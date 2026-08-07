@@ -16,6 +16,8 @@ Same two kinds of evidence as `test_smoke_cases.py`, with one addition that only
 
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from dpos_harness.cases.smoke import (asserts_fault, crash_survivor, deferred, driver, fault,
@@ -824,6 +826,12 @@ def _restart_world(monkeypatch, **over):
         shutdown_flushed=lambda service, **kw: True,
         check_external=lambda port, **kw: "0x70|0xaa",
         check_node=lambda service, **kw: "0x70|0xaa",
+        # A block stamped AFTER the restart instant. Read off the real clock rather than pinned:
+        # the case samples `restart_at` from `time.time()` at run time, and `_live_ctx` only
+        # fast-forwards `monotonic`.
+        timestamp_at=lambda block, **kw: int(time.time()) + 60,
+        # The resumption wait reads the finalized head separately from the reconverge poll.
+        finalized_dec=lambda **kw: 0x70,
         # The producer's chain for the fork half of the reconverge gate — see `_crash_world` on
         # why this is stubbed rather than left to reach a conftest-blocked `cast block`.
         blockhash_at=lambda block, **kw: ("0xaa" if int(block) == 0x70 else "null"),
@@ -885,6 +893,71 @@ def test_assert_full_restart_fails_when_the_fleet_never_produced_a_block_after_t
                                                               else "null"))
     with pytest.raises(SmokeFailure, match="did not reconverge"):
         asserts_fault.assert_full_restart(ctx)
+
+
+def test_assert_full_restart_fails_when_the_fleet_came_back_on_its_PERSISTED_TAIL(monkeypatch):
+    """THE SAMPLING-MOMENT HOLE, driven — and this is the exact shape the live run showed on
+    2026-08-03. Every height check passes: the fleet is agreed, on the producer's chain and
+    STRICTLY past `pre`. It gets there without producing anything, because `pre` is sampled BEFORE
+    a 40s stop window and the blocks written inside that window are on disk and above the floor.
+
+    THE TAIL RUNS SEVERAL BLOCKS PAST THE CONVERGED HEIGHT and every one of them is pre-restart —
+    live it was `pre=65` with 66, 67 and 68 all older than the restart. So a check that merely
+    looked one block up, or that took a block's EXISTENCE for resumption, still sees nothing but
+    tail. Only a stamp at or past `restart_at` distinguishes them."""
+    stopped = int(time.time()) - 3600
+    ctx, _ = _restart_world(monkeypatch,
+                            timestamp_at=lambda block, **kw: (stopped + int(block)
+                                                              if int(block) <= 0x74 else 0),
+                            finalized_dec=lambda **kw: 0x70)
+    with pytest.raises(SmokeFailure) as e:
+        asserts_fault.assert_full_restart(ctx)
+    assert "produced NO block" in e.value.message
+    assert "PERSISTED TAIL" in e.value.message
+
+
+def test_an_unreadable_timestamp_fails_the_restart_witness_rather_than_passing_it(monkeypatch):
+    """`block_field_at` answers `"null"` for an unreachable node as well as for a missing field,
+    and `hex_to_dec` maps that to 0. Zero is older than any restart instant, so the read failure
+    lands on the RED side — the direction a witness has to fail in."""
+    ctx, _ = _restart_world(monkeypatch, timestamp_at=lambda block, **kw: 0)
+    with pytest.raises(SmokeFailure, match="produced NO block"):
+        asserts_fault.assert_full_restart(ctx)
+
+
+def test_the_restart_diagnostic_never_calls_a_PRE_restart_block_resumption(monkeypatch, capsys):
+    """THE INFERENCE BUG, driven. The dump concluded "the chain KEPT CLIMBING, so the fleet
+    resumed" from a block above the converged height merely EXISTING — while printing that block's
+    stamp showing it was OLDER than the restart. A next block that is itself pre-restart is more
+    tail, not evidence of anything."""
+    stopped = int(time.time()) - 3600
+    ctx, _ = _restart_world(monkeypatch,
+                            timestamp_at=lambda block, **kw: (stopped + int(block)
+                                                              if int(block) <= 0x74 else 0),
+                            finalized_dec=lambda **kw: 0x70)
+    with pytest.raises(SmokeFailure):
+        asserts_fault.assert_full_restart(ctx)
+    out = capsys.readouterr().out
+    assert "resumption is unproven" in out and "came back on its tail" in out
+    assert "resume" not in out.replace("resumption is unproven", "")
+
+
+def test_the_restart_diagnostic_names_the_FIRST_post_restart_block_when_one_exists(
+        monkeypatch, capsys):
+    """The other direction: a tail that runs 3 blocks past the converged height and THEN a real
+    produced block. The diagnostic must name that block, because it is the evidence that the gate
+    was reading the tail rather than that the fleet was dead."""
+    now = int(time.time())
+    ctx, _ = _restart_world(
+        monkeypatch,
+        # 0x70..0x73 are tail (pre-restart); 0x74 is the first produced block.
+        timestamp_at=lambda block, **kw: (now - 100 if int(block) <= 0x73 else now + 60),
+        # …but the finalized head still sits on the tail, so the WAIT expires and the case fails.
+        finalized_dec=lambda **kw: 0x70)
+    with pytest.raises(SmokeFailure):
+        asserts_fault.assert_full_restart(ctx)
+    out = capsys.readouterr().out
+    assert "first POST-restart block 116" in out and "the chain DID resume" in out
 
 
 def test_assert_full_restart_fails_when_one_node_is_wedged_at_the_persisted_head(monkeypatch):

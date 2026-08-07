@@ -714,3 +714,106 @@ def test_the_tuned_genesis_constants_match_the_bash_exports():
     #: cert-catchup's interval is NOT the midwindow one and must not be aliased to it: they agree
     #: on 64 for unrelated reasons. Raising it to 128 was tried live and the stack does not boot.
     assert vo.CATCHUP_EPOCH_INTERVAL == 64
+
+
+# ══ smoke-weighted-vrf ═════════════════════════════════════════════════════
+
+#: 9:1:1:1 over the two 64-block epochs the case measures, roughly the expected split.
+_WEIGHTED_EPOCHS = [3, 4]
+_WEIGHTED_OK = [[(48, 64), (6, 64), (5, 64), (5, 64)],
+                [(46, 64), (7, 64), (6, 64), (5, 64)]]
+
+
+def _wv(*per_epoch):
+    """One reading list per epoch; a single list is repeated across both."""
+    rows = list(per_epoch) if len(per_epoch) > 1 else list(per_epoch) * len(_WEIGHTED_EPOCHS)
+    return vo.evaluate_weighted_election(_WEIGHTED_EPOCHS, rows, 9)
+
+
+def test_the_weighted_election_passes_on_a_plausible_split():
+    assert vo.evaluate_weighted_election(_WEIGHTED_EPOCHS, _WEIGHTED_OK, 9)[0]
+
+
+def test_the_measurement_SUMS_across_the_epochs_rather_than_scoring_one():
+    """One 64-view epoch leaves ~1.1% chance that some light produces nothing by luck, which would
+    make condition (b) a coin flip. The interval cannot be raised (128 does not boot — see
+    `CATCHUP_EPOCH_INTERVAL`), so the sample is bought in epochs: a light that is silent for ONE
+    epoch and productive in the other is a PASS, and one silent across both is not."""
+    assert _wv([(48, 64), (6, 64), (5, 64), (5, 64)],
+               [(52, 64), (7, 64), (5, 64), (0, 64)])[0]
+    ok, msg = _wv([(51, 64), (8, 64), (5, 64), (0, 64)],
+                  [(52, 64), (7, 64), (5, 64), (0, 64)])
+    assert not ok and "produced NOTHING" in msg
+
+
+def test_a_MONOPOLY_elector_FAILS_instead_of_scoring_best():
+    """THE FAILURE THE BASH ORIGINAL REWARDED. An elector that always returns index 0 gives
+    heavy=total and light_max=0, which is the BEST possible score on the margin criterion alone —
+    `heavy > 0` and `heavy*2 >= 0` are both trivially true. The check would have blessed the exact
+    degeneracy it exists to catch."""
+    ok, msg = _wv([(64, 64), (0, 64), (0, 64), (0, 64)])
+    assert not ok and "picking a fixed index" in msg
+
+
+def test_a_SYSTEMATICALLY_EXCLUDED_validator_FAILS_even_when_the_others_produced():
+    """The weaker shape of the same thing, and the reason condition (b) was not relaxed to "two of
+    three": one specific light is never elected while the rest of the distribution looks healthy.
+    `light_max` has no lower bound, so the margin criterion cannot see it."""
+    ok, msg = _wv([(48, 64), (11, 64), (5, 64), (0, 64)],
+                  [(48, 64), (11, 64), (5, 64), (0, 64)])
+    assert not ok and "produced NOTHING" in msg
+
+
+def test_counters_that_do_not_sum_to_blocksInEpoch_FAIL():
+    """THE SELF-CHECK, and the thing no log tally could offer. On-chain counters cannot be lost,
+    rotated away or driven negative, and they publish their own total — so arithmetic that does
+    not close means a reading was lost, and no distribution can be scored over it.
+
+    It is also what catches a validator JOINING mid-measurement: its blocks are in the totals and
+    credited to nobody the case reads."""
+    ok, msg = _wv([(48, 64), (6, 64), (5, 64), (1, 64)])
+    assert not ok and "do not add up" in msg
+
+
+def test_a_read_failed_sentinel_is_never_scored_as_zero():
+    """§2.4 item 5 at the one place it decides this case. `(-2,-2)` is a FAILED getter call; folding
+    it onto 0 would make "a light produced nothing" a free truth. `(-1,-1)` is "not in committee",
+    which is ALSO what a member LEAVING between the two epochs reads as — the half of the
+    committee-stability assumption that enforces itself."""
+    ok, msg = _wv([(48, 64), (-2, -2), (5, 64), (5, 64)])
+    assert not ok and vo.STATE_FAILED in msg
+    ok, msg = _wv([(48, 64), (6, 64), (5, 64), (5, 64)],
+                  [(48, 64), (-1, -1), (5, 64), (5, 64)])
+    assert not ok and vo.STATE_ABSENT in msg and "in epoch 4" in msg
+
+
+def test_the_margin_is_driven_from_both_sides():
+    """`heavy*2 >= light_max*3` — integer-exact, as the original wrote it."""
+    assert _wv([(30, 64), (20, 64), (7, 64), (7, 64)])[0]
+    ok, msg = _wv([(29, 64), (20, 64), (8, 64), (7, 64)])
+    assert not ok and "weighted plurality" in msg
+
+
+def test_a_heavy_that_merely_TIES_the_busiest_light_is_not_a_plurality():
+    ok, _ = _wv([(16, 64), (16, 64), (16, 64), (16, 64)])
+    assert not ok
+
+
+def test_the_stake_skew_precondition_both_ways():
+    """The original never checked it, so a failed export read as "weighting does not work" and any
+    pass was unattributed: `HEAVY_STAKE_MULT` reaches the chain only through genesis."""
+    assert vo.evaluate_stake_skew([9, 1, 1, 1], 9)[0]
+    ok, msg = vo.evaluate_stake_skew([1, 1, 1, 1], 9)
+    assert not ok and "did not reach genesis" in msg
+
+
+def test_an_unreadable_stake_FAILS_rather_than_reading_as_unstaked():
+    """0 is the read-failed sentinel — a genesis committee member cannot be below
+    `minValidatorStakeAmount` and still be seated."""
+    ok, msg = vo.evaluate_stake_skew([9, 1, 0, 1], 9)
+    assert not ok and "read-failed sentinel" in msg
+
+
+def test_unequal_light_stakes_FAIL_because_the_case_assumes_1_to_1():
+    ok, msg = vo.evaluate_stake_skew([9, 1, 2, 1], 9)
+    assert not ok and "not equally staked" in msg

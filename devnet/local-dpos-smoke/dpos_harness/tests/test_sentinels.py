@@ -191,3 +191,55 @@ def test_wait_finalized_ge_tolerates_the_zero_coercion(monkeypatch):
     monkeypatch.setattr(converge.time, "sleep", lambda _s: None)
     reads = iter([0, 0, 90, 100])
     assert converge.wait_finalized_ge(100, timeout=30, read_fin=lambda: next(reads)) is True
+
+
+# ══ the on-chain field readers, against REAL `cast` output ═════════════════
+
+#: `getValidatorStatus` as `cast` actually renders it: one field per line, and the uint256
+#: pretty-printed with its exponent annotation. Same shape the harness already pins at
+#: `test_prod_substrate.py::test_the_status_byte_survives_a_pretty_printed_stake_field`.
+_STATUS_OUT = ("0x000000000000000000000000000000000000dEaD\n"
+               "1\n"
+               "9000000000000000000 [9e18]\n"
+               "0\n"
+               "0\n"
+               "0")
+
+
+def test_validator_stake_survives_the_pretty_printed_annotation(monkeypatch):
+    """THE BUG THAT REACHED A LIVE RUN. `cast` prints `9000000000000000000 [9e18]` and
+    `cast_field` collapses whitespace, gluing the annotation to the digits; the parse then threw
+    inside `int()` and came back as the bare-except 0 — for EVERY validator, so a 9:1:1:1 genesis
+    read as an equal-stake chain rather than as a failed read.
+
+    It shipped because the only coverage stubbed `SmokeCtx.validator_stake`, one layer ABOVE the
+    defect, so neither `nodes.validator_stake` nor `cast_field` ever ran. This drives the real
+    reader against the real output."""
+    monkeypatch.setattr(nodes, "staking_call", lambda *a, **k: _STATUS_OUT)
+    assert nodes.validator_stake("0xdead") == 9000000000000000000
+
+
+def test_validator_stake_reads_a_bare_number_too(monkeypatch):
+    """The annotation is `cast`'s presentation, not part of the ABI — a foundry that stopped
+    emitting it must not break the reader in the other direction."""
+    monkeypatch.setattr(nodes, "staking_call",
+                        lambda *a, **k: _STATUS_OUT.replace(" [9e18]", ""))
+    assert nodes.validator_stake("0xdead") == 9000000000000000000
+
+
+def test_an_unreadable_stake_is_0_and_0_is_the_SENTINEL(monkeypatch):
+    """0 is never a real stake here: a seated genesis validator is above
+    `minValidatorStakeAmount` by construction, so every caller must read 0 as a failed read.
+    `verdicts_onchain.evaluate_stake_skew` is the one that does."""
+    monkeypatch.setattr(nodes, "staking_call", lambda *a, **k: "")
+    assert nodes.validator_stake("0xdead") == 0
+    monkeypatch.setattr(nodes, "staking_call", lambda *a, **k: "0xowner\n1\nnot-a-number\n0\n0\n0")
+    assert nodes.validator_stake("0xdead") == 0
+
+
+def test_the_status_byte_is_read_from_the_SAME_output(monkeypatch):
+    """The two readers share one signature and one output; field 2 is the status byte, field 3 the
+    stake. A drifted arity would silently move both."""
+    monkeypatch.setattr(nodes, "staking_call", lambda *a, **k: _STATUS_OUT)
+    assert nodes.validator_status("0xdead") == "1"
+    assert len(_STATUS_OUT.split("\n")) == 6, "the tuple is SIX fields, not the eight it once was"

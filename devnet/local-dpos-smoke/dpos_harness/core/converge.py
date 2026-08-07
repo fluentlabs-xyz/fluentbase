@@ -232,7 +232,7 @@ def wait_finalized_ge(target, timeout=60, read_fin=None, poll_s=ALIGN_POLL_S) ->
 
 
 def wait_follower_align(port, floor_dec, timeout=240, poll_s=FOLLOWER_POLL_S,
-                        producer_port=None):
+                        producer_port=None, read_follower=None):
     """Poll until the follower RPC on host `port` is finalized strictly above the decimal
     `floor_dec` AND the producer agrees on the block AT THAT HEIGHT (same hash). Bash
     `wait_follower_align` (lib.sh:213-227). Returns the follower's aligned reading, or None
@@ -256,11 +256,17 @@ def wait_follower_align(port, floor_dec, timeout=240, poll_s=FOLLOWER_POLL_S,
     follower reads the `"null|null"` sentinel and must never count as agreement — and
     `blockhash_at` yields `"null"` for a block the producer does not hold (or an unreachable
     producer), which never matches a real hash.
+
+    `read_follower` overrides HOW the follower is read, and nothing else. The overlay followers
+    have no host port to read — publishing one was a workaround for the missing exec seam, and
+    three of those ports sat in the kernel's ephemeral range where any outbound connection can
+    take them — so the case layer passes an in-container reader here. The floor, the fork check
+    and the producer side are untouched: only the transport of one reading changes.
     """
     producer_port = topology.HOST_RPC_PORT if producer_port is None else producer_port
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        f = nodes.check_external(port)
+        f = read_follower() if read_follower is not None else nodes.check_external(port)
         f_head, _, f_hash = f.partition("|")
         if f_head != "null":
             f_dec = nodes.hex_to_dec(f_head)

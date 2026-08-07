@@ -242,7 +242,8 @@ def assert_vrf(ctx) -> None:
               flush=True)
 
     # ── 3) the logged value IS the on-chain header value ──────────────────────────
-    raw = ctx.logs_all(topology.validator(0))
+    raw = ctx.logs_required(topology.validator(0), case, "logged prev_randao scan",
+                            dry_value=f"(dry) {verdicts.ACTIVE_LINE} prev_randao=0x00")
     logged = verdicts.parse_logged_randaos(raw)
     ok, msg = verdicts.evaluate_logged_randaos_present(logged)
     ctx.check(case, ok, msg, on_fail=lambda: _dump_active_samples(raw))
@@ -365,7 +366,7 @@ def _assert_beacon_metrics(ctx, case: str) -> None:
     fb1 = nodes.metric_first_val(text1, "beacon_digest_fallback")
     sa1 = nodes.metric_first_val(text1, "beacon_seed_active")
     ctx.check(case, *verdicts.evaluate_beacon_metrics_delta(fb0, sa0, fb1, sa1))
-    print(f"smoke-vrf: D1 — beacon_digest_fallback flat ({fb0}) while beacon_seed_active grew "
+    print(f"{case}: D1 — beacon_digest_fallback flat ({fb0}) while beacon_seed_active grew "
           f"({sa0} → {sa1}) over {verdicts.GROWTH_BLOCKS} blocks", flush=True)
 
 

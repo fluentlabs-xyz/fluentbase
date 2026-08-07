@@ -590,6 +590,11 @@ FULL_RESTART_STOP_TIMEOUT_S = 40
 #: `:525` — the reconverge budget after the whole validator set comes back from disk.
 FULL_RESTART_RECONVERGE_S = 120
 FULL_RESTART_POLL_S = 2
+#: How far above the reconverged height the FAILURE diagnostic scans for the first block the chain
+#: produced after the restart. Bounded because it costs one RPC per block: the live evidence showed
+#: the persisted tail running 3 blocks past the floor, and at ~1 blk/s with K=3 result lag a
+#: resumed fleet puts a post-restart block within a handful of the tail's top.
+FULL_RESTART_SCAN_BLOCKS = 12
 FULL_RESTART_LOG_TAIL = 200
 
 
@@ -604,6 +609,52 @@ def evaluate_flushed(service, flushed):
     if flushed:
         return True, ""
     return False, f"{service} did not exit cleanly (code 0) on shutdown"
+
+
+def evaluate_produced_after_restart(block_ts, restart_at):
+    """The block the fleet converged on was PRODUCED after the restart, not lifted off disk.
+
+    THE HOLE THIS CLOSES IS THE SAMPLING MOMENT, not the comparison. `pre` is captured BEFORE the
+    stop, and the stop takes up to `FULL_RESTART_STOP_TIMEOUT_S` (40 s) — so everything the chain
+    finalized inside that window is on disk and clears `> pre` the moment the containers come back.
+    Five nodes with a dead consensus engine satisfy the height floor perfectly.
+
+    A timestamp cannot be replayed into the future: the proposer stamps
+    `wall_clock_now().max(parent.timestamp + 1)` (`crates/dpos/consensus/src/application.rs:991`),
+    so a block sealed before `compose_start` carries an earlier second and only a freshly PRODUCED
+    one can carry a later one.
+
+    An unreadable timestamp reads as 0 and fails here, which is the safe direction — but it is a
+    read failure, not a product failure, so the message says which reading it is talking about."""
+    if int(block_ts) >= int(restart_at):
+        return True, ""
+    return False, (f"the fleet converged on a block timestamped {block_ts}, before the restart at "
+                   f"{restart_at} — it came back on its persisted tail and produced nothing "
+                   "(a 0 here means the timestamp could not be read at all)")
+
+
+def evaluate_resumed_production(produced, reconverged_head, pre, restart_at, budget_s):
+    """The chain PRODUCED a block after the restart — the assertion reconvergence cannot make.
+
+    WHY THIS IS A SEPARATE WAIT. `full_restart_reconverged` returns the instant every reader
+    clears `pre`, and the persisted tail clears it unaided: `pre` is sampled BEFORE `compose_stop`,
+    so the blocks the fleet wrote while it was stopping are already above the floor and on disk.
+    Proven live on 2026-08-03 — floor `pre=65`, and blocks 66, 67 and 68 all carried stamps
+    EARLIER than the restart. Reconvergence is a real property (the fleet came back on one chain)
+    and it is kept; it simply cannot witness production, so this does.
+
+    The comparison inside is `evaluate_produced_after_restart` and it is unchanged — `>=` with no
+    tolerance, for the reason that function's docstring gives. The defect was never the
+    comparison; it was which block the comparison was handed."""
+    if not reconverged_head:
+        return False, ("the fleet never reconverged, so whether it produced anything after the "
+                       "restart was never measured")
+    if produced:
+        return True, ""
+    return False, (f"the fleet reconverged at {reconverged_head} (> pre={pre}) but produced NO "
+                   f"block within {budget_s}s: every finalized block through {reconverged_head} "
+                   f"is stamped before restart_at={restart_at}. It came back on its PERSISTED "
+                   "TAIL and the chain never resumed")
 
 
 def full_restart_reconverged(readings, pre, producer_hash_at=None) -> bool:

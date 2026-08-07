@@ -582,3 +582,44 @@ def test_an_all_down_fleet_and_a_wiped_fleet_are_both_rejected():
     assert not vf.full_restart_reconverged(["null|null"] * 5, 100)
     assert not vf.full_restart_reconverged(["0x0|0x0"] * 5, 0)
     assert not vf.full_restart_reconverged([], 100)
+
+
+# ══ the full-restart production witness ════════════════════════════════════
+
+def test_the_restart_witness_boundary_is_INCLUSIVE_and_needs_no_tolerance():
+    """THE OFF-BY-ONE QUESTION, settled by the arithmetic rather than by what makes a run green.
+
+    `restart_at = int(time.time())` is sampled BEFORE `compose_start`, so `restart_at = floor(T_s)`
+    for a sample instant `T_s` that PRECEDES every container start. A produced block is sealed at
+    some `T_b > T_s` and the proposer stamps it
+    `max(wall_now.as_secs(), parent.timestamp + 1)` (`application.rs:991`). Both arms are
+    `>= floor(T_b) >= floor(T_s) = restart_at`: the wall arm because flooring is monotone, the
+    parent arm because it only ever raises the value.
+
+    So a genuinely produced block CANNOT carry a stamp below `restart_at`, and `>=` is exactly
+    right — a one-second tolerance would buy nothing and would start accepting a tail block sealed
+    in the second before the restart."""
+    assert vf.evaluate_produced_after_restart(1785766423, 1785766423)[0], "equal is produced"
+    assert vf.evaluate_produced_after_restart(1785766424, 1785766423)[0]
+    ok, msg = vf.evaluate_produced_after_restart(1785766422, 1785766423)
+    assert not ok and "persisted tail" in msg
+
+
+def test_an_unreadable_timestamp_lands_on_the_RED_side():
+    """`block_field_at` answers `"null"` for an unreachable node as well as a missing field, and
+    `hex_to_dec` maps that to 0 — older than any restart instant."""
+    ok, msg = vf.evaluate_produced_after_restart(0, 1785766423)
+    assert not ok and "timestamped 0" in msg
+
+
+def test_the_restart_failure_path_reads_the_block_ABOVE_the_converged_height():
+    """The deciding row. A stamp at or below `restart_at` is what a persisted tail looks like AND
+    what the last pre-stop block looks like on a fleet that resumed afterwards; only whether the
+    chain kept climbing tells them apart."""
+    import inspect
+    from dpos_harness.cases.smoke import asserts_fault
+    src = inspect.getsource(asserts_fault._dump_restart_window)
+    assert "head_dec + 1" in src and "head_dec - 1" in src
+    assert "KEPT" in src and "<none>" in src
+    body = inspect.getsource(asserts_fault.assert_full_restart)
+    assert "_dump_restart_window(ctx, pre, head_dec, restart_at)" in body

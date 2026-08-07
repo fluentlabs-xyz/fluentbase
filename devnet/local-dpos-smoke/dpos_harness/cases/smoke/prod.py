@@ -47,6 +47,7 @@ from ...chain.writes import Chain, ChainError
 from ...core import converge, nodes, proc, rpc, topology
 from ...core.chainpaced import ChainPaced
 from ...core.converge import ConvergeError
+from ...core.exit_codes import RC_ERROR, RC_FAIL, RC_PASS, RC_USAGE
 from ...core.proc import ProcError, Runner
 from ...core.spammer import SpammerPool
 from ...stack.production_path import (ProductionPathProfile, RotationBringUp,
@@ -350,6 +351,22 @@ class ProdCtx:
         return self._delegated("check_external", str(port),
                                lambda: nodes.check_external(port), dry_value)
 
+    def reading(self, port: int, what: str, dry_value="0x80|0x" + "ab" * 32):
+        """`check_external <port>` -> `(head_hex, head_dec, hash)`, FAIL-LOUD on the sentinel.
+
+        For readings used as DATA rather than as a verdict. `hex_to_dec("null")` is 0, and 0 is a
+        perfectly usable height: an unreachable node read as zero yields a floor the live chain
+        passed minutes ago, so the check passes over a gap that never existed.
+
+        NOT for sites where `"null"` is the expected PASS value — those need a separate liveness
+        witness instead."""
+        raw = self.check_external(port, dry_value=dry_value)
+        head, _, digest = (raw or "").partition("|")
+        if not head.startswith("0x"):
+            raise ProdFailure(self.label, f"{what} on host port {port} read {raw!r} — refusing to "
+                                          "read an unreachable node as height 0")
+        return head, nodes.hex_to_dec(head), digest
+
     def check_node(self, service: str, dry_value="0x0|0x0") -> str:
         return self._delegated("check_node", service,
                                lambda: nodes.check_node(service), dry_value)
@@ -459,8 +476,7 @@ class ProdCtx:
         "not jailed"."""
         return self._delegated("validator_status", addr,
                                lambda: V.status_byte(nodes.staking_call(
-                                   "getValidatorStatus(address)"
-                                   "(address,uint8,uint256,uint64,uint64,uint16)",
+                                   nodes.VALIDATOR_STATUS_SIG,
                                    addr, addr=self.staking_rt, rpc_url=self.rpc)),
                                dry_value)
 
@@ -490,6 +506,21 @@ class ProdCtx:
 
     def logs_all(self, service: str, dry_value="") -> str:
         return self._delegated("logs_all", service, lambda: nodes.logs_all(service), dry_value)
+
+    def logs_required(self, service: str, what: str, dry_value="") -> str:
+        """Container log, FAIL-LOUD on an empty read.
+
+        For ABSENCE assertions: `logs_all` returns `""` on a timeout or a daemon error
+        (`core/rpc.py:93-99`), and empty text satisfies any "the line is not there". An absence
+        assertion over an unreadable log is a grep that matches its own absence.
+
+        NOT for diagnostic reads — there `""` is legitimate and gates nothing."""
+        text = self.logs_all(service, dry_value=dry_value)
+        if not text.strip():
+            raise ProdFailure(self.label,
+                              f"{what}: `docker compose logs {service}` returned nothing — "
+                              "refusing to satisfy an absence assertion over an unreadable log")
+        return text
 
     def logs_all_project(self, dry_value="") -> str:
         """`docker compose logs` with NO service — the WHOLE project's logs, ANSI-STRIPPED.
@@ -729,7 +760,8 @@ def tear_down(runner: Runner) -> None:
 
 def run(case: str, assertions, argv=None, contracts_dir=None, manifest=None,
         committee_size=None, bring_up=True, overlays=None, post_manifest=None) -> int:
-    """Bring up the production-path stack, run `assertions` in order, clean up. 0 pass, 1 fail.
+    """Bring up the production-path stack, run `assertions` in order, clean up
+    (`core/exit_codes`).
 
     `assertions` is a list of `fn(ctx)`, run in order, fail-fast — the first failure ends the run
     and the later assertions do not execute, as bash's `set -e` did.
@@ -757,7 +789,7 @@ def run(case: str, assertions, argv=None, contracts_dir=None, manifest=None,
     if unknown:
         print(f"{case}: unrecognised argument(s) {unknown} (only --dry-run is accepted)",
               flush=True)
-        return 2
+        return RC_USAGE
 
     runner = Runner(dry=dry, echo=dry)
     profile = ProductionPathProfile(committee_size=committee_size, extra_overlays=overlays)
@@ -771,7 +803,7 @@ def run(case: str, assertions, argv=None, contracts_dir=None, manifest=None,
               f"validators={profile.val_count}, committee={profile.committee_size}, "
               f"overlays={list(profile.extra_overlays)}, manifest={bu.manifest})")
 
-    rc = 0
+    rc = RC_PASS
     # `RotationBringUp` exports `COMPOSE_FILE` into `os.environ`, because the bare `docker compose
     # exec` readers inherit only that. bash's process exits at the end of a case, so nothing there
     # ever observes the leftover; here a second case — or the harness's own test suite — would
@@ -784,13 +816,15 @@ def run(case: str, assertions, argv=None, contracts_dir=None, manifest=None,
             bu.run()
         for fn in assertions:
             fn(ctx)
-    except (ProdFailure, RotationBringUpError) as e:
-        print(f"FAIL ({getattr(e, 'case', None) or getattr(e, 'label', case)}): {e.message}",
-              flush=True)
-        rc = 1
+    except ProdFailure as e:
+        print(f"FAIL ({e.case}): {e.message}", flush=True)
+        rc = RC_FAIL
+    except RotationBringUpError as e:
+        print(f"ERROR ({e.label}): bring-up failed: {e.message}", flush=True)
+        rc = RC_ERROR
     except (ChainError, ConvergeError, ProcError) as e:
-        print(f"FAIL ({case}): {e}", flush=True)
-        rc = 1
+        print(f"ERROR ({case}): {e}", flush=True)
+        rc = RC_ERROR
     except KeyboardInterrupt:
         print(f"{case}: interrupted", flush=True)
         rc = 130
@@ -862,4 +896,4 @@ def dry_run_transcript(label: str = "smoke-vrf-rotation", contracts_dir=None) ->
     finally:
         _restore_compose(saved_compose)
     print(f"# {len(runner.log)} commands")
-    return 0
+    return RC_PASS

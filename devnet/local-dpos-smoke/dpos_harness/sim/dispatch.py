@@ -33,6 +33,7 @@ import os
 from . import actions
 from ..core import setops, topology
 from ..chain.writes import fatal_or_diag
+from .coverage import Tally, gate_reason_key
 from .rounds import draw_round, build_gate_inputs, apply_action
 
 
@@ -67,6 +68,10 @@ class Dispatcher:
         self.warm_stint = {}                  # identity idx -> consecutive warming rounds
         self.mint_defer_idx = ""
         self.mint_defer_acc = 0
+        # Coverage instrumentation. Owned here because this is the only object that sees every
+        # round from draw to apply; the orchestrator reads it to report. Constructed
+        # unconditionally (not injected) so every Dispatcher — live, test, dry tick — counts.
+        self.tally = Tally()
 
     # ── impure seams (bound live; overridable in tests) ───────────────────────
     def finalized_dec(self):
@@ -108,6 +113,17 @@ class Dispatcher:
 
     # ── the churn round ───────────────────────────────────────────────────────
     def run_round(self, cur, n):
+        """One churn round. Records the verdict, then returns it unchanged.
+
+        The verdict used to be returned and dropped by the caller (orchestrator's loop), so a run
+        could not say how many of its rounds did anything. Counted in the WRAPPER rather than at
+        the caller so every entry point — the live loop, the dry tick, the tests — is covered by
+        the one seam, and so the phase is read after the body, i.e. the phase the round ran in."""
+        verdict = self._run_round(cur, n)
+        self.tally.round_verdict(self.s.rotation_phase, verdict)
+        return verdict
+
+    def _run_round(self, cur, n):
         """One churn round (case-soak.sh 2249-3118). Returns the verdict string."""
         s = self.s
         s.round += 1
@@ -164,6 +180,7 @@ class Dispatcher:
         if self.rec.dkg_window_fragile == 1:
             self.event("churn", f"dkg-barrier HELD (epoch {cur}): incoming committee[{cur + 1}] "
                                 f"not beacon-warm [{self.rec.dkg_barrier_notready.strip()}]")
+            self.tally.skip_round("dkg-barrier-held")
             return "skipped"
 
         # ── pre-warm hook ──
@@ -198,12 +215,14 @@ class Dispatcher:
             self.event("churn", f"heal-before-harm: backfill obligation open (committee n={n} < cap "
                                 f"{self.cfg.validators}) — suppressing the fault lottery until the "
                                 "vacated seat is backfilled to full")
+            self.tally.skip_round("heal-before-harm")
             return "skipped"
 
         # ── SERIALIZE settle block ──
         if (cur < s.settle_until_epoch or s.promote_pending or s.refill_pending or s.refill_resumed):
             self.event("churn", f"settle-window (until epoch {s.settle_until_epoch}) or membership "
                                 "change in flight — no fault churn")
+            self.tally.skip_round("settle-window")
             return "skipped"
 
         # ── GROWTH-COMPLETE gate: no fault churn until the committee has reached full cap.
@@ -223,6 +242,7 @@ class Dispatcher:
         if n < self.cfg.validators:
             self.event("churn", f"growth-incomplete (committee n={n} < cap {self.cfg.validators}) — "
                                 "no fault churn until the committee is fully grown")
+            self.tally.skip_round("growth-incomplete")
             return "skipped"
 
         # ── fault lottery: 4-draw + victim pool + calm + forced overrides ──
@@ -310,6 +330,7 @@ class Dispatcher:
             self.event("churn", f"APPLIED register_activate {topology.validator(s.next_joiner)} "
                                 f"(committee {n}->{n + 1})")
             s.next_joiner += 1
+            self.tally.fire("register_activate")
             return "applied"
 
         # REFILL elif (mechanism B: resume → frontier → activate)
@@ -326,11 +347,13 @@ class Dispatcher:
                     note="refill-resume")
                 s.refill_resumed = v
                 self.event("churn", f"refill: resumed spare {v}; awaiting FRONTIER catch-up")
+                self.tally.skip_action("refill", "awaiting-frontier-catchup")
                 return "skipped"
             if not self.rec.recovery_confirmed(v):
                 # a refill that never frontier-syncs is a plain deferral now (its stall watchdog was
                 # demoted-diagnostic); chain liveness catches a genuinely wedged cluster.
                 self.event("churn", f"refill: {v} not yet frontier-synced — deferring")
+                self.tally.skip_action("refill", "not-frontier-synced")
                 return "skipped"
             self.chain.register_activate(s.next_joiner, 0, voter_idx=self._live_voter_idx(cur))
             s.refill_resumed = ""
@@ -342,6 +365,7 @@ class Dispatcher:
             s.refill_over_ticks = 0
             self.event("churn", f"APPLIED refill {v} (frontier-synced spare replaces tombstone)")
             s.next_joiner += 1
+            self.tally.fire("refill")
             return "applied"
 
         # PROMOTE elif
@@ -375,6 +399,7 @@ class Dispatcher:
             if base < 0:
                 self.event("churn", f"defer bench_promote {topology.validator(cand)} — share baseline "
                                     "unreadable at fire (-1) on a released-native container")
+                self.tally.skip_action("bench_promote", "share-baseline-unreadable")
                 return "skipped"
             self.chain.bench_promote(cand, voter_idx=self._live_voter_idx(cur))
             s.promote_pending = str(cand)
@@ -385,6 +410,7 @@ class Dispatcher:
             self.warm_stint.pop(cand, None)
             s.settle_until_epoch = cur + self.membership_settle
             self.event("churn", f"APPLIED bench_promote {topology.validator(cand)} (committee cap-1->cap)")
+            self.tally.fire("bench_promote")
             return "applied"
         # kind=warm: keep warming
         if self.hp.warm_identity(cand):
@@ -392,9 +418,11 @@ class Dispatcher:
             self._warm_stint_charge(cand)
             self.event("promote_deferred_warming",
                        f"promote candidate {topology.validator(cand)} HOSTED but not yet warm_ready")
+            self.tally.skip_action("bench_promote", "candidate-still-warming")
         else:
             self.event("promote_deferred_no_host",
                        f"host for promote candidate {topology.validator(cand)} DISAPPEARED (in-round race)")
+            self.tally.skip_action("bench_promote", "host-disappeared")
         return "skipped"
 
     def _bench_join_mint(self, cur):
@@ -417,6 +445,7 @@ class Dispatcher:
                                   seen=self._diag_seen, key=f"mint:{idx}")
                 self.event("churn", f"mint DEFERRED for {topology.validator(idx)} "
                                     f"(attempt {self.mint_defer_acc}/3; idx NOT consumed)")
+                self.tally.skip_action("bench_join", "mint-fund-deferred")
                 return "skipped"
             self.mint_defer_idx = ""
             self.mint_defer_acc = 0
@@ -426,6 +455,7 @@ class Dispatcher:
         self.hp.warm_identity(idx)
         s.next_bench_joiner += 1
         s.last_bench_join_round = s.round
+        self.tally.fire("bench_join")
         return "applied"
 
     # ── fault lottery (4-draw + calm + forced overrides + gate + apply) ───────
@@ -435,13 +465,16 @@ class Dispatcher:
         vpool = setops.committee_victim_idxs(s.cur_committee, s.address.addr2idx, s.disrupted)
         d = draw_round(s, pool, vpool, cur, self.calm_permille)
         action, victim, is_calm, forced = d.action, d.victim, d.is_calm, d.forced
+        self.tally.draw(action)
 
         if not victim:
             self.event("churn", "no eligible victim this round — SKIPPING the fault lottery")
+            self.tally.skip_action(action, "no-eligible-victim")
             return "skipped"
 
         if is_calm == 1:
             self.event("churn", f"calm epoch {cur} — no churn")
+            self.tally.skip_action(action, "calm-epoch")
             return "skipped"
 
         # gate inputs + gate_accept (the ≤f SAFETY gate — the load-bearing decision)
@@ -451,8 +484,10 @@ class Dispatcher:
         ok, reason = actions.gate_accept(gi)
         if not ok:
             self.event("churn", f"GATE SKIP {action} {victim} — {reason}")
+            self.tally.skip_action(action, f"gate:{gate_reason_key(reason)}")
             return "skipped"
-        apply_action(s, self.act, action, victim, cur, chain=self.chain, event=self.event)
+        apply_action(s, self.act, action, victim, cur, chain=self.chain, event=self.event,
+                     tally=self.tally)
         return "applied"
 
     # ══ CHAIN-DRIVEN ROTATION PHASE (v61 a20) ═════════════════════════════════
@@ -478,14 +513,17 @@ class Dispatcher:
         #    committee-member stratify or one bench activate per round, retried on a flaky gov defer.
         if not s.bench_provisioned:
             self.provision_warm_bench(cur)
+            self.tally.skip_round("bench-provisioning")
             return "skipped"           # no departures until the warm bench is armed
         if self.rec.dkg_window_fragile == 1:
             self.event("churn", f"dkg-barrier HELD (epoch {cur}): incoming committee[{cur + 1}] "
                                 f"not beacon-warm [{self.rec.dkg_barrier_notready.strip()}]")
+            self.tally.skip_round("dkg-barrier-held")
             return "skipped"
         if cur < s.settle_until_epoch:
             self.event("churn", f"rotation settle-window (until epoch {s.settle_until_epoch}) — "
                                 "one departure at a time; no churn")
+            self.tally.skip_round("rotation-settle-window")
             return "skipped"
         return self._rotation_lottery(cur, n)
 
@@ -518,6 +556,7 @@ class Dispatcher:
                 s.provision_cursor += 1
             except Exception as e:  # noqa: BLE001 — a deferral holds the cursor (retry next round)
                 self.event("churn", f"committee-stratify {topology.validator(cur_idx)} deferred: {e}")
+                self.tally.skip_action("provision_bench", "committee-stratify-deferred")
             return
         if cur_idx < self.cfg.val_containers:
             # one warm-bench idx → Lo band
@@ -532,10 +571,15 @@ class Dispatcher:
                 s.provision_cursor += 1
             except Exception as e:  # noqa: BLE001 — a deferral holds the cursor (retry next round)
                 self.event("churn", f"warm-bench provision {topology.validator(cur_idx)} deferred: {e}")
+                self.tally.skip_action("provision_bench", "bench-activate-deferred")
             return
         s.bench_provisioned = 1
         self.event("churn", f"STRATIFIED: committee → Hi {hi}, bench → Lo "
                             f"{self.cfg.bench_lo_wei} (cause-driven rotation armed)")
+        # The belt's only completion event. A run whose report shows provision_bench applied=0 with
+        # a growing deferral count never armed rotation at all — every departure class downstream
+        # is then dead for a reason that has nothing to do with its own gate.
+        self.tally.fire("provision_bench")
 
     def _rotation_lottery(self, cur, n):
         """The phase-2 lottery: the SAME sacred 4-draw + calm/victim discipline as _fault_lottery,
@@ -546,17 +590,21 @@ class Dispatcher:
         vpool = setops.committee_victim_idxs(s.cur_committee, s.address.addr2idx, s.disrupted)
         d = draw_round(s, pool, vpool, cur, self.calm_permille)
         action, victim, is_calm = d.action, d.victim, d.is_calm
+        self.tally.draw(action)
         if not victim:
             self.event("churn", "no eligible victim this round — SKIPPING the rotation lottery")
+            self.tally.skip_action(action, "no-eligible-victim")
             return "skipped"
         if is_calm == 1:
             self.event("churn", f"calm epoch {cur} — no churn")
+            self.tally.skip_action(action, "calm-epoch")
             return "skipped"
         nxt = self.chain.committee(cur + 1)
         gi = build_gate_inputs(s, action, victim, n, nxt, self.top_stake_leader(), 1)
         ok, reason = actions.gate_accept(gi)
         if not ok:
             self.event("churn", f"GATE SKIP {action} {victim} — {reason}")
+            self.tally.skip_action(action, f"gate:{gate_reason_key(reason)}")
             return "skipped"
         self._rotation_apply(cur, action, victim)
         return "applied"
@@ -591,6 +639,7 @@ class Dispatcher:
             s.settle_until_epoch = cur + self.membership_settle
             self.event("churn", f"APPLIED byzantine_equivocate {victim} — equivocation → on-chain "
                                 "slash/evict; chain re-selects a warm bench; rekey pending")
+            self.tally.fire("byzantine_equivocate")
         elif action == "voluntary_exit":
             # сам вышел: drop OWN stake below the bench tier → chain drops it from top-k. NO
             # disableValidator (reversible), NO promotable re-queue (that was the a18 bounce bug).
@@ -600,6 +649,7 @@ class Dispatcher:
             if not self._rotation_chain_write(
                     lambda: self.chain.undelegate(vidx, self.cfg.voluntary_undelegate_wei),
                     f"voluntary_exit {victim} undelegate"):
+                self.tally.skip_action("voluntary_exit", "chain-write-deferred")
                 return
             s.container.disrupt_kind[victim] = action
             s.voluntary_exits += 1
@@ -607,6 +657,7 @@ class Dispatcher:
             s.settle_until_epoch = cur + self.membership_settle
             self.event("churn", f"APPLIED voluntary_exit {victim} — undelegated own stake; chain "
                                 "drops it from the top-k; rekey pending")
+            self.tally.fire("voluntary_exit")
         elif action == "delegate_shift":
             # вытеснен (v61 a22 FIX-3): EMERGENT victim. The committee is uniform Hi, so boosting a
             # bench ABOVE the tier drops whichever incumbent the chain ranks weakest — NOT the drawn
@@ -616,10 +667,12 @@ class Dispatcher:
             bench = self._pick_bench_for_evict(victim)
             if bench is None:
                 self.event("churn", "stake-evict — no warm-bench key available; SKIPPING")
+                self.tally.skip_action("delegate_shift", "no-warm-bench-key")
                 return
             if not self._rotation_chain_write(
                     lambda: self.chain.stake_delegate(bench, self.cfg.evict_stake_wei),
                     f"stake_evict delegate->bench {bench}"):
+                self.tally.skip_action("delegate_shift", "chain-write-deferred")
                 return
             snapshot = [a.lower() for a in s.cur_committee.split()]
             a2i = s.address.addr2idx
@@ -631,9 +684,13 @@ class Dispatcher:
             self.event("churn", f"APPLIED stake_evict (delegate {self.cfg.evict_stake_wei} → bench "
                                 f"idx {bench}; chain drops the weakest incumbent; victim resolved "
                                 "on landing)")
+            self.tally.fire("delegate_shift")
         else:
-            # transient faults: reversible, same identity rejoins → NO rekey.
-            apply_action(s, self.act, action, victim, cur, chain=self.chain, event=self.event)
+            # transient faults: reversible, same identity rejoins → NO rekey. apply_action does
+            # its OWN coverage accounting, so this arm must not also count — the two seams are
+            # mutually exclusive by construction (this else is the only path that reaches it).
+            apply_action(s, self.act, action, victim, cur, chain=self.chain, event=self.event,
+                         tally=self.tally)
 
     def _rotation_chain_write(self, fn, label):
         """Run a rotation-phase chain write best-effort: a revert/transient logs a diagnostic and

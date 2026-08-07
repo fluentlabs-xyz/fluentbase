@@ -15,7 +15,10 @@ The bash wrappers are 14-30 lines each and identical apart from which assertions
     on a failed BRING-UP, so the `finally` covers the assertion phase, which is the half bash's
     trap covered.
   * `set -e` becomes exceptions: `SmokeFailure` for an assertion verdict, `ConvergeError` /
-    `ProcError` for the infrastructure underneath. All three exit 1, as bash did.
+    `ProcError` for the infrastructure underneath. Bash exited 1 for all three; here they split
+    into `RC_FAIL` and `RC_ERROR` (`core/exit_codes.py`), because a suite that cannot separate
+    "the property is false" from "the run never got far enough to look" reports docker noise as a
+    red property.
   * fail-fast across a multi-assertion case is UNCHANGED — the first failure aborts the run and
     the later assertions do not execute. `smoke-base` is ordered by increasing sophistication
     precisely so the first thing to break is the simplest one.
@@ -76,9 +79,11 @@ from __future__ import annotations
 
 import json
 import os
+import traceback
 
 from ...core import converge, nodes, proc, rpc, topology
 from ...core.converge import ConvergeError
+from ...core.exit_codes import RC_ERROR, RC_FAIL, RC_PASS, RC_USAGE
 from ...core.proc import ProcError, Runner
 from ...stack.profiles import StaticProfile
 from ...stack.static_stack import StaticStack
@@ -350,6 +355,37 @@ class SmokeCtx:
         return self._delegated("check_external", str(port),
                                lambda: nodes.check_external(port), dry_value)
 
+    def reading(self, port: int, what: str, case: str, dry_value="0x80|0x" + "ab" * 32):
+        """`check_external <port>` -> `(head_hex, head_dec, hash)`, FAIL-LOUD on the sentinel.
+
+        For readings used as DATA rather than as a verdict. `hex_to_dec("null")` is 0, and 0 is a
+        perfectly usable height: an unreachable node read as zero yields a floor the live chain
+        passed minutes ago, so the check passes over a gap that never existed.
+
+        NOT for sites where `"null"` is the expected PASS value — those need a separate liveness
+        witness instead."""
+        raw = self.check_external(port, dry_value=dry_value)
+        head, _, digest = (raw or "").partition("|")
+        if not head.startswith("0x"):
+            raise SmokeFailure(case, f"{what} on host port {port} read {raw!r} — refusing to "
+                                     "read an unreachable node as height 0")
+        return head, nodes.hex_to_dec(head), digest
+
+    def logs_required(self, service: str, case: str, what: str, dry_value="") -> str:
+        """Container log, FAIL-LOUD on an empty read.
+
+        For ABSENCE assertions: `logs_all` returns `""` on a timeout or a daemon error
+        (`core/rpc.py:93-99`), and empty text satisfies any "the line is not there". An absence
+        assertion over an unreadable log is a grep that matches its own absence.
+
+        NOT for diagnostic reads — there `""` is legitimate and gates nothing."""
+        text = self.logs_all(service, dry_value=dry_value)
+        if not text.strip():
+            raise SmokeFailure(case, f"{what}: `docker compose logs {service}` returned nothing — "
+                                     "refusing to satisfy an absence assertion over an unreadable "
+                                     "log")
+        return text
+
     def check_node(self, service: str, dry_value="0x0|0x0") -> str:
         """`check_node docker compose exec -T <svc>` (lib.sh:39) — same reading, in-container."""
         return self._delegated("check_node", service,
@@ -412,6 +448,18 @@ class SmokeCtx:
         return self._delegated("mixhash_at", str(block),
                                lambda: nodes.mixhash_at(block, self.rpc), dry_value)
 
+    def timestamp_at(self, block, dry_value=0) -> int:
+        """`eth_getBlockByNumber(<block>).timestamp`, decimal.
+
+        `block_field_at` answers `"null"` for BOTH a missing field and an unreachable node, and
+        `hex_to_dec("null")` is 0. The direction is the safe one — a 0 is older than any restart
+        instant, so an unreadable answer FAILS the verdict below rather than passing it — but it
+        is a read failure wearing a verdict's clothes, so read the failure message accordingly."""
+        return self._delegated("timestamp_at", str(block),
+                               lambda: nodes.hex_to_dec(
+                                   rpc.block_field_at(block, "timestamp", self.rpc)),
+                               dry_value)
+
     def blockhash_at(self, block, dry_value="null") -> str:
         """`blockhash_at` (lib.sh:352) — the PRODUCER's block hash at a decimal height, over the
         host `cast block`. This is the second read of the same-height fork check: a rejoin /
@@ -441,7 +489,9 @@ class SmokeCtx:
 
     def validator_status(self, addr: str, dry_value="2") -> str:
         """`validator_status <addr>` (lib.sh:226-234) — the status byte of `getValidatorStatus`'s
-        8-field tuple (0 inactive, 1 pending, 2 active, 3 jailed, 4 exiting).
+        6-field tuple (0 inactive, 1 pending, 2 active, 3 jailed, 4 exiting). SIX, not the eight
+        this said until the arity was checked: `slashesCount` and `jailedBefore` went with the
+        liveness jail, and `nodes.VALIDATOR_STATUS_SIG` is the one definition of the signature.
 
         Returns "" when the read FAILED, and the two cases that use it both treat that as a hard
         error rather than as "not jailed": an empty-vs-"3" false-green would hide the very jail
@@ -466,6 +516,13 @@ class SmokeCtx:
         return self._delegated("production", f"{epoch}, {addr}",
                                lambda: nodes.production(epoch, addr, rpc_url=self.rpc),
                                dry_value)
+
+    def validator_stake(self, addr: str, dry_value=0) -> int:
+        """`totalDelegated` for `addr` on the staking predeploy — the quantity the weighted elector
+        ranks by. 0 is the read-failed sentinel: a genesis committee member cannot hold zero stake
+        and stay above `minValidatorStakeAmount`."""
+        return self._delegated("validator_stake", addr,
+                               lambda: nodes.validator_stake(addr, rpc_url=self.rpc), dry_value)
 
     def runtime_addresses(self, dry_value=None):
         """`docker compose exec -T validator-0 cat /runtime/addresses.json` -> the `validators`
@@ -867,6 +924,75 @@ class SmokeCtx:
             env_overlay=dict(self.compose_env), timeout=120,
             note=note or f"overlay-write {service}:{path}")
 
+    def overlay_exec_prefix(self, service: str):
+        """`docker compose <files> exec -T <svc>` — the READ mirror of `overlay_exec_write`.
+
+        THE SEAM THAT REPLACES THREE PUBLISHED PORTS. `rpc.compose_exec` builds from the bare
+        `DOCKER_COMPOSE`, so it resolves only `docker-compose.yml` and cannot name an overlay
+        service at all. Because the read side had no way to address a follower, every follower
+        published a HOST PORT for the harness to read — and 38545 / 48545 / 58545 sit inside the
+        kernel's ephemeral range (32768-60999), where any outbound connection on the host can take
+        them. One did: Steam held 48545 and `smoke-cert-cascade` could not bind it.
+
+        Every bit of inter-container traffic already goes over `fluent-net`; the ports were never
+        for the nodes, only for the reader. This is the reader."""
+        return self._overlay_argv("exec", "-T", service)
+
+    def overlay_check_node(self, service: str, dry_value="0x0|0x0") -> str:
+        """`check_node` for an OVERLAY service — `"height|hash"` read INSIDE the container, with
+        the `"null|null"` sentinel an unreachable node must produce."""
+        return self._delegated("overlay_check_node", service,
+                               lambda: nodes.check_node_via(self.overlay_exec_prefix(service)),
+                               dry_value)
+
+    def overlay_head_dec(self, service: str, dry_value=1) -> int:
+        """`eth_blockNumber` inside an OVERLAY container, **-1** when it did not answer — the
+        liveness witness for a follower whose `finalized` is legitimately still unset."""
+        return self._delegated("overlay_head_dec", service,
+                               lambda: nodes.head_dec_via(self.overlay_exec_prefix(service)),
+                               dry_value)
+
+    def overlay_enode_pubkey(self, service: str, dry_value="ab" * 64) -> str:
+        """The 128-hex devp2p pubkey of an OVERLAY service, via in-container `admin_nodeInfo`."""
+        return self._delegated("overlay_enode_pubkey", service,
+                               lambda: nodes.enode_pubkey_via(
+                                   self.overlay_exec_prefix(service)), dry_value)
+
+    def overlay_wait_align(self, service: str, floor_dec, timeout, dry_value="0x80|0xdry"):
+        """`wait_follower_align` against an OVERLAY service, read in-container.
+
+        Only the follower READING changes: the strict floor, the same-height fork check and the
+        producer side are `converge.wait_follower_align`'s and are untouched."""
+        if self.dry:
+            self.p.step("poll", f"overlay_wait_align({service}, > {floor_dec}, <= {timeout}s)")
+            return dry_value
+        return converge.wait_follower_align(
+            None, floor_dec, timeout,
+            read_follower=lambda: nodes.check_node_via(self.overlay_exec_prefix(service)))
+
+    def overlay_rpc_write(self, service: str, method: str, *args, note="") -> None:
+        """A MUTATING JSON-RPC call against an OVERLAY service, in-container and RECORDED.
+
+        The exec twin of `cast_rpc_write`. `admin_addTrustedPeer` changes a node's peer policy, so
+        it is choreography and belongs in the transcript — `run_checked` because bash fails the
+        case when it does not return 0 (`case-tx-cascade.sh:75`)."""
+        self.p.run_checked(
+            self.overlay_exec_prefix(service) + rpc.rpc_post_argv(rpc.rpc_body(method, list(args))),
+            env_overlay=dict(self.compose_env), timeout=120,
+            note=note or f"overlay-rpc-{method}")
+
+    def overlay_reading(self, service: str, what: str, case: str,
+                        dry_value="0x80|0x" + "ab" * 32):
+        """`overlay_check_node` -> `(head_hex, head_dec, hash)`, FAIL-LOUD on the sentinel — the
+        overlay twin of `reading`, and it exists for the same reason: `hex_to_dec("null")` is 0,
+        and a floor of 0 is one the live chain passed minutes ago."""
+        raw = self.overlay_check_node(service, dry_value=dry_value)
+        head, _, digest = (raw or "").partition("|")
+        if not head.startswith("0x"):
+            raise SmokeFailure(case, f"{what} on {service} read {raw!r} — refusing to read an "
+                                     "unreachable node as height 0")
+        return head, nodes.hex_to_dec(head), digest
+
     def overlay_logs(self, *services, tail=None, dry_value="") -> str:
         """`docker compose <files> logs --no-color [--tail=N] <svc …>`, ANSI-STRIPPED, as a READ.
 
@@ -884,14 +1010,15 @@ class SmokeCtx:
         return rpc.strip_ansi(proc.read(argv, timeout=nodes.LOGS_ALL_TIMEOUT))
 
     def overlay_ps_state(self, service: str, dry_value="running") -> str:
-        """`docker compose <files> ps --format '{{.State}}' <svc>` (`case-cert-cascade.sh:98`).
+        """`docker compose <files> ps -a --format '{{.State}}' <svc>` — DIAGNOSTIC only.
 
-        The bogus-checkpoint follower may REFUSE and exit before its refusal line can be read, so
-        `exited` is a second, equally valid witness of the same rejection. Without it the case
-        would poll a dead container for 240 s and then report that it never refused."""
+        It stopped being a verdict when the `exited` witness was removed from
+        `verdicts_follow.evaluate_bogus_rejected` (a container state cannot tell a refusal from an
+        OOM). `-a` is what makes it answer at all for the case it is read in: without the flag
+        `docker compose ps` lists only RUNNING containers, so a stopped one renders as blank."""
         return self._delegated("overlay_ps_state", service,
                                lambda: proc.read(self._overlay_argv(
-                                   "ps", "--format", "{{.State}}", service)).strip(),
+                                   "ps", "-a", "--format", "{{.State}}", service)).strip(),
                                dry_value)
 
     def overlay_dump_logs(self, tail: int, *services) -> None:
@@ -953,7 +1080,7 @@ class _Exports:
 
 def run(case: str, assertions, argv=None, converge_exclude=None, honours_keep_up=False,
         overlays=None, exports=None) -> int:
-    """Bring up the static DPoS stack, run `assertions` in order, tear down. 0 pass, 1 fail.
+    """Bring up the static DPoS stack, run `assertions` in order, tear down (`core/exit_codes`).
 
     `assertions` is a list of `fn(ctx)`, run in order. Fail-fast: the first `SmokeFailure` ends the
     run and the rest do not execute.
@@ -979,7 +1106,7 @@ def run(case: str, assertions, argv=None, converge_exclude=None, honours_keep_up
     if unknown:
         print(f"{case}: unrecognised argument(s) {unknown} (only --dry-run is accepted)",
               flush=True)
-        return 2
+        return RC_USAGE
 
     runner = Runner(dry=dry, echo=dry)
     env = _Exports(exports)
@@ -1003,22 +1130,34 @@ def _run(case, assertions, runner, dry, converge_exclude, honours_keep_up, overl
     try:
         stack.bring_up_dpos()
     except (ConvergeError, ProcError) as e:
-        print(f"FAIL ({case}): bring-up failed: {e}", flush=True)
-        return 1
+        # `StaticStack` tears itself down on a failed CONVERGENCE, but the four lifecycle
+        # `run_checked` calls (static_stack.py:208,231,298,312) raise `ProcError` with the
+        # containers still up, and this return sits ahead of the `try/finally` that owns teardown.
+        print(f"ERROR ({case}): bring-up failed: {e}", flush=True)
+        stack.tear_down()
+        return RC_ERROR
 
-    rc = 0
+    rc = RC_PASS
     try:
         for fn in assertions:
             fn(ctx)
     except SmokeFailure as e:
         print(f"FAIL ({e.case}): {e.message}", flush=True)
-        rc = 1
+        rc = RC_FAIL
     except (ConvergeError, ProcError) as e:
-        print(f"FAIL ({case}): {e}", flush=True)
-        rc = 1
+        print(f"ERROR ({case}): {e}", flush=True)
+        rc = RC_ERROR
     except KeyboardInterrupt:
         print(f"{case}: interrupted", flush=True)
         rc = 130
+    except Exception as e:  # noqa: BLE001
+        # Deliberately broad, and narrow in purpose. `ValueError` (verdicts.py:97), `KeyError`
+        # (verdicts_fault.py:83) and `ChainError` all escape here otherwise, as a traceback with
+        # process rc=1 — indistinguishable from an honest failed verdict. The traceback is still
+        # printed; only the classification changes.
+        print(f"ERROR ({case}): unhandled {type(e).__name__}: {e}", flush=True)
+        traceback.print_exc()
+        rc = RC_ERROR
     finally:
         if honours_keep_up and _keep_up():
             print(f"{case}: SMOKE_KEEP_UP set — leaving the stack up", flush=True)

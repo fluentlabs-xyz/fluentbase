@@ -11,7 +11,8 @@ import pytest
 
 from dpos_harness.stack import compose_gen
 from dpos_harness.stack import bringup as bringup_mod
-from dpos_harness.stack.bringup import BringUp, StackSpec
+from dpos_harness.stack.bringup import (BringUp, EXPORTED_ENV, StackSpec,
+                                        restore_exported_env, save_exported_env)
 from dpos_harness.sim.orchestrator import SimConfig
 from dpos_harness.core import proc
 from dpos_harness.core.proc import Runner
@@ -844,3 +845,41 @@ def test_shadow_ctx_carries_the_resolved_addresses(monkeypatch):
     assert (ctx.STAKING_RT, ctx.CHAIN_CONFIG_RT, ctx.LIVENESS_RT) == (
         _RT_ADDRS["STAKING_RT"], _RT_ADDRS["CHAIN_CONFIG_RT"], _RT_ADDRS["LIVENESS_RT"])
     assert seen == [_RT_ADDRS["CHAIN_CONFIG_RT"]] * 2
+
+
+def test_the_ambient_exports_are_restorable(monkeypatch):
+    """THE 2026-07-22 LEAK, closed at the source. `BringUp` writes four names straight into
+    `os.environ` and puts none of them back; bash got away with it because its process exits at
+    the end of a case. Running a case from `pytest` did not, and it tore down a live sim stack
+    (see `conftest.py`).
+
+    Both directions matter. A name the caller HAD must come back to its own value — that is
+    `DPOS_ACTIVATION_BLOCK`, which `StaticProfile` reads at CALL time, so a leaked one silently
+    rewrites the next static case's epoch arithmetic. A name the caller did NOT have must end up
+    UNSET, not set to "": an empty `COMPOSE_FILE` is still an override and still shadows the
+    default project."""
+    monkeypatch.setenv("DPOS_ACTIVATION_BLOCK", "999")
+    monkeypatch.delenv("COMPOSE_FILE", raising=False)
+
+    saved = save_exported_env()
+    for name in EXPORTED_ENV:
+        os.environ[name] = "leaked-by-the-bring-up"
+    restore_exported_env(saved)
+
+    assert os.environ.get("DPOS_ACTIVATION_BLOCK") == "999"
+    assert "COMPOSE_FILE" not in os.environ
+
+
+def test_a_dry_case_run_leaves_the_ambient_environment_alone(monkeypatch):
+    """The whole path, through a real bring-up: `_set_compose` fires three times inside `run()`,
+    so this fails the moment a case stops restoring."""
+    monkeypatch.delenv("COMPOSE_FILE", raising=False)
+    monkeypatch.delenv("L3_SPAMMER_ADDR", raising=False)
+
+    saved = save_exported_env()
+    try:
+        BringUp(_spec(validators=4, initial_committee=3), Runner(dry=True)).run()
+        assert os.environ.get("COMPOSE_FILE"), "the bring-up did not export it — test is vacuous"
+    finally:
+        restore_exported_env(saved)
+    assert "COMPOSE_FILE" not in os.environ

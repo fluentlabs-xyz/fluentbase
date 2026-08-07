@@ -147,10 +147,15 @@ class EventLog:
         else:
             t["count"] += 1
 
-    def _demoted_trip_lines(self):
-        """The bundle-summary block. One line per (id, occurrences, first sighting) — the diag
+    def demoted_trip_lines(self):
+        """The demoted-trip block. One line per (id, occurrences, first sighting) — the diag
         LATCH means `count` is per distinct entity, not per tick, so a 2 there means two seats /
-        members / addresses tripped it, which is the thing worth reading in a failure bundle."""
+        members / addresses tripped it, which is the thing worth reading in a failure bundle.
+
+        PUBLIC because a green run needs it too: this block used to reach stdout only through
+        `bundle_dump`, which the orchestrator calls ONLY on failure — so a run in which a demoted
+        watchdog tripped on every departure ended printing "0 invariant failures" and nothing
+        else. The sim's periodic + final report now renders these same lines directly."""
         if not self.demoted_trips:
             return ["DEMOTED TRIPS   : none this run"]
         out = [f"DEMOTED TRIPS   : {len(self.demoted_trips)} demoted invariant(s) fired this run "
@@ -186,7 +191,7 @@ class EventLog:
             f"disrupted        : {ctx.disrupted}",
             f"pending          : {ctx.pending}",
             "",
-            *self._demoted_trip_lines(),
+            *self.demoted_trip_lines(),
             "",
             "REPLAY (reproduces the INTENT schedule; applied churn may differ — plan §1.2):",
             f"  SIM_SEED={ctx.seed} make smoke-sim",

@@ -55,6 +55,7 @@ from __future__ import annotations
 import os
 
 from . import beacon, verdicts_onchain as vo
+from .asserts import _assert_beacon_metrics
 from ...core import topology
 
 
@@ -115,6 +116,15 @@ def _wait_bootstrap_dkg(ctx, case: str, timeout, tail=None) -> None:
 #: agreeing with an empty string.
 _DRY_PROMOTE_LOG = "INFO promoted to Signer in-process: per-epoch BFT engine started epoch=Epoch(9)"
 
+#: The canned answer for the reads that only establish that the container HAS a readable
+#: log. Its contents are never parsed — only its non-emptiness is the assertion.
+_DRY_READABLE_LOG = "(dry) victim log"
+
+#: Canned `production` readings for the weighted-VRF dry walk, one per validator. They SUM to
+#: `blocksInEpoch` because the verdict they feed checks exactly that, and a transcript whose canned
+#: data fails its own arithmetic is a misleading rehearsal.
+_DRY_PRODUCTION = ((48, 64), (6, 64), (5, 64), (5, 64))
+
 
 def assert_liveness(ctx) -> None:
     """With 4 validators (f=1, quorum 3) the network keeps finalizing while ONE is offline, the
@@ -165,7 +175,9 @@ def _liveness_cycle(ctx, case: str, addrs, hub_addr: str, idx: int, gap: int) ->
     # its way into the epoch it is about to be killed in is still in there. Only a DELTA against
     # this snapshot is evidence about the node that came back — the same reason `cert-catchup`
     # snapshots its four counters rather than grepping absolutes.
-    promoted_before = vo.promoted_epoch_counts(ctx.logs_all(svc, dry_value=_DRY_PROMOTE_LOG))
+    promoted_before = vo.promoted_epoch_counts(
+        ctx.logs_required(svc, case, "pre-stop promote ledger",
+                          dry_value=_DRY_PROMOTE_LOG))
     ctx.compose_stop(svc, timeout=vo.LIVENESS_STOP_TIMEOUT_S, note=f"liveness-stop {svc}")
 
     # 1) BFT f=1 holds: the chain keeps finalizing with one of four down, and advances the gap.
@@ -473,6 +485,11 @@ def _catchup_cycle(ctx, case: str, victim: str, gap: int, label: str, require_pa
     as the product's rather than as this case's.
     """
     threshold = vo.rejump_threshold(ctx.interval)
+    # BOTH absence gates below are `after <= before`, so an unreadable log scores 0 on each side
+    # and passes them for free — `log_count` cannot tell a silent daemon from a clean node. This
+    # read can, and it is taken against the same container that is about to be counted.
+    ctx.logs_required(victim, case, f"[{label}] victim log before the cycle",
+                      dry_value=_DRY_READABLE_LOG)
     park0 = ctx.log_count(victim, vo.PARK_LOG)
     rejump0 = ctx.log_count(victim, vo.REJUMP_LOG)
     fatal0 = ctx.log_count(victim, vo.OLD_FATAL)
@@ -552,6 +569,8 @@ def _catchup_cycle(ctx, case: str, victim: str, gap: int, label: str, require_pa
     _say(ctx, f"  OK: {victim} rejoined at {landed[0]} (v0={landed[1]}, floor=pre+gap={floor})")
     _say(ctx, f"  netem: cleared on {victim} (catch-up window closed)")
 
+    ctx.logs_required(victim, case, f"[{label}] victim log after the cycle",
+                      dry_value=_DRY_READABLE_LOG)
     park1 = ctx.log_count(victim, vo.PARK_LOG)
     rejump1 = ctx.log_count(victim, vo.REJUMP_LOG)
     fatal1 = ctx.log_count(victim, vo.OLD_FATAL)
@@ -738,3 +757,63 @@ def _poll_production_for(ctx, epoch, addr: str):
     ctx.sample_until(vo.PART_RETRIES, sample, sleep_s=vo.PART_RETRY_SLEEP_S,
                      label=f"producedAt(epoch={epoch})")
     return box["p"]
+
+
+# ══ smoke-weighted-vrf ════════════════════════════════════════════════════════════════
+
+def assert_weighted_vrf(ctx) -> None:
+    """Stake-weighted leader election, measured on the ON-CHAIN production counters.
+
+    THE PORT MOVED THE MEASUREMENT, and that is the whole of it. `case-weighted-vrf.sh` tallied
+    `dpos: proposing order block` log lines per validator across a window; `log_count` answers 0 on
+    a failed read, so its per-window delta could go negative and satisfy both halves of its
+    condition at once. The counters here are written by an unconditional system call on every
+    block at or past activation (`crates/node/src/evm.rs:1224-1246`) from the leader index in
+    `extra_data`, so they are cross-node agreed, cannot go negative, and publish their own total.
+
+    AND THE CASE NAME OVERSTATES WHAT IT PROVES. It does not exercise the VRF: `randomness_bytes`
+    weights identically on the seed arm and the fallback arm and `elect` feeds both into one CDF
+    (`crates/dpos/consensus/src/weighted_vrf.rs:136-154,190-198`), so a dead beacon leaves the
+    leader distribution untouched. The beacon-liveness assertion at the end is what keeps the name
+    from being a lie; the weighting claim stands on its own regardless.
+    """
+    case = "smoke-weighted-vrf"
+    addrs = _addresses(ctx, case)
+    mult = int(os.environ.get("HEAVY_STAKE_MULT", str(vo.HEAVY_STAKE_MULT)))
+
+    # Past the bootstrap DKG before anything is measured: the beacon only goes live at epoch 2, so
+    # an earlier epoch would make the liveness assertion below fail for a reason the case is not
+    # about.
+    _wait_bootstrap_dkg(ctx, case, vo.LIVENESS_DKG_WAIT_S, tail=None)
+
+    # THE PRECONDITION, which the original never checked. `HEAVY_STAKE_MULT` reaches the chain only
+    # through genesis; an export that did not land gives an equal-stake chain on which the elector
+    # is correctly uniform, and the case would report "weighting is not effective" about a chain
+    # that was never skewed.
+    stakes = [ctx.validator_stake(a, dry_value=(mult if i == 0 else 1))
+              for i, a in enumerate(addrs)]
+    ctx.check(case, *vo.evaluate_stake_skew(stakes, mult))
+    _say(ctx, f"genesis stake skew reached the chain: {stakes} (heavy = {mult}x light)")
+
+    # WHOLE epochs, so no counter can roll over mid-measurement, and `WEIGHTED_EPOCHS` of them so
+    # the sample is large enough for the every-light-produced condition to be a gate rather than a
+    # coin flip. `epoch_first_block` is a `ProdCtx` method and this case runs on `SmokeCtx`, so the
+    # boundary comes from the profile.
+    first = int(_first_token(ctx.staking_call("currentEpoch()(uint64)", dry_value="2")))
+    epochs = list(range(first, first + vo.WEIGHTED_EPOCHS))
+    boundary = ctx.activation_block + (epochs[-1] + 1) * ctx.interval
+    ctx.check(case, ctx.wait_finalized_ge(boundary, vo.WEIGHTED_WINDOW_S),
+              f"chain did not finish epochs {epochs} (boundary {boundary}) within "
+              f"{vo.WEIGHTED_WINDOW_S}s — nothing to score")
+
+    # The same three-valued contract `smoke-liveness` reads under: a -2 is a failed read and is
+    # never scored as 0, which would make "a light produced nothing" a free truth.
+    counts_by_epoch = [[ctx.production(e, a, dry_value=_DRY_PRODUCTION[i])
+                        for i, a in enumerate(addrs)] for e in epochs]
+    ctx.check(case, *vo.evaluate_weighted_election(epochs, counts_by_epoch, mult))
+    summed = [sum(c[i][0] for c in counts_by_epoch) for i in range(len(addrs))]
+    _say(ctx, f"epochs {epochs} production {summed} of "
+              f"{sum(c[0][1] for c in counts_by_epoch)} blocks")
+
+    _assert_beacon_metrics(ctx, case)
+    _ok(ctx, case, f"stake-weighted election verified over epochs {epochs} with a live beacon")

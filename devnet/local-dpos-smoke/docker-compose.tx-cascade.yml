@@ -44,8 +44,6 @@ services:
           --datadir=/runtime/reth-data/sentry
     volumes:
       - runtime:/runtime
-    ports:
-      - "38545:8545"
     networks:
       fluent-net:
         ipv4_address: 172.20.0.30
@@ -70,6 +68,15 @@ services:
           --datadir=/runtime/reth-data/downstream
     volumes:
       - runtime:/runtime
+    # PUBLISHING RULE — read this before adding a follower.
+    #   * The HARNESS never needs a published port. Every follower read goes in-container through
+    #     `SmokeCtx.overlay_*` (`dpos_harness/cases/smoke/driver.py`), and all inter-container
+    #     traffic is on `fluent-net` regardless.
+    #   * A published port is therefore only ever (a) a host-side `cast` endpoint where the
+    #     harness must sign and send, or (b) a human `curl` affordance while debugging.
+    #   * If you publish one it MUST sit below 32768. The kernel's ephemeral range here is
+    #     32768-60999, and a published port inside it can be taken by ANY outbound connection on
+    #     the host — 38545/48545/58545 were, Steam held 48545 and the case could not bind it.
     ports:
       - "28545:8545"
     networks:

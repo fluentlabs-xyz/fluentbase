@@ -38,6 +38,7 @@ import re
 import time
 
 from ..core import topology
+from ..core.exit_codes import RC_FAIL, RC_PASS, RC_USAGE
 
 
 # ── PURE VERDICT LAYER (docker-free, unit-tested in tests/test_case_growth.py) ──
@@ -147,12 +148,24 @@ def golden_spec():
     )
 
 
+#: The canned readings a `--dry-run` walk answers its measurement reads with. They are announced
+#: in the transcript and never scored: a verdict computed over canned readings is meaningless in
+#: both directions, which is the rule `driver.SmokeCtx.check` already states for the ported cases.
+_DRY_FIN = 100
+_DRY_SERVICES = (topology.validator(0), topology.validator(1))
+
 # ── LIVE POLL HELPERS (bounded; return None/raise on the deadline) ─────────────
 
-def _await_dpos_active(chain, nodes, deadline_s: int):
+def _await_dpos_active(chain, nodes, deadline_s: int, dry=False):
     """Wait until DPoS is active (epoch>=1) AND finalized is advancing (two rising
     samples). Returns (fin, epoch). Bringup.run() already converges past the anchor,
-    so this normally returns on the first poll — it is the explicit readiness gate."""
+    so this normally returns on the first poll — it is the explicit readiness gate.
+
+    DRY: one probe of the chain-side read (so the transcript shows where the case looks), a canned
+    height, and no sleep. `nodes.finalized_dec` is not Runner-backed, so under dry it is not issued
+    at all."""
+    if dry:
+        return _DRY_FIN, chain.current_epoch()
     deadline = time.time() + deadline_s
     prev = -1
     rising = 0
@@ -172,9 +185,16 @@ def _await_dpos_active(chain, nodes, deadline_s: int):
                      f"DPoS not active/finalizing within {deadline_s}s (epoch={ep}, fin={fin})")
 
 
-def _await_cap_increase(chain, cap_before: int, deadline_s: int):
+def _await_cap_increase(chain, cap_before: int, deadline_s: int, dry=False):
     """Poll activeValidatorsLength until it exceeds cap_before; return the new cap
-    or None on the deadline (growth did not land on-chain)."""
+    or None on the deadline (growth did not land on-chain).
+
+    DRY: the read is ISSUED ONCE through the Runner (it belongs in the transcript) and its answer
+    is discarded for a canned rise. A dry Runner has no chain to answer from, so scoring the real
+    answer would fail the case for the one reason a rehearsal cannot be evidence about."""
+    if dry:
+        chain.active_validators_length()
+        return cap_before + 1
     deadline = time.time() + deadline_s
     while time.time() < deadline:
         cap = chain.active_validators_length()
@@ -184,10 +204,17 @@ def _await_cap_increase(chain, cap_before: int, deadline_s: int):
     return None
 
 
-def _await_live_seat(chain, addr: str, deadline_s: int):
+def _await_live_seat(chain, addr: str, deadline_s: int, dry=False):
     """Poll the LIVE committee until it contains addr (the growth warm-up lands the
     new member at the boundary). Return the epoch it seated at, or None on deadline.
-    Crossing to the seat naturally spans the 2-epoch warm-up boundaries."""
+    Crossing to the seat naturally spans the 2-epoch warm-up boundaries.
+
+    DRY: both reads issued once through the Runner, the membership answer discarded for a canned
+    seat — same reason as `_await_cap_increase`."""
+    if dry:
+        cur = chain.current_epoch()
+        chain.committee_has(addr, cur)
+        return cur
     deadline = time.time() + deadline_s
     while time.time() < deadline:
         cur = chain.current_epoch()
@@ -200,10 +227,18 @@ def _await_live_seat(chain, addr: str, deadline_s: int):
 # ── THE CASE ───────────────────────────────────────────────────────────────────
 
 def run_case(argv=None) -> int:
+    argv = list(argv or [])
+    dry = "--dry-run" in argv
+    unknown = [a for a in argv if a != "--dry-run"]
+    if unknown:
+        print(f"case-growth: unrecognised argument(s) {unknown} (only --dry-run is accepted)",
+              flush=True)
+        return RC_USAGE
+
     prof = apply_case_env_defaults()
 
     from ..sim.orchestrator import SimConfig
-    from ..stack.bringup import BringUp
+    from ..stack.bringup import BringUp, restore_exported_env, save_exported_env
     from ..core.proc import Runner
     from ..chain.writes import Chain, ChainError
     from ..core.events import EventLog
@@ -215,14 +250,15 @@ def run_case(argv=None) -> int:
         print(f"CASE-GROWTH SETUP ERROR: initial_committee={cfg.initial_committee} >= "
               f"validators={cfg.validators} — no room for a growth (raise SIM_VALIDATORS)",
               flush=True)
-        return 2
+        return RC_USAGE
 
     interval = int(os.environ.get("SIM_EPOCH_INTERVAL", "32"))
     rpc = os.environ.get("RPC", topology.DEFAULT_RPC_URL)
     keep_up = os.environ.get("SIM_KEEP_UP", "0") == "1"
     env = {"RPC": rpc, "COMPOSE_FILE": os.environ.get("COMPOSE_FILE", ""),
            "CHAIN_ID": os.environ.get("CHAIN_ID", str(topology.CHAIN_ID))}
-    runner = Runner(env=env)
+    runner = Runner(env=env, dry=dry, echo=dry)
+    saved_env = save_exported_env()
     bu = BringUp(cfg.stack_spec(), runner)
 
     print(f"CASE-GROWTH: profile {prof} — growth joiners {growth_joiners} "
@@ -239,6 +275,16 @@ def run_case(argv=None) -> int:
         else:
             print("CASE-GROWTH: SIM_KEEP_UP=1 — leaving the stack up", flush=True)
 
+    def measured(label: str, live, dry_value):
+        """A measurement read. Live: issued. Dry: recorded as a transcript marker and answered
+        with `dry_value`, never issued — these reads go straight to `core/nodes`, which has no dry
+        seam of its own. `driver.SmokeCtx._delegated` is the same shape; these three cases predate
+        the ctx and have nothing to hang it on."""
+        if dry:
+            runner.step("read", label)
+            return dry_value
+        return live()
+
     def fail(reason: str) -> int:
         print(f"CASE-GROWTH FAIL: {reason}", flush=True)
         try:
@@ -246,7 +292,7 @@ def run_case(argv=None) -> int:
         except Exception:  # noqa: BLE001 — a best-effort bundle must not mask the fault
             pass
         teardown()
-        return 1
+        return RC_FAIL
 
     try:
         # FAST PATH (opt-in): SIM_USE_GOLDEN=1 + a fresh golden snapshot restores the
@@ -275,7 +321,7 @@ def run_case(argv=None) -> int:
         os.environ.setdefault("PP_GOV_VOTERS", str(cfg.initial_committee))
 
         # 2. readiness baseline
-        fin0, epoch0 = _await_dpos_active(chain, nodes, deadline_s=300)
+        fin0, epoch0 = _await_dpos_active(chain, nodes, deadline_s=300, dry=dry)
         print(f"CASE-GROWTH: DPoS active — baseline fin0={fin0} epoch0={epoch0}", flush=True)
 
         # 3. SCRIPTED growth across boundaries. Capture a log cursor so the scan is
@@ -291,12 +337,12 @@ def run_case(argv=None) -> int:
                   f"idx {idx} at epoch {ep_at} (cap {cap})", flush=True)
             chain.register_activate(idx, raise_cap=1)
 
-            new_cap = _await_cap_increase(chain, cap, deadline_s=interval * 4 + 120)
+            new_cap = _await_cap_increase(chain, cap, deadline_s=interval * 4 + 120, dry=dry)
             if new_cap is None:
                 return fail(f"growth idx {idx}: activeValidatorsLength never rose above {cap} "
                             "— the cap bump did not land on-chain")
             addr = chain.owner_addr(idx)
-            seated = _await_live_seat(chain, addr, deadline_s=interval * 5 + 120)
+            seated = _await_live_seat(chain, addr, deadline_s=interval * 5 + 120, dry=dry)
             if seated is None:
                 return fail(f"growth idx {idx} ({addr}): never seated in the live committee after "
                             f"the cap grew {cap}→{new_cap} — growth did not reach the committee")
@@ -310,19 +356,28 @@ def run_case(argv=None) -> int:
         min_advance = interval
         target = fin0 + min_advance
         live_deadline = time.time() + interval * 8
-        fin_now = nodes.finalized_dec()
+        fin_now = measured("finalized_dec()", nodes.finalized_dec, target)
         while fin_now < target and time.time() < live_deadline:
             time.sleep(5)
             fin_now = nodes.finalized_dec()
 
         # 5. NO BUG-B SIGNATURE: scan every running validator's logs over the growth window.
         window = f"{int(time.monotonic() - growth_start) + 60}s"
-        per_node_logs = {svc: nodes.logs_since(svc, window)
-                         for svc in nodes.running_services() if topology.is_validator(svc)}
+        running = measured("running_services()", nodes.running_services, list(_DRY_SERVICES))
+        if not running:
+            return fail("`docker compose ps` returned no running services — refusing to report "
+                        "'no idx-stall' over an empty node set")
+        per_node_logs = {svc: measured(f"logs_since({svc}, {window})",
+                                       lambda s=svc: nodes.logs_since(s, window), "")
+                         for svc in running if topology.is_validator(svc)}
         print(f"CASE-GROWTH: scanned {len(per_node_logs)} validator log(s) over the last {window}",
               flush=True)
 
         # 6. verdict
+        if dry:
+            teardown()
+            print(f"# {len(runner.log)} commands")
+            return RC_PASS
         ok, reason = evaluate_growth_case(fin0, fin_now, min_advance, per_node_logs)
         if not ok:
             return fail(reason)
@@ -331,7 +386,7 @@ def run_case(argv=None) -> int:
               f"advanced fin0={fin0}→finN={fin_now} (~{span} epoch-span), no dkg_logs idx-stall",
               flush=True)
         teardown()
-        return 0
+        return RC_PASS
 
     except ChainError as e:
         return fail(f"chain error [{e.reason_id}]: {e.message}")
@@ -339,3 +394,5 @@ def run_case(argv=None) -> int:
         print("CASE-GROWTH: interrupted", flush=True)
         teardown()
         return 130
+    finally:
+        restore_exported_env(saved_env)

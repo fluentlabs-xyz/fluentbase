@@ -6,7 +6,8 @@ verdict function is where the safety logic lives, so it is what gets unit covera
 
 from __future__ import annotations
 
-from dpos_harness.cases.quorum import apply_case_env_defaults, evaluate_quorum_case
+from dpos_harness.cases.quorum import (_wait_victims_up, apply_case_env_defaults,
+                                       evaluate_quorum_case)
 
 
 # ── the PASS path: stalled flat, all victims back, finalized resumed ──────────
@@ -73,3 +74,43 @@ def test_profile_respects_operator_override(monkeypatch):
     monkeypatch.setenv("SIM_INITIAL_COMMITTEE", "10")
     prof = apply_case_env_defaults()
     assert prof["SIM_INITIAL_COMMITTEE"] == "10"
+
+
+# ── the up-confirm bar ───────────────────────────────────────────────────────
+class _Nodes:
+    """`node_fin_in` answering a scripted per-victim sequence, repeating its last value."""
+
+    def __init__(self, **heights):
+        self.heights = {k: list(v) for k, v in heights.items()}
+
+    def node_fin_in(self, svc):
+        seq = self.heights[svc]
+        return seq.pop(0) if len(seq) > 1 else seq[0]
+
+
+class _Runner:
+    def __init__(self):
+        self.starts = []
+
+    def run(self, argv, **_kw):
+        self.starts.append(argv[-1])
+
+
+def test_a_victim_sitting_exactly_ON_the_plateau_is_not_counted_as_up(monkeypatch):
+    """THE HOLE THE OLD `<= 0` BAR LEFT. A container that booted but never rejoined consensus
+    serves its own persisted pre-stop height — certainly > 0, and at most the plateau, because the
+    plateau is where the chain sat while it was down. The old bar read that as recovered."""
+    monkeypatch.setattr("time.sleep", lambda _s: None)
+    nodes = _Nodes(**{"validator-1": [2460]})
+    runner = _Runner()
+    down = _wait_victims_up(nodes, runner, dict, ["validator-1"], plateau_hi=2460, budget_s=0)
+    assert down == ["validator-1"]
+
+
+def test_a_victim_past_the_plateau_is_counted_as_up(monkeypatch):
+    """The other direction: a height ABOVE the plateau is a block produced AFTER the restore, so
+    the node processed something the chain could not have made while it was down."""
+    monkeypatch.setattr("time.sleep", lambda _s: None)
+    nodes = _Nodes(**{"validator-1": [2461]})
+    down = _wait_victims_up(nodes, _Runner(), dict, ["validator-1"], plateau_hi=2460, budget_s=0)
+    assert down == []

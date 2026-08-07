@@ -76,10 +76,55 @@ def test_tamper_no_progress_does_not_accept_an_empty_reading_as_zero():
     assert not vf.evaluate_tamper_no_progress(None)[0]
 
 
-def test_tamper_rejection_hint_matches_either_driver_line():
-    assert vf.tamper_rejection_hint("… finalization cert FAILED BLS verification …")
-    assert vf.tamper_rejection_hint("… dropping mismatched cert at height 91 …")
-    assert not vf.tamper_rejection_hint("cert applied")
+@pytest.mark.parametrize("line", vf.TAMPER_REJECT_LINES)
+def test_either_refusal_line_satisfies_the_tamper_gate(line):
+    """THE STRING IS THE ASSERTION, and this one has been wrong twice. It first grepped for two
+    lines that appear NOWHERE in `crates/`; the replacement, `cert-inlet: BLS verify FAILED`, is a
+    real string on a real path but UNREACHABLE under this tamper — the flip lands in the trailing
+    48-byte beacon seed slot, a compressed G1 point, so `read_seed_slot` fails DECODE and the
+    certificate never reaches `CertInlet::ingest` (see `TAMPER_REJECT_LINES`).
+
+    Both accepted lines are parametrised rather than spot-checked, because which one fires depends
+    on whether the cold-start pull or the subscription stream sees the first bad certificate."""
+    ok, _, matched = vf.evaluate_tamper_rejected(f"2026-08-03T00:00:00Z WARN error=x {line}")
+    assert ok
+    assert matched == line, "the verdict must report WHICH path refused, not just that one did"
+
+
+def test_the_matched_line_reaches_the_transcript():
+    """The case tears its stack down when it finishes, so the container log is gone before anyone
+    can read it afterwards. If the OK line does not name the path that fired, the run leaves no
+    record of whether the live subscription or the cold-start pull rejected the certificate."""
+    import inspect
+    from dpos_harness.cases.smoke import asserts_follow
+    src = inspect.getsource(asserts_follow.assert_cert_follow)
+    assert "matched = vf.evaluate_tamper_rejected(" in src
+    assert "{matched!r}" in src
+
+
+def test_the_tamper_gate_fails_when_the_follower_said_nothing():
+    ok, msg, matched = vf.evaluate_tamper_rejected("cert applied")
+    assert not ok and "never delivered" in msg and matched == ""
+    for line in vf.TAMPER_REJECT_LINES:
+        assert line in msg, "the failure must name every line it would have accepted"
+    assert not vf.evaluate_tamper_rejected("")[0]
+
+
+def test_the_verify_time_string_is_NOT_accepted_as_the_refusal():
+    """THE REGRESSION THIS COST A LIVE RUN. `cert-inlet: BLS verify FAILED` is emitted by a real
+    path on a real follower, so it reads as a plausible witness — but a certificate whose seed slot
+    was corrupted never gets that far. Accepting it would make the gate green on a run where the
+    follower never logged anything at all."""
+    assert not vf.evaluate_tamper_rejected("WARN cert-inlet: BLS verify FAILED; skipping")[0]
+
+
+def test_the_tamper_follower_must_be_UP_before_its_silence_counts_as_rejection():
+    """The control the phase had no way to make. Zero finalized progress is also what a follower
+    that never started reports, and `"null"` is a legitimate PASS on that read — so the liveness
+    witness has to be a separate reading."""
+    assert vf.evaluate_tamper_alive(True)[0]
+    ok, msg = vf.evaluate_tamper_alive(False)
+    assert not ok and "not up" in msg
 
 
 def test_the_tamper_observation_window_is_the_budget_bash_used():
@@ -91,11 +136,16 @@ def test_the_tamper_observation_window_is_the_budget_bash_used():
     assert vf.CF_ALIGN_S == 180 and vf.CF_GAP_ADVANCE_S == 120
 
 
-def test_the_two_follower_ports_are_not_the_same_node():
-    """Phase 3 reads 38545 (the TAMPER follower). Reading 28545 would sample the honest follower,
-    which — having been stopped and restarted in phase 2 — also makes no progress for a moment:
-    a negative assertion passing for entirely the wrong reason."""
-    assert (vf.CF_PORT, vf.TAMPER_PORT) == (28545, 38545)
+def test_the_two_followers_are_not_the_same_node():
+    """Phase 3 reads the TAMPER follower. Reading the honest one would sample a node that — having
+    been stopped and restarted in phase 2 — also makes no progress for a moment: a negative
+    assertion passing for entirely the wrong reason.
+
+    SERVICE names, not host ports. The followers publish none: the harness reads them
+    in-container, which is what let 38545/48545/58545 be withdrawn from the kernel's ephemeral
+    range where any outbound connection could take them."""
+    assert vf.CF_SERVICE != vf.TAMPER_SERVICE
+    assert (vf.CF_SERVICE, vf.TAMPER_SERVICE) == ("cert-follower", "cert-follower-tamper")
 
 
 # ══ smoke-cert-cascade ═════════════════════════════════════════════════════
@@ -113,21 +163,25 @@ def test_l1_checkpoint_verified_fails_when_the_assert_never_ran():
 
 
 def test_bogus_rejected_by_the_logged_refusal():
-    ok, _, witness = vf.evaluate_bogus_rejected("checkpoint hash NOT in the local chain", "")
+    ok, _, witness = vf.evaluate_bogus_rejected("checkpoint hash NOT in the local chain")
     assert ok and witness == "refusal logged"
 
 
-def test_bogus_rejected_by_an_exit_before_the_log_could_be_read():
-    """The second witness. The node may refuse and die before the log read catches it; requiring
-    the line alone would poll a dead container for 240 s and then report that it never refused."""
-    ok, _, witness = vf.evaluate_bogus_rejected("", "exited")
-    assert ok and witness == "exited on the refusal"
+def test_a_DEAD_container_is_not_a_refusal():
+    """THE `exited` WITNESS, DELETED. It read a container state as proof that a trust root
+    worked, so a follower killed by a bad address, an OOM or an unresolvable L1 URL passed the
+    check — and an exit code cannot separate any of those from a refusal, since all of them are
+    eyre-1. Nothing is lost: the refusal is LOGGED before the exit
+    (`bins/fluent/src/main.rs:407` then `:429`) and the string is contract-pinned
+    (`crates/dpos/consensus/src/cold_start_jump.rs:894-897`)."""
+    ok, msg, witness = vf.evaluate_bogus_rejected("")
+    assert not ok and witness == "" and msg == vf.BOGUS_NOT_REFUSED
 
 
 def test_bogus_rejected_FAILS_while_the_follower_is_happily_running():
     """THE NEGATIVE, driven. A running container with no refusal in its log is a follower that
     accepted a checkpoint hash existing in no block of the chain — the trust root failing OPEN."""
-    ok, msg, witness = vf.evaluate_bogus_rejected("cert applied at 131", "running")
+    ok, msg, witness = vf.evaluate_bogus_rejected("cert applied at 131")
     assert not ok and witness == ""
     assert msg == vf.BOGUS_NOT_REFUSED
 

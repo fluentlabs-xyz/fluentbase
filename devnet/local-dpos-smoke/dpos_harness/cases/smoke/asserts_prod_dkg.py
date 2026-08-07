@@ -51,7 +51,8 @@ from . import verdicts_onchain as VO
 from . import verdicts_rotation as VR
 from .asserts_prod import (JOINER_IDX, JOINER_SERVICE, _ok, _say, assert_beacon_window,
                            assert_still_finalizing, initial_committee_gate,
-                           register_joiner, scan_for_rotation, wait_nodes_have)
+                           register_joiner, scan_for_rotation, share_present_vol,
+                           wait_nodes_have)
 from ...core import topology
 from ...stack.production_path import PP_VAL_COUNT
 
@@ -76,23 +77,26 @@ def share_absent(ctx, idx, epoch) -> bool:
     return not ctx.exec_test(topology.validator(idx), VO.share_probe(idx, epoch), dry_value=False)
 
 
-def share_present_vol(ctx, idx, epoch) -> bool:
-    """`share_present_vol <idx> <epoch>` (`case-vrf-dkg-durability.sh:93-97`) — a non-empty share
-    file, read through the VOLUME so it answers whether the validator is running or stopped."""
-    return ctx.vol_test(
-        f"find /runtime/reth-data/v{idx} -type f -name 'beacon-share-e{epoch}.bin' "
-        "-size +0c 2>/dev/null | grep -q .")
+#: The dry stand-in for "this log holds none of the lines the caller greps for". Non-empty on
+#: purpose: `logs_required` refuses an empty read, and every ABSENCE predicate below cans exactly
+#: this state, so an empty string would make the absent direction untraversable in the transcript.
+_DRY_NO_MATCH = "(dry) log with no matching line"
 
 
 def _logs(ctx, idx, dry_lines=()):
-    """One whole-log read per node per gate iteration, ANSI-STRIPPED.
+    """One whole-log read per node per gate iteration, ANSI-STRIPPED and FAIL-LOUD on empty.
 
     bash issues a separate `docker compose logs` for EACH predicate — two per node in the halt
     gate, two in the durability seal gate — because a shell function cannot return text cheaply.
     One read answers all of them: they are several questions about the same text, and the only
     thing lost is a redundant re-read of a log that grows to megabytes (the trade
-    `asserts_onchain.resumed` already makes)."""
-    return ctx.logs_all(topology.validator(idx), dry_value="\n".join(dry_lines))
+    `asserts_onchain.resumed` already makes).
+
+    `logs_required` rather than `logs_all` because three of the five predicates below are read as
+    ABSENCES (`share_absent`, the DKG-None discriminator, the sit-out), and an unreadable log
+    satisfies every one of them."""
+    return ctx.logs_required(topology.validator(idx), f"DKG log of v{idx}",
+                             dry_value="\n".join(dry_lines) or _DRY_NO_MATCH)
 
 
 def _has_line(logs: str, message: str, epoch) -> bool:
@@ -277,7 +281,7 @@ def assert_vrf_dkg_halt(ctx) -> None:
                              share_absent(ctx, i, e_new)) for i in (k0, k1)):
             box["gated"] = True
             return True
-        ctx.check(*VR.evaluate_seal_window_not_missed(ctx.finalized_dec(), boundary,
+        ctx.check(*VR.evaluate_seal_window_not_missed(ctx.baseline_height(), boundary,
                                                       f"E_new={e_new}"))
         return False
 
@@ -362,7 +366,7 @@ def assert_vrf_dkg_halt(ctx) -> None:
 
     # ── the halt is PERMANENT ──────────────────────────────────────────────────────
     ctx.check(*VR.evaluate_permanent_halt(_frozen_for(ctx, VR.REFREEZE_WINDOW_S)))
-    fin = ctx.finalized_dec()
+    fin = ctx.baseline_height()
     ctx.check(*VR.evaluate_below_boundary(fin, boundary))
     _say(ctx, f"halt is permanent — head still frozen, finalized {fin} never crossed the E_new "
               f"boundary {boundary}")
@@ -462,7 +466,7 @@ def _phase1_post_seal_recovery(ctx, addrs) -> None:
                for i in (v_a, v_b)):
             box["gated"] = True
             return True
-        ctx.check(*VR.evaluate_window_not_missed(ctx.finalized_dec(), epoch2_start, "epoch-2"))
+        ctx.check(*VR.evaluate_window_not_missed(ctx.baseline_height(), epoch2_start, "epoch-2"))
         return False
 
     ctx.poll(both_sealed, VR.GATE_S, poll_s=1)
@@ -547,7 +551,8 @@ def _phase3_torn_sitout(ctx, got0: str, addrs):
         if journal_present(ctx, torn, e_new) and share_absent(ctx, torn, e_new):
             box["gated"] = True
             return True
-        ctx.check(*VR.evaluate_window_not_missed(ctx.finalized_dec(), boundary, f"E_new={e_new}"))
+        ctx.check(*VR.evaluate_window_not_missed(ctx.baseline_height(), boundary,
+                                                 f"E_new={e_new}"))
         return False
 
     ctx.poll(window_open, VR.GATE_S, poll_s=1)
@@ -599,7 +604,9 @@ def _phase3_torn_sitout(ctx, got0: str, addrs):
     # A GRACEFUL sit-out: no panic, and no equivocation evidence. The second is the ON-CHAIN
     # witness for the log-side no-re-deal check above — a torn resume that re-dealt would produce
     # exactly this, so the two together tell a wrong corruption recipe from a product failure.
-    ctx.check(*VR.evaluate_no_panic(VR.panic_lines(ctx.logs_all(torn_svc)), f"v{torn}"))
+    ctx.check(*VR.evaluate_no_panic(
+        VR.panic_lines(ctx.logs_required(torn_svc, f"v{torn} sit-out panic sweep",
+                                         dry_value=_DRY_NO_MATCH)), f"v{torn}"))
     ctx.check(*VR.evaluate_no_equivocation(VR.equiv_hits(ctx.logs_all_project(), addrs[torn]),
                                            torn))
     _say(ctx, f"PHASE 3 OK — torn-journal sit-out: v{torn} sat out gracefully (no panic, no "

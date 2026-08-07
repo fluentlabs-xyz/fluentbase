@@ -24,6 +24,7 @@ import pytest
 from dpos_harness.cases.smoke import (asserts_follow, cert_cascade, cert_follow, driver,
                                       tx_cascade, verdicts, verdicts_follow as vf)
 from dpos_harness.cases.smoke.driver import SmokeCtx, SmokeFailure
+from dpos_harness.core import rpc, topology
 from dpos_harness.core.proc import Runner
 from dpos_harness.stack.profiles import StaticProfile
 from dpos_harness.stack.static_stack import StaticStack
@@ -36,8 +37,9 @@ RPC = "http://localhost:8545"
 KEY = "0x" + "00" * 32
 MOCK = "0x" + "11" * 20
 BOGUS = "0x" + "22" * 20
+#: L3 keeps a host URL — the tx leg signs with host-side `cast`. The sentry has NO host port any
+#: more: it is read and written in-container, so it is keyed by SERVICE.
 L3_RPC = "http://localhost:28545"
-SENTRY_RPC = "http://localhost:38545"
 
 
 def _files(overlay):
@@ -172,11 +174,11 @@ def test_cert_follow_order_stop_read_restart_is_the_gap_backfill():
     dead RPC; restarting before v0 advanced would back-fill an empty gap and pass on a follower
     that cannot back-fill at all."""
     seq = _seq(_dry(cert_follow)[1])
-    read_f1 = _idx(seq, "check_external(28545)")
+    read_f1 = _idx(seq, "overlay_check_node(cert-follower)")
     stop = _idx(seq, "stop --timeout 40 cert-follower", read_f1)
     advance = _idx(seq, "wait_finalized_ge(", stop)
     restart = _idx(seq, "start cert-follower", advance)
-    align = _idx(seq, "wait_follower_align(28545", restart)
+    align = _idx(seq, "overlay_wait_align(cert-follower,", restart)
     assert read_f1 < stop < advance < restart < align
 
 
@@ -188,7 +190,7 @@ def test_cert_follow_observes_for_the_full_window_between_the_two_v0_reads():
     tamper_up = _idx(seq, "up -d cert-follower-tamper")
     sleep = _idx(seq, f"{vf.TAMPER_OBSERVE_S}s", tamper_up)
     fins = [i for i, s in enumerate(seq) if s == "finalized_dec()"]
-    tamper_read = _idx(seq, "check_external(38545)")
+    tamper_read = _idx(seq, "overlay_check_node(cert-follower-tamper)")
     before = [i for i in fins if i < sleep][-1]
     after = [i for i in fins if i > sleep][0]
     assert before < tamper_up < sleep < after < tamper_read
@@ -251,7 +253,7 @@ def test_cert_cascade_reads_the_l1_verified_line_only_after_tier1_aligned():
     """Alignment first, then the trust-root grep. Grepping before the follower has done anything
     would read an empty log and fail a correct node."""
     flat = _flat(_dry(cert_cascade)[1])
-    align = flat.index("wait_follower_align(28545, > 32, <= 240s)")
+    align = flat.index("overlay_wait_align(cert-follower-l1, > 32, <= 240s)")
     grep = flat.index("overlay_logs(cert-follower-l1, tail=None)")
     assert align < grep
 
@@ -272,8 +274,11 @@ def test_tx_cascade_transcript_is_bash_faithful():
         _compose(ov, "exec", "-T", "sentry", "sh", "-c",
                  f"printf '%s' 'enode://{pk}@172.20.0.30:30303' > /runtime/sentry-enode.txt"),
         _compose(ov, "up", "-d", "downstream"),
-        ["cast", "rpc", "--rpc-url", SENTRY_RPC, "admin_addTrustedPeer",
-         f"enode://{pk3}@172.20.0.31:30303"],
+        # The sentry has NO host port: `admin_addTrustedPeer` goes IN-CONTAINER, and it stays in
+        # the transcript because a peer-policy change is choreography.
+        _compose(ov, "exec", "-T", "sentry",
+                 *rpc.rpc_post_argv(rpc.rpc_body(
+                     "admin_addTrustedPeer", [f"enode://{pk3}@172.20.0.31:30303"]))),
         ["cast", "rpc", "--rpc-url", L3_RPC, "net_peerCount"],
         ["docker", "compose", "exec", "-T", "validator-0", "cat", "/runtime/keys/funded.hex"],
         ["cast", "wallet", "address", "--private-key", KEY],
@@ -308,7 +313,7 @@ def test_tx_cascade_writes_the_sentry_enode_before_starting_L3():
     the `up` leaves a downstream that came up with an empty trusted-peer list, `--trusted-only`
     and `--disable-discovery` — permanently peerless, and the case then blames tx gossip."""
     seq = _seq(_dry(tx_cascade)[1])
-    read_pk = _idx(seq, "enode_pubkey(http://localhost:38545)")
+    read_pk = _idx(seq, "overlay_enode_pubkey(sentry)")
     write = _idx(seq, "/runtime/sentry-enode.txt", read_pk)
     up_l3 = _idx(seq, "up -d downstream", write)
     assert read_pk < write < up_l3
@@ -353,15 +358,23 @@ def test_the_teardown_stays_bare_and_reaps_the_overlay_containers_as_orphans():
 def _cf_world(**over):
     """A healthy cert-follow world: the producer advances, the follower aligns, the MITM comes up
     and the tamper follower finalizes nothing."""
-    fin = iter([100, 100, 100, 140])
+    fin = iter([100, 140])
     world = dict(
+        baseline_height=lambda dry_value=0: 100,
         finalized_dec=lambda dry_value=0: next(fin, 140),
-        wait_follower_align=lambda *a, **k: "0x8c|0xaa",
+        overlay_wait_align=lambda *a, **k: "0x8c|0xaa",
         wait_finalized_ge=lambda *a, **k: True,
-        check_external=lambda port, dry_value="": ("0x64|0xaa" if port == vf.CF_PORT
-                                                   else "null|null"),
+        # v0 is the only HOST-port read left in this case — the back-fill target, through the
+        # fail-loud `ctx.reading`. The followers are keyed by SERVICE and read in-container.
+        check_external=lambda port, dry_value="": "0x8c|0xaa",
+        overlay_check_node=lambda svc, dry_value="": {vf.CF_SERVICE: "0x64|0xaa"}.get(
+            svc, "null|null"),
+        # The tamper follower is UP and finalizing nothing — the shape the phase actually asserts.
+        # It used to be unreachable, i.e. a "healthy world" whose negative passed vacuously.
+        overlay_head_dec=lambda svc, **k: 12,
         shutdown_flushed=lambda *a, **k: True,
-        overlay_logs=lambda *svcs, **k: (vf.MITM_READY_LINE if svcs[0] == "cert-mitm" else ""),
+        overlay_logs=lambda *svcs, **k: (vf.MITM_READY_LINE if svcs[0] == "cert-mitm"
+                                         else vf.TAMPER_REJECT_LINES[0]),
         sleep=lambda _s: None,
     )
     world.update(over)
@@ -382,11 +395,34 @@ def test_cert_follow_FAILS_when_the_tamper_follower_finalized_anything(monkeypat
     driver accepted a forged certificate. The body must read port 38545 and fail on it — a live
     run never walks this branch, because producing it needs a Byzantine build."""
     ctx, _ = _live_ctx(monkeypatch, asserts_follow.CERT_FOLLOW_OVERLAY,
-                       **_cf_world(check_external=lambda port, dry_value="":
-                                   "0x140|0xbb" if port == vf.TAMPER_PORT else "0x64|0xaa"))
+                       **_cf_world(overlay_check_node=lambda svc, dry_value="":
+                                   "0x140|0xbb" if svc == vf.TAMPER_SERVICE else "0x64|0xaa"))
     with pytest.raises(SmokeFailure) as e:
         asserts_follow.assert_cert_follow(ctx)
     assert "verification is NOT load-bearing" in e.value.message
+
+
+def test_cert_follow_FAILS_when_the_tamper_follower_never_came_UP(monkeypatch):
+    """THE VACUOUS PASS THIS PHASE USED TO HAVE. A follower that never started reports exactly the
+    zero progress the phase treats as proof of rejection, and `"null"` is a legitimate reading
+    here — so the case has to ask a separate question, and `eth_blockNumber` is the one a live
+    node answers even with `finalized` unset."""
+    ctx, _ = _live_ctx(monkeypatch, asserts_follow.CERT_FOLLOW_OVERLAY,
+                       **_cf_world(overlay_head_dec=lambda svc, **k: -1))
+    with pytest.raises(SmokeFailure) as e:
+        asserts_follow.assert_cert_follow(ctx)
+    assert "not up" in e.value.message
+
+
+def test_cert_follow_FAILS_when_the_driver_never_logged_the_REJECTION(monkeypatch):
+    """The follower is up, it finalized nothing — and it never said why. That is also what a MITM
+    which came up and forwarded NOTHING looks like, so silence cannot be read as refusal."""
+    ctx, _ = _live_ctx(monkeypatch, asserts_follow.CERT_FOLLOW_OVERLAY,
+                       **_cf_world(overlay_logs=lambda *svcs, **k: (
+                           vf.MITM_READY_LINE if svcs[0] == "cert-mitm" else "cert applied")))
+    with pytest.raises(SmokeFailure) as e:
+        asserts_follow.assert_cert_follow(ctx)
+    assert "never delivered" in e.value.message
 
 
 def test_cert_follow_FAILS_when_v0_stalled_rather_than_crediting_the_follower(monkeypatch):
@@ -423,7 +459,7 @@ def test_cert_follow_FAILS_LOUD_rather_than_reading_an_unreachable_follower_as_h
     block 33, which a live chain passed minutes ago, so phase 2 would pass over a gap that was
     never created."""
     ctx, _ = _live_ctx(monkeypatch, asserts_follow.CERT_FOLLOW_OVERLAY,
-                       **_cf_world(check_external=lambda port, dry_value="": "null|null"))
+                       **_cf_world(overlay_check_node=lambda svc, dry_value="": "null|null"))
     with pytest.raises(SmokeFailure) as e:
         asserts_follow.assert_cert_follow(ctx)
     assert "refusing to read an unreachable node as height 0" in e.value.message
@@ -433,7 +469,8 @@ def test_cert_cascade_FAILS_LOUD_rather_than_pushing_a_null_checkpoint_hash(monk
     """The same guard on the other side: `"null"` is not a bytes32, and letting it through would
     fail inside `cast` three commands later with a message about ABI encoding."""
     ctx, _ = _live_ctx(monkeypatch, asserts_follow.CERT_CASCADE_OVERLAY,
-                       **_cc_world(check_external=lambda port, dry_value="": "null|null"))
+                       **_cc_world(check_external=lambda port, dry_value="": "null|null",
+                                   overlay_check_node=lambda svc, dry_value="": "null|null"))
     with pytest.raises(SmokeFailure) as e:
         asserts_follow.assert_cert_cascade(ctx)
     assert "refusing to read an unreachable node as height 0" in e.value.message
@@ -441,7 +478,7 @@ def test_cert_cascade_FAILS_LOUD_rather_than_pushing_a_null_checkpoint_hash(monk
 
 def test_cert_follow_FAILS_when_the_follower_never_aligns(monkeypatch):
     ctx, _ = _live_ctx(monkeypatch, asserts_follow.CERT_FOLLOW_OVERLAY,
-                       **_cf_world(wait_follower_align=lambda *a, **k: None))
+                       **_cf_world(overlay_wait_align=lambda *a, **k: None))
     with pytest.raises(SmokeFailure) as e:
         asserts_follow.assert_cert_follow(ctx)
     assert "did not align with v0 past" in e.value.message
@@ -461,6 +498,7 @@ def test_cert_follow_only_warns_when_the_follower_did_not_flush(monkeypatch, cap
 
 def _cc_world(**over):
     world = dict(
+        baseline_height=lambda dry_value=0: 100,
         finalized_dec=lambda dry_value=0: 100,
         funded_key=lambda **k: "00" * 32,
         cast_send=lambda tail, note, dry_value="{}": (
@@ -468,8 +506,9 @@ def _cc_world(**over):
             if "--create" in [str(t) for t in tail] else {"blockNumber": "0x80"}),
         check_external=lambda port, dry_value="": ("0x80|0x" + "ab" * 32
                                                    if port == 8545 else "null|null"),
+        overlay_check_node=lambda svc, dry_value="": "null|null",
         wait_finalized_ge=lambda *a, **k: True,
-        wait_follower_align=lambda *a, **k: "0x8c|0xaa",
+        overlay_wait_align=lambda *a, **k: "0x8c|0xaa",
         overlay_logs=lambda *svcs, **k: (vf.L1_VERIFIED_LINE if svcs[0] == "cert-follower-l1"
                                          else vf.BOGUS_REJECT_LINE),
         overlay_ps_state=lambda *a, **k: "running",
@@ -498,22 +537,26 @@ def test_cert_cascade_FAILS_when_the_bogus_follower_never_refuses(monkeypatch):
     assert e.value.message == vf.BOGUS_NOT_REFUSED
 
 
-def test_cert_cascade_accepts_an_EXIT_as_the_refusal(monkeypatch):
-    """The second witness: the node may refuse and die before its log can be read."""
+def test_cert_cascade_does_NOT_accept_a_dead_container_as_the_refusal(monkeypatch):
+    """The inverse of the test that used to live here. `exited` was accepted as proof of refusal,
+    which blessed a follower that died for ANY reason — the false PASS `evaluate_bogus_rejected`
+    now describes. With the witness gone this world must fail, and it must fail with the
+    never-refused message rather than by falling through."""
     ctx, _ = _live_ctx(monkeypatch, asserts_follow.CERT_CASCADE_OVERLAY,
                        **_cc_world(overlay_logs=lambda *svcs, **k:
                                    vf.L1_VERIFIED_LINE if svcs[0] == "cert-follower-l1" else "",
                                    overlay_ps_state=lambda *a, **k: "exited"))
-    asserts_follow.assert_cert_cascade(ctx)
+    with pytest.raises(SmokeFailure) as e:
+        asserts_follow.assert_cert_cascade(ctx)
+    assert e.value.message == vf.BOGUS_NOT_REFUSED
 
 
 def test_cert_cascade_FAILS_when_the_bogus_follower_refused_and_followed_anyway(monkeypatch):
     """THE SECOND HALF of the negative. Logging the refusal and then finalizing past the anchor is
     the fail-open the log grep alone cannot see."""
     ctx, _ = _live_ctx(monkeypatch, asserts_follow.CERT_CASCADE_OVERLAY,
-                       **_cc_world(check_external=lambda port, dry_value="":
-                                   {8545: "0x80|0x" + "ab" * 32,
-                                    vf.BOGUS_PORT: "0xc8|0xbb"}.get(port, "null|null")))
+                       **_cc_world(overlay_check_node=lambda svc, dry_value="":
+                                   "0xc8|0xbb" if svc == vf.BOGUS_SERVICE else "null|null"))
     with pytest.raises(SmokeFailure) as e:
         asserts_follow.assert_cert_cascade(ctx)
     assert "made finalized progress" in e.value.message
@@ -560,9 +603,11 @@ def test_cert_cascade_pushes_the_hash_it_READ_not_a_constant(monkeypatch):
 
 def _txc_world(**over):
     world = dict(
-        wait_follower_align=lambda *a, **k: "0x8c|0xaa",
+        overlay_wait_align=lambda *a, **k: "0x8c|0xaa",
         wait_finalized_ge=lambda *a, **k: True,
-        enode_pubkey=lambda url, dry_value="": ("ab" * 64 if url == SENTRY_RPC else "cd" * 64),
+        overlay_enode_pubkey=lambda svc, dry_value="": "ab" * 64,
+        overlay_rpc_write=lambda svc, method, *a, **k: None,
+        enode_pubkey=lambda url, dry_value="": "cd" * 64,
         cast_rpc=lambda method, *a, **k: '"0x1"',
         funded_key=lambda **k: "00" * 32,
         wallet_address=lambda key, **k: "0x" + "11" * 20,
@@ -678,7 +723,7 @@ def test_tx_cascade_FAILS_LOUD_on_an_unreadable_sentry_enode(monkeypatch):
     """An empty pubkey would otherwise be written as `enode://@172.20.0.30:30303`, producing a
     peerless L3 and no error anywhere."""
     ctx, _ = _live_ctx(monkeypatch, asserts_follow.TX_CASCADE_OVERLAY,
-                       **_txc_world(enode_pubkey=lambda url, dry_value="": ""))
+                       **_txc_world(overlay_enode_pubkey=lambda svc, dry_value="": ""))
     with pytest.raises(SmokeFailure) as e:
         asserts_follow.assert_tx_cascade(ctx)
     assert "bad sentry enode pubkey" in e.value.message

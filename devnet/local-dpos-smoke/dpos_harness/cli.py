@@ -24,8 +24,11 @@ the whole sim just to kill a pidfile.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 
+from .core.exit_codes import (RC_ERROR, RC_FAIL, RC_INCONCLUSIVE, RC_PASS,  # noqa: F401
+                              RC_USAGE)
 from .core.termio import enable_line_buffering
 
 # case name  ->  module under `cases/`. `case <name>` and `case list` both read this single
@@ -44,6 +47,7 @@ CASES = {
     "smoke-epoch": "smoke.epoch",
     "smoke-vrf": "smoke.vrf",
     "smoke-vrf-boundary": "smoke.vrf_boundary",
+    "smoke-weighted-vrf": "smoke.weighted_vrf",
     "smoke-fault": "smoke.fault",
     "smoke-deferred": "smoke.deferred",
     "smoke-peers": "smoke.peers",
@@ -67,6 +71,112 @@ CASES = {
     "smoke-vrf-dkg-durability": "smoke.vrf_dkg_durability",
     "smoke-byzantine-vrf": "smoke.byzantine_vrf",
 }
+
+
+#: THE GATE'S SUITE — the AGGREGATES, not their constituents. `smoke-base` and `smoke-fault` run
+#: the very same assertion FUNCTIONS the nine single-entry cases run (object identity, not copied
+#: bodies — pinned by `tests/test_cli_case_all.py`), so listing both would buy nine extra bring-ups
+#: and not one extra check. The nine stay in `CASES` for isolated debugging.
+#:
+#: ORDER IS CHEAP-AND-READ-ONLY FIRST, DESTRUCTIVE LATER, the production-path substrate LAST: a
+#: failure stops the run before anything worse has been done to a stack, and the five prod cases
+#: are the long ones that need foundry and a solidity-contracts checkout.
+SUITE = [
+    "smoke-base", "smoke-weighted-vrf", "smoke-rejump-signer",
+    "smoke-liveness", "smoke-fault", "smoke-vrf-dkg-liveness",
+    "smoke-cert-follow", "smoke-cert-cascade", "smoke-tx-cascade",
+    "smoke-byzantine", "smoke-cert-catchup", "smoke-vrf-dkg-restart-midwindow",
+    "growth", "quorum", "seed-continuity",
+    "smoke-production-path", "smoke-vrf-rotation", "smoke-vrf-dkg-halt",
+    "smoke-vrf-dkg-durability", "smoke-byzantine-vrf",
+]
+
+_RC_NAME = {RC_PASS: "PASS", RC_FAIL: "FAIL", RC_USAGE: "USAGE",
+            RC_ERROR: "ERROR", RC_INCONCLUSIVE: "INCONCLUSIVE", 130: "INTERRUPTED"}
+
+#: HOW BAD an outcome is, for picking the suite's exit code. The raw code VALUES cannot serve:
+#: `RC_INCONCLUSIVE` is 4 and a `max()` over them would rank it above `RC_ERROR` (3) and
+#: `RC_FAIL` (1) — an unevaluated property outranking a real failure.
+#:
+#: INCONCLUSIVE IS WORSE THAN A PASS and therefore non-zero. A case returns it exactly where a
+#: reading failed and the property was never evaluated at all (`seed-continuity`, when the beacon
+#: metrics do not answer). An unchecked property is not a checked one, and reporting it as passed
+#: is the same silent lie this suite exists to remove. It is not a failure either, so it gets its
+#: own code and its own banner line.
+#:
+#: 130 IS DELIBERATELY ABSENT. An interrupt is not an outcome to rank — folding it in would let a
+#: Ctrl-C mask a genuine FAIL from an earlier case. It rides a flag instead.
+_RC_RANK = {RC_PASS: 0, RC_INCONCLUSIVE: 1, RC_USAGE: 2, RC_ERROR: 3, RC_FAIL: 4}
+
+
+def _case_all(args) -> int:
+    """Run the suite, one case per SUBPROCESS, strictly sequentially.
+
+    A SUBPROCESS AND NOT A CALL, for two reasons that survive the Phase-3 env-restore fix. The
+    environment is captured at IMPORT time in four modules — `core/nodes.py` binds `RPC`,
+    `core/rpc.py` / `core/events.py` / `stack/sender.py` bind their timeouts — so the first case to
+    import them freezes those values for every later case in the same interpreter. And
+    `stack/bringup.py` writes `DPOS_ACTIVATION_BLOCK`, which `StaticProfile` reads at CALL time, so
+    a sim case running before a static one would hand it a foreign activation block and the whole
+    epoch arithmetic would go wrong with nothing to show for it. A process boundary closes both at
+    once, which is how `run-all.sh` worked.
+
+    SEQUENTIAL, never parallel: every case brings a stack up on fixed host ports and fixed IPs in
+    `172.20.0.0/24`, so two at a time would fight over them.
+    """
+    from .core import proc, topology
+
+    dry = bool(getattr(args, "dry_run", False))
+    names = (os.environ.get("SMOKE_CASES") or "").split() or SUITE
+    unknown = [n for n in names if n not in CASES]
+    if unknown:
+        print(f"unknown case(s) in suite: {unknown}", flush=True)
+        return RC_USAGE
+
+    # The one command the aggregate issues itself. Through a Runner so `--dry-run` suppression is
+    # the seam's job and not a hand-written `if` here; `record=False` because the suite is the
+    # thing that RUNS choreography, not a piece of it, and its transcript belongs to the children.
+    cleanup = proc.Runner(dry=dry, record=False)
+    result, worst, interrupted = {}, RC_PASS, False
+    for name in names:
+        print(f"==================== {name} ====================", flush=True)
+        argv = [sys.executable, "-m", __package__, "case", name] + (["--dry-run"] if dry else [])
+        rc = proc.run_streaming(argv)
+        # RECORDED BEFORE ANY BRANCH BELOW CAN LEAVE THE LOOP: an interrupt that escaped without
+        # being noted printed "ALL SMOKE CASES PASSED" with exit 0 over a table of MISSING rows.
+        result[name] = rc
+        if rc == 130:
+            interrupted = True
+            break
+        if _RC_RANK.get(rc, _RC_RANK[RC_ERROR]) > _RC_RANK[worst]:
+            worst = rc
+        # Defensive, because there is no preflight `down -v` before a STATIC bring-up
+        # (`stack/static_stack.py`) — only the generated-profile one has it.
+        #
+        # PER PROJECT, and a bare `docker compose down` is NOT enough. Every compose ROOT pins its
+        # own `name:`, so this suite spans four docker projects: the static cases run in
+        # `fluent-dpos-smoke`, `growth`/`quorum`/`seed-continuity` in `fluent-dpos-sim`, and the
+        # five production-path cases in `fluent-dpos-prod-path`. A bare `down` from this directory
+        # resolves `docker-compose.yml` and therefore reaps ONLY the first of them — `-v` and
+        # `--remove-orphans` widen what is removed WITHIN a project, never across projects. All
+        # three live roots publish host 8545 and 8546, so a case that died before its own teardown
+        # leaves ports bound that the next case cannot bind, and the cleanup meant to prevent
+        # exactly that would have walked straight past it.
+        for project in topology.DOCKER_PROJECTS:
+            cleanup.run_ok(["docker", "compose", "-p", project, "down", "-v", "--remove-orphans"],
+                           timeout=300, note=f"suite-cleanup-{project}")
+
+    print("==================== summary ====================", flush=True)
+    for name in names:
+        print(f"  {name:<34} {_RC_NAME.get(result.get(name), 'MISSING')}", flush=True)
+    if interrupted:
+        print("SMOKE RUN INTERRUPTED — the remaining cases did not run", flush=True)
+    if worst == RC_PASS and interrupted:
+        return 130
+    print({RC_PASS: "ALL SMOKE CASES PASSED",
+           RC_INCONCLUSIVE: "SOME SMOKE CASES COULD NOT BE JUDGED",
+           }.get(worst, "SOME SMOKE CASES FAILED"), flush=True)
+    return worst
 
 
 # ── sim ──────────────────────────────────────────────────────────────────────
@@ -123,7 +233,7 @@ def _case_run(args) -> int:
 def _case_list(_args) -> int:
     for name in CASES:
         print(name)
-    return 0
+    return RC_PASS
 
 
 # ── stack ────────────────────────────────────────────────────────────────────
@@ -237,6 +347,11 @@ def build_parser() -> argparse.ArgumentParser:
                             "transcript; no docker, no chain")
         c.add_argument("rest", nargs=argparse.REMAINDER)
         c.set_defaults(fn=_case_run, case=name)
+    allp = case_cmds.add_parser("all", help="run the whole gate suite, one case per subprocess")
+    allp.add_argument("--dry-run", action="store_true",
+                      help="forward --dry-run to every case and skip the inter-case cleanup; "
+                           "no docker, no chain")
+    allp.set_defaults(fn=_case_all)
     case_cmds.add_parser("list", help="print the case names").set_defaults(fn=_case_list)
 
     # -- stack ----------------------------------------------------------------
@@ -298,7 +413,7 @@ def main(argv=None) -> int:
         # level the operator actually reached, not the top one — `dpos_harness sim` should say
         # what `sim` offers.
         getattr(args, "_parser", p).print_usage(sys.stderr)
-        return 2
+        return RC_USAGE
     return fn(args)
 
 

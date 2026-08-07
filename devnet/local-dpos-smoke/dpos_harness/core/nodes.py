@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 
 from . import rpc, topology
 from .rpc import (
@@ -61,12 +62,55 @@ def _num_hash(out: str):
     return (num if num is not None else "null", h if h is not None else "null")
 
 
+def check_node_via(exec_prefix) -> str:
+    """`check_node`, but for a service the caller must address with its OWN exec prefix.
+
+    THE OVERLAY SERVICES NEED THIS. `compose_exec` builds from the bare `DOCKER_COMPOSE`, which
+    resolves only `docker-compose.yml` — it cannot name `cert-follower-tamper` or `sentry` at all.
+    That gap is why those followers used to publish a HOST PORT purely so the harness could read
+    them, and three of those ports sat in the kernel's ephemeral range (32768-60999) where any
+    outbound connection on the box can take them. Passing the prefix in removes the reason the
+    ports existed."""
+    num, h = _num_hash(rpc_post_exec(JSONRPC_FINALIZED, exec_prefix))
+    return f"{num}|{h}"
+
+
+def head_dec_via(exec_prefix) -> int:
+    """`head_dec_at`'s question — did this node ANSWER — for a service addressed by exec prefix.
+    **-1** when it did not.
+
+    The sentinel is the whole point and it is not `head_dec`'s 0: a live node answers
+    `eth_blockNumber` with a real height even while `finalized` is still unset, so this separates
+    "it rejected everything" from "it never came up". Over exec it also answers the question more
+    directly than the host-port version could — a stopped container fails the `exec` itself, where
+    a host port merely stops answering and cannot say why."""
+    out = rpc_post_exec(rpc_body("eth_blockNumber"), exec_prefix)
+    try:
+        res = json.loads(out).get("result")
+    except Exception:
+        return -1
+    return hex_to_dec(res) if res is not None else -1
+
+
+def enode_pubkey_via(exec_prefix) -> str:
+    """The 128-hex devp2p pubkey via in-container `admin_nodeInfo`. "" when unavailable.
+
+    The exec twin of `rpc._enode_pubkey`, and it re-uses that function's validation by handing it
+    the same JSON: `cast rpc` unwraps `.result`, a raw POST does not, so the `.result` is peeled
+    here and the enode parse stays in one place."""
+    out = rpc_post_exec(rpc_body("admin_nodeInfo"), exec_prefix)
+    try:
+        res = json.loads(out).get("result")
+    except Exception:
+        return ""
+    return rpc.enode_pubkey_of(res)
+
+
 def check_node(service: str) -> str:
     """"height|hash" as seen INSIDE container <service>, or "null|null" if
     unreachable (the all-nodes-down false-pass guard: an unreachable node MUST
     read the null|null sentinel, never "")."""
-    num, h = _num_hash(rpc_post_exec(JSONRPC_FINALIZED, compose_exec(service)))
-    return f"{num}|{h}"
+    return check_node_via(compose_exec(service))
 
 
 def check_external(port: int) -> str:
@@ -472,16 +516,42 @@ def liveness_call(sig: str, *args, addr: str = None, rpc_url: str = None) -> str
     return _cast_call(addr or topology.LIVENESS_SLASHING_ADDR, sig, *args, rpc_url=rpc_url)
 
 
+#: The 6-field `getValidatorStatus` ABI tuple, and the ONE definition of it in the package. It
+#: lost `slashesCount` and `jailedBefore` with the liveness jail, and a STALE signature does not
+#: error — `cast` decodes garbage or truncates — so a per-case copy rots silently. The docstring
+#: below said this already while five call sites in two spellings copied it anyway.
+VALIDATOR_STATUS_SIG = ("getValidatorStatus(address)"
+                        "(address,uint8,uint256,uint64,uint64,uint16)")
+
+#: 1-based `cast` field positions inside that tuple.
+STATUS_FIELD = 2
+TOTAL_DELEGATED_FIELD = 3
+
+
 def validator_status(addr: str, staking_addr: str = None, rpc_url: str = None) -> str:
     """On-chain validator status byte (2nd tuple field of getValidatorStatus):
-    NotFound=0, Active/Pending/etc. The 6-field ABI tuple has ONE definition — it lost
-    `slashesCount` and `jailedBefore` with the liveness jail, and a STALE signature does
-    not error (cast decodes garbage or truncates), so it must never be copied per-case."""
-    out = staking_call(
-        "getValidatorStatus(address)(address,uint8,uint256,uint64,uint64,uint16)",
-        addr, addr=staking_addr, rpc_url=rpc_url,
-    )
-    return cast_field(2, out)
+    NotFound=0, Active/Pending/etc."""
+    out = staking_call(VALIDATOR_STATUS_SIG, addr, addr=staking_addr, rpc_url=rpc_url)
+    return cast_field(STATUS_FIELD, out)
+
+
+def validator_stake(addr: str, staking_addr: str = None, rpc_url: str = None) -> int:
+    """`totalDelegated` — the 3rd field of the SAME tuple `validator_status` reads the 2nd of.
+
+    THE LEADING-DIGITS TAKE IS LOAD-BEARING, and shipping without it cost a live run. `cast`
+    pretty-prints a uint256 as `9000000000000000000 [9e18]`, and `cast_field` collapses whitespace
+    (`core/rpc.py:182`) — so the annotation is GLUED to the number, `9000000000000000000[9e18]`,
+    which no integer parse accepts. Routed through `hex_to_dec` that raised inside `int()` and came
+    back as its bare-except 0, uniformly, for every validator: the skew read as an equal-stake
+    chain instead of as a broken reading. Same idiom as `cases/seed_continuity.py:344`, which
+    reads this same field and has always stripped it.
+
+    0 on an unreadable answer, which every caller must treat as a failed read rather than as an
+    unstaked validator: a genesis committee member cannot hold zero stake (it would be below
+    `minValidatorStakeAmount`), so 0 is only ever the sentinel."""
+    out = staking_call(VALIDATOR_STATUS_SIG, addr, addr=staking_addr, rpc_url=rpc_url)
+    digits = re.match(r"\d+", cast_field(TOTAL_DELEGATED_FIELD, out))
+    return int(digits.group(0)) if digits else 0
 
 
 # Runtime-deploy variants (production-path / sim deploy staking at runtime).

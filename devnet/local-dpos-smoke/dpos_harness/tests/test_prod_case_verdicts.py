@@ -33,10 +33,6 @@ A2 = "0x" + "a2" * 20
 A3 = "0x" + "a3" * 20
 A4 = "0x" + "a4" * 20
 A5 = "0x" + "a5" * 20
-#: The bash the production-path port mirrors. DEPTH-SENSITIVE, like `test_prod_cases.py:48`:
-#: <smoke>/dpos_harness/tests/<this file> → two dirnames up is the smoke dir.
-CASE_PP_SH = pathlib.Path(__file__).resolve().parents[2] / "scripts" / "case-production-path.sh"
-CASE_HALT_SH = pathlib.Path(__file__).resolve().parents[2] / "scripts" / "case-vrf-dkg-halt.sh"
 #: The consensus crate, absent in a harness-only checkout — the cross-tree tests below SKIP there
 #: rather than fail (same shape as `test_smoke_onchain_cases.py:769`).
 BEACON_ACTOR_RS = (pathlib.Path(__file__).resolve().parents[4] / "crates" / "dpos" / "consensus"
@@ -155,13 +151,6 @@ def test_the_demoted_validator_must_keep_following(pre, post, ok):
     node that is following, and `printf '%d' null` would have aborted the bash."""
     assert VR.evaluate_still_following(pre, post, 4)[0] is ok
 
-def _bash_arith(text: str, var: str) -> str:
-    """The right-hand side of a `VAR=$(( … ))` assignment in the bash case, as a Python-evaluable
-    expression (bash and Python agree on `+`/`-` over ints)."""
-    m = re.search(rf"^{var}=\$\(\( (.+?) \)\)\s*$", text, re.M)
-    assert m, f"{var}=$(( … )) is gone from {CASE_PP_SH.name}"
-    return m.group(1)
-
 def test_the_watchdog_absence_fails_when_the_line_IS_present():
     """`grep -q "NOT in the current committee"` over v5's ENTIRE log. The pass side is an absence,
     so the only direction that distinguishes a working grep from a dead one is this one."""
@@ -203,17 +192,81 @@ def test_the_probe_set_must_contain_the_joiner():
 
 
 def test_the_early_join_lifecycle_grep_both_ways():
+    """The fixture always carried `epoch=4`; the code ignored it, so this passed with no filter at
+    all. Now the epoch is part of the question."""
     logs = ("noise\nlive DKG: ceremony started epoch=4\nmore\n"
             "live DKG: PK_epoch + share computed + stored epoch=4\n")
-    hits = VR.dkg_lifecycle_lines(logs)
-    assert len(hits) == 2 and VR.evaluate_early_join(hits)[0]
-    ok, msg = VR.evaluate_early_join(VR.dkg_lifecycle_lines("nothing here\n"))
-    assert not ok and "beacon OBSERVER" in msg
+    hits = VR.dkg_lifecycle_lines(logs, 4)
+    assert len(hits) == 2 and VR.evaluate_early_join(hits, 4)[0]
+    ok, msg = VR.evaluate_early_join(VR.dkg_lifecycle_lines("nothing here\n", 4), 4)
+    assert not ok and "NO ceremony at all" in msg
 
 
-def test_the_lifecycle_grep_keeps_only_the_last_four():
-    logs = "\n".join(f"live DKG: ceremony started epoch={i}" for i in range(10))
-    assert len(VR.dkg_lifecycle_lines(logs)) == 4
+#: The exact shape the 2026-08-03 live run produced: the ceremony began for the right epoch and
+#: the store line had not been written yet.
+_STARTED_ONLY = "live DKG: ceremony started epoch=4\n"
+
+
+def test_a_ceremony_that_STARTED_and_never_STORED_is_not_an_early_join():
+    """The failure the either-line version let through. `ceremony started` alone is a ceremony
+    that began and FAILED QUALIFICATION — the joiner dealt, never computed a share, and enters
+    E_new as the shareless observer this check exists to catch."""
+    hits = VR.dkg_lifecycle_lines(_STARTED_ONLY, 4)
+    ok, msg = VR.evaluate_early_join(hits, 4, window_closed=True)
+    assert not ok and "window is CLOSED" in msg and "as a MEMBER" in msg
+
+
+def test_started_only_with_the_window_STILL_OPEN_names_the_budget_not_the_boundary():
+    """THE LIVE FAILURE, and the reason it was a false red: the case sampled nine seconds after
+    `ceremony started` and the window was nowhere near closed. The two messages must not read
+    alike — one says the ceremony is not completing, the other says the follower phase is over."""
+    hits = VR.dkg_lifecycle_lines(_STARTED_ONLY, 4)
+    ok, msg = VR.evaluate_early_join(hits, 4, window_closed=False, budget_s=900)
+    assert not ok
+    assert "still open" in msg and "900s" in msg and "MEMBER" not in msg
+
+
+def test_the_store_line_landing_inside_the_window_PASSES():
+    """The direction the wait exists to allow: the ceremony finishes a little after it started."""
+    logs = _STARTED_ONLY + "live DKG: PK_epoch + share computed + stored epoch=4\n"
+    assert VR.evaluate_early_join(VR.dkg_lifecycle_lines(logs, 4), 4)[0]
+
+
+def test_another_epochs_ceremony_does_not_prove_THIS_epochs_early_join():
+    """Unscoped, any ceremony the joiner had ever run satisfied the proof for E_new."""
+    logs = ("live DKG: ceremony started epoch=3\n"
+            "live DKG: PK_epoch + share computed + stored epoch=3\n")
+    assert VR.dkg_lifecycle_lines(logs, 4) == []
+    assert not VR.evaluate_early_join(VR.dkg_lifecycle_lines(logs, 4), 4)[0]
+
+
+def test_the_epoch_filter_runs_BEFORE_the_tail():
+    """THE ORDERING, driven. `tail` keeps the last N matches, so a tail taken first would trim the
+    E_new pair out of a busy log and report a joiner that ran the ceremony as one that never did.
+    Here the E_new pair is the OLDEST thing in the log and ten later lines follow it."""
+    logs = "\n".join(
+        ["live DKG: ceremony started epoch=4",
+         "live DKG: PK_epoch + share computed + stored epoch=4"]
+        + [f"live DKG: ceremony started epoch={i}" for i in range(10, 20)])
+    hits = VR.dkg_lifecycle_lines(logs, 4)
+    assert len(hits) == 2 and VR.evaluate_early_join(hits, 4)[0]
+
+
+def test_the_lifecycle_grep_is_right_anchored_on_the_epoch_field():
+    """`epoch=2` must not also match `epoch=20` — the property `VO.epoch_field_lines` carries."""
+    logs = ("live DKG: ceremony started epoch=20\n"
+            "live DKG: PK_epoch + share computed + stored epoch=20\n")
+    assert VR.dkg_lifecycle_lines(logs, 2) == []
+
+
+def test_the_joiner_share_probe_is_what_discriminates():
+    """`ACTIVE_LINE` growth cannot separate a signer from an observer: the deriver logs that line
+    on EVERY node whose certificate carries a seed (`crates/node/src/derive.rs:78-86`). The
+    on-disk share file for the epoch can."""
+    assert VR.evaluate_joiner_holds_share(True, 4, 5)[0]
+    ok, msg = VR.evaluate_joiner_holds_share(False, 4, 5)
+    assert not ok
+    assert "beacon-share-e4.bin" in msg and "ACTIVE_LINE count cannot see this" in msg
 
 
 def test_active_growth_names_the_ROLE_in_the_failure():
@@ -292,27 +345,6 @@ def test_CEREMONY_STARTED_LINE_is_a_string_the_product_ACTUALLY_EMITS():
                 if VR.CEREMONY_STARTED_LINE in ln and not ln.strip().startswith("//")]
     assert len(emitters) == 1, f"{VR.CEREMONY_STARTED_LINE!r} emitters: {emitters}"
     assert "tracing::info!" in emitters[0]
-
-
-def test_the_bash_halt_case_tears_with_the_SAME_magic_and_the_SAME_torn_grep():
-    """Two trees, two literals, one claim. A recipe fixed in one and not the other reproduces the
-    original defect in half the runs — the drift class
-    `test_smoke_onchain_cases.py::test_both_trees_grep_the_SAME_park_string` exists for."""
-    if not CASE_HALT_SH.exists():
-        pytest.skip(f"bash case not in this tree ({CASE_HALT_SH})")
-    text = CASE_HALT_SH.read_text()
-    assert VR.TORN_LINE in text
-    assert VR.CEREMONY_STARTED_LINE in text
-    assert VR.TORN_MAGIC in text
-    # OCTAL, never hex: genesis-init's /bin/sh has POSIX `\\ooo` and would write the literal
-    # characters for `\\xHH` — a corruption that lands as Present/NoFile rather than Torn.
-    assert r'printf "\377\377\377\377"' in text
-    # And the share must be removed too, or `store.contains_key` short-circuits before the journal
-    # is ever read (`actor.rs:982-989`) and the torn journal is never even opened.
-    assert re.search(r'vol_mutate_beacon "\$i" "beacon-share-e\$e\.bin" .*rm -f', text)
-    # Both victims, not one: on n=5 a single sit-out leaves 4 dealers = quorum and the ceremony
-    # finalizes, which is the DURABILITY case's outcome.
-    assert 'for i in "$K0" "$K1"; do tear_journal_to_torn "$i" "$E_new"; done' in text
 
 
 # ══ case-vrf-dkg-halt ══════════════════════════════════════════════════════════════════════
@@ -592,11 +624,16 @@ def test_the_forge_epoch_is_the_LAST_one_and_needs_an_ANSI_STRIPPED_log():
     assert VR.forge_epoch(strip_ansi(raw)) == "7"
 
 
-def test_the_forge_epoch_falls_back_to_E_new():
+def test_the_forged_epoch_must_be_READ_from_the_log_and_never_substituted():
+    """The fallback still RESOLVES an anchor; it no longer SATISFIES the gate.
+
+    `e_new` is a real digit, so the old verdict passed on it while the safety window anchored on
+    an HONEST boundary — the one where an honest leader committed the real key — and the boundary
+    the byzantine actually forged at was never inspected."""
     assert VR.forge_epoch("nothing", fallback=5) == "5"
-    assert VR.evaluate_forge_epoch(VR.forge_epoch("nothing", fallback=5))[0]
-    ok, msg = VR.evaluate_forge_epoch(VR.forge_epoch("nothing", fallback=None))
-    assert not ok and "observability gap" in msg
+    ok, msg = VR.evaluate_forge_epoch(VR.forge_epoch_hits("nothing"), 5)
+    assert not ok and "refusing to anchor the safety window on the fallback 5" in msg
+    assert VR.evaluate_forge_epoch(VR.forge_epoch_hits(f"WARN {VR.FORGE_LINE} epoch=7"), 5)[0]
 
 
 def test_a_line_that_is_not_a_forge_line_never_contributes_an_epoch():
@@ -653,3 +690,54 @@ def test_slash_hits_keeps_its_default_markers_when_none_are_given():
     logs = f"WARN ValidatorSlashed who={A3[2:]}"
     assert VO.slash_hits(logs, A3)
     assert not VO.slash_hits(logs, A3, markers=("nosuchmarker",))
+
+
+def test_the_lifecycle_AUDIT_shows_what_the_filter_rejected():
+    """THE FAILURE ARTIFACT. The filtered list is `[]` in exactly the case where the filter is what
+    is wrong, so it cannot be the diagnostic. This one is unfiltered and carries each line's own
+    epoch, which separates "the joiner dealt for a different epoch" from "it never dealt"."""
+    logs = ("noise\n"
+            "INFO live DKG: ceremony started epoch=6\n"
+            "INFO live DKG: PK_epoch + share computed + stored epoch=5\n"
+            "INFO unrelated epoch=6\n")
+    rows = VR.dkg_lifecycle_audit(logs)
+    assert [e for e, _ in rows] == ["6", "5"], "both lifecycle lines, unrelated ones dropped"
+    assert VR.dkg_lifecycle_lines(logs, 6) == ["INFO live DKG: ceremony started epoch=6"]
+
+
+def test_the_audit_is_empty_when_the_joiner_ran_no_ceremony_at_all():
+    assert VR.dkg_lifecycle_audit("INFO something else\n") == []
+
+
+def test_the_audit_marks_a_lifecycle_line_carrying_no_epoch_field():
+    """Both product lines carry `epoch=` (`beacon/actor.rs:959,1133`); one that stopped would be a
+    finding in its own right, so it shows as `?` rather than being dropped."""
+    assert VR.dkg_lifecycle_audit("INFO live DKG: ceremony started\n") == [
+        ("?", "INFO live DKG: ceremony started")]
+
+
+def test_the_audit_is_bounded():
+    logs = "\n".join(f"INFO live DKG: ceremony started epoch={i}" for i in range(200))
+    assert len(VR.dkg_lifecycle_audit(logs)) == VR.DKG_AUDIT_TAIL
+
+
+def test_the_early_join_failure_path_dumps_the_AUDIT_not_the_filtered_list():
+    """The case tears its stack down on the way out, so a diagnostic that is not printed is gone.
+    Wiring the empty filtered list here is the bug this replaced."""
+    import inspect
+    from dpos_harness.cases.smoke import asserts_prod
+    src = inspect.getsource(asserts_prod.assert_vrf_rotation)
+    assert '_dump_dkg_lifecycle(box["logs"], e_new)' in src
+    assert "for ln in dkg" not in src, "the filtered list is empty exactly when the filter is wrong"
+
+
+def test_the_early_join_wait_STOPS_at_the_E_new_boundary():
+    """THE TRAP. The claim is "from its FOLLOWER phase", which ends when E_new's first block
+    finalizes — a wait that ran past it would accept a share computed as a MEMBER, trading a false
+    red for a false green. The height bound must be in the probe, not just a wall-clock budget."""
+    import inspect
+    from dpos_harness.cases.smoke import asserts_prod
+    src = inspect.getsource(asserts_prod.assert_vrf_rotation)
+    assert "e_new_boundary = ctx.epoch_first_block(e_new)" in src
+    assert 'ctx.finalized_dec(dry_value=0) >= e_new_boundary' in src
+    assert 'box["closed"] = True' in src

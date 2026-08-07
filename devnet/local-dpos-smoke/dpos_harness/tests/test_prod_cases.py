@@ -83,15 +83,19 @@ def test_every_case_is_registered_and_importable(case, module):
 
 
 @pytest.mark.parametrize("case", sorted(PROD_CASES))
-def test_the_makefile_carries_a_py_target_and_declares_it_phony(case):
-    """`-py` targets are ADDED beside the bash ones (chunks 0-4 set that), never replacing them:
-    the port is proven only once both have run against the same stack and their verdicts have been
-    compared, and that comparison needs both to stay runnable."""
+def test_the_makefile_carries_the_target_and_declares_it_phony(case):
+    """Every prod case is reachable by its own `make` target, forwards `ARGS` (so `ARGS=--dry-run`
+    works there too), and is in `.PHONY`.
+
+    This used to also assert that a BASH target of the same name still existed beside a `-py` one,
+    because the port was proven only by running both against the same stack and comparing. That
+    comparison is done and the bash tree is deleted, so the `-py` suffix — which existed solely to
+    disambiguate from it — is gone and these names now belong to the python cases."""
     text = (SMOKE_DIR / "Makefile").read_text()
-    assert f"\n{case}-py:" in text, f"{case}-py target missing"
+    assert f"\n{case}:" in text, f"{case} target missing"
     assert f"python3 -m dpos_harness case {case} $(ARGS)" in text
-    assert f"{case}-py" in text.split("\n\nregen-contracts")[0], f"{case}-py not in .PHONY"
-    assert f"\n{case}:" in text, "the bash target must still be there"
+    assert case in text.split("\n\nregen-contracts")[0], f"{case} not in .PHONY"
+    assert f"{case}-py" not in text, "the -py suffix outlived the bash set it disambiguated from"
 
 
 def test_the_aggregate_dry_run_target_covers_all_five():

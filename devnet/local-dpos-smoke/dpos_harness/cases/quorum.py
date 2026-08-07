@@ -37,6 +37,7 @@ import os
 import time
 
 from ..core import topology
+from ..core.exit_codes import RC_FAIL, RC_PASS, RC_USAGE
 
 
 # ── PURE VERDICT LAYER (docker-free, unit-tested in tests/test_case_quorum.py) ──
@@ -92,11 +93,22 @@ def apply_case_env_defaults():
     return {k: os.environ[k] for k in prof}
 
 
+#: The canned readings a `--dry-run` walk answers its measurement reads with. They are announced
+#: in the transcript and never scored: a verdict computed over canned readings is meaningless in
+#: both directions, which is the rule `driver.SmokeCtx.check` already states for the ported cases.
+_DRY_FIN = 100
+
 # ── LIVE POLL HELPERS ──────────────────────────────────────────────────────────
 
-def _await_dpos_active(nodes, chain, deadline_s: int):
+def _await_dpos_active(nodes, chain, deadline_s: int, dry=False):
     """Wait until DPoS is active (epoch>=1) and finalized is advancing (two rising samples).
-    Returns (fin, epoch)."""
+    Returns (fin, epoch).
+
+    DRY: one probe of the chain-side read (so the transcript shows where the case looks), a canned
+    height, and no sleep. `nodes.finalized_dec` is not Runner-backed, so under dry it is not issued
+    at all."""
+    if dry:
+        return _DRY_FIN, chain.current_epoch()
     deadline = time.time() + deadline_s
     prev = -1
     rising = 0
@@ -116,17 +128,35 @@ def _await_dpos_active(nodes, chain, deadline_s: int):
                      f"DPoS not active/finalizing within {deadline_s}s (epoch={ep}, fin={fin})")
 
 
-def _wait_victims_up(nodes, runner, compose_overlay, victims, budget_s, poll_s=3.0):
+def _wait_victims_up(nodes, runner, compose_overlay, victims, plateau_hi, budget_s, poll_s=3.0,
+                     dry=False):
     """After restoring the victims, confirm EACH is genuinely back up (its own in-container
-    finalized read answers > 0), retrying the idempotent `docker compose start` on any straggler.
-    Returns the victims STILL down after the budget (empty = all up). This per-victim verification
-    is the exact gap that let the removed in-sim probe declare "recovered" while a victim stayed
-    down — the chain resumes the instant quorum returns, so f of the f+1 restarting is enough to
-    hide a straggler."""
+    finalized read cleared the plateau), retrying the idempotent `docker compose start` on any
+    straggler. Returns the victims STILL down after the budget (empty = all up). This per-victim
+    verification is the exact gap that let the removed in-sim probe declare "recovered" while a
+    victim stayed down — the chain resumes the instant quorum returns, so f of the f+1 restarting
+    is enough to hide a straggler.
+
+    THE BAR IS THE PLATEAU, NOT ZERO. The old `<= 0` asked only "does the RPC answer": a container
+    that booted but never rejoined consensus serves its OWN persisted pre-stop height, which is
+    certainly > 0, so a straggler was declared back — the very hole this docstring names as the
+    reason the per-victim check exists. `plateau_hi` is the height the chain sat at while the f+1
+    were down; it is by construction not below any victim's pre-stop height, so clearing it means
+    the node processed blocks produced AFTER the restore, and no invented margin is needed.
+
+    WHAT IT STILL DOES NOT PROVE: that the node VOTES again. Height also advances on a node merely
+    syncing from its peers. Consensus participation is a separate property and is not claimed
+    here.
+
+    DRY: reports every victim up without probing. `node_fin_in` is not Runner-backed, and the
+    restart it is confirming was itself only recorded — there is nothing for the probe to observe
+    and a canned answer below the bar would spin the loop to its deadline for no evidence."""
+    if dry:
+        return []
     deadline = time.time() + budget_s
     pending = list(victims)
     while pending:
-        pending = [v for v in pending if nodes.node_fin_in(v) <= 0]
+        pending = [v for v in pending if nodes.node_fin_in(v) <= plateau_hi]
         if not pending or time.time() >= deadline:
             break
         for v in pending:
@@ -139,14 +169,22 @@ def _wait_victims_up(nodes, runner, compose_overlay, victims, budget_s, poll_s=3
 # ── THE CASE ───────────────────────────────────────────────────────────────────
 
 def run_case(argv=None) -> int:
+    argv = list(argv or [])
+    dry = "--dry-run" in argv
+    unknown = [a for a in argv if a != "--dry-run"]
+    if unknown:
+        print(f"case-quorum: unrecognised argument(s) {unknown} (only --dry-run is accepted)",
+              flush=True)
+        return RC_USAGE
+
     prof = apply_case_env_defaults()
 
     from ..sim.orchestrator import SimConfig
-    from ..stack.bringup import BringUp
+    from ..stack.bringup import BringUp, restore_exported_env, save_exported_env
     from ..core.proc import Runner
     from ..chain.writes import Chain, ChainError
     from ..core.events import EventLog
-    from ..core import nodes
+    from ..core import converge, nodes
 
     cfg = SimConfig()
     n = cfg.initial_committee
@@ -155,7 +193,7 @@ def run_case(argv=None) -> int:
     if need >= n:
         print(f"CASE-QUORUM SETUP ERROR: committee n={n} too small for an f+1={need} drop "
               "(raise SIM_INITIAL_COMMITTEE)", flush=True)
-        return 2
+        return RC_USAGE
 
     interval = int(os.environ.get("SIM_EPOCH_INTERVAL", "32"))
     rpc = os.environ.get("RPC", topology.DEFAULT_RPC_URL)
@@ -163,7 +201,9 @@ def run_case(argv=None) -> int:
     # NB: do NOT seed self.env with COMPOSE_FILE — a start-time snapshot would be empty and, being
     # layered OVER os.environ, would blank the fresh value bringup exports. Every docker call below
     # instead passes a LIVE compose overlay read at call time (the fix the in-sim probe lacked).
-    runner = Runner(env={"RPC": rpc, "CHAIN_ID": os.environ.get("CHAIN_ID", str(topology.CHAIN_ID))})
+    chain_id = os.environ.get("CHAIN_ID", str(topology.CHAIN_ID))
+    runner = Runner(env={"RPC": rpc, "CHAIN_ID": chain_id}, dry=dry, echo=dry)
+    saved_env = save_exported_env()
     bu = BringUp(cfg.stack_spec(), runner)
 
     def compose_overlay():
@@ -187,6 +227,24 @@ def run_case(argv=None) -> int:
         else:
             print("CASE-QUORUM: SIM_KEEP_UP=1 — leaving the stack up", flush=True)
 
+    def measured(label: str, live, dry_value):
+        """A measurement read. Live: issued. Dry: recorded as a transcript marker and answered
+        with `dry_value`, never issued — these reads go straight to `core/nodes`, which has no dry
+        seam of its own. `driver.SmokeCtx._delegated` is the same shape; these three cases predate
+        the ctx and have nothing to hang it on."""
+        if dry:
+            runner.step("read", label)
+            return dry_value
+        return live()
+
+    def wait(seconds) -> None:
+        """A measurement window. Dry: recorded, not slept — the window is the assertion only when
+        something is being measured across it, and nothing is."""
+        if dry:
+            runner.step("sleep", f"{seconds}s")
+            return
+        time.sleep(seconds)
+
     def fail(reason: str) -> int:
         print(f"CASE-QUORUM FAIL: {reason}", flush=True)
         try:
@@ -194,7 +252,7 @@ def run_case(argv=None) -> int:
         except Exception:  # noqa: BLE001
             pass
         teardown()
-        return 1
+        return RC_FAIL
 
     try:
         bu.run()
@@ -203,7 +261,7 @@ def run_case(argv=None) -> int:
                       LIVENESS_RT=bu.liveness_rt, TOKEN=bu.token,
                       CHAIN_ID=os.environ.get("CHAIN_ID", str(topology.CHAIN_ID)))
 
-        fin0, epoch0 = _await_dpos_active(nodes, chain, deadline_s=300)
+        fin0, epoch0 = _await_dpos_active(nodes, chain, deadline_s=300, dry=dry)
         print(f"CASE-QUORUM: DPoS active — baseline fin0={fin0} epoch0={epoch0}", flush=True)
 
         # 1. STOP f+1 committee members.
@@ -215,10 +273,14 @@ def run_case(argv=None) -> int:
         # 2. CONFIRM STALL: drain in-flight (<=K) finalizations, then require a flat plateau.
         settle_s = 5 + 2 * int(os.environ.get("RESULT_LAG_K", "3"))
         window_s = 8 + 2 * int(os.environ.get("RESULT_LAG_K", "3"))
-        time.sleep(settle_s)
-        plateau_lo = nodes.finalized_dec()
-        time.sleep(window_s)
-        plateau_hi = nodes.finalized_dec()
+        wait(settle_s)
+        # FAIL-LOUD, not `finalized_dec`: an unreachable producer reads as 0 on BOTH samples, and
+        # `0 > 0` is false — an RPC blip would manufacture the very plateau the case is looking
+        # for. `plateau_hi` is also the up-confirm bar below, so a 0 there silently restores the
+        # `<= 0` bar that bar exists to replace.
+        plateau_lo = measured("baseline_height()", converge.baseline_height, _DRY_FIN)
+        wait(window_s)
+        plateau_hi = measured("baseline_height()", converge.baseline_height, _DRY_FIN)
         print(f"CASE-QUORUM: plateau samples {plateau_lo} -> {plateau_hi} "
               f"({'FLAT — quorum lost' if plateau_hi <= plateau_lo else 'ADVANCING — no stall'})",
               flush=True)
@@ -228,7 +290,8 @@ def run_case(argv=None) -> int:
             runner.run(["docker", "compose", "start", v],
                        env_overlay=compose_overlay(), timeout=120, note=f"probe-start-{v}")
         recover_budget = 180 + cfg.validators * 30
-        down = _wait_victims_up(nodes, runner, compose_overlay, victims, recover_budget)
+        down = _wait_victims_up(nodes, runner, compose_overlay, victims, plateau_hi,
+                                recover_budget, dry=dry)
         if down:
             return fail(evaluate_quorum_case(need, plateau_lo, plateau_hi, down, plateau_hi)[1])
         print(f"CASE-QUORUM: all {need} victims confirmed back up — awaiting finalized resume",
@@ -237,18 +300,22 @@ def run_case(argv=None) -> int:
         # 4. CONFIRM RECOVERY: finalized must climb past the plateau.
         target = plateau_hi + 1
         deadline = time.time() + recover_budget
-        fin_recovered = nodes.finalized_dec()
+        fin_recovered = measured("finalized_dec()", nodes.finalized_dec, target)
         while fin_recovered < target and time.time() < deadline:
             time.sleep(5)
             fin_recovered = nodes.finalized_dec()
 
         # 5. verdict.
+        if dry:
+            teardown()
+            print(f"# {len(runner.log)} commands")
+            return RC_PASS
         ok, reason = evaluate_quorum_case(need, plateau_lo, plateau_hi, [], fin_recovered)
         if not ok:
             return fail(reason)
         print(f"CASE-QUORUM PASS: {reason}", flush=True)
         teardown()
-        return 0
+        return RC_PASS
 
     except ChainError as e:
         return fail(f"chain error [{e.reason_id}]: {e.message}")
@@ -256,3 +323,5 @@ def run_case(argv=None) -> int:
         print("CASE-QUORUM: interrupted", flush=True)
         teardown()
         return 130
+    finally:
+        restore_exported_env(saved_env)

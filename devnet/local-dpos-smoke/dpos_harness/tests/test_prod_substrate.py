@@ -23,6 +23,7 @@ import pytest
 from dpos_harness.cases.smoke import prod, verdicts_prod as V
 from dpos_harness.chain.writes import Chain, ChainError
 from dpos_harness.core.chainpaced import ChainPaced
+from dpos_harness.core.exit_codes import RC_ERROR
 from dpos_harness.core.proc import RunResult, Runner
 from dpos_harness.core.spammer import SpammerPool
 from dpos_harness.stack import production_path as PP
@@ -591,7 +592,7 @@ def test_a_failed_bring_up_still_runs_all_three_cleanup_steps(monkeypatch, tmp_p
     monkeypatch.setattr(prod, "tear_down", lambda r: seen.setdefault("down", True))
 
     rc = prod.run("smoke-x", [], manifest=str(manifest))
-    assert rc == 1
+    assert rc == RC_ERROR, "a bring-up that never measured anything is not a false verdict"
     assert stopped, "the spammer was never reaped"
     assert not manifest.exists(), "the deploy manifest was left for the next run to read"
     assert seen.get("down"), "the stack was never torn down"
@@ -706,6 +707,38 @@ def _bringup(dry=True, **kw):
 
 def _prod_ctx():
     return prod.ProdCtx(_bringup(dry=False))
+
+
+# ══ the two fail-loud readers on ProdCtx ════════════════════════════════════════════════
+
+def test_reading_splits_a_real_answer_into_hex_decimal_and_hash():
+    ctx = _prod_ctx()
+    ctx.check_external = lambda port, dry_value="": "0x80|0xdead"
+    assert ctx.reading(8545, "v0 finalized") == ("0x80", 128, "0xdead")
+
+
+def test_reading_FAILS_LOUD_rather_than_reading_an_unreachable_node_as_height_0():
+    """`hex_to_dec("null")` is 0, and 0 is a usable height: a floor taken from an unreachable node
+    is one the live chain passed minutes ago, so the check passes over a gap that never existed."""
+    ctx = _prod_ctx()
+    ctx.check_external = lambda port, dry_value="": "null|null"
+    with pytest.raises(prod.ProdFailure, match="refusing to read an unreachable node as height 0"):
+        ctx.reading(8545, "v0 finalized")
+
+
+def test_logs_required_returns_the_log_when_the_daemon_answers():
+    ctx = _prod_ctx()
+    ctx.logs_all = lambda svc, dry_value="": "line one\nline two\n"
+    assert ctx.logs_required("validator-0", "panic sweep") == "line one\nline two\n"
+
+
+def test_logs_required_FAILS_LOUD_on_an_unreadable_log():
+    """`logs_all` answers `""` on a timeout and on a daemon error, and empty text satisfies any
+    "the line is not there" — an absence assertion that matches its own absence."""
+    ctx = _prod_ctx()
+    ctx.logs_all = lambda svc, dry_value="": "   \n"
+    with pytest.raises(prod.ProdFailure, match="returned nothing"):
+        ctx.logs_required("validator-0", "panic sweep")
 
 
 def test_the_label_is_required():

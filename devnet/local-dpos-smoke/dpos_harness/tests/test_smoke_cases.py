@@ -22,6 +22,7 @@ import pytest
 from dpos_harness.cases.smoke import asserts, base, driver, epoch, tx, verdicts, vrf, vrf_boundary
 from dpos_harness.cases.smoke.driver import SmokeCtx, SmokeFailure
 from dpos_harness.core import proc
+from dpos_harness.core.exit_codes import RC_ERROR
 from dpos_harness.core.proc import Runner
 from dpos_harness.stack.profiles import StaticProfile
 from dpos_harness.stack.static_stack import StaticStack
@@ -251,17 +252,22 @@ def test_a_passing_case_tears_down_too(monkeypatch):
     assert calls == ["bring-up", "teardown"]
 
 
-def test_a_failed_bring_up_is_not_torn_down_twice(monkeypatch):
-    """`StaticStack` already tears itself down on a failed bring-up, and bash installs its trap
-    AFTER `bring_up_dpos` for the same reason. A second teardown here would be harmless but the
-    ProcError path (compose up failed, nothing running) is not the trap's job."""
+def test_a_failed_bring_up_is_torn_down_and_reported_as_an_ERROR(monkeypatch):
+    """`StaticStack` tears itself down only on the CONVERGE paths (static_stack.py:153,277,317,
+    341). The four lifecycle `run_checked` calls (:208,:231,:298,:312) raise `ProcError` with the
+    containers still up — :298/:312 stop and start a running fleet — and this return sits ahead of
+    the `try/finally` that owns teardown, so without the call here that stack outlives the case.
+    A second `down` on a converge path is a best-effort `run_ok` and costs nothing.
+
+    And it is an ERROR, not a FAIL: nothing was measured, so there is no false property to report.
+    """
     calls = []
     monkeypatch.setattr(StaticStack, "tear_down", lambda self: calls.append("teardown"))
     monkeypatch.setattr(StaticStack, "bring_up_dpos",
                         lambda self: (_ for _ in ()).throw(
                             proc.ProcError(proc.RunResult(argv=["docker"], rc=1), "phase1-up")))
-    assert driver.run("smoke-x", [lambda ctx: pytest.fail("ran an assertion")]) == 1
-    assert calls == []
+    assert driver.run("smoke-x", [lambda ctx: pytest.fail("ran an assertion")]) == RC_ERROR
+    assert calls == ["teardown"]
 
 
 @pytest.mark.parametrize("honours,kept", [(True, True), (False, False)])
@@ -342,6 +348,34 @@ def _seq(*values):
     def read(*_a, **_kw):
         return box.pop(0) if len(box) > 1 else box[0]
     return read
+
+
+# ══ the two fail-loud readers on SmokeCtx ══════════════════════════════════
+
+def test_reading_splits_a_real_answer_into_hex_decimal_and_hash(monkeypatch):
+    ctx, _ = _live_ctx(monkeypatch, check_external=lambda port, dry_value="": "0x80|0xdead")
+    assert ctx.reading(8545, "v0 finalized", "smoke-x") == ("0x80", 128, "0xdead")
+
+
+def test_reading_FAILS_LOUD_rather_than_reading_an_unreachable_node_as_height_0(monkeypatch):
+    """`hex_to_dec("null")` is 0, and 0 is a usable height: a floor taken from an unreachable node
+    is one the live chain passed minutes ago, so the check passes over a gap that never existed."""
+    ctx, _ = _live_ctx(monkeypatch, check_external=lambda port, dry_value="": "null|null")
+    with pytest.raises(SmokeFailure, match="refusing to read an unreachable node as height 0"):
+        ctx.reading(8545, "v0 finalized", "smoke-x")
+
+
+def test_logs_required_returns_the_log_when_the_daemon_answers(monkeypatch):
+    ctx, _ = _live_ctx(monkeypatch, logs_all=lambda svc, dry_value="": "line one\nline two\n")
+    assert ctx.logs_required("validator-0", "smoke-x", "panic sweep") == "line one\nline two\n"
+
+
+def test_logs_required_FAILS_LOUD_on_an_unreadable_log(monkeypatch):
+    """`logs_all` answers `""` on a timeout and on a daemon error, and empty text satisfies any
+    "the line is not there" — an absence assertion that matches its own absence."""
+    ctx, _ = _live_ctx(monkeypatch, logs_all=lambda svc, dry_value="": "   \n")
+    with pytest.raises(SmokeFailure, match="returned nothing"):
+        ctx.logs_required("validator-0", "smoke-x", "panic sweep")
 
 
 def _tx_world(monkeypatch, **over):

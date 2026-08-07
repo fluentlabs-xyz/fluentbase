@@ -832,7 +832,7 @@ where
                     self.roles.insert(epoch, Role::Signer);
                     self.deferred_spawns.remove(&epoch);
                     // Stable greppable token for the production-path smoke
-                    // (`case-production-path.sh`): the in-process Verifier→Signer
+                    // (`smoke-production-path`): the in-process Verifier→Signer
                     // promotion — a joiner that catches up + holds its DKG share
                     // re-promotes here without a process restart.
                     info!(

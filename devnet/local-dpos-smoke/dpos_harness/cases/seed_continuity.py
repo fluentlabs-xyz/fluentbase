@@ -59,6 +59,7 @@ import time
 from bisect import bisect_right
 
 from ..core import topology
+from ..core.exit_codes import RC_FAIL, RC_INCONCLUSIVE, RC_PASS, RC_USAGE
 
 
 # ── PURE VERDICT LAYER (docker-free, unit-tested in tests/test_case_seed_continuity.py) ──
@@ -172,7 +173,7 @@ def successors_of_nullified(view_of: dict, epoch_of: dict):
 def evaluate_seed_continuity_case(controls: list, samples: list, fin_delta: int,
                                   bad_share_nodes: list, m_min: int = 5,
                                   s_min: int = 20, controls_min: int = 3):
-    """Pure verdict. Returns (exit_code, reason); 0 pass, 1 fail, 2 inconclusive.
+    """Pure verdict. Returns `(exit_code, reason)` from `core/exit_codes`.
 
       controls — [(epoch, predicted_idx, observed_idx)] for view 1 of each epoch.
       samples  — [(epoch, view, predicted_idx, observed_idx)] for the successors of
@@ -182,45 +183,52 @@ def evaluate_seed_continuity_case(controls: list, samples: list, fin_delta: int,
 
     Deterministic; no I/O."""
     if bad_share_nodes:
-        return (1, "SHARE-GATE FIRED: engine_demoted_bad_share > 0 on "
-                   f"{' '.join(bad_share_nodes)} — a committee member was demoted for a share "
-                   "that does not verify against its own sharing; the mandatory-partial change "
-                   "would have made this member a nullify-quorum blocker")
+        return (RC_FAIL,
+                "SHARE-GATE FIRED: engine_demoted_bad_share > 0 on "
+                f"{' '.join(bad_share_nodes)} — a committee member was demoted for a share "
+                "that does not verify against its own sharing; the mandatory-partial change "
+                "would have made this member a nullify-quorum blocker")
     if fin_delta <= 0:
-        return (1, f"NO PROGRESS: finalized did not advance ({fin_delta}) with k=1 down — "
-                   "quorum should be intact; nullification may no longer be reachable")
+        return (RC_FAIL,
+                f"NO PROGRESS: finalized did not advance ({fin_delta}) with k=1 down — "
+                "quorum should be intact; nullification may no longer be reachable")
 
     bad_controls = [c for c in controls if c[1] != c[2]]
     if len(controls) < controls_min:
-        return (2, f"INCONCLUSIVE: only {len(controls)} positive control(s) observed "
-                   f"(need {controls_min}) — too few epoch boundaries in the window to "
-                   "validate the offline predictor")
+        return (RC_INCONCLUSIVE,
+                f"INCONCLUSIVE: only {len(controls)} positive control(s) observed "
+                f"(need {controls_min}) — too few epoch boundaries in the window to "
+                "validate the offline predictor")
     if bad_controls:
         e, p, o = bad_controls[0]
-        return (2, f"INCONCLUSIVE: positive control FAILED at epoch {e} — view 1 must take the "
-                   f"fallback arm and the predictor said index {p}, observed {o} "
-                   f"({len(bad_controls)}/{len(controls)} controls wrong). The predictor or its "
-                   "committee/epoch inputs are wrong, so the experimental arm carries no "
-                   "information. First suspects: the epoch value fed to the fallback hash, and "
-                   "the parent-vs-own seed_round offset")
+        return (RC_INCONCLUSIVE,
+                f"INCONCLUSIVE: positive control FAILED at epoch {e} — view 1 must take the "
+                f"fallback arm and the predictor said index {p}, observed {o} "
+                f"({len(bad_controls)}/{len(controls)} controls wrong). The predictor or its "
+                "committee/epoch inputs are wrong, so the experimental arm carries no "
+                "information. First suspects: the epoch value fed to the fallback hash, and "
+                "the parent-vs-own seed_round offset")
 
     if len(samples) < s_min:
-        return (2, f"INCONCLUSIVE: only {len(samples)} successor-of-nullified sample(s) "
-                   f"(need {s_min}) — the stopped member was rarely elected, or the stop never "
-                   "took effect; nothing was measured")
+        return (RC_INCONCLUSIVE,
+                f"INCONCLUSIVE: only {len(samples)} successor-of-nullified sample(s) "
+                f"(need {s_min}) — the stopped member was rarely elected, or the stop never "
+                "took effect; nothing was measured")
     mismatches = [s for s in samples if s[2] != s[3]]
     rate = (len(samples) - len(mismatches)) / len(samples)
     if len(mismatches) < m_min:
-        return (1, f"FALLBACK STILL IN USE: only {len(mismatches)} of {len(samples)} leaders "
-                   f"after a nullified view differed from the offline fallback prediction "
-                   f"(need {m_min}; match rate {rate:.2f}). Under the PRE-change binary this "
-                   "count is 0 with certainty, so this reads as a nullification certificate "
-                   "carrying no seed — the change is not in force")
-    return (0, f"BRANCH-INDEPENDENT: {len(mismatches)} of {len(samples)} leaders after a "
-               f"nullified view differed from the fallback prediction (match rate {rate:.2f}, "
-               f"expected ~1/n by chance); {len(controls)} positive control(s) matched, so the "
-               "predictor is byte-correct. A nullification certificate carried a seed and it "
-               "reached the elector")
+        return (RC_FAIL,
+                f"FALLBACK STILL IN USE: only {len(mismatches)} of {len(samples)} leaders "
+                f"after a nullified view differed from the offline fallback prediction "
+                f"(need {m_min}; match rate {rate:.2f}). Under the PRE-change binary this "
+                "count is 0 with certainty, so this reads as a nullification certificate "
+                "carrying no seed — the change is not in force")
+    return (RC_PASS,
+            f"BRANCH-INDEPENDENT: {len(mismatches)} of {len(samples)} leaders after a "
+            f"nullified view differed from the fallback prediction (match rate {rate:.2f}, "
+            f"expected ~1/n by chance); {len(controls)} positive control(s) matched, so the "
+            "predictor is byte-correct. A nullification certificate carried a seed and it "
+            "reached the elector")
 
 
 # ── ENV PROFILE (minimal, fast, deterministic) ─────────────────────────────────
@@ -245,10 +253,21 @@ def apply_case_env_defaults():
     return {k: os.environ[k] for k in prof}
 
 
+#: The canned finalized height a `--dry-run` walk answers its readiness read with. Announced in
+#: the transcript and never scored: a verdict computed over canned readings is meaningless in both
+#: directions, which is the rule `driver.SmokeCtx.check` already states for the ported cases.
+_DRY_FIN = 100
+
 # ── LIVE POLL HELPERS ──────────────────────────────────────────────────────────
 
-def _await_dpos_active(nodes, chain, deadline_s: int):
-    """Wait until DPoS is active (epoch>=1) and finalized is advancing (two rising samples)."""
+def _await_dpos_active(nodes, chain, deadline_s: int, dry=False):
+    """Wait until DPoS is active (epoch>=1) and finalized is advancing (two rising samples).
+
+    DRY: one probe of the chain-side read (so the transcript shows where the case looks), a canned
+    height, and no sleep. `nodes.finalized_dec` is not Runner-backed, so under dry it is not issued
+    at all."""
+    if dry:
+        return _DRY_FIN, chain.current_epoch()
     deadline = time.time() + deadline_s
     prev, rising, ep, fin = -1, 0, 0, 0
     while time.time() < deadline:
@@ -294,8 +313,10 @@ def _committee_material(nodes, chain, staking_rt: str, n: int):
     search. `getEpochCommitteeWithStakes` is the same source the staking-reader feeds the
     elector from, so reading it removes the guess entirely.
 
-    Read PER VALIDATOR via `getValidatorStatus`, whose return is a FLAT 8-tuple with
-    `totalDelegated` third — one value per line out of `cast`. The committee-wide
+    Read PER VALIDATOR via `getValidatorStatus`, whose return is a FLAT 6-FIELD tuple with
+    `totalDelegated` third — one value per line out of `cast`. The signature comes from
+    `nodes.VALIDATOR_STATUS_SIG`: it is one ABI with one definition, and the copy that used to sit
+    here is exactly what that constant's docstring warns against. The committee-wide
     `getEpochCommitteeWithStakes` would be the more direct source but returns
     `(address[], ConsensusKeys[], uint256[])`, and hand-decoding a nested ABI blob is the
     same class of positional guess this function exists to eliminate.
@@ -319,10 +340,8 @@ def _committee_material(nodes, chain, staking_rt: str, n: int):
         addr, pk = ck.get("validatorAddress", ""), ck.get("peerPubkey", "")
         if not (addr and pk):
             raise ChainError("consensus-keys", f"{topology.validator(i)}: missing address/peerPubkey")
-        raw = nodes.staking_call(
-            "getValidatorStatus(address)(address,uint8,uint256,uint64,uint64,uint16)",
-            addr, addr=staking_rt)
-        field = nodes.rpc.cast_field(3, raw)  # 1-based: 1 owner, 2 status, 3 totalDelegated
+        raw = nodes.staking_call(nodes.VALIDATOR_STATUS_SIG, addr, addr=staking_rt)
+        field = nodes.rpc.cast_field(nodes.TOTAL_DELEGATED_FIELD, raw)
         if not field:
             raise ChainError("committee-read",
                              f"getValidatorStatus({addr}) @ {staking_rt} gave no third field: "
@@ -347,10 +366,18 @@ def _committee_material(nodes, chain, staking_rt: str, n: int):
 # ── THE CASE ───────────────────────────────────────────────────────────────────
 
 def run_case(argv=None) -> int:
+    argv = list(argv or [])
+    dry = "--dry-run" in argv
+    unknown = [a for a in argv if a != "--dry-run"]
+    if unknown:
+        print(f"case-seed: unrecognised argument(s) {unknown} (only --dry-run is accepted)",
+              flush=True)
+        return RC_USAGE
+
     prof = apply_case_env_defaults()
 
     from ..sim.orchestrator import SimConfig
-    from ..stack.bringup import BringUp
+    from ..stack.bringup import BringUp, restore_exported_env, save_exported_env
     from ..core.proc import Runner
     from ..chain.writes import Chain, ChainError
     from ..core.events import EventLog
@@ -363,12 +390,14 @@ def run_case(argv=None) -> int:
     if k > max(1, f - 1):
         print(f"CASE-SEED SETUP ERROR: k={k} leaves no quorum slack at n={n} f={f} "
               f"(use k <= {max(1, f - 1)})", flush=True)
-        return 2
+        return RC_USAGE
 
     window_s = int(os.environ.get("SEED_CASE_WINDOW_S", "600"))
     rpc = os.environ.get("RPC", topology.DEFAULT_RPC_URL)
     keep_up = os.environ.get("SIM_KEEP_UP", "0") == "1"
-    runner = Runner(env={"RPC": rpc, "CHAIN_ID": os.environ.get("CHAIN_ID", str(topology.CHAIN_ID))})
+    chain_id = os.environ.get("CHAIN_ID", str(topology.CHAIN_ID))
+    runner = Runner(env={"RPC": rpc, "CHAIN_ID": chain_id}, dry=dry, echo=dry)
+    saved_env = save_exported_env()
     bu = BringUp(cfg.stack_spec(), runner)
 
     def compose_overlay():
@@ -392,7 +421,7 @@ def run_case(argv=None) -> int:
             print("CASE-SEED: SIM_KEEP_UP=1 — leaving the stack up", flush=True)
 
     def fail(code: int, reason: str, extra: dict = None) -> int:
-        tag = "FAIL" if code == 1 else "INCONCLUSIVE"
+        tag = "FAIL" if code == RC_FAIL else "INCONCLUSIVE"
         print(f"CASE-SEED {tag}: {reason}", flush=True)
         try:
             ev = EventLog()
@@ -417,19 +446,31 @@ def run_case(argv=None) -> int:
                       LIVENESS_RT=bu.liveness_rt, TOKEN=bu.token,
                       CHAIN_ID=os.environ.get("CHAIN_ID", str(topology.CHAIN_ID)))
 
-        fin0, epoch0 = _await_dpos_active(nodes, chain, deadline_s=300)
+        fin0, epoch0 = _await_dpos_active(nodes, chain, deadline_s=300, dry=dry)
         print(f"CASE-SEED: DPoS active — baseline fin0={fin0} epoch0={epoch0}", flush=True)
 
-        sorted_pks, idx_to_svc, cum, total, stakes0 = _committee_material(
-            nodes, chain, bu.staking_rt, n)
-        svc_to_idx = {svc: i for i, svc in idx_to_svc.items()}
-        print(f"CASE-SEED: committee weights (compacted) "
-              f"{ {s: v // BALANCE_COMPACT_PRECISION for s, v in stakes0.items()} }", flush=True)
+        # Not under dry: every input the elector needs is read off the chain, and a dry Runner
+        # answers "" to all of them — `_service_pubkeys` refuses the first empty peer pubkey, which
+        # is the guard doing its job. There is no committee to weigh in a rehearsal.
+        if not dry:
+            sorted_pks, idx_to_svc, cum, total, stakes0 = _committee_material(
+                nodes, chain, bu.staking_rt, n)
+            svc_to_idx = {svc: i for i, svc in idx_to_svc.items()}
+            print(f"CASE-SEED: committee weights (compacted) "
+                  f"{ {s: v // BALANCE_COMPACT_PRECISION for s, v in stakes0.items()} }",
+                  flush=True)
 
         for v in victims:
             runner.run(["docker", "compose", "stop", "--timeout", "40", v],
                        env_overlay=compose_overlay(), timeout=120, note=f"seed-stop-{v}")
         print(f"CASE-SEED: stopped {' '.join(victims)} — their views will nullify", flush=True)
+
+        # The case issues no further WRITES: everything past this point is the observation window
+        # and the scoring over it, and neither has anything to observe on a rehearsal.
+        if dry:
+            teardown()
+            print(f"# {len(runner.log)} commands")
+            return RC_PASS
 
         since = f"{window_s + 30}s"
         time.sleep(window_s)
@@ -439,9 +480,10 @@ def run_case(argv=None) -> int:
         # precondition — the predictor uses CURRENT stake for every epoch in the window.
         _, _, _, _, stakes1 = _committee_material(nodes, chain, bu.staking_rt, n)
         if stakes1 != stakes0:
-            return fail(2, f"INCONCLUSIVE: committee stake changed during the window "
-                           f"({stakes0} -> {stakes1}) — the predictor's weights are only valid "
-                           "for a static committee, so no view can be scored")
+            return fail(RC_INCONCLUSIVE,
+                        f"INCONCLUSIVE: committee stake changed during the window "
+                        f"({stakes0} -> {stakes1}) — the predictor's weights are only valid "
+                        "for a static committee, so no view can be scored")
 
         logs = {svc: nodes.logs_since(svc, since) for svc in live}
         view_of, epoch_of, proposer_of = parse_view_leader_map(logs)
@@ -466,23 +508,32 @@ def run_case(argv=None) -> int:
                 continue
             samples.append((e, v, fallback_leader_index(e, v, sorted_pks, cum, total), observed))
 
-        bad_share = [s for s in live
-                     if nodes.beacon_metric(s, "engine_demoted_bad_share") > 0]
+        # `beacon_metric` answers -1 for an unreachable endpoint and 0 for a counter that is really
+        # zero. Folding both into `> 0` scored the gate over nodes that never answered.
+        reads = {s: nodes.beacon_metric(s, "engine_demoted_bad_share") for s in live}
+        unreadable = [s for s, v in reads.items() if v < 0]
+        if unreadable:
+            return fail(RC_INCONCLUSIVE,
+                        f"beacon metrics unreadable on {unreadable} — the bad-share gate cannot be "
+                        "evaluated over nodes that did not answer")
+        bad_share = [s for s, v in reads.items() if v > 0]
 
         code, reason = evaluate_seed_continuity_case(
             controls, samples, fin1 - fin0, bad_share)
-        if code != 0:
+        if code != RC_PASS:
             table = "\n".join(f"{e} {v} pred={p} obs={o}" for e, v, p, o in samples)
             return fail(code, reason, {"table.txt": table,
                                        "metrics.txt": "\n\n".join(
                                            f"### {s}\n{nodes.node_metrics(s)}" for s in live)})
         print(f"CASE-SEED PASS: {reason}", flush=True)
         teardown()
-        return 0
+        return RC_PASS
 
     except ChainError as e:
-        return fail(1, f"chain error [{e.reason_id}]: {e.message}")
+        return fail(RC_FAIL, f"chain error [{e.reason_id}]: {e.message}")
     except KeyboardInterrupt:
         print("CASE-SEED: interrupted", flush=True)
         teardown()
         return 130
+    finally:
+        restore_exported_env(saved_env)

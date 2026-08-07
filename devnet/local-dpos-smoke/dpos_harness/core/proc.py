@@ -331,6 +331,27 @@ class Runner:
 _AMBIENT = Runner(record=False)
 
 
+def run_streaming(argv, env_overlay: dict = None, cwd: str = None, timeout=None) -> int:
+    """Spawn a child whose OUTPUT GOES STRAIGHT TO THIS PROCESS'S stdout/stderr; return its code.
+
+    THE THIRD SHAPE, and the one neither channel above can serve: both of them capture. The gate
+    aggregate (`cli._case_all`) runs each smoke case as a child over a multi-hour suite and the
+    operator watches it live — capturing would hold every case's output until the end and then
+    print it as a wall.
+
+    NO TRANSCRIPT, for the ambient channel's reason: what the child does is recorded by the child.
+    What this keeps is the env merge, which is the part call sites get wrong (see the header).
+
+    NO WALL-CLOCK CEILING BY DEFAULT, and that is a decision rather than an omission. Every poll
+    and wait inside a case is already bounded by its own budget, so a suite-level timeout could
+    only ever fire on a case whose own budgets had already failed to — killing it from the outside
+    would replace a diagnosable red with a bare signal. Pass one explicitly if a caller has a
+    ceiling that means something."""
+    argv = [str(a) for a in argv]
+    env = {**os.environ, **(env_overlay or {})}
+    return subprocess.run(argv, env=env, cwd=cwd, timeout=timeout).returncode
+
+
 def read(argv, timeout: float = 15, cwd: str = None, env_overlay: dict = None) -> str:
     """Run a READ-ONLY command; return its stdout VERBATIM (no strip — callers that want a token
     strip it themselves, and the metrics/log readers need the newlines), "" on any failure or

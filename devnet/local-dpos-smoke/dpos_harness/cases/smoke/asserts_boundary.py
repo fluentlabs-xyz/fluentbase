@@ -62,8 +62,13 @@ from . import asserts_onchain as ao, verdicts_boundary as vb, verdicts_onchain a
 
 _say = ao._say
 
+#: The dry stand-in for the victim's log. Non-empty on purpose: `logs_required` refuses an empty
+#: read, and every gate below is a DELTA over this text, so a canned "" would take the dry
+#: transcript down the unreadable-log path instead of through the choreography.
+_DRY_LOG = "(dry) victim log"
 
-def _snapshot(ctx, victim: str) -> dict:
+
+def _snapshot(ctx, case: str, victim: str) -> dict:
     """One log read + one metrics scrape, reduced to everything the gates compare against.
 
     Taken BEFORE the disruption and again after it; every verdict below is the difference of two
@@ -77,8 +82,12 @@ def _snapshot(ctx, victim: str) -> dict:
     spelling through `nodes.gauge_val`'s anchored matcher returns ""), and a dead :9100 returns ""
     for everything. `vb.evaluate_metrics_plane_live` gates the `after` samples on having PARSED,
     which is the only reading that separates a live registry from a silent one.
+
+    THE LOG READ IS FAIL-LOUD for the same reason. Every gate below is `after − base`, and an
+    unreadable log reduces both sides to zero — "did not rise" is then satisfied by a node nobody
+    could read.
     """
-    log = ctx.logs_all(victim)
+    log = ctx.logs_required(victim, case, "boundary snapshot", dry_value=_DRY_LOG)
     return {
         "seed_rejump": vb.count_lines(log, vb.SEED_LOG_REJUMP),
         "seed_fail": vb.count_lines(log, vb.SEED_FAIL_LOG),
@@ -123,7 +132,7 @@ def _wait_restart_window(ctx, case: str, victim: str, floor: int, timeout: int) 
               f"<= {vb.RESTART_MAX_OFFSET} — the landing gets a full epoch to sign in)")
 
 
-def _await_landing_epoch_promote(ctx, victim: str, base: dict) -> None:
+def _await_landing_epoch_promote(ctx, case: str, victim: str, base: dict) -> None:
     """Hold the `after` snapshot until the victim has logged its LANDING-EPOCH promotion.
 
     WHY THE SNAPSHOT NEEDS A WAIT AT ALL. `_await_rejoin` answers on the victim's RPC, and its
@@ -139,7 +148,8 @@ def _await_landing_epoch_promote(ctx, victim: str, base: dict) -> None:
     anything, it only decides WHEN the one honest reading is taken.
     """
     def promoted():
-        log = ctx.logs_all(victim)
+        log = ctx.logs_required(victim, case, "landing-epoch promote wait",
+                                dry_value=_DRY_LOG)
         landings = vb.landing_heights(log)
         if not landings:
             return False
@@ -167,7 +177,7 @@ def _assert_landed_and_entered(ctx, case: str, victim: str, base: dict, after: d
     landings = after["landings"]
     ctx.check(case, *vb.evaluate_landed(landings, victim, vo.rejump_threshold(ctx.interval)),
               on_fail=dump)
-    landing = landings[-1] if landings else ctx.finalized_dec()
+    landing = landings[-1] if landings else ctx.baseline_height()
 
     ok, msg, boundary = vb.evaluate_entered_landing_epoch(base["entered"], after["entered"],
                                                           landing, ctx.interval,
@@ -308,7 +318,7 @@ def assert_rejump_signer(ctx) -> None:
 
     ao._wait_bootstrap_dkg(ctx, case, vb.BOUNDARY_DKG_WAIT_S, tail=vb.BOUNDARY_LOG_TAIL)
 
-    base = _snapshot(ctx, victim)
+    base = _snapshot(ctx, case, victim)
     pre = ctx.baseline_height()
     _say(ctx, f"── victim={victim} down-gap>={gap} "
               f"(re-jump gate={vo.rejump_threshold(ctx.interval)}, cold-start gate="
@@ -326,9 +336,9 @@ def assert_rejump_signer(ctx) -> None:
 
     ctx.compose_start(victim, note=f"boundary-start {victim}")
     _await_rejoin(ctx, case, victim, floor=pre + gap)
-    _await_landing_epoch_promote(ctx, victim, base)
+    _await_landing_epoch_promote(ctx, case, victim, base)
 
-    after = _snapshot(ctx, victim)
+    after = _snapshot(ctx, case, victim)
     landing = _assert_landed_and_entered(ctx, case, victim, base, after)
     _assert_signs_in_landing_epoch(ctx, case, victim, base, after, landing)
     _report_seeding(ctx, case, victim, base, after)

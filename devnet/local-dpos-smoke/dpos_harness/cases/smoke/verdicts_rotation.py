@@ -367,27 +367,114 @@ def evaluate_probe_members(members, joiner_service: str):
     return True, ""
 
 
-def dkg_lifecycle_lines(logs: str, tail: int = 4):
-    """`:240-241` — `grep -E "ceremony started|PK_epoch \\+ share computed \\+ stored" | tail -4`
-    over the joiner's ANSI-STRIPPED log.
+def dkg_lifecycle_lines(logs: str, epoch, tail: int = 4):
+    """The joiner's DKG lifecycle lines FOR `epoch`, over an ANSI-STRIPPED log.
 
-    No `epoch=` filter, matching bash: the joiner runs exactly one ceremony before it promotes, so
-    the messages alone are the evidence and adding an epoch filter would need E_new-1, which the
-    case does not compute."""
-    hits = [line for line in (logs or "").splitlines()
-            if any(m in line for m in DKG_LIFECYCLE_LINES)]
+    THE FILTER RUNS BEFORE THE TAIL. `tail` keeps the last N matches, so trimming first would push
+    the E_new pair out of a busy log and report a joiner that ran the ceremony as one that never
+    did. The unfiltered version matched ANY ceremony the joiner ever ran — a previous epoch's pair
+    satisfied the proof for E_new.
+
+    The old docstring justified having no filter by saying the case does not compute E_new-1. The
+    code contradicts it — `e_new` is in scope at the call site — and E_new-1 is the wrong epoch
+    anyway: both lines carry the epoch they are FOR, not the epoch they are logged in
+    (`crates/dpos/consensus/src/beacon/actor.rs:959,1133`), so the filter is `epoch=E_new`.
+
+    Matching goes through `VO.epoch_field_lines`, whose field pattern is right-anchored so
+    `epoch=2` does not also match `epoch=20`."""
+    hits = [ln for m in DKG_LIFECYCLE_LINES for ln in VO.epoch_field_lines(logs, m, epoch)]
     return hits[-int(tail):] if tail else hits
 
 
-def evaluate_early_join(hits):
-    """`:242-246` — the EARLY-JOIN proof. An ABSENCE here is the failure: the joiner logging no
-    ceremony lifecycle means it did NOT deal/receive its committee[E_new] share from its follower
-    phase, i.e. it would be a beacon OBSERVER rather than an early-join signer."""
-    if hits:
+#: How often the early-join wait re-reads the joiner's log. Coarser than the 1-2s gates nearby
+#: because each poll is a WHOLE `docker compose logs` of a growing log, and the thing being waited
+#: for takes seconds to tens of seconds, not milliseconds.
+EARLY_JOIN_POLL_S = 5
+
+
+def evaluate_early_join(hits, epoch, window_closed=False, budget_s=None):
+    """The EARLY-JOIN proof: BOTH lifecycle lines for `epoch`, observed BEFORE the boundary.
+
+    `ceremony started` on its own is a ceremony that BEGAN AND FAILED QUALIFICATION — the joiner
+    dealt, never reached `PK_epoch + share computed + stored`, and enters E_new holding no share.
+    That shareless observer is precisely the failure this check exists to catch, and accepting
+    either line let it through.
+
+    IT IS A WAIT, NOT A SAMPLE. Live on 2026-08-03 the joiner logged `ceremony started epoch=6` and
+    the case read the log NINE SECONDS later, before the ceremony had finalized — a red gate over a
+    healthy run. The DKG for E_new runs during E_new-1 and seals near its end, so one sample taken
+    right after `scan_for_rotation` returns is far too early.
+
+    `window_closed` IS THE UPPER BOUND AND IT IS NOT A BUDGET. The claim is that the joiner
+    completed the ceremony FROM ITS FOLLOWER PHASE, and that phase ends when E_new's first block is
+    finalized — after that it is a member, and a share stored then is a strictly weaker property
+    than the one the OK line asserts. So the wait stops at the boundary even with budget left.
+
+    NOT the seal deadline (`epoch_start(E_new) − DKG_MARGIN_BLOCKS`), which is tighter: that is the
+    PRODUCT's contract for when a ceremony must seal, and `smoke-vrf-dkg-halt` /
+    `smoke-vrf-dkg-durability` are the cases that rail on it. A share stored between the seal
+    deadline and the boundary would still be from the follower phase, so failing it here would red
+    this case for a property it does not own and its message does not describe."""
+    started = any(DKG_LIFECYCLE_LINES[0] in h for h in hits)
+    stored = any(DKG_LIFECYCLE_LINES[1] in h for h in hits)
+    if started and stored:
         return True, ""
-    return False, ("EARLY-JOIN — validator-5 logged NO live-DKG ceremony lifecycle during E_new-1; "
-                   "it did NOT deal/receive its committee[E_new] share from its follower phase "
-                   "(would be a beacon OBSERVER, not an early-join signer)")
+    if not started:
+        return False, (f"EARLY-JOIN — validator-5 logged NO ceremony at all for committee"
+                       f"[{epoch}]: it never even began the DKG from its follower phase, so it "
+                       "enters E_new as a beacon OBSERVER, not a signer")
+    if window_closed:
+        return False, (f"EARLY-JOIN — validator-5 started committee[{epoch}]'s DKG but stored no "
+                       f"share before E_new's first block finalized. The follower-phase window is "
+                       "CLOSED: a share it stores now would be stored as a MEMBER, which is not "
+                       "the property this case asserts")
+    return False, (f"EARLY-JOIN — validator-5 started committee[{epoch}]'s DKG but had stored no "
+                   f"share after {budget_s}s, with the follower-phase window still open (E_new's "
+                   "first block is not finalized yet) — the ceremony is not completing")
+
+
+#: How many lifecycle lines the failure dump keeps. A bounded tail, not the log: the point is to
+#: show WHICH epochs the joiner ran ceremonies for, and a handful of rows settles that.
+DKG_AUDIT_TAIL = 40
+
+
+def dkg_lifecycle_audit(logs: str, tail: int = DKG_AUDIT_TAIL):
+    """EVERY lifecycle line with its epoch parsed out, UNFILTERED — `[(epoch, line), …]`.
+
+    The failure dump, and it exists because the filtered list cannot be one: `dkg_lifecycle_lines`
+    returns `[]` in precisely the case the filter is what is wrong, so printing it shows nothing at
+    all. This shows what the filter REJECTED, which separates the three readings of a red gate:
+    a ceremony logged for a DIFFERENT epoch means the filter is looking at the wrong number; no
+    ceremony at any epoch means the joiner never dealt; `ceremony started` alone at the right
+    epoch means it dealt and failed qualification.
+
+    `"?"` for a line with no `epoch=` field at all — that would itself be a finding, since both
+    lifecycle lines are logged with one (`beacon/actor.rs:959,1133`)."""
+    rows = []
+    for line in (logs or "").splitlines():
+        if any(m in line for m in DKG_LIFECYCLE_LINES):
+            hit = _EPOCH_FIELD_RE.search(line)
+            rows.append((hit.group(1) if hit else "?", line.strip()))
+    return rows[-int(tail):] if tail else rows
+
+
+def evaluate_joiner_holds_share(present: bool, epoch, joiner_idx):
+    """The joiner holds a NON-EMPTY share file for E_new on disk.
+
+    This is the only witness available that DISCRIMINATES. `ACTIVE_LINE` growth does not: the
+    deriver logs `beacon: threshold prev_randao active` on EVERY node whose certificate carries a
+    seed (`crates/node/src/derive.rs:78-86`), regardless of whether that node contributed a
+    partial — so a shareless observer grows the count exactly like a real signer.
+
+    WHAT THE PROBE DOES NOT SHOW: that the share is valid, or that it sits on the committed
+    polynomial. The file could be stale or corrupt. All that is claimed is a non-empty file FOR
+    THIS EPOCH, which is strictly more than the previous check asserted."""
+    if present:
+        return True, ""
+    return False, (f"validator-{joiner_idx} holds no beacon-share-e{epoch}.bin — it entered "
+                   f"committee[{epoch}] without a share, i.e. as a beacon OBSERVER rather than a "
+                   "signer (the ACTIVE_LINE count cannot see this: the deriver logs that line on "
+                   "every node that receives a seeded certificate)")
 
 
 def evaluate_member_active_growth(before, after, service: str, joiner_service: str):
@@ -1045,22 +1132,30 @@ def forge_epoch(logs: str, fallback=None):
     diagnostic. The strip happens in the reading half; this half is given clean text.
 
     LAST, not first: the most recent forged boundary is the one certain to be finalised by the time
-    the SAFETY window is asserted. Falls back to E_new, which is also a change-epoch boundary where
-    an honest leader commits the real key, so either is a valid safety anchor."""
-    hits = _EPOCH_FIELD_RE.findall("\n".join(
-        line for line in (logs or "").splitlines() if FORGE_LINE in line))
+    the SAFETY window is asserted. The `fallback` is a last resort only — `evaluate_forge_epoch`
+    gates on the LOG hits, so a run that reaches this function's fallback arm has already failed."""
+    hits = forge_epoch_hits(logs)
     if hits:
         return hits[-1]
     return str(fallback) if fallback not in (None, "") else ""
 
 
-def evaluate_forge_epoch(epoch):
-    """`:550-551` — a forged epoch could be determined from either source."""
-    if str(epoch or "").isdigit():
-        return True, ""
-    return False, ("forge fired but could not determine the forged epoch (neither the log's epoch= "
-                   "field nor a recorded v5-entry change boundary) — observability gap; raise the "
-                   "committee-poll cadence")
+def forge_epoch_hits(logs: str):
+    """Every `epoch=<N>` on a forge line, in order, over ANSI-STRIPPED text."""
+    return _EPOCH_FIELD_RE.findall("\n".join(
+        line for line in (logs or "").splitlines() if FORGE_LINE in line))
+
+
+def evaluate_forge_epoch(hits, fallback):
+    """The forged epoch was READ FROM THE LOG, not substituted.
+
+    The silent fallback to `e_new` returned a real digit, so the verdict passed while the safety
+    window anchored on an HONEST boundary — the one where an honest leader committed the real
+    key — and the boundary the byzantine actually forged at was never inspected."""
+    if not hits:
+        return False, (f"could not read the forged epoch from the byzantine node's log; refusing "
+                       f"to anchor the safety window on the fallback {fallback}")
+    return True, ""
 
 
 def evaluate_c_gate_rejected(count):

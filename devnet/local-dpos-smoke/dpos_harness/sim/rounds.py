@@ -186,8 +186,16 @@ def _apply_chain_write(fn, arg, event, label) -> bool:
         return False
 
 
+# The action names this dispatch actually HANDLES. Used only by the coverage tail below: a name
+# no arm matches falls through with `applied_msg` still at its default, so without this set the
+# tally would record a fire for a round in which nothing happened.
+APPLY_ACTIONS = ("graceful_stop_restart", "sigkill_restart", "cpu_throttle",
+                 "dkg_midwindow_restart", "delegate_shift", "byzantine_equivocate",
+                 "byzantine_forge_pk", "voluntary_exit")
+
+
 def apply_action(state, act: "actions.Actuators", action: str, victim: str,
-                 cur_epoch: int, *, chain, event=None):
+                 cur_epoch: int, *, chain, event=None, tally=None):
     """The apply dispatch — the SAME one the self-check dry-runs. Transient restart/kill/throttle
     faults set RESTORE_AT to cur_epoch (restore ASAP; confirm-before-free still holds the against-f
     slot until a real rejoin). Only the EXPLICIT byzantine / voluntary_exit actions cause a lasting
@@ -277,3 +285,18 @@ def apply_action(state, act: "actions.Actuators", action: str, victim: str,
 
     if applied_msg and event:
         event("churn", applied_msg)
+
+    # Coverage (instrumentation only — nothing below reads these counters). The fire is recorded
+    # HERE, at the tail of the apply dispatch, because this is the only point that knows whether
+    # the action took effect: `applied_msg` is blanked by exactly the two arms whose chain write
+    # can fail to land (delegate_shift, voluntary_exit), so a deferral cannot be counted as a fire.
+    # The actuator arms have no such signal today — their `act_*` return is discarded upstream
+    # (SIM_AUDIT §E) — so for those "applied" means "the actuator was invoked and the state was
+    # marked", which is still strictly stronger than "the lottery selected it".
+    if tally is not None:
+        if action not in APPLY_ACTIONS:
+            tally.skip_action(action, "unhandled-by-apply")
+        elif applied_msg:
+            tally.fire(action)
+        else:
+            tally.skip_action(action, "chain-write-deferred")

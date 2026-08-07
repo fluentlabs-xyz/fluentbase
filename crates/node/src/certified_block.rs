@@ -87,7 +87,7 @@ mod tests {
 
     /// The follower and server agree on the JSON wire contract: camelCase keys and
     /// a lossless round-trip. (Full cert decode+verify is exercised end-to-end in the
-    /// `case-cert-follow.sh` smoke against a running chain — a valid multisig
+    /// `smoke-cert-follow` smoke against a running chain — a valid multisig
     /// `Finalization` fixture has no fluentbase-side constructor.)
     #[test]
     fn dto_serde_round_trip_is_camel_case() {

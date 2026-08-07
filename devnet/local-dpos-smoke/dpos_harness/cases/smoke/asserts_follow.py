@@ -79,8 +79,8 @@ def _say(ctx, message: str) -> None:
         print(message, flush=True)
 
 
-def _align_diag(ctx, *labelled_ports) -> str:
-    """`(<label>=<reading>, …, v0=<reading>)` for a FAILED `wait_follower_align`.
+def _align_diag(ctx, *labelled_services) -> str:
+    """`(<label>=<reading>, …, v0=<reading>)` for a FAILED align wait.
 
     Pass this to `ctx.check` as a CALLABLE message — `check` evaluates it only on the failure
     path (its docstring: the bash diagnostic RPCs live inside the failing `echo`, and an f-string
@@ -89,28 +89,9 @@ def _align_diag(ctx, *labelled_ports) -> str:
     Without it the artifact is the follower's log tail alone, which cannot separate "three blocks
     behind" from "on a different chain" — and those are opposite verdicts. `case-cert-catchup.sh`
     already prints both sides (`victim=… v0=…`, :170); this is that, for these cases."""
-    parts = [f"{label}={ctx.check_external(port)}" for label, port in labelled_ports]
+    parts = [f"{label}={ctx.overlay_check_node(svc)}" for label, svc in labelled_services]
     parts.append(f"v0={ctx.check_external(topology.HOST_RPC_PORT)}")
     return "(" + ", ".join(parts) + ")"
-
-
-def _reading(ctx, case: str, port, what: str):
-    """`check_external <port>` -> `(head_hex, head_dec, hash)`, FAIL-LOUD on the sentinel.
-
-    §2.4 item 5, at the two places in this chunk where a reading is used as DATA rather than as a
-    verdict. `nodes.hex_to_dec("null")` is 0, and 0 is a perfectly usable height: `cert-follow`
-    would compute its back-fill gap from an unreachable follower and require v0 to pass block 33,
-    which a live chain did minutes ago — the phase would still pass, over a gap that was never
-    created. `cert-cascade` would push `"null"` into a `bytes32` and fail three commands later.
-
-    Deliberately NOT used for the tamper or bogus readings: there `"null"` is the expected PASS
-    value, and its verdict function is the thing that says so."""
-    reading = ctx.check_external(port, dry_value="0x80|0x" + "ab" * 32)
-    head, _, digest = (reading or "").partition("|")
-    if not head.startswith("0x"):
-        raise SmokeFailure(case, f"{what} on host port {port} read {reading!r} — refusing to read "
-                                 "an unreachable node as height 0")
-    return head, nodes.hex_to_dec(head), digest
 
 
 def _balance(ctx, case: str, addr: str, rpc_url: str) -> int:
@@ -146,7 +127,7 @@ def assert_cert_follow(ctx) -> None:
     accepted every certificate it was handed would pass both positive phases perfectly.
     """
     case = "smoke-cert-follow"
-    anchor = ctx.finalized_dec()
+    anchor = ctx.baseline_height()
     _say(ctx, f"smoke-cert-follow: DPoS converged; anchor finalized={anchor}")
 
     # ── Phase 1: subscribe-align ──────────────────────────────────────────────────────
@@ -154,15 +135,15 @@ def assert_cert_follow(ctx) -> None:
     ctx.overlay_up("cert-follower", note="cf-up-follower")
 
     align_target = vf.align_floor(anchor, ctx.interval)
-    aligned = ctx.wait_follower_align(vf.CF_PORT, align_target, vf.CF_ALIGN_S)
+    aligned = ctx.overlay_wait_align(vf.CF_SERVICE, align_target, vf.CF_ALIGN_S)
     ctx.check(case, bool(aligned),
               lambda: f"cert-follower did not align with v0 past {align_target} "
-                      + _align_diag(ctx, ("cert-follower", vf.CF_PORT)),
+                      + _align_diag(ctx, ("cert-follower", vf.CF_SERVICE)),
               on_fail=lambda: ctx.overlay_dump_logs(vf.CF_LOG_TAIL, "cert-follower"))
     _ok(ctx, "phase 1 subscribe-align", f"cert-follower aligned with v0 at {aligned}")
 
     # ── Phase 2: gap back-fill ────────────────────────────────────────────────────────
-    _, f1, _ = _reading(ctx, case, vf.CF_PORT, "cert-follower finalized")
+    _, f1, _ = ctx.overlay_reading(vf.CF_SERVICE, "cert-follower finalized", case)
     _say(ctx, f"smoke-cert-follow: stopping cert-follower at finalized={f1}")
     ctx.overlay_stop("cert-follower", timeout=vf.CF_STOP_TIMEOUT_S, note="cf-stop-follower")
     # NON-FATAL, exactly as bash: `shutdown_flushed` resolves the container through the BARE
@@ -176,14 +157,14 @@ def assert_cert_follow(ctx) -> None:
     _say(ctx, f"  waiting for v0 to advance past {gap_target} before restart")
     ctx.check(case, ctx.wait_finalized_ge(gap_target + 1, vf.CF_GAP_ADVANCE_S),
               f"v0 did not advance past {gap_target}")
-    f2 = ctx.finalized_dec()
+    _, f2, _ = ctx.reading(topology.HOST_RPC_PORT, "v0 finalized", case)
 
     _say(ctx, f"  restarting cert-follower; must back-fill [{f1 + 1} .. {f2}] via getFinalization")
     ctx.overlay_start("cert-follower", note="cf-start-follower")
-    caught = ctx.wait_follower_align(vf.CF_PORT, f2, vf.CF_ALIGN_S)
+    caught = ctx.overlay_wait_align(vf.CF_SERVICE, f2, vf.CF_ALIGN_S)
     ctx.check(case, bool(caught),
               lambda: f"cert-follower did not back-fill the gap to >= {f2} "
-                      + _align_diag(ctx, ("cert-follower", vf.CF_PORT)),
+                      + _align_diag(ctx, ("cert-follower", vf.CF_SERVICE)),
               on_fail=lambda: ctx.overlay_dump_logs(vf.CF_LOG_TAIL, "cert-follower"))
     _ok(ctx, "phase 2 gap back-fill", f"cert-follower caught up to {caught} (>= f2={f2})")
 
@@ -203,23 +184,36 @@ def assert_cert_follow(ctx) -> None:
 
     v0_before = ctx.finalized_dec()
     ctx.overlay_up("cert-follower-tamper", note="cf-up-tamper")
+    # LIVENESS FIRST. Everything below concludes "it rejected" from an ABSENCE, and a follower that
+    # never started produces the same absence. `"null"` stays a legitimate PASS on the finalized
+    # read (reth leaves it unset until something finalizes), so the witness has to be a separate
+    # reading — `eth_blockNumber`, which a live node answers even with `finalized` unset.
+    ctx.check(case, *vf.evaluate_tamper_alive(
+        ctx.poll(lambda: ctx.overlay_head_dec(vf.TAMPER_SERVICE) >= 0, vf.TAMPER_UP_S)),
+        on_fail=lambda: ctx.overlay_dump_logs(vf.CF_LOG_TAIL, "cert-follower-tamper", "cert-mitm"))
     _say(ctx, f"  tamper-follower up; observing for {vf.TAMPER_OBSERVE_S}s while v0 advances")
     # THE OBSERVATION WINDOW IS THE ASSERTION — see the module header. Not a settle time.
     ctx.sleep(vf.TAMPER_OBSERVE_S)
     v0_after = ctx.finalized_dec()
-    tamper_head = ctx.check_external(vf.TAMPER_PORT, dry_value="null|null").split("|", 1)[0]
+    tamper_head = ctx.overlay_check_node(vf.TAMPER_SERVICE,
+                                         dry_value="null|null").split("|", 1)[0]
 
     # The control first: a chain-wide stall makes the follower's stillness meaningless.
     ctx.check(case, *vf.evaluate_v0_advanced(v0_before, v0_after))
     ctx.check(case, *vf.evaluate_tamper_no_progress(tamper_head),
               on_fail=lambda: ctx.overlay_dump_logs(vf.CF_LOG_TAIL, "cert-follower-tamper",
                                                     "cert-mitm"))
-    if vf.tamper_rejection_hint(ctx.overlay_logs("cert-follower-tamper",
-                                                 tail=vf.TAMPER_HINT_TAIL)):
-        _say(ctx, "  (hint) rejection fired at the driver live-tail verify")
+    # AND THE DRIVER SAID SO. Zero progress cannot separate "the certs were refused" from "they
+    # were never delivered" — a MITM that came up but forwarded nothing reads identically.
+    rejected, msg, matched = vf.evaluate_tamper_rejected(
+        ctx.overlay_logs("cert-follower-tamper", tail=vf.TAMPER_HINT_TAIL,
+                         dry_value=vf.TAMPER_REJECT_LINES[0]))
+    ctx.check(case, rejected, msg,
+              on_fail=lambda: ctx.overlay_dump_logs(vf.CF_LOG_TAIL, "cert-follower-tamper",
+                                                    "cert-mitm"))
     _ok(ctx, "phase 3 tampered-reject",
-        f"tamper-follower made ZERO finalized progress (finalized={tamper_head}) while v0 "
-        f"advanced {v0_before}→{v0_after}")
+        f"tamper-follower made ZERO finalized progress (finalized={tamper_head}) and logged "
+        f"{matched!r} while v0 advanced {v0_before}→{v0_after}")
 
     _ok(ctx, case, "subscribe-align + gap back-fill + tampered-cert rejection all verified")
 
@@ -240,7 +234,7 @@ def assert_cert_cascade(ctx) -> None:
     The "L1" here is the devnet's own RPC: only the DATA is mocked, the read path is the real one.
     """
     case = "smoke-cert-cascade"
-    anchor = ctx.finalized_dec()
+    anchor = ctx.baseline_height()
     _say(ctx, f"smoke-cert-cascade: DPoS converged; anchor finalized={anchor}")
 
     key = ctx.funded_key()
@@ -257,7 +251,7 @@ def assert_cert_cascade(ctx) -> None:
     # ONE read, both fields. Bash calls `check_external 8545` TWICE here (`:33-34`), once for the
     # height and once for the hash — two round trips that can straddle a new block, so the pair it
     # pushes may name a height and a hash from DIFFERENT blocks. One atomic read cannot.
-    fin_hex, _, fin_hash = _reading(ctx, case, topology.HOST_RPC_PORT, "producer finalized")
+    fin_hex, _, fin_hash = ctx.reading(topology.HOST_RPC_PORT, "producer finalized", case)
     set_receipt = ctx.cast_send(
         send + [mock_addr, vf.SET_CHECKPOINT_SIG, str(vf.CHECKPOINT_BATCH), fin_hash],
         note="cc-set-checkpoint", dry_value='{"blockNumber":"0x80"}')
@@ -276,10 +270,10 @@ def assert_cert_cascade(ctx) -> None:
     ctx.overlay_up("cert-follower-l1", note="cc-up-tier1")
 
     align_target = vf.align_floor(anchor, ctx.interval)
-    aligned = ctx.wait_follower_align(vf.T1_PORT, align_target, vf.CC_ALIGN_S)
+    aligned = ctx.overlay_wait_align(vf.T1_SERVICE, align_target, vf.CC_ALIGN_S)
     ctx.check(case, bool(aligned),
               lambda: f"tier-1 did not align with v0 past {align_target} "
-                      + _align_diag(ctx, ("tier-1", vf.T1_PORT)),
+                      + _align_diag(ctx, ("tier-1", vf.T1_SERVICE)),
               on_fail=lambda: ctx.overlay_dump_logs(vf.CC_LOG_TAIL, "cert-follower-l1"))
     ctx.check(case, *vf.evaluate_l1_checkpoint_verified(ctx.overlay_logs("cert-follower-l1")))
     _ok(ctx, "phase 1 L1-checkpoint align",
@@ -288,10 +282,10 @@ def assert_cert_cascade(ctx) -> None:
     # ── Phase 2: tier-2 follower fed ONLY by tier 1 ───────────────────────────────────
     ctx.overlay_up("cert-follower-tier2", note="cc-up-tier2")
     t2_target = nodes.hex_to_dec(str(aligned).split("|", 1)[0]) + ctx.interval
-    t2_aligned = ctx.wait_follower_align(vf.T2_PORT, t2_target, vf.CC_ALIGN_S)
+    t2_aligned = ctx.overlay_wait_align(vf.T2_SERVICE, t2_target, vf.CC_ALIGN_S)
     ctx.check(case, bool(t2_aligned),
               lambda: f"tier-2 did not align via the tier-1 window past {t2_target} "
-                      + _align_diag(ctx, ("tier-2", vf.T2_PORT), ("tier-1", vf.T1_PORT)),
+                      + _align_diag(ctx, ("tier-2", vf.T2_SERVICE), ("tier-1", vf.T1_SERVICE)),
               on_fail=lambda: ctx.overlay_dump_logs(vf.CC_LOG_TAIL, "cert-follower-tier2",
                                                     "cert-follower-l1"))
     _ok(ctx, "phase 2 cascade", f"tier-2 aligned with v0 at {t2_aligned} through tier 1")
@@ -314,22 +308,17 @@ def assert_cert_cascade(ctx) -> None:
     ctx.overlay_up("cert-follower-l1-bogus", note="cc-up-bogus")
 
     def refused():
-        """The refusal, by either witness. The `ps` read is LAZY, as bash's is: the follower
-        usually logs and stays up, and paying for a second command per poll would double the read
-        load on a docker daemon that is also running eight nodes."""
-        logs = ctx.overlay_logs("cert-follower-l1-bogus")
-        ok_line, _, witness = vf.evaluate_bogus_rejected(logs, "")
-        if ok_line:
-            return witness
-        ok_state, _, witness = vf.evaluate_bogus_rejected(
-            logs, ctx.overlay_ps_state("cert-follower-l1-bogus"))
-        return witness if ok_state else False
+        """The refusal, by the product line — the only witness. See `evaluate_bogus_rejected` on
+        why the container-state one was removed rather than kept as a fallback."""
+        ok, _, witness = vf.evaluate_bogus_rejected(
+            ctx.overlay_logs("cert-follower-l1-bogus", dry_value=vf.BOGUS_REJECT_LINE))
+        return witness if ok else False
 
     hit = ctx.poll(refused, vf.CC_REJECT_S, poll_s=vf.CC_REJECT_POLL_S, dry_value="dry-witness")
     ctx.check(case, bool(hit), vf.BOGUS_NOT_REFUSED,
               on_fail=lambda: ctx.overlay_dump_logs(vf.CC_BOGUS_LOG_TAIL,
                                                     "cert-follower-l1-bogus"))
-    bogus_reading = ctx.check_external(vf.BOGUS_PORT, dry_value="null|null")
+    bogus_reading = ctx.overlay_check_node(vf.BOGUS_SERVICE, dry_value="null|null")
     ctx.check(case, *vf.evaluate_bogus_no_progress(bogus_reading, anchor))
     _ok(ctx, "phase 3 bogus-checkpoint reject",
         f"follower refused the unverifiable trust root ({hit}; "
@@ -373,19 +362,21 @@ def assert_tx_cascade(ctx) -> None:
     """
     case = "smoke-tx-cascade"
     anchor_dec = ctx.anchor_dec(case)
-    sentry_rpc = topology.host_url(vf.SENTRY_PORT)
+    # L3 keeps a HOST URL because the tx leg below signs and sends with host-side `cast`, and the
+    # container carries no foundry. Its port is 28545, below the ephemeral range, so it is safe to
+    # publish; the sentry's was 38545 and is gone — every sentry read/write here goes over exec.
     l3_rpc = topology.host_url(vf.DOWNSTREAM_PORT)
 
     # ── L2 sentry: cert-follow v0 + devp2p pinned to v0 ───────────────────────────────
     _say(ctx, "smoke-tx-cascade: starting L2 sentry (cert-follow v0; devp2p → v0)")
     ctx.overlay_up("sentry", note="txc-up-sentry")
-    ctx.check(case, bool(ctx.wait_follower_align(vf.SENTRY_PORT, anchor_dec, vf.TXC_ALIGN_S)),
+    ctx.check(case, bool(ctx.overlay_wait_align(vf.SENTRY_SERVICE, anchor_dec, vf.TXC_ALIGN_S)),
               f"sentry (L2) did not align past {anchor_dec}",
               on_fail=lambda: ctx.overlay_dump_logs(vf.TXC_LOG_TAIL, "sentry"))
     _say(ctx, f"  sentry (L2) aligned with v0 past {anchor_dec}")
 
     # ── L3 downstream: cert-follow the SENTRY + devp2p pinned to ONLY the sentry ──────
-    pk = ctx.enode_pubkey(sentry_rpc)
+    pk = ctx.overlay_enode_pubkey(vf.SENTRY_SERVICE)
     ctx.check(case, *vf.evaluate_enode_pubkey(pk, "sentry"))
     ctx.overlay_exec_write("sentry", "/runtime/sentry-enode.txt", vf.sentry_enode(pk),
                            note="txc-write-sentry-enode")
@@ -400,10 +391,11 @@ def assert_tx_cascade(ctx) -> None:
                            sleep_s=vf.TXC_ENODE_SLEEP_S, label="l3-enode",
                            dry_value="cd" * 64)
     ctx.check(case, *vf.evaluate_enode_pubkey(pk3 or "", "downstream"))
-    ctx.cast_rpc_write("admin_addTrustedPeer", vf.downstream_enode(pk3), rpc_url=sentry_rpc,
-                       note="txc-trust-l3-on-sentry")
+    ctx.overlay_rpc_write(vf.SENTRY_SERVICE, "admin_addTrustedPeer", vf.downstream_enode(pk3),
+                          note="txc-trust-l3-on-sentry")
     _say(ctx, "  sentry now trusts L3 (mutual) → awaiting L3 align via the sentry")
-    ctx.check(case, bool(ctx.wait_follower_align(vf.DOWNSTREAM_PORT, anchor_dec, vf.TXC_ALIGN_S)),
+    ctx.check(case, bool(ctx.overlay_wait_align(vf.DOWNSTREAM_SERVICE, anchor_dec,
+                                                vf.TXC_ALIGN_S)),
               f"L3 did not align past {anchor_dec} via the sentry",
               on_fail=lambda: ctx.overlay_dump_logs(vf.TXC_LOG_TAIL, "downstream"))
     _say(ctx, f"  L3 aligned with v0 past {anchor_dec} through the sentry (validators→L2→L3)")

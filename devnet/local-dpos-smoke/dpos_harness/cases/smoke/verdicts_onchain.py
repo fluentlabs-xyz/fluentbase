@@ -1106,3 +1106,126 @@ def evaluate_still_finalizing(before, after):
     if int(after) > int(before):
         return True, ""
     return False, f"chain not finalizing after the boundary ({after} <= {before})"
+
+
+# ══ smoke-weighted-vrf ════════════════════════════════════════════════════════════════
+
+#: `case-weighted-vrf.sh:15` — validator-0's genesis stake multiple. `genesis-bootstrap` skews
+#: only the FIRST validator (`bootstrap.rs:426-430`), so the committee is 9:1:1:1 and the elector
+#: should hand validator-0 ~75% of the views against ~8.3% each.
+HEAVY_STAKE_MULT = 9
+
+#: The epoch length this case runs on, and it is a SAMPLE SIZE, not a preference. The property
+#: below requires every LIGHT validator to produce at least one block, and one epoch is the whole
+#: sample: at p=1/12 per view, 32 views leave a 6% chance that a given light produces nothing and
+#: ~17% that at least one of the three does — a coin-flip gate. 64 views bring those to 0.37% and
+#: ~1.1%.
+#:
+#: 128 WOULD BE BETTER AND IS NOT AVAILABLE: it is proven not to boot — see
+#: `CATCHUP_EPOCH_INTERVAL`, where the chain produced zero blocks past the anchor at that interval
+#: and every view answered `proposal failed verification`. 64 is the ceiling on the INTERVAL, so
+#: the sample is bought in EPOCHS instead — see `WEIGHTED_EPOCHS`.
+WEIGHTED_EPOCH_INTERVAL = 64
+
+#: How many consecutive epochs the measurement spans. TWO, because one is not enough sample and
+#: the interval cannot be raised: 64 views leave ~1.1% chance that some light validator produces
+#: nothing by luck, and 128 brings that to ~5e-5.
+#:
+#: The cheaper fix — relaxing "every light produced" to "at least two of three" — was rejected. It
+#: still kills a monopoly elector, but it stops catching a SYSTEMATICALLY EXCLUDED validator, a
+#: weighting bug where one specific light is never elected. That is a real defect, and a minute of
+#: runtime is not worth trading it away.
+WEIGHTED_EPOCHS = 2
+
+#: How long the chain gets to finish the measured epochs. A CEILING, not a measurement interval:
+#: the worst honest wait is `WEIGHTED_EPOCHS` full epochs (128 blocks at ~1 blk/s) plus result-lag
+#: settle, and this is ~3.7× that. Being generous costs a healthy run nothing —
+#: `wait_finalized_ge` returns as soon as the boundary lands — while a tight budget would turn a
+#: loaded docker daemon into a red weighting verdict.
+WEIGHTED_WINDOW_S = 480
+
+#: `case-weighted-vrf.sh:57` — `heavy*2 >= light_max*3`, i.e. a >=1.5x plurality, integer-exact as
+#: the original wrote it. At 9:1:1:1 the expectation is ~9x, so 1.5x is far enough below the mean
+#: that binomial variance over the window cannot flip it.
+WEIGHTED_MARGIN_NUM, WEIGHTED_MARGIN_DEN = 3, 2
+
+
+def evaluate_stake_skew(stakes, mult):
+    """THE PRECONDITION: the genesis skew actually reached the chain.
+
+    The bash original never checked it, and that is why a green run there was unattributed and a
+    red one was ambiguous. `HEAVY_STAKE_MULT` travels through `docker-compose.yml` into
+    `genesis-init`'s environment; an export that did not land produces an EQUAL-STAKE chain, on
+    which the elector is uniform, validator-0 does not lead a plurality, and the case reports
+    "weighting is not effective" — a true statement about a chain that was never skewed."""
+    if len(stakes) < 2 or any(int(s) <= 0 for s in stakes):
+        return False, (f"could not read the on-chain validator stakes ({stakes}) — 0 is the "
+                       "read-failed sentinel here, not a real stake")
+    heavy, light = int(stakes[0]), int(stakes[1])
+    if any(int(s) != light for s in stakes[1:]):
+        return False, (f"the light validators are not equally staked ({stakes}) — this case "
+                       "assumes 1:1 among them, which is what genesis writes")
+    if heavy != light * int(mult):
+        return False, (f"HEAVY_STAKE_MULT={mult} did not reach genesis: validator-0's stake "
+                       f"{heavy} is {heavy / light:.2f}x the light stake {light}, not {mult}x")
+    return True, ""
+
+
+def evaluate_weighted_election(epochs, counts_by_epoch, mult):
+    """Stake-weighted leader election, measured on the ON-CHAIN production counters and SUMMED
+    across `epochs`. `counts_by_epoch` is one `[(produced, blocksInEpoch), …]` list per epoch, in
+    committee order.
+
+    THREE conditions in order, and the first two are what the bash original could not express.
+
+    (a) THE COUNTERS SUM TO `blocksInEpoch`. A self-check no log tally could offer: `log_count`
+        answers 0 on a failed read, so bash's per-window delta could go NEGATIVE and satisfy both
+        halves of its condition trivially (heavy=-1 > light_max=-10). On-chain counters cannot be
+        lost, cannot be rotated away and cannot go negative, and their own total is published
+        alongside them — so a lost read shows up as arithmetic that does not close.
+
+    (b) EVERY LIGHT VALIDATOR PRODUCED AT LEAST ONE BLOCK. Without it a monopoly elector that
+        always returns index 0 scores the BEST possible result on the margin criterion — the check
+        would REWARD the exact failure it exists to catch. Summing across epochs is what makes the
+        condition affordable: one 64-view epoch leaves ~1.1% chance of a light producing nothing by
+        luck, which would be a coin-flip gate (`WEIGHTED_EPOCHS`).
+
+    (c) ONLY THEN the margin, as the original wrote it.
+
+    THE SUM IS ONLY VALID WHILE THE COMMITTEE DOES NOT CHANGE BETWEEN THE EPOCHS, which is true of
+    the 4-validator no-rotation stack this case brings up and would need revisiting on a rotation
+    substrate. Two thirds of that assumption are self-enforcing: a member that LEFT reads
+    `(-1,-1)` for the epoch it missed and is rejected below, and a member that JOINED takes blocks
+    nobody in `counts_by_epoch` is credited with, so condition (a) stops closing. What is NOT
+    caught is a STAKE change between the epochs — re-delegation would move the weights under the
+    measurement, and nothing on this stack issues one.
+
+    WHAT THIS DOES NOT TEST, and the case name should not be read as claiming it: the VRF. The
+    seed arm and the fallback arm of `randomness_bytes` are hashed into the SAME CDF by `elect`
+    (`crates/dpos/consensus/src/weighted_vrf.rs:136-154,190-198`), so a completely dead beacon
+    leaves the leader distribution unchanged. That is why the case also asserts the beacon is
+    live, separately, through the metrics."""
+    epochs = list(epochs)
+    for e, counts in zip(epochs, counts_by_epoch):
+        for i, (produced, _) in enumerate(counts):
+            state = credit_state(produced)
+            if state != STATE_OK:
+                return False, (f"validator-{i} production read {state} in epoch {e} "
+                               f"({produced}) — refusing to score an election over it")
+    produced = [sum(int(counts[i][0]) for counts in counts_by_epoch)
+                for i in range(len(counts_by_epoch[0]))]
+    total = sum(int(counts[0][1]) for counts in counts_by_epoch)
+    span = f"epochs {epochs}" if len(epochs) > 1 else f"epoch {epochs[0]}"
+    if sum(produced) != total:
+        return False, (f"production counters do not add up over {span}: {produced} sums to "
+                       f"{sum(produced)}, blocksInEpoch={total} — a reading was lost, so no "
+                       "distribution can be scored")
+    heavy, lights = produced[0], produced[1:]
+    if min(lights) == 0:
+        return False, (f"a light validator produced NOTHING over {span} ({produced}) — the "
+                       "elector is not distributing by weight, it is picking a fixed index")
+    light_max = max(lights)
+    if heavy > light_max and heavy * WEIGHTED_MARGIN_DEN >= light_max * WEIGHTED_MARGIN_NUM:
+        return True, ""
+    return False, (f"validator-0 ({mult}x stake) did not produce a weighted plurality over "
+                   f"{span}: heavy={heavy}, light_max={light_max}, total={total}")

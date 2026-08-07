@@ -41,8 +41,11 @@ from ...core import nodes, topology
 #: 38545 and the positive one on 28545; swapping them would make phase 3 read the HONEST node,
 #: which of course makes no progress either once it is stopped — a negative assertion that passes
 #: for the wrong reason is the failure mode this file is organised around.
-CF_PORT = 28545
-TAMPER_PORT = 38545
+#: The overlay SERVICES the harness reads. Service names, not host ports: every follower read
+#: goes in-container through `SmokeCtx.overlay_*` (`driver.py`), so the harness needs no published
+#: port at all. See `docker-compose.cert-follow.yml` for the publishing rule.
+CF_SERVICE = "cert-follower"
+TAMPER_SERVICE = "cert-follower-tamper"
 
 #: `:39`, `:57` — the follower alignment budget for phases 1 and 2.
 CF_ALIGN_S = 180
@@ -64,11 +67,33 @@ MITM_READY_LINE = "cert-mitm: listening"
 #: shortening it weakens the claim by exactly the amount shortened and nothing goes red.
 TAMPER_OBSERVE_S = 45
 
-#: `:98` — the driver lines that name the rejection. Best-effort observability only: the
-#: finalized-progress gate above is what fails the case, and log capture is not guaranteed.
-TAMPER_HINT_LINES = ("finalization cert FAILED BLS verification", "dropping mismatched cert")
-#: `:97` — how deep the hint grep reads.
+#: The lines the follower writes when it refuses a tampered certificate. EITHER satisfies the
+#: gate, because the cold-start `get_latest` pull and the live subscription stream are different
+#: call sites and which one sees the first bad certificate depends on start-up ordering:
+#:   * `upstream.rs:308` — the subscription path (`decode_finalized`);
+#:   * `upstream.rs:324` — the by-height / cold-start pull path (`fetch_finalization`).
+#:
+#: THE REJECTION HAPPENS AT DECODE, NOT AT VERIFY, and this constant got that wrong once. The
+#: earlier value `cert-inlet: BLS verify FAILED` (`cert_inlet.rs:813`) is a real string on a real
+#: path — `launch_follower` does spawn `CertInlet` (`dpos.rs:3727,3750,3781`) — but it is
+#: unreachable under THIS tamper. `CombinedCertificate` is `vote ‖ seed_flag ‖ seed_slot`, and the
+#: trailing 48 bytes are the beacon seed slot, a compressed G1 point, NOT the multisig aggregate
+#: (`combined_scheme.rs:146-156`). The MITM flips a nibble 4 bytes from the end
+#: (`scripts/cert-mitm-proxy.py:38`), landing inside that point; `read_seed_slot` decodes it
+#: eagerly and `BlsSignature::read` does uncompress plus a subgroup check, so the flip fails
+#: DECODE with probability ~1. `into_parts()` returns `Err` and the certificate never reaches
+#: `CertInlet::ingest`.
+#:
+#: Before these two, the grep was for "finalization cert FAILED BLS verification" and "dropping
+#: mismatched cert" — neither of which appears anywhere in `crates/`. That is three wrong strings
+#: on one assertion, which is why the live run is the only thing that closes this.
+TAMPER_REJECT_LINES = ("cert-follow: discarding malformed finalized event",
+                       "cert-follow: malformed getFinalization response")
+#: `:97` — how deep the rejection grep reads.
 TAMPER_HINT_TAIL = 400
+
+#: How long the tamper follower has to answer `eth_blockNumber` before the observation window.
+TAMPER_UP_S = 60
 
 #: `:42`, `:61`, `:107` — fail-path log depth.
 CF_LOG_TAIL = 200
@@ -122,18 +147,51 @@ def evaluate_tamper_no_progress(tamper_head):
                    "verification is NOT load-bearing!")
 
 
-def tamper_rejection_hint(logs: str) -> bool:
-    """`:96-99` — did the driver's live-tail verify say so out loud? Observability, not a gate."""
+def evaluate_tamper_alive(alive):
+    """The tamper follower is UP before the observation window opens.
+
+    Without it the phase concludes "it verified and rejected" from a node that never started. Zero
+    finalized progress is the expected reading either way, and `"null"` is a legitimate PASS here
+    (reth leaves `finalized` unset until something finalizes), so the negative cannot be made
+    self-witnessing — it needs a separate liveness reading, and a live node answers
+    `eth_blockNumber` with a real height even while `finalized` is unset."""
+    if alive:
+        return True, ""
+    return False, ("cert-follower-tamper never answered eth_blockNumber — it is not up, so its "
+                   "zero finalized progress is not evidence that verification rejected anything")
+
+
+def evaluate_tamper_rejected(logs: str):
+    """The POSITIVE witness: the follower SAID it refused. A gate now, not a hint.
+
+    Zero progress alone cannot separate "the certificates were refused" from "they were never
+    delivered" — a MITM that came up but forwarded nothing produces the identical reading.
+
+    EITHER line counts: see `TAMPER_REJECT_LINES` on why there are two. The failure names both, so
+    a run that refused on the path this check did not expect reads as an expectation mismatch
+    rather than as a follower that accepted a forged certificate.
+
+    RETURNS THE LINE IT MATCHED, third element, the shape `evaluate_bogus_rejected` uses. The two
+    lines are two different code PATHS — the live subscription (`upstream.rs:308`) and the
+    cold-start / by-height pull (`upstream.rs:324`) — and which one sees the first bad certificate
+    depends on start-up ordering. The case tears its stack down when it finishes, so the container
+    log is gone before anyone can read it afterwards; if the transcript does not say which path
+    fired, nothing does."""
     text = logs or ""
-    return any(line in text for line in TAMPER_HINT_LINES)
+    for line in TAMPER_REJECT_LINES:
+        if line in text:
+            return True, "", line
+    return False, ("cert-follower-tamper logged none of " + repr(TAMPER_REJECT_LINES) +
+                   " — zero finalized progress alone does not show the certificates were "
+                   "REJECTED rather than never delivered"), ""
 
 
 # ══ smoke-cert-cascade ════════════════════════════════════════════════════════════════
 
 #: `case-cert-cascade.sh:20-22` — the three followers' host ports.
-T1_PORT = 28545
-T2_PORT = 48545
-BOGUS_PORT = 58545
+T1_SERVICE = "cert-follower-l1"
+T2_SERVICE = "cert-follower-tier2"
+BOGUS_SERVICE = "cert-follower-l1-bogus"
 
 #: `:59`, `:76` — the tier-1 and tier-2 alignment budgets. Longer than cert-follow's 180 s: tier 2
 #: syncs through tier 1's window rather than off the producer.
@@ -181,17 +239,20 @@ def evaluate_l1_checkpoint_verified(logs: str):
     return False, "tier-1 aligned but the L1 checkpoint assert never ran"
 
 
-def evaluate_bogus_rejected(logs: str, ps_state: str):
-    """`:95-110` — the negative. Two witnesses of ONE refusal, and either is sufficient.
+def evaluate_bogus_rejected(logs: str):
+    """`:95-110` — the negative, on the ONE witness that names the refusal: the product line.
 
-    The follower may print `NOT in the local chain` and stay up, or it may exit on the refusal
-    before the log read catches it. Requiring the line alone would poll a dead container for the
-    full budget and then report that it never refused — a false FAIL. Requiring `exited` alone
-    would accept a container that died for any other reason, which is a false PASS."""
+    THE `exited` WITNESS IS GONE, and its removal is the point. It read a container STATE as proof
+    of a refusal, so a follower that died of a bad address, an OOM or an unresolvable L1 URL was
+    counted as a trust root that worked — the false PASS its own docstring described. An exit code
+    cannot tell those apart from a refusal either: every one of them is eyre-1.
+
+    Nothing is lost by dropping it, because the refusal is LOGGED BEFORE the exit — the eyre error
+    reaches `error!(?e, "consensus thread exited with error")` (`bins/fluent/src/main.rs:407`) and
+    only then `exit(1)` (`:429`) — and the string is contract-pinned as "MUST survive verbatim"
+    (`crates/dpos/consensus/src/cold_start_jump.rs:894-897`)."""
     if BOGUS_REJECT_LINE in (logs or ""):
         return True, "", "refusal logged"
-    if (ps_state or "").strip() == "exited":
-        return True, "", "exited on the refusal"
     return False, BOGUS_NOT_REFUSED, ""
 
 
@@ -239,7 +300,10 @@ def receipt_block(receipt: dict, what: str):
 
 #: `case-tx-cascade.sh:20-23` — the two cascade tiers. NOTE the ports are CROSSED relative to the
 #: tiers' depth: the L2 sentry publishes on 38545 and the L3 downstream on 28545.
-SENTRY_PORT = 38545
+SENTRY_SERVICE = "sentry"
+DOWNSTREAM_SERVICE = "downstream"
+#: L3 keeps a host URL: the tx leg signs and sends with host-side `cast` and the container has no
+#: foundry. 28545 is below the ephemeral range, so publishing it is safe.
 DOWNSTREAM_PORT = 28545
 SENTRY_IP = "172.20.0.30"
 DOWNSTREAM_IP = "172.20.0.31"

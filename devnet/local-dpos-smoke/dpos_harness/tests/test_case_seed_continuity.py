@@ -20,6 +20,7 @@ from dpos_harness.cases.seed_continuity import (
     parse_view_leader_map,
     successors_of_nullified,
 )
+from dpos_harness.core.exit_codes import RC_FAIL, RC_INCONCLUSIVE, RC_PASS
 
 
 # ── the offline predictor ──────────────────────────────────────────────────────
@@ -193,29 +194,29 @@ _BAD_CONTROLS = [(1, 3, 3), (2, 5, 6), (3, 0, 0)]
 #: `(controls, samples, fin_delta, bad_share_nodes) -> (exit_code, reason substring)`.
 #: A `None` substring means the original assertion read the code only.
 _VERDICTS = [
-    (_OK_CONTROLS, _samples(20, 24), 50, [], 0, "BRANCH-INDEPENDENT",
+    (_OK_CONTROLS, _samples(20, 24), 50, [], RC_PASS, "BRANCH-INDEPENDENT",
      "pass_when_enough_leaders_differ_from_the_fallback"),
     # The pre-change signature: mismatch_count == 0 with certainty.
-    (_OK_CONTROLS, _samples(0, 30), 50, [], 1, "FALLBACK STILL IN USE",
+    (_OK_CONTROLS, _samples(0, 30), 50, [], RC_FAIL, "FALLBACK STILL IN USE",
      "fail_when_every_leader_matches_the_fallback"),
     # The threshold, driven from both sides: 4 mismatches still fails, 5 is the pass.
-    (_OK_CONTROLS, _samples(4, 30), 50, [], 1, None,
+    (_OK_CONTROLS, _samples(4, 30), 50, [], RC_FAIL, None,
      "fail_is_not_triggered_just_below_the_threshold_by_accident__below"),
-    (_OK_CONTROLS, _samples(5, 30), 50, [], 0, None,
+    (_OK_CONTROLS, _samples(5, 30), 50, [], RC_PASS, None,
      "fail_is_not_triggered_just_below_the_threshold_by_accident__at"),
-    (_BAD_CONTROLS, _samples(30, 30), 50, [], 2, "positive control FAILED",
+    (_BAD_CONTROLS, _samples(30, 30), 50, [], RC_INCONCLUSIVE, "positive control FAILED",
      "inconclusive_when_the_positive_control_fails"),
-    ([(1, 3, 3)], _samples(30, 30), 50, [], 2, "positive control",
+    ([(1, 3, 3)], _samples(30, 30), 50, [], RC_INCONCLUSIVE, "positive control",
      "inconclusive_when_too_few_controls"),
     # A stop that never took effect must not pass vacuously.
-    (_OK_CONTROLS, _samples(3, 3), 50, [], 2, "successor-of-nullified",
+    (_OK_CONTROLS, _samples(3, 3), 50, [], RC_INCONCLUSIVE, "successor-of-nullified",
      "inconclusive_when_the_sample_is_too_thin"),
-    (_OK_CONTROLS, _samples(20, 24), 50, ["validator-3"], 1, "SHARE-GATE FIRED",
+    (_OK_CONTROLS, _samples(20, 24), 50, ["validator-3"], RC_FAIL, "SHARE-GATE FIRED",
      "fail_when_the_share_gate_fired"),
-    (_OK_CONTROLS, _samples(20, 24), 0, [], 1, "NO PROGRESS",
+    (_OK_CONTROLS, _samples(20, 24), 0, [], RC_FAIL, "NO PROGRESS",
      "fail_when_finalized_did_not_advance"),
     # A demoted member explains the thin sample; report the cause, not the symptom.
-    ([], [], 50, ["validator-2"], 1, "SHARE-GATE FIRED",
+    ([], [], 50, ["validator-2"], RC_FAIL, "SHARE-GATE FIRED",
      "share_gate_outranks_a_thin_sample"),
 ]
 

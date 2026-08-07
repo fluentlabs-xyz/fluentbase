@@ -28,7 +28,8 @@ from . import dataroot, profiles
 from .profiles import GeneratedProfile
 from ..core import converge, nodes, topology
 from ..core.spammer import SpammerPool
-from ..chain.writes import Chain, ChainError, sim_regen_staking_reader
+from ..chain.writes import (Chain, ChainError, dry_owner_addr,
+                            sim_regen_staking_reader)
 
 # `SpammerPool` MOVED to `core/spammer.py` in P7 chunk 5a and is re-exported here.
 # It is the substrate under `pp_spammer_start`, which SIX production-path cases call, and the
@@ -103,6 +104,35 @@ def _geo_wait_margin(val_containers: int) -> int:
     if os.environ.get("SIM_GEO_LATENCY", "0") == "1":
         return 120 + val_containers * 15
     return 0
+
+
+#: Every name this module writes into the AMBIENT process environment (`_set_compose`, and the
+#: three bare `os.environ[...] =` exports in `run()`). Bash's process exits at the end of a case,
+#: so nothing there ever observes the leftovers; in one interpreter the next case inherits them.
+#:
+#: `DPOS_ACTIVATION_BLOCK` is the dangerous one: `StaticProfile` reads it at CALL time
+#: (`stack/profiles.py`), so a sim case that ran first hands a later static case a foreign
+#: activation block and its whole epoch arithmetic goes wrong with nothing to show for it. A stale
+#: `COMPOSE_FILE` points every bare `docker compose exec` at the previous run's project, which is
+#: the leak `tests/conftest.py` exists because of. The other two are cheap to carry and there is no
+#: reason to leave a subset behind.
+EXPORTED_ENV = ("COMPOSE_FILE", "PP_GOV_VOTERS", "DPOS_ACTIVATION_BLOCK", "L3_SPAMMER_ADDR")
+
+
+def save_exported_env() -> dict:
+    """Snapshot `EXPORTED_ENV` before a bring-up. A `None` records "was not set"."""
+    return {k: os.environ.get(k) for k in EXPORTED_ENV}
+
+
+def restore_exported_env(saved: dict) -> None:
+    """Put the ambient environment back the way the caller found it — `prod._restore_compose`,
+    widened to every name this module exports. Call it AFTER teardown: the teardown still needs
+    `COMPOSE_FILE` to reach the right docker project."""
+    for k, old in (saved or {}).items():
+        if old is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = old
 
 
 def resolve_compose_env(out_dir: str = ".") -> str:
@@ -481,7 +511,7 @@ class BringUp:
 
     def _deploy_staking(self, deployer_addr, deployer_key):
         spec = self.spec
-        iv = ",".join(_pp_addr_dry(i) if self.p.dry else Chain(runner=self.p, RPC=self.rpc)
+        iv = ",".join(dry_owner_addr(i) if self.p.dry else Chain(runner=self.p, RPC=self.rpc)
                       .owner_addr(i) for i in range(spec.initial_committee))
         ist = ",".join("5000000000000000000" if j == 0 else "1000000000000000000"
                        for j in range(spec.initial_committee))
@@ -608,5 +638,3 @@ def _hex(v) -> int:
         return 0
 
 
-def _pp_addr_dry(i) -> str:
-    return f"0x{'%040x' % (0xA0 + int(i))}"

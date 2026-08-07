@@ -204,9 +204,10 @@ def _blaster_section(log):
     # The Python blaster (`python3 -m dpos_harness load start`) — the supervisor is one process
     # with the sender loops as threads, so this counts 1 per running blaster.
     pids = proc.read(["pgrep", "-f", r"[d]pos_harness.*load start"]).split()
-    # …and the legacy bash blaster, which is still a hand-launched tool an operator can point at
-    # a live run (README's `./scripts/load-heavy.sh`) until it is deleted. Unlike the bash SIM,
-    # nothing has replaced it as an operator entry point, so it stays discoverable.
+    # …and any legacy bash blaster still running. `scripts/load-heavy.sh` is deleted, but this
+    # dashboard is pointed at LIVE runs, and a soak started before the deletion can still have one
+    # attached — reporting that process as absent would be the dashboard lying about the load the
+    # chain is actually under.
     pids += proc.read(["pgrep", "-f", r"[l]oad-heavy\.sh"]).split()
     nproc = len(pids)
     lhlog = _newest_lh_log(log)

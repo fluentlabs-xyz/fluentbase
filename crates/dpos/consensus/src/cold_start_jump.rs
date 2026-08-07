@@ -893,8 +893,10 @@ where
 ///
 /// The two log/error strings — `"L1 Rollup checkpoint verified against local
 /// chain"` and `"is NOT in the local chain after EL-sync"` — are byte-asserted
-/// by `case-cert-cascade.sh` (phase-1 `:59` / phase-3 `:89`) and MUST survive
-/// verbatim.
+/// by the `smoke-cert-cascade` smoke (`verdicts_follow.L1_VERIFIED_LINE` /
+/// `BOGUS_REJECT_LINE`) and MUST survive verbatim. The phase-3 one is now the
+/// case's SOLE witness of the refusal: the container-state witness that used to
+/// back it up was removed for reading an OOM as a working trust root.
 pub fn assert_l1_checkpoint<Provider>(provider: &Provider, l1_hash: B256) -> eyre::Result<()>
 where
     Provider: reth_storage_api::BlockReader + Send + Sync,

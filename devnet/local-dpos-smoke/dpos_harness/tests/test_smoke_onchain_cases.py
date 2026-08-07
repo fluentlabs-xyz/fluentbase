@@ -28,7 +28,8 @@ import re
 import pytest
 
 from dpos_harness.cases.smoke import (asserts_onchain, byzantine, cert_catchup, driver, liveness,
-                                      verdicts_onchain as vo, vrf_dkg_restart_midwindow as mw)
+                                      verdicts_onchain as vo, vrf_dkg_restart_midwindow as mw,
+                                      weighted_vrf)
 from dpos_harness.cases.smoke.driver import SmokeCtx, SmokeFailure
 from dpos_harness.core.proc import Runner
 from dpos_harness.stack.profiles import StaticProfile
@@ -862,6 +863,9 @@ def _cc_world(park=(2, 5), fatal=(0, 0), exits=(0, 0), rejump=(0, 0), **over):
 
     world = dict(
         log_count=log_count,
+        # The readability witness the two absence gates now take before counting: an unreadable
+        # log scores 0 on both sides of `after <= before` and passes them for free.
+        logs_all=lambda svc, dry_value="": "INFO victim log line",
         baseline_height=lambda dry_value=0: 300,
         wait_finalized_ge=lambda *a, **k: True,
         finalized_dec=lambda dry_value=0: 360,
@@ -931,8 +935,6 @@ def test_cert_catchup_FAILS_when_the_victim_rejoined_without_ever_PARKING(monkey
 #: `scripts/case-cert-catchup.sh` and `crates/`, reached from this file. Both are absent in a
 #: harness-only checkout, so the tests below SKIP rather than fail there (same shape as
 #: `test_smoke_fault_verdicts.py::test_the_field_list_matches_the_rust_codec`).
-CASE_CC_SH = pathlib.Path(__file__).resolve().parents[2] / "scripts" / "case-cert-catchup.sh"
-CASE_LV_SH = pathlib.Path(__file__).resolve().parents[2] / "scripts" / "case-liveness.sh"
 CRATES_DIR = pathlib.Path(__file__).resolve().parents[4] / "crates"
 EPOCH_MANAGER_RS = CRATES_DIR / "dpos" / "consensus" / "src" / "epoch_manager.rs"
 
@@ -1018,137 +1020,6 @@ def test_the_SIGNER_PROMOTED_LINE_is_a_string_the_product_ACTUALLY_EMITS_ONCE():
     # more is fine, but zero would mean the message sends the operator after a string that does
     # not exist.
     assert any(vo.SIGNER_DEFER_LINE in w for w in body)
-
-
-def test_both_trees_run_the_SAME_signing_gate():
-    """bash and the port hold the promote token, the epoch extraction and the budget in separate
-    literals, so the drift class `test_both_trees_grep_the_SAME_park_string` exists for applies
-    here too — and worse, because this gate fails by TIMING OUT: a tree grepping a stale token
-    reports "height-aligned but not signing" on a perfectly healthy member."""
-    if not CASE_LV_SH.exists():
-        pytest.skip(f"bash case not in this tree ({CASE_LV_SH})")
-    text = CASE_LV_SH.read_text()
-    assert f'/{vo.SIGNER_PROMOTED_LINE}/' in text, (
-        f"case-liveness.sh does not select on {vo.SIGNER_PROMOTED_LINE!r}")
-    assert f'grep -c "{vo.SIGNER_DEFER_LINE}"' in text
-    # The EPOCH extraction, which both trees spell in their own dialect over the same rendering.
-    assert r"epoch[=:][[:space:]]*(Epoch\()?([0-9]+)" in text
-    # The budget: `interval + slack` on both sides, and the slack is the same number.
-    assert f"EPOCH_INTERVAL + {vo.LIVENESS_SIGNING_SLACK_S}" in text
-    assert vo.liveness_signing_budget(32) == 32 + vo.LIVENESS_SIGNING_SLACK_S
-    # The FLOOR: bash derives it from the same `(h - activation) / interval`.
-    assert "($1 - DPOS_ACTIVATION_BLOCK) / EPOCH_INTERVAL" in text
-    # …and the ANSI strip, without which both readers are silent on a live log.
-    assert "| strip_ansi" in text
-
-
-def test_both_trees_grep_the_SAME_park_string():
-    """The bash case and the port must not drift apart on the one string that decides the gate.
-
-    They are separate trees with separate literals, so a fix applied to one and not the other
-    reproduces the original defect in half the runs."""
-    if not CASE_CC_SH.exists():
-        pytest.skip(f"bash case not in this tree ({CASE_CC_SH})")
-    m = re.search(r"^PARK_LOG='([^']*)'", CASE_CC_SH.read_text(), re.M)
-    assert m, "PARK_LOG assignment not found in case-cert-catchup.sh"
-    assert m.group(1) == vo.PARK_LOG
-
-
-def test_both_trees_use_the_SAME_INTERVAL_GAP_and_DELAY():
-    """THE THREE NUMBERS THE PARK GATE DEPENDS ON, and the two trees hold each in its own literal.
-
-    They are not independent. The delay is what makes the park fire at all; the gap is what the
-    victim must walk; the interval is the re-jump ceiling both of those have to stay under
-    (`min(1024, epochBlockInterval)`). A live iteration that retunes one tree and not the other
-    leaves the bash case and the port measuring DIFFERENT races while both call themselves
-    smoke-cert-catchup — the same drift class `test_both_trees_grep_the_SAME_park_string` exists
-    for, and the interval is the one that silently moves the ceiling rather than the measurement.
-
-    The INTERFACE too: every service sits on the single `fluent-net` bridge, so `eth0` is
-    deterministic — but only as long as both trees say `eth0`."""
-    if not CASE_CC_SH.exists():
-        pytest.skip(f"bash case not in this tree ({CASE_CC_SH})")
-    text = CASE_CC_SH.read_text()
-    m = re.search(r'^export EPOCH_BLOCK_INTERVAL="\$\{EPOCH_BLOCK_INTERVAL:-(\d+)\}"', text, re.M)
-    assert m, "EPOCH_BLOCK_INTERVAL export not found in case-cert-catchup.sh"
-    assert int(m.group(1)) == vo.CATCHUP_EPOCH_INTERVAL
-    # …and bash MIRRORS it into the host-side chain math rather than defaulting separately.
-    assert 'export EPOCH_INTERVAL="$EPOCH_BLOCK_INTERVAL"' in text
-    m = re.search(r'^GAP="\$\{CERT_CATCHUP_GAP:-(\d+)\}"', text, re.M)
-    assert m, "GAP assignment not found in case-cert-catchup.sh"
-    assert int(m.group(1)) == vo.CATCHUP_GAP
-    m = re.search(r'^DELAY_MS="\$\{CERT_CATCHUP_DELAY_MS:-(\d+)\}"', text, re.M)
-    assert m, "DELAY_MS assignment not found in case-cert-catchup.sh"
-    assert int(m.group(1)) == vo.CATCHUP_NETEM_DELAY_MS
-    m = re.search(r"^NETEM_IFACE='([^']*)'", text, re.M)
-    assert m, "NETEM_IFACE assignment not found in case-cert-catchup.sh"
-    assert m.group(1) == vo.CATCHUP_NETEM_IFACE
-
-
-def test_both_trees_derive_the_SAME_gap_ceiling():
-    """The ceiling is the bound that decides whether the derive-walk survives to park, and bash
-    computes it with its own `$(( ))` arithmetic and its own scan. Reimplemented arithmetic
-    drifts, so the bash source is evaluated here and compared against `vo.catchup_gap_ceiling`
-    across six geometries — including (64, 3000), the delay experiment the guard must not
-    forbid — so a formula that happens to agree on one input cannot pass."""
-    if not CASE_CC_SH.exists():
-        pytest.skip(f"bash case not in this tree ({CASE_CC_SH})")
-    import subprocess
-    text = CASE_CC_SH.read_text()
-    for name in ("BOOT_BLOCKS=10", "MAX_REPAIR=20"):
-        assert name in text, name
-    # The effective-gap helper plus the scan that solves it for the ceiling, lifted verbatim.
-    start = text.index("_catchup_effective_gap() {")
-    expr = text[start:text.index("\ndone\n", start) + len("\ndone\n")]
-    assert "GAP_CEILING=0" in expr and "REJUMP_THRESHOLD" in expr
-    for interval, delay in ((vo.CATCHUP_EPOCH_INTERVAL, vo.CATCHUP_NETEM_DELAY_MS), (64, 3000),
-                            (128, 1000), (64, 0), (64, 300), (64, 10 ** 6)):
-        script = (f"REJUMP_THRESHOLD={min(interval, vo.JUMP_THRESHOLD)}; DELAY_MS={delay}; "
-                  f"BOOT_BLOCKS={vo.CATCHUP_BOOT_BLOCKS}; MAX_REPAIR={vo.CATCHUP_MAX_REPAIR}\n"
-                  f"{expr}\necho $GAP_CEILING")
-        out = subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=True)
-        assert int(out.stdout) == vo.catchup_gap_ceiling(interval, delay), (interval, delay)
-
-
-def test_the_bash_case_UNSHAPES_the_victim_BEFORE_the_DKG_wait():
-    """The bash half of the self-healing pre-flight. bash's EXIT trap does not fire on a SIGKILL
-    of the parent, so the guarantee has to be made at the START of the next run, not at the end of
-    the last one — and before the DKG wait, which is the first thing that measures the chain."""
-    if not CASE_CC_SH.exists():
-        pytest.skip(f"bash case not in this tree ({CASE_CC_SH})")
-    text = CASE_CC_SH.read_text()
-    preflight = text.index('netem_clear "$VICTIM"\necho "netem pre-flight')
-    assert text.index("trap cleanup EXIT") < preflight
-    assert preflight < text.index("establishing bootstrap DKG")
-    # …and before the first thing that stops or shapes the victim.
-    assert preflight < text.index('docker compose stop --timeout 40 "$VICTIM"')
-    assert preflight < text.index('netem_apply "$VICTIM"')
-
-
-def test_both_trees_layer_the_SAME_NET_ADMIN_overlay():
-    """`tc qdisc add` needs `NET_ADMIN`, and without it the case dies six minutes in. bash reaches
-    the overlay through `DPOS_EXTRA_COMPOSE`, the port through `driver.run(overlays=…)` — two
-    spellings of one file, which this pins, plus the file actually granting the capability.
-
-    The capability is on ALL FOUR validators on purpose: `CERT_CATCHUP_VICTIM` is
-    operator-overridable in both trees, and it is inert without the case's own `tc` exec."""
-    if not CASE_CC_SH.exists():
-        pytest.skip(f"bash case not in this tree ({CASE_CC_SH})")
-    m = re.search(r'^export DPOS_EXTRA_COMPOSE="-f ([^"]*)"', CASE_CC_SH.read_text(), re.M)
-    assert m, "DPOS_EXTRA_COMPOSE export not found in case-cert-catchup.sh"
-    assert m.group(1) == vo.CATCHUP_OVERLAY
-
-    overlay = CASE_CC_SH.resolve().parents[1] / vo.CATCHUP_OVERLAY
-    assert overlay.exists(), f"{overlay} is named by both trees but is not in the tree"
-    import yaml
-    services = yaml.safe_load(overlay.read_text())["services"]
-    assert sorted(services) == VALS
-    for name, body in services.items():
-        assert body["cap_add"] == ["NET_ADMIN"], name
-        # NOTHING ELSE. The overlay grants a capability; the SHAPING is the case's explicit `tc`
-        # exec, which targets one service for one window. An overlay that also baked in a netem
-        # prologue would shape from bring-up and there would be no window to speak of.
-        assert list(body) == ["cap_add"], name
 
 
 def test_cert_catchup_FAILS_when_the_graceful_stop_did_not_FLUSH(monkeypatch):
@@ -1418,3 +1289,127 @@ def test_midwindow_FAILS_when_the_chain_stops_finalizing_after_the_boundary(monk
     with pytest.raises(SmokeFailure) as e:
         asserts_onchain.assert_vrf_dkg_restart_midwindow(ctx)
     assert "chain not finalizing after the boundary" in e.value.message
+
+
+# ══ the wiring: smoke-weighted-vrf ═════════════════════════════════════════
+
+def _scripted(*values):
+    """A reader answering a scripted sequence, repeating its last value."""
+    box = list(values)
+
+    def read(*_a, **_kw):
+        return box.pop(0) if len(box) > 1 else box[0]
+    return read
+
+
+#: 9:1:1:1 stakes and a plausible 64-block split, keyed by validator index.
+_WV_STAKES = {0: 9, 1: 1, 2: 1, 3: 1}
+_WV_PRODUCED = {0: 48, 1: 6, 2: 5, 3: 5}
+
+
+def _wv_world(**over):
+    idx = {a: i for i, a in enumerate(DRY_ADDRS)}
+    world = dict(
+        runtime_addresses=lambda dry_value=None: list(DRY_ADDRS),
+        validator_stake=lambda addr, **k: _WV_STAKES[idx[addr]],
+        staking_call=lambda sig, *a, **k: "3",
+        production=lambda epoch, addr, **k: (_WV_PRODUCED[idx[addr]], sum(_WV_PRODUCED.values())),
+        wait_finalized_ge=lambda *a, **k: True,
+        log_count=lambda svc, pattern, dry_value=0: 1,
+        consensus_metrics=_scripted("beacon_digest_fallback_total 0\nbeacon_seed_active_total 7\n",
+                                    "beacon_digest_fallback_total 0\nbeacon_seed_active_total 9\n"),
+        head_dec=_scripted(100, 200),
+        dump_logs=lambda *a, **k: None,
+        sleep=lambda _s: None,
+    )
+    world.update(over)
+    return world
+
+
+def test_weighted_vrf_passes_on_a_healthy_world(monkeypatch, capsys):
+    ctx, _ = _live_ctx(monkeypatch, **_wv_world())
+    asserts_onchain.assert_weighted_vrf(ctx)
+    out = capsys.readouterr().out
+    assert "genesis stake skew reached the chain" in out
+    assert "OK (smoke-weighted-vrf)" in out
+
+
+def test_weighted_vrf_FAILS_when_the_GENESIS_SKEW_never_landed(monkeypatch):
+    """THE PRECONDITION the bash original had no way to state. `HEAVY_STAKE_MULT` reaches the chain
+    only through genesis, so an export that did not land gives an equal-stake chain — on which the
+    elector is CORRECTLY uniform. Without this the case reports "weighting is not effective" about
+    a chain that was never skewed, and every pass is unattributed."""
+    ctx, _ = _live_ctx(monkeypatch, **_wv_world(validator_stake=lambda addr, **k: 1))
+    with pytest.raises(SmokeFailure) as e:
+        asserts_onchain.assert_weighted_vrf(ctx)
+    assert "did not reach genesis" in e.value.message
+
+
+def test_weighted_vrf_FAILS_on_a_MONOPOLY_elector_driven_through_the_body(monkeypatch):
+    """The elector always returns index 0. This is the reading the bash original scored BEST, and
+    a live run can never walk this branch — producing it needs a broken elector."""
+    idx = {a: i for i, a in enumerate(DRY_ADDRS)}
+    ctx, _ = _live_ctx(monkeypatch, **_wv_world(
+        production=lambda epoch, addr, **k: ((64, 64) if idx[addr] == 0 else (0, 64))))
+    with pytest.raises(SmokeFailure) as e:
+        asserts_onchain.assert_weighted_vrf(ctx)
+    assert "picking a fixed index" in e.value.message
+
+
+def test_weighted_vrf_FAILS_on_a_read_failed_sentinel_rather_than_counting_it_as_zero(monkeypatch):
+    """A `-2` folded onto 0 would make "a light produced nothing" a free truth."""
+    idx = {a: i for i, a in enumerate(DRY_ADDRS)}
+    ctx, _ = _live_ctx(monkeypatch, **_wv_world(
+        production=lambda epoch, addr, **k: ((-2, -2) if idx[addr] == 2
+                                             else (_WV_PRODUCED[idx[addr]], 64))))
+    with pytest.raises(SmokeFailure) as e:
+        asserts_onchain.assert_weighted_vrf(ctx)
+    assert vo.STATE_FAILED in e.value.message
+
+
+def test_weighted_vrf_measures_WHOLE_epochs_off_the_profile_not_ProdCtx(monkeypatch):
+    """`epoch_first_block` exists only on `ProdCtx`; this case runs through `driver.run` and gets a
+    `SmokeCtx`, so the boundary is computed from the profile. It must be the FIRST block PAST the
+    last measured epoch, or a counter could roll over mid-measurement.
+
+    `currentEpoch()` reads 3, `WEIGHTED_EPOCHS` is 2, so the case measures 3 and 4 and waits for
+    the first block of epoch 5."""
+    seen = []
+    ctx, _ = _live_ctx(monkeypatch, interval=64, activation=128,
+                       **_wv_world(wait_finalized_ge=lambda target, timeout:
+                                   seen.append(target) or True))
+    asserts_onchain.assert_weighted_vrf(ctx)
+    assert seen[-1] == 128 + (3 + vo.WEIGHTED_EPOCHS) * 64
+    assert vo.WEIGHTED_EPOCHS == 2
+
+
+def test_weighted_vrf_reads_EVERY_measured_epoch(monkeypatch):
+    """A sum over two epochs that only ever read one would be the one-epoch sample wearing a
+    two-epoch banner."""
+    seen = []
+    ctx, _ = _live_ctx(monkeypatch, **_wv_world(
+        production=lambda epoch, addr, **k: seen.append(epoch) or (
+            _WV_PRODUCED[{a: i for i, a in enumerate(DRY_ADDRS)}[addr]], 64)))
+    asserts_onchain.assert_weighted_vrf(ctx)
+    assert sorted(set(seen)) == [3, 4] and len(seen) == 8
+
+
+def test_the_weighted_vrf_case_brings_up_its_OWN_genesis():
+    """The skew is a different GENESIS, not a different phase — `docker-compose.yml` interpolates
+    `HEAVY_STAKE_MULT` into `genesis-init`. So it cannot ride `smoke-base`'s stack, and the epoch
+    interval it tunes must reach BOTH the container and the host-side epoch arithmetic."""
+    seen = {}
+    original = driver.run
+
+    def spy(case, assertions, argv=None, **kw):
+        seen.update(kw.get("exports") or {})
+        return 0
+
+    driver.run = spy
+    try:
+        weighted_vrf.run_case([])
+    finally:
+        driver.run = original
+    assert seen["HEAVY_STAKE_MULT"] == str(vo.HEAVY_STAKE_MULT)
+    assert seen["EPOCH_BLOCK_INTERVAL"] == seen["EPOCH_INTERVAL"] == str(
+        vo.WEIGHTED_EPOCH_INTERVAL)

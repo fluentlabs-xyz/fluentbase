@@ -58,6 +58,20 @@ from __future__ import annotations
 
 # ── service naming ────────────────────────────────────────────────────────────────
 VALIDATOR_PREFIX = "validator-"
+#: THE DOCKER PROJECTS a run can leave behind. Each is the `name:` field of a compose ROOT file,
+#: which is what makes it a project rather than a directory-name accident: `docker-compose.yml`
+#: (`fluent-dpos-smoke`), `docker-compose.production-path.yml` (`fluent-dpos-prod-path`),
+#: `docker-compose.sim.gen.yml` (`fluent-dpos-sim`), `docker-compose.soak.gen.yml`
+#: (`fluent-dpos-soak`). No OVERLAY declares a name, so an overlay's containers join whichever
+#: root it was merged with — which is why a bare `down --remove-orphans` reaps overlay services
+#: fine, and why it CANNOT reach a different project at all.
+#:
+#: They matter together because they collide: all three live roots publish host 8545 and 8546, so
+#: one project left running blocks a case in any other. Pinned against the files by
+#: `tests/test_compose_projects.py`.
+DOCKER_PROJECTS = ("fluent-dpos-smoke", "fluent-dpos-prod-path", "fluent-dpos-sim",
+                   "fluent-dpos-soak")
+
 FULL_NODE = "full-node"
 DOWNSTREAM = "downstream"
 GENESIS_INIT = "genesis-init"

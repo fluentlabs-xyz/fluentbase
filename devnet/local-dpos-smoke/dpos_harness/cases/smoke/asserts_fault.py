@@ -32,9 +32,16 @@ So three rules hold throughout, and none of them is style:
 
 from __future__ import annotations
 
+import time
+
 from . import beacon, verdicts, verdicts_fault as vf
 from .driver import BEACON_NODES, SmokeFailure
 from ...core import nodes, topology
+
+#: The dry stand-in for the restarted victim's log. Non-empty because `logs_required`
+#: refuses an empty read, and free of any share line because the ABSENCE direction is the
+#: one the case walks.
+_DRY_NO_SHARE = "(dry) victim log with no epoch share line"
 
 
 def _survivors(victim: str):
@@ -456,7 +463,9 @@ def assert_vrf_dkg_liveness(ctx) -> None:
     _await_catchup(ctx, case, victim, boundary_probe, vf.DKG_CATCHUP_S, vf.DKG_CATCHUP_POLL_S,
                    f"{victim} did not catch up to {boundary_probe} after restart")
 
-    lines = vf.epoch_share_lines(ctx.logs_all(victim, dry_value=""), epoch=2)
+    lines = vf.epoch_share_lines(
+        ctx.logs_required(victim, case, "epoch-2 share absence", dry_value=_DRY_NO_SHARE),
+        epoch=2)
     ctx.check(case, *vf.evaluate_no_epoch_share(lines, victim, epoch=2))
     _say(ctx, f"smoke-vrf-dkg-liveness: {victim} holds NO epoch-2 share (correctly excluded by "
               "QUAL — it sits out the epoch-2 seed quorum, NO reshare)")
@@ -564,6 +573,49 @@ def assert_crash_survivor(ctx) -> None:
 
 # ══ smoke-full-restart ════════════════════════════════════════════════════════════════
 
+def _dump_restart_window(ctx, pre, head_dec, restart_at) -> None:
+    """The full-restart failure artifact: the whole timestamp picture, not just the one number
+    the verdict compared.
+
+    THE DECIDING ROW IS `head+1`. A block at or below `restart_at` is ambiguous on its own — it is
+    what a persisted tail looks like AND what the last pre-stop block looks like on a fleet that
+    came back and then went on producing. Whether the chain KEPT CLIMBING past it is what separates
+    them, so the block above is read: a real timestamp there means the fleet resumed and this gate
+    simply sampled the tail, and `<none>` means nothing was produced after the restart at all.
+
+    Read lazily, on the failure path only — `ctx.check` evaluates `on_fail` nowhere else, and these
+    are three extra RPCs that a passing run must not pay for."""
+    parent_ts = ctx.timestamp_at(head_dec - 1)
+    here_ts = ctx.timestamp_at(head_dec)
+    print(f"    FULL-RESTART diagnostic — floor pre={pre}, restart_at={restart_at}", flush=True)
+    print(f"      converged height {head_dec}: timestamp={here_ts} "
+          f"({here_ts - restart_at:+d}s vs restart)", flush=True)
+    print(f"      parent {head_dec - 1}: timestamp={parent_ts}", flush=True)
+
+    # EXISTENCE IS NOT RESUMPTION. This scan used to conclude "the fleet resumed" from a block
+    # merely BEING there, while printing a stamp that showed it was pre-restart — a block above
+    # the converged height that is itself older than the restart is more TAIL, not evidence of
+    # anything. It may only say "produced" for a stamp that clears `restart_at`.
+    tail_top = head_dec
+    for h in range(head_dec + 1, head_dec + 1 + vf.FULL_RESTART_SCAN_BLOCKS):
+        ts = ctx.timestamp_at(h)
+        if not ts:
+            break
+        if ts >= restart_at:
+            print(f"      first POST-restart block {h}: timestamp={ts} "
+                  f"({ts - restart_at:+d}s vs restart) — the chain DID resume; the gate was "
+                  "reading the tail", flush=True)
+            ctx.dump_logs(vf.FULL_RESTART_LOG_TAIL)
+            return
+        tail_top = h
+    span = tail_top - head_dec
+    print(f"      no post-restart block within {vf.FULL_RESTART_SCAN_BLOCKS} of the converged "
+          f"height: the persisted tail runs to at least {tail_top} "
+          f"({span} block(s) past it) and every one of those is PRE-restart, so resumption is "
+          "unproven — the fleet came back on its tail", flush=True)
+    ctx.dump_logs(vf.FULL_RESTART_LOG_TAIL)
+
+
 def assert_full_restart(ctx) -> None:
     """Stop ALL four validators, verify each persisted, restart them, and require the network to
     reconverge FROM THE PERSISTED FINALIZED HEAD — DPoS cold restart from disk for the whole set,
@@ -589,6 +641,7 @@ def assert_full_restart(ctx) -> None:
     for v in vals:
         ctx.check(case, *vf.evaluate_flushed(v, ctx.shutdown_flushed(v)))
     _say(ctx, "  all persisted (exit 0); restarting")
+    restart_at = int(time.time())
     ctx.compose_start(*vals, note="full-restart-start-committee")
 
     labels = [topology.PINNED_RPC_HOST, *vals[1:], "full-node"]
@@ -605,6 +658,33 @@ def assert_full_restart(ctx) -> None:
                    dry_value=[f"{hex(pre + 1)}|0xh"] * (len(vals) + 1))
     ctx.check(case, bool(got), f"network did not reconverge after full restart (> pre={pre})",
               on_fail=lambda: ctx.dump_logs(vf.FULL_RESTART_LOG_TAIL))
+
+    # AND THE CHAIN RESUMED — a SEPARATE wait, because reconvergence cannot witness it. `pre` is
+    # sampled before a 40s stop window (`vf.FULL_RESTART_STOP_TIMEOUT_S`), so the blocks written
+    # while the fleet was stopping are on disk and clear the floor by themselves; the poll above
+    # therefore returns on the persisted tail, whose stamps all predate the restart. Only a block
+    # the chain produced AFTER `restart_at` proves it came back to life.
+    head_dec = nodes.hex_to_dec(str((got or [""])[0]).split("|", 1)[0])
+
+    def resumed():
+        h = ctx.finalized_dec(dry_value=head_dec + 1)
+        if h <= 0:
+            return False
+        ts = ctx.timestamp_at(h, dry_value=restart_at)
+        return (h, ts) if vf.evaluate_produced_after_restart(ts, restart_at)[0] else False
+
+    # The RECONVERGE budget, reused rather than a new number: it is the one already tuned for "this
+    # fleet is coming back to life" on this case, and at ~1 blk/s plus K=3 result lag a resumed
+    # fleet finalizes a fresh block in seconds — so 120s is headroom, and erring generous only
+    # makes a dead fleet red slowly.
+    produced = ctx.poll(resumed, vf.FULL_RESTART_RECONVERGE_S, poll_s=vf.FULL_RESTART_POLL_S,
+                        dry_value=(head_dec + 1, restart_at))
+    ctx.check(case, *vf.evaluate_resumed_production(produced, head_dec, pre, restart_at,
+                                                    vf.FULL_RESTART_RECONVERGE_S),
+              on_fail=lambda: _dump_restart_window(ctx, pre, head_dec, restart_at))
+    _say(ctx, f"  chain RESUMED: block {produced[0]} stamped {produced[1]} "
+              f"({produced[1] - restart_at:+d}s vs the restart)")
+
     # EVERY node's height on the OK line, not just the producer's. There is no victim/hub split
     # here — all five are peers — so the auditable evidence is the whole ragged set against the
     # floor, and the pass that had to be caught by eye (`all 5 reconverged at 0x41 (>= pre=65)`,

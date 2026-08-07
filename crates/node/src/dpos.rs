@@ -781,7 +781,7 @@ where
 /// it). Spawned on a child of the commonware runtime context; children share
 /// the runtime's prometheus registry, so `c.encode()` includes the p2p
 /// tracker `connected`/`tracked` gauges the DposLayer registers later (the
-/// smoke `case-peers.sh` scrapes them). Must bind exactly ONCE per process, so
+/// smoke `smoke-peers` scrapes them). Must bind exactly ONCE per process, so
 /// it lives in the thread body, not inside [`launch_dpos_layer`].
 pub(crate) fn spawn_devnet_metrics(ctx: &Context, cfg: &DposConfig) {
     #[cfg(feature = "dpos-devnet-metrics")]

@@ -26,7 +26,7 @@ import re
 import sys
 import time
 
-from ..core import topology
+from ..core import nodes, topology
 from ..core.nodes import hex_to_dec as _hex_to_dec
 from ..core.policy import DEMOTED_INVARIANTS, gov_voter_list
 from ..core.proc import Runner
@@ -156,7 +156,13 @@ class Chain:
     def owner_addr(self, idx) -> str:
         """pp_owner_addr: derive the owner ADDRESS from the durable per-idx key via
         `cast wallet address --private-key 0x<key>` (lowercased); jq-on-addresses.json fallback
-        only if the key file is absent (byte-identical native path)."""
+        only if the key file is absent (byte-identical native path).
+
+        DRY FALLS BACK, it does not short-circuit: a dry Runner with CANNED reads is the substrate
+        the write tests pin argv against, so the live derivation must still run and still be
+        recorded. Only when both reads come back empty — a plain `--dry-run`, where nothing is
+        canned — does the per-idx placeholder stand in, because the callers refuse an empty address
+        (`register_setkeys`, `bench_promote`) and a rehearsal would abort on its first joiner."""
         raw = self.runtime_cat(f"keys/owner-{idx}.hex")
         if raw:
             addr = self.p.run(["cast", "wallet", "address", "--private-key", f"0x{raw}"],
@@ -168,7 +174,7 @@ class Chain:
         try:
             return (json.loads(aj)["validators"][int(idx)] or "").lower()
         except Exception:
-            return ""
+            return dry_owner_addr(idx) if self.p.dry else ""
 
     def consensus_keys(self, idx) -> dict:
         """pp_consensus_keys: run genesis-bootstrap consensus-keys one-off; returns the parsed
@@ -269,9 +275,7 @@ class Chain:
     def validator_status(self, addr: str) -> str:
         """pp_validator_status: 2nd tuple field (status byte) of getValidatorStatus over the
         RUNTIME staking cluster (the predeploy 0x..5201 is codeless here)."""
-        out = self.p.run(["cast", "call", self.staking_rt,
-                          "getValidatorStatus(address)"
-                          "(address,uint8,uint256,uint64,uint64,uint16)",
+        out = self.p.run(["cast", "call", self.staking_rt, nodes.VALIDATOR_STATUS_SIG,
                           addr, "--rpc-url", self.rpc], note="validator-status")
         parts = out.split()
         return parts[1] if len(parts) >= 2 else ""
@@ -280,9 +284,7 @@ class Chain:
         """3rd tuple field (uint256 stake) of getValidatorStatus — the member's CURRENT total
         delegated stake, the quantity the on-chain top-k committee selection ranks by. 0 when the
         read is unavailable (a stratify top-up then treats it as 'needs the full target')."""
-        out = self.p.run(["cast", "call", self.staking_rt,
-                          "getValidatorStatus(address)"
-                          "(address,uint8,uint256,uint64,uint64,uint16)",
+        out = self.p.run(["cast", "call", self.staking_rt, nodes.VALIDATOR_STATUS_SIG,
                           addr, "--rpc-url", self.rpc], note="validator-stake")
         parts = out.split()
         try:
@@ -327,9 +329,14 @@ class Chain:
         return out
 
     def active_validators_length(self) -> int:
+        """DRY answers a canned cap only when the read came back EMPTY — zero is this getter's
+        read-failed value and every caller aborts on it, so a plain `--dry-run` would never get
+        past its first growth step. A canned read still wins (see `owner_addr`)."""
         out = self.p.run(["cast", "call", self.chain_config_rt,
                           "getActiveValidatorsLength()(uint32)", "--rpc-url", self.rpc],
                          note="active-len")
+        if self.p.dry and not out:
+            return DRY_ACTIVE_LEN
         try:
             return int(_first_token(out) or 0)
         except ValueError:
@@ -337,7 +344,12 @@ class Chain:
 
     def _head_hex(self) -> str:
         # check_external 8545 | cut -d'|' -f1 — reuse nodes for the read (READ side is pure).
+        #
+        # The ONE read in this class that does not go through the Runner, so it is the one place a
+        # dry run would still reach docker. Canned to `"0x0"` exactly as `BringUp._head_hex` does.
         from ..core import nodes
+        if self.p.dry:
+            return "0x0"
         return nodes.check_external(topology.HOST_RPC_PORT).split("|", 1)[0]
 
     def nonce(self, addr: str):
@@ -670,7 +682,10 @@ class Chain:
                   "registerValidator(address,uint16,uint256)", addr, 0, "1000000000000000000",
                   key=key)
         st = self.validator_status(addr)
-        if st != "2":
+        # An EMPTY status is "nobody answered", not "the wrong status": that is a plain `--dry-run`,
+        # where the write being checked was itself only recorded. A dry Runner with a CANNED status
+        # still gets asserted, which is how the write tests drive this branch.
+        if st != "2" and not (self.p.dry and not st):
             raise ChainError("register", f"v{idx} ({addr}): status={st} after register (want 2)")
         ck = self.consensus_keys(idx)
         self.send(f"setConsensusKeys v{idx}", self.staking_rt,
@@ -903,6 +918,17 @@ class Chain:
 
 
 # ── module helpers ────────────────────────────────────────────────────────────
+
+#: The committee cap a `--dry-run` walk reads. Positive because zero is this getter's read-failed
+#: value and every caller aborts on it.
+DRY_ACTIVE_LEN = 4
+
+
+def dry_owner_addr(i) -> str:
+    """The canned per-idx owner address of a dry walk. One definition, because `BringUp` puts the
+    same values in the staking-reader it writes and two formulas would disagree silently."""
+    return f"0x{'%040x' % (0xA0 + int(i))}"
+
 
 def _receipt_ok(out: str) -> bool:
     """jq -r '.status // .receipt.status' == 0x1|1 over a --json receipt."""

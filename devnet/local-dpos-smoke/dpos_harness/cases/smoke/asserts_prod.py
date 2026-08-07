@@ -56,6 +56,42 @@ JOINER_IDX = PP_VAL_COUNT - 1
 JOINER_SERVICE = topology.validator(JOINER_IDX)
 
 
+def _dump_dkg_lifecycle(logs: str, want_epoch) -> None:
+    """The early-join failure artifact: every DKG lifecycle line the joiner logged, AT ANY EPOCH,
+    against the epoch the gate wanted.
+
+    The filtered list cannot serve here — it is empty in exactly the case where the filter is the
+    problem. The case tears its stack down when it returns, so whatever is not printed now is
+    gone; this is the same lesson as the cert-follow refusal line.
+
+    Reading it: a `stored` row at a DIFFERENT epoch than `want_epoch` means the two lifecycle
+    lines disagree about which epoch they name, and the fix is the filter. No rows at all means
+    the joiner never ran a ceremony. `started` at `want_epoch` with no `stored` at `want_epoch`
+    means it dealt and failed qualification — the shareless observer the gate exists to catch."""
+    rows = VR.dkg_lifecycle_audit(logs)
+    print(f"    EARLY-JOIN diagnostic — the gate wanted epoch={want_epoch}. DKG lifecycle lines "
+          f"in {JOINER_SERVICE}'s log (ALL epochs, last {VR.DKG_AUDIT_TAIL}):", flush=True)
+    if not rows:
+        print("      (none at any epoch — the joiner logged no ceremony lifecycle whatsoever)",
+              flush=True)
+    for epoch, line in rows:
+        mark = "  <-- the wanted epoch" if str(epoch) == str(want_epoch) else ""
+        print(f"      epoch={epoch}{mark}  {line}", flush=True)
+
+
+def share_present_vol(ctx, idx, epoch) -> bool:
+    """`share_present_vol <idx> <epoch>` (`case-vrf-dkg-durability.sh:93-97`) — a non-empty share
+    file, read through the VOLUME so it answers whether the validator is running or stopped.
+
+    It lives HERE rather than in `asserts_prod_dkg` because the early-join check needs it too, and
+    `asserts_prod_dkg` already imports from this module — putting it the other way round makes the
+    two import each other, which `tests/test_layering.py::test_no_import_cycles` rejects whether
+    the import sits at module level or inside a function."""
+    return ctx.vol_test(
+        f"find /runtime/reth-data/v{idx} -type f -name 'beacon-share-e{epoch}.bin' "
+        "-size +0c 2>/dev/null | grep -q .")
+
+
 # ══ shared plumbing ════════════════════════════════════════════════════════════════════════
 
 def _ok(ctx, message: str) -> None:
@@ -389,7 +425,10 @@ def assert_production_path(ctx) -> None:
     # In unified mode the joiner NEVER runs the legacy silent-verifier wait, so the committee
     # watchdog WARN must be absent from its ENTIRE log. An ABSENCE assertion over an ANSI-carrying
     # log — the reader strips, or this passes for the wrong reason.
-    hits = [ln for ln in ctx.logs_all(JOINER_SERVICE).splitlines() if VR.WATCHDOG_LINE in ln]
+    hits = [ln for ln in ctx.logs_required(
+        JOINER_SERVICE, "watchdog-silence scan",
+        dry_value="(dry) v5 log with no watchdog warn").splitlines()
+        if VR.WATCHDOG_LINE in ln]
     ctx.check(*VR.evaluate_watchdog_silent(hits))
     _say(ctx, "v5 watchdog silent for the whole run (unified mode)")
 
@@ -499,10 +538,36 @@ def assert_vrf_rotation(ctx) -> None:
     # The POSITIVE early-join proof: the joiner logged the live-DKG ceremony lifecycle during
     # E_new-1, while it was still a cert-follower. That is the direct evidence it dealt/received in
     # E_new's ceremony — i.e. it holds a share, rather than merely deriving from a committed key.
-    dkg = VR.dkg_lifecycle_lines(ctx.logs_all(
-        JOINER_SERVICE, dry_value=VR.DKG_LIFECYCLE_LINES[0] + " epoch=3"))
-    ctx.check(*VR.evaluate_early_join(dkg),
-              on_fail=lambda: [print(f"    {ln}", flush=True) for ln in dkg])
+    # SCOPED TO E_new: both lines carry the epoch they are FOR, and an unscoped grep was satisfied
+    # by any earlier ceremony the joiner had run.
+    dry_dkg = "\n".join(f"{m} epoch={e_new}" for m in VR.DKG_LIFECYCLE_LINES)
+    e_new_boundary = ctx.epoch_first_block(e_new)
+    box = {"logs": "", "closed": False}
+
+    def dkg_complete():
+        """Both lifecycle lines for E_new — or the follower-phase window closing under us.
+
+        Returning True on the CLOSED branch stops the poll deliberately: past E_new's first block
+        the joiner is a member, so more waiting cannot produce evidence about its follower phase,
+        and the verdict below reads `closed` to say which of the two it is."""
+        box["logs"] = ctx.logs_required(JOINER_SERVICE, "early-join DKG lifecycle",
+                                        dry_value=dry_dkg)
+        if VR.evaluate_early_join(VR.dkg_lifecycle_lines(box["logs"], e_new), e_new)[0]:
+            return True
+        if ctx.finalized_dec(dry_value=0) >= e_new_boundary:
+            box["closed"] = True
+            return True
+        return False
+
+    # THE HEIGHT BOUND IS THE REAL ONE — the poll stops at E_new's first block whatever the clock
+    # says. `E_NEW_CLIMB_S` is reused as the wall-clock backstop because it is already this stack's
+    # budget for exactly this span (here to the E_new boundary); it only ever fires on a chain that
+    # stopped finalizing, which is a different failure and reads as one.
+    ctx.poll(dkg_complete, VR.E_NEW_CLIMB_S, poll_s=VR.EARLY_JOIN_POLL_S)
+    dkg = VR.dkg_lifecycle_lines(box["logs"], e_new)
+    ctx.check(*VR.evaluate_early_join(dkg, e_new, window_closed=box["closed"],
+                                      budget_s=VR.E_NEW_CLIMB_S),
+              on_fail=lambda: _dump_dkg_lifecycle(box["logs"], e_new))
     _say(ctx, "EARLY-JOIN proof — validator-5 ran committee[E_new]'s DKG from its follower phase:")
     for line in dkg:
         _say(ctx, f"  {line}")
@@ -533,8 +598,19 @@ def assert_vrf_rotation(ctx) -> None:
                             VR.HEAD_GROWTH_S)),
               f"head did not advance >= {VR.HEAD_GROWTH_BLOCKS} past {head0} within "
               f"{VR.HEAD_GROWTH_S}s — cannot observe a sustained post-rotation beacon")
+    # THE JOINER NEEDS A DIFFERENT WITNESS. `ACTIVE_LINE` growth does not discriminate for it: the
+    # deriver logs that line on EVERY node whose certificate carries a seed
+    # (`crates/node/src/derive.rs:78-86`), so a shareless observer grows the count exactly like a
+    # signer. The share file on disk is the one reading that separates them.
+    ctx.check(*VR.evaluate_joiner_holds_share(
+        share_present_vol(ctx, JOINER_IDX, e_new), e_new, JOINER_IDX))
+    _say(ctx, f"{JOINER_SERVICE} holds a non-empty beacon-share-e{e_new}.bin (a SIGNER, not an "
+              "observer)")
+
     for v in members:
         after = ctx.log_count(v, VR.ACTIVE_LINE, dry_value=before[v] + 1)
+        # `ACTIVE_LINE` stays the witness for the STAYERS — there it does mean "the beacon
+        # relived". For the joiner the share probe above is what carries the claim.
         ctx.check(*VR.evaluate_member_active_growth(before[v], after, v, JOINER_SERVICE),
                   on_fail=lambda s=v: ctx.dump_logs(VR.LOG_TAIL_NODE, s))
         role = ("EARLY-JOIN: v5 votes as a new member" if v == JOINER_SERVICE

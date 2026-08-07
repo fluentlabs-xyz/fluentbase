@@ -170,11 +170,11 @@ class ByzantineDrive:
         # The ANSI strip happens in the reader — without it the regex never matches, and in bash
         # the unguarded `$( … | grep … )` then exited non-zero and aborted the case with no
         # diagnostic at all.
-        forge_epoch = VR.forge_epoch(
-            ctx.logs_all(self.service, dry_value=f"{VR.FORGE_LINE} epoch=4"),
-            fallback=state["e_new"])
-        ctx.check(*VR.evaluate_forge_epoch(forge_epoch))
-        forge_epoch = int(forge_epoch) if str(forge_epoch).isdigit() else 0
+        logs = ctx.logs_required(self.service, "forged-epoch scan",
+                                 dry_value=f"{VR.FORGE_LINE} epoch=4")
+        hits = VR.forge_epoch_hits(logs)
+        ctx.check(*VR.evaluate_forge_epoch(hits, state["e_new"]))
+        forge_epoch = int(VR.forge_epoch(logs, fallback=state["e_new"]) or 0)
         _say(ctx, f"forged boundary epoch = {forge_epoch} (anchoring the SAFETY window there)")
 
         # The beacon has no on-chain mirror, so the safety proof is the OBSERVABLE output: at and

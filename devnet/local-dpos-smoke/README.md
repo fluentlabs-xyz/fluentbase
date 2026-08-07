@@ -1,18 +1,23 @@
 # DPoS Local Smoke (Pipeline 2 — sequencer→DPoS migration mirror)
 
-Two-phase smoke test that mirrors the production migration from a
-single sequencer to a 4-validator DPoS BFT set on isolated
-`chainId=2026`, deterministic from a BIP39 mnemonic:
+A suite of self-contained regression cases on an isolated `chainId=2026` devnet,
+deterministic from a BIP39 mnemonic. Every case brings up its own stack, asserts,
+and tears down; the harness is `dpos_harness/`, a Python package, and `make` is a
+thin launcher over it (`python3 -m dpos_harness case <name>`).
 
-- **phase-1** (`make smoke`): validator-0 runs as the sequencer
-  (1 block / sec); validators 1-3 and a non-staking full-node follow
-  via `--cert-upstream ws://172.20.0.10:8546` (deprecated alias
-  `--sequencer-url`). All 5 align finalized
-  > 0 within 60 s.
-- **phase-2** (`make smoke-swap`): cold-restart validators 0-3 with
-  `--dpos` via `docker-compose.dpos.yml` override; chain continues
-  past the sequencer's last block via DPoS BFT. All 5 align finalized
-  > sequencer_last within 60 s.
+Each bring-up mirrors the production migration in two phases, and both are a
+PRECONDITION of every case rather than a target of their own:
+
+- **phase-1**: validator-0 runs as the sequencer (1 block / sec); validators 1-3
+  and a non-staking full-node follow via `--cert-upstream ws://172.20.0.10:8546`
+  (deprecated alias `--sequencer-url`). All 5 must align finalized > 0.
+- **phase-2**: cold-restart validators 0-3 with `--dpos` via the
+  `docker-compose.dpos.yml` override; the chain must continue past the
+  sequencer's last block via DPoS BFT, all 5 aligned.
+
+Neither phase can silently not-happen: `StaticStack.bring_up_dpos` raises
+`ConvergeError` and tears the stack down if either fails to converge, so a case
+that reaches its first assertion has already proved the migration.
 
 Every node passes `--dpos.staking-config=/runtime/staking-reader.json`
 in both phases — required so `FluentBlockExecutor::apply_pre_execution_changes`
@@ -33,12 +38,18 @@ constraint prod will face during migration.
 ## Quick start
 
     make regen-contracts        # one-time, after a Solidity change
-    make smoke                  # phase-1: sequencer + followers; leaves chain UP
-    make smoke-swap             # phase-2: cold-restart to DPoS; tears down on success
+    make smoke-base             # the read-only case suite on one bring-up (~4 min)
+    make smoke-all              # the whole gate, 20 cases, one subprocess each (3-5 h)
 
-For phase-1 only (no migration test) run `make smoke` and clean up
-with `make down`. For the full end-to-end migration test run both
-sequentially.
+    python3 -m dpos_harness case list          # every case name
+    python3 -m dpos_harness case <name>        # one case
+    python3 -m dpos_harness case <name> --dry-run   # its command transcript, no docker
+
+Every `make smoke-<case>` target forwards `ARGS`, so `ARGS=--dry-run` works there
+too, and the `*-dry-run` targets walk a whole family in about a second.
+
+The suite is strictly sequential: each case binds fixed host ports and fixed IPs
+in `172.20.0.0/24`, so two at once fight over them.
 
 For interactive observation:
 
@@ -51,24 +62,25 @@ For interactive observation:
 
 ## Acceptance check
 
-**phase-1** (`make smoke`) succeeds when within 60 s of `docker
-compose up`:
+A case's bring-up converges phase-1 when all 5 nodes report
+`eth_getBlockByNumber("finalized", false).result.number > 0` on a single agreed
+hash, and phase-2 when all 5 are past the sequencer's last finalized block —
+visibly advanced, not stuck at the swap boundary. Failure of either dumps the
+container logs, runs `docker compose down -v`, and aborts the case.
 
-- all 5 nodes' `eth_getBlockByNumber("finalized", false).result.number > 0`
-- all 5 nodes' `eth_getBlockByNumber("finalized", false).result.hash` are identical
+A case then reports one of five outcomes (`dpos_harness/core/exit_codes.py`), and
+the distinction between the middle three is the point of the suite:
 
-Chain stays UP on success so phase-2 can take over via compose
-override.
+| code | meaning |
+|---|---|
+| 0 `PASS` | every verdict held |
+| 1 `FAIL` | a verdict came back false — the property is broken |
+| 2 `USAGE` | bad argument, or a setup that cannot express the case |
+| 3 `ERROR` | infrastructure: a bring-up failed, a command failed, an exception escaped |
+| 4 `INCONCLUSIVE` | a reading failed, so the property was never evaluated at all |
 
-**phase-2** (`make smoke-swap`) succeeds when within 60 s of the
-cold-restart:
-
-- all 5 nodes' finalized number > the sequencer's last finalized number (chain
-  visibly advanced post-swap, not stuck at the swap boundary)
-- all 5 nodes' finalized hash identical
-
-On either failure: container logs dumped, `docker compose down -v`
-cleans up.
+`INCONCLUSIVE` is non-zero on purpose. An unchecked property is not a checked
+one, and reporting it as a pass is the failure mode the suite exists to remove.
 
 ## Teardown
 
@@ -94,12 +106,12 @@ cleans up.
   `commitEpochCommittee` system call causes followers to reject
   the sequencer's blocks. All 5 nodes must pass identical
   `--dpos.staking-config` in both phases.
-- **phase-2 `make smoke-swap` hangs at PREV_FIN** — the cold-restart
-  happened but DPoS BFT didn't make a block past the sequencer's last
-  finalized. `docker compose logs validator-0` shows DPoS engine
-  state; common cause is a swap fired past the first epoch boundary
-  (block ≥ 32) without prior `commitEpochCommittee` for the new
-  epoch. Keep swap within epoch 0 in smoke (default `epoch_block_interval = 32`).
+- **a case dies with `ERROR (…): bring-up failed` at PREV_FIN** — the
+  cold-restart happened but DPoS BFT didn't make a block past the sequencer's
+  last finalized. `docker compose logs validator-0` shows DPoS engine state;
+  common cause is a swap fired past the first epoch boundary (block ≥ 32)
+  without prior `commitEpochCommittee` for the new epoch. The swap stays within
+  epoch 0 (default `epoch_block_interval = 32`).
 - **Contract artefacts stale after Solidity change** — run
   `make regen-contracts` and commit the new JSONs in `contracts/`.
 
@@ -271,10 +283,6 @@ die on a failed send; SIGTERM/Ctrl-C kills senders cleanly.
     LOAD_WAIT_MARKER_LOG=sim.log python3 -m dpos_harness load start   # gate funding on the sim's DeployStaking marker
     python3 -m dpos_harness load stop [pidfile]               # clean pidfile-based shutdown
 
-The legacy `scripts/load-heavy.sh` is still on disk until the bash tree is
-deleted. It reads the OLD `LH_*` names, not the `LOAD_*` ones below, and greps
-the OLD `[soak r<N> ` run marker — so it will not gate on a Python sim's log
-without `LH_WAIT_MARKER_RE` set. Use the Python blaster with the Python sim.
 
 **Self-supervising lifecycle** (the sender-lifecycle rework — retires the old
 external `launch-load.sh` + `blaster-waiter.sh` scratchpad glue): this ONE

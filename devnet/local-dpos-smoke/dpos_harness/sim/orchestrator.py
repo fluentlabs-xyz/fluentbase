@@ -808,6 +808,10 @@ class Orchestrator:
         for kind, msg in disp.events[-4:]:
             print(f"#   event[{kind}] {msg[:100]}")
         print(f"# {len(runner.log)} tick commands")
+        # the coverage tally the live run reports — shown here so the dry tick demonstrates the
+        # instrument as well as the commands (one round, so at most one class moves)
+        for line in disp.tally.human_lines():
+            print(f"# {line}")
         return 0
 
     def run(self):
@@ -833,6 +837,17 @@ class Orchestrator:
         bu = BringUp(self.cfg.stack_spec(), runner)
 
         interrupted = {"v": False}
+        # Bound before the try so the exit handlers can report coverage without risking a NameError
+        # over the top of the real failure: bring-up raises before the Dispatcher exists.
+        disp = None
+
+        def _coverage(when):
+            # getattr, not attribute access: bring-up can raise before the Dispatcher exists, and
+            # the loop tests substitute a stub for it. Instrumentation reports what is there and
+            # is silent otherwise — it must never be the thing that fails a run.
+            tally = getattr(disp, "tally", None)
+            if tally is not None:
+                self._emit_coverage(elog, tally, when)
 
         def _on_signal(signum, _frame):               # F5: SIGINT/SIGTERM (case-soak.sh:526-533)
             interrupted["v"] = True
@@ -890,6 +905,11 @@ class Orchestrator:
             start = time.time()
             last_churn = 0.0
             committee_read_fail_ticks = 0
+            # Coverage reporting rides the reconciler's OWN pool-report clock (SIM_POOL_REPORT_EVERY
+            # epochs) rather than a second cadence of its own: `check_resource_pools` stamps
+            # `pool_last_report` with the epoch it reported in, so a change of that stamp is the
+            # report edge. One clock, one operator-visible rhythm.
+            last_cov_epoch = rec.pool_last_report
 
             # ── run-config record: the EFFECTIVE knobs this run acts and judges by ──────────
             # A bundle used to carry NO record of the environment its run was launched under —
@@ -955,6 +975,7 @@ class Orchestrator:
                 battery.bind(*self.to_ctx(**self.rt_addrs))
                 if not battery.check_invariants():
                     _drain()
+                    _coverage("invariant-fail")
                     self._fail_bundle(elog, battery.inv_fail_id, battery.inv_fail_msg, _teardown)
                     return 1
                 _drain()
@@ -972,25 +993,51 @@ class Orchestrator:
                     disp.run_round(cur, n)                 # increments state.round
                     _drain()
 
+                # periodic coverage, on the pool report's edge (see last_cov_epoch above)
+                if rec.pool_last_report != last_cov_epoch:
+                    last_cov_epoch = rec.pool_last_report
+                    _coverage(f"epoch-{cur}")
+
                 time.sleep(check_secs)                  # F3: terminal tick sleep
 
             elog.sim_event("end", f"sim finished cleanly (seed {self.cfg.seed}, "
                                    f"{self.state.round} rounds)")
+            _coverage("final")
             _teardown()
             return 0
         except KeyboardInterrupt:                       # F5: SIGINT/SIGTERM path
             if interrupted["v"]:
                 elog.sim_event("end", "interrupted (SIGINT/SIGTERM)")
             _drain()
+            _coverage("interrupted")
             _teardown()
             return 130
         except ChainError as e:                         # F5: watchdog trip → bundle + teardown
             _drain()
+            _coverage("chain-error")
             self._fail_bundle(elog, e.reason_id, e.message, _teardown)
             return 1
         finally:
             signal.signal(signal.SIGINT, prev_int)
             signal.signal(signal.SIGTERM, prev_term)
+
+    @staticmethod
+    def _emit_coverage(elog, tally, when: str):
+        """Report what the run has EXERCISED so far — machine-readable into events.jsonl, human
+        block to stdout, plus the demoted-trip summary.
+
+        Emitted periodically AND on every exit path, deliberately: an overnight run gets killed,
+        wedged or interrupted, and a tally that exists only at exit is a tally we do not have.
+        The structured line is the artifact the morning analysis reads; the printed block is for
+        the operator watching the terminal. Neither is read back by anything that decides."""
+        try:
+            elog.sim_event("coverage", json.dumps(
+                {"at": when, **tally.snapshot(demoted=elog.demoted_trips)},
+                sort_keys=True, default=str))
+            for line in tally.human_lines() + elog.demoted_trip_lines():
+                print(line, flush=True)
+        except Exception as e:  # noqa: BLE001 — instrumentation must never break the run it measures
+            print(f"coverage report failed ({type(e).__name__}: {e})", flush=True)
 
     def _fail_bundle(self, elog, inv_id, msg, teardown):
         """fail_bundle (case-soak.sh): record the invariant_fail event, dump the structured bundle,

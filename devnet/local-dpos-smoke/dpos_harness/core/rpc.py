@@ -99,11 +99,13 @@ def _run_read(cmd, timeout: float) -> str:
     return proc.read(cmd, timeout=timeout)
 
 
-def rpc_post_exec(body: str, exec_prefix) -> str:
-    """POST a JSON-RPC body to a node's in-container RPC (:8545) through a command
-    prefix (e.g. ["docker","compose","exec","-T","validator-2"]). Outer-bounded by
-    the exec timeout. Returns raw JSON, `{}` if empty/failed."""
-    cmd = list(exec_prefix) + [
+def rpc_post_argv(body: str):
+    """The `curl` argv that POSTs `body` to a node's OWN in-container RPC (:8545).
+
+    Split out of `rpc_post_exec` so the WRITE side can issue the identical command on the
+    recording channel: a mutating JSON-RPC call against an overlay service belongs in the
+    transcript, and two hand-built curls would be two things to keep in step."""
+    return [
         "curl", "-s",
         "--max-time", str(int(RPC_MAX_TIME)),
         "--connect-timeout", str(int(RPC_CONNECT_TIMEOUT)),
@@ -112,7 +114,13 @@ def rpc_post_exec(body: str, exec_prefix) -> str:
         "--data", body,
         topology.IN_CONTAINER_RPC_URL,
     ]
-    out = _run_read(cmd, RPC_EXEC_TIMEOUT)
+
+
+def rpc_post_exec(body: str, exec_prefix) -> str:
+    """POST a JSON-RPC body to a node's in-container RPC (:8545) through a command
+    prefix (e.g. ["docker","compose","exec","-T","validator-2"]). Outer-bounded by
+    the exec timeout. Returns raw JSON, `{}` if empty/failed."""
+    out = _run_read(list(exec_prefix) + rpc_post_argv(body), RPC_EXEC_TIMEOUT)
     return out if out else "{}"
 
 
@@ -157,6 +165,14 @@ def _enode_pubkey(url: str) -> str:
         obj = json.loads(out) if out.strip() else {}
     except Exception:
         return ""
+    return enode_pubkey_of(obj)
+
+
+def enode_pubkey_of(obj) -> str:
+    """The 128-hex pubkey out of an already-parsed `admin_nodeInfo` object, "" if absent or
+    malformed. Split out so the exec-based reader (`nodes.enode_pubkey_via`) validates through the
+    same code as the host-URL one — the length check is the contract callers rely on when they
+    test truthiness."""
     enode = obj.get("enode") if isinstance(obj, dict) else None
     if not enode:
         return ""
