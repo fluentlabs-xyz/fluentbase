@@ -108,14 +108,39 @@ fn convert_sol_to_rust(
         .map(|s| sol_struct_to_rust_tokens(s))
         .collect::<syn::Result<Vec<_>>>()?;
 
-    let trait_fns = visitor
-        .functions
-        .iter()
-        .filter_map(|func| sol_fn_to_trait_method(func).ok())
-        .filter(|tokens| !tokens.is_empty())
-        .collect::<Vec<_>>();
+    // Every function must convert: dropping one would silently shrink the interface surface.
+    let mut trait_fns = Vec::new();
+    let mut errors = Vec::new();
+    for func in &visitor.functions {
+        match sol_fn_to_trait_method(func) {
+            Ok(tokens) if tokens.is_empty() => {}
+            Ok(tokens) => trait_fns.push(tokens),
+            Err(err) => errors.push(err),
+        }
+    }
+
+    if let Some(err) = combine_errors(errors) {
+        return Err(err);
+    }
 
     Ok((structs, trait_name, trait_fns))
+}
+
+/// Merges accumulated errors into a single one so a build reports every
+/// unsupported item at once instead of only the first
+///
+/// # Arguments
+///
+/// * `errors` - The collected conversion errors
+///
+/// # Returns
+///
+/// The merged error, or `None` if there were no errors
+fn combine_errors(errors: Vec<syn::Error>) -> Option<syn::Error> {
+    errors.into_iter().reduce(|mut acc, err| {
+        acc.combine(err);
+        acc
+    })
 }
 
 /// Derives a trait name from the Solidity file
@@ -192,7 +217,9 @@ fn sol_struct_to_rust_tokens(sol_struct: &ItemStruct) -> syn::Result<TokenStream
                 .unwrap_or_else(|| Ident::new("_", field.ty.span()));
 
             // Convert Solidity type to Rust type
-            let sol_ty = convert_solidity_type(&field.ty)?;
+            let sol_ty = convert_solidity_type(&field.ty).map_err(|e| {
+                syn::Error::new(field.ty.span(), format!("Struct field type error: {e}"))
+            })?;
             let rust_ty: Type = sol_to_rust(&sol_ty).map_err(|e| {
                 syn::Error::new(field.ty.span(), format!("Struct field type error: {e}"))
             })?;
@@ -233,16 +260,29 @@ fn sol_fn_to_trait_method(func: &ItemFunction) -> syn::Result<TokenStream> {
     let fn_name = format_ident!("{}", name.to_string().to_case(Case::Snake));
     let receiver = determine_method_receiver(func);
 
-    // Generate function parameters
-    let args = func
-        .parameters
-        .iter()
-        .enumerate()
-        .filter_map(|(i, param)| sol_param_to_tokens(i, param).ok())
-        .collect::<Vec<_>>();
+    // Generate function parameters. A dropped parameter would change the selector,
+    // so any failure has to abort the whole function.
+    let mut args = Vec::new();
+    let mut errors = Vec::new();
+    for (i, param) in func.parameters.iter().enumerate() {
+        match sol_param_to_tokens(i, param) {
+            Ok(tokens) => args.push(tokens),
+            Err(err) => errors.push(err),
+        }
+    }
 
     // Generate function return type
-    let ret = sol_return_to_tokens(func)?;
+    let ret = match sol_return_to_tokens(func) {
+        Ok(tokens) => tokens,
+        Err(err) => {
+            errors.push(err);
+            quote! {}
+        }
+    };
+
+    if let Some(err) = combine_errors(errors) {
+        return Err(err);
+    }
 
     // Generate the function signature
     Ok(quote! {
@@ -271,7 +311,8 @@ fn sol_param_to_tokens(index: usize, param: &VariableDeclaration) -> syn::Result
     let name_ident = format_ident!("{}", name_str);
 
     // Convert Solidity type to Rust type
-    let sol_ty = convert_solidity_type(&param.ty)?;
+    let sol_ty = convert_solidity_type(&param.ty)
+        .map_err(|e| syn::Error::new(param.ty.span(), format!("Cannot convert param type: {e}")))?;
     let rust_ty = sol_to_rust(&sol_ty)
         .map_err(|e| syn::Error::new(param.ty.span(), format!("Cannot convert param type: {e}")))?;
 
@@ -297,27 +338,32 @@ fn sol_return_to_tokens(func: &ItemFunction) -> syn::Result<TokenStream> {
 
     // If there's only one return parameter, use it directly
     if return_params.len() == 1 {
-        let sol_ty = convert_solidity_type(&return_params[0].ty)?;
-        let rust_ty = sol_to_rust(&sol_ty).map_err(|e| {
-            syn::Error::new(
-                return_params[0].ty.span(),
-                format!("Return type error: {e}"),
-            )
-        })?;
+        let span = return_params[0].ty.span();
+        let sol_ty = convert_solidity_type(&return_params[0].ty)
+            .map_err(|e| syn::Error::new(span, format!("Return type error: {e}")))?;
+        let rust_ty = sol_to_rust(&sol_ty)
+            .map_err(|e| syn::Error::new(span, format!("Return type error: {e}")))?;
 
         return Ok(quote! { -> #rust_ty });
     }
 
     // For multiple return parameters, create a tuple
-    let rust_types = return_params
-        .iter()
-        .map(|param| {
-            let sol_ty = convert_solidity_type(&param.ty)?;
-            sol_to_rust(&sol_ty).map(|ty| quote! { #ty }).map_err(|e| {
-                syn::Error::new(param.ty.span(), format!("Tuple return type error: {e}"))
-            })
-        })
-        .collect::<syn::Result<Vec<_>>>()?;
+    let mut rust_types = Vec::new();
+    let mut errors = Vec::new();
+    for param in return_params.iter() {
+        let converted = convert_solidity_type(&param.ty)
+            .and_then(|sol_ty| sol_to_rust(&sol_ty))
+            .map_err(|e| syn::Error::new(param.ty.span(), format!("Tuple return type error: {e}")));
+
+        match converted {
+            Ok(ty) => rust_types.push(quote! { #ty }),
+            Err(err) => errors.push(err),
+        }
+    }
+
+    if let Some(err) = combine_errors(errors) {
+        return Err(err);
+    }
 
     Ok(quote! { -> (#(#rust_types),*) })
 }
@@ -394,6 +440,72 @@ library SomeLibrary {
         let formatted = prettyplease::unparse(&parsed);
 
         assert_snapshot!("sol_to_rust_trait_nested_struct", formatted);
+    }
+
+    #[test]
+    fn test_unsupported_param_type_fails() {
+        let solidity_code = r#"
+        interface IProgram {
+            function transfer(address to, function() external cb) external;
+            function ping() external view returns (uint256);
+        }
+    "#;
+        let input: alloy_sol_macro_input::SolInput = parse_str(solidity_code).unwrap();
+
+        let err = to_rust_trait(input).unwrap_err();
+        assert!(
+            err.to_string().contains("Cannot convert param type"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_unsupported_return_type_fails() {
+        let solidity_code = r#"
+        interface IProgram {
+            function lookup() external view returns (function() external);
+        }
+    "#;
+        let input: alloy_sol_macro_input::SolInput = parse_str(solidity_code).unwrap();
+
+        let err = to_rust_trait(input).unwrap_err();
+        assert!(
+            err.to_string().contains("Return type error"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_every_unsupported_item_is_reported() {
+        let solidity_code = r#"
+        interface IProgram {
+            function first(function() external cb) external;
+            function second(function() external cb) external;
+        }
+    "#;
+        let input: alloy_sol_macro_input::SolInput = parse_str(solidity_code).unwrap();
+
+        let err = to_rust_trait(input).unwrap_err();
+        assert_eq!(err.into_iter().count(), 2);
+    }
+
+    #[test]
+    fn test_supported_interface_keeps_all_functions_and_params() {
+        let solidity_code = r#"
+        interface IProgram {
+            function transfer(address to, uint256 amount) external returns (bool);
+            function balanceOf(address owner) external view returns (uint256);
+            fallback() external;
+            receive() external payable;
+        }
+    "#;
+        let input: alloy_sol_macro_input::SolInput = parse_str(solidity_code).unwrap();
+
+        let generated = to_rust_trait(input).unwrap();
+        let parsed = syn::parse_file(&generated.to_string()).unwrap();
+        let formatted = prettyplease::unparse(&parsed);
+
+        assert_snapshot!("sol_to_rust_trait_full_surface", formatted);
     }
 
     #[test]

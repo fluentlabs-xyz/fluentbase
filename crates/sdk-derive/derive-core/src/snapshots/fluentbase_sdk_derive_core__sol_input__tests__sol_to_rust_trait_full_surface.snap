@@ -1,0 +1,8 @@
+---
+source: crates/sdk-derive/derive-core/src/sol_input.rs
+expression: formatted
+---
+pub trait IProgram {
+    fn transfer(&mut self, to: Address, amount: U256) -> bool;
+    fn balance_of(&self, owner: Address) -> U256;
+}
