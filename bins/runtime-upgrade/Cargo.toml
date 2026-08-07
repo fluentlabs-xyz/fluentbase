@@ -18,7 +18,7 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 fluentbase-sdk = { workspace = true, features = ["std"] }
 rwasm = { workspace = true }
 alloy-genesis = { workspace = true }
-fluentbase-release-verify = { workspace = true }
+fluentbase-release-verify = { workspace = true, features = ["reqwest"] }
 reth-chainspec = { workspace = true }
 clap = { workspace = true }
 flate2 = { workspace = true }
@@ -28,7 +28,6 @@ hex = { workspace = true }
 alloy-sol-types = { workspace = true }
 
 # misc
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 futures-util = "0.3"
 rpassword = "0.3.0"
 

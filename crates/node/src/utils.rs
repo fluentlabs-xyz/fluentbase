@@ -8,9 +8,9 @@
 use alloy_genesis::Genesis;
 use eyre::WrapErr as _;
 use fluentbase_release_verify::{
-    load_verified, parse_genesis_gz, FetchError, ReleaseAsset, ReleaseKey,
+    bounded_http_fetch, load_verified, parse_genesis_gz, FetchError, ReleaseAsset, ReleaseKey,
 };
-use std::{io::Read as _, path::PathBuf, time::Duration};
+use std::{path::PathBuf, time::Duration};
 
 /// Timeout for a single artifact download.
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(300);
@@ -49,40 +49,7 @@ fn genesis_cache_dir() -> eyre::Result<PathBuf> {
 /// Downloads `url` into memory, refusing responses larger than `max_bytes`.
 fn http_fetch(url: &str, max_bytes: usize) -> Result<Vec<u8>, FetchError> {
     // NOTE: blocking client avoids pulling tokio into a CLI dependency tree.
-    let client = reqwest::blocking::Client::builder()
-        .user_agent("fluent-chainspec/1.0")
-        .timeout(DOWNLOAD_TIMEOUT)
-        .build()
-        .map_err(|err| FetchError::new(format!("failed to build HTTP client: {err}")))?;
-    let resp = client
-        .get(url)
-        .send()
-        .map_err(|err| FetchError::new(format!("GET {url}: {err}")))?;
-    if resp.status() == reqwest::StatusCode::NOT_FOUND {
-        return Err(FetchError::not_found(format!("GET {url} returned 404")));
-    }
-    let resp = resp
-        .error_for_status()
-        .map_err(|err| FetchError::new(format!("GET {url} returned non-success: {err}")))?;
-
-    if let Some(len) = resp.content_length() {
-        if len > max_bytes as u64 {
-            return Err(FetchError::new(format!(
-                "advertises {len} bytes, over the {max_bytes} byte limit"
-            )));
-        }
-    }
-
-    let mut buf = Vec::new();
-    resp.take(max_bytes as u64 + 1)
-        .read_to_end(&mut buf)
-        .map_err(|err| FetchError::new(format!("reading response body: {err}")))?;
-    if buf.len() > max_bytes {
-        return Err(FetchError::new(format!(
-            "exceeds the {max_bytes} byte limit"
-        )));
-    }
-    Ok(buf)
+    bounded_http_fetch("fluent-chainspec/1.0", DOWNLOAD_TIMEOUT, url, max_bytes)
 }
 
 #[cfg(test)]

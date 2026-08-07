@@ -18,8 +18,8 @@
 //!   instead of it;
 //! * every read, parse, signer, or signature error is an error. There is no bypass switch.
 //!
-//! HTTP lives with the caller: [`load_verified`] takes a [`Fetcher`] closure, so the same
-//! verification runs behind a blocking client in the node and an async one in the CLIs.
+//! [`load_verified`] takes a [`Fetcher`] closure. Consumers that use blocking HTTP can enable the
+//! `reqwest` feature and reuse [`bounded_http_fetch`]; other transports remain injectable.
 //!
 //! ```no_run
 //! use fluentbase_release_verify::{load_verified, parse_genesis_gz, ReleaseAsset, ReleaseKey};
@@ -38,6 +38,8 @@
 
 pub mod asset;
 pub mod error;
+#[cfg(feature = "reqwest")]
+mod http;
 pub mod key;
 pub mod load;
 pub mod manifest;
@@ -51,6 +53,8 @@ pub use asset::{
     MAX_SIGNATURE_BYTES, RELEASE_BASE_URL,
 };
 pub use error::{FetchError, Result, VerifyError};
+#[cfg(feature = "reqwest")]
+pub use http::bounded_http_fetch;
 pub use key::{ReleaseKey, FLUENT_RELEASE_KEY_FINGERPRINT, FLUENT_RELEASE_PUBKEY_ASC};
 pub use load::{
     authenticate, decompress_gz, load_verified, parse_genesis_gz, read_capped, write_atomic,
