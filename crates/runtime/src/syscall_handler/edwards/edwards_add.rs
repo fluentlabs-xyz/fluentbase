@@ -16,7 +16,7 @@ pub fn syscall_edwards_add_handler(
     ctx.memory_read(q_ptr as usize, &mut q_bytes)?;
     let res = syscall_edwards_add_impl(p_bytes, q_bytes)
         .map_err(|e| syscall_process_exit_code(ctx, e))?;
-    ctx.memory_write(q_ptr as usize, &res)?;
+    ctx.memory_write(p_ptr as usize, &res)?;
     Ok(())
 }
 
