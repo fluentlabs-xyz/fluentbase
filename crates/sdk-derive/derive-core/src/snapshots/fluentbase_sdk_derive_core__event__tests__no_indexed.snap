@@ -16,7 +16,6 @@ impl DataStored {
         &self,
         sdk: &mut SDK,
     ) -> Result<(), fluentbase_sdk::ExitCode> {
-        use fluentbase_sdk::codec::SolidityABI;
         let topics: [fluentbase_sdk::B256; 1usize] = [
             fluentbase_sdk::B256::new([
                 211u8, 182u8, 197u8, 148u8, 69u8, 27u8, 234u8, 50u8, 4u8, 113u8, 108u8,
@@ -27,7 +26,7 @@ impl DataStored {
         let data = {
             let mut buf = fluentbase_sdk::codec::bytes::BytesMut::new();
             let values = (self.key.clone(), self.value.clone());
-            SolidityABI::encode_function_args(&values, &mut buf)
+            fluentbase_sdk::codec::SolidityABI::encode_function_args(&values, &mut buf)
                 .expect("encode data fields");
             buf.freeze()
         };

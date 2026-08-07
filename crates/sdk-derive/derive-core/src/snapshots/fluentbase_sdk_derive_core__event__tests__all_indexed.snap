@@ -1,6 +1,5 @@
 ---
 source: crates/sdk-derive/derive-core/src/event.rs
-assertion_line: 279
 expression: generate(input)
 ---
 impl Approval {
@@ -17,7 +16,6 @@ impl Approval {
         &self,
         sdk: &mut SDK,
     ) -> Result<(), fluentbase_sdk::ExitCode> {
-        use fluentbase_sdk::codec::SolidityABI;
         let topics: [fluentbase_sdk::B256; 4usize] = [
             fluentbase_sdk::B256::new([
                 140u8, 91u8, 225u8, 229u8, 235u8, 236u8, 125u8, 91u8, 209u8, 79u8, 113u8,
@@ -25,39 +23,39 @@ impl Approval {
                 41u8, 30u8, 91u8, 32u8, 10u8, 200u8, 199u8, 195u8, 185u8, 37u8,
             ]),
             {
-                let mut buf = fluentbase_sdk::codec::bytes::BytesMut::new();
-                let value = self.owner.clone();
-                SolidityABI::encode(&value, &mut buf, 0).expect("encode indexed field");
-                if SolidityABI::<Address>::is_dynamic() {
-                    fluentbase_sdk::B256::new(SDK::keccak256(&buf).0)
-                } else {
-                    let mut bytes = [0u8; 32];
-                    bytes.copy_from_slice(&buf[..32]);
-                    fluentbase_sdk::B256::new(bytes)
+                let topic = fluentbase_sdk::codec::encode_indexed_topic(&self.owner)
+                    .expect("encode indexed field");
+                match topic {
+                    fluentbase_sdk::codec::IndexedTopic::Word(word) => {
+                        fluentbase_sdk::B256::new(word)
+                    }
+                    fluentbase_sdk::codec::IndexedTopic::Preimage(preimage) => {
+                        fluentbase_sdk::B256::new(SDK::keccak256(&preimage).0)
+                    }
                 }
             },
             {
-                let mut buf = fluentbase_sdk::codec::bytes::BytesMut::new();
-                let value = self.spender.clone();
-                SolidityABI::encode(&value, &mut buf, 0).expect("encode indexed field");
-                if SolidityABI::<Address>::is_dynamic() {
-                    fluentbase_sdk::B256::new(SDK::keccak256(&buf).0)
-                } else {
-                    let mut bytes = [0u8; 32];
-                    bytes.copy_from_slice(&buf[..32]);
-                    fluentbase_sdk::B256::new(bytes)
+                let topic = fluentbase_sdk::codec::encode_indexed_topic(&self.spender)
+                    .expect("encode indexed field");
+                match topic {
+                    fluentbase_sdk::codec::IndexedTopic::Word(word) => {
+                        fluentbase_sdk::B256::new(word)
+                    }
+                    fluentbase_sdk::codec::IndexedTopic::Preimage(preimage) => {
+                        fluentbase_sdk::B256::new(SDK::keccak256(&preimage).0)
+                    }
                 }
             },
             {
-                let mut buf = fluentbase_sdk::codec::bytes::BytesMut::new();
-                let value = self.value.clone();
-                SolidityABI::encode(&value, &mut buf, 0).expect("encode indexed field");
-                if SolidityABI::<U256>::is_dynamic() {
-                    fluentbase_sdk::B256::new(SDK::keccak256(&buf).0)
-                } else {
-                    let mut bytes = [0u8; 32];
-                    bytes.copy_from_slice(&buf[..32]);
-                    fluentbase_sdk::B256::new(bytes)
+                let topic = fluentbase_sdk::codec::encode_indexed_topic(&self.value)
+                    .expect("encode indexed field");
+                match topic {
+                    fluentbase_sdk::codec::IndexedTopic::Word(word) => {
+                        fluentbase_sdk::B256::new(word)
+                    }
+                    fluentbase_sdk::codec::IndexedTopic::Preimage(preimage) => {
+                        fluentbase_sdk::B256::new(SDK::keccak256(&preimage).0)
+                    }
                 }
             },
         ];

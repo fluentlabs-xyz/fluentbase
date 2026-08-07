@@ -523,7 +523,7 @@ mod log_data_abi {
     }
 
     /// Emits a single event into a throwaway context and returns `(topics, data)`.
-    fn emitted(emit: impl FnOnce(&mut TestingContextImpl)) -> (Vec<B256>, Bytes) {
+    pub(super) fn emitted(emit: impl FnOnce(&mut TestingContextImpl)) -> (Vec<B256>, Bytes) {
         let mut sdk = TestingContextImpl::default();
         emit(&mut sdk);
         let mut logs = sdk.take_logs();
@@ -693,5 +693,113 @@ mod log_data_abi {
         let decoded =
             sol_abi::OwnerChanged::decode_raw_log(topics, &data).expect("standard decoder");
         assert_eq!(decoded.new_owner, new_owner);
+    }
+}
+
+/// Indexed-topic ABI vectors.
+///
+/// Solidity gives indexed reference types — `string`, `bytes`, arrays (fixed ones included) and
+/// structs — their own encoding: the topic is `keccak256` of a preimage with no length prefix and
+/// no head/tail offsets, not `keccak256` of ordinary ABI encoding. Every expectation below comes
+/// from `alloy-sol-types`, an independent implementation of that rule, and each log is then run
+/// through a standard decoder so a regression to ordinary ABI encoding fails here.
+mod log_topic_abi {
+    use super::{log_data_abi::emitted, *};
+    use alloy_sol_types::{sol_data, EventTopic, SolEvent};
+    use fluentbase_sdk::U256;
+
+    /// The same events declared in Solidity.
+    mod sol_abi {
+        alloy_sol_types::sol! {
+            event Tagged(
+                string indexed label,
+                bytes indexed payload,
+                uint256[] indexed ids,
+                uint256 value
+            );
+
+            event Batched(address[2] indexed recipients, uint256 total);
+        }
+    }
+
+    #[derive(Event)]
+    struct Tagged {
+        #[indexed]
+        label: String,
+        #[indexed]
+        payload: Bytes,
+        #[indexed]
+        ids: Vec<U256>,
+        value: U256,
+    }
+
+    /// A fixed array is static, so ordinary ABI encoding leaves it in place — but it is still a
+    /// reference type, and its topic is a hash rather than its first word.
+    #[derive(Event)]
+    struct Batched {
+        #[indexed]
+        recipients: [Address; 2],
+        total: U256,
+    }
+
+    #[test]
+    fn indexed_dynamic_topics_match_solidity_indexed_encoding() {
+        let label = "genesis".to_string();
+        let payload = bytes!("c0ffee");
+        let ids = vec![U256::from(7), U256::from(9)];
+        let value = U256::from(42);
+
+        let (topics, data) = emitted(|sdk| {
+            Tagged {
+                label: label.clone(),
+                payload: payload.clone(),
+                ids: ids.clone(),
+                value,
+            }
+            .emit(sdk)
+            .unwrap()
+        });
+
+        assert_eq!(topics.len(), 4);
+        assert_eq!(topics[0], sol_abi::Tagged::SIGNATURE_HASH);
+        assert_eq!(
+            topics[1],
+            <sol_data::String as EventTopic>::encode_topic(&label).0
+        );
+        assert_eq!(
+            topics[2],
+            <sol_data::Bytes as EventTopic>::encode_topic(&payload).0
+        );
+        assert_eq!(
+            topics[3],
+            <sol_data::Array<sol_data::Uint<256>> as EventTopic>::encode_topic(&ids).0
+        );
+
+        let decoded = sol_abi::Tagged::decode_raw_log(topics, &data).expect("standard decoder");
+        assert_eq!(decoded.value, value);
+    }
+
+    #[test]
+    fn indexed_fixed_array_topic_is_hashed_not_truncated() {
+        let recipients = [
+            address!("1111111111111111111111111111111111111111"),
+            address!("2222222222222222222222222222222222222222"),
+        ];
+        let total = U256::from(3);
+
+        let (topics, data) = emitted(|sdk| Batched { recipients, total }.emit(sdk).unwrap());
+
+        assert_eq!(topics.len(), 2);
+        assert_eq!(topics[0], sol_abi::Batched::SIGNATURE_HASH);
+        assert_eq!(
+            topics[1],
+            <sol_data::FixedArray<sol_data::Address, 2> as EventTopic>::encode_topic(&recipients).0
+        );
+
+        // The old encoding copied the first word, which is the first recipient, left-padded.
+        assert_ne!(topics[1], B256::left_padding_from(recipients[0].as_slice()));
+
+        let decoded = sol_abi::Batched::decode_raw_log(topics, &data).expect("standard decoder");
+        assert_eq!(decoded.total, total);
     }
 }

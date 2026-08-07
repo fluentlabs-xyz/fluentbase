@@ -582,3 +582,19 @@ where
         ))
     }
 }
+impl ::fluentbase_sdk::codec::SolidityEventTopic for SingleFieldStruct
+where
+    u64: ::fluentbase_sdk::codec::SolidityEventTopic,
+{
+    const IS_REFERENCE_TYPE: bool = true;
+    fn encode_topic_preimage(
+        &self,
+        out: &mut ::fluentbase_sdk::codec::bytes::BytesMut,
+    ) -> Result<(), ::fluentbase_sdk::codec::CodecError> {
+        ::fluentbase_sdk::codec::SolidityEventTopic::encode_topic_preimage(
+            &self.value,
+            out,
+        )?;
+        Ok(())
+    }
+}
