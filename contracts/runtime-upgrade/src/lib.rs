@@ -389,11 +389,14 @@ impl<SDK: SharedAPI> App<SDK> {
             panic!("runtime-upgrade: failed to upgrade");
         }
 
-        let Ok(code_hash) = self.sdk.code_hash(&target_address).ok() else {
-            panic!("runtime-upgrade: can't obtain code hash");
-        };
-
-        code_hash
+        // Hash the exact bytes we just installed instead of reading the hash back through
+        // `code_hash`. That syscall is the EVM-facing `EXTCODEHASH`, which deliberately reports zero
+        // for canonical precompile addresses (0x01..=0x11) even though Fluent keeps real rWasm code
+        // there — so reading it back would emit a zero artifact hash for exactly the consensus-
+        // critical upgrades that most need an auditable one. For every other target the two agree:
+        // `SYSCALL_ID_UPGRADE_WASM_RUNTIME` stores `Bytecode::Rwasm`, whose account code hash is
+        // keccak256 over this same serialized module.
+        crypto_keccak256(&rwasm_bytecode)
     }
 
     fn install_evm(&mut self, target_address: Address, evm_bytecode: Bytes) -> B256 {
@@ -417,11 +420,11 @@ impl<SDK: SharedAPI> App<SDK> {
             panic!("runtime-upgrade: failed to upgrade evm contract");
         }
 
-        let Ok(code_hash) = self.sdk.code_hash(&target_address).ok() else {
-            panic!("runtime-upgrade: can't obtain code hash");
-        };
-
-        code_hash
+        // Same reasoning as `compile_and_install`: hash the installed bytes directly so canonical
+        // precompile targets get a real artifact hash. `SYSCALL_ID_UPGRADE_EVM_RUNTIME` wraps this
+        // bytecode in `EthereumMetadata::new_analyzed`, which records keccak256 over these same
+        // bytes as the account's EVM code hash, so unmasked targets keep the value they had before.
+        crypto_keccak256(evm_bytecode.as_ref())
     }
 
     /// Drop the whole plan: the delegated updater, the genesis metadata it was scoped to, and
