@@ -1,3 +1,4 @@
+use crate::client_data::{parse_client_data, CLIENT_DATA_TYPE_GET};
 use alloc::{format, string::String, vec::Vec};
 use fluentbase_sdk::{codec::Codec, crypto::crypto_sha256, Bytes, ExitCode, B256, U256};
 
@@ -30,11 +31,13 @@ pub struct WebAuthnAuth {
     pub client_data_json: Bytes,
 
     /// Start index of "challenge":"..." in `client_data_json`.
-    /// Used to verify that the client data contains the correct challenge.
+    /// Used by the legacy entrypoint to verify that the client data contains the correct
+    /// challenge. The strict entrypoint parses `client_data_json` and ignores this index.
     pub challenge_index: U256,
 
     /// Start index of "type":"..." in `client_data_json`.
-    /// Used to verify that the client data has the correct type (webauthn.get).
+    /// Used by the legacy entrypoint to verify that the client data has the correct type
+    /// (webauthn.get). The strict entrypoint parses `client_data_json` and ignores this index.
     pub type_index: U256,
 
     /// Signature components (r, s) of the WebAuthn authentication assertion.
@@ -46,7 +49,6 @@ pub struct WebAuthnAuth {
 pub struct WebAuthnPolicy {
     pub expected_rp_id_hash: B256,
     pub expected_origin: Bytes,
-    pub origin_index: U256,
 }
 
 /// Verifies a WebAuthn Authentication Assertion
@@ -83,19 +85,18 @@ pub fn verify_webauthn(
         return Ok(false);
     }
 
-    // Step 2: Verify authenticator data flags
-    if !verify_authenticator_flags(&auth.authenticator_data, require_user_verification) {
-        return Ok(false);
-    }
-
-    // Step 3: Compute message hash
-    let message_hash = compute_message_hash(&auth.authenticator_data, &auth.client_data_json[..]);
-
-    // Step 4: Verify signature
-    verify_signature(message_hash, auth.r, auth.s, x, y, gas_limit)
+    // Step 2: Verify authenticator flags and the signature
+    verify_flags_and_signature(auth, require_user_verification, x, y, gas_limit)
 }
 
-/// Verifies a WebAuthn assertion and caller-controlled relying-party policy.
+/// Verifies a WebAuthn assertion against a caller-controlled relying-party policy.
+///
+/// Unlike [`verify_webauthn`], this path never looks at caller-supplied offsets into
+/// `client_data_json`. The client data is parsed under the strict profile of
+/// [`crate::client_data`] and the decoded `type`, `challenge`, and `origin` values are compared,
+/// so signed input carrying duplicate or decoy members is rejected instead of matching a
+/// caller-selected slice. Cross-origin assertions are rejected as well, because the policy names a
+/// single expected origin.
 pub fn verify_webauthn_with_policy(
     challenge: &Bytes,
     require_user_verification: bool,
@@ -109,15 +110,46 @@ pub fn verify_webauthn_with_policy(
         return Ok(false);
     }
 
-    if !verify_client_data_json_origin(
-        &auth.client_data_json,
-        &policy.expected_origin,
-        policy.origin_index,
-    ) {
+    let client_data = match parse_client_data(&auth.client_data_json) {
+        Ok(client_data) => client_data,
+        Err(_) => return Ok(false),
+    };
+
+    if client_data.ty != CLIENT_DATA_TYPE_GET {
         return Ok(false);
     }
 
-    verify_webauthn(challenge, require_user_verification, auth, x, y, gas_limit)
+    // Comparing against the canonical encoding also rejects padded or non-URL-safe variants.
+    if client_data.challenge != base64url_encode(challenge) {
+        return Ok(false);
+    }
+
+    if client_data.origin.as_bytes() != policy.expected_origin.as_ref() {
+        return Ok(false);
+    }
+
+    if client_data.cross_origin {
+        return Ok(false);
+    }
+
+    verify_flags_and_signature(auth, require_user_verification, x, y, gas_limit)
+}
+
+/// Verifies the authenticator data flags and the assertion signature.
+fn verify_flags_and_signature(
+    auth: &WebAuthnAuth,
+    require_user_verification: bool,
+    x: U256,
+    y: U256,
+    gas_limit: u64,
+) -> Result<bool, ExitCode> {
+    if !verify_authenticator_flags(&auth.authenticator_data, require_user_verification) {
+        return Ok(false);
+    }
+
+    let message_hash = compute_message_hash(&auth.authenticator_data, &auth.client_data_json[..]);
+
+    verify_signature(message_hash, auth.r, auth.s, x, y, gas_limit)
 }
 
 fn verify_rp_id_hash(authenticator_data: &Bytes, expected_rp_id_hash: &B256) -> bool {
@@ -128,28 +160,9 @@ fn verify_rp_id_hash(authenticator_data: &Bytes, expected_rp_id_hash: &B256) -> 
     &authenticator_data[..32] == expected_rp_id_hash.as_slice()
 }
 
-fn verify_client_data_json_origin(
-    client_data_json: &Bytes,
-    expected_origin: &Bytes,
-    origin_index: U256,
-) -> bool {
-    let origin_idx = match u32::try_from(origin_index) {
-        Ok(idx) => idx as usize,
-        Err(_) => return false,
-    };
-
-    if origin_idx >= client_data_json.len() {
-        return false;
-    }
-
-    let mut origin_str = Vec::with_capacity(b"\"origin\":\"\"".len() + expected_origin.len());
-    origin_str.extend_from_slice(b"\"origin\":\"");
-    origin_str.extend_from_slice(expected_origin.as_ref());
-    origin_str.extend_from_slice(b"\"");
-    contains_at(origin_str.as_slice(), client_data_json, origin_idx)
-}
-
-/// Verifies the client data JSON type and challenge
+/// Verifies the client data JSON type and challenge at the caller-supplied offsets.
+///
+/// Only the legacy entrypoint uses this; the strict entrypoint parses the client data instead.
 fn verify_client_data_json(
     client_data_json: &Bytes,
     challenge: &Bytes,
@@ -457,34 +470,6 @@ mod tests {
     }
 
     #[test]
-    fn test_verify_client_data_json_origin() {
-        let (client_data_json, _, _, _) = create_valid_client_data_json_test_data();
-        let origin = Bytes::copy_from_slice(b"http://localhost:3005");
-        let origin_index = U256::from(
-            client_data_json
-                .windows(b"\"origin\"".len())
-                .position(|window| window == b"\"origin\"")
-                .unwrap(),
-        );
-
-        assert!(verify_client_data_json_origin(
-            &client_data_json,
-            &origin,
-            origin_index,
-        ));
-        assert!(!verify_client_data_json_origin(
-            &client_data_json,
-            &Bytes::copy_from_slice(b"https://example.com"),
-            origin_index,
-        ));
-        assert!(!verify_client_data_json_origin(
-            &client_data_json,
-            &origin,
-            U256::from(client_data_json.len()),
-        ));
-    }
-
-    #[test]
     fn test_verify_rp_id_hash() {
         let challenge = create_valid_challenge();
         let (auth, _, _) = create_valid_webauthn(&challenge);
@@ -505,12 +490,6 @@ mod tests {
         let (auth, x, y) = create_valid_webauthn(&challenge);
         let expected_rp_id_hash = B256::from_slice(&auth.authenticator_data[..32]);
         let expected_origin = Bytes::copy_from_slice(b"http://localhost:3005");
-        let origin_index = U256::from(
-            auth.client_data_json
-                .windows(b"\"origin\"".len())
-                .position(|window| window == b"\"origin\"")
-                .unwrap(),
-        );
 
         assert!(verify_webauthn_with_policy(
             &challenge,
@@ -518,7 +497,6 @@ mod tests {
             &WebAuthnPolicy {
                 expected_rp_id_hash,
                 expected_origin: expected_origin.clone(),
-                origin_index,
             },
             &auth,
             x,
@@ -533,7 +511,6 @@ mod tests {
             &WebAuthnPolicy {
                 expected_rp_id_hash: B256::with_last_byte(1),
                 expected_origin: expected_origin.clone(),
-                origin_index,
             },
             &auth,
             x,
@@ -548,7 +525,21 @@ mod tests {
             &WebAuthnPolicy {
                 expected_rp_id_hash,
                 expected_origin: Bytes::copy_from_slice(b"https://example.com"),
-                origin_index,
+            },
+            &auth,
+            x,
+            y,
+            100000,
+        )
+        .unwrap());
+
+        // A different challenge must not verify even though the origin and RP ID hash match.
+        assert!(!verify_webauthn_with_policy(
+            &Bytes::copy_from_slice(b"other challenge"),
+            true,
+            &WebAuthnPolicy {
+                expected_rp_id_hash,
+                expected_origin,
             },
             &auth,
             x,

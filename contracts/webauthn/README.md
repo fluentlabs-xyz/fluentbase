@@ -32,10 +32,10 @@ The contract exposes two entrypoint selectors. The legacy selector is `0x94516dd
 keccak256("verify(bytes,bool,(bytes,bytes,uint256,uint256,bytes32,bytes32),uint256,uint256)")
 ```
 
-The strict selector is `0xd6b45308`, derived from:
+The strict selector is `0x42520fdd`, derived from:
 
 ```
-keccak256("verifyStrict(bytes,bool,bytes32,bytes,uint256,(bytes,bytes,uint256,uint256,bytes32,bytes32),uint256,uint256)")
+keccak256("verifyStrict(bytes,bool,bytes32,bytes,(bytes,bytes,uint256,uint256,bytes32,bytes32),uint256,uint256)")
 ```
 
 ### Legacy Input Parameters
@@ -61,11 +61,10 @@ The strict selector takes the following parameters:
 1. `challenge` (bytes): The original challenge sent to the authenticator
 2. `require_user_verification` (bool): Whether to require the User Verified (UV) flag
 3. `expected_rp_id_hash` (bytes32): SHA-256 hash of the expected RP ID, compared with the first 32 bytes of `authenticator_data`
-4. `expected_origin` (bytes): Expected origin bytes, compared with `client_data_json` at `origin_index`
-5. `origin_index` (uint256): Start index of `"origin":"..."` in `client_data_json`
-6. `auth` (WebAuthnAuth struct): The WebAuthn authentication data
-7. `x` (uint256): The x coordinate of the public key
-8. `y` (uint256): The y coordinate of the public key
+4. `expected_origin` (bytes): Expected origin, compared with the decoded `origin` member of `client_data_json`
+5. `auth` (WebAuthnAuth struct): The WebAuthn authentication data. The strict selector parses `client_data_json` and ignores `challenge_index` and `type_index`
+6. `x` (uint256): The x coordinate of the public key
+7. `y` (uint256): The y coordinate of the public key
 
 ### Return Value
 
@@ -79,26 +78,45 @@ The contract returns a 32-byte value:
 The contract performs the following verification steps:
 
 1. **Client Data Verification**:
-   - Verifies the type is "webauthn.get"
-   - Confirms the challenge matches the expected value
+   - The legacy selector verifies the type is "webauthn.get" and the challenge at the supplied indexes
+   - The strict selector parses `client_data_json` and compares the decoded `type`, `challenge`, and `origin` members
 
 2. **Authenticator Data Validation**:
    - The strict selector verifies the RP ID hash matches `expected_rp_id_hash`
    - Checks the User Present (UP) flag is set
    - Verifies the User Verified (UV) flag if required
    - Validates backup state consistency
-   - The strict selector verifies the origin matches `expected_origin` at `origin_index`
 
 3. **Signature Verification**:
    - Computes the message hash: SHA-256(authenticator_data || SHA-256(client_data_json))
    - Verifies the signature using the secp256r1 precompile
 
+### Strict Client Data Profile
+
+The strict selector never interprets caller-supplied offsets into `client_data_json`, because a
+signed object can contain duplicate or decoy `type`, `challenge`, and `origin` members that make a
+selected byte range look correct while the JSON means something else. Instead it parses the object
+under a deterministic profile and compares decoded values:
+
+- Input must be exactly one well-formed JSON object of at most 2048 bytes, valid UTF-8, nested at
+  most 8 levels deep. Trailing content after the object is rejected.
+- Duplicate member names are rejected in every object, so `type`, `challenge`, and `origin` each
+  appear exactly once and each must be a string.
+- String escapes, including `\uXXXX` and surrogate pairs, are decoded before comparison; lone
+  surrogates, invalid escapes, and raw control characters are rejected.
+- Unknown members are allowed, as the specification requires, but they are fully parsed and count
+  against the size and depth limits.
+- The decoded `challenge` must equal the canonical base64url encoding of the expected challenge,
+  which rejects padded or non-URL-safe encodings.
+- `crossOrigin`, when present, must be a boolean, and a cross-origin assertion is rejected because
+  the policy names a single expected origin.
+
 ## Standards Compliance and Caller Policy
 
 The W3C assertion verification procedure includes checks that require Relying Party state and policy. This contract verifies:
 
-- `clientDataJSON.type == "webauthn.get"` at the supplied `type_index`
-- the expected challenge at the supplied `challenge_index`
+- `clientDataJSON.type == "webauthn.get"`, at the supplied `type_index` for the legacy selector and from the parsed object for the strict selector
+- the expected challenge, at the supplied `challenge_index` for the legacy selector and from the parsed object for the strict selector
 - User Present (UP), optional User Verified (UV), and backup-state flag consistency
 - the P-256 signature over `authenticator_data || SHA-256(client_data_json)`
 
@@ -109,7 +127,7 @@ The caller is still responsible for enforcing:
 - Challenge freshness and single use. A valid old assertion must not be replayable.
 - Signature counter policy, if the application relies on clone detection.
 - Credential ID lookup, allow-list policy, and account ownership.
-- Client extension outputs, token binding, and cross-origin policy if these are relevant to the application.
+- Client extension outputs and token binding, and cross-origin policy when using the legacy selector. The strict selector rejects assertions marked `crossOrigin`.
 
 The `client_data_json`, `authenticator_data`, indexes, and public key are user-supplied inputs. They must not be treated as trusted application data merely because this contract returns `true`; the application must compare policy-critical fields against values it controls.
 
@@ -122,7 +140,7 @@ This implementation deliberately omits some full Relying Party validations:
 - Signature counter
 - Attestation objects
 
-The legacy selector should be treated as a cryptographic assertion primitive. Prefer the strict selector when the caller wants the contract to reject RP ID hash or origin mismatches before returning signature success.
+The legacy selector matches `type` and `challenge` as substrings at caller-supplied indexes and does not parse `client_data_json`, so a signed object with duplicate or decoy members can satisfy the selected bytes while meaning something else. It should be treated as a cryptographic assertion primitive, with the calling application enforcing client data policy itself. Prefer the strict selector when the caller wants the contract to enforce client data semantics, RP ID hash, and origin before returning signature success.
 
 ## License
 

@@ -2,6 +2,7 @@
 extern crate alloc;
 extern crate fluentbase_sdk;
 
+mod client_data;
 mod webauthn;
 
 use fluentbase_sdk::{
@@ -14,10 +15,10 @@ use webauthn::{verify_webauthn, verify_webauthn_with_policy, WebAuthnAuth, WebAu
 /// keccak256("verify(bytes,bool,(bytes,bytes,uint256,uint256,bytes32,bytes32),uint256,uint256)")
 const VERIFY_SELECTOR: [u8; 4] = [0x94, 0x51, 0x6d, 0xde];
 
-/// Function selector: 0xd6b45308
+/// Function selector: 0x42520fdd
 /// Derived from:
-/// keccak256("verifyStrict(bytes,bool,bytes32,bytes,uint256,(bytes,bytes,uint256,uint256,bytes32,bytes32),uint256,uint256)")
-const VERIFY_STRICT_SELECTOR: [u8; 4] = [0xd6, 0xb4, 0x53, 0x08];
+/// keccak256("verifyStrict(bytes,bool,bytes32,bytes,(bytes,bytes,uint256,uint256,bytes32,bytes32),uint256,uint256)")
+const VERIFY_STRICT_SELECTOR: [u8; 4] = [0x42, 0x52, 0x0f, 0xdd];
 
 /// Estimated verification cost, in EVM gas units.
 const WEBAUTHN_VERIFY_GAS: u64 = 22_000;
@@ -58,14 +59,11 @@ pub fn main_entry<SDK: SystemAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
             require_user_verification,
             expected_rp_id_hash,
             expected_origin,
-            origin_index,
             auth,
             x,
             y,
-        ) = SolidityABI::<(Bytes, bool, B256, Bytes, U256, WebAuthnAuth, U256, U256)>::decode(
-            &params, 0,
-        )
-        .map_err(|_| ExitCode::MalformedBuiltinParams)?;
+        ) = SolidityABI::<(Bytes, bool, B256, Bytes, WebAuthnAuth, U256, U256)>::decode(&params, 0)
+            .map_err(|_| ExitCode::MalformedBuiltinParams)?;
 
         verify_webauthn_with_policy(
             &challenge,
@@ -73,7 +71,6 @@ pub fn main_entry<SDK: SystemAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
             &WebAuthnPolicy {
                 expected_rp_id_hash,
                 expected_origin,
-                origin_index,
             },
             &auth,
             x,
@@ -104,7 +101,7 @@ mod tests {
         elliptic_curve::rand_core::OsRng,
     };
 
-    type StrictCallParams = (Bytes, bool, B256, Bytes, U256, WebAuthnAuth, U256, U256);
+    type StrictCallParams = (Bytes, bool, B256, Bytes, WebAuthnAuth, U256, U256);
 
     fn valid_call_params(
         require_user_verification: bool,
@@ -113,18 +110,29 @@ mod tests {
             &hex::decode("f631058a3ba1116acce12396fad0a125b5041c43f8e15723709f81aa8d5f4ccf")
                 .unwrap(),
         );
-        let authenticator_data = Bytes::copy_from_slice(
-            &hex::decode(
-                "49960de5880e8c687434170f6476605b8fe4aeb9a28632c7995cf3ba831d97630500000101",
-            )
-            .unwrap(),
-        );
         let client_data_json = Bytes::copy_from_slice(
             format!(
                 "{{\"type\":\"webauthn.get\",\"challenge\":\"{}\",\"origin\":\"http://localhost:3005\"}}",
                 webauthn::base64url_encode(&challenge)
             )
             .as_bytes(),
+        );
+
+        signed_call_params(challenge, require_user_verification, client_data_json)
+    }
+
+    /// Builds call parameters with a fresh key pair signing the supplied client data, so the
+    /// assertion is cryptographically valid and only the client data policy is under test.
+    fn signed_call_params(
+        challenge: Bytes,
+        require_user_verification: bool,
+        client_data_json: Bytes,
+    ) -> (Bytes, bool, WebAuthnAuth, U256, U256) {
+        let authenticator_data = Bytes::copy_from_slice(
+            &hex::decode(
+                "49960de5880e8c687434170f6476605b8fe4aeb9a28632c7995cf3ba831d97630500000101",
+            )
+            .unwrap(),
         );
 
         let mut signing_key = SigningKey::random(&mut OsRng);
@@ -172,7 +180,7 @@ mod tests {
 
     fn encode_strict_call(params_tuple: &StrictCallParams) -> Vec<u8> {
         let mut params = BytesMut::new();
-        SolidityABI::<(Bytes, bool, B256, Bytes, U256, WebAuthnAuth, U256, U256)>::encode(
+        SolidityABI::<(Bytes, bool, B256, Bytes, WebAuthnAuth, U256, U256)>::encode(
             params_tuple,
             &mut params,
             0,
@@ -184,29 +192,42 @@ mod tests {
         input
     }
 
-    fn valid_strict_call_input(require_user_verification: bool) -> (Vec<u8>, StrictCallParams) {
-        let (challenge, require_user_verification, auth, x, y) =
-            valid_call_params(require_user_verification);
+    fn strict_call_params(params: (Bytes, bool, WebAuthnAuth, U256, U256)) -> StrictCallParams {
+        let (challenge, require_user_verification, auth, x, y) = params;
         let expected_rp_id_hash = B256::from_slice(&auth.authenticator_data[..32]);
         let expected_origin = Bytes::copy_from_slice(b"http://localhost:3005");
-        let origin_index = U256::from(
-            auth.client_data_json
-                .windows(b"\"origin\"".len())
-                .position(|window| window == b"\"origin\"")
-                .unwrap(),
-        );
-        let params = (
+
+        (
             challenge,
             require_user_verification,
             expected_rp_id_hash,
             expected_origin,
-            origin_index,
             auth,
             x,
             y,
-        );
+        )
+    }
+
+    fn valid_strict_call_input(require_user_verification: bool) -> (Vec<u8>, StrictCallParams) {
+        let params = strict_call_params(valid_call_params(require_user_verification));
 
         (encode_strict_call(&params), params)
+    }
+
+    /// Signs `client_data_json` and runs it through the strict entrypoint with a matching policy.
+    fn strict_result_for_client_data(client_data_json: &str) -> Vec<u8> {
+        let challenge = Bytes::copy_from_slice(
+            &hex::decode("f631058a3ba1116acce12396fad0a125b5041c43f8e15723709f81aa8d5f4ccf")
+                .unwrap(),
+        );
+        let params = strict_call_params(signed_call_params(
+            challenge,
+            true,
+            Bytes::copy_from_slice(client_data_json.as_bytes()),
+        ));
+
+        let (output, _) = exec(&encode_strict_call(&params), WEBAUTHN_VERIFY_GAS).unwrap();
+        output
     }
 
     fn valid_call_input(require_user_verification: bool) -> Vec<u8> {
@@ -258,6 +279,92 @@ mod tests {
         let (output, fuel) = exec(&encode_strict_call(&params), WEBAUTHN_VERIFY_GAS).unwrap();
         assert_eq!(output, B256::default()[..]);
         assert_eq!(fuel, WEBAUTHN_VERIFY_GAS * FUEL_DENOM_RATE);
+    }
+
+    #[test]
+    fn strict_accepts_conforming_client_data_variants() {
+        let challenge = webauthn::base64url_encode(
+            &hex::decode("f631058a3ba1116acce12396fad0a125b5041c43f8e15723709f81aa8d5f4ccf")
+                .unwrap(),
+        );
+        let variants = [
+            // Chrome-style object with the extra members conforming clients append.
+            format!(
+                "{{\"type\":\"webauthn.get\",\"challenge\":\"{challenge}\",\
+                 \"origin\":\"http://localhost:3005\",\"crossOrigin\":false,\
+                 \"other_keys_can_be_added_here\":\"do not compare clientDataJSON against a \
+                 template. See https://goo.gl/yabPex\"}}"
+            ),
+            // Members in a different order, which the index-based check could not accept.
+            format!(
+                "{{\"origin\":\"http://localhost:3005\",\"challenge\":\"{challenge}\",\
+                 \"type\":\"webauthn.get\"}}"
+            ),
+            // Escaped solidus in the origin, which decodes to the expected origin.
+            format!(
+                "{{\"type\":\"webauthn.get\",\"challenge\":\"{challenge}\",\
+                 \"origin\":\"http:\\/\\/localhost:3005\"}}"
+            ),
+        ];
+
+        for client_data_json in variants {
+            assert_eq!(
+                strict_result_for_client_data(&client_data_json),
+                B256::with_last_byte(1)[..],
+                "expected {client_data_json} to verify"
+            );
+        }
+    }
+
+    #[test]
+    fn strict_rejects_ambiguous_or_malformed_client_data() {
+        let challenge = webauthn::base64url_encode(
+            &hex::decode("f631058a3ba1116acce12396fad0a125b5041c43f8e15723709f81aa8d5f4ccf")
+                .unwrap(),
+        );
+        let rejected = [
+            // Duplicate origin: the expected origin is present, but the object is ambiguous.
+            format!(
+                "{{\"type\":\"webauthn.get\",\"challenge\":\"{challenge}\",\
+                 \"origin\":\"http://localhost:3005\",\"origin\":\"https://evil.example\"}}"
+            ),
+            // Duplicate type, where only the decoy is an assertion type.
+            format!(
+                "{{\"type\":\"webauthn.get\",\"type\":\"webauthn.create\",\
+                 \"challenge\":\"{challenge}\",\"origin\":\"http://localhost:3005\"}}"
+            ),
+            // A decoy origin hidden in an unknown member's string value.
+            format!(
+                "{{\"type\":\"webauthn.get\",\"challenge\":\"{challenge}\",\
+                 \"decoy\":\"\\\"origin\\\":\\\"http://localhost:3005\\\"\",\
+                 \"origin\":\"https://evil.example\"}}"
+            ),
+            // Cross-origin assertion, which the single-origin policy does not allow.
+            format!(
+                "{{\"type\":\"webauthn.get\",\"challenge\":\"{challenge}\",\
+                 \"origin\":\"http://localhost:3005\",\"crossOrigin\":true}}"
+            ),
+            // Padded challenge encoding instead of the canonical base64url form.
+            format!(
+                "{{\"type\":\"webauthn.get\",\"challenge\":\"{challenge}=\",\
+                 \"origin\":\"http://localhost:3005\"}}"
+            ),
+            // Trailing object after the client data.
+            format!(
+                "{{\"type\":\"webauthn.get\",\"challenge\":\"{challenge}\",\
+                 \"origin\":\"http://localhost:3005\"}}{{\"origin\":\"https://evil.example\"}}"
+            ),
+            // Missing origin altogether.
+            format!("{{\"type\":\"webauthn.get\",\"challenge\":\"{challenge}\"}}"),
+        ];
+
+        for client_data_json in rejected {
+            assert_eq!(
+                strict_result_for_client_data(&client_data_json),
+                B256::default()[..],
+                "expected {client_data_json} to be rejected"
+            );
+        }
     }
 
     #[test]
