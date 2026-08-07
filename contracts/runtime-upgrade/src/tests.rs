@@ -474,3 +474,224 @@ fn test_planned_upgrade_rejects_same_hash_for_wrong_target() {
     let upgrade_call = UpgradeToPlannedCall::new((wrong_target, wasm_bytecode));
     assert_ne!(h.call(upgrade_call.encode()), ExitCode::Ok);
 }
+
+/// Log-data ABI vectors.
+///
+/// Solidity encodes event data with top-level argument semantics (`abi.encode(a, b, ...)`), so
+/// dynamic non-indexed fields must NOT be wrapped in an outer tuple offset. Every expected vector
+/// below is written out word by word, independently of the encoder, and cross-checked against
+/// `alloy-sol-types` — a standard log decoder — so a regression to tuple-value encoding fails here.
+mod log_data_abi {
+    use super::*;
+    use alloy_sol_types::SolEvent;
+    use fluentbase_sdk::U256;
+
+    /// The same events declared in Solidity. Names must match the Rust ones: the decoder checks
+    /// `topics[0]` against the signature hash it derives itself.
+    mod sol_abi {
+        alloy_sol_types::sol! {
+            event RuntimeUpgraded(
+                address indexed target_address,
+                bytes32 indexed genesis_hash,
+                string genesis_version,
+                bytes32 code_hash
+            );
+
+            event UpgradePlanned(
+                bytes32 indexed genesis_hash,
+                string genesis_version,
+                address[] target_addresses,
+                bytes32[] wasm_code_hashes,
+                address updater
+            );
+
+            event OwnerChanged(address new_owner);
+
+            event Mixed(address indexed who, uint256 amount, string note, address tail);
+        }
+    }
+
+    /// A non-indexed field placed after a dynamic one: its head word must stay in place instead of
+    /// sliding behind a wrapper offset.
+    #[derive(Event)]
+    struct Mixed {
+        #[indexed]
+        who: Address,
+        amount: U256,
+        note: String,
+        tail: Address,
+    }
+
+    /// Emits a single event into a throwaway context and returns `(topics, data)`.
+    fn emitted(emit: impl FnOnce(&mut TestingContextImpl)) -> (Vec<B256>, Bytes) {
+        let mut sdk = TestingContextImpl::default();
+        emit(&mut sdk);
+        let mut logs = sdk.take_logs();
+        assert_eq!(logs.len(), 1, "expected exactly one log");
+        let (data, topics) = logs.remove(0);
+        (topics, data)
+    }
+
+    /// Concatenates 32-byte words into the expected `data` blob.
+    fn words(words: &[[u8; 32]]) -> Vec<u8> {
+        words.concat()
+    }
+
+    fn word_u64(value: u64) -> [u8; 32] {
+        let mut word = [0u8; 32];
+        word[24..].copy_from_slice(&value.to_be_bytes());
+        word
+    }
+
+    fn word_address(address: Address) -> [u8; 32] {
+        let mut word = [0u8; 32];
+        word[12..].copy_from_slice(address.as_slice());
+        word
+    }
+
+    fn word_bytes32(value: B256) -> [u8; 32] {
+        value.0
+    }
+
+    /// Right-pads a string to a single 32-byte word (all fixtures here are shorter than 32 bytes).
+    fn word_utf8(text: &str) -> [u8; 32] {
+        assert!(text.len() <= 32, "fixture string must fit one word");
+        let mut word = [0u8; 32];
+        word[..text.len()].copy_from_slice(text.as_bytes());
+        word
+    }
+
+    #[test]
+    fn runtime_upgraded_data_matches_solidity_argument_encoding() {
+        let target_address = address!("1111111111111111111111111111111111111111");
+        let genesis_hash = B256::repeat_byte(0x22);
+        let genesis_version = "v1.2.3".to_string();
+        let code_hash = B256::repeat_byte(0x33);
+
+        let (topics, data) = emitted(|sdk| {
+            RuntimeUpgraded {
+                target_address,
+                genesis_hash,
+                genesis_version: genesis_version.clone(),
+                code_hash,
+            }
+            .emit(sdk)
+            .unwrap()
+        });
+
+        // head: [offset(genesis_version), code_hash], tail: [len, utf8]
+        let expected = words(&[
+            word_u64(0x40),
+            word_bytes32(code_hash),
+            word_u64(genesis_version.len() as u64),
+            word_utf8(&genesis_version),
+        ]);
+        assert_eq!(hex::encode(&data), hex::encode(&expected));
+
+        let decoded =
+            sol_abi::RuntimeUpgraded::decode_raw_log(topics, &data).expect("standard decoder");
+        assert_eq!(decoded.target_address, target_address);
+        assert_eq!(decoded.genesis_hash, genesis_hash);
+        assert_eq!(decoded.genesis_version, genesis_version);
+        assert_eq!(decoded.code_hash, code_hash);
+    }
+
+    #[test]
+    fn upgrade_planned_data_matches_solidity_argument_encoding() {
+        let genesis_hash = B256::repeat_byte(0x44);
+        let genesis_version = "planned".to_string();
+        let target_a = address!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        let target_b = address!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+        let hash_a = B256::repeat_byte(0xcc);
+        let hash_b = B256::repeat_byte(0xdd);
+        let updater = address!("eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee");
+
+        let (topics, data) = emitted(|sdk| {
+            UpgradePlanned {
+                genesis_hash,
+                genesis_version: genesis_version.clone(),
+                target_addresses: vec![target_a, target_b],
+                wasm_code_hashes: vec![hash_a, hash_b],
+                updater,
+            }
+            .emit(sdk)
+            .unwrap()
+        });
+
+        // head: [off(version)=0x80, off(targets)=0xc0, off(hashes)=0x120, updater]
+        let expected = words(&[
+            word_u64(0x80),
+            word_u64(0xc0),
+            word_u64(0x120),
+            word_address(updater),
+            word_u64(genesis_version.len() as u64),
+            word_utf8(&genesis_version),
+            word_u64(2),
+            word_address(target_a),
+            word_address(target_b),
+            word_u64(2),
+            word_bytes32(hash_a),
+            word_bytes32(hash_b),
+        ]);
+        assert_eq!(hex::encode(&data), hex::encode(&expected));
+
+        let decoded =
+            sol_abi::UpgradePlanned::decode_raw_log(topics, &data).expect("standard decoder");
+        assert_eq!(decoded.genesis_hash, genesis_hash);
+        assert_eq!(decoded.genesis_version, genesis_version);
+        assert_eq!(decoded.target_addresses, vec![target_a, target_b]);
+        assert_eq!(decoded.wasm_code_hashes, vec![hash_a, hash_b]);
+        assert_eq!(decoded.updater, updater);
+    }
+
+    #[test]
+    fn mixed_static_and_dynamic_data_matches_solidity_argument_encoding() {
+        let who = address!("1010101010101010101010101010101010101010");
+        let amount = U256::from(0x1234u64);
+        let note = "mixed".to_string();
+        let tail = address!("2020202020202020202020202020202020202020");
+
+        let (topics, data) = emitted(|sdk| {
+            Mixed {
+                who,
+                amount,
+                note: note.clone(),
+                tail,
+            }
+            .emit(sdk)
+            .unwrap()
+        });
+
+        // head: [amount, off(note)=0x60, tail], tail: [len, utf8]
+        let expected = words(&[
+            word_u64(0x1234),
+            word_u64(0x60),
+            word_address(tail),
+            word_u64(note.len() as u64),
+            word_utf8(&note),
+        ]);
+        assert_eq!(hex::encode(&data), hex::encode(&expected));
+
+        let decoded = sol_abi::Mixed::decode_raw_log(topics, &data).expect("standard decoder");
+        assert_eq!(decoded.who, who);
+        assert_eq!(decoded.amount, amount);
+        assert_eq!(decoded.note, note);
+        assert_eq!(decoded.tail, tail);
+    }
+
+    #[test]
+    fn fully_static_data_has_no_offset_word() {
+        let new_owner = address!("3030303030303030303030303030303030303030");
+
+        let (topics, data) = emitted(|sdk| OwnerChanged { new_owner }.emit(sdk).unwrap());
+
+        assert_eq!(
+            hex::encode(&data),
+            hex::encode(words(&[word_address(new_owner)]))
+        );
+
+        let decoded =
+            sol_abi::OwnerChanged::decode_raw_log(topics, &data).expect("standard decoder");
+        assert_eq!(decoded.new_owner, new_owner);
+    }
+}

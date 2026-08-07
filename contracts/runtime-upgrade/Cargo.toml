@@ -8,6 +8,8 @@ fluentbase-sdk = { workspace = true }
 
 [dev-dependencies]
 fluentbase-testing = { workspace = true }
+# Independent Solidity ABI decoder used to validate emitted event log data.
+alloy-sol-types = { workspace = true }
 
 [build-dependencies]
 fluentbase-build = { workspace = true }

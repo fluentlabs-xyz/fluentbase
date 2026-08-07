@@ -29,6 +29,7 @@ revm-precompile = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", br
 #solana-program-option = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
 #solana-bincode = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
 # misc
+alloy-sol-types = { version = "1.5.0" }
 hex = { version = "0.4.3", default-features = false, features = ["alloc"] }
 ecdsa = { git = "https://github.com/rwasm-patches/signatures.git", default-features = false, features = ["hazmat", "verifying"] }
 k256 = { version = "0.13.4", default-features = false }

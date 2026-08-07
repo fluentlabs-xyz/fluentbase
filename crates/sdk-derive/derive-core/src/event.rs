@@ -219,7 +219,11 @@ fn generate_topics(indexed: &[&EventField], anonymous: bool, selector: &[u8; 32]
 
 /// Generates data encoding for non-indexed fields.
 ///
-/// Data section contains ABI-encoded tuple of all non-indexed fields.
+/// Data section contains the non-indexed fields encoded with top-level argument semantics,
+/// exactly like Solidity's `abi.encode(arg0, arg1, ...)`. This is *not* the same as encoding
+/// the fields as a single tuple value: a dynamic tuple value carries an extra outer offset
+/// word that standard log decoders do not expect, so `encode_function_args` is used to drop it.
+///
 /// Unlike topics, data preserves full values but cannot be filtered via bloom filter.
 fn generate_data(fields: &[&EventField]) -> TokenStream2 {
     if fields.is_empty() {
@@ -232,7 +236,7 @@ fn generate_data(fields: &[&EventField]) -> TokenStream2 {
         let data = {
             let mut buf = fluentbase_sdk::codec::bytes::BytesMut::new();
             let values = (#(self.#names.clone(),)*);
-            SolidityABI::encode(&values, &mut buf, 0).expect("encode data fields");
+            SolidityABI::encode_function_args(&values, &mut buf).expect("encode data fields");
             buf.freeze()
         };
     }
@@ -316,6 +320,20 @@ mod tests {
                 sender: Address,
                 #[indexed]
                 text: String,
+            }
+        };
+        assert_snapshot!(generate(input));
+    }
+
+    #[test]
+    fn test_mixed_static_dynamic_data() {
+        let input: DeriveInput = parse_quote! {
+            struct Mixed {
+                #[indexed]
+                who: Address,
+                amount: U256,
+                note: String,
+                extra: Vec<Address>,
             }
         };
         assert_snapshot!(generate(input));
