@@ -3,6 +3,28 @@
 //! EthVM executes analyzed EVM bytecode and yields on host-bound opcodes
 //! (calls, storage, logs, etc.). The surrounding runtime performs the
 //! operation, and the VM resumes with identical EVM semantics and gas.
+//!
+//! # Why this interpreter is pinned to a single hardfork
+//!
+//! Everything here runs at `SpecId::OSAKA` unconditionally, and it is *not* a bug that the
+//! chain's active fork is ignored: the delegated EVM is versioned by contract upgrade, not by
+//! hardfork.
+//!
+//! This crate is compiled into the EVM runtime contract (`contracts/evm`), which lives at
+//! `PRECOMPILE_EVM_RUNTIME` as ordinary rWASM genesis code. Its bytecode is replaced through
+//! `contracts/runtime-upgrade`, so EVM semantics can be changed on a live chain in a forkless
+//! manner — deploy a new runtime, and every account delegating to it changes behavior at once.
+//! The deployed runtime version *is* the fork boundary.
+//!
+//! The consequence is deliberate and should not be "fixed": an opcode from a newer hardfork,
+//! e.g. `CLZ` (EIP-7939, Osaka), executes even while the chain spec still declares an older
+//! fork such as Prague. Fork conditions in the chain spec (`crates/node/src/chainspec.rs`) gate
+//! the protocol and native REVM side; they intentionally do not reach into delegated bytecode.
+//! Threading a `SpecId` through the shared context to gate opcodes here would reintroduce
+//! hardfork coupling that the upgrade mechanism exists to avoid.
+//!
+//! When bumping this, bump [`crate::evm_gas_params`] to match — opcode availability and the gas
+//! schedule must describe the same fork.
 use crate::{
     bytecode::AnalyzedBytecode,
     host::HostWrapperImpl,
@@ -64,6 +86,9 @@ impl EthVM {
             input: inputs_impl,
             runtime_flag: RuntimeFlags {
                 is_static,
+                // Intentionally pinned rather than read from the chain's active fork: this
+                // runtime is upgraded as a contract, not activated by a hardfork. See the
+                // module docs before "fixing" this to follow the chain spec.
                 spec_id: SpecId::OSAKA,
             },
             extend: InterruptionExtension {

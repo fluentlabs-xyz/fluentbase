@@ -138,6 +138,14 @@ pub static FLUENT_MAINNET: LazyLock<Arc<ChainSpec>> = LazyLock::new(|| {
     .into()
 });
 
+/// Fork schedule for the protocol and the native REVM side (precompile sets, transaction rules,
+/// and so on).
+///
+/// It does not govern EVM bytecode semantics. Contracts delegating to `PRECOMPILE_EVM_RUNTIME`
+/// execute at the hardfork pinned by the deployed EVM runtime contract, which is upgraded
+/// forklessly rather than activated here — so a `osaka_fork` condition scheduled in the future
+/// does not hold back Osaka opcodes inside delegated bytecode. That is intended; see the
+/// `fluentbase_evm::evm` module docs.
 fn fluent_default_chain_hardforks(osaka_fork: ForkCondition) -> ChainHardforks {
     ChainHardforks::new(vec![
         (EthereumHardfork::Frontier.boxed(), ForkCondition::Block(0)),

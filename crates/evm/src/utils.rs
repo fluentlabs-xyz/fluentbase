@@ -10,6 +10,13 @@ use revm_interpreter::{
 };
 use revm_primitives::hardfork::SpecId;
 
+/// Gas schedule used by the delegated EVM runtime.
+///
+/// A single process-wide table is correct here precisely because the fork is pinned: the runtime
+/// always executes at `SpecId::OSAKA` regardless of the chain's active fork, since it is versioned
+/// by contract upgrade rather than by hardfork (see the `crate::evm` module docs). If the pin in
+/// `EthVM::new` ever changes, change it here too — opcode availability and gas prices must
+/// describe the same fork.
 pub fn evm_gas_params() -> &'static GasParams {
     static GAS_PARAMS: OnceBox<GasParams> = OnceBox::new();
     GAS_PARAMS.get_or_init(|| GasParams::new_spec(SpecId::OSAKA).into())

@@ -232,6 +232,10 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
     }
 
     // Encode the shared context (block/tx/contract) that the runtime expects.
+    //
+    // The active hardfork is deliberately absent: delegated runtimes pin their own spec and are
+    // versioned by contract upgrade instead of fork activation (see the `fluentbase_evm::evm`
+    // module docs), so there is nothing here for them to follow.
     let context_input = SharedContextInput::V1(SharedContextInputV1 {
         block: BlockContextV1 {
             chain_id: ctx.cfg().chain_id(),

@@ -1,3 +1,13 @@
+//! The EVM runtime contract: executes EVM bytecode for every account that delegates to
+//! `PRECOMPILE_EVM_RUNTIME`.
+//!
+//! This contract is the unit of EVM versioning on Fluent. It is ordinary genesis rWASM code, and
+//! `contracts/runtime-upgrade` can replace it on a live chain, so EVM semantics are upgraded
+//! forklessly: ship a new runtime and every delegating account follows it immediately. Because
+//! of that, the interpreter always runs at a single pinned hardfork (Osaka) instead of tracking
+//! the chain's active fork — the deployed runtime version is the fork boundary. See the
+//! `fluentbase_evm::evm` module docs for the full rationale before changing this.
+
 #![cfg_attr(target_arch = "wasm32", no_std, no_main)]
 
 extern crate alloc;
