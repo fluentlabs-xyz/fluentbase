@@ -7,6 +7,7 @@
 
 use crate::EvmTestingContextWithGenesis;
 use alloy_sol_types::{sol, SolCall};
+use fluentbase_revm::{RwasmBuilder, RwasmContext};
 use fluentbase_sdk::{
     address, Address, Bytes, PRECOMPILE_BIG_MODEXP, PRECOMPILE_BLAKE2F,
     PRECOMPILE_BLS12_381_G1_ADD, PRECOMPILE_BN256_ADD, PRECOMPILE_KZG_POINT_EVALUATION,
@@ -14,6 +15,14 @@ use fluentbase_sdk::{
 };
 use fluentbase_testing::EvmTestingContext;
 use hex_literal::hex;
+use revm::{
+    context::{ContextTr, TransactTo, TxEnv},
+    database::InMemoryDB,
+    inspector::InspectEvm,
+    interpreter::{CallInputs, CallOutcome},
+    primitives::hardfork::SpecId::PRAGUE,
+    Inspector,
+};
 
 const CALLER_ADDRESS: Address = address!("1234121212121212121212121212121212121234");
 
@@ -185,6 +194,68 @@ fn test_bn256_invalid_point_burns_gas_after_precharge() {
         "bn256-add",
         PRECOMPILE_BN256_ADD,
         bn256_add_point_not_on_curve(),
+    );
+}
+
+/// Records the gas each frame reports to `Inspector::call_end`.
+///
+/// This is the one consumer that reads the halted frame's gas verbatim: `inspect_frame_run`
+/// dispatches `frame_end` with the result `process_halt` produced, before `last_frame_result`
+/// (top level) or `insert_interrupted_result` (nested) get a chance to correct it. Tracers derive
+/// their per-frame `gasUsed` from exactly this outcome.
+#[derive(Default)]
+struct CallEndGasRecorder {
+    frames: Vec<(Address, u64, u64)>,
+}
+
+impl<CTX: ContextTr> Inspector<CTX> for CallEndGasRecorder {
+    fn call_end(&mut self, _ctx: &mut CTX, inputs: &CallInputs, outcome: &mut CallOutcome) {
+        self.frames.push((
+            inputs.bytecode_address,
+            outcome.result.gas.limit(),
+            outcome.result.gas.remaining(),
+        ));
+    }
+}
+
+fn trace_direct_call(precompile: Address, input: Bytes, gas_limit: u64) -> CallEndGasRecorder {
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
+    let mut context: RwasmContext<InMemoryDB> =
+        RwasmContext::new(core::mem::take(&mut ctx.db), PRAGUE);
+    context.cfg = ctx.cfg.clone();
+    context.cfg.legacy_bytecode_enabled = false;
+
+    let tx = TxEnv {
+        caller: CALLER_ADDRESS,
+        kind: TransactTo::Call(precompile),
+        data: input,
+        gas_limit,
+        gas_price: 0,
+        ..Default::default()
+    };
+
+    let mut evm = context.build_rwasm_with_inspector(CallEndGasRecorder::default());
+    evm.inspect_one_tx(tx).unwrap();
+    core::mem::take(&mut evm.0.inspector)
+}
+
+#[test]
+fn test_halted_precompile_frame_reports_no_gas_left_to_tracers() {
+    // Without the central rule the frame reports a full tank here (remaining == limit), because
+    // the wrapper errors out before `sync_evm_gas` and the engine meters no fuel for it.
+    let recorder = trace_direct_call(PRECOMPILE_BLAKE2F, blake2f_malformed_flag(), GAS_LIMIT);
+
+    let frame = recorder
+        .frames
+        .iter()
+        .find(|(address, ..)| *address == PRECOMPILE_BLAKE2F)
+        .expect("blake2f frame must be traced");
+    let (_, limit, remaining) = *frame;
+
+    assert!(limit > 0, "the frame must have been given gas to spend");
+    assert_eq!(
+        remaining, 0,
+        "a halted precompile frame reported {remaining} of {limit} gas still available"
     );
 }
 
