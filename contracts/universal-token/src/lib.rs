@@ -19,8 +19,16 @@ use fluentbase_sdk::{
     storage::{StorageMap, StorageU256},
     system_entrypoint,
     universal_token::*,
-    Address, Bytes, ContextReader, EvmExitCode, ExitCode, StorageUtils, SystemAPI, U256,
+    Address, Bytes, ContextReader, EvmExitCode, ExitCode, StorageUtils, SystemAPI, FUEL_DENOM_RATE,
+    U256,
 };
+
+/// EVM `CODEDEPOSIT` price, charged per byte of code a creation persists.
+///
+/// Token metadata is committed as the created account's code, so it is priced the same way the
+/// EVM runtime prices deployed bytecode (see `contracts/evm`, which charges this against its own
+/// gas before writing metadata).
+const CODE_DEPOSIT_GAS_PER_BYTE: u64 = 200;
 
 mod events {
     use super::*;
@@ -706,7 +714,18 @@ fn erc20_constructor_handler<SDK: SystemAPI>(
     when_non_payable!(sdk);
     when_non_static!(sdk);
 
-    // Decode initial settings parameters (SolidityABI)
+    // Decode initial settings parameters (SolidityABI). Decoding accepts only the exact canonical
+    // payload forms, so `input` carries no bytes without token semantics.
+    let settings =
+        InitialSettings::decode_with_prefix(&input).ok_or(ExitCode::MalformedBuiltinParams)?;
+
+    // Persist a canonical re-encoding rather than the creation input itself. The two are
+    // byte-identical for V1/V2 payloads; a legacy payload collapses to its much smaller V1 form.
+    let metadata = settings.encode_with_prefix();
+    if metadata.len() > INITIAL_SETTINGS_V2_SIZE {
+        return Err(ExitCode::CreateContractSizeLimit);
+    }
+
     let InitialSettings {
         token_name,
         token_symbol,
@@ -715,7 +734,7 @@ fn erc20_constructor_handler<SDK: SystemAPI>(
         minter,
         pauser,
         wrapped,
-    } = InitialSettings::decode_with_prefix(&input).ok_or(ExitCode::MalformedBuiltinParams)?;
+    } = settings;
 
     // Decode both metadata fields before writing either one, so a malformed symbol can
     // never leave a half-initialized token with its name already committed.
@@ -768,14 +787,26 @@ fn erc20_constructor_handler<SDK: SystemAPI>(
         sdk.write_storage(WRAPPED_STORAGE_SLOT, U256::from(wrapped))
             .ok()?;
     }
-    // Copy initial settings into metadata
-    sdk.write_contract_metadata(input);
+    // Metadata becomes the created account's code, so pay for it at the EVM code-deposit rate
+    // before committing it.
+    let fuel_for_metadata = (metadata.len() as u64)
+        .saturating_mul(CODE_DEPOSIT_GAS_PER_BYTE)
+        .saturating_mul(FUEL_DENOM_RATE);
+    if sdk.fuel() < fuel_for_metadata {
+        return Err(ExitCode::OutOfFuel);
+    }
+    sdk.charge_fuel(fuel_for_metadata);
+
+    // Copy canonical initial settings into metadata
+    sdk.write_contract_metadata(metadata);
     Ok(0)
 }
 
 pub fn deploy_entry<SDK: SystemAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     let input_size = sdk.input_size();
-    if input_size < SIG_LEN_BYTES as u32 {
+    // Bound the payload before reading it: no accepted creation form is larger than the legacy
+    // one, so a bigger input can only be a payload padded with bytes this runtime would ignore.
+    if input_size < SIG_LEN_BYTES as u32 || input_size as usize > INITIAL_SETTINGS_MAX_SIZE {
         return Err(ExitCode::MalformedBuiltinParams);
     }
     let input = sdk.bytes_input();

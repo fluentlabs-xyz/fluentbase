@@ -265,7 +265,10 @@ struct Harness {
 
 impl Harness {
     fn new(token_address: Address) -> Self {
-        let gas_limit = 120_000;
+        Self::new_with_gas_limit(token_address, 120_000)
+    }
+
+    fn new_with_gas_limit(token_address: Address, gas_limit: u64) -> Self {
         let sdk = TestingContextImpl::default()
             .with_contract_context(ContractContextV1 {
                 address: token_address,
@@ -2054,4 +2057,218 @@ fn secp256k1_half_order_constant_matches_eip2_boundary() {
 
     assert_eq!(crate::erc2612::SECP256K1N_HALF, expected);
     assert!(crate::erc2612::SECP256K1N_HALF < high_s);
+}
+
+/// Creation-payload canonicality.
+///
+/// A creation payload becomes the account's metadata, and metadata is committed as account code.
+/// The constructor therefore accepts only the exact canonical payload forms and persists a
+/// re-encoding of what it decoded, so no byte without token semantics can reach state.
+mod canonical_creation_payload {
+    use super::*;
+    use fluentbase_sdk::{
+        bytes::BytesMut, SystemAPI, EVM_MAX_INITCODE_SIZE, UNIVERSAL_TOKEN_MAGIC_BYTES,
+    };
+
+    const TOKEN: Address = Address::with_last_byte(1);
+    const DEPLOYER: Address = Address::with_last_byte(2);
+
+    fn canonical_v1() -> Bytes {
+        let mut s = InitialSettings::default();
+        s.token_name = "TestToken".into();
+        s.token_symbol = "TST".into();
+        s.decimals = 18;
+        s.initial_supply = U256::from(1_000u64);
+        s.encode_with_prefix()
+    }
+
+    fn canonical_v2() -> Bytes {
+        let mut s = InitialSettings::default();
+        s.token_name = "Wrapped".into();
+        s.token_symbol = "WRP".into();
+        s.decimals = 18;
+        s.wrapped = Some(true);
+        s.encode_with_prefix()
+    }
+
+    /// The pre-V1 layout: name and symbol as `[u8; 32]`, one word per byte.
+    fn canonical_legacy() -> Bytes {
+        let mut token_name = [0u8; 32];
+        token_name[.."Legacy".len()].copy_from_slice(b"Legacy");
+        let mut token_symbol = [0u8; 32];
+        token_symbol[.."LGC".len()].copy_from_slice(b"LGC");
+
+        let settings = LegacyInitialSettings {
+            token_name,
+            token_symbol,
+            decimals: 8,
+            initial_supply: U256::from(42u64),
+            minter: Address::ZERO,
+            pauser: Address::ZERO,
+        };
+        let mut payload = BytesMut::new();
+        SolidityABI::encode(&settings, &mut payload, 0).unwrap();
+
+        let mut out = Vec::with_capacity(UNIVERSAL_TOKEN_MAGIC_BYTES.len() + payload.len());
+        out.extend_from_slice(&UNIVERSAL_TOKEN_MAGIC_BYTES[..]);
+        out.extend_from_slice(&payload);
+        out.into()
+    }
+
+    fn forms() -> Vec<(&'static str, Bytes)> {
+        vec![
+            ("v1", canonical_v1()),
+            ("v2", canonical_v2()),
+            ("legacy", canonical_legacy()),
+        ]
+    }
+
+    /// Asserts a rejected creation left no account state behind.
+    fn assert_creation_rejected(input: Bytes, label: &str) {
+        let mut h = Harness::new(TOKEN);
+        let (ec, _) = h.deploy(input, DEPLOYER);
+        assert_eq!(
+            ec,
+            ExitCode::MalformedBuiltinParams,
+            "{label} must be rejected"
+        );
+
+        assert!(
+            h.sdk.contract_metadata().is_empty(),
+            "{label} persisted metadata"
+        );
+        assert!(h.take_logs().is_empty(), "{label} emitted logs");
+
+        // Storage is untouched: every read still returns the empty-account value.
+        let (ec, out) = h.call(with_sig(SIG_ERC20_NAME, &[]));
+        assert_eq!(ec, ExitCode::Ok);
+        assert_eq!(abi_decode_string(&out), "");
+        let (ec, out) = h.call(with_sig(SIG_ERC20_TOTAL_SUPPLY, &[]));
+        assert_eq!(ec, ExitCode::Ok);
+        assert_eq!(abi_decode_u256_word(&out), U256::ZERO);
+    }
+
+    #[test]
+    fn canonical_payloads_still_deploy() {
+        for (label, input) in forms() {
+            let mut h = Harness::new(TOKEN);
+            let (ec, _) = h.deploy(input, DEPLOYER);
+            assert_eq!(ec, ExitCode::Ok, "{label} payload must deploy");
+        }
+    }
+
+    #[test]
+    fn one_trailing_byte_rejects_the_creation() {
+        for (label, input) in forms() {
+            let mut padded = input.to_vec();
+            padded.push(0);
+            assert_creation_rejected(padded.into(), &format!("{label} + 1 byte"));
+        }
+    }
+
+    #[test]
+    fn non_canonical_boundary_lengths_are_rejected() {
+        let legacy = canonical_legacy();
+        for size in [
+            INITIAL_SETTINGS_V1_SIZE,
+            INITIAL_SETTINGS_V2_SIZE,
+            INITIAL_SETTINGS_LEGACY_SIZE,
+        ] {
+            for len in [size - 1, size + 1] {
+                // A V1/V2 length is a real canonical form, so only test the lengths adjacent to
+                // one that no form occupies.
+                if [
+                    INITIAL_SETTINGS_V1_SIZE,
+                    INITIAL_SETTINGS_V2_SIZE,
+                    INITIAL_SETTINGS_LEGACY_SIZE,
+                ]
+                .contains(&len)
+                {
+                    continue;
+                }
+                let mut input = legacy[..len.min(legacy.len())].to_vec();
+                input.resize(len, 0);
+                assert_creation_rejected(input.into(), &format!("payload of {len} bytes"));
+            }
+        }
+    }
+
+    #[test]
+    fn maximum_creation_input_is_rejected() {
+        // The largest payload EIP-3860 lets a creator submit, prefixed so it routes to this
+        // runtime. Before exact-length decoding, a payload like this decoded as legacy and its
+        // whole body was persisted as account code.
+        let legacy = canonical_legacy();
+        let mut input = legacy.to_vec();
+        input.resize(EVM_MAX_INITCODE_SIZE, 0);
+        assert_eq!(input[..4], UNIVERSAL_TOKEN_MAGIC_BYTES);
+        assert_creation_rejected(input.into(), "maximum creation input");
+    }
+
+    #[test]
+    fn persisted_metadata_is_the_canonical_encoding() {
+        for (label, input) in forms() {
+            let mut h = Harness::new(TOKEN);
+            let (ec, _) = h.deploy(input.clone(), DEPLOYER);
+            assert_eq!(ec, ExitCode::Ok);
+
+            let metadata = h.sdk.contract_metadata();
+            let expected = InitialSettings::decode_with_prefix(&input)
+                .unwrap()
+                .encode_with_prefix();
+            assert_eq!(metadata, expected, "{label}: metadata must be canonical");
+            assert!(
+                metadata.len() <= INITIAL_SETTINGS_V2_SIZE,
+                "{label}: metadata must stay within the V2 bound"
+            );
+        }
+    }
+
+    #[test]
+    fn legacy_metadata_is_stored_in_its_compact_v1_form() {
+        let input = canonical_legacy();
+        let mut h = Harness::new(TOKEN);
+        let (ec, _) = h.deploy(input.clone(), DEPLOYER);
+        assert_eq!(ec, ExitCode::Ok);
+
+        // The legacy payload is over ten times the size of what it means; only the meaning is kept.
+        assert_eq!(input.len(), INITIAL_SETTINGS_LEGACY_SIZE);
+        assert_eq!(h.sdk.contract_metadata().len(), INITIAL_SETTINGS_V1_SIZE);
+
+        // The token still behaves as the legacy payload described it.
+        let (ec, out) = h.call(with_sig(SIG_ERC20_NAME, &[]));
+        assert_eq!(ec, ExitCode::Ok);
+        assert_eq!(abi_decode_string(&out), "Legacy");
+        let (ec, out) = h.call(with_sig(SIG_ERC20_DECIMALS, &[]));
+        assert_eq!(ec, ExitCode::Ok);
+        assert_eq!(abi_decode_u256_word(&out), U256::from(8u64));
+    }
+
+    #[test]
+    fn creation_charges_code_deposit_gas_for_metadata() {
+        let input = canonical_v1();
+        let mut h = Harness::new(TOKEN);
+        let before = h.sdk.fuel();
+        let (ec, _) = h.deploy(input, DEPLOYER);
+        assert_eq!(ec, ExitCode::Ok);
+
+        let spent_gas = (before - h.sdk.fuel()) / FUEL_DENOM_RATE;
+        let metadata_len = h.sdk.contract_metadata().len() as u64;
+        assert_eq!(
+            spent_gas,
+            metadata_len * 200,
+            "metadata must be charged at the EVM code-deposit rate"
+        );
+    }
+
+    #[test]
+    fn creation_without_gas_for_metadata_is_rejected() {
+        let input = canonical_v1();
+        let metadata_gas = INITIAL_SETTINGS_V1_SIZE as u64 * 200;
+
+        let mut h = Harness::new_with_gas_limit(TOKEN, metadata_gas - 1);
+        let (ec, _) = h.deploy(input, DEPLOYER);
+        assert_eq!(ec, ExitCode::OutOfFuel);
+        assert!(h.sdk.contract_metadata().is_empty());
+    }
 }
