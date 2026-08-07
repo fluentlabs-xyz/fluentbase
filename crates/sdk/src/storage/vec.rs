@@ -94,15 +94,36 @@ where
 
             (elements_base + U256::from(slot_index), offset)
         } else {
-            // Non-packable elements
-            (elements_base + U256::from(index * T::SLOTS as u64), 0)
+            // Non-packable elements. The multiplication is done in U256 so that a large index
+            // cannot wrap a u64 and alias an earlier element (contracts build with
+            // `overflow-checks = false`).
+            (elements_base + U256::from(index) * U256::from(T::SLOTS), 0)
         }
     }
 
-    /// Access element at index (no bounds check).
+    /// Access element at index without checking it against the current length.
+    ///
+    /// Distinct indices always map to distinct storage locations, but indices past the
+    /// length address slots the vector does not own yet. Prefer [`Self::get`].
     pub fn at(&self, index: u64) -> T::Accessor {
         let (slot, offset) = self.element_location(index);
         T::access(T::Descriptor::new(slot, offset))
+    }
+
+    /// Access element at index, returning `None` when it is out of bounds.
+    pub fn get<S: StorageAPI>(&self, sdk: &S, index: u64) -> Option<T::Accessor> {
+        self.get_checked(sdk, index).unwrap()
+    }
+
+    pub fn get_checked<S: StorageAPI>(
+        &self,
+        sdk: &S,
+        index: u64,
+    ) -> Result<Option<T::Accessor>, ExitCode> {
+        if index >= self.len_checked(sdk)? {
+            return Ok(None);
+        }
+        Ok(Some(self.at(index)))
     }
 
     /// Grow vector by one and return accessor to new element.
@@ -201,9 +222,53 @@ where
 mod tests {
     use super::*;
     use crate::storage::{
+        array::StorageArray,
         mock::MockStorage,
-        primitive::{StorageU256, StorageU64},
+        primitive::{StorageU256, StorageU64, StorageU8},
     };
+
+    /// Indices spanning both the packing boundaries and the u64 values that used to wrap.
+    const PROBE_INDICES: [u64; 14] = [
+        0,
+        1,
+        2,
+        3,
+        4,
+        7,
+        31,
+        32,
+        33,
+        1 << 32,
+        (1 << 63) - 1,
+        1 << 63,
+        u64::MAX - 1,
+        u64::MAX,
+    ];
+
+    /// Total order over element addresses: slots grow with the index, and elements packed
+    /// inside one slot are laid out right to left (so a lower offset means a later element).
+    fn address_key<T: StorageLayout>(vec: &StorageVec<T>, index: u64) -> (U256, u8)
+    where
+        T::Descriptor: StorageDescriptor,
+    {
+        let (slot, offset) = vec.element_location(index);
+        (slot.wrapping_sub(vec.elements_base_slot()), 32 - offset)
+    }
+
+    fn assert_addresses_monotonic<T: StorageLayout>(vec: &StorageVec<T>)
+    where
+        T::Descriptor: StorageDescriptor,
+    {
+        for pair in PROBE_INDICES.windows(2) {
+            let (lower, higher) = (pair[0], pair[1]);
+            assert!(
+                address_key(vec, lower) < address_key(vec, higher),
+                "index {higher} does not address a later location than {lower} (SLOTS={}, BYTES={})",
+                T::SLOTS,
+                T::BYTES,
+            );
+        }
+    }
 
     #[test]
     fn test_vec_primitive_api() {
@@ -284,5 +349,49 @@ mod tests {
         let removed = vec.shrink(&mut sdk).unwrap();
         assert_eq!(removed.at(0).get(&sdk), U256::from(30)); // Can still read
         assert_eq!(vec.len(&sdk), 1); // But length updated
+    }
+
+    #[test]
+    fn test_vec_large_index_does_not_alias_earlier_element() {
+        // Elements of this vector reserve 2 slots each, so `index * SLOTS` used to wrap a
+        // u64 back to 0 at index 2^63 and alias element 0.
+        let vec = StorageVec::<StorageArray<StorageU256, 2>>::new(U256::from(400));
+        let elements_base = vec.elements_base_slot();
+
+        assert_eq!(vec.element_location(0), (elements_base, 0));
+
+        let (slot, offset) = vec.element_location(1 << 63);
+        assert_eq!(offset, 0);
+        assert_eq!(
+            slot.wrapping_sub(elements_base),
+            U256::from(1u64 << 63) * U256::from(2)
+        );
+    }
+
+    #[test]
+    fn test_vec_addresses_are_monotonic_for_all_widths() {
+        // Packed elements, one element per slot, and multi-slot elements.
+        assert_addresses_monotonic(&StorageVec::<StorageU8>::new(U256::from(401)));
+        assert_addresses_monotonic(&StorageVec::<StorageU64>::new(U256::from(402)));
+        assert_addresses_monotonic(&StorageVec::<StorageU256>::new(U256::from(403)));
+        assert_addresses_monotonic(&StorageVec::<StorageArray<StorageU256, 2>>::new(
+            U256::from(404),
+        ));
+        assert_addresses_monotonic(&StorageVec::<StorageArray<StorageU256, 7>>::new(
+            U256::from(405),
+        ));
+    }
+
+    #[test]
+    fn test_vec_get_rejects_out_of_bounds() {
+        let mut sdk = MockStorage::new();
+        let vec = StorageVec::<StorageU256>::new(U256::from(500));
+
+        assert!(vec.get(&sdk, 0).is_none());
+
+        vec.push(&mut sdk, U256::from(111));
+        assert_eq!(vec.get(&sdk, 0).unwrap().get(&sdk), U256::from(111));
+        assert!(vec.get(&sdk, 1).is_none());
+        assert!(vec.get(&sdk, u64::MAX).is_none());
     }
 }
