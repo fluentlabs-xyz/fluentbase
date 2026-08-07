@@ -3,7 +3,8 @@ use alloy_sol_macro_input::{SolInput, SolInputKind};
 use convert_case::{Case, Casing};
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
-use syn::{Ident, Type};
+use std::path::Path;
+use syn::{Ident, LitStr, Type};
 use syn_solidity::{
     visit::{visit_file, Visit},
     File, Item, ItemFunction, ItemStruct, Mutability, Spanned, VariableDeclaration,
@@ -35,10 +36,12 @@ impl<'a> Visit<'a> for Collector<'a> {
 ///
 /// A TokenStream representing the generated Rust trait
 pub fn to_rust_trait(input: SolInput) -> syn::Result<TokenStream> {
+    let source_dependency = source_file_dependency(input.path.as_deref());
     let (structs, trait_name, trait_fns) = convert_sol_to_rust(input)?;
 
     // Generate the final output for trait
     Ok(quote! {
+        #source_dependency
         #(#structs)*
         pub trait #trait_name {
             #(#trait_fns)*
@@ -56,16 +59,45 @@ pub fn to_rust_trait(input: SolInput) -> syn::Result<TokenStream> {
 ///
 /// A TokenStream representing the generated Rust client trait
 pub fn to_sol_client(input: SolInput) -> syn::Result<TokenStream> {
+    let source_dependency = source_file_dependency(input.path.as_deref());
     let (structs, trait_name, trait_fns) = convert_sol_to_rust(input)?;
 
     // Generate the final output for client trait with attribute
     Ok(quote! {
+        #source_dependency
         #(#structs)*
         #[client(mode = "solidity")]
         pub trait #trait_name {
             #(#trait_fns)*
         }
     })
+}
+
+/// Declares the `.sol` file a path-form macro read as a build input
+///
+/// The macro reads the file itself, so without this rustc never learns the file
+/// was consumed and Cargo keeps the dependent crate fresh after the interface
+/// changes, leaving stale methods and selectors in the build. A discarded
+/// `include_str!` puts the path into rustc's dep-info without emitting data.
+///
+/// # Arguments
+///
+/// * `path` - The resolved path of the Solidity file, or `None` for inline input
+///
+/// # Returns
+///
+/// A TokenStream declaring the dependency, empty when there is no file to track
+fn source_file_dependency(path: Option<&Path>) -> TokenStream {
+    // A non-UTF-8 path cannot be spelled as a string literal, and `include_str!`
+    // takes nothing else, so such a path stays untracked
+    let Some(path) = path.and_then(Path::to_str) else {
+        return quote! {};
+    };
+    let path = LitStr::new(path, Span::call_site());
+
+    quote! {
+        const _: &::core::primitive::str = ::core::include_str!(#path);
+    }
 }
 
 /// Converts Solidity input to Rust code components
@@ -506,6 +538,23 @@ library SomeLibrary {
         let formatted = prettyplease::unparse(&parsed);
 
         assert_snapshot!("sol_to_rust_trait_full_surface", formatted);
+    }
+
+    #[test]
+    fn test_inline_input_declares_no_file_dependency() {
+        let solidity_code = r#"
+        interface IProgram {
+            function ping() external view returns (uint256);
+        }
+    "#;
+        let input: alloy_sol_macro_input::SolInput = parse_str(solidity_code).unwrap();
+        assert!(input.path.is_none());
+
+        let generated = to_rust_trait(input).unwrap().to_string();
+        assert!(
+            !generated.contains("include_str"),
+            "inline input has no file to track: {generated}"
+        );
     }
 
     #[test]
