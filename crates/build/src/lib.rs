@@ -21,6 +21,11 @@ pub const DEFAULT_DOCKER_TAG: &str = concat!("v", env!("CARGO_PKG_VERSION"));
 pub const DOCKER_PLATFORM: &str = "linux/amd64";
 pub const CARGO_CACHE_VOLUME: &str = "fluentbase-cargo-cache";
 
+/// Pins the build image to an immutable digest (`sha256:...`).
+pub const ENV_DOCKER_DIGEST: &str = "FLUENTBASE_BUILD_DOCKER_DIGEST";
+/// Accepts a build image whose provenance cannot be verified.
+pub const ENV_ALLOW_UNVERIFIED_IMAGE: &str = "FLUENTBASE_BUILD_ALLOW_UNVERIFIED_IMAGE";
+
 pub const DEFAULT_STACK_SIZE: u32 = 128 * 1024; // 128 KB
 pub const BUILD_TARGET: &str = "wasm32-unknown-unknown";
 pub const HELPER_TARGET_SUBDIR: &str = "wasm-compilation";
@@ -74,6 +79,20 @@ pub struct BuildArgs {
     /// Docker image tag to use
     #[arg(long, default_value = DEFAULT_DOCKER_TAG)]
     pub docker_tag: String,
+
+    /// Pin the Docker image to an immutable digest (`sha256:<64 hex chars>`).
+    ///
+    /// The build fails before any container runs if the image resolves to a different
+    /// digest. Required for release and system builds, where a mutable tag is not enough.
+    #[arg(long, env = ENV_DOCKER_DIGEST)]
+    pub docker_digest: Option<String>,
+
+    /// Accept a Docker image that carries no registry digest for the expected repository.
+    ///
+    /// Needed when running a locally built image; provenance cannot be verified, so never
+    /// use it for release or system builds. Ignored when `--docker-digest` is set.
+    #[arg(long, env = ENV_ALLOW_UNVERIFIED_IMAGE)]
+    pub allow_unverified_docker_image: bool,
 
     /// Root directory to mount in Docker (defaults to current directory)
     #[arg(long)]
@@ -144,6 +163,10 @@ impl Default for BuildArgs {
             docker: true,
             docker_image: DEFAULT_DOCKER_IMAGE.to_string(),
             docker_tag: DEFAULT_DOCKER_TAG.to_string(),
+            // Build scripts construct `BuildArgs` directly, so the environment overrides
+            // clap would apply are resolved here as well.
+            docker_digest: env_docker_digest(),
+            allow_unverified_docker_image: env_allow_unverified_image(),
             mount_dir: None,
             rust_version: None,
             use_toolchain_file: false, // by default use rust from the image
@@ -161,7 +184,49 @@ impl Default for BuildArgs {
     }
 }
 
+fn env_docker_digest() -> Option<String> {
+    env::var(ENV_DOCKER_DIGEST)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn env_allow_unverified_image() -> bool {
+    env::var(ENV_ALLOW_UNVERIFIED_IMAGE)
+        .ok()
+        .map(|value| value.trim().to_ascii_lowercase())
+        .is_some_and(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
+}
+
 impl BuildArgs {
+    /// Full reference of the build image.
+    ///
+    /// `docker_image` may already carry a tag or a digest, in which case it is used as is;
+    /// otherwise the configured tag is appended.
+    pub fn docker_image_reference(&self) -> String {
+        let image = self.docker_image.trim();
+        let has_tag_or_digest = image.contains('@')
+            || image
+                .rsplit('/')
+                .next()
+                .is_some_and(|name| name.contains(':'));
+
+        if has_tag_or_digest {
+            image.to_string()
+        } else {
+            format!("{image}:{}", self.docker_tag)
+        }
+    }
+
+    /// Resolve and verify the build image before anything is allowed to run in it.
+    pub fn ensure_docker_image(&self) -> anyhow::Result<docker::VerifiedImage> {
+        docker::ensure_rust_image(
+            &self.docker_image_reference(),
+            self.docker_digest.as_deref(),
+            self.allow_unverified_docker_image,
+        )
+    }
+
     pub fn toolchain_version(&self, contract_dir: &Path) -> Option<String> {
         if let Some(version) = &self.rust_version {
             return Some(version.clone());
@@ -335,5 +400,56 @@ impl BuildArgs {
         }
 
         flags.join("\x1f")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::CommandFactory;
+
+    #[test]
+    fn cli_definition_is_valid() {
+        BuildArgs::command().debug_assert();
+    }
+
+    #[test]
+    fn appends_the_tag_only_when_the_image_has_none() {
+        let digest = format!("sha256:{}", "a".repeat(64));
+        let args = BuildArgs {
+            docker_tag: "v1.2.3".to_string(),
+            ..Default::default()
+        };
+
+        let tagged = BuildArgs {
+            docker_image: DEFAULT_DOCKER_IMAGE.to_string(),
+            ..args.clone()
+        };
+        assert_eq!(
+            tagged.docker_image_reference(),
+            format!("{DEFAULT_DOCKER_IMAGE}:v1.2.3")
+        );
+
+        // An image that already carries a tag or digest is used verbatim.
+        for image in [
+            format!("{DEFAULT_DOCKER_IMAGE}:custom"),
+            format!("{DEFAULT_DOCKER_IMAGE}@{digest}"),
+        ] {
+            let pinned = BuildArgs {
+                docker_image: image.clone(),
+                ..args.clone()
+            };
+            assert_eq!(pinned.docker_image_reference(), image);
+        }
+
+        // A registry port is not a tag.
+        let with_port = BuildArgs {
+            docker_image: "localhost:5000/fluentbase-build".to_string(),
+            ..args
+        };
+        assert_eq!(
+            with_port.docker_image_reference(),
+            "localhost:5000/fluentbase-build:v1.2.3"
+        );
     }
 }
