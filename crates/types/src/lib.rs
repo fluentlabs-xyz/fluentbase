@@ -116,6 +116,20 @@ pub const QUADRATIC_DIVISOR: u32 = 512;
 /// A max rWasm call stack limit
 pub const CALL_STACK_LIMIT: u32 = 1024;
 
+/// Maximum linear memory, in bytes, that all live contract frames of one transaction may hold
+/// at the same time.
+///
+/// A suspended frame keeps its entire store — linear memory included — alive until it is resumed
+/// or forgotten, so a call chain holds `depth * frame_size` bytes resident at once. Per-frame fuel
+/// prices that allocation but cannot bound the sum over frames: at `CALL_STACK_LIMIT` frames of
+/// the largest permitted memory it reaches ~64 GiB while costing about half of a 100M gas block.
+///
+/// The limit sits above the worst case reachable by ordinary contracts — full `CALL_STACK_LIMIT`
+/// depth at the Rust/Wasm toolchain's default 17 initial pages, roughly 1.06 GiB — so no
+/// execution that succeeds today begins to fail. The tests in `runtime::executor` pin both ends
+/// of that trade-off.
+pub const MAX_IN_FLIGHT_MEMORY_BYTES: u64 = 1536 * 1024 * 1024;
+
 /// WASM max code size
 ///
 /// This value is temporary for testing purposes, requires recalculation.
