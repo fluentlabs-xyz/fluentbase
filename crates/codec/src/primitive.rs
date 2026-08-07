@@ -1,6 +1,9 @@
 use crate::{
     alloc::string::ToString,
-    encoder::{align_up, get_aligned_indices, get_aligned_slice, is_big_endian, Encoder},
+    encoder::{
+        align_up, checked_decode_slice, get_aligned_indices, get_aligned_slice, is_big_endian,
+        Encoder,
+    },
     error::{CodecError, DecodingError},
 };
 use byteorder::ByteOrder;
@@ -51,15 +54,9 @@ impl<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool, const IS_STATIC: bo
         let word_size =
             align_up::<ALIGN>(<Self as Encoder<B, ALIGN, SOL_MODE, IS_STATIC>>::HEADER_SIZE);
 
-        if buf.remaining() < offset + word_size {
-            return Err(CodecError::Decoding(DecodingError::BufferTooSmall {
-                expected: offset + word_size,
-                found: buf.remaining(),
-                msg: "buf too small to read aligned u8".to_string(),
-            }));
-        }
+        let chunk =
+            checked_decode_slice(buf, offset, word_size, "buf too small to read aligned u8")?;
 
-        let chunk = &buf.chunk()[offset..];
         let value = if is_big_endian::<B>() {
             chunk[word_size - 1]
         } else {
@@ -149,20 +146,17 @@ macro_rules! impl_int {
                     <Self as Encoder<B, ALIGN, SOL_MODE, IS_STATIC>>::HEADER_SIZE,
                 );
 
-                if buf.remaining() < offset + ALIGN {
-                    return Err(CodecError::Decoding(DecodingError::BufferTooSmall {
-                        expected: offset + ALIGN,
-                        found: buf.remaining(),
-                        msg: "buf too small to decode value".to_string(),
-                    }));
-                }
+                // The read below spans the whole aligned word, so the buffer has to be checked
+                // against `word_size` and not `ALIGN`: types wider than the alignment (`u64` and
+                // `i64` with `ALIGN == 4`) otherwise pass the guard while truncated and panic
+                // inside the byteorder read.
+                let chunk =
+                    checked_decode_slice(buf, offset, word_size, "buf too small to decode value")?;
 
-                let chunk = &buf.chunk()[offset..];
                 let value = if is_big_endian::<B>() {
                     B::$read_method(
                         &chunk[word_size
-                            - <Self as Encoder<B, ALIGN, SOL_MODE, IS_STATIC>>::HEADER_SIZE
-                            ..word_size],
+                            - <Self as Encoder<B, ALIGN, SOL_MODE, IS_STATIC>>::HEADER_SIZE..],
                     )
                 } else {
                     B::$read_method(
@@ -666,5 +660,127 @@ mod tests {
 
         let decoded = SolidityPackedABI::<[u16; 3]>::decode(&buf, 0).unwrap();
         assert_eq!(arr, decoded);
+    }
+
+    /// Encodes `value` with `ALIGN == 4` and asserts that every truncation of the resulting word
+    /// is rejected with a decoding error instead of panicking, in both byte orders.
+    macro_rules! assert_truncated_decode_errors {
+        ($typ:ty, $value:expr) => {{
+            const ALIGN: usize = 4;
+            let value: $typ = $value;
+
+            let mut le_buf = BytesMut::new();
+            <$typ as Encoder<LittleEndian, ALIGN, false, true>>::encode(&value, &mut le_buf, 0)
+                .unwrap();
+            let mut be_buf = BytesMut::new();
+            <$typ as Encoder<BigEndian, ALIGN, false, true>>::encode(&value, &mut be_buf, 0)
+                .unwrap();
+
+            let word_size = le_buf.len();
+            assert_eq!(word_size, align_up::<ALIGN>(size_of::<$typ>()));
+            assert_eq!(be_buf.len(), word_size);
+
+            // A full word decodes back to the original value.
+            let le_full = le_buf.clone().freeze();
+            assert_eq!(
+                <$typ as Encoder<LittleEndian, ALIGN, false, true>>::decode(&le_full, 0).unwrap(),
+                value
+            );
+            let be_full = be_buf.clone().freeze();
+            assert_eq!(
+                <$typ as Encoder<BigEndian, ALIGN, false, true>>::decode(&be_full, 0).unwrap(),
+                value
+            );
+
+            // Every short buffer is an error, including the 4..7 byte range that used to slip
+            // past the `ALIGN`-sized guard and panic for the 8-byte types.
+            for len in 0..word_size {
+                let le_short = Bytes::copy_from_slice(&le_buf[..len]);
+                assert!(
+                    <$typ as Encoder<LittleEndian, ALIGN, false, true>>::decode(&le_short, 0)
+                        .is_err(),
+                    "LE decode of {} bytes should fail for {}",
+                    len,
+                    stringify!($typ)
+                );
+
+                let be_short = Bytes::copy_from_slice(&be_buf[..len]);
+                assert!(
+                    <$typ as Encoder<BigEndian, ALIGN, false, true>>::decode(&be_short, 0).is_err(),
+                    "BE decode of {} bytes should fail for {}",
+                    len,
+                    stringify!($typ)
+                );
+            }
+        }};
+    }
+
+    #[test]
+    fn test_truncated_native_widths_do_not_panic() {
+        assert_truncated_decode_errors!(u8, 0xAB);
+        assert_truncated_decode_errors!(u16, 0xABCD);
+        assert_truncated_decode_errors!(u32, 0xABCDEF01);
+        assert_truncated_decode_errors!(u64, 0x0123456789ABCDEF);
+        assert_truncated_decode_errors!(i16, -0x1234);
+        assert_truncated_decode_errors!(i32, -0x12345678);
+        assert_truncated_decode_errors!(i64, -0x123456789ABCDEF);
+    }
+
+    #[test]
+    fn test_truncated_decode_reports_full_word() {
+        // A 4-byte buffer satisfies `ALIGN` but not the 8-byte `u64` word.
+        let short = Bytes::from_static(&[0xFF, 0xFF, 0xFF, 0xFF]);
+        let err = <u64 as Encoder<LittleEndian, 4, false, true>>::decode(&short, 0).unwrap_err();
+
+        match err {
+            CodecError::Decoding(DecodingError::BufferTooSmall {
+                expected, found, ..
+            }) => {
+                assert_eq!(expected, 8);
+                assert_eq!(found, 4);
+            }
+            other => panic!("unexpected error: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_decode_offset_overflow_is_rejected() {
+        let buf = Bytes::from_static(&[0u8; 8]);
+        assert!(<u64 as Encoder<LittleEndian, 4, false, true>>::decode(&buf, usize::MAX).is_err());
+    }
+
+    /// Encodes three `u64`s back to back at `ALIGN == 4` and checks that each one round-trips at
+    /// its own offset, and that a buffer missing the last byte errors instead of panicking.
+    macro_rules! assert_multi_value_u64_vector {
+        ($byte_order:ty) => {{
+            const ALIGN: usize = 4;
+            let values: [u64; 3] = [0, 0x0123456789ABCDEF, u64::MAX];
+
+            let mut buf = BytesMut::new();
+            for (i, value) in values.iter().enumerate() {
+                <u64 as Encoder<$byte_order, ALIGN, false, true>>::encode(value, &mut buf, i * 8)
+                    .unwrap();
+            }
+            assert_eq!(buf.len(), 24);
+            let encoded = buf.freeze();
+
+            for (i, expected) in values.iter().enumerate() {
+                let decoded =
+                    <u64 as Encoder<$byte_order, ALIGN, false, true>>::decode(&encoded, i * 8)
+                        .unwrap();
+                assert_eq!(decoded, *expected, "element {} round-trip", i);
+            }
+
+            let truncated = encoded.slice(..23);
+            assert!(
+                <u64 as Encoder<$byte_order, ALIGN, false, true>>::decode(&truncated, 16).is_err()
+            );
+        }};
+    }
+
+    #[test]
+    fn test_aligned_multi_value_u64_vector_decodes() {
+        assert_multi_value_u64_vector!(LittleEndian);
+        assert_multi_value_u64_vector!(BigEndian);
     }
 }
