@@ -15,7 +15,8 @@ use fluentbase_sdk::{
     storage::{StorageAddress, StorageBytes32, StorageString, StorageVec},
     syscall::{encode, SYSCALL_ID_UPGRADE_EVM_RUNTIME, SYSCALL_ID_UPGRADE_WASM_RUNTIME},
     Address, Bytes, ContextReader, ExitCode, RwasmCompilationResult, SharedAPI, B256,
-    DEFAULT_UPDATE_GENESIS_AUTH, EVM_MAX_CODE_SIZE, STATE_MAIN, SYSTEM_ADDRESS, WASM_MAGIC_BYTES,
+    DEFAULT_UPDATE_GENESIS_AUTH, EVM_MAX_CODE_SIZE, RWASM_MAX_CODE_SIZE, STATE_MAIN,
+    SYSTEM_ADDRESS, WASM_MAGIC_BYTES, WASM_MAX_CODE_SIZE,
 };
 
 #[derive(Event)]
@@ -338,17 +339,39 @@ impl<SDK: SharedAPI> RuntimeUpgradeTr for App<SDK> {
     }
 }
 
+/// Reject raw WASM that the protocol would never accept as contract code.
+///
+/// Compilation is the expensive half of an upgrade, so the cap has to be applied to the input
+/// before the module is built rather than to the artifact afterwards.
+fn assert_wasm_size_within_limit(wasm_bytecode: &[u8]) {
+    if wasm_bytecode.len() > WASM_MAX_CODE_SIZE {
+        panic!("runtime-upgrade: wasm bytecode exceeds maximum size");
+    }
+}
+
+/// Reject compiled rWasm above the protocol cap before it reaches the upgrade syscall.
+///
+/// A module that stays under the raw cap can still serialize past this one, and installed code
+/// beyond it breaks the state-size and code-copy assumptions the rest of the runtime makes.
+fn assert_rwasm_size_within_limit(rwasm_bytecode: &[u8]) {
+    if rwasm_bytecode.len() > RWASM_MAX_CODE_SIZE {
+        panic!("runtime-upgrade: rwasm bytecode exceeds maximum size");
+    }
+}
+
 impl<SDK: SharedAPI> App<SDK> {
     fn compile_and_install(&mut self, target_address: Address, wasm_bytecode: Bytes) -> B256 {
         if !wasm_bytecode.starts_with(&WASM_MAGIC_BYTES) {
             panic!("runtime-upgrade: malformed wasm bytecode");
         }
+        assert_wasm_size_within_limit(&wasm_bytecode);
         let Ok(RwasmCompilationResult { rwasm_module, .. }) =
             compile_rwasm_maybe_system(&target_address, &wasm_bytecode)
         else {
             panic!("runtime-upgrade: failed to compile bytecode");
         };
         let rwasm_bytecode = rwasm_module.serialize();
+        assert_rwasm_size_within_limit(&rwasm_bytecode);
 
         let mut buffer = vec![0u8; encode::upgrade_runtime_size_hint(rwasm_bytecode.len())];
         encode::upgrade_runtime_into(&mut &mut buffer[..], &target_address, &rwasm_bytecode);

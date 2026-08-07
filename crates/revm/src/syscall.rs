@@ -19,7 +19,7 @@ use fluentbase_sdk::{
     bytes::Buf,
     calc_create_metadata_address, is_execute_using_system_runtime, Address, Bytes, ExitCode, Log,
     LogData, B256, EVM_MAX_CODE_SIZE, EXT_CODE_COPY_MAX_COPY_SIZE, FUEL_DENOM_RATE, KECCAK_EMPTY,
-    PRECOMPILE_EVM_RUNTIME, PRECOMPILE_RUNTIME_UPGRADE, STATE_MAIN, U256,
+    PRECOMPILE_EVM_RUNTIME, PRECOMPILE_RUNTIME_UPGRADE, RWASM_MAX_CODE_SIZE, STATE_MAIN, U256,
 };
 use revm::{
     bytecode::{opcode, rwasm::RwasmBytecode, Bytecode},
@@ -1239,6 +1239,11 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 return_halt!(MemoryOutOfBounds);
             };
             let rwasm_binary: Bytes = rwasm_binary.into();
+            // The caller is trusted to authorize the upgrade, not to size it: installed code above
+            // this cap violates the state-size and code-copy assumptions of the rest of the runtime.
+            if rwasm_binary.len() > RWASM_MAX_CODE_SIZE {
+                return_halt!(MalformedBuiltinParams);
+            }
             #[cfg(feature = "std")]
             warn!(
                 ?target_address,

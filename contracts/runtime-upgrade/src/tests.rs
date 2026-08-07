@@ -475,6 +475,84 @@ fn test_planned_upgrade_rejects_same_hash_for_wrong_target() {
     assert_ne!(h.call(upgrade_call.encode()), ExitCode::Ok);
 }
 
+/// Raw WASM of exactly `len` bytes: the magic and version header followed by inert padding.
+///
+/// The padding never has to parse — every size check runs strictly before compilation.
+fn wasm_of_len(len: usize) -> Bytes {
+    let mut wasm_bytecode = vec![0u8; len];
+    wasm_bytecode[..8].copy_from_slice(&[0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]);
+    Bytes::from(wasm_bytecode)
+}
+
+#[test]
+fn test_wasm_size_limit_rejects_only_above_the_cap() {
+    let at_limit = vec![0u8; WASM_MAX_CODE_SIZE];
+    let over_limit = vec![0u8; WASM_MAX_CODE_SIZE + 1];
+    assert_wasm_size_within_limit(&at_limit);
+    assert!(
+        std::panic::catch_unwind(|| assert_wasm_size_within_limit(&over_limit)).is_err(),
+        "one byte over the wasm cap was accepted"
+    );
+}
+
+#[test]
+fn test_rwasm_size_limit_rejects_only_above_the_cap() {
+    let at_limit = vec![0u8; RWASM_MAX_CODE_SIZE];
+    let over_limit = vec![0u8; RWASM_MAX_CODE_SIZE + 1];
+    assert_rwasm_size_within_limit(&at_limit);
+    assert!(
+        std::panic::catch_unwind(|| assert_rwasm_size_within_limit(&over_limit)).is_err(),
+        "one byte over the rwasm cap was accepted"
+    );
+}
+
+#[test]
+fn test_upgrade_to_rejects_oversized_wasm() {
+    let mut h = Harness::new();
+    h.set_caller(OWNER);
+    let upgrade_call = UpgradeToCall::new((
+        TARGET_A,
+        B256::from([0xab; 32]),
+        "v1.0.0".to_string(),
+        wasm_of_len(WASM_MAX_CODE_SIZE + 1),
+    ));
+    assert_eq!(h.call(upgrade_call.encode()), ExitCode::Panic);
+    assert!(
+        h.sdk.take_logs().is_empty(),
+        "rejected upgrade emitted an event"
+    );
+}
+
+/// A rejected planned upgrade must not burn its target/hash pair: the plan has to stay usable for
+/// a correctly sized artifact.
+#[test]
+fn test_planned_upgrade_rejects_oversized_wasm_and_keeps_plan() {
+    let oversized_wasm = wasm_of_len(WASM_MAX_CODE_SIZE + 1);
+    let wasm_code_hash = crypto_keccak256(oversized_wasm.as_ref());
+
+    let mut h = Harness::new();
+    h.set_caller(OWNER);
+    let plan_call = PlanUpgradeCall::new((
+        B256::from([0xab; 32]),
+        "v1.0.0".to_string(),
+        vec![TARGET_A],
+        vec![wasm_code_hash],
+        UPDATER,
+    ));
+    assert_eq!(h.call(plan_call.encode()), ExitCode::Ok);
+
+    h.set_caller(UPDATER);
+    let upgrade_call = UpgradeToPlannedCall::new((TARGET_A, oversized_wasm));
+    assert_eq!(h.call(upgrade_call.encode()), ExitCode::Panic);
+
+    assert_eq!(h.planned_updater(), UPDATER);
+    assert_eq!(h.planned_len(), 1);
+    assert!(
+        h.has_planned(TARGET_A, wasm_code_hash),
+        "rejected upgrade consumed the planned pair"
+    );
+}
+
 /// Log-data ABI vectors.
 ///
 /// Solidity encodes event data with top-level argument semantics (`abi.encode(a, b, ...)`), so
