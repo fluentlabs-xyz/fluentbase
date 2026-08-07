@@ -1,5 +1,8 @@
 use cargo_metadata::{CrateType, MetadataCommand, Package, PackageId, TargetKind};
-use fluentbase_build::{docker, BuildArgs, DEFAULT_DOCKER_IMAGE, DEFAULT_DOCKER_TAG};
+use fluentbase_build::{
+    docker, BuildArgs, DEFAULT_DOCKER_IMAGE, DEFAULT_DOCKER_TAG, ENV_ALLOW_UNVERIFIED_IMAGE,
+    ENV_DOCKER_DIGEST,
+};
 use std::{
     collections::HashSet,
     env, fs,
@@ -63,6 +66,9 @@ fn contracts_build_args(fluentbase_root_dir: &Path) -> BuildArgs {
         docker_tag: env::var("FLUENTBASE_BUILD_DOCKER_TAG")
             .unwrap_or_else(|_| DEFAULT_DOCKER_TAG.to_string()),
         mount_dir: Some(mount_dir),
+        // `docker_digest` / `allow_unverified_docker_image` are inherited from
+        // `BuildArgs::default()`, which reads FLUENTBASE_BUILD_DOCKER_DIGEST and
+        // FLUENTBASE_BUILD_ALLOW_UNVERIFIED_IMAGE.
         features,
         no_default_features: true,
         locked: true,
@@ -201,9 +207,12 @@ fn run_cargo_build(
     };
 
     if build_args.docker {
-        let image_ref = format!("{}:{}", build_args.docker_image, build_args.docker_tag);
-        let image = docker::ensure_rust_image(&image_ref)
-            .unwrap_or_else(|_| panic!("failed to ensure docker image {image_ref}"));
+        let image = build_args.ensure_docker_image().unwrap_or_else(|err| {
+            panic!(
+                "failed to verify docker image {}: {err:#}",
+                build_args.docker_image_reference()
+            )
+        });
 
         let rust_toolchain = build_args.toolchain_version(work_dir);
 
@@ -249,6 +258,8 @@ fn main() {
     println!("cargo:rerun-if-env-changed=FLUENTBASE_CONTRACTS_DOCKER");
     println!("cargo:rerun-if-env-changed=FLUENTBASE_BUILD_DOCKER_IMAGE");
     println!("cargo:rerun-if-env-changed=FLUENTBASE_BUILD_DOCKER_TAG");
+    println!("cargo:rerun-if-env-changed={}", ENV_DOCKER_DIGEST);
+    println!("cargo:rerun-if-env-changed={}", ENV_ALLOW_UNVERIFIED_IMAGE);
     println!("cargo:rerun-if-env-changed=FLUENTBASE_CONTRACTS_IGNORE_DEFAULT_RUST_FLAGS");
 
     let fluentbase_root_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("../..");

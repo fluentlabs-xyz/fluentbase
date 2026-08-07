@@ -1,5 +1,8 @@
 #![allow(clippy::too_many_arguments)]
-use crate::{docker, generators, Artifact, BuildArgs, BUILD_TARGET, DEFAULT_DOCKER_TAG};
+use crate::{
+    docker::{self, VerifiedImage},
+    generators, Artifact, BuildArgs, BUILD_TARGET, DEFAULT_DOCKER_TAG,
+};
 use anyhow::{Context, Result};
 use cargo_metadata::{Metadata, MetadataCommand, Package};
 use std::{
@@ -125,10 +128,7 @@ pub fn execute_build(args: &BuildArgs, contract_dir: Option<PathBuf>) -> Result<
 
     // Determine the Docker image that would be used for all generators
     let docker_image = if args.docker {
-        Some(docker::ensure_rust_image(&format!(
-            "{}:{}",
-            args.docker_image, args.docker_tag
-        ))?)
+        Some(args.ensure_docker_image()?)
     } else {
         None
     };
@@ -193,7 +193,7 @@ fn build_wasm(
     args: &BuildArgs,
     contract_dir: &Path,
     package: &Package,
-    docker_image: &Option<String>,
+    docker_image: &Option<VerifiedImage>,
     mount_dir: &Path,
 ) -> Result<PathBuf> {
     let target_dir = if let Some(dir) = &args.target_dir {
@@ -227,9 +227,7 @@ fn build_wasm(
     // Run build
     let env_vars = vec![("CARGO_ENCODED_RUSTFLAGS".to_string(), args.rust_flags())];
 
-    let docker_config = docker_image
-        .as_ref()
-        .map(|image| (image.as_str(), mount_dir));
+    let docker_config = docker_image.as_ref().map(|image| (image, mount_dir));
 
     let rust_toolchain = args.toolchain_version(contract_dir);
     eprintln!("Detected toolchain: {:?}", rust_toolchain);
@@ -315,7 +313,7 @@ fn find_wasm_artifact(target_dir: &Path, package: &Package) -> Result<PathBuf> {
 
 fn optimize_wasm(
     wasm_path: &Path,
-    docker_config: Option<(&str, &Path)>,
+    docker_config: Option<(&VerifiedImage, &Path)>,
     rust_toolchain: &Option<String>,
 ) -> Result<()> {
     let work_dir = wasm_path.parent().unwrap();
@@ -347,7 +345,7 @@ fn optimize_wasm(
 fn run_command<S: AsRef<str>>(
     args: &[S],
     work_dir: &Path,
-    docker_config: Option<(&str, &Path)>,
+    docker_config: Option<(&VerifiedImage, &Path)>,
     env_vars: &[(String, String)],
     rust_toolchain: &Option<String>,
 ) -> Result<()> {
@@ -400,7 +398,7 @@ fn generate_artifacts(
     output_dir: &Path,
     wasm_path: &Path,
     package_name: &str,
-    docker_image: &Option<String>,
+    docker_image: &Option<VerifiedImage>,
     mount_dir: &Path,
     rust_toolchain: &Option<String>,
     result: &mut BuildResult,
@@ -443,9 +441,7 @@ fn generate_artifacts(
     for artifact in &artifacts {
         match artifact {
             Artifact::Wat => {
-                let docker_config = docker_image
-                    .as_ref()
-                    .map(|image| (image.as_str(), mount_dir));
+                let docker_config = docker_image.as_ref().map(|image| (image, mount_dir));
 
                 run_command(
                     &["wasm2wat", "lib.wasm", "-o", "lib.wat"],
@@ -496,7 +492,7 @@ fn generate_artifacts(
                     args,
                     wasm,
                     rwasm_data.as_deref(),
-                    docker_image.as_deref(),
+                    docker_image.as_ref(),
                     rust_toolchain.as_deref(),
                 )?;
 
@@ -525,7 +521,7 @@ fn generate_artifacts(
                     args,
                     wasm,
                     Some(&rwasm_data),
-                    docker_image.as_deref(),
+                    docker_image.as_ref(),
                     rust_toolchain.as_deref(),
                 )?;
 

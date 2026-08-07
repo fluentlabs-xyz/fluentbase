@@ -105,10 +105,15 @@ pub struct BuildConfig {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DockerImageInfo {
-    /// Full image name used for build
+    /// Immutable reference the build actually ran
     pub image_used: String,
+    /// Reference requested before digest resolution
+    pub image_requested: String,
     /// Base tag requested
     pub base_tag: String,
+    /// Registry digest verified before the container ran
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub digest: Option<String>,
     /// Docker image ID for exact reproduction
     #[serde(skip_serializing_if = "Option::is_none")]
     pub image_id: Option<String>,
@@ -155,7 +160,7 @@ pub fn generate(
     args: &crate::BuildArgs,
     wasm_data: &[u8],
     rwasm_data: Option<&[u8]>,
-    docker_image_used: Option<&str>,
+    docker_image_used: Option<&docker::VerifiedImage>,
     rust_toolchain: Option<&str>,
 ) -> Result<BuildMetadata> {
     // Load package metadata
@@ -199,11 +204,14 @@ pub fn generate(
         os_version: get_os_version(),
     };
 
-    // Docker image info if applicable
+    // Docker image info if applicable. The digest and image ID come from the verification
+    // performed before the build ran, so the metadata records what was actually checked.
     let docker_image = docker_image_used.map(|image| DockerImageInfo {
-        image_used: image.to_string(),
+        image_used: image.reference().to_string(),
+        image_requested: image.requested().to_string(),
         base_tag: args.docker_tag.clone(),
-        image_id: docker::get_image_id(image).ok(),
+        digest: image.digest().map(str::to_string),
+        image_id: Some(image.image_id().to_string()),
     });
 
     // Build config
