@@ -1,5 +1,5 @@
 use crate::{
-    attr::mode::Mode,
+    attr::{mode::Mode, StateMutabilityExt},
     codec::CodecGenerator,
     method::{MethodCollector, MethodLike, ParsedMethod},
 };
@@ -233,11 +233,58 @@ impl<T: MethodLike> Client<T> {
             }
         };
 
+        // The host operation and the value policy follow the Solidity mutability:
+        // `view`/`pure` must not be able to mutate state or move funds, so they
+        // are issued as static calls without a value parameter, and `nonpayable`
+        // keeps the mutable call but has no way to attach a value.
+        let mutability = method.state_mutability();
+
+        let value_param = if mutability.allows_value() {
+            quote! { value: fluentbase_sdk::U256, }
+        } else {
+            quote! {}
+        };
+
+        let value_check = if mutability.allows_value() {
+            quote! {
+                if context.tx_value() < value {
+                    ::core::panic!("Insufficient funds for transaction");
+                }
+            }
+        } else {
+            quote! {}
+        };
+
+        let host_call = if mutability.is_static() {
+            quote! {
+                self.sdk.static_call(
+                    contract_address,
+                    &input,
+                    Some(gas_limit),
+                )
+            }
+        } else {
+            let value = if mutability.allows_value() {
+                quote! { value }
+            } else {
+                quote! { fluentbase_sdk::U256::ZERO }
+            };
+
+            quote! {
+                self.sdk.call(
+                    contract_address,
+                    #value,
+                    &input,
+                    Some(gas_limit),
+                )
+            }
+        };
+
         Ok(quote! {
             pub fn #fn_name(
                 &mut self,
                 contract_address: fluentbase_sdk::Address,
-                value: fluentbase_sdk::U256,
+                #value_param
                 gas_limit: u64,
                 #(#params,)*
             ) -> #return_type {
@@ -247,20 +294,13 @@ impl<T: MethodLike> Client<T> {
 
                 {
                     let context = self.sdk.context();
-                    if context.tx_value() < value {
-                        ::core::panic!("Insufficient funds for transaction");
-                    }
+                    #value_check
                     if context.tx_gas_limit() < gas_limit {
                         ::core::panic!("Insufficient gas limit for transaction");
                     }
                 }
 
-                let result = self.sdk.call(
-                    contract_address,
-                    value,
-                    &input,
-                    Some(gas_limit),
-                );
+                let result = #host_call;
 
                 if !fluentbase_sdk::SyscallResult::is_ok(result.status) {
                     ::core::panic!("Contract call failed");
@@ -305,5 +345,90 @@ mod tests {
         let formatted = prettyplease::unparse(&parsed);
 
         assert_snapshot!("generate_client", formatted.to_string());
+    }
+
+    /// Generates a client for a single method and strips whitespace, so
+    /// assertions can pin the exact host call without depending on formatting
+    fn generated_method(method: TraitItemFn) -> String {
+        let trait_def: ItemTrait = parse_quote! {
+            pub trait CallPolicy {
+                #method
+            }
+        };
+
+        let client = Client::new(ClientAttributes::default(), trait_def).unwrap();
+        let generated = client.generate().unwrap();
+
+        generated
+            .to_string()
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect()
+    }
+
+    #[test]
+    fn test_pure_and_view_methods_issue_static_calls_without_value() {
+        for method in [
+            parse_quote! {
+                #[state_mutability("pure")]
+                fn read_only(&self, a: u32) -> u32;
+            },
+            parse_quote! {
+                #[state_mutability("view")]
+                fn read_only(&self, a: u32) -> u32;
+            },
+            // Hand-written traits carry no attribute: `&self` is read-only
+            parse_quote! {
+                fn read_only(&self, a: u32) -> u32;
+            },
+        ] {
+            let generated = generated_method(method);
+
+            assert!(generated
+                .contains("self.sdk.static_call(contract_address,&input,Some(gas_limit),)"));
+            assert!(!generated.contains("self.sdk.call("));
+            // No value can be attached, and none has to be checked
+            assert!(!generated.contains("value:fluentbase_sdk::U256"));
+            assert!(!generated.contains("tx_value()"));
+        }
+    }
+
+    #[test]
+    fn test_nonpayable_methods_call_with_zero_value() {
+        let generated = generated_method(parse_quote! {
+            #[state_mutability("nonpayable")]
+            fn mutate(&mut self, a: u32) -> u32;
+        });
+
+        assert!(generated.contains(
+            "self.sdk.call(contract_address,fluentbase_sdk::U256::ZERO,&input,Some(gas_limit),)"
+        ));
+        assert!(!generated.contains("static_call"));
+        assert!(!generated.contains("value:fluentbase_sdk::U256"));
+        assert!(!generated.contains("tx_value()"));
+    }
+
+    #[test]
+    fn test_payable_methods_forward_the_requested_value() {
+        for method in [
+            parse_quote! {
+                #[state_mutability("payable")]
+                fn mutate(&mut self, a: u32) -> u32;
+            },
+            // Hand-written traits carry no attribute: `&mut self` keeps the
+            // historical behavior of forwarding a caller-supplied value
+            parse_quote! {
+                fn mutate(&mut self, a: u32) -> u32;
+            },
+        ] {
+            let generated = generated_method(method);
+
+            assert!(generated.contains("value:fluentbase_sdk::U256,gas_limit:u64"));
+            assert!(
+                generated.contains("self.sdk.call(contract_address,value,&input,Some(gas_limit),)")
+            );
+            assert!(generated.contains("context.tx_value()<value"));
+            assert!(!generated.contains("static_call"));
+        }
     }
 }

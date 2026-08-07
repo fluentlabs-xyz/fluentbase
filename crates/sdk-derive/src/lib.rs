@@ -136,7 +136,6 @@ pub fn router(attr: TokenStream, input: TokenStream) -> TokenStream {
 /// // Call contract methods with standard parameters
 /// let balance = client.balance_of(
 ///     token_address,    // contract address
-///     U256::zero(),     // value to send (none)
 ///     50000,            // gas limit
 ///     my_address        // method-specific parameters
 /// );
@@ -149,8 +148,8 @@ pub fn router(attr: TokenStream, input: TokenStream) -> TokenStream {
 /// - `TokenInterfaceClient<SDK>` struct with a `new(sdk)` constructor
 /// - Method implementations that append common parameters: ```rust,ignore fn method_name( &mut
 ///   self, contract_address: Address,  // Target contract value: U256,                // Native
-///   tokens to send gas_limit: u64,             // Maximum gas ...original_parameters      // From
-///   trait definition ) -> original_return_type ```
+///   tokens to send, payable methods only gas_limit: u64,             // Maximum gas
+///   ...original_parameters      // From trait definition ) -> original_return_type ```
 ///
 /// # Features
 ///
@@ -158,6 +157,9 @@ pub fn router(attr: TokenStream, input: TokenStream) -> TokenStream {
 /// - **Runtime safety checks** for insufficient funds or gas
 /// - **Compatible with router** when using the same encoding mode
 /// - **Preserves method signatures** from the trait definition
+/// - **Preserves state mutability**: `&self` (or `#[state_mutability("pure"/"view")]`) issues a
+///   `STATICCALL` and takes no value, `#[state_mutability("nonpayable")]` calls with a zero value,
+///   and only payable methods forward a caller-supplied value
 ///
 /// # Attributes
 ///

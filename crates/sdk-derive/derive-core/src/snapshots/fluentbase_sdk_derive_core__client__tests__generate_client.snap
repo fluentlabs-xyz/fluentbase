@@ -163,7 +163,6 @@ impl<SDK: fluentbase_sdk::SharedAPI> TestContractClient<SDK> {
     pub fn first_method(
         &mut self,
         contract_address: fluentbase_sdk::Address,
-        value: fluentbase_sdk::U256,
         gas_limit: u64,
         value: u32,
     ) -> u32 {
@@ -171,14 +170,11 @@ impl<SDK: fluentbase_sdk::SharedAPI> TestContractClient<SDK> {
         let input = fluentbase_sdk::Bytes::from(FirstMethodCall::new((value,)).encode());
         {
             let context = self.sdk.context();
-            if context.tx_value() < value {
-                ::core::panic!("Insufficient funds for transaction");
-            }
             if context.tx_gas_limit() < gas_limit {
                 ::core::panic!("Insufficient gas limit for transaction");
             }
         }
-        let result = self.sdk.call(contract_address, value, &input, Some(gas_limit));
+        let result = self.sdk.static_call(contract_address, &input, Some(gas_limit));
         if !fluentbase_sdk::SyscallResult::is_ok(result.status) {
             ::core::panic!("Contract call failed");
         }
@@ -187,7 +183,6 @@ impl<SDK: fluentbase_sdk::SharedAPI> TestContractClient<SDK> {
     pub fn second_method(
         &mut self,
         contract_address: fluentbase_sdk::Address,
-        value: fluentbase_sdk::U256,
         gas_limit: u64,
         a: String,
         b: bool,
@@ -196,14 +191,11 @@ impl<SDK: fluentbase_sdk::SharedAPI> TestContractClient<SDK> {
         let input = fluentbase_sdk::Bytes::from(SecondMethodCall::new((a, b)).encode());
         {
             let context = self.sdk.context();
-            if context.tx_value() < value {
-                ::core::panic!("Insufficient funds for transaction");
-            }
             if context.tx_gas_limit() < gas_limit {
                 ::core::panic!("Insufficient gas limit for transaction");
             }
         }
-        let result = self.sdk.call(contract_address, value, &input, Some(gas_limit));
+        let result = self.sdk.static_call(contract_address, &input, Some(gas_limit));
         if !fluentbase_sdk::SyscallResult::is_ok(result.status) {
             ::core::panic!("Contract call failed");
         }

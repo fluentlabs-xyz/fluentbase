@@ -41,6 +41,7 @@ derive_solidity_client!(
         function totalSupply() external view returns (uint256);
         function balanceOf(address account) external view returns (uint256);
         function transfer(address to, uint256 amount) external returns (bool);
+        function deposit() external payable;
     }
 );
 
@@ -48,18 +49,20 @@ derive_solidity_client!(
 fn interact_with_erc20<SDK: SharedAPI>(sdk: SDK, token_address: Address) {
     let mut client = IERC20Client::new(sdk);
 
-    // Call the contract methods
-    let total = client.total_supply(token_address, U256::zero(), 100000);
-    let balance = client.balance_of(token_address, U256::zero(), 100000, my_address);
+    // `view` and `pure` functions are issued as static calls and take no value
+    let total = client.total_supply(token_address, 100000);
+    let balance = client.balance_of(token_address, 100000, my_address);
 
-    // Send tokens
+    // `nonpayable` functions are mutable calls, but cannot carry a value
     let success = client.transfer(
         token_address,
-        U256::zero(), // No value sent with the call
-        100000,       // Gas limit
-        recipient,    // To address
-        U256::from(100) // Amount to transfer
+        100000,          // Gas limit
+        recipient,       // To address
+        U256::from(100)  // Amount to transfer
     );
+
+    // Only `payable` functions accept a value
+    client.deposit(token_address, U256::from(1), 100000);
 }
 ```
 
@@ -74,16 +77,21 @@ derive_solidity_client!("abi/IToken.sol");
 // The client is generated automatically
 // You can use it like this:
 let mut client = ITokenClient::new(sdk);
-let result = client.method_name(contract_address, value, gas_limit, ...args);
+let result = client.method_name(contract_address, gas_limit, ...args);
 ```
 
 ## Notes & Best Practices
 
 - **Parameter Order**: Generated client methods take standard parameters first:
   - `contract_address`: The address of the contract to call
-  - `value`: Amount of native tokens to send with the call (usually `U256::zero()`)
+  - `value`: Amount of native tokens to send with the call, only present for `payable` functions
   - `gas_limit`: Maximum gas for the transaction
   - Then any function-specific parameters
+
+- **State Mutability**: The Solidity mutability decides which host call is issued:
+  - `pure` and `view` become `STATICCALL`, so a callee cannot mutate state through them
+  - `nonpayable` becomes `CALL` with a zero value
+  - `payable` becomes `CALL` with the caller-supplied value
 
 - **Client Structure**: The generated client follows the same patterns as the [`client` macro](client.md)
 

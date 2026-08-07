@@ -65,7 +65,8 @@ impl<SDK: SharedAPI> ERC20Client<SDK> {
         amount: U256,
         gas_limit: u64
     ) -> bool {
-        let balance = self.balance_of(contract_address, U256::zero(), gas_limit, to);
+        // `balance_of` takes `&self`, so it is a static call without a value
+        let balance = self.balance_of(contract_address, gas_limit, to);
         if balance >= amount {
             self.transfer(contract_address, U256::zero(), gas_limit, to, amount)
         } else {
@@ -96,11 +97,12 @@ trait Governance {
 
 ## Notes & Best Practices
 
-- **Automatic Client Methods**: For each trait method, the macro generates a client method that takes contract address, value, gas limit, and function parameters
+- **Automatic Client Methods**: For each trait method, the macro generates a client method that takes contract address, value (payable methods only), gas limit, and function parameters
 - **Return Types**: Return types are automatically decoded from contract call results
 - **Error Handling**: Client methods panic if the contract call fails (for simplicity - you may want to extend with custom error handling)
 - **SDK Requirement**: The generated client requires an SDK type that implements `fluentbase_sdk::SharedAPI`
 - **Trait Methods**: Only trait methods are included in the client (not custom implementations)
-- **Method Receivers**: The macro respects method receivers - `&self` generates a read-only call, `&mut self` allows value transfer
+- **Method Receivers**: The macro respects method receivers - `&self` generates a `STATICCALL` with no value parameter, `&mut self` generates a `CALL` that forwards a value
+- **State Mutability**: `#[state_mutability("pure" | "view" | "nonpayable" | "payable")]` overrides that default. It is emitted automatically by `derive_solidity_client`, so a Solidity `nonpayable` function keeps its mutable call but loses the value parameter
 - **ABI Compatibility**: Use the same encoding mode (`solidity` or `fluent`) as the contract you're calling
 - **Type Consistency**: Ensure parameter and return types match between client and contract for proper encoding/decoding
