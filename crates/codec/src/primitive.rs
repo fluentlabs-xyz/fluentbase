@@ -124,9 +124,10 @@ macro_rules! impl_int {
 
                 B::$write_method(&mut buf[start..end], *self);
 
-                // Fill the rest of the buffer with 0x00 or 0xFF depending on the sign of the
-                // integer
-                let fill_val = if *self > 0 { 0x00 } else { 0xFF };
+                // Sign-extend negative values; everything else, zero included, pads with zeros.
+                // `< 0` is always false for the unsigned instantiations of this macro.
+                #[allow(unused_comparisons)]
+                let fill_val = if *self < 0 { 0xFF } else { 0x00 };
 
                 for i in offset..start {
                     buf[i] = fill_val;
@@ -782,5 +783,89 @@ mod tests {
     fn test_aligned_multi_value_u64_vector_decodes() {
         assert_multi_value_u64_vector!(LittleEndian);
         assert_multi_value_u64_vector!(BigEndian);
+    }
+
+    /// Encodes `value` at both alignments and byte orders and checks every padding byte.
+    ///
+    /// Padding is sign extension, so it is `0xFF` only for negative values. Zero used to take
+    /// the negative branch and pad with `0xFF`, producing a word no other ABI implementation
+    /// accepts - and the round-trip through this codec hid it, because decoding ignores the
+    /// padding entirely.
+    macro_rules! assert_padding {
+        ($typ:ty, $value:expr, $expected_fill:expr) => {{
+            fn check<T, B: ByteOrder, const ALIGN: usize>(value: &T, expected_fill: u8)
+            where
+                T: Encoder<B, ALIGN, true, true> + core::fmt::Debug,
+            {
+                let mut buf = BytesMut::new();
+                value.encode(&mut buf, 0).unwrap();
+
+                let value_width = size_of::<T>();
+                let padding = if is_big_endian::<B>() {
+                    0..buf.len() - value_width
+                } else {
+                    value_width..buf.len()
+                };
+
+                assert!(
+                    buf[padding.clone()].iter().all(|byte| *byte == expected_fill),
+                    "{value:?}: padding {padding:?} should be all 0x{expected_fill:02x}, got {}",
+                    hex_words(&buf)
+                );
+            }
+
+            let value: $typ = $value;
+            check::<$typ, BigEndian, 32>(&value, $expected_fill);
+            check::<$typ, LittleEndian, 4>(&value, $expected_fill);
+        }};
+    }
+
+    fn hex_words(bytes: &[u8]) -> alloc::string::String {
+        use alloc::string::String;
+        bytes.iter().fold(String::new(), |mut acc, byte| {
+            acc.push_str(&alloc::format!("{byte:02x}"));
+            acc
+        })
+    }
+
+    /// Zero is not negative, so its padding must be zeros in every width and byte order.
+    #[test]
+    fn test_zero_pads_with_zeros_not_sign_extension() {
+        assert_padding!(u16, 0, 0x00);
+        assert_padding!(u32, 0, 0x00);
+        assert_padding!(u64, 0, 0x00);
+        assert_padding!(i16, 0, 0x00);
+        assert_padding!(i32, 0, 0x00);
+        assert_padding!(i64, 0, 0x00);
+    }
+
+    /// The neighbours of zero keep the behaviour the fix must not change.
+    #[test]
+    fn test_padding_follows_sign_around_zero() {
+        assert_padding!(u16, 1, 0x00);
+        assert_padding!(u32, 1, 0x00);
+        assert_padding!(u64, u64::MAX, 0x00);
+        assert_padding!(i16, 1, 0x00);
+        assert_padding!(i16, -1, 0xFF);
+        assert_padding!(i32, -1, 0xFF);
+        assert_padding!(i32, i32::MIN, 0xFF);
+        assert_padding!(i64, -1, 0xFF);
+        assert_padding!(i64, i64::MAX, 0x00);
+    }
+
+    /// The whole point of the padding: a zero must survive a round-trip through the codec and
+    /// still be the canonical zero word on the wire.
+    #[test]
+    fn test_zero_encodes_to_the_canonical_word() {
+        let mut buf = BytesMut::new();
+        <u64 as Encoder<BigEndian, 32, true, true>>::encode(&0, &mut buf, 0).unwrap();
+        assert_eq!(buf.len(), 32);
+        assert_eq!(hex_words(&buf), "0".repeat(64));
+
+        let encoded = buf.freeze();
+        assert_eq!(
+            <u64 as Encoder<BigEndian, 32, true, true>>::decode(&encoded, 0).unwrap(),
+            0
+        );
     }
 }

@@ -67,6 +67,61 @@ fn value_types_occupy_the_topic_word_directly() {
     );
 }
 
+/// Zero is the value the padding rule is easiest to get wrong on: it is not negative, so it must
+/// be zero-padded, but a sign test written as `> 0` sends it down the sign-extension branch and
+/// produces `0xff..ff0000`. Round-tripping through this codec cannot catch that - the decoder
+/// ignores the padding - so every width is checked against `alloy-sol-types` instead.
+#[test]
+fn zero_is_zero_padded_in_every_integer_width() {
+    assert_eq!(topic(&0u8), expected::<sol_data::Uint<8>>(&0u8));
+    assert_eq!(topic(&0u16), expected::<sol_data::Uint<16>>(&0u16));
+    assert_eq!(topic(&0u32), expected::<sol_data::Uint<32>>(&0u32));
+    assert_eq!(topic(&0u64), expected::<sol_data::Uint<64>>(&0u64));
+    assert_eq!(topic(&0i16), expected::<sol_data::Int<16>>(&0i16));
+    assert_eq!(topic(&0i32), expected::<sol_data::Int<32>>(&0i32));
+    assert_eq!(topic(&0i64), expected::<sol_data::Int<64>>(&0i64));
+    assert_eq!(topic(&U256::ZERO), expected::<sol_data::Uint<256>>(&U256::ZERO));
+    assert_eq!(topic(&I256::ZERO), expected::<sol_data::Int<256>>(&I256::ZERO));
+    assert_eq!(topic(&false), expected::<sol_data::Bool>(&false));
+
+    assert_eq!(preimage(&0u64), [0u8; 32]);
+}
+
+/// The sign rule itself, on both sides of zero, so a fix for the zero case cannot quietly drop
+/// sign extension for negatives.
+#[test]
+fn padding_follows_the_sign_of_the_value() {
+    assert_eq!(topic(&(-1i32)), expected::<sol_data::Int<32>>(&-1i32));
+    assert_eq!(preimage(&(-1i32)), [0xffu8; 32]);
+
+    assert_eq!(topic(&i64::MIN), expected::<sol_data::Int<64>>(&i64::MIN));
+    assert_eq!(topic(&i64::MAX), expected::<sol_data::Int<64>>(&i64::MAX));
+    assert_eq!(topic(&u64::MAX), expected::<sol_data::Uint<64>>(&u64::MAX));
+}
+
+/// Zero inside a container: the members are concatenated in place, so a wrongly padded member
+/// changes the hash rather than one visible word.
+#[test]
+fn zero_members_keep_the_container_topic_correct() {
+    let values = vec![0u32, 1, u32::MAX];
+    assert_eq!(
+        topic(&values),
+        expected::<sol_data::Array<sol_data::Uint<32>>>(&values)
+    );
+
+    let fixed = [0u64, 7];
+    assert_eq!(
+        topic(&fixed),
+        expected::<sol_data::FixedArray<sol_data::Uint<64>, 2>>(&fixed)
+    );
+
+    let mixed = (0u32, "x".to_string());
+    assert_eq!(
+        topic(&mixed),
+        expected::<(sol_data::Uint<32>, sol_data::String)>(&(0u32, "x".to_string()))
+    );
+}
+
 #[test]
 fn indexed_string_hashes_its_raw_contents() {
     let value = "hello".to_string();
