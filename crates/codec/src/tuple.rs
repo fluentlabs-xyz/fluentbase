@@ -95,13 +95,22 @@ macro_rules! impl_encoder_for_tuple {
         where
             $($T: Encoder<B, ALIGN, $is_solidity, IS_STATIC>,)+
         {
+            // The width of the head area: one word per dynamic member, because its head is an
+            // offset, and the aligned inline width per static one. Aligning a running total and
+            // adding each member's raw `HEADER_SIZE` gives the same answer while every member is
+            // static, and a wrong one as soon as a member is dynamic - it counts that member's
+            // whole head area instead of the single offset word it actually writes. This is the
+            // same expression `encode` computes below, and the same rule the derive uses.
             const HEADER_SIZE: usize = {
                 let mut size = 0;
                 $(
-                    size = align_up::<ALIGN>(size);
-                    size += $T::HEADER_SIZE;
+                    size += if $T::IS_DYNAMIC {
+                        align_up::<ALIGN>(4)
+                    } else {
+                        align_up::<ALIGN>($T::HEADER_SIZE)
+                    };
                 )+
-                align_up::<ALIGN>(size)
+                size
             };
 
             const IS_DYNAMIC: bool = {
