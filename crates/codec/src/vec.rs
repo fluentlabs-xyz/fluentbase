@@ -11,6 +11,23 @@ use alloc::vec::Vec;
 use byteorder::ByteOrder;
 use bytes::{Buf, BytesMut};
 
+/// Width of one element's slot in the head area of a Solidity array.
+///
+/// The ABI encodes an array as a tuple of its elements, so each element contributes a head: its
+/// own encoding when the element is static, and a single offset word when it is dynamic. Striding
+/// by `T::HEADER_SIZE` instead is wrong in both directions - it is wider than a word for a dynamic
+/// element, and it is not the aligned inline width for a static one.
+fn element_head_width<T, B: ByteOrder, const ALIGN: usize>() -> usize
+where
+    T: Encoder<B, ALIGN, true, false>,
+{
+    if T::IS_DYNAMIC {
+        align_up::<ALIGN>(4)
+    } else {
+        align_up::<ALIGN>(T::HEADER_SIZE)
+    }
+}
+
 /// We encode dynamic arrays as following:
 /// - header
 ///   - length: number of elements inside vector
@@ -140,11 +157,17 @@ where
             return Ok(());
         }
 
-        // Encode values
-        let mut value_encoder = BytesMut::zeroed(32 * self.len());
+        // Encode values.
+        //
+        // Each element occupies `head_width` bytes of the head area: one word when the element is
+        // dynamic - the head is then an offset into the tail - and its aligned inline width when
+        // it is static. `T::HEADER_SIZE` is not that width on its own: for a dynamic element it is
+        // the sum of the element's own member heads, which is wider than the single offset word
+        // the element actually writes.
+        let head_width = element_head_width::<T, B, ALIGN>();
+        let mut value_encoder = BytesMut::zeroed(head_width * self.len());
         for (index, obj) in self.iter().enumerate() {
-            let elem_offset = ALIGN.max(T::HEADER_SIZE) * index;
-            obj.encode(&mut value_encoder, elem_offset)?;
+            obj.encode(&mut value_encoder, head_width * index)?;
         }
 
         let data = value_encoder.freeze();
@@ -165,7 +188,7 @@ where
             .checked_add(32)
             .ok_or(CodecError::Decoding(DecodingError::Overflow))?;
         let chunk = checked_decode_slice_from(buf, body_offset, "vector body exceeds input")?;
-        let element_header_size = align_up::<ALIGN>(T::HEADER_SIZE);
+        let element_header_size = element_head_width::<T, B, ALIGN>();
         validate_collection_body(data_len, element_header_size, chunk.len())?;
 
         let mut result = Vec::new();

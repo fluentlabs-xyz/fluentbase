@@ -1,11 +1,13 @@
 use crate::{
     alloc::string::ToString,
     encoder::{
-        align_up, checked_decode_slice, get_aligned_indices, get_aligned_slice, is_big_endian,
-        Encoder,
+        align_up, checked_decode_slice, checked_decode_slice_from, get_aligned_indices,
+        get_aligned_slice, is_big_endian, read_u32_aligned, validate_collection_body,
+        write_u32_aligned, Encoder,
     },
     error::{CodecError, DecodingError},
 };
+use alloc::vec::Vec;
 use byteorder::ByteOrder;
 use bytes::{Buf, BytesMut};
 use core::{marker::PhantomData, mem::size_of};
@@ -66,9 +68,9 @@ impl<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool, const IS_STATIC: bo
         Ok(value)
     }
 
-    fn partial_decode(_buf: &impl Buf, _offset: usize) -> Result<(usize, usize), CodecError> {
+    fn partial_decode(_buf: &impl Buf, offset: usize) -> Result<(usize, usize), CodecError> {
         Ok((
-            0,
+            offset,
             align_up::<ALIGN>(<Self as Encoder<B, ALIGN, SOL_MODE, IS_STATIC>>::HEADER_SIZE),
         ))
     }
@@ -95,7 +97,7 @@ impl<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool, const IS_STATIC: bo
     fn partial_decode(_buf: &impl Buf, offset: usize) -> Result<(usize, usize), CodecError> {
         Ok((
             offset,
-            <Self as Encoder<B, ALIGN, SOL_MODE, IS_STATIC>>::HEADER_SIZE,
+            align_up::<ALIGN>(<Self as Encoder<B, ALIGN, SOL_MODE, IS_STATIC>>::HEADER_SIZE),
         ))
     }
 }
@@ -172,9 +174,14 @@ macro_rules! impl_int {
                 _buf: &impl Buf,
                 offset: usize,
             ) -> Result<(usize, usize), CodecError> {
+                // The aligned width, not the value's own size: this reports the extent of the
+                // field in the buffer, which is what `Address`, `FixedBytes` and `Uint` report and
+                // what `Option<T>` adds up. `HEADER_SIZE` alone makes `Some` and `None` disagree.
                 Ok((
                     offset,
-                    <Self as Encoder<B, ALIGN, SOL_MODE, IS_STATIC>>::HEADER_SIZE,
+                    align_up::<ALIGN>(
+                        <Self as Encoder<B, ALIGN, SOL_MODE, IS_STATIC>>::HEADER_SIZE,
+                    ),
                 ))
             }
         }
@@ -282,16 +289,10 @@ where
     }
 }
 
-impl<
-        T,
-        B: ByteOrder,
-        const ALIGN: usize,
-        const SOL_MODE: bool,
-        const N: usize,
-        const IS_STATIC: bool,
-    > Encoder<B, ALIGN, SOL_MODE, IS_STATIC> for [T; N]
+impl<T, B: ByteOrder, const ALIGN: usize, const N: usize, const IS_STATIC: bool>
+    Encoder<B, ALIGN, false, IS_STATIC> for [T; N]
 where
-    T: Sized + Encoder<B, ALIGN, SOL_MODE, IS_STATIC> + Default + Copy,
+    T: Sized + Encoder<B, ALIGN, false, IS_STATIC> + Default + Copy,
 {
     const HEADER_SIZE: usize = align_up::<ALIGN>(T::HEADER_SIZE) * N;
     const IS_DYNAMIC: bool = false;
@@ -333,6 +334,157 @@ where
 
     fn partial_decode(_buf: &impl Buf, offset: usize) -> Result<(usize, usize), CodecError> {
         let item_size = align_up::<ALIGN>(T::HEADER_SIZE);
+        let total_size = item_size * N;
+
+        Ok((offset, total_size))
+    }
+}
+
+/// Collects `N` decoded elements into an array without requiring `T: Copy`.
+///
+/// `[T::default(); N]` would, and that bound is what used to make `[String; N]` - a legal Solidity
+/// `string[N]` - impossible to encode at all.
+fn collect_array<T, const N: usize>(items: Vec<T>) -> Result<[T; N], CodecError> {
+    items.try_into().map_err(|_| {
+        CodecError::Decoding(DecodingError::InvalidData(
+            "decoded element count does not match the array length".to_string(),
+        ))
+    })
+}
+
+/// Solidity `T[N]`.
+///
+/// Two things about this impl are not obvious.
+///
+/// The elements are always encoded at word alignment, whatever this array's own `ALIGN` is: the
+/// spec says array elements are padded even in packed mode ("array elements are padded, but still
+/// encoded in-place"), while a value passed directly is not. `ALIGN` therefore governs where the
+/// array as a whole sits, and the element encoding is pinned to 32. At `ALIGN = 32` the two
+/// coincide and the bytes are unchanged.
+///
+/// And `T[k]` is dynamic exactly when `T` is - `string[3]` is a dynamic type. In that case the
+/// array occupies one offset word in its parent's head area and its body is `k` offset words
+/// followed by the elements' tails, the same layout `Vec<T>` uses minus the length prefix.
+impl<T, B: ByteOrder, const ALIGN: usize, const N: usize, const IS_STATIC: bool>
+    Encoder<B, ALIGN, true, IS_STATIC> for [T; N]
+where
+    T: Sized + Encoder<B, 32, true, IS_STATIC>,
+{
+    const HEADER_SIZE: usize = if T::IS_DYNAMIC {
+        32
+    } else {
+        align_up::<32>(T::HEADER_SIZE) * N
+    };
+    const IS_DYNAMIC: bool = T::IS_DYNAMIC;
+
+    fn encode(&self, buf: &mut BytesMut, offset: usize) -> Result<(), CodecError> {
+        if T::IS_DYNAMIC {
+            // One offset word in the head; the body goes at the end of the buffer. Elements encode
+            // into their own buffer so the offsets they write are relative to the start of the
+            // array's body, which is what the spec requires.
+            if buf.len() < offset + 32 {
+                buf.resize(offset + 32, 0);
+            }
+            write_u32_aligned::<B, ALIGN>(buf, offset, buf.len() as u32);
+
+            let head_width = align_up::<32>(4);
+            let mut body = BytesMut::zeroed(head_width * N);
+            for (i, item) in self.iter().enumerate() {
+                item.encode(&mut body, head_width * i)?;
+            }
+            buf.extend_from_slice(&body);
+
+            return Ok(());
+        }
+
+        let item_size = align_up::<32>(T::HEADER_SIZE);
+        let end = offset + (item_size * N);
+
+        if buf.len() < end {
+            buf.resize(end, 0);
+        }
+
+        if offset.is_multiple_of(32) {
+            for (i, item) in self.iter().enumerate() {
+                item.encode(buf, offset + (item_size * i))?;
+            }
+            return Ok(());
+        }
+
+        // Packed mode can place an array at an offset that is not a whole number of words, and the
+        // element encoder rounds whatever offset it is handed up to a word. Encode each element on
+        // its own, where that rounding is a no-op, and copy it into place.
+        let mut element = BytesMut::new();
+        for (i, item) in self.iter().enumerate() {
+            element.clear();
+            element.resize(item_size, 0);
+            item.encode(&mut element, 0)?;
+            element.resize(item_size, 0);
+            let at = offset + (item_size * i);
+            buf[at..at + item_size].copy_from_slice(&element);
+        }
+
+        Ok(())
+    }
+
+    fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
+        let mut items = Vec::new();
+        items.try_reserve(N).map_err(|_| {
+            CodecError::Decoding(DecodingError::InvalidData(
+                "unable to reserve array capacity".to_string(),
+            ))
+        })?;
+
+        if T::IS_DYNAMIC {
+            let body_offset = read_u32_aligned::<B, ALIGN>(buf, offset)? as usize;
+            let body = checked_decode_slice_from(buf, body_offset, "array body exceeds input")?;
+            let head_width = align_up::<32>(4);
+            validate_collection_body(N, head_width, body.len())?;
+
+            for i in 0..N {
+                items.push(T::decode(&body, head_width * i)?);
+            }
+
+            return collect_array(items);
+        }
+
+        let item_size = align_up::<32>(T::HEADER_SIZE);
+        let total_size = offset + (item_size * N);
+
+        if buf.remaining() < total_size {
+            return Err(CodecError::Decoding(DecodingError::BufferTooSmall {
+                expected: total_size,
+                found: buf.remaining(),
+                msg: "buf too small to decode [T; N]".to_string(),
+            }));
+        }
+
+        if offset.is_multiple_of(32) {
+            for i in 0..N {
+                items.push(T::decode(buf, offset + (item_size * i))?);
+            }
+
+            return collect_array(items);
+        }
+
+        // Mirrors the unaligned branch of `encode`.
+        let chunk = buf.chunk();
+        for i in 0..N {
+            let at = offset + (item_size * i);
+            let element = &chunk[at..at + item_size];
+            items.push(T::decode(&element, 0)?);
+        }
+
+        collect_array(items)
+    }
+
+    fn partial_decode(buf: &impl Buf, offset: usize) -> Result<(usize, usize), CodecError> {
+        if T::IS_DYNAMIC {
+            let body_offset = read_u32_aligned::<B, ALIGN>(buf, offset)? as usize;
+            return Ok((body_offset, align_up::<32>(4) * N));
+        }
+
+        let item_size = align_up::<32>(T::HEADER_SIZE);
         let total_size = item_size * N;
 
         Ok((offset, total_size))
@@ -447,7 +599,7 @@ mod tests {
                 0,
             )
             .unwrap();
-        assert_eq!(partial_decoded, (0, 1));
+        assert_eq!(partial_decoded, (0, ALIGNMENT));
     }
 
     #[test]
@@ -483,7 +635,7 @@ mod tests {
                 0,
             )
             .unwrap();
-        assert_eq!(partial_decoded, (0, 1));
+        assert_eq!(partial_decoded, (0, ALIGNMENT));
     }
 
     #[test]
@@ -657,7 +809,13 @@ mod tests {
         // Using the existing implementation with packed parameters
         SolidityPackedABI::<[u16; 3]>::encode(&arr, &mut buf, 0).unwrap();
 
-        assert_eq!(buf.to_vec(), vec![0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC]);
+        // "array elements are padded, but still encoded in-place" - only the direct arguments of
+        // `abi.encodePacked` go in unpadded, so each `uint16` here still occupies a whole word.
+        let mut expected = vec![0u8; 96];
+        expected[30..32].copy_from_slice(&[0x12, 0x34]);
+        expected[62..64].copy_from_slice(&[0x56, 0x78]);
+        expected[94..96].copy_from_slice(&[0x9A, 0xBC]);
+        assert_eq!(buf.to_vec(), expected);
 
         let decoded = SolidityPackedABI::<[u16; 3]>::decode(&buf, 0).unwrap();
         assert_eq!(arr, decoded);

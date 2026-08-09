@@ -82,21 +82,29 @@ fn test_complex_struct_solidity_packed() {
         tuple: (43981, true, [0xAA, 0xBB], 0xCCDDEEFF),
     };
 
-    let expected_encoded = concat!(
-        "ff",               // u8 (1 byte)
-        "ffff",             // u16 (2 bytes)
-        "ffffffff",         // u32 (4 bytes)
-        "ffffffffffffffff", // u64 (8 bytes)
-        "01",               // bool (1 byte)
-        "ff",               // bytes_1 (1 byte)
-        // bytes_32 (32 bytes)
-        "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+    // `[u8; N]` is Solidity's `uint8[N]`, and the spec says "array elements are padded, but still
+    // encoded in-place" - only the direct arguments of `abi.encodePacked` go in unpadded. So each
+    // element of these arrays takes a whole word. `FixedBytes<N>` is the type that packs to a bare
+    // `bytesN`.
+    fn packed_u8_array(bytes: &[u8]) -> String {
+        bytes.iter().map(|b| format!("{:0>62}{:02x}", "", b)).collect()
+    }
+
+    let expected_encoded = [
+        "ff".to_string(),               // u8 (1 byte)
+        "ffff".to_string(),             // u16 (2 bytes)
+        "ffffffff".to_string(),         // u32 (4 bytes)
+        "ffffffffffffffff".to_string(), // u64 (8 bytes)
+        "01".to_string(),               // bool (1 byte)
+        packed_u8_array(&original.bytes_1), // uint8[1] (1 word)
+        packed_u8_array(&original.bytes_32), // uint8[32] (32 words)
         // tuple:
-        "abcd",     // u16 (2 bytes)
-        "01",       // bool (1 byte)
-        "aabb",     // [u8; 2] (2 bytes)
-        "ccddeeff"  // u32 (4 bytes)
-    );
+        "abcd".to_string(),                 // u16 (2 bytes)
+        "01".to_string(),                   // bool (1 byte)
+        packed_u8_array(&original.tuple.2), // uint8[2] (2 words)
+        "ccddeeff".to_string(),             // u32 (4 bytes)
+    ]
+    .concat();
 
     let mut buf = BytesMut::new();
 

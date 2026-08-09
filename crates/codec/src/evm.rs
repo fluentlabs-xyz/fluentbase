@@ -183,13 +183,17 @@ impl<const N: usize, B: ByteOrder, const ALIGN: usize, const IS_STATIC: bool>
 impl<const N: usize, B: ByteOrder, const ALIGN: usize, const IS_STATIC: bool>
     Encoder<B, ALIGN, true, IS_STATIC> for FixedBytes<N>
 {
-    const HEADER_SIZE: usize = 32; // Always 32 bytes for Solidity ABI
+    // One word in standard mode; the bare `N` bytes when ALIGN is 1, because packed encoding
+    // concatenates short types without padding.
+    const HEADER_SIZE: usize = align_up::<ALIGN>(N);
     const IS_DYNAMIC: bool = false;
 
     /// Encode the fixed bytes into the buffer for Solidity mode.
-    /// Writes the fixed bytes directly to the buffer at the given offset, zero-padding to 32 bytes.
+    /// Writes the fixed bytes directly to the buffer at the given offset, zero-padding to the
+    /// aligned width.
     fn encode(&self, buf: &mut BytesMut, offset: usize) -> Result<(), CodecError> {
-        let slice = get_aligned_slice::<B, 32>(buf, offset, 32);
+        let width = align_up::<ALIGN>(N);
+        let slice = get_aligned_slice::<B, ALIGN>(buf, offset, width);
         slice[..N].copy_from_slice(self.as_ref());
         // Zero-pad the rest
         slice[N..].fill(0);
@@ -197,13 +201,14 @@ impl<const N: usize, B: ByteOrder, const ALIGN: usize, const IS_STATIC: bool>
     }
 
     /// Decode the fixed bytes from the buffer for Solidity mode.
-    /// Reads the fixed bytes directly from the buffer at the given offset, assuming 32-byte
-    /// alignment.
+    /// Reads the fixed bytes directly from the buffer at the given offset, assuming the value
+    /// occupies its aligned width.
     fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
-        let offset = align_up::<32>(offset); // Always 32-byte aligned for Solidity
-        if buf.remaining() < offset + 32 {
+        let width = align_up::<ALIGN>(N);
+        let offset = align_up::<ALIGN>(offset);
+        if buf.remaining() < offset + width {
             return Err(CodecError::Decoding(DecodingError::BufferTooSmall {
-                expected: offset + 32,
+                expected: offset + width,
                 found: buf.remaining(),
                 msg: "Buffer too small to decode FixedBytes".to_string(),
             }));
@@ -215,7 +220,7 @@ impl<const N: usize, B: ByteOrder, const ALIGN: usize, const IS_STATIC: bool>
     /// Partially decode the fixed bytes from the buffer for Solidity mode.
     /// Returns the data offset and size without reading the actual data.
     fn partial_decode(_buf: &impl Buf, offset: usize) -> Result<(usize, usize), CodecError> {
-        Ok((offset, 32))
+        Ok((offset, align_up::<ALIGN>(N)))
     }
 }
 
@@ -263,35 +268,39 @@ macro_rules! impl_evm_fixed {
         impl<B: ByteOrder, const ALIGN: usize, const IS_STATIC: bool>
             Encoder<B, ALIGN, true, IS_STATIC> for $type
         {
-            const HEADER_SIZE: usize = 32; // Always 32 bytes for Solidity ABI
+            // One word in standard mode; the bare value when ALIGN is 1, because packed
+            // encoding concatenates short types without padding.
+            const HEADER_SIZE: usize = align_up::<ALIGN>(<$type>::len_bytes());
             const IS_DYNAMIC: bool = false;
 
             /// Encode the fixed bytes into the buffer for Solidity mode.
-            /// Writes the fixed bytes directly to the buffer at the given offset, zero-padding to
-            /// 32 bytes.
+            /// Writes the fixed bytes directly to the buffer at the given offset, left-padding to
+            /// the aligned width.
             fn encode(&self, buf: &mut BytesMut, offset: usize) -> Result<(), CodecError> {
-                let slice = get_aligned_slice::<B, 32>(buf, offset, 32);
                 let size = <$type>::len_bytes();
+                let width = align_up::<ALIGN>(size);
+                let slice = get_aligned_slice::<B, ALIGN>(buf, offset, width);
                 // Zero-pad the beginning
-                slice[..32 - size].fill(0);
+                slice[..width - size].fill(0);
                 // Copy the address bytes to the end
-                slice[32 - size..].copy_from_slice(self.as_ref());
+                slice[width - size..].copy_from_slice(self.as_ref());
                 Ok(())
             }
 
             /// Decode the fixed bytes from the buffer for Solidity mode.
-            /// Reads the fixed bytes directly from the buffer at the given offset, assuming 32-byte
-            /// alignment.
+            /// Reads the fixed bytes directly from the buffer at the given offset, assuming the
+            /// value occupies its aligned width.
             fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
                 let size = <$type>::len_bytes();
-                if buf.remaining() < offset + 32 {
+                let width = align_up::<ALIGN>(size);
+                if buf.remaining() < offset + width {
                     return Err(CodecError::Decoding(DecodingError::BufferTooSmall {
-                        expected: offset + 32,
+                        expected: offset + width,
                         found: buf.remaining(),
                         msg: "Buffer too small to decode fixed bytes".to_string(),
                     }));
                 }
-                let data = buf.chunk()[offset + 32 - size..offset + 32].to_vec();
+                let data = buf.chunk()[offset + width - size..offset + width].to_vec();
                 Ok(<$type>::from_slice(&data))
             }
 
@@ -301,7 +310,7 @@ macro_rules! impl_evm_fixed {
                 _buf: &impl Buf,
                 offset: usize,
             ) -> Result<(usize, usize), CodecError> {
-                Ok((offset, 32))
+                Ok((offset, align_up::<ALIGN>(<$type>::len_bytes())))
             }
         }
     };
@@ -373,11 +382,14 @@ impl<
         const IS_STATIC: bool,
     > Encoder<B, ALIGN, true, IS_STATIC> for Uint<BITS, LIMBS>
 {
-    const HEADER_SIZE: usize = 32; // Always 32 bytes for Solidity ABI
+    // One word in standard mode; the bare value when ALIGN is 1, because packed encoding
+    // concatenates short types without padding or sign extension.
+    const HEADER_SIZE: usize = align_up::<ALIGN>(Self::BYTES);
     const IS_DYNAMIC: bool = false;
 
     fn encode(&self, buf: &mut BytesMut, offset: usize) -> Result<(), CodecError> {
-        let slice = get_aligned_slice::<B, 32>(buf, offset, 32);
+        let width = align_up::<ALIGN>(Self::BYTES);
+        let slice = get_aligned_slice::<B, ALIGN>(buf, offset, width);
 
         let bytes = if is_big_endian::<B>() {
             self.to_be_bytes_vec()
@@ -386,23 +398,25 @@ impl<
         };
 
         // For Solidity ABI, right-align the data
-        slice[32 - Self::BYTES..].copy_from_slice(&bytes);
-        slice[..32 - Self::BYTES].fill(0); // Zero-pad the rest
+        slice[width - Self::BYTES..].copy_from_slice(&bytes);
+        slice[..width - Self::BYTES].fill(0); // Zero-pad the rest
 
         Ok(())
     }
 
     fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
-        if buf.remaining() < offset + 32 {
+        let width = align_up::<ALIGN>(Self::BYTES);
+
+        if buf.remaining() < offset + width {
             return Err(CodecError::Decoding(DecodingError::BufferTooSmall {
-                expected: offset + 32,
+                expected: offset + width,
                 found: buf.remaining(),
                 msg: "buf too small to read Uint".to_string(),
             }));
         }
 
-        let chunk = &buf.chunk()[offset..offset + 32];
-        let value_slice = &chunk[32 - Self::BYTES..];
+        let chunk = &buf.chunk()[offset..offset + width];
+        let value_slice = &chunk[width - Self::BYTES..];
 
         let value = if is_big_endian::<B>() {
             Self::from_be_slice(value_slice)
@@ -414,7 +428,7 @@ impl<
     }
 
     fn partial_decode(_buf: &impl Buf, offset: usize) -> Result<(usize, usize), CodecError> {
-        Ok((offset, 32))
+        Ok((offset, align_up::<ALIGN>(Self::BYTES)))
     }
 }
 
@@ -482,11 +496,14 @@ impl<
         const IS_STATIC: bool,
     > Encoder<B, ALIGN, true, IS_STATIC> for Signed<BITS, LIMBS>
 {
-    const HEADER_SIZE: usize = 32; // Always 32 bytes for Solidity ABI
+    // One word in standard mode; the bare value when ALIGN is 1, because packed encoding
+    // concatenates short types without padding or sign extension.
+    const HEADER_SIZE: usize = align_up::<ALIGN>(Self::BYTES);
     const IS_DYNAMIC: bool = false;
 
     fn encode(&self, buf: &mut BytesMut, offset: usize) -> Result<(), CodecError> {
-        let slice = get_aligned_slice::<B, 32>(buf, offset, 32);
+        let width = align_up::<ALIGN>(Self::BYTES);
+        let slice = get_aligned_slice::<B, ALIGN>(buf, offset, width);
 
         let bytes = if is_big_endian::<B>() {
             self.into_raw().to_be_bytes_vec()
@@ -495,31 +512,33 @@ impl<
         };
 
         // For Solidity ABI, right-align the data
-        slice[32 - Self::BYTES..].copy_from_slice(&bytes);
+        slice[width - Self::BYTES..].copy_from_slice(&bytes);
 
         // For signed integers, we need to sign-extend the value
         // If the most significant bit of the value is set (negative number),
         // fill the padding with 1s, otherwise fill with 0s
         if self.is_negative() {
-            slice[..32 - Self::BYTES].fill(0xFF);
+            slice[..width - Self::BYTES].fill(0xFF);
         } else {
-            slice[..32 - Self::BYTES].fill(0);
+            slice[..width - Self::BYTES].fill(0);
         }
 
         Ok(())
     }
 
     fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
-        if buf.remaining() < offset + 32 {
+        let width = align_up::<ALIGN>(Self::BYTES);
+
+        if buf.remaining() < offset + width {
             return Err(CodecError::Decoding(DecodingError::BufferTooSmall {
-                expected: offset + 32,
+                expected: offset + width,
                 found: buf.remaining(),
                 msg: "buf too small to read Signed".to_string(),
             }));
         }
 
-        let chunk = &buf.chunk()[offset..offset + 32];
-        let value_slice = &chunk[32 - Self::BYTES..];
+        let chunk = &buf.chunk()[offset..offset + width];
+        let value_slice = &chunk[width - Self::BYTES..];
 
         let value = if is_big_endian::<B>() {
             Self::from_raw(Uint::<BITS, LIMBS>::from_be_slice(value_slice))
@@ -531,7 +550,7 @@ impl<
     }
 
     fn partial_decode(_buf: &impl Buf, offset: usize) -> Result<(usize, usize), CodecError> {
-        Ok((offset, 32))
+        Ok((offset, align_up::<ALIGN>(Self::BYTES)))
     }
 }
 

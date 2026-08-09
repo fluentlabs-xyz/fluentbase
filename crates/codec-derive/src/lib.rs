@@ -143,8 +143,19 @@ impl CodecStruct {
         let header_sizes = self.fields.iter().map(|field| {
             let ty = &field.ty;
             if sol_mode {
+                // Every member occupies a whole number of words in the head area: one word if it
+                // is dynamic (an offset), its aligned inline width otherwise. Summing the raw
+                // HEADER_SIZE instead would report 16 for `{u32, u64, i32}` and 65 for
+                // `{U256, Address, bool}`, and `Vec<T>` strides by this constant.
+                let member = quote! {
+                    <#ty as #crate_path::Encoder<B, ALIGN, {true}, {#is_static}>>
+                };
                 quote! {
-                    <#ty as #crate_path::Encoder<B, ALIGN, {true}, {#is_static}>>::HEADER_SIZE
+                    if #member ::IS_DYNAMIC {
+                        #crate_path::align_up::<ALIGN>(4)
+                    } else {
+                        #crate_path::align_up::<ALIGN>(#member ::HEADER_SIZE)
+                    }
                 }
             } else {
                 quote! {
