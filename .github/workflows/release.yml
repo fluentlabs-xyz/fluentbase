@@ -80,7 +80,7 @@ jobs:
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
       - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           cache-on-failure: true
 
@@ -350,7 +350,7 @@ jobs:
         id: cross_main
         run: |
           cargo +${RUST_TOOLCHAIN} install cross --git https://github.com/cross-rs/cross --rev ${CROSS_REV} --locked
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           cache-on-failure: true
       - name: Apple M1 setup

@@ -52,7 +52,7 @@ jobs:
         run: rustup target list --installed | grep -q '^wasm32-unknown-unknown$' || rustup target add wasm32-unknown-unknown
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           cache-on-failure: true
           shared-key: clippy-${{ matrix.name }}
