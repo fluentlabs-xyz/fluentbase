@@ -11,6 +11,8 @@ exclude = [
     "examples/svm",
     # exclude revm e2e testing suite to let it be a separate crate
     "evm-e2e",
+    # conformance corpus: thousands of generated cases, must not be compiled by CI
+    "codec-conformance",
 ]
 resolver = "2"
 

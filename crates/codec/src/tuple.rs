@@ -34,30 +34,41 @@ where
     const IS_DYNAMIC: bool = T::IS_DYNAMIC;
 
     fn encode(&self, buf: &mut BytesMut, offset: usize) -> Result<(), CodecError> {
-        let mut current_offset = offset;
+        let current_offset = offset;
         let header_el_size = if SOL_MODE {
             align_up::<ALIGN>(32)
         } else {
             align_up::<ALIGN>(4)
         };
         if Self::IS_DYNAMIC {
+            // The body goes at the end of the buffer, not straight after this tuple's own head
+            // word: with anything else in the head area, splitting at `offset + header_el_size`
+            // lands in the middle of a sibling's head and the member then writes its offsets
+            // against the wrong origin. Splitting at the end makes index 0 of `body` the start of
+            // the tuple's encoding, which is what the member's offsets have to be relative to.
+            // This mirrors what `impl_encoder_for_tuple!` already does for arity two and above.
+            //
+            // When the buffer is still empty the end of it is also the start, so the body has to
+            // be placed past this tuple's own head word - `offset + header_el_size`, not
+            // `header_el_size`. Writing the head at `offset` and then splitting at
+            // `header_el_size` puts the member's encoding on top of the head whenever the tuple
+            // does not start at zero.
             let buf_len = buf.len();
-            let dynamic_offset = if buf_len == 0 {
-                header_el_size
+            let body_at = if buf_len == 0 {
+                current_offset + header_el_size
             } else {
                 buf_len
             };
-            write_u32_aligned::<B, ALIGN>(buf, current_offset, dynamic_offset as u32);
-            current_offset += header_el_size;
 
-            let aligned_header_size = align_up::<ALIGN>(T::HEADER_SIZE);
-            if buf_len < current_offset + aligned_header_size {
-                buf.resize(current_offset + aligned_header_size, 0);
+            write_u32_aligned::<B, ALIGN>(buf, current_offset, body_at as u32);
+
+            if buf.len() < body_at {
+                buf.resize(body_at, 0);
             }
-            let mut tmp = buf.split_off(current_offset);
+            let mut body = buf.split_off(body_at);
 
-            self.0.encode(&mut tmp, 0)?;
-            buf.unsplit(tmp);
+            self.0.encode(&mut body, 0)?;
+            buf.unsplit(body);
         } else {
             self.0.encode(buf, current_offset)?;
         }
@@ -67,7 +78,17 @@ where
 
     fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
         let chunk = if Self::IS_DYNAMIC {
+            // The offset comes out of the input, so it is whatever the caller sent. Slicing on it
+            // unchecked turns a malformed word into a panic instead of an error - the same guard
+            // `impl_encoder_for_tuple!` already applies for arity two and above.
             let dynamic_offset = read_u32_aligned::<B, ALIGN>(&buf.chunk(), offset)? as usize;
+            if buf.remaining() < dynamic_offset {
+                return Err(CodecError::Decoding(DecodingError::BufferTooSmall {
+                    expected: dynamic_offset,
+                    found: buf.remaining(),
+                    msg: "buf too small to take dynamic offset".to_string(),
+                }));
+            }
             &buf.chunk()[dynamic_offset..]
         } else {
             &buf.chunk()[offset..]
@@ -101,10 +122,14 @@ macro_rules! impl_encoder_for_tuple {
             // static, and a wrong one as soon as a member is dynamic - it counts that member's
             // whole head area instead of the single offset word it actually writes. This is the
             // same expression `encode` computes below, and the same rule the derive uses.
+            // The head-width rule is a Solidity rule: only there does a dynamic member occupy one
+            // offset word. The compact branch of `encode` below strides every member by its full
+            // aligned size, and so do `decode` and the derive, so charging a dynamic member one
+            // word there would make the constant contradict the code that reads it.
             const HEADER_SIZE: usize = {
                 let mut size = 0;
                 $(
-                    size += if $T::IS_DYNAMIC {
+                    size += if $is_solidity && $T::IS_DYNAMIC {
                         align_up::<ALIGN>(4)
                     } else {
                         align_up::<ALIGN>($T::HEADER_SIZE)

@@ -443,9 +443,11 @@ fn test_vector_wasm_partial_decode() {
         "CompactABI vector encoding doesn't match expected value"
     );
 
-    // Test partial decoding - should return (offset, data_size)
-    // Note: We skip first 4 bytes (length) to get to the offset
-    let (data_offset, data_size) = CompactABI::<Vec<u32>>::partial_decode(&encoded, 4).unwrap();
+    // Test partial decoding - should return (offset, data_size) for the value at offset 0.
+    // This used to be called with an offset of 4 to skip the length word, because
+    // `partial_decode` read the header from the wrong place and returned (length, offset);
+    // compensating at the call site only worked for a vector sitting at the start of a buffer.
+    let (data_offset, data_size) = CompactABI::<Vec<u32>>::partial_decode(&encoded, 0).unwrap();
 
     assert_eq!(data_offset, 12, "Vector data should start at offset 12");
     assert_eq!(

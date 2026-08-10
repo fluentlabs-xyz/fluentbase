@@ -24,8 +24,8 @@ use alloy_primitives::{Address, Bytes, FixedBytes, I128, I256, U128, U160, U256}
 type U24 = alloy_primitives::Uint<24, 1>;
 type U40 = alloy_primitives::Uint<40, 1>;
 use alloy_sol_types::{sol_data, SolType};
-use bytes::BytesMut;
 use byteorder::BigEndian;
+use bytes::BytesMut;
 use fluentbase_codec::{Codec, Encoder};
 
 // ---------------------------------------------------------------------------------------------
@@ -67,7 +67,10 @@ impl Report {
             self.checked
         );
         for d in &self.divergences {
-            out.push_str(&format!("  [{}] {}\n      {}\n", d.direction, d.case, d.detail));
+            out.push_str(&format!(
+                "  [{}] {}\n      {}\n",
+                d.direction, d.case, d.detail
+            ));
         }
         panic!("{out}");
     }
@@ -101,7 +104,11 @@ where
         report.fail(
             case,
             "bytes",
-            format!("ours  = {}\n      alloy = {}", hex::encode(&ours), hex::encode(&theirs)),
+            format!(
+                "ours  = {}\n      alloy = {}",
+                hex::encode(&ours),
+                hex::encode(&theirs)
+            ),
         );
     }
 
@@ -269,18 +276,42 @@ fn value_types_match_the_specification() {
         case!(&mut r, sol_data::Int<256>, v);
     }
 
-    for v in [Address::ZERO, Address::repeat_byte(0xab), Address::repeat_byte(0xff)] {
+    for v in [
+        Address::ZERO,
+        Address::repeat_byte(0xab),
+        Address::repeat_byte(0xff),
+    ] {
         case!(&mut r, sol_data::Address, v);
     }
 
     case!(&mut r, sol_data::FixedBytes<1>, FixedBytes::<1>::ZERO);
-    case!(&mut r, sol_data::FixedBytes<1>, FixedBytes::<1>::new([0xff]));
-    case!(&mut r, sol_data::FixedBytes<3>, FixedBytes::<3>::repeat_byte(0xab));
+    case!(
+        &mut r,
+        sol_data::FixedBytes<1>,
+        FixedBytes::<1>::new([0xff])
+    );
+    case!(
+        &mut r,
+        sol_data::FixedBytes<3>,
+        FixedBytes::<3>::repeat_byte(0xab)
+    );
     case!(&mut r, sol_data::FixedBytes<8>, FixedBytes::<8>::ZERO);
-    case!(&mut r, sol_data::FixedBytes<16>, FixedBytes::<16>::repeat_byte(0xff));
-    case!(&mut r, sol_data::FixedBytes<31>, FixedBytes::<31>::repeat_byte(1));
+    case!(
+        &mut r,
+        sol_data::FixedBytes<16>,
+        FixedBytes::<16>::repeat_byte(0xff)
+    );
+    case!(
+        &mut r,
+        sol_data::FixedBytes<31>,
+        FixedBytes::<31>::repeat_byte(1)
+    );
     case!(&mut r, sol_data::FixedBytes<32>, FixedBytes::<32>::ZERO);
-    case!(&mut r, sol_data::FixedBytes<32>, FixedBytes::<32>::repeat_byte(0x5a));
+    case!(
+        &mut r,
+        sol_data::FixedBytes<32>,
+        FixedBytes::<32>::repeat_byte(0x5a)
+    );
 
     r.assert_clean("value types");
 }
@@ -311,7 +342,12 @@ fn dynamic_scalars_match_the_specification() {
         );
     }
 
-    case!(&mut r, sol_data::String, "unicode: ключ ‱ 🙂".to_string(), "string, multi-byte utf8");
+    case!(
+        &mut r,
+        sol_data::String,
+        "unicode: ключ ‱ 🙂".to_string(),
+        "string, multi-byte utf8"
+    );
 
     r.assert_clean("dynamic scalars");
 }
@@ -346,7 +382,9 @@ fn arrays_of_static_elements_match_the_specification() {
         case!(
             &mut r,
             sol_data::Array<sol_data::Address>,
-            (0..len).map(|i| Address::repeat_byte(i as u8)).collect::<Vec<_>>(),
+            (0..len)
+                .map(|i| Address::repeat_byte(i as u8))
+                .collect::<Vec<_>>(),
             &format!("address[] len {len}")
         );
         case!(
@@ -374,13 +412,17 @@ fn arrays_of_dynamic_elements_match_the_specification() {
         case!(
             &mut r,
             sol_data::Array<sol_data::Bytes>,
-            (0..len).map(|i| Bytes::from(vec![7u8; i * 16])).collect::<Vec<_>>(),
+            (0..len)
+                .map(|i| Bytes::from(vec![7u8; i * 16]))
+                .collect::<Vec<_>>(),
             &format!("bytes[] len {len}")
         );
         case!(
             &mut r,
             sol_data::Array<sol_data::Array<sol_data::Uint<256>>>,
-            (0..len).map(|i| (0..i).map(U256::from).collect::<Vec<_>>()).collect::<Vec<_>>(),
+            (0..len)
+                .map(|i| (0..i).map(U256::from).collect::<Vec<_>>())
+                .collect::<Vec<_>>(),
             &format!("uint256[][] len {len}")
         );
     }
@@ -396,13 +438,17 @@ fn arrays_of_tuples_match_the_specification() {
         case!(
             &mut r,
             sol_data::Array<(sol_data::Uint<256>, sol_data::Uint<256>)>,
-            (0..len).map(|i| (U256::from(i), U256::from(i * 2))).collect::<Vec<_>>(),
+            (0..len)
+                .map(|i| (U256::from(i), U256::from(i * 2)))
+                .collect::<Vec<_>>(),
             &format!("(uint256,uint256)[] len {len} - static tuple")
         );
         case!(
             &mut r,
             sol_data::Array<(sol_data::Uint<256>, sol_data::String)>,
-            (0..len).map(|i| (U256::from(i), "a".repeat(i))).collect::<Vec<_>>(),
+            (0..len)
+                .map(|i| (U256::from(i), "a".repeat(i)))
+                .collect::<Vec<_>>(),
             &format!("(uint256,string)[] len {len} - dynamic tuple")
         );
     }
@@ -420,8 +466,16 @@ fn arrays_of_tuples_match_the_specification() {
 fn fixed_arrays_match_the_specification() {
     let mut r = Report::default();
 
-    case!(&mut r, sol_data::FixedArray<sol_data::Uint<256>, 2>, [U256::ZERO, U256::from(2)]);
-    case!(&mut r, sol_data::FixedArray<sol_data::Uint<32>, 3>, [0u32, 1, u32::MAX]);
+    case!(
+        &mut r,
+        sol_data::FixedArray<sol_data::Uint<256>, 2>,
+        [U256::ZERO, U256::from(2)]
+    );
+    case!(
+        &mut r,
+        sol_data::FixedArray<sol_data::Uint<32>, 3>,
+        [0u32, 1, u32::MAX]
+    );
     case!(
         &mut r,
         sol_data::FixedArray<sol_data::Address, 2>,
@@ -447,7 +501,11 @@ fn structs_match_the_specification() {
     let (value, sol) = static_struct(5, 2, true);
     case_as!(&mut r, SolStatic, value, sol, "static struct, populated");
 
-    let narrow = NarrowStruct { small: 0, wide: 0, signed: 0 };
+    let narrow = NarrowStruct {
+        small: 0,
+        wide: 0,
+        signed: 0,
+    };
     case_as!(
         &mut r,
         SolNarrow,
@@ -455,7 +513,11 @@ fn structs_match_the_specification() {
         (narrow.small, narrow.wide, narrow.signed),
         "narrow-int struct, all zero"
     );
-    let narrow = NarrowStruct { small: 1, wide: u64::MAX, signed: -1 };
+    let narrow = NarrowStruct {
+        small: 1,
+        wide: u64::MAX,
+        signed: -1,
+    };
     case_as!(
         &mut r,
         SolNarrow,
@@ -465,21 +527,40 @@ fn structs_match_the_specification() {
     );
 
     let (value, sol) = dynamic_struct(0, "", &[]);
-    case_as!(&mut r, SolDynamic, value, sol, "dynamic struct, empty members");
+    case_as!(
+        &mut r,
+        SolDynamic,
+        value,
+        sol,
+        "dynamic struct, empty members"
+    );
     let (value, sol) = dynamic_struct(9, "fluent", b"abc");
     case_as!(&mut r, SolDynamic, value, sol, "dynamic struct, populated");
     let (value, sol) = dynamic_struct(1, &"n".repeat(40), &[3u8; 33]);
-    case_as!(&mut r, SolDynamic, value, sol, "dynamic struct, members over one word");
+    case_as!(
+        &mut r,
+        SolDynamic,
+        value,
+        sol,
+        "dynamic struct, members over one word"
+    );
 
     let nested = NestedStruct {
-        inner: StaticStruct { a: U256::from(1), b: Address::ZERO, c: false },
+        inner: StaticStruct {
+            a: U256::from(1),
+            b: Address::ZERO,
+            c: false,
+        },
         list: vec![U256::ZERO, U256::from(2)],
     };
     case_as!(
         &mut r,
         SolNested,
         nested.clone(),
-        ((nested.inner.a, nested.inner.b, nested.inner.c), nested.list.clone()),
+        (
+            (nested.inner.a, nested.inner.b, nested.inner.c),
+            nested.list.clone()
+        ),
         "struct containing a struct and an array"
     );
 
@@ -580,7 +661,11 @@ fn structs_containing_narrow_structs_match_the_specification() {
             "outer{U256, narrow struct, U256} zeros",
             Outer {
                 head: U256::ZERO,
-                inner: NarrowStruct { small: 0, wide: 0, signed: 0 },
+                inner: NarrowStruct {
+                    small: 0,
+                    wide: 0,
+                    signed: 0,
+                },
                 tail: U256::ZERO,
             },
         ),
@@ -588,7 +673,11 @@ fn structs_containing_narrow_structs_match_the_specification() {
             "outer{U256, narrow struct, U256} populated",
             Outer {
                 head: U256::from(7),
-                inner: NarrowStruct { small: 1, wide: 2, signed: -3 },
+                inner: NarrowStruct {
+                    small: 1,
+                    wide: 2,
+                    signed: -3,
+                },
                 tail: U256::from(9),
             },
         ),
@@ -641,7 +730,12 @@ macro_rules! function_args_case {
 fn function_arguments_match_the_specification() {
     let mut r = Report::default();
 
-    function_args_case!(&mut r, (sol_data::Uint<256>,), (U256::from(7),), "f(uint256)");
+    function_args_case!(
+        &mut r,
+        (sol_data::Uint<256>,),
+        (U256::from(7),),
+        "f(uint256)"
+    );
     function_args_case!(
         &mut r,
         (sol_data::Uint<32>, sol_data::Uint<256>),
@@ -722,7 +816,12 @@ fn indexed_topics_match_the_specification() {
     topic_case!(&mut r, sol_data::Int<64>, i64::MIN, "int64 min");
     topic_case!(&mut r, sol_data::Uint<256>, U256::MAX, "uint256 max");
     topic_case!(&mut r, sol_data::Int<256>, I256::MINUS_ONE, "int256 -1");
-    topic_case!(&mut r, sol_data::Address, Address::repeat_byte(0xab), "address");
+    topic_case!(
+        &mut r,
+        sol_data::Address,
+        Address::repeat_byte(0xab),
+        "address"
+    );
     topic_case!(
         &mut r,
         sol_data::FixedBytes<4>,
@@ -769,7 +868,9 @@ fn indexed_topics_match_the_specification() {
         topic_case!(
             &mut r,
             sol_data::Array<sol_data::Bytes>,
-            (0..len).map(|i| Bytes::from(vec![1u8; i * 17])).collect::<Vec<_>>(),
+            (0..len)
+                .map(|i| Bytes::from(vec![1u8; i * 17]))
+                .collect::<Vec<_>>(),
             &format!("bytes[] len {len}, members crossing word boundaries")
         );
     }
@@ -876,18 +977,33 @@ fn packed_mode_matches_the_specification() {
     packed_case!(&mut r, sol_data::Bool, false, "bool false");
 
     packed_case!(&mut r, sol_data::Uint<8>, 0x42u8, "uint8");
-    packed_case!(&mut r, sol_data::Uint<16>, 0x03u16, "uint16, from the spec example");
+    packed_case!(
+        &mut r,
+        sol_data::Uint<16>,
+        0x03u16,
+        "uint16, from the spec example"
+    );
     packed_case!(&mut r, sol_data::Uint<32>, 0u32, "uint32 zero");
     packed_case!(&mut r, sol_data::Uint<64>, u64::MAX, "uint64 max");
     packed_case!(&mut r, sol_data::Uint<256>, U256::from(1), "uint256");
 
     // "without padding or sign extension": int16(-1) is 0xffff, two bytes.
-    packed_case!(&mut r, sol_data::Int<16>, -1i16, "int16 -1, no sign extension");
+    packed_case!(
+        &mut r,
+        sol_data::Int<16>,
+        -1i16,
+        "int16 -1, no sign extension"
+    );
     packed_case!(&mut r, sol_data::Int<32>, -1i32, "int32 -1");
     packed_case!(&mut r, sol_data::Int<32>, 0i32, "int32 zero");
     packed_case!(&mut r, sol_data::Int<64>, i64::MIN, "int64 min");
 
-    packed_case!(&mut r, sol_data::Address, Address::repeat_byte(0xab), "address");
+    packed_case!(
+        &mut r,
+        sol_data::Address,
+        Address::repeat_byte(0xab),
+        "address"
+    );
     packed_case!(
         &mut r,
         sol_data::FixedBytes<1>,
@@ -947,7 +1063,10 @@ fn packed_mode_matches_the_specification() {
     );
     packed_spec_case!(
         &mut r,
-        [FixedBytes::<4>::new([1, 2, 3, 4]), FixedBytes::<4>::new([5, 6, 7, 8])],
+        [
+            FixedBytes::<4>::new([1, 2, 3, 4]),
+            FixedBytes::<4>::new([5, 6, 7, 8])
+        ],
         concat!(
             "0102030400000000000000000000000000000000000000000000000000000000",
             "0506070800000000000000000000000000000000000000000000000000000000"
@@ -959,7 +1078,10 @@ fn packed_mode_matches_the_specification() {
     // array's elements are padded relative to where the array begins, not to absolute words.
     packed_case!(
         &mut r,
-        (sol_data::Uint<8>, sol_data::FixedArray<sol_data::Uint<16>, 2>),
+        (
+            sol_data::Uint<8>,
+            sol_data::FixedArray<sol_data::Uint<16>, 2>
+        ),
         (0x42u8, [1u16, 2u16]),
         "uint8 then uint16[2], the array starts unaligned"
     );
@@ -986,7 +1108,10 @@ struct StructWithFixedArray {
     ids: [u32; 3],
     tail: U256,
 }
-type SolStructWithFixedArray = (sol_data::FixedArray<sol_data::Uint<32>, 3>, sol_data::Uint<256>);
+type SolStructWithFixedArray = (
+    sol_data::FixedArray<sol_data::Uint<32>, 3>,
+    sol_data::Uint<256>,
+);
 
 /// Mirrors `LegacyInitialSettings` in `fluentbase-sdk`, which stores names as `[u8; 32]`.
 #[derive(Codec, Default, Debug, PartialEq, Clone)]
@@ -994,7 +1119,10 @@ struct StructWithByteArray {
     name: [u8; 32],
     decimals: u8,
 }
-type SolStructWithByteArray = (sol_data::FixedArray<sol_data::Uint<8>, 32>, sol_data::Uint<8>);
+type SolStructWithByteArray = (
+    sol_data::FixedArray<sol_data::Uint<8>, 32>,
+    sol_data::Uint<8>,
+);
 
 /// A dynamic member with static members on both sides: the head area has to keep a word for the
 /// offset in the middle, and the tail has to land after both static members.
@@ -1036,6 +1164,28 @@ fn unusual_integer_widths_match_the_specification() {
     }
 
     // uint128/int128 are `Uint`/`Signed` on our side and Rust primitives on alloy's.
+    // The three widths whose `sol_to_rust` mapping lands on a Rust primitive: they delegate to
+    // `Uint`/`Signed` rather than carrying their own padding arithmetic.
+    for v in [0i8, -1, 1, i8::MIN, i8::MAX] {
+        case!(&mut r, sol_data::Int<8>, v, &format!("int8 = {v}"));
+    }
+    for v in [0u128, 1, u128::MAX] {
+        case!(
+            &mut r,
+            sol_data::Uint<128>,
+            v,
+            &format!("uint128 primitive = {v}")
+        );
+    }
+    for v in [0i128, -1, i128::MIN, i128::MAX] {
+        case!(
+            &mut r,
+            sol_data::Int<128>,
+            v,
+            &format!("int128 primitive = {v}")
+        );
+    }
+
     for v in [0u128, 1, u128::MAX] {
         case_as!(
             &mut r,
@@ -1068,13 +1218,21 @@ fn arrays_of_signed_elements_match_the_specification() {
         case!(
             &mut r,
             sol_data::Array<sol_data::Int<32>>,
-            (0..len).map(|i| if i % 2 == 0 { -(i as i32) - 1 } else { 0 }).collect::<Vec<_>>(),
+            (0..len)
+                .map(|i| if i % 2 == 0 { -(i as i32) - 1 } else { 0 })
+                .collect::<Vec<_>>(),
             &format!("int32[] len {len} (alternating negative and zero)")
         );
         case!(
             &mut r,
             sol_data::Array<sol_data::Int<256>>,
-            (0..len).map(|i| if i % 2 == 0 { I256::MINUS_ONE } else { I256::ZERO }).collect::<Vec<_>>(),
+            (0..len)
+                .map(|i| if i % 2 == 0 {
+                    I256::MINUS_ONE
+                } else {
+                    I256::ZERO
+                })
+                .collect::<Vec<_>>(),
             &format!("int256[] len {len}")
         );
     }
@@ -1093,26 +1251,48 @@ fn fixed_arrays_in_composites_match_the_specification() {
         tail: U256::MAX,
     };
     let sol = (value.ids, value.tail);
-    case_as!(&mut r, SolStructWithFixedArray, value, sol, "struct { uint32[3], uint256 }");
+    case_as!(
+        &mut r,
+        SolStructWithFixedArray,
+        value,
+        sol,
+        "struct { uint32[3], uint256 }"
+    );
 
     let mut name = [0u8; 32];
     name[..6].copy_from_slice(b"fluent");
     let value = StructWithByteArray { name, decimals: 18 };
     let sol = (value.name, value.decimals);
-    case_as!(&mut r, SolStructWithByteArray, value, sol, "struct { uint8[32], uint8 }");
+    case_as!(
+        &mut r,
+        SolStructWithByteArray,
+        value,
+        sol,
+        "struct { uint8[32], uint8 }"
+    );
 
     for len in [0usize, 1, 2, 3] {
         case!(
             &mut r,
             sol_data::Array<sol_data::FixedArray<sol_data::Uint<32>, 3>>,
-            (0..len).map(|i| [i as u32, 0, u32::MAX]).collect::<Vec<_>>(),
+            (0..len)
+                .map(|i| [i as u32, 0, u32::MAX])
+                .collect::<Vec<_>>(),
             &format!("uint32[3][] len {len}")
         );
     }
 
     // A fixed array whose elements are static structs: `k` inline struct encodings, no offsets.
-    let a = StaticStruct { a: U256::ZERO, b: Address::ZERO, c: false };
-    let b = StaticStruct { a: U256::MAX, b: Address::repeat_byte(9), c: true };
+    let a = StaticStruct {
+        a: U256::ZERO,
+        b: Address::ZERO,
+        c: false,
+    };
+    let b = StaticStruct {
+        a: U256::MAX,
+        b: Address::repeat_byte(9),
+        c: true,
+    };
     let value = [a, b];
     let sol = [(a.a, a.b, a.c), (b.a, b.b, b.c)];
     case_as!(
@@ -1190,7 +1370,11 @@ fn fixed_arrays_of_dynamic_elements_match_the_specification() {
     // on both sides.
     case!(
         &mut r,
-        (sol_data::Uint<256>, sol_data::FixedArray<sol_data::String, 2>, sol_data::Address),
+        (
+            sol_data::Uint<256>,
+            sol_data::FixedArray<sol_data::String, 2>,
+            sol_data::Address
+        ),
         (
             U256::MAX,
             ["first".to_string(), "second".to_string()],
@@ -1222,7 +1406,11 @@ fn deeply_nested_composites_match_the_specification() {
     for (label, name, blob) in [
         ("sandwich, empty dynamic member", "", &[][..]),
         ("sandwich, populated", "fluent", &[1u8, 2, 3][..]),
-        ("sandwich, member over one word", "0123456789012345678901234567890123", &[9u8; 40][..]),
+        (
+            "sandwich, member over one word",
+            "0123456789012345678901234567890123",
+            &[9u8; 40][..],
+        ),
     ] {
         let (inner, inner_sol) = dynamic_struct(7, name, blob);
         let value = SandwichStruct {
@@ -1251,13 +1439,16 @@ fn deeply_nested_composites_match_the_specification() {
         };
         let sol = (
             value.id,
-            (
-                (inner.a, inner.b, inner.c),
-                value.middle.list.clone(),
-            ),
+            ((inner.a, inner.b, inner.c), value.middle.list.clone()),
             value.names.clone(),
         );
-        case_as!(&mut r, SolDeep, value, sol, &format!("struct in struct, inner len {len}"));
+        case_as!(
+            &mut r,
+            SolDeep,
+            value,
+            sol,
+            &format!("struct in struct, inner len {len}")
+        );
     }
 
     // An array of arrays whose innermost elements are dynamic, and an array of arrays of structs.
@@ -1265,7 +1456,9 @@ fn deeply_nested_composites_match_the_specification() {
         case!(
             &mut r,
             sol_data::Array<sol_data::Array<sol_data::String>>,
-            (0..len).map(|i| (0..i).map(|j| "y".repeat(j * 33)).collect::<Vec<_>>()).collect::<Vec<_>>(),
+            (0..len)
+                .map(|i| (0..i).map(|j| "y".repeat(j * 33)).collect::<Vec<_>>())
+                .collect::<Vec<_>>(),
             &format!("string[][] len {len}")
         );
 
@@ -1335,6 +1528,111 @@ macro_rules! spec_vector_case {
     }};
 }
 
+/// One-element tuples, at the top level and nested.
+///
+/// The specification gives one-element tuples no special treatment: `(string)` is a tuple like any
+/// other, so its member's offset is measured from the start of the tuple's own encoding. A
+/// one-element tuple that is written at the very start of a buffer masks a mistake in that origin,
+/// because "start of the tuple" and "start of the buffer" then coincide; nesting one after another
+/// member separates the two. Every case here is therefore paired: the same shape alone and the
+/// same shape with something in front of it.
+#[test]
+fn one_element_tuples_match_the_specification() {
+    let mut r = Report::default();
+
+    // The whole defect in five words, written out so it can be read rather than run.
+    //
+    //   word 0   0x40   offset to the tail of member 0
+    //   word 1   0xff   member 1, the uint256
+    //   word 2   0x20   member 0 is a tuple, and this is its own head: the offset to its string
+    //   word 3   0x02   the string's length
+    //   word 4   "hi"
+    //
+    // Word 2 is the one that used to be missing. Everything after it shifted up by a word, so the
+    // offset in word 0 pointed at the length instead of at the tuple's head, and a decoder
+    // following it jumped to byte 2.
+    spec_vector_case!(
+        &mut r,
+        (("hi".to_string(),), U256::from(255)),
+        "0000000000000000000000000000000000000000000000000000000000000040
+         00000000000000000000000000000000000000000000000000000000000000ff
+         0000000000000000000000000000000000000000000000000000000000000020
+         0000000000000000000000000000000000000000000000000000000000000002
+         6869000000000000000000000000000000000000000000000000000000000000",
+        "((string),uint256) with ((hi), 255)"
+    );
+
+    for text in ["", "fluent", "0123456789012345678901234567890123"] {
+        let label = |what: &str| format!("{what}, member {:?}", text);
+
+        // Alone - the arrangement that coincides with a correct one.
+        case!(
+            &mut r,
+            (sol_data::String,),
+            (text.to_string(),),
+            &label("(string)")
+        );
+
+        // After a static member, so the tuple no longer starts at offset zero.
+        case!(
+            &mut r,
+            (sol_data::Uint<256>, (sol_data::String,)),
+            (U256::from(1), (text.to_string(),)),
+            &label("(uint256,(string))")
+        );
+
+        // Before a static member, so the tuple's tail is not the end of the buffer either.
+        case!(
+            &mut r,
+            ((sol_data::String,), sol_data::Uint<256>),
+            ((text.to_string(),), U256::MAX),
+            &label("((string),uint256)")
+        );
+
+        // Two levels, so the inner tuple's origin is itself not the buffer's start.
+        case!(
+            &mut r,
+            (sol_data::Uint<256>, ((sol_data::String,),)),
+            (U256::from(2), ((text.to_string(),),)),
+            &label("(uint256,((string)))")
+        );
+
+        // Between two dynamic members, which puts an entire tail between head and body.
+        case!(
+            &mut r,
+            (sol_data::String, (sol_data::String,), sol_data::String),
+            ("head".to_string(), (text.to_string(),), "tail".to_string()),
+            &label("(string,(string),string)")
+        );
+    }
+
+    // A one-element tuple that is static keeps its member inline, before and after a sibling.
+    case!(
+        &mut r,
+        (sol_data::Uint<256>,),
+        (U256::from(7),),
+        "(uint256), alone"
+    );
+    case!(
+        &mut r,
+        (sol_data::Address, (sol_data::Uint<256>,)),
+        (Address::repeat_byte(3), (U256::from(7),)),
+        "(address,(uint256))"
+    );
+
+    // An array of one-element tuples: every element's offset is relative to the array body.
+    for len in [0usize, 1, 2, 3] {
+        case!(
+            &mut r,
+            sol_data::Array<(sol_data::String,)>,
+            (0..len).map(|i| ("z".repeat(i * 33),)).collect::<Vec<_>>(),
+            &format!("(string)[] len {len}")
+        );
+    }
+
+    r.assert_clean("one-element tuples");
+}
+
 #[test]
 fn the_specifications_worked_examples_match_byte_for_byte() {
     let mut r = Report::default();
@@ -1402,15 +1700,13 @@ fn the_specifications_worked_examples_match_byte_for_byte() {
     );
 
     // g(uint256[][],string[]) - nested dynamic arrays, where every inner offset is relative to the
-    // start of its own array rather than to the buffer. This is the case D2 would break if a
-    // non-zero starting offset ever became reachable.
+    // start of its own array rather than to the buffer. Offset words are written as absolute
+    // buffer positions, so this is the case that would break if a non-zero starting offset ever
+    // became reachable.
     spec_vector_case!(
         &mut r,
         (
-            vec![
-                vec![U256::from(1), U256::from(2)],
-                vec![U256::from(3)]
-            ],
+            vec![vec![U256::from(1), U256::from(2)], vec![U256::from(3)]],
             vec!["one".to_string(), "two".to_string(), "three".to_string()]
         ),
         "0000000000000000000000000000000000000000000000000000000000000040
@@ -1482,7 +1778,13 @@ fn type_metadata_matches_the_specification() {
     invariant_case!(&mut r, bool, sol_data::Bool, true, "bool");
     invariant_case!(&mut r, u32, sol_data::Uint<32>, 7, "uint32");
     invariant_case!(&mut r, U256, sol_data::Uint<256>, U256::MAX, "uint256");
-    invariant_case!(&mut r, Address, sol_data::Address, Address::repeat_byte(3), "address");
+    invariant_case!(
+        &mut r,
+        Address,
+        sol_data::Address,
+        Address::repeat_byte(3),
+        "address"
+    );
     invariant_case!(
         &mut r,
         FixedBytes<4>,
@@ -1490,8 +1792,20 @@ fn type_metadata_matches_the_specification() {
         FixedBytes::<4>::repeat_byte(1),
         "bytes4"
     );
-    invariant_case!(&mut r, String, sol_data::String, "abc".to_string(), "string");
-    invariant_case!(&mut r, Bytes, sol_data::Bytes, Bytes::from_static(b"abc"), "bytes");
+    invariant_case!(
+        &mut r,
+        String,
+        sol_data::String,
+        "abc".to_string(),
+        "string"
+    );
+    invariant_case!(
+        &mut r,
+        Bytes,
+        sol_data::Bytes,
+        Bytes::from_static(b"abc"),
+        "bytes"
+    );
     invariant_case!(
         &mut r,
         Vec<U256>,
@@ -1524,14 +1838,22 @@ fn type_metadata_matches_the_specification() {
         &mut r,
         StaticStruct,
         SolStatic,
-        StaticStruct { a: U256::ONE, b: Address::ZERO, c: true },
+        StaticStruct {
+            a: U256::ONE,
+            b: Address::ZERO,
+            c: true
+        },
         "static struct"
     );
     invariant_case!(
         &mut r,
         NarrowStruct,
         SolNarrow,
-        NarrowStruct { small: 1, wide: 2, signed: -3 },
+        NarrowStruct {
+            small: 1,
+            wide: 2,
+            signed: -3
+        },
         "narrow struct"
     );
     invariant_case!(
@@ -1546,7 +1868,11 @@ fn type_metadata_matches_the_specification() {
         NestedStruct,
         SolNested,
         NestedStruct {
-            inner: StaticStruct { a: U256::ONE, b: Address::ZERO, c: false },
+            inner: StaticStruct {
+                a: U256::ONE,
+                b: Address::ZERO,
+                c: false
+            },
             list: vec![U256::ONE],
         },
         "nested struct"
@@ -1649,13 +1975,21 @@ fn header_arithmetic_agrees_with_the_encoding() {
     header_arithmetic_case!(
         &mut r,
         StaticStruct,
-        StaticStruct { a: U256::MAX, b: Address::repeat_byte(9), c: true },
+        StaticStruct {
+            a: U256::MAX,
+            b: Address::repeat_byte(9),
+            c: true
+        },
         "static struct"
     );
     header_arithmetic_case!(
         &mut r,
         NarrowStruct,
-        NarrowStruct { small: 1, wide: 2, signed: -3 },
+        NarrowStruct {
+            small: 1,
+            wide: 2,
+            signed: -3
+        },
         "narrow struct"
     );
 
@@ -1697,14 +2031,18 @@ fn optional_members_report_one_width() {
 
             let some_bytes = bytes::Bytes::from(some_buf.to_vec());
             let none_bytes = bytes::Bytes::from(none_buf.to_vec());
-            let some_width =
-                <Option<$typ> as Encoder<BigEndian, 32, true, false>>::partial_decode(&some_bytes, 0)
-                    .unwrap()
-                    .1;
-            let none_width =
-                <Option<$typ> as Encoder<BigEndian, 32, true, false>>::partial_decode(&none_bytes, 0)
-                    .unwrap()
-                    .1;
+            let some_width = <Option<$typ> as Encoder<BigEndian, 32, true, false>>::partial_decode(
+                &some_bytes,
+                0,
+            )
+            .unwrap()
+            .1;
+            let none_width = <Option<$typ> as Encoder<BigEndian, 32, true, false>>::partial_decode(
+                &none_bytes,
+                0,
+            )
+            .unwrap()
+            .1;
 
             if some_width != none_width {
                 r.fail(
@@ -1730,7 +2068,8 @@ fn optional_members_report_one_width() {
 //
 // The tables above pin the shapes and lengths that the specification and the known defects call
 // out. This layer sweeps the same shapes across generated lengths and values, which is what
-// catches a stride that is right at one length and wrong at the next - the exact form D1 took.
+// catches a stride that is right at one length and wrong at the next - the exact form the array
+// defect took.
 //
 // Adding a shape is one `prop_case!` line: a name, the alloy type, and a strategy. The four
 // directions come from the same `check` the tables use, so a randomised failure reads identically
@@ -1741,7 +2080,8 @@ mod randomised {
     use super::*;
     use proptest::prelude::*;
 
-    /// Container lengths worth sweeping. D1 first showed up at 2 and 3 elements; nothing in the
+    /// Container lengths worth sweeping. The array defect first showed up at 2 and 3 elements;
+    /// nothing in the
     /// encoding changes shape past a handful, and every case costs four encode/decode rounds.
     const LENGTHS: core::ops::RangeInclusive<usize> = 0..=6;
 
@@ -1757,7 +2097,13 @@ mod randomised {
     }
 
     fn i32_value() -> impl Strategy<Value = i32> {
-        prop_oneof![Just(0i32), Just(-1i32), Just(i32::MIN), Just(i32::MAX), any::<i32>()]
+        prop_oneof![
+            Just(0i32),
+            Just(-1i32),
+            Just(i32::MIN),
+            Just(i32::MAX),
+            any::<i32>()
+        ]
     }
 
     fn u256_value() -> impl Strategy<Value = U256> {
@@ -1783,8 +2129,11 @@ mod randomised {
     }
 
     fn static_struct_value() -> impl Strategy<Value = StaticStruct> {
-        (u256_value(), address_value(), any::<bool>())
-            .prop_map(|(a, b, c)| StaticStruct { a, b, c })
+        (u256_value(), address_value(), any::<bool>()).prop_map(|(a, b, c)| StaticStruct {
+            a,
+            b,
+            c,
+        })
     }
 
     fn narrow_struct_value() -> impl Strategy<Value = NarrowStruct> {
@@ -1796,8 +2145,11 @@ mod randomised {
     }
 
     fn dynamic_struct_value() -> impl Strategy<Value = DynamicStruct> {
-        (u256_value(), text_value(), bytes_value())
-            .prop_map(|(id, name, blob)| DynamicStruct { id, name, blob })
+        (u256_value(), text_value(), bytes_value()).prop_map(|(id, name, blob)| DynamicStruct {
+            id,
+            name,
+            blob,
+        })
     }
 
     /// One randomised shape.
@@ -1858,7 +2210,8 @@ mod randomised {
         proptest::collection::vec((u256_value(), text_value()), LENGTHS)
     );
 
-    // The three shapes below are the ones D1 broke: `Vec` strode by a `HEADER_SIZE` that was
+    // The three shapes below are the ones the array defect broke: `Vec` strode by a `HEADER_SIZE`
+    // that was
     // neither the head width of a dynamic member nor the aligned inline width of a static struct.
     prop_case!(
         arrays_of_static_structs,
@@ -2008,10 +2361,7 @@ mod randomised {
     prop_case!(
         arrays_of_arrays_of_text,
         sol_data::Array<sol_data::Array<sol_data::String>>,
-        proptest::collection::vec(
-            proptest::collection::vec(text_value(), LENGTHS),
-            LENGTHS
-        )
+        proptest::collection::vec(proptest::collection::vec(text_value(), LENGTHS), LENGTHS)
     );
 
     proptest! {

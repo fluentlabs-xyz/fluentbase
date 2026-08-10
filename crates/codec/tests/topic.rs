@@ -80,8 +80,14 @@ fn zero_is_zero_padded_in_every_integer_width() {
     assert_eq!(topic(&0i16), expected::<sol_data::Int<16>>(&0i16));
     assert_eq!(topic(&0i32), expected::<sol_data::Int<32>>(&0i32));
     assert_eq!(topic(&0i64), expected::<sol_data::Int<64>>(&0i64));
-    assert_eq!(topic(&U256::ZERO), expected::<sol_data::Uint<256>>(&U256::ZERO));
-    assert_eq!(topic(&I256::ZERO), expected::<sol_data::Int<256>>(&I256::ZERO));
+    assert_eq!(
+        topic(&U256::ZERO),
+        expected::<sol_data::Uint<256>>(&U256::ZERO)
+    );
+    assert_eq!(
+        topic(&I256::ZERO),
+        expected::<sol_data::Int<256>>(&I256::ZERO)
+    );
     assert_eq!(topic(&false), expected::<sol_data::Bool>(&false));
 
     assert_eq!(preimage(&0u64), [0u8; 32]);

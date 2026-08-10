@@ -36,6 +36,7 @@ clean:
 	cargo clean --manifest-path=./examples/Cargo.toml
 	cargo clean
 	cargo clean --manifest-path=./evm-e2e/Cargo.toml
+	cargo clean --manifest-path=./codec-conformance/Cargo.toml
 
 TEST_PROFILE ?=
 TEST_FEATURES ?=
@@ -45,6 +46,13 @@ run-e2e-tests:
 	cargo nextest run --manifest-path=./Cargo.toml --workspace $(TEST_PROFILE) --no-default-features --features $(TEST_FEATURES)
 	$(MAKE) -C evm-e2e sync_tests
 	cargo nextest run --manifest-path=./evm-e2e/Cargo.toml $(TEST_PROFILE) --no-default-features --features "$(TEST_FEATURES)" --package evm-e2e --bin evm-e2e
+# The codec against the external solc-derived corpus. Deliberately not part of `test`: it fetches
+# a corpus over the network and compiles thousands of generated cases, which is why the crate is
+# excluded from the workspace. Run it when the codec changes.
+.PHONY: run-codec-conformance
+run-codec-conformance:
+	$(MAKE) -C codec-conformance all
+
 .PHONY: run-contracts-tests
 run-contracts-tests:
 	cargo nextest run --manifest-path=./contracts/Cargo.toml --workspace $(TEST_PROFILE) --no-default-features --features "$(TEST_FEATURES)"

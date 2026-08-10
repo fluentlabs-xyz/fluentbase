@@ -1,0 +1,24 @@
+[package]
+name = "codec-conformance"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+fluentbase-codec = { path = "../crates/codec" }
+# The `Codec` derive expands to `::fluentbase_sdk::codec` for any crate not named
+# fluentbase-{codec,sdk,types,runtime} (codec-derive/src/lib.rs:55-64), so the derive path can only
+# be exercised through the SDK - which is also how a contract author reaches it.
+fluentbase-sdk = { path = "../crates/sdk" }
+alloy-primitives = "1.6"
+byteorder = "1"
+bytes = "1"
+hex = "0.4"
+
+[build-dependencies]
+fluentbase-sdk-derive-core = { path = "../crates/sdk-derive/derive-core", default-features = false }
+serde_json = "1"
+quote = "1"
+
+[dev-dependencies]
+proptest = "1.5"

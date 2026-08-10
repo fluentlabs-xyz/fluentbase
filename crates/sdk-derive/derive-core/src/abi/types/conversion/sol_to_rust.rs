@@ -124,10 +124,29 @@ fn to_rust_fixed_bytes(size: usize) -> Result<Type, ABIError> {
     Ok(parse_quote!(FixedBytes<#size>))
 }
 
+/// Whether a Solidity type is encoded with an offset word rather than in place.
+fn is_dynamic(ty: &SolType) -> bool {
+    match ty {
+        SolType::String | SolType::Bytes => true,
+        SolType::Array(_) => true,
+        SolType::FixedArray(inner, _) => is_dynamic(inner),
+        SolType::Tuple(members) => members.iter().any(is_dynamic),
+        SolType::Struct { fields, .. } => fields.iter().any(|(_, ty)| is_dynamic(ty)),
+        _ => false,
+    }
+}
+
 fn to_rust_tuple(types: &[SolType]) -> Result<Type, ABIError> {
     match types.len() {
         0 => Ok(parse_quote!(())),
-        1 => sol_to_rust(&types[0]),
+        // A one-member tuple encodes like its member only while that member is static. Once the
+        // member is dynamic the tuple is dynamic too and carries an offset word the bare member
+        // does not, so collapsing it drops a word from the calldata - see D10.
+        1 if !is_dynamic(&types[0]) => sol_to_rust(&types[0]),
+        1 => {
+            let inner = sol_to_rust(&types[0])?;
+            Ok(parse_quote!((#inner,)))
+        }
         _ => {
             let rust_types: Result<Vec<_>, _> = types.iter().map(sol_to_rust).collect();
             let rust_types = rust_types?;

@@ -153,6 +153,16 @@ impl<const N: usize, B: ByteOrder, const ALIGN: usize, const IS_STATIC: bool>
     /// Encode the fixed bytes into the buffer.
     /// Writes the fixed bytes directly to the buffer at the given offset.
     fn encode(&self, buf: &mut BytesMut, offset: usize) -> Result<(), CodecError> {
+        // The field is as wide as the alignment demands, while the value may be shorter - an
+        // 11-byte value sits in a 12-byte field at ALIGN 4. Clear the field before writing, or the
+        // difference keeps whatever the destination buffer already held and the encoding stops
+        // being a function of the value.
+        let width = align_up::<ALIGN>(N);
+        if buf.len() < offset + width {
+            buf.resize(offset + width, 0);
+        }
+        buf[offset..offset + width].fill(0);
+
         let slice = get_aligned_slice::<B, ALIGN>(buf, offset, N);
         slice.copy_from_slice(self.as_ref());
         Ok(())
@@ -175,8 +185,10 @@ impl<const N: usize, B: ByteOrder, const ALIGN: usize, const IS_STATIC: bool>
     /// Partially decode the fixed bytes from the buffer.
     /// Returns the data offset and size without reading the actual data.
     fn partial_decode(_buf: &impl Buf, offset: usize) -> Result<(usize, usize), CodecError> {
-        let aligned_offset = align_up::<ALIGN>(offset);
-        Ok((aligned_offset, N))
+        // The width of the field, not of the value: `[FixedBytes<11>; 3]` strides by 12, so
+        // reporting 11 would send a reader stepping over the field into the next one. And the
+        // offset is echoed back unchanged, because `encode` and `decode` do not align it either.
+        Ok((offset, align_up::<ALIGN>(N)))
     }
 }
 
@@ -235,6 +247,15 @@ macro_rules! impl_evm_fixed {
             /// Encode the fixed bytes into the buffer.
             /// Writes the fixed bytes directly to the buffer at the given offset.
             fn encode(&self, buf: &mut BytesMut, offset: usize) -> Result<(), CodecError> {
+                // Same rule as `FixedBytes` above: clear the field, then write the value into it.
+                // `Address` is 20 bytes and needs no padding at ALIGN 4, but the next type added
+                // to this macro inherits whatever this line does.
+                let width = align_up::<ALIGN>(<$type>::len_bytes());
+                if buf.len() < offset + width {
+                    buf.resize(offset + width, 0);
+                }
+                buf[offset..offset + width].fill(0);
+
                 let slice = get_aligned_slice::<B, ALIGN>(buf, offset, <$type>::len_bytes());
                 slice.copy_from_slice(self.as_ref());
                 Ok(())
@@ -261,7 +282,10 @@ macro_rules! impl_evm_fixed {
                 _buf: &impl Buf,
                 offset: usize,
             ) -> Result<(usize, usize), CodecError> {
-                Ok((offset, <$type>::len_bytes()))
+                // The aligned field width, matching the Solidity-mode impl below and every other
+                // static type. Identical to `len_bytes()` for `Address` at ALIGN 4, but the rule
+                // is what the next type added here will inherit.
+                Ok((offset, align_up::<ALIGN>(<$type>::len_bytes())))
             }
         }
 
@@ -341,6 +365,10 @@ impl<
         };
 
         slice[..Self::BYTES].copy_from_slice(&bytes);
+        // Zero the rest of the slot. Leaving it alone makes the encoding depend on whatever the
+        // destination buffer happened to hold, so the same value encodes differently into a fresh
+        // buffer and into a reused one.
+        slice[Self::BYTES..].fill(0);
 
         Ok(())
     }
@@ -455,6 +483,16 @@ impl<
         };
 
         slice[..Self::BYTES].copy_from_slice(&bytes);
+        // Sign-extend into the rest of the slot. Leaving it alone makes the encoding depend on
+        // what the buffer already held, and leaves a negative `i8` unextended where a negative
+        // `i16` is extended.
+        //
+        // The fill follows the value because that is where this impl places it; `impl_int!` puts
+        // its padding before the value instead. The two agree for little-endian, which is the only
+        // byte order compact mode is instantiated with, and differ for a big-endian instantiation
+        // whose aligned width exceeds its value - the placement, not the fill, is what would have
+        // to change to reconcile them.
+        slice[Self::BYTES..].fill(if self.is_negative() { 0xFF } else { 0 });
 
         Ok(())
     }

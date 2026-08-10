@@ -8,6 +8,7 @@ use crate::{
     error::{CodecError, DecodingError},
 };
 use alloc::vec::Vec;
+use alloy_primitives::{Signed, Uint, I128, I8, U128};
 use byteorder::ByteOrder;
 use bytes::{Buf, BytesMut};
 use core::{marker::PhantomData, mem::size_of};
@@ -44,6 +45,10 @@ impl<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool, const IS_STATIC: bo
         if buf.len() < offset + word_size {
             buf.resize(offset + word_size, 0);
         }
+        // Clear the whole slot before writing the single byte. `resize` only zeroes bytes it adds,
+        // so encoding into a buffer that already reaches this far would leave the padding as
+        // whatever was there - the same defect the integer and `Uint`/`Signed` impls fill against.
+        buf[offset..offset + word_size].fill(0);
 
         let write_to = get_aligned_slice::<B, ALIGN>(buf, offset, 1);
 
@@ -195,6 +200,75 @@ impl_int!(i16, read_i16, write_i16);
 impl_int!(i32, read_i32, write_i32);
 impl_int!(i64, read_i64, write_i64);
 
+// `int8`, `uint128` and `int128` are the widths `impl_int!` cannot cover: `byteorder` has no
+// single-byte reader, because one byte has no order, and the macro was never extended to 128 bits.
+// They delegate to the generic `Uint`/`Signed` impls rather than repeating the padding and
+// sign-extension arithmetic a fourth time. Every hand-written copy of those rules in this crate
+// has drifted from the others at least once.
+fn widen_u128(value: u128) -> U128 {
+    Uint::from_limbs([value as u64, (value >> 64) as u64])
+}
+
+fn narrow_u128(value: U128) -> u128 {
+    let limbs = value.as_limbs();
+    ((limbs[1] as u128) << 64) | limbs[0] as u128
+}
+
+fn widen_i128(value: i128) -> I128 {
+    Signed::from_raw(widen_u128(value as u128))
+}
+
+fn narrow_i128(value: I128) -> i128 {
+    narrow_u128(value.into_raw()) as i128
+}
+
+fn widen_i8(value: i8) -> I8 {
+    Signed::from_raw(Uint::from_limbs([value as u8 as u64]))
+}
+
+fn narrow_i8(value: I8) -> i8 {
+    value.into_raw().as_limbs()[0] as u8 as i8
+}
+
+macro_rules! impl_int_delegating {
+    ($prim:ty, $wide:ty, $widen:path, $narrow:path) => {
+        impl<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool, const IS_STATIC: bool>
+            Encoder<B, ALIGN, SOL_MODE, IS_STATIC> for $prim
+        where
+            $wide: Encoder<B, ALIGN, SOL_MODE, IS_STATIC>,
+        {
+            const HEADER_SIZE: usize =
+                <$wide as Encoder<B, ALIGN, SOL_MODE, IS_STATIC>>::HEADER_SIZE;
+            const IS_DYNAMIC: bool = <$wide as Encoder<B, ALIGN, SOL_MODE, IS_STATIC>>::IS_DYNAMIC;
+
+            fn encode(&self, buf: &mut BytesMut, offset: usize) -> Result<(), CodecError> {
+                <$wide as Encoder<B, ALIGN, SOL_MODE, IS_STATIC>>::encode(
+                    &$widen(*self),
+                    buf,
+                    offset,
+                )
+            }
+
+            fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
+                Ok($narrow(<$wide as Encoder<
+                    B,
+                    ALIGN,
+                    SOL_MODE,
+                    IS_STATIC,
+                >>::decode(buf, offset)?))
+            }
+
+            fn partial_decode(buf: &impl Buf, offset: usize) -> Result<(usize, usize), CodecError> {
+                <$wide as Encoder<B, ALIGN, SOL_MODE, IS_STATIC>>::partial_decode(buf, offset)
+            }
+        }
+    };
+}
+
+impl_int_delegating!(u128, U128, widen_u128, narrow_u128);
+impl_int_delegating!(i128, I128, widen_i128, narrow_i128);
+impl_int_delegating!(i8, I8, widen_i8, narrow_i8);
+
 /// Encodes and decodes `Option<T>` where `T` is an encoder.
 /// The encoded data is prefixed with a single byte that indicates whether the Option is Some or
 /// None. Single byte will be aligned to ALIGN.
@@ -203,7 +277,11 @@ impl<T, B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool, const IS_STATIC:
 where
     T: Sized + Encoder<B, ALIGN, SOL_MODE, true> + Default,
 {
-    const HEADER_SIZE: usize = 1 + T::HEADER_SIZE;
+    // The flag takes a whole aligned slot and the value starts in the next one, which is what
+    // `encode` below writes. Summing the raw sizes instead understates the field - `Option<u32>`
+    // claimed 5, aligning to one 32-byte word, while the value occupies two - and every consumer
+    // that strides by this constant then overlaps its own elements.
+    const HEADER_SIZE: usize = align_up::<ALIGN>(1) + align_up::<ALIGN>(T::HEADER_SIZE);
     const IS_DYNAMIC: bool = false;
 
     fn encode(&self, buf: &mut BytesMut, offset: usize) -> Result<(), CodecError> {
@@ -212,6 +290,11 @@ where
         if buf.len() < offset + aligned_header {
             buf.resize(offset + aligned_header, 0);
         }
+        // Clear the flag's slot first: only one byte of it is written, and `resize` zeroes only
+        // what it appends, so writing into a buffer that already reaches this far would leave the
+        // rest of the slot as whatever was underneath.
+        buf[offset..offset + align_up::<ALIGN>(1)].fill(0);
+
         // Get aligned slice for the option flag
         let flag_slice = get_aligned_slice::<B, ALIGN>(buf, offset, 1);
         flag_slice[0] = if self.is_some() { 1 } else { 0 };
@@ -242,8 +325,11 @@ where
         }
 
         let chunk = &buf.chunk()[offset..];
+        // The flag lives in the first aligned slot, where `encode` writes it - not at the end of
+        // the whole field. Indexing by the field width reads the low byte of the value instead,
+        // and then `Some(v)` decodes as `None` for every `v` whose low byte is zero.
         let option_flag = if is_big_endian::<B>() {
-            chunk[aligned_header - 1]
+            chunk[ALIGN - 1]
         } else {
             chunk[0]
         };
@@ -259,33 +345,21 @@ where
     }
 
     fn partial_decode(buf: &impl Buf, offset: usize) -> Result<(usize, usize), CodecError> {
-        let aligned_header =
+        // The field is the flag slot plus the value slot, and it is that wide whichever variant is
+        // present - a reader stepping over it must land in the same place either way. The width no
+        // longer has to be reassembled here: `HEADER_SIZE` already carries it.
+        let width =
             align_up::<ALIGN>(<Self as Encoder<B, ALIGN, SOL_MODE, IS_STATIC>>::HEADER_SIZE);
 
-        if buf.remaining() < offset + aligned_header {
+        if buf.remaining() < offset + width {
             return Err(CodecError::Decoding(DecodingError::BufferTooSmall {
-                expected: offset + aligned_header,
+                expected: offset + width,
                 found: buf.remaining(),
                 msg: "buf too small".to_string(),
             }));
         }
 
-        let chunk = &buf.chunk()[offset..];
-        let option_flag = if is_big_endian::<B>() {
-            chunk[ALIGN - 1]
-        } else {
-            chunk[0]
-        };
-
-        let chunk = &buf.chunk()[offset + ALIGN..];
-
-        if option_flag != 0 {
-            let (_, inner_size) = T::partial_decode(&chunk, 0)?;
-            Ok((offset, aligned_header + inner_size))
-        } else {
-            let aligned_data_size = align_up::<ALIGN>(T::HEADER_SIZE);
-            Ok((offset, aligned_header + aligned_data_size))
-        }
+        Ok((offset, width))
     }
 }
 
@@ -449,7 +523,13 @@ where
         }
 
         let item_size = align_up::<32>(T::HEADER_SIZE);
-        let total_size = offset + (item_size * N);
+        // Checked, like every other decode path here: on a 32-bit target a large offset would wrap
+        // instead, the guard below would then pass, and the slice further down would be taken at a
+        // wrapped index.
+        let total_size = item_size
+            .checked_mul(N)
+            .and_then(|body| offset.checked_add(body))
+            .ok_or(CodecError::Decoding(DecodingError::Overflow))?;
 
         if buf.remaining() < total_size {
             return Err(CodecError::Decoding(DecodingError::BufferTooSmall {
@@ -966,7 +1046,9 @@ mod tests {
                 };
 
                 assert!(
-                    buf[padding.clone()].iter().all(|byte| *byte == expected_fill),
+                    buf[padding.clone()]
+                        .iter()
+                        .all(|byte| *byte == expected_fill),
                     "{value:?}: padding {padding:?} should be all 0x{expected_fill:02x}, got {}",
                     hex_words(&buf)
                 );

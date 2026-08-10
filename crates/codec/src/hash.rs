@@ -310,12 +310,20 @@ where
             }));
         }
 
-        let (keys_offset, keys_length) =
-            read_bytes_header::<B, ALIGN, false>(buf, offset + align_up::<ALIGN>(4))?;
-        let (_values_offset, values_length) =
-            read_bytes_header::<B, ALIGN, false>(buf, offset + align_up::<ALIGN>(12))?;
+        // Where the length word sits, and the number of entries stored there - the same pair a
+        // `Vec` reports in this mode. A map writes its body offset *relative to its own head*
+        // while a `Vec` writes an absolute buffer position, so the relative value has to be
+        // rebased on `offset`; reading it as absolute is only right when the map starts at zero.
+        //
+        // The previous version read the *compact* header layout from inside this Solidity impl,
+        // at `align_up::<ALIGN>(4)` and `align_up::<ALIGN>(12)` - which at ALIGN 32 are both 32,
+        // so it read one place twice and returned the entry count as the offset.
+        let body = offset
+            .checked_add(read_u32_aligned::<B, ALIGN>(buf, offset)? as usize)
+            .ok_or(CodecError::Decoding(DecodingError::Overflow))?;
+        let length = read_u32_aligned::<B, ALIGN>(buf, body)? as usize;
 
-        Ok((keys_offset, keys_length + values_length))
+        Ok((body, length))
     }
 }
 
@@ -561,15 +569,18 @@ where
             }));
         }
 
-        let data_offset = read_u32_aligned::<B, ALIGN>(buf, aligned_offset)? as usize;
-        let start_offset = aligned_offset + data_offset;
-        let length = read_u32_aligned::<B, ALIGN>(buf, start_offset)? as usize;
-        let values_offset = read_u32_aligned::<B, ALIGN>(buf, start_offset + 64)? as usize;
-        let values_start = start_offset + 64 + values_offset;
+        // Where the length word sits, and how many elements are stored there. As with `HashMap`,
+        // the body offset is relative to this head, so it is rebased on `aligned_offset`.
+        //
+        // The previous version read the region offset from `start_offset + 64`, where the layout
+        // puts the region's own count rather than its offset, and reported an unaligned position
+        // derived from it.
+        let body = aligned_offset
+            .checked_add(read_u32_aligned::<B, ALIGN>(buf, aligned_offset)? as usize)
+            .ok_or(CodecError::Decoding(DecodingError::Overflow))?;
+        let length = read_u32_aligned::<B, ALIGN>(buf, body)? as usize;
 
-        let data_length = length * align_up::<ALIGN>(T::HEADER_SIZE);
-
-        Ok((values_start + 32, data_length))
+        Ok((body, length))
     }
 }
 

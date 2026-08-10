@@ -130,7 +130,11 @@ where
     }
 
     fn partial_decode(buf: &impl Buf, offset: usize) -> Result<(usize, usize), CodecError> {
-        read_bytes_header::<B, ALIGN, false>(buf, offset)
+        // A compact vector's header is three words - element count, then the offset and size of
+        // the body - so the offset/size pair begins one word in. Reading from `offset` instead
+        // returns the element count where the offset belongs and the offset where the size does,
+        // which is what `decode` above avoids by starting its own read at the same place.
+        read_bytes_header::<B, ALIGN, false>(buf, offset + align_up::<ALIGN>(4))
     }
 }
 

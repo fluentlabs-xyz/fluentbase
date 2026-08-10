@@ -8,7 +8,7 @@ pub mod bytes_codec;
 pub mod encoder;
 mod error;
 mod evm;
-mod func;
+pub mod func;
 mod hash;
 mod primitive;
 pub mod topic;
@@ -26,4 +26,5 @@ pub use encoder::*;
 pub use error::*;
 #[cfg(feature = "derive")]
 pub use fluentbase_codec_derive::Codec;
+pub use func::FunctionArgs;
 pub use topic::{encode_indexed_topic, IndexedTopic, SolidityEventTopic};

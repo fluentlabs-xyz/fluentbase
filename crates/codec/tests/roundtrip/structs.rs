@@ -87,16 +87,19 @@ fn test_complex_struct_solidity_packed() {
     // element of these arrays takes a whole word. `FixedBytes<N>` is the type that packs to a bare
     // `bytesN`.
     fn packed_u8_array(bytes: &[u8]) -> String {
-        bytes.iter().map(|b| format!("{:0>62}{:02x}", "", b)).collect()
+        bytes
+            .iter()
+            .map(|b| format!("{:0>62}{:02x}", "", b))
+            .collect()
     }
 
     let expected_encoded = [
-        "ff".to_string(),               // u8 (1 byte)
-        "ffff".to_string(),             // u16 (2 bytes)
-        "ffffffff".to_string(),         // u32 (4 bytes)
-        "ffffffffffffffff".to_string(), // u64 (8 bytes)
-        "01".to_string(),               // bool (1 byte)
-        packed_u8_array(&original.bytes_1), // uint8[1] (1 word)
+        "ff".to_string(),                    // u8 (1 byte)
+        "ffff".to_string(),                  // u16 (2 bytes)
+        "ffffffff".to_string(),              // u32 (4 bytes)
+        "ffffffffffffffff".to_string(),      // u64 (8 bytes)
+        "01".to_string(),                    // bool (1 byte)
+        packed_u8_array(&original.bytes_1),  // uint8[1] (1 word)
         packed_u8_array(&original.bytes_32), // uint8[32] (32 words)
         // tuple:
         "abcd".to_string(),                 // u16 (2 bytes)

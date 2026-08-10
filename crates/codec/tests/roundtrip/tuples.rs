@@ -339,3 +339,37 @@ fn test_single_tuple_solidity() {
         );
     }
 }
+
+/// A tuple with an `Option` member.
+///
+/// `Option<T>` writes its flag into one aligned slot and its value into the next, so the field is
+/// two slots wide. `HEADER_SIZE` used to report the raw sum `1 + T::HEADER_SIZE`, which aligns to a
+/// single slot, and the tuple then laid the following member on top of the option's value: this
+/// case decoded to `(7, Some(9), 9)` - the trailing `u64` read back as the option's contents.
+/// The values are chosen so their low byte is zero as well as non-zero. The flag byte sits in the
+/// first slot of the field and the value in the second; index the flag by the width of the whole
+/// field instead and you read the value's low byte, so `Some(0)`, `Some(256)` and any address
+/// ending in `0x00` come back as `None` with no error. A sweep over `Some(42)` alone is green
+/// against that.
+#[test]
+fn tuple_with_optional_member_does_not_overlap_its_neighbours() {
+    for flag in [
+        Some(42u32),
+        Some(0u32),
+        Some(256u32),
+        Some(0x1234_5600u32),
+        None,
+    ] {
+        let value = (7u32, flag, 9u64);
+
+        let mut buf = BytesMut::new();
+        SolidityABI::encode(&value, &mut buf, 0).unwrap();
+        let decoded = SolidityABI::<(u32, Option<u32>, u64)>::decode(&buf.freeze(), 0).unwrap();
+        assert_eq!(decoded, value, "solidity round trip with flag {flag:?}");
+
+        let mut buf = BytesMut::new();
+        CompactABI::encode(&value, &mut buf, 0).unwrap();
+        let decoded = CompactABI::<(u32, Option<u32>, u64)>::decode(&buf.freeze(), 0).unwrap();
+        assert_eq!(decoded, value, "compact round trip with flag {flag:?}");
+    }
+}
