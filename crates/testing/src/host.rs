@@ -15,6 +15,9 @@ pub struct TestingContextImpl {
 
 pub type HostTestingContextNativeAPI = RuntimeContextWrapper;
 
+type CallHandler =
+    Box<dyn FnMut(Address, U256, &[u8], Option<u64>) -> SyscallResult<Bytes> + 'static>;
+
 impl TestingContextImpl {
     pub fn with_shared_context_input(self, ctx: SharedContextInputV1) -> Self {
         self.inner.borrow_mut().shared_context_input_v1 = ctx;
@@ -84,6 +87,13 @@ impl TestingContextImpl {
         self.inner.borrow_mut().fuel_limit = Some(gas_limit * FUEL_DENOM_RATE);
         self
     }
+    /// Installs a handler for mocked cross-contract calls.
+    pub fn set_call_handler(
+        &self,
+        handler: impl FnMut(Address, U256, &[u8], Option<u64>) -> SyscallResult<Bytes> + 'static,
+    ) {
+        self.inner.borrow_mut().call_handler = Some(Box::new(handler));
+    }
     pub fn consumed_fuel(&self) -> u64 {
         self.inner.borrow().consumed_fuel
     }
@@ -152,6 +162,7 @@ struct TestingContextInner {
     consumed_fuel: u64,
     fuel_limit: Option<u64>,
     contract_metadata: Option<Bytes>,
+    call_handler: Option<CallHandler>,
 }
 
 impl Default for TestingContextImpl {
@@ -171,6 +182,7 @@ impl Default for TestingContextImpl {
                 consumed_fuel: 0,
                 fuel_limit: None,
                 contract_metadata: None,
+                call_handler: None,
             })),
         }
     }
@@ -334,12 +346,20 @@ impl SharedAPI for TestingContextImpl {
 
     fn call(
         &mut self,
-        _address: Address,
-        _value: U256,
-        _input: &[u8],
-        _fuel_limit: Option<u64>,
+        address: Address,
+        value: U256,
+        input: &[u8],
+        fuel_limit: Option<u64>,
     ) -> SyscallResult<Bytes> {
-        unimplemented!("not supported for testing context")
+        let mut handler = self
+            .inner
+            .borrow_mut()
+            .call_handler
+            .take()
+            .expect("call handler is not configured for testing context");
+        let result = handler(address, value, input, fuel_limit);
+        self.inner.borrow_mut().call_handler = Some(handler);
+        result
     }
 
     fn call_code(

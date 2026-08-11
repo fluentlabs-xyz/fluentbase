@@ -1,6 +1,5 @@
 ---
 source: crates/sdk-derive/derive-core/src/event.rs
-assertion_line: 264
 expression: generate(input)
 ---
 impl Transfer {
@@ -27,7 +26,8 @@ impl Transfer {
             {
                 let mut buf = fluentbase_sdk::codec::bytes::BytesMut::new();
                 let value = self.from.clone();
-                SolidityABI::encode(&value, &mut buf, 0).expect("encode indexed field");
+                SolidityABI::encode(&value, &mut buf, 0)
+                    .map_err(|_| fluentbase_sdk::ExitCode::MalformedBuiltinParams)?;
                 if SolidityABI::<Address>::is_dynamic() {
                     fluentbase_sdk::B256::new(SDK::keccak256(&buf).0)
                 } else {
@@ -39,7 +39,8 @@ impl Transfer {
             {
                 let mut buf = fluentbase_sdk::codec::bytes::BytesMut::new();
                 let value = self.to.clone();
-                SolidityABI::encode(&value, &mut buf, 0).expect("encode indexed field");
+                SolidityABI::encode(&value, &mut buf, 0)
+                    .map_err(|_| fluentbase_sdk::ExitCode::MalformedBuiltinParams)?;
                 if SolidityABI::<Address>::is_dynamic() {
                     fluentbase_sdk::B256::new(SDK::keccak256(&buf).0)
                 } else {
@@ -52,7 +53,8 @@ impl Transfer {
         let data = {
             let mut buf = fluentbase_sdk::codec::bytes::BytesMut::new();
             let values = (self.value.clone(),);
-            SolidityABI::encode(&values, &mut buf, 0).expect("encode data fields");
+            SolidityABI::encode_function_args(&values, &mut buf)
+                .map_err(|_| fluentbase_sdk::ExitCode::MalformedBuiltinParams)?;
             buf.freeze()
         };
         sdk.emit_log(&topics, &data).ok()

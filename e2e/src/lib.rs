@@ -52,6 +52,8 @@ mod helpers;
 #[cfg(test)]
 mod router;
 #[cfg(test)]
+mod staking;
+#[cfg(test)]
 mod stateless;
 // #[cfg(all(test, feature = "svm"))]
 // pub mod svm;

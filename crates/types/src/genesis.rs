@@ -51,6 +51,12 @@ pub const PRECOMPILE_WASM_RUNTIME: Address = address!("0x00000000000000000000000
 pub const PRECOMPILE_RUNTIME_UPGRADE: Address =
     address!("0x0000000000000000000000000000000000520010");
 
+/// Validator staking rWasm contract deployed directly in genesis.
+pub const GENESIS_STAKING: Address = address!("0x0000000000000000000000000000000000520011");
+
+/// Governance rWasm contract address reserved for genesis deployment.
+pub const GENESIS_GOVERNANCE: Address = address!("0x0000000000000000000000000000000000520012");
+
 /// A precompile smart contract that can deploy child contracts using CREATE/CREATE2.
 pub const PRECOMPILE_CREATE2_FACTORY: Address =
     address!("0x4e59b44847b379578588920cA78FbF26c0B4956C");

@@ -1,6 +1,5 @@
 ---
 source: crates/sdk-derive/derive-core/src/event.rs
-assertion_line: 290
 expression: generate(input)
 ---
 impl DataStored {
@@ -28,7 +27,8 @@ impl DataStored {
         let data = {
             let mut buf = fluentbase_sdk::codec::bytes::BytesMut::new();
             let values = (self.key.clone(), self.value.clone());
-            SolidityABI::encode(&values, &mut buf, 0).expect("encode data fields");
+            SolidityABI::encode_function_args(&values, &mut buf)
+                .map_err(|_| fluentbase_sdk::ExitCode::MalformedBuiltinParams)?;
             buf.freeze()
         };
         sdk.emit_log(&topics, &data).ok()
