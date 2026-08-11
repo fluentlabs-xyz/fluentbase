@@ -21,7 +21,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y clang libclang-dev pkg-config
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
 
       # Try to fetch the latest successful baseline from devel
       - name: Download baseline from devel
