@@ -3,7 +3,7 @@
 use fluentbase_sdk::{
     address,
     derive::{derive_keccak256_id, erc7201_slot},
-    Address, U256,
+    Address, FUEL_DENOM_RATE, U256,
 };
 
 pub const SIG_LEN_BYTES: usize = 4;
@@ -16,10 +16,10 @@ pub const STATUS_JAIL: u8 = 3;
 // ABI selectors are derived from their canonical signatures. The pinned hex
 // values remain beside them to make ABI drift visible during review.
 
-// 0x4b4b21a5
+// 0xd86555fe
 pub const SIG_INITIALIZE: u32 =
     derive_keccak256_id!(
-        "initialize(address,address[],uint256[],bytes[],bytes[],bytes32[],uint16,address,uint32,uint32,uint32,uint32,uint32,uint256,uint256,uint64,address,address,uint256,address,address)"
+        "initialize(address,address[],uint256[],bytes[],bytes[],bytes32[],uint16,address,uint32,uint32,uint32,uint256,uint256,uint64,address,address,uint256,address,address)"
     );
 // 0x76671808
 pub const SIG_CURRENT_EPOCH: u32 = derive_keccak256_id!("currentEpoch()");
@@ -53,6 +53,9 @@ pub const SIG_GET_STAKING_TOKEN: u32 = derive_keccak256_id!("getStakingToken()")
 // 0x32cc6f08
 pub const SIG_GET_ACTIVE_VALIDATORS_LENGTH: u32 =
     derive_keccak256_id!("getActiveValidatorsLength()");
+// 0xd9b083ba
+pub const SIG_GET_ACTIVE_VALIDATORS_LENGTH_AT: u32 =
+    derive_keccak256_id!("getActiveValidatorsLengthAt(uint64)");
 // 0x346c90a8
 pub const SIG_GET_EPOCH_BLOCK_INTERVAL: u32 = derive_keccak256_id!("getEpochBlockInterval()");
 // 0xa2a50528
@@ -77,9 +80,6 @@ pub const SIG_REGISTER_VALIDATOR: u32 =
 pub const SIG_DELEGATE: u32 = derive_keccak256_id!("delegate(address,uint256)");
 // 0x4d99dd16
 pub const SIG_UNDELEGATE: u32 = derive_keccak256_id!("undelegate(address,uint256)");
-// 0x2c1d88e8
-pub const SIG_DEFAULT_PARTICIPATION_FLOOR_BPS: u32 =
-    derive_keccak256_id!("DEFAULT_PARTICIPATION_FLOOR_BPS()");
 // 0x6cc69027
 pub const SIG_DEFAULT_SLASH_REPORTER_BPS: u32 =
     derive_keccak256_id!("DEFAULT_SLASH_REPORTER_BPS()");
@@ -88,26 +88,22 @@ pub const SIG_MAX_ACTIVE_VALIDATORS: u32 = derive_keccak256_id!("MAX_ACTIVE_VALI
 // 0x2bc2fec4
 pub const SIG_MAX_BLEND_STIPEND_PER_EPOCH: u32 =
     derive_keccak256_id!("MAX_BLEND_STIPEND_PER_EPOCH()");
-// 0x9dbdf12b
-pub const SIG_MAX_PARTICIPATION_FLOOR_BPS: u32 =
-    derive_keccak256_id!("MAX_PARTICIPATION_FLOOR_BPS()");
 // 0x0a3a6183
 pub const SIG_MAX_SLASH_REPORTER_BPS: u32 = derive_keccak256_id!("MAX_SLASH_REPORTER_BPS()");
+// 0x6fd3afb7
+pub const SIG_DEFAULT_MIN_VERDICT_DUE_BLOCKS: u32 =
+    derive_keccak256_id!("DEFAULT_MIN_VERDICT_DUE_BLOCKS()");
+// 0xd4c30c1a
+pub const SIG_DEFAULT_EXCLUSION_BACKOFF_CAP: u32 =
+    derive_keccak256_id!("DEFAULT_EXCLUSION_BACKOFF_CAP()");
+// 0x9b9a11ba
+pub const SIG_MAX_MIN_VERDICT_DUE_BLOCKS: u32 =
+    derive_keccak256_id!("MAX_MIN_VERDICT_DUE_BLOCKS()");
 // 0x23b872dd
 pub const SIG_ERC20_TRANSFER_FROM: u32 =
     derive_keccak256_id!("transferFrom(address,address,uint256)");
 // 0xa9059cbb
 pub const SIG_ERC20_TRANSFER: u32 = derive_keccak256_id!("transfer(address,uint256)");
-// 0xbe199738
-pub const SIG_GET_FELONY_THRESHOLD: u32 = derive_keccak256_id!("getFelonyThreshold()");
-// 0xfcd6cb3e
-pub const SIG_SET_FELONY_THRESHOLD: u32 = derive_keccak256_id!("setFelonyThreshold(uint32)");
-// 0x6cbe6cd8
-pub const SIG_GET_VALIDATOR_JAIL_EPOCH_LENGTH: u32 =
-    derive_keccak256_id!("getValidatorJailEpochLength()");
-// 0xc8652bd5
-pub const SIG_SET_VALIDATOR_JAIL_EPOCH_LENGTH: u32 =
-    derive_keccak256_id!("setValidatorJailEpochLength(uint32)");
 // 0xce534df5
 pub const SIG_GET_SLASH_REPORTER_REWARD_BPS: u32 =
     derive_keccak256_id!("getSlashReporterRewardBps()");
@@ -118,17 +114,6 @@ pub const SIG_SET_SLASH_REPORTER_REWARD_BPS: u32 =
 pub const SIG_GET_SLASH_FUND_ADDRESS: u32 = derive_keccak256_id!("getSlashFundAddress()");
 // 0xa79e7263
 pub const SIG_SET_SLASH_FUND_ADDRESS: u32 = derive_keccak256_id!("setSlashFundAddress(address)");
-// 0x4baffdc4
-pub const SIG_GET_PARTICIPATION_FLOOR_BPS: u32 = derive_keccak256_id!("getParticipationFloorBps()");
-// 0xd0a01007
-pub const SIG_SET_PARTICIPATION_FLOOR_BPS: u32 =
-    derive_keccak256_id!("setParticipationFloorBps(uint32)");
-// 0x485fd959
-pub const SIG_GET_PARTICIPATION_JAIL_DISABLED: u32 =
-    derive_keccak256_id!("getParticipationJailDisabled()");
-// 0x8664f2e7
-pub const SIG_SET_PARTICIPATION_JAIL_DISABLED: u32 =
-    derive_keccak256_id!("setParticipationJailDisabled(bool)");
 // 0xc8f45d87
 pub const SIG_GET_BLEND_STIPEND_PER_EPOCH: u32 = derive_keccak256_id!("getBlendStipendPerEpoch()");
 // 0x2c91b879
@@ -165,6 +150,40 @@ pub const SIG_SET_LIVENESS_SLASHING: u32 = derive_keccak256_id!("setLivenessSlas
 pub const SIG_GET_BLEND_RESERVE: u32 = derive_keccak256_id!("getBlendReserve()");
 // 0x7899ae8f
 pub const SIG_SET_BLEND_RESERVE: u32 = derive_keccak256_id!("setBlendReserve(address)");
+// 0xee3ad0e7
+pub const SIG_GET_MIN_VERDICT_DUE_BLOCKS: u32 = derive_keccak256_id!("getMinVerdictDueBlocks()");
+// 0x4fae9dea
+pub const SIG_SET_MIN_VERDICT_DUE_BLOCKS: u32 =
+    derive_keccak256_id!("setMinVerdictDueBlocks(uint32)");
+// 0x6bed0322
+pub const SIG_GET_EXCLUSION_BACKOFF_CAP: u32 = derive_keccak256_id!("getExclusionBackoffCap()");
+// 0x3b543e1c
+pub const SIG_SET_EXCLUSION_BACKOFF_CAP: u32 =
+    derive_keccak256_id!("setExclusionBackoffCap(uint32)");
+// 0x9a4c46bb
+pub const SIG_GET_PRODUCTION_LIVENESS_DISABLED: u32 =
+    derive_keccak256_id!("getProductionLivenessDisabled()");
+// 0x8fc07556
+pub const SIG_SET_PRODUCTION_LIVENESS_DISABLED: u32 =
+    derive_keccak256_id!("setProductionLivenessDisabled(bool)");
+// 0x8e948ac1
+pub const SIG_GET_PRODUCTION_STATS: u32 =
+    derive_keccak256_id!("getProductionStats(address,uint64)");
+// 0xf06be669
+pub const SIG_BLOCKS_IN_EPOCH: u32 = derive_keccak256_id!("blocksInEpoch(uint64)");
+// 0x91c7d453
+pub const SIG_PRODUCED_AT: u32 = derive_keccak256_id!("producedAt(uint64,uint32)");
+// 0xaef690f9
+pub const SIG_PENDING_EXCLUSIONS: u32 = derive_keccak256_id!("pendingExclusions()");
+// 0x32066046
+pub const SIG_READMIT_AT_EPOCH: u32 = derive_keccak256_id!("readmitAtEpoch(address)");
+// 0x33de61d2
+pub const SIG_LAST_PROCESSED_BLOCK: u32 = derive_keccak256_id!("lastProcessedBlock()");
+// 0x8244a2c2
+pub const SIG_RECORD_PRODUCTION: u32 = derive_keccak256_id!("recordProduction(uint64,uint8)");
+// 0x92d321ab
+pub const SIG_SETTLE_EPOCH_STIPEND_FROM: u32 =
+    derive_keccak256_id!("settleEpochStipendFrom(uint64)");
 // 0x457179fd
 pub const SIG_GET_VALIDATOR_FEE: u32 = derive_keccak256_id!("getValidatorFee(address)");
 // 0xc6fb9065
@@ -225,21 +244,10 @@ pub const SIG_GET_EPOCH_COMMITTEE_LENGTH: u32 =
 // 0xa4d160c1
 pub const SIG_GET_EPOCH_COMMITTEE_WITH_STAKES: u32 =
     derive_keccak256_id!("getEpochCommitteeWithStakes(uint64)");
-// 0x73a3dda6
-pub const SIG_RELEASE_VALIDATOR_FROM_JAIL: u32 =
-    derive_keccak256_id!("releaseValidatorFromJail(address)");
-// 0x67d80300
-pub const SIG_READMIT_EXPIRED_JAILS: u32 = derive_keccak256_id!("readmitExpiredJails(uint64)");
-// 0xc96be4cb
-pub const SIG_SLASH: u32 = derive_keccak256_id!("slash(address)");
 // 0xa5d2dd22
 pub const SIG_BLS_COMPRESS_G2_UNCHECKED: u32 = derive_keccak256_id!("compressG2Unchecked(bytes)");
 // 0x8bf26133
 pub const SIG_BLS_VERIFY: u32 = derive_keccak256_id!("verify(bytes,bytes,bytes,bytes,bytes)");
-// 0x52736f7b
-pub const SIG_LAST_FINALIZED_EPOCH_P1: u32 = derive_keccak256_id!("lastFinalizedEpochP1()");
-// 0x6a4a209f
-pub const SIG_PARTICIPATION: u32 = derive_keccak256_id!("participation(uint64,uint32)");
 // 0xa10954fe
 pub const SIG_RESERVE_BALANCE: u32 = derive_keccak256_id!("reserveBalance()");
 // 0x7f3bd56e
@@ -276,7 +284,7 @@ pub const SIG_BLS_COMPRESS_G1_UNCHECKED: u32 = derive_keccak256_id!("compressG1U
 
 pub const ERR_ALREADY_INITIALIZED: u32 = derive_keccak256_id!("InvalidInitialization()");
 pub const ERR_NOT_INITIALIZED: u32 = derive_keccak256_id!("NotInitialized()");
-pub const ERR_ONLY_GOVERNANCE: u32 = derive_keccak256_id!("OnlyGovernanceContract()");
+pub const ERR_ONLY_GOVERNANCE: u32 = derive_keccak256_id!("OnlyGovernance()");
 pub const ERR_ZERO_OWNER: u32 = derive_keccak256_id!("ZeroOwner()");
 pub const ERR_ZERO_VALIDATOR: u32 = derive_keccak256_id!("ZeroValidator()");
 pub const ERR_MALFORMED_INPUT_LENGTH: u32 = derive_keccak256_id!("MalformedInputLength()");
@@ -305,7 +313,7 @@ pub const ERR_PENDING_DELEGATION: u32 = derive_keccak256_id!("PendingDelegation(
 pub const ERR_STAKING_TOKEN_CALL_FAILED: u32 = derive_keccak256_id!("StakingTokenCallFailed()");
 pub const ERR_UNKNOWN_METHOD: u32 = derive_keccak256_id!("UnknownMethod()");
 pub const ERR_ONLY_SYSTEM_CALL: u32 = derive_keccak256_id!("OnlySystemCall()");
-pub const ERR_ONLY_LIVENESS_SLASHING: u32 = derive_keccak256_id!("OnlyLivenessSlashing()");
+pub const ERR_ONLY_SELF_CALL: u32 = derive_keccak256_id!("OnlySelfCall()");
 pub const ERR_ZERO_VALUE: u32 = derive_keccak256_id!("ZeroValue(string)");
 pub const ERR_MAX_ACTIVE_VALIDATORS_EXCEEDED: u32 =
     derive_keccak256_id!("MaxActiveValidatorsExceeded(uint32,uint32)");
@@ -316,10 +324,10 @@ pub const ERR_UNDELEGATE_WINDOW_TOO_SHORT: u32 =
     derive_keccak256_id!("UndelegateWindowTooShort(uint256,uint256)");
 pub const ERR_SLASH_REPORTER_REWARD_BPS_TOO_HIGH: u32 =
     derive_keccak256_id!("SlashReporterRewardBpsTooHigh(uint32,uint32)");
-pub const ERR_PARTICIPATION_FLOOR_BPS_TOO_HIGH: u32 =
-    derive_keccak256_id!("ParticipationFloorBpsTooHigh(uint32,uint32)");
 pub const ERR_BLEND_STIPEND_PER_EPOCH_TOO_HIGH: u32 =
     derive_keccak256_id!("BlendStipendPerEpochTooHigh(uint256,uint256)");
+pub const ERR_MIN_VERDICT_DUE_BLOCKS_TOO_HIGH: u32 =
+    derive_keccak256_id!("MinVerdictDueBlocksTooHigh(uint32,uint32)");
 pub const ERR_INVALID_CLAIM_EPOCH: u32 = derive_keccak256_id!("InvalidClaimEpoch()");
 pub const ERR_CONSENSUS_KEYS_ALREADY_SET: u32 =
     derive_keccak256_id!("ConsensusKeysAlreadySet(address)");
@@ -335,6 +343,10 @@ pub const ERR_SIGNER_INDEX_OUT_OF_RANGE: u32 =
 pub const ERR_COMMITTEE_LENGTH_MISMATCH: u32 =
     derive_keccak256_id!("CommitteeLengthMismatch(uint256,uint256)");
 pub const ERR_COMMITTEE_TOO_SMALL: u32 = derive_keccak256_id!("CommitteeTooSmall(uint256,uint256)");
+pub const ERR_LEADER_STAKES_LENGTH_MISMATCH: u32 =
+    derive_keccak256_id!("LeaderStakesLengthMismatch(uint64,uint256,uint256)");
+pub const ERR_STIPEND_RATE_NOT_SNAPSHOTTED: u32 =
+    derive_keccak256_id!("StipendRateNotSnapshotted(uint64)");
 pub const ERR_EPOCH_NOT_YET_COMMITTABLE: u32 =
     derive_keccak256_id!("EpochNotYetCommittable(uint64,uint64)");
 pub const ERR_COMMITTEE_MEMBER_KEYLESS: u32 =
@@ -369,8 +381,6 @@ pub const ERR_EQUIVOCATION_COMMITMENT_NOT_MATURE: u32 =
     derive_keccak256_id!("EquivocationCommitmentNotMature(address,uint64,uint64)");
 pub const ERR_INVALID_EQUIVOCATION_PROOF_KIND: u32 =
     derive_keccak256_id!("InvalidEquivocationProofKind(uint8)");
-pub const ERR_VALIDATOR_NOT_IN_JAIL: u32 = derive_keccak256_id!("ValidatorNotInJail(address)");
-pub const ERR_STILL_IN_JAIL: u32 = derive_keccak256_id!("StillInJail(address)");
 
 pub const BALANCE_COMPACT_PRECISION: U256 = U256::from_limbs([10_000_000_000, 0, 0, 0]);
 pub const COMMISSION_RATE_MAX: u16 = 3_000;
@@ -381,7 +391,24 @@ pub const MIN_COMMITTEE_LENGTH: usize = 1;
 pub const DEFAULT_UNDELEGATE_PERIOD: u64 = 7;
 pub const WARMUP_DELAY: u64 = 2;
 pub const MAX_EPOCHS_PER_CLAIM: u64 = 1_000;
-pub const MAX_SETTLE_CATCHUP: u64 = 32;
+/// Inherited from the Solidity, where it was sized against measured EVM gas for
+/// one settled epoch inside a 12M caller bound. rWasm meters fuel, not gas, so
+/// the bound this number encodes has not been measured on this runtime yet.
+pub const MAX_SETTLE_CATCHUP: u64 = 4;
+/// Exclusions stamped by one epoch close.
+///
+/// Deliberately low: a correlated loss of `f` seats is answered over at least
+/// eight closes, which gives a healed cause time to clear the verdicts before
+/// most stamps land.
+pub const MAX_STAMPS_PER_CLOSE: usize = 2;
+/// Fuel forwarded to the tolerant stipend leg.
+///
+/// The Solidity bound is 12M gas. Fuel is gas scaled by `FUEL_DENOM_RATE`, so
+/// passing the gas figure straight into the fuel slot under-provisions the
+/// frame twentyfold and turns the leg into a guaranteed `OutOfFuel`. Like
+/// `MAX_SETTLE_CATCHUP`, the 12M itself is a measured EVM budget that has not
+/// been re-measured against rWasm fuel.
+pub const STIPEND_FUEL_CAP: u64 = 12_000_000 * FUEL_DENOM_RATE;
 pub const EPOCH_COMMITTEE_RETENTION_MARGIN: u64 = 8;
 pub const MAX_COMMITTEE_LOOKAHEAD_EPOCHS: u64 = 2;
 pub const BLS_PUBKEY_UNCOMPRESSED_LENGTH: usize = 256;
@@ -393,12 +420,14 @@ pub const EQUIVOCATION_PROOF_KIND_FINALIZE: u8 = 1;
 pub const EQUIVOCATION_PROOF_KIND_NULLIFY_FINALIZE: u8 = 2;
 pub const EQUIVOCATION_PROOF_KIND_COUNT: u8 = 3;
 
-pub const DEFAULT_FELONY_THRESHOLD: u32 = 1;
-pub const DEFAULT_VALIDATOR_JAIL_EPOCH_LENGTH: u32 = 1;
 pub const DEFAULT_SLASH_REPORTER_REWARD_BPS: u32 = 3_000;
 pub const MAX_SLASH_REPORTER_REWARD_BPS: u32 = 5_000;
-pub const DEFAULT_PARTICIPATION_FLOOR_BPS: u32 = 1_500;
-pub const MAX_PARTICIPATION_FLOOR_BPS: u32 = 2_000;
+pub const DEFAULT_MIN_VERDICT_DUE_BLOCKS: u32 = 100;
+pub const DEFAULT_EXCLUSION_BACKOFF_CAP: u32 = 128;
+/// A due-block floor above the epoch length makes `due >= floor` unsatisfiable
+/// for every member at any stake, disabling the tier while it still reads as
+/// enabled. Bounded absolutely so the check cannot become interval-dependent.
+pub const MAX_MIN_VERDICT_DUE_BLOCKS: u32 = 1_000_000;
 pub const MAX_BLEND_STIPEND_PER_EPOCH: U256 =
     U256::from_limbs([2_003_764_205_206_896_640, 54_210, 0, 0]);
 pub const SYSTEM_CALLER: Address = address!("0xfffffffffffffffffffffffffffffffffffffffe");
@@ -411,3 +440,5 @@ pub const INITIALIZER_STORAGE_SLOT: U256 = erc7201_slot!("Fluent.storage.Initial
 pub const CHAIN_CONFIG_STORAGE_SLOT: U256 = erc7201_slot!("Fluent.storage.ChainConfig");
 pub const CONSENSUS_STORAGE_SLOT: U256 = erc7201_slot!("Fluent.storage.Consensus");
 pub const STAKING_STORAGE_SLOT: U256 = erc7201_slot!("Fluent.storage.StakingStorage");
+pub const PRODUCTION_LIVENESS_STORAGE_SLOT: U256 =
+    erc7201_slot!("Fluent.storage.ProductionLiveness");

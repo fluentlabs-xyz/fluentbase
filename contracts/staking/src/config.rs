@@ -9,8 +9,8 @@ use crate::{
     storage::chain_config_storage,
     types::{AddressCommand, BoolCommand, InitializeCommand, U256Command, U32Command, U64Command},
     util::{
-        decode, ensure_governance, ensure_mutable, ensure_non_payable, revert, revert_with,
-        write_abi,
+        decode, ensure_governance, ensure_mutable, ensure_non_payable, next_epoch, revert,
+        revert_with, write_abi,
     },
 };
 use alloc::string::String;
@@ -43,15 +43,10 @@ pub(crate) fn apply_initial_config<SDK: SharedAPI>(
     config
         .active_validators_length_accessor()
         .set_checked(sdk, command.active_validators_length as u64)?;
+    schedule_cap_checkpoint(sdk, 0, command.active_validators_length)?;
     config
         .epoch_block_interval_accessor()
         .set_checked(sdk, command.epoch_block_interval as u64)?;
-    config
-        .felony_threshold_accessor()
-        .set_checked(sdk, command.felony_threshold)?;
-    config
-        .validator_jail_epoch_length_accessor()
-        .set_checked(sdk, command.validator_jail_epoch_length)?;
     config
         .undelegate_period_accessor()
         .set_checked(sdk, command.undelegate_period as u64)?;
@@ -73,6 +68,16 @@ pub(crate) fn apply_initial_config<SDK: SharedAPI>(
     config
         .blend_reserve_accessor()
         .set_checked(sdk, command.blend_reserve)?;
+    config
+        .min_verdict_due_blocks_accessor()
+        .set_checked(sdk, DEFAULT_MIN_VERDICT_DUE_BLOCKS)?;
+    config
+        .exclusion_backoff_cap_accessor()
+        .set_checked(sdk, DEFAULT_EXCLUSION_BACKOFF_CAP)?;
+    // The tier ships off, and an unwritten slot would ship it on.
+    config
+        .production_liveness_disabled_accessor()
+        .set_checked(sdk, true)?;
     if !command.bls_verifier.is_zero() {
         config
             .bls_verifier_accessor()
@@ -87,21 +92,12 @@ pub(crate) fn apply_initial_config<SDK: SharedAPI>(
     events::ActiveValidatorsLengthChanged {
         prev_value: DEFAULT_ACTIVE_VALIDATORS_LENGTH as u32,
         new_value: command.active_validators_length,
+        effective_epoch: 0,
     }
     .emit(sdk)?;
     events::EpochBlockIntervalChanged {
         prev_value: DEFAULT_EPOCH_BLOCK_INTERVAL as u32,
         new_value: command.epoch_block_interval,
-    }
-    .emit(sdk)?;
-    events::FelonyThresholdChanged {
-        prev_value: DEFAULT_FELONY_THRESHOLD,
-        new_value: command.felony_threshold,
-    }
-    .emit(sdk)?;
-    events::ValidatorJailEpochLengthChanged {
-        prev_value: DEFAULT_VALIDATOR_JAIL_EPOCH_LENGTH,
-        new_value: command.validator_jail_epoch_length,
     }
     .emit(sdk)?;
     events::UndelegatePeriodChanged {
@@ -122,6 +118,21 @@ pub(crate) fn apply_initial_config<SDK: SharedAPI>(
     events::DposActivationBlockChanged {
         prev_value: initialization_block,
         new_value: command.dpos_activation_block,
+    }
+    .emit(sdk)?;
+    events::MinVerdictDueBlocksChanged {
+        prev_value: 0,
+        new_value: DEFAULT_MIN_VERDICT_DUE_BLOCKS,
+    }
+    .emit(sdk)?;
+    events::ExclusionBackoffCapChanged {
+        prev_value: 0,
+        new_value: DEFAULT_EXCLUSION_BACKOFF_CAP,
+    }
+    .emit(sdk)?;
+    events::ProductionLivenessDisabledChanged {
+        prev_value: false,
+        new_value: true,
     }
     .emit(sdk)?;
     if !command.bls_verifier.is_zero() {
@@ -161,8 +172,6 @@ fn validate_initialization<SDK: SharedAPI>(
     if command.active_validators_length == 0
         || command.active_validators_length as u64 > MAX_ACTIVE_VALIDATORS_LENGTH
         || command.epoch_block_interval == 0
-        || command.felony_threshold == 0
-        || command.validator_jail_epoch_length == 0
         || command.undelegate_period == 0
         || command.min_validator_stake_amount.is_zero()
         || command.min_staking_amount.is_zero()
@@ -196,14 +205,6 @@ fn validate_initialization<SDK: SharedAPI>(
     Ok(())
 }
 
-/// Public handler `0x2c1d88e8` (`DEFAULT_PARTICIPATION_FLOOR_BPS`).
-///
-/// Returns the protocol default participation floor BPS constant.
-pub fn default_participation_floor_bps<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
-    ensure_non_payable(sdk)?;
-    write_abi(sdk, &DEFAULT_PARTICIPATION_FLOOR_BPS)
-}
-
 /// Public handler `0x6cc69027` (`DEFAULT_SLASH_REPORTER_BPS`).
 ///
 /// Returns the protocol default slash reporter BPS constant.
@@ -228,20 +229,36 @@ pub fn max_blend_stipend_per_epoch<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), 
     write_abi(sdk, &MAX_BLEND_STIPEND_PER_EPOCH)
 }
 
-/// Public handler `0x9dbdf12b` (`MAX_PARTICIPATION_FLOOR_BPS`).
-///
-/// Returns the protocol max participation floor BPS limit.
-pub fn max_participation_floor_bps<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
-    ensure_non_payable(sdk)?;
-    write_abi(sdk, &MAX_PARTICIPATION_FLOOR_BPS)
-}
-
 /// Public handler `0x0a3a6183` (`MAX_SLASH_REPORTER_BPS`).
 ///
 /// Returns the protocol max slash reporter BPS limit.
 pub fn max_slash_reporter_bps<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     ensure_non_payable(sdk)?;
     write_abi(sdk, &MAX_SLASH_REPORTER_REWARD_BPS)
+}
+
+/// Public handler `0x6fd3afb7` (`DEFAULT_MIN_VERDICT_DUE_BLOCKS`).
+///
+/// Returns the protocol default verdict due-block floor.
+pub fn default_min_verdict_due_blocks<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
+    ensure_non_payable(sdk)?;
+    write_abi(sdk, &DEFAULT_MIN_VERDICT_DUE_BLOCKS)
+}
+
+/// Public handler `0xd4c30c1a` (`DEFAULT_EXCLUSION_BACKOFF_CAP`).
+///
+/// Returns the protocol default exclusion backoff cap.
+pub fn default_exclusion_backoff_cap<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
+    ensure_non_payable(sdk)?;
+    write_abi(sdk, &DEFAULT_EXCLUSION_BACKOFF_CAP)
+}
+
+/// Public handler `0x9b9a11ba` (`MAX_MIN_VERDICT_DUE_BLOCKS`).
+///
+/// Returns the protocol ceiling on the verdict due-block floor.
+pub fn max_min_verdict_due_blocks<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
+    ensure_non_payable(sdk)?;
+    write_abi(sdk, &MAX_MIN_VERDICT_DUE_BLOCKS)
 }
 
 /// Public handler `0x9f9106d1` (`getStakingToken`).
@@ -268,6 +285,67 @@ pub fn get_active_validators_length<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(),
             .active_validators_length_accessor()
             .get_checked(sdk)?,
     )
+}
+
+/// Committee size cap in force at `epoch`.
+///
+/// Backward scan over the checkpoint history. An empty history means the
+/// contract is not initialized yet, in which case the scalar is the only
+/// answer available.
+pub(crate) fn active_validators_length_at<SDK: SharedAPI>(
+    sdk: &SDK,
+    epoch: u64,
+) -> Result<u64, ExitCode> {
+    let config = chain_config_storage();
+    let checkpoints = config.cap_checkpoints_accessor();
+    let mut index = checkpoints.len_checked(sdk)?;
+    while index > 0 {
+        index -= 1;
+        let checkpoint = checkpoints.at(index);
+        if checkpoint.from_epoch_accessor().get_checked(sdk)? <= epoch {
+            return Ok(checkpoint.value_accessor().get_checked(sdk)? as u64);
+        }
+    }
+    config
+        .active_validators_length_accessor()
+        .get_checked(sdk)
+}
+
+/// Records `value` as the cap from `from_epoch` onward.
+///
+/// A repeat set inside the same epoch overwrites the pending tail instead of
+/// appending, so a scheduled-but-not-yet-effective cap can still be corrected
+/// without leaving an unreachable checkpoint behind.
+fn schedule_cap_checkpoint<SDK: SharedAPI>(
+    sdk: &mut SDK,
+    from_epoch: u64,
+    value: u32,
+) -> Result<(), ExitCode> {
+    let checkpoints = chain_config_storage().cap_checkpoints_accessor();
+    let len = checkpoints.len_checked(sdk)?;
+    if len > 0 {
+        let tail = checkpoints.at(len - 1);
+        if tail.from_epoch_accessor().get_checked(sdk)? == from_epoch {
+            return tail.value_accessor().set_checked(sdk, value);
+        }
+    }
+    // `grow_checked` does not zero the new element, so both fields are written.
+    let entry = checkpoints.grow_checked(sdk)?;
+    entry.from_epoch_accessor().set_checked(sdk, from_epoch)?;
+    entry.value_accessor().set_checked(sdk, value)
+}
+
+/// Public handler `0xd9b083ba` (`getActiveValidatorsLengthAt`).
+///
+/// Returns the committee size cap that was in force at `epoch`.
+pub fn get_active_validators_length_at<SDK: SharedAPI>(
+    sdk: &mut SDK,
+    input: &[u8],
+) -> Result<(), ExitCode> {
+    ensure_non_payable(sdk)?;
+    let epoch = decode::<U64Command>(input)?.value;
+    let value = active_validators_length_at(sdk, epoch)?;
+    write_abi(sdk, &value)
 }
 
 /// Public handler `0x346c90a8` (`getEpochBlockInterval`).
@@ -367,73 +445,6 @@ fn require_undelegate_window<SDK: SharedAPI>(
     Ok(())
 }
 
-/// Public handler `0xbe199738` (`getFelonyThreshold`).
-///
-/// Returns the configured felony threshold.
-pub fn get_felony_threshold<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
-    ensure_non_payable(sdk)?;
-    write_abi(
-        sdk,
-        &chain_config_storage()
-            .felony_threshold_accessor()
-            .get_checked(sdk)?,
-    )
-}
-
-/// Public handler `0xfcd6cb3e` (`setFelonyThreshold`).
-///
-/// Updates the configured felony threshold.
-pub fn set_felony_threshold<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), ExitCode> {
-    ensure_governance_mutation(sdk)?;
-    let value = decode::<U32Command>(input)?.value;
-    if value == 0 {
-        return zero_value(sdk, "felonyThreshold");
-    }
-    let field = chain_config_storage().felony_threshold_accessor();
-    let previous = field.get_checked(sdk)?;
-    field.set_checked(sdk, value)?;
-    events::FelonyThresholdChanged {
-        prev_value: previous,
-        new_value: value,
-    }
-    .emit(sdk)
-}
-
-/// Public handler `0x6cbe6cd8` (`getValidatorJailEpochLength`).
-///
-/// Returns the configured validator jail epoch length.
-pub fn get_validator_jail_epoch_length<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
-    ensure_non_payable(sdk)?;
-    write_abi(
-        sdk,
-        &chain_config_storage()
-            .validator_jail_epoch_length_accessor()
-            .get_checked(sdk)?,
-    )
-}
-
-/// Public handler `0xc8652bd5` (`setValidatorJailEpochLength`).
-///
-/// Updates the configured validator jail epoch length.
-pub fn set_validator_jail_epoch_length<SDK: SharedAPI>(
-    sdk: &mut SDK,
-    input: &[u8],
-) -> Result<(), ExitCode> {
-    ensure_governance_mutation(sdk)?;
-    let value = decode::<U32Command>(input)?.value;
-    if value == 0 {
-        return zero_value(sdk, "validatorJailEpochLength");
-    }
-    let field = chain_config_storage().validator_jail_epoch_length_accessor();
-    let previous = field.get_checked(sdk)?;
-    field.set_checked(sdk, value)?;
-    events::ValidatorJailEpochLengthChanged {
-        prev_value: previous,
-        new_value: value,
-    }
-    .emit(sdk)
-}
-
 /// Public handler `0xce534df5` (`getSlashReporterRewardBps`).
 ///
 /// Returns the configured slash reporter reward BPS.
@@ -513,85 +524,6 @@ pub fn set_slash_fund_address<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Re
     .emit(sdk)
 }
 
-/// Public handler `0x4baffdc4` (`getParticipationFloorBps`).
-///
-/// Returns the configured participation floor BPS.
-pub fn get_participation_floor_bps<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
-    ensure_non_payable(sdk)?;
-    let stored = chain_config_storage()
-        .participation_floor_bps_accessor()
-        .get_checked(sdk)?;
-    write_abi(
-        sdk,
-        &(if stored == 0 {
-            DEFAULT_PARTICIPATION_FLOOR_BPS
-        } else {
-            stored
-        }),
-    )
-}
-
-/// Public handler `0xd0a01007` (`setParticipationFloorBps`).
-///
-/// Updates the configured participation floor BPS.
-pub fn set_participation_floor_bps<SDK: SharedAPI>(
-    sdk: &mut SDK,
-    input: &[u8],
-) -> Result<(), ExitCode> {
-    ensure_governance_mutation(sdk)?;
-    let value = decode::<U32Command>(input)?.value;
-    if value == 0 {
-        return zero_value(sdk, "participationFloorBps");
-    }
-    if value > MAX_PARTICIPATION_FLOOR_BPS {
-        return revert_with(
-            sdk,
-            ERR_PARTICIPATION_FLOOR_BPS_TOO_HIGH,
-            &(value, MAX_PARTICIPATION_FLOOR_BPS),
-        );
-    }
-    let field = chain_config_storage().participation_floor_bps_accessor();
-    let previous = field.get_checked(sdk)?;
-    field.set_checked(sdk, value)?;
-    events::ParticipationFloorBpsChanged {
-        prev_value: previous,
-        new_value: value,
-    }
-    .emit(sdk)
-}
-
-/// Public handler `0x485fd959` (`getParticipationJailDisabled`).
-///
-/// Returns the configured participation jail disabled.
-pub fn get_participation_jail_disabled<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
-    ensure_non_payable(sdk)?;
-    write_abi(
-        sdk,
-        &chain_config_storage()
-            .participation_jail_disabled_accessor()
-            .get_checked(sdk)?,
-    )
-}
-
-/// Public handler `0x8664f2e7` (`setParticipationJailDisabled`).
-///
-/// Updates the configured participation jail disabled.
-pub fn set_participation_jail_disabled<SDK: SharedAPI>(
-    sdk: &mut SDK,
-    input: &[u8],
-) -> Result<(), ExitCode> {
-    ensure_governance_mutation(sdk)?;
-    let value = decode::<BoolCommand>(input)?.value;
-    let field = chain_config_storage().participation_jail_disabled_accessor();
-    let previous = field.get_checked(sdk)?;
-    field.set_checked(sdk, value)?;
-    events::ParticipationJailDisabledChanged {
-        prev_value: previous,
-        new_value: value,
-    }
-    .emit(sdk)
-}
-
 /// Public handler `0xc8f45d87` (`getBlendStipendPerEpoch`).
 ///
 /// Returns the configured blend stipend per epoch.
@@ -652,10 +584,16 @@ pub fn set_active_validators_length<SDK: SharedAPI>(
     }
     let field = chain_config_storage().active_validators_length_accessor();
     let previous = field.get_checked(sdk)?;
+    // The scalar reports the latest SCHEDULED value immediately; the checkpoint
+    // governs epoch-correct reads. Splitting the two is what keeps an epoch that
+    // has already started immutable.
     field.set_checked(sdk, value as u64)?;
+    let effective_epoch = next_epoch(sdk)?;
+    schedule_cap_checkpoint(sdk, effective_epoch, value)?;
     events::ActiveValidatorsLengthChanged {
         prev_value: previous as u32,
         new_value: value,
+        effective_epoch,
     }
     .emit(sdk)
 }
@@ -783,6 +721,118 @@ pub fn set_min_staking_amount<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Re
     let previous = field.get_checked(sdk)?;
     field.set_checked(sdk, value)?;
     events::MinStakingAmountChanged {
+        prev_value: previous,
+        new_value: value,
+    }
+    .emit(sdk)
+}
+
+/// Public handler `0xee3ad0e7` (`getMinVerdictDueBlocks`).
+///
+/// Returns the configured verdict due-block floor.
+pub fn get_min_verdict_due_blocks<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
+    ensure_non_payable(sdk)?;
+    write_abi(
+        sdk,
+        &chain_config_storage()
+            .min_verdict_due_blocks_accessor()
+            .get_checked(sdk)?,
+    )
+}
+
+/// Public handler `0x4fae9dea` (`setMinVerdictDueBlocks`).
+///
+/// Updates the due-block floor below which a committee member holds no verdict.
+///
+/// Zero would judge a member that was never due a single slot; the ceiling
+/// keeps the floor from silently disabling the tier for every member at once.
+pub fn set_min_verdict_due_blocks<SDK: SharedAPI>(
+    sdk: &mut SDK,
+    input: &[u8],
+) -> Result<(), ExitCode> {
+    ensure_governance_mutation(sdk)?;
+    let value = decode::<U32Command>(input)?.value;
+    if value == 0 {
+        return zero_value(sdk, "minVerdictDueBlocks");
+    }
+    if value > MAX_MIN_VERDICT_DUE_BLOCKS {
+        return revert_with(
+            sdk,
+            ERR_MIN_VERDICT_DUE_BLOCKS_TOO_HIGH,
+            &(value, MAX_MIN_VERDICT_DUE_BLOCKS),
+        );
+    }
+    let field = chain_config_storage().min_verdict_due_blocks_accessor();
+    let previous = field.get_checked(sdk)?;
+    field.set_checked(sdk, value)?;
+    events::MinVerdictDueBlocksChanged {
+        prev_value: previous,
+        new_value: value,
+    }
+    .emit(sdk)
+}
+
+/// Public handler `0x6bed0322` (`getExclusionBackoffCap`).
+///
+/// Returns the configured exclusion backoff cap.
+pub fn get_exclusion_backoff_cap<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
+    ensure_non_payable(sdk)?;
+    write_abi(
+        sdk,
+        &chain_config_storage()
+            .exclusion_backoff_cap_accessor()
+            .get_checked(sdk)?,
+    )
+}
+
+/// Public handler `0x3b543e1c` (`setExclusionBackoffCap`).
+///
+/// Updates the ceiling on the linear exclusion ladder, in selection epochs.
+pub fn set_exclusion_backoff_cap<SDK: SharedAPI>(
+    sdk: &mut SDK,
+    input: &[u8],
+) -> Result<(), ExitCode> {
+    ensure_governance_mutation(sdk)?;
+    let value = decode::<U32Command>(input)?.value;
+    if value == 0 {
+        return zero_value(sdk, "exclusionBackoffCap");
+    }
+    let field = chain_config_storage().exclusion_backoff_cap_accessor();
+    let previous = field.get_checked(sdk)?;
+    field.set_checked(sdk, value)?;
+    events::ExclusionBackoffCapChanged {
+        prev_value: previous,
+        new_value: value,
+    }
+    .emit(sdk)
+}
+
+/// Public handler `0x9a4c46bb` (`getProductionLivenessDisabled`).
+///
+/// Returns whether the production-liveness tier is switched off.
+pub fn get_production_liveness_disabled<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
+    ensure_non_payable(sdk)?;
+    write_abi(
+        sdk,
+        &chain_config_storage()
+            .production_liveness_disabled_accessor()
+            .get_checked(sdk)?,
+    )
+}
+
+/// Public handler `0x8fc07556` (`setProductionLivenessDisabled`).
+///
+/// Switches the production-liveness tier on or off.
+pub fn set_production_liveness_disabled<SDK: SharedAPI>(
+    sdk: &mut SDK,
+    input: &[u8],
+) -> Result<(), ExitCode> {
+    ensure_governance_mutation(sdk)?;
+    let value = decode::<BoolCommand>(input)?.value;
+    let field = chain_config_storage().production_liveness_disabled_accessor();
+    let previous = field.get_checked(sdk)?;
+    field.set_checked(sdk, value)?;
+    events::ProductionLivenessDisabledChanged {
         prev_value: previous,
         new_value: value,
     }

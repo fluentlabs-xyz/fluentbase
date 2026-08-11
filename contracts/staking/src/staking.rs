@@ -1,10 +1,11 @@
 //! Staking ownership, epoch reads, and validator lifecycle methods.
 
 use crate::{
+    config::active_validators_length_at,
     consensus::{store_consensus_keys, verify_consensus_keys},
     consts::*,
-    events, math,
-    storage::{chain_config_storage, consensus_storage, staking_storage, ValidatorSnapshotStorage},
+    events, liveness, math,
+    storage::{chain_config_storage, consensus_storage, production_liveness_storage, staking_storage, ValidatorSnapshotStorage},
     types::{
         AddValidatorCommand, AddressAmountCommand, AddressCommand, AddressU16Command,
         RegisterValidatorCommand, TwoAddressesCommand, U64Command, ValidatorBlockCommand,
@@ -256,17 +257,111 @@ pub(crate) fn selection_candidates_at<SDK: SharedAPI>(
     Ok(candidates)
 }
 
+/// Number of roster members that could actually be seated at `epoch`.
+///
+/// This counts the population `top_k_by_stake_at` cuts from, not the one
+/// `selection_candidates_at` returns: the Rust drops candidates below the
+/// minimum self-stake before the cut, which the Solidity does not. Counting
+/// visibility alone would over-report, and the exclusion rule would then hand
+/// out a stamp whose seat has no replacement — destroying it rather than
+/// rotating it.
+///
+/// Measured rather than materialized because it runs at every epoch close.
+pub(crate) fn count_selection_visible_at<SDK: SharedAPI>(
+    sdk: &SDK,
+    epoch: u64,
+) -> Result<u64, ExitCode> {
+    let roster = staking_storage().selection_roster_accessor();
+    let len = roster.len_checked(sdk)?;
+    let mut visible = 0;
+    for index in 0..len {
+        let validator = roster.at(index).get_checked(sdk)?;
+        if selection_visible_at(sdk, validator, epoch)?
+            && validator_has_minimum_self_stake_at(sdk, validator, epoch)?
+        {
+            visible += 1;
+        }
+    }
+    Ok(visible)
+}
+
+/// Stamp `validator` selection-invisible from the next epoch onward.
+///
+/// Refuses — returning `false`, never reverting — when the validator is already
+/// invisible at the bite epoch, or when the visible pool does not strictly
+/// exceed that epoch's cap. Selection takes `min(cap, visible)` with no
+/// backfill floor, so excluding the marginal candidate would shrink the
+/// committee instead of replacing a seat. A revert is not available here: the
+/// caller must be able to leave no trace of a refusal, and reverting would halt
+/// the chain over a condition that is normal on a small network.
+///
+/// Best-effort by construction: the stamp bites two selection epochs after this
+/// check, and registrations in between can invalidate it either way.
+pub(crate) fn apply_production_exclusion<SDK: SharedAPI>(
+    sdk: &mut SDK,
+    validator: Address,
+) -> Result<bool, ExitCode> {
+    let bite_epoch = next_epoch(sdk)?;
+    if !selection_visible_at(sdk, validator, bite_epoch)? {
+        return Ok(false);
+    }
+    // No "stamps already issued this close" term: an earlier stamp in the same
+    // close is already invisible at `bite_epoch`, so the count excludes it.
+    if count_selection_visible_at(sdk, bite_epoch)? <= active_validators_length_at(sdk, bite_epoch)?
+    {
+        return Ok(false);
+    }
+    set_selection_visible(sdk, validator, false, current_epoch(sdk)?)?;
+    events::ProductionExclusionApplied {
+        validator,
+        bite_epoch,
+    }
+    .emit(sdk)?;
+    Ok(true)
+}
+
+/// Restore selection visibility at the end of an exclusion.
+///
+/// A silent no-op for a tombstoned or non-Active validator. The selection
+/// filter is the visibility stamp and nothing else, so a blind re-stamp would
+/// permanently re-seat a slashed equivocator.
+pub(crate) fn release_production_exclusion<SDK: SharedAPI>(
+    sdk: &mut SDK,
+    validator: Address,
+) -> Result<(), ExitCode> {
+    if consensus_storage()
+        .tombstoned_accessor()
+        .entry(validator)
+        .get_checked(sdk)?
+    {
+        return Ok(());
+    }
+    if validator_status(sdk, validator)? != STATUS_ACTIVE {
+        return Ok(());
+    }
+    let bite_epoch = next_epoch(sdk)?;
+    set_selection_visible(sdk, validator, true, current_epoch(sdk)?)?;
+    events::ProductionExclusionReleased {
+        validator,
+        bite_epoch,
+    }
+    .emit(sdk)
+}
+
 pub(crate) fn selected_validators_at<SDK: SharedAPI>(
     sdk: &SDK,
     epoch: u64,
 ) -> Result<Vec<Address>, ExitCode> {
     let candidates = selection_candidates_at(sdk, epoch)?;
-    let cap = chain_config_storage()
-        .active_validators_length_accessor()
-        .get_checked(sdk)? as usize;
+    let cap = active_validators_length_at(sdk, epoch)? as usize;
     top_k_by_stake_at(sdk, candidates, epoch, cap)
 }
 
+/// Live committee view.
+///
+/// Deliberately reads the scalar cap, not the epoch-addressed one: this answers
+/// "who would be selected right now", so epoch purity neither holds here nor is
+/// claimed for it. Only `selected_validators_at` feeds committee commits.
 pub(crate) fn selected_validators<SDK: SharedAPI>(sdk: &SDK) -> Result<Vec<Address>, ExitCode> {
     let storage = staking_storage();
     let active = storage.active_validators_accessor();
@@ -650,7 +745,7 @@ pub fn is_validator_active<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Resul
 
 /// Public handler `0xa310624f` (`getValidatorStatus`).
 ///
-/// Returns the validator's owner, status, stake, slash, jail, claim, and commission data.
+/// Returns the validator's owner, status, stake, claim, and commission data.
 pub fn get_validator_status<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), ExitCode> {
     ensure_non_payable(sdk)?;
     let validator = address_arg(input)?;
@@ -664,9 +759,7 @@ pub fn get_validator_status<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Resu
         record.owner_accessor().get_checked(sdk)?,
         record.status_accessor().get_checked(sdk)?,
         math::expand_balance(snapshot.total_delegated_accessor().get_checked(sdk)?),
-        snapshot.slashes_count_accessor().get_checked(sdk)?,
         changed_at,
-        record.jailed_before_accessor().get_checked(sdk)?,
         record.claimed_at_accessor().get_checked(sdk)?,
         snapshot.commission_rate_accessor().get_checked(sdk)?,
     );
@@ -752,7 +845,13 @@ pub fn activate_validator<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result
         .active_validators_accessor()
         .push_checked(sdk, validator)?;
     ensure_rostered(sdk, validator)?;
-    set_selection_visible(sdk, validator, true, current_epoch(sdk)?)?;
+    // The visibility stamp is the whole selection filter, so re-stamping here
+    // would silently cancel a running exclusion. The validator still becomes
+    // Active; it stays unselectable until the exclusion's own release path
+    // re-stamps it.
+    if liveness::readmit_at_epoch_of(sdk, validator)? == 0 {
+        set_selection_visible(sdk, validator, true, current_epoch(sdk)?)?;
+    }
     touch_snapshot_at_or_before(sdk, validator, activation_epoch)?;
     emit_modified(sdk, validator)
 }
@@ -1253,45 +1352,38 @@ fn delegator_claimable<SDK: SharedAPI>(
         .entry(delegator);
     let delegates = delegation.delegate_queue_accessor();
     let delegate_len = delegates.len_checked(sdk)?;
-    let mut delegate_gap = delegation.delegate_gap_accessor().get_checked(sdk)?;
     let mut claimable = U256::ZERO;
 
-    while delegate_gap < delegate_len {
-        let operation = delegates.at(delegate_gap);
-        let mut epoch = operation.epoch_accessor().get_checked(sdk)?;
-        if epoch >= reward_before_epoch {
-            break;
-        }
-        let changed_at = if delegate_gap + 1 < delegate_len {
-            delegates
-                .at(delegate_gap + 1)
-                .epoch_accessor()
-                .get_checked(sdk)?
-        } else {
-            reward_before_epoch
-        };
-        let end = core::cmp::min(reward_before_epoch, changed_at);
-        let delegated = operation.amount_accessor().get_checked(sdk)?;
-        while epoch < end {
-            let (delegator_pool, _) = snapshot_payout(sdk, validator, epoch)?;
-            let snapshot = staking_storage()
-                .validator_snapshots_accessor()
-                .entry(validator)
-                .entry(epoch);
-            let total = snapshot.total_delegated_accessor().get_checked(sdk)?;
-            if !total.is_zero() {
-                claimable = claimable
-                    .checked_add(
-                        delegator_pool
-                            .checked_mul(U256::from(delegated))
-                            .ok_or(ExitCode::IntegerOverflow)?
-                            / U256::from(total),
-                    )
-                    .ok_or(ExitCode::IntegerOverflow)?;
+    if let Some((mut index, mut epoch)) = delegate_claim_start(sdk, validator, delegator)? {
+        while index < delegate_len && epoch < reward_before_epoch {
+            let changed_at = if index + 1 < delegate_len {
+                delegates.at(index + 1).epoch_accessor().get_checked(sdk)?
+            } else {
+                reward_before_epoch
+            };
+            let end = core::cmp::min(reward_before_epoch, changed_at);
+            let delegated = delegates.at(index).amount_accessor().get_checked(sdk)?;
+            while epoch < end {
+                let (delegator_pool, _) = snapshot_payout(sdk, validator, epoch)?;
+                let snapshot = staking_storage()
+                    .validator_snapshots_accessor()
+                    .entry(validator)
+                    .entry(epoch);
+                let total = snapshot.total_delegated_accessor().get_checked(sdk)?;
+                if !total.is_zero() {
+                    claimable = claimable
+                        .checked_add(
+                            delegator_pool
+                                .checked_mul(U256::from(delegated))
+                                .ok_or(ExitCode::IntegerOverflow)?
+                                / U256::from(total),
+                        )
+                        .ok_or(ExitCode::IntegerOverflow)?;
+                }
+                epoch = epoch.checked_add(1).ok_or(ExitCode::IntegerOverflow)?;
             }
-            epoch = epoch.checked_add(1).ok_or(ExitCode::IntegerOverflow)?;
+            index += 1;
         }
-        delegate_gap += 1;
     }
 
     let undelegates = delegation.undelegate_queue_accessor();
@@ -1344,32 +1436,62 @@ fn validator_self_stake_lock<SDK: SharedAPI>(
     ))
 }
 
+/// Position to resume a reward claim from: the delegate-queue entry in force at the reward
+/// cursor, and the epoch to start accruing at. `None` when the delegator has no delegations.
+///
+/// The resume epoch is `max(cursor, first entry)` rather than the bare cursor: a delegator who
+/// has never claimed carries a zero cursor, and windowing `MAX_EPOCHS_PER_CLAIM` from zero would
+/// place the whole window before the first delegation and strand the funds permanently.
+fn delegate_claim_start<SDK: SharedAPI>(
+    sdk: &SDK,
+    validator: Address,
+    delegator: Address,
+) -> Result<Option<(u64, u64)>, ExitCode> {
+    let delegation = staking_storage()
+        .validator_delegations_accessor()
+        .entry(validator)
+        .entry(delegator);
+    let delegates = delegation.delegate_queue_accessor();
+    let len = delegates.len_checked(sdk)?;
+    if len == 0 {
+        return Ok(None);
+    }
+    let cursor = delegation
+        .claimed_through_epoch_accessor()
+        .get_checked(sdk)?;
+    let first = delegates.at(0).epoch_accessor().get_checked(sdk)?;
+    let start = core::cmp::max(cursor, first);
+
+    let mut low = 0;
+    let mut high = len;
+    while low < high {
+        let middle = low + (high - low) / 2;
+        if delegates.at(middle).epoch_accessor().get_checked(sdk)? <= start {
+            low = middle + 1;
+        } else {
+            high = middle;
+        }
+    }
+    Ok(Some((low - 1, start)))
+}
+
 fn capped_delegator_reward_epoch<SDK: SharedAPI>(
     sdk: &SDK,
     validator: Address,
     delegator: Address,
     before_epoch: u64,
 ) -> Result<u64, ExitCode> {
-    let delegation = staking_storage()
-        .validator_delegations_accessor()
-        .entry(validator)
-        .entry(delegator);
-    let delegates = delegation.delegate_queue_accessor();
-    let delegate_gap = delegation.delegate_gap_accessor().get_checked(sdk)?;
     let settled_epoch_p1 = staking_storage()
         .last_rewarded_epoch_p1_accessor()
         .get_checked(sdk)?;
     let before_epoch = core::cmp::min(before_epoch, settled_epoch_p1);
-    if delegate_gap >= delegates.len_checked(sdk)? {
-        return Ok(before_epoch);
-    }
-    let first = delegates
-        .at(delegate_gap)
-        .epoch_accessor()
-        .get_checked(sdk)?;
+    let start = match delegate_claim_start(sdk, validator, delegator)? {
+        Some((_, start)) => start,
+        None => return Ok(before_epoch),
+    };
     Ok(core::cmp::min(
         before_epoch,
-        first
+        start
             .checked_add(MAX_EPOCHS_PER_CLAIM)
             .ok_or(ExitCode::IntegerOverflow)?,
     ))
@@ -1416,54 +1538,42 @@ fn consume_delegator_claim<SDK: SharedAPI>(
         .entry(delegator);
     let delegates = delegation.delegate_queue_accessor();
     let delegate_len = delegates.len_checked(sdk)?;
-    let mut delegate_gap = delegation.delegate_gap_accessor().get_checked(sdk)?;
     let mut claimable = U256::ZERO;
 
-    while delegate_gap < delegate_len {
-        let operation = delegates.at(delegate_gap);
-        let mut epoch = operation.epoch_accessor().get_checked(sdk)?;
-        if epoch >= reward_before_epoch {
-            break;
-        }
-        let has_next = delegate_gap + 1 < delegate_len;
-        let changed_at = if has_next {
-            delegates
-                .at(delegate_gap + 1)
-                .epoch_accessor()
-                .get_checked(sdk)?
-        } else {
-            reward_before_epoch
-        };
-        let end = core::cmp::min(reward_before_epoch, changed_at);
-        let delegated = operation.amount_accessor().get_checked(sdk)?;
-        while epoch < end {
-            let (delegator_pool, _) = snapshot_payout(sdk, validator, epoch)?;
-            let snapshot = storage
-                .validator_snapshots_accessor()
-                .entry(validator)
-                .entry(epoch);
-            let total = snapshot.total_delegated_accessor().get_checked(sdk)?;
-            if !total.is_zero() {
-                claimable = claimable
-                    .checked_add(
-                        delegator_pool
-                            .checked_mul(U256::from(delegated))
-                            .ok_or(ExitCode::IntegerOverflow)?
-                            / U256::from(total),
-                    )
-                    .ok_or(ExitCode::IntegerOverflow)?;
+    if let Some((mut index, mut epoch)) = delegate_claim_start(sdk, validator, delegator)? {
+        while index < delegate_len && epoch < reward_before_epoch {
+            let changed_at = if index + 1 < delegate_len {
+                delegates.at(index + 1).epoch_accessor().get_checked(sdk)?
+            } else {
+                reward_before_epoch
+            };
+            let end = core::cmp::min(reward_before_epoch, changed_at);
+            let delegated = delegates.at(index).amount_accessor().get_checked(sdk)?;
+            while epoch < end {
+                let (delegator_pool, _) = snapshot_payout(sdk, validator, epoch)?;
+                let snapshot = storage
+                    .validator_snapshots_accessor()
+                    .entry(validator)
+                    .entry(epoch);
+                let total = snapshot.total_delegated_accessor().get_checked(sdk)?;
+                if !total.is_zero() {
+                    claimable = claimable
+                        .checked_add(
+                            delegator_pool
+                                .checked_mul(U256::from(delegated))
+                                .ok_or(ExitCode::IntegerOverflow)?
+                                / U256::from(total),
+                        )
+                        .ok_or(ExitCode::IntegerOverflow)?;
+                }
+                epoch = epoch.checked_add(1).ok_or(ExitCode::IntegerOverflow)?;
             }
-            epoch = epoch.checked_add(1).ok_or(ExitCode::IntegerOverflow)?;
+            index += 1;
         }
-        if !has_next || epoch < changed_at {
-            operation.epoch_accessor().set_checked(sdk, epoch)?;
-            break;
-        }
-        delegate_gap += 1;
+        delegation
+            .claimed_through_epoch_accessor()
+            .set_checked(sdk, epoch)?;
     }
-    delegation
-        .delegate_gap_accessor()
-        .set_checked(sdk, delegate_gap)?;
 
     let undelegates = delegation.undelegate_queue_accessor();
     let undelegate_len = undelegates.len_checked(sdk)?;
@@ -1842,27 +1952,42 @@ pub fn get_epoch_rewards<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<
     write_abi(sdk, &total)
 }
 
-fn fault_tolerance(n: usize) -> usize {
-    if n == 0 {
-        0
-    } else {
-        (n - 1) / 3
-    }
-}
-
-fn settle_one<SDK: SharedAPI>(
-    sdk: &mut SDK,
-    epoch: u64,
-    liveness: Address,
-    reserve: Address,
-) -> Result<(), ExitCode> {
+fn settle_one<SDK: SharedAPI>(sdk: &mut SDK, epoch: u64, reserve: Address) -> Result<(), ExitCode> {
     let storage = staking_storage();
     let consensus = consensus_storage();
+    // Belongs here rather than at the close's call site: `settle_up_to` walks the
+    // cursor contiguously, so an epoch whose close never ran — a stalled recorder,
+    // a pre-activation prefix — would otherwise be paid a full pot for no blocks
+    // as soon as a later epoch settles.
+    if production_liveness_storage()
+        .blocks_in_epoch_accessor()
+        .entry(epoch)
+        .get_checked(sdk)?
+        == 0
+    {
+        events::StipendSkipped { epoch }.emit(sdk)?;
+        events::EpochBlendRewardsCommitted {
+            epoch,
+            blend_amount: U256::ZERO,
+        }
+        .emit(sdk)?;
+        return Ok(());
+    }
     let committee = consensus.epoch_committees_accessor().entry(epoch);
     let len = committee.len_checked(sdk)?;
-    let desired = chain_config_storage()
-        .blend_stipend_per_epoch_accessor()
+    // The rate this epoch worked under, pinned by its own close. Reading the
+    // live config here would let a rate change between the epoch ending and the
+    // epoch being paid rewrite what it earned, and the cursor never comes back.
+    let pinned = production_liveness_storage()
+        .stipend_rate_at_close_p1_accessor()
+        .entry(epoch)
         .get_checked(sdk)?;
+    if pinned.is_zero() {
+        // A revert defers, a guard return forfeits — see this function's caller.
+        // An epoch whose price is unknown belongs on the deferred side.
+        return revert_with(sdk, ERR_STIPEND_RATE_NOT_SNAPSHOTTED, &epoch);
+    }
+    let desired = pinned - U256::ONE;
     if desired.is_zero() {
         events::EpochBlendRewardsCommitted {
             epoch,
@@ -1877,74 +2002,52 @@ fn settle_one<SDK: SharedAPI>(
     let mut shares = vec![U256::ZERO; len as usize];
 
     if !pot.is_zero() && len != 0 {
-        let (_, certs) =
-            call_decode::<_, _, (u32, u32)>(sdk, liveness, SIG_PARTICIPATION, &(epoch, 0u32))?;
-        if certs != 0 {
-            let floor = chain_config_storage()
-                .participation_floor_bps_accessor()
-                .get_checked(sdk)?;
-            let floor = if floor == 0 {
-                DEFAULT_PARTICIPATION_FLOOR_BPS
-            } else {
-                floor
-            };
-            let mut passed = vec![false; len as usize];
-            let mut below = 0usize;
-            for index in 0..len {
-                let (seen, _) = call_decode::<_, _, (u32, u32)>(
-                    sdk,
-                    liveness,
-                    SIG_PARTICIPATION,
-                    &(epoch, index as u32),
-                )?;
-                if U256::from(seen) * U256::from(10_000) < U256::from(certs) * U256::from(floor) {
-                    below += 1;
-                } else {
-                    passed[index as usize] = true;
-                }
+        // Weights are the ones frozen at commit time, not a live stake walk: the
+        // committee was ranked and the leader drawn from this same vector, so a
+        // stake change after the commit must not move anyone's share.
+        let frozen = consensus.leader_stakes_accessor().entry(epoch);
+        // Paying a prefix would hand the whole pot to the members that happen to
+        // have weights and then advance the cursor past the epoch, so a mismatch
+        // must stop the settlement rather than narrow it. `getEpochCommitteeWithStakes`
+        // rejects the same condition.
+        if frozen.len_checked(sdk)? != len {
+            return revert_with(
+                sdk,
+                ERR_LEADER_STAKES_LENGTH_MISMATCH,
+                &(epoch, U256::from(len), U256::from(frozen.len_checked(sdk)?)),
+            );
+        }
+        let mut weights = vec![U256::ZERO; len as usize];
+        let mut total_weight = U256::ZERO;
+        for index in 0..len {
+            let validator = committee.at(index).get_checked(sdk)?;
+            if consensus
+                .tombstoned_accessor()
+                .entry(validator)
+                .get_checked(sdk)?
+            {
+                continue;
             }
-            // During a partition, keep stake-weighted rewards available to
-            // participating and non-participating committee members alike.
-            let partition = below > fault_tolerance(len as usize);
-            let mut stakes = vec![U256::ZERO; len as usize];
-            let mut total_stake = U256::ZERO;
-            for index in 0..len {
-                let validator = committee.at(index).get_checked(sdk)?;
-                if (!partition && !passed[index as usize])
-                    || consensus
-                        .tombstoned_accessor()
-                        .entry(validator)
-                        .get_checked(sdk)?
-                    || storage
-                        .validators_accessor()
-                        .entry(validator)
-                        .status_accessor()
-                        .get_checked(sdk)?
-                        == STATUS_NOT_FOUND
-                {
+            let weight = U256::from(frozen.at(index).get_checked(sdk)?);
+            if weight.is_zero() {
+                continue;
+            }
+            weights[index as usize] = weight;
+            total_weight = total_weight
+                .checked_add(weight)
+                .ok_or(ExitCode::IntegerOverflow)?;
+        }
+        if !total_weight.is_zero() {
+            for (index, weight) in weights.into_iter().enumerate() {
+                if weight.is_zero() {
                     continue;
                 }
-                let stake = validator_total_at(sdk, validator, epoch)?;
-                if stake.is_zero() {
-                    continue;
-                }
-                stakes[index as usize] = stake;
-                total_stake = total_stake
-                    .checked_add(stake)
+                let share =
+                    pot.checked_mul(weight).ok_or(ExitCode::IntegerOverflow)? / total_weight;
+                shares[index] = share;
+                assigned = assigned
+                    .checked_add(share)
                     .ok_or(ExitCode::IntegerOverflow)?;
-            }
-            if !total_stake.is_zero() {
-                for (index, stake) in stakes.into_iter().enumerate() {
-                    if stake.is_zero() {
-                        continue;
-                    }
-                    let share =
-                        pot.checked_mul(stake).ok_or(ExitCode::IntegerOverflow)? / total_stake;
-                    shares[index] = share;
-                    assigned = assigned
-                        .checked_add(share)
-                        .ok_or(ExitCode::IntegerOverflow)?;
-                }
             }
         }
     }
@@ -1996,26 +2099,27 @@ fn settle_one<SDK: SharedAPI>(
     .emit(sdk)
 }
 
-/// Public handler `0xa631344a` (`settleEpochStipend`).
+/// Settles every unsettled epoch up to `up_to`, contiguously from the cursor.
 ///
-/// Settles and distributes the finalized epoch stipend.
-pub fn settle_epoch_stipend<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), ExitCode> {
-    ensure_non_payable(sdk)?;
-    ensure_mutable(sdk)?;
-    ensure_initialized(sdk)?;
-    if sdk.context().contract_caller() != SYSTEM_CALLER {
-        return revert(sdk, ERR_ONLY_SYSTEM_CALL);
-    }
-    let requested = decode::<U64Command>(input)?.value;
+/// The cursor advances past every epoch this returns `Ok` for, so a replay
+/// re-draws nothing. Note that an epoch skipped by a guard inside `settle_one`
+/// is forfeited, not deferred — only a revert leaves it to be retried.
+pub(crate) fn settle_up_to<SDK: SharedAPI>(sdk: &mut SDK, up_to: u64) -> Result<(), ExitCode> {
     let storage = staking_storage();
-    let config = chain_config_storage();
-    let liveness = config.liveness_slashing_accessor().get_checked(sdk)?;
-    let reserve = config.blend_reserve_accessor().get_checked(sdk)?;
-    let finalized_p1 = call_decode::<_, _, u64>(sdk, liveness, SIG_LAST_FINALIZED_EPOCH_P1, &())?;
-    if finalized_p1 == 0 {
+    let reserve = chain_config_storage()
+        .blend_reserve_accessor()
+        .get_checked(sdk)?;
+    // A committee may be committed up to two epochs ahead, so `epoch_committees`
+    // and `leader_stakes` exist for epochs that have not started. Paying one
+    // draws a full pot for an epoch with no production and advances the cursor
+    // past it irrecoverably. The finished-epoch bound replaces the finality gate
+    // the liveness contract used to provide; a per-epoch "has data" belt takes
+    // over once block production is recorded on chain.
+    let current = current_epoch(sdk)?;
+    if current == 0 {
         return Ok(());
     }
-    let up_to = core::cmp::min(requested, finalized_p1 - 1);
+    let up_to = core::cmp::min(up_to, current - 1);
     let first = storage.last_rewarded_epoch_p1_accessor().get_checked(sdk)?;
     if first != 0 && up_to.checked_add(1).ok_or(ExitCode::IntegerOverflow)? <= first {
         return Ok(());
@@ -2023,7 +2127,7 @@ pub fn settle_epoch_stipend<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Resu
     let mut epoch = first;
     let mut settled = 0;
     while epoch <= up_to && settled < MAX_SETTLE_CATCHUP {
-        settle_one(sdk, epoch, liveness, reserve)?;
+        settle_one(sdk, epoch, reserve)?;
         storage
             .last_rewarded_epoch_p1_accessor()
             .set_checked(sdk, epoch.checked_add(1).ok_or(ExitCode::IntegerOverflow)?)?;
@@ -2031,4 +2135,36 @@ pub fn settle_epoch_stipend<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Resu
         settled += 1;
     }
     Ok(())
+}
+
+/// Public handler `0xa631344a` (`settleEpochStipend`).
+///
+/// Settles and distributes the epoch stipend.
+pub fn settle_epoch_stipend<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), ExitCode> {
+    ensure_non_payable(sdk)?;
+    ensure_mutable(sdk)?;
+    ensure_initialized(sdk)?;
+    if sdk.context().contract_caller() != SYSTEM_CALLER {
+        return revert(sdk, ERR_ONLY_SYSTEM_CALL);
+    }
+    settle_up_to(sdk, decode::<U64Command>(input)?.value)
+}
+
+/// Public handler `0x92d321ab` (`settleEpochStipendFrom`).
+///
+/// The stipend leg of the epoch close. Reachable only from this contract's own
+/// fuel-capped self-call, which is what gives the leg a journal checkpoint of
+/// its own: a failure here discards this frame and nothing the close already
+/// committed above it.
+pub fn settle_epoch_stipend_from<SDK: SharedAPI>(
+    sdk: &mut SDK,
+    input: &[u8],
+) -> Result<(), ExitCode> {
+    ensure_non_payable(sdk)?;
+    ensure_mutable(sdk)?;
+    ensure_initialized(sdk)?;
+    if sdk.context().contract_caller() != sdk.context().contract_address() {
+        return revert(sdk, ERR_ONLY_SELF_CALL);
+    }
+    settle_up_to(sdk, decode::<U64Command>(input)?.value)
 }

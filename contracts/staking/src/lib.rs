@@ -14,6 +14,7 @@ mod consensus;
 mod consts;
 mod events;
 mod initializer;
+mod liveness;
 mod math;
 mod staking;
 mod storage;
@@ -44,31 +45,25 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
         SIG_INITIALIZE => initializer::initialize(sdk, params),
 
         // ChainConfig
-        SIG_DEFAULT_PARTICIPATION_FLOOR_BPS => config::default_participation_floor_bps(sdk),
         SIG_DEFAULT_SLASH_REPORTER_BPS => config::default_slash_reporter_bps(sdk),
         SIG_MAX_ACTIVE_VALIDATORS => config::max_active_validators(sdk),
         SIG_MAX_BLEND_STIPEND_PER_EPOCH => config::max_blend_stipend_per_epoch(sdk),
-        SIG_MAX_PARTICIPATION_FLOOR_BPS => config::max_participation_floor_bps(sdk),
         SIG_MAX_SLASH_REPORTER_BPS => config::max_slash_reporter_bps(sdk),
+        SIG_DEFAULT_MIN_VERDICT_DUE_BLOCKS => config::default_min_verdict_due_blocks(sdk),
+        SIG_DEFAULT_EXCLUSION_BACKOFF_CAP => config::default_exclusion_backoff_cap(sdk),
+        SIG_MAX_MIN_VERDICT_DUE_BLOCKS => config::max_min_verdict_due_blocks(sdk),
         SIG_GET_STAKING_TOKEN => config::get_staking_token(sdk),
         SIG_GET_ACTIVE_VALIDATORS_LENGTH => config::get_active_validators_length(sdk),
+        SIG_GET_ACTIVE_VALIDATORS_LENGTH_AT => config::get_active_validators_length_at(sdk, params),
         SIG_GET_EPOCH_BLOCK_INTERVAL => config::get_epoch_block_interval(sdk),
         SIG_GET_DPOS_ACTIVATION_BLOCK => config::get_dpos_activation_block(sdk),
         SIG_GET_UNDELEGATE_PERIOD => config::get_undelegate_period(sdk),
         SIG_GET_MIN_VALIDATOR_STAKE_AMOUNT => config::get_min_validator_stake_amount(sdk),
         SIG_GET_MIN_STAKING_AMOUNT => config::get_min_staking_amount(sdk),
-        SIG_GET_FELONY_THRESHOLD => config::get_felony_threshold(sdk),
-        SIG_SET_FELONY_THRESHOLD => config::set_felony_threshold(sdk, params),
-        SIG_GET_VALIDATOR_JAIL_EPOCH_LENGTH => config::get_validator_jail_epoch_length(sdk),
-        SIG_SET_VALIDATOR_JAIL_EPOCH_LENGTH => config::set_validator_jail_epoch_length(sdk, params),
         SIG_GET_SLASH_REPORTER_REWARD_BPS => config::get_slash_reporter_reward_bps(sdk),
         SIG_SET_SLASH_REPORTER_REWARD_BPS => config::set_slash_reporter_reward_bps(sdk, params),
         SIG_GET_SLASH_FUND_ADDRESS => config::get_slash_fund_address(sdk),
         SIG_SET_SLASH_FUND_ADDRESS => config::set_slash_fund_address(sdk, params),
-        SIG_GET_PARTICIPATION_FLOOR_BPS => config::get_participation_floor_bps(sdk),
-        SIG_SET_PARTICIPATION_FLOOR_BPS => config::set_participation_floor_bps(sdk, params),
-        SIG_GET_PARTICIPATION_JAIL_DISABLED => config::get_participation_jail_disabled(sdk),
-        SIG_SET_PARTICIPATION_JAIL_DISABLED => config::set_participation_jail_disabled(sdk, params),
         SIG_GET_BLEND_STIPEND_PER_EPOCH => config::get_blend_stipend_per_epoch(sdk),
         SIG_SET_BLEND_STIPEND_PER_EPOCH => config::set_blend_stipend_per_epoch(sdk, params),
         SIG_SET_ACTIVE_VALIDATORS_LENGTH => config::set_active_validators_length(sdk, params),
@@ -85,6 +80,23 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
         SIG_SET_LIVENESS_SLASHING => config::set_liveness_slashing(sdk, params),
         SIG_GET_BLEND_RESERVE => config::get_blend_reserve(sdk),
         SIG_SET_BLEND_RESERVE => config::set_blend_reserve(sdk, params),
+        SIG_GET_MIN_VERDICT_DUE_BLOCKS => config::get_min_verdict_due_blocks(sdk),
+        SIG_SET_MIN_VERDICT_DUE_BLOCKS => config::set_min_verdict_due_blocks(sdk, params),
+        SIG_GET_EXCLUSION_BACKOFF_CAP => config::get_exclusion_backoff_cap(sdk),
+        SIG_SET_EXCLUSION_BACKOFF_CAP => config::set_exclusion_backoff_cap(sdk, params),
+        SIG_GET_PRODUCTION_LIVENESS_DISABLED => config::get_production_liveness_disabled(sdk),
+        SIG_SET_PRODUCTION_LIVENESS_DISABLED => {
+            config::set_production_liveness_disabled(sdk, params)
+        }
+
+        // ProductionLiveness
+        SIG_GET_PRODUCTION_STATS => liveness::get_production_stats(sdk, params),
+        SIG_BLOCKS_IN_EPOCH => liveness::blocks_in_epoch(sdk, params),
+        SIG_PRODUCED_AT => liveness::produced_at(sdk, params),
+        SIG_PENDING_EXCLUSIONS => liveness::pending_exclusions(sdk),
+        SIG_READMIT_AT_EPOCH => liveness::readmit_at_epoch(sdk, params),
+        SIG_LAST_PROCESSED_BLOCK => liveness::last_processed_block(sdk),
+        SIG_RECORD_PRODUCTION => liveness::record_production(sdk, params),
 
         // Staking
         SIG_CURRENT_EPOCH => staking::current_epoch_read(sdk),
@@ -121,6 +133,7 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
         SIG_REDELEGATE_DELEGATOR_FEE => staking::redelegate_delegator_fee(sdk, params),
         SIG_GET_EPOCH_REWARDS => staking::get_epoch_rewards(sdk, params),
         SIG_SETTLE_EPOCH_STIPEND => staking::settle_epoch_stipend(sdk, params),
+        SIG_SETTLE_EPOCH_STIPEND_FROM => staking::settle_epoch_stipend_from(sdk, params),
 
         // Consensus
         SIG_GET_CONSENSUS_KEYS => consensus::get_consensus_keys(sdk, params),
@@ -137,9 +150,6 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
         SIG_GET_EPOCH_COMMITTEE_WITH_STAKES => {
             consensus::get_epoch_committee_with_stakes(sdk, params)
         }
-        SIG_RELEASE_VALIDATOR_FROM_JAIL => consensus::release_validator_from_jail(sdk, params),
-        SIG_READMIT_EXPIRED_JAILS => consensus::readmit_expired_jails(sdk, params),
-        SIG_SLASH => consensus::slash(sdk, params),
         SIG_COMMIT_EQUIVOCATION_REPORT => consensus::commit_report(sdk, params),
         SIG_COMPUTE_EQUIVOCATION_REPORT_COMMITMENT => {
             consensus::compute_report_commitment(sdk, params)

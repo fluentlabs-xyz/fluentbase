@@ -1,15 +1,17 @@
 use super::*;
 use crate::{
-    consts::{STATUS_ACTIVE, STATUS_JAIL, STATUS_PENDING},
+    consts::{STATUS_ACTIVE, STATUS_PENDING},
     storage::{
-        chain_config_storage, consensus_storage, initializer_storage, staking_storage,
-        ConsensusKeysStorage, DelegationOpStorage, UndelegationOpStorage, ValidatorSnapshotStorage,
+        chain_config_storage, consensus_storage, initializer_storage, production_liveness_storage,
+        staking_storage, CapCheckpointStorage, ConsensusKeysStorage, DelegationOpStorage,
+        ProductionValidatorStorage, UndelegationOpStorage, ValidatorSnapshotStorage,
+        ValidatorStorage,
     },
     types::{
         AddValidatorCommand, AddressCommand, AddressU16Command, BoolCommand, ConsensusKeys,
         EpochSignerCommand, EquivocationCommand, InitializeCommand, RegisterValidatorCommand,
-        TwoAddressesCommand, U256Command, U32Command, U64Command, ValidatorBlockCommand,
-        ValidatorDelegatorCommand, ValidatorEpochCommand,
+        RecordProductionCommand, TwoAddressesCommand, U256Command, U32Command, U64Command,
+        ValidatorBlockCommand, ValidatorDelegatorCommand, ValidatorEpochCommand,
     },
 };
 use fluentbase_sdk::{
@@ -52,7 +54,7 @@ fn encode_empty_call(selector: u32) -> Vec<u8> {
 #[test]
 fn compact_storage_matches_solidity_struct_layouts() {
     assert_eq!(ValidatorSnapshotStorage::SLOTS, 1);
-    assert_eq!(<ValidatorSnapshotStorage as StorageLayout>::BYTES, 32);
+    assert_eq!(<ValidatorSnapshotStorage as StorageLayout>::BYTES, 28);
     assert_eq!(DelegationOpStorage::SLOTS, 1);
     assert_eq!(<DelegationOpStorage as StorageLayout>::BYTES, 22);
     assert_eq!(UndelegationOpStorage::SLOTS, 1);
@@ -63,9 +65,37 @@ fn compact_storage_matches_solidity_struct_layouts() {
     let snapshot = ValidatorSnapshotStorage::new(slot, 0);
     assert_eq!(snapshot.total_delegated_accessor().slot(), slot);
     assert_eq!(snapshot.total_delegated_accessor().offset(), 18);
-    assert_eq!(snapshot.slashes_count_accessor().offset(), 14);
-    assert_eq!(snapshot.commission_rate_accessor().offset(), 12);
-    assert_eq!(snapshot.total_blend_rewards_accessor().offset(), 0);
+    assert_eq!(snapshot.commission_rate_accessor().offset(), 16);
+    assert_eq!(snapshot.total_blend_rewards_accessor().offset(), 4);
+
+    // Removing a field from the middle of a packed word relocates everything
+    // below it, so the surviving offsets are pinned rather than assumed.
+    assert_eq!(ValidatorStorage::SLOTS, 2);
+    let validator = ValidatorStorage::new(slot, 0);
+    assert_eq!(validator.owner_accessor().offset(), 12);
+    assert_eq!(validator.status_accessor().offset(), 11);
+    assert_eq!(validator.changed_at_accessor().offset(), 3);
+    assert_eq!(validator.claimed_at_accessor().slot(), slot + U256::from(1));
+
+    assert_eq!(CapCheckpointStorage::SLOTS, 1);
+    assert_eq!(<CapCheckpointStorage as StorageLayout>::BYTES, 12);
+
+    // The per-block credit writes `total_produced` and `last_produced_epoch_p1`
+    // together; both must stay inside the first slot or every recorded block
+    // costs a second store.
+    assert_eq!(ProductionValidatorStorage::SLOTS, 2);
+    let production = ProductionValidatorStorage::new(slot, 0);
+    assert_eq!(production.total_produced_accessor().slot(), slot);
+    assert_eq!(production.total_produced_accessor().offset(), 24);
+    assert_eq!(production.last_produced_epoch_p1_accessor().slot(), slot);
+    assert_eq!(production.last_produced_epoch_p1_accessor().offset(), 16);
+    assert_eq!(production.last_failed_epoch_p1_accessor().offset(), 8);
+    assert_eq!(production.readmit_at_epoch_accessor().offset(), 0);
+    assert_eq!(
+        production.kick_count_accessor().slot(),
+        slot + U256::from(1)
+    );
+    assert_eq!(production.kick_count_accessor().offset(), 28);
 }
 
 #[test]
@@ -74,17 +104,28 @@ fn contract_storage_uses_separate_erc7201_namespaces() {
     let chain_config_slot = chain_config_storage().staking_token_accessor().slot();
     let consensus_slot = consensus_storage().consensus_keys_accessor().slot();
     let staking_slot = staking_storage().validators_accessor().slot();
+    let liveness_slot = production_liveness_storage()
+        .last_processed_block_accessor()
+        .slot();
 
     assert_eq!(initializer_slot, INITIALIZER_STORAGE_SLOT);
     assert_eq!(chain_config_slot, CHAIN_CONFIG_STORAGE_SLOT);
     assert_eq!(consensus_slot, CONSENSUS_STORAGE_SLOT);
     assert_eq!(staking_slot, STAKING_STORAGE_SLOT);
-    assert_ne!(initializer_slot, chain_config_slot);
-    assert_ne!(initializer_slot, consensus_slot);
-    assert_ne!(initializer_slot, staking_slot);
-    assert_ne!(chain_config_slot, consensus_slot);
-    assert_ne!(chain_config_slot, staking_slot);
-    assert_ne!(consensus_slot, staking_slot);
+    assert_eq!(liveness_slot, PRODUCTION_LIVENESS_STORAGE_SLOT);
+    let roots = [
+        initializer_slot,
+        chain_config_slot,
+        consensus_slot,
+        staking_slot,
+        liveness_slot,
+    ];
+    for (index, root) in roots.iter().enumerate() {
+        assert!(
+            !roots[index + 1..].contains(root),
+            "storage root {index} aliases a later namespace"
+        );
+    }
 }
 
 struct Harness {
@@ -197,8 +238,6 @@ impl Harness {
             staking_token: Address::with_last_byte(0xf0),
             active_validators_length: DEFAULT_ACTIVE_VALIDATORS_LENGTH as u32,
             epoch_block_interval: DEFAULT_EPOCH_BLOCK_INTERVAL as u32,
-            felony_threshold: DEFAULT_FELONY_THRESHOLD,
-            validator_jail_epoch_length: DEFAULT_VALIDATOR_JAIL_EPOCH_LENGTH,
             undelegate_period: DEFAULT_UNDELEGATE_PERIOD as u32,
             min_validator_stake_amount: DEFAULT_MIN_VALIDATOR_STAKE,
             min_staking_amount: DEFAULT_MIN_STAKING_AMOUNT,
@@ -258,6 +297,48 @@ fn store_test_consensus_keys(
         .unwrap();
 }
 
+/// Writes an epoch committee and its frozen leader weights, the pair
+/// `commitEpochCommittee` appends together and the stipend reads back.
+fn commit_test_committee(sdk: &mut TestingContextImpl, epoch: u64, members: &[(Address, U256)]) {
+    let consensus = consensus_storage();
+    let committee = consensus.epoch_committees_accessor().entry(epoch);
+    let stakes = consensus.leader_stakes_accessor().entry(epoch);
+    for (validator, stake) in members {
+        committee.push_checked(sdk, *validator).unwrap();
+        stakes
+            .push_checked(sdk, crate::math::compact_balance(*stake).unwrap())
+            .unwrap();
+    }
+}
+
+fn record_test_production(sdk: &mut TestingContextImpl, epoch: u64, blocks: u32) {
+    production_liveness_storage()
+        .blocks_in_epoch_accessor()
+        .entry(epoch)
+        .set_checked(sdk, blocks)
+        .unwrap();
+    pin_test_stipend_rate(sdk, epoch);
+}
+
+/// Pin the stipend rate the way `close_epoch` does.
+///
+/// Seeding the counters without the rate leaves settlement unable to price the
+/// epoch, which the contract now rejects. Pinning inside the seeding helpers
+/// rather than at their call sites is what keeps the stand-in from drifting away
+/// from the production path again — the callers must only make sure the rate is
+/// configured *before* they seed.
+fn pin_test_stipend_rate(sdk: &mut TestingContextImpl, epoch: u64) {
+    let rate = chain_config_storage()
+        .blend_stipend_per_epoch_accessor()
+        .get_checked(sdk)
+        .unwrap();
+    production_liveness_storage()
+        .stipend_rate_at_close_p1_accessor()
+        .entry(epoch)
+        .set_checked(sdk, rate + U256::ONE)
+        .unwrap();
+}
+
 enum MockDisbursement {
     Amount(U256),
     EmptyReturn,
@@ -265,9 +346,7 @@ enum MockDisbursement {
 }
 
 struct StipendCallState {
-    liveness: Address,
     reserve: Address,
-    finalized_epoch_p1: u64,
     reserve_balances: VecDeque<U256>,
     disbursements: VecDeque<MockDisbursement>,
     reserve_balance_reads: usize,
@@ -317,7 +396,6 @@ fn stipend_test_sdk(
 ) -> (Harness, Rc<RefCell<StipendCallState>>, Address) {
     let owner = Address::with_last_byte(0xa0);
     let validator = Address::with_last_byte(0x01);
-    let liveness = Address::with_last_byte(0xb0);
     let reserve = Address::with_last_byte(0xc0);
     let mut harness = Harness::new(1_000);
     assert_eq!(
@@ -331,25 +409,22 @@ fn stipend_test_sdk(
         .set_checked(&mut harness.sdk, U256::from(100))
         .unwrap();
     config
-        .liveness_slashing_accessor()
-        .set_checked(&mut harness.sdk, liveness)
-        .unwrap();
-    config
         .blend_reserve_accessor()
         .set_checked(&mut harness.sdk, reserve)
         .unwrap();
-    consensus_storage()
-        .epoch_committees_accessor()
-        .entry(0)
-        .push_checked(&mut harness.sdk, validator)
-        .unwrap();
+    commit_test_committee(
+        &mut harness.sdk,
+        0,
+        &[(validator, DEFAULT_MIN_VALIDATOR_STAKE)],
+    );
+    // Epoch 0 is only settleable once it is over and only if it recorded blocks.
+    record_test_production(&mut harness.sdk, 0, DEFAULT_EPOCH_BLOCK_INTERVAL as u32);
+    harness.set_block_number(1_000 + DEFAULT_EPOCH_BLOCK_INTERVAL);
     harness.set_caller(SYSTEM_CALLER);
     harness.sdk.take_logs();
 
     let calls = Rc::new(RefCell::new(StipendCallState {
-        liveness,
         reserve,
-        finalized_epoch_p1: 1,
         reserve_balances: reserve_balances.into(),
         disbursements: disbursements.into(),
         reserve_balance_reads: 0,
@@ -365,21 +440,10 @@ fn stipend_test_sdk(
             let selector = u32::from_be_bytes(input[..SIG_LEN_BYTES].try_into().unwrap());
             let mut calls = call_state.borrow_mut();
             match (address, selector) {
-                (address, SIG_LAST_FINALIZED_EPOCH_P1) if address == calls.liveness => {
-                    SyscallResult::new(
-                        encode_mock_return(&calls.finalized_epoch_p1),
-                        0,
-                        0,
-                        ExitCode::Ok,
-                    )
-                }
                 (address, SIG_RESERVE_BALANCE) if address == calls.reserve => {
                     calls.reserve_balance_reads += 1;
                     let balance = calls.reserve_balances.pop_front().unwrap_or(U256::ZERO);
                     SyscallResult::new(encode_mock_return(&balance), 0, 0, ExitCode::Ok)
-                }
-                (address, SIG_PARTICIPATION) if address == calls.liveness => {
-                    SyscallResult::new(encode_mock_return(&(1u32, 1u32)), 0, 0, ExitCode::Ok)
                 }
                 (address, SIG_RESERVE_DISBURSE) if address == calls.reserve => {
                     let params = &input[SIG_LEN_BYTES..];
@@ -685,26 +749,52 @@ fn solidity_bytes_outputs_and_event_match_cast_vectors() {
         )
     );
 
-    let keys = vec![ConsensusKeys {
-        bls_pubkey: Bytes::from_static(&[0xaa, 0xbb, 0xcc]),
-        peer_pubkey: B256::with_last_byte(0x01),
-        activation_epoch: 7,
-    }];
+    // Three elements, not one: a single-element array puts every head slot at offset 0, so it
+    // cannot catch a wrong stride between slots.
+    let keys = vec![
+        ConsensusKeys {
+            bls_pubkey: Bytes::from_static(&[0xaa, 0xbb, 0xcc]),
+            peer_pubkey: B256::with_last_byte(0x01),
+            activation_epoch: 7,
+        },
+        ConsensusKeys {
+            bls_pubkey: Bytes::from_static(&[0xdd, 0xee]),
+            peer_pubkey: B256::with_last_byte(0x02),
+            activation_epoch: 8,
+        },
+        ConsensusKeys {
+            bls_pubkey: Bytes::from_static(&[0xff]),
+            peer_pubkey: B256::with_last_byte(0x03),
+            activation_epoch: 9,
+        },
+    ];
     let mut encoded_keys = BytesMut::new();
     SolidityABI::<Vec<ConsensusKeys>>::encode(&keys, &mut encoded_keys, 0).unwrap();
     // cast abi-encode "f((bytes,bytes32,uint64)[])"
-    // "[(0xaabbcc,0x...01,7)]"
+    // "[(0xaabbcc,0x...01,7),(0xddee,0x...02,8),(0xff,0x...03,9)]"
     assert_eq!(
         encoded_keys.as_ref(),
         &hex!(
             "0000000000000000000000000000000000000000000000000000000000000020
-             0000000000000000000000000000000000000000000000000000000000000001
-             0000000000000000000000000000000000000000000000000000000000000020
+             0000000000000000000000000000000000000000000000000000000000000003
+             0000000000000000000000000000000000000000000000000000000000000060
+             0000000000000000000000000000000000000000000000000000000000000100
+             00000000000000000000000000000000000000000000000000000000000001a0
              0000000000000000000000000000000000000000000000000000000000000060
              0000000000000000000000000000000000000000000000000000000000000001
              0000000000000000000000000000000000000000000000000000000000000007
              0000000000000000000000000000000000000000000000000000000000000003
-             aabbcc0000000000000000000000000000000000000000000000000000000000"
+             aabbcc0000000000000000000000000000000000000000000000000000000000
+             0000000000000000000000000000000000000000000000000000000000000060
+             0000000000000000000000000000000000000000000000000000000000000002
+             0000000000000000000000000000000000000000000000000000000000000008
+             0000000000000000000000000000000000000000000000000000000000000002
+             ddee000000000000000000000000000000000000000000000000000000000000
+             0000000000000000000000000000000000000000000000000000000000000060
+             0000000000000000000000000000000000000000000000000000000000000003
+             0000000000000000000000000000000000000000000000000000000000000009
+             0000000000000000000000000000000000000000000000000000000000000001
+             ff00000000000000000000000000000000000000000000000000000000000000"
         )
     );
 
@@ -873,15 +963,13 @@ fn parameterized_custom_errors_use_solidity_abi() {
 #[test]
 fn derived_selectors_match_independent_hex_pins() {
     for (actual, pinned) in [
-        (SIG_INITIALIZE, 0x4b4b21a5),
+        (SIG_INITIALIZE, 0xd86555fe),
         (SIG_CURRENT_EPOCH, 0x76671808),
         (SIG_NEXT_EPOCH, 0xaea0e78b),
         (SIG_GET_STAKING_TOKEN, 0x9f9106d1),
-        (SIG_DEFAULT_PARTICIPATION_FLOOR_BPS, 0x2c1d88e8),
         (SIG_DEFAULT_SLASH_REPORTER_BPS, 0x6cc69027),
         (SIG_MAX_ACTIVE_VALIDATORS, 0x5d887462),
         (SIG_MAX_BLEND_STIPEND_PER_EPOCH, 0x2bc2fec4),
-        (SIG_MAX_PARTICIPATION_FLOOR_BPS, 0x9dbdf12b),
         (SIG_MAX_SLASH_REPORTER_BPS, 0x0a3a6183),
         (SIG_GET_VALIDATOR_DELEGATION, 0xd951e186),
         (SIG_GET_VALIDATOR_DELEGATED_STAKE_AT, 0xe8810ea7),
@@ -899,14 +987,11 @@ fn derived_selectors_match_independent_hex_pins() {
         (SIG_CHANGE_VALIDATOR_COMMISSION_RATE, 0x14f8649f),
         (SIG_CHANGE_VALIDATOR_OWNER, 0x0052c9e1),
         (SIG_SET_ACTIVE_VALIDATORS_LENGTH, 0xc227a412),
+        (SIG_GET_ACTIVE_VALIDATORS_LENGTH_AT, 0xd9b083ba),
         (SIG_SET_EPOCH_BLOCK_INTERVAL, 0xaf70fa2c),
         (SIG_SET_DPOS_ACTIVATION_BLOCK, 0xf517ca6a),
-        (SIG_SET_FELONY_THRESHOLD, 0xfcd6cb3e),
-        (SIG_SET_VALIDATOR_JAIL_EPOCH_LENGTH, 0xc8652bd5),
         (SIG_SET_SLASH_REPORTER_REWARD_BPS, 0x58702003),
         (SIG_SET_SLASH_FUND_ADDRESS, 0xa79e7263),
-        (SIG_SET_PARTICIPATION_FLOOR_BPS, 0xd0a01007),
-        (SIG_SET_PARTICIPATION_JAIL_DISABLED, 0x8664f2e7),
         (SIG_SET_BLEND_STIPEND_PER_EPOCH, 0x2c91b879),
         (SIG_SET_UNDELEGATE_PERIOD, 0x41d8a080),
         (SIG_SET_MIN_VALIDATOR_STAKE_AMOUNT, 0xe1a2e863),
@@ -928,17 +1013,101 @@ fn derived_selectors_match_independent_hex_pins() {
         (SIG_GET_VALIDATORS_WITH_KEYS_AT, 0x7cfba9f3),
         (SIG_COMMIT_EPOCH_COMMITTEE, 0x87401d8a),
         (SIG_GET_EPOCH_COMMITTEE_WITH_STAKES, 0xa4d160c1),
-        (SIG_RELEASE_VALIDATOR_FROM_JAIL, 0x73a3dda6),
-        (SIG_SLASH, 0xc96be4cb),
         (SIG_COMMIT_EQUIVOCATION_REPORT, 0x32890bc0),
         (SIG_COMPUTE_EQUIVOCATION_REPORT_COMMITMENT, 0xc289d76e),
         (SIG_GET_EQUIVOCATION_REPORT_COMMITMENT, 0xa3aae5dd),
         (SIG_SLASH_EQUIVOCATION_NOTARIZE, 0x2bc5fb10),
         (SIG_SLASH_EQUIVOCATION_FINALIZE, 0xb034c58b),
         (SIG_SLASH_EQUIVOCATION_NULLIFY_FINALIZE, 0x337e1437),
+        (SIG_DEFAULT_MIN_VERDICT_DUE_BLOCKS, 0x6fd3afb7),
+        (SIG_DEFAULT_EXCLUSION_BACKOFF_CAP, 0xd4c30c1a),
+        (SIG_MAX_MIN_VERDICT_DUE_BLOCKS, 0x9b9a11ba),
+        (SIG_GET_MIN_VERDICT_DUE_BLOCKS, 0xee3ad0e7),
+        (SIG_SET_MIN_VERDICT_DUE_BLOCKS, 0x4fae9dea),
+        (SIG_GET_EXCLUSION_BACKOFF_CAP, 0x6bed0322),
+        (SIG_SET_EXCLUSION_BACKOFF_CAP, 0x3b543e1c),
+        (SIG_GET_PRODUCTION_LIVENESS_DISABLED, 0x9a4c46bb),
+        (SIG_SET_PRODUCTION_LIVENESS_DISABLED, 0x8fc07556),
+        (SIG_GET_PRODUCTION_STATS, 0x8e948ac1),
+        (SIG_BLOCKS_IN_EPOCH, 0xf06be669),
+        (SIG_PRODUCED_AT, 0x91c7d453),
+        (SIG_PENDING_EXCLUSIONS, 0xaef690f9),
+        (SIG_READMIT_AT_EPOCH, 0x32066046),
+        (SIG_LAST_PROCESSED_BLOCK, 0x33de61d2),
+        (SIG_RECORD_PRODUCTION, 0x8244a2c2),
+        (SIG_SETTLE_EPOCH_STIPEND_FROM, 0x92d321ab),
+        (ERR_MIN_VERDICT_DUE_BLOCKS_TOO_HIGH, 0xb1776ed0),
+        (ERR_ONLY_SELF_CALL, 0xff54bf4b),
     ] {
         assert_eq!(actual, pinned);
     }
+}
+
+#[test]
+fn production_liveness_event_signatures_match_the_solidity_abi() {
+    // Event field types are mapped by type name and an unrecognised path
+    // degrades silently to `tuple`, so the signatures are pinned as strings
+    // rather than compared against the same derivation that produced them.
+    assert_eq!(
+        events::MinVerdictDueBlocksChanged::SIGNATURE,
+        "MinVerdictDueBlocksChanged(uint32,uint32)"
+    );
+    assert_eq!(
+        events::ExclusionBackoffCapChanged::SIGNATURE,
+        "ExclusionBackoffCapChanged(uint32,uint32)"
+    );
+    assert_eq!(
+        events::ProductionLivenessDisabledChanged::SIGNATURE,
+        "ProductionLivenessDisabledChanged(bool,bool)"
+    );
+    assert_eq!(
+        events::ProductionExclusionApplied::SIGNATURE,
+        "ProductionExclusionApplied(address,uint64)"
+    );
+    assert_eq!(
+        events::ProductionExclusionReleased::SIGNATURE,
+        "ProductionExclusionReleased(address,uint64)"
+    );
+    assert_eq!(
+        events::PartialEpoch::SIGNATURE,
+        "PartialEpoch(uint64,uint32,uint32)"
+    );
+    assert_eq!(
+        events::ProductionVerdictFailed::SIGNATURE,
+        "ProductionVerdictFailed(uint64,address,uint32,uint256)"
+    );
+    assert_eq!(
+        events::CorrelatedFailureEpoch::SIGNATURE,
+        "CorrelatedFailureEpoch(uint64,uint256,uint256)"
+    );
+    assert_eq!(
+        events::StipendLegSkipped::SIGNATURE,
+        "StipendLegSkipped(uint64)"
+    );
+    assert_eq!(
+        events::PartialEpoch::SELECTOR,
+        hex!("0e3a2b176af3f126559b647eec7cf85052c5cf6239a5fb6869c57d8416225690")
+    );
+    assert_eq!(
+        events::ProductionVerdictFailed::SELECTOR,
+        hex!("4d49874ac1e640f94f7ab435dd2305f79014052c7c659aac7f36742d043f8bd8")
+    );
+    assert_eq!(
+        events::CorrelatedFailureEpoch::SELECTOR,
+        hex!("3a7c10dc4c9367950614ebeed14db659b710db26c303e92aaf4ac4cdd5b10925")
+    );
+    assert_eq!(
+        events::StipendLegSkipped::SELECTOR,
+        hex!("d4266dfa609215f824cf7ef1953a79620625b0e0595260ffd393280da7285dbd")
+    );
+    assert_eq!(
+        events::ProductionExclusionApplied::SELECTOR,
+        hex!("b8336509c4e8c35e4348c3c1666d3687b7ba430c61e7d929d7f50010984da426")
+    );
+    assert_eq!(
+        events::ProductionExclusionReleased::SELECTOR,
+        hex!("1ce26a6c35478b6335c4d63746f3728de9394747163281c4383bf3ac95137644")
+    );
 }
 
 #[test]
@@ -973,15 +1142,13 @@ fn initializes_registry_and_preserves_solidity_read_abi() {
         SIG_GET_VALIDATOR_STATUS,
         &AddressCommand { value: validator_a },
     ));
-    let status: (Address, u8, U256, u32, u64, u64, u64, u16) = decode_output(&output);
+    let status: (Address, u8, U256, u64, u64, u16) = decode_output(&output);
     assert_eq!(
         status,
         (
             validator_a,
             STATUS_ACTIVE,
             U256::from(10) * DEFAULT_MIN_VALIDATOR_STAKE,
-            0,
-            0,
             0,
             0,
             500,
@@ -1154,10 +1321,6 @@ fn embedded_chain_config_exposes_solidity_public_constants() {
     let mut harness = Harness::new(0);
     for (selector, expected) in [
         (
-            SIG_DEFAULT_PARTICIPATION_FLOOR_BPS,
-            DEFAULT_PARTICIPATION_FLOOR_BPS,
-        ),
-        (
             SIG_DEFAULT_SLASH_REPORTER_BPS,
             DEFAULT_SLASH_REPORTER_REWARD_BPS,
         ),
@@ -1165,7 +1328,6 @@ fn embedded_chain_config_exposes_solidity_public_constants() {
             SIG_MAX_ACTIVE_VALIDATORS,
             MAX_ACTIVE_VALIDATORS_LENGTH as u32,
         ),
-        (SIG_MAX_PARTICIPATION_FLOOR_BPS, MAX_PARTICIPATION_FLOOR_BPS),
         (SIG_MAX_SLASH_REPORTER_BPS, MAX_SLASH_REPORTER_REWARD_BPS),
     ] {
         let (_, output) = harness.call(encode_empty_call(selector));
@@ -1186,8 +1348,6 @@ fn stores_chain_configuration_in_its_own_namespace() {
     command.staking_token = staking_token;
     command.active_validators_length = 50;
     command.epoch_block_interval = 100;
-    command.felony_threshold = 150;
-    command.validator_jail_epoch_length = 7;
     command.undelegate_period = 7;
     command.min_validator_stake_amount = BALANCE_COMPACT_PRECISION;
     command.min_staking_amount = BALANCE_COMPACT_PRECISION;
@@ -1265,7 +1425,7 @@ fn governance_updates_embedded_chain_configuration() {
     assert_eq!(
         harness
             .call(encode_call(
-                SIG_SET_FELONY_THRESHOLD,
+                SIG_SET_SLASH_REPORTER_REWARD_BPS,
                 &U32Command { value: 3 },
             ))
             .0,
@@ -1299,10 +1459,7 @@ fn governance_updates_embedded_chain_configuration() {
         );
     }
     for (selector, value) in [
-        (SIG_SET_FELONY_THRESHOLD, 3),
-        (SIG_SET_VALIDATOR_JAIL_EPOCH_LENGTH, 4),
         (SIG_SET_SLASH_REPORTER_REWARD_BPS, 2_500),
-        (SIG_SET_PARTICIPATION_FLOOR_BPS, 1_000),
         (SIG_SET_ACTIVE_VALIDATORS_LENGTH, 31),
         (SIG_SET_UNDELEGATE_PERIOD, 9),
     ] {
@@ -1328,15 +1485,6 @@ fn governance_updates_embedded_chain_configuration() {
     assert_eq!(
         harness
             .call(encode_call(
-                SIG_SET_PARTICIPATION_JAIL_DISABLED,
-                &BoolCommand { value: true },
-            ))
-            .0,
-        ExitCode::Ok
-    );
-    assert_eq!(
-        harness
-            .call(encode_call(
                 SIG_SET_BLEND_STIPEND_PER_EPOCH,
                 &U256Command {
                     value: U256::from(42),
@@ -1347,10 +1495,7 @@ fn governance_updates_embedded_chain_configuration() {
     );
 
     for (selector, expected) in [
-        (SIG_GET_FELONY_THRESHOLD, 3),
-        (SIG_GET_VALIDATOR_JAIL_EPOCH_LENGTH, 4),
         (SIG_GET_SLASH_REPORTER_REWARD_BPS, 2_500),
-        (SIG_GET_PARTICIPATION_FLOOR_BPS, 1_000),
         (SIG_GET_ACTIVE_VALIDATORS_LENGTH, 31),
         (SIG_GET_UNDELEGATE_PERIOD, 9),
     ] {
@@ -1369,8 +1514,6 @@ fn governance_updates_embedded_chain_configuration() {
         assert_eq!(exit, ExitCode::Ok);
         assert_eq!(decode_output::<Address>(&output), expected);
     }
-    let (_, output) = harness.call(encode_empty_call(SIG_GET_PARTICIPATION_JAIL_DISABLED));
-    assert!(decode_output::<bool>(&output));
     let (_, output) = harness.call(encode_empty_call(SIG_GET_BLEND_STIPEND_PER_EPOCH));
     assert_eq!(decode_output::<U256>(&output), U256::from(42));
 
@@ -1402,8 +1545,6 @@ fn initialize_events_report_defaults_as_previous_values() {
     command.staking_token = Address::with_last_byte(0xb0);
     command.active_validators_length = 31;
     command.epoch_block_interval = 200;
-    command.felony_threshold = 3;
-    command.validator_jail_epoch_length = 4;
     command.undelegate_period = 9;
     command.min_validator_stake_amount = DEFAULT_MIN_VALIDATOR_STAKE * U256::from(2);
     command.min_staking_amount = DEFAULT_MIN_STAKING_AMOUNT * U256::from(2);
@@ -1429,14 +1570,6 @@ fn initialize_events_report_defaults_as_previous_values() {
     assert_eq!(
         u32_event(events::EpochBlockIntervalChanged::SELECTOR),
         (DEFAULT_EPOCH_BLOCK_INTERVAL as u32, 200)
-    );
-    assert_eq!(
-        u32_event(events::FelonyThresholdChanged::SELECTOR),
-        (DEFAULT_FELONY_THRESHOLD, 3)
-    );
-    assert_eq!(
-        u32_event(events::ValidatorJailEpochLengthChanged::SELECTOR),
-        (DEFAULT_VALIDATOR_JAIL_EPOCH_LENGTH, 4)
     );
     assert_eq!(
         u32_event(events::UndelegatePeriodChanged::SELECTOR),
@@ -1921,8 +2054,6 @@ fn delegation_and_undelegation_follow_epoch_snapshots() {
     command.staking_token = token;
     command.active_validators_length = 21;
     command.epoch_block_interval = 200;
-    command.felony_threshold = 150;
-    command.validator_jail_epoch_length = 7;
     command.undelegate_period = 7;
     command.min_validator_stake_amount = one_token;
     command.min_staking_amount = one_token;
@@ -1987,6 +2118,316 @@ fn delegation_and_undelegation_follow_epoch_snapshots() {
     assert_eq!(decode_output::<U256>(&output), one_token * U256::from(11));
 }
 
+// Leader weight is drawn from the SELECTION epoch (target - 2), the same vintage
+// that ranked membership. Stamping `target` instead yields a contract that is
+// internally consistent and still wrong: nothing reverts, the leader is just
+// weighted by an epoch the committee was not chosen under.
+#[test]
+fn leader_weights_are_frozen_at_the_selection_epoch_vintage() {
+    let owner = Address::with_last_byte(0xa0);
+    let validator = Address::with_last_byte(0x01);
+    let delegator = Address::with_last_byte(0xb0);
+    let initial = DEFAULT_MIN_VALIDATOR_STAKE * U256::from(2);
+    let added = DEFAULT_MIN_STAKING_AMOUNT * U256::from(5);
+    let mut harness = Harness::new(1_000);
+    assert_eq!(
+        harness.initialize(owner, vec![validator], vec![initial], 0),
+        ExitCode::Ok
+    );
+
+    // Effective at epoch 2, so epoch 0 and epoch 2 hold different stakes.
+    staking::delegate_to(&mut harness.sdk, delegator, validator, added, false).unwrap();
+    assert_eq!(
+        staking::validator_total_at(&harness.sdk, validator, 0).unwrap(),
+        initial
+    );
+    assert_eq!(
+        staking::validator_total_at(&harness.sdk, validator, 2).unwrap(),
+        initial + added
+    );
+
+    harness.set_caller(SYSTEM_CALLER);
+    for _ in 0..3 {
+        assert_eq!(
+            harness
+                .call(encode_args_call(
+                    SIG_COMMIT_EPOCH_COMMITTEE,
+                    &(vec![validator],),
+                ))
+                .0,
+            ExitCode::Ok
+        );
+    }
+
+    let (_, output) = harness.call(encode_call(
+        SIG_GET_EPOCH_COMMITTEE_WITH_STAKES,
+        &U64Command { value: 2 },
+    ));
+    let (_, _, stakes): (Vec<Address>, Vec<ConsensusKeys>, Vec<U256>) = decode_returns(&output);
+    assert_eq!(
+        stakes,
+        vec![initial],
+        "epoch 2 was selected from epoch 0 and must carry epoch 0's weight"
+    );
+
+    staking::delegate_to(&mut harness.sdk, delegator, validator, added, false).unwrap();
+    let (_, output) = harness.call(encode_call(
+        SIG_GET_EPOCH_COMMITTEE_WITH_STAKES,
+        &U64Command { value: 2 },
+    ));
+    let (_, _, stakes): (Vec<Address>, Vec<ConsensusKeys>, Vec<U256>) = decode_returns(&output);
+    assert_eq!(
+        stakes,
+        vec![initial],
+        "a committed epoch's weights do not move when stake changes afterwards"
+    );
+}
+
+#[test]
+fn pruning_drops_leader_weights_with_their_committee() {
+    let owner = Address::with_last_byte(0xa0);
+    let validator = Address::with_last_byte(0x01);
+    let mut harness = Harness::new(1_000);
+    assert_eq!(
+        harness.initialize(owner, vec![validator], vec![DEFAULT_MIN_VALIDATOR_STAKE], 0),
+        ExitCode::Ok
+    );
+
+    harness.set_caller(SYSTEM_CALLER);
+    assert_eq!(
+        harness
+            .call(encode_args_call(
+                SIG_COMMIT_EPOCH_COMMITTEE,
+                &(vec![validator],),
+            ))
+            .0,
+        ExitCode::Ok
+    );
+
+    harness.set_block_number(1_000 + 60 * DEFAULT_EPOCH_BLOCK_INTERVAL);
+    assert_eq!(
+        harness
+            .call(encode_args_call(
+                SIG_COMMIT_EPOCH_COMMITTEE,
+                &(vec![validator],),
+            ))
+            .0,
+        ExitCode::Ok
+    );
+
+    let (exit, output) = harness.call(encode_call(
+        SIG_GET_EPOCH_COMMITTEE_WITH_STAKES,
+        &U64Command { value: 0 },
+    ));
+    assert_eq!(exit, ExitCode::Ok);
+    let (validators, _, stakes): (Vec<Address>, Vec<ConsensusKeys>, Vec<U256>) =
+        decode_returns(&output);
+    assert!(
+        validators.is_empty() && stakes.is_empty(),
+        "a pruned epoch answers empty, not a length mismatch"
+    );
+}
+
+// The committee cap was the last input of the epoch-frozen selection view still
+// read live: raising it used to retroactively enlarge the committee of an epoch
+// that had already been committed, which desynchronises the DKG index space
+// from the committed committee.
+#[test]
+fn raising_the_cap_leaves_already_started_epochs_untouched() {
+    let owner = Address::with_last_byte(0xa0);
+    let big = Address::with_last_byte(0x01);
+    let small = Address::with_last_byte(0x02);
+    let mut harness = Harness::new(1_000);
+    let mut command = harness.initialize_command(
+        owner,
+        vec![big, small],
+        vec![
+            DEFAULT_MIN_VALIDATOR_STAKE * U256::from(5),
+            DEFAULT_MIN_VALIDATOR_STAKE * U256::from(2),
+        ],
+        500,
+    );
+    command.active_validators_length = 1;
+    assert_eq!(harness.initialize_with(command), ExitCode::Ok);
+    assert_eq!(
+        staking::selected_validators_at(&harness.sdk, 0).unwrap(),
+        vec![big]
+    );
+
+    harness.set_caller(GENESIS_GOVERNANCE);
+    harness.sdk.take_logs();
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_SET_ACTIVE_VALIDATORS_LENGTH,
+                &U32Command { value: 2 },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+    let logs = harness.sdk.take_logs();
+    let (data, _) = logs
+        .iter()
+        .find(|(_, topics)| {
+            topics.first() == Some(&B256::new(events::ActiveValidatorsLengthChanged::SELECTOR))
+        })
+        .expect("cap change event");
+    assert_eq!(
+        decode_output::<(u32, u32, u64)>(data),
+        (1, 2, 1),
+        "the event must announce the epoch the new cap first governs, not the current one"
+    );
+
+    assert_eq!(
+        staking::selected_validators_at(&harness.sdk, 0).unwrap(),
+        vec![big],
+        "epoch 0 has already started and keeps the cap it was selected under"
+    );
+    assert_eq!(
+        staking::selected_validators_at(&harness.sdk, 1).unwrap(),
+        vec![big, small]
+    );
+
+    let (_, output) = harness.call(encode_call(
+        SIG_GET_ACTIVE_VALIDATORS_LENGTH_AT,
+        &U64Command { value: 0 },
+    ));
+    assert_eq!(decode_output::<u64>(&output), 1);
+    let (_, output) = harness.call(encode_call(
+        SIG_GET_ACTIVE_VALIDATORS_LENGTH_AT,
+        &U64Command { value: 1 },
+    ));
+    assert_eq!(decode_output::<u64>(&output), 2);
+    let (_, output) = harness.call(encode_empty_call(SIG_GET_ACTIVE_VALIDATORS_LENGTH));
+    assert_eq!(
+        decode_output::<u64>(&output),
+        2,
+        "the scalar reports the latest scheduled value immediately"
+    );
+}
+
+// The other half of the key filter: keys that exist but activate later must be
+// treated exactly like absent keys on both legs.
+#[test]
+fn keys_activating_after_the_selection_epoch_are_filtered_after_the_cut() {
+    let owner = Address::with_last_byte(0xa0);
+    let future = Address::with_last_byte(0x01);
+    let keyed = Address::with_last_byte(0x02);
+    let spare = Address::with_last_byte(0x03);
+    let mut harness = Harness::new(1_000);
+    let mut command = harness.initialize_command(
+        owner,
+        vec![future, keyed, spare],
+        vec![
+            DEFAULT_MIN_VALIDATOR_STAKE * U256::from(9),
+            DEFAULT_MIN_VALIDATOR_STAKE * U256::from(3),
+            DEFAULT_MIN_VALIDATOR_STAKE * U256::from(2),
+        ],
+        500,
+    );
+    command.active_validators_length = 2;
+    assert_eq!(harness.initialize_with(command), ExitCode::Ok);
+
+    consensus_storage()
+        .consensus_keys_accessor()
+        .entry(future)
+        .activation_epoch_accessor()
+        .set_checked(&mut harness.sdk, 7)
+        .unwrap();
+
+    let (_, output) = harness.call(encode_call(
+        SIG_GET_VALIDATORS_WITH_KEYS_AT,
+        &U64Command { value: 0 },
+    ));
+    let (view, view_keys): (Vec<Address>, Vec<ConsensusKeys>) = decode_returns(&output);
+    assert_eq!(
+        view,
+        vec![future, keyed],
+        "the not-yet-activated validator still occupies its top-k slot"
+    );
+    assert!(view_keys[0].bls_pubkey.is_empty());
+
+    harness.set_caller(SYSTEM_CALLER);
+    assert_revert_selector(
+        harness.call(encode_args_call(
+            SIG_COMMIT_EPOCH_COMMITTEE,
+            &(vec![keyed, spare],),
+        )),
+        ERR_COMMITTEE_LENGTH_MISMATCH,
+    );
+    assert_eq!(
+        harness
+            .call(encode_args_call(SIG_COMMIT_EPOCH_COMMITTEE, &(vec![keyed],)))
+            .0,
+        ExitCode::Ok
+    );
+}
+
+#[test]
+fn committee_stake_read_rejects_a_committee_without_matching_frozen_weights() {
+    let owner = Address::with_last_byte(0xa0);
+    let validator = Address::with_last_byte(0x01);
+    let mut harness = Harness::new(1_000);
+    assert_eq!(
+        harness.initialize(owner, vec![validator], vec![DEFAULT_MIN_VALIDATOR_STAKE], 0),
+        ExitCode::Ok
+    );
+
+    // A committee whose weights were never stamped: the reader must refuse it
+    // rather than fall back to a live, height-dependent walk.
+    consensus_storage()
+        .epoch_committees_accessor()
+        .entry(4)
+        .push_checked(&mut harness.sdk, validator)
+        .unwrap();
+
+    assert_revert_selector(
+        harness.call(encode_call(
+            SIG_GET_EPOCH_COMMITTEE_WITH_STAKES,
+            &U64Command { value: 4 },
+        )),
+        ERR_LEADER_STAKES_LENGTH_MISMATCH,
+    );
+}
+
+#[test]
+fn repeated_cap_changes_in_one_epoch_collapse_into_a_single_checkpoint() {
+    let owner = Address::with_last_byte(0xa0);
+    let validator = Address::with_last_byte(0x01);
+    let mut harness = Harness::new(1_000);
+    assert_eq!(
+        harness.initialize(owner, vec![validator], vec![DEFAULT_MIN_VALIDATOR_STAKE], 0),
+        ExitCode::Ok
+    );
+
+    harness.set_caller(GENESIS_GOVERNANCE);
+    for value in [2u32, 3, 4] {
+        assert_eq!(
+            harness
+                .call(encode_call(
+                    SIG_SET_ACTIVE_VALIDATORS_LENGTH,
+                    &U32Command { value },
+                ))
+                .0,
+            ExitCode::Ok
+        );
+    }
+
+    assert_eq!(
+        chain_config_storage()
+            .cap_checkpoints_accessor()
+            .len_checked(&harness.sdk)
+            .unwrap(),
+        2,
+        "the genesis checkpoint plus one pending entry, not one entry per call"
+    );
+    let (_, output) = harness.call(encode_call(
+        SIG_GET_ACTIVE_VALIDATORS_LENGTH_AT,
+        &U64Command { value: 1 },
+    ));
+    assert_eq!(decode_output::<u64>(&output), 4);
+}
+
 #[test]
 fn future_delegation_and_noop_commission_do_not_bypass_warmup() {
     let contract_owner = Address::with_last_byte(0xa0);
@@ -2006,10 +2447,18 @@ fn future_delegation_and_noop_commission_do_not_bypass_warmup() {
         ),
         ExitCode::Ok
     );
-    chain_config_storage()
-        .active_validators_length_accessor()
-        .set_checked(&mut harness.sdk, 1)
-        .unwrap();
+    // Through governance, not a raw storage poke: committee selection reads the
+    // cap checkpoint, and only the setter schedules one.
+    harness.set_caller(GENESIS_GOVERNANCE);
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_SET_ACTIVE_VALIDATORS_LENGTH,
+                &U32Command { value: 1 },
+            ))
+            .0,
+        ExitCode::Ok
+    );
 
     staking::delegate_to(&mut harness.sdk, delegator, validator_a, delegated, false).unwrap();
     harness.set_caller(validator_a);
@@ -2385,8 +2834,12 @@ fn committee_commit_is_system_gated_and_returns_epoch_stakes() {
     assert_eq!(event_committee, vec![validator_a, validator_b]);
 }
 
+// A keyless validator outranking a keyed one by stake occupies a top-k slot and
+// is dropped afterwards; it is not skipped over. Ranking before filtering is what
+// keeps `getValidatorsWithKeysAt` — the array the off-chain deriver builds from —
+// in agreement with the committee `commitEpochCommittee` will accept.
 #[test]
-fn committee_filters_keyless_validators_before_top_k_ranking() {
+fn committee_verify_matches_the_selection_view_the_deriver_reads() {
     let owner = Address::with_last_byte(0xa0);
     let keyless = Address::with_last_byte(0x01);
     let keyed_a = Address::with_last_byte(0x02);
@@ -2412,12 +2865,34 @@ fn committee_filters_keyless_validators_before_top_k_ranking() {
         .set_checked(&mut harness.sdk, B256::ZERO)
         .unwrap();
 
+    let (_, output) = harness.call(encode_call(
+        SIG_GET_VALIDATORS_WITH_KEYS_AT,
+        &U64Command { value: 0 },
+    ));
+    let (view, view_keys): (Vec<Address>, Vec<ConsensusKeys>) = decode_returns(&output);
+    assert_eq!(
+        view,
+        vec![keyless, keyed_a],
+        "the selection view ranks by stake before any key filtering"
+    );
+    assert!(
+        view_keys[0].bls_pubkey.is_empty(),
+        "the keyless top-ranked validator is surfaced with blank keys, not omitted"
+    );
+
     harness.set_caller(SYSTEM_CALLER);
+    assert_revert_selector(
+        harness.call(encode_args_call(
+            SIG_COMMIT_EPOCH_COMMITTEE,
+            &(vec![keyed_a, keyed_b],),
+        )),
+        ERR_COMMITTEE_LENGTH_MISMATCH,
+    );
     assert_eq!(
         harness
             .call(encode_args_call(
                 SIG_COMMIT_EPOCH_COMMITTEE,
-                &(vec![keyed_a, keyed_b],),
+                &(vec![keyed_a],),
             ))
             .0,
         ExitCode::Ok
@@ -2426,10 +2901,7 @@ fn committee_filters_keyless_validators_before_top_k_ranking() {
         SIG_GET_EPOCH_COMMITTEE,
         &U64Command { value: 0 },
     ));
-    assert_eq!(
-        decode_output::<Vec<Address>>(&output),
-        vec![keyed_a, keyed_b]
-    );
+    assert_eq!(decode_output::<Vec<Address>>(&output), vec![keyed_a]);
 }
 
 #[test]
@@ -2593,233 +3065,6 @@ fn committee_pruning_keeps_dkg_history() {
 }
 
 #[test]
-fn liveness_slash_jails_and_readmits_without_breaking_quorum() {
-    let owner = Address::with_last_byte(0xa0);
-    let liveness = Address::with_last_byte(0xb0);
-    let reserve = Address::with_last_byte(0xb1);
-    let validators = (1..=4)
-        .map(Address::with_last_byte)
-        .collect::<Vec<Address>>();
-    let mut harness = Harness::new(1_000);
-    harness.set_caller(owner);
-    let mut command = harness.initialize_command(
-        owner,
-        validators.clone(),
-        vec![DEFAULT_MIN_VALIDATOR_STAKE; validators.len()],
-        500,
-    );
-    command.liveness_slashing = liveness;
-    command.blend_reserve = reserve;
-    assert_eq!(harness.initialize_with(command), ExitCode::Ok);
-
-    harness.set_caller(liveness);
-    assert_eq!(
-        harness
-            .call(encode_call(
-                SIG_SLASH,
-                &AddressCommand {
-                    value: validators[0],
-                },
-            ))
-            .0,
-        ExitCode::Ok
-    );
-    assert_eq!(
-        staking_storage()
-            .validators_accessor()
-            .entry(validators[0])
-            .status_accessor()
-            .get_checked(&harness.sdk)
-            .unwrap(),
-        crate::consts::STATUS_JAIL
-    );
-
-    harness.set_block_number(1_200);
-    assert_eq!(
-        harness
-            .call(encode_call(
-                SIG_READMIT_EXPIRED_JAILS,
-                &U64Command { value: 1 },
-            ))
-            .0,
-        ExitCode::Ok
-    );
-    assert_eq!(
-        staking_storage()
-            .validators_accessor()
-            .entry(validators[0])
-            .status_accessor()
-            .get_checked(&harness.sdk)
-            .unwrap(),
-        STATUS_ACTIVE
-    );
-}
-
-#[test]
-fn liveness_slashing_preserves_fixed_committed_committee_quorum() {
-    let owner = Address::with_last_byte(0xa0);
-    let liveness = Address::with_last_byte(0xb0);
-    let validators = (1..=8)
-        .map(Address::with_last_byte)
-        .collect::<Vec<Address>>();
-    let committee = validators[..7].to_vec();
-    let mut harness = Harness::new(1_000);
-    let mut command = harness.initialize_command(
-        owner,
-        validators.clone(),
-        vec![DEFAULT_MIN_VALIDATOR_STAKE; validators.len()],
-        500,
-    );
-    command.active_validators_length = committee.len() as u32;
-    command.liveness_slashing = liveness;
-    assert_eq!(harness.initialize_with(command), ExitCode::Ok);
-
-    harness.set_caller(SYSTEM_CALLER);
-    assert_eq!(
-        harness
-            .call(encode_args_call(
-                SIG_COMMIT_EPOCH_COMMITTEE,
-                &(committee.clone(),),
-            ))
-            .0,
-        ExitCode::Ok
-    );
-
-    harness.set_caller(liveness);
-    for validator in &committee[..2] {
-        assert_eq!(
-            harness
-                .call(encode_call(
-                    SIG_SLASH,
-                    &AddressCommand { value: *validator },
-                ))
-                .0,
-            ExitCode::Ok
-        );
-    }
-    assert_eq!(
-        staking_storage()
-            .active_validators_accessor()
-            .len_checked(&harness.sdk),
-        Ok(6)
-    );
-
-    assert_eq!(
-        harness
-            .call(encode_call(
-                SIG_SLASH,
-                &AddressCommand {
-                    value: committee[2],
-                },
-            ))
-            .0,
-        ExitCode::Ok
-    );
-    assert_eq!(
-        staking_storage()
-            .validators_accessor()
-            .entry(committee[2])
-            .status_accessor()
-            .get_checked(&harness.sdk),
-        Ok(STATUS_ACTIVE),
-        "a seven-member committee must retain its five-member quorum floor"
-    );
-
-    let non_committee = validators[7];
-    assert_eq!(
-        harness
-            .call(encode_call(
-                SIG_SLASH,
-                &AddressCommand {
-                    value: non_committee,
-                },
-            ))
-            .0,
-        ExitCode::Ok
-    );
-    assert_eq!(
-        staking_storage()
-            .validators_accessor()
-            .entry(non_committee)
-            .status_accessor()
-            .get_checked(&harness.sdk),
-        Ok(STATUS_JAIL),
-        "a non-committee jail must not consume the protected committee quorum"
-    );
-    assert_eq!(
-        staking_storage()
-            .active_validators_accessor()
-            .len_checked(&harness.sdk),
-        Ok(5)
-    );
-}
-
-#[test]
-fn jail_readmission_rejects_validator_below_minimum_self_stake() {
-    let owner = Address::with_last_byte(0xa0);
-    let liveness = Address::with_last_byte(0xb0);
-    let validators = (1..=4)
-        .map(Address::with_last_byte)
-        .collect::<Vec<Address>>();
-    let validator = validators[0];
-    let mut harness = Harness::new(1_000);
-    let mut command = harness.initialize_command(
-        owner,
-        validators.clone(),
-        vec![DEFAULT_MIN_VALIDATOR_STAKE; validators.len()],
-        0,
-    );
-    command.liveness_slashing = liveness;
-    assert_eq!(harness.initialize_with(command), ExitCode::Ok);
-
-    harness.set_caller(liveness);
-    assert_eq!(
-        harness
-            .call(encode_call(SIG_SLASH, &AddressCommand { value: validator },))
-            .0,
-        ExitCode::Ok
-    );
-    staking::undelegate_from(
-        &mut harness.sdk,
-        validator,
-        validator,
-        DEFAULT_MIN_VALIDATOR_STAKE,
-    )
-    .unwrap();
-    harness.set_block_number(1_200);
-
-    harness.set_caller(validator);
-    assert_revert_selector(
-        harness.call(encode_call(
-            SIG_RELEASE_VALIDATOR_FROM_JAIL,
-            &AddressCommand { value: validator },
-        )),
-        ERR_OWNER_SELF_STAKE_BELOW_MINIMUM,
-    );
-
-    harness.set_caller(liveness);
-    assert_eq!(
-        harness
-            .call(encode_call(
-                SIG_READMIT_EXPIRED_JAILS,
-                &U64Command { value: 1 },
-            ))
-            .0,
-        ExitCode::Ok,
-        "automated readmission must skip an ineligible validator without blocking the scan"
-    );
-    assert_eq!(
-        staking_storage()
-            .validators_accessor()
-            .entry(validator)
-            .status_accessor()
-            .get_checked(&harness.sdk)
-            .unwrap(),
-        STATUS_JAIL
-    );
-}
-
-#[test]
 fn chain_config_guards_match_solidity_boundaries() {
     let owner = Address::with_last_byte(0xa0);
     let mut harness = Harness::new(0);
@@ -2847,13 +3092,6 @@ fn chain_config_guards_match_solidity_boundaries() {
             &U32Command { value: 0 },
         )),
         ERR_ZERO_VALUE,
-    );
-    assert_revert_selector(
-        harness.call(encode_call(
-            SIG_SET_PARTICIPATION_FLOOR_BPS,
-            &U32Command { value: 2_001 },
-        )),
-        ERR_PARTICIPATION_FLOOR_BPS_TOO_HIGH,
     );
     assert_revert_selector(
         harness.call(encode_call(
@@ -2947,6 +3185,15 @@ fn dpos_activation_at_block_zero_remains_configurable() {
             .0,
         ExitCode::Ok
     );
+
+    // Still unarmed here: the height crosses several interval boundaries and the
+    // epoch must not follow it. Configurable and running are two different
+    // states, and the zero activation block means the first one.
+    harness.set_block_number(4_000);
+    let (_, output) = harness.call(encode_empty_call(SIG_CURRENT_EPOCH));
+    assert_eq!(decode_output::<u64>(&output), 0);
+    harness.set_block_number(0);
+
     assert_eq!(
         harness
             .call(encode_call(
@@ -2955,6 +3202,59 @@ fn dpos_activation_at_block_zero_remains_configurable() {
             ))
             .0,
         ExitCode::Ok
+    );
+}
+
+#[test]
+fn scheduling_activation_never_moves_the_epoch_backwards() {
+    let owner = Address::with_last_byte(0xa0);
+    let mut harness = Harness::new(0);
+    assert_eq!(
+        harness.initialize(owner, Vec::new(), Vec::new(), 0),
+        ExitCode::Ok
+    );
+
+    fn epoch(harness: &mut Harness) -> u64 {
+        let (_, output) = harness.call(encode_empty_call(SIG_CURRENT_EPOCH));
+        decode_output::<u64>(&output)
+    }
+
+    harness.set_block_number(4_000);
+    assert_eq!(
+        epoch(&mut harness),
+        0,
+        "an unarmed chain must not accrue epochs from genesis"
+    );
+
+    harness.set_caller(GENESIS_GOVERNANCE);
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_SET_DPOS_ACTIVATION_BLOCK,
+                &U64Command { value: 6_000 },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+
+    // Arming is what used to drop a running counter back to zero: the epoch was
+    // derived from the height alone while unarmed, so scheduling a real
+    // activation rebased it downward and rewrote which checkpoint a stake fell
+    // under. Every step from here must be non-decreasing.
+    let mut previous = epoch(&mut harness);
+    assert_eq!(previous, 0);
+    for height in [4_001u64, 5_999, 6_000, 6_199, 6_200, 6_400] {
+        harness.set_block_number(height);
+        let current = epoch(&mut harness);
+        assert!(
+            current >= previous,
+            "epoch moved backwards at block {height}: {previous} -> {current}"
+        );
+        previous = current;
+    }
+    assert_eq!(
+        previous, 2,
+        "epochs count from the activation block once armed"
     );
 }
 
@@ -3298,6 +3598,463 @@ fn zero_reserve_balance_skips_without_disbursement_call() {
     assert_stipend_events(&harness.sdk, 0, U256::ZERO, true);
 }
 
+fn install_solvent_reserve(sdk: &TestingContextImpl, reserve: Address, balance: U256) {
+    sdk.set_call_handler(move |address, _value, input, _fuel_limit| {
+        if input.len() < SIG_LEN_BYTES {
+            return SyscallResult::new(Bytes::new(), 0, 0, ExitCode::MalformedBuiltinParams);
+        }
+        let selector = u32::from_be_bytes(input[..SIG_LEN_BYTES].try_into().unwrap());
+        match (address, selector) {
+            (address, SIG_RESERVE_BALANCE) if address == reserve => {
+                SyscallResult::new(encode_mock_return(&balance), 0, 0, ExitCode::Ok)
+            }
+            (address, SIG_RESERVE_DISBURSE) if address == reserve => {
+                let (_, assigned) =
+                    SolidityABI::<(Address, U256)>::decode(&&input[SIG_LEN_BYTES..], 0).unwrap();
+                SyscallResult::new(encode_mock_return(&assigned), 0, 0, ExitCode::Ok)
+            }
+            _ => SyscallResult::new(Bytes::new(), 0, 0, ExitCode::Panic),
+        }
+    });
+}
+
+fn epoch_reward(sdk: &TestingContextImpl, validator: Address, epoch: u64) -> U256 {
+    U256::from(
+        staking_storage()
+            .validator_snapshots_accessor()
+            .entry(validator)
+            .entry(epoch)
+            .total_blend_rewards_accessor()
+            .get_checked(sdk)
+            .unwrap(),
+    )
+}
+
+#[test]
+fn stipend_pays_the_frozen_weights_not_the_stake_at_settlement_time() {
+    let owner = Address::with_last_byte(0xa0);
+    let delegator = Address::with_last_byte(0xd0);
+    let reserve = Address::with_last_byte(0xc0);
+    let validator_a = Address::with_last_byte(0x01);
+    let validator_b = Address::with_last_byte(0x02);
+    let stake = DEFAULT_MIN_VALIDATOR_STAKE;
+    let mut harness = Harness::new(1_000);
+    let mut command =
+        harness.initialize_command(owner, vec![validator_a, validator_b], vec![stake, stake], 0);
+    command.blend_reserve = reserve;
+    assert_eq!(harness.initialize_with(command), ExitCode::Ok);
+
+    harness.set_caller(SYSTEM_CALLER);
+    for _ in 0..3 {
+        assert_eq!(
+            harness
+                .call(encode_args_call(
+                    SIG_COMMIT_EPOCH_COMMITTEE,
+                    &(vec![validator_a, validator_b],),
+                ))
+                .0,
+            ExitCode::Ok
+        );
+    }
+    // Effective from epoch 2, so a live walk at the settled epoch would weight
+    // the committee 4:1 where the epoch-0 freeze weights it 1:1.
+    staking::delegate_to(
+        &mut harness.sdk,
+        delegator,
+        validator_a,
+        stake * U256::from(3),
+        false,
+    )
+    .unwrap();
+
+    chain_config_storage()
+        .blend_stipend_per_epoch_accessor()
+        .set_checked(&mut harness.sdk, U256::from(100))
+        .unwrap();
+    staking_storage()
+        .last_rewarded_epoch_p1_accessor()
+        .set_checked(&mut harness.sdk, 2)
+        .unwrap();
+    install_solvent_reserve(&harness.sdk, reserve, U256::from(100));
+    record_test_production(&mut harness.sdk, 2, DEFAULT_EPOCH_BLOCK_INTERVAL as u32);
+
+    harness.set_block_number(1_000 + 3 * DEFAULT_EPOCH_BLOCK_INTERVAL);
+    harness.set_caller(SYSTEM_CALLER);
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_SETTLE_EPOCH_STIPEND,
+                &U64Command { value: 2 },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+    assert_eq!(epoch_reward(&harness.sdk, validator_a, 2), U256::from(50));
+    assert_eq!(epoch_reward(&harness.sdk, validator_b, 2), U256::from(50));
+}
+
+// A committee may be committed two epochs ahead, so the weights an unfinished
+// epoch would be paid on already exist. Paying it draws a full pot for an epoch
+// with no production and advances the cursor past it for good.
+#[test]
+fn an_epoch_that_has_not_finished_cannot_be_settled() {
+    let owner = Address::with_last_byte(0xa0);
+    let validator = Address::with_last_byte(0x01);
+    let reserve = Address::with_last_byte(0xc0);
+    let stake = DEFAULT_MIN_VALIDATOR_STAKE;
+    let mut harness = Harness::new(1_000);
+    let mut command = harness.initialize_command(owner, vec![validator], vec![stake], 0);
+    command.blend_reserve = reserve;
+    assert_eq!(harness.initialize_with(command), ExitCode::Ok);
+
+    commit_test_committee(&mut harness.sdk, 0, &[(validator, stake)]);
+    commit_test_committee(&mut harness.sdk, 1, &[(validator, stake)]);
+    chain_config_storage()
+        .blend_stipend_per_epoch_accessor()
+        .set_checked(&mut harness.sdk, U256::from(100))
+        .unwrap();
+    install_solvent_reserve(&harness.sdk, reserve, U256::from(1_000));
+    record_test_production(&mut harness.sdk, 0, DEFAULT_EPOCH_BLOCK_INTERVAL as u32);
+    record_test_production(&mut harness.sdk, 1, DEFAULT_EPOCH_BLOCK_INTERVAL as u32);
+
+    harness.set_caller(SYSTEM_CALLER);
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_SETTLE_EPOCH_STIPEND,
+                &U64Command { value: 1 },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+    assert_eq!(epoch_reward(&harness.sdk, validator, 0), U256::ZERO);
+    assert_eq!(epoch_reward(&harness.sdk, validator, 1), U256::ZERO);
+    assert_eq!(
+        staking_storage()
+            .last_rewarded_epoch_p1_accessor()
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        0,
+        "the cursor must not advance past an epoch that was never paid"
+    );
+
+    harness.set_block_number(1_000 + DEFAULT_EPOCH_BLOCK_INTERVAL);
+    harness.set_caller(SYSTEM_CALLER);
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_SETTLE_EPOCH_STIPEND,
+                &U64Command { value: 1 },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+    assert_eq!(epoch_reward(&harness.sdk, validator, 0), U256::from(100));
+    assert_eq!(
+        epoch_reward(&harness.sdk, validator, 1),
+        U256::ZERO,
+        "epoch 1 is still running and stays unpaid"
+    );
+}
+
+// The cursor walks epochs contiguously, so a gap in production — a stalled
+// recorder, a pre-activation prefix — is passed over by a LATER epoch's close.
+// Without a per-epoch belt each skipped epoch draws a full pot for no blocks.
+#[test]
+fn an_epoch_that_recorded_no_blocks_is_skipped_when_a_later_one_settles() {
+    let owner = Address::with_last_byte(0xa0);
+    let validator = Address::with_last_byte(0x01);
+    let reserve = Address::with_last_byte(0xc0);
+    let stake = DEFAULT_MIN_VALIDATOR_STAKE;
+    let mut harness = Harness::new(1_000);
+    let mut command = harness.initialize_command(owner, vec![validator], vec![stake], 0);
+    command.blend_reserve = reserve;
+    assert_eq!(harness.initialize_with(command), ExitCode::Ok);
+
+    for epoch in 0..3 {
+        commit_test_committee(&mut harness.sdk, epoch, &[(validator, stake)]);
+    }
+    chain_config_storage()
+        .blend_stipend_per_epoch_accessor()
+        .set_checked(&mut harness.sdk, U256::from(100))
+        .unwrap();
+    install_solvent_reserve(&harness.sdk, reserve, U256::from(1_000));
+    // Epochs 0 and 1 recorded nothing; only epoch 2 produced blocks.
+    record_test_production(&mut harness.sdk, 2, DEFAULT_EPOCH_BLOCK_INTERVAL as u32);
+
+    harness.set_block_number(1_000 + 3 * DEFAULT_EPOCH_BLOCK_INTERVAL);
+    harness.set_caller(SYSTEM_CALLER);
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_SETTLE_EPOCH_STIPEND,
+                &U64Command { value: 2 },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+
+    assert_eq!(epoch_reward(&harness.sdk, validator, 0), U256::ZERO);
+    assert_eq!(epoch_reward(&harness.sdk, validator, 1), U256::ZERO);
+    assert_eq!(
+        epoch_reward(&harness.sdk, validator, 2),
+        U256::from(100),
+        "only the epoch that recorded blocks is paid"
+    );
+    assert_eq!(
+        staking_storage()
+            .credited_blend_accessor()
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        U256::from(100),
+        "the skipped epochs must not have drawn a pot each"
+    );
+}
+
+// Truncating to the shorter of the two arrays would hand the whole pot to a
+// committee prefix and then advance the cursor past the epoch for good, so the
+// settle path must refuse a mismatch exactly as the reader does.
+#[test]
+fn stipend_pays_the_rate_pinned_at_close_not_the_live_one() {
+    let pot = U256::from(100);
+    let (mut harness, calls, validator) =
+        stipend_test_sdk(vec![pot], vec![MockDisbursement::Amount(pot)]);
+
+    // The rate the epoch worked under is already pinned. Dropping the live one to
+    // zero afterwards is the governance action that used to erase the epoch's pay
+    // outright: settlement returns Ok, the cursor moves past it, and no later
+    // call can revisit it.
+    chain_config_storage()
+        .blend_stipend_per_epoch_accessor()
+        .set_checked(&mut harness.sdk, U256::ZERO)
+        .unwrap();
+    harness.set_caller(SYSTEM_CALLER);
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_SETTLE_EPOCH_STIPEND,
+                &U64Command { value: 0 },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+    assert_eq!(stipend_accounting(&harness.sdk, validator), (pot, pot, 1));
+    assert_eq!(calls.borrow().disburse_calls, vec![(GENESIS_STAKING, pot)]);
+    assert_stipend_events(&harness.sdk, 0, pot, false);
+
+    // The mirror image: a raised live rate must not enrich an epoch that closed
+    // under a lower one either.
+    let (mut harness, calls, validator) =
+        stipend_test_sdk(vec![pot], vec![MockDisbursement::Amount(pot)]);
+    production_liveness_storage()
+        .stipend_rate_at_close_p1_accessor()
+        .entry(0)
+        .set_checked(&mut harness.sdk, U256::ONE)
+        .unwrap();
+    harness.set_caller(SYSTEM_CALLER);
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_SETTLE_EPOCH_STIPEND,
+                &U64Command { value: 0 },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+    assert_eq!(
+        stipend_accounting(&harness.sdk, validator),
+        (U256::ZERO, U256::ZERO, 1)
+    );
+    assert!(calls.borrow().disburse_calls.is_empty());
+    assert_stipend_events(&harness.sdk, 0, U256::ZERO, false);
+}
+
+#[test]
+fn closing_an_epoch_pins_the_stipend_rate() {
+    let owner = Address::with_last_byte(0xa0);
+    let validator = Address::with_last_byte(0x01);
+    let mut harness = Harness::new(1_000);
+    assert_eq!(
+        harness.initialize(owner, vec![validator], vec![DEFAULT_MIN_VALIDATOR_STAKE], 0),
+        ExitCode::Ok
+    );
+    chain_config_storage()
+        .blend_stipend_per_epoch_accessor()
+        .set_checked(&mut harness.sdk, U256::from(250))
+        .unwrap();
+    commit_test_committee(
+        &mut harness.sdk,
+        0,
+        &[(validator, DEFAULT_MIN_VALIDATOR_STAKE)],
+    );
+    // Written raw rather than through `record_test_production`, which pins the
+    // rate itself. The whole point of this test is that the contract pins it, so
+    // seeding through the stand-in would prove nothing.
+    production_liveness_storage()
+        .blocks_in_epoch_accessor()
+        .entry(0)
+        .set_checked(&mut harness.sdk, DEFAULT_EPOCH_BLOCK_INTERVAL as u32)
+        .unwrap();
+    let pinned = production_liveness_storage()
+        .stipend_rate_at_close_p1_accessor()
+        .entry(0);
+    assert_eq!(pinned.get_checked(&harness.sdk).unwrap(), U256::ZERO);
+
+    assert_eq!(close_epoch_via_record(&mut harness, 0), ExitCode::Ok);
+
+    assert_eq!(
+        pinned.get_checked(&harness.sdk).unwrap(),
+        U256::from(251),
+        "the close pins rate + 1 for the epoch it closes"
+    );
+}
+
+#[test]
+fn settling_an_unclosed_epoch_reverts_instead_of_forfeiting_it() {
+    let owner = Address::with_last_byte(0xa0);
+    let validator = Address::with_last_byte(0x01);
+    let mut harness = Harness::new(1_000);
+    assert_eq!(
+        harness.initialize(owner, vec![validator], vec![DEFAULT_MIN_VALIDATOR_STAKE], 0),
+        ExitCode::Ok
+    );
+    chain_config_storage()
+        .blend_stipend_per_epoch_accessor()
+        .set_checked(&mut harness.sdk, U256::from(100))
+        .unwrap();
+    commit_test_committee(
+        &mut harness.sdk,
+        0,
+        &[(validator, DEFAULT_MIN_VALIDATOR_STAKE)],
+    );
+    // An epoch that recorded blocks but whose close never ran: seeded raw, so no
+    // rate was pinned for it.
+    production_liveness_storage()
+        .blocks_in_epoch_accessor()
+        .entry(0)
+        .set_checked(&mut harness.sdk, DEFAULT_EPOCH_BLOCK_INTERVAL as u32)
+        .unwrap();
+    harness.set_block_number(1_000 + DEFAULT_EPOCH_BLOCK_INTERVAL);
+    harness.set_caller(SYSTEM_CALLER);
+
+    assert_revert_selector(
+        harness.call(encode_call(
+            SIG_SETTLE_EPOCH_STIPEND,
+            &U64Command { value: 0 },
+        )),
+        ERR_STIPEND_RATE_NOT_SNAPSHOTTED,
+    );
+    assert_eq!(
+        staking_storage()
+            .last_rewarded_epoch_p1_accessor()
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        0,
+        "a revert leaves the epoch for a retry; a guard return would forfeit it"
+    );
+}
+
+#[test]
+fn settlement_rejects_a_committee_without_matching_frozen_weights() {
+    let owner = Address::with_last_byte(0xa0);
+    let seated = Address::with_last_byte(0x01);
+    let unweighted = Address::with_last_byte(0x02);
+    let reserve = Address::with_last_byte(0xc0);
+    let stake = DEFAULT_MIN_VALIDATOR_STAKE;
+    let mut harness = Harness::new(1_000);
+    let mut command =
+        harness.initialize_command(owner, vec![seated, unweighted], vec![stake, stake], 0);
+    command.blend_reserve = reserve;
+    assert_eq!(harness.initialize_with(command), ExitCode::Ok);
+
+    // Two committee members, one frozen weight.
+    let consensus = consensus_storage();
+    let committee = consensus.epoch_committees_accessor().entry(0);
+    committee.push_checked(&mut harness.sdk, seated).unwrap();
+    committee.push_checked(&mut harness.sdk, unweighted).unwrap();
+    consensus
+        .leader_stakes_accessor()
+        .entry(0)
+        .push_checked(&mut harness.sdk, crate::math::compact_balance(stake).unwrap())
+        .unwrap();
+    chain_config_storage()
+        .blend_stipend_per_epoch_accessor()
+        .set_checked(&mut harness.sdk, U256::from(100))
+        .unwrap();
+    install_solvent_reserve(&harness.sdk, reserve, U256::from(1_000));
+    record_test_production(&mut harness.sdk, 0, DEFAULT_EPOCH_BLOCK_INTERVAL as u32);
+
+    harness.set_block_number(1_000 + DEFAULT_EPOCH_BLOCK_INTERVAL);
+    harness.set_caller(SYSTEM_CALLER);
+    assert_revert_selector(
+        harness.call(encode_call(
+            SIG_SETTLE_EPOCH_STIPEND,
+            &U64Command { value: 0 },
+        )),
+        ERR_LEADER_STAKES_LENGTH_MISMATCH,
+    );
+    assert_eq!(
+        staking_storage()
+            .last_rewarded_epoch_p1_accessor()
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        0,
+        "a refused settlement must not advance the cursor past the epoch"
+    );
+}
+
+#[test]
+fn tombstoned_committee_member_earns_no_stipend_share() {
+    let owner = Address::with_last_byte(0xa0);
+    let reserve = Address::with_last_byte(0xc0);
+    let validator_a = Address::with_last_byte(0x01);
+    let validator_b = Address::with_last_byte(0x02);
+    let stake = DEFAULT_MIN_VALIDATOR_STAKE;
+    let mut harness = Harness::new(1_000);
+    let mut command =
+        harness.initialize_command(owner, vec![validator_a, validator_b], vec![stake, stake], 0);
+    command.blend_reserve = reserve;
+    assert_eq!(harness.initialize_with(command), ExitCode::Ok);
+
+    commit_test_committee(
+        &mut harness.sdk,
+        0,
+        &[(validator_a, stake), (validator_b, stake)],
+    );
+    consensus_storage()
+        .tombstoned_accessor()
+        .entry(validator_a)
+        .set_checked(&mut harness.sdk, true)
+        .unwrap();
+    chain_config_storage()
+        .blend_stipend_per_epoch_accessor()
+        .set_checked(&mut harness.sdk, U256::from(100))
+        .unwrap();
+    install_solvent_reserve(&harness.sdk, reserve, U256::from(100));
+    record_test_production(&mut harness.sdk, 0, DEFAULT_EPOCH_BLOCK_INTERVAL as u32);
+
+    harness.set_block_number(1_000 + DEFAULT_EPOCH_BLOCK_INTERVAL);
+    harness.set_caller(SYSTEM_CALLER);
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_SETTLE_EPOCH_STIPEND,
+                &U64Command { value: 0 },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+    assert_eq!(epoch_reward(&harness.sdk, validator_a, 0), U256::ZERO);
+    assert_eq!(epoch_reward(&harness.sdk, validator_b, 0), U256::from(100));
+    assert_eq!(
+        staking_storage()
+            .credited_blend_accessor()
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        U256::from(100)
+    );
+}
+
 #[test]
 fn failed_or_malformed_disbursement_remains_retryable() {
     for (first_response, expected_exit) in [
@@ -3498,11 +4255,11 @@ fn delayed_reward_settlement_does_not_block_matured_principal() {
     assert_eq!(transfers.borrow().as_slice(), &[(delegator, stake)]);
     assert_eq!(
         delegation
-            .delegate_gap_accessor()
+            .claimed_through_epoch_accessor()
             .get_checked(&harness.sdk)
             .unwrap(),
-        0,
-        "principal maturity must not consume the unsettled reward cursor"
+        u64::from(WARMUP_DELAY),
+        "principal maturity must not advance the reward cursor past the settled frontier"
     );
     assert_eq!(
         delegation
@@ -3541,10 +4298,68 @@ fn delayed_reward_settlement_does_not_block_matured_principal() {
     );
     assert_eq!(
         delegation
-            .delegate_gap_accessor()
+            .claimed_through_epoch_accessor()
             .get_checked(&harness.sdk)
             .unwrap(),
-        1
+        u64::from(WARMUP_DELAY) + 1,
+        "the settled epoch is now paid, so the cursor sits one past it"
+    );
+}
+
+#[test]
+fn claiming_rewards_does_not_rewrite_historical_self_stake() {
+    let owner = Address::with_last_byte(0xa0);
+    let validator = Address::with_last_byte(0x01);
+    let mut harness = Harness::new(0);
+    harness.set_caller(owner);
+    assert_eq!(
+        harness.initialize(
+            owner,
+            vec![validator],
+            vec![DEFAULT_MIN_VALIDATOR_STAKE],
+            0,
+        ),
+        ExitCode::Ok
+    );
+
+    // A genesis validator is its own delegator, so its self-stake is the single delegate-queue
+    // entry the claim walks. Settling a frontier is what makes the claim advance at all.
+    let past_epoch = 20;
+    harness.set_block_number(DEFAULT_EPOCH_BLOCK_INTERVAL * 40);
+    staking_storage()
+        .last_rewarded_epoch_p1_accessor()
+        .set_checked(&mut harness.sdk, 40)
+        .unwrap();
+
+    let stake_before =
+        staking::validator_self_stake_at(&harness.sdk, validator, past_epoch).unwrap();
+    assert!(!stake_before.is_zero());
+    assert!(staking::selected_validators_at(&harness.sdk, past_epoch)
+        .unwrap()
+        .contains(&validator));
+
+    harness.set_caller(validator);
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_CLAIM_DELEGATOR_FEE,
+                &AddressCommand { value: validator },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+
+    assert_eq!(
+        staking::validator_self_stake_at(&harness.sdk, validator, past_epoch).unwrap(),
+        stake_before,
+        "a claim must not change what the self-stake was at an already-committed epoch"
+    );
+    assert!(
+        staking::selected_validators_at(&harness.sdk, past_epoch)
+            .unwrap()
+            .contains(&validator),
+        "the off-chain deriver re-reads past-epoch selection to rebuild committees; a claim must \
+         not drop the validator out of it"
     );
 }
 
@@ -3552,7 +4367,11 @@ fn delayed_reward_settlement_does_not_block_matured_principal() {
 fn reward_claims_are_bounded_to_one_thousand_epochs() {
     let owner = Address::with_last_byte(0xa0);
     let validator = Address::with_last_byte(0x01);
-    let mut harness = Harness::new(0);
+    // Not block 0: the harness seeds the activation block from the current
+    // height, and a zero activation is the unarmed sentinel, which pins every
+    // epoch at 0 and leaves this claim window empty.
+    let activation = DEFAULT_EPOCH_BLOCK_INTERVAL;
+    let mut harness = Harness::new(activation);
     harness.set_caller(owner);
     assert_eq!(
         harness.initialize(
@@ -3563,7 +4382,8 @@ fn reward_claims_are_bounded_to_one_thousand_epochs() {
         ),
         ExitCode::Ok
     );
-    harness.set_block_number(DEFAULT_EPOCH_BLOCK_INTERVAL * (MAX_EPOCHS_PER_CLAIM + 1));
+    harness
+        .set_block_number(activation + DEFAULT_EPOCH_BLOCK_INTERVAL * (MAX_EPOCHS_PER_CLAIM + 1));
     staking_storage()
         .last_rewarded_epoch_p1_accessor()
         .set_checked(&mut harness.sdk, MAX_EPOCHS_PER_CLAIM + 1)
@@ -3578,17 +4398,28 @@ fn reward_claims_are_bounded_to_one_thousand_epochs() {
             .0,
         ExitCode::Ok
     );
+    let delegation = staking_storage()
+        .validator_delegations_accessor()
+        .entry(validator)
+        .entry(validator);
     assert_eq!(
-        staking_storage()
-            .validator_delegations_accessor()
-            .entry(validator)
-            .entry(validator)
+        delegation
+            .claimed_through_epoch_accessor()
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        MAX_EPOCHS_PER_CLAIM,
+        "the claim advances its own cursor by at most the per-claim bound"
+    );
+    assert_eq!(
+        delegation
             .delegate_queue_accessor()
             .at(0)
             .epoch_accessor()
             .get_checked(&harness.sdk)
             .unwrap(),
-        MAX_EPOCHS_PER_CLAIM
+        0,
+        "the effective-from epoch is immutable: historical self-stake lookups binary-search it, \
+         so a claim that moved it would rewrite past-epoch committee views"
     );
     assert_eq!(
         harness
@@ -3617,124 +4448,6 @@ fn reward_claims_are_bounded_to_one_thousand_epochs() {
             },
         )),
         ERR_INVALID_CLAIM_EPOCH,
-    );
-}
-
-#[test]
-fn liveness_halt_guard_and_equivocation_tombstone_are_enforced() {
-    let owner = Address::with_last_byte(0xa0);
-    let liveness = Address::with_last_byte(0xb0);
-    let validators = (1..=4)
-        .map(Address::with_last_byte)
-        .collect::<Vec<Address>>();
-    let mut harness = Harness::new(1_000);
-    harness.set_caller(owner);
-    let mut command = harness.initialize_command(
-        owner,
-        validators.clone(),
-        vec![DEFAULT_MIN_VALIDATOR_STAKE; validators.len()],
-        500,
-    );
-    command.liveness_slashing = liveness;
-    command.blend_reserve = Address::with_last_byte(0xc0);
-    assert_eq!(harness.initialize_with(command), ExitCode::Ok);
-    harness.set_caller(liveness);
-    for validator in &validators[..2] {
-        assert_eq!(
-            harness
-                .call(encode_call(
-                    SIG_SLASH,
-                    &AddressCommand { value: *validator },
-                ))
-                .0,
-            ExitCode::Ok
-        );
-    }
-    assert_eq!(
-        staking_storage()
-            .validators_accessor()
-            .entry(validators[0])
-            .status_accessor()
-            .get_checked(&harness.sdk)
-            .unwrap(),
-        STATUS_JAIL
-    );
-    assert_eq!(
-        staking_storage()
-            .validators_accessor()
-            .entry(validators[1])
-            .status_accessor()
-            .get_checked(&harness.sdk)
-            .unwrap(),
-        STATUS_ACTIVE,
-        "the second jail would drop the active set below Simplex quorum"
-    );
-
-    let jailed_record = staking_storage().validators_accessor().entry(validators[0]);
-    let initial_deadline = jailed_record
-        .jailed_before_accessor()
-        .get_checked(&harness.sdk)
-        .unwrap();
-    harness.set_block_number(1_200);
-    assert_eq!(
-        harness
-            .call(encode_call(
-                SIG_SLASH,
-                &AddressCommand {
-                    value: validators[0],
-                },
-            ))
-            .0,
-        ExitCode::Ok
-    );
-    let extended_deadline = jailed_record
-        .jailed_before_accessor()
-        .get_checked(&harness.sdk)
-        .unwrap();
-    assert!(
-        extended_deadline > initial_deadline,
-        "re-slashing a jailed validator must extend its deadline despite the quorum guard"
-    );
-
-    chain_config_storage()
-        .validator_jail_epoch_length_accessor()
-        .set_checked(&mut harness.sdk, 0)
-        .unwrap();
-    harness.set_block_number(1_300);
-    assert_eq!(
-        harness
-            .call(encode_call(
-                SIG_SLASH,
-                &AddressCommand {
-                    value: validators[0],
-                },
-            ))
-            .0,
-        ExitCode::Ok
-    );
-    assert_eq!(
-        jailed_record
-            .jailed_before_accessor()
-            .get_checked(&harness.sdk)
-            .unwrap(),
-        extended_deadline,
-        "a shorter jail configuration must not reduce an existing deadline"
-    );
-
-    consensus_storage()
-        .tombstoned_accessor()
-        .entry(validators[0])
-        .set_checked(&mut harness.sdk, true)
-        .unwrap();
-    harness.set_caller(validators[0]);
-    assert_revert_selector(
-        harness.call(encode_call(
-            SIG_RELEASE_VALIDATOR_FROM_JAIL,
-            &AddressCommand {
-                value: validators[0],
-            },
-        )),
-        ERR_ALREADY_SLASHED_FOR_EQUIVOCATION,
     );
 }
 
@@ -4260,10 +4973,11 @@ fn equivocation_seizes_active_and_pending_self_delegation() {
     );
     assert_eq!(
         delegation
-            .delegate_gap_accessor()
+            .claimed_through_epoch_accessor()
             .get_checked(&harness.sdk)
             .unwrap(),
-        0
+        0,
+        "seizure resets the reward cursor with the queues"
     );
     assert_eq!(
         delegation
@@ -4507,4 +5221,1341 @@ fn continuously_seated_validator_self_stake_unlocks_at_bounded_liability_deadlin
             .unwrap(),
         0
     );
+}
+
+#[test]
+fn production_liveness_ships_disabled_on_a_fresh_chain() {
+    let owner = Address::with_last_byte(0xa0);
+    let mut harness = Harness::new(1_000);
+    assert_eq!(
+        harness.initialize(owner, Vec::new(), Vec::new(), 0),
+        ExitCode::Ok
+    );
+
+    let (exit, output) = harness.call(encode_empty_call(SIG_GET_PRODUCTION_LIVENESS_DISABLED));
+    assert_eq!(exit, ExitCode::Ok);
+    assert!(
+        decode_output::<bool>(&output),
+        "an unwritten slot reads false, so the tier would ship ON unless init seeds it"
+    );
+
+    for (selector, expected) in [
+        (SIG_GET_MIN_VERDICT_DUE_BLOCKS, DEFAULT_MIN_VERDICT_DUE_BLOCKS),
+        (SIG_GET_EXCLUSION_BACKOFF_CAP, DEFAULT_EXCLUSION_BACKOFF_CAP),
+        (
+            SIG_DEFAULT_MIN_VERDICT_DUE_BLOCKS,
+            DEFAULT_MIN_VERDICT_DUE_BLOCKS,
+        ),
+        (
+            SIG_DEFAULT_EXCLUSION_BACKOFF_CAP,
+            DEFAULT_EXCLUSION_BACKOFF_CAP,
+        ),
+        (SIG_MAX_MIN_VERDICT_DUE_BLOCKS, MAX_MIN_VERDICT_DUE_BLOCKS),
+    ] {
+        let (exit, output) = harness.call(encode_empty_call(selector));
+        assert_eq!(exit, ExitCode::Ok);
+        assert_eq!(decode_output::<u32>(&output), expected);
+    }
+
+    let logs = harness.sdk.take_logs();
+    let disabled_data = &logs
+        .iter()
+        .find(|(_, topics)| {
+            topics.first() == Some(&B256::new(events::ProductionLivenessDisabledChanged::SELECTOR))
+        })
+        .expect("kill-switch seed event")
+        .0;
+    assert_eq!(decode_output::<(bool, bool)>(disabled_data), (false, true));
+}
+
+#[test]
+fn production_liveness_setters_enforce_their_bounds() {
+    let owner = Address::with_last_byte(0xa0);
+    let outsider = Address::with_last_byte(0xb0);
+    let mut harness = Harness::new(1_000);
+    assert_eq!(
+        harness.initialize(owner, Vec::new(), Vec::new(), 0),
+        ExitCode::Ok
+    );
+
+    harness.set_caller(outsider);
+    for selector in [
+        SIG_SET_MIN_VERDICT_DUE_BLOCKS,
+        SIG_SET_EXCLUSION_BACKOFF_CAP,
+    ] {
+        assert_revert_selector(
+            harness.call(encode_call(selector, &U32Command { value: 5 })),
+            ERR_ONLY_GOVERNANCE,
+        );
+    }
+    assert_revert_selector(
+        harness.call(encode_call(
+            SIG_SET_PRODUCTION_LIVENESS_DISABLED,
+            &BoolCommand { value: false },
+        )),
+        ERR_ONLY_GOVERNANCE,
+    );
+
+    harness.set_caller(GENESIS_GOVERNANCE);
+    for selector in [
+        SIG_SET_MIN_VERDICT_DUE_BLOCKS,
+        SIG_SET_EXCLUSION_BACKOFF_CAP,
+    ] {
+        assert_revert_selector(
+            harness.call(encode_call(selector, &U32Command { value: 0 })),
+            ERR_ZERO_VALUE,
+        );
+    }
+    assert_revert_selector(
+        harness.call(encode_call(
+            SIG_SET_MIN_VERDICT_DUE_BLOCKS,
+            &U32Command {
+                value: MAX_MIN_VERDICT_DUE_BLOCKS + 1,
+            },
+        )),
+        ERR_MIN_VERDICT_DUE_BLOCKS_TOO_HIGH,
+    );
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_SET_MIN_VERDICT_DUE_BLOCKS,
+                &U32Command {
+                    value: MAX_MIN_VERDICT_DUE_BLOCKS,
+                },
+            ))
+            .0,
+        ExitCode::Ok,
+        "the ceiling is inclusive"
+    );
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_SET_EXCLUSION_BACKOFF_CAP,
+                &U32Command { value: u32::MAX },
+            ))
+            .0,
+        ExitCode::Ok,
+        "the ladder ceiling is bounded away from zero only"
+    );
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_SET_PRODUCTION_LIVENESS_DISABLED,
+                &BoolCommand { value: false },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+
+    let (_, output) = harness.call(encode_empty_call(SIG_GET_MIN_VERDICT_DUE_BLOCKS));
+    assert_eq!(decode_output::<u32>(&output), MAX_MIN_VERDICT_DUE_BLOCKS);
+    let (_, output) = harness.call(encode_empty_call(SIG_GET_EXCLUSION_BACKOFF_CAP));
+    assert_eq!(decode_output::<u32>(&output), u32::MAX);
+    let (_, output) = harness.call(encode_empty_call(SIG_GET_PRODUCTION_LIVENESS_DISABLED));
+    assert!(!decode_output::<bool>(&output));
+}
+
+// A roster member that is selection-visible but below the minimum self-stake can
+// never be seated, so it is not a replacement. Counting visibility alone
+// over-reports the pool and hands out a stamp whose seat then simply vanishes.
+// The Solidity has no such filter, so this gap exists only in the port.
+#[test]
+fn exclusion_does_not_count_a_validator_that_cannot_be_seated_as_a_replacement() {
+    let owner = Address::with_last_byte(0xa0);
+    let rich = Address::with_last_byte(0x01);
+    let middle = Address::with_last_byte(0x02);
+    let poor = Address::with_last_byte(0x03);
+    let mut harness = Harness::new(1_000);
+    let mut command = harness.initialize_command(
+        owner,
+        vec![rich, middle, poor],
+        vec![
+            DEFAULT_MIN_VALIDATOR_STAKE * U256::from(5),
+            DEFAULT_MIN_VALIDATOR_STAKE * U256::from(3),
+            DEFAULT_MIN_VALIDATOR_STAKE,
+        ],
+        0,
+    );
+    command.active_validators_length = 2;
+    assert_eq!(harness.initialize_with(command), ExitCode::Ok);
+
+    // `poor` stays visible but drops below the bar, so the eligible pool is 2 —
+    // exactly the cap, leaving nothing to replace an excluded member with.
+    harness.set_caller(GENESIS_GOVERNANCE);
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_SET_MIN_VALIDATOR_STAKE_AMOUNT,
+                &U256Command {
+                    value: DEFAULT_MIN_VALIDATOR_STAKE * U256::from(2),
+                },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+
+    let next = crate::util::next_epoch(&harness.sdk).unwrap();
+    assert_eq!(
+        staking::selected_validators_at(&harness.sdk, next).unwrap(),
+        vec![rich, middle],
+        "the pool that can actually be seated is already at the cap"
+    );
+
+    harness.sdk.take_logs();
+    assert!(
+        !staking::apply_production_exclusion(&mut harness.sdk, middle).unwrap(),
+        "an unseatable roster member is not a replacement"
+    );
+    assert!(harness.sdk.take_logs().is_empty());
+    assert_eq!(
+        staking::selected_validators_at(&harness.sdk, next).unwrap(),
+        vec![rich, middle],
+        "the refused stamp must not have shrunk the committee"
+    );
+}
+
+#[test]
+fn production_exclusion_refuses_without_a_replacement_and_leaves_no_trace() {
+    let owner = Address::with_last_byte(0xa0);
+    let first = Address::with_last_byte(0x01);
+    let second = Address::with_last_byte(0x02);
+    let mut harness = Harness::new(1_000);
+    let mut command = harness.initialize_command(
+        owner,
+        vec![first, second],
+        vec![
+            DEFAULT_MIN_VALIDATOR_STAKE * U256::from(3),
+            DEFAULT_MIN_VALIDATOR_STAKE * U256::from(2),
+        ],
+        0,
+    );
+    command.active_validators_length = 2;
+    assert_eq!(harness.initialize_with(command), ExitCode::Ok);
+    harness.sdk.take_logs();
+
+    assert!(
+        !staking::apply_production_exclusion(&mut harness.sdk, second).unwrap(),
+        "the visible pool only equals the cap, so excluding a member shrinks the committee"
+    );
+    assert!(staking::selection_visible_at(&harness.sdk, second, 1).unwrap());
+    assert_eq!(
+        staking::selected_validators_at(&harness.sdk, 1).unwrap(),
+        vec![first, second]
+    );
+    assert!(
+        harness.sdk.take_logs().is_empty(),
+        "a refused stamp must leave no trace at all"
+    );
+}
+
+#[test]
+fn production_exclusion_bites_at_the_next_epoch_and_not_before() {
+    let owner = Address::with_last_byte(0xa0);
+    let first = Address::with_last_byte(0x01);
+    let second = Address::with_last_byte(0x02);
+    let third = Address::with_last_byte(0x03);
+    let mut harness = Harness::new(1_000);
+    let mut command = harness.initialize_command(
+        owner,
+        vec![first, second, third],
+        vec![
+            DEFAULT_MIN_VALIDATOR_STAKE * U256::from(3),
+            DEFAULT_MIN_VALIDATOR_STAKE * U256::from(2),
+            DEFAULT_MIN_VALIDATOR_STAKE,
+        ],
+        0,
+    );
+    command.active_validators_length = 2;
+    assert_eq!(harness.initialize_with(command), ExitCode::Ok);
+    harness.sdk.take_logs();
+
+    assert!(staking::apply_production_exclusion(&mut harness.sdk, second).unwrap());
+    assert!(
+        staking::selection_visible_at(&harness.sdk, second, 0).unwrap(),
+        "epoch 0 has already started and its selection view must not be rewritten"
+    );
+    assert!(!staking::selection_visible_at(&harness.sdk, second, 1).unwrap());
+    assert_eq!(
+        staking::selected_validators_at(&harness.sdk, 0).unwrap(),
+        vec![first, second]
+    );
+    assert_eq!(
+        staking::selected_validators_at(&harness.sdk, 1).unwrap(),
+        vec![first, third],
+        "the freed seat is taken by the replacement the refusal rule required"
+    );
+
+    let logs = harness.sdk.take_logs();
+    let (data, topics) = logs
+        .iter()
+        .find(|(_, topics)| {
+            topics.first() == Some(&B256::new(events::ProductionExclusionApplied::SELECTOR))
+        })
+        .expect("exclusion event");
+    assert_eq!(&topics[1].0[12..], second.as_slice());
+    assert_eq!(decode_output::<u64>(data), 1);
+
+    harness.sdk.take_logs();
+    assert!(
+        !staking::apply_production_exclusion(&mut harness.sdk, second).unwrap(),
+        "a member already invisible at the bite epoch is refused rather than re-stamped"
+    );
+    assert!(
+        harness.sdk.take_logs().is_empty(),
+        "a repeat stamp leaves no trace either"
+    );
+}
+
+#[test]
+fn exclusion_release_skips_tombstoned_and_non_active_validators() {
+    let owner = Address::with_last_byte(0xa0);
+    let keeper = Address::with_last_byte(0x01);
+    let tombstoned = Address::with_last_byte(0x02);
+    let demoted = Address::with_last_byte(0x03);
+    let healthy = Address::with_last_byte(0x04);
+    let mut harness = Harness::new(1_000);
+    let mut command = harness.initialize_command(
+        owner,
+        vec![keeper, tombstoned, demoted, healthy],
+        vec![DEFAULT_MIN_VALIDATOR_STAKE * U256::from(4); 4],
+        0,
+    );
+    command.active_validators_length = 1;
+    assert_eq!(harness.initialize_with(command), ExitCode::Ok);
+
+    for validator in [tombstoned, demoted, healthy] {
+        assert!(staking::apply_production_exclusion(&mut harness.sdk, validator).unwrap());
+    }
+    consensus_storage()
+        .tombstoned_accessor()
+        .entry(tombstoned)
+        .set_checked(&mut harness.sdk, true)
+        .unwrap();
+    staking_storage()
+        .validators_accessor()
+        .entry(demoted)
+        .status_accessor()
+        .set_checked(&mut harness.sdk, STATUS_PENDING)
+        .unwrap();
+    harness.sdk.take_logs();
+
+    for validator in [tombstoned, demoted] {
+        staking::release_production_exclusion(&mut harness.sdk, validator).unwrap();
+        assert!(
+            !staking::selection_visible_at(&harness.sdk, validator, 1).unwrap(),
+            "a blind re-stamp would re-seat a validator the selection filter has no other check for"
+        );
+    }
+    assert!(
+        harness.sdk.take_logs().is_empty(),
+        "a skipped release must not announce one"
+    );
+
+    staking::release_production_exclusion(&mut harness.sdk, healthy).unwrap();
+    assert!(staking::selection_visible_at(&harness.sdk, healthy, 1).unwrap());
+    let logs = harness.sdk.take_logs();
+    let (data, topics) = logs
+        .iter()
+        .find(|(_, topics)| {
+            topics.first() == Some(&B256::new(events::ProductionExclusionReleased::SELECTOR))
+        })
+        .expect("release event");
+    assert_eq!(&topics[1].0[12..], healthy.as_slice());
+    assert_eq!(decode_output::<u64>(data), 1);
+}
+
+#[test]
+fn governance_activation_does_not_cancel_a_running_exclusion() {
+    let owner = Address::with_last_byte(0xa0);
+    let keeper = Address::with_last_byte(0x01);
+    let subject = Address::with_last_byte(0x02);
+    let mut harness = Harness::new(1_000);
+    assert_eq!(
+        harness.initialize(
+            owner,
+            vec![keeper, subject],
+            vec![
+                DEFAULT_MIN_VALIDATOR_STAKE * U256::from(2),
+                DEFAULT_MIN_VALIDATOR_STAKE,
+            ],
+            0,
+        ),
+        ExitCode::Ok
+    );
+
+    let readmit = production_liveness_storage()
+        .validators_accessor()
+        .entry(subject)
+        .readmit_at_epoch_accessor();
+    harness.set_caller(GENESIS_GOVERNANCE);
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_DISABLE_VALIDATOR,
+                &AddressCommand { value: subject },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+    readmit.set_checked(&mut harness.sdk, 5).unwrap();
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_ACTIVATE_VALIDATOR,
+                &AddressCommand { value: subject },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+    assert_eq!(
+        staking_storage()
+            .validators_accessor()
+            .entry(subject)
+            .status_accessor()
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        STATUS_ACTIVE
+    );
+    assert!(
+        !staking::selection_visible_at(&harness.sdk, subject, 1).unwrap(),
+        "re-activation must not re-stamp visibility while an exclusion is running"
+    );
+    assert_eq!(
+        staking::selected_validators_at(&harness.sdk, 1).unwrap(),
+        vec![keeper]
+    );
+
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_DISABLE_VALIDATOR,
+                &AddressCommand { value: subject },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+    readmit.set_checked(&mut harness.sdk, 0).unwrap();
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_ACTIVATE_VALIDATOR,
+                &AddressCommand { value: subject },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+    assert!(
+        staking::selection_visible_at(&harness.sdk, subject, 1).unwrap(),
+        "with no exclusion recorded the activation stamp is unchanged"
+    );
+}
+
+#[test]
+fn production_liveness_views_read_the_new_namespace() {
+    let owner = Address::with_last_byte(0xa0);
+    let validator = Address::with_last_byte(0x01);
+    let stranger = Address::with_last_byte(0x0f);
+    let mut harness = Harness::new(1_000);
+    assert_eq!(
+        harness.initialize(
+            owner,
+            vec![validator],
+            vec![DEFAULT_MIN_VALIDATOR_STAKE],
+            0
+        ),
+        ExitCode::Ok
+    );
+    commit_test_committee(&mut harness.sdk, 4, &[(validator, DEFAULT_MIN_VALIDATOR_STAKE)]);
+
+    let storage = production_liveness_storage();
+    storage
+        .last_processed_block_accessor()
+        .set_checked(&mut harness.sdk, 1_234)
+        .unwrap();
+    storage
+        .blocks_in_epoch_accessor()
+        .entry(4u64)
+        .set_checked(&mut harness.sdk, 200)
+        .unwrap();
+    storage
+        .produced_accessor()
+        .entry(4u64)
+        .entry(0u32)
+        .set_checked(&mut harness.sdk, 7)
+        .unwrap();
+    storage
+        .pending_exclusions_accessor()
+        .push_checked(&mut harness.sdk, validator)
+        .unwrap();
+    let record = storage.validators_accessor().entry(validator);
+    record
+        .total_produced_accessor()
+        .set_checked(&mut harness.sdk, 99)
+        .unwrap();
+    record
+        .last_produced_epoch_p1_accessor()
+        .set_checked(&mut harness.sdk, 5)
+        .unwrap();
+    record
+        .last_failed_epoch_p1_accessor()
+        .set_checked(&mut harness.sdk, 3)
+        .unwrap();
+    record
+        .readmit_at_epoch_accessor()
+        .set_checked(&mut harness.sdk, 9)
+        .unwrap();
+    record
+        .kick_count_accessor()
+        .set_checked(&mut harness.sdk, 2)
+        .unwrap();
+
+    let (exit, output) = harness.call(encode_empty_call(SIG_LAST_PROCESSED_BLOCK));
+    assert_eq!(exit, ExitCode::Ok);
+    assert_eq!(decode_output::<u64>(&output), 1_234);
+
+    let (exit, output) = harness.call(encode_call(SIG_BLOCKS_IN_EPOCH, &U64Command { value: 4 }));
+    assert_eq!(exit, ExitCode::Ok);
+    assert_eq!(decode_output::<u32>(&output), 200);
+
+    let (exit, output) = harness.call(encode_call(
+        SIG_PRODUCED_AT,
+        &EpochSignerCommand {
+            epoch: 4,
+            signer_idx: 0,
+        },
+    ));
+    assert_eq!(exit, ExitCode::Ok);
+    assert_eq!(decode_output::<u32>(&output), 7);
+
+    let (exit, output) = harness.call(encode_empty_call(SIG_PENDING_EXCLUSIONS));
+    assert_eq!(exit, ExitCode::Ok);
+    assert_eq!(decode_output::<Vec<Address>>(&output), vec![validator]);
+
+    let (exit, output) = harness.call(encode_call(
+        SIG_READMIT_AT_EPOCH,
+        &AddressCommand { value: validator },
+    ));
+    assert_eq!(exit, ExitCode::Ok);
+    assert_eq!(decode_output::<u64>(&output), 9);
+
+    let (exit, output) = harness.call(encode_call(
+        SIG_GET_PRODUCTION_STATS,
+        &ValidatorEpochCommand {
+            validator,
+            before_epoch: 4,
+        },
+    ));
+    assert_eq!(exit, ExitCode::Ok);
+    assert_eq!(
+        decode_output::<(u32, u64, u64, u64, u32, u64)>(&output),
+        (7, 99, 4, 2, 2, 9)
+    );
+
+    let (exit, output) = harness.call(encode_call(
+        SIG_GET_PRODUCTION_STATS,
+        &ValidatorEpochCommand {
+            validator: stranger,
+            before_epoch: 4,
+        },
+    ));
+    assert_eq!(exit, ExitCode::Ok);
+    assert_eq!(
+        decode_output::<(u32, u64, u64, u64, u32, u64)>(&output),
+        (0, 0, 0, 0, 0, 0),
+        "a non-member has no committee index and must not alias index 0"
+    );
+}
+
+/// Boots the tier with one active validator per stake, the committee cap set to
+/// `cap`, the kill switch off and the system caller installed.
+fn liveness_harness(stakes: &[U256], cap: u32) -> (Harness, Vec<Address>) {
+    let owner = Address::with_last_byte(0xa0);
+    let members: Vec<Address> = (1..=stakes.len())
+        .map(|index| Address::with_last_byte(index as u8))
+        .collect();
+    let mut harness = Harness::new(1_000);
+    let mut command = harness.initialize_command(owner, members.clone(), stakes.to_vec(), 0);
+    command.active_validators_length = cap;
+    assert_eq!(harness.initialize_with(command), ExitCode::Ok);
+    harness.set_caller(GENESIS_GOVERNANCE);
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_SET_PRODUCTION_LIVENESS_DISABLED,
+                &BoolCommand { value: false },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+    harness.set_caller(SYSTEM_CALLER);
+    harness.sdk.take_logs();
+    (harness, members)
+}
+
+fn record_production(harness: &mut Harness, block_number: u64, leader_index: u8) -> ExitCode {
+    harness.set_caller(SYSTEM_CALLER);
+    harness
+        .call(encode_call(
+            SIG_RECORD_PRODUCTION,
+            &RecordProductionCommand {
+                block_number,
+                leader_index,
+            },
+        ))
+        .0
+}
+
+fn seed_epoch_production(
+    sdk: &mut TestingContextImpl,
+    epoch: u64,
+    produced: &[u32],
+    recorded: u32,
+) {
+    let storage = production_liveness_storage();
+    for (index, count) in produced.iter().enumerate() {
+        storage
+            .produced_accessor()
+            .entry(epoch)
+            .entry(index as u32)
+            .set_checked(sdk, *count)
+            .unwrap();
+    }
+    storage
+        .blocks_in_epoch_accessor()
+        .entry(epoch)
+        .set_checked(sdk, recorded)
+        .unwrap();
+    pin_test_stipend_rate(sdk, epoch);
+}
+
+/// Drives the close of `epoch` by recording the first block of `epoch + 1`.
+fn close_epoch_via_record(harness: &mut Harness, epoch: u64) -> ExitCode {
+    let boundary = 1_000 + (epoch + 1) * DEFAULT_EPOCH_BLOCK_INTERVAL;
+    production_liveness_storage()
+        .last_processed_block_accessor()
+        .set_checked(&mut harness.sdk, boundary - 1)
+        .unwrap();
+    harness.set_block_number(boundary);
+    record_production(harness, boundary, 0)
+}
+
+fn production_record(
+    sdk: &TestingContextImpl,
+    validator: Address,
+) -> (u64, u64, u64, u64, u32) {
+    let record = production_liveness_storage()
+        .validators_accessor()
+        .entry(validator);
+    (
+        record.total_produced_accessor().get_checked(sdk).unwrap(),
+        record
+            .last_produced_epoch_p1_accessor()
+            .get_checked(sdk)
+            .unwrap(),
+        record
+            .last_failed_epoch_p1_accessor()
+            .get_checked(sdk)
+            .unwrap(),
+        record.readmit_at_epoch_accessor().get_checked(sdk).unwrap(),
+        record.kick_count_accessor().get_checked(sdk).unwrap(),
+    )
+}
+
+fn pending_exclusion_set(sdk: &TestingContextImpl) -> Vec<Address> {
+    let entries = production_liveness_storage().pending_exclusions_accessor();
+    (0..entries.len_checked(sdk).unwrap())
+        .map(|index| entries.at(index).get_checked(sdk).unwrap())
+        .collect()
+}
+
+fn logs_of(logs: &[(Bytes, Vec<B256>)], selector: [u8; 32]) -> Vec<(Bytes, Vec<B256>)> {
+    logs.iter()
+        .filter(|(_, topics)| topics.first() == Some(&B256::new(selector)))
+        .cloned()
+        .collect()
+}
+
+// A repeated block number must not be counted twice, and the epoch cursor must
+// come from the block already stored rather than from the one arriving: reading
+// it after the overwrite collapses `previous_epoch` onto `epoch` and the close
+// never runs.
+#[test]
+fn record_production_belt_holds_and_the_epoch_cursor_precedes_the_overwrite() {
+    let (mut harness, members) = liveness_harness(&[DEFAULT_MIN_VALIDATOR_STAKE], 21);
+    commit_test_committee(
+        &mut harness.sdk,
+        0,
+        &[(members[0], DEFAULT_MIN_VALIDATOR_STAKE)],
+    );
+
+    assert_eq!(record_production(&mut harness, 1_000, 0), ExitCode::Ok);
+    assert_eq!(record_production(&mut harness, 1_000, 0), ExitCode::Ok);
+    assert_eq!(record_production(&mut harness, 999, 0), ExitCode::Ok);
+
+    let storage = production_liveness_storage();
+    assert_eq!(
+        storage
+            .blocks_in_epoch_accessor()
+            .entry(0u64)
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        1,
+        "a replayed block number must be counted exactly once"
+    );
+    assert_eq!(production_record(&harness.sdk, members[0]).0, 1);
+    assert_eq!(
+        storage
+            .last_processed_block_accessor()
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        1_000
+    );
+
+    harness.set_block_number(1_200);
+    harness.sdk.take_logs();
+    assert_eq!(record_production(&mut harness, 1_200, 0), ExitCode::Ok);
+    let logs = harness.sdk.take_logs();
+    let partial = logs_of(&logs, events::PartialEpoch::SELECTOR);
+    assert_eq!(
+        partial.len(),
+        1,
+        "crossing into epoch 1 must close epoch 0, which the stored cursor identifies"
+    );
+    assert_eq!(
+        SolidityABI::<u64>::decode(&partial[0].1[1].as_slice(), 0).unwrap(),
+        0
+    );
+    assert_eq!(
+        decode_output::<(u32, u32)>(&partial[0].0),
+        (1, DEFAULT_EPOCH_BLOCK_INTERVAL as u32)
+    );
+}
+
+// The close names the epoch that ended, and the block that triggered it belongs
+// to the epoch that started: closing `epoch` instead of `previous_epoch` reports
+// an epoch nothing has recorded yet.
+#[test]
+fn the_close_reports_the_epoch_that_ended_not_the_one_the_block_starts() {
+    let (mut harness, members) = liveness_harness(&[DEFAULT_MIN_VALIDATOR_STAKE], 21);
+    commit_test_committee(
+        &mut harness.sdk,
+        0,
+        &[(members[0], DEFAULT_MIN_VALIDATOR_STAKE)],
+    );
+    commit_test_committee(
+        &mut harness.sdk,
+        1,
+        &[(members[0], DEFAULT_MIN_VALIDATOR_STAKE)],
+    );
+    seed_epoch_production(&mut harness.sdk, 0, &[7], 7);
+
+    assert_eq!(close_epoch_via_record(&mut harness, 0), ExitCode::Ok);
+
+    let storage = production_liveness_storage();
+    assert_eq!(
+        storage
+            .blocks_in_epoch_accessor()
+            .entry(0u64)
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        7,
+        "the boundary block must not land in the epoch being closed"
+    );
+    assert_eq!(
+        storage
+            .blocks_in_epoch_accessor()
+            .entry(1u64)
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        1
+    );
+    let logs = harness.sdk.take_logs();
+    let partial = logs_of(&logs, events::PartialEpoch::SELECTOR);
+    assert_eq!(partial.len(), 1);
+    assert_eq!(
+        SolidityABI::<u64>::decode(&partial[0].1[1].as_slice(), 0).unwrap(),
+        0
+    );
+    assert_eq!(
+        decode_output::<(u32, u32)>(&partial[0].0).0,
+        7,
+        "the taint must be measured before the boundary block is credited"
+    );
+}
+
+// An uncommitted epoch parks the block: nothing counted, nothing credited, and
+// no revert — a revert here is a per-block system call failing, i.e. a halt.
+#[test]
+fn an_uncommitted_committee_parks_the_block_instead_of_reverting() {
+    let (mut harness, members) = liveness_harness(&[DEFAULT_MIN_VALIDATOR_STAKE], 21);
+
+    assert_eq!(record_production(&mut harness, 1_000, 0), ExitCode::Ok);
+    let storage = production_liveness_storage();
+    assert_eq!(
+        storage
+            .last_processed_block_accessor()
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        1_000,
+        "the idempotency belt still advances over a parked block"
+    );
+    assert_eq!(
+        storage
+            .blocks_in_epoch_accessor()
+            .entry(0u64)
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        storage
+            .produced_accessor()
+            .entry(0u64)
+            .entry(0u32)
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        0
+    );
+    assert_eq!(production_record(&harness.sdk, members[0]), (0, 0, 0, 0, 0));
+
+    harness.set_block_number(1_200);
+    harness.sdk.take_logs();
+    assert_eq!(record_production(&mut harness, 1_200, 0), ExitCode::Ok);
+    let logs = harness.sdk.take_logs();
+    assert_eq!(
+        decode_output::<(u32, u32)>(&logs_of(&logs, events::PartialEpoch::SELECTOR)[0].0),
+        (0, DEFAULT_EPOCH_BLOCK_INTERVAL as u32),
+        "a fully parked epoch is tainted rather than silently complete"
+    );
+    assert!(
+        logs_of(&logs, events::EpochBlendRewardsCommitted::SELECTOR).is_empty(),
+        "an epoch with no recorded block must not draw a pot"
+    );
+}
+
+fn set_min_verdict_due_blocks(harness: &mut Harness, value: u32) {
+    harness.set_caller(GENESIS_GOVERNANCE);
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_SET_MIN_VERDICT_DUE_BLOCKS,
+                &U32Command { value },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+    harness.set_caller(SYSTEM_CALLER);
+}
+
+fn equal_weight_committee(sdk: &mut TestingContextImpl, epoch: u64, members: &[Address]) {
+    let weights: Vec<(Address, U256)> = members
+        .iter()
+        .map(|member| (*member, DEFAULT_MIN_VALIDATOR_STAKE))
+        .collect();
+    commit_test_committee(sdk, epoch, &weights);
+}
+
+// The taint is derived from the block count, so the identical verdict input
+// judges nobody at 199 blocks and judges normally at 200. Anything that drops a
+// record therefore disables the tier for a whole epoch while it reads as on.
+#[test]
+fn a_partial_epoch_suppresses_judging_entirely() {
+    let (mut harness, members) =
+        liveness_harness(&[DEFAULT_MIN_VALIDATOR_STAKE * U256::from(2); 4], 2);
+    set_min_verdict_due_blocks(&mut harness, 10);
+    equal_weight_committee(&mut harness.sdk, 0, &members);
+    equal_weight_committee(&mut harness.sdk, 1, &members);
+
+    let produced = [100, 100, 0, 0];
+    seed_epoch_production(&mut harness.sdk, 0, &produced, 199);
+    harness.sdk.take_logs();
+    assert_eq!(close_epoch_via_record(&mut harness, 0), ExitCode::Ok);
+
+    let logs = harness.sdk.take_logs();
+    assert_eq!(logs_of(&logs, events::PartialEpoch::SELECTOR).len(), 1);
+    assert!(
+        logs_of(&logs, events::ProductionVerdictFailed::SELECTOR).is_empty(),
+        "one missing record must cost the whole epoch its verdicts"
+    );
+    for member in &members {
+        assert_eq!(production_record(&harness.sdk, *member).2, 0);
+    }
+    assert!(pending_exclusion_set(&harness.sdk).is_empty());
+
+    seed_epoch_production(&mut harness.sdk, 1, &produced, 200);
+    harness.sdk.take_logs();
+    assert_eq!(close_epoch_via_record(&mut harness, 1), ExitCode::Ok);
+    let logs = harness.sdk.take_logs();
+    assert!(logs_of(&logs, events::PartialEpoch::SELECTOR).is_empty());
+    assert_eq!(
+        logs_of(&logs, events::ProductionVerdictFailed::SELECTOR).len(),
+        2,
+        "the same production judges normally once the epoch is complete"
+    );
+}
+
+// Both predicates are cross-multiplied against the frozen weights: a member
+// whose due share falls under the floor holds no verdict at all, and a member
+// producing exactly half its due passes.
+// The kill switch has two halves. Freezing releases is covered elsewhere; this
+// covers the other half, which is only reachable on a COMPLETE epoch — a partial
+// one takes the taint arm and never reaches judging at all.
+#[test]
+fn the_kill_switch_also_suppresses_verdicts() {
+    let token = DEFAULT_MIN_VALIDATOR_STAKE;
+    let (mut harness, members) = liveness_harness(&[token * U256::from(50); 4], 2);
+    set_min_verdict_due_blocks(&mut harness, 10);
+    commit_test_committee(
+        &mut harness.sdk,
+        0,
+        &[
+            (members[0], token * U256::from(49)),
+            (members[1], token * U256::from(25)),
+            (members[2], token * U256::from(25)),
+            (members[3], token),
+        ],
+    );
+    seed_epoch_production(&mut harness.sdk, 0, &[151, 24, 25, 0], 200);
+
+    harness.set_caller(GENESIS_GOVERNANCE);
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_SET_PRODUCTION_LIVENESS_DISABLED,
+                &BoolCommand { value: true },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+    harness.sdk.take_logs();
+
+    assert_eq!(close_epoch_via_record(&mut harness, 0), ExitCode::Ok);
+
+    let logs = harness.sdk.take_logs();
+    assert!(
+        logs_of(&logs, events::ProductionVerdictFailed::SELECTOR).is_empty(),
+        "a complete epoch must still produce no verdict while the tier is off"
+    );
+    assert_eq!(
+        production_record(&harness.sdk, members[1]).2,
+        0,
+        "and no failure is recorded against the member that would have failed"
+    );
+}
+
+#[test]
+fn verdicts_come_from_the_frozen_weights_and_are_never_divided() {
+    let token = DEFAULT_MIN_VALIDATOR_STAKE;
+    let (mut harness, members) = liveness_harness(&[token * U256::from(50); 4], 2);
+    set_min_verdict_due_blocks(&mut harness, 10);
+    commit_test_committee(
+        &mut harness.sdk,
+        0,
+        &[
+            (members[0], token * U256::from(49)),
+            (members[1], token * U256::from(25)),
+            (members[2], token * U256::from(25)),
+            (members[3], token),
+        ],
+    );
+    // due = 98 / 50 / 50 / 2 blocks out of 200 recorded, floor 10.
+    seed_epoch_production(&mut harness.sdk, 0, &[151, 24, 25, 0], 200);
+    harness.sdk.take_logs();
+
+    assert_eq!(close_epoch_via_record(&mut harness, 0), ExitCode::Ok);
+
+    let logs = harness.sdk.take_logs();
+    let failed = logs_of(&logs, events::ProductionVerdictFailed::SELECTOR);
+    assert_eq!(failed.len(), 1, "exactly one member is under half its due");
+    assert_eq!(&failed[0].1[2].0[12..], members[1].as_slice());
+    assert_eq!(
+        decode_output::<(u32, U256)>(&failed[0].0),
+        (24, U256::from(50))
+    );
+    assert_eq!(production_record(&harness.sdk, members[1]).2, 1);
+    assert_eq!(
+        production_record(&harness.sdk, members[2]).2,
+        0,
+        "producing exactly half the due share passes"
+    );
+    assert_eq!(
+        production_record(&harness.sdk, members[3]).2,
+        0,
+        "a member due fewer blocks than the floor holds no verdict at zero production"
+    );
+    assert_eq!(pending_exclusion_set(&harness.sdk), vec![members[1]]);
+}
+
+// More than `f` FIRST-TIME failures in one epoch reads as an environment and
+// stamps nobody; the same members failing again are no longer new, so the tier
+// answers them. At epoch 0 the never-failed sentinel and "failed epoch −1"
+// collide, and a bare equality reads a first-ever failure as a repeat.
+#[test]
+fn the_correlation_guard_keys_on_new_failures_and_frees_the_next_epoch() {
+    let (mut harness, members) =
+        liveness_harness(&[DEFAULT_MIN_VALIDATOR_STAKE * U256::from(2); 7], 2);
+    set_min_verdict_due_blocks(&mut harness, 10);
+    for epoch in 0..2 {
+        equal_weight_committee(&mut harness.sdk, epoch, &members);
+    }
+    let produced = [50, 50, 50, 50, 0, 0, 0];
+
+    seed_epoch_production(&mut harness.sdk, 0, &produced, 200);
+    harness.sdk.take_logs();
+    assert_eq!(close_epoch_via_record(&mut harness, 0), ExitCode::Ok);
+
+    let logs = harness.sdk.take_logs();
+    let correlated = logs_of(&logs, events::CorrelatedFailureEpoch::SELECTOR);
+    assert_eq!(correlated.len(), 1);
+    assert_eq!(
+        decode_output::<(U256, U256)>(&correlated[0].0),
+        (U256::from(3), U256::from(2))
+    );
+    assert!(
+        pending_exclusion_set(&harness.sdk).is_empty(),
+        "an environment is not answered by excluding its victims"
+    );
+    for member in &members[4..] {
+        let record = production_record(&harness.sdk, *member);
+        assert_eq!(record.2, 1, "the failure bit is written on the guarded path");
+        assert_eq!(record.4, 0);
+    }
+
+    seed_epoch_production(&mut harness.sdk, 1, &produced, 200);
+    harness.sdk.take_logs();
+    assert_eq!(close_epoch_via_record(&mut harness, 1), ExitCode::Ok);
+
+    let logs = harness.sdk.take_logs();
+    assert!(
+        logs_of(&logs, events::CorrelatedFailureEpoch::SELECTOR).is_empty(),
+        "a repeat failure is evidence of itself, not of an environment"
+    );
+    assert_eq!(
+        pending_exclusion_set(&harness.sdk),
+        vec![members[4], members[5]]
+    );
+}
+
+// Two stamps per close at most, and never more than `f` concurrent.
+#[test]
+fn stamps_are_bounded_per_close_and_by_the_concurrent_budget() {
+    let (mut harness, members) =
+        liveness_harness(&[DEFAULT_MIN_VALIDATOR_STAKE * U256::from(2); 10], 2);
+    set_min_verdict_due_blocks(&mut harness, 10);
+    for epoch in 0..3 {
+        equal_weight_committee(&mut harness.sdk, epoch, &members);
+    }
+    // A ladder already four episodes deep, so a stamp outlives the next close
+    // and the concurrent budget is what stops the third one.
+    for member in &members {
+        production_liveness_storage()
+            .validators_accessor()
+            .entry(*member)
+            .kick_count_accessor()
+            .set_checked(&mut harness.sdk, 4)
+            .unwrap();
+    }
+
+    seed_epoch_production(
+        &mut harness.sdk,
+        0,
+        &[29, 29, 29, 29, 28, 28, 28, 0, 0, 0],
+        200,
+    );
+    assert_eq!(close_epoch_via_record(&mut harness, 0), ExitCode::Ok);
+    assert_eq!(
+        pending_exclusion_set(&harness.sdk),
+        vec![members[7], members[8]],
+        "three failers, two stamps: the per-close cap, ordered by address"
+    );
+
+    seed_epoch_production(
+        &mut harness.sdk,
+        1,
+        &[34, 33, 33, 33, 33, 34, 0, 0, 0, 0],
+        200,
+    );
+    assert_eq!(close_epoch_via_record(&mut harness, 1), ExitCode::Ok);
+    assert_eq!(
+        pending_exclusion_set(&harness.sdk),
+        vec![members[7], members[8], members[6]],
+        "four failers, one stamp: `f` concurrent exclusions is the ceiling"
+    );
+    assert_eq!(production_record(&harness.sdk, members[9]).3, 0);
+
+    seed_epoch_production(
+        &mut harness.sdk,
+        2,
+        &[34, 33, 33, 33, 33, 34, 0, 0, 0, 0],
+        200,
+    );
+    assert_eq!(close_epoch_via_record(&mut harness, 2), ExitCode::Ok);
+    assert_eq!(pending_exclusion_set(&harness.sdk).len(), 3);
+}
+
+// Releases are frozen with the rest of the verdict state under the kill switch,
+// so no exclusion expires unnoticed while the tier is off.
+#[test]
+fn the_kill_switch_freezes_releases() {
+    let (mut harness, members) =
+        liveness_harness(&[DEFAULT_MIN_VALIDATOR_STAKE * U256::from(2); 3], 1);
+    let excluded = members[2];
+    assert!(staking::apply_production_exclusion(&mut harness.sdk, excluded).unwrap());
+    let record = production_liveness_storage()
+        .validators_accessor()
+        .entry(excluded);
+    record
+        .readmit_at_epoch_accessor()
+        .set_checked(&mut harness.sdk, 1)
+        .unwrap();
+    production_liveness_storage()
+        .pending_exclusions_accessor()
+        .push_checked(&mut harness.sdk, excluded)
+        .unwrap();
+
+    harness.set_caller(GENESIS_GOVERNANCE);
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_SET_PRODUCTION_LIVENESS_DISABLED,
+                &BoolCommand { value: true },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+    harness.sdk.take_logs();
+    assert_eq!(close_epoch_via_record(&mut harness, 1), ExitCode::Ok);
+
+    assert_eq!(pending_exclusion_set(&harness.sdk), vec![excluded]);
+    assert_eq!(record.readmit_at_epoch_accessor().get_checked(&harness.sdk).unwrap(), 1);
+    assert!(!staking::selection_visible_at(&harness.sdk, excluded, 3).unwrap());
+    assert!(harness
+        .sdk
+        .take_logs()
+        .iter()
+        .all(|(_, topics)| topics.first()
+            != Some(&B256::new(events::ProductionExclusionReleased::SELECTOR))));
+
+    harness.set_caller(GENESIS_GOVERNANCE);
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_SET_PRODUCTION_LIVENESS_DISABLED,
+                &BoolCommand { value: false },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+    harness.sdk.take_logs();
+    assert_eq!(close_epoch_via_record(&mut harness, 2), ExitCode::Ok);
+
+    assert!(pending_exclusion_set(&harness.sdk).is_empty());
+    assert_eq!(record.readmit_at_epoch_accessor().get_checked(&harness.sdk).unwrap(), 0);
+    assert!(staking::selection_visible_at(&harness.sdk, excluded, 4).unwrap());
+}
+
+struct CloseCallState {
+    reserve_balances: VecDeque<Option<U256>>,
+    disbursed: Vec<U256>,
+    self_call_fuel: Option<u64>,
+    self_calls: usize,
+}
+
+fn reserve_reply(input: &[u8], state: &Rc<RefCell<CloseCallState>>) -> SyscallResult<Bytes> {
+    let selector = u32::from_be_bytes(input[..SIG_LEN_BYTES].try_into().unwrap());
+    match selector {
+        SIG_RESERVE_BALANCE => match state.borrow_mut().reserve_balances.pop_front() {
+            Some(Some(balance)) => {
+                SyscallResult::new(encode_mock_return(&balance), 0, 0, ExitCode::Ok)
+            }
+            _ => SyscallResult::new(Bytes::new(), 0, 0, ExitCode::Panic),
+        },
+        SIG_RESERVE_DISBURSE => {
+            let params = &input[SIG_LEN_BYTES..];
+            let (_, amount) = SolidityABI::<(Address, U256)>::decode(&params, 0).unwrap();
+            state.borrow_mut().disbursed.push(amount);
+            SyscallResult::new(encode_mock_return(&amount), 0, 0, ExitCode::Ok)
+        }
+        _ => SyscallResult::new(Bytes::new(), 0, 0, ExitCode::Panic),
+    }
+}
+
+/// Mocks the stipend leg's fuel-capped self-call.
+///
+/// Everything about the nested frame is real — same storage, same dispatch,
+/// caller rewritten to the contract itself, failure returned as a status. Only
+/// the journal is emulated: this host has no checkpoint, so storage is
+/// snapshotted before the re-entry and restored when the frame fails, which is
+/// what `checkpoint_revert` does on the real one.
+fn install_close_call_handler(harness: &Harness, state: Rc<RefCell<CloseCallState>>) {
+    let host = harness.sdk.clone();
+    harness
+        .sdk
+        .set_call_handler(move |address, _value, input, fuel_limit| {
+            if address != GENESIS_STAKING {
+                return reserve_reply(input, &state);
+            }
+            {
+                let mut observed = state.borrow_mut();
+                observed.self_calls += 1;
+                observed.self_call_fuel = fuel_limit;
+            }
+            let snapshot = host.dump_storage();
+            let outer_caller = host.context().contract_caller();
+            host.context_mut().caller = GENESIS_STAKING;
+            let mut nested = host.clone().with_input(Bytes::from(input.to_vec()));
+            let inner = state.clone();
+            nested.set_call_handler(move |_address, _value, input, _fuel| {
+                reserve_reply(input, &inner)
+            });
+            let outcome = main_entry(&mut nested);
+            nested.context_mut().caller = outer_caller;
+            let data = Bytes::from(nested.take_output());
+            match outcome {
+                Ok(()) => SyscallResult::new(data, 0, 0, ExitCode::Ok),
+                Err(status) => {
+                    nested.restore_storage(snapshot);
+                    SyscallResult::new(data, 0, 0, status)
+                }
+            }
+        });
+}
+
+// The tolerant leg. A stipend that dies mid-catch-up discards its own frame and
+// nothing else: the release and the verdict of the same close survive, the
+// reward cursor does not advance, and the outer frame reports the failure with
+// an event of its own — a log written inside the discarded frame would go with
+// it, and a system call leaves no receipt to read instead.
+#[test]
+fn a_failing_stipend_leg_leaves_the_releases_and_verdicts_of_its_close_intact() {
+    let token = DEFAULT_MIN_VALIDATOR_STAKE;
+    let (mut harness, members) = liveness_harness(&[token * U256::from(2); 4], 2);
+    set_min_verdict_due_blocks(&mut harness, 10);
+    equal_weight_committee(&mut harness.sdk, 0, &members);
+    equal_weight_committee(&mut harness.sdk, 1, &members);
+
+    let reserve = Address::with_last_byte(0xc0);
+    let config = chain_config_storage();
+    config
+        .blend_stipend_per_epoch_accessor()
+        .set_checked(&mut harness.sdk, U256::from(400))
+        .unwrap();
+    config
+        .blend_reserve_accessor()
+        .set_checked(&mut harness.sdk, reserve)
+        .unwrap();
+
+    // Leg 1 has an exclusion expiring at this close.
+    let releasing = members[3];
+    assert!(staking::apply_production_exclusion(&mut harness.sdk, releasing).unwrap());
+    let releasing_record = production_liveness_storage()
+        .validators_accessor()
+        .entry(releasing);
+    releasing_record
+        .readmit_at_epoch_accessor()
+        .set_checked(&mut harness.sdk, 2)
+        .unwrap();
+    releasing_record
+        .last_failed_epoch_p1_accessor()
+        .set_checked(&mut harness.sdk, 1)
+        .unwrap();
+    production_liveness_storage()
+        .pending_exclusions_accessor()
+        .push_checked(&mut harness.sdk, releasing)
+        .unwrap();
+
+    // Leg 2 has one member under half its due.
+    seed_epoch_production(&mut harness.sdk, 0, &[50, 50, 50, 50], 200);
+    seed_epoch_production(&mut harness.sdk, 1, &[67, 67, 0, 66], 200);
+
+    let state = Rc::new(RefCell::new(CloseCallState {
+        // Epoch 0 settles; epoch 1 dies inside the same self-call, so the
+        // discarded frame is one that had already written.
+        reserve_balances: vec![Some(U256::from(1_000)), None].into(),
+        disbursed: Vec::new(),
+        self_call_fuel: None,
+        self_calls: 0,
+    }));
+    install_close_call_handler(&harness, state.clone());
+    harness.sdk.take_logs();
+
+    assert_eq!(
+        close_epoch_via_record(&mut harness, 1),
+        ExitCode::Ok,
+        "a failing stipend must not take the per-block system call down with it"
+    );
+
+    assert_eq!(state.borrow().self_calls, 1);
+    assert_eq!(
+        state.borrow().self_call_fuel,
+        Some(12_000_000 * 20),
+        "the cap is a fuel figure, not the Solidity gas figure"
+    );
+    assert_eq!(
+        state.borrow().disbursed,
+        vec![U256::from(400)],
+        "the mock records the call; on the real runtime the reserve's state change is discarded with the frame for epoch 0"
+    );
+
+    let logs = harness.sdk.take_logs();
+    let skipped = logs_of(&logs, events::StipendLegSkipped::SELECTOR);
+    assert_eq!(skipped.len(), 1);
+    assert_eq!(
+        SolidityABI::<u64>::decode(&skipped[0].1[1].as_slice(), 0).unwrap(),
+        1
+    );
+
+    assert_eq!(
+        production_record(&harness.sdk, releasing).3,
+        0,
+        "leg 1's release survives the stipend failure"
+    );
+    assert!(staking::selection_visible_at(&harness.sdk, releasing, 3).unwrap());
+    assert_eq!(
+        pending_exclusion_set(&harness.sdk),
+        vec![members[2]],
+        "leg 2's stamp survives it too"
+    );
+    let stamped = production_record(&harness.sdk, members[2]);
+    assert_eq!((stamped.2, stamped.3, stamped.4), (2, 3, 1));
+
+    let staking_state = staking_storage();
+    assert_eq!(
+        staking_state
+            .last_rewarded_epoch_p1_accessor()
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        0,
+        "the reward cursor did not advance, so the next close retries contiguously"
+    );
+    assert_eq!(
+        staking_state
+            .credited_blend_accessor()
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        U256::ZERO
+    );
+    assert_eq!(
+        staking_state
+            .validator_snapshots_accessor()
+            .entry(members[0])
+            .entry(0u64)
+            .total_blend_rewards_accessor()
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        crate::math::U96::ZERO,
+        "the epoch-0 credit was inside the discarded frame"
+    );
+}
+
+#[test]
+fn the_stipend_re_entry_is_reachable_only_from_the_contract_itself() {
+    let (mut harness, _) = liveness_harness(&[DEFAULT_MIN_VALIDATOR_STAKE], 21);
+    let calldata = encode_call(SIG_SETTLE_EPOCH_STIPEND_FROM, &U64Command { value: 0 });
+    harness.set_caller(SYSTEM_CALLER);
+    assert_revert_selector(harness.call(calldata.clone()), ERR_ONLY_SELF_CALL);
+    harness.set_caller(GENESIS_GOVERNANCE);
+    assert_revert_selector(harness.call(calldata.clone()), ERR_ONLY_SELF_CALL);
+    harness.set_caller(GENESIS_STAKING);
+    assert_eq!(harness.call(calldata).0, ExitCode::Ok);
 }

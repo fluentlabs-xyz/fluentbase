@@ -1,7 +1,7 @@
 use crate::EvmTestingContextWithGenesis;
 use alloy_sol_types::{sol, SolCall};
 use fluentbase_sdk::{
-    hex,
+    address, hex,
     universal_token::{ApproveCommand, BalanceOfCommand, InitialSettings, UniversalTokenCommand},
     Address, Bytes, B256, GENESIS_GOVERNANCE, GENESIS_STAKING, U256,
 };
@@ -10,6 +10,7 @@ use fluentbase_testing::EvmTestingContext;
 const OWNER: Address = Address::repeat_byte(0x11);
 const VALIDATOR: Address = Address::repeat_byte(0x22);
 const TOKEN: U256 = U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]);
+const SYSTEM_CALLER: Address = address!("0xfffffffffffffffffffffffffffffffffffffffe");
 
 sol! {
     struct ConsensusKeys {
@@ -30,8 +31,6 @@ sol! {
             address stakingToken,
             uint32 activeValidatorsLength,
             uint32 epochBlockInterval,
-            uint32 felonyThreshold,
-            uint32 validatorJailEpochLength,
             uint32 undelegatePeriod,
             uint256 minValidatorStakeAmount,
             uint256 minStakingAmount,
@@ -59,6 +58,10 @@ sol! {
             external
             view
             returns (uint256 delegatedAmount, uint64 atEpoch);
+        function recordProduction(uint64 blockNumber, uint8 leaderIndex) external;
+        function settleEpochStipendFrom(uint64 epoch) external;
+        function lastProcessedBlock() external view returns (uint64);
+        function blocksInEpoch(uint64 epoch) external view returns (uint32);
     }
 }
 
@@ -127,8 +130,6 @@ fn initialize_calldata(
         stakingToken: staking_token,
         activeValidatorsLength: 21,
         epochBlockInterval: 200,
-        felonyThreshold: 150,
-        validatorJailEpochLength: 7,
         undelegatePeriod: 7,
         minValidatorStakeAmount: TOKEN,
         minStakingAmount: TOKEN,
@@ -317,5 +318,65 @@ fn genesis_staking_custodies_and_returns_blend_through_real_rwasm_calls() {
     assert_eq!(
         token_balance(&mut context, token, OWNER),
         initial_supply - TOKEN * U256::from(3)
+    );
+}
+
+// The independent ABI oracle for the recorder: alloy builds the calldata from
+// its own signatures, so a selector that drifted from the Solidity name would
+// land on `UnknownMethod()` here rather than on a passing unit test.
+#[test]
+fn record_production_drives_the_epoch_close_through_real_rwasm() {
+    let mut context = EvmTestingContext::default().with_full_genesis();
+    let verifier = deploy_mock_bls_verifier(&mut context);
+    context = context.with_block_number(999);
+    call(
+        &mut context,
+        GENESIS_GOVERNANCE,
+        GENESIS_STAKING,
+        initialize_calldata(Address::repeat_byte(0x44), verifier, Vec::new()),
+    );
+
+    let record = |block_number: u64| {
+        IStakingRwasm::recordProductionCall {
+            blockNumber: block_number,
+            leaderIndex: 0,
+        }
+        .abi_encode()
+    };
+    assert_reverts(&mut context, OWNER, GENESIS_STAKING, record(1_000));
+    assert_reverts(
+        &mut context,
+        SYSTEM_CALLER,
+        GENESIS_STAKING,
+        IStakingRwasm::settleEpochStipendFromCall { epoch: 0 }.abi_encode(),
+    );
+
+    context = context.with_block_number(1_000);
+    call(&mut context, SYSTEM_CALLER, GENESIS_STAKING, record(1_000));
+    call(&mut context, SYSTEM_CALLER, GENESIS_STAKING, record(1_000));
+    // Crossing into epoch 1 runs the close, which must not fail the block.
+    context = context.with_block_number(1_200);
+    call(&mut context, SYSTEM_CALLER, GENESIS_STAKING, record(1_200));
+
+    let output = call(
+        &mut context,
+        OWNER,
+        GENESIS_STAKING,
+        IStakingRwasm::lastProcessedBlockCall {}.abi_encode(),
+    );
+    assert_eq!(
+        IStakingRwasm::lastProcessedBlockCall::abi_decode_returns(&output).unwrap(),
+        1_200
+    );
+    let output = call(
+        &mut context,
+        OWNER,
+        GENESIS_STAKING,
+        IStakingRwasm::blocksInEpochCall { epoch: 0 }.abi_encode(),
+    );
+    assert_eq!(
+        IStakingRwasm::blocksInEpochCall::abi_decode_returns(&output).unwrap(),
+        0,
+        "no committee is committed, so every block parks"
     );
 }

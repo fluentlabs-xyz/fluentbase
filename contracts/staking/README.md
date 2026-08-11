@@ -5,13 +5,16 @@ The core validator staking contract implemented as a normal rWasm contract and d
 
 ## Scope
 
-- Implements validator lifecycle, delegation, rewards, committees, liveness jail, and equivocation slashing.
-- Owns the chain configuration previously read from `ChainConfig`.
-- Isolates initializer, chain configuration, consensus, and staking state in separate ERC-7201 namespaces:
-  `Fluent.storage.Initializer`, `Fluent.storage.ChainConfig`,
-  `Fluent.storage.Consensus`, and `Fluent.storage.StakingStorage`.
+- Implements validator lifecycle, delegation, rewards, committees, equivocation slashing, and
+  block-production liveness.
+- Owns the chain configuration previously read from `ChainConfig`, and the block-production
+  accounting previously held by a separate liveness contract.
+- Isolates initializer, chain configuration, consensus, staking, and production-liveness state in
+  separate ERC-7201 namespaces: `Fluent.storage.Initializer`, `Fluent.storage.ChainConfig`,
+  `Fluent.storage.Consensus`, `Fluent.storage.StakingStorage`, and
+  `Fluent.storage.ProductionLiveness`.
 - Keeps `StakingPool` external and unchanged; this crate does not deploy or replace it.
-- Calls configured BLS verifier, evidence decoder, liveness, and BLEND reserve contracts.
+- Calls configured BLS verifier, evidence decoder, and BLEND reserve contracts.
 
 ## Lifecycle
 
@@ -21,8 +24,9 @@ The core validator staking contract implemented as a normal rWasm contract and d
    genesis validator stake; it grants no contract authority.
 3. Governance manages chain configuration, dependency rotation, and validator status.
 4. Validator creation verifies and stores consensus keys atomically; delegators approve and deposit BLEND.
-5. The system caller commits epoch committees and settles finalized epoch stipends.
-6. Liveness and equivocation paths jail or permanently tombstone validators.
+5. The system caller commits epoch committees and settles the stipend for epochs that have finished.
+6. Verified equivocation permanently tombstones a validator and seizes its self-stake. Block-production liveness never
+   jails and never touches stake; it only excludes a validator from selection for a bounded number of epochs.
 
 Governance is fixed at compile time to the `GENESIS_GOVERNANCE` address. Changing it requires a coordinated code/genesis
 rebuild. The base genesis builder embeds staking but does not install governance code at the reserved address, so a
@@ -46,7 +50,7 @@ key, proof of possession, and peer key in the validator-creation call; there is 
   epoch.
 - A newly materialized snapshot copies only the latest state already effective at that epoch. Earlier-effective stake
   and commission changes are carried forward through any scheduled warm-up snapshots, never copied backward from them.
-- Initialization, activation, jail readmission, and committee selection each require the validator owner's effective
+- Initialization, activation, and committee selection each require the validator owner's effective
   self-stake to meet the configured minimum. A full owner exit moves an active validator to pending in the same
   transaction and removes its next-epoch selection visibility.
 - Delegation amounts must use `BALANCE_COMPACT_PRECISION`.
@@ -58,18 +62,27 @@ key, proof of possession, and peer key in the validator-creation call; there is 
   committee pruning cannot delay release. The same absolute committee deadlines expire equivocation evidence;
   `getValidatorSelfStakeLock` exposes the current lock state and exclusive unlock epoch.
 - Equivocation seizure consumes both active and pending self-principal.
-- Claims, stipend catch-up, committee pruning, and jail scans are bounded per call.
+- Claims, stipend catch-up, and committee pruning are bounded per call.
 - BLEND transfers accept ERC-20 tokens that return `true` or no data; explicit `false` reverts.
+- The epoch stipend is flat pro-rata over the committee's frozen leader weights and consults no liveness verdict. The
+  only exclusions are a permanent equivocation tombstone and a zero frozen weight.
 - Reserve settlement credits rewards only after the exact assigned amount is disbursed. A successful zero or partial
   disbursement skips the epoch with zero credited rewards and advances the cursor; reverted calls and malformed return
   values revert settlement and remain retryable.
-- Equivocation tombstones are permanent and prevent key reuse or jail release.
+- Equivocation tombstones are permanent and prevent key reuse.
 - Compressed BLS public keys are stored as three fixed `bytes32` words. Validator creation rejects any verifier output
   that is not exactly 96 bytes, avoiding dynamic-bytes metadata and making malformed stored key lengths unrepresentable.
-- Liveness jailing protects the fixed committed committee for the current epoch (or its selected
-  pre-commit fallback); sequential reports cannot ratchet down the quorum floor.
-- Committee selection filters validators without active, correctly shaped consensus keys before
-  stake ranking and rejects empty committees without advancing the commit epoch.
+- Committee selection ranks candidates by stake first and drops those without active, correctly
+  shaped consensus keys afterwards, and rejects empty committees without advancing the commit epoch.
+  The order matters: the off-chain deriver reads the same ranked view with inactive keys blanked and
+  discards the keyless entries itself, so filtering before the cut would promote a lower-staked
+  validator and make every honest submission fail.
+- The committee-size cap is epoch-addressed. Changing it schedules the new value from the next epoch,
+  so an epoch that has already started keeps the cap it was selected under. The scalar getter reports
+  the latest scheduled value immediately and is not epoch-correct by design.
+- Leader weights are frozen at commit time from the selection epoch, and are never recomputed on
+  read. An unfrozen weight would depend on the block height each node reads at, and the leader is
+  drawn from those weights.
 - Equivocation reporter rewards use a beneficiary-owned commit/reveal flow; the transaction sender that reveals evidence
   is never used as the reward recipient.
 - A validator's `owner` is its immutable administrative, validator-fee, self-stake, and slashing identity.
@@ -127,8 +140,30 @@ bytes are unchanged.
 - `initializer.rs`: atomic one-shot initialization.
 - `config.rs`: chain configuration initialization, getters, setters, and dependencies.
 - `staking.rs`: epoch reads, validator administration, delegation, and rewards.
-- `consensus.rs`: consensus keys, epoch committees, liveness, and equivocation handling.
+- `consensus.rs`: consensus keys, epoch committees, and equivocation handling.
+- `liveness.rs`: the block-production recorder and the epoch close.
 - `storage.rs`: separate ERC-7201 roots and epoch snapshots.
+
+## Block-production liveness
+
+The system caller reports every block's producer through `recordProduction`. When the epoch rolls
+over, the close runs three legs with three deliberately different failure policies:
+
+1. **Releases** — unconditional, and frozen by the `productionLivenessDisabled` kill switch.
+2. **Verdicts** — fail-loud. An epoch whose recorded block count does not match the epoch interval is
+   tainted: it emits `PartialEpoch` and is not judged at all, because a partial record cannot
+   distinguish an idle validator from a missing report.
+3. **Stipend** — tolerant. It runs in a fuel-capped self-call so a failing payment cannot roll back
+   the releases and verdicts of the same close; a failure emits `StipendLegSkipped` from the outer
+   frame.
+
+The consequence of failing liveness is a temporary, auto-reversing **exclusion** from committee
+selection, never a stake penalty and never a jail — equivocation is the only path to `Jail`. An
+exclusion is refused outright when no replacement can take the seat, and a refusal leaves no trace,
+so a small network shrinks its committee rather than losing quorum.
+
+The stipend is paid only for an epoch that recorded blocks and has finished. A skipped epoch is
+forfeited, not deferred.
 
 ## Verification
 

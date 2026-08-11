@@ -111,6 +111,9 @@ macro_rules! impl_int {
             const HEADER_SIZE: usize = core::mem::size_of::<$typ>();
             const IS_DYNAMIC: bool = false;
 
+            // `unused_comparisons`: the `>= 0` sign test below is vacuously true for the
+            // unsigned instantiations of this macro.
+            #[allow(unused_comparisons)]
             fn encode(&self, buf: &mut BytesMut, offset: usize) -> Result<(), CodecError> {
                 let word_size = align_up::<ALIGN>(
                     <Self as Encoder<B, ALIGN, SOL_MODE, IS_STATIC>>::HEADER_SIZE,
@@ -125,11 +128,10 @@ macro_rules! impl_int {
                     <Self as Encoder<B, ALIGN, SOL_MODE, IS_STATIC>>::HEADER_SIZE,
                 );
 
-                B::$write_method(&mut buf[start..end], *self);
-
-                // Fill the rest of the buffer with 0x00 or 0xFF depending on the sign of the
-                // integer
-                let fill_val = if *self > 0 { 0x00 } else { 0xFF };
+                // Pad with the sign extension: 0xFF only for negative values. Zero is
+                // non-negative, so `>` here would pad it with 0xFF and produce a word no
+                // Solidity decoder accepts.
+                let fill_val = if *self >= 0 { 0x00 } else { 0xFF };
 
                 for i in offset..start {
                     buf[i] = fill_val;
