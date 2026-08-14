@@ -11,14 +11,13 @@
 //! 2. **Full actor pipeline**: the producer/consumer split using a
 //!    real `commonware_storage::queue::shared` WAL, a recording
 //!    [`SlasherTxSink`] stub, and a configurable [`StakingStateRead`]
-//!    stub. Asserts:
-//!    - `slasher_full_pipeline_records_wal_then_submits_via_sink` —
-//!      mailbox event → WAL enqueue → sink.submit called with the right
-//!      calldata.
-//!    - `slasher_falls_back_to_cache_on_empty_snapshot`.
-//!    - `slasher_rejects_tampered_evidence_at_verify_pre_submit` —
-//!      pre-submit fails → no sink call.
-//!    - `slasher_dedup_skips_already_submitted_victim`.
+//!    stub.
+//!
+//! A charge is block-eligible only inside its own epoch, so the transaction
+//! route these cases exercise is the **epoch-boundary fallback**: a charge is
+//! held for a proposer while its epoch runs and only reaches the sink once the
+//! epoch turns. Every case here therefore closes the epoch after driving its
+//! event — see [`report_and_close_epoch`].
 
 use alloy_primitives::{Address, B256};
 use alloy_sol_types::SolCall as _;
@@ -26,7 +25,7 @@ use commonware_codec::DecodeExt;
 use commonware_consensus::{
     simplex::types::{
         Activity, Attributable, ConflictingFinalize, ConflictingNotarize, Finalize, Notarize,
-        Nullify, NullifyFinalize, Proposal,
+        Nullify, NullifyFinalize, Proposal, Vote,
     },
     types::{Epoch, Round, View},
     Reporter, Reporters,
@@ -134,6 +133,26 @@ fn build_consensus_digest_conflicting_notarize() -> (
     (ConflictingNotarize::new(n1, n2), kps, bimap)
 }
 
+/// One signed notarize by OFFENDER. On its own it is not slashable — two of
+/// them for one round with different proposals are, and a single one is also
+/// the cheapest activity that tells the slasher which epoch consensus is in.
+fn offender_notarize(
+    epoch: u64,
+    view: u64,
+    tag: u8,
+) -> Activity<BlsScheme, fluentbase_consensus::Digest> {
+    let (kps, bimap) = committee(1);
+    let s = build_signer(&fluent_namespace(C_MAIN), bimap, &kps[OFFENDER], None)
+        .expect("offender in committee");
+    let round = Round::new(Epoch::new(epoch), View::new(view));
+    let proposal = Proposal::new(
+        round,
+        View::new(view - 1),
+        fluentbase_consensus::Digest(B256::from([tag; 32])),
+    );
+    Activity::Notarize(Notarize::sign(&s, proposal).expect("offender signs"))
+}
+
 fn snapshot_from_bimap(bimap: &BiMap<PeerPubkey, BlsPubkey>) -> ValidatorSetSnapshot {
     let validators = bimap
         .iter_pairs()
@@ -149,6 +168,7 @@ fn snapshot_from_bimap(bimap: &BiMap<PeerPubkey, BlsPubkey>) -> ValidatorSetSnap
                     activation_epoch: 0,
                 },
                 stake: 1,
+                tombstoned: false,
             }
         })
         .collect();
@@ -291,8 +311,7 @@ fn reporter_multiplex_routes_conflicting_notarize_to_slasher() {
 
     let runtime = commonware_runtime::deterministic::Runner::default();
     runtime.start(|_ctx| async move {
-        let (slash_tx, mut slash_rx) =
-            mpsc::unbounded_channel::<Activity<BlsScheme, fluentbase_consensus::Digest>>();
+        let (slash_tx, mut slash_rx) = mpsc::unbounded_channel::<slasher::ingress::Envelope>();
         let slasher_mailbox = slasher::ingress::test_only_mailbox(slash_tx);
 
         let (m_count_tx, mut m_count_rx) = mpsc::unbounded_channel::<()>();
@@ -309,7 +328,12 @@ fn reporter_multiplex_routes_conflicting_notarize_to_slasher() {
             Activity::ConflictingNotarize(ev);
         reporters.report(activity).await;
 
-        slash_rx.try_recv().expect("slasher mailbox received");
+        let delivered = slash_rx.try_recv().expect("slasher mailbox received");
+        assert_eq!(
+            delivered.provenance,
+            slasher::ingress::Provenance::Engine,
+            "the simplex Reporter arm is the engine path, and only it may move the epoch cursor"
+        );
         m_count_rx.try_recv().expect("marshal arm received");
         assert!(slash_rx.try_recv().is_err(), "exactly 1 event");
         assert!(m_count_rx.try_recv().is_err(), "exactly 1 event");
@@ -320,6 +344,7 @@ fn reporter_multiplex_routes_conflicting_notarize_to_slasher() {
 /// deterministic context. Returns:
 /// - the mailbox sender for driving the test
 /// - the recorded calls handle (read after exercising the pipeline)
+/// - the charge store the actor fills, standing in for the proposer's read
 /// - the actor handle for graceful shutdown
 async fn spawn_actor_with_stubs(
     ctx: commonware_runtime::deterministic::Context,
@@ -333,6 +358,26 @@ async fn spawn_actor_with_stubs(
 ) -> (
     slasher::Mailbox,
     Arc<TokioMutex<Vec<RecordedCall>>>,
+    slasher::ChargeStore,
+    commonware_runtime::Handle<()>,
+) {
+    // These cases drive the mailbox directly; no evidence channel is wired.
+    spawn_actor_with_evidence(ctx, reader, fallback, sink_outcome, partition, None).await
+}
+
+/// As [`spawn_actor_with_stubs`], but with the evidence-gossip bridge wired so a
+/// case can also feed the actor peer-forwarded votes.
+async fn spawn_actor_with_evidence(
+    ctx: commonware_runtime::deterministic::Context,
+    reader: StubReader,
+    fallback: Arc<dyn StaleEpochFallback>,
+    sink_outcome: SubmitOutcomeKind,
+    partition: &str,
+    evidence: Option<slasher::EvidenceBridge>,
+) -> (
+    slasher::Mailbox,
+    Arc<TokioMutex<Vec<RecordedCall>>>,
+    slasher::ChargeStore,
     commonware_runtime::Handle<()>,
 ) {
     use commonware_runtime::Metrics as _;
@@ -353,6 +398,9 @@ async fn spawn_actor_with_stubs(
     // `VoteScheme::verifier` from the recovered committee — no scheme provider.
 
     let latest: slasher::actor::LatestFinalizedHash = Arc::new(|| Some(B256::ZERO));
+    // No proposer here, so nothing drains what the actor holds for a block —
+    // the epoch boundary is the only thing that empties it.
+    let charges = slasher::ChargeStore::default();
     let cfg = slasher::actor::Config {
         staking_address,
         chain_id: C_MAIN,
@@ -362,10 +410,27 @@ async fn spawn_actor_with_stubs(
         sink,
         wal_writer,
         wal_reader,
+        evidence,
+        charges: charges.clone(),
     };
     let (actor, mailbox) = slasher::Actor::init(ctx.with_label("slasher"), cfg);
     let handle = actor.start();
-    (mailbox, sink_calls, handle)
+    (mailbox, sink_calls, charges, handle)
+}
+
+/// Drive `activity`, then an activity in the next epoch.
+///
+/// The epoch turn is the event that hands a charge to the transaction
+/// fallback: while its own epoch runs, a charge is held for a proposer to put
+/// in a block, and only members of that epoch's committee could verify it
+/// there — so once the epoch ends the transaction is the only route left.
+async fn report_and_close_epoch(
+    mb: &mut slasher::Mailbox,
+    activity: Activity<BlsScheme, fluentbase_consensus::Digest>,
+) {
+    use commonware_consensus::Reporter as _;
+    mb.report(activity).await;
+    mb.report(offender_notarize(EPOCH + 1, 1, 0x11)).await;
 }
 
 /// Helper: drive a `ConflictingNotarize` event into the mailbox and wait
@@ -383,8 +448,10 @@ async fn wait_for_sink_calls(calls: &Arc<TokioMutex<Vec<RecordedCall>>>, n: usiz
     false
 }
 
+/// The Phase-6 property: a charge that never reaches a block before its epoch
+/// ends is not lost — the epoch turn hands it to the transaction route.
 #[test]
-fn slasher_full_pipeline_records_wal_then_submits_via_sink() {
+fn a_charge_stranded_by_the_epoch_boundary_lands_by_transaction() {
     let runtime = commonware_runtime::deterministic::Runner::default();
     runtime.start(|ctx| async move {
         let (_kps_unused, bimap) = committee(1);
@@ -395,25 +462,37 @@ fn slasher_full_pipeline_records_wal_then_submits_via_sink() {
         };
         let fallback: Arc<dyn StaleEpochFallback> = Arc::new(StubFallback::default());
         let (ev, _kps, _bimap_d) = build_consensus_digest_conflicting_notarize();
-        let (mailbox, calls, handle) = spawn_actor_with_stubs(
+        let (mailbox, calls, charges, handle) = spawn_actor_with_stubs(
             ctx.clone(),
             reader,
             fallback,
             SubmitOutcomeKind::Mined,
-            "slasher_full_pipeline",
+            "slasher_boundary_fallback",
             &bimap,
         )
         .await;
 
-        // Drive the event through the mailbox.
         use commonware_consensus::Reporter as _;
         let mut mb = mailbox;
         mb.report(Activity::ConflictingNotarize(ev)).await;
+        for _ in 0..200 {
+            tokio::task::yield_now().await;
+        }
+        assert!(
+            charges.next_charge(EPOCH, |_| false).is_some(),
+            "inside its own epoch the charge is held for a proposer"
+        );
+        assert_eq!(
+            calls.lock().await.len(),
+            0,
+            "and is NOT spent on a transaction while the block route is open"
+        );
 
-        // The consumer should pick up the WAL entry and call the sink.
+        mb.report(offender_notarize(EPOCH + 1, 1, 0x11)).await;
+
         assert!(
             wait_for_sink_calls(&calls, 1).await,
-            "sink.submit was not called within timeout"
+            "the epoch turn must hand the stranded charge to the sink"
         );
         let recorded = calls.lock().await;
         assert_eq!(recorded.len(), 1, "exactly one sink.submit call");
@@ -429,8 +508,235 @@ fn slasher_full_pipeline_records_wal_then_submits_via_sink() {
             slash_abi::slashEquivocationNotarizeCall::SELECTOR.as_slice(),
             "calldata ABI selector must be slashEquivocationNotarize"
         );
+        assert!(
+            charges.next_charge(EPOCH, |_| false).is_none(),
+            "a drained charge is released, so no later turn re-submits it"
+        );
 
+        drop(recorded);
         // Cleanup: drop the mailbox so producer + consumer exit cleanly.
+        drop(mb);
+        handle.abort();
+    });
+}
+
+/// The other half of the one-epoch grace [`slasher::ChargeStore`]'s vote store
+/// keeps: a half that arrives after the boundary still pairs, and the charge it
+/// makes is for an epoch whose drain has already run. It must go straight to
+/// the sink rather than joining a queue nothing will empty again.
+#[test]
+fn a_charge_assembled_after_the_boundary_goes_straight_to_the_sink() {
+    let runtime = commonware_runtime::deterministic::Runner::default();
+    runtime.start(|ctx| async move {
+        let (_kps, bimap) = committee(1);
+        let snapshot = snapshot_from_bimap(&bimap);
+        let reader = StubReader {
+            snapshot,
+            empty: false,
+        };
+        let fallback: Arc<dyn StaleEpochFallback> = Arc::new(StubFallback::default());
+        let (mailbox, calls, charges, handle) = spawn_actor_with_stubs(
+            ctx.clone(),
+            reader,
+            fallback,
+            SubmitOutcomeKind::Mined,
+            "slasher_late_match",
+            &bimap,
+        )
+        .await;
+
+        use commonware_consensus::Reporter as _;
+        let mut mb = mailbox;
+        // The epoch turns FIRST, with nothing queued for the old one.
+        mb.report(offender_notarize(EPOCH + 1, 1, 0x11)).await;
+        for _ in 0..200 {
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(
+            calls.lock().await.len(),
+            0,
+            "an epoch turn with an empty queue submits nothing"
+        );
+
+        // Only now do the two halves of an EPOCH equivocation meet.
+        mb.report(offender_notarize(EPOCH, VIEW, 0xaa)).await;
+        mb.report(offender_notarize(EPOCH, VIEW, 0xbb)).await;
+
+        assert!(
+            wait_for_sink_calls(&calls, 1).await,
+            "a charge assembled after the boundary must still reach the sink"
+        );
+        assert_eq!(
+            &calls.lock().await[0].calldata[..4],
+            slash_abi::slashEquivocationNotarizeCall::SELECTOR.as_slice(),
+            "calldata ABI selector must be slashEquivocationNotarize"
+        );
+        assert!(
+            charges.next_charge(EPOCH, |_| false).is_none(),
+            "and must not sit in the queue, whose drain for EPOCH already ran"
+        );
+
+        drop(mb);
+        handle.abort();
+    });
+}
+
+/// One signed notarize by OFFENDER as a wire `Vote` — what a peer forwards on
+/// the evidence channel.
+fn offender_vote(epoch: u64, view: u64, tag: u8) -> Vote<BlsScheme, fluentbase_consensus::Digest> {
+    match offender_notarize(epoch, view, tag) {
+        Activity::Notarize(n) => Vote::Notarize(n),
+        _ => unreachable!("offender_notarize builds a Notarize"),
+    }
+}
+
+/// Resolver over the test committee, standing in for the node's chain read.
+fn evidence_committee_for(bimap: &BiMap<PeerPubkey, BlsPubkey>) -> slasher::EvidenceCommitteeFor {
+    let bimap = bimap.clone();
+    Arc::new(move |epoch: u64| {
+        Some(fluentbase_bls::EpochCommittee::from_unverified(
+            epoch,
+            bimap.clone(),
+        ))
+    })
+}
+
+async fn settle() {
+    for _ in 0..200 {
+        tokio::task::yield_now().await;
+    }
+}
+
+/// Gossip may add votes; it must never move the epoch cursor.
+///
+/// A member of the committee for `EPOCH + 2` — already committed on chain under
+/// the two-epoch ahead-commit horizon — signs one genuine `Notarize` for a round
+/// in its own future epoch and publishes it. Signing is not bound to the live
+/// view, so the signature is real. If that were allowed to set the cursor, every
+/// receiving node would prune its vote store past the live epoch and push every
+/// live charge onto the transaction route, at one Byzantine member's discretion
+/// and permanently, since the cursor is monotone.
+#[test]
+fn a_gossiped_vote_naming_a_future_epoch_neither_moves_the_cursor_nor_flushes_the_store() {
+    let runtime = commonware_runtime::deterministic::Runner::default();
+    runtime.start(|ctx| async move {
+        let (_kps, bimap) = committee(1);
+        let reader = StubReader {
+            snapshot: snapshot_from_bimap(&bimap),
+            empty: false,
+        };
+        let fallback: Arc<dyn StaleEpochFallback> = Arc::new(StubFallback::default());
+        let (bridge, _publications) = slasher::EvidenceBridge::new();
+        let (mailbox, calls, charges, handle) = spawn_actor_with_evidence(
+            ctx.clone(),
+            reader,
+            fallback,
+            SubmitOutcomeKind::Mined,
+            "slasher_gossip_cursor",
+            Some(bridge.clone()),
+        )
+        .await;
+
+        use commonware_consensus::Reporter as _;
+        let mut mb = mailbox;
+        // The local engine is at EPOCH, and this node holds one half of a
+        // split-delivered equivocation for it.
+        mb.report(offender_notarize(EPOCH, VIEW, 0xaa)).await;
+        settle().await;
+        assert_eq!(
+            bridge.epoch_cursor().get(),
+            EPOCH,
+            "the engine sets the cursor"
+        );
+
+        // The Byzantine publication. It reaches the vote store as gossip — that
+        // is allowed — but says nothing about where consensus is.
+        bridge
+            .gossip_sink()
+            .expect("the actor bound its sink at init")
+            .report_gossiped(offender_notarize(EPOCH + 2, 1, 0x55));
+        settle().await;
+        assert_eq!(
+            bridge.epoch_cursor().get(),
+            EPOCH,
+            "a forwarded vote must not move the epoch cursor"
+        );
+
+        // The other half arrives. It can only pair if the first half survived,
+        // which is what a cursor jump would have destroyed.
+        mb.report(offender_notarize(EPOCH, VIEW, 0xbb)).await;
+        settle().await;
+        assert!(
+            charges.next_charge(EPOCH, |_| false).is_some(),
+            "the held half survived, so the pair still assembles into a block charge"
+        );
+        assert_eq!(
+            calls.lock().await.len(),
+            0,
+            "and the charge is still on the in-block route, not flushed to transactions"
+        );
+
+        drop(mb);
+        handle.abort();
+    });
+}
+
+/// The bound rejects a claim, not the feature: a forwarded vote inside the
+/// retained window still lands in the store and still pairs into a charge. This
+/// is the whole reason the channel exists — without it a cleanly split
+/// equivocation leaves no node holding both halves.
+#[test]
+fn a_gossiped_vote_inside_the_window_still_assembles_a_charge() {
+    let runtime = commonware_runtime::deterministic::Runner::default();
+    runtime.start(|ctx| async move {
+        let (_kps, bimap) = committee(1);
+        let reader = StubReader {
+            snapshot: snapshot_from_bimap(&bimap),
+            empty: false,
+        };
+        let fallback: Arc<dyn StaleEpochFallback> = Arc::new(StubFallback::default());
+        let (bridge, _publications) = slasher::EvidenceBridge::new();
+        let (mailbox, calls, charges, handle) = spawn_actor_with_evidence(
+            ctx.clone(),
+            reader,
+            fallback,
+            SubmitOutcomeKind::Mined,
+            "slasher_gossip_in_window",
+            Some(bridge.clone()),
+        )
+        .await;
+
+        use commonware_consensus::Reporter as _;
+        let mut mb = mailbox;
+        // This node was shown only one half by the equivocator.
+        mb.report(offender_notarize(EPOCH, VIEW, 0xaa)).await;
+        settle().await;
+        assert!(
+            charges.next_charge(EPOCH, |_| false).is_none(),
+            "one half is not evidence"
+        );
+
+        // A peer that was shown the other half republishes it, through the full
+        // inbound path: decode, epoch bound, committee resolve, signature verify.
+        let batch = slasher::gossip::encode_batch(&vec![offender_vote(EPOCH, VIEW, 0xbb)]);
+        slasher::gossip::ingest_batch(
+            batch.as_ref(),
+            C_MAIN,
+            &evidence_committee_for(&bimap),
+            &bridge,
+        );
+        settle().await;
+
+        assert!(
+            charges.next_charge(EPOCH, |_| false).is_some(),
+            "the forwarded half pairs with the held one into a block charge"
+        );
+        assert_eq!(
+            calls.lock().await.len(),
+            0,
+            "inside its own epoch the charge takes the block route"
+        );
+
         drop(mb);
         handle.abort();
     });
@@ -453,7 +759,7 @@ fn slasher_falls_back_to_cache_on_empty_snapshot() {
 
         let (ev, _kps_unused, _bimap_d) = build_consensus_digest_conflicting_notarize();
         let _kps_keep = kps;
-        let (mailbox, calls, handle) = spawn_actor_with_stubs(
+        let (mailbox, calls, _charges, handle) = spawn_actor_with_stubs(
             ctx.clone(),
             reader,
             fallback,
@@ -464,8 +770,7 @@ fn slasher_falls_back_to_cache_on_empty_snapshot() {
         .await;
 
         let mut mb = mailbox;
-        use commonware_consensus::Reporter as _;
-        mb.report(Activity::ConflictingNotarize(ev)).await;
+        report_and_close_epoch(&mut mb, Activity::ConflictingNotarize(ev)).await;
 
         assert!(
             wait_for_sink_calls(&calls, 1).await,
@@ -497,7 +802,7 @@ fn slasher_rejects_tampered_evidence_at_verify_pre_submit() {
         // Evidence signed by committee 1 (a DIFFERENT committee from the snapshot).
         let (ev, _kps_unused, _bimap_d) = build_consensus_digest_conflicting_notarize();
 
-        let (mailbox, calls, handle) = spawn_actor_with_stubs(
+        let (mailbox, calls, _charges, handle) = spawn_actor_with_stubs(
             ctx.clone(),
             reader,
             fallback,
@@ -508,11 +813,11 @@ fn slasher_rejects_tampered_evidence_at_verify_pre_submit() {
         .await;
 
         let mut mb = mailbox;
-        use commonware_consensus::Reporter as _;
-        mb.report(Activity::ConflictingNotarize(ev)).await;
+        report_and_close_epoch(&mut mb, Activity::ConflictingNotarize(ev)).await;
 
         // Give the actor a chance to run; it should NOT have enqueued
-        // anything because verify_pre_submit failed in the producer.
+        // anything — the verify gate refused the charge, so the epoch turn
+        // finds nothing queued to hand on.
         for _ in 0..50 {
             tokio::task::yield_now().await;
         }
@@ -583,6 +888,9 @@ fn build_nullify_finalize() -> NullifyFinalize<BlsScheme, fluentbase_consensus::
 /// sink calls result (1 = victim deduped after the first; 2 = not deduped).
 /// This exercises the consumer's outcome lifecycle: `Mined`/`AlreadySlashed`
 /// insert the victim into the in-session dedup set, `Failed` does not.
+///
+/// The first event takes the boundary drain, the second the late-match route —
+/// both end at the same per-victim dedup, which is the point.
 fn dedup_call_count(outcome: SubmitOutcomeKind, partition: &'static str) -> usize {
     use std::sync::{Arc as StdArc, Mutex as StdMutex};
     let observed = StdArc::new(StdMutex::new(0usize));
@@ -597,7 +905,7 @@ fn dedup_call_count(outcome: SubmitOutcomeKind, partition: &'static str) -> usiz
             empty: false,
         };
         let fallback: Arc<dyn StaleEpochFallback> = Arc::new(StubFallback::default());
-        let (mailbox, calls, handle) =
+        let (mailbox, calls, _charges, handle) =
             spawn_actor_with_stubs(ctx.clone(), reader, fallback, outcome, &partition, &bimap)
                 .await;
         let mut mb = mailbox;
@@ -606,7 +914,7 @@ fn dedup_call_count(outcome: SubmitOutcomeKind, partition: &'static str) -> usiz
         // First event → exactly one sink call; on Mined/AlreadySlashed the
         // consumer then inserts the victim into the dedup set.
         let (ev1, _k, _b) = build_consensus_digest_conflicting_notarize();
-        mb.report(Activity::ConflictingNotarize(ev1)).await;
+        report_and_close_epoch(&mut mb, Activity::ConflictingNotarize(ev1)).await;
         assert!(wait_for_sink_calls(&calls, 1).await, "first submit");
         // Let the consumer finish the post-submit insert + ack.
         for _ in 0..200 {
@@ -669,7 +977,7 @@ fn slasher_pipeline_handles_conflicting_finalize() {
             empty: false,
         };
         let fallback: Arc<dyn StaleEpochFallback> = Arc::new(StubFallback::default());
-        let (mailbox, calls, handle) = spawn_actor_with_stubs(
+        let (mailbox, calls, _charges, handle) = spawn_actor_with_stubs(
             ctx.clone(),
             reader,
             fallback,
@@ -679,9 +987,11 @@ fn slasher_pipeline_handles_conflicting_finalize() {
         )
         .await;
         let mut mb = mailbox;
-        use commonware_consensus::Reporter as _;
-        mb.report(Activity::ConflictingFinalize(build_conflicting_finalize()))
-            .await;
+        report_and_close_epoch(
+            &mut mb,
+            Activity::ConflictingFinalize(build_conflicting_finalize()),
+        )
+        .await;
 
         assert!(
             wait_for_sink_calls(&calls, 1).await,
@@ -710,7 +1020,7 @@ fn slasher_pipeline_handles_nullify_finalize() {
             empty: false,
         };
         let fallback: Arc<dyn StaleEpochFallback> = Arc::new(StubFallback::default());
-        let (mailbox, calls, handle) = spawn_actor_with_stubs(
+        let (mailbox, calls, _charges, handle) = spawn_actor_with_stubs(
             ctx.clone(),
             reader,
             fallback,
@@ -720,9 +1030,7 @@ fn slasher_pipeline_handles_nullify_finalize() {
         )
         .await;
         let mut mb = mailbox;
-        use commonware_consensus::Reporter as _;
-        mb.report(Activity::NullifyFinalize(build_nullify_finalize()))
-            .await;
+        report_and_close_epoch(&mut mb, Activity::NullifyFinalize(build_nullify_finalize())).await;
 
         assert!(
             wait_for_sink_calls(&calls, 1).await,

@@ -1053,8 +1053,8 @@ class Orchestrator:
 # ── PORT STATUS (the code-completable port is DONE) ───────────────────────────
 #
 # The DECISION + STATE layer and every IMPURE seam are now ported and unit-tested:
-#   * sim_bring_up ....................... bringup.py (gen-compose → up → migrate → DeployStaking
-#                                           → commitEpochCommittee → cold-restart under --dpos)
+#   * sim_bring_up ....................... bringup.py (gen-compose → up → write staking-reader
+#                                           → governance → cold-restart under --dpos)
 #   * the pp_* staking/gov WRITE helpers .. chain/writes.py (Chain: gov_action / fund_eth / ensure_blend
 #                                           / owner_addr,key / consensus_keys / runtime_write,cat …)
 #   * the per-tick live READS ............. nodes.py (pp_current_epoch/committee/committee_has via

@@ -15,14 +15,15 @@ use commonware_utils::NZU32;
 // Channel IDs
 //
 // Three top-level Muxed channels (per-epoch demux): VOTE/CERT/RESOLVER.
-// Five top-level non-Muxed channels (global one-instance for the node):
+// Six top-level non-Muxed channels (global one-instance for the node):
 // BROADCAST (block-data dissemination via `buffered::Engine`),
 // MARSHAL (backfill via `marshal::resolver::p2p::init`), BEACON
 // (randomness-beacon DKG; see BEACON_CHANNEL below), BEACON_RESOLVER
 // (DKG-log recovery via `commonware_resolver::p2p`; see BEACON_RESOLVER_CHANNEL
-// below), and FRONTIER (plane-native `CertUpstream` frontier/by-height pull via
-// `commonware_resolver::p2p`; see FRONTIER_CHANNEL below). Order is arbitrary but
-// fixed: changing it without coordinated release silently misroutes consensus
+// below), FRONTIER (plane-native `CertUpstream` frontier/by-height pull via
+// `commonware_resolver::p2p`; see FRONTIER_CHANNEL below), and EVIDENCE
+// (equivocation-evidence gossip; see EVIDENCE_CHANNEL below). Order is arbitrary
+// but fixed: changing it without coordinated release silently misroutes consensus
 // traffic across the network.
 pub const VOTE_CHANNEL: u64 = 0;
 pub const CERT_CHANNEL: u64 = 1;
@@ -60,6 +61,13 @@ pub const BEACON_RESOLVER_CHANNEL: u64 = 6;
 // `FluentP2P::build` and consumed by the frontier resolver engine
 // (`node/dpos.rs::build_beacon_plane`). MUST be byte-identical across the network.
 pub const FRONTIER_CHANNEL: u64 = 7;
+// EVIDENCE: equivocation evidence gossip. A node publishes the signed vote it
+// personally received for a view when that view failed, or when its own vote
+// disagrees with a certificate it saw. A GLOBAL one-instance channel, registered
+// once in `FluentP2P::build` and consumed by the node's evidence task
+// (`node/dpos.rs::build_beacon_plane`), which feeds verified votes into the
+// slasher's vote store. MUST be byte-identical across the network.
+pub const EVIDENCE_CHANNEL: u64 = 8;
 
 // Per-channel rate quotas
 //
@@ -93,6 +101,9 @@ pub const BEACON_RESOLVER_QUOTA: Quota = Quota::per_second(NZU32!(16));
 // re-jump edge / marshal by-height backfill hole). O(1) local reads. Matched to
 // MARSHAL/BEACON_RESOLVER (the other resolver backfill channels).
 pub const FRONTIER_QUOTA: Quota = Quota::per_second(NZU32!(16));
+// EVIDENCE: at most one publication per validator per failed view — bounded by
+// the view rate, not by traffic. Matched to FRONTIER.
+pub const EVIDENCE_QUOTA: Quota = Quota::per_second(NZU32!(16));
 
 // Per-channel backlog (mailbox size before back-pressure)
 pub const VOTE_BACKLOG: usize = 256;
@@ -103,6 +114,7 @@ pub const MARSHAL_BACKLOG: usize = 128;
 pub const BEACON_BACKLOG: usize = 256;
 pub const BEACON_RESOLVER_BACKLOG: usize = 128;
 pub const FRONTIER_BACKLOG: usize = 64;
+pub const EVIDENCE_BACKLOG: usize = 64;
 
 // Wire caps
 //
@@ -115,12 +127,14 @@ pub const MAX_MESSAGE_SIZE: u32 = 4 * 1024 * 1024;
 // `leader_index: u8`, BLS scheme building), NOT the p2p tracker feed (see
 // `MAX_REGISTRY_PEER_SET` below for that).
 //
-// MUST mirror
-// `solidity-contracts/contracts/staking/ChainConfig.sol::MAX_ACTIVE_VALIDATORS`
-// and stay ≤ 255 (the u8 wire format). Drift between the two literals means a
-// successful `ChainConfig.setActiveValidatorsLength` call later fails the
-// startup cap assert (outer.rs) or makes an honest leader's index unencodable.
-// Update both in the SAME PR.
+// MUST mirror the staking module's
+// `contracts/staking/src/consts.rs::MAX_ACTIVE_VALIDATORS_LENGTH` (51, exposed
+// on chain as `MAX_ACTIVE_VALIDATORS()` / `0x5d887462`) and stay ≤ 255 (the u8
+// wire format). Drift between the two literals means a successful
+// `setActiveValidatorsLength` call later fails the startup cap assert
+// (outer.rs) or makes an honest leader's index unencodable. Update both in the
+// SAME PR. The `ChainConfig` predeploy this used to mirror is GONE — it was
+// absorbed into the one rWasm staking module at `GENESIS_STAKING`.
 pub const MAX_COMMITTEE_SIZE: u64 = 51;
 
 // Tracker bit-vec guard for the tier-2 registry feed (the FULL Active

@@ -5822,6 +5822,7 @@ dependencies = [
  "flate2",
  "fluentbase-bls",
  "fluentbase-consensus",
+ "fluentbase-evm",
  "fluentbase-genesis",
  "fluentbase-p2p",
  "fluentbase-revm",

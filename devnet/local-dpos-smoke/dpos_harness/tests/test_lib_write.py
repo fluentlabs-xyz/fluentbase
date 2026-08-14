@@ -8,11 +8,12 @@ import subprocess
 import pytest
 
 from dpos_harness.chain.writes import Chain, ChainError
+from dpos_harness.core import rpc
 from dpos_harness.core.proc import Runner
 
 
-def _chain(**reads):
-    r = Runner(dry=True)
+def _chain(_runner=None, **reads):
+    r = _runner if _runner is not None else Runner(dry=True)
     # canned reads so read-dependent flows proceed deterministically.
     r.reads = {
         "docker compose exec": "aa" * 32,          # owner-N.hex body (→ 0x<hex>)
@@ -90,25 +91,35 @@ def test_consensus_keys_peers_stays_pp_peers_when_idx_below():
     assert argv[-4:] == ["--peers", "6", "--chain-id", "2026"]
 
 
-def test_setconsensuskeys_exact_arg_strings_from_ck_json():
-    """register_setkeys → setConsensusKeys(address,bytes,bytes,bytes32): the bls pubkey/PoP and
-    ed25519 peer key are the RAW 0x hex from pp_consensus_keys (bash `jq -r`), flat, unquoted, no
-    JSON-list repr — pinned against the real genesis-bootstrap output shape."""
+def test_register_validator_exact_arg_strings_from_ck_json():
+    """register_setkeys → the 6-arg `registerValidator(address,uint16,uint256,bytes,bytes,bytes32)`:
+    the bls pubkey/PoP and ed25519 peer key are the RAW 0x hex from pp_consensus_keys (bash
+    `jq -r`), flat, unquoted, no JSON-list repr — pinned against the real genesis-bootstrap
+    output shape.
+
+    `setConsensusKeys` HAS NO COUNTERPART on the module; its three arguments moved here, and the
+    PoP is verified inside this same call. Positions 4-6 are what this pins, because the
+    six-argument form shares one selector and a transposed pair would be a silently wrong
+    registration rather than a revert."""
     c, r = _chain()
     r.reads["cast send"] = '{"status":"0x1"}'
     r.reads["cast call"] = "0x000000000000000000000000000000000000dEaD 2"   # status byte 2 (Pending)
     r.reads["docker compose run"] = _CK_JSON                                # pp_consensus_keys stdout
     c.register_setkeys(6)
-    argv = _find(r, "setConsensusKeys(address,bytes,bytes,bytes32)")
-    # cast send --json --rpc-url <RPC> <STAKING_RT> <sig> <addr> <bls_pub> <bls_pop> <peer> --private-key <key>
+    sig = "registerValidator(address,uint16,uint256,bytes,bytes,bytes32)"
+    argv = _find(r, sig)
+    # cast send --json --rpc-url <RPC> <STAKING_RT> <sig> <addr> <commission> <stake>
+    #           <bls_pub> <bls_pop> <peer> --private-key <key>
     assert argv[:6] == ["cast", "send", "--json", "--rpc-url", "http://localhost:8545", "0xSTAKE"]
-    sig_i = argv.index("setConsensusKeys(address,bytes,bytes,bytes32)")
-    addr, bls_pub, bls_pop, peer = argv[sig_i + 1:sig_i + 5]
-    assert addr == "0x000000000000000000000000000000000000dead"          # owner_addr (cast wallet), lowercased
+    sig_i = argv.index(sig)
+    addr, commission, stake, bls_pub, bls_pop, peer = argv[sig_i + 1:sig_i + 7]
+    assert addr == "0x000000000000000000000000000000000000dead"          # owner_addr, lowercased
+    assert (commission, stake) == ("0", "1000000000000000000")
     assert bls_pub == "0xa1b2c3"
     assert bls_pop == "0xdeadbeef"
     assert peer == "0x1111111111111111111111111111111111111111111111111111111111111111"
-    assert argv[sig_i + 5:sig_i + 7] == ["--private-key", "0x" + "aa" * 32]
+    assert argv[sig_i + 7:sig_i + 9] == ["--private-key", "0x" + "aa" * 32]
+    assert _find(r, "setConsensusKeys") is None, "setConsensusKeys has no counterpart on the module"
 
 
 def test_consensus_keys_empty_output_fails_loud():
@@ -204,16 +215,25 @@ def test_gov_action_propose_vote_execute_sequence():
 
 
 def test_register_setkeys_flow_order():
-    """_sim_register_setkeys: approve → registerValidator → (status==2) → setConsensusKeys."""
+    """_sim_register_setkeys: consensus-keys read → approve → the 6-arg registerValidator →
+    (status==2).
+
+    The keys are read BEFORE the approve, not between the approve and the register: they are now
+    arguments to the register itself, and a keys read that fails must do so before any money has
+    moved. The status assert survives the collapse as a swallowed-revert detector — a `cast send`
+    with no receipt is confirmed by the sender's nonce advancing, and a REVERTED tx advances the
+    nonce just as a successful one does."""
     c, r = _chain()
     r.reads["cast send"] = '{"status":"0x1"}'
     r.reads["cast call"] = "0x000000000000000000000000000000000000dEaD 2"  # status byte = 2 (Pending)
     c.register_setkeys(4)
     lines = [" ".join(a.argv) for a in r.log]
+    keys = next(i for i, l in enumerate(lines) if "consensus-keys" in l)
     approve = next(i for i, l in enumerate(lines) if "approve(address,uint256)(bool)" in l)
-    register = next(i for i, l in enumerate(lines) if "registerValidator(address,uint16,uint256)" in l)
-    setkeys = next(i for i, l in enumerate(lines) if "setConsensusKeys(address,bytes,bytes,bytes32)" in l)
-    assert approve < register < setkeys
+    register = next(i for i, l in enumerate(lines)
+                    if "registerValidator(address,uint16,uint256,bytes,bytes,bytes32)" in l)
+    status = next(i for i, l in enumerate(lines) if "getValidatorStatus(address)" in l)
+    assert keys < approve < register < status
 
 
 def test_fund_eth_distinct_codes_floor():
@@ -316,10 +336,36 @@ def test_selection_view_read_returns_none_on_a_failed_call():
     assert c2.staking_current_epoch() is None
 
 
+class _SigReads(Runner):
+    """A dry Runner whose canned `cast call` answer depends on the SIGNATURE.
+
+    `Runner.reads` keys on an argv PREFIX, and every staking view shares `cast call <staking>` —
+    fine until two of them need answers of a different SHAPE. `selection_view_at` decodes two
+    top-level return values and `currentEpoch` one, and the arity is CHECKED now (a `cast` handed
+    a stale signature decodes the prefix and prints it, rc 0), so one canned string cannot stand
+    in for both."""
+
+    def __init__(self, sig_reads, **kw):
+        super().__init__(**kw)
+        self.sig_reads = sig_reads
+
+    def _canned(self, argv) -> str:
+        for sig, out in self.sig_reads.items():
+            if sig in argv:
+                return out
+        return super()._canned(argv)
+
+
+#: A two-value `getValidatorsWithKeysAt` answer — `(address[], ConsensusKeys[])`, both empty.
+_EMPTY_SELECTION_VIEW = "[]\n[]"
+
+
 def test_growth_cap_raise_brackets_the_write_with_the_probe_reads():
     """WIRING: on the GROWTH path the two getValidatorsWithKeysAt reads bracket the
     setActiveValidatorsLength calldata (before/after), and the epoch read precedes them."""
-    c, r = _chain()
+    c, r = _chain(_SigReads(
+        {"getValidatorsWithKeysAt(uint64)(address[],(bytes,bytes32,uint64)[])":
+         _EMPTY_SELECTION_VIEW}, dry=True))
     c.validator_status = lambda addr: "2"          # register post-assert (canned reads are scalar)
     c.register_activate(6, raise_cap=1)
     lines = [" ".join(a.argv) for a in r.log]
@@ -328,6 +374,29 @@ def test_growth_cap_raise_brackets_the_write_with_the_probe_reads():
     ep = [i for i, ln in enumerate(lines) if "currentEpoch()(uint64)" in ln]
     assert len(view) == 2 and len(cd) == 1 and len(ep) == 1
     assert ep[0] < view[0] < cd[0] < view[1]
+
+
+def test_the_committee_read_refuses_an_answer_that_is_not_an_address_array():
+    """A `cast` handed a signature the contract has outgrown decodes the PREFIX and prints it,
+    rc 0. The old regex sweep over raw stdout accepted that as a committee, and `committee_has`
+    then answered questions about it. An EMPTY answer still means "nobody answered" and still
+    yields "" — that is an RPC brownout, not a drift, and the callers that treat "" as unreadable
+    must keep being able to."""
+    c, _r = _chain(**{"cast call": "0x000000000000000000000000000000000000dEaD"})
+    with pytest.raises(rpc.CastDecodeError):
+        c.committee(4)
+    c2, _r2 = _chain(**{"cast call": ""})
+    assert c2.committee(4) == ""
+
+
+def test_the_purity_probe_refuses_a_truncated_selection_view():
+    """The sharpest case for the arity check. The probe compares raw stdout to ITSELF across one
+    governance write, so a decode that silently lost a return value stays perfectly
+    self-consistent — the probe PASSES, on a view it can no longer fully see, which is worse than
+    no probe. A failed read still answers None (the brownout sentinel), never a raise."""
+    c, _r = _chain(**{"cast call": "[]"})          # one value where the contract returns two
+    with pytest.raises(rpc.CastDecodeError):
+        c.selection_view_at(4)
 
 
 def test_refill_path_runs_no_purity_probe():

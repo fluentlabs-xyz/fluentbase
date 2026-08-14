@@ -14,20 +14,11 @@ regen-contracts:
 	@test -d $(SOLIDITY_CONTRACTS_DIR) || \
 	  (echo "ERROR: solidity-contracts not found at $(SOLIDITY_CONTRACTS_DIR); set SOLIDITY_CONTRACTS_DIR" && exit 1)
 	cd $(SOLIDITY_CONTRACTS_DIR) && forge build
-	cp $(SOLIDITY_CONTRACTS_DIR)/out/Staking.sol/Staking.json                               contracts/
-	cp $(SOLIDITY_CONTRACTS_DIR)/out/StakingDpos.sol/StakingDpos.json                       contracts/
-	cp $(SOLIDITY_CONTRACTS_DIR)/out/StakingEconomics.sol/StakingEconomics.json             contracts/
-	cp $(SOLIDITY_CONTRACTS_DIR)/out/StakingRewards.sol/StakingRewards.json                 contracts/
-	cp $(SOLIDITY_CONTRACTS_DIR)/out/BlendReserve.sol/BlendReserve.json                     contracts/
-	cp $(SOLIDITY_CONTRACTS_DIR)/out/ChainConfig.sol/ChainConfig.json                       contracts/
 	cp $(SOLIDITY_CONTRACTS_DIR)/out/StakingPool.sol/StakingPool.json                       contracts/
-	cp $(SOLIDITY_CONTRACTS_DIR)/out/SystemReward.sol/SystemReward.json                     contracts/
 	cp $(SOLIDITY_CONTRACTS_DIR)/out/FluentGovernance.sol/FluentGovernance.json             contracts/
-	cp $(SOLIDITY_CONTRACTS_DIR)/out/ProductionLiveness.sol/ProductionLiveness.json         contracts/
 	cp $(SOLIDITY_CONTRACTS_DIR)/out/MockBlendToken.sol/MockBlendToken.json                 contracts/
 	cp $(SOLIDITY_CONTRACTS_DIR)/out/BLS12381Verifier.sol/BLS12381Verifier.json             contracts/
 	cp $(SOLIDITY_CONTRACTS_DIR)/out/PrevRandaoProbe.sol/PrevRandaoProbe.json               contracts/
-	cp $(SOLIDITY_CONTRACTS_DIR)/out/SimplexEvidenceDecoder.sol/SimplexEvidenceDecoder.json contracts/
 	cp $(SOLIDITY_CONTRACTS_DIR)/out/MockRollup.sol/MockRollup.json                         contracts/
 	git -C $(SOLIDITY_CONTRACTS_DIR) rev-parse HEAD > contracts/.vendor-sha
 	@echo "Vendored contracts updated; SHA recorded in contracts/.vendor-sha; remember to commit."

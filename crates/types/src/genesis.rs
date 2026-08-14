@@ -51,6 +51,18 @@ pub const PRECOMPILE_WASM_RUNTIME: Address = address!("0x00000000000000000000000
 pub const PRECOMPILE_RUNTIME_UPGRADE: Address =
     address!("0x0000000000000000000000000000000000520010");
 
+/// Validator staking rWasm contract deployed directly in genesis.
+pub const GENESIS_STAKING: Address = address!("0x0000000000000000000000000000000000520011");
+
+/// Governance contract address reserved for genesis deployment.
+///
+/// The staking contract compiles this address in as the sole caller its privileged
+/// setters accept, so whatever governance implementation a network installs MUST sit
+/// here and nowhere else. Deliberately absent from
+/// [`EXECUTE_USING_SYSTEM_RUNTIME_ADDRESSES`] and [`ENGINE_METERED_PRECOMPILES`]:
+/// both are ordinary contracts, not system runtimes.
+pub const GENESIS_GOVERNANCE: Address = address!("0x0000000000000000000000000000000000520012");
+
 /// A precompile smart contract that can deploy child contracts using CREATE/CREATE2.
 pub const PRECOMPILE_CREATE2_FACTORY: Address =
     address!("0x4e59b44847b379578588920cA78FbF26c0B4956C");
@@ -68,14 +80,13 @@ pub const PRECOMPILE_ROLLUP_BRIDGE_DEPLOYER: Address =
 /// A precompile smart contract that handles fee management.
 pub const PRECOMPILE_FEE_MANAGER: Address = address!("0x0000000000000000000000000000000000520fee");
 
-/// Liveness predeploy address — holds `ProductionLiveness`.
-/// Called from `FluentBlockExecutor::apply_pre_execution_changes` via
-/// `transact_system_call(SYSTEM_ADDRESS, …)` with this block's production
-/// record; credits the producer, and at an epoch boundary closes the epoch
-/// (verdicts, temporary exclusions, and the stipend settlement). The
-/// `SYSTEM_ADDRESS` sentinel itself lives at [`crate::SYSTEM_ADDRESS`].
-pub const PRECOMPILE_LIVENESS_SLASHING: Address =
-    address!("0x0000000000000000000000000000000000520020");
+// 0x…520020 was `PRECOMPILE_LIVENESS_SLASHING`, the standalone `ProductionLiveness`
+// predeploy. RETIRED 2026-08-08: the liveness recorder is part of the one rWasm
+// staking module, so `recordProduction(uint8)` targets [`GENESIS_STAKING`] and the
+// constant had no readers left. Deliberately NOT kept as a reservation — nothing in
+// this tree enumerates reserved addresses, so an unused constant only invites a
+// resurrected system call to be pointed at a codeless account, and an EVM call to a
+// codeless account returns Success, i.e. a silent per-block no-op.
 
 /// EIP-2935 system contract / precompile address (as specified by the EIP).
 ///

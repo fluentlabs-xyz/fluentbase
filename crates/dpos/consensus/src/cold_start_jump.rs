@@ -1096,6 +1096,7 @@ mod tests {
             beacon_outcome: None,
             dkg_logs: Vec::new(),
             parent_seed: None,
+            equivocation: None,
         }
     }
 

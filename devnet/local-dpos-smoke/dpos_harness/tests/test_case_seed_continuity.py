@@ -13,8 +13,9 @@ from bisect import bisect_right
 import pytest
 
 from dpos_harness.cases.seed_continuity import (
-    LEADER_DOMAIN,
+    LEADER_FALLBACK_DOMAIN,
     build_cum,
+    constant_fallback_seed,
     evaluate_seed_continuity_case,
     fallback_leader_index,
     parse_view_leader_map,
@@ -31,29 +32,40 @@ def _pks(n):
 
 
 def test_predictor_matches_an_independent_recomputation():
+    """Both halves of the seedless arm, recomputed here from the formula rather than called:
+    the LAST-RESORT base (`sha256(epoch_be ‖ sorted pks)`) and the draw over it
+    (`sha256(LEADER_FALLBACK_DOMAIN ‖ base ‖ view_be) % total`)."""
     pks = sorted(_pks(7))
     cum, total = build_cum([1] * 7)
+    base = hashlib.sha256(b"".join([(3).to_bytes(8, "big")] + pks)).digest()
+    assert constant_fallback_seed(3, pks) == base
     for view in (1, 2, 17, 4096):
-        seed = hashlib.sha256(b"".join([(3).to_bytes(8, "big")] + pks)).digest()
-        rand = hashlib.sha256(LEADER_DOMAIN + seed + view.to_bytes(8, "big")).digest()
+        rand = hashlib.sha256(LEADER_FALLBACK_DOMAIN + base + view.to_bytes(8, "big")).digest()
         want = bisect_right(cum, int.from_bytes(rand, "big") % total)
-        assert fallback_leader_index(3, view, pks, cum, total) == want
+        assert fallback_leader_index(base, view, cum, total) == want
 
 
-def test_predictor_is_epoch_and_view_separated():
+def test_predictor_is_base_and_view_separated():
+    """The epoch no longer enters the draw directly — it reaches it only through the base
+    (and, on the live path, not at all: the base is INHERITED from the previous epoch's
+    terminal block). So the property to hold is base-separation, of which epoch-separation
+    via `constant_fallback_seed` is one instance."""
     pks = sorted(_pks(7))
     cum, total = build_cum([1] * 7)
-    a = [fallback_leader_index(3, v, pks, cum, total) for v in range(1, 40)]
-    b = [fallback_leader_index(4, v, pks, cum, total) for v in range(1, 40)]
-    assert a != b, "changing the epoch must change the schedule"
-    assert len(set(a)) > 1, "a fixed epoch must still rotate leaders across views"
+    a = [fallback_leader_index(constant_fallback_seed(3, pks), v, cum, total)
+         for v in range(1, 40)]
+    b = [fallback_leader_index(constant_fallback_seed(4, pks), v, cum, total)
+         for v in range(1, 40)]
+    assert a != b, "changing the base must change the schedule"
+    assert len(set(a)) > 1, "a fixed base must still rotate leaders across views"
 
 
 def test_predictor_index_is_always_in_range():
     pks = sorted(_pks(7))
     cum, total = build_cum([1] * 7)
+    base = constant_fallback_seed(9, pks)
     for v in range(1, 500):
-        assert 0 <= fallback_leader_index(9, v, pks, cum, total) < 7
+        assert 0 <= fallback_leader_index(base, v, cum, total) < 7
 
 
 # The devnet's deterministic 7-peer committee, and the compacted 50e18 self-delegation.
@@ -69,11 +81,14 @@ _XLANG_PKS = [
     "596918e015ca3b4b2bc2482dc36a58398423cc6f0c89b9d018ae8c928e73977c",
 ]
 _XLANG_STAKE = 5_000_000_000
+#: Transcribed from `weighted_vrf.rs::xlang_conformance::VECTOR`. Regenerated 2026-08-12
+#: with the arm's own domain tag (`LEADER_FALLBACK_DOMAIN`); the Rust fixture drives it
+#: through `constant_fallback_seed`, which is the base this vector is defined over.
 _XLANG_VECTOR = [
-    (2, 1, 5), (2, 2, 2), (2, 3, 5), (2, 4, 1),
-    (2, 5, 0), (2, 6, 4), (2, 7, 5), (2, 8, 1),
-    (5, 1, 2), (5, 2, 5), (5, 3, 6), (5, 4, 1),
-    (5, 5, 6), (5, 6, 3), (5, 7, 0), (5, 8, 3),
+    (2, 1, 1), (2, 2, 4), (2, 3, 4), (2, 4, 3),
+    (2, 5, 3), (2, 6, 2), (2, 7, 4), (2, 8, 4),
+    (5, 1, 5), (5, 2, 2), (5, 3, 6), (5, 4, 6),
+    (5, 5, 1), (5, 6, 5), (5, 7, 6), (5, 8, 5),
 ]
 
 
@@ -82,18 +97,21 @@ def test_predictor_matches_the_rust_cross_language_vector():
     pks = sorted(bytes.fromhex(h) for h in _XLANG_PKS)
     cum, total = build_cum([_XLANG_STAKE] * len(pks))
     for epoch, view, want in _XLANG_VECTOR:
-        assert fallback_leader_index(epoch, view, pks, cum, total) == want, (
-            f"diverged from weighted_vrf.rs at epoch {epoch} view {view}")
+        got = fallback_leader_index(constant_fallback_seed(epoch, pks), view, cum, total)
+        assert got == want, (
+            f"diverged from weighted_vrf.rs at epoch {epoch} view {view}: "
+            f"rust={want} python={got}")
 
 
 def test_weight_magnitude_changes_the_winner_not_just_the_distribution():
     """`rand % total` is magnitude-sensitive: normalising a uniform committee to 1s
     elects someone ELSE. This is the defect the first live run hit."""
     pks = sorted(bytes.fromhex(h) for h in _XLANG_PKS)
+    base = constant_fallback_seed(2, pks)
     ones = build_cum([1] * len(pks))
     real = build_cum([_XLANG_STAKE] * len(pks))
-    assert (fallback_leader_index(2, 1, pks, *ones)
-            != fallback_leader_index(2, 1, pks, *real))
+    assert (fallback_leader_index(base, 1, *ones)
+            != fallback_leader_index(base, 1, *real))
 
 
 def test_build_cum_matches_the_rust_all_zero_guard():
@@ -104,7 +122,8 @@ def test_build_cum_matches_the_rust_all_zero_guard():
 def test_stake_weight_biases_selection():
     pks = sorted(_pks(3))
     cum, total = build_cum([98, 1, 1])
-    hits = [fallback_leader_index(1, v, pks, cum, total) for v in range(1, 300)]
+    base = constant_fallback_seed(1, pks)
+    hits = [fallback_leader_index(base, v, cum, total) for v in range(1, 300)]
     assert hits.count(0) > hits.count(1) + hits.count(2)
 
 

@@ -195,20 +195,23 @@ def register_joiner(ctx, addrs, idx=JOINER_IDX, delegate=True):
     """The shared TRIGGER: register + key + activate (+ delegate) validator-`idx`, verbatim from
     `case-production-path.sh:212-231` and copied unchanged into the other three.
 
-    Six sends in a fixed order and each one has a reason to be where it is:
+    Five sends in a fixed order and each one has a reason to be where it is:
 
       1. `approve(STAKING_RT, 1e18)` — `registerValidator` pulls the self-stake, so the allowance
          must exist first. No `||` in bash: under `set -e` a failed approve aborts.
-      2. `registerValidator(addr, 0, 1e18)` — commission 0, the minimum self-stake.
-      3. `setConsensusKeys(...)` — AFTER registration (the validator record must exist) and after
-         the bring-up's `setBlsVerifier` (the PoP is verified on the way in).
-      4. governance `activateValidator(addr)` — Pending → Active. The joiner keeps running the
+      2. `registerValidator(addr, 0, 1e18, blsPubkey, blsPoP, peerPubkey)` — commission 0, the
+         minimum self-stake, AND the consensus keys. `setConsensusKeys` has no counterpart on the
+         module: the keys are arguments 4-6 here and are PoP-verified inside this call. That also
+         retires the two ordering rules the old two-step form needed — "keys after registration"
+         (the record must exist) and "keys after `setBlsVerifier`" (the verifier must be wired) —
+         because there is no longer a moment between the two at which either could be violated.
+      3. governance `activateValidator(addr)` — Pending → Active. The joiner keeps running the
          unified follower substrate throughout; there is no operator choreography.
-      5. `approve(STAKING_RT, 2e18)` + 6. `delegate(addr, 2e18)` — the weight that makes the
-         joiner outrank an incumbent. `case-byzantine-vrf.sh:361` STOPS after step 4 and drives
-         the weight through a dedicated toggle delegator instead, so that an `undelegate` later
-         never trips `OwnerSelfStakeBelowMinimum` on the joiner's own self-stake. That is what
-         `delegate=False` is.
+      4. `approve(STAKING_RT, 2e18)` + 5. `delegate(addr, 2e18)` — the weight that makes the
+         joiner outrank an incumbent. `case-byzantine-vrf.sh:361` STOPS after the activation and
+         drives the weight through a dedicated toggle delegator instead, so that an `undelegate`
+         later never trips `OwnerSelfStakeBelowMinimum` on the joiner's own self-stake. That is
+         what `delegate=False` is.
 
     Returns the REG_FLOOR — the finalized head captured BEFORE the first send, which the caller
     then requires the cluster to converge strictly past. Captured first because the point is that
@@ -221,15 +224,14 @@ def register_joiner(ctx, addrs, idx=JOINER_IDX, delegate=True):
 
     ctx.cast_send_checked([ctx.token, "approve(address,uint256)(bool)", staking, VR.STAKE_1E18],
                           note=f"approve-register-v{idx}", key=key)
-    ctx.check(ctx.cast_send([staking, "registerValidator(address,uint16,uint256)",
-                             addr, 0, VR.STAKE_1E18], note=f"registerValidator-v{idx}", key=key),
-              f"registerValidator v{idx}")
     ck = ctx.consensus_keys(idx)
-    ctx.check(ctx.cast_send([staking, "setConsensusKeys(address,bytes,bytes,bytes32)",
-                             ck.get("validatorAddress", ""), ck.get("blsPubkeyUncompressed", ""),
-                             ck.get("blsPoPUncompressed", ""), ck.get("peerPubkey", "")],
-                            note=f"setConsensusKeys-v{idx}", key=key),
-              f"setConsensusKeys v{idx}")
+    ctx.check(ctx.cast_send([staking,
+                             "registerValidator(address,uint16,uint256,bytes,bytes,bytes32)",
+                             addr, 0, VR.STAKE_1E18,
+                             ck.get("blsPubkeyUncompressed", ""), ck.get("blsPoPUncompressed", ""),
+                             ck.get("peerPubkey", "")],
+                            note=f"registerValidator-v{idx}", key=key),
+              f"registerValidator v{idx}")
     ctx.gov_action(staking, ctx.calldata("activateValidator(address)", addr),
                    f"activateValidator-v{idx}")
     if delegate:

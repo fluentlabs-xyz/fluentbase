@@ -137,3 +137,34 @@ def gov_voter_list(voters: int, vote_all: bool = False, explicit=None):
     if need < 1:
         need = 1
     return list(range(need))
+
+
+def gov_live_voter_idx(committee: str, owner_addr, max_idx: int):
+    """The `explicit` argument of `gov_voter_list`, derived from the LIVE committee: the owner idx
+    of every current committee member, or `None` when the committee is unreadable.
+
+    This is mode 1's supplier. The quorum FluentGovernance enforces is 2/3 of the delegated STAKE,
+    and every seated member holds stake, so the voter set has to track the committee as it moves —
+    a fixed prefix under-votes the moment a member holding real weight sits outside it. The growth
+    case measured it: at a 7e18 voting supply with quorum 4.666e18, the four-owner prefix carried
+    only 4e18 and the `activate-5` proposal came back Defeated on a chain where nothing was wrong.
+
+    `committee` is `Chain.committee(epoch)` — space-joined, lowercased, "" when NOBODY ANSWERED.
+    `owner_addr` is `Chain.owner_addr`, called for 0..max_idx; the caller sets that ceiling from
+    whatever its own identity space is (the sim's minted high-water, the growth case's validator
+    count) — this function does not guess it.
+
+    BOTH empty answers return `None`, never `[]`, and the distinction is the whole failure
+    behaviour: `None` falls through to the `ceil(2/3·voters)+1` prefix, which at least votes,
+    whereas `[]` reaches `gov_voter_list`'s explicit branch and sends a proposal to the Governor
+    with ZERO votes — guaranteed Defeated. An RPC brownout must not be able to manufacture that.
+    """
+    comm = set((committee or "").split())
+    if not comm:
+        return None
+    out = []
+    for i in range(int(max_idx) + 1):
+        a = owner_addr(i)
+        if a and a.lower() in comm:
+            out.append(i)
+    return out or None

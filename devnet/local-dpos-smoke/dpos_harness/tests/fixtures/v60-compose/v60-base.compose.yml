@@ -65,26 +65,28 @@ services:
     <<: *fluent-build-def
     entrypoint: ["/usr/local/bin/genesis-bootstrap"]
     command:
-      - bare
+      # RE-PINNED, not copied from the v60 bundle. `genesis-init` is the ONE service in this
+      # oracle whose command deliberately no longer matches the bash bundle: the bundle ran
+      # `bare` and predicted the staking cluster's CREATE addresses, and both the arm and the
+      # prediction are gone. The staking module is an rWasm contract installed at a fixed
+      # genesis address, and only `full` installs it — a sim left on `bare` would boot with no
+      # staking code at all. Every OTHER service below is still the bundle verbatim, which is
+      # what the oracle is for; this block is pinned against `compose_gen` on purpose so a
+      # future unintended change to it still fails the parity test.
+      - full
       - --peers=20
+      - --committee-size=14
+      - --blend-holder-validator=0
+      - --dpos-activation-block=0
       - --bootstrappers=2
       - --output=/runtime
+      - --contracts-dir=/contracts
       - --chain-id=2026
       - --validator-ips=172.20.0.10,172.20.0.11,172.20.0.12,172.20.0.13,172.20.0.14,172.20.0.15,172.20.0.16,172.20.0.17,172.20.0.18,172.20.0.19,172.20.0.20,172.20.0.21,172.20.0.22,172.20.0.23,172.20.0.24,172.20.0.25,172.20.0.26,172.20.0.27,172.20.0.28,172.20.0.29
       - --peer-host-mode=ip
-      # Deployer prefix before DeployStaking's first CREATE occupies nonces 0..4 (fund-spammer,
-      # token, + three more), so the hardened DeployStaking's first internal CREATE (BLS12381Verifier)
-      # lands at nonce 5 and its proxy CREATEs land at deployer nonces 9/15/19 for
-      # staking/chainConfig/liveness (verified against the DeployStaking broadcast: Staking proxy
-      # nonce 0x9, ChainConfig proxy 0xf, LivenessSlashing proxy 0x13; the production-path stack
-      # has a longer 7-tx prefix → 11/17/21 there). This prediction is now only the PHASE-A
-      # PLACEHOLDER that lets sequencer nodes parse --dpos.staking-config at boot; case-soak.sh
-      # REGENERATES /runtime/staking-reader.json from the real DeployStaking manifest before the
-      # --dpos cold-restart (soak_regen_staking_reader), so a stale/leaked-state nonce drift here
-      # is overwritten, not fatal. The file must still EXIST at phase-A boot, so keep this pin.
-      - --staking-reader-create-nonces=9,15,19
     volumes:
       - runtime:/runtime
+      - ./contracts:/contracts:ro
     networks:
       fluent-net:
         ipv4_address: 172.20.0.5

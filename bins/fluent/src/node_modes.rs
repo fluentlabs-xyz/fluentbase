@@ -30,16 +30,13 @@ pub(crate) struct ResolvedModes {
     /// alongside `node_stack` when DPoS or cert-follow is enabled.
     pub cert_rpc_feed: Option<FeedStateHandle>,
     /// Pipeline 2 (sequencer→DPoS migration): parsed from `--dpos.staking-config`
-    /// independent of `--dpos`. Sequencer and follower modes need non-zero addresses
+    /// independent of `--dpos`. Sequencer and follower modes need a non-zero address
     /// so the executor's `commitEpochCommittee` system call fires at epoch
     /// boundaries — required for prod migration past the first epoch boundary.
+    /// ONE address: the registry, the committee, the chain-configuration views and
+    /// the liveness recorder are one contract, so there is nothing here that can
+    /// fall out of sync with itself.
     pub staking_address: Address,
-    pub chain_config_address: Address,
-    /// Liveness predeploy address the executor's `recordProduction` system call
-    /// targets. Lifted from the staking config (serde-defaulted to the canonical
-    /// predeploy slot) so the whole cluster can be runtime-deployed. Unused when
-    /// `staking_address` is zero (the system call is gated off).
-    pub liveness_slashing_address: Address,
     /// Retained to build the activation-block reader for the sequencer's
     /// production gate (clean-halt at `dposActivationBlock`).
     pub staking_reader_cfg: Option<fluentbase_staking_reader::reader::StakingReaderConfig>,
@@ -153,29 +150,26 @@ pub(crate) fn resolve_node_modes(
     }
 
     // sequencer→DPoS migration: parse `--dpos.staking-config` independently of
-    // `--dpos`. Sequencer and follower modes also need non-zero `staking_address` /
-    // `chain_config_address` so the existing `commitEpochCommittee` system call
-    // in `FluentBlockExecutor::apply_pre_execution_changes`
-    // ([crates/node/src/evm.rs:848](../../../crates/node/src/evm.rs#L848)) fires
-    // at epoch boundaries. Without this, post-swap DPoS validators reading
+    // `--dpos`. Sequencer and follower modes also need a non-zero `staking_address`
+    // so the existing `commitEpochCommittee` system call in
+    // `FluentBlockExecutor::apply_pre_execution_changes` fires at epoch
+    // boundaries. Without this, post-swap DPoS validators reading
     // `epoch_committee_snapshot(epoch_k, finalized_hash)` would see an empty
     // committee for any epoch > 0.
     if let Some(path) = &ext.dpos_cfg.dpos_staking_config {
         apply_staking_config(&mut modes, path, "--dpos.staking-config");
     }
 
-    // DPoS / cert-follow REQUIRE non-zero staking addresses: both modes read the
+    // DPoS / cert-follow REQUIRE a non-zero staking address: both modes read the
     // committee from the staking contract at runtime (`epoch_committee_snapshot`),
     // which against address zero fails post-launch with an opaque decode error and
-    // exits 0 (audit P2-20). Fail loud at load instead. (Both-zero is legal only
-    // for plain / sequencer-migration nodes, handled above.)
-    if (ext.dpos || ext.cert_follow)
-        && (modes.staking_address.is_zero() || modes.chain_config_address.is_zero())
-    {
+    // exits 0 (audit P2-20). Fail loud at load instead. (Zero is legal only for
+    // plain / sequencer-migration nodes, handled above.)
+    if (ext.dpos || ext.cert_follow) && modes.staking_address.is_zero() {
         eprintln!(
-            "--dpos / --cert-follow require a --dpos.staking-config with non-zero \
-             staking_address and chain_config_address (got {} / {})",
-            modes.staking_address, modes.chain_config_address
+            "--dpos / --cert-follow require a --dpos.staking-config with a non-zero \
+             staking_address (got {})",
+            modes.staking_address
         );
         std::process::exit(1);
     }
@@ -186,11 +180,11 @@ pub(crate) fn resolve_node_modes(
 /// Modes for non-`node` subcommands (`import` / `stage` / `re-execute`).
 ///
 /// `--dpos.staking-config` is a `node`-subcommand Ext flag, so those commands
-/// default to zero staking addresses — but post-migration DPoS blocks re-execute
+/// default to a zero staking address — but post-migration DPoS blocks re-execute
 /// through the same `FluentBlockExecutor` whose `commitEpochCommittee` /
-/// `recordProduction` system calls WRITE canonical state. With the addresses zero
+/// `recordProduction` system calls WRITE canonical state. With the address zero
 /// the DPoS gate is off and the recomputed state root diverges (import fails at
-/// the Merkle stage; re-execute falsely reports corruption). Source the addresses
+/// the Merkle stage; re-execute falsely reports corruption). Source the address
 /// from the env var so re-execution matches the live chain (audit P2-16).
 pub(crate) fn resolve_non_node_modes() -> ResolvedModes {
     let mut modes = ResolvedModes::default();
@@ -204,30 +198,20 @@ pub(crate) fn resolve_non_node_modes() -> ResolvedModes {
     modes
 }
 
-/// Parse a staking-reader config and wire `staking_address` /
-/// `chain_config_address` / `staking_reader_cfg` into `modes`, fail-loud at load
-/// on a parse error or a partial (one-zero) config. `source` labels the input
-/// (CLI flag vs env var) in diagnostics. Shared by the node and non-node paths so
-/// the both-or-neither guard can't drift between them.
+/// Parse a staking-reader config and wire `staking_address` / `staking_reader_cfg`
+/// into `modes`, fail-loud at load on a parse error. `source` labels the input
+/// (CLI flag vs env var) in diagnostics. Shared by the node and non-node paths.
+///
+/// There is no both-or-neither guard left to keep in step: the config carries ONE
+/// address and no serde default, so a missing field fails the parse below rather
+/// than resolving to a codeless account — which is what made the old partial
+/// config dangerous, since an EVM call to a codeless account returns Success and
+/// the system call becomes a silent per-block no-op.
 fn apply_staking_config(modes: &mut ResolvedModes, path: &std::path::Path, source: &str) {
     match fluentbase_staking_reader::reader::StakingReaderConfig::from_json_path(path) {
         Ok(parsed) => {
             modes.staking_address = parsed.staking_address;
-            modes.chain_config_address = parsed.chain_config_address;
-            modes.liveness_slashing_address = parsed.liveness_slashing_address;
             modes.staking_reader_cfg = Some(parsed);
-            // Both-or-neither: the committee-commit gate (evm.rs) needs BOTH
-            // addresses non-zero. A one-zero typo would silently downgrade the
-            // node to plain Ethereum (or, on import/re-execute, diverge the state
-            // root) with no error — fail loud at load instead.
-            if modes.staking_address.is_zero() != modes.chain_config_address.is_zero() {
-                eprintln!(
-                    "{source} partial config: staking_address ({}) and chain_config_address \
-                     ({}) must be BOTH zero (non-DPoS) or BOTH non-zero (DPoS)",
-                    modes.staking_address, modes.chain_config_address
-                );
-                std::process::exit(1);
-            }
         }
         Err(e) => {
             eprintln!("failed parsing {source} at {}: {e}", path.display());

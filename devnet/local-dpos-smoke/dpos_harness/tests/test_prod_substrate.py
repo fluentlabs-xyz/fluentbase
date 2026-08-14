@@ -574,13 +574,13 @@ def test_the_status_byte_survives_a_pretty_printed_stake_field():
 
 # ══ TRAP 11 — `exit 1` fired the EXIT trap; a raise does not ═══════════════════════════
 
-def test_a_failed_bring_up_still_runs_all_three_cleanup_steps(monkeypatch, tmp_path):
+def test_a_failed_bring_up_still_runs_every_cleanup_step(monkeypatch):
     """§2.4 item 12. bash's `exit 1` inside `pp_bring_up_rotation` TERMINATED the process, which
-    fired `trap cleanup EXIT` — and cleanup is three things: `pp_spammer_stop; rm -f "$MANIFEST";
-    tear_down`. A Python `raise` only unwinds, so a missing `finally` leaks a spammer thread, a
-    stale manifest AND a running six-node devnet on every failed bring-up."""
-    manifest = tmp_path / "runtime-deployment.json"
-    manifest.write_text("{}")
+    fired `trap cleanup EXIT`. A Python `raise` only unwinds, so a missing `finally` leaks a
+    spammer thread AND a running six-node devnet on every failed bring-up.
+
+    Two steps now, not three: `rm -f "$MANIFEST"` went with the manifest — there is no deploy
+    manifest and no per-run contract address for a stale one to mislead the next run about."""
     stopped = []
 
     def boom(self):
@@ -591,20 +591,15 @@ def test_a_failed_bring_up_still_runs_all_three_cleanup_steps(monkeypatch, tmp_p
     seen = {}
     monkeypatch.setattr(prod, "tear_down", lambda r: seen.setdefault("down", True))
 
-    rc = prod.run("smoke-x", [], manifest=str(manifest))
+    rc = prod.run("smoke-x", [])
     assert rc == RC_ERROR, "a bring-up that never measured anything is not a false verdict"
     assert stopped, "the spammer was never reaped"
-    assert not manifest.exists(), "the deploy manifest was left for the next run to read"
     assert seen.get("down"), "the stack was never torn down"
 
 
-def test_a_cleanup_step_that_raises_does_not_skip_the_others(monkeypatch, tmp_path):
-    """bash's three cleanup commands each swallow their own failure. In Python a raise in the
-    first would skip the other two — which is how a leaked spammer outlives the stack it was
-    pressuring."""
-    manifest = tmp_path / "m.json"
-    manifest.write_text("{}")
-
+def test_a_cleanup_step_that_raises_does_not_skip_the_others(monkeypatch):
+    """bash's cleanup commands each swallow their own failure. In Python a raise in the first
+    would skip the rest — which is how a leaked spammer outlives the stack it was pressuring."""
     def explode(self):
         raise RuntimeError("thread join blew up")
 
@@ -612,17 +607,15 @@ def test_a_cleanup_step_that_raises_does_not_skip_the_others(monkeypatch, tmp_pa
     monkeypatch.setattr(SpammerPool, "stop", explode)
     seen = {}
     monkeypatch.setattr(prod, "tear_down", lambda r: seen.setdefault("down", True))
-    assert prod.run("smoke-x", [], manifest=str(manifest)) == 0
-    assert not manifest.exists() and seen.get("down")
+    assert prod.run("smoke-x", []) == 0
+    assert seen.get("down")
 
 
-def test_a_passing_case_also_cleans_up(monkeypatch, tmp_path):
-    manifest = tmp_path / "m.json"
-    manifest.write_text("{}")
+def test_a_passing_case_also_cleans_up(monkeypatch):
     monkeypatch.setattr(PP.RotationBringUp, "run", lambda self: self)
     seen = {}
     monkeypatch.setattr(prod, "tear_down", lambda r: seen.setdefault("down", True))
-    assert prod.run("smoke-x", [lambda ctx: None], manifest=str(manifest)) == 0
+    assert prod.run("smoke-x", [lambda ctx: None]) == 0
     assert seen.get("down")
 
 
@@ -701,8 +694,7 @@ def test_a_dry_pool_starts_nothing():
 def _bringup(dry=True, **kw):
     runner = Runner(dry=dry)
     return PP.RotationBringUp(runner=runner, label=kw.pop("label", "smoke-x"),
-                              contracts_dir=kw.pop("contracts_dir", "/contracts"),
-                              manifest=kw.pop("manifest", "/contracts/deployments/m.json"), **kw)
+                              contracts_dir=kw.pop("contracts_dir", "/contracts"), **kw)
 
 
 def _prod_ctx():
@@ -750,29 +742,112 @@ def test_the_label_is_required():
 
 
 def test_the_bring_up_phases_run_in_bash_order():
-    """The 14 phases, as the ordered note sequence. Order is the assertion, not the contents:
-    `setBlsVerifier` before `setConsensusKeys` (the keys are PoP-verified on the way in, so with no
-    verifier the first setConsensusKeys reverts), the activation gov AFTER the keys, and the
-    cold-restart last."""
+    """The phases, as the ordered note sequence. ORDER is the assertion, and after the migration
+    it is the six-step bring-up of the staking state: token + verifier (they are ARGUMENTS to
+    `initialize`), the runtime-upgrade delivery, the `approve` that funds the stakes `initialize`
+    pulls, `initialize` itself, then governance and the cold restart."""
     bu = _bringup()
     bu.run()
     notes = [i.note for i in bu.p.log if i.note]
-    order = [n for n in ["phaseA-up", "spammer-key", "fund-spammer", "deploy-token",
-                         "deploy-verifier", "token-transfer", "DeployStaking",
-                         "setConsensusKeys-v0", "dpos-cold-restart"] if n in notes]
-    assert order == ["phaseA-up", "spammer-key", "fund-spammer", "deploy-token",
-                     "deploy-verifier", "token-transfer", "DeployStaking",
-                     "setConsensusKeys-v0", "dpos-cold-restart"]
-    assert notes.index("deploy-verifier") < notes.index("setConsensusKeys-v0")
+    want = ["phaseA-up", "spammer-key", "fund-spammer", "deploy-token", "deploy-verifier",
+            "token-transfer", "install-staking-module", "send:BLEND.approve(staking)",
+            "send:Staking.initialize", "dpos-cold-restart"]
+    assert [n for n in want if n in notes] == want
 
 
-def test_the_verifier_gov_precedes_the_consensus_keys():
+def test_the_verifier_and_the_keys_ride_initialize_rather_than_a_setter():
+    """`setBlsVerifier` and `setConsensusKeys` are both DELETED, and the ordering rule between
+    them ("the verifier MUST precede the keys") goes with them rather than moving.
+
+    That rule described the two-contract split: install the verifier by setter, then feed keys in
+    one at a time and have each PoP checked against it. The module verifies every genesis PoP
+    INSIDE the initializer, so a deferred verifier reverts `ERR_BLS_VERIFIER_NOT_CONFIGURED` on
+    the first key of the very call that would have set it. Argument 15 is the verifier, arguments
+    4-6 are the keys, one call, no window."""
     bu = _bringup()
     bu.run()
     argvs = [" ".join(i.argv) for i in bu.p.log]
-    verifier_at = next(i for i, a in enumerate(argvs) if "setBlsVerifier(address)" in a)
-    keys_at = next(i for i, a in enumerate(argvs) if "setConsensusKeys(address" in a)
-    assert verifier_at < keys_at
+    assert not [a for a in argvs if "setBlsVerifier" in a or "setConsensusKeys" in a]
+    init = next(a for a in argvs if PP.INITIALIZE_SIG in a)
+    assert bu.verifier in init and bu.token in init
+    # `dposActivationBlock` (argument 14) is the unscheduled sentinel at init: a real value would
+    # engage the node's pre-execution section against a registry that is not complete yet.
+    args = init.split(PP.INITIALIZE_SIG, 1)[1].split()
+    assert args[13] == str(PP.INIT_DPOS_ACTIVATION_BLOCK) == "0"
+    # ...and it is scheduled for real afterwards, by governance.
+    assert any("setDposActivationBlock(uint64)" in a for a in argvs)
+
+
+def test_initialize_seeds_the_whole_committee():
+    """FIVE seeded validators, not zero. The env overlay this stand used to pass omitted
+    `INITIAL_VALIDATORS`, which reads like "this stand bootstraps its whole committee through
+    governance" — but `DeployStaking.s.sol` fell back to the network JSON and `l2.json` supplied
+    five, so the stand has ALWAYS deployed seeded-with-five and registered a SIXTH through
+    governance. That is what the 6-validator / 5-seat topology is for, and it is also what keeps
+    the registry at or above the contract's `MIN_COMMITTEE_LENGTH = 4`."""
+    bu = _bringup()
+    bu.run()
+    n = bu.profile.committee_size
+    assert n >= 4, "below MIN_COMMITTEE_LENGTH the first commitEpochCommittee reverts"
+    init = next(" ".join(i.argv) for i in bu.p.log if PP.INITIALIZE_SIG in " ".join(i.argv))
+    args = init.split(PP.INITIALIZE_SIG, 1)[1].split()
+    validators = args[1]
+    assert validators.startswith("[") and validators.endswith("]")
+    assert len(validators[1:-1].split(",")) == n
+    assert args[8] == str(n), "activeValidatorsLength must match the seeded set"
+
+
+def test_the_module_delivery_signs_with_the_governance_key_out_of_band():
+    """The upgrade precompile is `only_owner`-gated on a slot `genesis-bootstrap bare` seeds with
+    the GOVERNANCE signer, so no other key can deliver. The key rides the ENVIRONMENT, not the
+    argv, and that is a wedge guard rather than a secrets nicety: the binary resolves
+    `--private-key`, then `$PRIVATE_KEY`, then a HIDDEN TERMINAL PROMPT — which in an unattended
+    harness run is a bring-up that hangs forever, not an error."""
+    bu = _bringup()
+    bu.run()
+    inv = next(i for i in bu.p.log if i.note == "install-staking-module")
+    assert inv.argv[:2] == [PP.RUNTIME_UPGRADE_BIN, "install-local"]
+    assert "--wasm" in inv.argv and PP.STAKING_WASM in inv.argv
+    assert inv.argv[inv.argv.index("--target") + 1] == bu.staking_rt
+    assert "--private-key" not in inv.argv
+    assert inv.env.get("PRIVATE_KEY", "").startswith("0x")
+    # The `.wasm`, never the `.rwasm`: the precompile compiles the module ON-CHAIN with the same
+    # address-aware config genesis uses, so the two paths agree by construction.
+    assert PP.STAKING_WASM.endswith(".wasm") and not PP.STAKING_WASM.endswith(".rwasm")
+
+
+def test_upgrade_manifest_is_parsed_from_the_binarys_REAL_output():
+    """Verbatim stdout from `runtime-upgrade install-local`, captured against a live chain.
+
+    The verdict is NESTED under `entries`, and a parser that read `result` off the top level
+    returned None for every run — which is exactly what happened, and it cost five cases a
+    full bring-up each before the shape was looked at. A hand-written approximation of this
+    JSON would have reproduced the bug; only the real bytes pin it."""
+    real = (
+        "Wallet loaded (0xbc0b\u202660d6)\n"
+        "Upgrading contract 0x0000000000000000000000000000000000520011... UP-TO-DATE\n"
+        'RESULT_MANIFEST_JSON={"entries":[{"target":'
+        '"0x0000000000000000000000000000000000520011","expected_hash":'
+        '"0xe536c1d2f145f1bd2e48d0178e0999ecf4f1bf6439e20a86f1b8f2a0da0d5cfb",'
+        '"transaction_hash":null,"receipt_status":null,"verified_onchain_hash":'
+        '"0xe536c1d2f145f1bd2e48d0178e0999ecf4f1bf6439e20a86f1b8f2a0da0d5cfb",'
+        '"result":"up_to_date"}]}'
+    )
+    entry = PP._upgrade_result(real)
+    assert entry is not None, "the manifest line must parse"
+    assert entry["result"] in PP.UPGRADE_OK_RESULTS
+    # The binary verifies the installed code hash itself; carrying both fields is what makes
+    # `up_to_date` a real verdict rather than a shrug.
+    assert entry["expected_hash"] == entry["verified_onchain_hash"]
+
+
+def test_upgrade_manifest_refuses_anything_but_one_entry():
+    """We install exactly one target. More than one entry means the invocation was not the one
+    we think it was, so it is a failure rather than a pick-the-first."""
+    assert PP._upgrade_result('RESULT_MANIFEST_JSON={"entries":[{"result":"upgraded"},{}]}') is None
+    assert PP._upgrade_result('RESULT_MANIFEST_JSON={"entries":[]}') is None
+    assert PP._upgrade_result('RESULT_MANIFEST_JSON={"result":"upgraded"}') is None
+    assert PP._upgrade_result("no manifest line at all") is None
 
 
 def test_compose_file_is_re_exported_at_the_cold_restart(monkeypatch):
@@ -866,61 +941,6 @@ def test_the_read_set_is_six_validators_plus_the_full_node(monkeypatch):
     assert [v for _, v in got[1:6]] == [f"exec:validator-{i}" for i in range(1, 6)]
 
 
-# ══ the create-nonce drift detector ════════════════════════════════════════════════════
-
-def test_staking_reader_agreement_is_case_insensitive():
-    """The manifest is checksummed and the reader file is not, so a byte comparison would report
-    three mismatches on a perfectly aligned deploy."""
-    pre = {"staking_address": "0xAABB", "chain_config_address": "0xccdd",
-           "liveness_slashing_address": "0xEEFF"}
-    manifest = {"staking": "0xaabb", "chain_config": "0xCCDD", "liveness_slashing": "0xeeff"}
-    assert V.staking_reader_mismatches(pre, manifest) == []
-
-
-def test_a_drifted_staking_reader_names_every_mismatch():
-    """The detector's whole job: a deployer nonce that moved makes the pre-written file point at
-    an address DeployStaking did not deploy, and the run would then read a codeless contract."""
-    pre = {"staking_address": "0x1111", "chain_config_address": "0xccdd",
-           "liveness_slashing_address": "0x3333"}
-    manifest = {"staking": "0x2222", "chain_config": "0xccdd", "liveness_slashing": "0x4444"}
-    got = V.staking_reader_mismatches(pre, manifest)
-    assert [k for k, _, _ in got] == ["staking_address", "liveness_slashing_address"]
-
-
-def test_a_missing_reader_key_is_a_mismatch_not_a_skip():
-    """One absent key means the generator changed, which is exactly the drift this gate is for."""
-    got = V.staking_reader_mismatches({}, {"staking": "0xaa", "chain_config": "0xbb",
-                                           "liveness_slashing": "0xcc"})
-    assert len(got) == 3
-
-
-def test_the_bring_up_fails_loud_on_a_drifted_staking_reader(monkeypatch, tmp_path):
-    """And the message names the FIX, as bash's does — a mismatch with no mention of
-    `--staking-reader-create-nonces` leaves the reader with two addresses and no idea what
-    produced the difference."""
-    manifest = tmp_path / "m.json"
-    manifest.write_text('{"staking":"0xaa","chain_config":"0xbb","governance":"0xcc",'
-                        '"liveness_slashing":"0xdd"}')
-    bu = _bringup(dry=False, manifest=str(manifest))
-    bu.staking_rt, bu.chain_config_rt, bu.liveness_rt = "0xaa", "0xbb", "0xdd"
-    chain = Chain(runner=bu.p)
-    chain.runtime_cat = lambda _p: '{"staking_address":"0xZZ","chain_config_address":"0xbb",' \
-                                   '"liveness_slashing_address":"0xdd"}'
-    with pytest.raises(PP.RotationBringUpError) as e:
-        bu._assert_staking_reader(chain)
-    assert "staking-reader-create-nonces" in e.value.message
-
-
-def test_a_manifest_missing_an_address_is_named():
-    """bash asserts each of the four is `0x…` and `cat`s the manifest on failure. A jq miss returns
-    `null`, which is what this catches."""
-    assert V.manifest_missing({"staking": "0xa", "chain_config": "0xb", "governance": "0xc",
-                               "liveness_slashing": "0xd"}) == []
-    assert V.manifest_missing({"staking": "0xa"}) == ["CHAIN_CONFIG_RT", "GOV_ADDR",
-                                                      "LIVENESS_RT"]
-    assert V.manifest_missing({}) == ["STAKING_RT", "CHAIN_CONFIG_RT", "GOV_ADDR", "LIVENESS_RT"]
-
-
 # ══ the governance wait, as a pure classifier ══════════════════════════════════════════
 
 @pytest.mark.parametrize("state,head,end,stalled,verdict", [
@@ -935,6 +955,7 @@ def test_a_manifest_missing_an_address_is_named():
     ("1", 5, None, 0, "waiting"),    # unreadable deadline is NOT a failure
     ("1", 5, None, 999, "frozen"),   # ...but the frozen escape still bounds it
 ])
+
 def test_gov_wait_verdicts(state, head, end, stalled, verdict):
     got, msg = V.gov_wait_verdict(state, head, end, stalled, desc="d")
     assert got == verdict

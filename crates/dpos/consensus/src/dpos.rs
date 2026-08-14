@@ -658,11 +658,20 @@ where
             })
             .await
             .wrap_err("crash-survivor recovery per-block FCU failed")?;
-        ensure!(
-            resp.is_valid(),
-            "EL rejected crash-survivor recovery FCU at {h}: {:?}",
-            resp.payload_status
-        );
+        // Judged by the next derive, not by the response code: VALID and "parent
+        // is visible" diverge in BOTH directions — SYNCING during a backfill does
+        // nothing, and INVALID can be returned AFTER canonicalization already
+        // happened. The typed `ParentHeaderMissing` on the following iteration is
+        // the honest signal; `derive_with_visibility_retry` already absorbs the
+        // concurrent-devp2p case here.
+        if !resp.is_valid() {
+            warn!(
+                height = h,
+                status = ?resp.payload_status,
+                "crash-survivor recovery FCU not VALID; the next derive will report \
+                 whether the parent became visible"
+            );
+        }
         // Hand the already-fetched child to the next iteration (each walk
         // element is fetched exactly once). `None` only at `h == target`,
         // where the range is exhausted anyway.
@@ -691,6 +700,9 @@ pub struct DposLayerConfig<D, XC, A, U> {
     pub bls_keypair: ValidatorBlsKeypair,
     pub peer_keypair: commonware_cryptography::ed25519::PrivateKey,
     pub slasher_sink: Arc<dyn SlasherTxSink>,
+    /// Evidence-channel bridge to the node's gossip task, which owns both p2p
+    /// halves of `EVIDENCE_CHANNEL` ([`crate::slasher::gossip`]).
+    pub evidence: crate::slasher::EvidenceBridge,
     pub staking_config: StakingReaderConfig,
     /// Cert upstream for the single-shot, pre-engine cold-start EL-sync JUMP
     /// ([`crate::cold_start_jump`]). `Some` ⇒ an upstream-configured node
@@ -866,6 +878,12 @@ pub struct SharedBeaconPlane {
     /// that impossible by construction (mutations serialize under the one `Mutex`;
     /// `persist_final`/`prune` are idempotent, so two ETs sharing it stays consistent).
     pub cache: Arc<Mutex<ValidatorSetCache<Context>>>,
+    /// Committee members observed slashed for equivocation. Written by the plane's
+    /// tombstone watcher (the sole writer, riding the finalized-height poller);
+    /// read by every promoted engine's `FluentApp`. Carried here for the same
+    /// reason as `cache`: one instance per process, and the reader must be handed
+    /// the writer's own handle rather than a second empty one.
+    pub tombstones: crate::slasher::TombstoneSet,
 }
 
 /// Cold-start kind resolved from durable state. Pure function of the inputs
@@ -1624,6 +1642,19 @@ pub struct DposLayerHandle {
     /// `get_finalization`+`get_block`). The node calls `feed_handle.set_marshal`
     /// with this once `launch` returns — keeping node types out of consensus.
     pub cert_mailbox: crate::outer::MarshalMailbox,
+    /// Layer-internal tasks the HOST must supervise alongside
+    /// `consensus_handle`, each with the label the host's exit log prints.
+    ///
+    /// The runtime runs with `with_catch_panics(true)` and a commonware
+    /// `Handle` has NO `Drop` impl, so a DROPPED handle detaches its task: a
+    /// panic in it logs one line, resolves nothing, and the node keeps passing
+    /// liveness checks with the subsystem dead. Handing the handle up instead
+    /// lands it in `dpos.rs::supervise`, where a panic surfaces as
+    /// `Err(Error::Exited)` → shared-token cancel → node down (the SAME fatal
+    /// semantics `("inlet", h)` already gets on the validator path).
+    ///
+    /// Appended into the host's `Vec<SupervisedHandle>` — same tuple shape.
+    pub supervised: Vec<(&'static str, Handle<()>)>,
 }
 
 /// Namespace type for the launch entry point.
@@ -1667,6 +1698,7 @@ impl DposLayer {
             bls_keypair,
             peer_keypair,
             slasher_sink,
+            evidence,
             staking_config,
             upstream,
             deriver,
@@ -1702,6 +1734,7 @@ impl DposLayer {
             marshal_mux,
             vote_backup,
             cache,
+            tombstones,
         } = beacon_plane;
         let vote_backup_rx = vote_backup.subscribe().await;
 
@@ -2074,18 +2107,18 @@ impl DposLayer {
             dpos_activation_block,
         );
 
-        // Enforce Rust ↔ Solidity invariant
-        //   `ChainConfig.activeValidatorsLength <= fluentbase_p2p::MAX_COMMITTEE_SIZE`.
+        // Enforce the node ↔ contract invariant
+        //   `activeValidatorsLength <= fluentbase_p2p::MAX_COMMITTEE_SIZE`.
         let active_validators_length = reader
             .active_validators_length(latest_finalized_hash)
-            .wrap_err("failed reading ChainConfig.activeValidatorsLength")?;
+            .wrap_err("failed reading Staking.activeValidatorsLength")?;
         if (active_validators_length as u64) > fluentbase_p2p::constants::MAX_COMMITTEE_SIZE {
             return Err(eyre!(
-                "ChainConfig.activeValidatorsLength ({}) exceeds \
-                 fluentbase_p2p::constants::MAX_COMMITTEE_SIZE ({}). Rust ↔ Solidity \
+                "Staking.activeValidatorsLength ({}) exceeds \
+                 fluentbase_p2p::constants::MAX_COMMITTEE_SIZE ({}). Node ↔ contract \
                  cap drift detected — bump MAX_COMMITTEE_SIZE in \
-                 crates/p2p/src/constants.rs AND MAX_ACTIVE_VALIDATORS in \
-                 solidity-contracts/contracts/staking/ChainConfig.sol in the SAME PR, \
+                 crates/dpos/p2p/src/constants.rs AND MAX_ACTIVE_VALIDATORS_LENGTH in \
+                 the staking module's contracts/staking/src/consts.rs in the SAME PR, \
                  then redeploy/upgrade.",
                 active_validators_length,
                 fluentbase_p2p::constants::MAX_COMMITTEE_SIZE,
@@ -2112,8 +2145,16 @@ impl DposLayer {
             eyre::bail!(
                 "Staking contract returned empty committee for epoch {initial_epoch_u64} \
                  (read at finalized block {latest_finalized}). \
-                 Run commitEpochCommittee(address[]) on the staking contract \
-                 before launching DPoS validators."
+                 `commitEpochCommittee` is a system call the block producer issues \
+                 from pre-execution and is SYSTEM_CALLER-only, so there is no \
+                 operator command that fixes this. What resolves it is on-chain \
+                 state plus block production: `getDposActivationBlock()` must be \
+                 scheduled, the registry must hold at least {min} activated \
+                 validators with consensus keys (the commit reverts \
+                 ERR_COMMITTEE_TOO_SMALL below that), and the producer must then \
+                 have advanced far enough for the commit to land and finalize. \
+                 Relaunch once the committee is readable at the finalized block.",
+                min = fluentbase_staking_reader::reader::MIN_COMMITTEE_LENGTH,
             );
         }
 
@@ -2243,6 +2284,25 @@ impl DposLayer {
              forever (no shutdown); a sustained non-zero value flags a wedged boundary read.",
             on_finalized_consecutive_errors.clone(),
         );
+        // The re-poke loop below is the ONE task on this path that genuinely
+        // cannot hand a handle to the node supervisor: `enter_boundary` is an
+        // `Arc<dyn Fn(u64)>` called from the delivery adapter and from the
+        // executor's re-jump landing, spawning one loop PER boundary entry —
+        // there is no return path and no fixed set of handles to register. So
+        // its death is made LOUD instead: the panic is caught right at the loop
+        // (`with_catch_panics(true)` otherwise reduces it to one log line, and a
+        // dropped handle detaches the task) and ticked here. Any non-zero value
+        // means an epoch boundary lost its re-poke driver — pair it with
+        // `parked_boundary_height != 0`, which stays stuck at the height the
+        // dead loop was driving.
+        let boundary_repoke_panics: Counter = Counter::default();
+        ctx_for_hook.register(
+            "boundary_repoke_task_panics",
+            "Epoch-boundary re-poke tasks killed by a panic (caught by the runtime's \
+             catch_panics, so NOT fatal on its own). Non-zero ⇒ a parked boundary has no \
+             driver left; expect parked_boundary_height to stay pinned.",
+            boundary_repoke_panics.clone(),
+        );
         let parked_gauge_for_hook = parked_boundary_height.clone();
         let errors_gauge_for_hook = on_finalized_consecutive_errors.clone();
         // The epoch-entry seam, keyed on a HEIGHT and not on a delivered block, so the
@@ -2257,6 +2317,7 @@ impl DposLayer {
             let parked_gauge = parked_gauge_for_hook.clone();
             let errors_gauge = errors_gauge_for_hook.clone();
             let sync_metrics = sync_metrics_for_hook.clone();
+            let repoke_panics = boundary_repoke_panics.clone();
             // The old BlockNotFound retry loop is gone: committee reads
             // now resolve at the result-final height (number − K) inside
             // EpochTransition; an unresolved read is Intra + a pending
@@ -2282,82 +2343,105 @@ impl DposLayer {
                 // EXTERNAL — the parked_boundary_height gauge (+ periodic
                 // warn) and the harness recover-stall deadline, never a local
                 // counter/clock.
-                let mut pokes = 0u64;
-                loop {
-                    let outcome = {
-                        let mut et_guard = et.lock().await;
-                        et_guard.on_finalized(number).await
-                    };
-                    match outcome {
-                        // Any Ok is a successful boundary read — clear the
-                        // consecutive-error streak + the degraded gauge.
-                        Ok(TransitionOutcome::EpochAdvanced(_) | TransitionOutcome::Intra) => {
-                            if errors.swap(0, Ordering::Relaxed) != 0 {
-                                errors_gauge.set(0);
-                                sync_metrics.recover(SyncReason::BoundaryHook);
+                // LOUD-EXIT rather than supervised (see the
+                // `boundary_repoke_task_panics` counter above for why no handle
+                // can reach the node supervisor from here): catch the unwind at
+                // the loop so a panic in the only driver of THIS boundary becomes
+                // a counter tick + an error!, instead of the single anonymous
+                // "task panicked" line `with_catch_panics(true)` reduces it to.
+                // Only a panic takes the arm below — a clean `break` returns
+                // `Ok` and an abort never resolves at all.
+                use futures::FutureExt as _;
+                let repoke = std::panic::AssertUnwindSafe(async move {
+                    let mut pokes = 0u64;
+                    loop {
+                        let outcome = {
+                            let mut et_guard = et.lock().await;
+                            et_guard.on_finalized(number).await
+                        };
+                        match outcome {
+                            // Any Ok is a successful boundary read — clear the
+                            // consecutive-error streak + the degraded gauge.
+                            Ok(TransitionOutcome::EpochAdvanced(_) | TransitionOutcome::Intra) => {
+                                if errors.swap(0, Ordering::Relaxed) != 0 {
+                                    errors_gauge.set(0);
+                                    sync_metrics.recover(SyncReason::BoundaryHook);
+                                }
                             }
-                        }
-                        // #16 SELF-HEAL (retry-forever-degraded, Decision A): a
-                        // boundary-read failure is typically correlated (bad
-                        // staking state every validator reads), so a fatal here
-                        // would crash all validators at once. Raise the gauges,
-                        // back off, and re-attempt on_finalized — NEVER break/
-                        // shutdown (a break would wedge the last-deliverable-
-                        // boundary catch-up with no further delivery to re-fire).
-                        Err(e) => {
-                            let count = errors.fetch_add(1, Ordering::Relaxed) + 1;
-                            errors_gauge.set(count as i64);
-                            sync_metrics.degrade(SyncReason::BoundaryHook);
-                            error!(
-                                block_number = number,
-                                consecutive_errors = count,
-                                error = ?e,
-                                "epoch_transition.on_finalized failed; retrying-degraded \
-                                 (no shutdown — a correlated boundary-read failure must not \
-                                 crash all validators)"
-                            );
-                            ctx_inner
-                                .sleep(
-                                    fluentbase_staking_reader::epoch_transition::PENDING_RETRY_BACKOFF,
-                                )
-                                .await;
-                            continue;
-                        }
-                    }
-                    // BENIGN MISATTRIBUTION: `enter_boundary` spawns one of these
-                    // loops per call and both the delivery adapter and the
-                    // executor's re-jump landing can call it, so the value read
-                    // here may have been parked by the OTHER task. The gauge and
-                    // the every-N-pokes warn can therefore credit a park to the
-                    // wrong spawn. Nothing is lost by it: the slot is global, both
-                    // loops exit only on `None`, and whichever loop sees `None`
-                    // clears the gauge — so no wakeup can be dropped and the gauge
-                    // still reads "some boundary is parked", which is what the
-                    // wedge alert asks.
-                    let parked = et.lock().await.pending_boundary();
-                    match parked {
-                        None => {
-                            parked_gauge.set(0);
-                            break;
-                        }
-                        Some(parked_height) => {
-                            parked_gauge.set(parked_height as i64);
-                            pokes += 1;
-                            if pokes.is_multiple_of(PARKED_BOUNDARY_WARN_EVERY) {
-                                warn!(
-                                    boundary = parked_height,
-                                    pokes,
-                                    "epoch boundary still parked awaiting EL state \
-                                     materialization; re-poking (no give-up)"
+                            // #16 SELF-HEAL (retry-forever-degraded, Decision A): a
+                            // boundary-read failure is typically correlated (bad
+                            // staking state every validator reads), so a fatal here
+                            // would crash all validators at once. Raise the gauges,
+                            // back off, and re-attempt on_finalized — NEVER break/
+                            // shutdown (a break would wedge the last-deliverable-
+                            // boundary catch-up with no further delivery to re-fire).
+                            Err(e) => {
+                                let count = errors.fetch_add(1, Ordering::Relaxed) + 1;
+                                errors_gauge.set(count as i64);
+                                sync_metrics.degrade(SyncReason::BoundaryHook);
+                                error!(
+                                    block_number = number,
+                                    consecutive_errors = count,
+                                    error = ?e,
+                                    "epoch_transition.on_finalized failed; retrying-degraded \
+                                     (no shutdown — a correlated boundary-read failure must not \
+                                     crash all validators)"
                                 );
+                                ctx_inner
+                                    .sleep(
+                                        fluentbase_staking_reader::epoch_transition::PENDING_RETRY_BACKOFF,
+                                    )
+                                    .await;
+                                continue;
                             }
-                            ctx_inner
-                                .sleep(
-                                    fluentbase_staking_reader::epoch_transition::PENDING_RETRY_BACKOFF,
-                                )
-                                .await;
+                        }
+                        // BENIGN MISATTRIBUTION: `enter_boundary` spawns one of these
+                        // loops per call and both the delivery adapter and the
+                        // executor's re-jump landing can call it, so the value read
+                        // here may have been parked by the OTHER task. The gauge and
+                        // the every-N-pokes warn can therefore credit a park to the
+                        // wrong spawn. Nothing is lost by it: the slot is global, both
+                        // loops exit only on `None`, and whichever loop sees `None`
+                        // clears the gauge — so no wakeup can be dropped and the gauge
+                        // still reads "some boundary is parked", which is what the
+                        // wedge alert asks.
+                        let parked = et.lock().await.pending_boundary();
+                        match parked {
+                            None => {
+                                parked_gauge.set(0);
+                                break;
+                            }
+                            Some(parked_height) => {
+                                parked_gauge.set(parked_height as i64);
+                                pokes += 1;
+                                if pokes.is_multiple_of(PARKED_BOUNDARY_WARN_EVERY) {
+                                    warn!(
+                                        boundary = parked_height,
+                                        pokes,
+                                        "epoch boundary still parked awaiting EL state \
+                                         materialization; re-poking (no give-up)"
+                                    );
+                                }
+                                ctx_inner
+                                    .sleep(
+                                        fluentbase_staking_reader::epoch_transition::PENDING_RETRY_BACKOFF,
+                                    )
+                                    .await;
+                            }
                         }
                     }
+                })
+                .catch_unwind()
+                .await;
+                if repoke.is_err() {
+                    repoke_panics.inc();
+                    error!(
+                        boundary = number,
+                        "epoch-boundary re-poke task PANICKED: this boundary lost its only \
+                         driver, so a parked boundary stays parked until some other entry \
+                         re-fires it (committee rotation wedges meanwhile). See \
+                         boundary_repoke_task_panics + parked_boundary_height."
+                    );
                 }
             }));
         });
@@ -2759,6 +2843,7 @@ impl DposLayer {
             beacon_metrics,
             sync_metrics: sync_metrics.clone(),
             safety_halt: safety_halt.clone(),
+            tombstones,
             beacon_verify,
             group_keys,
             timeouts: ConsensusTimeouts::fluent_1s(),
@@ -2805,6 +2890,7 @@ impl DposLayer {
             slasher_stale_fallback,
             slasher_sink,
             slasher_wal_partition: "slasher-wal".into(),
+            slasher_evidence: Some(evidence),
 
             feed,
 
@@ -2830,7 +2916,15 @@ impl DposLayer {
         // and converts to (Epoch, snap) for OuterEngine's boundary receiver.
         let outer_boundary_tx = outer.boundary_sender();
         let shutdown_for_forwarder = shutdown.clone();
-        drop(ctx.with_label("epoch_bridge").spawn(move |_| async move {
+        // SUPERVISED, not detached: the `shutdown.cancel()` below is the ERROR
+        // path only — a panic inside this loop unwinds straight past it, and
+        // under `with_catch_panics(true)` that panic is one log line and nothing
+        // else. Dropping the handle would detach the task (no `Drop` on
+        // commonware handles), so committee rotation would stop while the node
+        // stayed "healthy". Handed to the host supervisor instead, which treats
+        // ANY resolution (panic → `Err(Error::Exited)`, or the clean-exit warn)
+        // as fatal — so the deliberate fail-fast holds for both paths.
+        let epoch_bridge_handle = ctx.with_label("epoch_bridge").spawn(move |_| async move {
             while let Some((u64_ep, snap)) = bridge_rx.recv().await {
                 if let Err(e) = outer_boundary_tx.send((Epoch::new(u64_ep), snap)).await {
                     error!(
@@ -2842,7 +2936,7 @@ impl DposLayer {
                     break;
                 }
             }
-        }));
+        });
 
         // Grab the marshal mailbox for the node-side cert feed/RPC BEFORE
         // `start` consumes the engine.
@@ -2879,6 +2973,7 @@ impl DposLayer {
         Ok(DposLayerHandle {
             consensus_handle,
             cert_mailbox,
+            supervised: vec![("epoch_bridge", epoch_bridge_handle)],
         })
     }
 }
@@ -3483,6 +3578,11 @@ impl DposLayer {
             beacon_metrics,
             sync_metrics: sync_metrics.clone(),
             safety_halt: safety_halt.clone(),
+            // The follower has no beacon plane, so no tombstone watcher fills a
+            // set here. It casts no vote and proposes no block, so both readers of
+            // this handle are unreachable on the follower path — an empty set is
+            // the honest state, not a lost signal.
+            tombstones: crate::slasher::TombstoneSet::default(),
             beacon_verify: None,
             // The follower runs no DKG resolver (beacon_resolver is a constant
             // `Absent`, beacon_verify `None`); a fresh map is the same Arc its
@@ -3524,6 +3624,9 @@ impl DposLayer {
             slasher_stale_fallback,
             slasher_sink: Arc::new(NoopSlasherSink),
             slasher_wal_partition: "slasher-wal".into(),
+            // A follower runs no slasher (built, never started) and registers
+            // no evidence channel, so there is nothing to bridge to.
+            slasher_evidence: None,
 
             feed,
 
@@ -3724,7 +3827,16 @@ impl DposLayer {
         let inlet_rotate: Option<crate::cert_inlet::RotateUpstream> = upstream
             .as_ref()
             .map(crate::cert_follow::CertUpstream::rotate_callback);
-        drop(ctx.with_label("cert_inlet").spawn(move |c| async move {
+        // SUPERVISED, not detached — the follower twin of the validator path's
+        // `("inlet", h)` registration (`node/src/cert_inlet.rs` → `dpos.rs`).
+        // The `shutdown.cancel()` at the end of the body covers the LOOP exits
+        // (total upstream loss / committee fatal); a PANIC skips it entirely and
+        // `with_catch_panics(true)` swallows it, which on this path means zero
+        // certificate ingestion with a live network and a live RPC — the node
+        // looks healthy and follows nothing. The returned handle resolves
+        // `Err(Error::Exited)` on that panic, so the host supervisor fails the
+        // node closed exactly as the loop exits already do.
+        let cert_inlet_handle = ctx.with_label("cert_inlet").spawn(move |c| async move {
             // Hold the WS upstream REQUEST handle alive for the inlet's whole
             // lifetime. The WS actor's `run` loop exits the instant ALL
             // `UpstreamHandle`s drop (its `mailbox_rx` closes → `None => return`),
@@ -3795,11 +3907,12 @@ impl DposLayer {
             // shutdown so the host brings the node down (case-cert-cascade A3
             // accepts an `exited` state; a silent hang would fail it).
             shutdown_for_inlet.cancel();
-        }));
+        });
 
         Ok(DposLayerHandle {
             consensus_handle,
             cert_mailbox,
+            supervised: vec![("cert_inlet", cert_inlet_handle)],
         })
     }
 }
@@ -4082,6 +4195,7 @@ mod visibility_retry_tests {
             beacon_outcome: None,
             dkg_logs: Vec::new(),
             parent_seed: None,
+            equivocation: None,
         }
     }
 
@@ -4518,6 +4632,7 @@ mod refetch_hole_tests {
             beacon_outcome: None,
             dkg_logs: Vec::new(),
             parent_seed: None,
+            equivocation: None,
         }
     }
 

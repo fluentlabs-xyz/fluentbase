@@ -133,29 +133,41 @@ where
     // TIER-2 follower aligns by reading THIS node's window WS. `record_finalized`
     // already emits both finality tiers, so a downstream follower gets
     // `ResultFinalized` for free.
-    let verified_tx = cfg.feed.map(|handle| {
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<UpstreamFinalized>();
-        let window: crate::consensus_rpc::state::CertWindow = Default::default();
-        handle.set_window(window.clone());
-        drop(ctx.with_label("window_feed").spawn(move |_| async move {
-            while let Some(uf) = rx.recv().await {
-                let height = uf.block.height;
-                let cb = std::sync::Arc::new(crate::certified_block::CertifiedBlock::from_parts(
-                    &uf.finalization,
-                    &uf.block,
-                ));
-                {
-                    let mut w = window.write().expect("cert window poisoned");
-                    w.insert(height, cb.clone());
-                    while w.len() as u64 > fluentbase_consensus::JUMP_THRESHOLD {
-                        w.pop_first();
+    //
+    // SUPERVISED, not detached: this task is the ONLY writer of the cert window
+    // the consensus RPC serves, and it holds a `.expect()` on a poisoned lock.
+    // With `with_catch_panics(true)` a panic here would be one log line and
+    // nothing else — the window would freeze and every downstream follower would
+    // keep reading a permanently stale finalized block off a node that still
+    // answers every liveness check. The handle goes to `dpos.rs::supervise`, so
+    // that death is fatal like any other overlay task's.
+    let (verified_tx, window_feed_handle) = match cfg.feed {
+        Some(handle) => {
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<UpstreamFinalized>();
+            let window: crate::consensus_rpc::state::CertWindow = Default::default();
+            handle.set_window(window.clone());
+            let feed_handle = ctx.with_label("window_feed").spawn(move |_| async move {
+                while let Some(uf) = rx.recv().await {
+                    let height = uf.block.height;
+                    let cb =
+                        std::sync::Arc::new(crate::certified_block::CertifiedBlock::from_parts(
+                            &uf.finalization,
+                            &uf.block,
+                        ));
+                    {
+                        let mut w = window.write().expect("cert window poisoned");
+                        w.insert(height, cb.clone());
+                        while w.len() as u64 > fluentbase_consensus::JUMP_THRESHOLD {
+                            w.pop_first();
+                        }
                     }
+                    handle.record_finalized(cb, crate::consensus_rpc::now_ms());
                 }
-                handle.record_finalized(cb, crate::consensus_rpc::now_ms());
-            }
-        }));
-        tx
-    });
+            });
+            (Some(tx), Some(feed_handle))
+        }
+        None => (None, None),
+    };
 
     // The ONE plane piece a follower keeps: a minimal, gossip-idle broadcast
     // `Muxer`. Required so the `buffered::Engine` is ALIVE to answer the marshal's
@@ -221,17 +233,24 @@ where
     // `--cert-upstream` trust relay is the separate `launch_consensus_node` path,
     // not this overlay.
 
-    let handle =
+    let mut handle =
         DposLayer::launch_follower(ctx, reth, follow_cfg, oracle, broadcast_mux, shutdown_token)
             .await?;
 
     // Hand the WS / network / broadcast-mux handles back to the unified
     // node-stack supervisor (`dpos.rs::supervise`); the engine handle rides in
     // the returned `DposLayerHandle`.
-    let supervised: Vec<SupervisedHandle> = vec![
+    let mut supervised: Vec<SupervisedHandle> = vec![
         ("ws_upstream", ws_handle),
         ("network", net_handle),
         ("mux", bcast_mux_handle),
     ];
+    if let Some(h) = window_feed_handle {
+        supervised.push(("window_feed", h));
+    }
+    // Plus the layer-internal tasks the consensus crate spawned (the follower's
+    // `cert_inlet`) — same supervisor, same fatal semantics. See
+    // [`DposLayerHandle::supervised`].
+    supervised.append(&mut handle.supervised);
     Ok((handle, supervised))
 }

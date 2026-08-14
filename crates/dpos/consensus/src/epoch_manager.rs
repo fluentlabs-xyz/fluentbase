@@ -28,6 +28,7 @@ use crate::{
     scheme::soft_enter_verifier,
     slasher::Mailbox as SlasherMailbox,
     timeouts::ConsensusTimeouts,
+    weighted_vrf::{constant_fallback_seed, witness_fallback_seed},
 };
 use commonware_consensus::{
     marshal::{core::Mailbox as MarshalMailbox, standard::Standard},
@@ -87,6 +88,55 @@ pub enum Role {
     Signer,
     /// Verify-only: follow finalized certs, never propose or sign.
     Verifier,
+}
+
+/// Outcome of the `Inline::genesis(E)` precondition lookup on the E-1 terminal
+/// block (see [`Actor::boundary_lookup`]), which also supplies the seedless arm's
+/// base for epoch E.
+enum BoundaryLookup {
+    /// No predecessor epoch (epoch 0) or no computable terminal height. Nothing to
+    /// wait for and no seed to inherit — every node reaches this identically, so
+    /// the constant base stays agreed.
+    NotApplicable,
+    /// The E-1 terminal block is not in marshal storage yet — defer the spawn.
+    Missing,
+    /// The block is present. `seed` is [`witness_fallback_seed`] of its
+    /// `parent_seed` — a one-way compression of the threshold signature, neither
+    /// the signature itself nor the round that witness pins. `None` only on
+    /// pre-bootstrap links where the witness is forbidden.
+    Present { seed: Option<[u8; 32]> },
+}
+
+/// Which base the leader elector's seedless arm gets for an epoch, and why —
+/// the variant, not just the bytes, so the caller can meter the predictable case
+/// without re-deriving the choice.
+#[derive(Debug, PartialEq, Eq)]
+enum SeedlessBase {
+    /// Inherited from the E-1 terminal block's witness seed: not derivable from
+    /// constants, so the epoch's first leader is not known an epoch ahead.
+    Witness([u8; 32]),
+    /// The constant derivation, reached only where no witness can exist. Agreed
+    /// across nodes but predictable.
+    Constant([u8; 32]),
+}
+
+/// Choose the seedless arm's base from the E-1 terminal-block lookup. `None` for
+/// [`BoundaryLookup::Missing`]: that epoch defers its spawn rather than electing
+/// anything, so there is no base to choose. Pure — the metric for the predictable
+/// case is emitted by the caller.
+fn seedless_base(lookup: &BoundaryLookup, snap: &ValidatorSetSnapshot) -> Option<SeedlessBase> {
+    match lookup {
+        BoundaryLookup::Missing => None,
+        BoundaryLookup::Present {
+            seed: Some(witness),
+        } => Some(SeedlessBase::Witness(*witness)),
+        // Witness-less terminal block or no predecessor: the constant base is
+        // predictable, but no seed exists to do better, and every node takes this
+        // branch on the same block.
+        BoundaryLookup::NotApplicable | BoundaryLookup::Present { seed: None } => {
+            Some(SeedlessBase::Constant(constant_fallback_seed(snap)))
+        }
+    }
 }
 
 /// Outcome of a per-epoch beacon-key resolve (see [`BeaconResolver`]).
@@ -644,7 +694,7 @@ where
 
         // At the live frontier (checked above): role = f(member). "Caught up" is not
         // a separate input: a member only spawns a participating engine once the
-        // share-gate AND `boundary_block_present` both hold below, which together
+        // share-gate AND `boundary_lookup` both hold below, which together
         // mean the local executor has derived up to E-1's boundary.
         //
         // Fork-safety latch (Phase 3): a SafetyHalted node is NEVER a member for
@@ -731,22 +781,30 @@ where
                 // may still be backfilling it — DEFER, never panic; the executor's
                 // `spawn_unblocked` edge (or the next boundary) re-pokes. Register
                 // verify-only meanwhile so the marshal verifies this epoch's certs.
-                if !self.boundary_block_present(epoch).await {
-                    self.deferred_spawns.insert(epoch);
-                    self.soft_enter(epoch, &snap).await;
-                    self.cfg.beacon_metrics.engine_spawn_deferred.inc();
-                    info!(
-                        ?epoch,
-                        boundary = ?epoch
-                            .get()
-                            .checked_sub(1)
-                            .and_then(|prev| self.cfg.epocher.last(Epoch::new(prev)))
-                            .map(|h| h.get()),
-                        "signer spawn deferred — E-1 boundary block not yet in marshal; \
-                         verify-only until it lands"
-                    );
-                    return;
-                }
+                let lookup = self.boundary_lookup(epoch).await;
+                let fallback_seed = match seedless_base(&lookup, &snap) {
+                    None => {
+                        self.deferred_spawns.insert(epoch);
+                        self.soft_enter(epoch, &snap).await;
+                        self.cfg.beacon_metrics.engine_spawn_deferred.inc();
+                        info!(
+                            ?epoch,
+                            boundary = ?epoch
+                                .get()
+                                .checked_sub(1)
+                                .and_then(|prev| self.cfg.epocher.last(Epoch::new(prev)))
+                                .map(|h| h.get()),
+                            "signer spawn deferred — E-1 boundary block not yet in marshal; \
+                             verify-only until it lands"
+                        );
+                        return;
+                    }
+                    Some(SeedlessBase::Witness(base)) => base,
+                    Some(SeedlessBase::Constant(base)) => {
+                        self.cfg.beacon_metrics.fallback_seed_constant.inc();
+                        base
+                    }
+                };
 
                 // Promote-gate VALUE check (defense-in-depth; f297cc36 extended
                 // from key PRESENCE to key VALUE): when the network already
@@ -828,7 +886,10 @@ where
                     );
                     insert_group_key(&self.cfg.group_keys, epoch.get(), pk, KeySource::LocalDkg);
                 }
-                if self.spawn_engine(epoch, snap, beacon, muxes).await {
+                if self
+                    .spawn_engine(epoch, snap, beacon, fallback_seed, muxes)
+                    .await
+                {
                     self.roles.insert(epoch, Role::Signer);
                     self.deferred_spawns.remove(&epoch);
                     // Stable greppable token for the production-path smoke
@@ -961,18 +1022,25 @@ where
         }
     }
 
-    /// True when the `Inline::genesis(E)` precondition holds — the E-1 terminal
-    /// (boundary) block is present in marshal `finalized_blocks` storage. `epoch 0`
-    /// has no predecessor (genesis needs nothing). This is the exact lookup
-    /// `Inline::genesis` itself performs, so the guard is precise, not heuristic.
-    async fn boundary_block_present(&mut self, epoch: Epoch) -> bool {
+    /// The `Inline::genesis(E)` precondition lookup on the E-1 terminal (boundary)
+    /// block — the exact lookup `Inline::genesis` itself performs, so the guard is
+    /// precise, not heuristic — which ALSO yields the seedless arm's base for epoch
+    /// E. Gate and base come from one `get_block` so it is impossible to spawn on a
+    /// block the base was not taken from, and the block is fetched exactly as often
+    /// as when this only returned a bool.
+    async fn boundary_lookup(&mut self, epoch: Epoch) -> BoundaryLookup {
         let Some(prev) = epoch.get().checked_sub(1).map(Epoch::new) else {
-            return true; // epoch 0 — genesis needs no predecessor block
+            return BoundaryLookup::NotApplicable; // epoch 0 — genesis needs no predecessor block
         };
         let Some(last) = self.cfg.epocher.last(prev) else {
-            return true;
+            return BoundaryLookup::NotApplicable;
         };
-        self.cfg.marshal_mailbox.get_block(last).await.is_some()
+        let Some(block) = self.cfg.marshal_mailbox.get_block(last).await else {
+            return BoundaryLookup::Missing;
+        };
+        BoundaryLookup::Present {
+            seed: block.parent_seed.as_ref().map(witness_fallback_seed),
+        }
     }
 
     /// Abort engines of all epochs strictly below `current` (exit-at-transition;
@@ -1023,6 +1091,7 @@ where
         epoch: Epoch,
         snap: ValidatorSetSnapshot,
         beacon: Option<BeaconKey>,
+        fallback_seed: [u8; 32],
         muxes: Option<&Muxes<HS, HR>>,
     ) -> bool
     where
@@ -1059,6 +1128,7 @@ where
                 blocker: self.cfg.blocker.clone(),
                 snapshot: snap,
                 epoch,
+                fallback_seed,
                 epocher: self.cfg.epocher.clone(),
                 chain_id: self.cfg.chain_id,
                 signer_keypair: self.cfg.signer_keypair.clone(),
@@ -1292,6 +1362,7 @@ fn engine_handle_dead(handle: &mut Handle<()>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_primitives::B256;
     use commonware_cryptography::{ed25519::PrivateKey as Ed25519PrivateKey, Signer};
     use commonware_math::algebra::Random as _;
     use rand_08::rngs::StdRng;
@@ -1381,6 +1452,46 @@ mod tests {
         // (the pre-existing last rung), unchanged.
         let unresolvable: BeaconResolver = Arc::new(|_| BeaconResolve::Absent);
         assert_eq!(group_key_ladder(&empty, &unresolvable, 12), None);
+    }
+
+    /// The seedless arm must inherit the E-1 terminal block's witness whenever the
+    /// block carries one, and fall back to the predictable constant derivation ONLY
+    /// where no witness can exist — a witness-less block or no predecessor epoch.
+    /// `Missing` is not a base at all: that epoch defers its spawn.
+    ///
+    /// The fixture's committee is empty on purpose: what is under test is which arm
+    /// is selected, not the constant derivation's own inputs (pinned in
+    /// `weighted_vrf`).
+    #[test]
+    fn the_witness_base_is_inherited_whenever_the_boundary_block_carries_one() {
+        let snap = ValidatorSetSnapshot {
+            block_hash: B256::repeat_byte(0x11),
+            block_number: 42,
+            epoch: 9,
+            validators: Vec::new(),
+        };
+        let witness = [0xA7u8; 32];
+        let constant = constant_fallback_seed(&snap);
+        assert_ne!(witness, constant);
+
+        assert_eq!(
+            seedless_base(
+                &BoundaryLookup::Present {
+                    seed: Some(witness)
+                },
+                &snap
+            ),
+            Some(SeedlessBase::Witness(witness))
+        );
+        assert_eq!(
+            seedless_base(&BoundaryLookup::Present { seed: None }, &snap),
+            Some(SeedlessBase::Constant(constant))
+        );
+        assert_eq!(
+            seedless_base(&BoundaryLookup::NotApplicable, &snap),
+            Some(SeedlessBase::Constant(constant))
+        );
+        assert_eq!(seedless_base(&BoundaryLookup::Missing, &snap), None);
     }
 
     // A single peer (even naming u64::MAX) must NOT advance the live frontier —

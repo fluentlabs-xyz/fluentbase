@@ -95,26 +95,35 @@ class GeneratedProfile(StackProfile):
     """The N-validator compose pair `stack/compose_gen.py` writes. The simulation's devnet.
 
     `prepare` GENERATES the files (unless the runner is dry, where the transcript is the
-    artifact and nothing is written). The three sizes are the generator's arguments, and they
-    come from the caller's `StackSpec` — this class holds no policy of its own.
+    artifact and nothing is written). The four sizes are the generator's arguments, and they
+    come from the caller's `StackSpec` — this class holds no policy of its own. They are four
+    distinct things: containers run, committee targeted, identities derived, and — since the
+    staking contract moved into genesis — identities SEATED at block 0.
     """
 
     name = "generated"
 
-    def __init__(self, val_containers: int, validators: int, identity_pool: int):
+    def __init__(
+        self, val_containers: int, validators: int, identity_pool: int, initial_committee: int
+    ):
         self.val_containers = int(val_containers)
         self.validators = int(validators)
         self.identity_pool = int(identity_pool)
+        self.initial_committee = int(initial_committee)
 
     @classmethod
     def for_spec(cls, spec) -> "GeneratedProfile":
         """Build the profile a `StackSpec` describes."""
-        return cls(spec.val_containers, spec.validators, spec.identity_pool)
+        return cls(
+            spec.val_containers, spec.validators, spec.identity_pool, spec.initial_committee
+        )
 
     def prepare(self, runner) -> None:
         if runner.dry:
             return
-        compose_gen.generate(self.val_containers, self.validators, self.identity_pool)
+        compose_gen.generate(
+            self.val_containers, self.validators, self.identity_pool, self.initial_committee
+        )
 
     def compose_files(self, phase: str = "dpos"):
         if phase == "base":

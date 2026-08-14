@@ -21,12 +21,14 @@ BLEND, and BLEND for the three floor-bumped owners), and the assertion then spen
 toggle delegator's derived key has to survive from one to the other. `prod.run`'s `post_manifest`
 seam takes a callable, and a bound method of this object is that callable.
 
-The transfers CANNOT move earlier. `case-byzantine-vrf.sh:190-197` is emphatic: sending them before
-`DeployStaking` would advance the deployer nonce and shift DeployStaking's CREATE addresses off the
-prediction baked into `staking-reader.json`, so the node would read ChainConfig at the wrong address
-and the `--dpos` cold start would fail. The deployer's PRE-deploy tx sequence must stay byte-for-byte
-the production-path one — which is exactly what routing this case through the shared
-`RotationBringUp` guarantees, rather than merely documents.
+The transfers CANNOT move earlier, though the reason has changed under them.
+`case-byzantine-vrf.sh:190-197` was emphatic about a create-nonce hazard: sending them before the
+deploy would shift its CREATE addresses off the prediction in `staking-reader.json`. There is no
+prediction any more — the staking module sits at a fixed genesis address. What survives is
+simpler and still binding: these transfers move BLEND and act through a `Chain`, so the token must
+already be deployed and the module already installed, and they must still precede the first
+governance write. Routing the case through the shared `RotationBringUp` guarantees that position
+rather than merely documenting it.
 
 ═══ WHY REPEATED COMMITTEE FLIPS ══════════════════════════════════════════════════════════
 
@@ -93,7 +95,8 @@ class ByzantineDrive:
 
     # -- the bring-up hook ---------------------------------------------------------
     def post_manifest(self, bu) -> None:
-        """`:235-250` — the five extra DEPLOYER-funded transfers, sent ONLY after DeployStaking.
+        """`:235-250` — the five extra DEPLOYER-funded transfers, sent ONLY after the staking
+        module has been installed and initialized.
 
         Issued through `bu` rather than a ctx because they are part of the BRING-UP: they run
         inside `RotationBringUp.run`, before the first governance write, exactly where bash has
@@ -124,7 +127,7 @@ class ByzantineDrive:
             bu._fail("fund v5-toggle delegator")
         chain.token_transfer(bu.token, self.toggle_addr, VR.TOGGLE_BLEND_WEI, checked=True)
         # The floor-bumped owners hold genesis ETH but no RUNTIME BLEND, and they self-delegate
-        # from their OWN keys below — so they need funding here, post-DeployStaking and nonce-safe.
+        # from their OWN keys below — so they need funding here, once the token exists.
         for i in FLOOR_BUMP_IDXS:
             if i == self.byz_idx:
                 continue

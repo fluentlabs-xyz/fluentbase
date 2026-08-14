@@ -32,8 +32,11 @@ constraint prod will face during migration.
 - `make`, `jq`, `curl` on host
 - Sibling checkout of `fluentlabs-xyz/solidity-contracts` at
   `../../../solidity-contracts/` (or set `SOLIDITY_CONTRACTS_DIR` env)
-- Foundry (`forge`) on host — only for `make regen-contracts`
-  (genesis-init container does not need it at run time)
+- Foundry (`forge`) on host — for `make regen-contracts` and for the
+  production-path stand's two runtime `forge create`s
+- `runtime-upgrade` on host (or `RUNTIME_UPGRADE_BIN=<path>`) — only the
+  production-path stand needs it; every other stand gets the staking module
+  installed in genesis by `genesis-bootstrap full`
 
 ## Quick start
 
@@ -139,21 +142,31 @@ config, off-chain — the on-chain `ConsensusKeys` carry no IP/enode. See
 The full prod lifecycle on a chain where the staking cluster is deployed at
 **runtime via forge** (not baked into genesis):
 
-1. 6 nodes + a full node boot a **bare** chain (no staking predeploys) — a
-   plain sequencer (validator-0) + WS followers. Every node carries
+1. 6 nodes + a full node boot a **bare** chain (no staking module in genesis) —
+   a plain sequencer (validator-0) + WS followers. Every node carries
    `--dpos.staking-config` from first boot: `genesis-init` pre-writes
-   `staking-reader.json` predicting the runtime CREATE addresses from deployer
-   nonces (`--staking-reader-create-nonces`, see the compose comment), so all
-   nodes execute the `commitEpochCommittee` system call identically from
-   block 1.
+   `staking-reader.json` with the FIXED `GENESIS_STAKING` address
+   (`0x…520011`), which is where the module is delivered below — nothing is
+   predicted from a create-nonce — so all nodes execute the
+   `commitEpochCommittee` system call identically from block 1. `genesis-init`
+   also seeds the runtime-upgrade precompile's owner slot with the governance
+   signer, the only key the delivery is allowed to use.
 2. The host driver deploys `MockBlendToken` + `BLS12381Verifier` (`forge
-   create`) and the staking cluster (`forge script DeployStaking`, config
-   selected via `NETWORK=local-dpos-smoke/l2`); the driver asserts the deploy
-   manifest matches the pre-written `staking-reader.json` (fail-loud on
-   deployer-nonce drift).
-3. Bootstraps a 5-validator committee: `setBlsVerifier` (governance) **before**
-   `setConsensusKeys` (the PoP is verified against the on-chain verifier), then
-   `setDposActivationBlock` (governance).
+   create`), then DELIVERS the staking module to the running chain with
+   `runtime-upgrade install-local --wasm contracts/fluentbase_contracts_staking.wasm
+   --target 0x…520011`. The upgrade precompile compiles the wasm on-chain with
+   the same address-aware config genesis uses, so the delivered bytes match a
+   genesis-installed module by construction.
+3. Initializes it and bootstraps a 5-validator committee: `BLEND.approve`, then
+   the 17-argument `initialize` — which seeds the five genesis validators with
+   their stakes AND their consensus keys (PoP-verified inline against the
+   verifier passed in the same call), and takes `dposActivationBlock = 0`, the
+   unscheduled sentinel. Then two governance calls
+   (`setProductionLivenessDisabled(false)`, `setBlendStipendPerEpoch`) and
+   `setDposActivationBlock` with the real block. Activation is scheduled LAST,
+   after the registry is complete: an activation block set at `initialize` time
+   would engage the node's pre-execution section against a registry below
+   `MIN_COMMITTEE_LENGTH` and halt block production.
 4. The sequencer's **dynamic activation gate** (per-tick on-chain re-read)
    clean-halts sequencer production at exactly `dposActivationBlock` — no
    mid-flight restart, so the followers ride the uninterrupted WS stream to
@@ -161,8 +174,9 @@ The full prod lifecycle on a chain where the staking cluster is deployed at
    `--dpos` (`--dpos.follower-upstream` set): committee members cold-start as
    signers, while validator-5 (no committee seat yet) stays a verify-only node
    that follows the chain via its cert-inlet.
-5. Registers the **external 6th** validator (`registerValidator` →
-   `setConsensusKeys` → governance `activateValidator` → `delegate`) while it
+5. Registers the **external 6th** validator (the 6-argument `registerValidator`,
+   which carries its consensus keys → governance `activateValidator` →
+   `delegate`) while it
    follows via its inlet; once its key appears in the ahead-committed
    `getEpochCommittee(E+1)` and it holds its DKG share, `reconcile_roles`
    **promotes it to Signer in-process** (no restart) — the case asserts
@@ -180,8 +194,9 @@ The full prod lifecycle on a chain where the staking cluster is deployed at
 Long (~5-8 min) and first-of-its-kind, so it is **NOT** in `make smoke-all` —
 run it explicitly. Uses its own 6-node compose project
 (`docker-compose.production-path.yml` + `.production-path.dpos.yml`, chainId 2026)
-distinct from the genesis-baked cases. Needs `forge`/`cast`/`jq` and a
-`solidity-contracts` checkout at `SOLIDITY_CONTRACTS_DIR`.
+distinct from the genesis-baked cases. Needs `forge`/`cast`/`jq`, the
+`runtime-upgrade` binary on `PATH` (or `RUNTIME_UPGRADE_BIN` pointing at it),
+and a `solidity-contracts` checkout at `SOLIDITY_CONTRACTS_DIR`.
 
 ## Joining a running chain as a new validator
 
@@ -280,7 +295,7 @@ die on a failed send; SIGTERM/Ctrl-C kills senders cleanly.
 
     python3 -m dpos_harness load start                        # supervise until stop, defaults below
     LOAD_DURATION=60 LOAD_SENDERS=1 LOAD_TARGET_GAS_FRACTION=0.02 python3 -m dpos_harness load start   # gentle poke
-    LOAD_WAIT_MARKER_LOG=sim.log python3 -m dpos_harness load start   # gate funding on the sim's DeployStaking marker
+    LOAD_WAIT_MARKER_LOG=sim.log python3 -m dpos_harness load start   # gate funding on the sim's first-round marker
     python3 -m dpos_harness load stop [pidfile]               # clean pidfile-based shutdown
 
 
@@ -291,7 +306,7 @@ readiness with bounded retry/backoff *inside* the script — every
 `LOAD_ACQUIRE_INTERVAL` (15 s), each miss logged with its reason, loud FAIL only
 after `LOAD_ACQUIRE_TIMEOUT` (30 min) — so a not-yet-readable key never yields a
 silent zero-load run; (2) **gates** all funding behind the sim's first
-`[sim r<N> ` marker when `LOAD_WAIT_MARKER_LOG` is set (the DeployStaking-complete
+`[sim r<N> ` marker when `LOAD_WAIT_MARKER_LOG` is set (the bring-up-complete
 signal — funding before it corrupts the shared dev-EOA nonce), replacing the
 external waiter; (3) **supervises** the `LOAD_SENDERS` loops, restarting any that
 die with a per-sender restart counter + exponential backoff (flap-reset after a
@@ -315,7 +330,7 @@ pidfile.
 | `LOAD_STATUS_EVERY` | `30` | status-line cadence (txs sent, fleet in-flight, basefee/max, sample receipt, head) |
 | `LOAD_MAX_INFLIGHT` | `12` | per-sender in-flight (pending−mined) cap, < reth's 16 per-account pool cap; senders self-throttle to drain instead of racing nonces |
 | `LOAD_UNWEDGE_SKIPS` | `10` | full-window skips with a frozen mined head between "head-of-line waits" diagnostic logs (base-fee-over-cap self-regulation, or an inherited stuck legacy tx — which is loudly reported at startup as topup/decay-required, never futilely re-sent) |
-| `LOAD_WAIT_MARKER_LOG` | unset (no gate) | sim log to gate ALL funding behind its first `[sim r<N> ` marker (DeployStaking-complete). Replaces the external `blaster-waiter.sh` |
+| `LOAD_WAIT_MARKER_LOG` | unset (no gate) | sim log to gate ALL funding behind its first `[sim r<N> ` marker (bring-up-complete). Replaces the external `blaster-waiter.sh` |
 | `LOAD_ACQUIRE_TIMEOUT` / `LOAD_ACQUIRE_INTERVAL` | `1800` / `15` s | bounded startup acquisition (funder key + RPC + marker): retry every interval, loud FAIL only after the timeout — never die on the first miss |
 | `LOAD_PIDFILE` / `LOAD_LOG` | `$TMPDIR/load-heavy.pid` (or beside `LOAD_LOG`) | supervisor pidfile path / its default anchor. `stop [pidfile]` reads it |
 | `LOAD_SUPERVISE_TICK` / `LOAD_RESTART_HEALTHY_SECS` | `5` / `120` s | supervisor loop cadence (dead-sender detection latency) / how long a sender must stay up before its restart counter flap-resets |

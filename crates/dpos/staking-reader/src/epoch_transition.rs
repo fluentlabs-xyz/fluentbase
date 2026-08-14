@@ -238,6 +238,18 @@ where
         }
     }
 
+    /// The relative epoch `number` falls in, over the FROZEN geometry — the same
+    /// value [`Self::apply_at`] derives, so a consumer riding the boundary walk
+    /// asks the epoch authority instead of re-deriving the formula from a
+    /// `frozen_geometry()` pair. `None` until the geometry freezes.
+    pub fn epoch_at(&self, number: u64) -> Option<u64> {
+        Some(epoch_of_block(
+            number,
+            self.frozen_interval?,
+            self.frozen_activation?,
+        ))
+    }
+
     /// Activation-relative boundary predicate over the FROZEN geometry —
     /// usable without any state read once `cold_start` froze it.
     fn is_epoch_boundary_frozen(&self, number: u64) -> Option<bool> {
@@ -746,6 +758,7 @@ mod tests {
                 activation_epoch: 1,
             },
             stake: 1,
+            tombstoned: false,
         }
     }
 

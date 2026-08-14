@@ -1,5 +1,5 @@
 use alloy_genesis::Genesis;
-use alloy_primitives::U256;
+use alloy_primitives::{B256, U256};
 use eyre::WrapErr;
 use std::collections::BTreeMap;
 
@@ -45,6 +45,23 @@ pub fn assemble(chain_id: u64, keys: &KeySet, predeploy: PredeployState) -> eyre
             acct.balance = *balance;
         }
     }
+
+    // The runtime-upgrade precompile is `only_owner`, and an unset owner slot falls back
+    // to `DEFAULT_UPDATE_GENESIS_AUTH` — a key no devnet holds, on an account that is not
+    // even in the alloc, so funding it would buy nothing. Seed the owner instead: `owner`
+    // is the contract's first field, a `StorageAddress` with no namespace and no hashing,
+    // so it is slot 0 with the address right-aligned in the word. Written on EVERY mode:
+    // the stand that needs it is the bare one, which installs no predeploys at all.
+    // Taken through `entry` on the base-genesis account (which already carries the
+    // precompile's code) because the merge above is keyed on bytecode and would drop a
+    // storage-only entry.
+    let upgrade_acct = g
+        .alloc
+        .entry(fluentbase_types::PRECOMPILE_RUNTIME_UPGRADE)
+        .or_default();
+    let mut upgrade_storage = upgrade_acct.storage.take().unwrap_or_default();
+    upgrade_storage.insert(B256::ZERO, keys.governance_signer.address().into_word());
+    upgrade_acct.storage = Some(upgrade_storage);
 
     let wei_per_eth = U256::from(10u128.pow(18));
     for v in &keys.validators {

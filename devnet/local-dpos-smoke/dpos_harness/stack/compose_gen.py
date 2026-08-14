@@ -13,6 +13,27 @@ byte-compatible with the bash output (same anchors, same fluent argv, same key o
 post-write truncation guard. RUST_LOG_STYLE=never, the json-file log bounds, and every knob
 (PRUNE/DATA_ROOT/GEO_LATENCY/NO_CASCADE/PEER_HOST_MODE/BOOTSTRAP_MODE/rotation/identity-pool)
 are carried faithfully.
+
+═══ genesis-init runs `full`, not `bare` ══════════════════════════════════════════════
+
+The staking module is an rWasm contract installed at a FIXED genesis address, and
+`genesis-bootstrap` installs it on the `full` arm only (`bare` deliberately installs
+nothing, so the production-path stand has something to deliver). A sim/soak stand left on
+`bare` would boot with no staking code at all. Hence `full`, the `/contracts` bind mount
+the artefact loader reads, and `--contracts-dir`. `--staking-reader-create-nonces` is gone
+with CREATE-address prediction: the address is a constant on both arms now, and passing
+the flag is an unknown-argument error.
+
+Three flags carry what the sim needs and the smoke does not. Unset, each defaults to the
+smoke's behaviour, so the two stands share one binary. `--peers` is the IDENTITY POOL and is
+deliberately larger
+than the set the sim runs containers for, so seating all of it would commit a committee
+containing identities with no node — one the chain cannot finalize. `--committee-size` is
+therefore passed explicitly from `StackSpec.initial_committee`, alongside
+`--blend-holder-validator=0` (the supply must land where the harness spends from, `owner_key(0)`,
+not on the governance signer) and `--dpos-activation-block=0` (the sim computes its own
+activation after phase A and sets it through governance; a genesis-written one would already
+be in the past).
 """
 
 from __future__ import annotations
@@ -41,20 +62,39 @@ def _envs(name, default):
     return v if v not in (None, "") else default
 
 
-def generate(n: int, target: int = None, identity_pool: int = None, out_dir: str = "."):
+def generate(
+    n: int,
+    target: int = None,
+    identity_pool: int = None,
+    initial_committee: int = None,
+    out_dir: str = ".",
+):
     """Generate the compose pair for N validators. Returns (base_path, dpos_path). Knobs are read
     from the environment exactly like the bash (SIM_ROTATION_SLOTS, SIM_NO_CASCADE,
     PEER_HOST_MODE, BOOTSTRAP_MODE, SIM_PRUNE_PROFILE, SIM_DATA_ROOT, SIM_GEO_LATENCY,
-    SIM_LOG_MAX_SIZE/FILE)."""
+    SIM_LOG_MAX_SIZE/FILE).
+
+    `initial_committee` is the set genesis SEATS, as distinct from `identity_pool` (which it
+    DERIVES) and `n` (which it runs containers for). Seating an identity with no container
+    behind it commits a committee the chain cannot finalize, so this is bounded by n, not by
+    the pool. Defaults to n — every container-backed validator seated."""
     if target is None:
         target = n
     if identity_pool is None:
         identity_pool = n
+    if initial_committee is None:
+        initial_committee = n
 
     if not (4 <= target <= n):
         raise ComposeGenError(f"bad COMMITTEE_TARGET={target} (need 4..{n})")
     if identity_pool < n:
         raise ComposeGenError(f"bad IDENTITY_POOL={identity_pool} (need >= N={n})")
+    if not (4 <= initial_committee <= n):
+        raise ComposeGenError(
+            f"bad INITIAL_COMMITTEE={initial_committee} (need 4..{n}) — below 4 the contract's "
+            "commitEpochCommittee reverts ERR_COMMITTEE_TOO_SMALL during genesis-init; above N "
+            "it seats identities with no container and the chain cannot finalize"
+        )
     if n < 4:
         raise ComposeGenError(f"N={n} < 4 (need INITIAL_F>=1; MIN_COMMITTEE math, D4)")
     if n > 51:
@@ -203,16 +243,20 @@ services:
     <<: *fluent-build-def
     entrypoint: ["/usr/local/bin/genesis-bootstrap"]
     command:
-      - bare
+      - full
       - --peers={identity_pool}
+      - --committee-size={initial_committee}
+      - --blend-holder-validator=0
+      - --dpos-activation-block=0
       - --bootstrappers=2
       - --output=/runtime
+      - --contracts-dir=/contracts
       - --chain-id={topology.CHAIN_ID}
       - --validator-ips={ips}
       - --peer-host-mode={peer_host_mode}{seed_dns_cmd}
-      - --staking-reader-create-nonces=9,15,19
     volumes:
       - runtime:/runtime
+      - ./contracts:/contracts:ro
     networks:
       fluent-net:
         ipv4_address: {topology.GENESIS_INIT_IP}

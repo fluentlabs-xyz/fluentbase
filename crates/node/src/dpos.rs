@@ -12,7 +12,7 @@ use commonware_consensus::types::Height;
 use commonware_cryptography::Signer as _;
 use commonware_p2p::{
     utils::mux::{Builder, Muxer},
-    Ingress,
+    Blocker as _, Ingress, Receiver as _, Recipients, Sender as _,
 };
 use commonware_runtime::{tokio::Context, Clock as _, Handle, Metrics as _, Spawner as _};
 use eyre::{eyre, OptionExt as _, WrapErr as _};
@@ -48,7 +48,7 @@ use std::{
 };
 use tokio::sync::{mpsc, Mutex};
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 /// Bridge trait exposing reth's `canonical_in_memory_state` snapshot to
 /// the generic host adapter. No reth trait exposes this method —
@@ -691,7 +691,7 @@ where
     // Cloned before `launch_dpos_layer` consumes `ctx` — used to spawn the
     // frontier-resolver keepalive task below.
     let keepalive_ctx = ctx.clone();
-    let handle = launch_dpos_layer(
+    let mut handle = launch_dpos_layer(
         ctx,
         &node,
         &cfg,
@@ -700,6 +700,7 @@ where
         cert_feed,
         plane.shared.clone(),
         plane.plane_upstream.clone(),
+        plane.evidence.clone(),
         upstream_frontier.clone(),
         shutdown_token,
     )
@@ -745,6 +746,7 @@ where
         ("poller", plane.poller_handle),
         ("beacon_resolver", plane.beacon_resolver_handle),
         ("frontier_resolver", plane.frontier_resolver_handle),
+        ("evidence", plane.evidence_handle),
     ];
     for h in plane.mux_handles {
         supervised.push(("mux", h));
@@ -752,6 +754,12 @@ where
     if let Some(h) = inlet_handle {
         supervised.push(("inlet", h));
     }
+    // Plus the layer-internal tasks spawned below the crate boundary
+    // (`epoch_bridge` in the consensus crate, `cert_feed` in `launch_dpos_layer`):
+    // detaching them made a panic in either invisible — committee rotation or the
+    // RPC feed dead with the node still passing liveness. See
+    // [`DposLayerHandle::supervised`].
+    supervised.append(&mut handle.supervised);
 
     // Frontier-resolver keepalive: the always-on plane frontier resolver
     // (`FRONTIER_CHANNEL`) is a `commonware_resolver::p2p::Engine` whose event
@@ -790,8 +798,29 @@ pub(crate) fn spawn_devnet_metrics(ctx: &Context, cfg: &DposConfig) {
             port,
             "DEVNET: serving commonware consensus metrics over HTTP (do not enable in prod)"
         );
+        // LOUD-EXIT, deliberately NOT supervised. `serve_metrics` returns on a
+        // bind failure (busy port) as well as on a dead accept loop; registering
+        // this handle with `supervise` would turn "devnet metrics port taken"
+        // into "node exits", a behaviour change on the one task whose death
+        // costs no consensus. So the exit is only made audible — a panic under
+        // `with_catch_panics(true)` is otherwise a single anonymous line and the
+        // scrape just goes quiet forever. No counter either: the only consumer
+        // of this process's registry is the endpoint that just died, so a metric
+        // here would be unscrapeable by construction; the log line is the signal.
         drop(ctx.with_label("metrics_http").spawn(move |c| async move {
-            serve_metrics(c, port).await;
+            // Catch the unwind HERE (same idiom as the boundary re-poke loop): a
+            // panic inside `serve_metrics` would otherwise skip the exit log and
+            // leave only the runtime's anonymous "task panicked" line.
+            use futures::FutureExt as _;
+            let exit = std::panic::AssertUnwindSafe(serve_metrics(c, port))
+                .catch_unwind()
+                .await;
+            error!(
+                port,
+                panicked = exit.is_err(),
+                "DEVNET: metrics_http task exited (bind failure, dead accept loop, or a panic); \
+                 the metrics endpoint is dead for the rest of this process"
+            );
         }));
     }
     #[cfg(not(feature = "dpos-devnet-metrics"))]
@@ -837,6 +866,14 @@ pub(crate) struct BeaconPlane {
     /// shutdown (it serves peers' tip/by-height fetches and drives this node's own
     /// `get_latest`/`get_finalization` for the whole process).
     pub frontier_resolver_handle: Handle<()>,
+    /// The evidence-gossip task on EVIDENCE_CHANNEL — aborted ONLY at process
+    /// shutdown. It owns both channel halves for the life of the process: peers'
+    /// republished votes come in through it and this node's own go out through
+    /// it.
+    pub evidence_handle: Handle<()>,
+    /// The slasher's end of that task. Threaded into the consensus layer, which
+    /// binds its slasher mailbox into it at launch.
+    pub evidence: fluentbase_consensus::slasher::EvidenceBridge,
     /// The plane-native `CertUpstream` client handle. Threaded into the validator
     /// overlay as the `U: CertUpstream` when no `--dpos.follower-upstream` is set, so a
     /// plain `--dpos` validator runs the jump / Hybrid backfill plane-natively.
@@ -1211,6 +1248,13 @@ where
     // that exists in BOTH the follower and signer phases, unlike the per-engine
     // boundary hook. cold_start tracks the initial committee's peer set so the node
     // is connected on BEACON_CHANNEL from block 1 of its follower phase.
+    // Committee members observed slashed for equivocation. Created here, filled by
+    // the finalized-height poller below (the sole writer) and published on
+    // `SharedBeaconPlane` so every promoted engine's `FluentApp` reads the writer's
+    // own handle. Empty at process start and refilled from chain state on the first
+    // poll — which is exactly why the reaction survives a restart, where a list of
+    // who this node personally caught misbehaving would not.
+    let tombstones = fluentbase_consensus::slasher::TombstoneSet::default();
     let (dkg_height_tx, dkg_height_rx) = mpsc::channel::<u64>(256);
     let cache = Arc::new(Mutex::new(
         ValidatorSetCache::init(ctx.with_label("beacon_plane_cache"))
@@ -1272,6 +1316,14 @@ where
         let et = et_arc.clone();
         let dkg_tx = dkg_height_tx.clone();
         let geometry_ready = geometry_ready.clone();
+        let tombstones = tombstones.clone();
+        let tombstone_reader = RethStakingStateReader::new(
+            node.provider.clone(),
+            node.evm_config.clone(),
+            staking_config.clone(),
+        );
+        let mut blocker = handles.oracle.clone();
+        let me = peer_keypair.public_key();
         ctx.with_label("beacon_plane_poller")
             .spawn(move |c| async move {
                 let mut sent = cs_fin_num;
@@ -1315,6 +1367,66 @@ where
                     };
                     if let Err(e) = outcome {
                         warn!(finalized = fin, error = ?e, "beacon plane: ET on_finalized/cold_start failed");
+                    }
+
+                    // Tombstone watch — event-driven on THIS existing poll, no
+                    // second timer (same discipline as the cold-start drive
+                    // above). The committee snapshot now carries each member's
+                    // equivocation verdict, so one read arms both reactions: the
+                    // refuse-to-bind gate in `FluentApp::verify_block`, and the
+                    // transport severance below.
+                    //
+                    // Severing the transport is the load-bearing half, not
+                    // hygiene. The batcher's inactivity rule keys on
+                    // `latest_seen`, which `record_activity` refreshes on ANY
+                    // accepted message from a participant — before signature
+                    // verification and regardless of role — so a slashed member
+                    // that merely keeps voting stays "active" indefinitely and
+                    // its leader deadline is never collapsed to now. Only
+                    // freezing `latest_seen` lets `is_active` go false after
+                    // `skip` views, at which point its slots stop costing a
+                    // timeout at all.
+                    //
+                    // This blocks through an `OracleHandle` clone rather than by
+                    // arming the wired `NoopBlocker`: `block!` discards its
+                    // reason string, so arming that switch would ban a peer on
+                    // any verdict — including a transient batch-verify failure —
+                    // and a ban is four hours of GLOBAL transport severance.
+                    // Here the verdict is on chain and permanent, so the ban is
+                    // proportionate; the delta from `observe` is what keeps it to
+                    // one call per peer instead of one per tick.
+                    let epoch = et.lock().await.epoch_at(fin);
+                    if let (Some(epoch), Ok(Some(hash))) = (epoch, provider.block_hash(fin)) {
+                        match tombstone_reader.epoch_committee_snapshot(epoch, hash) {
+                            Ok(snap) => {
+                                for peer in tombstones.observe(&snap) {
+                                    // Never sever our own transport: a node that
+                                    // has been slashed still has to follow the
+                                    // chain, and blocking itself would cut the
+                                    // connectivity it needs to do that. The
+                                    // consensus consequences of its own tombstone
+                                    // are the network's to apply, not its own.
+                                    if peer == me {
+                                        error!(
+                                            epoch,
+                                            "this validator is tombstoned for equivocation on chain"
+                                        );
+                                        continue;
+                                    }
+                                    warn!(
+                                        ?peer,
+                                        epoch,
+                                        "validator tombstoned for equivocation — severing its transport"
+                                    );
+                                    blocker.block(peer).await;
+                                }
+                            }
+                            Err(e) => debug!(
+                                epoch,
+                                error = ?e,
+                                "beacon plane: tombstone read failed; retrying on the next poll"
+                            ),
+                        }
                     }
                 }
             })
@@ -1373,6 +1485,106 @@ where
         fluentbase_consensus::PlaneUpstreamHandle::new(frontier_mailbox, frontier_waiters);
     let frontier_resolver_handle =
         frontier_engine.start((handles.frontier_sender, handles.frontier_receiver));
+
+    // EVIDENCE plane: the votes a node republishes for a round decided against
+    // them, so the two halves of a split-delivered equivocation meet somewhere
+    // (`consensus/slasher/gossip.rs`). This task owns BOTH channel halves.
+    // Inbound it verifies every forwarded vote against the epoch committee
+    // before the slasher's vote store sees it — `Activity::verified()` is false
+    // for every vote variant, so a peer can hand us a structurally valid vote
+    // carrying a bogus signature under an honest validator's name. Outbound it
+    // broadcasts what the slasher chose to publish; the slasher cannot do that
+    // itself because the p2p sender lives in this crate.
+    let (evidence_bridge, mut evidence_rx) = fluentbase_consensus::slasher::EvidenceBridge::new();
+    let evidence_committee_for: fluentbase_consensus::slasher::EvidenceCommitteeFor = {
+        let reader = RethStakingStateReader::new(
+            node.provider.clone(),
+            node.evm_config.clone(),
+            staking_config.clone(),
+        );
+        let provider = node.provider.clone();
+        let live_height = live_height.clone();
+        // Committees are epoch-frozen, so a resolved one is cacheable outright.
+        // One slot is enough: forwarded votes concern live rounds, and an epoch
+        // turn simply replaces the entry.
+        let memo: Arc<std::sync::Mutex<Option<(u64, fluentbase_bls::EpochCommittee)>>> =
+            Arc::new(std::sync::Mutex::new(None));
+        Arc::new(move |epoch: u64| {
+            let cached = memo.lock().ok().and_then(|memo| {
+                memo.as_ref()
+                    .filter(|(cached, _)| *cached == epoch)
+                    .map(|(_, committee)| committee.clone())
+            });
+            if cached.is_some() {
+                return cached;
+            }
+            // Same read cursor as `committee_for` above: committee[E] is
+            // content-invariant across any in-epoch executed hash and the live
+            // cursor is cert-finalized, so reading at the executed-but-not-yet-
+            // EL-finalized tip is sound and surfaces it sooner.
+            let fin = provider.finalized_block_number().ok().flatten();
+            let live = live_height.load(std::sync::atomic::Ordering::Relaxed);
+            if fin.is_none() && live == 0 {
+                return None;
+            }
+            let fin = fin.unwrap_or(0);
+            let hash = provider
+                .block_hash(fin.max(live))
+                .ok()
+                .flatten()
+                .or_else(|| provider.block_hash(fin).ok().flatten())?;
+            let snap = reader.epoch_committee_snapshot(epoch, hash).ok()?;
+            if snap.validators.is_empty() {
+                return None;
+            }
+            let committee =
+                fluentbase_consensus::scheme::epoch_committee_from_snapshot(&snap).ok()?;
+            if let Ok(mut memo) = memo.lock() {
+                *memo = Some((epoch, committee.clone()));
+            }
+            Some(committee)
+        })
+    };
+    let evidence_handle = {
+        let bridge = evidence_bridge.clone();
+        let mut sender = handles.evidence_sender;
+        let mut receiver = handles.evidence_receiver;
+        ctx.with_label("evidence_gossip").spawn(move |_| async move {
+            // Two independent loops, joined rather than `select!`ed: neither
+            // feeds the other, so there is no reason to drop a half-polled
+            // `recv()` every time the other side fires.
+            let inbound = async move {
+                loop {
+                    match receiver.recv().await {
+                        Ok((_from, buf)) => {
+                            // The bridge carries both what ingest needs: the
+                            // gossip half of the slasher mailbox (absent until
+                            // the consensus layer launches) and the epoch cursor
+                            // that bounds what a peer may claim.
+                            fluentbase_consensus::slasher::gossip::ingest_batch(
+                                buf.as_ref(),
+                                chain_id,
+                                &evidence_committee_for,
+                                &bridge,
+                            );
+                        }
+                        Err(e) => {
+                            warn!(error = ?e, "evidence channel receiver failed; ingest stopped");
+                            break;
+                        }
+                    }
+                }
+            };
+            let outbound = async move {
+                while let Some(batch) = evidence_rx.recv().await {
+                    if let Err(e) = sender.send(Recipients::All, batch, true).await {
+                        debug!(error = ?e, "evidence publication failed");
+                    }
+                }
+            };
+            tokio::join!(inbound, outbound);
+        })
+    };
 
     let dkg_handle = {
         let et = et_arc.clone();
@@ -1439,6 +1651,8 @@ where
         poller_handle,
         beacon_resolver_handle,
         frontier_resolver_handle,
+        evidence_handle,
+        evidence: evidence_bridge,
         plane_upstream,
         mux_handles,
         shared: SharedBeaconPlane {
@@ -1460,6 +1674,7 @@ where
             marshal_mux: Arc::new(Mutex::new(marshal_mux)),
             vote_backup,
             cache, // the ONE process-wide vsc Archive; signer `launch` clones it (no 2nd opener)
+            tombstones,
         },
         live_height,
         dkg_height_tx,
@@ -1533,6 +1748,7 @@ pub(crate) async fn launch_dpos_layer<N, AddOns>(
     cert_feed: Option<CertFeed>,
     shared_beacon: SharedBeaconPlane,
     plane_upstream: fluentbase_consensus::PlaneUpstreamHandle,
+    evidence: fluentbase_consensus::slasher::EvidenceBridge,
     upstream_frontier: std::sync::Arc<std::sync::atomic::AtomicU64>,
     shutdown_token: CancellationToken,
 ) -> eyre::Result<DposLayerHandle>
@@ -1702,6 +1918,7 @@ where
         bls_keypair,
         peer_keypair,
         slasher_sink,
+        evidence,
         staking_config,
         upstream,
         deriver,
@@ -1734,15 +1951,29 @@ where
     // Spawn the cert-feed actor on a child of the runtime context BEFORE `launch`
     // consumes `ctx`. It blocks on the channel until finalizations flow (post-launch),
     // by which point `set_marshal` (below) has run. Keep the handle for `set_marshal`.
-    let feed_handle = feed_actor_wiring.map(|(rx, handle)| {
-        let actor_handle = handle.clone();
-        drop(ctx.with_label("cert_feed").spawn(move |_| async move {
-            FeedActor::new(rx, actor_handle).run().await;
-        }));
-        handle
-    });
+    //
+    // SUPERVISED, not detached: `FeedActor::run` returns only when the `FeedSink`
+    // drops (node shutdown), so ANY earlier exit — a panic, which
+    // `with_catch_panics(true)` would otherwise reduce to one log line — means
+    // the consensus RPC feed is dead for the rest of the process while the node
+    // keeps serving. The handle rides up on [`DposLayerHandle::supervised`] to
+    // `supervise`, which treats a clean exit and a panic alike as fatal.
+    let (feed_handle, cert_feed_task) = match feed_actor_wiring {
+        Some((rx, handle)) => {
+            let actor_handle = handle.clone();
+            let task = ctx.with_label("cert_feed").spawn(move |_| async move {
+                FeedActor::new(rx, actor_handle).run().await;
+            });
+            (Some(handle), Some(task))
+        }
+        None => (None, None),
+    };
 
-    let handle: DposLayerHandle = DposLayer::launch(ctx, reth, layer_cfg, shutdown_token).await?;
+    let mut handle: DposLayerHandle =
+        DposLayer::launch(ctx, reth, layer_cfg, shutdown_token).await?;
+    if let Some(task) = cert_feed_task {
+        handle.supervised.push(("cert_feed", task));
+    }
 
     // Hand the marshal mailbox to the feed state (node-side, respecting the crate
     // boundary — consensus never names node types). Until this runs the RPC returns

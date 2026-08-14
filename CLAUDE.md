@@ -8,18 +8,22 @@ code sit on commonware" directly. The reth fork is a **separate** graph at
 `~/Work/graphs/reth/graphify-out/`; query it with `cd ~/Work/graphs/reth` or
 `--graph ~/Work/graphs/reth/graphify-out/graph.json`.
 
-The three verified reference docs (`.claude/DPOS_ARCHITECTURE.md`,
-`COMMONWARE_INTERNALS.md`, `RETH_INTERNALS.md`) are extracted into the graph as
-325 concept/rationale nodes wired to the code by 437 edges — so `explain` on a
-symbol returns both its code neighbours and what we already established about it
-(invariants, Rule SA/PIN, fork-delta traps).
+The four verified reference docs (`.claude/DPOS_ARCHITECTURE.md`,
+`DPOS_AUDIT.md`, `COMMONWARE_INTERNALS.md`, `RETH_INTERNALS.md`) are extracted
+into the graph as **463 concept/rationale nodes** (310 / 47 / 42 / 64) wired to
+each other by 516 edges and to the code by 76 — so `explain` on a symbol returns
+both its code neighbours and what we already established about it (invariants,
+Rule SA/PIN, fork-delta traps, and the audit row that bears on it).
+`DPOS_ARCHITECTURE_CHANGELOG.md` is deliberately **NOT** extracted: it is landing
+history, not spec, and its retired mechanisms would read as current facts.
 
 Those nodes survive `graphify update` — it merges into the existing graph.json via
-`build_merge` and only prunes genuinely deleted files (verified by simulating a
-merge: 325 doc nodes in, 325 out). They are LLM-extracted and cost ~455k tokens,
-so do NOT rebuild the graph from scratch without re-running the doc extraction —
-that is what loses them. Editing a `.claude/*.md` does not refresh its concepts
-either; re-extract that doc deliberately when it changes materially.
+`build_merge`, which replaces per `source_file` and only prunes genuinely deleted
+files. They are LLM-extracted, so do NOT rebuild the graph from scratch without
+re-running the doc extraction — that is what loses them. Editing a `.claude/*.md`
+does not refresh its concepts either (`graphify update` is code-only, and
+`.claude/` is outside the corpus scan entirely); re-extract that doc deliberately
+when it changes materially. Last doc re-extraction: 2026-08-10.
 
 Rules:
 - For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.

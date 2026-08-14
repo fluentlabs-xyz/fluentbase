@@ -36,6 +36,47 @@ def test_cast_field(lineno, text, expected):
     assert rpc.cast_field(lineno, text) == expected
 
 
+# ── the silent-truncation guards ─────────────────────────────────────────────
+# `cast` decodes a return blob against the signature IT WAS GIVEN, not against the one the
+# contract has. Hand it a signature with fewer return values than the contract returns and it
+# decodes the PREFIX, prints it, and exits 0 — no diagnostic anywhere. `cast_field` cannot see
+# that; these two can.
+
+def test_cast_returns_accepts_the_expected_arity():
+    assert rpc.cast_returns("  [0xaa]\n  [0xbb]  ", 2, "twoValues") == ["[0xaa]", "[0xbb]"]
+    assert rpc.cast_returns("7", 1, "oneValue") == ["7"]
+
+
+@pytest.mark.parametrize("text,want", [
+    ("[0xaa]", 2),                    # the contract grew a return value the signature lacks
+    ("[0xaa]\n[0xbb]\n[0xcc]", 2),    # ...or the signature grew one the contract lacks
+    ("", 1),                          # nothing at all
+])
+def test_cast_returns_refuses_a_different_arity(text, want):
+    with pytest.raises(rpc.CastDecodeError):
+        rpc.cast_returns(text, want, "drifted")
+
+
+def test_cast_addr_array_lowercases_and_orders_as_read():
+    """Order is preserved, NOT sorted: the committee's on-chain order is its consensus index
+    space, and a caller that wants set-membership sorts for itself."""
+    got = rpc.cast_addr_array(f"[0x{'A' * 40}, 0x{'b' * 40}]", "getEpochCommittee(3)")
+    assert got == ["0x" + "a" * 40, "0x" + "b" * 40]
+    assert rpc.cast_addr_array("[]", "getEpochCommittee(3)") == []
+
+
+@pytest.mark.parametrize("text,why", [
+    ("0x" + "a" * 40, "a bare address — what a wrong signature decodes to"),
+    ("[0xaa]", "a bracketed value that is not an address"),
+    (f"[0x{'a' * 40}]\n[0x{'b' * 40}]", "two return values where one was asked for"),
+])
+def test_cast_addr_array_refuses_anything_that_is_not_an_address_array(text, why):
+    """A regex sweep for `0x`+40 hex over raw stdout accepted all three, which is how a wrong
+    signature read as a plausible committee."""
+    with pytest.raises(rpc.CastDecodeError):
+        rpc.cast_addr_array(text, "getEpochCommittee(3)")
+
+
 def test_num_hash_coercion():
     out = json.dumps({"result": {"number": "0x10", "hash": "0xabc"}})
     assert nodes._num_hash(out) == ("0x10", "0xabc")

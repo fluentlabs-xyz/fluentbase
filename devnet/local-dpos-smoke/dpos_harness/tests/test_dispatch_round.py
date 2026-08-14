@@ -226,6 +226,21 @@ def test_growth_landing_high_water():
     assert s.grow_landed == 6
 
 
+def test_live_voter_idx_spans_the_minted_high_water():
+    """The sim's gov voter ceiling is the MINTED high-water (`max_minted_idx`), NOT the configured
+    validator count: churn mints identities past the pool, and one of them seated in the committee
+    holds stake the 2/3 STAKE quorum sums — outside any prefix, and outside a validators-sized
+    ceiling too. Read from state on every call, since minting moves it mid-run.
+
+    (`_live_voter_idx` shares `core.policy.gov_live_voter_idx` with the growth case, which passes a
+    validator-count ceiling instead; this pins that the sim's own ceiling did not travel with it.)"""
+    chain = FakeChain(committee_next="0xowner1 0xowner9")
+    d, s, _ = _disp(chain=chain, max_minted_idx=9)
+    assert d._live_voter_idx(4) == [1, 9]
+    s.max_minted_idx = 5
+    assert d._live_voter_idx(4) == [1]
+
+
 def test_warm_stint_budget_expires_and_resets():
     d, s, chain = _disp()
     d.promote_warm_max_rounds = 2

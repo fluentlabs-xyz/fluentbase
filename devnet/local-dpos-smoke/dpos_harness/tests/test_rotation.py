@@ -60,12 +60,30 @@ def test_stake_delegate_approves_then_delegates():
     assert _find(r, "cast", "send", "delegate(address,uint256)", "10000000000000000000")
 
 
-def test_remove_validator_uses_governance():
-    """sim_remove_validator: removeValidator(address) via the gov propose→vote→execute flow."""
-    c, r = _chain()
-    c.remove_validator(6)
-    assert _find(r, "cast", "calldata", "removeValidator(address)")
+def test_force_disable_uses_governance_on_an_active_validator():
+    """`force_disable` on an Active identity: `disableValidator(address)` through the gov
+    propose→vote→execute flow, targeting the STAKING address.
+
+    `removeValidator` does not exist on the module — the terminal roster removal it named is
+    gone, and `disableValidator` is what is left."""
+    c, r = _chain(**{"cast call": "0x000000000000000000000000000000000000dEaD 1"})   # Active
+    assert c.force_disable(6) is True
+    assert _find(r, "cast", "calldata", "disableValidator(address)")
     assert _find(r, "cast", "send", "0xGOV", "propose(address[],uint256[],bytes[],string)(uint256)")
+    assert _find(r, "cast", "calldata", "removeValidator(address)") is None
+
+
+@pytest.mark.parametrize("status,name", [("3", "jailed"), ("2", "pending"), ("0", "not-found")])
+def test_force_disable_burns_no_governance_round_on_a_non_active_validator(status, name):
+    """`disableValidator` REVERTS unless the validator is currently Active
+    (`staking.rs::disable_validator`). The caller reaches this on a starved equivocator the
+    slasher may already have jailed, so a blind call would be three voters' worth of
+    transactions and a `gov-execute-reverted` raise on a round that could only ever revert.
+    False means "no round needed", not "failed" — the identity is already out of selection."""
+    c, r = _chain(**{"cast call": f"0x000000000000000000000000000000000000dEaD {status}"})
+    assert c.force_disable(6) is False
+    assert _find(r, "cast", "send", "0xGOV",
+                 "propose(address[],uint256[],bytes[],string)(uint256)") is None
 
 
 def test_activate_bench_registers_activates_delegates_low_no_cap_raise():
@@ -144,8 +162,10 @@ class FakeChain:
     def stake_delegate(self, idx, amount, key=None):
         self.calls.append(("stake_delegate", str(idx), str(amount)))
 
-    def remove_validator(self, idx, voter_idx=None):
-        self.calls.append(("remove_validator", str(idx)))
+    def force_disable(self, idx, voter_idx=None):
+        self.calls.append(("force_disable", str(idx)))
+        # True == "a governance round was issued", which is what the Active default means here.
+        return self.validator_status(self.owner_addr(idx)) == "1"
 
     def activate_bench(self, idx, stake, voter_idx=None):
         self.calls.append(("activate_bench", str(idx), str(stake)))
@@ -351,7 +371,8 @@ def test_activate_bench_notfound_full_register_path():
     c, r = _chain(**{"cast call": "0x000000000000000000000000000000000000dEaD 0"})
     with pytest.raises(ChainError):
         c.activate_bench(13, "4000000000000000000")
-    assert _find(r, "cast", "send", "registerValidator(address,uint16,uint256)")
+    assert _find(r, "cast", "send",
+                 "registerValidator(address,uint16,uint256,bytes,bytes,bytes32)")
 
 
 def test_rotation_transient_stays_reversible_no_rekey():
@@ -447,29 +468,30 @@ def test_process_rotations_emits_stall_when_overdue():
     assert hp.rebirths == []                              # diagnostic only — no rekey forced
 
 
-# ── a27: byzantine departure fallback — force removeValidator for a starved equivocator ──
+# ── a27: byzantine departure fallback — force the departure of a starved equivocator ──
 def test_process_rotations_forces_removal_for_starved_byzantine():
     """v61 a27: a byzantine victim that never won a proposal slot to equivocate stays seated (the
-    slasher saw no evidence). Past the horizon, force removeValidator (latched) so the rekey proceeds."""
+    slasher saw no evidence). Past the horizon, force the departure (latched) so the rekey
+    proceeds. `force_disable` replaces the retired `remove_validator`."""
     chain = FakeChain(seated=range(7))                    # idx-4 STILL seated past the horizon
     hp = FakeHP()
     rec, s = _rec(chain, hp, rotation_phase=1)
     s.rekey_pending = {"validator-4": {"epoch": 10, "cause": "byzantine", "idx": "4"}}
     rec.process_rotations(10 + s.cfg.rotation_confirm_epochs + 1)
-    assert ("remove_validator", "4") in chain.calls
+    assert ("force_disable", "4") in chain.calls
     assert s.rekey_pending["validator-4"].get("force_removed") is not None
     assert hp.rebirths == []                              # still seated → not yet rekeyed
 
 
 def test_process_rotations_forced_removal_is_idempotent():
-    """The gov removeValidator round is issued exactly once (force_removed latch)."""
+    """The gov round is issued exactly once (force_removed latch)."""
     chain = FakeChain(seated=range(7))
     hp = FakeHP()
     rec, s = _rec(chain, hp, rotation_phase=1)
     s.rekey_pending = {"validator-4": {"epoch": 10, "cause": "byzantine", "idx": "4"}}
     rec.process_rotations(10 + s.cfg.rotation_confirm_epochs + 1)
     rec.process_rotations(10 + s.cfg.rotation_confirm_epochs + 2)
-    assert sum(1 for c in chain.calls if c[0] == "remove_validator") == 1
+    assert sum(1 for c in chain.calls if c[0] == "force_disable") == 1
 
 
 def test_process_rotations_voluntary_stall_not_force_removed():
@@ -479,19 +501,19 @@ def test_process_rotations_voluntary_stall_not_force_removed():
     rec, s = _rec(chain, hp, rotation_phase=1)
     s.rekey_pending = {"validator-4": {"epoch": 10, "cause": "voluntary", "idx": "4"}}
     rec.process_rotations(10 + s.cfg.rotation_confirm_epochs + 1)
-    assert not any(c[0] == "remove_validator" for c in chain.calls)
+    assert not any(c[0] == "force_disable" for c in chain.calls)
     assert any("rotation-stall" in str(e) for e in rec.events)
 
 
 def test_process_rotations_rekeys_after_forced_removal():
-    """Once forced removeValidator lands and the identity leaves the committee, the normal byzantine
+    """Once the forced disable lands and the identity leaves the committee, the normal byzantine
     rekey fires (consumes a fresh key — byzantine is the permanent consumer)."""
     chain = FakeChain(seated=range(7))                    # idx-4 seated
     hp = FakeHP()
     rec, s = _rec(chain, hp, rotation_phase=1)
     s.next_rekey_idx = s.cfg.val_containers               # 11
     s.rekey_pending = {"validator-4": {"epoch": 10, "cause": "byzantine", "idx": "4"}}
-    rec.process_rotations(10 + s.cfg.rotation_confirm_epochs + 1)   # force removeValidator (still seated)
+    rec.process_rotations(10 + s.cfg.rotation_confirm_epochs + 1)   # force disable (still seated)
     chain.seated = {f"0xowner{i}" for i in [0, 1, 2, 3, 5, 6]}      # idx-4 now dropped by the chain
     rec.process_rotations(10 + s.cfg.rotation_confirm_epochs + 2)
     assert hp.rebirths == [("validator-4", "11")]         # now rekeyed under a fresh pool key

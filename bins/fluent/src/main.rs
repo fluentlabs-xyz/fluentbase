@@ -209,8 +209,6 @@ fn main() {
         node_stack,
         cert_rpc_feed,
         staking_address,
-        chain_config_address,
-        liveness_slashing_address,
         staking_reader_cfg,
     } = modes;
 
@@ -245,8 +243,6 @@ fn main() {
                 spec.clone(),
                 fluentbase_node::evm::FluentEvmFactory::default(),
                 staking_address,
-                chain_config_address,
-                liveness_slashing_address,
             ),
             Arc::new(FluentConsensus::new(spec)),
         )
@@ -271,11 +267,7 @@ fn main() {
 
         let components_builder = FluentNode::with_dpos_active(!staking_address.is_zero())
             .components_builder()
-            .executor(FluentExecutorBuilder::new(
-                staking_address,
-                chain_config_address,
-                liveness_slashing_address,
-            ));
+            .executor(FluentExecutorBuilder::new(staking_address));
         let add_ons = EthereumAddOns::default();
 
         let handle: DebugNodeLauncherFuture<_, _, _> = builder
@@ -305,12 +297,12 @@ fn main() {
         // tick/block (NOT once at launch): a node started before governance
         // schedules activation must still gate / mirror without a restart,
         // and a pending activation may be re-scheduled. Pre-deploy (codeless
-        // ChainConfig) and unscheduled (0) both map to None; consumers latch
+        // staking contract) and unscheduled (0) both map to None; consumers latch
         // the last Some, so every failure path below must be observable
         // (warn) — a silent None is indistinguishable from "not scheduled
         // yet" and would hide a degraded provider from operators.
         let activation_probe: Option<ActivationProbe> = match &staking_reader_cfg {
-            Some(cfg) if !cfg.chain_config_address.is_zero() => {
+            Some(cfg) if !cfg.staking_address.is_zero() => {
                 let reader = fluentbase_staking_reader::RethStakingStateReader::new(
                     handle.node.provider.clone(),
                     handle.node.evm_config.clone(),

@@ -8,7 +8,7 @@ with locally-tracked nonces, paced so LOAD_SENDERS×rate×LOAD_TX_GAS ≈ fracti
 LIFECYCLE (self-supervising, one process):
   start     — launch; writes a pidfile "<pid> <pgid> <start_epoch>".
   wait      — LOAD_WAIT_MARKER_LOG gates ALL funding behind that log's first run-started marker
-              (DeployStaking-complete; incidents v51/v54/v55). Bounded retry/backoff. The marker
+              (the sim's first completed round; incidents v51/v54/v55). Bounded retry/backoff. The marker
               PATTERN is LOAD_WAIT_MARKER_RE, defaulting to core.events.HEARTBEAT_MARKER_RE — this
               module holds no consumer's log format (C9).
   supervise — restart any sender that dies (counter + exponential backoff, flap-reset), emit the
@@ -337,7 +337,7 @@ class Sender:
             if self.wait_marker_log and not lh_log_has_marker(self.wait_marker_log,
                                                               self.wait_marker_re):
                 reason = (f"run-started marker /{self.wait_marker_re}/ not yet in "
-                          f"{self.wait_marker_log} (DeployStaking incomplete — funding now would "
+                          f"{self.wait_marker_log} (bring-up incomplete — funding now would "
                           "corrupt the dev-EOA nonce)")
             elif not self._rpc_ready():
                 reason = f"RPC {self.rpc} not answering eth_blockNumber"

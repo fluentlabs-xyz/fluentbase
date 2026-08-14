@@ -15,32 +15,34 @@ enables it). NEVER in prod. Long (~8-10 min), foundry-gated; NOT in run-all.
 
 The bash builds its own bring-up inline (`:163-297`) rather than calling `pp_bring_up_rotation`,
 and the plan flags that as something to check before routing it through the shared one. Read line
-by line, the two differ in exactly THREE places and only two of them are load-bearing:
+by line, the two differ in exactly TWO places, both load-bearing:
 
   1. **A third compose file at the cold restart** — `docker-compose.byzantine-vrf.yml`, which puts
      `FLUENT_DPOS_BYZANTINE=forge-beacon-pk` on one validator. LOAD-BEARING, and it is the whole
      case. Expressed as `ProductionPathProfile.extra_overlays`, which appends it to the DPoS pair
      and leaves phase A on the bare file, exactly as the bash `export COMPOSE_FILE` sequence does.
-  2. **Five extra deployer-funded transfers after DeployStaking** — LOAD-BEARING in their ORDERING
-     rather than their content: sending them before the deploy would advance the deployer nonce and
-     shift DeployStaking's CREATE addresses off the prediction baked into `staking-reader.json`, so
-     the node would read ChainConfig at the wrong address and the cold start would fail. Expressed
-     as `RotationBringUp`'s `post_manifest` seam, which fires immediately after the manifest is
-     read and before the first governance write — bash's position exactly.
-  3. **The staking-reader assert is hoisted** ahead of `setBlsVerifier`, where the shared bring-up
-     runs it after `setDposActivationBlock`. NOT load-bearing: both of its operands — a static file
-     written by genesis-init and a manifest already written by DeployStaking — are fixed before
-     either position is reached, and nothing between the two positions writes to either. The check
-     cannot change its answer, only its line number in the transcript.
+  2. **Five extra deployer-funded transfers, after the staking module exists** — LOAD-BEARING in
+     their ORDERING rather than their content. Their ORIGINAL justification was a create-nonce
+     one — an earlier transfer would shift the deploy's CREATE addresses off the prediction in
+     `staking-reader.json` — and that is gone with the prediction. The position survives for a
+     reason that justification hid: they move BLEND and they act through a `Chain`, so they
+     cannot run before the token has been deployed and the module installed, and they must still
+     precede the first governance write. Expressed as `RotationBringUp`'s `post_manifest` seam,
+     which fires exactly there.
+
+The bash's THIRD difference — the staking-reader assert hoisted ahead of `setBlsVerifier` — is
+gone with both of the steps it sat between. There is no create-nonce prediction to assert against
+and no `setBlsVerifier`; the verifier rides `initialize`.
 
 Everything else — the phase-A converge budget, the spammer, the two `forge create`s, the BLEND to
-the joiner, DeployStaking, `setBlsVerifier`, `setConsensusKeys` v0..v4, the activation-block
-governance call, the clean-halt wait, the recreate argv including `full-node`, the converge past
-the anchor and the `getEpochBlockInterval` read — is identical, budget for budget.
+the joiner, the runtime-upgrade delivery, `initialize` seeding v0..v4, the two governance config
+calls, the activation-block governance call, the clean-halt wait, the recreate argv including
+`full-node`, the converge past the anchor and the `getEpochBlockInterval` read — is identical,
+budget for budget.
 
-So the case does NOT get a bring-up of its own here. Two seams plus one provably-inert reordering
-is a far smaller surface than a second copy of the 14-phase forge bring-up, which is where the bug
-density in this family actually lives (`plan §11`).
+So the case does NOT get a bring-up of its own here. Two seams is a far smaller surface than a
+second copy of the bring-up, which is where the bug density in this family actually lives
+(`plan §11`).
 
 ═══ WHY REPEATED COMMITTEE FLIPS ══════════════════════════════════════════════════════════
 

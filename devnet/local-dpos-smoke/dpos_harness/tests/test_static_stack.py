@@ -61,7 +61,7 @@ def test_static_profile_publishes_no_compose_file_env():
 def test_generated_profile_does_publish_one():
     """The other profile drives compose through the ambient env var — that asymmetry is the
     whole reason `compose_file_env` is a question a profile answers rather than a constant."""
-    g = GeneratedProfile(6, 4, 8)
+    g = GeneratedProfile(6, 4, 8, 4)
     assert g.compose_file_env("base") == "docker-compose.sim.gen.yml"
     assert g.compose_file_env("dpos") == ("docker-compose.sim.gen.yml:"
                                           "docker-compose.sim.dpos.gen.yml")
@@ -71,7 +71,7 @@ def test_bringup_derives_its_compose_constants_from_the_profile():
     """`stack/bringup.py`'s module constants are the generated profile's answer, not a second
     copy of the filenames. Asserted so the two cannot drift apart."""
     from dpos_harness.stack import bringup
-    g = GeneratedProfile(1, 1, 1)
+    g = GeneratedProfile(1, 1, 1, 1)
     assert bringup.BASE_COMPOSE == g.compose_file_env("base")
     assert bringup.DPOS_COMPOSE == g.compose_file_env("dpos")
 
@@ -79,7 +79,7 @@ def test_bringup_derives_its_compose_constants_from_the_profile():
 def test_both_profiles_answer_the_same_interface():
     """The point of §3.4: a caller can hold either one. Checked structurally rather than by
     duck-typing at the call site, which is how the sim's `SimConfig` leak happened."""
-    for p in (StaticProfile(), GeneratedProfile(6, 4, 8)):
+    for p in (StaticProfile(), GeneratedProfile(6, 4, 8, 4)):
         assert isinstance(p, profiles.StackProfile)
         assert p.compose_files("dpos") and p.compose_args("dpos") and p.committee()
         p.prepare(Runner(dry=True))          # must not raise; static is a no-op

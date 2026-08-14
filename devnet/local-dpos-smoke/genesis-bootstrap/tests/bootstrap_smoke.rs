@@ -5,9 +5,8 @@ use alloy_sol_types::{sol, SolCall, SolValue};
 use fluentbase_genesis_bootstrap::{
     artifacts, bootstrap,
     bootstrap::{
-        PredeployState, BLEND_RESERVE_ADDR, BLS_VERIFIER_ADDR, CHAIN_CONFIG_ADDR, GOVERNANCE_ADDR,
-        LIVENESS_SLASHING_ADDR, STAKING_ADDR, STAKING_POOL_ADDR, STAKING_TOKEN_ADDR,
-        SYSTEM_REWARD_ADDR,
+        PredeployState, BLS_VERIFIER_ADDR, GOVERNANCE_ADDR, GOVERNANCE_VOTING_PERIOD_BLOCKS,
+        STAKING_ADDR, STAKING_POOL_ADDR, STAKING_TOKEN_ADDR,
     },
     keys,
 };
@@ -15,6 +14,10 @@ use fluentbase_testing::EvmTestingContext;
 
 const SMOKE_CHAIN_ID: u64 = 2026;
 const SMOKE_MNEMONIC: &str = "test test test test test test test test test test test junk";
+/// The contract's `MIN_COMMITTEE_LENGTH` (`consts.rs:388`): `commitEpochCommittee`
+/// reverts `ERR_COMMITTEE_TOO_SMALL` below it, so a bootstrap with fewer peers
+/// cannot complete at all.
+const SMOKE_PEERS: u32 = 4;
 
 fn contracts_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -23,28 +26,34 @@ fn contracts_dir() -> PathBuf {
         .join("contracts")
 }
 
-fn run_bootstrap(peers: u32) -> (keys::KeySet, PredeployState) {
+fn run_bootstrap() -> (keys::KeySet, PredeployState) {
+    run_bootstrap_with(SMOKE_PEERS, bootstrap::BootstrapParams::default())
+}
+
+fn run_bootstrap_with(
+    peers: u32,
+    params: bootstrap::BootstrapParams,
+) -> (keys::KeySet, PredeployState) {
     let key_set = keys::derive(SMOKE_MNEMONIC, peers, SMOKE_CHAIN_ID).unwrap();
     let arts = artifacts::load(&contracts_dir()).unwrap();
-    let state = bootstrap::run(&key_set, &arts, SMOKE_CHAIN_ID).unwrap();
+    let state = bootstrap::run(&key_set, &arts, SMOKE_CHAIN_ID, &params).unwrap();
     (key_set, state)
 }
 
 // Rebuild a minimal EvmTestingContext from the produced PredeployState so
-// integration assertions can invoke staking getters (`getEpochCommittee`,
-// `getConsensusKeys`) against the same EVM state the runtime nodes will
-// see at genesis.
+// integration assertions can invoke staking getters against the same EVM state
+// the runtime nodes will see at genesis.
 fn ctx_from_predeploy(state: &PredeployState) -> EvmTestingContext {
     let fluent_contracts: Vec<_> = fluentbase_genesis::GENESIS_CONTRACTS_BY_ADDRESS
         .values()
         .cloned()
         .collect();
     let mut ctx = EvmTestingContext::default().with_contracts(&fluent_contracts);
-    // The predeploy snapshot stores production-form bytecode — EVM runtime code
-    // wrapped as OwnableAccount(PRECOMPILE_EVM_RUNTIME, ..) with the 0xEF44 magic
-    // (see bootstrap::snapshot). Executing it requires the rWASM path (which
-    // delegates the wrapper to the EVM_RUNTIME precompile), exactly like the
-    // production node; the mainnet-legacy path would read 0xEF as an invalid
+    // The predeploy snapshot stores production-form bytecode — the rWasm staking
+    // module verbatim, and EVM runtime code wrapped as
+    // OwnableAccount(PRECOMPILE_EVM_RUNTIME, ..) with the 0xEF44 magic (see
+    // bootstrap::wrap_for_rwasm). Executing either requires the rWASM path, exactly
+    // like the production node; the mainnet-legacy path would read 0xEF as an invalid
     // opcode and halt OpcodeNotFound.
     ctx.disabled_rwasm = false;
     ctx.cfg.limit_contract_code_size = Some(usize::MAX);
@@ -81,13 +90,19 @@ sol! {
     }
     interface IStakingView {
         function getEpochCommittee(uint64 epoch) external view returns (address[] memory);
+        function getEpochCommitteeWithStakes(uint64 epoch) external view returns (
+            address[] addrs, ConsensusKeys[] keys, uint256[] stakes, bool[] tombstoned);
         function getConsensusKeys(address validator) external view returns (ConsensusKeys memory);
-    }
-    interface IBlendReserveView {
-        function reserveBalance() external view returns (uint256);
-    }
-    interface IChainConfigView {
+        function getProductionLivenessDisabled() external view returns (bool);
         function getBlendStipendPerEpoch() external view returns (uint256);
+        function getDposActivationBlock() external view returns (uint64);
+        function getActiveValidatorsLength() external view returns (uint32);
+    }
+    interface IERC20View {
+        function balanceOf(address account) external view returns (uint256);
+    }
+    interface IGovernorView {
+        function votingPeriod() external view returns (uint256);
     }
 }
 
@@ -101,18 +116,14 @@ fn eth_call(ctx: &mut EvmTestingContext, to: Address, input: Bytes) -> Vec<u8> {
 
 #[test]
 fn bootstrap_produces_all_predeploy_bytecode() {
-    let (_keys, state) = run_bootstrap(2);
+    let (_keys, state) = run_bootstrap();
 
     for addr in [
         STAKING_ADDR,
-        CHAIN_CONFIG_ADDR,
         STAKING_POOL_ADDR,
-        SYSTEM_REWARD_ADDR,
         GOVERNANCE_ADDR,
-        LIVENESS_SLASHING_ADDR,
         STAKING_TOKEN_ADDR,
         BLS_VERIFIER_ADDR,
-        BLEND_RESERVE_ADDR,
     ] {
         let code = state
             .bytecode_by_address
@@ -122,32 +133,31 @@ fn bootstrap_produces_all_predeploy_bytecode() {
     }
 }
 
-/// The stipend end-to-end wiring: the bootstrap must deploy + seed `BlendReserve`
-/// so `reserveBalance()` is non-zero AND flip the ChainConfig kill-switch ON so
-/// `getBlendStipendPerEpoch()` is non-zero. Without both, `settleEpochStipend`
-/// (injected every block by the executor) is a permanent no-op and no validator
-/// reward is ever distributed — the integration gap this proves closed. Reads the
-/// same genesis state the runtime nodes see, through the production rWASM path.
+/// The two configuration decisions `initialize` deliberately does NOT make. It
+/// writes `productionLivenessDisabled = true` (the tier ships off, and an unwritten
+/// slot would ship it on) and leaves the stipend at its zero kill-switch, so both
+/// have to arrive as governance calls. Miss either and the devnet runs with the
+/// liveness tier dark and every validator reward a permanent no-op — silently, since
+/// both states are legal. Reads the genesis state through the production rWASM path.
 #[test]
-fn bootstrap_seeds_blend_reserve_and_configures_stipend() {
-    let (_keys, state) = run_bootstrap(2);
+fn bootstrap_makes_the_two_config_calls_initialize_cannot() {
+    let (_keys, state) = run_bootstrap();
     let mut ctx = ctx_from_predeploy(&state);
 
-    let reserve_out = eth_call(
+    let disabled_out = eth_call(
         &mut ctx,
-        BLEND_RESERVE_ADDR,
-        IBlendReserveView::reserveBalanceCall {}.abi_encode().into(),
+        STAKING_ADDR,
+        IStakingView::getProductionLivenessDisabledCall {}
+            .abi_encode()
+            .into(),
     );
-    let reserve = U256::abi_decode(&reserve_out).expect("decode reserveBalance");
-    assert!(
-        reserve > U256::ZERO,
-        "BlendReserve must be seeded with BLEND"
-    );
+    let disabled = bool::abi_decode(&disabled_out).expect("decode getProductionLivenessDisabled");
+    assert!(!disabled, "production-liveness tier must be ON in devnet");
 
     let stipend_out = eth_call(
         &mut ctx,
-        CHAIN_CONFIG_ADDR,
-        IChainConfigView::getBlendStipendPerEpochCall {}
+        STAKING_ADDR,
+        IStakingView::getBlendStipendPerEpochCall {}
             .abi_encode()
             .into(),
     );
@@ -160,7 +170,7 @@ fn bootstrap_seeds_blend_reserve_and_configures_stipend() {
 
 #[test]
 fn bootstrap_commits_epoch_zero_committee() {
-    let (key_set, state) = run_bootstrap(2);
+    let (key_set, state) = run_bootstrap();
     let mut ctx = ctx_from_predeploy(&state);
 
     let calldata = IStakingView::getEpochCommitteeCall { epoch: 0 }.abi_encode();
@@ -181,9 +191,175 @@ fn bootstrap_commits_epoch_zero_committee() {
     }
 }
 
+/// Peer-key ascending IS the consensus index space: the node writes a commonware
+/// `Participant` index into the block and the contract resolves the victim of a slash
+/// positionally from this array. The contract produces the order and nothing on this
+/// side re-derives it, so this is the only place the agreement is checked — and a
+/// duplicate would make two positions indistinguishable, hence strict.
+#[test]
+fn committed_committee_is_strictly_ascending_on_peer_pubkey() {
+    let (_keys, state) = run_bootstrap();
+    let mut ctx = ctx_from_predeploy(&state);
+
+    let calldata = IStakingView::getEpochCommitteeWithStakesCall { epoch: 0 }.abi_encode();
+    let out = eth_call(&mut ctx, STAKING_ADDR, calldata.into());
+    let decoded = IStakingView::getEpochCommitteeWithStakesCall::abi_decode_returns(&out)
+        .expect("decode getEpochCommitteeWithStakes");
+
+    assert_eq!(decoded.keys.len(), decoded.addrs.len());
+    for pair in decoded.keys.windows(2) {
+        assert!(
+            pair[0].peerPubkey < pair[1].peerPubkey,
+            "committee not strictly ascending on peer pubkey: {:?} then {:?}",
+            pair[0].peerPubkey,
+            pair[1].peerPubkey
+        );
+    }
+}
+
+/// The sim/soak shape: a derived identity POOL wider than the set of nodes actually
+/// run, BLEND on `validator-0`'s owner key rather than on the governance signer, and
+/// no activation scheduled at genesis. Each of the three defaults is wrong for that
+/// stand in a way that is silent or fatal — a committee holding identities with no
+/// node behind them never finalizes, a supply on an unspendable account fails every
+/// later delegation, and an activation block already in the past cannot be moved.
+#[test]
+fn sim_shape_seats_a_prefix_and_defers_activation() {
+    const POOL: u32 = 6;
+    const SEATED: usize = 4;
+    let pool_keys = keys::derive(SMOKE_MNEMONIC, POOL, SMOKE_CHAIN_ID).unwrap();
+    let blend_holder = pool_keys.validators[0].l2_signer.address();
+    let governance = pool_keys.governance_signer.address();
+    let (key_set, state) = run_bootstrap_with(
+        POOL,
+        bootstrap::BootstrapParams {
+            committee_size: Some(SEATED),
+            blend_holder: Some(blend_holder),
+            dpos_activation_block: Some(0),
+        },
+    );
+    let mut ctx = ctx_from_predeploy(&state);
+
+    let out = eth_call(
+        &mut ctx,
+        STAKING_ADDR,
+        IStakingView::getEpochCommitteeCall { epoch: 0 }
+            .abi_encode()
+            .into(),
+    );
+    let committee = <Vec<Address>>::abi_decode(&out).expect("decode getEpochCommittee");
+    let expected: Vec<Address> = key_set.validators[..SEATED]
+        .iter()
+        .map(|v| v.l2_signer.address())
+        .collect();
+    assert_eq!(committee.len(), SEATED);
+    for addr in &expected {
+        assert!(committee.contains(addr), "seated {addr:?} not in committee");
+    }
+    for v in &key_set.validators[SEATED..] {
+        assert!(
+            !committee.contains(&v.l2_signer.address()),
+            "unseated validator-{} reached the committee",
+            v.idx
+        );
+    }
+
+    let cap_out = eth_call(
+        &mut ctx,
+        STAKING_ADDR,
+        IStakingView::getActiveValidatorsLengthCall {}
+            .abi_encode()
+            .into(),
+    );
+    let cap = u32::abi_decode(&cap_out).expect("decode getActiveValidatorsLength");
+    assert_eq!(cap as usize, SEATED);
+
+    let activation_out = eth_call(
+        &mut ctx,
+        STAKING_ADDR,
+        IStakingView::getDposActivationBlockCall {}
+            .abi_encode()
+            .into(),
+    );
+    let activation = u64::abi_decode(&activation_out).expect("decode getDposActivationBlock");
+    assert_eq!(activation, 0, "activation must stay unscheduled at genesis");
+
+    let holder_balance = balance_of(&mut ctx, blend_holder);
+    assert!(
+        holder_balance > U256::ZERO,
+        "BLEND supply did not reach the named holder"
+    );
+    assert_eq!(
+        balance_of(&mut ctx, governance),
+        U256::ZERO,
+        "governance signer still holds BLEND the harness cannot spend"
+    );
+}
+
+/// `bare` installs the Governor and NOTHING else. Both halves are load-bearing: the
+/// staking module compiles `GENESIS_GOVERNANCE` in as the sole caller its setters
+/// accept, so a missing Governor makes every post-delivery governance write hit an
+/// address with no code — which answers Success-with-empty-output, not a revert, so the
+/// stand reads it as a proposal that never became Active rather than as a fault. And
+/// the staking address must stay codeless, because that is what the stand's premise and
+/// the reader's code-presence probe both key off.
+#[test]
+fn bare_installs_only_the_governor() {
+    let key_set = keys::derive(SMOKE_MNEMONIC, SMOKE_PEERS, SMOKE_CHAIN_ID).unwrap();
+    let governance_init = artifacts::load_governance(&contracts_dir()).unwrap();
+    let state = bootstrap::run_governance_only(&key_set, &governance_init, SMOKE_CHAIN_ID).unwrap();
+
+    let governor = state
+        .bytecode_by_address
+        .get(&GOVERNANCE_ADDR)
+        .expect("no code at GENESIS_GOVERNANCE");
+    assert!(!governor.is_empty());
+    assert_eq!(
+        state.bytecode_by_address.len(),
+        1,
+        "bare installed more than the Governor: {:?}",
+        state.bytecode_by_address.keys().collect::<Vec<_>>()
+    );
+    for addr in [
+        STAKING_ADDR,
+        STAKING_POOL_ADDR,
+        STAKING_TOKEN_ADDR,
+        BLS_VERIFIER_ADDR,
+    ] {
+        assert!(
+            !state.bytecode_by_address.contains_key(&addr),
+            "bare must leave {addr:?} codeless"
+        );
+    }
+
+    // Initialized, and executable in the production wrapped form — a Governor whose
+    // `initialize` silently did nothing looks identical in the alloc.
+    let mut ctx = ctx_from_predeploy(&state);
+    let out = eth_call(
+        &mut ctx,
+        GOVERNANCE_ADDR,
+        IGovernorView::votingPeriodCall {}.abi_encode().into(),
+    );
+    let period = U256::abi_decode(&out).expect("decode votingPeriod");
+    assert_eq!(
+        period,
+        U256::from(GOVERNANCE_VOTING_PERIOD_BLOCKS),
+        "bare's Governor must carry the same voting window as full's"
+    );
+}
+
+fn balance_of(ctx: &mut EvmTestingContext, account: Address) -> U256 {
+    let out = eth_call(
+        ctx,
+        STAKING_TOKEN_ADDR,
+        IERC20View::balanceOfCall { account }.abi_encode().into(),
+    );
+    U256::abi_decode(&out).expect("decode balanceOf")
+}
+
 #[test]
 fn bootstrap_registers_consensus_keys_per_validator() {
-    let (key_set, state) = run_bootstrap(2);
+    let (key_set, state) = run_bootstrap();
     let mut ctx = ctx_from_predeploy(&state);
 
     for v in &key_set.validators {

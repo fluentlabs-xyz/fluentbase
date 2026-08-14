@@ -101,7 +101,7 @@ def test_golden_artifacts_land_under_the_smoke_dir():
     boot, which is the expensive, benign-looking regression this whole file guards."""
     smoke = os.path.realpath(golden._SMOKE_DIR)
     assert os.path.realpath(golden.GOLDEN_DIR) == os.path.join(smoke, "sim-out", "golden")
-    for artifact in (golden.TARBALL, golden.SIDECAR, golden.FACTS):
+    for artifact in (golden.TARBALL, golden.SIDECAR):
         assert os.path.realpath(artifact).startswith(os.path.realpath(golden.GOLDEN_DIR) + os.sep)
 
 

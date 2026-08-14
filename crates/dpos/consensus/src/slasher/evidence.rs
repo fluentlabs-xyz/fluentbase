@@ -53,10 +53,11 @@ use commonware_utils::ordered::BiMap;
 use fluentbase_bls::{
     combined_scheme::CombinedSignature,
     encoding::{pubkey_compressed_to_eip2537, signature_compressed_to_eip2537},
-    BlsPubkey, EpochCommittee, Error, PeerPubkey, Scheme, VoteScheme, PUBKEY_BYTES,
-    PUBKEY_EIP2537_BYTES, SIGNATURE_BYTES, SIGNATURE_EIP2537_BYTES,
+    fluent_namespace, BlsPubkey, EpochCommittee, Error, PeerPubkey, Scheme, VoteScheme,
+    PUBKEY_BYTES, PUBKEY_EIP2537_BYTES, SIGNATURE_BYTES, SIGNATURE_EIP2537_BYTES,
 };
-use rand_core::CryptoRngCore;
+use fluentbase_p2p::constants::MAX_COMMITTEE_SIZE;
+use rand_core::{CryptoRngCore, OsRng};
 
 /// Discriminator for the three `slashEquivocation*` entry points.
 ///
@@ -69,6 +70,108 @@ pub enum SlashKind {
     ConflictingNotarize,
     ConflictingFinalize,
     NullifyFinalize,
+}
+
+/// Decode cap for the equivocation charge an [`crate::order_block::OrderBlock`]
+/// carries: the encoded commonware `Activity` for one of the three attributable
+/// Byzantine variants — a one-byte tag plus two single-signer votes, each a
+/// round, a 32-byte proposal digest, a signer index and a 97-byte
+/// `CombinedSignature`, so ~290 B at the widest. 1 KiB is generous headroom and
+/// keeps the carve-out this reserves out of the block's tx budget
+/// ([`crate::order_block::EQUIVOCATION_FRAMING`]) negligible; the ~290 B figure
+/// is pinned by `an_assembled_charge_encodes_well_under_the_block_cap`.
+pub const MAX_EQUIVOCATION_SIZE: usize = 1024;
+
+/// Why a block-carried equivocation charge was refused.
+///
+/// Every variant is a vote-false, and they are named apart only so the log line
+/// says which one: the first three mean the proposer sent bytes no committee
+/// could act on, the last three mean it named a fault that did not happen.
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum ChargeError {
+    #[error("evidence is not a decodable Activity")]
+    Undecodable,
+    #[error("trailing bytes after the evidence")]
+    TrailingBytes,
+    #[error("evidence is not one of the three attributable Byzantine variants")]
+    NotAttributable,
+    #[error("evidence is for epoch {charged}, the block is in epoch {block}")]
+    EpochMismatch { charged: u64, block: u64 },
+    #[error("evidence attributes signer {signer}, the block accuses {accused}")]
+    SignerMismatch { signer: u32, accused: u8 },
+    #[error("evidence carries a signature that does not verify")]
+    BadSignature,
+}
+
+/// Verify the charge a block carries against the committee of the block's own
+/// epoch: the vote-time gate every committee member runs before backing the
+/// block (`application::equivocation_gate_decision`).
+///
+/// `epoch` is the block's epoch, and a charge for any other epoch is refused.
+/// That is not a tidiness rule — only the committee of a charge's own epoch can
+/// verify it (a past epoch's `signer_idx → BLS key` mapping is not
+/// reconstructible from a running node), so accepting an older charge would mean
+/// accepting one nobody can check. It is what makes the verifier this function
+/// needs always available, and it is why a charge that outlives its epoch leaves
+/// by the transaction fallback instead.
+///
+/// The decode does the structural work: `Conflicting*::read_cfg` re-checks the
+/// same signer/round/proposal invariants `Conflicting*::new` asserts, so
+/// well-formedness and attribution are settled before any pairing is trusted.
+pub fn verify_block_charge(
+    evidence: &[u8],
+    accused: u8,
+    epoch: u64,
+    committee: BiMap<PeerPubkey, BlsPubkey>,
+    chain_id: u64,
+) -> Result<(), ChargeError> {
+    let mut buf = evidence;
+    // The cfg bounds a certificate variant's signer bitmap; those variants are
+    // refused right below, but the bound has to hold at DECODE time so a peer
+    // cannot buy an unbounded allocation with a one-byte tag.
+    let activity = Activity::<Scheme, crate::digest::Digest>::read_cfg(
+        &mut buf,
+        &(MAX_COMMITTEE_SIZE as usize),
+    )
+    .map_err(|_| ChargeError::Undecodable)?;
+    if !buf.is_empty() {
+        return Err(ChargeError::TrailingBytes);
+    }
+    if SlashKind::from_activity(&activity).is_none() {
+        return Err(ChargeError::NotAttributable);
+    }
+    let charged = activity.epoch().get();
+    if charged != epoch {
+        return Err(ChargeError::EpochMismatch {
+            charged,
+            block: epoch,
+        });
+    }
+    let signer = attributable_signer_idx(&activity).ok_or(ChargeError::NotAttributable)?;
+    if signer != u32::from(accused) {
+        return Err(ChargeError::SignerMismatch { signer, accused });
+    }
+    let vote_scheme = VoteScheme::verifier(&fluent_namespace(chain_id), committee);
+    verify_pre_submit_vote_only(&activity, &vote_scheme, &mut OsRng)
+        .map_err(|_| ChargeError::BadSignature)
+}
+
+/// The committee position a slashable `Activity` attributes its fault to.
+///
+/// `None` for every other variant, including the certificates: those carry an
+/// aggregated signer bitmap rather than one attributable index, so there is
+/// nobody to charge.
+pub fn attributable_signer_idx<S, D>(activity: &Activity<S, D>) -> Option<u32>
+where
+    S: certificate::Scheme,
+    D: DigestTrait,
+{
+    match activity {
+        Activity::ConflictingNotarize(ev) => Some(ev.signer().get()),
+        Activity::ConflictingFinalize(ev) => Some(ev.signer().get()),
+        Activity::NullifyFinalize(ev) => Some(ev.signer().get()),
+        _ => None,
+    }
 }
 
 impl SlashKind {
@@ -396,7 +499,9 @@ where
     }
 }
 
-/// Project a slashable `Activity<Scheme, D>` onto its attributable VoteScheme
+/// Project an attributable `Activity<Scheme, D>` — a slashable `Conflicting*`
+/// pair or a single `Notarize`/`Finalize`/`Nullify` off the evidence channel —
+/// onto its attributable VoteScheme
 /// half and verify ONLY the multisig vote signatures against a VoteScheme
 /// verifier built from the committee bimap.
 ///
@@ -436,11 +541,16 @@ where
     }
 }
 
-/// Re-project a slashable `Activity<Scheme, D>` onto `Activity<VoteScheme, D>`,
+/// Re-project an `Activity<Scheme, D>` onto `Activity<VoteScheme, D>`,
 /// dropping the threshold seed half of every attestation. Mirrors the
 /// per-variant `extract_from_*` re-encoding (same `vote_attestation` +
 /// `Conflicting*::new` reconstruction) but returns the typed Activity so it can
 /// be re-verified rather than ABI-encoded.
+///
+/// The three single-vote variants are here for the evidence channel
+/// ([`crate::slasher::gossip`]), which verifies one peer-forwarded vote at a
+/// time. Their inner fields are public, so they need no encode round-trip —
+/// that detour exists only because `Conflicting*` keeps its halves private.
 fn project_activity_to_vote<D>(
     activity: &Activity<Scheme, D>,
 ) -> Result<Activity<VoteScheme, D>, Error>
@@ -510,9 +620,21 @@ where
                 ),
             ))
         }
-        // Not a slashable equivocation variant — the caller filters via
-        // `SlashKind::from_activity` before reaching this, so this is
-        // unreachable; reject rather than panic.
+        Activity::Notarize(n) => Ok(Activity::Notarize(Notarize {
+            proposal: n.proposal.clone(),
+            attestation: vote_attestation(&n.attestation)?,
+        })),
+        Activity::Finalize(f) => Ok(Activity::Finalize(Finalize {
+            proposal: f.proposal.clone(),
+            attestation: vote_attestation(&f.attestation)?,
+        })),
+        Activity::Nullify(n) => Ok(Activity::Nullify(Nullify {
+            round: n.round,
+            attestation: vote_attestation(&n.attestation)?,
+        })),
+        // A certificate variant carries an aggregated bitmap, not an
+        // attributable single-signer attestation, so it has no vote-only
+        // projection.
         _ => Err(Error::NonConflictingEvidence),
     }
 }
@@ -821,6 +943,153 @@ mod tests {
                 }
             ),
             "got: {err:?}"
+        );
+    }
+
+    /// A block-charge fixture over the block digest type the OrderBlock carries
+    /// (the tests above use a Sha256 digest, which `verify_block_charge` does not
+    /// accept — it decodes the concrete `Activity` a real block holds).
+    fn block_charge(
+        seed: u64,
+    ) -> (
+        Activity<Scheme, crate::digest::Digest>,
+        BiMap<PeerPubkey, BlsPubkey>,
+        u32,
+    ) {
+        let (kps, bimap) = small_committee(seed, 4);
+        let signer = build_signer(
+            &fluent_namespace(TEST_CHAIN_ID),
+            bimap.clone(),
+            &kps[0],
+            None,
+        )
+        .expect("offender must be a committee member");
+        let n1 = Notarize::sign(
+            &signer,
+            Proposal::new(
+                round(),
+                View::new(41),
+                crate::digest::Digest(alloy_primitives::B256::repeat_byte(0xaa)),
+            ),
+        )
+        .expect("offender signs");
+        let n2 = Notarize::sign(
+            &signer,
+            Proposal::new(
+                round(),
+                View::new(41),
+                crate::digest::Digest(alloy_primitives::B256::repeat_byte(0xbb)),
+            ),
+        )
+        .expect("offender signs");
+        let signer_idx = n1.signer().get();
+        (
+            Activity::ConflictingNotarize(ConflictingNotarize::new(n1, n2)),
+            bimap,
+            signer_idx,
+        )
+    }
+
+    /// The decode cap is a wire budget carved out of every block's tx budget, so
+    /// it must stay far above what a real charge actually costs — and must never
+    /// drift below it.
+    #[test]
+    fn an_assembled_charge_encodes_well_under_the_block_cap() {
+        let (charge, _, _) = block_charge(11);
+        let len = charge.encode().len();
+        assert!(
+            (200..=400).contains(&len),
+            "a ConflictingNotarize is ~290 B; got {len} — re-check MAX_EQUIVOCATION_SIZE"
+        );
+        assert!(
+            len * 2 < MAX_EQUIVOCATION_SIZE,
+            "the cap must keep real headroom"
+        );
+    }
+
+    #[test]
+    fn verify_block_charge_accepts_a_real_charge() {
+        let (charge, bimap, signer_idx) = block_charge(12);
+        assert_eq!(
+            verify_block_charge(
+                &charge.encode(),
+                signer_idx as u8,
+                round().epoch().get(),
+                bimap,
+                TEST_CHAIN_ID,
+            ),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn verify_block_charge_rejects_every_way_a_charge_can_be_wrong() {
+        let (charge, bimap, signer_idx) = block_charge(13);
+        let bytes = charge.encode();
+        let accused = signer_idx as u8;
+        let epoch = round().epoch().get();
+        let check = |bytes: &[u8], accused: u8, epoch: u64, chain_id: u64| {
+            verify_block_charge(bytes, accused, epoch, bimap.clone(), chain_id).unwrap_err()
+        };
+
+        assert_eq!(
+            check(&[], accused, epoch, TEST_CHAIN_ID),
+            ChargeError::Undecodable
+        );
+
+        let mut trailing = bytes.to_vec();
+        trailing.push(0);
+        assert_eq!(
+            check(&trailing, accused, epoch, TEST_CHAIN_ID),
+            ChargeError::TrailingBytes
+        );
+
+        // A lone vote is well-formed and correctly signed, but it is not evidence
+        // of anything — nobody may be convicted on it.
+        let (kps, plain_bimap) = small_committee(13, 4);
+        let signer =
+            build_signer(&fluent_namespace(TEST_CHAIN_ID), plain_bimap, &kps[0], None).unwrap();
+        let lone = Activity::<Scheme, crate::digest::Digest>::Notarize(
+            Notarize::sign(
+                &signer,
+                Proposal::new(
+                    round(),
+                    View::new(41),
+                    crate::digest::Digest(alloy_primitives::B256::repeat_byte(0xaa)),
+                ),
+            )
+            .unwrap(),
+        );
+        assert_eq!(
+            check(&lone.encode(), accused, epoch, TEST_CHAIN_ID),
+            ChargeError::NotAttributable
+        );
+
+        // The epoch invariant: only the committee of a charge's own epoch can
+        // verify it, so a charge from any other epoch is refused outright rather
+        // than checked against a committee that cannot describe its signer.
+        assert_eq!(
+            check(&bytes, accused, epoch + 1, TEST_CHAIN_ID),
+            ChargeError::EpochMismatch {
+                charged: epoch,
+                block: epoch + 1,
+            }
+        );
+
+        // Real evidence, but the block names somebody else.
+        let innocent = accused.wrapping_add(1);
+        assert_eq!(
+            check(&bytes, innocent, epoch, TEST_CHAIN_ID),
+            ChargeError::SignerMismatch {
+                signer: signer_idx,
+                accused: innocent,
+            }
+        );
+
+        // Signatures bound to another chain's domain separator.
+        assert_eq!(
+            check(&bytes, accused, epoch, TEST_CHAIN_ID + 1),
+            ChargeError::BadSignature
         );
     }
 }

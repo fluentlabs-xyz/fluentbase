@@ -10,7 +10,7 @@
 
 use alloy_consensus::BlockHeader;
 use alloy_evm::Evm;
-use alloy_primitives::{address, Address, Bytes, B256, U256};
+use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::SolCall;
 use commonware_codec::DecodeExt as _;
 use fluentbase_bls::{BlsPubkey, PeerPubkey, PUBKEY_BYTES};
@@ -88,9 +88,17 @@ fn map_evm_call_err(e: &(dyn std::error::Error + 'static)) -> ReadError {
     ReadError::Backend(e.to_string())
 }
 
-/// Solidity ABI subset this layer calls (verified against
-/// `solidity-contracts`: `IStaking.sol:92-96` `ConsensusKeys`, `:231-245`
-/// views; `IChainConfig.sol:41` `getEpochBlockInterval` — note `uint32`).
+/// Solidity-ABI subset this layer calls. All seven views live on the ONE staking
+/// system contract — the former `ChainConfig` split is gone, so
+/// [`StakingReaderConfig`] carries a single address.
+///
+/// Verified against the rWasm staking contract (`contracts/staking/src`, FLU-989
+/// worktree; artefact provenance in
+/// `devnet/local-dpos-smoke/contracts/STAKING_ARTEFACT.md`): `types.rs:111-115`
+/// `ConsensusKeys`, `consensus.rs:309,584,683` and `config.rs:245,317,330,343` the
+/// view handlers. The contract dispatches on a raw 4-byte selector, so a signature
+/// typo here reverts `ERR_UNKNOWN_METHOD` rather than mis-decoding — the selectors
+/// are pinned byte-for-byte in `tests::view_selectors_are_pinned`.
 ///
 /// Kept as an inner module so the Solidity `ConsensusKeys` tuple does not
 /// collide with the hybrid [`ConsensusKeys`] below (same identifier,
@@ -99,18 +107,22 @@ mod abi {
     use alloy_sol_types::sol;
 
     sol! {
-        /// Mirrors `IStaking.ConsensusKeys`. `blsPubkey` is exactly 96 B when
-        /// set (compressed BLS12-381 G2, MinSig); empty when unset.
-        #[derive(Debug)]
+        /// Mirrors the contract's `ConsensusKeys`. `blsPubkey` is exactly 96 B
+        /// when set (compressed BLS12-381 G2, MinSig); empty when unset.
+        #[derive(Debug, PartialEq)]
         struct ConsensusKeys {
             bytes blsPubkey;
             bytes32 peerPubkey;
             uint64 activationEpoch;
         }
 
-        // Staking contract
+        // Staking contract. `tombstoned` is the per-member equivocation
+        // tombstone, read LIVE at `at` (the other three legs are frozen at the
+        // commit): it rides this snapshot rather than a view of its own so the
+        // flag arrives on the path the node already takes, at no extra call.
         function getEpochCommitteeWithStakes(uint64 epoch)
-            external view returns (address[] addrs, ConsensusKeys[] keys, uint256[] stakes);
+            external view returns (
+                address[] addrs, ConsensusKeys[] keys, uint256[] stakes, bool[] tombstoned);
         function getRegistryWithKeys()
             external view returns (address[] addrs, ConsensusKeys[] keys);
         // Committee-change bit: set DETERMINISTICALLY by the contract at
@@ -119,16 +131,9 @@ mod abi {
         // `epoch` (its DKG re-mints the beacon key); `false` ⇒ unchanged (carry
         // forward). Consumed by `beacon::carry` as the carry-forward arbiter.
         function getDkgQual(uint64 epoch) external view returns (bool);
-        // Epoch selection view: a pure function of the selection epoch. Kept in sync
-        // with `Staking.sol::getValidatorsWithKeysAt`; the executor's
-        // `evm.rs::derive_committee_at` derives committee[N] from
-        // `getValidatorsWithKeysAt(N-2)` (the 2-epoch warm-up selection epoch) and
-        // commits it at N-2. Not-yet-active keys are zeroed on-chain (activationEpoch
-        // gate), so the keyless filter drops them.
-        function getValidatorsWithKeysAt(uint64 epoch)
-            external view returns (address[] validators, ConsensusKeys[] keys);
 
-        // ChainConfig contract (separate address)
+        // Chain-configuration views. Formerly a separate `ChainConfig` predeploy;
+        // same contract now, so the same address.
         function getEpochBlockInterval() external view returns (uint32);
         function getDposActivationBlock() external view returns (uint64);
         function getUndelegatePeriod() external view returns (uint32);
@@ -136,25 +141,35 @@ mod abi {
     }
 }
 
-/// On-chain `Staking.sol` epoch-committee retention margin
-/// (`EPOCH_COMMITTEE_RETENTION_MARGIN`, `Staking.sol:54`): the contract
-/// prunes committees older than `currentEpoch - (undelegatePeriod +
-/// MARGIN)`. The cache mirrors this exact window (epoch_transition).
+/// On-chain epoch-committee retention margin: the contract prunes committees
+/// older than `currentEpoch - (undelegatePeriod + MARGIN)`. The cache mirrors
+/// this exact window (epoch_transition).
 ///
-/// MUST mirror `solidity-contracts/contracts/staking/Staking.sol`
-/// `EPOCH_COMMITTEE_RETENTION_MARGIN`. Any drift silently mis-prunes
-/// the off-chain cache vs on-chain pruning — update both in the same PR.
+/// MUST mirror the staking contract's `EPOCH_COMMITTEE_RETENTION_MARGIN`
+/// (`consts.rs:436`). Any drift silently mis-prunes the off-chain cache vs
+/// on-chain pruning — update both in the same PR.
 pub const EPOCH_COMMITTEE_RETENTION_MARGIN: u64 = 8;
 
-/// Mirrors `StakingLayout.BALANCE_COMPACT_PRECISION` (`StakingLayout.sol:51`,
-/// `1e10`): on-chain `totalDelegated` is returned wei-scale (compacted ×1e10).
-/// The elector needs only relative weights, so we scale back to the compacted
-/// `uint112` (fits `u128`). MUST mirror Solidity — drift mis-weights leaders.
+/// Smallest committee the contract will commit: `commitEpochCommittee` reverts
+/// `ERR_COMMITTEE_TOO_SMALL` below it (`consensus.rs:523-529`), and
+/// `setActiveValidatorsLength` refuses to store a cap under it
+/// (`config.rs:499-503`), so a non-empty committee shorter than this cannot be a
+/// legal on-chain state.
+///
+/// MUST mirror the staking contract's `MIN_COMMITTEE_LENGTH` (`consts.rs:388`).
+pub const MIN_COMMITTEE_LENGTH: usize = 4;
+
+/// Mirrors the staking contract's `BALANCE_COMPACT_PRECISION` (`consts.rs:336`,
+/// `1e10`): on-chain `totalDelegated` is returned wei-scale (compacted ×1e10 by
+/// `math::expand_balance`). The elector needs only relative weights, so we scale
+/// back to the compacted `uint112` (fits `u128`). MUST mirror the contract —
+/// drift mis-weights leaders.
 pub const BALANCE_COMPACT_PRECISION: u128 = 10_000_000_000;
 
 /// Wei-scale `totalDelegated` → compacted `uint112` weight (`u128`). Delegations
-/// are exact multiples of [`BALANCE_COMPACT_PRECISION`] (`Staking.sol`), so the
-/// division is lossless; `try_from` guards the impossible `> u128` case.
+/// are exact multiples of [`BALANCE_COMPACT_PRECISION`] (`math::compact_balance`
+/// rejects a remainder), so the division is lossless; `try_from` guards the
+/// impossible `> u128` case.
 fn compact_stake(wei: U256) -> Result<u128, ReadError> {
     u128::try_from(wei / U256::from(BALANCE_COMPACT_PRECISION))
         .map_err(|_| ReadError::AbiDecode("stake exceeds u128".into()))
@@ -163,8 +178,10 @@ fn compact_stake(wei: U256) -> Result<u128, ReadError> {
 /// A validator's consensus identity, decoded and validated.
 ///
 /// `bls_pubkey` is subgroup-checked on decode; `peer_pubkey` is a 32-byte
-/// ed25519 key. Order in any `Vec` is **contract order, verbatim** — this
-/// crate never sorts. Stake is NOT a key property — it lives on
+/// ed25519 key. Order in any `Vec` is **contract order, verbatim** — this crate
+/// never sorts, and for a committee snapshot [`check_committee_ordering`] has
+/// proved that order strictly ascending on the raw `peer_pubkey` bytes rather
+/// than assuming it. Stake is NOT a key property — it lives on
 /// [`ValidatorWithKeys::stake`] (the per-epoch frozen leader weight).
 #[derive(Clone, Debug)]
 pub struct ConsensusKeys {
@@ -194,6 +211,18 @@ pub struct ValidatorWithKeys {
     /// the committee (an under-full committee does not filter by stake) but cannot
     /// be elected leader and earns no stipend share for it.
     pub stake: u128,
+    /// Whether this member has been slashed for equivocation.
+    ///
+    /// The ONE field of the snapshot that is NOT frozen at the epoch commit: it is
+    /// read live at the snapshot's own block, because a verdict landing mid-epoch
+    /// has to reach the committee it names. So unlike membership, keys and stake,
+    /// this field is NOT hash-invariant — two nodes reading the same epoch at
+    /// different heights can legitimately disagree for the few blocks it takes the
+    /// verdict to reach them both. It is monotone (a tombstone is permanent on
+    /// chain), so the disagreement only ever resolves in one direction and never
+    /// oscillates. Do NOT build anything that needs byte-identical snapshots
+    /// across nodes on it.
+    pub tombstoned: bool,
 }
 
 /// Validator set as read at one specific block. `epoch` is computed locally
@@ -206,28 +235,21 @@ pub struct ValidatorSetSnapshot {
     pub validators: Vec<ValidatorWithKeys>,
 }
 
-/// Startup configuration. The staking + `ChainConfig` addresses are not
-/// pinned in-tree; they arrive in a JSON file distributed with the bootnode
-/// IP list (the genesis tooling owns that file; this layer only parses it).
+/// Startup configuration. The staking address is not pinned in-tree; it arrives
+/// in a JSON file distributed with the bootnode IP list (the genesis tooling owns
+/// that file; this layer only parses it).
+///
+/// ONE address, deliberately, and with NO serde default. The registry, the epoch
+/// committee, the chain-configuration views and the liveness recorder are one
+/// rWasm contract, so three fields obliged to be equal would only be a sync
+/// hazard — and its failure mode is the worst available: an omitted field falls
+/// back to an address with no code, an EVM call to a codeless account returns
+/// Success, and the system call becomes a silent no-op. A missing field must fail
+/// the parse, so there is nothing to omit.
 #[derive(Clone, Debug, serde::Deserialize)]
 pub struct StakingReaderConfig {
-    /// Staking system/predeploy contract address.
+    /// The staking system contract.
     pub staking_address: Address,
-    /// `ChainConfig` system contract address (separate contract — what
-    /// `Staking._currentEpoch()` dereferences for `epochBlockInterval`).
-    pub chain_config_address: Address,
-    /// Liveness predeploy address the executor system-calls for
-    /// `recordProduction`. Defaults to the canonical predeploy slot so existing
-    /// genesis-baked configs (which omit the field) keep working.
-    #[serde(default = "default_liveness_slashing_address")]
-    pub liveness_slashing_address: Address,
-}
-
-/// Mirror of `fluentbase_types::PRECOMPILE_LIVENESS_SLASHING`. Inlined (not
-/// imported) to avoid adding a `fluentbase-types` dep to this crate; a
-/// conformance test in `crates/node` (which depends on both) pins the equality.
-fn default_liveness_slashing_address() -> Address {
-    address!("0x0000000000000000000000000000000000520020")
 }
 
 impl StakingReaderConfig {
@@ -240,10 +262,10 @@ impl StakingReaderConfig {
 }
 
 /// Relative DPoS epoch: `(block_number - dpos_activation_block) / epoch_block_interval`
-/// (integer division, matching the contract's relative `_currentEpoch`,
-/// `Staking.sol:400`). `dpos_activation_block` is the `uint64` from
-/// `ChainConfig.getDposActivationBlock()` — zero ⇒ absolute numbering.
-/// `epoch_block_interval` is the `uint32` from `ChainConfig.getEpochBlockInterval()`.
+/// (integer division, matching the contract's `math::epoch_at_block`,
+/// `math.rs:49-57`). `dpos_activation_block` is the `uint64` from
+/// `getDposActivationBlock()` — zero ⇒ absolute numbering.
+/// `epoch_block_interval` is the `uint32` from `getEpochBlockInterval()`.
 ///
 /// `saturating_sub` mirrors the contract's `block.number < activation ⇒ 0` clamp
 /// (pre-activation blocks all map to epoch 0).
@@ -307,6 +329,69 @@ pub(crate) fn check_peer_set_size(
             size,
             max: max_peer_set_size,
         });
+    }
+    Ok(())
+}
+
+/// The committee's order IS the consensus index space, so assert it on arrival.
+///
+/// The node writes a commonware `Participant` index into the block (`extra_data`
+/// `accused`) and the contract resolves the accused positionally from its own
+/// stored array. The two agree only while both order by ascending raw
+/// peer-pubkey bytes — the contract sorts on `peer_pubkey: B256` whose derived
+/// `Ord` is byte-lex (`consensus.rs:538`), commonware's `BiMap` sorts on
+/// `PeerPubkey: Ord` which is the same comparator. Nothing else asserts that
+/// agreement across the two repositories, and a drift slashes the wrong
+/// validator in silence, so this is a hard error rather than a warning. Consumers
+/// treat a [`ReadError`] as deferrable, never fatal-to-process (`on_finalized`
+/// logs + degrades a gauge, the slasher buffers a transient), so failing the read
+/// costs a retry, not a halt.
+///
+/// Two properties are load-bearing and must not be "simplified":
+/// - it compares **raw bytes** (`as_ref()`), not `PeerPubkey: Ord`, because raw
+///   byte-lex is the comparator the *contract* uses and that is the side of the
+///   agreement this check exists to anchor. `tests::peer_pubkey_ord_is_raw_byte_lex`
+///   closes the loop to commonware's comparator;
+/// - an **empty** committee is NOT an error. Six call sites branch on
+///   `validators.is_empty()` as a routine deferral (an uncommitted / not-yet-read
+///   epoch), and erroring here would turn the epoch-boundary park into a degraded
+///   retry loop.
+pub(crate) fn check_committee_ordering(
+    epoch: u64,
+    members: &[ValidatorWithKeys],
+) -> Result<(), ReadError> {
+    if members.is_empty() {
+        return Ok(());
+    }
+    if members.len() < MIN_COMMITTEE_LENGTH {
+        return Err(ReadError::CommitteeTooSmall {
+            epoch,
+            size: members.len(),
+            min: MIN_COMMITTEE_LENGTH,
+        });
+    }
+    for (i, pair) in members.windows(2).enumerate() {
+        let (a, b): (&[u8], &[u8]) = (
+            pair[0].keys.peer_pubkey.as_ref(),
+            pair[1].keys.peer_pubkey.as_ref(),
+        );
+        match a.cmp(b) {
+            std::cmp::Ordering::Less => {}
+            std::cmp::Ordering::Equal => {
+                return Err(ReadError::CommitteeDuplicatePeerKey {
+                    epoch,
+                    position: i + 1,
+                    validator: pair[1].address,
+                })
+            }
+            std::cmp::Ordering::Greater => {
+                return Err(ReadError::CommitteeOutOfOrder {
+                    epoch,
+                    position: i + 1,
+                    validator: pair[1].address,
+                })
+            }
+        }
     }
     Ok(())
 }
@@ -460,40 +545,46 @@ where
         self.with_evm(at, |evm, _header| decode_view(evm, addr, call))
     }
 
-    /// `ChainConfig.getEpochBlockInterval()` at block `at`.
+    /// `getEpochBlockInterval()` at block `at`.
     ///
     /// Re-read on every call (no cache). The cost is one in-process
     /// EVM STATICCALL per finalized block — negligible relative to a
     /// governance-flip consensus-split blast radius.
     pub fn epoch_block_interval(&self, at: B256) -> Result<u32, ReadError> {
         self.call(
-            self.cfg.chain_config_address,
+            self.cfg.staking_address,
             &abi::getEpochBlockIntervalCall {},
             at,
         )
     }
 
-    /// `ChainConfig.getDposActivationBlock()` at block `at` — origin for the
-    /// relative DPoS epoch numbering. `0` is the unscheduled sentinel
+    /// `getDposActivationBlock()` at block `at` — origin for the relative DPoS
+    /// epoch numbering. `0` is the unscheduled sentinel
     /// (`setDposActivationBlock` requires a future block, so a live chain never
     /// stores `0`; cf. `crates/node/src/evm.rs`). Re-read per call.
     pub fn dpos_activation_block(&self, at: B256) -> Result<u64, ReadError> {
         self.call(
-            self.cfg.chain_config_address,
+            self.cfg.staking_address,
             &abi::getDposActivationBlockCall {},
             at,
         )
     }
 
-    /// Activation height as a *scheduling state*: `Ok(None)` while the
-    /// ChainConfig contract has no code at `at` (runtime cluster not deployed
-    /// yet — the production-path smoke pre-writes the reader config before the
-    /// forge deploy) or while activation is unscheduled (`0`); `Ok(Some(h))`
-    /// once governance has scheduled it. The code-presence probe mirrors the
-    /// executor's P2-2 gate (`crates/node/src/evm.rs`) at the provider layer
-    /// so launcher-side consumers can boot with a pre-written config. A raw
+    /// Activation height as a *scheduling state*: `Ok(None)` while the staking
+    /// contract has no code at `at` (not installed yet — the production-path
+    /// smoke pre-writes the reader config before the runtime-upgrade delivery)
+    /// or while activation is unscheduled (`0`); `Ok(Some(h))` once governance
+    /// has scheduled it. The code-presence probe mirrors the executor's P2-2
+    /// gate (`crates/node/src/evm.rs`) at the provider layer so launcher-side
+    /// consumers can boot with a pre-written config. A raw
     /// [`Self::dpos_activation_block`] against a codeless account would
     /// instead surface as an `AbiDecode` error on the empty return.
+    ///
+    /// The probe and the read now target the SAME address, which is strictly
+    /// tighter than before: it used to probe the `ChainConfig` predeploy for the
+    /// sake of a call issued to that same predeploy, so the property it asserts
+    /// ("the account serving `getDposActivationBlock` has code") is unchanged
+    /// while the window where the two addresses could disagree is gone.
     pub fn scheduled_dpos_activation(&self, at: B256) -> Result<Option<u64>, ReadError> {
         let state = self
             .provider
@@ -502,7 +593,7 @@ where
         // reth normalizes no-code accounts to `bytecode_hash: None`; the
         // KECCAK_EMPTY arm is defensive against unnormalized providers.
         let deployed = state
-            .basic_account(&self.cfg.chain_config_address)
+            .basic_account(&self.cfg.staking_address)
             .map_err(|e| ReadError::Backend(e.to_string()))?
             .is_some_and(|acc| {
                 acc.bytecode_hash
@@ -517,36 +608,35 @@ where
         })
     }
 
-    /// `ChainConfig.getUndelegatePeriod()` (epochs) at block `at`.
+    /// `getUndelegatePeriod()` (epochs) at block `at`.
     ///
     /// Re-read on every call. Drives the epoch-committee retention
     /// window (`undelegatePeriod + EPOCH_COMMITTEE_RETENTION_MARGIN`) and
-    /// mirrors the contract's own `_pruneStaleCommittees`.
+    /// mirrors the contract's own committee pruning.
     pub fn undelegate_period(&self, at: B256) -> Result<u32, ReadError> {
         self.call(
-            self.cfg.chain_config_address,
+            self.cfg.staking_address,
             &abi::getUndelegatePeriodCall {},
             at,
         )
     }
 
-    /// `ChainConfig.getActiveValidatorsLength()`. Used at startup by the host
-    /// adapter to enforce the Rust ↔ Solidity invariant
-    /// `activeValidatorsLength <= fluentbase_p2p::constants::MAX_COMMITTEE_SIZE`
-    /// The value is bounded on-chain by `ChainConfig.MAX_ACTIVE_VALIDATORS`
-    /// (currently 51); if Rust and Solidity caps ever drift, the production
-    /// record's wire format (u8 leader_index) or scheme building would break —
-    /// the startup assert catches this earlier with an actionable error
-    /// pointing at both source files.
+    /// `getActiveValidatorsLength()`. Used at startup by the host adapter to
+    /// enforce the Rust ↔ contract invariant
+    /// `activeValidatorsLength <= fluentbase_p2p::constants::MAX_COMMITTEE_SIZE`.
+    /// The value is bounded on-chain by `MAX_ACTIVE_VALIDATORS` (currently 51);
+    /// if the two caps ever drift, the production record's wire format (u8
+    /// leader_index) or scheme building would break — the startup assert catches
+    /// this earlier with an actionable error pointing at both source files.
     pub fn active_validators_length(&self, at: B256) -> Result<u32, ReadError> {
         self.call(
-            self.cfg.chain_config_address,
+            self.cfg.staking_address,
             &abi::getActiveValidatorsLengthCall {},
             at,
         )
     }
 
-    /// `Staking.getDkgQual(epoch)` at block `at` — the on-chain committee-change
+    /// `getDkgQual(epoch)` at block `at` — the on-chain committee-change
     /// bit for `epoch`. Set DETERMINISTICALLY by the contract at
     /// `commitEpochCommittee` (`dkgQual[epoch] = committee[epoch] != committee[epoch−1]`),
     /// NOT via a permissionless marker tx. `true` ⇒ the committee changed at `epoch`
@@ -564,14 +654,20 @@ where
     /// is what the cache persists.
     ///
     /// One `getEpochCommitteeWithStakes` call returns the complete per-epoch
-    /// snapshot — `(addrs, keys, stakes)`, all frozen-at-epoch — keeping the
-    /// full [`ConsensusKeys`] (bls + peer + activationEpoch) the codec needs
-    /// plus the per-member [`ValidatorWithKeys::stake`] the leader elector
-    /// consumes. A keyless committee member ⇒
+    /// snapshot — `(addrs, keys, stakes, tombstoned)` — keeping the full
+    /// [`ConsensusKeys`] (bls + peer + activationEpoch) the codec needs plus the
+    /// per-member [`ValidatorWithKeys::stake`] the leader elector consumes. The
+    /// first three legs are frozen at the epoch commit; `tombstoned` is read live
+    /// at `at` (see [`ValidatorWithKeys::tombstoned`]), which is what lets a
+    /// mid-epoch verdict reach the committee it names. A keyless committee member ⇒
     /// [`ReadError::CommitteeMemberKeyless`] (on-chain invariant violation),
     /// never silently skipped. Empty / uncommitted epoch ⇒ a snapshot with
-    /// `validators: []`. A `(addrs, keys, stakes)` length mismatch ⇒
+    /// `validators: []`. A length mismatch across the four arrays ⇒
     /// [`ReadError::AbiDecode`] (the contract returns equal-length arrays).
+    ///
+    /// This is the single site [`check_committee_ordering`] runs at, so every
+    /// consumer inherits the index-space invariant through the one shared
+    /// snapshot rather than each re-asserting it.
     pub fn epoch_committee_snapshot(
         &self,
         epoch: u64,
@@ -586,9 +682,12 @@ where
                 staking,
                 &abi::getEpochCommitteeWithStakesCall { epoch },
             )?;
-            if ret.addrs.len() != ret.keys.len() || ret.addrs.len() != ret.stakes.len() {
+            if ret.addrs.len() != ret.keys.len()
+                || ret.addrs.len() != ret.stakes.len()
+                || ret.addrs.len() != ret.tombstoned.len()
+            {
                 return Err(ReadError::AbiDecode(
-                    "committee/keys/stakes length mismatch".into(),
+                    "committee/keys/stakes/tombstoned length mismatch".into(),
                 ));
             }
             let validators = ret
@@ -596,7 +695,8 @@ where
                 .into_iter()
                 .zip(ret.keys)
                 .zip(ret.stakes)
-                .map(|((address, k), stake_wei)| {
+                .zip(ret.tombstoned)
+                .map(|(((address, k), stake_wei), tombstoned)| {
                     if is_unset(&k) {
                         return Err(ReadError::CommitteeMemberKeyless {
                             epoch,
@@ -607,9 +707,11 @@ where
                         address,
                         keys: decode_consensus_keys(k)?,
                         stake: compact_stake(stake_wei)?,
+                        tombstoned,
                     })
                 })
                 .collect::<Result<Vec<_>, ReadError>>()?;
+            check_committee_ordering(epoch, &validators)?;
             Ok((block_number, validators))
         })?;
         Ok(ValidatorSetSnapshot {
@@ -621,14 +723,13 @@ where
     }
 
     /// Peer keys of the FULL Active-status validator registry
-    /// (`Staking.getRegistryWithKeys` = `_activeValidatorsList`, NOT the
+    /// (`getRegistryWithKeys` = the active-validator list, NOT the
     /// stake-weighted top-k committee) at block `at`. Feeds the consensus
     /// p2p tier-2 peer set: every activated validator — in or out of the
     /// committee, including the sequencer — keeps consensus-plane
-    /// connectivity. Keyless entries (registered but `setConsensusKeys`
-    /// not yet called) are SKIPPED: unlike a committee member, a keyless
-    /// registry entry is a legal transient state, not an invariant
-    /// violation.
+    /// connectivity. Keyless entries (registered but with no consensus keys
+    /// set yet) are SKIPPED: unlike a committee member, a keyless registry
+    /// entry is a legal transient state, not an invariant violation.
     pub fn active_registry_peers(&self, at: B256) -> Result<Vec<PeerPubkey>, ReadError> {
         let decoded = self.call(
             self.cfg.staking_address,
@@ -736,15 +837,17 @@ where
 #[cfg(test)]
 mod tests {
     use super::{
-        abi, check_peer_set_size, decode_consensus_keys, epoch_of_block, is_epoch_boundary,
-        is_unset, map_evm_call_err, map_state_provider_err, StakingReaderConfig,
+        abi, check_committee_ordering, check_peer_set_size, decode_consensus_keys, epoch_of_block,
+        is_epoch_boundary, is_unset, map_evm_call_err, map_state_provider_err, StakingReaderConfig,
+        ValidatorWithKeys, MIN_COMMITTEE_LENGTH,
     };
     use crate::error::{ReadError, SHORT_READ_DISPLAY, TORN_RANGE_DISPLAY};
-    use alloy_primitives::{address, Bytes, FixedBytes, B256};
+    use alloy_primitives::{address, hex, Address, Bytes, FixedBytes, B256, U256};
     use alloy_sol_types::SolCall;
     use commonware_codec::Encode as _;
     use commonware_cryptography::{ed25519::PrivateKey as Ed25519PrivateKey, Signer};
     use commonware_math::algebra::Random as _;
+    use fluentbase_bls::PeerPubkey;
     use rand_08::rngs::StdRng;
     use rand_core::SeedableRng;
     use reth_storage_api::errors::{db::DatabaseError, provider::ProviderError};
@@ -881,6 +984,7 @@ mod tests {
                 addrs: vec![],
                 keys: vec![],
                 stakes: vec![],
+                tombstoned: vec![],
             },
         );
         let ret = abi::getEpochCommitteeWithStakesCall::abi_decode_returns(&data)
@@ -888,35 +992,340 @@ mod tests {
         assert!(ret.addrs.is_empty());
         assert!(ret.keys.is_empty());
         assert!(ret.stakes.is_empty());
+        assert!(ret.tombstoned.is_empty());
+    }
+
+    /// The contract reports the tombstone positionally, so a decode that dropped
+    /// or shifted the leg would name the wrong validator. Pinned against the
+    /// `sol!` binding this crate calls the view through.
+    #[test]
+    fn the_tombstone_leg_decodes_positionally() {
+        let data = abi::getEpochCommitteeWithStakesCall::abi_encode_returns(
+            &abi::getEpochCommitteeWithStakesReturn {
+                addrs: vec![Address::with_last_byte(1), Address::with_last_byte(2)],
+                keys: vec![keys(11), keys(12)],
+                stakes: vec![U256::from(1u64), U256::from(2u64)],
+                tombstoned: vec![true, false],
+            },
+        );
+        let ret = abi::getEpochCommitteeWithStakesCall::abi_decode_returns(&data)
+            .expect("committee must decode");
+        assert_eq!(ret.tombstoned, vec![true, false]);
+    }
+
+    /// `n` members whose raw peer-pubkey bytes ascend — the shape the contract
+    /// commits (`consensus.rs:538` sorts on exactly this key) and the only shape
+    /// the invariant accepts. Real ed25519 keys, because `PeerPubkey::decode`
+    /// point-validates and arbitrary 32-byte patterns do not decode.
+    fn ascending_members(n: usize) -> Vec<ValidatorWithKeys> {
+        let mut peers: Vec<PeerPubkey> = (0..n as u64)
+            .map(|s| Ed25519PrivateKey::random(&mut StdRng::seed_from_u64(1000 + s)).public_key())
+            .collect();
+        peers.sort_by(|a, b| {
+            let (a, b): (&[u8], &[u8]) = (a.as_ref(), b.as_ref());
+            a.cmp(b)
+        });
+        peers
+            .into_iter()
+            .enumerate()
+            .map(|(i, peer_pubkey)| {
+                let mut keys = decode_consensus_keys(keys(i as u64)).expect("fixture keys decode");
+                keys.peer_pubkey = peer_pubkey;
+                ValidatorWithKeys {
+                    address: Address::with_last_byte(i as u8 + 1),
+                    keys,
+                    stake: 0,
+                    tombstoned: false,
+                }
+            })
+            .collect()
     }
 
     #[test]
-    fn config_omitting_liveness_defaults_to_canonical_slot() {
-        // Back-compat: genesis-baked configs predate the field and must still
-        // land on the canonical predeploy slot (`PRECOMPILE_LIVENESS_SLASHING`).
-        let json = r#"{
-            "staking_address": "0x0000000000000000000000000000000000520010",
-            "chain_config_address": "0x0000000000000000000000000000000000520011"
-        }"#;
-        let cfg: StakingReaderConfig = serde_json::from_str(json).expect("config must parse");
+    fn ascending_committee_passes_the_index_space_invariant() {
+        assert!(check_committee_ordering(7, &ascending_members(MIN_COMMITTEE_LENGTH)).is_ok());
+        assert!(check_committee_ordering(7, &ascending_members(2 * MIN_COMMITTEE_LENGTH)).is_ok());
+    }
+
+    /// The carve-out that makes the invariant deployable: an uncommitted epoch
+    /// reads back `[]`, and six consumers branch on `validators.is_empty()` to
+    /// park. Erroring on empty would turn the epoch-boundary park into a degraded
+    /// retry loop. The carve-out is exactly *empty*, not *short*.
+    #[test]
+    fn an_empty_committee_is_not_an_ordering_error() {
+        assert!(check_committee_ordering(7, &[]).is_ok());
+        assert!(matches!(
+            check_committee_ordering(7, &ascending_members(1)),
+            Err(ReadError::CommitteeTooSmall {
+                epoch: 7,
+                size: 1,
+                min: MIN_COMMITTEE_LENGTH
+            })
+        ));
+    }
+
+    #[test]
+    fn a_descending_pair_is_rejected_with_its_position() {
+        let mut members = ascending_members(MIN_COMMITTEE_LENGTH);
+        members.swap(2, 3);
+        let moved = members[3].address;
+        assert!(matches!(
+            check_committee_ordering(9, &members),
+            Err(ReadError::CommitteeOutOfOrder {
+                epoch: 9,
+                position: 3,
+                validator,
+            }) if validator == moved
+        ));
+    }
+
+    #[test]
+    fn a_duplicate_peer_key_is_rejected_with_its_position() {
+        let mut members = ascending_members(MIN_COMMITTEE_LENGTH);
+        members[2].keys.peer_pubkey = members[1].keys.peer_pubkey.clone();
+        let duplicate = members[2].address;
+        assert!(matches!(
+            check_committee_ordering(9, &members),
+            Err(ReadError::CommitteeDuplicatePeerKey {
+                epoch: 9,
+                position: 2,
+                validator,
+            }) if validator == duplicate
+        ));
+    }
+
+    /// Closes the loop on the index-space agreement. `check_committee_ordering`
+    /// compares RAW BYTES because that is the contract's comparator (it sorts on
+    /// `peer_pubkey: B256`, whose derived `Ord` is byte-lex); consumers index
+    /// through commonware's `BiMap`, which orders by `PeerPubkey: Ord`. The
+    /// positional slash is correct only while those two are the same order. They
+    /// are today — ed25519 `PublicKey` derives `Ord` over `VerificationKey`,
+    /// which compares its `[u8; 32]` — and this test is what fails on a
+    /// commonware bump that changes it.
+    #[test]
+    fn peer_pubkey_ord_is_raw_byte_lex() {
+        let peers: Vec<PeerPubkey> = (0..24u64)
+            .map(|s| Ed25519PrivateKey::random(&mut StdRng::seed_from_u64(s)).public_key())
+            .collect();
+        for a in &peers {
+            for b in &peers {
+                let (a_raw, b_raw): (&[u8], &[u8]) = (a.as_ref(), b.as_ref());
+                assert_eq!(
+                    a.cmp(b),
+                    a_raw.cmp(b_raw),
+                    "PeerPubkey: Ord diverged from raw byte-lex — the contract's \
+                     committee order and commonware's Participant index no longer agree"
+                );
+            }
+        }
+    }
+
+    /// Three `blsPubkey` blobs of three DIFFERENT lengths — 96 / 1 / 33 bytes,
+    /// i.e. 3 / 1 / 2 words. Deliberate: a one-element array puts every head slot
+    /// at offset 0, and equal-length elements give a uniform stride, so neither
+    /// can catch a wrong head stride in an array of dynamic elements.
+    fn three_keys() -> Vec<abi::ConsensusKeys> {
+        vec![
+            abi::ConsensusKeys {
+                blsPubkey: Bytes::from(vec![0xa1u8; 96]),
+                peerPubkey: FixedBytes::<32>::repeat_byte(0x11),
+                activationEpoch: 7,
+            },
+            abi::ConsensusKeys {
+                blsPubkey: Bytes::from_static(&[0xb2u8]),
+                peerPubkey: FixedBytes::<32>::repeat_byte(0x22),
+                activationEpoch: 8,
+            },
+            abi::ConsensusKeys {
+                blsPubkey: Bytes::from(vec![0xc3u8; 33]),
+                peerPubkey: FixedBytes::<32>::repeat_byte(0x33),
+                activationEpoch: 9,
+            },
+        ]
+    }
+
+    fn three_addrs() -> Vec<Address> {
+        vec![
+            Address::with_last_byte(1),
+            Address::with_last_byte(2),
+            Address::with_last_byte(3),
+        ]
+    }
+
+    /// Byte-level conformance for the four-array return, asserted in BOTH
+    /// directions. This is the one layer in the migration where a wrong answer
+    /// produces neither an exception nor a crash but plausible incorrect data:
+    /// a head-stride defect shifts the keys against the addresses and the node
+    /// signs on behalf of the wrong validator.
+    ///
+    /// Vector produced by (0x…01/02/03 abbreviated, `0xa1`×96 / `0xb2` / `0xc3`×33,
+    /// peer keys `0x11`×32 / `0x22`×32 / `0x33`×32):
+    ///
+    ///     cast abi-encode "f(address[],(bytes,bytes32,uint64)[],uint256[],bool[])" \
+    ///       "[0x…01,0x…02,0x…03]" \
+    ///       "[(0xa1…,0x11…,7),(0xb2,0x22…,8),(0xc3…,0x33…,9)]" \
+    ///       "[1,22,333]" "[false,true,false]"
+    #[test]
+    fn epoch_committee_return_matches_the_contract_abi_encoding() {
+        let fixture = abi::getEpochCommitteeWithStakesReturn {
+            addrs: three_addrs(),
+            keys: three_keys(),
+            stakes: vec![U256::from(1u64), U256::from(22u64), U256::from(333u64)],
+            tombstoned: vec![false, true, false],
+        };
+        let expected = hex!(
+            "0000000000000000000000000000000000000000000000000000000000000080
+             0000000000000000000000000000000000000000000000000000000000000100
+             00000000000000000000000000000000000000000000000000000000000003c0
+             0000000000000000000000000000000000000000000000000000000000000440
+             0000000000000000000000000000000000000000000000000000000000000003
+             0000000000000000000000000000000000000000000000000000000000000001
+             0000000000000000000000000000000000000000000000000000000000000002
+             0000000000000000000000000000000000000000000000000000000000000003
+             0000000000000000000000000000000000000000000000000000000000000003
+             0000000000000000000000000000000000000000000000000000000000000060
+             0000000000000000000000000000000000000000000000000000000000000140
+             00000000000000000000000000000000000000000000000000000000000001e0
+             0000000000000000000000000000000000000000000000000000000000000060
+             1111111111111111111111111111111111111111111111111111111111111111
+             0000000000000000000000000000000000000000000000000000000000000007
+             0000000000000000000000000000000000000000000000000000000000000060
+             a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1
+             a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1
+             a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1
+             0000000000000000000000000000000000000000000000000000000000000060
+             2222222222222222222222222222222222222222222222222222222222222222
+             0000000000000000000000000000000000000000000000000000000000000008
+             0000000000000000000000000000000000000000000000000000000000000001
+             b200000000000000000000000000000000000000000000000000000000000000
+             0000000000000000000000000000000000000000000000000000000000000060
+             3333333333333333333333333333333333333333333333333333333333333333
+             0000000000000000000000000000000000000000000000000000000000000009
+             0000000000000000000000000000000000000000000000000000000000000021
+             c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3
+             c300000000000000000000000000000000000000000000000000000000000000
+             0000000000000000000000000000000000000000000000000000000000000003
+             0000000000000000000000000000000000000000000000000000000000000001
+             0000000000000000000000000000000000000000000000000000000000000016
+             000000000000000000000000000000000000000000000000000000000000014d
+             0000000000000000000000000000000000000000000000000000000000000003
+             0000000000000000000000000000000000000000000000000000000000000000
+             0000000000000000000000000000000000000000000000000000000000000001
+             0000000000000000000000000000000000000000000000000000000000000000"
+        );
         assert_eq!(
-            cfg.liveness_slashing_address,
-            address!("0x0000000000000000000000000000000000520020")
+            abi::getEpochCommitteeWithStakesCall::abi_encode_returns(&fixture),
+            expected
+        );
+
+        let decoded = abi::getEpochCommitteeWithStakesCall::abi_decode_returns(&expected)
+            .expect("the pinned vector must decode");
+        assert_eq!(decoded.addrs, fixture.addrs);
+        assert_eq!(decoded.keys, fixture.keys);
+        assert_eq!(decoded.stakes, fixture.stakes);
+        assert_eq!(decoded.tombstoned, fixture.tombstoned);
+    }
+
+    /// Byte-level conformance for the two-array registry return. The middle
+    /// entry is the contract's keyless sentinel (empty `blsPubkey`) — a legal
+    /// transient state that `active_registry_peers` filters out — so the vector
+    /// also pins the three lengths 96 / 0 / 33.
+    ///
+    ///     cast abi-encode "f(address[],(bytes,bytes32,uint64)[])" \
+    ///       "[0x…01,0x…02,0x…03]" \
+    ///       "[(0xa1…,0x11…,7),(0x,0x00…,0),(0xc3…,0x33…,9)]"
+    #[test]
+    fn registry_return_matches_the_contract_abi_encoding() {
+        let mut keys = three_keys();
+        keys[1] = abi::ConsensusKeys {
+            blsPubkey: Bytes::new(),
+            peerPubkey: FixedBytes::<32>::ZERO,
+            activationEpoch: 0,
+        };
+        let fixture = abi::getRegistryWithKeysReturn {
+            addrs: three_addrs(),
+            keys,
+        };
+        let expected = hex!(
+            "0000000000000000000000000000000000000000000000000000000000000040
+             00000000000000000000000000000000000000000000000000000000000000c0
+             0000000000000000000000000000000000000000000000000000000000000003
+             0000000000000000000000000000000000000000000000000000000000000001
+             0000000000000000000000000000000000000000000000000000000000000002
+             0000000000000000000000000000000000000000000000000000000000000003
+             0000000000000000000000000000000000000000000000000000000000000003
+             0000000000000000000000000000000000000000000000000000000000000060
+             0000000000000000000000000000000000000000000000000000000000000140
+             00000000000000000000000000000000000000000000000000000000000001c0
+             0000000000000000000000000000000000000000000000000000000000000060
+             1111111111111111111111111111111111111111111111111111111111111111
+             0000000000000000000000000000000000000000000000000000000000000007
+             0000000000000000000000000000000000000000000000000000000000000060
+             a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1
+             a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1
+             a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1
+             0000000000000000000000000000000000000000000000000000000000000060
+             0000000000000000000000000000000000000000000000000000000000000000
+             0000000000000000000000000000000000000000000000000000000000000000
+             0000000000000000000000000000000000000000000000000000000000000000
+             0000000000000000000000000000000000000000000000000000000000000060
+             3333333333333333333333333333333333333333333333333333333333333333
+             0000000000000000000000000000000000000000000000000000000000000009
+             0000000000000000000000000000000000000000000000000000000000000021
+             c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3
+             c300000000000000000000000000000000000000000000000000000000000000"
+        );
+        assert_eq!(
+            abi::getRegistryWithKeysCall::abi_encode_returns(&fixture),
+            expected
+        );
+
+        let decoded = abi::getRegistryWithKeysCall::abi_decode_returns(&expected)
+            .expect("the pinned vector must decode");
+        assert_eq!(decoded.addrs, fixture.addrs);
+        assert_eq!(decoded.keys, fixture.keys);
+        assert!(!is_unset(&decoded.keys[0]));
+        assert!(is_unset(&decoded.keys[1]));
+        assert!(!is_unset(&decoded.keys[2]));
+    }
+
+    /// The rWasm contract dispatches on the raw 4-byte selector, so a signature
+    /// typo here is not a mis-decode but an `ERR_UNKNOWN_METHOD` revert against a
+    /// live chain. Values are the contract's own handler doc comments
+    /// (`consensus.rs:309,584,683`, `config.rs:245,317,330,343`).
+    #[test]
+    fn view_selectors_are_pinned() {
+        assert_eq!(
+            abi::getEpochCommitteeWithStakesCall::SELECTOR,
+            hex!("a4d160c1")
+        );
+        assert_eq!(abi::getRegistryWithKeysCall::SELECTOR, hex!("d96cbd7b"));
+        assert_eq!(abi::getDkgQualCall::SELECTOR, hex!("2660899f"));
+        assert_eq!(abi::getEpochBlockIntervalCall::SELECTOR, hex!("346c90a8"));
+        assert_eq!(abi::getDposActivationBlockCall::SELECTOR, hex!("a2a50528"));
+        assert_eq!(abi::getUndelegatePeriodCall::SELECTOR, hex!("5e7b72ad"));
+        assert_eq!(
+            abi::getActiveValidatorsLengthCall::SELECTOR,
+            hex!("32cc6f08")
         );
     }
 
     #[test]
-    fn config_with_explicit_liveness_overrides_default() {
-        let json = r#"{
-            "staking_address": "0x0000000000000000000000000000000000520010",
-            "chain_config_address": "0x0000000000000000000000000000000000520011",
-            "liveness_slashing_address": "0x00000000000000000000000000000000000000ff"
-        }"#;
+    fn config_is_one_address() {
+        let json = r#"{"staking_address": "0x0000000000000000000000000000000000520011"}"#;
         let cfg: StakingReaderConfig = serde_json::from_str(json).expect("config must parse");
         assert_eq!(
-            cfg.liveness_slashing_address,
-            address!("0x00000000000000000000000000000000000000ff")
+            cfg.staking_address,
+            address!("0x0000000000000000000000000000000000520011")
         );
+    }
+
+    #[test]
+    fn config_without_the_address_refuses_to_parse() {
+        // The point of the collapse: there is no default to silently fall back to.
+        // A defaulted address would land on a codeless account, and an EVM call to
+        // a codeless account returns Success — a per-block silent no-op.
+        assert!(serde_json::from_str::<StakingReaderConfig>(r#"{}"#).is_err());
     }
 
     #[test]

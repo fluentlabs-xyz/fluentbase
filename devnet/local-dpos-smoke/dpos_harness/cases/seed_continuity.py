@@ -6,8 +6,22 @@ WHY THIS EXISTS
     the ROUND alone, a nullification and a notarization of the same view recover the
     byte-identical sigma — so the leader elected for view v+1 no longer depends on whether
     view v produced a block. Before the change a nullified v yielded NO sigma and the
-    elector fell back to `sha256(LEADER_DOMAIN || sha256(epoch || sorted peer pubkeys)
-    || view)`: a public, epoch-fixed table anyone could compute two epochs ahead.
+    elector fell back to `sha256(LEADER_FALLBACK_DOMAIN || base || view_be)`: a table
+    anyone could compute ahead of time, because `base` was `sha256(epoch || sorted peer
+    pubkeys)` — pure constants.
+
+    OFFLINE-DERIVABILITY OF `base` NO LONGER HOLDS (task
+    `.claude/tasks/2026_08_12__12_40__fallback_seed_from_prev_round/`). The seedless arm's
+    base is now `sha256(sigma_encoded)` of the `parent_seed` witness carried in the PREVIOUS
+    epoch's terminal block (`weighted_vrf.rs::witness_fallback_seed`), and only where no
+    such witness can exist does it fall back to the constant derivation
+    (`weighted_vrf.rs::constant_fallback_seed`). Those witness bytes appear in NO log line
+    and on NO RPC — `derive-seed` prints `prev_randao = keccak256(sigma)`, a different hash
+    of the same object, and the OrderBlock body is a consensus-plane object with no JSON-RPC
+    surface. So the LIVE arm of this case (assertion A, the positive control) can only be
+    predicted for an epoch that takes the CONSTANT arm, and its live scoring is BLOCKED
+    until the witness base has a source. The PURE layer below is kept byte-exact against
+    `weighted_vrf.rs` regardless, and is pinned to the Rust conformance vector.
 
     That fallback table is exactly what makes this case TWO-SIDED rather than a smoke
     test. Under the OLD binary the leader after a nullified view was the offline
@@ -64,7 +78,12 @@ from ..core.exit_codes import RC_FAIL, RC_INCONCLUSIVE, RC_PASS, RC_USAGE
 
 # ── PURE VERDICT LAYER (docker-free, unit-tested in tests/test_case_seed_continuity.py) ──
 
-LEADER_DOMAIN = b"fluent/leader"
+#: Domain tag of the SEEDLESS arm only (`weighted_vrf.rs::LEADER_FALLBACK_DOMAIN`). The
+#: sigma arm's own tag (`b"fluent/leader"`) is deliberately absent: this module mirrors the
+#: seedless arm alone. The two tags are prefix-free of each other precisely so that feeding
+#: one epoch's sigma to both arms cannot hash the same preimage — keep that property if the
+#: Rust side ever changes the bytes.
+LEADER_FALLBACK_DOMAIN = b"fluent/seedless-leader"
 BALANCE_COMPACT_PRECISION = 10_000_000_000
 
 # `derive-seed`'s `seed_round` is the block's OWN round, not its parent's: the executor
@@ -89,24 +108,50 @@ _RE_SEED_ROUND = re.compile(r"seed_round[=:\s]+\S*?Round\s*\{[^}]*?(\d+)[^}]*?(\
 _RE_PROPOSING = re.compile(r"dpos: proposing order block")
 
 
-def fallback_leader_index(epoch: int, view: int, sorted_pubkeys: list, cum: list, total: int):
-    """The offline mirror of `weighted_vrf.rs`'s fallback arm. Returns the participant INDEX.
+def constant_fallback_seed(epoch: int, sorted_pubkeys: list) -> bytes:
+    """Mirror of `weighted_vrf.rs::constant_fallback_seed` — the LAST-RESORT base, taken
+    only where no witness seed can exist (epoch 0, a non-computable terminal height, and
+    pre-bootstrap links whose terminal block legitimately carries no witness).
 
       sorted_pubkeys — raw peer-pubkey bytes, sorted bytewise (commonware `ordered::Set`
                        is a Vec built by `items.sort()`, so the order is Ord on the raw
-                       ed25519 key).
-      cum            — inclusive prefix sums of COMPACTED stake, same order.
-      total          — cum[-1].
+                       ed25519 key; the Rust side sorts the snapshot's keys itself, which
+                       lands on the same order).
 
     Deterministic; no I/O."""
     h = hashlib.sha256()
     h.update(epoch.to_bytes(8, "big"))
     for pk in sorted_pubkeys:
         h.update(pk)
-    fallback_seed = h.digest()
+    return h.digest()
 
+
+def witness_fallback_seed(signature_bytes: bytes) -> bytes:
+    """Mirror of `weighted_vrf.rs::witness_fallback_seed` — the base an epoch INHERITS from
+    the previous epoch's terminal block.
+
+      signature_bytes — the ENCODED BLS threshold signature of that block's `parent_seed`
+                        (commonware `Encode`, i.e. the raw compressed point), not the
+                        `Seed` struct: the Rust side hashes `seed.signature.encode()`.
+
+    Deliberately NOT keccak256: that is `prev_randao`, and invariant D6 keeps the leader
+    draw disjoint from the header field."""
+    return hashlib.sha256(signature_bytes).digest()
+
+
+def fallback_leader_index(fallback_seed: bytes, view: int, cum: list, total: int):
+    """The offline mirror of `weighted_vrf.rs`'s seedless arm. Returns the participant INDEX.
+
+      fallback_seed — 32 bytes: `witness_fallback_seed(parent_seed.signature)` of the
+                      previous epoch's terminal block, or `constant_fallback_seed` where no
+                      witness exists. Supplied by the caller, because it is no longer
+                      derivable from the epoch and the committee alone.
+      cum           — inclusive prefix sums of COMPACTED stake, sorted-pubkey order.
+      total         — cum[-1].
+
+    Deterministic; no I/O."""
     r = hashlib.sha256()
-    r.update(LEADER_DOMAIN)
+    r.update(LEADER_FALLBACK_DOMAIN)
     r.update(fallback_seed)
     r.update(view.to_bytes(8, "big"))
     target = int.from_bytes(r.digest(), "big") % total
@@ -488,6 +533,16 @@ def run_case(argv=None) -> int:
         logs = {svc: nodes.logs_since(svc, since) for svc in live}
         view_of, epoch_of, proposer_of = parse_view_leader_map(logs)
 
+        # LIVE SCORING IS BLOCKED — see the module docstring. `base_of` can only offer the
+        # CONSTANT derivation, which is the base a running binary uses for epoch 0 and for
+        # the degenerate links alone; every epoch that inherits a witness from the previous
+        # epoch's terminal block elects off bytes this process cannot see, so assertion A
+        # (the positive control) will read INCONCLUSIVE for those epochs. Do not "fix" that
+        # by relaxing the control: the missing input is the witness seed, and it needs a
+        # source (a log line carrying `parent_seed.signature`, or an RPC over the OrderBlock
+        # body) before this case can be a live gate again.
+        base_of = {e: constant_fallback_seed(e, sorted_pks) for e in set(epoch_of.values())}
+
         controls, samples = [], []
         for h in sorted(view_of):
             if h not in proposer_of or h not in epoch_of:
@@ -496,7 +551,7 @@ def run_case(argv=None) -> int:
             observed = svc_to_idx.get(proposer_of[h])
             if observed is None:
                 continue
-            predicted = fallback_leader_index(e, v, sorted_pks, cum, total)
+            predicted = fallback_leader_index(base_of[e], v, cum, total)
             if v == 1:
                 controls.append((e, predicted, observed))
         for h in successors_of_nullified(view_of, epoch_of):
@@ -506,7 +561,7 @@ def run_case(argv=None) -> int:
             observed = svc_to_idx.get(proposer_of[h])
             if observed is None or v == 1:
                 continue
-            samples.append((e, v, fallback_leader_index(e, v, sorted_pks, cum, total), observed))
+            samples.append((e, v, fallback_leader_index(base_of[e], v, cum, total), observed))
 
         # `beacon_metric` answers -1 for an unreachable endpoint and 0 for a counter that is really
         # zero. Folding both into `> 0` scored the gate over nodes that never answered.

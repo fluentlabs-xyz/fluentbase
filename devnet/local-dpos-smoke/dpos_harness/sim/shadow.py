@@ -99,27 +99,32 @@ def discover_bash_log():
 class ShadowAttachError(RuntimeError):
     """The shadow could not resolve the running sim's DEPLOYED contract addresses.
 
-    FATAL at attach, never demoted to a warning. The sim deploys staking /
-    chain-config / liveness at run time, so the genesis predeploys the nodes.py
-    seams fall back to are CODELESS here: every contract read returns empty, every
-    contract-backed detector evaluates over nothing, and the battery reports
-    confident "holds" verdicts about a chain it cannot see. Judging a running sim
-    that way is worse than not observing it at all — which is exactly the defect
-    (task 20260729__sim_port_gaps, F1 on the run path, F8 here) this class exists
-    to make impossible to repeat silently.
+    FATAL at attach, never demoted to a warning. `nodes.py`'s read helpers no longer
+    fall back to an address when none is given — they raise — so an unresolved
+    address is now loud wherever it lands. This class keeps it loud AT ATTACH, which
+    is where it can still be reported as "the shadow could not attach" rather than
+    as a detector blowing up mid-tick. Judging a running sim through addresses it
+    could not confirm is worse than not observing it at all — which is exactly the
+    defect (task 20260729__sim_port_gaps, F1 on the run path, F8 here) this class
+    exists to make impossible to repeat silently.
     """
 
 
 STAKING_READER_JSON = "staking-reader.json"
 
-# Ctx field  ←  /runtime/staking-reader.json key. The file is written at bring-up by
-# sim_regen_staking_reader (chain/writes.py:880-890) from the DeployStaking manifest, so it
-# is the same derive-don't-predict source the live run's Chain carries in memory.
-RUNTIME_ADDR_FIELDS = (
-    ("STAKING_RT", "staking_address"),
-    ("CHAIN_CONFIG_RT", "chain_config_address"),
-    ("LIVENESS_RT", "liveness_slashing_address"),
-)
+#: The ONE key `/runtime/staking-reader.json` carries. It used to carry three, and the config's
+#: worst failure mode was an omitted one: the reader defaulted it to a genesis slot with no code,
+#: and an EVM call to a codeless account returns Success, so the node's per-block system call
+#: became a silent no-op. `ChainConfig` and `LivenessSlashing` are part of the staking module now,
+#: so there is one address and nothing to omit.
+STAKING_ADDRESS_KEY = "staking_address"
+
+#: The Ctx fields that address feeds. THREE READ SURFACES, ONE CONTRACT — the battery reasons
+#: about the registry, the chain parameters and the production counters separately and reaches
+#: them through separate seams (`_staking_call` / `_chainconfig_call` / `_liveness_call`), so the
+#: three fields survive. They are all assigned from the same resolved value, in one place, which
+#: is a single fact under three names rather than three facts obliged to agree.
+RUNTIME_ADDR_FIELDS = ("STAKING_RT", "CHAIN_CONFIG_RT", "LIVENESS_RT")
 
 _ADDR_RE = re.compile(r"0x[0-9a-fA-F]{40}\Z")
 
@@ -147,8 +152,8 @@ def _runtime_cat(path, timeout=15):
 
 
 def resolve_runtime_addrs():
-    """Read the three DEPLOYED contract addresses out of the running topology's
-    /runtime/staking-reader.json and return them as a {Ctx field: address} dict.
+    """Read the staking address out of the running topology's /runtime/staking-reader.json and
+    return it as a {Ctx field: address} dict over `RUNTIME_ADDR_FIELDS`.
 
     Raises ShadowAttachError on ANY failure — unreachable container, unparseable file, a
     missing/zero/malformed address. There is deliberately no empty-dict return path."""
@@ -162,25 +167,21 @@ def resolve_runtime_addrs():
     if not isinstance(obj, dict):
         raise ShadowAttachError(
             f"/runtime/{STAKING_READER_JSON} is not a JSON object: {_fmt_note(raw)!r}")
-    addrs = {}
-    bad = []
-    for field, key in RUNTIME_ADDR_FIELDS:
-        val = str(obj.get(key, "") or "").strip().lower()
-        if not _ADDR_RE.match(val) or int(val, 16) == 0:
-            bad.append(f"{key}={val!r}")
-        addrs[field] = val
-    if bad:
+    val = str(obj.get(STAKING_ADDRESS_KEY, "") or "").strip().lower()
+    if not _ADDR_RE.match(val) or int(val, 16) == 0:
         raise ShadowAttachError(
-            f"/runtime/{STAKING_READER_JSON} carries no usable address for: {', '.join(bad)}")
-    return addrs
+            f"/runtime/{STAKING_READER_JSON} carries no usable address for: "
+            f"{STAKING_ADDRESS_KEY}={val!r}")
+    return {field: val for field in RUNTIME_ADDR_FIELDS}
 
 
 # ── head-derived epoch (best-effort, on-chain) ───────────────────────────────
 def _current_epoch(chain_config_rt):
     """cur relative DPoS epoch from the host head, using getEpochBlockInterval /
     getDposActivationBlock (falls back to env EPOCH_INTERVAL / DPOS_ACTIVATION_BLOCK).
-    `chain_config_rt` is the DEPLOYED ChainConfig — reading through the nodes.py predeploy
-    default returns empty here and silently pinned the epoch to 0 for every shadow run."""
+    `chain_config_rt` is the resolved staking address (the chain-parameter read surface on it);
+    `nodes.chainconfig_call` refuses an empty one rather than reading a codeless address, which
+    used to pin the epoch to 0 for every shadow run without saying so."""
     head = nodes.finalized_dec()
     interval = 0
     act = 0
@@ -199,8 +200,8 @@ def _build_ctx(tick, round_, addrs):
     ctx = Ctx()
     ctx.SIM_TICK = tick
     ctx.SIM_ROUND = round_
-    # the resolved deploy facts — without them every battery cast seam (_staking_call /
-    # _chainconfig_call / _liveness_call / _pp_committee …) falls back to a codeless predeploy.
+    # the resolved address — without it every battery cast seam (_staking_call /
+    # _chainconfig_call / _liveness_call / _pp_committee …) has no address to read at and raises.
     for field, val in addrs.items():                # required: never call this with None/{}
         setattr(ctx, field, val)
     try:
@@ -253,7 +254,7 @@ def run(args):
         log.write(f"# dpos_harness shadow started {started} "
                   f"(running-sim pid={pid or 'none'}, period={period}s)\n")
         log.write("# resolved runtime addresses: "
-                  + " ".join(f"{f}={addrs[f]}" for f, _k in RUNTIME_ADDR_FIELDS) + "\n")
+                  + " ".join(f"{f}={addrs[f]}" for f in RUNTIME_ADDR_FIELDS) + "\n")
         # F10: the Battery holds ROLLING belt state (SIM_FLAT_TICKS, the stranger/coverage/detector
         # accumulators) that must PERSIST across ticks — a fresh Battery every tick reset every belt
         # to zero and no multi-tick detector could ever trip. Construct ONCE; refresh its ctx +

@@ -23,9 +23,11 @@ struct Cli {
 enum Cmd {
     /// Deploy the staking cluster into genesis (genesis-baked smoke).
     Full(GenesisArgs),
-    /// Plain chain: keys + funding + genesis, NO staking cluster. The staking
-    /// cluster is deployed at runtime via `forge` (production-path smoke), so
-    /// `staking-reader.json` is written later by the driver, not here.
+    /// Plain chain: keys + funding + genesis + the Governor, NO staking module. The
+    /// module is delivered to the running chain through the runtime-upgrade precompile
+    /// (production-path smoke); the Governor has to be here because its address is
+    /// compiled into that module and nothing can place code at a fixed address after
+    /// genesis. Needs `--contracts-dir` for `FluentGovernance.json`.
     Bare(GenesisArgs),
     /// Emit one validator's consensus-key material (BLS pubkey/PoP, peer pubkey,
     /// l2 owner address + key) as JSON, for host-side `cast setConsensusKeys`.
@@ -35,6 +37,24 @@ enum Cmd {
     /// re-running genesis. The soak's mint-on-demand uses this to create a fresh
     /// idx >= POOL at runtime (the only path that writes a single idx's secrets).
     WriteKeys(WriteKeysArgs),
+}
+
+/// `DPOS_ACTIVATION_BLOCK` from the environment, with EMPTY treated as UNSET.
+///
+/// The compose files forward `${DPOS_ACTIVATION_BLOCK:-}`, so the variable is present and
+/// empty whenever the host has not tuned it — and the value they mean by that is "derive
+/// the default from the interval", which is what `None` expresses here. A malformed
+/// non-empty value is a real mistake and fails loudly rather than falling back.
+fn env_activation_block() -> Option<u64> {
+    let raw = std::env::var("DPOS_ACTIVATION_BLOCK").ok()?;
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    Some(
+        raw.parse()
+            .unwrap_or_else(|e| panic!("DPOS_ACTIVATION_BLOCK={raw:?} is not a u64: {e}")),
+    )
 }
 
 #[derive(clap::Args, Debug)]
@@ -83,14 +103,36 @@ struct GenesisArgs {
     #[arg(long, env = "SEED_DNS_ZONE")]
     seed_dns_zone: Option<String>,
 
-    /// Bare mode only: also write `staking-reader.json` predicting the
-    /// staking cluster a driver will forge-deploy at runtime. Three CREATE
-    /// nonces of the owner-0 deployer — the staking, chain_config, and
-    /// liveness_slashing proxies — resolved in-process via
-    /// `Address::create`. The production-path driver fail-loud asserts the
-    /// post-deploy manifest equals this file.
-    #[arg(long, value_delimiter = ',')]
-    staking_reader_create_nonces: Option<Vec<u64>>,
+    /// Seat only the first N derived identities (`validator-0..N-1`) as the genesis
+    /// committee, and cap `activeValidatorsLength` at N. Unset (default) seats every
+    /// identity, which is right where `--peers` IS the committee. The sim/soak derives
+    /// an identity POOL larger than the set of nodes it runs, and seating an identity
+    /// with no node behind it commits a committee that cannot finalize.
+    #[arg(long)]
+    committee_size: Option<u32>,
+
+    /// Hand the whole MockBlendToken supply to this validator index's owner key, and
+    /// make it the genesis stake sponsor and the stipend reserve. Unset (default)
+    /// leaves it on the governance signer, where the token's constructor mints it. The
+    /// sim/soak passes `0` because it signs every funding and delegation with
+    /// `owner-0.hex`.
+    #[arg(long)]
+    blend_holder_validator: Option<u32>,
+
+    /// `dposActivationBlock` baked into genesis. Unset (default) schedules
+    /// `2 * EPOCH_BLOCK_INTERVAL`, landing the migration anchor in absolute epoch 2.
+    /// Pass `0` for the contract's unscheduled sentinel — nothing activates at genesis
+    /// and governance sets the real block later, which is what a stand whose bring-up
+    /// outlasts block `2 * interval` needs.
+    ///
+    /// The env var is parsed by hand rather than through clap's `env =` because the
+    /// compose files forward it as `${DPOS_ACTIVATION_BLOCK:-}` — deliberately EMPTY when
+    /// the host has not tuned it, so the interval-derived default applies. Clap sees an
+    /// empty-but-present variable and fails on `cannot parse integer from empty string`,
+    /// which is a usage error at genesis-init and a dead stand. Empty means unset here,
+    /// as it did when `bootstrap.rs` read the variable itself.
+    #[arg(long)]
+    dpos_activation_block: Option<u64>,
 }
 
 #[derive(clap::Args, Debug)]
@@ -185,22 +227,19 @@ fn run_genesis(args: GenesisArgs, bare: bool) -> eyre::Result<()> {
         args.validator_ips.len(),
         args.peers
     );
-    // Bare-only flag: GenesisArgs is shared with `full`, where a silently
-    // ignored prediction would mask a misconfiguration (genesis bakes the
-    // cluster at fixed predeploy slots — there is nothing to predict).
     eyre::ensure!(
-        bare || args.staking_reader_create_nonces.is_none(),
-        "--staking-reader-create-nonces is bare-mode-only (full bakes the \
-         staking cluster into genesis at fixed predeploy slots)"
+        args.committee_size
+            .is_none_or(|n| n >= 1 && n <= args.peers),
+        "--committee-size {:?} must be within 1..={} (--peers)",
+        args.committee_size,
+        args.peers
     );
-    if let Some(nonces) = &args.staking_reader_create_nonces {
-        eyre::ensure!(
-            nonces.len() == 3,
-            "--staking-reader-create-nonces needs exactly 3 values \
-             (staking,chain_config,liveness_slashing), got {}",
-            nonces.len()
-        );
-    }
+    eyre::ensure!(
+        args.blend_holder_validator.is_none_or(|i| i < args.peers),
+        "--blend-holder-validator {:?} out of range for --peers {}",
+        args.blend_holder_validator,
+        args.peers
+    );
 
     std::fs::create_dir_all(&args.output).wrap_err("create output dir")?;
 
@@ -212,18 +251,34 @@ fn run_genesis(args: GenesisArgs, bare: bool) -> eyre::Result<()> {
         "keys derived deterministically from mnemonic"
     );
 
-    // Bare mode skips the in-process staking deploy entirely: the cluster is
-    // deployed at runtime via `forge`, so genesis carries an empty predeploy set
-    // (`artifacts::load` is only consumed by `bootstrap::run`).
+    // The axis is the STAKING MODULE, not predeploys in general: `full` means "staking
+    // present and initialized at block 0", `bare` means "no staking", and
+    // `artifacts::load` (the only reader of the rWasm blob) is reached from
+    // `bootstrap::run` alone. `bare` still installs the Governor, because the module
+    // that arrives later by runtime-upgrade compiles `GENESIS_GOVERNANCE` in as the
+    // only caller its setters accept and nothing can put a contract at a fixed address
+    // after genesis.
     let predeploy_state = if bare {
-        bootstrap::PredeployState::default()
+        let governance_init = artifacts::load_governance(&args.contracts_dir)?;
+        tracing::info!(
+            contracts_dir = %args.contracts_dir.display(),
+            "vendored governance artefact loaded"
+        );
+        bootstrap::run_governance_only(&key_set, &governance_init, args.chain_id)?
     } else {
         let artefacts = artifacts::load(&args.contracts_dir)?;
         tracing::info!(
             contracts_dir = %args.contracts_dir.display(),
             "vendored forge artefacts loaded"
         );
-        bootstrap::run(&key_set, &artefacts, args.chain_id)?
+        let params = bootstrap::BootstrapParams {
+            committee_size: args.committee_size.map(|n| n as usize),
+            blend_holder: args
+                .blend_holder_validator
+                .map(|i| key_set.validators[i as usize].l2_signer.address()),
+            dpos_activation_block: args.dpos_activation_block.or_else(env_activation_block),
+        };
+        bootstrap::run(&key_set, &artefacts, args.chain_id, &params)?
     };
 
     let genesis = genesis::assemble(args.chain_id, &key_set, predeploy_state)?;
@@ -236,8 +291,6 @@ fn run_genesis(args: GenesisArgs, bare: bool) -> eyre::Result<()> {
         &args.validator_ips,
         args.peer_host_mode,
         args.seed_dns_zone.as_deref(),
-        bare,
-        args.staking_reader_create_nonces.as_deref(),
     )?;
     tracing::info!(out = %args.output.display(), "bootstrap complete");
     Ok(())

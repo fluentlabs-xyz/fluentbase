@@ -511,6 +511,12 @@ pub struct OuterBuilder<B, P, BE, D, XC, A, R: slasher::StakingStateRead + Send 
     /// and kept on the [`OuterEngine`] so the supervisor PARKS (keeps marshal +
     /// `consensus`-RPC alive) on a halt instead of abort-all.
     pub safety_halt: crate::sync_metrics::SafetyHalt,
+    /// Committee members observed slashed for equivocation — filled by the node's
+    /// tombstone watcher off chain state, read by `FluentApp` to refuse binding
+    /// their proposals and to drop a charge whose verdict already landed. Passed
+    /// in rather than defaulted here because the writer lives in the node crate;
+    /// a default would be a set nothing fills.
+    pub tombstones: crate::slasher::TombstoneSet,
     /// Live-DKG verify/propose context for `FluentApp` (the boundary "C" gate +
     /// the proposer's `beacon_outcome` assertion). `None` ⇒ no beacon gating.
     pub beacon_verify: Option<BeaconVerify>,
@@ -600,6 +606,10 @@ pub struct OuterBuilder<B, P, BE, D, XC, A, R: slasher::StakingStateRead + Send 
     /// are initialised inside [`OuterBuilder::build`] under the slasher's
     /// own context label.
     pub slasher_wal_partition: String,
+    /// Evidence-channel bridge to the node's gossip task
+    /// ([`slasher::gossip`]). `None` on the follower path, whose slasher is
+    /// constructed but never started.
+    pub slasher_evidence: Option<slasher::EvidenceBridge>,
 
     /// DEVNET/TEST-ONLY byzantine validator behaviour (gated behind
     /// `dpos-devnet-byzantine`). `None` on every honest node. Threaded into
@@ -709,14 +719,13 @@ where
         self.timeouts
             .validated()
             .expect("ConsensusTimeouts invariants violated");
-        // The production record encodes `leader_index` as a u8, and Solidity
-        // `ProductionLiveness.recordProduction(uint64, uint8)` mirrors that
-        // width. A committee larger than 255 would make an honest leader's index
-        // unencodable, so every voter would reject every block it proposed — a
-        // silent, permanent loss of that member's whole slot share. Fail at
-        // startup instead, before any block is proposed. Mirrored constant:
-        // MAX_ACTIVE_VALIDATORS in
-        // solidity-contracts/contracts/staking/ChainConfig.sol.
+        // The production record encodes `leader_index` as a u8, and the staking
+        // module's `recordProduction(uint8)` mirrors that width. A committee
+        // larger than 255 would make an honest leader's index unencodable, so
+        // every voter would reject every block it proposed — a silent,
+        // permanent loss of that member's whole slot share. Fail at startup
+        // instead, before any block is proposed. Mirrored constant:
+        // `MAX_ACTIVE_VALIDATORS_LENGTH` in `contracts/staking/src/consts.rs`.
         assert!(
             fluentbase_p2p::constants::MAX_COMMITTEE_SIZE <= u8::MAX as u64,
             "wire format requires leader_index to fit u8; \
@@ -1037,6 +1046,12 @@ where
         let spec_exec_mailbox =
             crate::spec_exec::Mailbox::new(executor_mailbox.clone(), Some(seed_store.clone()));
 
+        // The slasher's verified-charge queue: filled by the slasher below,
+        // drained one charge per block by the proposer. Created here because the
+        // app is built before the slasher and both need the SAME handle — a
+        // second store would be a queue nothing fills.
+        let charges = slasher::ChargeStore::default();
+
         // FluentApp (needs executor_mailbox + marshal_mailbox + sidecar state).
         // The beacon seed feed lives here, NOT on the executor: the partial is
         // triggered at notarize-time (verify→true / own propose), so seed(h) is
@@ -1053,6 +1068,9 @@ where
                 self.dpos_activation_block,
                 Some(seed_store.clone()),
                 group_keys.clone(),
+                self.chain_id,
+                Some(charges.clone()),
+                self.tombstones,
             );
             match self.beacon_verify {
                 Some(bv) => app.with_beacon(bv),
@@ -1126,6 +1144,11 @@ where
                 // Durable WAL split between producer/consumer tasks.
                 wal_writer,
                 wal_reader,
+                // `Actor::init` binds its own mailbox into the bridge, closing
+                // the inbound direction of the evidence channel.
+                evidence: self.slasher_evidence,
+                // The same handle the app reads at propose time.
+                charges,
             },
         );
 

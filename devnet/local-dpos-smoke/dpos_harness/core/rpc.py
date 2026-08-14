@@ -200,6 +200,61 @@ def cast_field(lineno: int, text: str) -> str:
     return ""
 
 
+class CastDecodeError(RuntimeError):
+    """A `cast call` SUCCEEDED and returned something the caller's ABI signature does not
+    describe.
+
+    This is the failure mode `cast_field` cannot see and the one that matters after the
+    contract merge. `cast` decodes the return blob against the signature IT WAS GIVEN, not
+    against the one the contract has: hand it a signature with fewer return values than the
+    contract actually returns and it decodes the PREFIX and prints it, rc 0, no diagnostic.
+    Every downstream check then evaluates a partial view and agrees with itself about it.
+
+    Deliberately distinct from an unreadable RPC. The callers keep their existing
+    ""/None/sentinel answers for "nobody answered" — an RPC brownout raised as a decode fault
+    would be a flaky guard, which is worse than none. This type is only ever raised on a
+    NON-EMPTY answer of the wrong shape.
+    """
+
+
+def cast_returns(text: str, want: int, what: str):
+    """The `want` top-level return values of a `cast call …(t1,t2,…)`, one per line, stripped.
+
+    `cast` prints exactly one line per top-level return value, so the line count IS the arity
+    of what it decoded. A count that disagrees with `want` means the signature and the contract
+    have drifted — raise rather than hand back a prefix."""
+    lines = [ln.strip() for ln in (text or "").splitlines() if ln.strip()]
+    if len(lines) != want:
+        raise CastDecodeError(
+            f"{what}: decoded {len(lines)} return value(s), expected {want} — the ABI signature "
+            f"and the contract have drifted, and `cast` decodes the prefix silently. Output: "
+            f"{' | '.join(lines)[:200]!r}")
+    return lines
+
+
+def cast_addr_array(text: str, what: str):
+    """The lowercased addresses of a single-return `cast call …(address[])`.
+
+    Refuses anything that is not bracketed-array syntax. A regex sweep for `0x`+40 hex over raw
+    stdout accepts a bare address, a tuple, or a truncated decode just as happily as the array
+    it was asked for — which is how a wrong signature reads as a plausible committee."""
+    line = cast_returns(text, 1, what)[0]
+    if not (line.startswith("[") and line.endswith("]")):
+        raise CastDecodeError(
+            f"{what}: expected a bracketed address array, got {line[:200]!r}")
+    body = line[1:-1].strip()
+    if not body:
+        return []
+    out = []
+    for item in body.split(","):
+        item = item.strip()
+        if not re.fullmatch(r"0x[0-9a-fA-F]{40}", item):
+            raise CastDecodeError(
+                f"{what}: {item[:80]!r} is not an address inside {line[:200]!r}")
+        out.append(item.lower())
+    return out
+
+
 # --- block-field getters (CQ-H4) -------------------------------------------
 # GRACEFUL everywhere: a not-yet-synced block / unreachable RPC yields "null"
 # (never aborts), so callers handle a lagging node cleanly. All results lowercased.

@@ -48,18 +48,61 @@ def _idx(lines, *needles):
 
 
 def test_bringup_phase_order():
-    """The load-bearing ORDER: preflight down → phase-A up → DeployStaking → regen reader →
-    setDposActivationBlock → stop spares → --dpos cold-restart."""
+    """The load-bearing ORDER: preflight down → phase-A up → write reader → setEpochBlockInterval
+    → setDposActivationBlock → stop spares → --dpos cold-restart.
+
+    There is no deploy step between the `up` and the reader write any more: the staking module is
+    installed and initialized in genesis by `genesis-bootstrap full`, so the bring-up's first
+    on-chain act is a governance call against a contract that already exists."""
     r, _ = _run()
     L = _lines(r)
     down = _idx(L, "docker compose down -v --remove-orphans")
     upA = _idx(L, "docker compose up --build -d")
-    deploy = _idx(L, "DeployStaking.s.sol:DeployStaking")
     regen = _idx(L, "sh -c cat > /runtime/staking-reader.json")
+    interval = _idx(L, "setEpochBlockInterval")
     act = _idx(L, "setDposActivationBlock")
     stop_spare = _idx(L, "docker compose stop validator-")
     cold = _idx(L, "up -d --force-recreate validator-0")
-    assert 0 <= down < upA < deploy < regen < act < stop_spare < cold
+    assert 0 <= down < upA < regen < interval < act < stop_spare < cold
+
+
+def test_bringup_issues_no_deploy_round():
+    """The runtime deploy is GONE, and its absence is the assertion. `forge script
+    DeployStaking`, `forge create MockBlendToken` and the deployer-nonce tripwire all existed to
+    cope with a staking cluster whose addresses were unknown until it was deployed; the module is
+    at a fixed genesis address now, so a `forge`/manifest step reappearing here means somebody
+    re-introduced address discovery."""
+    r, _ = _run()
+    L = _lines(r)
+    assert _idx(L, "DeployStaking") == -1
+    assert _idx(L, "forge") == -1
+    assert _idx(L, "cast nonce") == -1
+
+
+def test_bringup_addresses_are_genesis_constants():
+    """A dry walk and a live run report the SAME addresses, because they are the same addresses.
+    The dry-vs-live split existed only because the dry walk had no manifest to read."""
+    from dpos_harness.core import topology as t
+    _, bu = _run()
+    assert bu.staking_rt == t.GENESIS_STAKING
+    assert bu.gov_addr == t.GENESIS_GOVERNANCE
+    assert bu.token == t.GENESIS_STAKING_TOKEN
+    # three read surfaces, one contract
+    assert bu.chain_config_rt == bu.staking_rt == bu.liveness_rt
+
+
+def test_bringup_governance_writes_target_the_staking_address():
+    """Both governance proposals name the STAKING address. Getting this wrong is invisible: a
+    proposal into an address with no code executes, emits `ProposalExecuted` and returns a 0x1
+    receipt while doing nothing, because OZ's `Address.verifyCallResult` never checks
+    `target.code.length`."""
+    from dpos_harness.core import topology as t
+    r, _ = _run()
+    proposals = [" ".join(a.argv) for a in r.log
+                 if "propose(address[],uint256[],bytes[],string)(uint256)" in " ".join(a.argv)]
+    assert len(proposals) == 2, proposals
+    for line in proposals:
+        assert f"[{t.GENESIS_STAKING}]" in line, line
 
 
 def test_bringup_passes_val_containers_not_pool(monkeypatch):
@@ -207,58 +250,9 @@ def test_byzantine_flag_assert_present():
     assert _idx(_lines(r), "--dpos.byzantine", "equivocate", "--help") >= 0
 
 
-def test_deploy_staking_env_overlay():
-    """DeployStaking rides INITIAL_VALIDATORS/STAKES/ACTIVE_VALIDATORS_LENGTH as an env delta;
-    the recorded argv is the bare `forge script …` line (the oracle)."""
-    r, _ = _run()
-    dep = next(a for a in r.log if "DeployStaking.s.sol:DeployStaking" in " ".join(a.argv))
-    assert dep.argv[:2] == ["forge", "script"]
-    assert dep.env.get("ACTIVE_VALIDATORS_LENGTH") == "3"
-    assert dep.env.get("NETWORK") == "local-dpos-smoke/l2"
 
 
-def test_deploy_staking_cwd_and_absolute_output_path():
-    """The forge_l2 wrapper is `( cd $SOLIDITY_CONTRACTS_DIR && forge … )`, and DeployStaking's
-    `vm.writeJson(out, OUTPUT_PATH)` runs under solidity-contracts' foundry.toml whose
-    fs_permissions only allow `./deployments`. Pin the full oracle triple: the invocation's
-    cwd == contracts_dir, and OUTPUT_PATH is an ABSOLUTE path inside <contracts>/deployments
-    (a relative path resolves against forge's root=cwd and escapes the allowed dir → v61.3 bug)."""
-    r, bu = _run()
-    dep = next(a for a in r.log if "DeployStaking.s.sol:DeployStaking" in " ".join(a.argv))
-    # cwd mirrors the bash `cd $SOLIDITY_CONTRACTS_DIR`
-    assert dep.cwd == bu.contracts_dir
-    out = dep.env.get("OUTPUT_PATH")
-    # writer path == the manifest the readers use (single source of truth)
-    assert out == bu.manifest
-    # ABSOLUTE and inside <contracts_dir>/deployments so foundry fs_permissions allow the write
-    assert os.path.isabs(out)
-    assert out == os.path.join(os.path.abspath(bu.contracts_dir),
-                               "deployments", "runtime-deployment.json")
 
-
-def test_manifest_reader_writer_agree_on_absolute_path():
-    """The DeployStaking OUTPUT_PATH (writer), _read_manifest's open(), and the
-    sim_regen_staking_reader arg (reader) must all be the SAME absolute file — otherwise the
-    forge write (cwd=contracts_dir) and the Python read (cwd=smoke dir) resolve to different
-    files. All three consume bu.manifest, which is now absolute."""
-    r, bu = _run()
-    dep = next(a for a in r.log if "DeployStaking.s.sol:DeployStaking" in " ".join(a.argv))
-    assert os.path.isabs(bu.manifest)
-    assert dep.env.get("OUTPUT_PATH") == bu.manifest
-
-
-def test_token_create_runs_under_contracts_dir():
-    """MockBlendToken forge-create shares the forge_l2 wrapper semantics (cwd=contracts_dir)."""
-    r, bu = _run()
-    tok = next(a for a in r.log if "MockBlendToken.sol:MockBlendToken" in " ".join(a.argv))
-    assert tok.cwd == bu.contracts_dir
-
-
-def test_setconsensuskeys_for_initial_committee():
-    """setConsensusKeys is issued for v0..v(initial-1) = 3 validators."""
-    r, _ = _run()
-    n = sum(1 for l in _lines(r) if "setConsensusKeys(address,bytes,bytes,bytes32)" in l)
-    assert n == 3
 
 
 def test_no_cascade_skips_downstream():
@@ -725,9 +719,11 @@ def test_shadow_attach_resolves_compose_without_bringup(monkeypatch, tmp_path):
 
 
 # ── F8: the shadow's deployed-address resolver ───────────────────────────────
-_RT_ADDRS = {"STAKING_RT": "0x" + "a" * 40,
-             "CHAIN_CONFIG_RT": "0x" + "b" * 40,
-             "LIVENESS_RT": "0x" + "c" * 40}
+#: ONE resolved address under three Ctx names — the battery reads the registry, the chain
+#: parameters and the production counters through three seams, and all three now land on the
+#: same staking module.
+_RT_ADDR = "0x" + "a" * 40
+_RT_ADDRS = {"STAKING_RT": _RT_ADDR, "CHAIN_CONFIG_RT": _RT_ADDR, "LIVENESS_RT": _RT_ADDR}
 
 
 def _stub_runtime_cat(monkeypatch, out):
@@ -744,13 +740,13 @@ def _stub_runtime_cat(monkeypatch, out):
 
 
 def test_shadow_resolves_runtime_addrs_from_staking_reader_json(monkeypatch):
-    """The resolver parses the file bring-up writes (sim_regen_staking_reader) into the three
-    Ctx fields, lowercased."""
+    """The resolver parses the ONE field the file carries into the three Ctx fields, lowercased.
+
+    Surplus keys are IGNORED rather than rejected: `staking-reader.json` is the node's config
+    file, the node itself tolerates unknown keys, and a shadow that refused to attach over one
+    would be stricter than the thing it observes."""
     from dpos_harness.sim import shadow
-    body = json.dumps({"staking_address": "0x" + "A" * 40,
-                       "chain_config_address": "0x" + "b" * 40,
-                       "liveness_slashing_address": "0x" + "c" * 40,
-                       "ignored": "x"})
+    body = json.dumps({"staking_address": "0x" + "A" * 40, "ignored": "x"})
     _stub_runtime_cat(monkeypatch, body)
     assert shadow.resolve_runtime_addrs() == _RT_ADDRS
 
@@ -759,17 +755,14 @@ def test_shadow_resolves_runtime_addrs_from_staking_reader_json(monkeypatch):
     ("", "empty read (container gone / compose project not resolved)"),
     ("Error: No such service: validator-0", "an error banner instead of the file"),
     ("[]", "JSON that is not an object"),
-    (json.dumps({"staking_address": "0x" + "a" * 40}), "missing keys"),
-    (json.dumps({"staking_address": "0x" + "0" * 40,
-                 "chain_config_address": "0x" + "b" * 40,
-                 "liveness_slashing_address": "0x" + "c" * 40}), "a zero address"),
-    (json.dumps({"staking_address": "nope",
-                 "chain_config_address": "0x" + "b" * 40,
-                 "liveness_slashing_address": "0x" + "c" * 40}), "a malformed address"),
+    (json.dumps({"nothing": "here"}), "the staking address absent"),
+    (json.dumps({"staking_address": "0x" + "0" * 40}), "a zero address"),
+    (json.dumps({"staking_address": "nope"}), "a malformed address"),
 ])
 def test_shadow_addr_resolution_fails_loud_never_empty(monkeypatch, body, why):
-    """FAIL LOUD, never "" — a shadow running the battery through codeless predeploys logs a
-    confident OK every tick over a chain it cannot read (task 20260729__sim_port_gaps F8)."""
+    """FAIL LOUD, never "" — a shadow that could not confirm the address would otherwise run the
+    whole battery against whatever it guessed and log a confident OK every tick over a chain it
+    cannot read (task 20260729__sim_port_gaps F8)."""
     from dpos_harness.sim import shadow
     _stub_runtime_cat(monkeypatch, body)
     with pytest.raises(shadow.ShadowAttachError):

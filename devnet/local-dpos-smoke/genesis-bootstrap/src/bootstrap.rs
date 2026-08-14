@@ -4,68 +4,71 @@ use eyre::WrapErr;
 use fluentbase_testing::EvmTestingContext;
 use std::collections::HashMap;
 
-use crate::artifacts::{Artefacts, ContractArtefact};
+use crate::artifacts::Artefacts;
 use crate::keys::KeySet;
 use crate::pop;
 
-// Canonical predeploy addresses. Chosen visually-distinctive (0x...520N
-// echoes chain_id=2026's older 0x5201 devnet pattern) and well clear of
-// EIP-2537/2935/etc precompiles at 0x01..0x12. Storage layout under each
-// of these addresses is identical to what the (matching impl's) UUPS proxy
-// would have, because we deploy impl-direct.
-pub const STAKING_ADDR: Address = address!("0x0000000000000000000000000000000000005201");
-pub const CHAIN_CONFIG_ADDR: Address = address!("0x0000000000000000000000000000000000005202");
+// The staking system contract and the governance contract live at the two
+// addresses `fluentbase_types` reserves for them. `GENESIS_GOVERNANCE` is
+// COMPILED INTO the staking module as the sole caller its privileged setters
+// accept (`util.rs::ensure_governance`), so the Governor deployed below must land
+// at exactly that address or every governance write reverts `ERR_ONLY_GOVERNANCE`.
+pub const STAKING_ADDR: Address = fluentbase_types::GENESIS_STAKING;
+pub const GOVERNANCE_ADDR: Address = fluentbase_types::GENESIS_GOVERNANCE;
+// The three predeploys that stayed Solidity keep their historical 0x...520N
+// devnet slots (well clear of the EIP-2537/2935 precompiles at 0x01..0x12).
 pub const STAKING_POOL_ADDR: Address = address!("0x0000000000000000000000000000000000005203");
-pub const SYSTEM_REWARD_ADDR: Address = address!("0x0000000000000000000000000000000000005204");
-pub const GOVERNANCE_ADDR: Address = address!("0x0000000000000000000000000000000000005205");
-// The liveness predeploy (`ProductionLiveness`) is NOT a configurable predeploy: the block
-// executor system-calls it at the fixed genesis address
-// `fluentbase_types::PRECOMPILE_LIVENESS_SLASHING` (evm.rs
-// `apply_pre_execution_changes` → recordProduction), unlike the staking/chain-config
-// predeploys above whose addresses reach the executor via `--dpos.staking-config`.
-// It MUST be deployed at that exact address — deploying it at a 0x...520N scheme
-// address silently no-ops the recorder (a system call to an empty address returns EVM
-// `Success` with no state change, so `lastProcessedBlock`/`blocksInEpoch` never move, no
-// epoch ever closes and the stipend never pays). Bound to the constant so the two cannot
-// drift.
-pub const LIVENESS_SLASHING_ADDR: Address = fluentbase_types::PRECOMPILE_LIVENESS_SLASHING;
 pub const STAKING_TOKEN_ADDR: Address = address!("0x0000000000000000000000000000000000005207");
-// Non-upgradeable; no initialize/proxy. Wired into ChainConfig via
-// setBlsVerifier (`onlyFromGovernance`) — bootstrap spoofs caller =
-// GOVERNANCE_ADDR (immutable target of the modifier).
 pub const BLS_VERIFIER_ADDR: Address = address!("0x0000000000000000000000000000000000005208");
-// DELEGATECALL'd library that `Staking` is linked against (forge extracted the
-// DPoS logic into it). Deployed at this fixed address; `artifacts::load` links
-// `Staking`'s `__$StakingDpos$__` placeholders to it. Stateless library — no
-// constructor args, no storage.
-pub const STAKING_DPOS_ADDR: Address = address!("0x0000000000000000000000000000000000005209");
-// Second DELEGATECALL'd library `Staking` is linked against — forge extracted the
-// staking-economics logic (delegation / rewards / fees / claims) into it to keep
-// `Staking` runtime bytecode under EIP-170. Deployed at this fixed address;
-// `artifacts::load` links `Staking`'s `__$StakingEconomics$__` placeholders to it.
-// Stateless library — no constructor args, no storage.
-pub const STAKING_ECONOMICS_ADDR: Address = address!("0x000000000000000000000000000000000000520a");
-// Stateless equivocation-evidence decoder (no storage / constructor, like the BLS
-// verifier). Wired into ChainConfig via setEvidenceDecoder (`onlyFromGovernance`);
-// without it `Staking._slashEquivocation` reverts EvidenceDecoderNotConfigured, so
-// the byzantine equivocation smoke's slash can never land.
-pub const EVIDENCE_DECODER_ADDR: Address = address!("0x000000000000000000000000000000000000520b");
-// Third DELEGATECALL'd library `Staking` is linked against — the per-epoch BLEND
-// stipend settlement (`settleEpochStipend` / `getEpochRewards`), extracted to keep
-// `Staking` under EIP-170. Deployed at this fixed address; `artifacts::load` links
-// `Staking`'s `__$StakingRewards$__` placeholders to it. Stateless library — no
-// constructor args, no storage.
-pub const STAKING_REWARDS_ADDR: Address = address!("0x000000000000000000000000000000000000520c");
-// BLEND stipend reserve predeploy — holds the reward pot that `settleEpochStipend`
-// draws from. `disburse` is gated to the Staking predeploy (constructor `stakingAddr`
-// = STAKING_ADDR); Staking's constructor in turn takes this address as `blendReserveAddr`
-// (a mutual address dependency both sides resolve at fixed genesis addresses). Seeded
-// with BLEND from MockBlendToken below so `reserveBalance()` is non-zero.
-pub const BLEND_RESERVE_ADDR: Address = address!("0x000000000000000000000000000000000000520d");
 
-// EVM canonical SYSTEM_CALLER per StakingContext.sol:17 — used to satisfy
-// the `onlySystemCall` modifier on `commitEpochCommittee`.
+// EVM canonical SYSTEM_CALLER (`consts.rs::SYSTEM_CALLER`) — used to satisfy the
+// `ERR_ONLY_SYSTEM_CALL` guard on `commitEpochCommittee`.
 const SYSTEM_CALLER: Address = address!("0xfffffffffffffffffffffffffffffffffffffffe");
+
+// `initialize` verifies one BLS proof-of-possession per genesis validator inside a
+// single call (`initializer.rs` → `consensus::verify_consensus_keys`), each a
+// hash-to-curve plus a pairing through the Solidity verifier, so the whole init
+// sequence runs well past the 50 M an individual predeploy call used to need. This
+// is an in-process bootstrap EVM with `BlockEnv::gas_limit = u64::MAX`, not a
+// consensus budget.
+const BOOTSTRAP_GAS_LIMIT: u64 = 500_000_000;
+
+// Governor voting window, in blocks — the value
+// `solidity-contracts/scripts/config/local-dpos-smoke/l2.json` gave the retired
+// `DeployStaking` run for this same devnet. Not a tuning choice: the sim drives real
+// governance rounds (setEpochBlockInterval, setDposActivationBlock, cap raises), and a
+// 1-block window closes between the harness noticing a proposal is Active and its votes
+// landing, so every proposal ends Defeated. The static smoke never exercised governance,
+// which is why 1 survived until the sim moved off the runtime forge deploy onto this
+// path. Shared by BOTH arms: the production-path stand governs a chain whose Governor
+// came from `bare`, and a window that differed there would make that stand behave
+// unlike every other one.
+pub const GOVERNANCE_VOTING_PERIOD_BLOCKS: u32 = 10;
+
+/// The three genesis facts that differ between the stands this binary serves.
+///
+/// Every field is `None` by default and every `None` resolves to the genesis-baked
+/// smoke's behaviour, so a smoke invocation is byte-identical whether or not the
+/// caller knows these exist. The sim/soak sets all three: it derives a large identity
+/// POOL but runs containers for only the first few, it spends BLEND from
+/// `validator-0`'s owner key, and it schedules DPoS activation itself through
+/// governance once its bring-up phases are done.
+#[derive(Debug, Default)]
+pub struct BootstrapParams {
+    /// Seat `validators[0..committee_size]` as the genesis committee and use that as
+    /// the `activeValidatorsLength` cap. `None` ⇒ every derived identity, which is
+    /// right only where `--peers` IS the committee.
+    pub committee_size: Option<usize>,
+    /// Account the whole MockBlendToken supply ends up on, and therefore the genesis
+    /// stake sponsor and the `blendReserve` the stipend is drawn from. `None` ⇒ the
+    /// governance signer, which is what the token's constructor mints to.
+    pub blend_holder: Option<Address>,
+    /// `dposActivationBlock`. `None` ⇒ `2 × epochBlockInterval`, which lands the
+    /// migration anchor in absolute epoch 2. `Some(0)` is the contract's unscheduled
+    /// sentinel — nothing is scheduled at genesis and governance sets the real value
+    /// later.
+    pub dpos_activation_block: Option<u64>,
+}
 
 #[derive(Debug, Default)]
 pub struct PredeployState {
@@ -84,9 +87,16 @@ pub struct PredeployState {
 mod abi {
     use alloy_sol_types::sol;
     sol! {
-        interface IChainConfig {
+        interface IStaking {
             function initialize(
-                address initialOwner,
+                address initialStakeOwner,
+                address[] validators,
+                uint256[] initialStakes,
+                bytes[] blsPubkeysUncompressed,
+                bytes[] blsPopsUncompressed,
+                bytes32[] peerPubkeys,
+                uint16 commissionRate,
+                address stakingToken,
                 uint32 activeValidatorsLength,
                 uint32 epochBlockInterval,
                 uint32 undelegatePeriod,
@@ -94,39 +104,15 @@ mod abi {
                 uint256 minStakingAmount,
                 uint64 dposActivationBlock,
                 address blsVerifier,
-                address evidenceDecoder
+                uint256 minUndelegateBlocks,
+                address blendReserve
             ) external;
-        }
-        interface IStaking {
-            function initialize(
-                address initialOwner,
-                address[] validators,
-                uint256[] initialStakes,
-                uint16 commissionRate
-            ) external;
-            function setConsensusKeys(
-                address validatorAddress,
-                bytes blsPubkeyUncompressed,
-                bytes blsPoPUncompressed,
-                bytes32 peerPubkey
-            ) external;
-            function commitEpochCommittee(address[] committee) external;
+            function setProductionLivenessDisabled(bool value) external;
+            function setBlendStipendPerEpoch(uint256 value) external;
+            function commitEpochCommittee() external;
         }
         interface IStakingPool {
             function initialize(address initialOwner) external;
-        }
-        interface IProductionLiveness {
-            function initialize(address initialOwner) external;
-        }
-        interface IBlendReserve {
-            function initialize(address initialOwner) external;
-        }
-        interface ISystemReward {
-            function initialize(
-                address initialOwner,
-                address[] accounts,
-                uint16[] shares
-            ) external;
         }
         interface IFluentGovernance {
             function initialize(address initialOwner, uint32 initialVotingPeriod) external;
@@ -134,112 +120,55 @@ mod abi {
         interface IERC20 {
             function approve(address spender, uint256 value) external returns (bool);
             function transfer(address to, uint256 value) external returns (bool);
-        }
-        interface IChainConfigGovernance {
-            function setBlsVerifier(address newValue) external;
-            function setEvidenceDecoder(address newValue) external;
-            function setBlendStipendPerEpoch(uint256 newValue) external;
+            function balanceOf(address account) external view returns (uint256);
         }
     }
 }
 
-pub fn run(keys: &KeySet, artefacts: &Artefacts, chain_id: u64) -> eyre::Result<PredeployState> {
-    // PRECOMPILE_EVM_RUNTIME needs to be registered before any plain
-    // EVM (`deployedBytecode`) deploy through `deploy_evm_tx` — without
-    // it the EVM aborts with `MalformedBuiltinParams`. Mirrors the
-    // e2e/src/lib.rs `with_full_genesis` trait impl.
-    let fluent_contracts: Vec<_> = fluentbase_genesis::GENESIS_CONTRACTS_BY_ADDRESS
-        .values()
-        .cloned()
-        .collect();
-    let mut ctx = EvmTestingContext::default().with_contracts(&fluent_contracts);
-    // Use mainnet revm path (not rWASM); we deploy plain EVM bytecode
-    // and don't need fluentbase's WASM runtime. e2e/benches use the same
-    // setting (e2e/benches/greeting.rs:15, e2e/src/nitro.rs:37).
-    ctx.disabled_rwasm = true;
-    // Staking.sol runtime bytecode exceeds EIP-170's 24 KB limit (it
-    // packages slashing + BLS verifier + committee bookkeeping). Prod
-    // deploys via UUPS proxy so the impl is on a side address whose
-    // immutables don't have to be re-pointed; we deploy impl-direct,
-    // so disable the cap (initcode and
-    // runtime) for the in-process bootstrap session.
-    ctx.cfg.limit_contract_code_size = Some(usize::MAX);
-    ctx.cfg.limit_contract_initcode_size = Some(usize::MAX);
-    // EIP-3607 (RejectCallerWithCode) blocks tx where caller already has
-    // code. We need to spoof caller = GOVERNANCE_ADDR (a deployed
-    // contract) to satisfy ChainConfig's `onlyFromGovernance` modifier
-    // (checks `msg.sender == _governanceContract`, no code-shape check).
-    // Same applies to SYSTEM_CALLER for `onlySystemCall`. Disable 3607
-    // for the in-process bootstrap session only — not a real chain.
-    ctx.cfg.disable_eip3607 = true;
-    // block.chainid drives Staking._fluentNamespace() (= "FLUENT_DPOS_V1_"
-    // ‖ u64 BE chain_id), which the contract uses both as the PoP-signed
-    // message and the slashing namespace. The Rust-side PoP is signed
-    // with `fluent_namespace(chain_id)` — both MUST agree, else
-    // verifier.verify returns false → InvalidProofOfPossession.
-    ctx.cfg.chain_id = chain_id;
-    // TxBuilder::create / TxBuilder::call leave tx.chain_id at its
-    // TxEnv::default() value of Some(1), which then disagrees with our
-    // cfg.chain_id = 2026 and trips the EIP-155 chain-ID check. We don't
-    // care about replay protection in an in-process bootstrap session,
-    // so disable the check entirely instead of patching each TxEnv.
-    ctx.cfg.tx_chain_id_check = false;
-    let deployer = keys.governance_signer.address();
-    ctx.add_balance(deployer, U256::from(10u128).pow(U256::from(22)));
-
-    let context_args = (
-        STAKING_ADDR,
-        SYSTEM_REWARD_ADDR,
-        STAKING_POOL_ADDR,
-        GOVERNANCE_ADDR,
-        CHAIN_CONFIG_ADDR,
-        STAKING_TOKEN_ADDR,
+pub fn run(
+    keys: &KeySet,
+    artefacts: &Artefacts,
+    chain_id: u64,
+    params: &BootstrapParams,
+) -> eyre::Result<PredeployState> {
+    // The genesis committee is `validators[0..committee_size]` — the FIRST K by
+    // identity index, which is what `keys::derive` produces (every key is
+    // `H(seed|role|i)`, pushed in `0..peers` order with `idx: i`, and nothing sorts
+    // afterwards) and what the harness runs containers for (`validator-0..K-1`,
+    // `owner-N.hex`, `addresses.json[N]`). The contract re-sorts the committee on peer
+    // pubkey at commit time, so a member's identity index is NOT its committee
+    // position — but membership is exactly {0..K-1} either way, and the node derives
+    // its participant index from the same peer-pubkey order, so nothing downstream
+    // reads identity index as position.
+    let seated = params.committee_size.unwrap_or(keys.validators.len());
+    eyre::ensure!(
+        seated >= 1 && seated <= keys.validators.len(),
+        "committee size {seated} outside the derived pool of {}",
+        keys.validators.len()
     );
-    let context_args_encoded = context_args.abi_encode_sequence();
+    let committee = &keys.validators[..seated];
+    let deployer = keys.governance_signer.address();
+    let mut ctx = bootstrap_ctx(chain_id, deployer);
 
-    let staking_constructor = (
+    // `StakingContext`'s six-address tuple. The former ChainConfig predeploy is part
+    // of the staking module now, so its slot resolves to STAKING_ADDR; the
+    // SystemReward contract has no successor at all, and STAKING_ADDR stands in
+    // there too rather than zero — a call to a codeless account returns Success, so
+    // a zero would turn any future dereference into a silent no-op instead of an
+    // error. `StakingPool` never dereferences the slot today (it only re-exposes it
+    // through the inherited `getSystemReward()` getter).
+    let pool_constructor = (
         STAKING_ADDR,
-        SYSTEM_REWARD_ADDR,
+        STAKING_ADDR,
         STAKING_POOL_ADDR,
         GOVERNANCE_ADDR,
-        CHAIN_CONFIG_ADDR,
+        STAKING_ADDR,
         STAKING_TOKEN_ADDR,
-        LIVENESS_SLASHING_ADDR,
-        BLEND_RESERVE_ADDR,
     )
         .abi_encode_sequence();
-
-    // BlendReserve takes the 6 StakingContext addresses PLUS `stakingAddr`
-    // (= STAKING_ADDR) — the sole authorized `disburse` caller.
-    let blend_reserve_constructor = (
-        STAKING_ADDR,
-        SYSTEM_REWARD_ADDR,
-        STAKING_POOL_ADDR,
-        GOVERNANCE_ADDR,
-        CHAIN_CONFIG_ADDR,
-        STAKING_TOKEN_ADDR,
-        STAKING_ADDR,
-    )
-        .abi_encode_sequence();
-
-    // ChainConfig takes the 6 StakingContext addresses PLUS the F1 immutable
-    // `minUndelegateBlocks` (devnet = 0, guard off). Encoded separately from the
-    // shared `context_args_encoded`, which the other 6-arg UUPS impls reuse.
-    let chain_config_constructor = (
-        STAKING_ADDR,
-        SYSTEM_REWARD_ADDR,
-        STAKING_POOL_ADDR,
-        GOVERNANCE_ADDR,
-        CHAIN_CONFIG_ADDR,
-        STAKING_TOKEN_ADDR,
-        U256::ZERO, // minUndelegateBlocks: F1 floor off on devnet
-    )
-        .abi_encode_sequence();
-
-    let governance_constructor = (STAKING_ADDR, CHAIN_CONFIG_ADDR).abi_encode_sequence();
 
     // MockBlendToken: constructor mints to deployer → storage MUST be
-    // copied (balanceOf, totalSupply). The 6 UUPS impls below set ONLY
+    // copied (balanceOf, totalSupply). The two UUPS impls below set ONLY
     // immutables + call `_disableInitializers()`, which writes to the
     // OZ initialized slot (`Initializable.STORAGE_LOCATION`); copying
     // that to canonical would make `initialize()` revert with
@@ -256,92 +185,12 @@ pub fn run(keys: &KeySet, artefacts: &Artefacts, chain_id: u64) -> eyre::Result<
     deploy_to_canonical(
         &mut ctx,
         deployer,
-        &artefacts.system_reward,
-        SYSTEM_REWARD_ADDR,
-        &context_args_encoded,
-        false,
-    )?;
-    deploy_to_canonical(
-        &mut ctx,
-        deployer,
         &artefacts.staking_pool,
         STAKING_POOL_ADDR,
-        &context_args_encoded,
+        &pool_constructor,
         false,
     )?;
-    deploy_to_canonical(
-        &mut ctx,
-        deployer,
-        &artefacts.chain_config,
-        CHAIN_CONFIG_ADDR,
-        &chain_config_constructor,
-        false,
-    )?;
-    deploy_to_canonical(
-        &mut ctx,
-        deployer,
-        &artefacts.liveness_slashing,
-        LIVENESS_SLASHING_ADDR,
-        &context_args_encoded,
-        false,
-    )?;
-    // Deploy the DELEGATECALL'd libraries FIRST — `Staking`'s bytecode is linked
-    // against `STAKING_DPOS_ADDR` + `STAKING_ECONOMICS_ADDR` (see `artifacts::load`).
-    // Stateless libraries: no constructor args, no storage copy.
-    deploy_to_canonical(
-        &mut ctx,
-        deployer,
-        &artefacts.staking_dpos,
-        STAKING_DPOS_ADDR,
-        &[],
-        false,
-    )?;
-    deploy_to_canonical(
-        &mut ctx,
-        deployer,
-        &artefacts.staking_economics,
-        STAKING_ECONOMICS_ADDR,
-        &[],
-        false,
-    )?;
-    // Third linked library — `Staking`'s `__$StakingRewards$__` placeholders point
-    // here. Stateless: no constructor args, no storage. MUST precede the Staking deploy.
-    deploy_to_canonical(
-        &mut ctx,
-        deployer,
-        &artefacts.staking_rewards,
-        STAKING_REWARDS_ADDR,
-        &[],
-        false,
-    )?;
-    // BlendReserve — the stipend pot. Deploy before Staking is not required (Staking
-    // holds only its address, resolved at the fixed genesis addr), but keep it adjacent
-    // to the other predeploys. Storage copy skipped (UUPS impl: only immutables +
-    // `_disableInitializers()`; `initialize` is called on the canonical below).
-    deploy_to_canonical(
-        &mut ctx,
-        deployer,
-        &artefacts.blend_reserve,
-        BLEND_RESERVE_ADDR,
-        &blend_reserve_constructor,
-        false,
-    )?;
-    deploy_to_canonical(
-        &mut ctx,
-        deployer,
-        &artefacts.staking,
-        STAKING_ADDR,
-        &staking_constructor,
-        false,
-    )?;
-    deploy_to_canonical(
-        &mut ctx,
-        deployer,
-        &artefacts.governance,
-        GOVERNANCE_ADDR,
-        &governance_constructor,
-        false,
-    )?;
+    deploy_governance(&mut ctx, deployer, &artefacts.governance)?;
     // BLS12381Verifier is stateless (no storage, no constructor args) —
     // just place the runtime bytecode at the canonical address. We still
     // route through deploy_to_canonical to keep one code path for all
@@ -354,30 +203,36 @@ pub fn run(keys: &KeySet, artefacts: &Artefacts, chain_id: u64) -> eyre::Result<
         &[],
         false,
     )?;
-    // SimplexEvidenceDecoder is likewise stateless (no storage / constructor) —
-    // place its runtime bytecode at the canonical address through the same path.
-    deploy_to_canonical(
-        &mut ctx,
-        deployer,
-        &artefacts.evidence_decoder,
-        EVIDENCE_DECODER_ADDR,
-        &[],
-        false,
-    )?;
 
-    // ChainConfig enforces non-zero minStake values (revert
-    // "minValidatorStakeAmount") and Staking._addValidator enforces
-    // `initialStake >= minValidatorStakeAmount` (line 731). Stakes must
-    // also be `% BALANCE_COMPACT_PRECISION == 0` where the precision
-    // is `1e10` (Staking.sol:78). Pick 1 BLEND (1e18) as min stake +
-    // initial — multiple of 1e10, smoke uses no real economics.
+    // Everything below runs through the rWasm executor, which rejects bare legacy
+    // bytecode (`execute_rwasm_frame` returns `NotSupportedBytecode` for anything
+    // that is neither rWasm-native nor an OwnableAccount). Re-install the four
+    // Solidity predeploys in the production OwnableAccount(EVM_RUNTIME, ..) form
+    // BEFORE the flip, or the first call into any of them halts.
+    wrap_evm_predeploys(
+        &mut ctx,
+        &[
+            STAKING_TOKEN_ADDR,
+            STAKING_POOL_ADDR,
+            GOVERNANCE_ADDR,
+            BLS_VERIFIER_ADDR,
+        ],
+    )?;
+    ctx.disabled_rwasm = false;
+    ctx.add_bytecode(STAKING_ADDR, artefacts.staking_rwasm.clone());
+
+    // The contract rejects a zero `minValidatorStakeAmount`/`minStakingAmount` and
+    // `_addValidator` enforces `initialStake >= minValidatorStakeAmount`. Stakes must
+    // also be `% BALANCE_COMPACT_PRECISION == 0` where the precision is `1e10`
+    // (`consts.rs:336`). Pick 1 BLEND (1e18) as min stake + initial — a multiple of
+    // 1e10, and smoke uses no real economics.
     let smoke_min_stake = U256::from(10u128).pow(U256::from(18));
     // `dposActivationBlock` defaults to `2 * epochBlockInterval` so the migration anchor
     // still lands in absolute epoch 2 (alignment invariant); both the interval and the
-    // activation block MUST match `lib.sh`'s `EPOCH_INTERVAL` / `DPOS_ACTIVATION_BLOCK`.
+    // activation block MUST match the harness's `EPOCH_INTERVAL` / `DPOS_ACTIVATION_BLOCK`.
     //
     // The production-liveness tier's three parameters are NOT initializer arguments — they
-    // are seeded from constants inside `__ChainConfig_init` and moved by governance, so a
+    // are seeded from constants inside `apply_initial_config` and moved by governance, so a
     // soak that wants real verdicts lowers `minVerdictDueBlocks` rather than re-deploying.
     let env_u32 = |k: &str, default: u32| -> u32 {
         std::env::var(k)
@@ -392,39 +247,17 @@ pub fn run(keys: &KeySet, artefacts: &Artefacts, chain_id: u64) -> eyre::Result<
             .unwrap_or(default)
     };
     let epoch_block_interval = env_u32("EPOCH_BLOCK_INTERVAL", 32);
-    let dpos_activation_block =
-        env_u64("DPOS_ACTIVATION_BLOCK", 2 * u64::from(epoch_block_interval));
-    let chain_config_init = abi::IChainConfig::initializeCall {
-        initialOwner: deployer,
-        activeValidatorsLength: keys.validators.len() as u32,
-        epochBlockInterval: epoch_block_interval,
-        undelegatePeriod: 16,
-        minValidatorStakeAmount: smoke_min_stake,
-        minStakingAmount: smoke_min_stake,
-        dposActivationBlock: dpos_activation_block,
-        // Option B (behavior-preserving): leave both crypto units unset here and
-        // keep wiring them via the `setBlsVerifier`/`setEvidenceDecoder` god-mode
-        // governance setters below (which already work). address(0) ⇒ ChainConfig
-        // leaves the slot unset at genesis; the setters seed it right after.
-        blsVerifier: Address::ZERO,
-        evidenceDecoder: Address::ZERO,
-    }
-    .abi_encode();
-    call_or_die(
-        &mut ctx,
-        deployer,
-        CHAIN_CONFIG_ADDR,
-        chain_config_init.into(),
-        "ChainConfig.initialize",
-    )?;
+    let dpos_activation_block = params
+        .dpos_activation_block
+        .unwrap_or(2 * u64::from(epoch_block_interval));
 
     // `HEAVY_STAKE_MULT` (default 1 ⇒ byte-identical equal-stake genesis) skews
     // validator-0's genesis stake k× the others, so the weighted-VRF smoke can
     // assert it proposes proportionally more blocks. Committee membership is
-    // unaffected (n = validators.len() ≤ activeValidatorsLength ⇒ all selected),
+    // unaffected (the seated set ≤ activeValidatorsLength ⇒ all selected),
     // and validator-0 stays ≥ minValidatorStakeAmount.
     let heavy_mult = U256::from(env_u64("HEAVY_STAKE_MULT", 1));
-    let mut initial_stakes = vec![smoke_min_stake; keys.validators.len()];
+    let mut initial_stakes = vec![smoke_min_stake; seated];
     if let Some(first) = initial_stakes.first_mut() {
         *first *= heavy_mult;
     }
@@ -432,36 +265,95 @@ pub fn run(keys: &KeySet, artefacts: &Artefacts, chain_id: u64) -> eyre::Result<
         .iter()
         .copied()
         .fold(U256::ZERO, |acc, s| acc + s);
-    let validator_addrs: Vec<Address> = keys
-        .validators
-        .iter()
-        .map(|v| v.l2_signer.address())
-        .collect();
+    let validator_addrs: Vec<Address> = committee.iter().map(|v| v.l2_signer.address()).collect();
 
-    // Staking._addValidator pulls each validator's initial stake via
-    // BLEND.transferFrom(initialOwner, staking, stake). MockBlendToken's
-    // constructor mints the entire supply to `msg.sender` (= deployer),
-    // so the funds are present, but we still need to grant allowance to
-    // STAKING_ADDR before calling Staking.initialize, otherwise the call
-    // reverts with ERC20InsufficientAllowance.
+    let mut bls_pubkeys = Vec::with_capacity(seated);
+    let mut bls_pops = Vec::with_capacity(seated);
+    let mut peer_pubkeys = Vec::with_capacity(seated);
+    for v in committee {
+        let p = pop::produce(&v.bls, keys.chain_id)?;
+        bls_pubkeys.push(Bytes::copy_from_slice(&p.bls_pubkey_uncompressed));
+        bls_pops.push(Bytes::copy_from_slice(&p.bls_pop_uncompressed));
+        use commonware_codec::Encode as _;
+        let pk = commonware_cryptography::Signer::public_key(&v.peer).encode();
+        peer_pubkeys.push(B256::from_slice(pk.as_ref()));
+    }
+
+    // MockBlendToken's constructor mints the whole supply to `msg.sender`, i.e. the
+    // deployer. That is only useful where the deployer is also the account that later
+    // spends BLEND; the sim/soak signs every funding and delegation with
+    // `validator-0`'s owner key, so the supply has to move there or it sits on an
+    // account nothing can spend from. Moving it makes that account the BLEND role
+    // wholesale: stake sponsor, approver, and stipend reserve.
+    let blend_holder = params.blend_holder.unwrap_or(deployer);
+    if blend_holder != deployer {
+        let supply_out = call_returning(
+            &mut ctx,
+            deployer,
+            STAKING_TOKEN_ADDR,
+            abi::IERC20::balanceOfCall { account: deployer }
+                .abi_encode()
+                .into(),
+            "BLEND.balanceOf(deployer)",
+        )?;
+        let supply = U256::abi_decode(&supply_out).wrap_err("decode BLEND balanceOf")?;
+        let hand_over = abi::IERC20::transferCall {
+            to: blend_holder,
+            value: supply,
+        }
+        .abi_encode();
+        call_or_die(
+            &mut ctx,
+            deployer,
+            STAKING_TOKEN_ADDR,
+            hand_over.into(),
+            "BLEND.transfer(holder)",
+        )?;
+    }
+
+    // The BLEND stipend is drawn with `transferFrom(blendReserve, staking, amount)`
+    // (`staking.rs::settle_one`), so the reserve is whatever account holds the pot and
+    // has approved the staking contract. `apply_initial_config` refuses a zero reserve.
+    // One allowance covers both draws: the genesis stakes `initialize` pulls, and the
+    // stipend budget.
+    let stipend_budget = U256::from(env_u64("BLEND_RESERVE_GENESIS_BLEND", 1_000_000))
+        * U256::from(10u128).pow(U256::from(18));
     let approve_call = abi::IERC20::approveCall {
         spender: STAKING_ADDR,
-        value: total_stake,
+        value: total_stake + stipend_budget,
     }
     .abi_encode();
     call_or_die(
         &mut ctx,
-        deployer,
+        blend_holder,
         STAKING_TOKEN_ADDR,
         approve_call.into(),
         "BLEND.approve(staking)",
     )?;
 
+    // One call seeds the chain configuration, the dependency addresses and every
+    // genesis validator with its stake and verified consensus keys. The verifier rides
+    // it inline: leaving it zero and wiring it afterwards through a setter is what the
+    // old two-contract split did, and it now reverts `ERR_BLS_VERIFIER_NOT_CONFIGURED`
+    // on the first key verification inside this very call.
     let staking_init = abi::IStaking::initializeCall {
-        initialOwner: deployer,
-        validators: validator_addrs.clone(),
+        initialStakeOwner: blend_holder,
+        validators: validator_addrs,
         initialStakes: initial_stakes,
+        blsPubkeysUncompressed: bls_pubkeys,
+        blsPopsUncompressed: bls_pops,
+        peerPubkeys: peer_pubkeys,
         commissionRate: 0,
+        stakingToken: STAKING_TOKEN_ADDR,
+        activeValidatorsLength: seated as u32,
+        epochBlockInterval: epoch_block_interval,
+        undelegatePeriod: 16,
+        minValidatorStakeAmount: smoke_min_stake,
+        minStakingAmount: smoke_min_stake,
+        dposActivationBlock: dpos_activation_block,
+        blsVerifier: BLS_VERIFIER_ADDR,
+        minUndelegateBlocks: U256::ZERO,
+        blendReserve: blend_holder,
     }
     .abi_encode();
     call_or_die(
@@ -470,6 +362,35 @@ pub fn run(keys: &KeySet, artefacts: &Artefacts, chain_id: u64) -> eyre::Result<
         STAKING_ADDR,
         staking_init.into(),
         "Staking.initialize",
+    )?;
+
+    // `apply_initial_config` writes `productionLivenessDisabled = true` deliberately —
+    // the tier ships off, and an unwritten slot would ship it on. The devnet wants it
+    // ON, so the flip is a governance call the initializer cannot make.
+    let enable_liveness =
+        abi::IStaking::setProductionLivenessDisabledCall { value: false }.abi_encode();
+    call_or_die(
+        &mut ctx,
+        GOVERNANCE_ADDR,
+        STAKING_ADDR,
+        enable_liveness.into(),
+        "Staking.setProductionLivenessDisabled(false)",
+    )?;
+
+    // Turn the per-epoch BLEND stipend ON for the devnet (0 = OFF kill-switch). Flat
+    // pro-rata by stake among committee members that met the participation floor.
+    let stipend_per_epoch = U256::from(env_u64("BLEND_STIPEND_PER_EPOCH_BLEND", 10))
+        * U256::from(10u128).pow(U256::from(18));
+    let set_stipend = abi::IStaking::setBlendStipendPerEpochCall {
+        value: stipend_per_epoch,
+    }
+    .abi_encode();
+    call_or_die(
+        &mut ctx,
+        GOVERNANCE_ADDR,
+        STAKING_ADDR,
+        set_stipend.into(),
+        "Staking.setBlendStipendPerEpoch",
     )?;
 
     let pool_init = abi::IStakingPool::initializeCall {
@@ -484,140 +405,19 @@ pub fn run(keys: &KeySet, artefacts: &Artefacts, chain_id: u64) -> eyre::Result<
         "StakingPool.initialize",
     )?;
 
-    let liveness_init = abi::IProductionLiveness::initializeCall {
-        initialOwner: deployer,
-    }
-    .abi_encode();
+    init_governance(&mut ctx, deployer)?;
+
+    // The committee for epoch 0. The contract selects it from its own registry and
+    // sorts it on peer pubkey, which IS the consensus index space — there is nothing
+    // for this side to supply or to agree with.
+    let commit = abi::IStaking::commitEpochCommitteeCall {}.abi_encode();
     call_or_die(
         &mut ctx,
-        deployer,
-        LIVENESS_SLASHING_ADDR,
-        liveness_init.into(),
-        "ProductionLiveness.initialize",
+        SYSTEM_CALLER,
+        STAKING_ADDR,
+        commit.into(),
+        "commitEpochCommittee[epoch=0]",
     )?;
-
-    // SystemReward._updateDistributionShare requires sum(shares) ==
-    // SHARE_MAX_VALUE (10_000 bps). Smoke has no real fee economics, so
-    // route 100% of system reward to the deployer EOA — a single-entry
-    // distribution table satisfies the require + leaves changes for
-    // later via the governance-owned update path.
-    let sys_reward_init = abi::ISystemReward::initializeCall {
-        initialOwner: deployer,
-        accounts: vec![deployer],
-        shares: vec![10_000],
-    }
-    .abi_encode();
-    call_or_die(
-        &mut ctx,
-        deployer,
-        SYSTEM_REWARD_ADDR,
-        sys_reward_init.into(),
-        "SystemReward.initialize",
-    )?;
-
-    let gov_init = abi::IFluentGovernance::initializeCall {
-        initialOwner: deployer,
-        initialVotingPeriod: 1,
-    }
-    .abi_encode();
-    call_or_die(
-        &mut ctx,
-        deployer,
-        GOVERNANCE_ADDR,
-        gov_init.into(),
-        "FluentGovernance.initialize",
-    )?;
-
-    // Wire BLS verifier through ChainConfig BEFORE registering keys —
-    // setConsensusKeys reads chainConfig.getBlsVerifier() and reverts
-    // BlsVerifierNotConfigured if it's address(0). setBlsVerifier is
-    // `onlyFromGovernance`, where governance is the FluentGovernance
-    // immutable set in ChainConfig's constructor (GOVERNANCE_ADDR), so
-    // we spoof caller = GOVERNANCE_ADDR — the modifier checks
-    // `msg.sender == _governanceContract` only.
-    let set_verifier = abi::IChainConfigGovernance::setBlsVerifierCall {
-        newValue: BLS_VERIFIER_ADDR,
-    }
-    .abi_encode();
-    call_or_die(
-        &mut ctx,
-        GOVERNANCE_ADDR,
-        CHAIN_CONFIG_ADDR,
-        set_verifier.into(),
-        "ChainConfig.setBlsVerifier",
-    )?;
-
-    // Wire the equivocation-evidence decoder through ChainConfig (same
-    // `onlyFromGovernance` spoof). Without it `Staking._slashEquivocation` reverts
-    // `EvidenceDecoderNotConfigured` — the byzantine equivocation smoke's on-chain
-    // slash would never land (honest peers detect+block the equivocator, but the
-    // jail never happens). setConsensusKeys does not need it, so historically it was
-    // left unset; the equivocation smoke is the first path that exercises slashing.
-    let set_decoder = abi::IChainConfigGovernance::setEvidenceDecoderCall {
-        newValue: EVIDENCE_DECODER_ADDR,
-    }
-    .abi_encode();
-    call_or_die(
-        &mut ctx,
-        GOVERNANCE_ADDR,
-        CHAIN_CONFIG_ADDR,
-        set_decoder.into(),
-        "ChainConfig.setEvidenceDecoder",
-    )?;
-
-    // Initialize BlendReserve (UUPS impl-direct, like the other predeploys — its
-    // `initialize` only sets the OZ owner; funding is a plain BLEND transfer, NOT an
-    // init arg).
-    let reserve_init = abi::IBlendReserve::initializeCall {
-        initialOwner: deployer,
-    }
-    .abi_encode();
-    call_or_die(
-        &mut ctx,
-        deployer,
-        BLEND_RESERVE_ADDR,
-        reserve_init.into(),
-        "BlendReserve.initialize",
-    )?;
-
-    // Seed the reserve with BLEND so `reserveBalance()` (= token.balanceOf(reserve)) is
-    // non-zero and `settleEpochStipend` has a pot to draw from. MockBlendToken minted the
-    // entire 1e9 BLEND supply to `deployer`; a plain ERC20 transfer moves the seed in.
-    // Sized for many thousands of epochs at the stipend below; env-overridable.
-    let reserve_genesis = U256::from(env_u64("BLEND_RESERVE_GENESIS_BLEND", 1_000_000))
-        * U256::from(10u128).pow(U256::from(18));
-    let seed_call = abi::IERC20::transferCall {
-        to: BLEND_RESERVE_ADDR,
-        value: reserve_genesis,
-    }
-    .abi_encode();
-    call_or_die(
-        &mut ctx,
-        deployer,
-        STAKING_TOKEN_ADDR,
-        seed_call.into(),
-        "BLEND.transfer(reserve)",
-    )?;
-
-    // Turn the per-epoch BLEND stipend ON for the devnet (0 = OFF kill-switch). Flat
-    // pro-rata by stake among committee members that met the participation floor. Same
-    // `onlyFromGovernance` spoof as the setters above; env-overridable.
-    let stipend_per_epoch = U256::from(env_u64("BLEND_STIPEND_PER_EPOCH_BLEND", 10))
-        * U256::from(10u128).pow(U256::from(18));
-    let set_stipend = abi::IChainConfigGovernance::setBlendStipendPerEpochCall {
-        newValue: stipend_per_epoch,
-    }
-    .abi_encode();
-    call_or_die(
-        &mut ctx,
-        GOVERNANCE_ADDR,
-        CHAIN_CONFIG_ADDR,
-        set_stipend.into(),
-        "ChainConfig.setBlendStipendPerEpoch",
-    )?;
-
-    register_validators(&mut ctx, keys)?;
-    commit_initial_committee(&mut ctx, keys)?;
     // No genesis beacon key is committed: the beacon is always-on live DKG and is
     // consumed internally (the per-block seed rides the consensus cert; there is no
     // on-chain PK_E — that layer was removed, DPOS_ARCHITECTURE §8.11).
@@ -626,31 +426,134 @@ pub fn run(keys: &KeySet, artefacts: &Artefacts, chain_id: u64) -> eyre::Result<
         &mut ctx,
         &[
             STAKING_ADDR,
-            STAKING_DPOS_ADDR,
-            STAKING_ECONOMICS_ADDR,
-            STAKING_REWARDS_ADDR,
-            BLEND_RESERVE_ADDR,
-            CHAIN_CONFIG_ADDR,
             STAKING_POOL_ADDR,
-            SYSTEM_REWARD_ADDR,
             GOVERNANCE_ADDR,
-            LIVENESS_SLASHING_ADDR,
             STAKING_TOKEN_ADDR,
             BLS_VERIFIER_ADDR,
-            EVIDENCE_DECODER_ADDR,
         ],
     ))
+}
+
+/// Everything the `bare` arm installs: `FluentGovernance` at `GENESIS_GOVERNANCE`,
+/// initialized, and nothing else — the staking address stays codeless, which is the
+/// premise the stand is built on and what the reader's code-presence probe keys off.
+///
+/// The Governor is not the staking module; it is the control plane the module requires
+/// to exist at a fixed address. The module compiles `GENESIS_GOVERNANCE` in as the sole
+/// caller its privileged setters accept, and the stand's bring-up has three
+/// governance-gated steps after the module lands by runtime-upgrade
+/// (`setProductionLivenessDisabled`, `setBlendStipendPerEpoch`, `setDposActivationBlock`).
+/// A Governor cannot be forge-created into place afterwards: CREATE derives its address
+/// from the deployer's nonce, and this one is fixed in compiled bytecode. Same
+/// reasoning as the runtime-upgrade owner slot `genesis::assemble` seeds on this arm.
+///
+/// No `disabled_rwasm` flip here, unlike [`run`]: the flip exists so the init sequence
+/// can CALL the rWasm staking module, and there is no module on this arm. The Governor
+/// is deployed and initialized on the mainnet-revm path and wrapped into production
+/// `OwnableAccount` form by [`snapshot`], which is how every predeploy reached genesis
+/// before the module existed.
+pub fn run_governance_only(
+    keys: &KeySet,
+    governance_init_bytecode: &Bytes,
+    chain_id: u64,
+) -> eyre::Result<PredeployState> {
+    let deployer = keys.governance_signer.address();
+    let mut ctx = bootstrap_ctx(chain_id, deployer);
+    deploy_governance(&mut ctx, deployer, governance_init_bytecode)?;
+    init_governance(&mut ctx, deployer)?;
+    Ok(snapshot(&mut ctx, &[GOVERNANCE_ADDR]))
+}
+
+/// The in-process EVM both arms deploy through. Shared so the Governor they each
+/// produce is byte-identical — it is the one account they have in common, and the
+/// production-path stand runs a chain that took it from `bare` and everything else from
+/// a later delivery.
+fn bootstrap_ctx(chain_id: u64, deployer: Address) -> EvmTestingContext {
+    // PRECOMPILE_EVM_RUNTIME needs to be registered before any plain
+    // EVM (`deployedBytecode`) deploy through `deploy_evm_tx` — without
+    // it the EVM aborts with `MalformedBuiltinParams`. Mirrors the
+    // e2e/src/lib.rs `with_full_genesis` trait impl.
+    let fluent_contracts: Vec<_> = fluentbase_genesis::GENESIS_CONTRACTS_BY_ADDRESS
+        .values()
+        .cloned()
+        .collect();
+    let mut ctx = EvmTestingContext::default().with_contracts(&fluent_contracts);
+    // Solidity predeploys are CREATE'd through the mainnet revm path, the only one
+    // that accepts plain legacy initcode. `run` flips to the rWasm path afterwards,
+    // before the staking module is installed; `run_governance_only` never needs to.
+    ctx.disabled_rwasm = true;
+    ctx.cfg.limit_contract_code_size = Some(usize::MAX);
+    ctx.cfg.limit_contract_initcode_size = Some(usize::MAX);
+    // EIP-3607 (RejectCallerWithCode) blocks tx where caller already has
+    // code. We need to spoof caller = GOVERNANCE_ADDR (a deployed
+    // contract) to satisfy the staking module's `ensure_governance`
+    // (checks `contract_caller() == GENESIS_GOVERNANCE`, no code-shape check).
+    // Same applies to SYSTEM_CALLER for `commitEpochCommittee`. Disable 3607
+    // for the in-process bootstrap session only — not a real chain.
+    ctx.cfg.disable_eip3607 = true;
+    // block.chainid drives the contract's `fluent_namespace()` (= "FLUENT_DPOS_V1_"
+    // ‖ u64 BE chain_id), which is both the PoP-signed message and the slashing
+    // namespace. The Rust-side PoP is signed with `fluent_namespace(chain_id)` —
+    // both MUST agree, else verifier.verify returns false →
+    // ERR_INVALID_PROOF_OF_POSSESSION.
+    ctx.cfg.chain_id = chain_id;
+    // TxBuilder::create / TxBuilder::call leave tx.chain_id at its
+    // TxEnv::default() value of Some(1), which then disagrees with our
+    // cfg.chain_id = 2026 and trips the EIP-155 chain-ID check. We don't
+    // care about replay protection in an in-process bootstrap session,
+    // so disable the check entirely instead of patching each TxEnv.
+    ctx.cfg.tx_chain_id_check = false;
+    ctx.add_balance(deployer, U256::from(10u128).pow(U256::from(22)));
+    ctx
+}
+
+/// `FluentGovernance`'s constructor takes `(IStaking, IChainConfig)` and only ASSIGNS
+/// both to immutables before `_disableInitializers()` — it dereferences neither, and
+/// `initialize` calls nothing but OZ `__*_init` (verified in
+/// `contracts/governance/FluentGovernance.sol:40-53`). The one dereference,
+/// `onlyValidatorOwner`, guards proposal creation at runtime. So the Governor can be
+/// installed before the staking module exists, which is exactly what `bare` does. Both
+/// addresses resolve to the staking module: it absorbed the ChainConfig predeploy.
+fn deploy_governance(
+    ctx: &mut EvmTestingContext,
+    deployer: Address,
+    init_bytecode: &Bytes,
+) -> eyre::Result<()> {
+    let constructor = (STAKING_ADDR, STAKING_ADDR).abi_encode_sequence();
+    deploy_to_canonical(
+        ctx,
+        deployer,
+        init_bytecode,
+        GOVERNANCE_ADDR,
+        &constructor,
+        false,
+    )
+}
+
+fn init_governance(ctx: &mut EvmTestingContext, deployer: Address) -> eyre::Result<()> {
+    let gov_init = abi::IFluentGovernance::initializeCall {
+        initialOwner: deployer,
+        initialVotingPeriod: GOVERNANCE_VOTING_PERIOD_BLOCKS,
+    }
+    .abi_encode();
+    call_or_die(
+        ctx,
+        deployer,
+        GOVERNANCE_ADDR,
+        gov_init.into(),
+        "FluentGovernance.initialize",
+    )
 }
 
 fn deploy_to_canonical(
     ctx: &mut EvmTestingContext,
     deployer: Address,
-    artefact: &ContractArtefact,
+    init_bytecode: &Bytes,
     canonical: Address,
     constructor_args: &[u8],
     copy_storage: bool,
 ) -> eyre::Result<()> {
-    let mut init = artefact.init_bytecode.to_vec();
+    let mut init = init_bytecode.to_vec();
     init.extend_from_slice(constructor_args);
     let create_addr = ctx
         .deploy_evm_tx_result(deployer, init.into())
@@ -687,6 +590,73 @@ fn deploy_to_canonical(
     Ok(())
 }
 
+/// Re-install each address's code in the production
+/// `OwnableAccount(EVM_RUNTIME, EthereumMetadata)` form, in place.
+///
+/// `add_bytecode` rebuilds the whole `AccountInfo`, so the balance is read first and
+/// re-applied; storage lives beside `info` on the cache entry and survives the
+/// rebuild (`CacheDB::insert_account_info` only calls `update_info`).
+fn wrap_evm_predeploys(ctx: &mut EvmTestingContext, addrs: &[Address]) -> eyre::Result<()> {
+    for addr in addrs {
+        let account = ctx
+            .db
+            .cache
+            .accounts
+            .get(addr)
+            .ok_or_else(|| eyre::eyre!("predeploy {addr:?} absent before the rWasm flip"))?;
+        let balance = account.info.balance;
+        let raw = account
+            .info
+            .code
+            .as_ref()
+            .ok_or_else(|| eyre::eyre!("predeploy {addr:?} has no code before the rWasm flip"))?
+            .original_bytes();
+        ctx.add_bytecode(*addr, wrap_for_rwasm(raw));
+        ctx.add_balance(*addr, balance);
+    }
+    Ok(())
+}
+
+/// Wrap deployed EVM runtime bytecode in `OwnableAccount(EVM_RUNTIME, code)`, the
+/// shape fluent's executor requires: every contract must be either rWasm-native or an
+/// OwnableAccount delegating to a runtime precompile, else `execute_rwasm_frame`
+/// returns `NotSupportedBytecode`. During normal CREATE through fluent's rWasm EVM
+/// revm produces this wrapping itself; the mainnet-revm CREATE path this bootstrap
+/// deploys through does not, so we replicate it. Already-wrapped (`0xEF44`) and
+/// rWasm-native (`0xEF52`) code passes through untouched.
+fn wrap_for_rwasm(raw: Bytes) -> Bytes {
+    if raw.starts_with(&[0xEF, 0x44]) || raw.starts_with(&[0xEF, 0x52]) {
+        return raw;
+    }
+    // EVM_RUNTIME reads metadata as `EthereumMetadata` (see
+    // crates/evm/src/metadata.rs:23) — `[code_hash 32 bytes] || [bytecode]`
+    // for legacy. Without the 32-byte hash prefix EVM_RUNTIME interprets the
+    // first 32 bytes of EVM bytecode as the hash, skips them, runs the rest,
+    // halts with StackOverflow.
+    let metadata = fluentbase_evm::EthereumMetadata::new_legacy(raw).write_to_bytes();
+    let mut buf = Vec::with_capacity(23 + metadata.len());
+    buf.extend_from_slice(&[0xEF, 0x44, 0x00]);
+    buf.extend_from_slice(fluentbase_types::PRECOMPILE_EVM_RUNTIME.as_slice());
+    buf.extend_from_slice(&metadata);
+    buf.into()
+}
+
+fn call_returning(
+    ctx: &mut EvmTestingContext,
+    caller: Address,
+    callee: Address,
+    input: Bytes,
+    label: &str,
+) -> eyre::Result<Bytes> {
+    let res = ctx.call_evm_tx(caller, callee, input, Some(BOOTSTRAP_GAS_LIMIT), None);
+    if !res.is_success() {
+        return Err(eyre::eyre!(
+            "{label} (caller={caller:?} → {callee:?}) reverted: {res:?}"
+        ));
+    }
+    Ok(res.output().cloned().unwrap_or_default())
+}
+
 fn call_or_die(
     ctx: &mut EvmTestingContext,
     caller: Address,
@@ -694,71 +664,7 @@ fn call_or_die(
     input: Bytes,
     label: &str,
 ) -> eyre::Result<()> {
-    let res = ctx.call_evm_tx(caller, callee, input, Some(50_000_000), None);
-    if !res.is_success() {
-        return Err(eyre::eyre!(
-            "{label} (caller={caller:?} → {callee:?}) reverted: {res:?}"
-        ));
-    }
-    Ok(())
-}
-
-fn register_validators(ctx: &mut EvmTestingContext, keys: &KeySet) -> eyre::Result<()> {
-    for v in &keys.validators {
-        let p = pop::produce(&v.bls, keys.chain_id)?;
-        let mut peer_bytes32 = [0u8; 32];
-        use commonware_codec::Encode as _;
-        let pk = commonware_cryptography::Signer::public_key(&v.peer).encode();
-        peer_bytes32.copy_from_slice(pk.as_ref());
-
-        let input = abi::IStaking::setConsensusKeysCall {
-            validatorAddress: v.l2_signer.address(),
-            blsPubkeyUncompressed: Bytes::copy_from_slice(&p.bls_pubkey_uncompressed),
-            blsPoPUncompressed: Bytes::copy_from_slice(&p.bls_pop_uncompressed),
-            peerPubkey: peer_bytes32.into(),
-        }
-        .abi_encode();
-
-        // setConsensusKeys requires msg.sender == ownerAddress (Staking.sol:1095).
-        // initialize() set ownerAddress = validator.l2_signer.address() for each
-        // initial validator (Staking.sol:221 _addValidator(addr, addr, ...)).
-        call_or_die(
-            ctx,
-            v.l2_signer.address(),
-            STAKING_ADDR,
-            input.into(),
-            &format!("setConsensusKeys[validator-{}]", v.idx),
-        )?;
-    }
-    Ok(())
-}
-
-fn commit_initial_committee(ctx: &mut EvmTestingContext, keys: &KeySet) -> eyre::Result<()> {
-    // Canonical ed25519 ascending-peerPubkey order (G5 invariant —
-    // crates/p2p/src/lib.rs:213, commonware_utils::ordered::Set ordering).
-    use commonware_codec::Encode as _;
-    let mut sorted: Vec<(Vec<u8>, Address)> = keys
-        .validators
-        .iter()
-        .map(|v| {
-            let pk = commonware_cryptography::Signer::public_key(&v.peer).encode();
-            (pk.as_ref().to_vec(), v.l2_signer.address())
-        })
-        .collect();
-    sorted.sort_by(|a, b| a.0.cmp(&b.0));
-    let committee: Vec<Address> = sorted.into_iter().map(|(_, addr)| addr).collect();
-
-    let input = abi::IStaking::commitEpochCommitteeCall { committee }.abi_encode();
-    // commitEpochCommittee is `onlySystemCall` (Staking.sol:1191 +
-    // StakingContext.sol:63-64) — tx.caller must == SYSTEM_CALLER, NOT
-    // block.coinbase.
-    call_or_die(
-        ctx,
-        SYSTEM_CALLER,
-        STAKING_ADDR,
-        input.into(),
-        "commitEpochCommittee[epoch=0]",
-    )
+    call_returning(ctx, caller, callee, input, label).map(|_| ())
 }
 
 fn snapshot(ctx: &mut EvmTestingContext, addrs: &[Address]) -> PredeployState {
@@ -772,37 +678,7 @@ fn snapshot(ctx: &mut EvmTestingContext, addrs: &[Address]) -> PredeployState {
         };
 
         if let Some(bytecode) = &account.info.code {
-            // Wrap deployed EVM runtime bytecode in OwnableAccount(EVM_RUNTIME, code).
-            // Bootstrap runs with `disabled_rwasm = true` (plain revm), so deployed
-            // contracts come out as plain LegacyAnalyzed EVM bytecode (0x60…).
-            // Fluent's production executor (`execute_rwasm_frame` at
-            // crates/revm/src/executor.rs:213,389) expects every contract to be
-            // either rWASM-native or an OwnableAccount that delegates to a runtime
-            // precompile — otherwise it returns `NotSupportedBytecode`, payload
-            // build fails, no blocks. During normal CREATE through fluent's
-            // rWASM EVM (crates/revm/src/evm.rs:362), revm wraps the new contract
-            // as `OwnableAccount(PRECOMPILE_EVM_RUNTIME, runtime_bytecode)`; we
-            // replicate that wrapping here so the genesis JSON's `code` field
-            // starts with the 0xEF44 magic and `Bytecode::new_raw_checked` in the
-            // running node round-trips back to OwnableAccount.
-            let raw = bytecode.original_bytes();
-            let wrapped: Bytes = if raw.starts_with(&[0xEF, 0x44]) || raw.starts_with(&[0xEF, 0x52])
-            {
-                raw
-            } else {
-                // EVM_RUNTIME reads metadata as `EthereumMetadata` (see
-                // crates/evm/src/metadata.rs:23) — `[code_hash 32 bytes] || [bytecode]`
-                // for legacy. Without the 32-byte hash prefix EVM_RUNTIME
-                // interprets the first 32 bytes of EVM bytecode as the hash,
-                // skips them, runs the rest, halts with StackOverflow.
-                let metadata = fluentbase_evm::EthereumMetadata::new_legacy(raw).write_to_bytes();
-                let mut buf = Vec::with_capacity(23 + metadata.len());
-                buf.extend_from_slice(&[0xEF, 0x44, 0x00]);
-                buf.extend_from_slice(fluentbase_types::PRECOMPILE_EVM_RUNTIME.as_slice());
-                buf.extend_from_slice(&metadata);
-                buf.into()
-            };
-            bytecode_by_address.insert(*addr, wrapped);
+            bytecode_by_address.insert(*addr, wrap_for_rwasm(bytecode.original_bytes()));
         }
         balance_by_address.insert(*addr, account.info.balance);
 

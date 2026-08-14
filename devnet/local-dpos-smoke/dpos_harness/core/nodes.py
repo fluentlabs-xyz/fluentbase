@@ -487,33 +487,46 @@ def _cast_call(addr: str, sig: str, *args, rpc_url: str = None) -> str:
     return rpc._run_read(cmd, rpc.RPC_EXEC_TIMEOUT)
 
 
-# PRE-EXISTING HAZARD, preserved as-is (P4.1 is an extraction, not a fix): the `addr or …`
-# fallbacks below reach the genesis PREDEPLOY slot, which is CODELESS in this configuration
-# (see core/topology.py). A read that lands there returns an empty answer off a contract that
-# does not exist, rather than failing.
-#
-# "Every live caller passes addr=" is TRUE but is not the guard — passing the field is not the
-# same as the field being set. The runtime addresses default to "" (battery.Ctx.STAKING_RT /
-# CHAIN_CONFIG_RT / LIVENESS_RT), and `"" or <predeploy>` IS the predeploy. What actually keeps
-# this fallback dark is that both entry points refuse to run without the deployed addresses:
-#   * sim/orchestrator.py::_build_chain — ChainError("selfcheck-no-runtime-addrs") when any of
-#     the three is blank after bring-up;
-#   * sim/shadow.py::resolve_runtime_addrs — ShadowAttachError on an unreadable/zero/malformed
-#     address, with no empty-dict return path.
-# Relax either into a warn-and-continue (or add a third entry point without the same abort) and
-# the fallback fires SILENTLY: every on-chain detector then evaluates over a codeless address
-# and reports "holds" for a chain it cannot see. Do not add callers that rely on the fallback,
-# and do not introduce this pattern anywhere else.
+class NoContractAddress(RuntimeError):
+    """A contract read was attempted with no address to read it at.
+
+    The three helpers below used to answer `addr or <genesis predeploy slot>`, and that
+    fallback is the hazard this class replaces. The runtime addresses default to ""
+    (`battery.Ctx.STAKING_RT` / `CHAIN_CONFIG_RT` / `LIVENESS_RT`), so `"" or <slot>` IS the
+    slot — and a `cast call` against an address with no code returns an EMPTY answer, not an
+    error. Every on-chain detector then evaluates over nothing and reports a confident
+    "holds" verdict about a chain it cannot see. Two entry points
+    (`sim/orchestrator._build_chain`, `sim/shadow.resolve_runtime_addrs`) happened to abort
+    first, which is what kept the fallback dark; a third one without the same abort would
+    have re-armed it silently. Refusing here makes that structurally impossible.
+    """
+
+
+def _require_addr(addr, what: str) -> str:
+    addr = (addr or "").strip()
+    if not addr:
+        raise NoContractAddress(
+            f"{what} read attempted with no contract address — pass addr= explicitly "
+            f"(topology.GENESIS_STAKING on a genesis-installed stand, the resolved runtime "
+            f"address on a delivered one). There is no fallback: a read against a codeless "
+            f"address returns empty and every detector then reports 'holds'.")
+    return addr
+
+
+# ChainConfig and LivenessSlashing were folded into the staking module, so all three
+# helpers now resolve to the SAME contract. The three names survive because they name three
+# READ SURFACES the callers reason about separately (registry/committee, chain parameters,
+# production counters) — not three deployments. None of them defaults an address.
 def staking_call(sig: str, *args, addr: str = None, rpc_url: str = None) -> str:
-    return _cast_call(addr or topology.STAKING_ADDR, sig, *args, rpc_url=rpc_url)
+    return _cast_call(_require_addr(addr, "staking"), sig, *args, rpc_url=rpc_url)
 
 
 def chainconfig_call(sig: str, *args, addr: str = None, rpc_url: str = None) -> str:
-    return _cast_call(addr or topology.CHAIN_CONFIG_ADDR, sig, *args, rpc_url=rpc_url)
+    return _cast_call(_require_addr(addr, "chain-config"), sig, *args, rpc_url=rpc_url)
 
 
 def liveness_call(sig: str, *args, addr: str = None, rpc_url: str = None) -> str:
-    return _cast_call(addr or topology.LIVENESS_SLASHING_ADDR, sig, *args, rpc_url=rpc_url)
+    return _cast_call(_require_addr(addr, "liveness"), sig, *args, rpc_url=rpc_url)
 
 
 #: The 6-field `getValidatorStatus` ABI tuple, and the ONE definition of it in the package. It

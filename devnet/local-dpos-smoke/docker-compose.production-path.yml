@@ -1,15 +1,15 @@
 name: fluent-dpos-prod-path
 
 # Production-path smoke phase-A: a PLAIN chain (no staking in genesis). The
-# staking cluster is deployed at runtime via `forge` by the driver, which then
-# cold-restarts validators into `--dpos` via
+# staking module is DELIVERED to the running chain by the driver through the
+# runtime-upgrade precompile and then initialized by ordinary transactions; the
+# driver then cold-restarts validators into `--dpos` via
 # docker-compose.production-path.dpos.yml. Every node carries
 # --dpos.staking-config from first boot: genesis-init pre-writes
-# /runtime/staking-reader.json predicting the runtime CREATE addresses (see
-# --staking-reader-create-nonces below), so all 7 nodes execute the
-# commitEpochCommittee system call identically from block 1 (state-root
-# symmetry) and the sequencer's dynamic activation gate clean-halts at
-# dposActivationBlock without a mid-flight restart.
+# /runtime/staking-reader.json with the fixed GENESIS_STAKING address, so all 7
+# nodes execute the commitEpochCommittee system call identically from block 1
+# (state-root symmetry) and the sequencer's dynamic activation gate clean-halts
+# at dposActivationBlock without a mid-flight restart.
 #
 # Topology: 6 validators (committee of 5 + 1 external joiner) + a full node.
 # validator-0 is the sequencer (1s blocks); 1-5 + full-node follow via WS.
@@ -94,19 +94,22 @@ services:
       - --output=/runtime
       - --chain-id=2026
       - --validator-ips=172.20.0.10,172.20.0.11,172.20.0.12,172.20.0.13,172.20.0.14,172.20.0.15
-      # Pre-write staking-reader.json predicting the runtime forge deploy.
-      # Deployer = owner-0; driver tx prefix: fund-spammer(0), token(1),
-      # BLS verifier(2), BLEND→v5(3); DeployStaking: CREATE2 linked-library
-      # txs burn nonces 4-5 (StakingDpos, StakingEconomics), approve 6, then
-      # in-script BLS12381Verifier(7) + SimplexEvidenceDecoder(8) + one more
-      # early deploy(9), then impl/proxy pairs 10.. → proxies at nonce 11
-      # (Staking), 17 (ChainConfig), 21 (LivenessSlashing). Adding/removing a
-      # linked library or an early driver tx SHIFTS these —
-      # case-production-path.sh asserts the deploy manifest equals this file
-      # and fails loud with the fix hint.
-      - --staking-reader-create-nonces=11,17,21
+      # No --staking-reader-create-nonces: nothing is predicted any more. `bare`
+      # writes staking-reader.json with the FIXED GENESIS_STAKING address, which is
+      # where the driver's runtime-upgrade delivery installs the module -- so every
+      # node parses --dpos.staking-config from first boot and points at the address
+      # the contract will occupy, with no create-nonce arithmetic in between. `bare`
+      # also seeds the runtime-upgrade owner slot (0x...520010 slot 0) with the
+      # governance signer, which is the only key that delivery is allowed to use.
     volumes:
       - runtime:/runtime
+      # `bare` needs the vendored forge artefacts too, for exactly ONE of them:
+      # FluentGovernance. It has to exist at GENESIS_GOVERNANCE from block 0 because
+      # the staking module compiles that address in as the sole caller its privileged
+      # setters accept, and this stand's bring-up governs the module the moment it
+      # lands. `bare` still installs no staking module -- that is what makes the
+      # runtime-upgrade delivery this stand exists to exercise meaningful.
+      - ./contracts:/contracts:ro
     networks:
       fluent-net:
         ipv4_address: 172.20.0.5

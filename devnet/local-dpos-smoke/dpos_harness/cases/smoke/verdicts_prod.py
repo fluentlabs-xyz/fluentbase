@@ -88,14 +88,6 @@ GOV_SUCCEEDED = "4"
 #: end block. Not slack: the Governor's state only flips once a block past the deadline is mined.
 GOV_DEADLINE_MARGIN = 5
 
-#: The three keys of `/runtime/staking-reader.json` the create-nonce drift detector compares
-#: (lib.sh:1328-1330), mapped to their manifest counterparts.
-STAKING_READER_PAIRS = (
-    ("staking_address", "staking"),
-    ("chain_config_address", "chain_config"),
-    ("liveness_slashing_address", "liveness_slashing"),
-)
-
 _ADDR_RE = re.compile(r"0x[0-9a-fA-F]{40}")
 
 
@@ -310,34 +302,4 @@ def gov_wait_verdict(state, head, end, stalled_for, desc: str = "",
 
 # ══ 4. the bring-up's own gates ════════════════════════════════════════════════════════════
 
-def staking_reader_mismatches(pre: dict, manifest: dict):
-    """The create-nonce drift detector (lib.sh:1327-1334): every `/runtime/staking-reader.json`
-    address that disagrees with the deploy manifest, as `(key, got, want)` triples.
 
-    Case-insensitive on both sides, as bash's `tr 'A-F' 'a-f'` is — the manifest is checksummed
-    and the reader file is not, so a byte comparison would report three mismatches on a perfectly
-    aligned deploy.
-
-    A MISSING key is a mismatch against "", not a skip. The file is generated with all three; one
-    absent means the generator changed, which is exactly the drift this gate is for."""
-    out = []
-    for reader_key, manifest_key in STAKING_READER_PAIRS:
-        want = str(manifest.get(manifest_key, "") or "").lower()
-        got = str((pre or {}).get(reader_key, "") or "").lower()
-        if got != want:
-            out.append((reader_key, got, want))
-    return out
-
-
-def manifest_missing(manifest: dict):
-    """The four deploy addresses `pp_bring_up_rotation` asserts are `0x…` (lib.sh:1295-1297), as
-    the list of NAMES that are absent or malformed. Empty list = the deploy produced a usable
-    manifest.
-
-    `startswith("0x")` is bash's whole test and is kept as such rather than tightened to a
-    40-hex-digit check: widening the gate would make it reject a manifest bash accepts, and the
-    thing it is guarding against is a jq miss returning `null`, not a subtly wrong address."""
-    names = (("STAKING_RT", "staking"), ("CHAIN_CONFIG_RT", "chain_config"),
-             ("GOV_ADDR", "governance"), ("LIVENESS_RT", "liveness_slashing"))
-    return [name for name, key in names
-            if not str((manifest or {}).get(key, "") or "").startswith("0x")]

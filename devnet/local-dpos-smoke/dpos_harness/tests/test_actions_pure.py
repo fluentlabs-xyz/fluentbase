@@ -1,13 +1,16 @@
 """Pure action helpers — counter-progress, warm-debt belt, DKG barrier, mint/pool economics,
-staking-reader regen. Ports the soak-gate-test.sh assertions for the pure seams in soak-actions.sh."""
+the staking-reader body. Ports the soak-gate-test.sh assertions for the pure seams in
+soak-actions.sh."""
 
 from __future__ import annotations
 
 import json
 import os
 
+import pytest
+
 from dpos_harness.sim import actions
-from dpos_harness.chain.writes import sim_regen_staking_reader
+from dpos_harness.chain.writes import ChainError, staking_reader_json
 from dpos_harness.sim.actions import (counter_progress, warm_debt_step, promote_nohost_is_leak,
                              promote_gate_reason, dkg_member_ready,
                              adds_disruption)
@@ -65,18 +68,24 @@ def test_adds_disruption_classification():
         assert not adds_disruption(a)
 
 
-# ── sim_regen_staking_reader: derive-don't-predict, lowercased ───────────────
-def test_regen_staking_reader(tmp_path):
-    m = tmp_path / "runtime-deployment.json"
-    m.write_text(json.dumps({
-        "staking": "0xAABBccDD00000000000000000000000000005201",
-        "chain_config": "0x00000000000000000000000000000000000052F2",
-        "liveness_slashing": "0x0000000000000000000000000000000000520020",
-    }))
-    out = json.loads(sim_regen_staking_reader(str(m)))
-    assert out["staking_address"] == "0xaabbccdd00000000000000000000000000005201"
-    assert out["chain_config_address"] == "0x00000000000000000000000000000000000052f2"
-    assert out["liveness_slashing_address"] == "0x0000000000000000000000000000000000520020"
+# ── staking_reader_json: ONE field, lowercased, and no way to omit it ────────
+def test_staking_reader_json_is_one_lowercased_field():
+    """The node's whole `--dpos.staking-config`. Three fields collapsed to one because the
+    config's worst failure mode was an OMITTED one: it fell back to a codeless address, and an
+    EVM call to a codeless account returns Success, so the per-block system call became a
+    silent no-op. Lowercased to match what `genesis-bootstrap` writes — bring-up re-writes this
+    file over the bootstrap's copy, and the two must produce the same bytes."""
+    out = json.loads(staking_reader_json("0xAABBccDD00000000000000000000000000520011"))
+    assert out == {"staking_address": "0xaabbccdd00000000000000000000000000520011"}
+
+
+@pytest.mark.parametrize("bad", ["", "   ", "not-an-address", "520011"])
+def test_staking_reader_json_refuses_a_non_address(bad):
+    """A refusal, not a best-effort write. The node PARSES whatever is in this file and then
+    reads at it; a blank or malformed address gets past the parser and reports nothing, which is
+    the failure this whole collapse exists to remove."""
+    with pytest.raises(ChainError):
+        staking_reader_json(bad)
 
 
 # ── mint/pool economics: SIM_MINT_FUNDABLE + the identity-pool arithmetic ─────

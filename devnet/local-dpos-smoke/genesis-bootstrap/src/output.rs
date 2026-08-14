@@ -8,7 +8,7 @@ use std::fs;
 use std::net::IpAddr;
 use std::path::Path;
 
-use crate::bootstrap::{CHAIN_CONFIG_ADDR, STAKING_ADDR};
+use crate::bootstrap::STAKING_ADDR;
 use crate::keys::KeySet;
 
 /// How `peers.json` renders each validator's ingress host.
@@ -24,15 +24,13 @@ pub enum PeerHostMode {
     Dns,
 }
 
+/// The reader's whole configuration: one contract, one address
+/// (`StakingReaderConfig`). No serde default backs it — an omitted field would
+/// fall back to an address with no code, and an EVM call to a codeless account
+/// returns Success, which makes the per-block system call a silent no-op.
 #[derive(Serialize)]
 struct StakingReaderJson {
     staking_address: String,
-    chain_config_address: String,
-    /// Runtime-deployed liveness is NOT at the canonical predeploy slot, so
-    /// the bare/pre-written variant pins it explicitly; the genesis-baked
-    /// variant keeps relying on the reader's serde default.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    liveness_slashing_address: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -46,9 +44,6 @@ struct AddressesJson {
     validators: Vec<String>,
 }
 
-// Devnet generator: a flat positional signature keeps the single call site
-// readable; the DNS peer-host mode + seed-DNS-zone add the 8th/9th parameters.
-#[allow(clippy::too_many_arguments)]
 pub fn write(
     out: &Path,
     genesis: &Genesis,
@@ -57,42 +52,28 @@ pub fn write(
     validator_ips: &[IpAddr],
     peer_host_mode: PeerHostMode,
     seed_dns_zone: Option<&str>,
-    bare: bool,
-    staking_reader_create_nonces: Option<&[u64]>,
 ) -> eyre::Result<()> {
     fs::write(
         out.join("genesis-local.json"),
         serde_json::to_string_pretty(genesis)?,
     )?;
 
-    // `Full` flow: the cluster lives at fixed genesis predeploy slots. Bare
-    // flow: the cluster is forge-deployed at runtime by the driver, but the
-    // production-path smoke pre-writes the reader config by predicting the
-    // CREATE proxy addresses from the deployer (owner-0) nonces, so every
-    // node can carry `--dpos.staking-config` from first boot; the driver
-    // asserts the deploy manifest equals this file.
-    let staking_reader = if bare {
-        staking_reader_create_nonces.map(|nonces| {
-            let deployer = keys.validators[0].l2_signer.address();
-            StakingReaderJson {
-                staking_address: format!("{:#x}", deployer.create(nonces[0])),
-                chain_config_address: format!("{:#x}", deployer.create(nonces[1])),
-                liveness_slashing_address: Some(format!("{:#x}", deployer.create(nonces[2]))),
-            }
-        })
-    } else {
-        Some(StakingReaderJson {
-            staking_address: format!("{:#x}", STAKING_ADDR),
-            chain_config_address: format!("{:#x}", CHAIN_CONFIG_ADDR),
-            liveness_slashing_address: None,
-        })
+    // The same address in both modes: `full` bakes the module in at
+    // `GENESIS_STAKING`, `bare` has it delivered there later through the
+    // runtime-upgrade precompile. Nothing is predicted, so every node can carry
+    // `--dpos.staking-config` from first boot on either stand.
+    let staking_reader = StakingReaderJson {
+        staking_address: format!("{:#x}", STAKING_ADDR),
     };
-    if let Some(sr) = staking_reader {
-        // Merge-preserving (see write_shared_json_preserving): staking-reader.json is a
-        // fixed object with no per-idx array, so this is a plain write — the helper is
-        // applied uniformly to all three shared files and no-ops on a non-array target.
-        write_shared_json_preserving(out, "staking-reader.json", &serde_json::to_value(&sr)?, "")?;
-    }
+    // Merge-preserving (see write_shared_json_preserving): staking-reader.json is a
+    // fixed object with no per-idx array, so this is a plain write — the helper is
+    // applied uniformly to all three shared files and no-ops on a non-array target.
+    write_shared_json_preserving(
+        out,
+        "staking-reader.json",
+        &serde_json::to_value(&staking_reader)?,
+        "",
+    )?;
 
     // peers.json `socket` is a `"host:port"` string parsed by
     // `fluentbase_p2p::parse_ingress` (both `BootstrapperJson.socket` and
@@ -202,8 +183,11 @@ pub fn write(
         &keys_dir.join("funded.hex"),
         hex::encode(keys.validators[0].l2_signer.to_bytes()).as_bytes(),
     )?;
-    // Governance signer key — owns ChainConfig/Staking; smoke-gov-interval uses it to
-    // call setEpochBlockInterval. DEVNET ONLY (1 ETH at genesis).
+    // Governance signer key — the genesis deployer and stake sponsor, and the owner
+    // seeded into the runtime-upgrade precompile so this stand can deliver a module to
+    // a running chain. It does NOT reach the staking module's governance setters: those
+    // accept only the contract at `GENESIS_GOVERNANCE` as caller. DEVNET ONLY (1 ETH at
+    // genesis).
     write_mode_0600(
         &keys_dir.join("governance.hex"),
         hex::encode(keys.governance_signer.to_bytes()).as_bytes(),

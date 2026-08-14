@@ -27,6 +27,12 @@ contracts/out
 examples/**/lib.wasm
 examples/**/lib.rwasm
 
+# Staking module vendored from the feat/flu-989-port-solidity-delta worktree.
+# TEMPORARY: drops out when the contract sources move into contracts/staking/.
+# See devnet/local-dpos-smoke/contracts/STAKING_ARTEFACT.md for provenance.
+devnet/local-dpos-smoke/contracts/fluentbase_contracts_staking.wasm
+devnet/local-dpos-smoke/contracts/fluentbase_contracts_staking.rwasm
+
 revm/e2e/tests
 
 evm-e2e/target

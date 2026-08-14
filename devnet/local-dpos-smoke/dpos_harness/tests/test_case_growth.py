@@ -12,6 +12,7 @@ from dpos_harness.cases.growth import (
     apply_case_env_defaults,
     cluster_verify_false,
     evaluate_growth_case,
+    growth_voter_idx,
     scan_idx_stall,
 )
 
@@ -116,3 +117,68 @@ def test_apply_case_env_defaults_respects_operator_override(monkeypatch):
     prof = apply_case_env_defaults()
     assert prof["SIM_VALIDATORS"] == "9"      # setdefault must not clobber
     assert prof["SIM_EPOCH_INTERVAL"] == "48"
+
+
+# ── the governance voter set (the stake-weighted-quorum fix) ───────────────────
+
+class _Cfg:
+    def __init__(self, validators):
+        self.validators = validators
+
+
+class _VoterChain:
+    """The two reads `growth_voter_idx` makes, and nothing else. `committee` answers "" for an
+    unreadable committee exactly as `Chain.committee` does (its `Runner.run` swallows the RPC
+    error), and `owner_addr` answers "" for an idx with no key, exactly as `Chain.owner_addr`."""
+
+    def __init__(self, committee, addrs):
+        self._committee = committee
+        self._addrs = dict(addrs)
+        self.asked = []
+        self.epochs = []
+
+    def committee(self, epoch):
+        self.epochs.append(epoch)
+        return self._committee
+
+    def owner_addr(self, idx):
+        self.asked.append(idx)
+        return self._addrs.get(idx, "")
+
+
+_ADDRS = {i: f"0xowner{i}" for i in range(6)}
+
+
+def test_growth_votes_with_the_live_committee_not_the_initial_prefix():
+    """THE REGRESSION. After growth #1 the committee is the four originals PLUS the joiner at idx
+    4, who holds 3e18 of a 7e18 voting supply. Voting the initial 4-owner prefix leaves forVotes
+    at 4e18 against a 4.666e18 stake quorum → `activate-5` Defeated. The joiner must be in the
+    set."""
+    chain = _VoterChain(" ".join(_ADDRS[i] for i in range(5)), _ADDRS)
+    assert growth_voter_idx(chain, _Cfg(6), epoch=7) == [0, 1, 2, 3, 4]
+    assert chain.epochs == [7]           # the committee is read AT the epoch the caller names
+
+
+def test_growth_voter_idx_spans_the_last_seatable_idx():
+    """The ceiling is `validators - 1` INCLUSIVE — the highest idx growth can ever seat. An
+    off-by-one here silently drops the final joiner's vote, which is the one growth step where the
+    committee is largest and the quorum hardest to reach."""
+    chain = _VoterChain(_ADDRS[5], _ADDRS)
+    assert growth_voter_idx(chain, _Cfg(6), epoch=7) == [5]
+    assert chain.asked == [0, 1, 2, 3, 4, 5]   # and it probes no identity the case does not own
+
+
+def test_unreadable_committee_falls_back_to_the_gov_prefix():
+    """An RPC brownout returns "" from `Chain.committee`. That must reach gov as None (→ the
+    PP_GOV_VOTERS prefix, which at least votes), and must not cost a single owner-addr read."""
+    chain = _VoterChain("", _ADDRS)
+    assert growth_voter_idx(chain, _Cfg(6), epoch=7) is None
+    assert chain.asked == []
+
+
+def test_a_committee_of_strangers_is_never_an_empty_voter_list():
+    """A readable committee none of whose members map to a case identity yields None, NOT []. An
+    empty explicit list is the one answer worse than the prefix: gov's explicit branch would send
+    the proposal with zero votes, which the Governor defeats by construction."""
+    chain = _VoterChain("0xstranger0 0xstranger1", _ADDRS)
+    assert growth_voter_idx(chain, _Cfg(6), epoch=7) is None

@@ -12,6 +12,12 @@ compose files copied verbatim (renamed only to dodge the `docker-compose.sim*.ge
 gitignore so they check in; no logs). The bundle's knobs: N=14, COMMITTEE_TARGET=10,
 IDENTITY_POOL=20, SIM_GEO_LATENCY=1, PEER_HOST_MODE=ip, BOOTSTRAP_MODE=json, prune=full.
 
+ONE service is deliberately no longer verbatim: `genesis-init`. The bundle ran
+`genesis-bootstrap bare` and predicted the staking cluster's CREATE addresses; the staking
+module is an rWasm contract installed at a fixed genesis address by the `full` arm, so both the
+arm and the prediction changed. That block is re-pinned in the fixture, with the reasoning
+beside it — it is still an oracle, just one anchored to the generator rather than to the bash.
+
 Normalization (semantically-neutral, documented): we compare ONLY entrypoint/command/environment
 per service via yaml.safe_load, which
   - drops YAML comments and key ORDER (both differ harmlessly: the bash carries prose comments

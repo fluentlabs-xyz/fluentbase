@@ -20,16 +20,16 @@ The static cases trap `tear_down`. These five trap THREE things (case-vrf-rotati
     cleanup() { pp_spammer_stop; rm -f "$MANIFEST"; tear_down; }
     trap cleanup EXIT
 
-and every one of the three matters on the failure path:
+and each of its legs matters on the failure path:
 
   * **`pp_spammer_stop`** reaps a BACKGROUND `cast send` loop. A leaked one keeps sending against
     a torn-down RPC forever — the 2026-07-14 3.5-hour orphan incident. It is also the reason
     `RotationBringUp` does not stop its own spammer: the trap covers the assertion phase too, and
     the bring-up knows nothing about that.
-  * **`rm -f "$MANIFEST"`** deletes the deploy manifest. Leaving it makes the NEXT run read a
-    stale `runtime-deployment.json` if its own DeployStaking fails — i.e. judge a fresh chain
-    through the previous run's contract addresses, which are codeless on it. It is removed on the
-    way OUT, not on the way in, precisely so a failed run leaves nothing behind for the next one.
+  * **`rm -f "$MANIFEST"`** is GONE, with the manifest. It deleted the deploy manifest so the
+    next run could not judge a fresh chain through the previous run's contract addresses; there
+    is no deploy manifest and there are no per-run contract addresses — the staking module sits
+    at a fixed genesis address on every run. The cleanup is two steps now, not three.
   * **`tear_down`** is `docker compose down -v --remove-orphans` on the production-path project.
 
 §2.4 item 12: bash's `exit 1` inside `pp_bring_up_rotation` TERMINATED THE PROCESS, which fired
@@ -758,7 +758,7 @@ def tear_down(runner: Runner) -> None:
                   timeout=300, note="teardown-down")
 
 
-def run(case: str, assertions, argv=None, contracts_dir=None, manifest=None,
+def run(case: str, assertions, argv=None, contracts_dir=None,
         committee_size=None, bring_up=True, overlays=None, post_manifest=None) -> int:
     """Bring up the production-path stack, run `assertions` in order, clean up
     (`core/exit_codes`).
@@ -766,19 +766,18 @@ def run(case: str, assertions, argv=None, contracts_dir=None, manifest=None,
     `assertions` is a list of `fn(ctx)`, run in order, fail-fast — the first failure ends the run
     and the later assertions do not execute, as bash's `set -e` did.
 
-    The `finally` is the EXIT trap, all three parts of it, in bash's order (spammer, manifest,
-    teardown) — see the module header. It runs on EVERY path including a failed BRING-UP, which is
-    the case bash covered with `exit 1` and a Python `raise` does not.
+    The `finally` is the EXIT trap, in bash's order minus the manifest leg (spammer, teardown)
+    — see the module header. It runs on EVERY path including a failed BRING-UP, which is the case
+    bash covered with `exit 1` and a Python `raise` does not.
 
     `overlays` and `post_manifest` are the two seams `case-byzantine-vrf` needs, and they are the
     reason it does NOT get a bring-up of its own. Its bash builds one inline (`:163-297`), and a
-    line-by-line diff against `pp_bring_up_rotation` leaves exactly three differences: a THIRD
-    compose file at the cold restart (`overlays`), five further deployer-funded transfers that MUST
-    post-date DeployStaking (`post_manifest`), and the staking-reader assert hoisted ahead of
-    `setBlsVerifier` — which cannot change its own outcome, since both of its operands (a static
-    file and an already-written manifest) are fixed by the time either position is reached. Two
-    seams and one provably-inert reordering is a much smaller surface than a second copy of the
-    14-phase bring-up, which is where the bug density in this family actually lives.
+    line-by-line diff against `pp_bring_up_rotation` leaves two differences: a THIRD compose file
+    at the cold restart (`overlays`), and five further deployer-funded transfers that must
+    post-date the token deploy (`post_manifest`). The third — the staking-reader assert hoisted
+    ahead of `setBlsVerifier` — is gone with both of those steps. Two seams is a much smaller
+    surface than a second copy of the bring-up, which is where the bug density in this family
+    actually lives.
 
     `bring_up=False` remains for a case that wants the ctx, the cleanup and the argv contract
     without a stack coming up underneath it.
@@ -794,14 +793,13 @@ def run(case: str, assertions, argv=None, contracts_dir=None, manifest=None,
     runner = Runner(dry=dry, echo=dry)
     profile = ProductionPathProfile(committee_size=committee_size, extra_overlays=overlays)
     bu = RotationBringUp(runner=runner, label=case, profile=profile,
-                         contracts_dir=contracts_dir, manifest=manifest,
-                         post_manifest=post_manifest)
+                         contracts_dir=contracts_dir, post_manifest=post_manifest)
     ctx = ProdCtx(bu)
 
     if dry:
         print(f"# dpos_harness {case} --dry-run (profile={profile.name}, "
               f"validators={profile.val_count}, committee={profile.committee_size}, "
-              f"overlays={list(profile.extra_overlays)}, manifest={bu.manifest})")
+              f"overlays={list(profile.extra_overlays)}, staking={bu.staking_rt})")
 
     rc = RC_PASS
     # `RotationBringUp` exports `COMPOSE_FILE` into `os.environ`, because the bare `docker compose
@@ -848,32 +846,20 @@ def _restore_compose(saved) -> None:
 
 
 def _cleanup(bu: RotationBringUp, runner: Runner) -> None:
-    """`cleanup() { pp_spammer_stop; rm -f "$MANIFEST"; tear_down; }`, in that order.
+    """`cleanup() { pp_spammer_stop; tear_down; }`, in that order — bash's three-step trap
+    minus the `rm -f "$MANIFEST"` leg, whose subject no longer exists.
 
-    Each step is independently guarded. bash's trap runs under `set -e` too, but every one of its
-    three commands already swallows its own failure (`kill … || true`, `rm -f`, `down … || true`);
-    here a raise in the first would skip the other two, so each is wrapped. A cleanup that stops
-    half-way is how a leaked spammer outlives the stack it was pressuring."""
+    Each step is independently guarded. bash's trap runs under `set -e` too, but each of its
+    commands already swallows its own failure (`kill … || true`, `down … || true`); here a raise
+    in the first would skip the rest, so each is wrapped. A cleanup that stops half-way is how a
+    leaked spammer outlives the stack it was pressuring."""
     for step, fn in (("spammer-stop", bu.spammers.stop),
-                     ("manifest-rm", lambda: _rm_manifest(bu, runner)),
                      ("tear-down", lambda: tear_down(runner))):
         try:
             fn()
         except Exception as e:  # noqa: BLE001 — a teardown must never mask the case's verdict
             print(f"  cleanup {step} failed (ignored): {e}", flush=True)
 
-
-def _rm_manifest(bu: RotationBringUp, runner: Runner) -> None:
-    """`rm -f "$MANIFEST"`. Recorded as a transcript step rather than run as a `rm` process: it is
-    an in-process file operation, and a transcript printing a `rm` that never runs would be
-    describing fiction (`core/proc.py`'s read-marker note)."""
-    runner.step("rm", bu.manifest)
-    if runner.dry:
-        return
-    try:
-        os.remove(bu.manifest)
-    except FileNotFoundError:
-        pass
 
 
 def dry_run_transcript(label: str = "smoke-vrf-rotation", contracts_dir=None) -> int:
@@ -889,7 +875,7 @@ def dry_run_transcript(label: str = "smoke-vrf-rotation", contracts_dir=None) ->
                          contracts_dir=contracts_dir)
     print(f"# dpos_harness dry-run-rotation (profile={profile.name}, "
           f"validators={profile.val_count}, committee={profile.committee_size}, "
-          f"manifest={bu.manifest})")
+          f"staking={bu.staking_rt})")
     saved_compose = os.environ.get("COMPOSE_FILE")
     try:
         bu.run()

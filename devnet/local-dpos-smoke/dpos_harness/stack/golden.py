@@ -14,7 +14,7 @@ THE IDEA (deliberately simple — no daemon, no registry, one tarball + one hash
 INVALIDATION (golden_hash)
     The snapshot is only valid for the exact binary + contracts + topology it was baked with:
       * the fluent smoke docker image id (a rebuilt node binary invalidates the state),
-      * contracts/.vendor-sha (a redeployed staking cluster invalidates the addresses),
+      * contracts/.vendor-sha (a rebuilt staking module invalidates the on-chain state),
       * the committee/topology/epoch config that determines the on-chain + consensus state
         (validators / initial_committee / val_containers / identity_pool / epoch interval).
     is_golden_fresh() = tarball present AND its sidecar hash == the current golden_hash().
@@ -51,7 +51,10 @@ _SMOKE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__f
 GOLDEN_DIR = os.path.join(_SMOKE_DIR, "sim-out", "golden")
 TARBALL = os.path.join(GOLDEN_DIR, "golden-dpos.tgz")
 SIDECAR = os.path.join(GOLDEN_DIR, "golden-dpos.hash")
-FACTS = os.path.join(GOLDEN_DIR, "golden-dpos.facts.json")
+# There is no facts sidecar. It carried the five deploy-discovered contract addresses so a
+# restored stack could act without re-deploying; the addresses are genesis constants now
+# (`core/topology.py`), identical in a restored stack and a fresh one, and a JSON copy of a
+# constant is only a way for the two to disagree.
 
 
 class GoldenError(RuntimeError):
@@ -157,14 +160,6 @@ def is_golden_fresh(spec: GoldenSpec) -> bool:
     return is_golden_fresh_logic(os.path.exists(TARBALL), _read_sidecar(), golden_hash(spec))
 
 
-def load_facts() -> dict:
-    """Load the deploy-facts sidecar (staking/chain_config/governance/liveness/token addresses)
-    captured at build time so a restored stack can drive on-chain actions without re-reading the
-    host manifest."""
-    with open(FACTS) as f:
-        return json.load(f)
-
-
 # ── VOLUME DETECTION ────────────────────────────────────────────────────────────
 
 def _detect_runtime_volume() -> str:
@@ -212,7 +207,7 @@ def _untar_into_volume(runner, volume: str):
 
 def build_golden(spec: GoldenSpec, runner=None) -> str:
     """Bring the caller's stack to DPoS-active ONCE via the normal full boot, graceful-stop it
-    (reth flushes to MDBX), tar the runtime volume into TARBALL, and write the hash + facts
+    (reth flushes to MDBX), tar the runtime volume into TARBALL, and write the hash
     sidecars. Returns the golden hash. Wipes stale volumes/data-root first (a leftover volume
     caused a reth static-file panic in an earlier run).
 
@@ -270,10 +265,6 @@ def build_golden(spec: GoldenSpec, runner=None) -> str:
     print(f"GOLDEN build: taring runtime volume {volume} → {TARBALL}", flush=True)
     _tar_volume(runner, volume)
 
-    facts = {"token": bu.token, "staking": bu.staking_rt, "chain_config": bu.chain_config_rt,
-             "governance": bu.gov_addr, "liveness_slashing": bu.liveness_rt}
-    with open(FACTS, "w") as f:
-        json.dump(facts, f, indent=2)
     h = golden_hash(spec)
     with open(SIDECAR, "w") as f:
         f.write(h + "\n")

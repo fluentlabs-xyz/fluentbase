@@ -798,27 +798,36 @@ class Reconcilers:
                         # STARVED EQUIVOCATOR (v61 a27): a byzantine victim only equivocates on a
                         # PROPOSAL SLOT; if it never won one within the horizon the slasher saw no
                         # evidence and never jailed it, so it sits seated forever and the rekey wedges
-                        # in rekey_pending. Force the terminal roster removal via governance so the
-                        # rekey can proceed. removeValidator preempts the (never-arriving) equivocation
-                        # — tradeoff: the slasher path isn't exercised for THIS victim, but most
-                        # byzantine win a slot and land naturally; this only rescues the rare wedge.
+                        # in rekey_pending. Force the departure via governance so the rekey can
+                        # proceed — it preempts the (never-arriving) equivocation. Tradeoff: the
+                        # slasher path isn't exercised for THIS victim, but most byzantine win a
+                        # slot and land naturally; this only rescues the rare wedge.
                         # Latched (force_removed) so the gov round issues exactly once.
+                        #
+                        # `force_disable` REPLACES `remove_validator`: the module has no
+                        # `removeValidator` at all, and the `disableValidator` that survives it
+                        # REVERTS unless the validator is currently Active. A starved equivocator
+                        # may already be jailed, so `force_disable` dispatches on the status byte
+                        # and returns False for an identity that is already out of selection —
+                        # not a failure, and the latch is set either way, because in both cases
+                        # there is nothing further to issue.
                         try:
-                            self.chain.remove_validator(int(info["idx"]),
-                                                        voter_idx=self._rotation_voter_idx(cur))
+                            issued = self.chain.force_disable(
+                                int(info["idx"]), voter_idx=self._rotation_voter_idx(cur))
                             info["force_removed"] = cur
+                            how = ("FORCED disableValidator" if issued else
+                                   "already out of selection (jailed/pending) — no gov round")
                             self.events.append(("churn",
                                 f"byzantine {container} (idx {info['idx']}) never got a proposal slot "
-                                f"to equivocate within {cfg.rotation_confirm_epochs} epochs — FORCED "
-                                "removeValidator"))
+                                f"to equivocate within {cfg.rotation_confirm_epochs} epochs — {how}"))
                         except Exception as e:  # noqa: BLE001 — best-effort gov write
-                            self.events.append(("churn", f"forced removeValidator idx {info['idx']} "
+                            self.events.append(("churn", f"forced disableValidator idx {info['idx']} "
                                                          f"deferred: {e}"))
                     elif info.get("force_removed"):
                         if cur - info["force_removed"] > cfg.rotation_confirm_epochs:
                             fatal_or_diag(self.events, "rotation-stall",
                                           f"byzantine identity {info['idx']} still seated even after "
-                                          f"forced removeValidator @epoch {info['force_removed']}",
+                                          f"forced disableValidator @epoch {info['force_removed']}",
                                           seen=self._diag_seen,
                                           key=f"rotstall:{container}:{info['epoch']}")
                     else:

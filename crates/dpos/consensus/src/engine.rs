@@ -78,6 +78,11 @@ pub struct EpochEngineConfig<B, XC, A> {
     pub blocker: B,
     pub snapshot: ValidatorSetSnapshot,
     pub epoch: Epoch,
+    /// Base for the leader elector's seedless arm: the witness seed of the E-1
+    /// terminal block, resolved by the epoch manager's boundary lookup
+    /// (`epoch_manager::Actor::boundary_lookup`), else the constant derivation
+    /// where no witness can exist.
+    pub fallback_seed: [u8; 32],
     /// Single cross-epoch `OriginEpocher` instance threaded from
     /// [`crate::outer::OuterBuilder::build`] (no per-epoch re-construction;
     /// marshal and engine share the same instance). `origin = dposActivationBlock`.
@@ -288,7 +293,7 @@ where
             context.with_label("simplex"),
             simplex::Config {
                 scheme,
-                elector: WeightedVrf::from_snapshot(&cfg.snapshot),
+                elector: WeightedVrf::new(&cfg.snapshot, cfg.fallback_seed),
                 blocker: cfg.blocker,
                 automaton: automaton.clone(),
                 relay: automaton,

@@ -7,7 +7,7 @@
 //! epoch_manager mux consumption) are deferred.
 //!
 //! Public API:
-//! - [`FluentP2P::build`] — sync constructor (Network::new + 8× register); returns the Network owner + [`FluentP2PHandles`] (clone-into-04/06).
+//! - [`FluentP2P::build`] — sync constructor (Network::new + 9× register); returns the Network owner + [`FluentP2PHandles`] (clone-into-04/06).
 //! - [`FluentP2P::start`] — consumes self, calls `Network::start`.
 //! - [`FluentP2PHandles`] — Fluent-domain handles (no commonware-p2p types leaked into 04's / 06's public API beyond the `OracleHandle` newtype and the `DiscSender` / `DiscReceiver` type aliases, which are intentional re-exports).
 
@@ -122,7 +122,7 @@ pub type DiscReceiver = Receiver<ed25519::PublicKey>;
 /// `epoch_manager` (see
 /// `crates/consensus/src/epoch_manager.rs`), which builds its own
 /// `Muxer`s over the raw channels. So 05 exposes
-/// the raw 7-channel `(Sender, Receiver)` pairs and does NOT pre-mux
+/// the raw 9-channel `(Sender, Receiver)` pairs and does NOT pre-mux
 /// vote/cert/resolver here — pre-muxing was redundant and would
 /// double-demux.
 pub struct FluentP2P<E>
@@ -179,6 +179,13 @@ where
     // frontier resolver engine in `node/dpos.rs::build_beacon_plane`.
     pub frontier_sender: DiscSender<E>,
     pub frontier_receiver: DiscReceiver,
+
+    // EVIDENCE: global one-instance channel for equivocation-evidence gossip —
+    // the votes a node republishes for a decided round so the two halves of a
+    // split-delivered equivocation can meet. Consumed once by the evidence task
+    // in `node/dpos.rs::build_beacon_plane`.
+    pub evidence_sender: DiscSender<E>,
+    pub evidence_receiver: DiscReceiver,
 }
 
 impl<E> FluentP2P<E>
@@ -186,7 +193,7 @@ where
     E: BufferPooler + Clock + CryptoRngCore + Spawner + Storage + Metrics + RNetwork + Resolver,
 {
     /// Build the p2p layer: instantiate commonware Network, register
-    /// 8 top-level channels. Per-epoch demux for vote/cert/resolver is
+    /// 9 top-level channels. Per-epoch demux for vote/cert/resolver is
     /// handled inside the consensus `EpochManager` (it builds its own
     /// `Muxer`s), so this layer returns raw channels here.
     pub fn build(ctx: E, cfg: FluentP2PConfig) -> (Self, FluentP2PHandles<E>) {
@@ -210,12 +217,13 @@ where
             constants::RESOLVER_BACKLOG,
         );
 
-        // Register 5 global one-instance channels:
+        // Register 6 global one-instance channels:
         //    BROADCAST (block-data via buffered::Engine) +
         //    MARSHAL (backfill via marshal::resolver::p2p::init) +
         //    BEACON (randomness-beacon DKG + per-height seed partials) +
         //    BEACON_RESOLVER (DKG-log recovery) +
-        //    FRONTIER (plane-native CertUpstream frontier/by-height pull).
+        //    FRONTIER (plane-native CertUpstream frontier/by-height pull) +
+        //    EVIDENCE (equivocation-evidence gossip).
         let (br_s, br_r) = network.register(
             constants::BROADCAST_CHANNEL,
             constants::BROADCAST_QUOTA,
@@ -241,6 +249,11 @@ where
             constants::FRONTIER_QUOTA,
             constants::FRONTIER_BACKLOG,
         );
+        let (evidence_s, evidence_r) = network.register(
+            constants::EVIDENCE_CHANNEL,
+            constants::EVIDENCE_QUOTA,
+            constants::EVIDENCE_BACKLOG,
+        );
 
         let handles = FluentP2PHandles {
             oracle: OracleHandle { inner: oracle },
@@ -260,6 +273,8 @@ where
             beacon_resolver_receiver: beacon_res_r,
             frontier_sender: frontier_s,
             frontier_receiver: frontier_r,
+            evidence_sender: evidence_s,
+            evidence_receiver: evidence_r,
         };
         let me = Self { network };
         (me, handles)
@@ -460,7 +475,7 @@ mod tests {
             let mut sink = handles.oracle.clone();
             <OracleHandle as PeerSetSink>::track(&mut sink, 7, Set::default()).await;
 
-            // All 8 channels are exposed as raw (sender, receiver) — bound by move
+            // All 9 channels are exposed as raw (sender, receiver) — bound by move
             // to prove they are owned and usable (BEACON + BEACON_RESOLVER via `..`).
             let FluentP2PHandles {
                 vote_sender: _vs,
@@ -475,6 +490,8 @@ mod tests {
                 marshal_receiver: _mr_r,
                 frontier_sender: _fr_s,
                 frontier_receiver: _fr_r,
+                evidence_sender: _ev_s,
+                evidence_receiver: _ev_r,
                 ..
             } = handles;
 

@@ -32,6 +32,7 @@ import os
 
 from . import actions
 from ..core import setops, topology
+from ..core.policy import gov_live_voter_idx
 from ..chain.writes import fatal_or_diag
 from .coverage import Tally, gate_reason_key
 from .rounds import draw_round, build_gate_inputs, apply_action
@@ -747,16 +748,10 @@ class Dispatcher:
 
     def _live_voter_idx(self, cur):
         """sim_live_voter_idx: owner-idx of every CURRENT committee member (the stake-holders the
-        stake-weighted quorum sums). Returns a space list, or None → the prefix path."""
-        comm = set(self.chain.committee(cur).split())
-        if not comm:
-            return None
-        out = []
-        for i in range(self.s.max_minted_idx + 1):
-            a = self.chain.owner_addr(i)
-            if a and a.lower() in comm:
-                out.append(i)
-        return out or None
+        stake-weighted quorum sums). Returns a list, or None → the prefix path. The sim's ceiling
+        is the minted high-water — churn mints identities past the configured pool."""
+        return gov_live_voter_idx(self.chain.committee(cur), self.chain.owner_addr,
+                                  self.s.max_minted_idx)
 
 
 def _int(v, default):

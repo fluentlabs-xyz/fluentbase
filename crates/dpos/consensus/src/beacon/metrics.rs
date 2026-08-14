@@ -55,6 +55,16 @@ pub struct BeaconMetrics {
     /// height sits below the marshal floor, where no repair path fetches it, and the
     /// boundary seeding at the floor-raise sites either did not run or failed.
     pub engine_spawn_deferred: Counter,
+    /// An epoch resolved the CONSTANT seedless-arm base
+    /// (`sha256(epoch ‖ sorted peers)`) instead of the previous epoch's terminal-block
+    /// witness seed, because no witness could exist there: epoch 0, a non-computable
+    /// terminal height, or a pre-bootstrap link. Counted where the base is CHOSEN, which is
+    /// upstream of the promote gates — so an epoch that resolves the constant base and is
+    /// then demoted to verify-only counts here without ever spawning an engine. That base
+    /// is derivable an epoch ahead, so the epoch's first leader is predictable — the only
+    /// signal that separates a chain on the intended unpredictable path from one silently
+    /// on the old behaviour. Expected only around bootstrap.
+    pub fallback_seed_constant: Counter,
     /// A consensus-pinned dealer-log index named a position outside the committed
     /// committee, and the ceremony skipped it. Nothing can ever satisfy such an entry
     /// (the resolver fetches per-DEALER), so before the skip it held `all_held=false`
@@ -131,6 +141,13 @@ impl BeaconMetrics {
              verify-only meanwhile). Persistently non-zero = the height is below the marshal \
              floor and boundary seeding did not cover it.",
             self.engine_spawn_deferred.clone(),
+        );
+        ctx.register(
+            "dpos_fallback_seed_constant_total",
+            "Epochs that resolved the constant (predictable) seedless-arm base because no \
+             previous-epoch witness seed could exist. Counted at the choice, which precedes \
+             the promote gates, so a demoted epoch counts too. Expected only around bootstrap.",
+            self.fallback_seed_constant.clone(),
         );
         ctx.register(
             "dpos_dkg_pinned_idx_out_of_range_total",

@@ -473,18 +473,28 @@ class SmokeCtx:
                                lambda: nodes.blockhash_at(block, self.rpc), dry_value)
 
     def staking_call(self, sig: str, *args, dry_value="") -> str:
+        """`staking_call` — `cast call <GENESIS_STAKING> …` on the static stand.
+
+        The address is passed EXPLICITLY. `nodes.staking_call` no longer defaults one, and the
+        static stand is the case where the genesis constant is the right answer: its compose
+        runs `genesis-bootstrap full`, which installs the module at exactly that address at
+        block 0."""
         return self._delegated("staking_call", ", ".join([sig, *map(str, args)]),
-                               lambda: nodes.staking_call(sig, *args, rpc_url=self.rpc), dry_value)
+                               lambda: nodes.staking_call(sig, *args,
+                                                          addr=topology.GENESIS_STAKING,
+                                                          rpc_url=self.rpc), dry_value)
 
     def chainconfig_call(self, sig: str, *args, dry_value="") -> str:
-        """`chainconfig_call` (lib.sh:219) — `cast call $CHAIN_CONFIG_ADDR …`.
+        """`chainconfig_call` (lib.sh:219) — the chain-PARAMETER read surface.
 
-        A THIRD contract on the same RPC, not a spelling of `staking_call`: the participation
-        FLOOR lives on ChainConfig and the participation COUNTERS on LivenessSlashing, and reading
-        the floor off the wrong address returns empty rather than failing (`core/nodes.py`'s
-        codeless-predeploy note), which the caller would then have to tell from a real 0."""
+        It used to be a THIRD contract; `ChainConfig` and `LivenessSlashing` were folded into
+        the staking module, so the address is the same one `staking_call` uses. The two names
+        survive because the callers reason about the surfaces separately, and keeping them apart
+        is what lets a future re-split be one edit here rather than a grep."""
         return self._delegated("chainconfig_call", ", ".join([sig, *map(str, args)]),
-                               lambda: nodes.chainconfig_call(sig, *args, rpc_url=self.rpc),
+                               lambda: nodes.chainconfig_call(sig, *args,
+                                                              addr=topology.GENESIS_STAKING,
+                                                              rpc_url=self.rpc),
                                dry_value)
 
     def validator_status(self, addr: str, dry_value="2") -> str:
@@ -498,7 +508,9 @@ class SmokeCtx:
         `smoke-byzantine` exists to observe and the very jail the DKG-restart case exists to prove
         was AVOIDED (`case-vrf-dkg-restart-midwindow.sh:246-250`)."""
         return self._delegated("validator_status", addr,
-                               lambda: nodes.validator_status(addr, rpc_url=self.rpc), dry_value)
+                               lambda: nodes.validator_status(
+                                   addr, staking_addr=topology.GENESIS_STAKING,
+                                   rpc_url=self.rpc), dry_value)
 
     def production(self, epoch, addr: str, dry_value=(9, 10)):
         """`produced_in_epoch <epoch> <addr>` (lib.sh) — `(produced, blocksInEpoch)`, with the
@@ -514,15 +526,20 @@ class SmokeCtx:
         reading looks like absent-but-live, which satisfies `victim produced < hub produced` for
         free. `verdicts_onchain.credit_state` is the one place the three are told apart."""
         return self._delegated("production", f"{epoch}, {addr}",
-                               lambda: nodes.production(epoch, addr, rpc_url=self.rpc),
+                               lambda: nodes.production(
+                                   epoch, addr, rpc_url=self.rpc,
+                                   staking_rt=topology.GENESIS_STAKING,
+                                   liveness_rt=topology.GENESIS_STAKING),
                                dry_value)
 
     def validator_stake(self, addr: str, dry_value=0) -> int:
-        """`totalDelegated` for `addr` on the staking predeploy — the quantity the weighted elector
-        ranks by. 0 is the read-failed sentinel: a genesis committee member cannot hold zero stake
-        and stay above `minValidatorStakeAmount`."""
+        """`totalDelegated` for `addr` on the genesis staking module — the quantity the weighted
+        elector ranks by. 0 is the read-failed sentinel: a genesis committee member cannot hold
+        zero stake and stay above `minValidatorStakeAmount`."""
         return self._delegated("validator_stake", addr,
-                               lambda: nodes.validator_stake(addr, rpc_url=self.rpc), dry_value)
+                               lambda: nodes.validator_stake(
+                                   addr, staking_addr=topology.GENESIS_STAKING,
+                                   rpc_url=self.rpc), dry_value)
 
     def runtime_addresses(self, dry_value=None):
         """`docker compose exec -T validator-0 cat /runtime/addresses.json` -> the `validators`

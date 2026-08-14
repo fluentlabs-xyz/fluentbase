@@ -192,17 +192,38 @@ def test_chain_id():
     assert t.CHAIN_ID == 2026
 
 
-def test_predeploy_slots_are_not_defaults_in_the_ctx():
-    """The predeploy addresses are CODELESS in this configuration — that is why the
-    runtime addresses are injected at the ctx refresh. Naming them in topology must not
-    resurrect them as a `Ctx` default; that defect was fixed and must stay fixed."""
+def test_genesis_addresses():
+    """The two fixed genesis addresses, mirrored from `crates/types/src/genesis.rs`. They are
+    pinned here because the harness cannot derive them and cannot be told them at runtime:
+    `GENESIS_STAKING` must equal what `genesis-bootstrap` writes into `staking-reader.json`,
+    and `GENESIS_GOVERNANCE` is COMPILED INTO the staking module as the sole caller its
+    privileged setters accept — a Governor anywhere else has every proposal reverted."""
+    assert t.GENESIS_STAKING == "0x0000000000000000000000000000000000520011"
+    assert t.GENESIS_GOVERNANCE == "0x0000000000000000000000000000000000520012"
+    assert t.GENESIS_STAKING_TOKEN == "0x0000000000000000000000000000000000005207"
+
+
+def test_the_retired_predeploy_constants_are_gone():
+    """`STAKING_ADDR` / `CHAIN_CONFIG_ADDR` / `STAKING_POOL_ADDR` / `LIVENESS_SLASHING_ADDR`
+    named the thirteen-predeploy split, and they were DELETED rather than repointed at the new
+    module — so that every reference had to be looked at by somebody instead of silently
+    acquiring a new meaning. Re-adding one under an old name would let a stale call site start
+    resolving again without anyone reading it."""
+    for retired in ("STAKING_ADDR", "CHAIN_CONFIG_ADDR", "STAKING_POOL_ADDR",
+                    "LIVENESS_SLASHING_ADDR"):
+        assert not hasattr(t, retired), f"{retired} came back — see the module header"
+
+
+def test_genesis_addresses_are_not_defaults_in_the_ctx():
+    """A contract address must still ARRIVE at the ctx, never be assumed there. The sim's
+    battery reads through `Ctx.STAKING_RT` / `CHAIN_CONFIG_RT` / `LIVENESS_RT`, and a default
+    would let a shadow that failed to resolve run the whole detector set against an address it
+    never confirmed. `nodes.py` now refuses an empty address loudly, which is the other half of
+    the same guarantee."""
     from dpos_harness.checks.battery import Ctx
     ctx = Ctx()
-    predeploys = {t.STAKING_ADDR, t.CHAIN_CONFIG_ADDR, t.STAKING_POOL_ADDR,
-                  t.LIVENESS_SLASHING_ADDR}
     for field in ("STAKING_RT", "CHAIN_CONFIG_RT", "LIVENESS_RT"):
-        assert getattr(ctx, field) == "", f"Ctx.{field} must default empty, not to a predeploy"
-        assert getattr(ctx, field) not in predeploys
+        assert getattr(ctx, field) == "", f"Ctx.{field} must default empty, not to an address"
 
 
 def test_topology_is_a_pure_leaf():

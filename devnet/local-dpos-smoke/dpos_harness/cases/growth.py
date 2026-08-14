@@ -15,7 +15,9 @@ WHAT THIS CASE DOES (deterministic, SCRIPTED — not the random churn sim)
     2. Wait for DPoS active + a few finalized blocks; record baseline fin0 + epoch0.
     3. Force a committee GROWTH across an epoch boundary — register_activate(idx,
        raise_cap=1) for the growth joiners (idx initial_committee..validators-1),
-       each spaced so the change lands at a boundary (the exact a14 trigger).
+       each spaced so the change lands at a boundary (the exact a14 trigger), and
+       each voting with the CURRENT committee (`growth_voter_idx`) because a joiner
+       holds 3e18 of a stake-weighted quorum and would otherwise never vote.
        Confirm the growth LANDS: activeValidatorsLength() increases AND the new
        validator seats in the live committee.
     4. ASSERT LIVENESS: finalized_dec() must advance by >= a full epoch's worth of
@@ -39,6 +41,7 @@ import time
 
 from ..core import topology
 from ..core.exit_codes import RC_FAIL, RC_PASS, RC_USAGE
+from ..core.policy import gov_live_voter_idx
 
 
 # ── PURE VERDICT LAYER (docker-free, unit-tested in tests/test_case_growth.py) ──
@@ -224,6 +227,25 @@ def _await_live_seat(chain, addr: str, deadline_s: int, dry=False):
     return None
 
 
+def growth_voter_idx(chain, cfg, epoch):
+    """The governance voter set for ONE growth step: the owner idxs of the CURRENT committee,
+    or None (unreadable committee) → gov's `PP_GOV_VOTERS` prefix.
+
+    WHY THE PREFIX IS NOT ENOUGH HERE — measured on the live chain, not inferred. Every joiner
+    `register_activate` lands holds 3e18 (a 1e18 `registerValidator` self-stake plus a 2e18
+    `delegate`), and FluentGovernance's quorum is 2/3 of the delegated STAKE. After growth #1 the
+    joiner is 43% of a 7e18 voting supply and, pinned to the initial four owners, never votes:
+    `activate-5` carried forVotes 4e18 against quorum 4.666e18 and came back Defeated on a chain
+    where nothing whatsoever was wrong. The votes all arrived, 3 blocks into a 10-block window —
+    the harness was simply under-voting.
+
+    The ceiling is the case's OWN validator count, not a minted high-water like the sim's: growth
+    never mints, and `register_activate` caps the seat count at `SIM_VALIDATORS`, so idx
+    0..validators-1 spans every identity that can be seated for the whole run.
+    """
+    return gov_live_voter_idx(chain.committee(epoch), chain.owner_addr, cfg.validators - 1)
+
+
 # ── THE CASE ───────────────────────────────────────────────────────────────────
 
 def run_case(argv=None) -> int:
@@ -305,8 +327,7 @@ def run_case(argv=None) -> int:
             if golden.is_golden_fresh(spec):
                 print("CASE-GROWTH: SIM_USE_GOLDEN=1 and golden is fresh — restoring snapshot "
                       "(skipping full boot)", flush=True)
-                bu.run_from_golden(lambda runner: golden.restore_golden(spec, runner),
-                                   golden.load_facts)
+                bu.run_from_golden(lambda runner: golden.restore_golden(spec, runner))
             else:
                 print("CASE-GROWTH: SIM_USE_GOLDEN=1 but golden is stale/absent — full boot",
                       flush=True)
@@ -317,7 +338,9 @@ def run_case(argv=None) -> int:
                       CHAIN_CONFIG_RT=bu.chain_config_rt, GOV_ADDR=bu.gov_addr,
                       LIVENESS_RT=bu.liveness_rt, TOKEN=bu.token,
                       CHAIN_ID=env["CHAIN_ID"])
-        # gov voter prefix = the initial committee (bringup already exported PP_GOV_VOTERS).
+        # gov voter FALLBACK prefix = the initial committee (bringup already exported
+        # PP_GOV_VOTERS). Only reached when the live committee is unreadable — the growth calls
+        # below pass the live set explicitly.
         os.environ.setdefault("PP_GOV_VOTERS", str(cfg.initial_committee))
 
         # 2. readiness baseline
@@ -333,9 +356,12 @@ def run_case(argv=None) -> int:
             return fail("could not read activeValidatorsLength at baseline")
         for j, idx in enumerate(growth_joiners):
             ep_at = chain.current_epoch()
+            voters = growth_voter_idx(chain, cfg, ep_at)
             print(f"CASE-GROWTH: growth #{j + 1}/{len(growth_joiners)} — register+activate "
-                  f"idx {idx} at epoch {ep_at} (cap {cap})", flush=True)
-            chain.register_activate(idx, raise_cap=1)
+                  f"idx {idx} at epoch {ep_at} (cap {cap}, gov voters "
+                  f"{voters if voters is not None else 'PREFIX (committee unreadable)'})",
+                  flush=True)
+            chain.register_activate(idx, raise_cap=1, voter_idx=voters)
 
             new_cap = _await_cap_increase(chain, cap, deadline_s=interval * 4 + 120, dry=dry)
             if new_cap is None:

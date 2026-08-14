@@ -8,10 +8,19 @@ oracle, quoted in each docstring and pinned by the unit tests (test_writes.py re
 exact argv). Commands are issued through a single `proc.Runner` seam so a test / dry-run sees
 them without a live chain.
 
-The `Chain` object carries the post-deploy runtime facts (RPC, STAKING_RT/CHAIN_CONFIG_RT/
+The `Chain` object carries the contract addresses (RPC, STAKING_RT/CHAIN_CONFIG_RT/
 GOV_ADDR/LIVENESS_RT/TOKEN, CHAIN_ID, PP_PEERS) — deployment facts, not policy toggles
-(standards/general.md). The sim orchestrator constructs ONE Chain after the deploy and
-threads it into bringup / reconcilers / hostpool / the dispatcher.
+(standards/general.md). The sim orchestrator constructs ONE Chain and threads it into
+bringup / reconcilers / hostpool / the dispatcher.
+
+`STAKING_RT`, `CHAIN_CONFIG_RT` and `LIVENESS_RT` are THREE READ SURFACES ON ONE CONTRACT:
+`ChainConfig` and `LivenessSlashing` were folded into the staking module. Callers set all
+three from a single source (`topology.GENESIS_STAKING` on a genesis-installed stand, the
+delivered address on the production path), so this is one fact under three names, not three
+facts obliged to agree. Every governance WRITE names `staking_rt` explicitly rather than
+reaching for whichever alias reads best at the call site — a proposal into the wrong address
+executes, emits `ProposalExecuted`, returns a 0x1 receipt and does nothing, because OZ's
+`Address.verifyCallResult` never checks `target.code.length`.
 
 PORT-NOTE: the fail-loud `_die`/fail_bundle bash idiom becomes a raised ChainError the caller
 catches to write a structured bundle (mirrors battery.py's inv_fail return). A best-effort
@@ -22,11 +31,10 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import sys
 import time
 
-from ..core import nodes, topology
+from ..core import nodes, rpc, topology
 from ..core.nodes import hex_to_dec as _hex_to_dec
 from ..core.policy import DEMOTED_INVARIANTS, gov_voter_list
 from ..core.proc import Runner
@@ -259,12 +267,21 @@ class Chain:
 
     def committee(self, epoch) -> str:
         """pp_committee: getEpochCommittee(epoch) as a sorted, lowercased, space-joined addr
-        set (membership comparable regardless of on-chain order); "" when empty/unreadable."""
+        set (membership comparable regardless of on-chain order); "" when empty/unreadable.
+
+        The decode goes through `rpc.cast_addr_array` rather than a regex sweep of raw stdout.
+        The sweep could not tell an address ARRAY from any other answer containing an address,
+        so a signature that had drifted off the contract — a return value appended, a tuple
+        where an array was expected — came back as a plausible, quietly wrong committee, and
+        `committee_has` then answered questions about it. An EMPTY answer still means "nobody
+        answered" and still yields "": that is an RPC brownout, not a drift, and the callers
+        that treat "" as unreadable must keep being able to."""
         out = self.p.run(["cast", "call", self.staking_rt,
                           "getEpochCommittee(uint64)(address[])", str(epoch),
                           "--rpc-url", self.rpc], note="committee")
-        addrs = sorted(a.lower() for a in re.findall(r"0x[0-9a-fA-F]{40}", out))
-        return " ".join(addrs)
+        if not (out or "").strip():
+            return ""
+        return " ".join(sorted(rpc.cast_addr_array(out, f"getEpochCommittee({epoch})")))
 
     def committee_has(self, addr: str, epoch) -> bool:
         """committee_has: is <addr> (lowercased) in getEpochCommittee(epoch)?"""
@@ -274,7 +291,7 @@ class Chain:
 
     def validator_status(self, addr: str) -> str:
         """pp_validator_status: 2nd tuple field (status byte) of getValidatorStatus over the
-        RUNTIME staking cluster (the predeploy 0x..5201 is codeless here)."""
+        staking module (0 NotFound, 1 Active, 2 Pending, 3 Jail)."""
         out = self.p.run(["cast", "call", self.staking_rt, nodes.VALIDATOR_STATUS_SIG,
                           addr, "--rpc-url", self.rpc], note="validator-status")
         parts = out.split()
@@ -318,7 +335,14 @@ class Chain:
 
         None when the read failed (rc != 0 / empty) — the bash `|| echo READ_FAILED` sentinel,
         kept as a DISTINCT value from a successfully-read view so an RPC brownout can never be
-        reported as a purity violation."""
+        reported as a purity violation.
+
+        THE ARITY IS CHECKED, and this probe is the sharpest case for it. It compares raw stdout
+        to itself across one governance write, so a decode that silently lost a return value
+        stays perfectly self-consistent — the probe PASSES, on a view it can no longer fully
+        see, which is the one outcome that makes a guard worse than no guard. Two top-level
+        values (`address[]`, `ConsensusKeys[]`) is what the contract returns; anything else is
+        a signature that has drifted off it, and that is a raise, not a None."""
         r = self.p.run_capture(["cast", "call", self.staking_rt,
                                 "getValidatorsWithKeysAt(uint64)"
                                 "(address[],(bytes,bytes32,uint64)[])", str(epoch),
@@ -326,6 +350,7 @@ class Chain:
         out = (r.stdout or "").strip()
         if not r.ok or not out:
             return None
+        rpc.cast_returns(out, 2, f"getValidatorsWithKeysAt({epoch})")
         return out
 
     def active_validators_length(self) -> int:
@@ -669,29 +694,40 @@ class Chain:
 
     # ── staking lifecycle write flows (soak-actions.sh) ───────────────────────
     def register_setkeys(self, idx) -> None:
-        """_sim_register_setkeys: approve(stake) → registerValidator(→Pending) → assert
-        status==2 → setConsensusKeys. Every step revert-checked; the status==2 post-assert
-        catches a swallowed revert."""
+        """_sim_register_setkeys: approve(stake) → the 6-arg registerValidator(→Pending) → assert
+        status==2. Every step revert-checked; the status==2 post-assert catches a swallowed
+        revert.
+
+        `setConsensusKeys` HAS NO COUNTERPART on the module, and this is where its work went: the
+        BLS pubkey, the PoP and the peer pubkey are arguments 4-6 of
+        `registerValidator(address,uint16,uint256,bytes,bytes,bytes32)`, PoP-verified inside the
+        same call. The old two-step form also carried an ordering hazard — a register that landed
+        with no keys left a member the committee could select but nobody could reach — and that
+        hazard is now unreachable by construction rather than relocated: there is no window in
+        which a registered validator has no keys.
+
+        The intermediate status assert is KEPT even though the two writes collapsed into one. It
+        is not an ordering guard, it is a swallowed-revert detector: a `cast send` whose receipt
+        never arrives is confirmed by the sender's nonce advancing, and a REVERTED tx advances the
+        nonce too."""
         addr = self.owner_addr(idx)
         key = self.owner_key(idx)
         if not addr.startswith("0x"):
             raise ChainError("register", f"no owner addr for joiner idx {idx}")
+        ck = self.consensus_keys(idx)
         self.send(f"approve(stake) v{idx}", self.token, "approve(address,uint256)(bool)",
                   self.staking_rt, "1000000000000000000", key=key)
         self.send(f"registerValidator v{idx}", self.staking_rt,
-                  "registerValidator(address,uint16,uint256)", addr, 0, "1000000000000000000",
-                  key=key)
+                  "registerValidator(address,uint16,uint256,bytes,bytes,bytes32)",
+                  addr, 0, "1000000000000000000",
+                  ck.get("blsPubkeyUncompressed", ""), ck.get("blsPoPUncompressed", ""),
+                  ck.get("peerPubkey", ""), key=key)
         st = self.validator_status(addr)
         # An EMPTY status is "nobody answered", not "the wrong status": that is a plain `--dry-run`,
         # where the write being checked was itself only recorded. A dry Runner with a CANNED status
         # still gets asserted, which is how the write tests drive this branch.
         if st != "2" and not (self.p.dry and not st):
             raise ChainError("register", f"v{idx} ({addr}): status={st} after register (want 2)")
-        ck = self.consensus_keys(idx)
-        self.send(f"setConsensusKeys v{idx}", self.staking_rt,
-                  "setConsensusKeys(address,bytes,bytes,bytes32)", addr,
-                  ck.get("blsPubkeyUncompressed", ""), ck.get("blsPoPUncompressed", ""),
-                  ck.get("peerPubkey", ""), key=key)
 
     def register_only(self, idx) -> None:
         """sim_register_only: register→Pending→setConsensusKeys, then STOP (never activates →
@@ -740,7 +776,13 @@ class Chain:
         violation would be a flaky guard, which is worse than none."""
         purity_epoch = self.staking_current_epoch()
         before = None if purity_epoch is None else self.selection_view_at(purity_epoch)
-        self.gov_action(self.chain_config_rt,
+        # RETARGETED to `staking_rt`, explicitly, not left to ride on the two fields being equal.
+        # `setActiveValidatorsLength` moved onto the module with the rest of ChainConfig, and a
+        # proposal into an address with no code is INVISIBLE: OZ's `Address.verifyCallResult`
+        # never checks `target.code.length`, so the Governor emits `ProposalExecuted`, the receipt
+        # is 0x1, the purity probe sees no change (correctly — nothing changed), and the cap
+        # silently never moves.
+        self.gov_action(self.staking_rt,
                         self.calldata("setActiveValidatorsLength(uint32)", new_cap),
                         f"grow-cap-{new_cap}", voter_idx=voter_idx)
         after = None if purity_epoch is None else self.selection_view_at(purity_epoch)
@@ -817,13 +859,38 @@ class Chain:
         self.send(f"delegate(evict) v{served_idx}", self.staking_rt, "delegate(address,uint256)",
                   addr, str(amount), key=k)
 
-    def remove_validator(self, served_idx, voter_idx=None) -> None:
-        """sim_remove_validator: removeValidator(addr) via governance — the PERMANENT roster
-        removal for a byzantine/equivocation exit once its stake is gone. Frees the top-k slot
-        durably (a disableValidator would be reversible; removeValidator is terminal)."""
+    def force_disable(self, served_idx, voter_idx=None) -> bool:
+        """Governance-forced departure of a seated identity — the successor to
+        `remove_validator`, and a different shape because the contract is.
+
+        `removeValidator` does not exist on the module; the terminal roster removal it named is
+        gone. `disableValidator(address)` is what is left, and it is NOT a drop-in: it reverts
+        `ERR_NOT_ACTIVE_VALIDATOR` unless the validator is currently Active
+        (`staking.rs::disable_validator`). The caller reaches this on a STARVED EQUIVOCATOR — an
+        identity the slasher may already have jailed — so a blind call is a governance round that
+        can only revert: three voters' worth of transactions, a `gov-execute-reverted` raise, and
+        a rekey that still has not proceeded.
+
+        So it DISPATCHES on the status byte (0 NotFound, 1 Active, 2 Pending, 3 Jail) and returns
+        whether a round was actually needed:
+
+          * Active(1)                  → propose/vote/execute `disableValidator`, assert Pending.
+          * Jail(3) / Pending(2)       → the identity is ALREADY out of selection. Return False:
+                                         "no governance round needed", not "failed". The caller's
+                                         latch treats that as done, because it is.
+          * NotFound(0) / unreadable   → nothing to disable, and a failed read must not be spent
+                                         on a write. Return False.
+        """
         addr = self.owner_addr(served_idx)
-        self.gov_action(self.staking_rt, self.calldata("removeValidator(address)", addr),
-                        f"remove-validator-{served_idx}", voter_idx=voter_idx)
+        if not addr.startswith("0x"):
+            raise ChainError("force-disable", f"v{served_idx}: no owner addr")
+        st = self.validator_status(addr)
+        if st != "1" and not (self.p.dry and not st):
+            return False
+        self.gov_action(self.staking_rt, self.calldata("disableValidator(address)", addr),
+                        f"force-disable-{served_idx}", voter_idx=voter_idx)
+        self._status_assert(addr, "2", f"force_disable v{served_idx} (want 2=Pending)")
+        return True
 
     def activate_bench(self, idx, stake_wei, voter_idx=None) -> None:
         """sim_activate_bench: register_setkeys → activateValidator (gov) → approve+delegate a LOW
@@ -1003,16 +1070,20 @@ def build_addr_map(state, chain) -> None:
             addr.addr2idx[a] = served
 
 
-def sim_regen_staking_reader(manifest_path: str) -> str:
-    """sim_regen_staking_reader: derive staking-reader.json from the DeployStaking manifest's
-    ACTUAL deployed addresses, lowercased (kills the create-nonce PREDICTION fragility class).
+def staking_reader_json(staking_address: str) -> str:
+    """The body of `/runtime/staking-reader.json` — the node's whole `--dpos.staking-config`.
+
+    ONE field, and that is the point. It used to carry three addresses derived from a deploy
+    manifest, and the config's worst failure mode was an OMITTED one: the reader defaulted it
+    to a genesis slot with no code, and an EVM call to a codeless account returns Success, so
+    the per-block liveness system call became a silent no-op. There is nothing left to omit.
+
     Pure (json only, no docker) so it is gate-testable; `stack.bringup` writes the result to
-    /runtime. THE only copy — `sim/actions.py` carried an identical one with no production
-    caller and it is gone."""
-    with open(manifest_path) as f:
-        m = json.load(f)
-    return json.dumps({
-        "staking_address": str(m["staking"]).lower(),
-        "chain_config_address": str(m["chain_config"]).lower(),
-        "liveness_slashing_address": str(m["liveness_slashing"]).lower(),
-    })
+    /runtime. Lowercased, matching what `genesis-bootstrap` writes — the two must produce the
+    same bytes or the re-write in bring-up is a change rather than an idempotent restatement."""
+    addr = (staking_address or "").strip().lower()
+    if not addr.startswith("0x"):
+        raise ChainError("staking-reader",
+                         f"refusing to write staking-reader.json with staking_address={addr!r} "
+                         "— the node would parse it, read a codeless address and report nothing")
+    return json.dumps({"staking_address": addr})

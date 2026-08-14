@@ -32,10 +32,12 @@ use crate::{
         result_matches, result_target, OrderBlock, ResultTarget, MIN_GAS_LIMIT, TX_BYTE_BUDGET,
         TX_BYTE_BUDGET_AT_BOUNDARY,
     },
+    slasher::{evidence::verify_block_charge, ChargeStore, TombstoneSet},
 };
 use alloy_consensus::Transaction as _;
 use alloy_primitives::{Address, Bytes, B256};
 use alloy_rpc_types_engine::{ForkchoiceState, ForkchoiceUpdated, PayloadStatus};
+use commonware_codec::Encode as _;
 use commonware_consensus::{
     marshal::{
         ancestry::{AncestorStream, BlockProvider},
@@ -217,7 +219,9 @@ pub enum LeaderIndexError {
 }
 
 /// Vote-time rule for the production record in `extra_data`: the block must
-/// carry EXACTLY the 2-byte record naming its own leader.
+/// carry EXACTLY the [`extra_data::PRODUCTION_RECORD_LEN`]-byte record naming its
+/// own leader. The record's accusation half is gated separately, against the
+/// evidence, by [`equivocation_gate_decision`].
 ///
 /// `expected_leader_index` is `None` only for an instance with no committee map
 /// (a follower, a verify-only scheme, a test) — it casts no vote, so the rule is
@@ -673,6 +677,21 @@ pub struct FluentApp<XC, A> {
     /// slack, the class this codebase prohibits by name (see the byte-compare
     /// prohibition in `verify_block`).
     committee_index: Option<Arc<BiMap<PeerPubkey, BlsPubkey>>>,
+    /// L2 chain id — the domain separator of the vote signatures a block-carried
+    /// equivocation charge is verified under (`fluent_namespace`). A chain
+    /// constant, so it belongs on the cross-epoch app rather than on the
+    /// per-epoch committee injection.
+    chain_id: u64,
+    /// Read handle on the slasher's verified-charge queue, drained one charge
+    /// per block by [`Self::build_proposal`]. `None` for an instance with no
+    /// slasher (a follower, a test) — it proposes nothing, so it charges nobody.
+    charges: Option<ChargeStore>,
+    /// Committee members observed slashed for equivocation. Read at verify to
+    /// refuse binding their proposals, and at propose to drop a charge whose
+    /// verdict has already landed. Empty is the honest "nothing observed" state,
+    /// which is also what a test and a node whose watcher has not run yet hold —
+    /// so the default is permissive, like the absent committee map.
+    tombstones: TombstoneSet,
 }
 
 impl<XC: Clone, A> Clone for FluentApp<XC, A> {
@@ -691,6 +710,9 @@ impl<XC: Clone, A> Clone for FluentApp<XC, A> {
             fee_recipient: self.fee_recipient,
             target_gas_limit: self.target_gas_limit,
             dpos_activation_block: self.dpos_activation_block,
+            chain_id: self.chain_id,
+            charges: self.charges.clone(),
+            tombstones: self.tombstones.clone(),
         }
     }
 }
@@ -715,10 +737,20 @@ where
         // same `Arc` must also reach `epoch_manager::Config` (writer W1) — a
         // silently-forgotten second map would split writers from readers.
         group_keys: GroupKeys,
+        chain_id: u64,
+        // Same reasoning as `group_keys`: the same handle must also reach
+        // `slasher::Config`, and a second store would be a queue nothing fills.
+        charges: Option<ChargeStore>,
+        // Same reasoning again: the writer is the node's tombstone watcher, in
+        // another crate entirely, so a default here would be a set nothing fills.
+        tombstones: TombstoneSet,
     ) -> Self {
         Self {
             beacon: None,
             committee_index: None,
+            chain_id,
+            charges,
+            tombstones,
             seed_store,
             group_keys,
             genesis: Arc::new(genesis),
@@ -748,6 +780,16 @@ where
     /// agreed snapshot. Followers, verify-only schemes and tests leave it unset.
     pub fn with_committee_index(mut self, bimap: Arc<BiMap<PeerPubkey, BlsPubkey>>) -> Self {
         self.committee_index = Some(bimap);
+        self
+    }
+
+    /// Install the tombstone view a running node's watcher fills. Test-only: in
+    /// production the handle is a constructor argument precisely so an instance
+    /// cannot be built without the writer's own, and a second entry point would
+    /// re-open that hole.
+    #[cfg(test)]
+    fn with_tombstones(mut self, tombstones: TombstoneSet) -> Self {
+        self.tombstones = tombstones;
         self
     }
 
@@ -1088,7 +1130,50 @@ where
                 return None;
             }
         };
-        let extra_data = Bytes::from(extra_data::encode_production_record(leader_index));
+        // At most ONE charge per block: each costs every voter two BLS verifies
+        // that run OUTSIDE `VERIFY_EXEC_BUDGET`, out of the ~450 ms vote margin.
+        //
+        // The charge is drawn from THIS block's epoch and no other. Only that
+        // epoch's committee can verify it (`committee_index` maps exactly one
+        // epoch), so an older charge would produce a block every voter rejects
+        // and `BTreeMap` ordering would keep re-offering that same key. A charge
+        // that outlives its epoch leaves by the transaction fallback instead.
+        //
+        // The epoch is the ROUND's, not `epoch_of(height)`: the round is what
+        // every voter's `committee_index` was built for, and it is agreed data
+        // both sides of the vote read identically.
+        //
+        // If the block fails to gather a quorum nothing special happens — the
+        // charge stays in the queue and the next proposer holding it offers it
+        // again. No backoff, no retry counter, no timer.
+        // A charge names a committee index; the tombstone is recorded against a
+        // peer key. The round's own `committee_index` is the mapping between
+        // them, and it is the right one by construction — `next_charge` is asked
+        // only for this round's epoch. Without a map nothing is filtered, the
+        // same permissive direction the leader-index rule takes.
+        let charge = self.charges.as_ref().and_then(|store| {
+            store.next_charge(context.round.epoch().get(), |accused| {
+                self.committee_index
+                    .as_ref()
+                    .and_then(|bimap| bimap.get(accused as usize))
+                    .is_some_and(|peer| self.tombstones.contains(peer))
+            })
+        });
+        let (accused, equivocation) = match charge {
+            Some((accused, evidence)) => {
+                (Some(accused), Some(Bytes::from(evidence.encode().to_vec())))
+            }
+            None => (None, None),
+        };
+        if let Some(accused) = accused {
+            tracing::info!(
+                height,
+                accused,
+                "proposing an equivocation charge with its evidence"
+            );
+            metrics::counter!("dpos_equivocation_charge_proposed_total").increment(1);
+        }
+        let extra_data = Bytes::from(extra_data::encode_production_record(leader_index, accused));
 
         if parent_seed.is_some() {
             metrics::counter!("dpos_parent_seed_embedded_total").increment(1);
@@ -1115,6 +1200,7 @@ where
             beacon_outcome,
             dkg_logs,
             parent_seed,
+            equivocation,
         })
     }
 }
@@ -1245,6 +1331,73 @@ fn beacon_gate_decision(beacon: Option<&BeaconVerify>, block: &OrderBlock) -> bo
     }
 }
 
+/// Equivocation gate (returns `false` ⇒ vote against the block): the accusation
+/// in `extra_data` and the evidence in `OrderBlock::equivocation` must be present
+/// together or absent together, and when present the evidence must convict
+/// exactly the accused member of exactly this block's epoch.
+///
+/// Presence is exact in BOTH directions on purpose. An accusation without
+/// evidence is a slash nobody could check; evidence without an accusation is
+/// unagreed payload riding under the digest, and both would let one Byzantine
+/// proposer put something in a block that the committee did not attest to.
+///
+/// Every voter runs this against the block in front of it, so a charge is valid
+/// or not on its own bytes — block validity never depends on whether the evidence
+/// gossip reached this node in time. A false charge cannot pass, because honest
+/// nodes hold no valid evidence for an innocent validator.
+///
+/// `committee_index == None` (a follower, a verify-only scheme, a test) skips
+/// only the CRYPTOGRAPHIC arm — such an instance casts no vote, so a signature it
+/// cannot check is not a vote condition, exactly as for the leader-index rule.
+/// The presence rule needs no committee and is enforced regardless.
+fn equivocation_gate_decision(
+    block: &OrderBlock,
+    epoch: u64,
+    committee_index: Option<&Arc<BiMap<PeerPubkey, BlsPubkey>>>,
+    chain_id: u64,
+) -> bool {
+    // An absent or undecodable record names nobody, so no evidence may ride with
+    // it. `structural_checks` already rejected both for any instance that votes.
+    let accused = match extra_data::decode_production_record(&block.extra_data) {
+        Ok(Some(record)) => record.accused,
+        Ok(None) | Err(_) => None,
+    };
+    let (accused, evidence) = match (accused, block.equivocation.as_ref()) {
+        (None, None) => return true,
+        (Some(accused), Some(evidence)) => (accused, evidence),
+        (accused, evidence) => {
+            tracing::warn!(
+                height = block.height,
+                epoch,
+                has_accusation = accused.is_some(),
+                has_evidence = evidence.is_some(),
+                "equivocation gate: accusation and evidence must both be present \
+                 or both absent — voting false"
+            );
+            metrics::counter!("dpos_marker_reject_total", "reason" => "equivocation_presence")
+                .increment(1);
+            return false;
+        }
+    };
+    let Some(bimap) = committee_index else {
+        return true;
+    };
+    if let Err(e) = verify_block_charge(evidence, accused, epoch, (**bimap).clone(), chain_id) {
+        tracing::warn!(
+            height = block.height,
+            epoch,
+            accused,
+            error = %e,
+            "equivocation gate: the block's charge does not verify — voting false"
+        );
+        metrics::counter!("dpos_marker_reject_total", "reason" => "equivocation_charge")
+            .increment(1);
+        return false;
+    }
+    metrics::counter!("dpos_equivocation_charge_verified_total").increment(1);
+    true
+}
+
 impl<E, XC, A> Application<E> for FluentApp<XC, A>
 where
     E: Rng + Spawner + Metrics + Clock + Send + 'static,
@@ -1318,6 +1471,32 @@ where
         block: &OrderBlock,
         parent: &OrderBlock,
     ) -> bool {
+        // A slashed member keeps its seat and its leader slots until the committee
+        // turns over, and simplex clears the round's leader deadline the moment
+        // its proposal binds (`voter/round.rs` `set_proposal` / `verified`). That
+        // is what makes an equivocator's slot cost the full certification
+        // deadline instead of the leader timeout: equivocating disarms the timer.
+        // Refusing here is the node's one seam before certification — a `false`
+        // verify sets both deadlines to now (`voter/state.rs::trigger_timeout` →
+        // `set_deadlines(now, now)`), so the view ends at once instead of paying
+        // out the certification window.
+        //
+        // This is a vote decision read from a NON-hash-invariant field, and that
+        // is deliberate rather than overlooked: a node that has not yet seen the
+        // verdict simply votes as before, so the two populations disagree only on
+        // whether this view nullifies — never on which block is final. The flag
+        // is monotone, so the disagreement resolves in one direction and within
+        // the few blocks it takes the verdict to reach everyone.
+        if self.tombstones.contains(&ctx.leader) {
+            tracing::warn!(
+                height = block.height,
+                round = ?ctx.round,
+                "refusing to bind a proposal from a validator slashed for equivocation"
+            );
+            metrics::counter!("dpos_marker_reject_total", "reason" => "tombstoned_leader")
+                .increment(1);
+            return false;
+        }
         let now_secs = clock
             .current()
             .duration_since(std::time::UNIX_EPOCH)
@@ -1366,6 +1545,18 @@ where
         // Beacon boundary gate: epoch-type (beacon_outcome present IFF change-epoch
         // first block) + the "C" share-on-polynomial qualification on a change block.
         if !beacon_gate_decision(self.beacon.as_ref(), block) {
+            return false;
+        }
+
+        // Equivocation gate: accusation and evidence bound to each other, and the
+        // charge verified against THIS round's committee — the only one whose
+        // `signer_idx → BLS key` mapping a running node can reconstruct.
+        if !equivocation_gate_decision(
+            block,
+            ctx.round.epoch().get(),
+            self.committee_index.as_ref(),
+            self.chain_id,
+        ) {
             return false;
         }
 
@@ -1727,12 +1918,20 @@ impl DerivedBlock for SealedBlock<RethBlock> {
 #[error("derive: parent header {0} not found")]
 pub struct ParentHeaderMissing(pub B256);
 
-/// Derivation with a bounded retry on the parent-visibility race above. The
-/// live executor is immune — it awaits an FCU response after every block —
-/// but paths that derive against a parent imported WITHOUT an awaited FCU in
-/// between (the crash-recovery walk; the follower's first derive after an
-/// EL-sync jump, where devp2p canonicalized the parent) must absorb the race
-/// here. Any other derivation error stays immediately fatal.
+/// Derivation with a bounded retry on the parent-visibility race above.
+///
+/// Any path that derives against a parent imported WITHOUT an awaited
+/// canonicalization in between must make the parent visible first — that is a
+/// property of the code path, not of the component. Both walks do it: the
+/// crash-recovery walk (`dpos.rs`) and the executor's gap-walk
+/// (`derive_finalized_with_gap_fill`). Classifying "the executor" as immune
+/// wholesale is what left the gap-walk unprotected.
+///
+/// This retry absorbs the narrower race where the parent is imported
+/// CONCURRENTLY by someone else (the follower's first derive after an EL-sync
+/// jump, where devp2p canonicalized the parent). It is not a substitute for
+/// sending the canonicalization FCU. Any other derivation error stays
+/// immediately fatal.
 pub(crate) async fn derive_with_visibility_retry<C, D>(
     ctx: &C,
     deriver: &D,
@@ -1784,10 +1983,18 @@ pub trait DerivedBlockBuilder: Send + Sync + 'static {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::slasher::Message;
     use commonware_consensus::types::{Epoch, View};
     use commonware_cryptography::{ed25519::PrivateKey as Ed25519PrivateKey, Signer as _};
     use commonware_runtime::Runner as _;
+    use fluentbase_bls::keys::ValidatorBlsKeypair;
+    use fluentbase_staking_reader::reader::{
+        ConsensusKeys, ValidatorSetSnapshot, ValidatorWithKeys,
+    };
     use std::sync::Mutex;
+
+    /// The domain separator every test signature is produced and verified under.
+    const TEST_CHAIN_ID: u64 = 20_994;
 
     fn test_group_keys() -> GroupKeys {
         Arc::new(RwLock::new(BTreeMap::new()))
@@ -1885,6 +2092,7 @@ mod tests {
             beacon_outcome: None,
             dkg_logs: Vec::new(),
             parent_seed: None,
+            equivocation: None,
         }
     }
 
@@ -1903,15 +2111,24 @@ mod tests {
         (keys, bimap)
     }
 
-    fn committee_bimap(keys: &[Ed25519PrivateKey], seed: u64) -> BiMap<PeerPubkey, BlsPubkey> {
-        use commonware_codec::DecodeExt as _;
-        use fluentbase_bls::keys::ValidatorBlsKeypair;
+    /// The BLS keypairs [`committee_bimap`] puts in the map, in the same order —
+    /// so a test that must SIGN as a committee member holds the secrets behind
+    /// the very pubkeys the map was built from.
+    fn committee_bls_keys(n: usize, seed: u64) -> Vec<ValidatorBlsKeypair> {
         use rand_08::{rngs::StdRng, SeedableRng as _};
 
         let mut rng = StdRng::seed_from_u64(seed);
+        (0..n)
+            .map(|_| ValidatorBlsKeypair::generate(&mut rng))
+            .collect()
+    }
+
+    fn committee_bimap(keys: &[Ed25519PrivateKey], seed: u64) -> BiMap<PeerPubkey, BlsPubkey> {
+        use commonware_codec::DecodeExt as _;
+
         keys.iter()
-            .map(|p| {
-                let bls = ValidatorBlsKeypair::generate(&mut rng);
+            .zip(committee_bls_keys(keys.len(), seed))
+            .map(|(p, bls)| {
                 (
                     p.public_key(),
                     BlsPubkey::decode(bls.public_bytes().as_slice()).unwrap(),
@@ -1984,7 +2201,7 @@ mod tests {
     /// tolerate.
     #[test]
     fn production_record_rule_arms() {
-        let good = extra_data::encode_production_record(3);
+        let good = extra_data::encode_production_record(3, None);
 
         // No expectation ⇒ every input passes, including one that is not a
         // record at all. This arm is why a stale `None` would be dangerous.
@@ -1993,6 +2210,11 @@ mod tests {
         assert!(production_record_ok(&[0xAB; 24], None));
 
         assert!(production_record_ok(&good, Some(3)));
+        // Naming an accused member does not change who produced the block.
+        assert!(production_record_ok(
+            &extra_data::encode_production_record(3, Some(0)),
+            Some(3)
+        ));
         assert!(
             !production_record_ok(&good, Some(4)),
             "wrong index must fail"
@@ -2001,13 +2223,17 @@ mod tests {
             !production_record_ok(&[], Some(3)),
             "empty must REJECT at verify even though the executor tolerates it"
         );
-        assert!(!production_record_ok(&[1u8], Some(3)), "short must fail");
+        // Exact length is what keeps a 4 KiB-tolerant OrderBlock codec from
+        // finalizing a block whose extra_data no reth header (32-byte cap) can
+        // hold, so it is pinned on BOTH sides of the record's own width — the
+        // near miss below is the 2-byte record this format replaced.
+        assert!(!production_record_ok(&[1u8, 3], Some(3)), "short must fail");
         assert!(
-            !production_record_ok(&[1u8, 3, 0], Some(3)),
-            "long must fail — the OrderBlock codec tolerates 4 KiB, the reth header caps at 32"
+            !production_record_ok(&[1u8, 3, extra_data::NO_CHARGE, 0], Some(3)),
+            "long must fail"
         );
         assert!(
-            !production_record_ok(&[2u8, 3], Some(3)),
+            !production_record_ok(&[2u8, 3, extra_data::NO_CHARGE], Some(3)),
             "unknown version must fail closed"
         );
     }
@@ -2029,6 +2255,9 @@ mod tests {
             0,
             None,
             test_group_keys(),
+            TEST_CHAIN_ID,
+            None,
+            TombstoneSet::default(),
         )
     }
 
@@ -2068,6 +2297,9 @@ mod tests {
             0,
             None,
             group_keys,
+            TEST_CHAIN_ID,
+            None,
+            TombstoneSet::default(),
         )
         .with_beacon(bv)
     }
@@ -2351,6 +2583,9 @@ mod tests {
             0,
             None,
             group_keys,
+            TEST_CHAIN_ID,
+            None,
+            TombstoneSet::default(),
         )
         .with_beacon(BeaconVerify::new(
             Arc::new(|_| None),
@@ -2470,11 +2705,132 @@ mod tests {
         let seed = fx.seed_at(Round::new(Epoch::new(5), View::new(4)));
         let (parent, mut block) = witness_pair(4, 9, Some(seed));
         let (bimap, idx) = armed_committee();
-        block.extra_data = extra_data::encode_production_record(idx).into();
+        block.extra_data = extra_data::encode_production_record(idx, None).into();
         let ctx = ctx_same_epoch(5, 9, &parent);
         let app = witness_app(NoChain, test_group_keys(), resolved(fx.pk), fx.ns.clone())
             .with_committee_index(bimap);
         assert!(run_gate(app, ctx, block, parent).0);
+    }
+
+    /// The committee snapshot as a node reads it back from chain, with `leader`
+    /// carrying the equivocation verdict.
+    fn snapshot_tombstoning(
+        leader: &PeerPubkey,
+        bimap: &BiMap<PeerPubkey, BlsPubkey>,
+    ) -> ValidatorSetSnapshot {
+        ValidatorSetSnapshot {
+            block_hash: B256::ZERO,
+            block_number: 1,
+            epoch: 5,
+            validators: bimap
+                .iter_pairs()
+                .map(|(peer, bls)| ValidatorWithKeys {
+                    address: Address::ZERO,
+                    keys: ConsensusKeys {
+                        bls_pubkey: *bls,
+                        peer_pubkey: peer.clone(),
+                        activation_epoch: 0,
+                    },
+                    stake: 1,
+                    tombstoned: peer == leader,
+                })
+                .collect(),
+        }
+    }
+
+    /// A slashed member keeps its seat and its leader slots, and equivocating
+    /// disarms the leader timer — binding its proposal clears the round's leader
+    /// deadline, so the view then runs to the certification deadline instead.
+    /// Refusing is the node's one seam before certification: a `false` verify
+    /// makes simplex time the view out immediately.
+    ///
+    /// NOT expressible here: that the view then ends at the leader timeout rather
+    /// than the certification deadline. Both deadlines live in commonware's voter
+    /// round, which this crate drives only through the `verify` verdict; the
+    /// timing claim belongs to the live byzantine smoke.
+    #[test]
+    fn a_proposal_from_a_tombstoned_leader_is_refused_and_only_from_that_leader() {
+        let leader = Ed25519PrivateKey::from_seed(7).public_key();
+        let bystander = Ed25519PrivateKey::from_seed(101).public_key();
+        for (label, tombstoned, expected) in [
+            ("nobody", None, true),
+            ("some other member", Some(&bystander), true),
+            ("the round leader", Some(&leader), false),
+        ] {
+            let fx = witness_crypto(1);
+            let seed = fx.seed_at(Round::new(Epoch::new(5), View::new(4)));
+            let (parent, mut block) = witness_pair(4, 9, Some(seed));
+            let (bimap, idx) = armed_committee();
+            block.extra_data = extra_data::encode_production_record(idx, None).into();
+            let ctx = ctx_same_epoch(5, 9, &parent);
+            let tombstones = TombstoneSet::default();
+            if let Some(peer) = tombstoned {
+                tombstones.observe(&snapshot_tombstoning(peer, &bimap));
+            }
+            let app = witness_app(NoChain, test_group_keys(), resolved(fx.pk), fx.ns.clone())
+                .with_committee_index(bimap)
+                .with_tombstones(tombstones);
+            assert_eq!(
+                run_gate(app, ctx, block, parent).0,
+                expected,
+                "with {label} tombstoned"
+            );
+        }
+    }
+
+    /// The reaction is driven from chain state and not from the evidence a node
+    /// happened to hold, and this is the property that makes it survive a
+    /// restart: everything below is built fresh — a new tombstone set, a new app,
+    /// no charge store, no vote store, no gossip — and the refusal still arms
+    /// from the committee snapshot alone.
+    #[test]
+    fn the_refusal_rearms_from_chain_state_alone_after_a_restart() {
+        let leader = Ed25519PrivateKey::from_seed(7).public_key();
+        let (bimap, idx) = armed_committee();
+        let snapshot = snapshot_tombstoning(&leader, &bimap);
+
+        // Before the read, a restarted process knows nothing and votes as usual.
+        let fresh = TombstoneSet::default();
+        assert!(!fresh.contains(&leader));
+
+        let fx = witness_crypto(1);
+        let seed = fx.seed_at(Round::new(Epoch::new(5), View::new(4)));
+        let (parent, mut block) = witness_pair(4, 9, Some(seed));
+        block.extra_data = extra_data::encode_production_record(idx, None).into();
+        let ctx = ctx_same_epoch(5, 9, &parent);
+        assert!(
+            run_gate(
+                witness_app(NoChain, test_group_keys(), resolved(fx.pk), fx.ns.clone())
+                    .with_committee_index(bimap.clone())
+                    .with_tombstones(fresh.clone()),
+                ctx,
+                block,
+                parent
+            )
+            .0,
+            "a process that has read nothing yet must not refuse"
+        );
+
+        // The first committee read after the restart is the whole input.
+        fresh.observe(&snapshot);
+
+        let fx = witness_crypto(1);
+        let seed = fx.seed_at(Round::new(Epoch::new(5), View::new(4)));
+        let (parent, mut block) = witness_pair(4, 9, Some(seed));
+        block.extra_data = extra_data::encode_production_record(idx, None).into();
+        let ctx = ctx_same_epoch(5, 9, &parent);
+        assert!(
+            !run_gate(
+                witness_app(NoChain, test_group_keys(), resolved(fx.pk), fx.ns.clone())
+                    .with_committee_index(bimap)
+                    .with_tombstones(fresh),
+                ctx,
+                block,
+                parent
+            )
+            .0,
+            "the snapshot alone re-arms the refusal"
+        );
     }
 
     /// Both halves of the `Some(i)` arm at the gate: a record naming SOMEONE
@@ -2486,7 +2842,7 @@ mod tests {
         for (label, field) in [
             (
                 "names another member",
-                extra_data::encode_production_record(idx + 1),
+                extra_data::encode_production_record(idx + 1, None),
             ),
             ("empty", Vec::new()),
         ] {
@@ -2517,7 +2873,7 @@ mod tests {
             let (parent, mut block) = witness_pair(4, 9, Some(seed));
             // Seeds 9000.. — disjoint from the seed-7 leader `ctx_same_epoch` names.
             let (_, disjoint) = test_committee(4, 9);
-            block.extra_data = extra_data::encode_production_record(0).into();
+            block.extra_data = extra_data::encode_production_record(0, None).into();
             let ctx = ctx_same_epoch(5, 9, &parent);
             let app = witness_app(NoChain, test_group_keys(), resolved(fx.pk), fx.ns.clone())
                 .with_committee_index(Arc::new(disjoint));
@@ -3212,7 +3568,7 @@ mod tests {
 
     // ───────────────────────────── propose side (§3) ────────────────────────
 
-    fn propose_app(store: SeedStore) -> FluentApp<NoChain, NoTxs> {
+    fn propose_app(store: SeedStore, charges: Option<ChargeStore>) -> FluentApp<NoChain, NoTxs> {
         let (mailbox, _rx) = fresh_mailbox();
         FluentApp::new(
             sample_order(Digest(B256::ZERO), 0),
@@ -3225,6 +3581,9 @@ mod tests {
             0,
             Some(store),
             test_group_keys(),
+            TEST_CHAIN_ID,
+            charges,
+            TombstoneSet::default(),
         )
         .with_committee_index(propose_committee())
     }
@@ -3258,7 +3617,7 @@ mod tests {
         }
     }
 
-    /// The wire flip's propose half: a proposal carries EXACTLY the 2-byte record
+    /// The wire flip's propose half: a proposal carries EXACTLY the 3-byte record
     /// naming its own proposer, and that record is what its voters recompute from
     /// `ctx.leader`. Asserting the bytes (not just "some extra_data") is the point
     /// — the executor feeds `leader_index` straight to `recordProduction`, so a
@@ -3272,7 +3631,7 @@ mod tests {
         runtime.start(|rt| async move {
             let store = SeedStore::new();
             store.record(pinned, seed.signature);
-            let app = propose_app(store);
+            let app = propose_app(store, None);
             let parent = tiny_parent(4);
             let ctx = propose_ctx(5, 9, (4, false), &parent);
             let block = app
@@ -3281,7 +3640,7 @@ mod tests {
                 .expect("proposed");
             assert_eq!(
                 block.extra_data.as_ref(),
-                extra_data::encode_production_record(propose_leader_index()).as_slice(),
+                extra_data::encode_production_record(propose_leader_index(), None).as_slice(),
             );
             // And the proposer's own verifier accepts what it just built.
             assert!(
@@ -3291,9 +3650,224 @@ mod tests {
         });
     }
 
+    /// A real charge signed by the member `propose_committee()` seats behind
+    /// ed25519 seed 8 — deliberately NOT the fixture leader, so the accused and
+    /// the producer are different members and a test cannot pass by conflating
+    /// the two record bytes.
+    fn sample_charge(epoch: u64, view: u64) -> (u8, Message) {
+        use commonware_consensus::simplex::types::{
+            Activity, Attributable as _, ConflictingNotarize, Notarize, Proposal,
+        };
+        use fluentbase_bls::{fluent_namespace, scheme::build_signer};
+
+        let committee = propose_committee();
+        let offender = build_signer(
+            &fluent_namespace(TEST_CHAIN_ID),
+            (*committee).clone(),
+            &committee_bls_keys(3, 7)[1],
+            None,
+        )
+        .expect("the offender is a committee member");
+        let round = Round::new(Epoch::new(epoch), View::new(view));
+        let vote = |tag: u8| {
+            Notarize::sign(
+                &offender,
+                Proposal::new(round, View::new(view - 1), Digest(B256::repeat_byte(tag))),
+            )
+            .expect("the offender signs")
+        };
+        let (first, second) = (vote(0xaa), vote(0xbb));
+        let accused = first.signer().get() as u8;
+        (
+            accused,
+            Activity::ConflictingNotarize(ConflictingNotarize::new(first, second)),
+        )
+    }
+
+    /// The block path's whole point: a proposer that holds a charge stamps the
+    /// verdict into `extra_data` AND the evidence into the block, and its own
+    /// vote-time gate accepts what it just built. Asserting both halves together
+    /// is the test — either alone would pass on a block no voter would take.
+    #[test]
+    fn a_proposer_holding_a_charge_stamps_the_verdict_and_its_evidence() {
+        let fx = witness_crypto(1);
+        let pinned = Round::new(Epoch::new(5), View::new(4));
+        let seed = fx.seed_at(pinned);
+        let (accused, charge) = sample_charge(5, 9);
+        let runtime = commonware_runtime::deterministic::Runner::default();
+        runtime.start(|rt| async move {
+            let store = SeedStore::new();
+            store.record(pinned, seed.signature);
+            let charges = ChargeStore::default();
+            assert!(charges.hold(5, accused, charge));
+
+            let app = propose_app(store, Some(charges));
+            let parent = tiny_parent(4);
+            let ctx = propose_ctx(5, 9, (4, false), &parent);
+            let block = app
+                .build_proposal(&rt, &ctx, parent)
+                .await
+                .expect("proposed");
+
+            assert_eq!(
+                block.extra_data.as_ref(),
+                extra_data::encode_production_record(propose_leader_index(), Some(accused))
+                    .as_slice(),
+            );
+            assert!(block.equivocation.is_some());
+            assert!(
+                equivocation_gate_decision(&block, 5, Some(&propose_committee()), TEST_CHAIN_ID),
+                "a proposer must never build a block its own verify rule rejects"
+            );
+            // A charge the proposer does not hold for THIS epoch is not offered:
+            // only the epoch's own committee could verify it.
+            assert_eq!(
+                app.charges
+                    .as_ref()
+                    .and_then(|c| c.next_charge(6, |_| false))
+                    .map(|(idx, _)| idx),
+                None
+            );
+        });
+    }
+
+    /// Once the verdict has landed the charge has nothing left to achieve, and
+    /// leaving it queued is worse than useless: it is the lowest key for its
+    /// epoch, so it would occupy the one-charge-per-block slot ahead of every
+    /// later charge for the same epoch, forever. So the proposer drops it and
+    /// offers the next one instead.
+    #[test]
+    fn a_charge_whose_verdict_already_landed_is_dropped_rather_than_re_offered() {
+        let fx = witness_crypto(1);
+        let pinned = Round::new(Epoch::new(5), View::new(4));
+        let seed = fx.seed_at(pinned);
+        let (accused, charge) = sample_charge(5, 9);
+        let committee = propose_committee();
+        let settled = committee
+            .get(accused as usize)
+            .expect("the accused is seated")
+            .clone();
+        // A second charge for the same epoch, seated ABOVE the settled one so the
+        // walk has to get past it rather than stopping at the first key.
+        let later = accused
+            .checked_add(1)
+            .filter(|idx| (*idx as usize) < committee.len())
+            .expect("the fixture committee seats a member above the accused");
+
+        let runtime = commonware_runtime::deterministic::Runner::default();
+        runtime.start(|rt| async move {
+            let store = SeedStore::new();
+            store.record(pinned, seed.signature);
+            let charges = ChargeStore::default();
+            assert!(charges.hold(5, accused, charge.clone()));
+            assert!(charges.hold(5, later, charge));
+
+            let tombstones = TombstoneSet::default();
+            tombstones.observe(&snapshot_tombstoning(&settled, &committee));
+
+            let app = propose_app(store, Some(charges.clone())).with_tombstones(tombstones);
+            let parent = tiny_parent(4);
+            let ctx = propose_ctx(5, 9, (4, false), &parent);
+            let block = app
+                .build_proposal(&rt, &ctx, parent)
+                .await
+                .expect("proposed");
+
+            assert_eq!(
+                block.extra_data.as_ref(),
+                extra_data::encode_production_record(propose_leader_index(), Some(later))
+                    .as_slice(),
+                "the settled charge is stepped over, the next one carried"
+            );
+            assert!(
+                !charges.contains(5, accused),
+                "and the settled charge is gone, not merely skipped"
+            );
+        });
+    }
+
+    /// Presence is exact in both directions. A verdict without evidence is a
+    /// slash nobody could check; evidence without a verdict is unagreed payload
+    /// riding under the digest. Both are one Byzantine proposer away.
+    #[test]
+    fn the_equivocation_gate_binds_the_verdict_to_its_evidence() {
+        let (accused, charge) = sample_charge(5, 9);
+        let evidence = Bytes::from(charge.encode().to_vec());
+        let committee = propose_committee();
+        let charged = |accused: Option<u8>, evidence: Option<Bytes>| OrderBlock {
+            extra_data: Bytes::from(extra_data::encode_production_record(
+                propose_leader_index(),
+                accused,
+            )),
+            equivocation: evidence,
+            ..sample_order(Digest(B256::ZERO), 9)
+        };
+
+        for (block, expected, why) in [
+            (
+                charged(None, None),
+                true,
+                "no charge at all is the common block",
+            ),
+            (
+                charged(Some(accused), Some(evidence.clone())),
+                true,
+                "a verdict backed by its evidence",
+            ),
+            (
+                charged(Some(accused), None),
+                false,
+                "a verdict nobody could check",
+            ),
+            (
+                charged(None, Some(evidence.clone())),
+                false,
+                "evidence under the digest that the record does not claim",
+            ),
+        ] {
+            assert_eq!(
+                equivocation_gate_decision(&block, 5, Some(&committee), TEST_CHAIN_ID),
+                expected,
+                "{why}"
+            );
+        }
+
+        // An instance with no committee map casts no vote, so it skips only the
+        // CRYPTOGRAPHIC arm — the presence rule needs no committee and still holds.
+        assert!(equivocation_gate_decision(
+            &charged(Some(accused), Some(evidence.clone())),
+            5,
+            None,
+            TEST_CHAIN_ID
+        ));
+        assert!(!equivocation_gate_decision(
+            &charged(Some(accused), None),
+            5,
+            None,
+            TEST_CHAIN_ID
+        ));
+
+        // The epoch invariant, at the gate rather than at the decoder: the charge
+        // is real, but only epoch 5's committee can check it, so epoch 6 refuses
+        // it rather than voting on crypto it cannot run.
+        assert!(!equivocation_gate_decision(
+            &charged(Some(accused), Some(evidence.clone())),
+            6,
+            Some(&committee),
+            TEST_CHAIN_ID
+        ));
+        // Real evidence, innocent victim.
+        assert!(!equivocation_gate_decision(
+            &charged(Some(accused + 1), Some(evidence)),
+            5,
+            Some(&committee),
+            TEST_CHAIN_ID
+        ));
+    }
+
     /// A leader that cannot name itself in its committee SKIPS the view instead of
     /// proposing a block every honest voter would reject. Cheaper by one wasted
-    /// leader deadline, and it keeps "every consensus block carries 2 valid bytes"
+    /// leader deadline, and it keeps "every consensus block carries a valid record"
     /// true by construction rather than by convention.
     #[test]
     fn a_leader_outside_its_own_committee_declines_to_propose() {
@@ -3306,7 +3880,7 @@ mod tests {
             store.record(pinned, seed.signature);
             // A committee that does NOT contain the fixture leader (`from_seed(7)`).
             let (_outsiders, disjoint) = test_committee(3, 99);
-            let app = propose_app(store).with_committee_index(Arc::new(disjoint));
+            let app = propose_app(store, None).with_committee_index(Arc::new(disjoint));
             let parent = tiny_parent(4);
             let ctx = propose_ctx(5, 9, (4, false), &parent);
             assert!(app.build_proposal(&rt, &ctx, parent).await.is_none());
@@ -3325,7 +3899,7 @@ mod tests {
         runtime.start(|rt| async move {
             let store = SeedStore::new();
             store.record(pinned, seed.signature);
-            let app = propose_app(store);
+            let app = propose_app(store, None);
             let parent = tiny_parent(4);
             let ctx = propose_ctx(5, 9, (4, false), &parent);
             let block = app
@@ -3346,7 +3920,7 @@ mod tests {
         metrics::with_local_recorder(&recorder, || {
             let runtime = commonware_runtime::deterministic::Runner::default();
             runtime.start(|rt| async move {
-                let app = propose_app(SeedStore::new());
+                let app = propose_app(SeedStore::new(), None);
                 let parent = tiny_parent(4);
                 let ctx = propose_ctx(5, 9, (4, false), &parent);
                 assert!(app.build_proposal(&rt, &ctx, parent).await.is_none());
@@ -3377,7 +3951,7 @@ mod tests {
             let store = SeedStore::new();
             store.record(pinned, genuine.signature);
             store.record(spin, decoy.signature); // the local first-wins spin round
-            let app = propose_app(store);
+            let app = propose_app(store, None);
             let parent = tiny_parent(v0);
             let ctx = propose_ctx(5, 3, (0, true), &parent);
             let block = app
@@ -3406,7 +3980,7 @@ mod tests {
             runtime.start(|rt| async move {
                 let store = SeedStore::new();
                 store.record(spin, decoy.signature); // only the spin round
-                let app = propose_app(store);
+                let app = propose_app(store, None);
                 let parent = tiny_parent(7); // pin = (4, 7) — absent
                 let ctx = propose_ctx(5, 3, (0, true), &parent);
                 assert!(app.build_proposal(&rt, &ctx, parent).await.is_none());
@@ -3424,7 +3998,7 @@ mod tests {
     fn pre_bootstrap_propose_carries_no_witness() {
         let runtime = commonware_runtime::deterministic::Runner::default();
         runtime.start(|rt| async move {
-            let app = propose_app(SeedStore::new());
+            let app = propose_app(SeedStore::new(), None);
             let parent = tiny_parent(4);
             let ctx = propose_ctx(1, 9, (4, false), &parent);
             let block = app
@@ -3680,6 +4254,9 @@ mod tests {
                 0,
                 None,
                 test_group_keys(),
+                TEST_CHAIN_ID,
+                None,
+                TombstoneSet::default(),
             )
             .with_beacon(bv)
             .with_committee_index(propose_committee());
@@ -3955,7 +4532,7 @@ mod tests {
         let parent = sample_order(Digest(B256::ZERO), 1);
         let good = OrderBlock {
             parent: parent.digest(),
-            extra_data: Bytes::from(extra_data::encode_production_record(LEADER)),
+            extra_data: Bytes::from(extra_data::encode_production_record(LEADER, None)),
             ..sample_order(parent.digest(), 2)
         };
         let now = good.timestamp;
@@ -3987,7 +4564,7 @@ mod tests {
             ..good.clone()
         }));
         assert!(!check(&OrderBlock {
-            extra_data: Bytes::from(extra_data::encode_production_record(LEADER + 1)),
+            extra_data: Bytes::from(extra_data::encode_production_record(LEADER + 1, None)),
             ..good.clone()
         }));
         assert!(!check(&OrderBlock {

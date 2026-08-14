@@ -52,19 +52,13 @@ enum Command {
 
     /// Execute previously planned contracts through upgradeToPlanned(...)
     UpgradePlanned(UpgradePlannedArgs),
+
+    /// Install a locally built .wasm module at one address through upgradeTo(...)
+    InstallLocal(InstallLocalArgs),
 }
 
 #[derive(Args, Debug)]
-struct CommonArgs {
-    /// Genesis release tag, e.g. v0.5.3
-    #[arg(long)]
-    genesis: String,
-
-    /// Contract key name (e.g. PRECOMPILE_EVM_RUNTIME) from CONTRACTS_TO_UPGRADE.
-    /// If omitted, upgrades all known contracts (with a prompt).
-    #[arg(long)]
-    contract: Option<String>,
-
+struct EndpointArgs {
     /// Use local RPC (http://localhost:8545)
     #[arg(long)]
     local: bool,
@@ -80,6 +74,21 @@ struct CommonArgs {
     /// A custom RPC endpoint (overrides --local, --dev, --test)
     #[arg(long)]
     rpc: Option<String>,
+}
+
+#[derive(Args, Debug)]
+struct CommonArgs {
+    /// Genesis release tag, e.g. v0.5.3
+    #[arg(long)]
+    genesis: String,
+
+    /// Contract key name (e.g. PRECOMPILE_EVM_RUNTIME) from CONTRACTS_TO_UPGRADE.
+    /// If omitted, upgrades all known contracts (with a prompt).
+    #[arg(long)]
+    contract: Option<String>,
+
+    #[command(flatten)]
+    endpoint: EndpointArgs,
 }
 
 #[derive(Args, Debug)]
@@ -130,13 +139,76 @@ struct UpgradePlannedArgs {
     tx: TxArgs,
 }
 
+#[derive(Args, Debug)]
+struct InstallLocalArgs {
+    /// Path to the .wasm module to install. The contract compiles it on chain, so this
+    /// must be the Wasm source and not an already compiled .rwasm.
+    #[arg(long, value_name = "PATH")]
+    wasm: PathBuf,
+
+    /// Address to install the module at.
+    #[arg(long, value_name = "ADDRESS")]
+    target: Address,
+
+    #[command(flatten)]
+    endpoint: EndpointArgs,
+
+    #[command(flatten)]
+    tx: TxArgs,
+}
+
 impl Command {
-    fn common(&self) -> &CommonArgs {
+    /// `InstallLocal` sources its module from disk and never touches a release genesis,
+    /// so it carries no `CommonArgs`.
+    fn common(&self) -> Option<&CommonArgs> {
         match self {
-            Self::DirectUpgrade(args) => &args.common,
-            Self::PlanUpgrade(args) => &args.common,
-            Self::UpgradePlanned(args) => &args.common,
+            Self::DirectUpgrade(args) => Some(&args.common),
+            Self::PlanUpgrade(args) => Some(&args.common),
+            Self::UpgradePlanned(args) => Some(&args.common),
+            Self::InstallLocal(_) => None,
         }
+    }
+}
+
+/// One module install: the payload that goes on the wire, plus the reference the on-chain
+/// module is checked against.
+#[derive(Debug)]
+struct UpgradeTarget {
+    address: Address,
+    wasm: Vec<u8>,
+    /// The release artefact, when the module came out of a release genesis — matching it
+    /// whole also catches a compiler change behind an unchanged Wasm. A locally built
+    /// module has no such artefact, so the payload itself is the reference and the check
+    /// runs against the hint section, which is where the compiled module keeps it.
+    release_module: Option<RwasmModule>,
+}
+
+impl UpgradeTarget {
+    fn from_release(address: Address, module: RwasmModule) -> Self {
+        Self {
+            address,
+            wasm: module.hint_section.clone(),
+            release_module: Some(module),
+        }
+    }
+
+    fn from_local_wasm(address: Address, wasm: Vec<u8>) -> Self {
+        Self {
+            address,
+            wasm,
+            release_module: None,
+        }
+    }
+
+    fn is_installed(&self, onchain: &RwasmModule) -> bool {
+        match &self.release_module {
+            Some(module) => onchain == module,
+            None => onchain.hint_section == self.wasm,
+        }
+    }
+
+    fn expected_hash(&self) -> B256 {
+        crypto_keccak256(self.wasm.as_slice())
     }
 }
 
@@ -304,7 +376,7 @@ fn ask_for_secret(prompt: &str) -> Result<String> {
     Ok(s)
 }
 
-fn pick_rpc(args: &CommonArgs) -> Result<String> {
+fn pick_rpc(args: &EndpointArgs) -> Result<String> {
     if let Some(rpc) = &args.rpc {
         return Ok(rpc.clone());
     }
@@ -467,11 +539,11 @@ fn function_selector(signature: &[u8]) -> [u8; 4] {
     selector
 }
 
-fn load_release_modules(
+fn load_release_targets(
     genesis: &alloy_genesis::Genesis,
     upgrade_list: &[Address],
-) -> Result<HashMap<Address, RwasmModule>> {
-    let mut rwasm_module_by_address: HashMap<Address, RwasmModule> = HashMap::new();
+) -> Result<Vec<UpgradeTarget>> {
+    let mut targets = Vec::with_capacity(upgrade_list.len());
     for addr in upgrade_list {
         let entry = genesis.alloc.get(addr).ok_or_else(|| {
             anyhow!(
@@ -488,9 +560,26 @@ fn load_release_modules(
         if module.hint_section.is_empty() {
             bail!("Failed to extract WASM bytecode from {}", addr);
         }
-        rwasm_module_by_address.insert(*addr, module);
+        targets.push(UpgradeTarget::from_release(*addr, module));
     }
-    Ok(rwasm_module_by_address)
+    Ok(targets)
+}
+
+/// A compiled `.rwasm` starts with `0xEF52`; the upgrade contract wants the Wasm source and
+/// compiles it itself, with the same `compile_rwasm_maybe_system` the genesis path uses, so
+/// that both installs land on identical module bytes.
+const WASM_MAGIC: [u8; 4] = *b"\0asm";
+
+fn load_local_target(path: &Path, address: Address) -> Result<UpgradeTarget> {
+    let wasm = fs::read(path).with_context(|| format!("reading {}", path.display()))?;
+    if !wasm.starts_with(&WASM_MAGIC) {
+        bail!(
+            "{} is not a Wasm module (no \\0asm magic); the payload must be the .wasm source, \
+             not a compiled .rwasm",
+            path.display()
+        );
+    }
+    Ok(UpgradeTarget::from_local_wasm(address, wasm))
 }
 
 fn select_contracts(
@@ -514,28 +603,37 @@ fn select_contracts(
     }
 }
 
-fn preflight_selected_modules(
-    rwasm_module_by_address: &HashMap<Address, RwasmModule>,
-    upgrade_list: &[Address],
-) -> Result<()> {
-    for contract in upgrade_list {
-        let module = rwasm_module_by_address.get(contract).ok_or_else(|| {
-            anyhow!(
-                "selected contract {} is missing from release artifacts",
-                contract
-            )
-        })?;
-        if module.hint_section.is_empty() {
+fn preflight_targets(targets: &[UpgradeTarget]) -> Result<()> {
+    for target in targets {
+        if target.wasm.is_empty() {
             bail!(
-                "selected contract {} has an empty Wasm hint section",
-                contract
+                "selected contract {} has an empty Wasm payload",
+                target.address
             );
         }
-        if module.hint_section.len() >= WASM_MAX_CODE_SIZE {
-            bail!("selected contract {} exceeds 1MiB", contract);
+        if target.wasm.len() >= WASM_MAX_CODE_SIZE {
+            bail!("selected contract {} exceeds 1MiB", target.address);
         }
     }
     Ok(())
+}
+
+/// `None` when the account holds no code — a fresh install target, which the release path
+/// never sees but a local one starts from.
+async fn onchain_module(
+    provider: &Provider<Http>,
+    address: Address,
+) -> Result<Option<RwasmModule>> {
+    let code = provider
+        .get_code(NameOrAddress::Address(ethers_address(address)), None)
+        .await
+        .context("get_code")?;
+    if code.is_empty() {
+        return Ok(None);
+    }
+    let (module, _) = RwasmModule::new_checked(code.as_ref())
+        .with_context(|| format!("decoding on-chain rwasm for {}", address))?;
+    Ok(Some(module))
 }
 
 fn encode_direct_upgrade_call(
@@ -679,10 +777,22 @@ pub static FLUENT_HARDFORKS: LazyLock<ChainHardforks> = LazyLock::new(|| {
     ])
 });
 
+/// `upgradeTo` only re-emits `genesisHash` and `genesisVersion` in `RuntimeUpgraded` and
+/// checks neither (contracts/runtime-upgrade/src/lib.rs:115-132). A locally built module
+/// belongs to no release genesis, so the hash is zero and the version names the mode.
+const LOCAL_GENESIS_HASH: B256 = B256::ZERO;
+const LOCAL_GENESIS_VERSION: &str = "local";
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    let common = cli.command.common();
+    if let Command::InstallLocal(args) = &cli.command {
+        return install_local_module(args).await;
+    }
+    let common = cli
+        .command
+        .common()
+        .context("release upgrade is missing its genesis arguments")?;
 
     let genesis = download_genesis_file(&common.genesis).await?;
     let genesis_header = make_genesis_header(&genesis, &FLUENT_HARDFORKS);
@@ -694,10 +804,10 @@ async fn main() -> Result<()> {
     if upgrade_list.is_empty() {
         return Ok(());
     }
-    let rwasm_module_by_address = load_release_modules(&genesis, &upgrade_list)?;
-    preflight_selected_modules(&rwasm_module_by_address, &upgrade_list)?;
+    let targets = load_release_targets(&genesis, &upgrade_list)?;
+    preflight_targets(&targets)?;
 
-    let rpc = pick_rpc(common)?;
+    let rpc = pick_rpc(&common.endpoint)?;
     let provider = Provider::<Http>::try_from(rpc).context("creating provider")?;
 
     let chain_id = provider
@@ -709,29 +819,20 @@ async fn main() -> Result<()> {
     match &cli.command {
         Command::PlanUpgrade(args) => {
             let mut planned_upgrades = Vec::new();
-            for contract in upgrade_list {
-                print!("Planning contract {}... ", contract);
+            for target in targets {
+                print!("Planning contract {}... ", target.address);
                 std::io::stdout().flush().ok();
 
-                let new_rwasm = rwasm_module_by_address
-                    .get(&contract)
-                    .expect("selected modules were preflighted");
-
-                let on_chain_code = provider
-                    .get_code(NameOrAddress::Address((*contract.0).into()), None)
-                    .await
-                    .context("get_code")?;
-                let (onchain_rwasm, _) = RwasmModule::new_checked(on_chain_code.as_ref())
-                    .with_context(|| format!("decoding on-chain rwasm for {}", contract))?;
-                if &onchain_rwasm == new_rwasm {
+                let installed = onchain_module(&provider, target.address).await?;
+                if installed.is_some_and(|module| target.is_installed(&module)) {
                     println!("UP-TO-DATE");
                     continue;
                 }
 
                 planned_upgrades.push(PlannedUpgrade {
-                    contract_key: contract_key_for(&contracts, contract).to_string(),
-                    contract,
-                    wasm_code_hash: crypto_keccak256(new_rwasm.hint_section.as_slice()),
+                    contract_key: contract_key_for(&contracts, target.address).to_string(),
+                    contract: target.address,
+                    wasm_code_hash: target.expected_hash(),
                 });
                 println!("SAFE_PLAN_QUEUED");
             }
@@ -750,8 +851,7 @@ async fn main() -> Result<()> {
                 &args.tx,
                 &provider,
                 chain_id,
-                &rwasm_module_by_address,
-                upgrade_list,
+                targets,
                 |contract, wasm_bytecode| {
                     encode_direct_upgrade_call(
                         contract,
@@ -768,23 +868,52 @@ async fn main() -> Result<()> {
                 &args.tx,
                 &provider,
                 chain_id,
-                &rwasm_module_by_address,
-                upgrade_list,
+                targets,
                 encode_planned_upgrade_call,
             )
             .await?;
         }
+        Command::InstallLocal(_) => unreachable!("dispatched before the release path"),
     }
 
     Ok(())
+}
+
+async fn install_local_module(args: &InstallLocalArgs) -> Result<()> {
+    let target = load_local_target(&args.wasm, args.target)?;
+    let targets = vec![target];
+    preflight_targets(&targets)?;
+
+    let rpc = pick_rpc(&args.endpoint)?;
+    let provider = Provider::<Http>::try_from(rpc).context("creating provider")?;
+    let chain_id = provider
+        .get_chainid()
+        .await
+        .context("get_chainid")?
+        .as_u64();
+
+    run_upgrade_transactions(
+        &args.tx,
+        &provider,
+        chain_id,
+        targets,
+        |contract, wasm_bytecode| {
+            encode_direct_upgrade_call(
+                contract,
+                LOCAL_GENESIS_HASH,
+                LOCAL_GENESIS_VERSION,
+                wasm_bytecode,
+            )
+        },
+    )
+    .await
 }
 
 async fn run_upgrade_transactions(
     tx_args: &TxArgs,
     provider: &Provider<Http>,
     chain_id: u64,
-    rwasm_module_by_address: &HashMap<Address, RwasmModule>,
-    upgrade_list: Vec<Address>,
+    targets: Vec<UpgradeTarget>,
     encode_call: impl Fn(Address, &[u8]) -> Vec<u8>,
 ) -> Result<()> {
     let wallet = load_wallet(tx_args)?;
@@ -795,37 +924,30 @@ async fn run_upgrade_transactions(
         entries: Vec::new(),
     };
 
-    for contract in upgrade_list {
-        print!("Upgrading contract {}... ", contract);
+    for target in targets {
+        print!("Upgrading contract {}... ", target.address);
         std::io::stdout().flush().ok();
 
-        let new_rwasm = rwasm_module_by_address
-            .get(&contract)
-            .expect("selected modules were preflighted");
-        let expected_hash = crypto_keccak256(new_rwasm.hint_section.as_slice());
+        let expected_hash = target.expected_hash();
 
-        let on_chain_code = provider
-            .get_code(NameOrAddress::Address((*contract.0).into()), None)
-            .await
-            .context("get_code")?;
-        let (onchain_rwasm, _) = RwasmModule::new_checked(on_chain_code.as_ref())
-            .with_context(|| format!("decoding on-chain rwasm for {}", contract))?;
-        if &onchain_rwasm == new_rwasm {
-            manifest.entries.push(UpgradeResultEntry {
-                target: address_hex(contract),
-                expected_hash: hash_hex(expected_hash),
-                transaction_hash: None,
-                receipt_status: None,
-                verified_onchain_hash: Some(hash_hex(crypto_keccak256(
-                    onchain_rwasm.hint_section.as_slice(),
-                ))),
-                result: "up_to_date",
-            });
-            println!("UP-TO-DATE");
-            continue;
+        if let Some(installed) = onchain_module(provider, target.address).await? {
+            if target.is_installed(&installed) {
+                manifest.entries.push(UpgradeResultEntry {
+                    target: address_hex(target.address),
+                    expected_hash: hash_hex(expected_hash),
+                    transaction_hash: None,
+                    receipt_status: None,
+                    verified_onchain_hash: Some(hash_hex(crypto_keccak256(
+                        installed.hint_section.as_slice(),
+                    ))),
+                    result: "up_to_date",
+                });
+                println!("UP-TO-DATE");
+                continue;
+            }
         }
 
-        let data = encode_call(contract, &new_rwasm.hint_section);
+        let data = encode_call(target.address, &target.wasm);
         let mut tx = TransactionRequest::new()
             .to(NameOrAddress::Address(
                 (*PRECOMPILE_RUNTIME_UPGRADE.0).into(),
@@ -839,7 +961,7 @@ async fn run_upgrade_transactions(
             Ok(outcome) => outcome,
             Err(error) => {
                 manifest.entries.push(UpgradeResultEntry {
-                    target: address_hex(contract),
+                    target: address_hex(target.address),
                     expected_hash: hash_hex(expected_hash),
                     transaction_hash: None,
                     receipt_status: None,
@@ -852,7 +974,7 @@ async fn run_upgrade_transactions(
         };
         if outcome == TransactionOutcome::Printed {
             manifest.entries.push(UpgradeResultEntry {
-                target: address_hex(contract),
+                target: address_hex(target.address),
                 expected_hash: hash_hex(expected_hash),
                 transaction_hash: None,
                 receipt_status: None,
@@ -862,36 +984,35 @@ async fn run_upgrade_transactions(
             continue;
         }
 
-        let on_chain_code = provider
-            .get_code(NameOrAddress::Address((*contract.0).into()), None)
+        let installed = onchain_module(provider, target.address)
             .await
-            .context("get_code")?;
-        let (onchain_rwasm, _) = RwasmModule::new_checked(on_chain_code.as_ref())
-            .with_context(|| format!("decoding post-upgrade on-chain rwasm for {}", contract))?;
-        let verified_hash = crypto_keccak256(onchain_rwasm.hint_section.as_slice());
-        if &onchain_rwasm != new_rwasm {
+            .with_context(|| format!("re-reading {} after the upgrade", target.address))?;
+        let verified_hash = installed
+            .as_ref()
+            .map(|module| hash_hex(crypto_keccak256(module.hint_section.as_slice())));
+        if !installed.is_some_and(|module| target.is_installed(&module)) {
             manifest.entries.push(UpgradeResultEntry {
-                target: address_hex(contract),
+                target: address_hex(target.address),
                 expected_hash: hash_hex(expected_hash),
                 transaction_hash: transaction_hash(outcome),
                 receipt_status: receipt_status(outcome),
-                verified_onchain_hash: Some(hash_hex(verified_hash)),
+                verified_onchain_hash: verified_hash.clone(),
                 result: "verification_failed",
             });
             print_result_manifest(&manifest)?;
             bail!(
                 "post-upgrade bytecode mismatch for {}: verified {}, expected {}",
-                contract,
-                hash_hex(verified_hash),
+                target.address,
+                verified_hash.as_deref().unwrap_or("no code"),
                 hash_hex(expected_hash)
             );
         }
         manifest.entries.push(UpgradeResultEntry {
-            target: address_hex(contract),
+            target: address_hex(target.address),
             expected_hash: hash_hex(expected_hash),
             transaction_hash: transaction_hash(outcome),
             receipt_status: receipt_status(outcome),
-            verified_onchain_hash: Some(hash_hex(verified_hash)),
+            verified_onchain_hash: verified_hash,
             result: "upgraded",
         });
     }
@@ -925,10 +1046,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn preflight_fails_when_selected_contract_is_missing() {
-        let modules = HashMap::new();
-        let err = preflight_selected_modules(&modules, &[PRECOMPILE_EVM_RUNTIME])
-            .expect_err("missing selected contract must fail preflight");
+    fn loading_fails_when_selected_contract_is_missing() {
+        let genesis = alloy_genesis::Genesis::default();
+        let err = load_release_targets(&genesis, &[PRECOMPILE_EVM_RUNTIME])
+            .expect_err("missing selected contract must fail loading");
 
         assert!(err
             .to_string()
@@ -936,14 +1057,40 @@ mod tests {
     }
 
     #[test]
-    fn preflight_fails_when_selected_contract_has_empty_hint_section() {
-        let mut modules = HashMap::new();
-        modules.insert(PRECOMPILE_EVM_RUNTIME, RwasmModule::default());
+    fn preflight_fails_when_selected_contract_has_empty_payload() {
+        let targets = vec![UpgradeTarget::from_local_wasm(
+            PRECOMPILE_EVM_RUNTIME,
+            Vec::new(),
+        )];
 
-        let err = preflight_selected_modules(&modules, &[PRECOMPILE_EVM_RUNTIME])
-            .expect_err("empty hint section must fail preflight");
+        let err = preflight_targets(&targets).expect_err("empty Wasm payload must fail preflight");
 
-        assert!(err.to_string().contains("empty Wasm hint section"));
+        assert!(err.to_string().contains("empty Wasm payload"));
+    }
+
+    #[test]
+    fn local_load_rejects_a_compiled_rwasm() {
+        let path = std::env::temp_dir().join("runtime-upgrade-local-load-rejects.rwasm");
+        fs::write(&path, [0xEF, 0x52, 0x00, 0x00]).expect("writing the fixture");
+
+        let err = load_local_target(&path, PRECOMPILE_EVM_RUNTIME)
+            .expect_err("a compiled rwasm must be rejected");
+        fs::remove_file(&path).ok();
+
+        assert!(err.to_string().contains("is not a Wasm module"));
+    }
+
+    #[test]
+    fn a_local_target_matches_only_a_module_carrying_the_same_wasm() {
+        let wasm = b"\0asm\x01\0\0\0".to_vec();
+        let target = UpgradeTarget::from_local_wasm(PRECOMPILE_EVM_RUNTIME, wasm.clone());
+
+        assert!(!target.is_installed(&RwasmModule::default()));
+        assert!(target.is_installed(
+            &rwasm::RwasmModuleBuilder::default()
+                .with_hint_section(&wasm)
+                .build()
+        ));
     }
 
     #[test]

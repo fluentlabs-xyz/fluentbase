@@ -48,8 +48,8 @@ pub(crate) const MAX_VALIDATORS: usize = 4096;
 /// a cache miss and re-derives from chain — the cache is a derived store, fully
 /// reconstructible. `1` = first versioned layout (adds the per-validator
 /// `stake` the leader elector consumes; the pre-version layout had no leading
-/// byte).
-pub(crate) const SNAPSHOT_CODEC_VERSION: u8 = 1;
+/// byte). `2` adds the per-member equivocation tombstone.
+pub(crate) const SNAPSHOT_CODEC_VERSION: u8 = 2;
 
 const HASH_BYTES: usize = 32;
 const ADDR_BYTES: usize = 20;
@@ -57,7 +57,8 @@ const PEER_BYTES: usize = 32;
 
 // Wire (all integers big-endian via the bytes crate):
 //   version(u8) ‖ block_hash(32) ‖ block_number(u64) ‖ epoch(u64) ‖ count(u32)
-//   ‖ [ address(20) ‖ bls_pubkey ‖ peer_pubkey(32) ‖ activation_epoch(u64) ‖ stake(u128) ] × count
+//   ‖ [ address(20) ‖ bls_pubkey ‖ peer_pubkey(32) ‖ activation_epoch(u64) ‖ stake(u128)
+//      ‖ tombstoned(u8) ] × count
 impl Write for ValidatorSetSnapshot {
     fn write(&self, buf: &mut impl BufMut) {
         buf.put_u8(SNAPSHOT_CODEC_VERSION);
@@ -71,6 +72,7 @@ impl Write for ValidatorSetSnapshot {
             v.keys.peer_pubkey.write(buf);
             buf.put_u64(v.keys.activation_epoch);
             buf.put_u128(v.stake);
+            buf.put_u8(u8::from(v.tombstoned));
         }
     }
 }
@@ -90,7 +92,8 @@ impl EncodeSize for ValidatorSetSnapshot {
                     + PUBKEY_BYTES
                     + PEER_BYTES
                     + size_of::<u64>()/* activation_epoch */
-                    + size_of::<u128>()/* stake */)
+                    + size_of::<u128>()/* stake */
+                    + size_of::<u8>()/* tombstoned */)
     }
 }
 
@@ -138,11 +141,23 @@ impl Read for ValidatorSetSnapshot {
             // Subgroup-checked decode (integrity check).
             let bls_pubkey = BlsPubkey::read(buf)?;
             let peer_pubkey = PeerPubkey::read(buf)?;
-            if buf.remaining() < size_of::<u64>() + size_of::<u128>() {
+            if buf.remaining() < size_of::<u64>() + size_of::<u128>() + size_of::<u8>() {
                 return Err(CodecError::EndOfBuffer);
             }
             let activation_epoch = buf.get_u64();
             let stake = buf.get_u128();
+            // Only `0`/`1` are ever written; anything else is a corrupt entry, and
+            // the cache's answer to a corrupt entry is a miss + re-derive.
+            let tombstoned = match buf.get_u8() {
+                0 => false,
+                1 => true,
+                _ => {
+                    return Err(CodecError::Invalid(
+                        "ValidatorSetSnapshot",
+                        "tombstoned flag is not a boolean",
+                    ))
+                }
+            };
             validators.push(ValidatorWithKeys {
                 address,
                 keys: ConsensusKeys {
@@ -151,6 +166,7 @@ impl Read for ValidatorSetSnapshot {
                     activation_epoch,
                 },
                 stake,
+                tombstoned,
             });
         }
         Ok(ValidatorSetSnapshot {
@@ -334,6 +350,9 @@ mod codec_tests {
                         activation_epoch: 3 + i as u64,
                     },
                     stake: 1_000 + i as u128,
+                    // Alternate so the round-trip pins the per-member flag rather
+                    // than a constant the codec could be dropping.
+                    tombstoned: i % 2 == 1,
                 }
             })
             .collect();
@@ -360,6 +379,14 @@ mod codec_tests {
             s.validators[2].keys.activation_epoch
         );
         assert_eq!(back.validators[2].stake, s.validators[2].stake);
+        assert_eq!(
+            back.validators
+                .iter()
+                .map(|v| v.tombstoned)
+                .collect::<Vec<_>>(),
+            vec![false, true, false],
+            "the tombstone survives the round trip per member, not as a constant"
+        );
     }
 
     #[test]
@@ -435,6 +462,7 @@ mod cache_tests {
                     activation_epoch: epoch + 1,
                 },
                 stake: u128::from(epoch) * 1_000,
+                tombstoned: false,
             }],
         }
     }

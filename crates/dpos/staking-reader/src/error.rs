@@ -92,6 +92,35 @@ pub enum ReadError {
     #[error("epoch {epoch} tracker peer-set size {size} (registry ∪ committee) exceeds configured max_peer_set_size {max} (misconfig / governance drift)")]
     PeerSetTooLarge { epoch: u64, size: usize, max: usize },
 
+    /// The committee the contract returned is not strictly ascending on the raw
+    /// peer-pubkey bytes. That order IS the consensus index space: the node writes a
+    /// commonware `Participant` index into the block and the contract resolves the
+    /// accused positionally from its own array, so a divergence slashes the wrong
+    /// validator in silence. Fail the read instead.
+    #[error("epoch {epoch} committee is not ascending on peer pubkey at position {position} (member {validator}) — contract/consensus index-space divergence")]
+    CommitteeOutOfOrder {
+        epoch: u64,
+        position: usize,
+        validator: alloy_primitives::Address,
+    },
+
+    /// Two committee members share a peer pubkey. The contract enforces uniqueness
+    /// (`ERR_PEER_PUBKEY_ALREADY_IN_USE`) and relies on it for its unstable sort to be
+    /// deterministic; a duplicate here means that enforcement broke, and the
+    /// positional index the node writes would be ambiguous.
+    #[error("epoch {epoch} committee has a duplicate peer pubkey at position {position} (member {validator}) — on-chain uniqueness invariant violated")]
+    CommitteeDuplicatePeerKey {
+        epoch: u64,
+        position: usize,
+        validator: alloy_primitives::Address,
+    },
+
+    /// A committed committee below the contract's own floor. `commitEpochCommittee`
+    /// reverts under it, so a non-empty short committee cannot be a legal on-chain
+    /// state (an *empty* one can — an uncommitted epoch — and is not an error).
+    #[error("epoch {epoch} committee size {size} is below MIN_COMMITTEE_LENGTH {min}")]
+    CommitteeTooSmall { epoch: u64, size: usize, min: usize },
+
     #[error("provider/evm backend error: {0}")]
     Backend(String),
 

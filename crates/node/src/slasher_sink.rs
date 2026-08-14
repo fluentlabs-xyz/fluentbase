@@ -11,8 +11,11 @@
 //! - simulation reverts with `AlreadySlashedForEquivocation` → the victim is
 //!   already tombstoned; the goal is achieved, return [`SubmitOutcome::AlreadySlashed`]
 //!   without spending gas;
-//! - simulation reverts otherwise → a deterministic bug (calldata / EIP-2537
-//!   encoding); return [`SubmitOutcome::Failed`] (no submit, loud log);
+//! - simulation reverts or HALTS otherwise → a deterministic bug; return
+//!   [`SubmitOutcome::Failed`] (no submit, loud log). A malformed calldata
+//!   arrives on the halt arm, not the revert one: the rWasm contract decodes
+//!   before it can revert, so a decode failure exits the frame rather than
+//!   returning a reason;
 //! - simulation succeeds → submit the tx, await on-chain inclusion, read the
 //!   receipt, and return [`SubmitOutcome::Mined`] only on `status == 1`.
 //!
@@ -73,9 +76,10 @@ const SLASH_GAS_PRICE: u128 = 1_000_000_000;
 const SLASH_INCLUSION_TIMEOUT: Duration = Duration::from_secs(120);
 
 sol! {
-    /// `Staking.sol` equivocation replay-guard revert. The 4-byte selector is
-    /// matched against the pre-flight simulation's revert output to recognise
-    /// an already-tombstoned victim.
+    /// The staking contract's equivocation replay-guard revert
+    /// (`ERR_ALREADY_SLASHED_FOR_EQUIVOCATION`, `contracts/staking/src/consts.rs`).
+    /// The 4-byte selector is matched against the pre-flight simulation's revert
+    /// output to recognise an already-tombstoned victim.
     error AlreadySlashedForEquivocation(address validator);
 }
 
@@ -196,14 +200,12 @@ where
     /// state diff (eth_call semantics). Uses the system-call path (no caller
     /// funding / nonce / gas), but with `self.signer_address` as the caller —
     /// the same sender the real [`SlasherTxSink::submit`] tx is signed with —
-    /// so the simulated `msg.sender` matches the real submission. This matters
-    /// because the slash path's reporter-reward `safeTransfer(msg.sender, …)`
-    /// requires a non-zero `msg.sender` (OZ ERC20 rejects transfer to
-    /// `address(0)` with `ERC20InvalidReceiver`): keeping caller=0 here gave a
-    /// false-negative pre-flight whenever `SlashReporterRewardBps > 0` (default
-    /// 30%). This is a full `TxKind::Call`, so the state-mutating
-    /// `slashEquivocation*` executes normally and we observe success/revert
-    /// without committing.
+    /// so the simulated `msg.sender` matches the real submission. Keeping the
+    /// two senders identical is what makes a would-succeed verdict transferable
+    /// to the submission: any caller-dependent check the contract makes is then
+    /// evaluated against the address that will actually make the call. This is a
+    /// full `TxKind::Call`, so the state-mutating `slashEquivocation*` executes
+    /// normally and we observe success/revert without committing.
     fn simulate(&self, target: Address, calldata: Bytes) -> Result<Sim, String> {
         let num = self
             .provider

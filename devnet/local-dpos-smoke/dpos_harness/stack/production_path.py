@@ -3,9 +3,10 @@
 `stack/profiles.py` describes two devnets: the sim's GENERATED N-validator pair and the smoke
 cases' STATIC four-validator pair. There is a third, and it was invisible from Python until now:
 the **production-path** stack — six validators plus a full-node on `docker-compose.production-path
-.yml`, with a BARE genesis (no staking contracts baked in) whose staking cluster is deployed at
-RUNTIME by `forge script DeployStaking` and whose addresses are DISCOVERED from the deploy
-manifest rather than predicted from a create-nonce.
+.yml`, with a BARE genesis (no staking module baked in) whose staking contract is DELIVERED to the
+running chain through the runtime-upgrade precompile and then initialized by ordinary
+transactions. That is the whole subject of this stand: every other stand gets its staking state
+from `genesis-bootstrap`, and this one has to earn it at runtime, the way a real network would.
 
 Five bash cases run on it — `case-production-path`, `case-vrf-rotation`, `case-vrf-dkg-halt`,
 `case-vrf-dkg-durability`, `case-byzantine-vrf` — and each `export COMPOSE_FILE=…` before sourcing
@@ -34,8 +35,9 @@ from the generated profile in two:
 
 1. **`exit 1`, not `return 1`** (§2.4 item 12). Every failure branch in the bash TERMINATES THE
    PROCESS, which fires the caller's `trap cleanup EXIT` — and that trap is three things, not one:
-   `pp_spammer_stop; rm -f "$MANIFEST"; tear_down` (case-vrf-rotation.sh:88). A Python `raise` only
-   unwinds, so the teardown has to be re-wired deliberately. It is re-wired in the CASE WRAPPER
+   `pp_spammer_stop; rm -f "$MANIFEST"; tear_down` (case-vrf-rotation.sh:88) — now two, the
+   manifest leg having gone with the manifest. A Python `raise` only unwinds, so the teardown has
+   to be re-wired deliberately. It is re-wired in the CASE WRAPPER
    (`cases/smoke/prod.py::run`), not here: this class raises `RotationBringUpError` and the wrapper
    owns the `finally`. Doing it here would give the bring-up a teardown the assertion phase does
    not have, which is the half bash's trap actually covered.
@@ -49,16 +51,61 @@ from the generated profile in two:
    function, so the bash could not have used it even if it wanted to. Substituting the real
    interval here would move the activation block on any stack whose interval is not 64 — i.e.
    change which block the whole case anchors on — so the literal is preserved and named.
-4. **the pre-written `staking-reader.json` is ASSERTED, not regenerated.** The sim REGENERATES it
-   from the manifest (`bringup.py` step 7, derive-don't-predict); the production path deliberately
-   does the opposite — it checks that the file genesis baked from `--staking-reader-create-nonces`
-   matches what DeployStaking actually deployed. That assert IS the create-nonce drift detector,
-   and replacing it with a regen would delete the only thing that notices when the nonces move.
-5. **`setBlsVerifier` MUST precede `setConsensusKeys`.** The keys are PoP-verified on the way in;
-   with no verifier set the first `setConsensusKeys` reverts. The bash says so in its banner.
+4. **the pre-written `staking-reader.json` is neither asserted nor regenerated any more.** Both
+   halves existed to reconcile a PREDICTED address with a DEPLOYED one, and there is no prediction
+   left: `genesis-bootstrap bare` writes the fixed `GENESIS_STAKING` address into that file, and
+   the delivery below installs the module at exactly that address. The create-nonce drift detector
+   it used to be goes with its subject.
+5. **the verifier rides `initialize`; there is no `setBlsVerifier` and no `setConsensusKeys`.**
+   The old ordering rule ("`setBlsVerifier` MUST precede `setConsensusKeys`") described the
+   two-contract split: install the verifier by setter, then feed keys in one at a time and have
+   each PoP checked against it. The module verifies every genesis PoP INSIDE the initializer, so a
+   deferred verifier reverts `ERR_BLS_VERIFIER_NOT_CONFIGURED` on the first key of the very call
+   that would have set it. Argument 15 is the verifier, arguments 4-6 are the keys, and the
+   ordering constraint disappears rather than moving.
 6. **the spammer starts BEFORE the deploys** and keeps user tx pressure on the mempool across
    every transition the case then measures. Its key is mnemonic index 6 — an account that issues
    no other transaction, or its nonce races the deploy txs (`core/spammer.py`).
+
+═══ THE SIX-STEP BRING-UP OF THE STAKING STATE ════════════════════════════════════════════
+
+A runtime-upgrade install places CODE and nothing else: no constructor runs, storage stays
+empty. So every piece of state the genesis stands receive from `bootstrap::run` has to be
+issued here as ordinary transactions, and the ORDER is not free:
+
+1. `forge create` the BLEND token and the BLS verifier. Both are Solidity, both are plain
+   CREATEs, and both are ARGUMENTS to step 4.
+2. Deliver the module: `runtime-upgrade install-local --wasm … --target GENESIS_STAKING`.
+   Signed with the GOVERNANCE SIGNER, which is the address `genesis-bootstrap bare` seeds into
+   the upgrade precompile's owner slot — any other key fails `only_owner`.
+3. `BLEND.approve(staking, …)` from the stake sponsor. `initialize` PULLS the genesis stakes
+   inside its own call, so the allowance has to exist before it, not after.
+4. `initialize`, the 17-argument one-shot, permissionless, sent by the deployer. It seeds the
+   FIVE initial validators with their stakes and consensus keys and takes
+   `dpos_activation_block = 0`.
+5. `setProductionLivenessDisabled(false)` and `setBlendStipendPerEpoch`, both from the Governor
+   at `GENESIS_GOVERNANCE` — the initializer writes the tier OFF deliberately and cannot flip
+   its own governance-gated setter.
+6. Then the pre-existing governance flow, unchanged: `setDposActivationBlock` here, and
+   `registerValidator` → `activateValidator` → `delegate` for the SIXTH validator in the case.
+
+Two details of step 4 are load-bearing and neither is a style choice.
+
+**Five seeded validators, not zero.** The env overlay this stand used to pass omitted
+`INITIAL_VALIDATORS`, which reads like "this stand bootstraps its whole committee through
+governance" — but `DeployStaking.s.sol` fell back to the network JSON with `vm.envOr`, and
+`l2.json` supplied five. So the stand has ALWAYS deployed seeded-with-five and registered a
+SIXTH through governance, which is exactly what the 6-validator / 5-seat topology is for.
+Seeding preserves that, and it is also what keeps the registry at or above the contract's
+`MIN_COMMITTEE_LENGTH = 4`.
+
+**`dpos_activation_block = 0`, the unscheduled sentinel.** A real value here would engage the
+node's pre-execution section on the very next block, and the ahead-commit driver runs
+PRE-activation by design — so `commit_epoch` would system-call `commitEpochCommittee()` against
+a registry that is not populated yet, revert `ERR_COMMITTEE_TOO_SMALL` into the fail-loud arm,
+and halt block production. Seeding five removes the shortfall; passing `0` removes the window
+in which the shortfall could be observed at all. BOTH, not either — step 6 sets the real
+activation block once the registry is complete.
 """
 
 from __future__ import annotations
@@ -69,7 +116,7 @@ import os
 from .profiles import StackProfile
 from ..core import converge, nodes, topology
 from ..core.spammer import SpammerPool
-from ..chain.writes import Chain
+from ..chain.writes import Chain, ChainError
 
 # ── the production-path compose pair ──────────────────────────────────────────────────
 PRODUCTION_BASE = "docker-compose.production-path.yml"
@@ -111,19 +158,84 @@ JOINER_BLEND_WEI = "10000000000000000000"
 SPAMMER_MNEMONIC_INDEX = "6"
 DEFAULT_MNEMONIC = "test test test test test test test test test test test junk"
 
-#: The three keys the pre-written `/runtime/staking-reader.json` must agree with the manifest on
-#: (lib.sh:1328-1330), as `(json key in the runtime file, manifest key)`. `governance` is
-#: deliberately absent: the reader does not carry it, and adding it would fail every run.
-STAKING_READER_PAIRS = (
-    ("staking_address", "staking"),
-    ("chain_config_address", "chain_config"),
-    ("liveness_slashing_address", "liveness_slashing"),
-)
-
-#: The two `forge create` targets, in bash's order. The verifier is deployed SEPARATELY here and
-#: wired by governance; the sim's DeployStaking self-deploys one instead.
+#: The two `forge create` targets, in bash's order. Both are ARGUMENTS to `initialize` (the token
+#: is argument 8, the verifier argument 15) rather than things wired up afterwards by a setter.
 TOKEN_CONTRACT = "contracts/staking/mocks/MockBlendToken.sol:MockBlendToken"
 VERIFIER_CONTRACT = "contracts/libraries/BLS12381Verifier.sol:BLS12381Verifier"
+
+#: The runtime-upgrade delivery. `runtime-upgrade` is a HOST binary, like `forge` and `cast` —
+#: the smoke image ships only `fluent` and `genesis-bootstrap`. Unlike those two it is built
+#: FROM THIS REPO and is not something a developer has already installed, so resolution prefers
+#: the workspace build and falls back to PATH. `RUNTIME_UPGRADE_BIN` overrides both.
+#:
+#: The fallback is deliberately a bare name and not an error: an operator who has installed it
+#: (or a CI image that bakes it in) should not be forced to set an env var. But the common case
+#: is a plain `cargo build --release -p fluentbase-runtime-upgrade`, and requiring a PATH entry
+#: for that turned all five production-path cases into a spawn error rather than a clear
+#: "binary missing" message.
+def _resolve_runtime_upgrade_bin() -> str:
+    override = os.environ.get("RUNTIME_UPGRADE_BIN")
+    if override:
+        return override
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
+    for profile in ("release", "debug"):
+        built = os.path.join(repo_root, "target", profile, "runtime-upgrade")
+        if os.path.isfile(built) and os.access(built, os.X_OK):
+            return built
+    return "runtime-upgrade"
+
+
+RUNTIME_UPGRADE_BIN = _resolve_runtime_upgrade_bin()
+#: The `.wasm` (NOT the `.rwasm`): the precompile compiles the module ON-CHAIN with
+#: `compile_rwasm_maybe_system(&target_address, …)`, which is the same function
+#: `crates/genesis/build.rs` uses — so the delivered bytes and the genesis-installed bytes agree
+#: by construction. The binary enforces this too: it checks the `\0asm` magic and rejects an
+#: already-compiled `.rwasm` before it builds a transaction. Path is relative to the smoke dir,
+#: which is every entry point's cwd.
+STAKING_WASM = os.environ.get(
+    "STAKING_WASM", "contracts/fluentbase_contracts_staking.wasm")
+#: The line `runtime-upgrade install-local` prints on success, carrying `result` (`upgraded` on a
+#: first install, `up_to_date` when the module is already there) and the verified on-chain code
+#: hash. Parsed rather than trusted to the exit code, because `up_to_date` is a legitimate
+#: success on a repeated bring-up and looks identical from outside.
+UPGRADE_RESULT_PREFIX = "RESULT_MANIFEST_JSON="
+UPGRADE_OK_RESULTS = ("upgraded", "up_to_date")
+
+# ── the `initialize` arguments this stand seeds ────────────────────────────────────────
+#: `initialize(address,address[],uint256[],bytes[],bytes[],bytes32[],uint16,address,uint32,
+#: uint32,uint32,uint256,uint256,uint64,address,uint256,address)` — pinned against the
+#: contract's own `SIG_INITIALIZE` (`contracts/staking/src/consts.rs`). Seventeen arguments in
+#: one selector, so a re-ordering is a silent wrong-argument call rather than a revert; the
+#: keyword-built list below is what keeps the positions honest.
+INITIALIZE_SIG = ("initialize(address,address[],uint256[],bytes[],bytes[],bytes32[],uint16,"
+                  "address,uint32,uint32,uint32,uint256,uint256,uint64,address,uint256,address)")
+#: 1 BLEND. The baseline per-validator genesis stake and `minValidatorStakeAmount`/
+#: `minStakingAmount` — the contract rejects a zero minimum, and a stake must be a multiple of
+#: `BALANCE_COMPACT_PRECISION` (1e10), which 1e18 is.
+INIT_STAKE_WEI = 10 ** 18
+#: validator-0 is seeded 5x, exactly as the retired `DeployStaking` config did
+#: (`solidity-contracts/scripts/config/local-dpos-smoke/l2.json`: initialStakes
+#: `[5e18, 1e18, 1e18, 1e18, 1e18]`). NOT decoration: v0 is the HOST-RPC node every reading in
+#: `case-production-path` goes through, and the case's whole subject is a joiner displacing an
+#: incumbent at a committee boundary. With six equal stakes the top-5 selection is a tie and the
+#: contract's tie-break decides who drops — it dropped v0 once, which leaves the harness
+#: measuring the chain through a demoted node, and `evaluate_displaced` fails that outright
+#: rather than adapting. The 5x makes "v0 is never the lowest" a property instead of a
+#: coincidence.
+INIT_STAKE_V0_WEI = 5 * INIT_STAKE_WEI
+#: `undelegatePeriod` / `minUndelegateBlocks` / `commissionRate`, mirroring what
+#: `genesis-bootstrap` passes on the genesis stands so the two devnets share one economics.
+INIT_UNDELEGATE_PERIOD = 16
+INIT_MIN_UNDELEGATE_BLOCKS = 0
+INIT_COMMISSION_RATE = 0
+#: The BLEND the stipend is drawn from (`transferFrom(blendReserve, staking, …)`), approved in
+#: the same allowance as the genesis stakes because both draw on the deployer.
+STIPEND_BUDGET_WEI = 1_000_000 * 10 ** 18
+#: `setBlendStipendPerEpoch` — 10 BLEND, the devnet value `genesis-bootstrap` uses. 0 is the
+#: kill-switch, so this must be an explicit non-zero or the stipend leg never runs.
+STIPEND_PER_EPOCH_WEI = 10 * 10 ** 18
+#: `dposActivationBlock` AT `initialize`. The unscheduled sentinel — see the module header.
+INIT_DPOS_ACTIVATION_BLOCK = 0
 
 
 class RotationBringUpError(Exception):
@@ -208,19 +320,6 @@ def _read_host(service: str):
     return (f"{service}@{port}", nodes.check_external(port))
 
 
-def default_manifest(contracts_dir: str) -> str:
-    """`MANIFEST="$(cd "$SOLIDITY_CONTRACTS_DIR" && pwd)/deployments/runtime-deployment.json"` —
-    defined identically and independently by all five cases plus `case-soak.sh`, which is the
-    duplication P7 chunk 5b's "cheap win" note is about. ONE definition, here.
-
-    ABSOLUTE, and that is not cosmetic: `DeployStaking`'s `vm.writeJson` runs under
-    solidity-contracts' foundry.toml with root=cwd=$SOLIDITY_CONTRACTS_DIR, whose `fs_permissions`
-    allow only `./deployments`. A RELATIVE path escapes the allowed dir and is denied; an absolute
-    one inside `<contracts>/deployments` both satisfies it and makes the forge writer (cwd =
-    contracts dir) and the Python reader (cwd = smoke dir) resolve to ONE file."""
-    return os.path.abspath(os.path.join(contracts_dir, "deployments", "runtime-deployment.json"))
-
-
 class RotationBringUp:
     """`pp_bring_up_rotation` (lib.sh:1252-1357) — the 14-phase runtime-forge bring-up.
 
@@ -236,7 +335,7 @@ class RotationBringUp:
     """
 
     def __init__(self, runner, label: str, profile: ProductionPathProfile = None,
-                 contracts_dir: str = None, manifest: str = None, rpc: str = None,
+                 contracts_dir: str = None, rpc: str = None,
                  chain_id=None, spammers: SpammerPool = None, post_manifest=None):
         # `PP_ROT_LABEL` (lib.sh:1253) is `${PP_ROT_LABEL:?…}` — REQUIRED, and bash aborts on an
         # unset one rather than defaulting. It is the label in every FAIL line, so a default would
@@ -251,29 +350,30 @@ class RotationBringUp:
         self.chain_id = str(chain_id or os.environ.get("CHAIN_ID", topology.CHAIN_ID))
         self.contracts_dir = contracts_dir or os.environ.get("SOLIDITY_CONTRACTS_DIR",
                                                              "../../../solidity-contracts")
-        self.manifest = manifest or os.environ.get("MANIFEST") or default_manifest(
-            self.contracts_dir)
         self.spammers = spammers if spammers is not None else SpammerPool(dry=runner.dry)
-        #: `fn(bringup)`, invoked ONCE, after the deploy manifest is read and the `Chain` exists,
-        #: and BEFORE the first governance write. One case needs it: `case-byzantine-vrf.sh:235-250`
+        #: `fn(bringup)`, invoked ONCE, after the staking module exists and the `Chain` does, and
+        #: BEFORE the first governance write. One case needs it: `case-byzantine-vrf.sh:235-250`
         #: sends five further DEPLOYER-funded transfers (the byzantine owner's BLEND, the toggle
-        #: delegator's gas and BLEND, and BLEND for the three floor-bumped owners) and the comment
-        #: at `:190-197` is emphatic about WHY they sit exactly here: sending them EARLIER would
-        #: advance the deployer nonce and shift DeployStaking's CREATE addresses off the prediction
-        #: baked into `staking-reader.json`, and the node would then read ChainConfig at the wrong
-        #: address and the cold start would fail. The hook is the post-DeployStaking half of that
-        #: contract, expressed as a seam rather than as a second bring-up.
+        #: delegator's gas and BLEND, and BLEND for the three floor-bumped owners). Its original
+        #: justification for sitting exactly here — that an earlier transfer would advance the
+        #: deployer nonce and shift the CREATE addresses off the prediction in
+        #: `staking-reader.json` — is GONE with the prediction. The position still matters for a
+        #: reason the old one hid: the transfers move BLEND, and the token does not exist until
+        #: step 1 of the sequence has run.
         self.post_manifest = post_manifest
-        # the eleven exported facts (lib.sh:1247-1249), empty until run().
+        # Facts the case reads afterwards. The three contract addresses are CONSTANTS, not deploy
+        # outcomes — one module at a fixed address, with `chain_config_rt` / `liveness_rt` as
+        # aliases for the read surfaces that used to be separate predeploys. `token` and
+        # `verifier` are still discovered, because they are still `forge create`d here.
         self.deployer_key = ""
         self.deployer_addr = ""
         self.spammer_addr = ""
         self.token = ""
         self.verifier = ""
-        self.staking_rt = ""
-        self.chain_config_rt = ""
-        self.gov_addr = ""
-        self.liveness_rt = ""
+        self.staking_rt = topology.GENESIS_STAKING
+        self.chain_config_rt = topology.GENESIS_STAKING
+        self.gov_addr = topology.GENESIS_GOVERNANCE
+        self.liveness_rt = topology.GENESIS_STAKING
         self.act = 0
         self.anchor = "0x0"
         self.epoch_len = 0
@@ -315,7 +415,7 @@ class RotationBringUp:
         full-node aligned at finalized > floor. Returns the aligned `"height|hash"`.
 
         Unlike `StaticStack._wait_aligned` this does NOT tear the stack down on expiry: the caller
-        owns a three-part cleanup (spammer, manifest, compose) and tearing down half of it here
+        owns a multi-part cleanup (spammer, compose, teardown) and tearing down half of it here
         would leave the other half leaked. It raises; `cases/smoke/prod.py::run` reaps."""
         if self.dry:
             # Recorded as a marker, not skipped silently: the three converge gates are WHERE this
@@ -393,7 +493,10 @@ class RotationBringUp:
         self.spammers.start(spammer_key, self.deployer_addr, self.rpc, note="production-path")
         print(f"  tx spammer started (from {self.spammer_addr})", flush=True)
 
-        # -- runtime deploy: token + BLS verifier ----------------------------------
+        # -- step 1: forge-create the token and the BLS verifier -------------------
+        # Both are Solidity and both are plain CREATEs, so `forge create` still works and still
+        # discovers their addresses. They are ARGUMENTS to `initialize` (8 and 15), not things
+        # wired up by a setter afterwards.
         print("== runtime deploy: token + BLS verifier ==", flush=True)
         self.token = self._forge_create(TOKEN_CONTRACT, "deploy-token",
                                         "0xToKeN0000000000000000000000000000000000")
@@ -410,24 +513,10 @@ class RotationBringUp:
         chain0.token_transfer(self.token, chain0.owner_addr(p.val_count - 1), JOINER_BLEND_WEI,
                               checked=True)
 
-        # -- runtime deploy: the staking cluster -----------------------------------
-        print("== runtime deploy: staking cluster (DeployStaking) ==", flush=True)
-        overlay = {"NETWORK": "local-dpos-smoke/l2", "DEPLOYER": self.deployer_addr,
-                   "INITIAL_OWNER": self.deployer_addr, "STAKING_TOKEN": self.token,
-                   "OUTPUT_PATH": self.manifest}
-        # NO INITIAL_VALIDATORS / INITIAL_STAKES / ACTIVE_VALIDATORS_LENGTH, unlike the sim's
-        # deploy. The production path registers and activates its committee through governance
-        # afterwards — that IS the path it exists to exercise — so seeding the deploy with a
-        # committee would skip the thing under test.
-        if not self.forge(["forge", "script",
-                           "scripts/deploy/DeployStaking.s.sol:DeployStaking",
-                           "--rpc-url", self.rpc, "--private-key", self.deployer_key,
-                           "--broadcast", "--skip-simulation"],
-                          note="DeployStaking", env_overlay=overlay).ok and not self.dry:
-            self._fail("DeployStaking (EIP-170? see prereqs)")
-        self._read_manifest()
-        print(f"  staking={self.staking_rt} chainConfig={self.chain_config_rt} "
-              f"gov={self.gov_addr} liveness={self.liveness_rt}", flush=True)
+        # -- step 2: deliver the staking module to the running chain ---------------
+        print(f"== runtime-upgrade: install the staking module at {self.staking_rt} ==",
+              flush=True)
+        self._deliver_staking_module()
 
         chain = Chain(runner=self.p, RPC=self.rpc, STAKING_RT=self.staking_rt,
                       CHAIN_CONFIG_RT=self.chain_config_rt, GOV_ADDR=self.gov_addr,
@@ -435,42 +524,40 @@ class RotationBringUp:
                       PP_PEERS=os.environ.get("PP_PEERS", DEFAULT_PP_PEERS))
         self.chain = chain
 
-        # -- the case's own post-DeployStaking writes, if it has any ---------------
+        # -- the case's own post-install writes, if it has any ---------------------
         if self.post_manifest is not None:
             self.post_manifest(self)
 
-        # -- governance: setBlsVerifier MUST precede setConsensusKeys --------------
-        print("== governance: setBlsVerifier (MUST precede setConsensusKeys) ==", flush=True)
-        self._gov(chain, self.chain_config_rt,
-                  chain.calldata("setBlsVerifier(address)", self.verifier),
-                  "setBlsVerifier", "gov setBlsVerifier")
+        # -- steps 3+4: approve the genesis stakes, then initialize -----------------
+        print(f"== initialize the staking module (seeding v0..v{p.committee_size - 1}) ==",
+              flush=True)
+        self._initialize_staking(chain)
 
-        # -- setConsensusKeys for the INITIAL committee ---------------------------
-        print(f"== setConsensusKeys for committee v0..v{p.committee_size - 1} ==", flush=True)
-        for i in range(p.committee_size):
-            ck = chain.consensus_keys(i)
-            argv = ["cast", "send", self.staking_rt,
-                    "setConsensusKeys(address,bytes,bytes,bytes32)",
-                    ck.get("validatorAddress", ""), ck.get("blsPubkeyUncompressed", ""),
-                    ck.get("blsPoPUncompressed", ""), ck.get("peerPubkey", ""),
-                    "--rpc-url", self.rpc, "--private-key", chain.owner_key(i)]
-            if not self.p.run_capture(argv, note=f"setConsensusKeys-v{i}").ok and not self.dry:
-                self._fail(f"setConsensusKeys v{i}")
-        print(f"  consensus keys set for {p.committee_size} validators", flush=True)
+        # -- step 5: the two governance-only configuration flips -------------------
+        # `apply_initial_config` writes `productionLivenessDisabled = true` DELIBERATELY — the
+        # tier ships off and an unwritten slot would ship it on — and the setter is governance-
+        # gated, so the initializer cannot flip its own default. Both proposals target the
+        # STAKING address explicitly: a proposal into an address with no code executes, emits
+        # `ProposalExecuted` and returns 0x1 while doing nothing (OZ's `Address.verifyCallResult`
+        # never checks `target.code.length`).
+        print("== governance: enable the production-liveness tier + the BLEND stipend ==",
+              flush=True)
+        self._gov(chain, self.staking_rt,
+                  chain.calldata("setProductionLivenessDisabled(bool)", "false"),
+                  "setProductionLivenessDisabled", "gov setProductionLivenessDisabled")
+        self._gov(chain, self.staking_rt,
+                  chain.calldata("setBlendStipendPerEpoch(uint256)", STIPEND_PER_EPOCH_WEI),
+                  "setBlendStipendPerEpoch", "gov setBlendStipendPerEpoch")
 
-        # -- governance: the activation block -------------------------------------
+        # -- step 6: governance sets the REAL activation block ---------------------
+        # `initialize` passed 0 (unscheduled) so nothing could engage the node's pre-execution
+        # section against a half-built registry. The registry is complete now, so schedule it.
         head = self._head_dec()
         self.act = ((head // ACTIVATION_GRID) + 2) * ACTIVATION_GRID
         print(f"== governance: setDposActivationBlock={self.act} (head={head}) ==", flush=True)
-        self._gov(chain, self.chain_config_rt,
+        self._gov(chain, self.staking_rt,
                   chain.calldata("setDposActivationBlock(uint64)", self.act),
                   "setDposActivationBlock", "gov setDposActivationBlock")
-
-        # -- the create-nonce drift detector (module header item 4) ---------------
-        print("== assert pre-written staking-reader.json matches the deploy manifest ==",
-              flush=True)
-        self._assert_staking_reader(chain)
-        print("  pre-written config matches manifest", flush=True)
 
         # -- clean-halt at the activation block -----------------------------------
         print(f"== wait for sequencer (validator-0) to clean-halt at activation block "
@@ -517,58 +604,134 @@ class RotationBringUp:
         except (ValueError, AttributeError):
             return ""
 
-    def _read_manifest(self) -> None:
-        """`jq -r '.staking' "$MANIFEST"` ×4, then assert each is `0x…` (else `cat $MANIFEST`).
+    def _governance_key(self) -> str:
+        """`/runtime/keys/governance.hex`, 0x-prefixed — the ONLY key the runtime-upgrade
+        precompile accepts on this stand.
 
-        The dry stand-ins are the genesis predeploy SLOTS, which are CODELESS here
-        (`core/topology.py`) — the transcript needs *some* address so the sequence walks to the
-        end, and nothing may read them on a live path."""
+        `genesis-bootstrap bare` seeds this address into the upgrade contract's `owner` storage
+        slot (`0x…520010`, slot 0). Without that seed the contract falls back to
+        `DEFAULT_UPDATE_GENESIS_AUTH`, a key nobody here holds — which is why the slot is seeded
+        rather than the account funded. Any other signer fails `only_owner`."""
+        raw = self.p.run(["docker", "compose", "exec", "-T", topology.RUNTIME_MOUNT_HOST,
+                          "cat", "/runtime/keys/governance.hex"], timeout=15,
+                         note="governance-key")
+        raw = (raw or "").strip()
+        if raw:
+            return raw if raw.startswith("0x") else f"0x{raw}"
         if self.dry:
-            self.staking_rt = topology.STAKING_ADDR
-            self.chain_config_rt = topology.CHAIN_CONFIG_ADDR
-            self.gov_addr = topology.STAKING_POOL_ADDR
-            self.liveness_rt = topology.LIVENESS_SLASHING_ADDR
-            return
-        try:
-            with open(self.manifest) as fh:
-                m = json.load(fh)
-        except (OSError, ValueError) as e:
-            self._fail(f"manifest unreadable at {self.manifest}: {e}")
-            return
-        self.staking_rt = str(m.get("staking", ""))
-        self.chain_config_rt = str(m.get("chain_config", ""))
-        self.gov_addr = str(m.get("governance", ""))
-        self.liveness_rt = str(m.get("liveness_slashing", ""))
-        for name, value in (("STAKING_RT", self.staking_rt),
-                            ("CHAIN_CONFIG_RT", self.chain_config_rt),
-                            ("GOV_ADDR", self.gov_addr),
-                            ("LIVENESS_RT", self.liveness_rt)):
-            if not value.startswith("0x"):
-                print(json.dumps(m, indent=2), flush=True)   # bash `cat "$MANIFEST"`
-                self._fail(f"manifest missing {name}")
+            return "0x" + "11" * 32
+        self._fail("/runtime/keys/governance.hex is empty — the runtime-upgrade owner key is "
+                   "the only signer the upgrade precompile accepts on this stand")
 
-    def _assert_staking_reader(self, chain: Chain) -> None:
-        """`docker compose exec -T validator-0 cat /runtime/staking-reader.json`, then compare
-        three lowercased addresses against the manifest (lib.sh:1327-1334).
+    def _deliver_staking_module(self) -> None:
+        """Step 2: `runtime-upgrade install-local --wasm <module> --target <staking>`.
 
-        The FAIL message names the fix, as bash's does: a mismatch means the deployer's create
-        nonces drifted and `--staking-reader-create-nonces` needs updating. Dropping that half of
-        the message leaves the reader with an address mismatch and no idea what produced it."""
-        raw = chain.runtime_cat("staking-reader.json")
+        A HOST binary, invoked like `forge` and `cast`. There is deliberately no Python signing
+        path: the payload is ~418 KB, far past what fits in an `execve` argument, so no
+        `cast send` shape can carry it — this binary builds the calldata in-process, which is
+        exactly why it is the tool for this.
+
+        The key goes in the ENVIRONMENT, not the argv, and that is a wedge guard rather than a
+        secrets nicety: the binary resolves `--private-key`, then `$PRIVATE_KEY`, then a HIDDEN
+        TERMINAL PROMPT. In an unattended harness run that third fallback is not an error, it is
+        a bring-up that hangs forever.
+
+        The verdict comes from the `RESULT_MANIFEST_JSON=` line, not from the exit code alone:
+        `up_to_date` is a legitimate success on a repeated bring-up (the module is already there
+        and the on-chain code hash matches) and is indistinguishable from `upgraded` from
+        outside."""
+        argv = [RUNTIME_UPGRADE_BIN, "install-local",
+                "--wasm", STAKING_WASM,
+                "--target", self.staking_rt,
+                "--rpc", self.rpc]
+        # NOT `self.forge`: that wrapper cd's into the solidity-contracts checkout, and
+        # `--wasm` is a path relative to the SMOKE dir (every entry point's cwd), where the
+        # vendored artefact lives.
+        r = self.p.run_capture(argv, note="install-staking-module",
+                               env_overlay={"PRIVATE_KEY": self._governance_key()},
+                               timeout=900)
         if self.dry:
             return
+        if not r.ok:
+            self._fail(f"runtime-upgrade install-local failed: "
+                       f"{(r.merged or '').splitlines()[-1] if r.merged else ''}")
+        result = _upgrade_result(r.merged)
+        if result is None:
+            self._fail(f"runtime-upgrade install-local printed no {UPGRADE_RESULT_PREFIX} line — "
+                       "cannot confirm the module landed")
+        if result.get("result") not in UPGRADE_OK_RESULTS:
+            self._fail(f"runtime-upgrade install-local reported result="
+                       f"{result.get('result')!r} (want one of {list(UPGRADE_OK_RESULTS)})")
+        print(f"  module installed at {self.staking_rt} (result={result.get('result')})",
+              flush=True)
+
+    def _initialize_staking(self, chain: Chain) -> None:
+        """Steps 3+4: `BLEND.approve(staking, …)` then the 17-argument `initialize`.
+
+        `initialize` PULLS the genesis stakes with `transferFrom` inside its own call, so the
+        allowance has to exist first; the same allowance also covers the stipend budget, because
+        both draw on the deployer (`MockBlendToken` minted the whole supply to it).
+
+        The consensus keys of all `committee_size` seeded validators ride arguments 4-6 and are
+        PoP-verified inside this call against argument 15, the freshly deployed verifier. That is
+        why there is no `setBlsVerifier` step any more: a zero verifier here reverts
+        `ERR_BLS_VERIFIER_NOT_CONFIGURED` on the first key, inside the very call that would have
+        configured it.
+
+        `epochBlockInterval` is `ACTIVATION_GRID`, not a separate knob, and the coupling is
+        deliberate: the activation block this stand schedules is computed on that grid
+        (`ACT = ((HEAD/64)+2)*64`), and an interval that disagreed with it would put the migration
+        anchor off an epoch boundary."""
+        n = self.profile.committee_size
+        keys = [chain.consensus_keys(i) for i in range(n)]
+        addrs = [k.get("validatorAddress", "") or chain.owner_addr(i)
+                 for i, k in enumerate(keys)]
+        if not self.dry and not all(a.startswith("0x") for a in addrs):
+            self._fail(f"no owner address for one of v0..v{n - 1}: {addrs}")
+        # v0 seeded 5x so it is never the lowest and never the displaced one — see
+        # INIT_STAKE_V0_WEI. Mirrors the retired DeployStaking config exactly.
+        stakes = [INIT_STAKE_V0_WEI] + [INIT_STAKE_WEI] * (n - 1)
+        total_stake = sum(stakes)
+
+        self._send(chain, "BLEND.approve(staking)", self.token,
+                   "approve(address,uint256)(bool)",
+                   self.staking_rt, total_stake + STIPEND_BUDGET_WEI)
+
+        # Built positionally against INITIALIZE_SIG, one argument per line with the parameter
+        # name beside it. Seventeen arguments share one selector, so a transposed pair is a
+        # silently wrong call, not a revert.
+        args = [
+            self.deployer_addr,                                    # 1  initialStakeOwner
+            _arr(addrs),                                           # 2  validators
+            _arr(stakes),                                          # 3  initialStakes
+            _arr([k.get("blsPubkeyUncompressed", "") for k in keys]),   # 4  blsPubkeysUncompressed
+            _arr([k.get("blsPoPUncompressed", "") for k in keys]),      # 5  blsPopsUncompressed
+            _arr([k.get("peerPubkey", "") for k in keys]),          # 6  peerPubkeys
+            INIT_COMMISSION_RATE,                                  # 7  commissionRate
+            self.token,                                            # 8  stakingToken
+            n,                                                     # 9  activeValidatorsLength
+            ACTIVATION_GRID,                                       # 10 epochBlockInterval
+            INIT_UNDELEGATE_PERIOD,                                # 11 undelegatePeriod
+            INIT_STAKE_WEI,                                        # 12 minValidatorStakeAmount
+            INIT_STAKE_WEI,                                        # 13 minStakingAmount
+            INIT_DPOS_ACTIVATION_BLOCK,                            # 14 dposActivationBlock
+            self.verifier,                                         # 15 blsVerifier
+            INIT_MIN_UNDELEGATE_BLOCKS,                            # 16 minUndelegateBlocks
+            self.deployer_addr,                                    # 17 blendReserve
+        ]
+        self._send(chain, "Staking.initialize", self.staking_rt, INITIALIZE_SIG, *args)
+        print(f"  initialized: {n} seeded validators, activeValidatorsLength={n}, "
+              f"epochBlockInterval={ACTIVATION_GRID}, dposActivationBlock="
+              f"{INIT_DPOS_ACTIVATION_BLOCK} (unscheduled)", flush=True)
+
+    def _send(self, chain: Chain, label: str, to: str, sig: str, *args) -> None:
+        """One deployer-signed, revert-checked `cast send`. `Chain.send` owns the receipt check,
+        the nonce-based confirm and the transient re-send; a raised `ChainError` becomes this
+        bring-up's `exit 1` so the caller's `finally` still reaps."""
         try:
-            pre = json.loads(raw) if (raw or "").strip() else {}
-        except ValueError:
-            pre = {}
-        manifest = {"staking": self.staking_rt, "chain_config": self.chain_config_rt,
-                    "liveness_slashing": self.liveness_rt}
-        for reader_key, manifest_key in STAKING_READER_PAIRS:
-            want = str(manifest[manifest_key]).lower()
-            got = str(pre.get(reader_key, "")).lower()
-            if got != want:
-                self._fail(f"pre-written {reader_key}={got} != deployed {want} (deployer nonce "
-                           "drift — update --staking-reader-create-nonces)")
+            chain.send(label, to, sig, *args, key=self.deployer_key)
+        except ChainError as e:
+            self._fail(f"{label}: {e.message}")
 
     def _wait_finalized_ge(self, target, timeout) -> bool:
         if self.dry:
@@ -595,7 +758,6 @@ class RotationBringUp:
 
     def _gov(self, chain: Chain, target: str, calldata: str, desc: str, fail_label: str) -> None:
         """One `pp_gov_action … || { echo "FAIL ($L): …"; exit 1; }` branch."""
-        from ..chain.writes import ChainError
         try:
             chain.gov_action(target, calldata, desc)
         except ChainError as e:
@@ -610,3 +772,42 @@ class RotationBringUp:
         a method on the object that owns those two facts, which is the same guarantee without the
         global."""
         return int(self.act) + int(epoch) * int(self.epoch_len)
+
+
+def _arr(items) -> str:
+    """`cast`'s array literal — `[a,b,c]`, or `[]` for an empty one.
+
+    `cast send` parses an array argument from this bracketed, comma-joined form. No spaces: a
+    space inside an argument is harmless to `subprocess` (there is no shell) but the recorded
+    argv is a test oracle, and one spelling keeps it stable."""
+    return "[" + ",".join(str(i) for i in items) + "]"
+
+
+def _upgrade_result(output: str):
+    """The parsed `RESULT_MANIFEST_JSON={…}` object `runtime-upgrade install-local` prints, or
+    None when the line is absent or unparseable.
+
+    Scanned from the END: the binary logs progress before it, and the last such line is the one
+    describing the transaction that actually settled.
+
+    The verdict is NESTED. The manifest is `{"entries": [ {..., "result": "upgraded"} ]}` — one
+    entry per target, because the binary's release path upgrades several at once. We ask for
+    exactly one target, so anything other than exactly one entry means the invocation was not
+    the one we think it was, and that is a failure rather than something to pick a winner from.
+    Returning the single entry keeps every caller reading `result` off a flat object."""
+    for line in reversed((output or "").splitlines()):
+        line = line.strip()
+        if not line.startswith(UPGRADE_RESULT_PREFIX):
+            continue
+        try:
+            obj = json.loads(line[len(UPGRADE_RESULT_PREFIX):])
+        except ValueError:
+            return None
+        if not isinstance(obj, dict):
+            return None
+        entries = obj.get("entries")
+        if not isinstance(entries, list) or len(entries) != 1:
+            return None
+        entry = entries[0]
+        return entry if isinstance(entry, dict) else None
+    return None

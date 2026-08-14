@@ -1,21 +1,31 @@
 """bringup.py — the sim_bring_up choreography. Python port of case-soak.sh:sim_bring_up
 (668-903) + sim_start_cascade_l3 (909-952).
 
-A single ordered command sequence: gen-compose → preflight teardown → phase-A bare chain →
-runtime deploy (token + DeployStaking) → regen staking-reader → fund the pool → governance
-(interval/jail/participation/activation) → setConsensusKeys → clean-halt at activation →
---dpos cold-restart → converge → L3 cascade. Every docker/cast/forge/forge-script command is
-issued through the shared proc.Runner seam, so `--dry-run-bringup` prints the WHOLE sequence
-(in order, with the env delta) without executing, to diff against the known-good bash log.
+A single ordered command sequence: gen-compose → preflight teardown → phase-A chain →
+write staking-reader → fund the pool → governance (interval/activation) → clean-halt at
+activation → --dpos cold-restart → converge → L3 cascade. Every docker/cast command is issued
+through the shared proc.Runner seam, so `--dry-run-bringup` prints the WHOLE sequence (in
+order, with the env delta) without executing, to diff against the known-good bash log.
 
 The read/converge WAITS are seam methods (`_wait_*`) that no-op under dry-run — the transcript
 is about the WRITE commands, and the reads are already ported (nodes.py). Live mode delegates
 them to nodes.py.
 
-PORT-NOTE: the bash `forge_l2 forge …` wrapper (`( cd $SOLIDITY_CONTRACTS_DIR && … )`) becomes
-a `cwd=` on the Runner. The DeployStaking env overrides (INITIAL_VALIDATORS/STAKES/…) ride as
-an env_overlay so the recorded argv stays the bare `forge script …` line (the oracle) with the
-env delta shown separately.
+═══ THE DEPLOY ROUND IS GONE ═════════════════════════════════════════════════════════
+
+There used to be a runtime deploy here — `forge create MockBlendToken`, `forge script
+DeployStaking`, a manifest read, a create-nonce tripwire on the deployer, and a
+`staking-reader.json` regenerated from that manifest. All of it existed to cope with a
+staking cluster whose ADDRESSES were not known until it had been deployed. There is no
+cluster and no prediction any more: one rWasm module sits at `topology.GENESIS_STAKING` on
+every stand, `genesis-bootstrap full` installs and initializes it at block 0, and the
+addresses this class exposes are CONSTANTS set in `__init__`. That also removes the
+dry-vs-live address split — a dry walk and a live run now report the same addresses,
+because they are the same addresses.
+
+`setConsensusKeys` is gone with it: the genesis committee's keys ride the initializer inside
+`genesis-bootstrap`, and a mid-run joiner's ride the 6-arg `registerValidator`
+(`chain/writes.py::register_setkeys`).
 """
 
 from __future__ import annotations
@@ -28,8 +38,7 @@ from . import dataroot, profiles
 from .profiles import GeneratedProfile
 from ..core import converge, nodes, topology
 from ..core.spammer import SpammerPool
-from ..chain.writes import (Chain, ChainError, dry_owner_addr,
-                            sim_regen_staking_reader)
+from ..chain.writes import Chain, ChainError, staking_reader_json
 
 # `SpammerPool` MOVED to `core/spammer.py` in P7 chunk 5a and is re-exported here.
 # It is the substrate under `pp_spammer_start`, which SIX production-path cases call, and the
@@ -80,10 +89,10 @@ class StackSpec:
       val_containers    — total validator CONTAINERS (committee + spares + rotation slots).
                           Containers in [validators, val_containers) are stopped before the
                           --dpos restart, and this is the N compose is generated for.
-      initial_committee — the genesis on-chain set: DeployStaking's INITIAL_VALIDATORS /
-                          INITIAL_STAKES, the setConsensusKeys loop, and PP_GOV_VOTERS.
-      identity_pool     — total funded IDENTITIES (>= val_containers): the post-deploy token
-                          grant covers [initial_committee, identity_pool).
+      initial_committee — the genesis on-chain set: the committee `genesis-bootstrap full`
+                          seats and keys in its initializer, and PP_GOV_VOTERS.
+      identity_pool     — total funded IDENTITIES (>= val_containers): the BLEND grant covers
+                          [initial_committee, identity_pool).
       no_cascade        — 1 omits the L2 full-node + L3 downstream tiers. Compared against 1
                           (not truthiness), faithfully to the env contract it came from.
       byzantine         — 1 runs the `--dpos.byzantine equivocate --help` flag-parse assert
@@ -160,8 +169,8 @@ def resolve_compose_env(out_dir: str = ".") -> str:
 
 class BringUp:
     """Drives sim_bring_up. Construct with a `StackSpec` and a proc.Runner (dry or live); call
-    run(). In dry mode the deploy manifest reads return canned addresses so the sequence walks
-    to the end. Exposes the post-deploy facts (staking_rt, …) the orchestrator threads onward."""
+    run(). Exposes the contract addresses (staking_rt, …) the orchestrator threads onward — now
+    constants set in `__init__`, identical in a dry walk and a live run."""
 
     def __init__(self, spec: StackSpec, runner, chain: Chain = None, profile=None):
         # Enforced, not merely annotated: a `StackSpec` that anything with the right seven
@@ -181,26 +190,21 @@ class BringUp:
         # profiles be inspected/compared by the same tooling.
         self.profile = profile if profile is not None else GeneratedProfile.for_spec(spec)
         self.rpc = os.environ.get("RPC", topology.DEFAULT_RPC_URL)
-        self.contracts_dir = os.environ.get("SOLIDITY_CONTRACTS_DIR", "../../../solidity-contracts")
-        # MUST be ABSOLUTE, mirroring bash `MANIFEST="$(cd "$SOLIDITY_CONTRACTS_DIR" && pwd)/…"`
-        # (case-production-path.sh:32). DeployStaking's `vm.writeJson(out, OUTPUT_PATH)` runs under
-        # solidity-contracts' foundry.toml with root=cwd=$SOLIDITY_CONTRACTS_DIR, whose fs_permissions
-        # only allow `./deployments`. Forge resolves a RELATIVE OUTPUT_PATH against that root, so a
-        # relative `../../../solidity-contracts/deployments/…` escapes the allowed dir and is denied.
-        # An absolute path inside <contracts>/deployments both satisfies fs_permissions and makes the
-        # forge writer (cwd=contracts_dir) and the Python readers (cwd=smoke dir) resolve to ONE file.
-        self.manifest = os.path.abspath(os.environ.get(
-            "MANIFEST",
-            os.path.join(self.contracts_dir, "deployments", "runtime-deployment.json")))
         self.base_compose = self.profile.compose_file_env("base")
         self.dpos_compose = self.profile.compose_file_env("dpos")
-        # facts populated by run()
-        self.token = ""
-        self.staking_rt = ""
-        self.chain_config_rt = ""
-        self.gov_addr = ""
-        self.liveness_rt = ""
-        self.chain = chain  # set after deploy
+        # CONSTANTS, not facts a deploy round discovers. `staking_rt` / `chain_config_rt` /
+        # `liveness_rt` are three names for ONE contract (the module absorbed ChainConfig and
+        # LivenessSlashing) and every one of them is derived HERE from the single genesis
+        # address — one source, three aliases, which is not the three-independent-fields sync
+        # hazard the collapse removed. Governance WRITES name `staking_rt` explicitly rather
+        # than riding on the aliases being equal: a proposal into the wrong address executes,
+        # emits `ProposalExecuted`, returns 0x1 and does nothing.
+        self.token = topology.GENESIS_STAKING_TOKEN
+        self.staking_rt = topology.GENESIS_STAKING
+        self.chain_config_rt = topology.GENESIS_STAKING
+        self.gov_addr = topology.GENESIS_GOVERNANCE
+        self.liveness_rt = topology.GENESIS_STAKING
+        self.chain = chain
         # ANCHOR = the finalized head captured right after the activation converge (case-soak.sh:864);
         # the FLOOR every post-activation alignment gate (cold-restart :890, L3 :934) must finalize
         # strictly PAST. Dry stays "0x0" (the poll no-ops under dry anyway).
@@ -359,8 +363,11 @@ class BringUp:
                                     "--mnemonic-index", "6"], note="spammer-addr")
         spammer_key = self.p.run(["cast", "wallet", "private-key", "--mnemonic", mnem,
                                   "--mnemonic-index", "6"], note="spammer-key")
-        # leaked-state tripwire (one RPC before the first deployer tx).
-        self._assert_fresh_deployer(deployer_addr)
+        # The `_assert_fresh_deployer` nonce tripwire is GONE with the thing it protected: it
+        # guarded the deploy CREATEs against a leaked reth datadir shifting the staking address.
+        # The address is a genesis constant now and no CREATE decides it, so the check has no
+        # subject left. A leaked datadir is still caught, by the preflight `down -v` above and
+        # by the data-root wipe.
         self.p.run_ok(["cast", "send", spammer_addr, "--value", "1000000000000000",
                        "--rpc-url", self.rpc, "--private-key", deployer_key], note="fund-spammer")
         # F11 (pp_spammer_start, case-soak.sh:731): start the main tx spammer so the proposer pool
@@ -368,57 +375,54 @@ class BringUp:
         # races the deploy/registration txns). Stopped by the orchestrator teardown (bu.spammers).
         self.spammers.start(spammer_key, deployer_addr, self.rpc, note="main")
 
-        # 6. runtime deploy: token + DeployStaking (self-deploys verifier + decoder).
-        self.token = self._deploy_token(deployer_key)
-        self._deploy_staking(deployer_addr, deployer_key)
-        self._read_manifest()
-
-        # 7. derive-don't-predict: regen staking-reader.json from the manifest.
+        # 6. the chain object over the genesis contract addresses (no deploy round: the module
+        # is installed and initialized at block 0 by `genesis-bootstrap full`).
         chain = Chain(runner=self.p, RPC=self.rpc, STAKING_RT=self.staking_rt,
                       CHAIN_CONFIG_RT=self.chain_config_rt, GOV_ADDR=self.gov_addr,
                       LIVENESS_RT=self.liveness_rt, TOKEN=self.token,
                       CHAIN_ID=os.environ.get("CHAIN_ID", str(topology.CHAIN_ID)))
         self.chain = chain
-        if not self.p.dry:
-            body = sim_regen_staking_reader(self.manifest)
-        else:
-            body = "{}"
-        chain.runtime_write("staking-reader.json", body)
 
-        # 8. fund ALL joiners/spares/bench identities (post-deploy).
+        # 7. re-write staking-reader.json. `genesis-bootstrap` already wrote exactly this file,
+        # so this is IDEMPOTENT rather than corrective — kept because the sim's data-root wipe
+        # and the rebirth path can hand a container a /runtime that genesis-init did not write,
+        # and because it is the one line that fails loudly if the two sides ever disagree about
+        # where the module lives. Same body in dry and live: there is no address to discover.
+        chain.runtime_write("staking-reader.json", staking_reader_json(self.staking_rt))
+
+        # 8. fund ALL joiners/spares/bench identities.
         for i in range(spec.initial_committee, spec.identity_pool):
             chain.token_transfer(self.token, chain.owner_addr(i), "100000000000000000000")
 
         os.environ["PP_GOV_VOTERS"] = str(spec.initial_committee)
 
-        # 9. governance: epoch block interval.
+        # 9. governance: epoch block interval. RETARGETED to the staking address, explicitly —
+        # `setEpochBlockInterval` moved onto the module with the rest of ChainConfig, and a
+        # proposal aimed at an address with no code EXECUTES: OZ's `Address.verifyCallResult`
+        # never checks `target.code.length`, so the Governor emits `ProposalExecuted`, the
+        # receipt is 0x1, and nothing happened.
         interval = os.environ.get("SIM_EPOCH_INTERVAL", "64")
-        chain.gov_action(self.chain_config_rt,
+        chain.gov_action(self.staking_rt,
                          chain.calldata("setEpochBlockInterval(uint32)", interval),
                          "setEpochBlockInterval")
         # (removed) the jail-length and participation-jail-kill-switch gov calls: both setters
-        # are DELETED from ChainConfig with the liveness jail, so they would hit dead selectors.
-        # The production-liveness tier that replaces it ships FLAG-OFF from genesis and stays off
+        # are DELETED with the liveness jail, so they would hit dead selectors. The
+        # production-liveness tier that replaces it ships FLAG-OFF from genesis and stays off
         # — arming it is Phase-5 work gated on the pre-enable evidence.
+        #
+        # (removed) the `setConsensusKeys` loop over the initial committee. The keys are
+        # arguments 4-6 of the module's initializer, which `genesis-bootstrap full` calls at
+        # block 0 — every genesis committee member is already keyed before the first block.
 
-        # 10. setConsensusKeys for the INITIAL committee.
-        for i in range(spec.initial_committee):
-            ck = chain.consensus_keys(i)
-            chain.send(f"setConsensusKeys v{i}", self.staking_rt,
-                       "setConsensusKeys(address,bytes,bytes,bytes32)",
-                       ck.get("validatorAddress", chain.owner_addr(i)),
-                       ck.get("blsPubkeyUncompressed", ""), ck.get("blsPoPUncompressed", ""),
-                       ck.get("peerPubkey", ""), key=chain.owner_key(i))
-
-        # 11. compute activation (2 epochs ahead) + gov setDposActivationBlock.
+        # 10. compute activation (2 epochs ahead) + gov setDposActivationBlock.
         head = _hex(self._head_hex())
         act = ((head // int(interval)) + 2) * int(interval)
         os.environ["DPOS_ACTIVATION_BLOCK"] = str(act)
-        chain.gov_action(self.chain_config_rt,
+        chain.gov_action(self.staking_rt,
                          chain.calldata("setDposActivationBlock(uint64)", act),
                          "setDposActivationBlock")
 
-        # 12. CHAIN-PACED clean-halt wait at activation (case-soak.sh:854-863): FOLLOW finalized to
+        # 11. CHAIN-PACED clean-halt wait at activation (case-soak.sh:854-863): FOLLOW finalized to
         # ACT before touching the committee — the sequencer clean-halts at the activation block, so
         # bring-up must not return / cold-restart until finalized >= ACT (else run() self-checks a
         # still-bare, pre-activation chain, the fin=216-vs-act=360 premature-return class). Budget =
@@ -434,7 +438,7 @@ class BringUp:
             self.p.run_ok(["docker", "compose", "stop", topology.validator(s)],
                           note="stop-spare")
 
-        # 13. phase B: --dpos overlay + cold-restart of the committee (+ full-node).
+        # 12. phase B: --dpos overlay + cold-restart of the committee (+ full-node).
         self._set_compose(self.dpos_compose)
         up_list = [topology.validator(i) for i in range(spec.validators)]
         if spec.no_cascade != 1:
@@ -447,27 +451,30 @@ class BringUp:
         # (bash `cold_wait = converge_wait + 90`, case-soak.sh:889-890; ANCHOR floor).
         self._wait_aligned(converge_wait + 90, self.anchor, self._read_sim_nodes)
 
-        # 14. L3 cascade (unless SIM_NO_CASCADE).
+        # 13. L3 cascade (unless SIM_NO_CASCADE).
         if spec.no_cascade != 1:
             self._start_cascade_l3()
         return True
 
     # -- golden fast path --------------------------------------------------------
-    def run_from_golden(self, restore, load_facts):
+    def run_from_golden(self, restore):
         """FAST PATH: restore the golden DPoS-active snapshot and start the validators DIRECTLY
         under --dpos — skipping phase-A / activation / migration entirely. Reuses the EXISTING
         populated-/runtime resume path (crash-survivor / full-restart): the restored volume holds
         reth's MDBX + static files + commonware journals + keys, so the nodes resume finalizing.
 
-        The caller must have confirmed the golden is fresh. Populates the deploy facts
-        (staking_rt/…/token) from the golden facts sidecar so the case can drive on-chain actions
-        without a re-deploy. Returns True once the committee re-converges (aligned finalized > 0).
+        The caller must have confirmed the golden is fresh. Returns True once the committee
+        re-converges (aligned finalized > 0).
 
-        `restore(runner) -> volume` and `load_facts() -> dict` are passed IN rather than imported:
-        `golden` already imports this module to build a snapshot, so importing it back made a
-        same-layer cycle out of what is really a caller's decision — golden-vs-fresh. Both stay
-        CALLABLES, not eager values, so `load_facts` is still read AFTER the restore, exactly
-        where it was: a missing facts sidecar must fail at the same point it always did."""
+        `restore(runner) -> volume` is passed IN rather than imported: `golden` already imports
+        this module to build a snapshot, so importing it back made a same-layer cycle out of what
+        is really a caller's decision — golden-vs-fresh.
+
+        The `load_facts` companion argument is GONE, and so is the sidecar behind it. It existed
+        because the addresses were a deploy outcome the fast path could not re-derive without a
+        re-deploy; they are compile-time constants now, already set in `__init__`, identical in a
+        restored stack and a fresh one. Reading them back off a JSON file could only ever
+        introduce a way for them to disagree."""
         t0 = time.time()
         restore(self.p)
         self._set_compose(self.dpos_compose)
@@ -476,13 +483,6 @@ class BringUp:
         val_list = [topology.validator(i) for i in range(self.spec.validators)]
         self.p.run_checked(["docker", "compose", "start", *val_list], timeout=300,
                            note="golden-start")
-        # Recover the deploy facts captured at build time (no re-deploy on the fast path).
-        facts = load_facts()
-        self.token = facts["token"]
-        self.staking_rt = facts["staking"]
-        self.chain_config_rt = facts["chain_config"]
-        self.gov_addr = facts["governance"]
-        self.liveness_rt = facts["liveness_slashing"]
         self.chain = Chain(runner=self.p, RPC=self.rpc, STAKING_RT=self.staking_rt,
                            CHAIN_CONFIG_RT=self.chain_config_rt, GOV_ADDR=self.gov_addr,
                            LIVENESS_RT=self.liveness_rt, TOKEN=self.token,
@@ -495,61 +495,7 @@ class BringUp:
               "(skipped phase-A/activation/migration)", flush=True)
         return True
 
-    # -- deploy sub-steps --------------------------------------------------------
-    def _deploy_token(self, deployer_key) -> str:
-        out = self.p.run(["forge", "create", "--rpc-url", self.rpc, "--private-key", deployer_key,
-                          "--broadcast", "--json",
-                          "contracts/staking/mocks/MockBlendToken.sol:MockBlendToken"],
-                         cwd=self.contracts_dir, note="deploy-token")
-        if self.p.dry:
-            return "0xToKeN0000000000000000000000000000000000"
-        try:
-            import json
-            return json.loads(out).get("deployedTo", "")
-        except Exception:
-            return ""
-
-    def _deploy_staking(self, deployer_addr, deployer_key):
-        spec = self.spec
-        iv = ",".join(dry_owner_addr(i) if self.p.dry else Chain(runner=self.p, RPC=self.rpc)
-                      .owner_addr(i) for i in range(spec.initial_committee))
-        ist = ",".join("5000000000000000000" if j == 0 else "1000000000000000000"
-                       for j in range(spec.initial_committee))
-        overlay = {
-            "NETWORK": "local-dpos-smoke/l2", "DEPLOYER": deployer_addr,
-            "INITIAL_OWNER": deployer_addr, "STAKING_TOKEN": self.token,
-            "OUTPUT_PATH": self.manifest, "INITIAL_VALIDATORS": iv, "INITIAL_STAKES": ist,
-            "ACTIVE_VALIDATORS_LENGTH": str(spec.initial_committee),
-        }
-        # F12: DeployStaking's broadcast is the deploy the whole chain depends on — checked +
-        # generous ceiling so a broadcast failure aborts loudly (a swallowed False here is the
-        # v51/v54 nonce-war class: the run continues on a chain with no staking cluster).
-        self.p.run_checked(
-            ["forge", "script", "scripts/deploy/DeployStaking.s.sol:DeployStaking",
-             "--rpc-url", self.rpc, "--private-key", deployer_key,
-             "--broadcast", "--skip-simulation"],
-            env_overlay=overlay, timeout=600, cwd=self.contracts_dir, note="DeployStaking")
-
-    def _read_manifest(self):
-        if self.p.dry:
-            # DRY-RUN STAND-INS ONLY — the transcript needs *some* address so the sequence
-            # walks to the end. They are the genesis predeploy SLOTS, which are CODELESS
-            # here (core/topology.py); nothing may read them on a live path. `gov_addr`
-            # borrows the staking-pool slot: the deploy manifest's governance address has no
-            # predeploy of its own, and a distinct-looking placeholder is all dry mode needs.
-            self.staking_rt = topology.STAKING_ADDR
-            self.chain_config_rt = topology.CHAIN_CONFIG_ADDR
-            self.gov_addr = topology.STAKING_POOL_ADDR
-            self.liveness_rt = topology.LIVENESS_SLASHING_ADDR
-            return
-        import json
-        with open(self.manifest) as f:
-            m = json.load(f)
-        self.staking_rt = m["staking"]
-        self.chain_config_rt = m["chain_config"]
-        self.gov_addr = m["governance"]
-        self.liveness_rt = m["liveness_slashing"]
-
+    # -- sub-steps ---------------------------------------------------------------
     def _data_root_wipe(self):
         """HARD-guarded busybox wipe of `$SIM_DATA_ROOT/runtime` (no-op if unset). CONTENTS
         only; runs as root inside a throwaway container (reth writes root-owned files).
@@ -558,16 +504,6 @@ class BringUp:
         root, non-absolute path, verify-empty-in-the-same-container) is what keeps this from
         being pointed at `/` or silently not wiping, and one copy of it is enough."""
         dataroot.data_root_wipe(self.p)
-
-    def _assert_fresh_deployer(self, addr):
-        """sim_assert_fresh_deployer: deployer nonce MUST be 0 on a fresh chain (a leaked reth
-        datadir shifts the deploy CREATEs → staking-address drift, v54)."""
-        if self.p.dry:
-            return
-        n = self.p.run(["cast", "nonce", "--rpc-url", self.rpc, addr], note="fresh-deployer")
-        if n != "0":
-            raise ChainError("leaked-state",
-                             f"deployer {addr} nonce={n or '<unreadable>'} (want 0)")
 
     def _start_cascade_l3(self):
         """sim_start_cascade_l3: capture L2 enode → pin for L3 → up downstream → mutual trust

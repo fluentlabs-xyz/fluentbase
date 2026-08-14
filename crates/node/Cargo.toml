@@ -115,6 +115,10 @@ flate2 = { workspace = true }
 reqwest = { workspace = true }
 
 [dev-dependencies]
+# Test-only: wraps EVM bytecode into the ownable-account form a genesis
+# account must carry, so the executor tests can stand up stub predeploys
+# (`crates/genesis/build.rs` does the same for the real ones).
+fluentbase-evm.workspace = true
 reth-db-common.workspace = true
 reth-provider = { workspace = true, features = ["test-utils"] }
 

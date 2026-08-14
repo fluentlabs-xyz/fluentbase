@@ -585,7 +585,7 @@ where
         gas_limit: order.gas_limit,
         parent_beacon_block_root: Some(B256::ZERO),
         withdrawals: None,
-        // The agreed `extra_data` — the 2-byte production record the proposer
+        // The agreed `extra_data` — the production record the proposer
         // stamped and every voter checked against the round leader — copied
         // VERBATIM. This is the only writer of header `extra_data` on a DPoS
         // chain, and both the proposer and every importer run it, so build and
@@ -712,7 +712,7 @@ mod tests {
             timestamp: genesis_header.timestamp + 1,
             fee_recipient: Address::repeat_byte(0x77),
             gas_limit: genesis_header.gas_limit,
-            // The real 2-byte production record, not an arbitrary pair: this
+            // The real production record, not an arbitrary byte string: this
             // test is the ONLY place the record's trip into an EVM header is
             // pinned. `extra_data` reaches a header by exactly one path — this
             // `order.extra_data.clone()` — because the payload registry that
@@ -720,19 +720,21 @@ mod tests {
             // locally built payload always ships the force-emptied base.
             extra_data: Bytes::from(fluentbase_consensus::extra_data::encode_production_record(
                 42,
+                Some(7),
             )),
             result: B256::ZERO,
             txs: vec![signed_transfer(&signer, 0), signed_transfer(&signer, 7)],
             beacon_outcome: None,
             dkg_logs: Vec::new(),
             parent_seed: None,
+            // Consensus-only: the evidence stays off the EVM path, and this test
+            // asserts below that the header still carries the verdict without it.
+            equivocation: None,
         };
 
         let evm_config = FluentEvmConfig::new(
             chain_spec.clone(),
             FluentEvmFactory::default(),
-            Address::ZERO,
-            Address::ZERO,
             Address::ZERO,
         );
 
@@ -780,6 +782,10 @@ mod tests {
         .expect("header carries a decodable record")
         .expect("and it is not the empty migration-window case");
         assert_eq!(record.leader_index, 42);
+        // The verdict half makes the same trip — it is what feeds the
+        // pre-execution slash system call on a node syncing the EL from peers,
+        // which never sees the OrderBlock the evidence rides in.
+        assert_eq!(record.accused, Some(7));
         // prev_randao is the caller-resolved value, not the ordering digest.
         assert_eq!(a.header().mix_hash, prev_randao);
     }

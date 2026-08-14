@@ -131,7 +131,7 @@ def test_every_case_starts_the_tx_spammer_before_the_deploys(case, transcripts):
     _, text = transcripts[case]
     notes = _notes(text)
     assert "spammer-key" in notes and "fund-spammer" in notes
-    assert notes.index("fund-spammer") < notes.index("DeployStaking")
+    assert notes.index("fund-spammer") < notes.index("deploy-token")
 
 
 def test_the_spammer_is_reaped_on_the_PASSING_path(monkeypatch, tmp_path):
@@ -139,8 +139,7 @@ def test_the_spammer_is_reaped_on_the_PASSING_path(monkeypatch, tmp_path):
     orphan incident. `RotationBringUp` deliberately does NOT stop its own, because the trap covers
     the ASSERTION phase too."""
     seen = _spammer_spy(monkeypatch)
-    rc = prod.run("smoke-x", [lambda ctx: None], argv=["--dry-run"],
-                  manifest=str(tmp_path / "m.json"))
+    rc = prod.run("smoke-x", [lambda ctx: None], argv=["--dry-run"])
     assert rc == 0
     assert seen["stopped"] == 1
 
@@ -153,8 +152,7 @@ def test_the_spammer_is_reaped_on_the_FAILING_path(monkeypatch, tmp_path):
     def boom(_ctx):
         raise prod.ProdFailure("smoke-x", "deliberate")
 
-    assert prod.run("smoke-x", [boom], argv=["--dry-run"],
-                    manifest=str(tmp_path / "m.json")) == 1
+    assert prod.run("smoke-x", [boom], argv=["--dry-run"]) == 1
     assert seen["stopped"] == 1
 
 
@@ -172,8 +170,7 @@ def test_a_case_puts_COMPOSE_FILE_back_the_way_it_found_it(monkeypatch, tmp_path
         monkeypatch.delenv("COMPOSE_FILE", raising=False)
     else:
         monkeypatch.setenv("COMPOSE_FILE", preset)
-    prod.run("smoke-x", [lambda ctx: None], argv=["--dry-run"],
-             manifest=str(tmp_path / "m.json"))
+    prod.run("smoke-x", [lambda ctx: None], argv=["--dry-run"])
     assert os.environ.get("COMPOSE_FILE") == preset
 
 
@@ -384,15 +381,17 @@ def test_the_other_four_cases_carry_no_overlay(transcripts):
         assert "byzantine-vrf.yml" not in text, case
 
 
-def test_the_extra_transfers_land_AFTER_DeployStaking_and_BEFORE_the_first_governance_write(
+def test_the_extra_transfers_land_AFTER_THE_MODULE_and_BEFORE_the_first_governance_write(
         transcripts):
-    """The load-bearing half of the second seam. Sending them earlier would advance the deployer
-    nonce and shift DeployStaking's CREATE addresses off the prediction baked into
-    `staking-reader.json`, so the node would read ChainConfig at the wrong address and the `--dpos`
-    cold start would fail."""
+    """The load-bearing half of the second seam. Its ORIGINAL justification — that an earlier
+    transfer would advance the deployer nonce and shift the CREATE addresses off the prediction in
+    `staking-reader.json` — is gone with the prediction. The position still matters for a reason
+    that justification hid: the hook moves BLEND and reads through a `Chain`, so it cannot run
+    before the token exists and the module has been installed, and its writes must still precede
+    the first governance action so the deployer's tx sequence matches the bash."""
     _, text = transcripts["smoke-byzantine-vrf"]
     notes = _notes(text)
-    deploy = notes.index("DeployStaking")
+    deploy = notes.index("install-staking-module")
     first_gov = notes.index("gov-propose")
     for note in ("toggle-key", "toggle-addr", "fund-toggle-delegator"):
         assert deploy < notes.index(note) < first_gov, note
@@ -473,30 +472,42 @@ def test_a_profile_without_overlays_is_unchanged():
         PP.PRODUCTION_BASE, PP.PRODUCTION_DPOS_OVERLAY)
 
 
-def test_the_post_manifest_hook_fires_once_after_the_manifest_and_before_the_verifier_gov():
+def test_the_post_manifest_hook_fires_once_after_the_module_and_before_the_first_gov():
     """The seam's contract, pinned independently of the byzantine case that uses it: the hook needs
-    a `Chain` (so it must run after the manifest is read) and its writes must precede the first
-    governance action (so the deployer's tx sequence matches the bash)."""
+    a `Chain` over an installed module (so it must run after the delivery) and its writes must
+    precede the first governance action (so the deployer's tx sequence matches the bash)."""
     seen = []
     bu = PP.RotationBringUp(runner=Runner(dry=True), label="smoke-x", contracts_dir="/c",
-                            manifest="/c/m.json",
                             post_manifest=lambda b: seen.append(len(b.p.log)))
     bu.run()
     assert len(seen) == 1
     notes = [i.note for i in bu.p.log if i.note]
     at = seen[0]
     before = [i.note for i in bu.p.log[:at] if i.note]
-    assert "DeployStaking" in before
+    assert "install-staking-module" in before
     assert "gov-propose" not in before
     assert "gov-propose" in notes
 
 
+def test_the_sixth_validators_keys_ride_registerValidator(transcripts):
+    """The mid-run joiner is the THIRD and last `setConsensusKeys` call site, and its three
+    arguments moved into the 6-arg `registerValidator`. The genesis committee's keys ride
+    `initialize` and the module has no `setConsensusKeys` at all, so a surviving one here would
+    be a call into a dead selector — which reverts with empty output, i.e. a registration that
+    looks registered and can never be reached on the consensus plane."""
+    _, text = transcripts["smoke-production-path"]
+    assert "setConsensusKeys" not in text
+    reg = [ln for ln in text.splitlines()
+           if "registerValidator(address,uint16,uint256,bytes,bytes,bytes32)" in ln]
+    assert len(reg) == 1, reg
+    assert "registerValidator(address,uint16,uint256)" not in text
+
+
 def test_no_hook_means_no_extra_commands():
-    plain = PP.RotationBringUp(runner=Runner(dry=True), label="smoke-x", contracts_dir="/c",
-                               manifest="/c/m.json")
+    plain = PP.RotationBringUp(runner=Runner(dry=True), label="smoke-x", contracts_dir="/c")
     plain.run()
     hooked = PP.RotationBringUp(runner=Runner(dry=True), label="smoke-x", contracts_dir="/c",
-                                manifest="/c/m.json", post_manifest=lambda b: None)
+                                post_manifest=lambda b: None)
     hooked.run()
     assert len(plain.p.log) == len(hooked.p.log)
 
@@ -510,7 +521,7 @@ def test_finalized_and_tip_are_two_DIFFERENT_readers():
     silently convert three tip-based negative assertions (the beacon growth probe and both of the
     halt case's freeze windows) into finalized-based ones, which pass for the wrong reason."""
     ctx = prod.ProdCtx(PP.RotationBringUp(runner=Runner(dry=True), label="smoke-x",
-                                          contracts_dir="/c", manifest="/c/m.json"))
+                                          contracts_dir="/c"))
     assert hasattr(ctx, "finalized_dec") and hasattr(ctx, "tip_dec")
     assert not hasattr(ctx, "head_dec"), "the ambiguous name must not come back"
     ctx.finalized_dec()

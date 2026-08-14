@@ -11,8 +11,8 @@ Two clearly separated halves, exactly as the bash:
 Plus the pure selectors/economics helpers the dispatcher leans on (_slot_reusable WITH the
 seated-guard-first fix, _bench_join_due, _spare_reserved_for_refill, select_promote_candidate,
 _warm_debt_step, the DKG-barrier decision core, _promote_nohost_is_leak). `counter_progress` is
-re-exported from `core.counters` (shared with the battery) and `sim_regen_staking_reader` now
-lives only in `chain.writes`, where its one production caller (`stack.bringup`) reads it.
+re-exported from `core.counters` (shared with the battery) and `staking_reader_json` now lives
+only in `chain.writes`, where its one production caller (`stack.bringup`) reads it.
 
 PORT-NOTE: every bash contortion here exists to dodge a bash trap the port deletes structurally —
 `if sim_warm_ready; then` instead of `sim_warm_ready && n=…` (the RUN#7/#8 &&-as-last-statement

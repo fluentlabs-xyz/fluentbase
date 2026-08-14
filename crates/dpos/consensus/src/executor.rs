@@ -523,6 +523,22 @@ enum DeriveOutcome {
     /// AND the already-resolved witness) is handed back to be PARKED + re-poked
     /// event-driven; boxed to keep the hot `Done` arm small.
     NeedAttestation(Box<Deferred>),
+    /// The gap-walk's canonicalization FCU could not land — reth answers SYNCING
+    /// while a backfill holds the engine exclusively, and the cold-start jump
+    /// starts exactly such a backfill. The parent stays invisible, so the derive
+    /// cannot proceed and MUST NOT be fatal: park and re-poke, the way reth warns
+    /// and heals rather than dying. Same payload as [`Self::NeedAttestation`]; a
+    /// distinct variant because the fresh-park side effects differ (no `h + K`
+    /// hint — nothing is missing from the archive here).
+    NeedParentVisible(Box<Deferred>),
+}
+
+/// `true` for the typed parent-visibility failure, wherever it sits in the
+/// `wrap_err` chain the walk builds around it.
+fn is_parent_not_visible(error: &eyre::Report) -> bool {
+    error
+        .chain()
+        .any(|e| e.is::<crate::application::ParentHeaderMissing>())
 }
 
 pub struct Config<BE, D, XC, MarshalMailbox> {
@@ -1024,7 +1040,7 @@ where
                             // bug 10: a hole in the marshal's OWN floor..=last_finalized
                             // inventory cannot self-heal (`get_block` is local-only), so a
                             // skip merely relocates + mislabels the fatal — the later
-                            // gap-walk (`derive_missing_prefix`) re-hits the same height and
+                            // gap-walk (`derive_finalized_with_gap_fill`) re-hits the same height and
                             // fails naming the WRONG height. Fail loud AT the true site.
                             error_span!("backfill_on_start", %height).in_scope(|| error!(
                                 "marshal has no block at height {height} inside its own \
@@ -1540,29 +1556,42 @@ where
         Ok(())
     }
 
-    /// PARK a `NeedAttestation` outcome in the deferred slot (a `Done` outcome is
-    /// a no-op). `fresh` is `true` for a block first derived off the pipeline —
-    /// which hints the missing `h + K` body, sets the observability gauge, and
-    /// `warn!`s once — and `false` for a re-poke re-stash (the block is already
-    /// parked; do not re-hint/re-warn). There is NO deadline: parking is the
-    /// terminal behaviour, re-poked event-driven, never a shutdown (§8.11).
+    /// PARK a parked-outcome in the deferred slot (a `Done` outcome is a no-op).
+    /// `fresh` is `true` for a block first derived off the pipeline — which sets
+    /// the observability gauge and, for guard #2, hints the missing `h + K` body
+    /// and `warn!`s once — and `false` for a re-poke re-stash (the block is
+    /// already parked; do not re-hint/re-warn). There is NO deadline: parking is
+    /// the terminal behaviour, re-poked event-driven, never a shutdown (§8.11).
     async fn defer_if_needed(&mut self, outcome: DeriveOutcome, fresh: bool) {
-        if let DeriveOutcome::NeedAttestation(d) = outcome {
-            if fresh {
-                let height = d.order.height;
-                warn!(
-                    height,
-                    "guard #2: committee-attested body at h+K not backfilled yet; \
-                    PARKING derive + hinting peers (event-driven re-poke, no give-up timer)"
-                );
-                self.deferred_height.set(height as i64);
-                if let Some(targets) = (self.peers_for_finalization)() {
-                    self.marshal
-                        .hint_finalization(Height::new(height + crate::order_block::K), targets)
-                        .await;
+        match outcome {
+            DeriveOutcome::Done => {}
+            DeriveOutcome::NeedAttestation(d) => {
+                if fresh {
+                    let height = d.order.height;
+                    warn!(
+                        height,
+                        "guard #2: committee-attested body at h+K not backfilled yet; \
+                        PARKING derive + hinting peers (event-driven re-poke, no give-up timer)"
+                    );
+                    self.deferred_height.set(height as i64);
+                    if let Some(targets) = (self.peers_for_finalization)() {
+                        self.marshal
+                            .hint_finalization(Height::new(height + crate::order_block::K), targets)
+                            .await;
+                    }
                 }
+                self.deferred = Some(*d);
             }
-            self.deferred = Some(*d);
+            DeriveOutcome::NeedParentVisible(d) => {
+                if fresh {
+                    self.deferred_height.set(d.order.height as i64);
+                }
+                // No `h + K` hint: the archive is not missing anything — the EL
+                // simply has not canonicalized what we already imported. The
+                // `warn!` was emitted at the park site, which holds the parent
+                // height this is waiting on.
+                self.deferred = Some(*d);
+            }
         }
     }
 
@@ -1582,7 +1611,7 @@ where
             return Ok(());
         };
         match self.try_derive(d.cause, d.order, d.ack, d.seed).await? {
-            outcome @ DeriveOutcome::NeedAttestation(_) => {
+            outcome @ (DeriveOutcome::NeedAttestation(_) | DeriveOutcome::NeedParentVisible(_)) => {
                 self.defer_if_needed(outcome, false).await;
             }
             DeriveOutcome::Done => {
@@ -2558,7 +2587,7 @@ where
         // pre-state) and would splice a forked block onto the finalized chain if
         // reused — the same fork-safety family as the spec-seed-blind divergence.
         // Absence of the parent (`None`) is not a match, so a missing parent takes
-        // the re-derive path (which walks `derive_missing_prefix`).
+        // the re-derive path (which walks `derive_finalized_with_gap_fill`).
         let correctly_speculated = spec_round == Some(finalization_round)
             && spec_parent == self.executed.spec_executed_hash(parent_height)
             && self.executed.spec_executed_hash(height).is_some();
@@ -2580,30 +2609,52 @@ where
                 .spec_executed_hash(height)
                 .expect("checked is_some above")
         } else {
-            let parent_hash = match self.executed.spec_executed_hash(parent_height) {
-                Some(hash) => hash,
-                // The marshal can hold finalized artifacts the EL hasn't derived
-                // yet (restart with an unflushed reth tail; repair landing ahead
-                // of dispatch). Derivation is strictly sequential, so walk the
-                // missing prefix out of the marshal and derive it first; a
-                // genuinely unfillable gap stays fatal (visible, not wedged).
-                // `order` is the walk's final witness source (it is the child of
-                // the walk's top element).
-                None => self.derive_missing_prefix(parent_height, &order).await?,
-            };
-
-            // EXEC-SATURATION observability (see spec_execute for scope rationale).
-            let el_apply_started = std::time::Instant::now();
-            let derived = self
-                .deriver
-                .derive_and_execute(order, parent_hash, finalization_seed)
+            // ONE range, ONE Ok/Err: the missing prefix (the marshal can hold
+            // finalized artifacts the EL hasn't derived yet — restart with an
+            // unflushed reth tail, repair landing ahead of dispatch) and the
+            // delivered height derive through the same call, so there is no
+            // second site that must separately remember to catch an invisible
+            // parent. Two structurally identical sites with only one of them
+            // protected is how this defect class survived.
+            let gap = self.executed.spec_executed_hash(parent_height).is_none();
+            // Cloned ONLY when a gap exists (the rare path) — the park needs an
+            // owned `order` + `seed`, and the derive consumes both. `Seed` is
+            // Clone-not-Copy, which is why the retry path above already clones it
+            // for the same reason.
+            let parked = gap.then(|| (order.clone(), finalization_seed.clone()));
+            match self
+                .derive_finalized_with_gap_fill(order, finalization_seed)
                 .await
-                .wrap_err("derive_and_execute failed")?;
-            let derived_hash = derived.evm_hash();
-            self.submit_finalized_payload(derived).await?;
-            metrics::histogram!("dpos_derive_el_apply_duration_seconds", "path" => "finalized")
-                .record(el_apply_started.elapsed().as_secs_f64());
-            derived_hash
+            {
+                Ok(hash) => hash,
+                Err(error) if is_parent_not_visible(&error) => {
+                    // No-gap path: `block_hash(h)` resolving does NOT imply the
+                    // header read will (reth canonicalizes eagerly on the
+                    // engine-tree thread, so a block is by-number resolvable
+                    // milliseconds before provider reads see its header — see
+                    // `ParentHeaderMissing`). That transient has no park payload
+                    // and stays the recoverable `Err` it has always been; turning
+                    // it into a panic here would be a regression.
+                    let Some((order, seed)) = parked else {
+                        return Err(error);
+                    };
+                    warn!(
+                        height,
+                        parent_height,
+                        error = %format_args!("{error:#}"),
+                        "parent still invisible after canonicalization; PARKING \
+                         (event-driven re-poke, no give-up timer)"
+                    );
+                    metrics::counter!("dpos_executor_parent_visibility_park_total").increment(1);
+                    return Ok(DeriveOutcome::NeedParentVisible(Box::new(Deferred {
+                        cause,
+                        order,
+                        ack: self.take_inflight_ack(),
+                        seed,
+                    })));
+                }
+                Err(error) => return Err(error),
+            }
         };
         self.record_el_lag();
 
@@ -2906,21 +2957,34 @@ where
             .expect("inflight ack set at try_derive entry")
     }
 
-    /// Derive the missing `..=target` prefix from the marshal's archive:
-    /// probe backward to the highest executed ancestor, then fetch + derive +
-    /// import forward. BLOCKS-ONLY (§4): the witness for gap height `h` is block
-    /// `h+1`'s `parent_seed` — the next element of the walk, and for the top
-    /// element (`h == target`) the `delivered` block the caller is holding
-    /// (`delivered.height == target + 1`). No certs, no extra fetches, no hints.
-    /// Returns the derived hash AT `target`. A missing BLOCK stays fatal (the
-    /// pre-existing "hole below the floor cannot self-heal" class); the re-walk
-    /// on a retry is idempotent — already-derived prefix heights advance
-    /// `first_missing`.
-    async fn derive_missing_prefix(
+    /// Derive `[first_missing ..= delivered.height]` — the missing prefix AND the
+    /// delivered block — as ONE fallible range, returning the derived hash at the
+    /// delivered height. When nothing is missing the range is a single element and
+    /// this is the ordinary finalized derive; `first_missing` is found by probing
+    /// backward to the highest executed ancestor.
+    ///
+    /// One range with ONE `Ok`/`Err` exit is the point: the delivered height is
+    /// structurally identical to a prefix element (it derives against a parent the
+    /// walk just imported), so a caller catching an invisible parent must not have
+    /// to remember a second site. BLOCKS-ONLY (§4): the witness for height `h` is
+    /// block `h+1`'s `parent_seed` — the next element of the walk, and for the
+    /// last element `delivered_seed`. No certs, no extra fetches, no hints.
+    ///
+    /// A missing BLOCK stays fatal (the pre-existing "hole below the floor cannot
+    /// self-heal" class); a re-walk on a retry is idempotent — already-derived
+    /// prefix heights advance `first_missing`.
+    ///
+    /// The landing re-check, the canonicalization FCU, the gap telemetry and the
+    /// result cross-check apply to the PREFIX elements only. The delivered element
+    /// is the caller's: `try_derive` re-checks its landing in the postcondition
+    /// loop, sends its FCU and runs its own cross-check, so repeating them here
+    /// would double every steady-state block's EL round-trips.
+    async fn derive_finalized_with_gap_fill(
         &mut self,
-        target: u64,
-        delivered: &OrderBlock,
+        delivered: OrderBlock,
+        mut delivered_seed: Option<crate::beacon::seed::Seed>,
     ) -> eyre::Result<B256> {
+        let target = delivered.height;
         let mut first_missing = target;
         let mut parent_hash = loop {
             if first_missing == 0 {
@@ -2933,25 +2997,37 @@ where
             }
             first_missing -= 1;
         };
-        info!(
-            first_missing,
-            target, "deriving missing prefix from marshal before the delivered block"
-        );
-        let mut order = self
-            .marshal
-            .fetch_block_by_height(Height::new(first_missing))
-            .await
-            .ok_or_else(|| {
-                eyre::eyre!(
-                    "derive gap: marshal has no ordering artifact at height {first_missing}"
-                )
-            })?;
+        // Held until the walk reaches it: `delivered` is both the range's last
+        // element and the witness source for `target - 1`, and moving rather than
+        // cloning keeps its tx list off the steady-state hot path.
+        let mut delivered = Some(delivered);
+        let mut order = match first_missing == target {
+            true => delivered.take().expect("just constructed as Some"),
+            false => {
+                info!(
+                    first_missing,
+                    target, "deriving missing prefix from marshal before the delivered block"
+                );
+                self.marshal
+                    .fetch_block_by_height(Height::new(first_missing))
+                    .await
+                    .ok_or_else(|| {
+                        eyre::eyre!(
+                            "derive gap: marshal has no ordering artifact at height {first_missing}"
+                        )
+                    })?
+            }
+        };
         for h in first_missing..=target {
             // The WITNESS for `h` = block `h+1`'s `parent_seed`: the next walk
             // element (fetched once — it becomes the next iteration's `order`),
-            // or the caller-held `delivered` block at the top of the walk.
+            // the caller-held `delivered` block just below the top, or
+            // `delivered_seed` at the top itself.
             let (seed, next_order) = if h == target {
-                (delivered.parent_seed.clone(), None)
+                (delivered_seed.take(), None)
+            } else if h + 1 == target {
+                let child = delivered.take().expect("taken only at h + 1 == target");
+                (child.parent_seed.clone(), Some(child))
             } else {
                 let child = self
                     .marshal
@@ -2975,12 +3051,25 @@ where
             // Derive-seed telemetry: gap-walk witness round, captured before
             // `seed` moves into the deriver.
             let gap_seed_round = seed.as_ref().map(|s| s.target_round);
+            // EXEC-SATURATION observability (see spec_execute for scope rationale);
+            // recorded for the DELIVERED element only, the scope it had before that
+            // derive moved inside this walk.
+            let el_apply_started = std::time::Instant::now();
             let derived = self
                 .deriver
                 .derive_and_execute(order, parent_hash, seed)
                 .await
-                .wrap_err_with(|| format!("gap derivation failed at height {h}"))?;
+                .wrap_err_with(|| match h == target {
+                    true => "derive_and_execute failed".to_owned(),
+                    false => format!("gap derivation failed at height {h}"),
+                })?;
             parent_hash = derived.evm_hash();
+            let Some(next) = next_order else {
+                self.submit_finalized_payload(derived).await?;
+                metrics::histogram!("dpos_derive_el_apply_duration_seconds", "path" => "finalized")
+                    .record(el_apply_started.elapsed().as_secs_f64());
+                break;
+            };
             // DERIVE-SEED TELEMETRY (fork-root byte-confirm): label the finalized
             // GAP-WALK derive so a height derived via prefix catch-up (vs top-level
             // `try_derive`) is attributable; `fin_proposal_round == gap_seed_round`
@@ -3007,6 +3096,33 @@ where
                      idempotent prefix"
                 ));
             }
+            // The walk hands `parent_hash` to the NEXT derive, which reads the
+            // parent BY HASH — and an `InsertExecuted` import is only in reth's
+            // tree-private state until an FCU canonicalizes it. Same literal-state
+            // shape as `reseed_forward`: head = safe = the block just landed (BFT
+            // ordering-final), finalized left on the result tier so the two-tier
+            // contract holds. Built literally rather than through `update_head`,
+            // which silently no-ops when `height <= finalized_height` — reachable
+            // right after a re-jump, exactly when this walk runs. The response is
+            // NOT inspected: VALID and "parent is visible" diverge in both
+            // directions, so the next derive is the honest judge.
+            if let Err(error) = self
+                .beacon_engine
+                .fork_choice_updated(ForkchoiceState {
+                    head_block_hash: parent_hash,
+                    safe_block_hash: parent_hash,
+                    finalized_block_hash: self.last_canonicalized.forkchoice.finalized_block_hash,
+                })
+                .pace(&self.context, self.fcu_pace)
+                .await
+            {
+                warn!(
+                    height = h,
+                    error = %format_args!("{error:#}"),
+                    "gap-walk canonicalization FCU failed; the next derive will \
+                     report the parent as missing and the walk will park"
+                );
+            }
             // SAME trustless result cross-check as `try_derive` (keyed on the
             // CHAIN activation block, NOT the cold-start anchor): the attested
             // result commits the locally-derived hash at `h − K`. A
@@ -3030,12 +3146,8 @@ where
                 ));
             }
             // Hand the already-fetched child to the next iteration (each walk
-            // element is fetched exactly once). `None` only at `h == target`,
-            // where the range is exhausted anyway.
-            match next_order {
-                Some(next) => order = next,
-                None => break,
-            }
+            // element is fetched exactly once).
+            order = next;
         }
         Ok(parent_hash)
     }
@@ -3141,6 +3253,7 @@ mod tests {
             beacon_outcome: None,
             dkg_logs: Vec::new(),
             parent_seed: None,
+            equivocation: None,
         }
     }
 
@@ -3359,10 +3472,11 @@ mod tests {
             // by hash is `ParentHeaderMissing`. Default frontier = MAX ⇒ always
             // visible (no-op for tests that don't exercise the lag).
             if !self.chain.vis.visible(parent_evm_hash) {
-                return Err(eyre::eyre!(
-                    "parent header {parent_evm_hash} not yet visible by hash \
-                     (ParentHeaderMissing)"
-                ));
+                // The TYPED error the real deriver returns (`node/src/derive.rs`),
+                // not a look-alike string: `is_parent_not_visible` keys on the type
+                // through the walk's `wrap_err` chain, so an untyped model would
+                // make the park untestable.
+                return Err(crate::application::ParentHeaderMissing(parent_evm_hash).into());
             }
             let sealed = sealed_at(parent_evm_hash, order.height, discriminator);
             // Pre-fix reth model (`sibling_drops` armed): a SAME-HEIGHT SIBLING
@@ -3400,10 +3514,10 @@ mod tests {
                 .lock()
                 .unwrap()
                 .insert(order.height, sealed.hash());
-            // A derived (new_payload'd + FCU'd) block is canonical ⇒ visible by
-            // hash, so it can serve as the next block's by-hash parent.
+            // Registered (by-number present) but NOT canonicalized: only an FCU
+            // makes a block by-hash visible. Modelling them as one event is what
+            // hid the gap-walk parent-visibility defect from every test.
             self.chain.vis.register(order.height, sealed.hash());
-            self.chain.vis.canonicalize_up_to(sealed.hash());
             Ok(sealed)
         }
     }
@@ -3455,14 +3569,19 @@ mod tests {
                 }
             }
             self.fcu_calls.lock().unwrap().push(state);
-            // Model reth: the FCU makes the segment up to `head` visible by hash.
-            self.vis.canonicalize_up_to(state.head_block_hash);
             let status = self
                 .fcu_status
                 .lock()
                 .unwrap()
                 .clone()
                 .unwrap_or(PayloadStatusEnum::Valid);
+            // Only a VALID forkchoice canonicalizes. SYNCING means a backfill
+            // holds the engine and reth did NOT make the segment canonical — the
+            // cause the parent-visibility park exists for, so a model that raised
+            // the frontier here could not express it at all.
+            if status == PayloadStatusEnum::Valid {
+                self.vis.canonicalize_up_to(state.head_block_hash);
+            }
             Ok(ForkchoiceUpdated::from_status(status))
         }
 
@@ -3494,8 +3613,9 @@ mod tests {
                 if status == PayloadStatusEnum::Valid {
                     let (height, hash) = (data.number(), data.hash());
                     chain.canonical.lock().unwrap().insert(height, hash);
+                    // Registered only: an import lands the block in reth's
+                    // tree-private state; the FCU is what canonicalizes it.
                     chain.vis.register(height, hash);
-                    chain.vis.canonicalize_up_to(hash);
                 }
             }
             self.new_payload_calls.lock().unwrap().push(data);
@@ -4989,7 +5109,245 @@ mod tests {
         });
     }
 
-    // A GAP block (filled by `derive_missing_prefix`, not the top-level delivery)
+    // PARENT-VISIBILITY, gap-walk: the walk imports each prefix block and hands
+    // its hash to the NEXT derive as a by-hash parent. Without a canonicalization
+    // FCU per landed block the walk's SECOND element derives against a parent that
+    // only exists in reth's tree-private state — pre-fix this fails with
+    // ParentHeaderMissing at height 98.
+    #[test]
+    fn gap_walk_canonicalizes_each_landed_block_for_the_next_by_hash_parent() {
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            const ANCHOR: u64 = 96;
+            let fx = Fixture::new(ANCHOR);
+            // Arm the by-hash lag: everything above the anchor is present by
+            // NUMBER but invisible by HASH until an FCU raises the frontier.
+            // Without this `visible()` short-circuits to true and the test proves
+            // nothing.
+            fx.chain.vis.set_frontier(ANCHOR);
+            // A TWO-block prefix exercises parent-to-parent chaining WITHIN the
+            // walk: 98 derives on a parent the walk itself imported one iteration
+            // earlier. The one-block shape — the one observed live — is covered
+            // separately, where the walk's only element is also its last.
+            {
+                let mut canned = fx.marshal.canned.lock().unwrap();
+                canned.insert(97, sample_order(Digest(B256::ZERO), 97, B256::ZERO));
+                canned.insert(98, sample_order(Digest(B256::ZERO), 98, B256::ZERO));
+            }
+            let (mut actor, _mailbox) = fx.build(ctx, ANCHOR, ANCHOR);
+
+            // `result_target(99, 96) == Height(96)`, so the delivered block commits
+            // the anchor hash — a ZERO result would trip the top-level divergence
+            // halt before the walk's outcome is observable.
+            let (ack, _waiter) = Exact::handle();
+            let outcome = actor
+                .try_derive(
+                    Span::current(),
+                    sample_order(Digest(B256::ZERO), 99, fx.anchor_hash),
+                    ack,
+                    None,
+                )
+                .await;
+            match outcome {
+                Ok(DeriveOutcome::Done) => {}
+                Ok(_) => panic!("the gap-walk parked instead of completing"),
+                Err(error) => panic!(
+                    "gap-walk must complete once each landed block is canonicalized: {error:#}"
+                ),
+            }
+
+            // The mechanism, not just the outcome. Asserted on the RECORDED SET:
+            // `FakeBeacon` stores `fcu_calls` with no derive interleaving, so
+            // "issued before the next derive" is not directly observable — and does
+            // not need to be, since the outcome assertion above already fails
+            // without the FCU.
+            let heads: Vec<B256> = fx
+                .beacon
+                .fcu_calls
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|s| s.head_block_hash)
+                .collect();
+            for h in [97u64, 98] {
+                let hash = fx.chain.canonical.lock().unwrap()[&h];
+                assert!(
+                    heads.contains(&hash),
+                    "no canonicalization FCU named height {h}'s hash as head"
+                );
+            }
+        });
+    }
+
+    /// Drive a ONE-block gap: 97 missing, 98 delivered, by-hash frontier at the
+    /// anchor. This is the shape observed live (`first_missing == target`), where
+    /// the walk's only element is also its last — so the walk returns `Ok` and the
+    /// DELIVERED derive is what depends on the canonicalization, which is exactly
+    /// what an entry-only catch misses. Both 97 and 98 are pre-activation
+    /// (`< anchor + K`), so a ZERO result is the correct commitment at each.
+    ///
+    /// The CALLER decides whether the FCU can land: arm nothing and the walk heals;
+    /// arm a transport blip or a SYNCING backfill and it parks. Either way
+    /// `try_derive` must not fail.
+    async fn derive_across_a_one_block_gap(
+        ctx: deterministic::Context,
+        fx: &Fixture,
+    ) -> (
+        Actor<deterministic::Context, FakeBeacon, FakeDeriver, FakeChain, FakeMarshal>,
+        DeriveOutcome,
+        commonware_utils::acknowledgement::ExactWaiter,
+    ) {
+        fx.chain.vis.set_frontier(96);
+        fx.marshal
+            .canned
+            .lock()
+            .unwrap()
+            .insert(97, sample_order(Digest(B256::ZERO), 97, B256::ZERO));
+        let (mut actor, _mailbox) = fx.build(ctx, 96, 96);
+        let (ack, waiter) = Exact::handle();
+        let outcome = actor
+            .try_derive(
+                Span::current(),
+                sample_order(Digest(B256::ZERO), 98, B256::ZERO),
+                ack,
+                None,
+            )
+            .await
+            .expect("a one-block gap completes or parks — it must never fail");
+        (actor, outcome, waiter)
+    }
+
+    // THE SHAPE THAT CRASHED LIVE, healed: a one-block gap where the walk's only
+    // element is also its last, so the block the walk imports is handed straight to
+    // the DELIVERED derive as a by-hash parent. The two park tests cover this same
+    // shape with the FCU defeated — without this one it would be asserted to fail
+    // safe and never asserted to make progress.
+    #[test]
+    fn a_one_block_gap_heals_when_the_canonicalization_fcu_lands() {
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            let fx = Fixture::new(96);
+            // Nothing armed: the FCU reaches reth and canonicalizes what it names.
+            let (_actor, outcome, _waiter) = derive_across_a_one_block_gap(ctx, &fx).await;
+
+            assert!(
+                matches!(outcome, DeriveOutcome::Done),
+                "the walk must COMPLETE once its canonicalization FCU lands"
+            );
+            let landed_97 = fx
+                .chain
+                .spec_executed_hash(97)
+                .expect("the walk's only prefix element landed");
+            assert!(
+                fx.chain.vis.visible(landed_97),
+                "the walk's FCU canonicalized 97 — that is what lets 98 read it by hash"
+            );
+            let derived_on_97 = sealed_at(
+                landed_97,
+                98,
+                sample_order(Digest(B256::ZERO), 98, B256::ZERO).digest().0,
+            )
+            .hash();
+            assert_eq!(
+                fx.chain.spec_executed_hash(98),
+                Some(derived_on_97),
+                "98 derived ON the block the walk just canonicalized"
+            );
+        });
+    }
+
+    #[test]
+    fn one_block_gap_with_an_unlandable_fcu_parks_instead_of_dying() {
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            let fx = Fixture::new(96);
+            // The FCU never reaches reth, so 97 lands but is never canonicalized.
+            *fx.beacon.fcu_transport_errs.lock().unwrap() = 1;
+            let (_actor, outcome, _waiter) = derive_across_a_one_block_gap(ctx, &fx).await;
+
+            assert_parked_at_98(outcome);
+            assert!(
+                !fx.safety_halt.is_engaged(),
+                "an invisible parent is a liveness stall, never a fork-safety halt"
+            );
+            assert!(
+                fx.chain.spec_executed_hash(98).is_none(),
+                "the delivered height must NOT be recorded while its parent is invisible"
+            );
+        });
+    }
+
+    // The cause the park primarily exists for: `cold_start_jump` arms a devp2p
+    // backfill, reth answers SYNCING while it holds the engine, and a SYNCING
+    // forkchoice canonicalizes NOTHING — which is why the fix cannot simply await
+    // VALID, and why the walk must survive an FCU that does not land.
+    #[test]
+    fn a_syncing_backfill_that_canonicalizes_nothing_parks_instead_of_dying() {
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            let fx = Fixture::new(96);
+            *fx.beacon.fcu_status.lock().unwrap() = Some(PayloadStatusEnum::Syncing);
+            let (_actor, outcome, _waiter) = derive_across_a_one_block_gap(ctx, &fx).await;
+
+            assert_parked_at_98(outcome);
+            assert!(
+                !fx.beacon.fcu_calls.lock().unwrap().is_empty(),
+                "the walk must still SEND the canonicalization FCU under SYNCING"
+            );
+            assert!(
+                !fx.safety_halt.is_engaged(),
+                "a backfill holding the engine is a liveness stall, not a fork"
+            );
+        });
+    }
+
+    fn assert_parked_at_98(outcome: DeriveOutcome) {
+        match outcome {
+            DeriveOutcome::NeedParentVisible(d) => assert_eq!(
+                d.order.height, 98,
+                "the DELIVERED height is parked — the prefix already landed"
+            ),
+            DeriveOutcome::NeedAttestation(_) => panic!("parked on the wrong cause"),
+            DeriveOutcome::Done => panic!("the derive cannot be Done: 97 is still invisible"),
+        }
+    }
+
+    #[test]
+    fn a_repoke_completes_the_block_parked_on_parent_visibility() {
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            let fx = Fixture::new(96);
+            *fx.beacon.fcu_status.lock().unwrap() = Some(PayloadStatusEnum::Syncing);
+            let (mut actor, outcome, _waiter) = derive_across_a_one_block_gap(ctx, &fx).await;
+            actor.defer_if_needed(outcome, true).await;
+            assert_eq!(
+                actor.deferred_height.get(),
+                98,
+                "the park is observable while it lasts"
+            );
+
+            // The backfill goes idle: reth answers VALID again, and 97 — imported
+            // but never canonicalized — is correspondingly absent from the
+            // by-number canonical index the re-walk probes (`provider.block_hash`
+            // in production). So the re-poke RE-WALKS, and it is the re-issued FCU
+            // that finally canonicalizes 97.
+            *fx.beacon.fcu_status.lock().unwrap() = None;
+            fx.chain.canonical.lock().unwrap().remove(&97);
+            actor
+                .repoke_deferred()
+                .await
+                .expect("a re-poke past the stall must not be fatal");
+
+            assert!(actor.deferred.is_none(), "the parked block completed");
+            assert_eq!(actor.deferred_height.get(), 0, "the park gauge cleared");
+            assert!(
+                fx.chain.spec_executed_hash(98).is_some(),
+                "the re-poke derived the delivered height on the now-visible parent"
+            );
+        });
+    }
+
+    // A GAP block (filled by `derive_finalized_with_gap_fill`, not the top-level delivery)
     // carries its OWN attested `result`; a forged value on a gap-range block must
     // fail loud just like the top-level cross-check — otherwise a
     // committee-attested wrong result on a gap block is imported unchecked (the
@@ -4997,7 +5355,7 @@ mod tests {
     // height) commits a forged hash; the gap-walk derives it, the cross-check
     // engages the SafetyHalt, and the executor parks retaining the ack. This
     // pins the `?`-propagated halt path (the engage fires INSIDE
-    // `derive_missing_prefix`, below the `inflight_ack` slot).
+    // `derive_finalized_with_gap_fill`, below the `inflight_ack` slot).
     #[test]
     fn gap_block_result_divergence_engages_safety_halt_and_parks() {
         let runtime = deterministic::Runner::default();

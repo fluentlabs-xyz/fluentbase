@@ -527,6 +527,7 @@ mod tests {
             beacon_outcome: beacon_outcome.map(Into::into),
             dkg_logs: Vec::new(),
             parent_seed: None,
+            equivocation: None,
         }
     }
 

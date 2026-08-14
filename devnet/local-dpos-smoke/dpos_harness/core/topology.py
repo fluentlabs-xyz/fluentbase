@@ -43,15 +43,23 @@ is the hazard: ADDING a service to a map is a topology change, not a note. Addin
 host port. Both are pinned by tests (`test_compose_parity.py`'s port oracle,
 `test_rpc.py::test_*metrics_transport*`) precisely so the widening cannot be silent.
 
-═══ PREDEPLOYS ═══════════════════════════════════════════════════════════════════════
+═══ GENESIS ADDRESSES ════════════════════════════════════════════════════════════════
 
-The `0x…52xx` addresses below are the genesis predeploy SLOTS. In this configuration
-they are CODELESS — `genesis-bootstrap bare` installs an empty predeploy set and the
-staking cluster is deployed at runtime by `DeployStaking`, so the live addresses are the
-manifest's (`staking_rt` / `chain_config_rt` / `liveness_rt`), injected at the ctx
-refresh. Naming them here must NOT make them a default anywhere: a read that falls back
-to a codeless address returns empty and judges a live chain through a contract that does
-not exist. They are here to be recognised, not to be substituted.
+The thirteen Solidity predeploys are gone. One rWasm staking module holds what
+`Staking` + `ChainConfig` + `LivenessSlashing` used to hold separately, and it lives at a
+FIXED address on every stand — `GENESIS_STAKING` (`crates/types/src/genesis.rs`), with the
+Governor at `GENESIS_GOVERNANCE`. Nothing is predicted from a create-nonce and nothing is
+read out of a deploy manifest any more: `genesis-bootstrap full` installs the module at
+that address at block 0, and `genesis-bootstrap bare` leaves it empty for the
+production-path stand to deliver there through the runtime-upgrade precompile.
+
+The four retired constants (`STAKING_ADDR` / `CHAIN_CONFIG_ADDR` / `STAKING_POOL_ADDR` /
+`LIVENESS_SLASHING_ADDR`) were DELETED rather than repointed, deliberately: every
+surviving reference then had to be read by somebody instead of silently acquiring a new
+meaning. The two names below are facts about where the contracts are, not defaults — the
+`core/nodes.py` read helpers now REFUSE an unset address rather than falling back to one,
+because a read against the wrong address is empty and a governance write against a
+codeless one succeeds and does nothing.
 """
 
 from __future__ import annotations
@@ -250,11 +258,17 @@ def enode(pubkey: str, ip: str, port: int = DEVP2P_PORT) -> str:
 # ── chain identity ────────────────────────────────────────────────────────────────
 CHAIN_ID = 2026
 
-# Genesis predeploy SLOTS — codeless in this configuration. Read the module header before
-# using any of these; they are never a fallback for a runtime-deployed address.
-STAKING_ADDR = "0x0000000000000000000000000000000000005201"
-CHAIN_CONFIG_ADDR = "0x0000000000000000000000000000000000005202"
-STAKING_POOL_ADDR = "0x0000000000000000000000000000000000005203"
-# LivenessSlashing is pinned to the fixed EXECUTOR predeploy (PRECOMPILE_LIVENESS_SLASHING),
-# NOT the 0x…520N scheme — see genesis-bootstrap bootstrap.rs LIVENESS_SLASHING_ADDR.
-LIVENESS_SLASHING_ADDR = "0x0000000000000000000000000000000000520020"
+# ── genesis contract addresses ────────────────────────────────────────────────────
+# Mirrors of `crates/types/src/genesis.rs` (`GENESIS_STAKING` / `GENESIS_GOVERNANCE`). The
+# staking value MUST agree with what `genesis-bootstrap` writes into
+# `/runtime/staking-reader.json`; the governance value is COMPILED INTO the staking module
+# as the sole caller its privileged setters accept, so the Governor sits there or its
+# proposals revert. Read the module header before using either.
+GENESIS_STAKING = "0x0000000000000000000000000000000000520011"
+GENESIS_GOVERNANCE = "0x0000000000000000000000000000000000520012"
+
+#: The BLEND token (`MockBlendToken`), the one surviving Solidity predeploy the harness
+#: transacts against. Mirrors `genesis-bootstrap`'s `STAKING_TOKEN_ADDR`. Present ONLY on a
+#: `full` stand — the production-path stand still `forge create`s its own, and reads the
+#: address back off that deploy rather than from here.
+GENESIS_STAKING_TOKEN = "0x0000000000000000000000000000000000005207"

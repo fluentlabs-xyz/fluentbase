@@ -4,7 +4,11 @@
 //! The only variable is the 32-byte randomness — the prior view's threshold seed
 //! σ (`CombinedCertificate::seed()`, k-lagged ⇒ unbiasable) when present, else a
 //! deterministic per-epoch fallback (view-1-of-epoch / nullify-justified views,
-//! where the cert carries no seed). Block share ∝ on-chain stake in expectation
+//! where the cert carries no seed). The fallback's base is not derivable from
+//! constants: it is [`witness_fallback_seed`] of the previous epoch's terminal
+//! block's `parent_seed`, supplied by the epoch manager that reads that block;
+//! [`constant_fallback_seed`] is the last resort where no witness can exist.
+//! Block share ∝ on-chain stake in expectation
 //! (D1); weights are the epoch's FROZEN snapshot stake (D3), never live balance —
 //! frozen ON-CHAIN since 2026-07-31 (`leaderStakes[epoch]`, stamped at
 //! `commitEpochCommittee` from the selection epoch), so the vector no longer
@@ -15,6 +19,7 @@
 //! This is a consensus-plane decision only: the STF / zk guest is NOT touched and
 //! MUST NOT mirror it — its sole σ consumer is `prev_randao`.
 
+use crate::beacon::seed::Seed;
 use alloy_primitives::U256;
 use commonware_codec::Encode as _;
 use commonware_consensus::{
@@ -33,6 +38,20 @@ use std::collections::BTreeMap;
 /// `prev_randao = keccak256(σ)` (`beacon/seed.rs`). The exact bytes are
 /// arbitrary; only the disjointness matters (D6).
 const LEADER_DOMAIN: &[u8] = b"fluent/leader";
+
+/// Separate tag for the seedless arm. The base fed to that arm is a σ that
+/// already drove a [`LEADER_DOMAIN`] draw inside the previous epoch, so the two
+/// arms must not be able to hash the same preimage — otherwise the first block
+/// of E+1 could be led by whoever led the last block of E.
+///
+/// The two tags must stay PREFIX-FREE (neither a prefix of the other) for that
+/// to hold, because the tag is the only self-delimiting part of the preimage:
+/// with a tag like `b"fluent/leader/fallback"` the arms are separated only by
+/// `σ.encode()` being 48 bytes against this arm's 32-byte base plus 8-byte view,
+/// i.e. by an encoding length rather than by the domains. Any replacement must
+/// keep the prefix-free property; the exact bytes are otherwise arbitrary and
+/// are pinned by `the_seedless_arm_is_pinned_to_its_own_domain_tag`.
+const LEADER_FALLBACK_DOMAIN: &[u8] = b"fluent/seedless-leader";
 
 /// Elector config (built into [`WeightedVrfElector`] by simplex at
 /// `voter/state.rs` from the commonware-sorted participant set). Carries the
@@ -53,8 +72,10 @@ pub struct WeightedVrf {
 }
 
 impl WeightedVrf {
-    /// Build from the epoch's frozen committee snapshot.
-    pub fn from_snapshot(snap: &ValidatorSetSnapshot) -> Self {
+    /// Build from the epoch's frozen committee snapshot and the epoch's
+    /// seedless-arm base. The base is the previous epoch's terminal-block
+    /// witness seed when one exists, else [`constant_fallback_seed`].
+    pub fn new(snap: &ValidatorSetSnapshot, fallback_seed: [u8; 32]) -> Self {
         let weights = snap
             .validators
             .iter()
@@ -62,18 +83,19 @@ impl WeightedVrf {
             .collect();
         Self {
             weights,
-            fallback_seed: fallback_seed(snap),
+            fallback_seed,
         }
     }
 }
 
-/// `sha256(epoch_be ‖ sorted peer pubkeys)` — deterministic, network-identical,
-/// unpredictable until the committee is committed on-chain. (Folded in from the
-/// deleted `elector_seed::epoch_leader_seed`; now the fallback entropy, no longer
-/// a RoundRobin shuffle seed.) Sorting the peers makes the seed invariant under
-/// any snapshot iteration order, so honest nodes that observe the epoch's keys in
-/// any order derive the identical fallback.
-fn fallback_seed(snap: &ValidatorSetSnapshot) -> [u8; 32] {
+/// Last-resort base for the seedless arm: `sha256(epoch_be ‖ sorted peer
+/// pubkeys)`, derivable from constants and therefore predictable an epoch ahead.
+/// Reached only where no witness seed can exist — epoch 0, a non-computable
+/// terminal height, and pre-bootstrap links whose terminal block legitimately
+/// carries no witness. Sorting the peers makes it invariant under any snapshot
+/// iteration order, so honest nodes that observe the epoch's keys in any order
+/// derive the identical base.
+pub(crate) fn constant_fallback_seed(snap: &ValidatorSetSnapshot) -> [u8; 32] {
     let mut h = Sha256::new();
     h.update(&snap.epoch.to_be_bytes());
     let mut peers: Vec<&[u8]> = snap
@@ -85,6 +107,17 @@ fn fallback_seed(snap: &ValidatorSetSnapshot) -> [u8; 32] {
     for p in peers {
         h.update(p);
     }
+    <[u8; 32]>::try_from(h.finalize().as_ref()).expect("sha256 is 32 bytes")
+}
+
+/// Compress a terminal-block witness seed into the seedless arm's base.
+/// Deliberately NOT [`prev_randao_from_seed`]: that value is a header field, and
+/// D6 requires the leader draw to stay disjoint from it.
+///
+/// [`prev_randao_from_seed`]: crate::beacon::seed::prev_randao_from_seed
+pub(crate) fn witness_fallback_seed(seed: &Seed) -> [u8; 32] {
+    let mut h = Sha256::new();
+    h.update(seed.signature.encode().as_ref());
     <[u8; 32]>::try_from(h.finalize().as_ref()).expect("sha256 is 32 bytes")
 }
 
@@ -132,21 +165,23 @@ pub struct WeightedVrfElector {
 }
 
 /// The 32-byte leader randomness: the prior view's threshold seed σ when present, else a
-/// deterministic per-epoch fallback bound to `(committee, view)`; domain-separated from
-/// `prev_randao` (D6). A free fn so every caller shares the EXACT bytes with the live
-/// elector — a divergent copy would split leader election.
+/// deterministic per-epoch fallback bound to `(fallback_seed, view)`; the two arms carry
+/// prefix-free domain tags, so they cannot share a preimage whatever they are fed, and both
+/// are disjoint from `prev_randao` (D6). A free fn so every caller shares the EXACT bytes
+/// with the live elector — a divergent copy would split leader election.
 pub(crate) fn randomness_bytes(
     round: Round,
     seed: Option<BlsSignature>,
     fallback_seed: &[u8; 32],
 ) -> [u8; 32] {
     let mut h = Sha256::new();
-    h.update(LEADER_DOMAIN);
     match seed {
         Some(sigma) => {
+            h.update(LEADER_DOMAIN);
             h.update(sigma.encode().as_ref());
         }
         None => {
+            h.update(LEADER_FALLBACK_DOMAIN);
             h.update(fallback_seed);
             h.update(&round.view().get().to_be_bytes());
         }
@@ -249,6 +284,7 @@ mod tests {
                         activation_epoch: 1,
                     },
                     stake,
+                    tombstoned: false,
                 }
             })
             .collect();
@@ -282,11 +318,12 @@ mod tests {
         // the byte-identical elector.
         let s = snapshot(7, &[3, 5, 2]);
         let p = participants(&s);
-        let e1 = WeightedVrf::from_snapshot(&s).build(&p);
-        let e2 = WeightedVrf::from_snapshot(&s).build(&p);
+        let e1 = WeightedVrf::new(&s, constant_fallback_seed(&s)).build(&p);
+        let e2 = WeightedVrf::new(&s, constant_fallback_seed(&s)).build(&p);
         let mut s_rev = s.clone();
         s_rev.validators.reverse();
-        let e3 = WeightedVrf::from_snapshot(&s_rev).build(&participants(&s_rev));
+        let e3 =
+            WeightedVrf::new(&s_rev, constant_fallback_seed(&s_rev)).build(&participants(&s_rev));
 
         assert_eq!(e1.cum, e2.cum);
         assert_eq!(e1.total, e2.total);
@@ -312,12 +349,12 @@ mod tests {
     }
 
     #[test]
-    fn from_snapshot_unequal_stake_is_proportional() {
+    fn unequal_stake_is_proportional() {
         // seam-2: the full snapshot → weights → pick path under skew. Driving
         // `elect` over many views (the fallback randomness, uniform per view) Monte-
         // Carlo-samples the weighted CDF — distributionally identical to the σ path.
         let s = snapshot(1, &[1, 2, 7]);
-        let e = WeightedVrf::from_snapshot(&s).build(&participants(&s));
+        let e = WeightedVrf::new(&s, constant_fallback_seed(&s)).build(&participants(&s));
         let weights = per_index_weights(&e);
         let n = e.cum.len();
         let samples = 30_000u64;
@@ -347,7 +384,7 @@ mod tests {
     #[test]
     fn zero_total_weight_is_uniform() {
         let s = snapshot(1, &[0, 0, 0]);
-        let e = WeightedVrf::from_snapshot(&s).build(&participants(&s));
+        let e = WeightedVrf::new(&s, constant_fallback_seed(&s)).build(&participants(&s));
         assert_eq!(e.total, 3, "all-zero guard sets each weight to 1");
         for view in 1..=50 {
             let idx: usize = e
@@ -363,7 +400,7 @@ mod tests {
         // a seedless view ≥ 2 (here `None`; `Some(cert{seed:None})` is equivalent)
         // must elect, not panic.
         let s = snapshot(1, &[1, 1, 1]);
-        let e = WeightedVrf::from_snapshot(&s).build(&participants(&s));
+        let e = WeightedVrf::new(&s, constant_fallback_seed(&s)).build(&participants(&s));
         let idx: usize = e
             .elect(Round::new(Epoch::new(1), View::new(2)), None)
             .into();
@@ -373,7 +410,7 @@ mod tests {
     #[test]
     fn sigma_path_deterministic_and_differs_from_fallback() {
         let s = snapshot(1, &[1, 1, 1]);
-        let e = WeightedVrf::from_snapshot(&s).build(&participants(&s));
+        let e = WeightedVrf::new(&s, constant_fallback_seed(&s)).build(&participants(&s));
         let mut rng = StdRng::seed_from_u64(42);
         let sk = Private::random(&mut rng);
         let sigma: BlsSignature = ops::sign_message::<MinSig>(&sk, b"ns", b"leader-test");
@@ -389,6 +426,57 @@ mod tests {
             e.randomness(r, None),
             "σ-path differs from fallback (domain separation)"
         );
+    }
+
+    fn sigma(seed: u64) -> BlsSignature {
+        let mut rng = StdRng::seed_from_u64(seed);
+        ops::sign_message::<MinSig>(&Private::random(&mut rng), b"ns", b"leader-test")
+    }
+
+    /// The seedless base for epoch E+1 is a σ that already drove a `Some(σ)` draw
+    /// inside epoch E, so the arms must stay disjoint even when fed that same σ —
+    /// and the prefix-free tag is the only thing that makes them so. The expected
+    /// digest is therefore recomputed here from the LITERAL tag bytes, not from
+    /// [`LEADER_FALLBACK_DOMAIN`]: this fails the moment the seedless arm is
+    /// pointed at another domain. Comparing the two arms' elected indices instead
+    /// proves nothing — those differ with or without a tag, because `σ.encode()`
+    /// and `base ‖ view_be` are different lengths.
+    #[test]
+    fn the_seedless_arm_is_pinned_to_its_own_domain_tag() {
+        let round = Round::new(Epoch::new(2), View::new(1));
+        let base = witness_fallback_seed(&Seed {
+            target_round: round,
+            signature: sigma(7),
+        });
+        let mut h = Sha256::new();
+        h.update(b"fluent/seedless-leader");
+        h.update(&base);
+        h.update(&round.view().get().to_be_bytes());
+        let want = <[u8; 32]>::try_from(h.finalize().as_ref()).unwrap();
+
+        assert_eq!(randomness_bytes(round, None, &base), want);
+    }
+
+    /// The point of the change: with the epoch and the committee both fixed, the
+    /// epoch's leader sequence must move when the inherited terminal-block witness
+    /// moves. Under the old constant-only base it could not — the sequence was a
+    /// function of `(epoch, peers)` and therefore computable an epoch ahead.
+    #[test]
+    fn the_leader_sequence_moves_with_the_inherited_witness() {
+        let s = snapshot(2, &[1; 7]);
+        let round = |view| Round::new(Epoch::new(2), View::new(view));
+        let sequence = |base: [u8; 32]| -> Vec<usize> {
+            let e = WeightedVrf::new(&s, base).build(&participants(&s));
+            (1..=8).map(|v| e.elect(round(v), None).into()).collect()
+        };
+        let witness = |seed| {
+            witness_fallback_seed(&Seed {
+                target_round: round(1),
+                signature: sigma(seed),
+            })
+        };
+        assert_ne!(sequence(witness(1)), sequence(witness(2)));
+        assert_ne!(sequence(witness(1)), sequence(constant_fallback_seed(&s)));
     }
 }
 
@@ -431,22 +519,22 @@ mod xlang_conformance {
 
     /// `(epoch, view, participant_index)` — the Python mirror asserts the same list.
     const VECTOR: [(u64, u64, usize); 16] = [
-        (2, 1, 5),
-        (2, 2, 2),
-        (2, 3, 5),
-        (2, 4, 1),
-        (2, 5, 0),
-        (2, 6, 4),
-        (2, 7, 5),
-        (2, 8, 1),
-        (5, 1, 2),
-        (5, 2, 5),
+        (2, 1, 1),
+        (2, 2, 4),
+        (2, 3, 4),
+        (2, 4, 3),
+        (2, 5, 3),
+        (2, 6, 2),
+        (2, 7, 4),
+        (2, 8, 4),
+        (5, 1, 5),
+        (5, 2, 2),
         (5, 3, 6),
-        (5, 4, 1),
-        (5, 5, 6),
-        (5, 6, 3),
-        (5, 7, 0),
-        (5, 8, 3),
+        (5, 4, 6),
+        (5, 5, 1),
+        (5, 6, 5),
+        (5, 7, 6),
+        (5, 8, 5),
     ];
 
     fn elector_for(epoch: u64) -> WeightedVrfElector {
@@ -472,6 +560,7 @@ mod xlang_conformance {
                         activation_epoch: 1,
                     },
                     stake: COMPACTED_STAKE,
+                    tombstoned: false,
                 }
             })
             .collect();
@@ -485,7 +574,7 @@ mod xlang_conformance {
             snap.validators.iter().map(|v| v.keys.peer_pubkey.clone()),
         )
         .unwrap();
-        WeightedVrf::from_snapshot(&snap).build(&parts)
+        WeightedVrf::new(&snap, constant_fallback_seed(&snap)).build(&parts)
     }
 
     #[test]
@@ -530,6 +619,7 @@ mod xlang_conformance {
                         activation_epoch: 1,
                     },
                     stake,
+                    tombstoned: false,
                 })
                 .collect();
             let snap = ValidatorSetSnapshot {
@@ -542,7 +632,7 @@ mod xlang_conformance {
                 snap.validators.iter().map(|v| v.keys.peer_pubkey.clone()),
             )
             .unwrap();
-            let e = WeightedVrf::from_snapshot(&snap).build(&parts);
+            let e = WeightedVrf::new(&snap, constant_fallback_seed(&snap)).build(&parts);
             let idx: usize = e
                 .elect(Round::new(Epoch::new(2), View::new(1)), None)
                 .into();
