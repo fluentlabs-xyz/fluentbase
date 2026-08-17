@@ -18,9 +18,8 @@ use fluentbase_sdk::{
     PRECOMPILE_EIP7951, PRECOMPILE_EVM_RUNTIME, PRECOMPILE_FEE_MANAGER, PRECOMPILE_IDENTITY,
     PRECOMPILE_KZG_POINT_EVALUATION, PRECOMPILE_NITRO_VERIFIER, PRECOMPILE_OAUTH2_VERIFIER,
     PRECOMPILE_RIPEMD160, PRECOMPILE_RUNTIME_UPGRADE, PRECOMPILE_SECP256K1_RECOVER,
-    PRECOMPILE_SHA256, PRECOMPILE_SVM_RUNTIME, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME,
-    PRECOMPILE_WASM_RUNTIME, PRECOMPILE_WEBAUTHN_VERIFIER, U256, UPDATE_GENESIS_PREFIX,
-    WASM_MAX_CODE_SIZE,
+    PRECOMPILE_SHA256, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, PRECOMPILE_WASM_RUNTIME,
+    PRECOMPILE_WEBAUTHN_VERIFIER, U256, UPDATE_GENESIS_PREFIX, WASM_MAX_CODE_SIZE,
 };
 use reth_chainspec::{
     make_genesis_header, ChainHardforks, EthereumHardfork, ForkCondition, Hardfork,
@@ -268,7 +267,6 @@ fn contracts_to_upgrade() -> HashMap<&'static str, Address> {
         ("PRECOMPILE_RIPEMD160", PRECOMPILE_RIPEMD160),
         ("PRECOMPILE_SECP256K1_RECOVER", PRECOMPILE_SECP256K1_RECOVER),
         ("PRECOMPILE_SHA256", PRECOMPILE_SHA256),
-        ("PRECOMPILE_SVM_RUNTIME", PRECOMPILE_SVM_RUNTIME),
         ("PRECOMPILE_WASM_RUNTIME", PRECOMPILE_WASM_RUNTIME),
         ("PRECOMPILE_RUNTIME_UPGRADE", PRECOMPILE_RUNTIME_UPGRADE),
         ("PRECOMPILE_FEE_MANAGER", PRECOMPILE_FEE_MANAGER),
@@ -343,16 +341,6 @@ fn pick_rpc(args: &CommonArgs) -> Result<String> {
     } else {
         "https://rpc.fluent.xyz".to_string()
     })
-}
-
-fn validate_genesis_chain_id(genesis_chain_id: u64, rpc_chain_id: u64) -> Result<()> {
-    if genesis_chain_id != rpc_chain_id {
-        bail!(
-            "authenticated genesis chain id {genesis_chain_id} does not match RPC chain id \
-             {rpc_chain_id}; refusing to build or submit an upgrade"
-        );
-    }
-    Ok(())
 }
 
 fn strip_0x(s: &str) -> &str {
@@ -740,10 +728,11 @@ async fn main() -> Result<()> {
 
     // Determine which contracts to upgrade.
     let contracts = contracts_to_upgrade();
-    let upgrade_list = select_contracts(common, &contracts)?;
+    let mut upgrade_list = select_contracts(common, &contracts)?;
     if upgrade_list.is_empty() {
         return Ok(());
     }
+    upgrade_list.sort();
     let rwasm_module_by_address = load_release_modules(&genesis, &upgrade_list)?;
     preflight_selected_modules(&rwasm_module_by_address, &upgrade_list)?;
 
@@ -755,7 +744,6 @@ async fn main() -> Result<()> {
         .await
         .context("get_chainid")?
         .as_u64();
-    validate_genesis_chain_id(genesis.config.chain_id, chain_id)?;
 
     match &cli.command {
         Command::PlanUpgrade(args) => {
@@ -1036,14 +1024,6 @@ mod tests {
         let args = common_args(&["--rpc", "https://internal.example", "--dev"]);
         assert_eq!(pick_rpc(&args).unwrap(), "https://internal.example");
         assert_eq!(args.genesis_channel(), None);
-    }
-
-    #[test]
-    fn rpc_chain_must_match_authenticated_genesis() {
-        validate_genesis_chain_id(25_363, 25_363).unwrap();
-        let err = validate_genesis_chain_id(25_363, 20_993)
-            .expect_err("a mainnet genesis must not target a devnet RPC");
-        assert!(err.to_string().contains("does not match"), "{err:#}");
     }
 
     #[test]

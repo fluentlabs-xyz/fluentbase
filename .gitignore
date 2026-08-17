@@ -38,3 +38,6 @@ node_modules
 evm-e2e/tests/
 datadir
 graphify-out/
+
+genesis-*.txt*
+genesis-*.gz*
