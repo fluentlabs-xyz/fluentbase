@@ -3,7 +3,7 @@
 use alloy_consensus::BlockHeader;
 use alloy_network::AnyNetwork;
 use alloy_primitives::B256;
-use alloy_rpc_types_engine::ForkchoiceState;
+use alloy_rpc_types_engine::{ForkchoiceState, PayloadStatusEnum};
 use eyre::OptionExt;
 use reth_consensus_debug_client::{BlockProvider, RpcBlockProvider};
 use reth_engine_primitives::ConsensusEngineHandle;
@@ -19,7 +19,12 @@ use reth_storage_api::BlockReader;
 use reth_tasks::shutdown::GracefulShutdown;
 use std::{sync::Arc, time::Duration};
 use tokio::{sync::mpsc, time::Interval};
-use tracing::{error, info};
+use tracing::{debug, error, info, warn};
+
+/// How often a persistent non-`VALID` forkchoice verdict is re-emitted while it
+/// does not change. Long enough that a multi-hour backfill does not spam the
+/// log, short enough that a parked node is never silent for a whole shift.
+const VERDICT_REEMIT_INTERVAL: Duration = Duration::from_secs(60);
 
 /// Re-readable probe for the governance-scheduled sequencer→DPoS activation
 /// height. `None` = staking cluster not deployed / activation not scheduled.
@@ -212,6 +217,8 @@ where
     }
 }
 
+/// Launches the plain / trust-relay full node's block relay: subscribe to an
+/// upstream RPC, hand every block it produces to this node's engine.
 pub async fn launch_consensus_node<Node, AddOns: RethRpcAddOns<Node>>(
     handle: &NodeHandle<Node, AddOns>,
     consensus_url: String,
@@ -247,6 +254,47 @@ where
     Ok(())
 }
 
+const VERDICT_VALID: &str = "VALID";
+
+/// Coarse name of a forkchoice verdict, used as the log latch key.
+const fn verdict_kind(status: &PayloadStatusEnum) -> &'static str {
+    match status {
+        PayloadStatusEnum::Valid => VERDICT_VALID,
+        PayloadStatusEnum::Accepted => "ACCEPTED",
+        PayloadStatusEnum::Syncing => "SYNCING",
+        PayloadStatusEnum::Invalid { .. } => "INVALID",
+    }
+}
+
+/// Latch for the relay's forkchoice-verdict logging.
+///
+/// Keyed on the verdict kind AND the `validation_error` text: two `INVALID`s
+/// with different reasons are different news and must both be reported, which a
+/// discriminant-only latch would swallow.
+struct VerdictLog {
+    kind: &'static str,
+    validation_error: Option<String>,
+    /// Relay head at which this verdict was FIRST seen — the re-emit reports it
+    /// so the operator can see how far the engine has fallen behind.
+    since_number: u64,
+    last_emit: std::time::Instant,
+}
+
+impl VerdictLog {
+    fn new(kind: &'static str, validation_error: Option<&str>, number: u64) -> Self {
+        Self {
+            kind,
+            validation_error: validation_error.map(str::to_owned),
+            since_number: number,
+            last_emit: std::time::Instant::now(),
+        }
+    }
+
+    fn same_verdict(&self, kind: &'static str, validation_error: Option<&str>) -> bool {
+        self.kind == kind && self.validation_error.as_deref() == validation_error
+    }
+}
+
 async fn new_block_fetcher<
     P: BlockProvider + Clone,
     T: PayloadTypes<BuiltPayload: BuiltPayload<Primitives: NodePrimitives<Block = P::Block>>>,
@@ -280,6 +328,19 @@ async fn new_block_fetcher<
     // launched before `setDposActivationBlock` still picks it up.
     let mut two_tier_activation: Option<u64> = None;
     let mut recent: std::collections::BTreeMap<u64, B256> = std::collections::BTreeMap::new();
+    // Forkchoice verdict log state. The FCU is the only channel through which a
+    // rejection can reach an operator, so it is EDGE-triggered (a running
+    // backfill answers `SYNCING` for every block for as long as it lasts, and
+    // one line per block would bury the transition that matters) but NOT
+    // one-shot: a node parked on `SYNCING` or `INVALID` re-emits on
+    // [`VERDICT_REEMIT_INTERVAL`], with the relay head so the gap is visible.
+    //
+    // That re-emit is the only signal for a real dead end: the relay never
+    // re-sends a height it has passed, so a block the engine could not attach
+    // is only ever recovered by reth's own buffering (`try_buffer_payload`) or
+    // by re-downloading it over devp2p — and a relay with no reachable peer can
+    // stay behind indefinitely.
+    let mut verdict_log: Option<VerdictLog> = None;
     while let Some(block) = block_stream.recv().await {
         if let Some(probe) = &activation_probe {
             if let Some(act) = probe() {
@@ -303,12 +364,114 @@ async fn new_block_fetcher<
             _ => block_hash,
         };
         // Send new events to execution client
-        let _ = engine_handle.new_payload(payload).await;
+        match engine_handle.new_payload(payload).await {
+            Ok(status) => match &status.status {
+                PayloadStatusEnum::Valid => {}
+                PayloadStatusEnum::Invalid { validation_error } => error!(
+                    target: "reth::cli",
+                    number,
+                    %block_hash,
+                    %validation_error,
+                    "consensus relay: engine rejected the relayed block as INVALID"
+                ),
+                // SYNCING / ACCEPTED while catching up is expected; the
+                // forkchoice verdict below is the load-bearing signal.
+                other => debug!(
+                    target: "reth::cli",
+                    number,
+                    %block_hash,
+                    status = ?other,
+                    "consensus relay: newPayload did not yet accept the relayed block"
+                ),
+            },
+            Err(e) => {
+                verdict_log = None;
+                error!(
+                    target: "reth::cli",
+                    number,
+                    %block_hash,
+                    error = %e,
+                    "consensus relay: newPayload never reached the engine"
+                );
+            }
+        }
         let state = ForkchoiceState {
             head_block_hash: block_hash,
             safe_block_hash: block_hash,
             finalized_block_hash: finalized,
         };
-        let _ = engine_handle.fork_choice_updated(state, None).await;
+        match engine_handle.fork_choice_updated(state, None).await {
+            Ok(res) => {
+                let verdict = verdict_kind(&res.payload_status.status);
+                let validation_error = match &res.payload_status.status {
+                    PayloadStatusEnum::Invalid { validation_error } => {
+                        Some(validation_error.as_str())
+                    }
+                    _ => None,
+                };
+                if let Some(state) = verdict_log
+                    .as_mut()
+                    .filter(|s| s.same_verdict(verdict, validation_error))
+                {
+                    // Unchanged verdict. Stay quiet while healthy; while stuck,
+                    // re-emit on the interval with how far back the relay first
+                    // saw this verdict, so the gap is visible.
+                    if verdict != VERDICT_VALID
+                        && state.last_emit.elapsed() >= VERDICT_REEMIT_INTERVAL
+                    {
+                        state.last_emit = std::time::Instant::now();
+                        warn!(
+                            target: "reth::cli",
+                            relay_head = number,
+                            %block_hash,
+                            verdict,
+                            validation_error,
+                            since_block = state.since_number,
+                            blocks_stuck = number.saturating_sub(state.since_number),
+                            "consensus relay: engine STILL not following the relayed head \
+                             — the relay never re-sends a height it has passed, so this \
+                             only clears once reth attaches the buffered block or \
+                             re-downloads it over devp2p"
+                        );
+                    }
+                } else {
+                    verdict_log = Some(VerdictLog::new(verdict, validation_error, number));
+                    match &res.payload_status.status {
+                        PayloadStatusEnum::Valid => info!(
+                            target: "reth::cli",
+                            relay_head = number,
+                            %block_hash,
+                            "consensus relay: engine is following the relayed head"
+                        ),
+                        PayloadStatusEnum::Invalid { validation_error } => error!(
+                            target: "reth::cli",
+                            relay_head = number,
+                            %block_hash,
+                            %validation_error,
+                            "consensus relay: engine REJECTED the relayed head — this node \
+                             will not advance until this is resolved"
+                        ),
+                        _ => warn!(
+                            target: "reth::cli",
+                            relay_head = number,
+                            %block_hash,
+                            verdict,
+                            "consensus relay: engine is not following the relayed head \
+                             (backfill running, or the block is still buffered)"
+                        ),
+                    }
+                }
+            }
+            Err(e) => {
+                verdict_log = None;
+                error!(
+                    target: "reth::cli",
+                    number,
+                    %block_hash,
+                    error = %e,
+                    "consensus relay: forkchoice update never reached the engine"
+                );
+            }
+        }
     }
 }
