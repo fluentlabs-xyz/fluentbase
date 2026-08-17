@@ -140,9 +140,20 @@ impl Config<BlsScheme> for WeightedVrf {
         let mut cum = Vec::with_capacity(w.len());
         let mut acc = 0u128;
         // Overflow-safe: committee ≤ MAX_PEER_SET_SIZE (51) × compacted uint112
-        // (< 2^112) ≈ 2^119 ≪ u128::MAX.
+        // (< 2^112) ≈ 2^119 ≪ u128::MAX. That bound is now enforced where the
+        // weights enter, by `staking-reader`'s MAX_COMPACT_STAKE, not just
+        // asserted by the contract.
+        //
+        // `saturating_add` is belt to that brace, and the belt is what makes
+        // `elect_index` sound rather than merely unlikely to be unsound: release
+        // builds run with overflow-checks off, so a plain `+=` would WRAP rather
+        // than panic, and a wrapped `acc` yields a NON-MONOTONIC `cum`.
+        // `cum.partition_point` only guarantees "result < len" for sorted input,
+        // so a wrapped prefix sum can hand back an out-of-range Participant and
+        // corrupt leader election. Saturating keeps `cum` non-decreasing for any
+        // input at all; the worst case is a skewed draw, never a bad index.
         for x in w {
-            acc += x;
+            acc = acc.saturating_add(x);
             cum.push(acc);
         }
         WeightedVrfElector {

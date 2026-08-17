@@ -166,13 +166,32 @@ pub const MIN_COMMITTEE_LENGTH: usize = 4;
 /// drift mis-weights leaders.
 pub const BALANCE_COMPACT_PRECISION: u128 = 10_000_000_000;
 
+/// Upper bound on a compacted stake weight: the contract stores `totalDelegated`
+/// compacted in a `uint112`, so any value at or above `2^112` is not a legal
+/// on-chain state and must be rejected rather than carried into the elector.
+///
+/// This is the bound `WeightedVrf::build` cites when it argues its prefix-sum
+/// accumulator cannot overflow (51 members × `< 2^112` ≈ `2^119` ≪ `u128::MAX`).
+/// Before this constant existed that argument rested on the contract alone —
+/// this function accepted anything up to `u128::MAX` — so the one invariant the
+/// elector's safety depends on was documented on the Rust side and enforced only
+/// on the Solidity side. Keep the two in step.
+const MAX_COMPACT_STAKE: u128 = 1 << 112;
+
 /// Wei-scale `totalDelegated` → compacted `uint112` weight (`u128`). Delegations
 /// are exact multiples of [`BALANCE_COMPACT_PRECISION`] (`math::compact_balance`
 /// rejects a remainder), so the division is lossless; `try_from` guards the
-/// impossible `> u128` case.
+/// impossible `> u128` case and [`MAX_COMPACT_STAKE`] guards the `uint112` range
+/// the elector's overflow argument depends on.
 fn compact_stake(wei: U256) -> Result<u128, ReadError> {
-    u128::try_from(wei / U256::from(BALANCE_COMPACT_PRECISION))
-        .map_err(|_| ReadError::AbiDecode("stake exceeds u128".into()))
+    let compacted = u128::try_from(wei / U256::from(BALANCE_COMPACT_PRECISION))
+        .map_err(|_| ReadError::AbiDecode("stake exceeds u128".into()))?;
+    if compacted >= MAX_COMPACT_STAKE {
+        return Err(ReadError::AbiDecode(
+            "compacted stake exceeds the contract's uint112 range".into(),
+        ));
+    }
+    Ok(compacted)
 }
 
 /// A validator's consensus identity, decoded and validated.
