@@ -93,7 +93,8 @@ pub const TX_BYTE_BUDGET_AT_BOUNDARY: usize = TX_BYTE_BUDGET - BEACON_OUTCOME_FR
 /// record it actually carries: this cap only has to compose with the
 /// TX_BYTE_BUDGET allowance. The BINDING bound is the vote-time exact-length
 /// rule in `application::structural_checks`, without which an over-length field
-/// could finalize here and then be unexecutable at the 32-byte reth header cap.
+/// could finalize here and then be unexecutable at the reth header cap
+/// (`FLUENT_MAXIMUM_EXTRA_DATA_SIZE`).
 const MAX_EXTRA_DATA_SIZE: usize = 4 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -236,7 +236,8 @@ pub enum LeaderIndexError {
 /// match on `Ok(Some(_))` rather than on `is_ok()`.
 ///
 /// Exact length is also what keeps a 4 KiB-tolerant OrderBlock codec from
-/// finalizing a block whose `extra_data` no reth header (32-byte cap) can hold.
+/// finalizing a block whose `extra_data` no reth header
+/// (`FLUENT_MAXIMUM_EXTRA_DATA_SIZE`) can hold.
 fn production_record_ok(extra_data: &[u8], expected_leader_index: Option<u8>) -> bool {
     let Some(expected) = expected_leader_index else {
         return true;
@@ -2224,9 +2225,10 @@ mod tests {
             "empty must REJECT at verify even though the executor tolerates it"
         );
         // Exact length is what keeps a 4 KiB-tolerant OrderBlock codec from
-        // finalizing a block whose extra_data no reth header (32-byte cap) can
-        // hold, so it is pinned on BOTH sides of the record's own width — the
-        // near miss below is the 2-byte record this format replaced.
+        // finalizing a block whose extra_data no reth header
+        // (FLUENT_MAXIMUM_EXTRA_DATA_SIZE) can hold, so it is pinned on BOTH
+        // sides of the record's own width — the near miss below is the 2-byte
+        // record this format replaced.
         assert!(!production_record_ok(&[1u8, 3], Some(3)), "short must fail");
         assert!(
             !production_record_ok(&[1u8, 3, extra_data::NO_CHARGE, 0], Some(3)),

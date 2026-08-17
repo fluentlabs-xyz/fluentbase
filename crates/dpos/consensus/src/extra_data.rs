@@ -93,8 +93,9 @@ pub fn encode_production_record(leader_index: u8, accused: Option<u8>) -> Vec<u8
 ///   `Some`, never merely `is_ok()`.
 /// - Any length other than 0 or [`PRODUCTION_RECORD_LEN`] → `Err(WrongLength)`.
 ///   Exact, because the OrderBlock codec tolerates 4 KiB of `extra_data` while
-///   the reth header caps it at 32 bytes: without an exact-length vote rule an
-///   over-length field could finalize a block no devp2p node can execute.
+///   the reth header caps it at `FLUENT_MAXIMUM_EXTRA_DATA_SIZE`: without an
+///   exact-length vote rule an over-length field could finalize a block no
+///   devp2p node can execute.
 /// - Unknown version → `Err(UnknownVersion)`, fail-closed.
 /// - An `accused` byte that is neither [`NO_CHARGE`] nor a legal committee
 ///   position → `Err(AccusedOutOfRange)`. The system call downstream resolves
