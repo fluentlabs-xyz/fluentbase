@@ -559,71 +559,189 @@ fn helper_extract_args_matches_pinned_corpus() {
     assert_eq!(args_nf.kind, SlashKind::NullifyFinalize);
 }
 
-/// Full-pin extension: extract → ABI-encode → compare against an in-test
-/// reference encoding computed via the canonical `SolCall` macro (selector +
-/// `abi.encode(...)`). Drift here means a Solidity function signature change,
-/// a `SlashCallArgs` field-order change, or an `alloy-sol-types` ABI codec
-/// change — any of which break the `equivocation_slashing` on-chain path.
+/// Literal 4-byte selectors of the three slash entry points the node calls.
+///
+/// **Hardcoded on purpose.** These are the independent half of the pin: they
+/// were computed with `cast sig "<signature>"` and are asserted against the
+/// production `sol!` in `slasher::actor`. Deriving them from that same `sol!`
+/// (`SomeCall::SELECTOR`) would check the declaration against itself, catching
+/// a typo but never a rename — which is the whole failure this file guards.
+///
+/// Rename a slash function and the assertions below fail naming both sides.
+/// The contract-side counterparts (different, by six-vs-four arguments) are in
+/// the merge checklist at the top of `crates/dpos/consensus/src/slasher/actor.rs`.
+mod pinned {
+    /// `cast sig "slashEquivocationNotarize(bytes,bytes,bytes,bytes)"`
+    pub const SEL_NOTARIZE: [u8; 4] = [0xe2, 0x8d, 0x2f, 0x63];
+    /// `cast sig "slashEquivocationFinalize(bytes,bytes,bytes,bytes)"`
+    pub const SEL_FINALIZE: [u8; 4] = [0xad, 0xd0, 0x7a, 0x3e];
+    /// `cast sig "slashEquivocationNullifyFinalize(bytes,bytes,bytes,bytes)"`
+    pub const SEL_NULLIFY_FINALIZE: [u8; 4] = [0xa1, 0x08, 0x27, 0xe9];
+
+    /// Signature strings, literal. The selector alone cannot tell a renamed
+    /// function from a retyped argument; these say which one moved.
+    pub const SIG_NOTARIZE: &str = "slashEquivocationNotarize(bytes,bytes,bytes,bytes)";
+    /// See [`SIG_NOTARIZE`].
+    pub const SIG_FINALIZE: &str = "slashEquivocationFinalize(bytes,bytes,bytes,bytes)";
+    /// See [`SIG_NOTARIZE`].
+    pub const SIG_NULLIFY_FINALIZE: &str =
+        "slashEquivocationNullifyFinalize(bytes,bytes,bytes,bytes)";
+}
+
+/// The production `sol!` declaration — the one the slasher actually encodes
+/// through — pinned against the literal selectors and signature strings above.
+///
+/// Nothing here derives the expected value from the declaration under test.
 #[test]
-fn helper_extract_then_abi_encode_matches_pinned_calldata() {
-    use alloy_primitives::Bytes as AlloyBytes;
-    use alloy_sol_types::{sol, SolCall};
-    use fluentbase_consensus::slasher::evidence::{
-        extract_from_conflicting_finalize, extract_from_conflicting_notarize,
-        extract_from_nullify_finalize, SlashCallArgs, SlashKind,
+fn slash_abi_signatures_and_selectors_are_pinned() {
+    use alloy_sol_types::SolCall;
+    use fluentbase_consensus::slasher::actor::{
+        slashEquivocationFinalizeCall, slashEquivocationNotarizeCall,
+        slashEquivocationNullifyFinalizeCall,
     };
 
-    // Mirror of the bindings in `crates/consensus/src/slasher/actor.rs` — pinned
-    // here so a future Solidity signature change is caught at the conformance
-    // boundary (the slasher is the only on-chain caller, but the contract ABI
-    // must move in lockstep with `SlashCallArgs`).
-    sol! {
-        function slashEquivocationNotarize(bytes evidence, bytes pkUncompressed,
-            bytes sig1Uncompressed, bytes sig2Uncompressed) external;
-        function slashEquivocationFinalize(bytes evidence, bytes pkUncompressed,
-            bytes sig1Uncompressed, bytes sig2Uncompressed) external;
-        function slashEquivocationNullifyFinalize(bytes evidence, bytes pkUncompressed,
-            bytes sig1Uncompressed, bytes sig2Uncompressed) external;
-    }
+    assert_eq!(
+        slashEquivocationNotarizeCall::SIGNATURE,
+        pinned::SIG_NOTARIZE,
+        "node-side slash-notarize signature drifted from the pin; \
+         contract side is slashEquivocationNotarize(bytes,bytes,bytes,bytes,address,bytes32) \
+         on feat/flu-989-port-solidity-delta"
+    );
+    assert_eq!(
+        slashEquivocationNotarizeCall::SELECTOR,
+        pinned::SEL_NOTARIZE,
+        "node-side slash-notarize selector drifted from the pinned 0xe28d2f63; \
+         contract side is 0x2bc5fb10 on feat/flu-989-port-solidity-delta"
+    );
+    assert_eq!(
+        slashEquivocationFinalizeCall::SIGNATURE,
+        pinned::SIG_FINALIZE,
+        "node-side slash-finalize signature drifted from the pin; \
+         contract side is slashEquivocationFinalize(bytes,bytes,bytes,bytes,address,bytes32) \
+         on feat/flu-989-port-solidity-delta"
+    );
+    assert_eq!(
+        slashEquivocationFinalizeCall::SELECTOR,
+        pinned::SEL_FINALIZE,
+        "node-side slash-finalize selector drifted from the pinned 0xadd07a3e; \
+         contract side is 0xb034c58b on feat/flu-989-port-solidity-delta"
+    );
+    assert_eq!(
+        slashEquivocationNullifyFinalizeCall::SIGNATURE,
+        pinned::SIG_NULLIFY_FINALIZE,
+        "node-side slash-nullify-finalize signature drifted from the pin; contract side is \
+         slashEquivocationNullifyFinalize(bytes,bytes,bytes,bytes,address,bytes32) \
+         on feat/flu-989-port-solidity-delta"
+    );
+    assert_eq!(
+        slashEquivocationNullifyFinalizeCall::SELECTOR,
+        pinned::SEL_NULLIFY_FINALIZE,
+        "node-side slash-nullify-finalize selector drifted from the pinned 0xa10827e9; \
+         contract side is 0x337e1437 on feat/flu-989-port-solidity-delta"
+    );
 
-    fn encode(args: &SlashCallArgs) -> Vec<u8> {
-        let evidence = AlloyBytes::from(args.evidence.clone());
-        let pk = AlloyBytes::from(args.pk_uncompressed.to_vec());
-        let s1 = AlloyBytes::from(args.sig1_uncompressed.to_vec());
-        let s2 = AlloyBytes::from(args.sig2_uncompressed.to_vec());
-        match args.kind {
-            SlashKind::ConflictingNotarize => slashEquivocationNotarizeCall {
-                evidence,
-                pkUncompressed: pk,
-                sig1Uncompressed: s1,
-                sig2Uncompressed: s2,
-            }
-            .abi_encode(),
-            SlashKind::ConflictingFinalize => slashEquivocationFinalizeCall {
-                evidence,
-                pkUncompressed: pk,
-                sig1Uncompressed: s1,
-                sig2Uncompressed: s2,
-            }
-            .abi_encode(),
-            SlashKind::NullifyFinalize => slashEquivocationNullifyFinalizeCall {
-                evidence,
-                pkUncompressed: pk,
-                sig1Uncompressed: s1,
-                sig2Uncompressed: s2,
-            }
-            .abi_encode(),
-        }
+    // A name collision would route to the wrong contract branch.
+    assert_ne!(pinned::SEL_NOTARIZE, pinned::SEL_FINALIZE);
+    assert_ne!(pinned::SEL_FINALIZE, pinned::SEL_NULLIFY_FINALIZE);
+    assert_ne!(pinned::SEL_NOTARIZE, pinned::SEL_NULLIFY_FINALIZE);
+}
+
+/// Byte-for-byte literal calldata for the production encoder, on a degenerate
+/// charge (empty evidence, all-zero key and signatures) whose every word is
+/// therefore predictable by hand. This is the argument-ORDER and ABI-LAYOUT
+/// pin the selector cannot give: swap two `bytes` parameters, or add a fifth,
+/// and the head offsets below move.
+///
+/// Sizes: `pkUncompressed` is 256 B (EIP-2537 uncompressed G2),
+/// `sig{1,2}Uncompressed` 128 B each (uncompressed G1). Head is four dynamic
+/// offsets: 0x80, 0xa0, 0x1c0, 0x260.
+#[test]
+fn slash_calldata_layout_is_pinned_literally() {
+    use alloy_primitives::hex;
+    use fluentbase_consensus::slasher::{
+        actor::encode_calldata,
+        evidence::{SlashCallArgs, SlashKind},
+    };
+
+    let zeroed = |kind| SlashCallArgs {
+        kind,
+        evidence: Vec::new(),
+        pk_uncompressed: [0u8; 256],
+        sig1_uncompressed: [0u8; 128],
+        sig2_uncompressed: [0u8; 128],
+    };
+
+    for (kind, selector) in [
+        (SlashKind::ConflictingNotarize, hex!("e28d2f63")),
+        (SlashKind::ConflictingFinalize, hex!("add07a3e")),
+        (SlashKind::NullifyFinalize, hex!("a10827e9")),
+    ] {
+        let mut expected: Vec<u8> = Vec::new();
+        expected.extend_from_slice(&selector);
+        expected.extend_from_slice(&hex!(
+            // head: offset of each of the four `bytes` arguments
+            "0000000000000000000000000000000000000000000000000000000000000080"
+            "00000000000000000000000000000000000000000000000000000000000000a0"
+            "00000000000000000000000000000000000000000000000000000000000001c0"
+            "0000000000000000000000000000000000000000000000000000000000000260"
+            // evidence: length 0, no payload words
+            "0000000000000000000000000000000000000000000000000000000000000000"
+            // pkUncompressed: length 256
+            "0000000000000000000000000000000000000000000000000000000000000100"
+        ));
+        expected.extend_from_slice(&[0u8; 256]);
+        // sig1Uncompressed: length 128
+        expected.extend_from_slice(&hex!(
+            "0000000000000000000000000000000000000000000000000000000000000080"
+        ));
+        expected.extend_from_slice(&[0u8; 128]);
+        // sig2Uncompressed: length 128
+        expected.extend_from_slice(&hex!(
+            "0000000000000000000000000000000000000000000000000000000000000080"
+        ));
+        expected.extend_from_slice(&[0u8; 128]);
+
+        assert_eq!(
+            encode_calldata(&zeroed(kind)),
+            expected,
+            "{kind:?}: production slash calldata drifted from the literal pin — \
+             the node's four-argument ABI moved. The contract \
+             (feat/flu-989-port-solidity-delta) takes SIX arguments \
+             (…,address beneficiary,bytes32 salt); see the merge checklist in \
+             crates/dpos/consensus/src/slasher/actor.rs"
+        );
     }
+}
+
+/// Full-pin extension: extract → ABI-encode via the PRODUCTION encoder
+/// (`slasher::actor::encode_calldata`) → check the selector against the
+/// literal pin and the arguments against the corpus. Drift here means a
+/// Solidity function signature change, a `SlashCallArgs` field-order change, or
+/// an `alloy-sol-types` ABI codec change — any of which break the
+/// `equivocation_slashing` on-chain path.
+#[test]
+fn helper_extract_then_abi_encode_matches_pinned_calldata() {
+    use alloy_sol_types::SolCall;
+    use fluentbase_consensus::slasher::{
+        actor::{
+            encode_calldata as encode, slashEquivocationFinalizeCall,
+            slashEquivocationNotarizeCall, slashEquivocationNullifyFinalizeCall,
+        },
+        evidence::{
+            extract_from_conflicting_finalize, extract_from_conflicting_notarize,
+            extract_from_nullify_finalize,
+        },
+    };
 
     let (_v_cn, cn, bimap_cn) = conflicting_notarize();
     let committee_cn = fluentbase_bls::EpochCommittee::from_unverified(EPOCH, bimap_cn);
     let args_cn = extract_from_conflicting_notarize(&cn, &committee_cn).unwrap();
     let calldata_cn = encode(&args_cn);
     assert_eq!(
-        &calldata_cn[..4],
-        &slashEquivocationNotarizeCall::SELECTOR,
-        "conflicting_notarize selector drift",
+        calldata_cn[..4],
+        pinned::SEL_NOTARIZE,
+        "conflicting_notarize selector drift: the production encoder no longer emits the \
+         pinned 0xe28d2f63 for slashEquivocationNotarize(bytes,bytes,bytes,bytes)",
     );
     let decoded_cn = slashEquivocationNotarizeCall::abi_decode(&calldata_cn).expect("decode cn");
     assert_eq!(decoded_cn.evidence.as_ref(), &args_cn.evidence[..]);
@@ -645,9 +763,10 @@ fn helper_extract_then_abi_encode_matches_pinned_calldata() {
     let args_cf = extract_from_conflicting_finalize(&cf, &committee_cf).unwrap();
     let calldata_cf = encode(&args_cf);
     assert_eq!(
-        &calldata_cf[..4],
-        &slashEquivocationFinalizeCall::SELECTOR,
-        "conflicting_finalize selector drift",
+        calldata_cf[..4],
+        pinned::SEL_FINALIZE,
+        "conflicting_finalize selector drift: the production encoder no longer emits the \
+         pinned 0xadd07a3e for slashEquivocationFinalize(bytes,bytes,bytes,bytes)",
     );
     let decoded_cf = slashEquivocationFinalizeCall::abi_decode(&calldata_cf).expect("decode cf");
     assert_eq!(decoded_cf.evidence.as_ref(), &args_cf.evidence[..]);
@@ -669,9 +788,10 @@ fn helper_extract_then_abi_encode_matches_pinned_calldata() {
     let args_nf = extract_from_nullify_finalize(&nf, &committee_nf).unwrap();
     let calldata_nf = encode(&args_nf);
     assert_eq!(
-        &calldata_nf[..4],
-        &slashEquivocationNullifyFinalizeCall::SELECTOR,
-        "nullify_finalize selector drift",
+        calldata_nf[..4],
+        pinned::SEL_NULLIFY_FINALIZE,
+        "nullify_finalize selector drift: the production encoder no longer emits the \
+         pinned 0xa10827e9 for slashEquivocationNullifyFinalize(bytes,bytes,bytes,bytes)",
     );
     let decoded_nf =
         slashEquivocationNullifyFinalizeCall::abi_decode(&calldata_nf).expect("decode nf");
@@ -690,19 +810,12 @@ fn helper_extract_then_abi_encode_matches_pinned_calldata() {
     );
 
     // All three selectors must be distinct (a name collision would route
-    // to the wrong Solidity branch).
-    assert_ne!(
-        &slashEquivocationNotarizeCall::SELECTOR,
-        &slashEquivocationFinalizeCall::SELECTOR,
-    );
-    assert_ne!(
-        &slashEquivocationFinalizeCall::SELECTOR,
-        &slashEquivocationNullifyFinalizeCall::SELECTOR,
-    );
-    assert_ne!(
-        &slashEquivocationNotarizeCall::SELECTOR,
-        &slashEquivocationNullifyFinalizeCall::SELECTOR,
-    );
+    // to the wrong Solidity branch). Compared as LITERALS — comparing the
+    // three `SELECTOR` constants to each other would hold even if all three
+    // functions were renamed together.
+    assert_ne!(pinned::SEL_NOTARIZE, pinned::SEL_FINALIZE);
+    assert_ne!(pinned::SEL_FINALIZE, pinned::SEL_NULLIFY_FINALIZE);
+    assert_ne!(pinned::SEL_NOTARIZE, pinned::SEL_NULLIFY_FINALIZE);
 }
 
 #[test]

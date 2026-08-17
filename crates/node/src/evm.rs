@@ -627,10 +627,19 @@ alloy_sol_types::sol! {
     // the EL from peers has no OrderBlock — which is why only the one-byte
     // verdict rides in `extra_data`, verbatim into the header.
     //
-    // Keep byte-identical to the contract's `SIG_SLASH_EQUIVOCATION`
-    // (selector `0xdc6fb3f2`). A drift is SILENT here, because the call below is
-    // deliberately soft-failed; `slash_equivocation_calldata_is_pinned` is what
-    // makes it loud.
+    // KNOWN CONTRACT DRIFT (verified 2026-08-14): there is NO counterpart. No
+    // `SIG_SLASH_EQUIVOCATION` exists in `contracts/staking/src/consts.rs` and
+    // nothing dispatches `0xdc6fb3f2` in `lib.rs` — on `feat/flu-989-port-
+    // solidity-delta`, on `origin/feat/flu-989-rust-staking`, or on any other
+    // branch in this repo carrying the contract. This call would revert
+    // `ERR_UNKNOWN_METHOD`, and since it is deliberately soft-failed the only
+    // symptom is verdicts that never land.
+    //
+    // Do NOT "fix" this one-sidedly — reconciling the verdict path needs the
+    // contract owner. Merge checklist:
+    // `crates/dpos/consensus/src/slasher/actor.rs`, entry 4.
+    // `slash_equivocation_calldata_is_pinned` pins the node side literally so a
+    // rename here stays loud in the meantime.
     function slashEquivocation(uint64 epoch, uint32 signerIdx) external;
 
     // Stipend-settlement events emitted by the settle leg the epoch CLOSE drives —
@@ -1526,11 +1535,47 @@ mod tests {
         );
     }
 
+    /// The ahead-commit cursor read. Argument-free, so the selector is the
+    /// entire wire; it is also the only node-side evidence a commit did
+    /// anything, and the commit loop's termination and stuck-cursor guard both
+    /// rest on it. A rename would leave the loop reading a revert.
+    ///
+    /// Pinned literally against the contract's `SIG_NEXT_EPOCH_TO_COMMIT`
+    /// (`cast sig "nextEpochToCommit()"` == `0xc06a82de`, matching
+    /// `contracts/staking/src/consts.rs` on `feat/flu-989-port-solidity-delta`).
+    /// This one AGREES with the contract today — no drift to record.
+    #[test]
+    fn next_epoch_to_commit_selector_is_pinned() {
+        use alloy_sol_types::SolCall;
+        assert_eq!(
+            super::nextEpochToCommitCall::SIGNATURE,
+            "nextEpochToCommit()"
+        );
+        assert_eq!(
+            super::nextEpochToCommitCall::SELECTOR,
+            [0xc0, 0x6a, 0x82, 0xde],
+            "node-side nextEpochToCommit selector drifted from the contract's \
+             SIG_NEXT_EPOCH_TO_COMMIT (0xc06a82de, feat/flu-989-port-solidity-delta)"
+        );
+        assert_eq!(
+            super::nextEpochToCommitCall {}.abi_encode(),
+            alloy_primitives::hex!("c06a82de")
+        );
+    }
+
     /// The verdict syscall is SOFT-failed, so a selector or argument drift
     /// against `contracts/staking` costs nothing at execution time and shows up
-    /// only as slashes that never land. Pin the signature, the 4-byte selector
-    /// the contract's `SIG_SLASH_EQUIVOCATION` derives, and the `u8 → uint32`
-    /// widening of the committee position.
+    /// only as slashes that never land. Pin the signature, the 4-byte selector,
+    /// and the `u8 → uint32` widening of the committee position.
+    ///
+    /// **The contract has no counterpart at all** — `slashEquivocation(uint64,
+    /// uint32)` is dispatched by neither `feat/flu-989-port-solidity-delta` nor
+    /// `origin/feat/flu-989-rust-staking` (verified 2026-08-14: zero hits for
+    /// the signature in `consts.rs` on every branch in this repo that carries
+    /// the contract). So this pin is one-sided by necessity: it holds the node
+    /// still and names the gap, and cannot be made two-sided until the verdict
+    /// path exists on-chain. Merge checklist:
+    /// `crates/dpos/consensus/src/slasher/actor.rs`, entry 4.
     #[test]
     fn slash_equivocation_calldata_is_pinned() {
         use alloy_sol_types::SolCall;
@@ -1540,7 +1585,11 @@ mod tests {
         );
         assert_eq!(
             super::slashEquivocationCall::SELECTOR,
-            [0xdc, 0x6f, 0xb3, 0xf2]
+            [0xdc, 0x6f, 0xb3, 0xf2],
+            "node-side slashEquivocation(uint64,uint32) selector drifted from the pinned \
+             0xdc6fb3f2; the contract side is ABSENT on every branch carrying \
+             contracts/staking (checked feat/flu-989-port-solidity-delta and \
+             origin/feat/flu-989-rust-staking), so there is nothing to re-derive it from"
         );
         // cast calldata "slashEquivocation(uint64,uint32)" 9 50
         let encoded = super::encode_slash_equivocation_call(9, 50);
@@ -1710,11 +1759,16 @@ mod tests {
         /// pre-execution section makes. Models the residue the soft fold exists
         /// for: a verdict the contract refuses.
         pub fn recording_rejecting_the_verdict() -> Vec<u8> {
+            reverting_on_calldata_size(0x44)
+        }
+
+        /// [`recording`] with a leading `calldatasize == size ⇒ revert` guard.
+        fn reverting_on_calldata_size(size: u8) -> Vec<u8> {
             let body = recording();
             let jumpdest = 7 + body.len();
             assert!(jumpdest < 256, "single-byte jump target");
-            // if calldatasize == 68 { jump to the revert }
-            let mut code = vec![0x60, 0x44, 0x36, 0x14, 0x60, jumpdest as u8, 0x57];
+            // if calldatasize == size { jump to the revert }
+            let mut code = vec![0x60, size, 0x36, 0x14, 0x60, jumpdest as u8, 0x57];
             code.extend_from_slice(&body);
             code.extend_from_slice(&[0x5b, 0x60, 0x00, 0x60, 0x00, 0xfd]);
             code
@@ -1763,6 +1817,24 @@ mod tests {
         alloy_primitives::B256,
         reth_primitives_traits::SealedHeader,
     ) {
+        stub_chain_at_interval(staking_code, STUB_ACTIVATION_AND_INTERVAL)
+    }
+
+    /// [`stub_chain`] with `getEpochBlockInterval()` answering `interval`
+    /// instead of [`STUB_ACTIVATION_AND_INTERVAL`]. Only the epoch-boundary
+    /// height gate cares; everything else in the section reads the activation,
+    /// which stays put.
+    fn stub_chain_at_interval(
+        staking_code: Vec<u8>,
+        interval: u64,
+    ) -> (
+        super::FluentEvmConfig,
+        reth_provider::providers::BlockchainProvider<
+            reth_provider::test_utils::MockNodeTypesWithDB,
+        >,
+        alloy_primitives::B256,
+        reth_primitives_traits::SealedHeader,
+    ) {
         use alloy_genesis::GenesisAccount;
         use alloy_primitives::{B256, U256};
         use alloy_sol_types::SolCall as _;
@@ -1794,10 +1866,7 @@ mod tests {
                             super::getDposActivationBlockCall::SELECTOR,
                             STUB_ACTIVATION_AND_INTERVAL,
                         ),
-                        answer(
-                            super::getEpochBlockIntervalCall::SELECTOR,
-                            STUB_ACTIVATION_AND_INTERVAL,
-                        ),
+                        answer(super::getEpochBlockIntervalCall::SELECTOR, interval),
                         answer(
                             super::nextEpochToCommitCall::SELECTOR,
                             STUB_NEXT_EPOCH_TO_COMMIT,

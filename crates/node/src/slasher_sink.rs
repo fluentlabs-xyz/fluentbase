@@ -398,4 +398,30 @@ mod tests {
             .expect("recover_address_from_prehash");
         assert_eq!(recovered, signer.address());
     }
+
+    /// The replay-guard revert is recognised by its raw 4-byte selector against
+    /// the pre-flight simulation's revert output. A rename would turn "victim
+    /// already tombstoned" into an unexplained `Failed`, which the consumer does
+    /// NOT ack — so the entry would be retried forever across restarts.
+    ///
+    /// Pinned literally: `cast sig "AlreadySlashedForEquivocation(address)"` ==
+    /// `0x8300031d`, which is what the contract's
+    /// `ERR_ALREADY_SLASHED_FOR_EQUIVOCATION` derives on
+    /// `feat/flu-989-port-solidity-delta`. This one AGREES with the contract
+    /// today — no drift to record.
+    #[test]
+    fn already_slashed_error_selector_is_pinned() {
+        use alloy_sol_types::SolError as _;
+        assert_eq!(
+            AlreadySlashedForEquivocation::SIGNATURE,
+            "AlreadySlashedForEquivocation(address)"
+        );
+        assert_eq!(
+            AlreadySlashedForEquivocation::SELECTOR,
+            [0x83, 0x00, 0x03, 0x1d],
+            "node-side AlreadySlashedForEquivocation selector drifted from the pinned \
+             0x8300031d; the contract side is ERR_ALREADY_SLASHED_FOR_EQUIVOCATION in \
+             contracts/staking/src/consts.rs on feat/flu-989-port-solidity-delta"
+        );
+    }
 }

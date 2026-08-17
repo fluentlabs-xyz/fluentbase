@@ -120,6 +120,16 @@ mod abi {
         // tombstone, read LIVE at `at` (the other three legs are frozen at the
         // commit): it rides this snapshot rather than a view of its own so the
         // flag arrives on the path the node already takes, at no extra call.
+        //
+        // KNOWN CONTRACT DRIFT — the fourth array has no contract-side
+        // counterpart. `feat/flu-989-port-solidity-delta` (and
+        // `origin/feat/flu-989-rust-staking`) end this handler with
+        // `write_returns(sdk, &(validators, keys, stakes))` — THREE arrays.
+        // Return types do not enter a selector, so `view_selectors_are_pinned`
+        // below passes and proves nothing about this; the arity is pinned
+        // separately by `epoch_committee_return_arity_is_pinned`. Do not
+        // one-sidedly drop the leg — see the merge checklist at the top of
+        // `crates/dpos/consensus/src/slasher/actor.rs`.
         function getEpochCommitteeWithStakes(uint64 epoch)
             external view returns (
                 address[] addrs, ConsensusKeys[] keys, uint256[] stakes, bool[] tombstoned);
@@ -1177,6 +1187,11 @@ mod tests {
     /// a head-stride defect shifts the keys against the addresses and the node
     /// signs on behalf of the wrong validator.
     ///
+    /// The vector below is the NODE's four-array shape, generated independently
+    /// with `cast abi-encode` — a real literal pin, not a re-encoding of the
+    /// `sol!` under test. It is not what the contract emits today: see
+    /// [`epoch_committee_return_arity_is_pinned`] for the three-vs-four drift.
+    ///
     /// Vector produced by (0x…01/02/03 abbreviated, `0xa1`×96 / `0xb2` / `0xc3`×33,
     /// peer keys `0x11`×32 / `0x22`×32 / `0x33`×32):
     ///
@@ -1308,10 +1323,90 @@ mod tests {
         assert!(!is_unset(&decoded.keys[2]));
     }
 
+    /// The hole a selector pin cannot cover: **return types do not enter a
+    /// selector**, so `view_selectors_are_pinned` below agrees with the contract
+    /// on `getEpochCommitteeWithStakes(uint64)` == `0xa4d160c1` while the two
+    /// sides disagree about what comes back.
+    ///
+    /// KNOWN DRIFT, recorded not fixed (2026-08-14):
+    ///
+    /// * node     `returns (address[], ConsensusKeys[], uint256[], bool[] tombstoned)`
+    ///   — the `sol!` above, four arrays.
+    /// * contract `returns (address[], ConsensusKeys[], uint256[])` — three
+    ///   arrays. `feat/flu-989-port-solidity-delta`, `contracts/staking/src/
+    ///   consensus.rs`, `write_returns(sdk, &(validators, keys, stakes))`;
+    ///   `origin/feat/flu-989-rust-staking` is identical.
+    ///
+    /// Reconciling needs the contract owner (the tombstone leg has no
+    /// contract-side source yet), so this test only makes the shape explicit:
+    /// the node's four-array return round-trips, the contract's three-array
+    /// return does NOT decode into it, and the size difference is exactly the
+    /// one extra `bool[]`. If someone adds or drops an array on either side,
+    /// this fails and says which.
+    #[test]
+    fn epoch_committee_return_arity_is_pinned() {
+        use alloy_sol_types::SolValue as _;
+
+        let addr = Address::with_last_byte(1);
+        let key = keys(11);
+        let stake = U256::from(42u64);
+
+        // What the NODE expects: four arrays.
+        let node_shape = abi::getEpochCommitteeWithStakesCall::abi_encode_returns(
+            &abi::getEpochCommitteeWithStakesReturn {
+                addrs: vec![addr],
+                keys: vec![key.clone()],
+                stakes: vec![stake],
+                tombstoned: vec![true],
+            },
+        );
+
+        // What the CONTRACT returns today: three arrays. Encoded from the ABI
+        // tuple directly, NOT through the `sol!` under test — the point is that
+        // the two sides are asserted independently.
+        let contract_shape = (vec![addr], vec![key], vec![stake]).abi_encode_params();
+
+        assert_ne!(
+            node_shape, contract_shape,
+            "if these ever match, the drift recorded on this test is gone and the \
+             doc comment above must go with it"
+        );
+        // Head offset word (32) + array length word (32) + one element (32).
+        assert_eq!(
+            node_shape.len(),
+            contract_shape.len() + 96,
+            "the node's return must exceed the contract's by exactly the extra \
+             one-element `bool[] tombstoned` leg (offset + length + element)"
+        );
+
+        // The drift is a hard decode failure, not a silent mis-pairing: a node
+        // pointed at the contract as it stands would error, not tombstone the
+        // wrong validator.
+        assert!(
+            abi::getEpochCommitteeWithStakesCall::abi_decode_returns(&contract_shape).is_err(),
+            "the contract's three-array return (feat/flu-989-port-solidity-delta) must not \
+             decode into the node's four-array expectation — if it starts to, the fourth leg \
+             is being silently mis-read and the tombstone would name the wrong validator"
+        );
+
+        // And the node's own shape survives the round trip with the leg intact.
+        let ret = abi::getEpochCommitteeWithStakesCall::abi_decode_returns(&node_shape)
+            .expect("the node's own four-array return must decode");
+        assert_eq!(ret.addrs.len(), 1);
+        assert_eq!(ret.keys.len(), 1);
+        assert_eq!(ret.stakes, vec![stake]);
+        assert_eq!(ret.tombstoned, vec![true]);
+    }
+
     /// The rWasm contract dispatches on the raw 4-byte selector, so a signature
     /// typo here is not a mis-decode but an `ERR_UNKNOWN_METHOD` revert against a
     /// live chain. Values are the contract's own handler doc comments
     /// (`consensus.rs:309,584,683`, `config.rs:245,317,330,343`).
+    ///
+    /// Literal on purpose: `abi::…Call::SELECTOR` is the node's belief, the
+    /// `hex!` is the contract's, and they are independent. A selector pin says
+    /// nothing about return shape — see
+    /// [`epoch_committee_return_arity_is_pinned`] for that half.
     #[test]
     fn view_selectors_are_pinned() {
         assert_eq!(

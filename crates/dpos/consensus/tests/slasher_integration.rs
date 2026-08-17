@@ -20,7 +20,6 @@
 //! event — see [`report_and_close_epoch`].
 
 use alloy_primitives::{Address, B256};
-use alloy_sol_types::SolCall as _;
 use commonware_codec::DecodeExt;
 use commonware_consensus::{
     simplex::types::{
@@ -502,11 +501,11 @@ fn a_charge_stranded_by_the_epoch_boundary_lands_by_transaction() {
             "sink called with the configured staking address"
         );
         // The calldata must be a `slashEquivocationNotarize` call — confirm the
-        // exact ABI selector (not merely "len >= 4").
+        // exact ABI selector (not merely "len >= 4"), against the literal pin.
         assert_eq!(
-            &recorded[0].calldata[..4],
-            slash_abi::slashEquivocationNotarizeCall::SELECTOR.as_slice(),
-            "calldata ABI selector must be slashEquivocationNotarize"
+            recorded[0].calldata[..4],
+            slash_abi::SEL_NOTARIZE,
+            "calldata ABI selector must be slashEquivocationNotarize (0xe28d2f63)"
         );
         assert!(
             charges.next_charge(EPOCH, |_| false).is_none(),
@@ -567,9 +566,9 @@ fn a_charge_assembled_after_the_boundary_goes_straight_to_the_sink() {
             "a charge assembled after the boundary must still reach the sink"
         );
         assert_eq!(
-            &calls.lock().await[0].calldata[..4],
-            slash_abi::slashEquivocationNotarizeCall::SELECTOR.as_slice(),
-            "calldata ABI selector must be slashEquivocationNotarize"
+            calls.lock().await[0].calldata[..4],
+            slash_abi::SEL_NOTARIZE,
+            "calldata ABI selector must be slashEquivocationNotarize (0xe28d2f63)"
         );
         assert!(
             charges.next_charge(EPOCH, |_| false).is_none(),
@@ -835,15 +834,58 @@ fn slasher_rejects_tampered_evidence_at_verify_pre_submit() {
 
 // ---- slasher coverage: ABI selectors, dedup / outcome-lifecycle, kind coverage ----
 
-/// Local ABI mirror of the three slash entry points (types only — the selector
-/// depends solely on `(bytes,bytes,bytes,bytes)`), used to assert which slash
-/// function the producer encoded.
+/// Literal 4-byte selectors of the three slash entry points, used to assert
+/// which slash function the producer encoded.
+///
+/// **Hardcoded on purpose.** This file used to carry a private `sol!` mirror of
+/// the production declaration and compare `SomeCall::SELECTOR` against calldata
+/// the production declaration produced — two copies of the same belief, which
+/// agree through any rename. These literals were computed with
+/// `cast sig "<signature>"` and are the independent half of the pin.
+///
+/// The contract-side counterparts differ (six arguments, not four); the merge
+/// checklist is at the top of `crates/dpos/consensus/src/slasher/actor.rs`.
 mod slash_abi {
-    alloy_sol_types::sol! {
-        function slashEquivocationNotarize(bytes evidence, bytes pk, bytes sig1, bytes sig2);
-        function slashEquivocationFinalize(bytes evidence, bytes pk, bytes sig1, bytes sig2);
-        function slashEquivocationNullifyFinalize(bytes evidence, bytes pk, bytes sig1, bytes sig2);
-    }
+    /// `cast sig "slashEquivocationNotarize(bytes,bytes,bytes,bytes)"`
+    pub const SEL_NOTARIZE: [u8; 4] = [0xe2, 0x8d, 0x2f, 0x63];
+    /// `cast sig "slashEquivocationFinalize(bytes,bytes,bytes,bytes)"`
+    pub const SEL_FINALIZE: [u8; 4] = [0xad, 0xd0, 0x7a, 0x3e];
+    /// `cast sig "slashEquivocationNullifyFinalize(bytes,bytes,bytes,bytes)"`
+    pub const SEL_NULLIFY_FINALIZE: [u8; 4] = [0xa1, 0x08, 0x27, 0xe9];
+}
+
+/// The production `sol!` in `slasher::actor` — the ONE declaration the producer
+/// encodes through — against the literal selectors above. A rename on either
+/// side fails here first, and the message names both sides.
+#[test]
+fn slash_abi_selectors_are_pinned() {
+    use alloy_sol_types::SolCall as _;
+    use fluentbase_consensus::slasher::actor::{
+        slashEquivocationFinalizeCall, slashEquivocationNotarizeCall,
+        slashEquivocationNullifyFinalizeCall,
+    };
+
+    assert_eq!(
+        slashEquivocationNotarizeCall::SELECTOR,
+        slash_abi::SEL_NOTARIZE,
+        "node emits {:?} for slashEquivocationNotarize; pinned literal is 0xe28d2f63 and the \
+         contract (feat/flu-989-port-solidity-delta, six args) is 0x2bc5fb10",
+        slashEquivocationNotarizeCall::SELECTOR
+    );
+    assert_eq!(
+        slashEquivocationFinalizeCall::SELECTOR,
+        slash_abi::SEL_FINALIZE,
+        "node emits {:?} for slashEquivocationFinalize; pinned literal is 0xadd07a3e and the \
+         contract (feat/flu-989-port-solidity-delta, six args) is 0xb034c58b",
+        slashEquivocationFinalizeCall::SELECTOR
+    );
+    assert_eq!(
+        slashEquivocationNullifyFinalizeCall::SELECTOR,
+        slash_abi::SEL_NULLIFY_FINALIZE,
+        "node emits {:?} for slashEquivocationNullifyFinalize; pinned literal is 0xa10827e9 and \
+         the contract (feat/flu-989-port-solidity-delta, six args) is 0x337e1437",
+        slashEquivocationNullifyFinalizeCall::SELECTOR
+    );
 }
 
 /// A `ConflictingFinalize` by OFFENDER (two finalizes, same round, differing
@@ -999,9 +1041,9 @@ fn slasher_pipeline_handles_conflicting_finalize() {
         );
         let recorded = calls.lock().await;
         assert_eq!(
-            &recorded[0].calldata[..4],
-            slash_abi::slashEquivocationFinalizeCall::SELECTOR.as_slice(),
-            "ABI selector must be slashEquivocationFinalize"
+            recorded[0].calldata[..4],
+            slash_abi::SEL_FINALIZE,
+            "ABI selector must be slashEquivocationFinalize (0xadd07a3e)"
         );
         drop(recorded);
         drop(mb);
@@ -1038,9 +1080,9 @@ fn slasher_pipeline_handles_nullify_finalize() {
         );
         let recorded = calls.lock().await;
         assert_eq!(
-            &recorded[0].calldata[..4],
-            slash_abi::slashEquivocationNullifyFinalizeCall::SELECTOR.as_slice(),
-            "ABI selector must be slashEquivocationNullifyFinalize"
+            recorded[0].calldata[..4],
+            slash_abi::SEL_NULLIFY_FINALIZE,
+            "ABI selector must be slashEquivocationNullifyFinalize (0xa10827e9)"
         );
         drop(recorded);
         drop(mb);
