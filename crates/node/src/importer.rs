@@ -9,9 +9,11 @@
 //! construction: the insert is enqueued on the tree's channel before the FCU
 //! even enters the beacon channel, and both funnel into the same FIFO.
 //!
-//! `FLUENT_DPOS_IMPORT_MODE=new-payload` keeps the Phase A path (reth
-//! re-executes and would reject a derivation whose roots diverge) as the
-//! conformance / operator escape hatch.
+//! `FLUENT_DPOS_IMPORT_MODE=new-payload` used to keep the Phase A re-execution
+//! path as the conformance / operator escape hatch. It is now REFUSED at
+//! startup: `insert` is the only import mode DPoS is validated on, and the
+//! deferred executor was never exercised on the re-execution path. See
+//! [`RethImporter::from_env`].
 
 use crate::derive::DerivedExecution;
 use alloy_rpc_types_engine::{
@@ -24,50 +26,46 @@ use reth_engine_primitives::ConsensusEngineHandle;
 use reth_engine_tree::engine::{EngineApiRequest, FromEngine};
 use reth_ethereum_engine_primitives::EthEngineTypes;
 use reth_ethereum_primitives::EthPrimitives;
-use reth_payload_primitives::PayloadTypes;
 use std::sync::Arc;
 
+/// Engine-tree request sender. `tree_sender_escrow::take` downcasts by EXACT
+/// type, and a mismatch is indistinguishable from "nothing was deposited" — so
+/// this alias must keep denoting the type reth deposits at launch.
 type TreeTx = Sender<
     FromEngine<EngineApiRequest<EthEngineTypes, EthPrimitives>, reth_ethereum_primitives::Block>,
 >;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ImportMode {
-    InsertExecuted,
-    NewPayload,
-}
-
 #[derive(Clone, Debug)]
 pub struct RethImporter {
     engine: ConsensusEngineHandle<EthEngineTypes>,
-    tree: Option<TreeTx>,
-    mode: ImportMode,
+    tree: TreeTx,
 }
 
 impl RethImporter {
-    /// Resolve the import mode from `FLUENT_DPOS_IMPORT_MODE` and claim the
-    /// engine-tree sender from the launch escrow. Fails loud when
-    /// single-execution import is requested but the escrow is empty (a fork
+    /// Validate `FLUENT_DPOS_IMPORT_MODE` and claim the engine-tree sender from
+    /// the launch escrow. Fails loud when the escrow is empty (a reth fork
     /// without the deposit, or a second claim in one process).
+    ///
+    /// `insert` is the only supported mode: it is the only route the deferred
+    /// executor has ever been validated on, so the former `new-payload` escape
+    /// hatch pointed operators at an unexercised path and is refused at startup
+    /// rather than at the first divergence.
     pub fn from_env(engine: ConsensusEngineHandle<EthEngineTypes>) -> eyre::Result<Self> {
-        let mode = match std::env::var("FLUENT_DPOS_IMPORT_MODE").as_deref() {
-            Ok("new-payload") => ImportMode::NewPayload,
-            Ok("insert") | Err(_) => ImportMode::InsertExecuted,
-            Ok(other) => eyre::bail!(
-                "FLUENT_DPOS_IMPORT_MODE={other:?} — expected \"insert\" or \"new-payload\""
-            ),
-        };
-        let tree = reth_engine_tree::launch::tree_sender_escrow::take::<TreeTx>();
-        if mode == ImportMode::InsertExecuted && tree.is_none() {
-            eyre::bail!(
-                "single-execution import requested but the engine-tree sender escrow is \
-                 empty — reth fork without the launch deposit, or the sender was already \
-                 claimed in this process (set FLUENT_DPOS_IMPORT_MODE=new-payload to fall \
-                 back to re-execution)"
-            );
+        match std::env::var("FLUENT_DPOS_IMPORT_MODE").as_deref() {
+            Ok("insert") | Err(_) => {}
+            Ok(other) => {
+                eyre::bail!("FLUENT_DPOS_IMPORT_MODE={other:?} — expected \"insert\"")
+            }
         }
-        tracing::info!(?mode, "DPoS block import mode");
-        Ok(Self { engine, tree, mode })
+        let Some(tree) = reth_engine_tree::launch::tree_sender_escrow::take::<TreeTx>() else {
+            eyre::bail!(
+                "single-execution import requires the engine-tree sender escrow, which is \
+                 empty — reth fork without the launch deposit, or the sender was already \
+                 claimed in this process"
+            );
+        };
+        tracing::info!("DPoS block import: single-execution (InsertExecutedBlock)");
+        Ok(Self { engine, tree })
     }
 }
 
@@ -91,39 +89,25 @@ impl BeaconEngineLike for RethImporter {
         &self,
         data: DerivedExecution,
     ) -> Result<PayloadStatus, TransportError> {
-        match self.mode {
-            ImportMode::InsertExecuted => {
-                let executed = ExecutedBlock::new(
-                    Arc::new(data.recovered),
-                    Arc::new(data.output),
-                    ComputedTrieData {
-                        hashed_state: Arc::new(data.hashed_state.into_sorted()),
-                        trie_updates: Arc::new(data.trie_updates.into_sorted()),
-                        anchored_trie_input: None,
-                    },
-                );
-                self.tree
-                    .as_ref()
-                    .expect("checked at construction")
-                    .send(FromEngine::Request(EngineApiRequest::InsertExecutedBlock(
-                        executed,
-                    )))
-                    // A closed tree channel is a TRANSPORT failure — same class as
-                    // the FCU's engine-handle error. The executor degrades + defers
-                    // to reconvergence instead of actor-death (Decision A).
-                    .map_err(|_| TransportError::new("engine tree channel closed"))?;
-                // The insert is fire-and-forget into the tree's FIFO; the FCU
-                // that follows it (same FIFO) surfaces any rejection.
-                Ok(PayloadStatus::from_status(PayloadStatusEnum::Valid))
-            }
-            ImportMode::NewPayload => {
-                let sealed = data.recovered.into_sealed_block();
-                let payload = <EthEngineTypes as PayloadTypes>::block_to_payload(sealed);
-                self.engine
-                    .new_payload(payload)
-                    .await
-                    .map_err(TransportError::new)
-            }
-        }
+        let executed = ExecutedBlock::new(
+            Arc::new(data.recovered),
+            Arc::new(data.output),
+            ComputedTrieData {
+                hashed_state: Arc::new(data.hashed_state.into_sorted()),
+                trie_updates: Arc::new(data.trie_updates.into_sorted()),
+                anchored_trie_input: None,
+            },
+        );
+        self.tree
+            .send(FromEngine::Request(EngineApiRequest::InsertExecutedBlock(
+                executed,
+            )))
+            // A closed tree channel is a TRANSPORT failure — same class as
+            // the FCU's engine-handle error. The executor degrades + defers
+            // to reconvergence instead of actor-death (Decision A).
+            .map_err(|_| TransportError::new("engine tree channel closed"))?;
+        // The insert is fire-and-forget into the tree's FIFO; the FCU
+        // that follows it (same FIFO) surfaces any rejection.
+        Ok(PayloadStatus::from_status(PayloadStatusEnum::Valid))
     }
 }
