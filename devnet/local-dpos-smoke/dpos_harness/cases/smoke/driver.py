@@ -81,6 +81,7 @@ import json
 import os
 import traceback
 
+from ...checks import battery
 from ...core import converge, nodes, proc, rpc, topology
 from ...core.converge import ConvergeError
 from ...core.exit_codes import RC_ERROR, RC_FAIL, RC_PASS, RC_USAGE
@@ -130,6 +131,21 @@ DEFERRED_HEIGHT_GAUGE = "deferred_height"
 #: reth datadir on a host running eight containers, and a timeout here reads as "the file is not
 #: there", which is the answer the DKG-restart case keys its restart on.
 EXEC_TEST_TIMEOUT = 60
+
+#: THE SAFETY SWEEP's kill switch. `SMOKE_SAFETY_SWEEP=0` runs a case exactly as it ran before the
+#: sweep existed. It is here because the sweep is the one thing in this driver that can fail a case
+#: for a reason the case did not ask about, and an operator bisecting a red gate needs to be able
+#: to take it out of the picture in one variable rather than by editing the harness. Any other
+#: value — unset included — arms it.
+SAFETY_SWEEP_ENV = "SMOKE_SAFETY_SWEEP"
+
+#: How many finalized heights back the sweep's double-finalization walk reaches. The battery's own
+#: default (`SIM_FIN_WALK_MAX`, 64) is written for a soak that walks once per tick and carries its
+#: cursor forward all run; the sweep walks ONCE, with an empty cursor, so 64 would mean 64 heights
+#: × every committee node of `docker compose exec` reads in a single burst at the end of every
+#: case. 16 keeps the window meaningful — a double-finalization is a permanent divergence, not a
+#: one-block blip, so it is still there sixteen heights later — at a quarter of the reads.
+SAFETY_SWEEP_FIN_WALK = 16
 
 
 class SmokeFailure(Exception):
@@ -1053,6 +1069,93 @@ class SmokeCtx:
 
 # ══ the wrapper ═══════════════════════════════════════════════════════════════════════
 
+def safety_sweep(ctx: SmokeCtx, case: str) -> None:
+    """Run the battery's SAFETY subset against the live stand once, and FAIL the case on a
+    violation. Raises `SmokeFailure` (→ `RC_FAIL`); returns None on hold, skip or unreadable.
+
+    ═══ WHY IT IS HERE AND NOT IN A CASE ══════════════════════════════════════════════════
+
+    `checks/battery.py` carries ~30 invariant detectors and, until this, NOT ONE of the twenty
+    cases in `cli.SUITE` ever instantiated it. Its only callers were the soak orchestrator — which
+    is not in the suite — and `sim/shadow.py`, which writes a log line and returns 0 unconditionally
+    and so cannot fail anything. The entire safety net was disarmed in the suite an operator
+    actually runs: a chain that finalized two different blocks would have gone green as long as
+    every case's own assertions happened to hold.
+
+    It sits in the DRIVER rather than in each case's assertion list on purpose. It is not a
+    property any one case is about — it is the property every case's stand has to have had while
+    that case was measuring something else — and `tests/test_cli_case_all.py` pins the nine
+    non-suite cases to assertions the two aggregates also run, which an appended per-case entry
+    would break for no gain.
+
+    ═══ WHAT IT CAN AND CANNOT DO ═════════════════════════════════════════════════════════
+
+    ARMED (`battery.ARMED_SAFETY_IDS`): safety-halt, fork-detected, result-divergence,
+    double-finalization. Four two-sided safety witnesses, each reachable from ONE tick of chain
+    reads with no belt behind it — see `ChainBattery.check_safety_subset` for why that boundary is
+    the one that matters and not "the HARD ones".
+
+    NOT ARMED, and the reasoning is the same in every case: a detector that cannot evaluate SKIPS.
+    Every belt in the battery needs consecutive evaluated ticks to mean anything and a case gives
+    it one, so nothing belt-shaped can be armed here without inventing verdicts. `detector-starved`
+    and `battery-coverage` are the battery's own read-channel guards and are reported, never
+    asserted, for the same reason. The three cross-node detectors decline to compare below their
+    own f+1 responder floors, which is what makes the sweep safe to run at the END of a case that
+    deliberately left validators stopped: an absent node is a node that did not answer, not a node
+    that disagreed.
+
+    A read-side exception is reported and swallowed. The sweep is a net under the case, not a
+    second case: an unreachable daemon at teardown time must not be able to turn a green run red.
+    """
+    if os.environ.get(SAFETY_SWEEP_ENV, "1") == "0":
+        return
+    if ctx.dry:
+        # A dry run's readings are canned, so the sweep is recorded and NOT evaluated — the same
+        # contract `SmokeCtx.check` keeps. This step proves the wiring, and nothing else.
+        ctx.p.step("battery", f"safety sweep ({', '.join(sorted(battery.ARMED_SAFETY_IDS))})")
+        return
+
+    addrs = [str(a).lower() for a in ctx.runtime_addresses() if str(a).startswith("0x")]
+    if len(addrs) < 2:
+        # No committee to compare across is not a violation — it is the sweep having nothing to
+        # say. Printed, because silence here is indistinguishable from a clean sweep.
+        print(f"{case}: safety sweep SKIPPED — /runtime/addresses.json yielded "
+              f"{len(addrs)} validator address(es); a cross-node safety check needs at least two",
+              flush=True)
+        return
+
+    # `validators[i] == validator-i` is the ordering contract of addresses.json (see
+    # RUNTIME_ADDRESSES_PATH), and it is the only thing that maps a seated address to a container
+    # the battery can read. SIM_CUR_F mirrors the orchestrator's `(n - 1) // 3`, which is what the
+    # responder floors (f+1) are computed from. SIM_NO_CASCADE=1 keeps the L2/L3 tiers out of the
+    # beacon window: they are excluded from the finalized-HASH comparison anyway
+    # (`_inv_beacon_window` skips `CASCADE_TIERS` for hash agreement), so including them would buy
+    # reads against a `downstream` that most of these stands do not even run.
+    cx = battery.Ctx(
+        SIM_TICK=0, SIM_ROUND=0,
+        SIM_CUR_F=max((len(addrs) - 1) // 3, 0),
+        SIM_CUR_COMMITTEE=" ".join(addrs),
+        ADDR2IDX={a: topology.validator(i) for i, a in enumerate(addrs)},
+        SIM_NO_CASCADE=1,
+    )
+    # ChainBattery, not Battery: the four armed detectors are all chain-only, and the class
+    # without a `sim` attribute is what makes that structural rather than a promise.
+    bat = battery.ChainBattery(ctx=cx)
+    bat.SIM_FIN_WALK_MAX = SAFETY_SWEEP_FIN_WALK
+    try:
+        ok = bat.check_safety_subset()
+    except Exception as e:  # noqa: BLE001 — see the docstring: a net must not become a failure mode
+        print(f"{case}: safety sweep could not run ({type(e).__name__}: {e}) — reported, not "
+              "asserted; the case's own verdict stands", flush=True)
+        return
+    for kind, note in bat.events:
+        print(f"{case}: safety sweep {kind}: {note}", flush=True)
+    if not ok:
+        raise SmokeFailure(case, f"SAFETY INVARIANT [{bat.inv_fail_id}] {bat.inv_fail_msg}")
+    print(f"{case}: safety sweep OK ({', '.join(sorted(battery.ARMED_SAFETY_IDS))} over "
+          f"{len(addrs)} committee node(s))", flush=True)
+
+
 def _keep_up() -> bool:
     """`case-vrf.sh:14` — `trap '[ -n "${SMOKE_KEEP_UP:-}" ] || tear_down' EXIT`. Any non-empty
     value keeps the stack, matching bash's `-n` test rather than inventing a `=1` convention."""
@@ -1158,6 +1261,12 @@ def _run(case, assertions, runner, dry, converge_exclude, honours_keep_up, overl
     try:
         for fn in assertions:
             fn(ctx)
+        # LAST, and inside the same try: the sweep judges the stand the assertions just ran on, so
+        # it must see the chain in the state the case left it in — and its verdict has to reach the
+        # same SmokeFailure → RC_FAIL path, or it would be a check that cannot fail anything, which
+        # is the defect it exists to close. Fail-fast still holds: a case that already failed an
+        # assertion never reaches it.
+        safety_sweep(ctx, case)
     except SmokeFailure as e:
         print(f"FAIL ({e.case}): {e.message}", flush=True)
         rc = RC_FAIL

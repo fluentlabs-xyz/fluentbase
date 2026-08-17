@@ -299,6 +299,24 @@ def cp_ncap_only(read_ok, n, cap, joiner_m1, grow_landed):
     return read_ok == 1 and n < cap and joiner_m1 <= grow_landed
 
 
+#: THE ARMED SAFETY SET — the only fail ids `check_safety_subset` lets a caller fail a run on.
+#:
+#: Four ids, and the boundary is not "the HARD ones": it is the ids whose detector reaches a
+#: verdict from ONE tick of chain reads, with no rolling belt and no soak-only state behind it.
+#: Everything a detector on that path can ALSO emit — `beacon-zero` / `beacon-divergent` /
+#: `beacon-stuck` off the beacon window, `detector-starved` off any of the three cross-node ones
+#: — is deliberately OUT: a belt that needs consecutive evaluated ticks cannot say anything true
+#: on a stand that gives it one, and an id that fires when the read channel is thin is a statement
+#: about the reader, not about the chain. `check_safety_subset` reports those and skips them.
+#:
+#: Every one of the four is also a two-sided SAFETY witness — the chain finalized two different
+#: things, or a node parked refusing the chain — which is the class that must never be allowed to
+#: pass silently, and the class `core.policy.DEMOTED_INVARIANTS` was explicitly written never to
+#: contain.
+ARMED_SAFETY_IDS = frozenset({"safety-halt", "fork-detected", "result-divergence",
+                              "double-finalization"})
+
+
 class ChainBattery:
     """The CHAIN-ONLY half of the battery: every detector that judges chain, node or metric
     facts and nothing else. Holds all the rolling state and the impure seams (defaulting to
@@ -1372,6 +1390,10 @@ class ChainBattery:
                 ceil[svc] = self.SIM_BW_L3_FIN
             else:
                 ceil[svc] = self._node_fin_cached(svc)
+        # First beacon-level verdict seen, held back so the more severe
+        # `fork-detected` scan below still runs over the whole window. Returned
+        # after the loop if nothing worse was found. See the two sites that set it.
+        deferred = None
         for b in range(lo, hi + 1):
             first = None
             agree = 1
@@ -1385,10 +1407,23 @@ class ChainBattery:
                 if mh == "null" or not mh:
                     continue
                 if nodes.is_zero_hash(mh):
-                    return self._inv_fail(
-                        "beacon-zero",
-                        f"prev_randao ZERO at block {b} on {svc} (beacon stalled / fell to "
-                        "digest)")
+                    # DEFERRED, not returned. `fork-detected` below is strictly more
+                    # severe than a zero beacon, and returning here used to abandon
+                    # the fork comparison for THIS height and every height above it.
+                    # That mattered once `check_safety_subset` began arming
+                    # `fork-detected` without arming `beacon-zero`: the sweep would
+                    # report-and-skip the zero, print "safety sweep OK", and never
+                    # have run the fork check at all — a false PASS on exactly the
+                    # cases whose tuned genesis puts pre-activation (legitimately
+                    # zero prev_randao) blocks inside the window.
+                    # Soak behaviour is unchanged: the verdict is still returned,
+                    # just after the more severe scan has had its chance.
+                    if deferred is None:
+                        deferred = (
+                            "beacon-zero",
+                            f"prev_randao ZERO at block {b} on {svc} (beacon stalled / fell "
+                            "to digest)")
+                    continue
                 responders += 1
                 if first is None:
                     first = mh
@@ -1424,10 +1459,17 @@ class ChainBattery:
                         f"{hash_bad_svc}={hash_bad} vs {fhash_svc}={fhash}; re-read "
                         f"{hash_bad_svc}={r2} vs {fhash_svc}={r1}")
             if agree == 0:
-                return self._inv_fail(
-                    "beacon-divergent",
-                    f"nodes disagree on prev_randao at block {b} (divergent seed)")
+                # Deferred for the same reason as `beacon-zero` above: it would
+                # otherwise abandon the `fork-detected` scan for every height above
+                # this one.
+                if deferred is None:
+                    deferred = (
+                        "beacon-divergent",
+                        f"nodes disagree on prev_randao at block {b} (divergent seed)")
+                continue
             seen.append(first)
+        if deferred is not None:
+            return self._inv_fail(*deferred)
         if not self._detector_sampled(
                 "beacon-fork",
                 f"json-rpc block reads (mixHash/hash over [{lo}..{hi}]; {len(beacon_nodes)} probe nodes)",
@@ -1744,6 +1786,64 @@ class ChainBattery:
                                     f"at {wpn} for {self.SIM_WP_FLAT} ticks while v0 finalizes")
         return True
 
+    # ── the SINGLE-TICK safety subset (armed outside the soak) ──────────────
+    #: `check_safety_subset`'s detectors, in `check_invariants` ORDER. Copied rather than
+    #: re-derived so the two lists can be diffed by eye; the labels are the detector names the
+    #: starvation belt already publishes, not the fail ids (`beacon-window` is the detector that
+    #: carries `fork-detected`).
+    _SAFETY_SUBSET = ("safety-halt", "beacon-window", "result-agreement", "finalized-chain")
+
+    def check_safety_subset(self):
+        """Run ONE tick of the four SAFETY detectors and return True (nothing violated) or False
+        with inv_fail_id/inv_fail_msg set to an id in `ARMED_SAFETY_IDS`.
+
+        WHY THIS EXISTS SEPARATELY FROM `check_invariants`. The full battery is written for the
+        soak: it runs ~30 detectors in one order, RETURNS ON THE FIRST that says no, and most of
+        them are belts that only mean something after N consecutive evaluated ticks. A consumer
+        that drives a stack for a few minutes and calls `check_invariants` once therefore gets a
+        verdict dominated by whichever bookkeeping or liveness detector happens to be unhappy
+        first, and never reaches the safety witnesses at all. This runs the safety four and
+        NOTHING else, so a `finalize-stall` during a deliberate fault window cannot mask a
+        `double-finalization` two detectors later.
+
+        SKIP, NEVER FAIL, is the whole discipline. Each of the four already declines to assert
+        when it cannot see enough — `_inv_result_agreement` and `_inv_finalized_chain` compare
+        nothing below their responder floors, `_inv_beacon_window` skips a height no f+1 nodes
+        answer for, `_inv_safety_halt` skips a node whose scrape came back empty — and on top of
+        that, any verdict this returns whose id is NOT armed is reported as an event and stepped
+        over. A stand that cannot evaluate a property says so; it does not go red for it.
+
+        It is a SINGLE tick by construction. Every belt in the battery arms at >= 2 evaluated
+        ticks (`SIM_DET_STARVE_TICKS`, `SIM_STALL_TICKS`, `SIM_COVERAGE_MIN_TICKS`), so one tick
+        cannot trip one — which is exactly why the four here are the four that need no belt.
+
+        The caller supplies the committee and its address map through `Ctx` and gets the reads for
+        free; with an EMPTY committee the three cross-node detectors compare nothing and this
+        returns True, as it must — vacuity is not health, but it is not a failure either, and the
+        caller is the one that knows whether its stand should have had a committee."""
+        self.inv_fail_id = ""
+        self.inv_fail_msg = ""
+        fin = self._finalized_dec()
+        self._scrape_metrics(self._node_metrics(topology.PINNED_RPC_HOST))
+        self._prime_node_fin(fin)
+        bound = {"safety-halt": lambda: self._inv_safety_halt(),
+                 "beacon-window": lambda: self._inv_beacon_window(fin),
+                 "result-agreement": lambda: self._inv_result_agreement(fin),
+                 "finalized-chain": lambda: self._inv_finalized_chain(fin)}
+        for det in self._SAFETY_SUBSET:
+            if bound[det]():
+                continue
+            if self.inv_fail_id in ARMED_SAFETY_IDS:
+                return False
+            self.sim_event(
+                "safety_subset_skip",
+                f"{det} answered [{self.inv_fail_id}] {self.inv_fail_msg} — that id is not in the "
+                f"armed set {sorted(ARMED_SAFETY_IDS)}, so it is REPORTED and stepped over. It is "
+                "either a belt that cannot mean anything on a single tick or a read-channel "
+                "statement; judging a run by it here would be judging the reader")
+            self.inv_fail_id = ""
+            self.inv_fail_msg = ""
+        return True
 
 
 class Battery(ChainBattery):

@@ -90,6 +90,13 @@ def test_tx_transcript_is_bash_faithful():
         :38  cast receipt $h --rpc-url $RPC --json          (per tx)
         :51  cast balance $DEAD --rpc-url $RPC
         :59  cast call $BLEND allowance(address,address)(uint256) $FROM $DEAD --rpc-url $RPC
+
+    ONE DELIBERATE DELTA FROM THE BASH, and it is the last entry before the teardown: the
+    `[step] battery` line is `driver.safety_sweep` — the invariant battery's four SAFETY detectors,
+    run against the stand every case leaves behind (`driver.SAFETY_SWEEP_ENV` disarms it). Bash has
+    no counterpart because bash never ran the battery from a case at all; that was the defect. It
+    is a STEP and not a command: under `--dry-run` the sweep records itself and evaluates nothing,
+    because a verdict computed over canned readings is meaningless in both directions.
     """
     rc, argvs = _dry(tx)
     key = "0x" + "00" * 32
@@ -109,6 +116,7 @@ def test_tx_transcript_is_bash_faithful():
         ["cast", "balance", verdicts.DEAD_ADDR, "--rpc-url", RPC],
         ["cast", "call", verdicts.BLEND_ADDR, "allowance(address,address)(uint256)",
          "0x" + "11" * 20, verdicts.DEAD_ADDR, "--rpc-url", RPC],
+        ["<step>", "battery"],
         DOWN,
     ]
 
