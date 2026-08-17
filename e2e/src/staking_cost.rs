@@ -11,11 +11,12 @@
 //! figure alongside the raw transaction figure.
 
 use crate::EvmTestingContextWithGenesis;
-use alloy_sol_types::{sol, SolCall};
+use alloy_sol_types::{sol, SolCall, SolEvent};
 use fluentbase_sdk::{
     address, hex, Address, Bytes, B256, GENESIS_GOVERNANCE, GENESIS_STAKING, U256,
 };
 use fluentbase_testing::EvmTestingContext;
+use revm::Database;
 
 const SYSTEM_CALLER: Address = address!("0xfffffffffffffffffffffffffffffffffffffffe");
 const OWNER: Address = Address::repeat_byte(0x11);
@@ -38,6 +39,10 @@ const SYSTEM_CALL_BUDGET: f64 = 30_000_000.0;
 /// `STIPEND_FUEL_CAP` in gas: `12_000_000 * FUEL_DENOM_RATE` fuel, and fuel
 /// converts back at the same rate (`crates/revm/src/executor.rs:420`).
 const STIPEND_CAP_GAS: u64 = 12_000_000;
+/// Mirrors the contract's `consts.rs::MAX_SETTLE_CATCHUP`. Epochs one settlement
+/// call may fund, and therefore the number of token pulls the two "maximum
+/// catch-up" measurements below must be able to count.
+const MAX_SETTLE_CATCHUP: u64 = 4;
 
 // ---------------------------------------------------------------------------
 // Cost guards.
@@ -66,24 +71,62 @@ const STIPEND_CAP_GAS: u64 = 12_000_000;
 //
 // READ THE THREE FLOORS AS A MINIMUM, NEVER INDIVIDUALLY. The roster is walked
 // by two separate system calls, each with its own 30M, and the chain stops at
-// whichever runs out first — today that is `commitEpochCommittee`, ~2.3x
-// tighter than the epoch close. Not because its fixed cost is the largest: the
-// close's is nearly three times bigger. The commit binds because it pays the
-// view's per-entry slope on top of a ~2.5M intercept, while the close pays a
-// large intercept against a slope a third the size. Quoting the close's headroom
-// as "the" limit overstates it by that factor.
+// whichever runs out first — today that is `commitEpochCommittee`, ~2.6x
+// tighter than the epoch close. The commit binds because it pays the view's
+// per-entry slope on top of a ~2.5M intercept, while the close pays a slope a
+// third that size. Quoting the close's headroom as "the" limit overstates it by
+// that factor.
+//
+// That gap WIDENED when the stipend split moved into the close (2026-08-17): the
+// close's intercept fell by 47% and its floor rose from 4_871 to 5_643 while the
+// commit did not move at all — 2_574_893 both before and after, to the digit, so
+// the "~2.5M" above is the same number it has always described. The close used to
+// have the larger fixed cost of the two by nearly 3x; it is now only ~1.6x the
+// commit's, and the two are on converging paths. The minimum rule matters more
+// than it did, not less.
 //
 // Crossing it is not recoverable in-band: the commit is a pre-execution system
 // call, so the block fails before any transaction in it runs, and the
 // transaction that would prune the roster can never be mined.
 // ---------------------------------------------------------------------------
 
-/// Measured 2026-08-06: 7_594_252.
-const PATH_A_INTERCEPT_MAX: f64 = 8_730_000.0;
-/// Measured 2026-08-06: 4_600 gas per roster entry.
+/// Measured 2026-08-17: 4_041_657. Was 7_594_252 on 2026-08-06.
+///
+/// It FELL by 3_552_595, and the ceiling is re-pinned down to match rather than
+/// left where it was. A ceiling three times the measurement reads green through
+/// any regression short of a tripling, so leaving 8_730_000 in place would have
+/// silently spent the whole improvement this change bought.
+///
+/// The fall is the stipend split moving out of the payment leg and into the
+/// close: the leg shed 6_603_076 (see `STIPEND_LEG_MAX`) while the close took on
+/// 3_264_563 of accrual (see `PATH_A_ACCRUAL_MAX`). The close does the work for
+/// ONE epoch where the leg did it for `MAX_SETTLE_CATCHUP`, which is where the
+/// net saving comes from — not from the work getting cheaper.
+const PATH_A_INTERCEPT_MAX: f64 = 4_640_000.0;
+/// Measured 2026-08-17: 4_600 gas per roster entry, unchanged from 2026-08-06.
+///
+/// Left at its existing value deliberately: the roster walk is `release_expired`
+/// and the exclusion sweep, neither of which the stipend split touches, and the
+/// measurement confirms it to the digit. 5_300 is already ~15% over it.
 const PATH_A_SLOPE_MAX: f64 = 5_300.0;
-/// Measured 2026-08-06: roster 4_871.
-const PATH_A_ROSTER_FLOOR: f64 = 4_280.0;
+/// Measured 2026-08-17: roster 5_643. Was 4_871 on 2026-08-06.
+///
+/// A floor that RISES is the one direction that cannot be left alone: 4_280 was
+/// 12% under the old measurement and is 24% under this one, so it would no longer
+/// catch the close regressing back to where it was.
+const PATH_A_ROSTER_FLOOR: f64 = 4_960.0;
+
+/// Measured 2026-08-17: 3_264_563 for a fresh epoch, 811_463 for one whose
+/// per-validator snapshots already exist.
+///
+/// Pinned against the fresh-epoch figure, which is the steady state: every epoch
+/// is new. Three quarters of it is `touch_snapshot_at_or_before` materializing 51
+/// snapshots at ~48_100 each, and that is work the settlement leg used to do —
+/// moved, not added.
+///
+/// This replaces a ~1.5M estimate that was decomposed from other measurements
+/// rather than measured. The estimate was low by 2.2x.
+const PATH_A_ACCRUAL_MAX: u64 = 3_750_000;
 
 /// Measured 2026-08-06: 544_000.
 const VIEW_INTERCEPT_MAX: f64 = 625_000.0;
@@ -114,15 +157,31 @@ const COMMIT_SLOPE_MAX: f64 = 14_700.0;
 /// Measured 2026-08-06: roster 2_143.
 const COMMIT_ROSTER_FLOOR: f64 = 1_885.0;
 
-/// Measured 2026-08-06: 6_651_928, i.e. 55.4% of the cap.
+/// Measured 2026-08-17: 48_852, i.e. 0.4% of the cap. Was 6_651_928 — 55.4% of
+/// it — on 2026-08-06.
 ///
-/// The wider band here — 20% over today rather than 15% — is deliberate. This is
-/// the one bound the contract enforces at run time rather than a bound on a
-/// trend, and the consequence of crossing it is silent: the self-call takes
-/// `OutOfFuel`, `settle_stipend_leg` swallows it as a status, and every epoch
-/// close from then on emits `StipendLegSkipped` and pays nobody. The guard is
-/// therefore placed to catch the approach, not the arrival.
-const STIPEND_LEG_MAX: u64 = 8_000_000;
+/// A fall of 6_603_076, or 99.27%. The leg no longer splits a pot or walks a
+/// committee; it reads one scalar per epoch and transfers it, so its cost is
+/// `MAX_SETTLE_CATCHUP` × ~12_200 and is independent of committee size.
+///
+/// **This guard's job changed with that, and the number is not a percentage band
+/// over the measurement.** The old 8_000_000 was 20% over a figure that was
+/// genuinely approaching the contract's 12M cap. At 48_852 the leg cannot
+/// approach that cap by growing — it would have to change shape — so a
+/// percentage band would only fire on benign per-epoch edits (one more event, one
+/// more read), and 8_000_000 would let it grow 164x unremarked. Neither is a
+/// guard.
+///
+/// 250_000 is set to catch the regression that actually matters: a per-member
+/// walk returning to the payment path. One committee-sized walk at 51 members
+/// costs on the order of 1M, so any such change trips this immediately, while
+/// ~5.1x of today absorbs several extra storage operations per settled epoch.
+///
+/// The consequence of crossing the contract's own cap is still silent — the
+/// self-call takes `OutOfFuel`, `settle_stipend_leg` swallows it as a status —
+/// but it now costs only a deferral: the accrual ran in the outer frame and the
+/// epochs stay owed.
+const STIPEND_LEG_MAX: u64 = 250_000;
 
 const _: () = assert!(
     STIPEND_LEG_MAX < STIPEND_CAP_GAS,
@@ -210,6 +269,15 @@ sol! {
         bytes32 peerPubkey;
         uint64 activationEpoch;
     }
+
+    /// The close's accrual fact: what the epoch owes, decided at its close.
+    event EpochBlendRewardsCommitted(uint64 indexed epoch, uint256 blendAmount);
+    /// The payment paid nobody for this epoch, whether because the close owed
+    /// nothing or because no close will ever run for it.
+    event StipendSkipped(uint64 indexed epoch);
+    /// The fuel-capped payment frame was discarded. Emitted from the outer frame,
+    /// which is why it survives when the two events above do not.
+    event StipendLegSkipped(uint64 indexed epoch);
 
     interface IStaking {
         function initialize(
@@ -302,6 +370,12 @@ fn deploy_bls_verifier(context: &mut EvmTestingContext) -> Address {
 /// the configured address, so an address that has not approved the staking
 /// contract is exactly an address whose `transferFrom` reverts. No balances are
 /// tracked; this measures gas, not solvency.
+///
+/// It DOES count successful pulls, in storage slot zero, and that counter is the
+/// only positive evidence in this file that a measured frame did the settlement
+/// work it is being priced for. Read it with `committed_pulls`. Being storage, it
+/// unwinds with a discarded frame, which is exactly the discrimination needed:
+/// the stipend leg's self-call is the one frame here whose failure is swallowed.
 fn deploy_token(context: &mut EvmTestingContext) -> Address {
     deploy_runtime(
         context,
@@ -317,11 +391,24 @@ fn deploy_token(context: &mut EvmTestingContext) -> Address {
             "14603b57"
             // no: revert, which is what an unapproved source looks like
             "60006000fd"
-            // yes: return true
+            // yes: sstore(0, sload(0) + 1), then return true
             "5b"
+            "600054600101600055"
             "600160005260206000f3"
         ),
     )
+}
+
+/// Successful `transferFrom` calls the token has COMMITTED, ever.
+///
+/// Slot zero of the mock. A pull inside a frame that was later discarded is not
+/// counted, because the store went with the frame.
+fn committed_pulls(context: &mut EvmTestingContext, token: Address) -> u64 {
+    context
+        .db
+        .storage(token, U256::ZERO)
+        .expect("the mock token's pull counter is readable")
+        .to()
 }
 
 /// An address that never approved the staking contract, used to stall the
@@ -358,6 +445,20 @@ struct Measured {
     frame_gas: u64,
     /// Post-refund figure, reported only so the gap is visible.
     tx_gas_after_refund: u64,
+    /// `topic0` of every log the call committed, in order.
+    ///
+    /// A log written inside a discarded frame is not here, which is what lets an
+    /// assertion tell a payment that happened from one that was rolled back.
+    event_topics: Vec<B256>,
+}
+
+impl Measured {
+    fn events(&self, signature_hash: B256) -> usize {
+        self.event_topics
+            .iter()
+            .filter(|topic| **topic == signature_hash)
+            .count()
+    }
 }
 
 fn measure(context: &mut EvmTestingContext, caller: Address, input: Vec<u8>) -> Measured {
@@ -370,6 +471,11 @@ fn measure(context: &mut EvmTestingContext, caller: Address, input: Vec<u8>) -> 
         tx_gas,
         frame_gas: tx_gas.saturating_sub(overhead),
         tx_gas_after_refund: result.tx_gas_used(),
+        event_topics: result
+            .logs()
+            .iter()
+            .filter_map(|log| log.topics().first().copied())
+            .collect(),
     }
 }
 
@@ -405,6 +511,7 @@ fn bls_pubkey(index: usize) -> Bytes {
 struct Fixture {
     context: EvmTestingContext,
     validators: Vec<Address>,
+    token: Address,
 }
 
 /// Genesis with `roster` active, equally staked, key-carrying validators.
@@ -458,10 +565,16 @@ fn fixture(roster: usize, source_is_approved: bool) -> Fixture {
     Fixture {
         context,
         validators,
+        token,
     }
 }
 
 impl Fixture {
+    /// Successful `transferFrom` calls the token has committed so far.
+    fn committed_pulls(&mut self) -> u64 {
+        committed_pulls(&mut self.context, self.token)
+    }
+
     fn commit_committee(&mut self) -> Measured {
         measure(
             &mut self.context,
@@ -676,7 +789,9 @@ fn worst_case_close(roster: usize) -> u64 {
     }
 
     let close_block = first_block(5);
+    let pulls_before = fixture.committed_pulls();
     let worst = fixture.record(close_block);
+    let pulls_in_close = fixture.committed_pulls() - pulls_before;
     println!(
         "  close(epoch 4) WORST at block {close_block}: frame {} / tx {} / post-refund {}",
         worst.frame_gas, worst.tx_gas, worst.tx_gas_after_refund
@@ -690,13 +805,114 @@ fn worst_case_close(roster: usize) -> u64 {
     // Proof that the worst case really happened: two exclusions expired and were
     // released while two more were stamped, and four epochs settled.
     assert_eq!(fixture.pending_exclusions().len(), 2);
-    for epoch in 0..4u64 {
+    // COUNT the transfers, positively. Two weaker forms were tried and both are
+    // vacuous in the direction that matters. `epoch_rewards(e) > 0` stopped
+    // proving settlement when the close took over writing that ledger — it is an
+    // accrual record now and fills in whether or not a token moves. And "no
+    // `StipendSkipped` was emitted" is vacuously TRUE of a walk that settled
+    // NOTHING, so a regression that advances the cursor early would empty this
+    // frame of settlement work, LOWER the measured intercept, and read green
+    // against a ceiling. The pull counter is the only assertion here that fails
+    // in both directions.
+    assert_eq!(
+        pulls_in_close, MAX_SETTLE_CATCHUP,
+        "the close must fund exactly MAX_SETTLE_CATCHUP epochs, or the figure \
+         above is not the worst case being guarded"
+    );
+    assert_eq!(
+        worst.events(StipendLegSkipped::SIGNATURE_HASH),
+        0,
+        "the payment frame was discarded"
+    );
+    assert_eq!(
+        worst.events(EpochBlendRewardsCommitted::SIGNATURE_HASH),
+        1,
+        "a close accrues exactly the one epoch it closes"
+    );
+    for epoch in 0..5u64 {
         assert!(
             fixture.epoch_rewards(epoch) > U256::ZERO,
-            "epoch {epoch} must have been settled by the catch-up"
+            "epoch {epoch} must have been accrued by its own close"
         );
     }
     worst.frame_gas
+}
+
+/// What the accrual costs inside the close, measured rather than decomposed.
+///
+/// Two fixtures identical in every respect but the configured stipend rate. At
+/// zero the accrual returns at its `pot.is_zero()` arm and writes only the
+/// closed-marker scalar; above zero it walks the committee, splits the pot and
+/// writes a credit per member. The difference is the split.
+///
+/// One thing is deliberately not held constant: the payment skips in the zero arm
+/// and transfers in the funded one. `path_a_stipend_leg_cost_at_max_catchup`
+/// prices that whole leg at four epochs, so the confound is bounded by a quarter
+/// of that figure — two orders of magnitude below what is being measured here.
+///
+/// Both epochs are reported on purpose. Epoch 0's per-validator snapshots already
+/// exist, materialized by `initialize`, so its accrual is the credit writes
+/// alone. Epoch 1's do not, so it also pays `touch_snapshot_at_or_before` per
+/// member — the steady-state shape, and work that MOVED out of the settlement
+/// leg rather than being new.
+#[test]
+fn path_a_close_accrual_cost() {
+    println!("\n=== PATH A: the accrual the close carries ===");
+    let with_split = closes_at_stipend_rate(TOKEN * U256::from(COMMITTEE));
+    let marker_only = closes_at_stipend_rate(U256::ZERO);
+    println!(
+        "{:>8}  {:>18}  {:>18}  {:>14}",
+        "epoch", "close with split", "close, marker only", "accrual"
+    );
+    let accruals: Vec<u64> = with_split
+        .iter()
+        .zip(&marker_only)
+        .map(|(full, marker)| full - marker)
+        .collect();
+    for (epoch, accrual) in accruals.iter().enumerate() {
+        println!(
+            "{epoch:>8}  {:>18}  {:>18}  {accrual:>14}",
+            with_split[epoch], marker_only[epoch]
+        );
+    }
+    let steady_state = accruals[1];
+    println!(
+        "\nsteady-state accrual (epoch 1, snapshots not yet materialized): \
+         {steady_state}"
+    );
+    println!(
+        "against the 30M system-call budget: {:.1}%",
+        steady_state as f64 / SYSTEM_CALL_BUDGET * 100.0
+    );
+
+    let mut guards = Guards::default();
+    guards.at_most(
+        "close accrual, steady state",
+        steady_state as f64,
+        PATH_A_ACCRUAL_MAX as f64,
+    );
+    guards.finish();
+}
+
+/// Frame gas of `close(0)` and `close(1)` with the stipend priced at `rate`.
+///
+/// The verdict tier is left at its seeded-off default, so neither close judges
+/// and the two arms differ only where the rate makes them.
+fn closes_at_stipend_rate(rate: U256) -> Vec<u64> {
+    let mut fixture = fixture(COMMITTEE, true);
+    fixture.govern(IStaking::setBlendStipendPerEpochCall { value: rate }.abi_encode());
+    // Two to close plus the lookahead the commit insists on.
+    for _ in 0..3 {
+        fixture.commit_committee();
+    }
+    let mut closes = Vec::new();
+    for block in first_block(0)..=first_block(2) {
+        let measured = fixture.record(block);
+        if block == first_block(1) || block == first_block(2) {
+            closes.push(measured.frame_gas);
+        }
+    }
+    closes
 }
 
 /// The stipend leg alone, through `settleEpochStipend`, which runs the identical
@@ -706,6 +922,7 @@ fn worst_case_close(roster: usize) -> u64 {
 fn path_a_stipend_leg_cost_at_max_catchup() {
     let mut fixture = fixture(COMMITTEE, false);
     println!("\n=== PATH A: stipend leg (settle_up_to) at maximum catch-up ===");
+    let stalled_baseline = fixture.committed_pulls();
 
     for _ in 0..3 {
         fixture.commit_committee();
@@ -719,8 +936,20 @@ fn path_a_stipend_leg_cost_at_max_catchup() {
             }
         }
     }
-    // The cursor is still at epoch 0: every close so far hit the
-    // unapproved source and its self-call frame was discarded.
+    // The cursor is still at epoch 0: every close so far hit the unapproved
+    // source and its self-call frame was discarded. That premise is ASSERTED
+    // rather than left to this comment — if it ever stops holding,
+    // `settle_up_to` early-returns, the measured frame collapses to nothing and
+    // `STIPEND_LEG_MAX` passes on a no-op.
+    //
+    // Against the post-genesis baseline, not against zero: `initialize` pulls the
+    // genesis stakes through the same `transferFrom` and the counter sees it.
+    assert_eq!(
+        fixture.committed_pulls(),
+        stalled_baseline,
+        "the stall did not hold, so the cursor is not at epoch 0 and there is no \
+         maximum catch-up left to measure"
+    );
     fixture.govern(IStaking::setBlendReserveCall { value: OWNER }.abi_encode());
 
     let measured = measure(
@@ -736,13 +965,21 @@ fn path_a_stipend_leg_cost_at_max_catchup() {
         "against STIPEND_FUEL_CAP ({STIPEND_CAP_GAS} gas-equivalent): {:.1}%",
         measured.frame_gas as f64 / STIPEND_CAP_GAS as f64 * 100.0
     );
+    // Four real pulls, COUNTED. The leg is priced on what it does, and after the
+    // split it can walk four epochs while paying for none of them — "no
+    // `StipendSkipped`" would be vacuously true of a walk that settled nothing,
+    // which is the shrink-to-nothing failure `STIPEND_LEG_MAX` cannot see.
+    assert_eq!(
+        fixture.committed_pulls() - stalled_baseline,
+        MAX_SETTLE_CATCHUP,
+        "the measured frame did not fund MAX_SETTLE_CATCHUP epochs"
+    );
     for epoch in 0..4u64 {
         let credited = fixture.epoch_rewards(epoch);
-        println!("  epoch {epoch} settled rewards: {credited}");
+        println!("  epoch {epoch} accrued rewards: {credited}");
         assert!(
             credited > U256::ZERO,
-            "epoch {epoch} must have been settled, or the leg was not doing the \
-             work this guard is sizing"
+            "epoch {epoch} must have been accrued, or the leg had nothing to pay"
         );
     }
 

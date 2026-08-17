@@ -170,8 +170,9 @@ pub struct CorrelatedFailureEpoch {
     pub tolerance: U256,
 }
 
-/// The liveness legs of this close have already committed; the reward cursor
-/// did not advance, so the next close retries contiguously.
+/// The liveness legs of this close have already committed, and so has the
+/// accrual; only the payment was lost. The reward cursor did not advance, so the
+/// next close retries contiguously and the epochs it skipped are still owed.
 #[derive(Event)]
 pub struct StipendLegSkipped {
     #[indexed]

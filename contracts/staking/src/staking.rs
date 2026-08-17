@@ -1918,135 +1918,41 @@ pub fn get_epoch_rewards<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<
     write_abi(sdk, &total)
 }
 
-fn settle_one<SDK: SharedAPI>(sdk: &mut SDK, epoch: u64, source: Address) -> Result<(), ExitCode> {
-    let storage = staking_storage();
-    let consensus = consensus_storage();
-    // Belongs here rather than at the close's call site: `settle_up_to` walks the
-    // cursor contiguously, so an epoch whose close never ran — a stalled recorder,
-    // a pre-activation prefix — would otherwise be paid a full pot for no blocks
-    // as soon as a later epoch settles.
-    if production_liveness_storage()
-        .blocks_in_epoch_accessor()
+/// Records what `epoch` owes its committee, at its close, and moves no money.
+///
+/// One `assigned` produces both the per-validator credits and the `assigned + 1`
+/// scalar the payment later pulls, in this one frame, so the contract can never
+/// owe more than it computed. Every path through here writes that scalar: its
+/// absence is the witness that the epoch never closed, and telling that apart
+/// from an epoch that closed owing nothing is what keeps `pay_epoch` from
+/// forfeiting a real entitlement.
+///
+/// The credit is an assignment, not an accumulation. `close_epoch` runs once per
+/// epoch, but that guarantee used to be carried by the monotone settlement
+/// cursor, which no longer stands between an accrual and a second one; an
+/// overwrite makes a re-entry idempotent instead of resting on it.
+pub(crate) fn accrue_epoch<SDK: SharedAPI>(
+    sdk: &mut SDK,
+    epoch: u64,
+    recorded: u32,
+) -> Result<(), ExitCode> {
+    // An epoch that was never recorded at all is reachable — a stalled recorder,
+    // a pre-activation prefix — and must not draw a full pot for no work. It is
+    // still marked closed: this is the only close it will ever get.
+    let assigned = if recorded == 0 {
+        U256::ZERO
+    } else {
+        assign_epoch_shares(sdk, epoch)?
+    };
+    production_liveness_storage()
+        .assigned_at_close_p1_accessor()
         .entry(epoch)
-        .get_checked(sdk)?
-        == 0
-    {
-        events::StipendSkipped { epoch }.emit(sdk)?;
-        events::EpochBlendRewardsCommitted {
-            epoch,
-            blend_amount: U256::ZERO,
-        }
-        .emit(sdk)?;
-        return Ok(());
-    }
-    let committee = consensus.epoch_committees_accessor().entry(epoch);
-    let len = committee.len_checked(sdk)?;
-    // The rate this epoch worked under, pinned by its own close. Reading the
-    // live config here would let a rate change between the epoch ending and the
-    // epoch being paid rewrite what it earned, and the cursor never comes back.
-    let pinned = production_liveness_storage()
-        .stipend_rate_at_close_p1_accessor()
-        .entry(epoch)
-        .get_checked(sdk)?;
-    if pinned.is_zero() {
-        // A revert defers, a guard return forfeits — see this function's caller.
-        // An epoch whose price is unknown belongs on the deferred side.
-        return revert_with(sdk, ERR_STIPEND_RATE_NOT_SNAPSHOTTED, &epoch);
-    }
-    let pot = pinned - U256::ONE;
-    if pot.is_zero() {
-        events::EpochBlendRewardsCommitted {
-            epoch,
-            blend_amount: U256::ZERO,
-        }
-        .emit(sdk)?;
-        return Ok(());
-    }
-    let mut assigned = U256::ZERO;
-    let mut shares = vec![U256::ZERO; len as usize];
-
-    if len != 0 {
-        // Weights are the ones frozen at commit time, not a live stake walk: the
-        // committee was ranked and the leader drawn from this same vector, so a
-        // stake change after the commit must not move anyone's share.
-        let mut weights = vec![U256::ZERO; len as usize];
-        let mut total_weight = U256::ZERO;
-        for index in 0..len {
-            let entry = committee.at(index);
-            let validator = entry.validator_accessor().get_checked(sdk)?;
-            if consensus
-                .tombstoned_accessor()
-                .entry(validator)
-                .get_checked(sdk)?
-            {
-                continue;
-            }
-            let weight = U256::from(entry.weight_accessor().get_checked(sdk)?);
-            if weight.is_zero() {
-                continue;
-            }
-            weights[index as usize] = weight;
-            total_weight = total_weight
-                .checked_add(weight)
-                .ok_or(ExitCode::IntegerOverflow)?;
-        }
-        if !total_weight.is_zero() {
-            for (index, weight) in weights.into_iter().enumerate() {
-                if weight.is_zero() {
-                    continue;
-                }
-                let share =
-                    pot.checked_mul(weight).ok_or(ExitCode::IntegerOverflow)? / total_weight;
-                shares[index] = share;
-                assigned = assigned
-                    .checked_add(share)
-                    .ok_or(ExitCode::IntegerOverflow)?;
-            }
-        }
-    }
-
-    if !assigned.is_zero() {
-        // All or nothing, and a shortfall must revert rather than pay what it
-        // can. A short payment reported as success would be credited as zero
-        // while `settle_up_to` advanced the cursor past the epoch, and the guard
-        // on the cursor then refuses to revisit it — the epoch would be lost for
-        // good. A failed pull reverts instead: the cursor stays where it is and
-        // the epoch settles once the source can cover it. Paying in full late
-        // beats paying half and burning the rest.
-        safe_transfer_from(sdk, source, assigned)?;
-        let mut credited_this_epoch = U256::ZERO;
-        for (index, share) in shares.into_iter().enumerate() {
-            if share.is_zero() {
-                continue;
-            }
-            let validator = committee
-                .at(index as u64)
-                .validator_accessor()
-                .get_checked(sdk)?;
-            let snapshot = touch_snapshot_at_or_before(sdk, validator, epoch)?;
-            let share = crate::math::narrow_reward(share).ok_or(ExitCode::IntegerOverflow)?;
-            let next = snapshot
-                .total_blend_rewards_accessor()
-                .get_checked(sdk)?
-                .checked_add(share)
-                .ok_or(ExitCode::IntegerOverflow)?;
-            snapshot
-                .total_blend_rewards_accessor()
-                .set_checked(sdk, next)?;
-            credited_this_epoch = credited_this_epoch
-                .checked_add(U256::from(share))
-                .ok_or(ExitCode::IntegerOverflow)?;
-        }
-        let credited = storage.credited_blend_accessor().get_checked(sdk)?;
-        storage.credited_blend_accessor().set_checked(
+        .set_checked(
             sdk,
-            credited
-                .checked_add(credited_this_epoch)
+            assigned
+                .checked_add(U256::ONE)
                 .ok_or(ExitCode::IntegerOverflow)?,
         )?;
-    } else {
-        events::StipendSkipped { epoch }.emit(sdk)?;
-    }
     events::EpochBlendRewardsCommitted {
         epoch,
         blend_amount: assigned,
@@ -2054,22 +1960,147 @@ fn settle_one<SDK: SharedAPI>(sdk: &mut SDK, epoch: u64, source: Address) -> Res
     .emit(sdk)
 }
 
-/// Settles every unsettled epoch up to `up_to`, contiguously from the cursor.
+/// Splits the epoch's pot across its committee and returns the total assigned.
+///
+/// Priced from the live config because the close *is* the moment the epoch is
+/// priced. The pinned rate existed to stop a change between the epoch ending and
+/// the epoch being paid from rewriting what it earned; there is no longer a gap
+/// between those two for a change to land in.
+///
+/// The total is the sum of the floored shares, never the pot, so the remainder
+/// of at most `n − 1` base units is simply never assigned.
+///
+/// The second loop re-reads each seat's validator rather than carrying it out of
+/// the first, and that is measured rather than overlooked: carrying it saves 100
+/// gas per seat, 5_100 across a full committee, 0.16% of this function
+/// (`e2e/src/staking_cost.rs`, 2026-08-17). The slot is warm by then. Not worth
+/// widening the intermediate vector for.
+fn assign_epoch_shares<SDK: SharedAPI>(sdk: &mut SDK, epoch: u64) -> Result<U256, ExitCode> {
+    let pot = chain_config_storage()
+        .blend_stipend_per_epoch_accessor()
+        .get_checked(sdk)?;
+    if pot.is_zero() {
+        return Ok(U256::ZERO);
+    }
+    let consensus = consensus_storage();
+    let committee = consensus.epoch_committees_accessor().entry(epoch);
+    let len = committee.len_checked(sdk)?;
+    if len == 0 {
+        return Ok(U256::ZERO);
+    }
+    // Weights are the ones frozen at commit time, not a live stake walk: the
+    // committee was ranked and the leader drawn from this same vector, so a
+    // stake change after the commit must not move anyone's share.
+    let mut weights = vec![U256::ZERO; len as usize];
+    let mut total_weight = U256::ZERO;
+    for index in 0..len {
+        let entry = committee.at(index);
+        let validator = entry.validator_accessor().get_checked(sdk)?;
+        if consensus
+            .tombstoned_accessor()
+            .entry(validator)
+            .get_checked(sdk)?
+        {
+            continue;
+        }
+        let weight = U256::from(entry.weight_accessor().get_checked(sdk)?);
+        if weight.is_zero() {
+            continue;
+        }
+        weights[index as usize] = weight;
+        total_weight = total_weight
+            .checked_add(weight)
+            .ok_or(ExitCode::IntegerOverflow)?;
+    }
+    if total_weight.is_zero() {
+        return Ok(U256::ZERO);
+    }
+    let mut assigned = U256::ZERO;
+    for (index, weight) in weights.into_iter().enumerate() {
+        if weight.is_zero() {
+            continue;
+        }
+        let share = pot.checked_mul(weight).ok_or(ExitCode::IntegerOverflow)? / total_weight;
+        if share.is_zero() {
+            continue;
+        }
+        let validator = committee
+            .at(index as u64)
+            .validator_accessor()
+            .get_checked(sdk)?;
+        let snapshot = touch_snapshot_at_or_before(sdk, validator, epoch)?;
+        snapshot.total_blend_rewards_accessor().set_checked(
+            sdk,
+            math::narrow_reward(share).ok_or(ExitCode::IntegerOverflow)?,
+        )?;
+        assigned = assigned
+            .checked_add(share)
+            .ok_or(ExitCode::IntegerOverflow)?;
+    }
+    Ok(assigned)
+}
+
+/// Pays what the epoch's close recorded: one scalar, one transfer, no decisions.
+///
+/// It reads no committee and no weight — the split already happened, against the
+/// weights frozen for that epoch, however long ago that was.
+///
+/// A missing scalar is the one thing this has to interpret, and the block
+/// counter separates its two meanings. A close that ran owing nothing is NOT one
+/// of them — that writes `1`, and is paid as a zero. Missing means the close
+/// never ran. With nothing recorded, no close ever will, and nothing was owed
+/// anyway, so the epoch is forfeited and the cursor moves on. With blocks
+/// recorded, `last_processed` reached that epoch and the next recorded block
+/// therefore closed it, so the only way to be here is a close still pending in
+/// this very block — forfeiting would throw away an accrual about to exist.
+fn pay_epoch<SDK: SharedAPI>(sdk: &mut SDK, epoch: u64, source: Address) -> Result<(), ExitCode> {
+    let storage = production_liveness_storage();
+    let accrued_p1 = storage
+        .assigned_at_close_p1_accessor()
+        .entry(epoch)
+        .get_checked(sdk)?;
+    if accrued_p1.is_zero() {
+        if storage
+            .blocks_in_epoch_accessor()
+            .entry(epoch)
+            .get_checked(sdk)?
+            != 0
+        {
+            // A revert defers, a guard return forfeits — see this function's
+            // caller.
+            return revert_with(sdk, ERR_EPOCH_NOT_ACCRUED, &epoch);
+        }
+        events::StipendSkipped { epoch }.emit(sdk)?;
+        return Ok(());
+    }
+    let assigned = accrued_p1 - U256::ONE;
+    if assigned.is_zero() {
+        events::StipendSkipped { epoch }.emit(sdk)?;
+        return Ok(());
+    }
+    // All or nothing, and a shortfall must revert rather than pay what it can:
+    // the cursor advances past every epoch this returns `Ok` for and never comes
+    // back. A failed pull leaves the cursor where it is and the epoch is paid in
+    // full once the source can cover it — the entitlement is already on the
+    // ledger either way, so a refusal costs a delay and nothing else.
+    safe_transfer_from(sdk, source, assigned)
+}
+
+/// Pays every accrued-but-unfunded epoch up to `up_to`, contiguously from the
+/// cursor.
 ///
 /// The cursor advances past every epoch this returns `Ok` for, so a replay
-/// re-draws nothing. Note that an epoch skipped by a guard inside `settle_one`
-/// is forfeited, not deferred — only a revert leaves it to be retried.
+/// re-draws nothing — and the claim gates read the same cursor, which is what
+/// keeps an epoch that has been accrued but not yet funded unclaimable.
 pub(crate) fn settle_up_to<SDK: SharedAPI>(sdk: &mut SDK, up_to: u64) -> Result<(), ExitCode> {
     let storage = staking_storage();
     let source = chain_config_storage()
         .blend_reserve_accessor()
         .get_checked(sdk)?;
     // A committee may be committed up to two epochs ahead, so `epoch_committees`
-    // holds entries for epochs that have not started. Paying one
-    // draws a full pot for an epoch with no production and advances the cursor
-    // past it irrecoverably. The finished-epoch bound replaces the finality gate
-    // the liveness contract used to provide; a per-epoch "has data" belt takes
-    // over once block production is recorded on chain.
+    // holds entries for epochs that have not started and whose closes have not
+    // run. Skipping one and advancing the cursor past it is irrecoverable, and
+    // it opens the claim gate on an epoch that has not happened.
     let current = current_epoch(sdk)?;
     if current == 0 {
         return Ok(());
@@ -2082,7 +2113,7 @@ pub(crate) fn settle_up_to<SDK: SharedAPI>(sdk: &mut SDK, up_to: u64) -> Result<
     let mut epoch = first;
     let mut settled = 0;
     while epoch <= up_to && settled < MAX_SETTLE_CATCHUP {
-        settle_one(sdk, epoch, source)?;
+        pay_epoch(sdk, epoch, source)?;
         storage
             .last_rewarded_epoch_p1_accessor()
             .set_checked(sdk, epoch.checked_add(1).ok_or(ExitCode::IntegerOverflow)?)?;

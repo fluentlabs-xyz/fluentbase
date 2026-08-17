@@ -299,8 +299,7 @@ pub const ERR_EPOCH_COMMITTEE_NOT_COMMITTED: u32 =
 pub const ERR_SIGNER_INDEX_OUT_OF_RANGE: u32 =
     derive_keccak256_id!("SignerIndexOutOfRange(uint64,uint32,uint256)");
 pub const ERR_COMMITTEE_TOO_SMALL: u32 = derive_keccak256_id!("CommitteeTooSmall(uint256,uint256)");
-pub const ERR_STIPEND_RATE_NOT_SNAPSHOTTED: u32 =
-    derive_keccak256_id!("StipendRateNotSnapshotted(uint64)");
+pub const ERR_EPOCH_NOT_ACCRUED: u32 = derive_keccak256_id!("EpochNotAccrued(uint64)");
 pub const ERR_EPOCH_NOT_YET_COMMITTABLE: u32 =
     derive_keccak256_id!("EpochNotYetCommittable(uint64,uint64)");
 pub const ERR_ALREADY_SLASHED_FOR_EQUIVOCATION: u32 =
@@ -409,8 +408,27 @@ pub const WARMUP_DELAY: u64 = 2;
 pub const MAX_EPOCHS_PER_CLAIM: u64 = 1_000;
 
 /// Inherited from the Solidity, where it was sized against measured EVM gas for
-/// one settled epoch inside a 12M caller bound. rWasm meters fuel, not gas, so
-/// the bound this number encodes has not been measured on this runtime yet.
+/// one settled epoch inside a 12M caller bound.
+///
+/// Measured on rWasm 2026-08-17, after the accrual moved to the close: a settled
+/// epoch costs **12_213 gas** (`e2e/src/staking_cost.rs`, 48_852 for four), and
+/// no longer varies with committee size — the payment reads one scalar and
+/// transfers it. Four therefore consume 0.4% of `STIPEND_FUEL_CAP`, and the leg
+/// would need ~982 epochs in one call to reach it.
+///
+/// Before the split the same measurement was 1_662_982 per epoch and four
+/// already consumed 55.4% of the cap, so **seven would have exceeded it**. The
+/// inherited 4 was very nearly right for the implementation it was inherited
+/// with; it is now three orders of magnitude below anything that binds.
+///
+/// Left at 4 here deliberately, because raising it is a behaviour change that
+/// belongs in its own review, but it should be raised: recovery from a stall is
+/// `MAX_SETTLE_CATCHUP - 1` epochs per epoch, this is the only thing bounding it,
+/// and `prune_committees` refuses to pass the settlement cursor
+/// (`consensus.rs`), so a lagging cursor pins committee storage for the whole
+/// stall AND the whole recovery. 32 is the recommendation: 390_816 gas, 1.3% of
+/// the close's 30M system-call budget, an order of magnitude off the recovery
+/// time, and still two orders below the leg's own cap.
 pub const MAX_SETTLE_CATCHUP: u64 = 4;
 /// Exclusions stamped by one epoch close.
 ///
@@ -422,9 +440,14 @@ pub const MAX_STAMPS_PER_CLOSE: usize = 2;
 ///
 /// The Solidity bound is 12M gas. Fuel is gas scaled by `FUEL_DENOM_RATE`, so
 /// passing the gas figure straight into the fuel slot under-provisions the
-/// frame twentyfold and turns the leg into a guaranteed `OutOfFuel`. Like
-/// `MAX_SETTLE_CATCHUP`, the 12M itself is a measured EVM budget that has not
-/// been re-measured against rWasm fuel.
+/// frame twentyfold and turns the leg into a guaranteed `OutOfFuel`.
+///
+/// Measured on rWasm 2026-08-17: the leg spends 48_852 at `MAX_SETTLE_CATCHUP`,
+/// 0.4% of this. It was 55.4% before the accrual moved to the close. Oversized
+/// now, and harmlessly so — this caps the blast radius of the one leg whose
+/// failure is tolerated, and what it protects is no longer load-bearing, because
+/// the entitlement is recorded above this frame and a discarded payment is a
+/// deferral rather than a loss.
 pub const STIPEND_FUEL_CAP: u64 = 12_000_000 * FUEL_DENOM_RATE;
 /// Slack added on top of `target + undelegatePeriod` when a commit stamps a
 /// committee's liability deadline, after which `prune_committees` may delete

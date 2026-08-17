@@ -215,7 +215,6 @@ pub struct StakingStorage {
     selection_membership: StorageMap<Address, SelectionMembershipStorage>,
     validator_snapshots: StorageMap<Address, StorageMap<u64, ValidatorSnapshotStorage>>,
     validator_delegations: StorageMap<Address, StorageMap<Address, ValidatorDelegationStorage>>,
-    credited_blend: StorageU256,
     last_rewarded_epoch_p1: StorageU64,
     /// Sorted epochs with materialized validator snapshots.
     ///
@@ -264,14 +263,24 @@ pub struct ProductionLivenessStorage {
     /// Live exclusions; the length is the concurrent count.
     pending_exclusions: StorageVec<StorageAddress>,
     validators: StorageMap<Address, ProductionValidatorStorage>,
-    /// Stipend rate in force when the epoch closed, stored as `rate + 1`.
+    /// BLEND the epoch's close assigned to its committee, stored as `sum + 1`.
     ///
-    /// Zero means "this epoch never closed", which is not the same as a rate of
-    /// zero. Settlement must not price an epoch from the live config: the rate
-    /// can change between the epoch being worked and the epoch being paid, the
-    /// cursor never returns to a settled epoch, and the committee weights three
-    /// lines below it are already frozen for exactly this reason.
-    stipend_rate_at_close_p1: StorageMap<u64, StorageU256>,
+    /// Zero means "this epoch never closed", which is not the same as an epoch
+    /// that closed owing nothing: `1` is the second. Both an all-zero-weight
+    /// committee and a zero configured rate reach `1`, and both are forfeited —
+    /// they closed, and they closed owing nothing.
+    ///
+    /// The state a zero has to be told apart from is neither of those. It is an
+    /// epoch the close never ran for AND that recorded blocks, which is the one
+    /// case settlement DEFERS: blocks recorded means the close is still coming.
+    /// A zero with no blocks recorded is forfeited too, because no close will
+    /// ever run for it. So the scalar alone does not decide — `blocks_in_epoch`
+    /// is the other half, and `pay_epoch` is where the two are read together.
+    ///
+    /// It is a sum of already-floored shares, written in the same frame as the
+    /// per-validator credits it stands for, so the payment can never pull more
+    /// than the ledger promises.
+    assigned_at_close_p1: StorageMap<u64, StorageU256>,
 }
 
 pub fn initializer_storage() -> InitializerStorage {

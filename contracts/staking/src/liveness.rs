@@ -182,25 +182,20 @@ fn close_epoch<SDK: SharedAPI>(sdk: &mut SDK, epoch: u64) -> Result<(), ExitCode
         judge(sdk, epoch, current, recorded)?;
     }
 
-    // An epoch that was never recorded at all is reachable and must not draw a
-    // full pot for no work.
-    if recorded > 0 {
-        // Pin the rate before settling. `settle_up_to` walks the cursor across a
-        // range, so a rate read at payment time prices every caught-up epoch at
-        // today's value. Stored `+1` so "never closed" stays distinguishable
-        // from "closed at a rate of zero".
-        let rate = config.blend_stipend_per_epoch_accessor().get_checked(sdk)?;
-        production_liveness_storage()
-            .stipend_rate_at_close_p1_accessor()
-            .entry(epoch)
-            .set_checked(
-                sdk,
-                rate.checked_add(U256::ONE)
-                    .ok_or(ExitCode::IntegerOverflow)?,
-            )?;
-        settle_stipend_leg(sdk, epoch)?;
-    }
-    Ok(())
+    // Unconditional, and above the leg that spends it. `close_epoch` only ever
+    // runs for the epoch of the last recorded block, so an epoch it skips here
+    // is an epoch nothing will ever accrue for — and the payment cursor, which
+    // walks contiguously, would sit in front of it forever waiting.
+    //
+    // In the main frame, not inside the leg: the leg's failure is swallowed as a
+    // status, which the payment survives because the cursor retries it, and an
+    // accrual would not.
+    staking::accrue_epoch(sdk, epoch, recorded)?;
+    // No longer gated on this epoch having produced. Payment is a scalar read
+    // and a transfer now, so holding the cursor back across a run of empty
+    // epochs buys nothing and leaves it a backlog to recover through at
+    // `MAX_SETTLE_CATCHUP` per close.
+    settle_stipend_leg(sdk, epoch)
 }
 
 /// Release every exclusion whose term has expired. Bounded by `f`.
@@ -473,6 +468,11 @@ fn stamp<SDK: SharedAPI>(
 /// The event is emitted from this frame deliberately: a log written inside the
 /// discarded frame goes with it, and a system call leaves no receipt to read the
 /// failure from instead.
+///
+/// What the discarded frame takes with it is the *payment* and nothing else. The
+/// accrual ran above this call, so every epoch the leg failed to fund is still
+/// on the ledger and still owed; `StipendLegSkipped` reports a deferral, not a
+/// loss.
 fn settle_stipend_leg<SDK: SharedAPI>(sdk: &mut SDK, epoch: u64) -> Result<(), ExitCode> {
     let mut params = BytesMut::new();
     SolidityABI::<U64Command>::encode(&U64Command { value: epoch }, &mut params, 0)
