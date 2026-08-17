@@ -423,12 +423,15 @@ pub const MAX_EPOCHS_PER_CLAIM: u64 = 1_000;
 ///
 /// Left at 4 here deliberately, because raising it is a behaviour change that
 /// belongs in its own review, but it should be raised: recovery from a stall is
-/// `MAX_SETTLE_CATCHUP - 1` epochs per epoch, this is the only thing bounding it,
-/// and `prune_committees` refuses to pass the settlement cursor
-/// (`consensus.rs`), so a lagging cursor pins committee storage for the whole
-/// stall AND the whole recovery. 32 is the recommendation: 390_816 gas, 1.3% of
-/// the close's 30M system-call budget, an order of magnitude off the recovery
-/// time, and still two orders below the leg's own cap.
+/// `MAX_SETTLE_CATCHUP - 1` epochs per epoch, and this is the only thing
+/// bounding it. 32 is the recommendation: 390_816 gas, 1.3% of the close's 30M
+/// system-call budget, an order of magnitude off the recovery time, and still
+/// two orders below the leg's own cap.
+///
+/// This argument used to carry a second half — that a lagging cursor also
+/// pinned committee storage, because pruning refused to pass the settlement
+/// cursor. Committees are no longer pruned at all, so a lagging cursor costs
+/// recovery time and nothing else.
 pub const MAX_SETTLE_CATCHUP: u64 = 4;
 /// Exclusions stamped by one epoch close.
 ///
@@ -449,15 +452,6 @@ pub const MAX_STAMPS_PER_CLOSE: usize = 2;
 /// the entitlement is recorded above this frame and a discarded payment is a
 /// deferral rather than a loss.
 pub const STIPEND_FUEL_CAP: u64 = 12_000_000 * FUEL_DENOM_RATE;
-/// Slack added on top of `target + undelegatePeriod` when a commit stamps a
-/// committee's liability deadline, after which `prune_committees` may delete
-/// it.
-///
-/// The undelegate period is when a member's stake can still be reached; the
-/// margin is the grace beyond it, so a committee is not discarded the same
-/// epoch its exposure ends. No derivation is recorded for 8.
-pub const EPOCH_COMMITTEE_RETENTION_MARGIN: u64 = 8;
-
 /// How far ahead of the current epoch a committee may be committed, and — the
 /// same number, because they are the same offset — how far back of the target
 /// epoch its membership is selected from.
@@ -465,13 +459,6 @@ pub const EPOCH_COMMITTEE_RETENTION_MARGIN: u64 = 8;
 /// Both `commit_epoch_committee` and the `committeeSelectionEpoch` getter must
 /// read it, or the node selects from an epoch the contract will reject.
 pub const MAX_COMMITTEE_LOOKAHEAD_EPOCHS: u64 = 2;
-
-/// Committees prune-able by one epoch close.
-///
-/// Bounds the cleanup loop so a long-idle chain cannot make one system call
-/// unbounded. Falling behind only defers deletions to later closes; nothing is
-/// lost.
-pub const MAX_COMMITTEE_PRUNES_PER_COMMIT: u64 = 16;
 
 pub const BLS_PUBKEY_UNCOMPRESSED_LENGTH: usize = 256;
 pub const BLS_POP_UNCOMPRESSED_LENGTH: usize = 128;

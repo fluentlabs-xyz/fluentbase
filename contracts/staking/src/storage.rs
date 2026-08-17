@@ -191,15 +191,11 @@ pub struct ConsensusStorage {
     epoch_committees: StorageMap<u64, StorageVec<EpochCommitteeMemberStorage>>,
     dkg_qual: StorageMap<u64, StorageBool>,
     last_committed_epoch_p1: StorageU64,
-    pruned_up_to_p1: StorageU64,
     tombstoned: StorageMap<Address, StorageBool>,
     /// Validator owning a canonical compressed BLS key, indexed by its keccak256 hash.
     ///
     /// Consensus identities are immutable in v1, so ownership is never released.
     bls_pubkey_owner: StorageMap<B256, StorageAddress>,
-    /// Exclusive epoch through which each committee's record must be kept, the
-    /// bound pruning stops at.
-    committee_liability_end_epochs: StorageMap<u64, StorageU64>,
 }
 
 /// Single ERC-7201 namespaced storage root for staking.

@@ -2441,134 +2441,6 @@ fn leader_weights_are_frozen_at_the_selection_epoch_vintage() {
     );
 }
 
-#[test]
-fn pruning_drops_leader_weights_with_their_committee() {
-    let owner = Address::with_last_byte(0xa0);
-    let validator = Address::with_last_byte(0x01);
-    let mut harness = Harness::new(1_000);
-    let (validators, stakes) = with_filler_validators(&[(validator, DEFAULT_MIN_VALIDATOR_STAKE)]);
-    assert_eq!(
-        harness.initialize(owner, validators, stakes, 0),
-        ExitCode::Ok
-    );
-
-    harness.set_caller(SYSTEM_CALLER);
-    assert_eq!(
-        harness
-            .call(encode_empty_call(SIG_COMMIT_EPOCH_COMMITTEE))
-            .0,
-        ExitCode::Ok
-    );
-
-    // Pruning is bounded by the stipend cursor, so epoch 0 has to be settled
-    // before it can be retired.
-    staking_storage()
-        .last_rewarded_epoch_p1_accessor()
-        .set_checked(&mut harness.sdk, 1)
-        .unwrap();
-    harness.set_block_number(1_000 + 60 * DEFAULT_EPOCH_BLOCK_INTERVAL);
-    assert_eq!(
-        harness
-            .call(encode_empty_call(SIG_COMMIT_EPOCH_COMMITTEE))
-            .0,
-        ExitCode::Ok
-    );
-
-    let (exit, output) = harness.call(encode_call(
-        SIG_GET_EPOCH_COMMITTEE_WITH_STAKES,
-        &U64Command { value: 0 },
-    ));
-    assert_eq!(exit, ExitCode::Ok);
-    let (validators, _, stakes, _): (Vec<Address>, Vec<ConsensusKeys>, Vec<U256>, Vec<bool>) =
-        decode_returns(&output);
-    assert!(
-        validators.is_empty() && stakes.is_empty(),
-        "a pruned epoch answers empty, not a length mismatch"
-    );
-}
-
-// Deferring a stipend only postpones the loss unless pruning is held behind the
-// settlement cursor too. Retire the committee of an unsettled epoch and
-// settlement finds it empty, credits nothing and steps over the epoch — the same
-// money gone, just quietly. The length-mismatch guard cannot catch that: members
-// and weights are cleared together, so it compares zero against zero.
-#[test]
-fn pruning_stops_at_the_settlement_cursor() {
-    let owner = Address::with_last_byte(0xa0);
-    let validator = Address::with_last_byte(0x01);
-    let mut harness = Harness::new(1_000);
-    let (validators, stakes) = with_filler_validators(&[(validator, DEFAULT_MIN_VALIDATOR_STAKE)]);
-    assert_eq!(
-        harness.initialize(owner, validators, stakes, 0),
-        ExitCode::Ok
-    );
-
-    harness.set_caller(SYSTEM_CALLER);
-    assert_eq!(
-        harness
-            .call(encode_empty_call(SIG_COMMIT_EPOCH_COMMITTEE))
-            .0,
-        ExitCode::Ok
-    );
-
-    // Sixty epochs on, far past epoch 0's liability deadline, with the stipend
-    // still stalled on epoch 0.
-    harness.set_block_number(1_000 + 60 * DEFAULT_EPOCH_BLOCK_INTERVAL);
-    assert_eq!(
-        harness
-            .call(encode_empty_call(SIG_COMMIT_EPOCH_COMMITTEE))
-            .0,
-        ExitCode::Ok
-    );
-
-    let consensus = consensus_storage();
-    assert_eq!(
-        consensus
-            .pruned_up_to_p1_accessor()
-            .get_checked(&harness.sdk)
-            .unwrap(),
-        0
-    );
-    assert_eq!(
-        consensus
-            .epoch_committees_accessor()
-            .entry(0)
-            .len_checked(&harness.sdk)
-            .unwrap() as usize,
-        MIN_COMMITTEE_LENGTH,
-        "an unsettled epoch keeps the committee its stipend still has to read"
-    );
-
-    // Settling epoch 0 releases it, and the next commit retires it.
-    staking_storage()
-        .last_rewarded_epoch_p1_accessor()
-        .set_checked(&mut harness.sdk, 1)
-        .unwrap();
-    assert_eq!(
-        harness
-            .call(encode_empty_call(SIG_COMMIT_EPOCH_COMMITTEE))
-            .0,
-        ExitCode::Ok
-    );
-    assert_eq!(
-        consensus
-            .pruned_up_to_p1_accessor()
-            .get_checked(&harness.sdk)
-            .unwrap(),
-        1,
-        "the bound is the cursor, not a blanket stop: settlement releases epoch 0 \
-         and only epoch 0"
-    );
-    assert_eq!(
-        consensus
-            .epoch_committees_accessor()
-            .entry(0)
-            .len_checked(&harness.sdk)
-            .unwrap(),
-        0
-    );
-}
-
 // The committee cap was the last input of the epoch-frozen selection view still
 // read live: raising it used to retroactively enlarge the committee of an epoch
 // that had already been committed, which desynchronises the DKG index space
@@ -3811,8 +3683,14 @@ fn a_raised_minimum_does_not_empty_the_next_committee() {
     assert_eq!(decode_output::<Vec<Address>>(&output), validators);
 }
 
+// The retired horizon stood at `target + undelegatePeriod + 8 + 1`. Nothing
+// deletes a committee now, so every reader that resolves against one has to keep
+// answering arbitrarily far past where the wall used to be. `getEpochRewards` is
+// why this is an assertion rather than a formality: it sums the committee, so an
+// emptied one made it return a confident zero instead of reverting — a wrong
+// answer no caller could tell from a real one.
 #[test]
-fn committee_pruning_keeps_dkg_history() {
+fn a_committee_stays_readable_far_past_the_retired_pruning_horizon() {
     let owner = Address::with_last_byte(0xa0);
     let validator = Address::with_last_byte(0x01);
     let activation_block = 1_000;
@@ -3820,19 +3698,9 @@ fn committee_pruning_keeps_dkg_history() {
     harness.set_caller(owner);
     let (validators, stakes) = with_filler_validators(&[(validator, DEFAULT_MIN_VALIDATOR_STAKE)]);
     assert_eq!(
-        harness.initialize(owner, validators, stakes, 0),
+        harness.initialize(owner, validators.clone(), stakes, 0),
         ExitCode::Ok
     );
-    harness.set_block_number(
-        activation_block
-            + DEFAULT_EPOCH_BLOCK_INTERVAL
-                * (DEFAULT_UNDELEGATE_PERIOD + EPOCH_COMMITTEE_RETENTION_MARGIN + 2),
-    );
-    consensus_storage()
-        .dkg_qual_accessor()
-        .entry(1)
-        .set_checked(&mut harness.sdk, true)
-        .unwrap();
 
     harness.set_caller(SYSTEM_CALLER);
     assert_eq!(
@@ -3841,9 +3709,59 @@ fn committee_pruning_keeps_dkg_history() {
             .0,
         ExitCode::Ok
     );
+    consensus_storage()
+        .dkg_qual_accessor()
+        .entry(0)
+        .set_checked(&mut harness.sdk, true)
+        .unwrap();
+    let reward = U256::from(7_000_000u64);
+    staking_storage()
+        .validator_snapshots_accessor()
+        .entry(validators[0])
+        .entry(0)
+        .total_blend_rewards_accessor()
+        .set_checked(
+            &mut harness.sdk,
+            math::narrow_reward(reward).expect("reward fits uint96"),
+        )
+        .unwrap();
+
+    harness.set_block_number(
+        activation_block + DEFAULT_EPOCH_BLOCK_INTERVAL * (DEFAULT_UNDELEGATE_PERIOD + 100),
+    );
+    assert_eq!(
+        harness
+            .call(encode_empty_call(SIG_COMMIT_EPOCH_COMMITTEE))
+            .0,
+        ExitCode::Ok
+    );
+
+    let (_, output) = harness.call(encode_call(
+        SIG_GET_EPOCH_COMMITTEE,
+        &U64Command { value: 0 },
+    ));
+    assert_eq!(decode_output::<Vec<Address>>(&output), validators);
+    let (_, output) = harness.call(encode_call(
+        SIG_RESOLVE_SIGNER,
+        &EpochSignerCommand {
+            epoch: 0,
+            signer_idx: 0,
+        },
+    ));
+    assert_eq!(decode_output::<Address>(&output), validators[0]);
+    let (_, output) = harness.call(encode_call(
+        SIG_GET_EPOCH_COMMITTEE_WITH_STAKES,
+        &U64Command { value: 0 },
+    ));
+    let (seated, _, weights, _): (Vec<Address>, Vec<ConsensusKeys>, Vec<U256>, Vec<bool>) =
+        decode_returns(&output);
+    assert_eq!(seated, validators);
+    assert!(weights.iter().all(|weight| !weight.is_zero()));
+    let (_, output) = harness.call(encode_call(SIG_GET_EPOCH_REWARDS, &U64Command { value: 0 }));
+    assert_eq!(decode_output::<U256>(&output), reward);
     assert!(consensus_storage()
         .dkg_qual_accessor()
-        .entry(1)
+        .entry(0)
         .get_checked(&harness.sdk)
         .unwrap());
 }
@@ -6367,8 +6285,13 @@ fn a_slash_survives_a_fund_that_refuses_the_seizure() {
     }
 }
 
+// The evidence route takes identity from the key, never from a committee seat,
+// so an epoch with no committee at all must not stop it. This used to be staged
+// by pruning the epoch away; committees are never deleted now, so the same state
+// is reached the only way still open — by naming an epoch that was never
+// committed.
 #[test]
-fn a_pruned_evidence_epoch_no_longer_blocks_a_slash() {
+fn an_uncommitted_evidence_epoch_does_not_block_a_slash() {
     let sponsor = Address::with_last_byte(0xa0);
     let offender = Address::with_last_byte(0x01);
     let mut harness = Harness::new(1_000);
@@ -6378,41 +6301,7 @@ fn a_pruned_evidence_epoch_no_longer_blocks_a_slash() {
         ExitCode::Ok
     );
 
-    // Commit every epoch through the evidence's own, one per epoch because the
-    // commit pointer may not run more than `MAX_COMMITTEE_LOOKAHEAD_EPOCHS` ahead.
-    harness.set_caller(SYSTEM_CALLER);
-    for epoch in 0..=CORPUS_EPOCH {
-        harness.set_block_number(1_000 + epoch * DEFAULT_EPOCH_BLOCK_INTERVAL);
-        assert_eq!(
-            harness
-                .call(encode_empty_call(SIG_COMMIT_EPOCH_COMMITTEE))
-                .0,
-            ExitCode::Ok
-        );
-    }
     let consensus = consensus_storage();
-    assert_eq!(
-        consensus
-            .epoch_committees_accessor()
-            .entry(CORPUS_EPOCH)
-            .len_checked(&harness.sdk)
-            .unwrap() as usize,
-        MIN_COMMITTEE_LENGTH
-    );
-
-    // Pruning is held behind the settlement cursor and the liability deadline, so
-    // release both and let the next commit retire everything committed so far.
-    staking_storage()
-        .last_rewarded_epoch_p1_accessor()
-        .set_checked(&mut harness.sdk, CORPUS_EPOCH + 1)
-        .unwrap();
-    harness.set_block_number(1_000 + 60 * DEFAULT_EPOCH_BLOCK_INTERVAL);
-    assert_eq!(
-        harness
-            .call(encode_empty_call(SIG_COMMIT_EPOCH_COMMITTEE))
-            .0,
-        ExitCode::Ok
-    );
     assert_eq!(
         consensus
             .epoch_committees_accessor()
@@ -6420,7 +6309,7 @@ fn a_pruned_evidence_epoch_no_longer_blocks_a_slash() {
             .len_checked(&harness.sdk)
             .unwrap(),
         0,
-        "the epoch the evidence names has been retired"
+        "the epoch the evidence names has no committee"
     );
 
     let command = equivocation_report(&mut harness.sdk, &NOTARIZE_ROUTE, 0x11);
@@ -6442,6 +6331,52 @@ fn a_pruned_evidence_epoch_no_longer_blocks_a_slash() {
             .unwrap(),
         STATUS_JAIL
     );
+}
+
+// The index route is the one pruning actually broke. `committee_member_at`
+// reverts with `ERR_EPOCH_COMMITTEE_NOT_COMMITTED` on an emptied epoch, and the
+// node soft-folds that revert — a real verdict the committee already reached was
+// dropped in silence. It is a system call, so nothing downstream could retry it.
+#[test]
+fn the_index_slash_route_still_resolves_far_past_the_retired_pruning_horizon() {
+    let sponsor = Address::with_last_byte(0xa0);
+    let offender = Address::with_last_byte(0x01);
+    let activation_block = 1_000;
+    let mut harness = Harness::new(activation_block);
+    let (validators, stakes) = with_filler_validators(&[(offender, DEFAULT_MIN_VALIDATOR_STAKE)]);
+    assert_eq!(
+        harness.initialize(sponsor, validators.clone(), stakes, 0),
+        ExitCode::Ok
+    );
+
+    harness.set_caller(SYSTEM_CALLER);
+    assert_eq!(
+        harness
+            .call(encode_empty_call(SIG_COMMIT_EPOCH_COMMITTEE))
+            .0,
+        ExitCode::Ok
+    );
+    let seat = validators
+        .iter()
+        .position(|member| *member == offender)
+        .expect("the offender is seated in epoch 0") as u32;
+
+    harness.set_block_number(
+        activation_block + DEFAULT_EPOCH_BLOCK_INTERVAL * (DEFAULT_UNDELEGATE_PERIOD + 100),
+    );
+    assert_eq!(
+        harness
+            .call(encode_empty_call(SIG_COMMIT_EPOCH_COMMITTEE))
+            .0,
+        ExitCode::Ok
+    );
+
+    assert_eq!(system_slash(&mut harness, 0, seat).0, ExitCode::Ok);
+    assert!(consensus_storage()
+        .tombstoned_accessor()
+        .entry(offender)
+        .get_checked(&harness.sdk)
+        .unwrap());
 }
 
 #[test]

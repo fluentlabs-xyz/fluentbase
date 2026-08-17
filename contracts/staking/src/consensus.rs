@@ -445,45 +445,6 @@ fn selected_committee_at<SDK: SharedAPI>(
     Ok(eligible)
 }
 
-fn prune_committees<SDK: SharedAPI>(sdk: &mut SDK, current: u64) -> Result<(), ExitCode> {
-    let storage = consensus_storage();
-    let mut cursor = storage.pruned_up_to_p1_accessor().get_checked(sdk)?;
-    // The first epoch the stipend has NOT settled: `settle_up_to` starts its walk
-    // at this value, so it names the next epoch to pay rather than the last one
-    // paid. Retiring a committee at or beyond it would delete the members and
-    // weights that settlement still has to read; settlement would then find an
-    // empty committee, credit nothing, and advance its own cursor past the epoch,
-    // writing the pot off exactly as a partial payment used to.
-    //
-    // The cost is accepted: while settlement is stalled the committees stop being
-    // retired and this storage grows. Recoverable state growth beats an
-    // unrecoverable loss.
-    let unsettled = staking_storage()
-        .last_rewarded_epoch_p1_accessor()
-        .get_checked(sdk)?;
-    let mut deleted = 0;
-    // Bound cleanup so a long-idle chain cannot make one system call unbounded.
-    while deleted < MAX_COMMITTEE_PRUNES_PER_COMMIT && cursor < unsettled {
-        let liability_end = storage
-            .committee_liability_end_epochs_accessor()
-            .entry(cursor);
-        let liability_end_epoch = liability_end.get_checked(sdk)?;
-        // Committee commits are sequential. A missing deadline therefore means
-        // that the pruning cursor has reached the first uncommitted epoch.
-        if liability_end_epoch == 0 || current < liability_end_epoch {
-            break;
-        }
-        storage
-            .epoch_committees_accessor()
-            .entry(cursor)
-            .clear_checked(sdk)?;
-        liability_end.set_checked(sdk, 0)?;
-        cursor = cursor.checked_add(1).ok_or(ExitCode::IntegerOverflow)?;
-        deleted += 1;
-    }
-    storage.pruned_up_to_p1_accessor().set_checked(sdk, cursor)
-}
-
 /// Public handler `0xe505b249` (`commitEpochCommittee`).
 ///
 /// Derives the next epoch's committee and freezes it, with its leader weights.
@@ -537,15 +498,6 @@ pub fn commit_epoch_committee<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitC
     // sort is deterministic.
     members.sort_unstable_by_key(|member| member.peer_pubkey);
 
-    let liability_end_epoch = target
-        .checked_add(
-            chain_config_storage()
-                .undelegate_period_accessor()
-                .get_checked(sdk)?,
-        )
-        .and_then(|epoch| epoch.checked_add(EPOCH_COMMITTEE_RETENTION_MARGIN))
-        .and_then(|epoch| epoch.checked_add(1))
-        .ok_or(ExitCode::IntegerOverflow)?;
     let changed = committee_changed(sdk, target, &members)?;
     let stored = storage.epoch_committees_accessor().entry(target);
     for member in &members {
@@ -563,17 +515,12 @@ pub fn commit_epoch_committee<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitC
         )?;
     }
     storage
-        .committee_liability_end_epochs_accessor()
-        .entry(target)
-        .set_checked(sdk, liability_end_epoch)?;
-    storage
         .dkg_qual_accessor()
         .entry(target)
         .set_checked(sdk, changed)?;
     storage
         .last_committed_epoch_p1_accessor()
         .set_checked(sdk, target.checked_add(1).ok_or(ExitCode::IntegerOverflow)?)?;
-    prune_committees(sdk, current)?;
     events::EpochCommitteeCommitted {
         epoch: target,
         committee: members.iter().map(|member| member.validator).collect(),
