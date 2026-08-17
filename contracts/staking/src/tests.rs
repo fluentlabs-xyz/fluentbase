@@ -626,16 +626,14 @@ fn solidity_bytes_calldata_reaches_staking_handlers() {
     );
 
     // cast calldata
-    // "slashEquivocationNotarize(bytes,bytes,bytes,bytes,address,bytes32)"
-    // 0x01 0x0203 0x04 0x0506 0x0000000000000000000000000000000000000002 0x...03
+    // "slashEquivocationNotarize(bytes,bytes,bytes,bytes)"
+    // 0x01 0x0203 0x04 0x0506
     let slash_equivocation = hex!(
-        "2bc5fb10
+        "e28d2f63
+         0000000000000000000000000000000000000000000000000000000000000080
          00000000000000000000000000000000000000000000000000000000000000c0
          0000000000000000000000000000000000000000000000000000000000000100
          0000000000000000000000000000000000000000000000000000000000000140
-         0000000000000000000000000000000000000000000000000000000000000180
-         0000000000000000000000000000000000000000000000000000000000000002
-         0000000000000000000000000000000000000000000000000000000000000003
          0000000000000000000000000000000000000000000000000000000000000001
          0100000000000000000000000000000000000000000000000000000000000000
          0000000000000000000000000000000000000000000000000000000000000002
@@ -647,15 +645,13 @@ fn solidity_bytes_calldata_reaches_staking_handlers() {
     );
     assert_revert_selector(
         harness.call(slash_equivocation),
-        ERR_NO_EQUIVOCATION_COMMITMENT,
+        ERR_INVALID_EVIDENCE_ENCODING,
     );
     let command = consensus::decode_equivocation(&slash_equivocation[4..]).unwrap();
     assert_eq!(&command.evidence[..], &[0x01]);
     assert_eq!(&command.pk_uncompressed[..], &[0x02, 0x03]);
     assert_eq!(&command.sig1_uncompressed[..], &[0x04]);
     assert_eq!(&command.sig2_uncompressed[..], &[0x05, 0x06]);
-    assert_eq!(command.beneficiary, Address::with_last_byte(0x02));
-    assert_eq!(command.salt, B256::with_last_byte(0x03));
 }
 
 #[test]
@@ -1054,10 +1050,8 @@ fn derived_selectors_match_independent_hex_pins() {
         (SIG_CURRENT_EPOCH, 0x76671808),
         (SIG_NEXT_EPOCH, 0xaea0e78b),
         (SIG_GET_STAKING_TOKEN, 0x9f9106d1),
-        (SIG_DEFAULT_SLASH_REPORTER_BPS, 0x6cc69027),
         (SIG_MAX_ACTIVE_VALIDATORS, 0x5d887462),
         (SIG_MAX_BLEND_STIPEND_PER_EPOCH, 0x2bc2fec4),
-        (SIG_MAX_SLASH_REPORTER_BPS, 0x0a3a6183),
         (SIG_GET_VALIDATOR_DELEGATION, 0xd951e186),
         (SIG_GET_VALIDATOR_DELEGATED_STAKE_AT, 0xe8810ea7),
         (SIG_REGISTER_VALIDATOR, 0x8d6067ed),
@@ -1076,7 +1070,6 @@ fn derived_selectors_match_independent_hex_pins() {
         (SIG_GET_ACTIVE_VALIDATORS_LENGTH_AT, 0xd9b083ba),
         (SIG_SET_EPOCH_BLOCK_INTERVAL, 0xaf70fa2c),
         (SIG_SET_DPOS_ACTIVATION_BLOCK, 0xf517ca6a),
-        (SIG_SET_SLASH_REPORTER_REWARD_BPS, 0x58702003),
         (SIG_SET_SLASH_FUND_ADDRESS, 0xa79e7263),
         (SIG_SET_BLEND_STIPEND_PER_EPOCH, 0x2c91b879),
         (SIG_SET_UNDELEGATE_PERIOD, 0x41d8a080),
@@ -1095,12 +1088,10 @@ fn derived_selectors_match_independent_hex_pins() {
         (SIG_GET_VALIDATORS_WITH_KEYS_AT, 0x7cfba9f3),
         (SIG_COMMIT_EPOCH_COMMITTEE, 0xe505b249),
         (SIG_GET_EPOCH_COMMITTEE_WITH_STAKES, 0xa4d160c1),
-        (SIG_COMMIT_EQUIVOCATION_REPORT, 0x32890bc0),
-        (SIG_COMPUTE_EQUIVOCATION_REPORT_COMMITMENT, 0xc289d76e),
-        (SIG_GET_EQUIVOCATION_REPORT_COMMITMENT, 0xa3aae5dd),
-        (SIG_SLASH_EQUIVOCATION_NOTARIZE, 0x2bc5fb10),
-        (SIG_SLASH_EQUIVOCATION_FINALIZE, 0xb034c58b),
-        (SIG_SLASH_EQUIVOCATION_NULLIFY_FINALIZE, 0x337e1437),
+        (SIG_SLASH_EQUIVOCATION, 0xdc6fb3f2),
+        (SIG_SLASH_EQUIVOCATION_NOTARIZE, 0xe28d2f63),
+        (SIG_SLASH_EQUIVOCATION_FINALIZE, 0xadd07a3e),
+        (SIG_SLASH_EQUIVOCATION_NULLIFY_FINALIZE, 0xa10827e9),
         (SIG_DEFAULT_MIN_VERDICT_DUE_BLOCKS, 0x6fd3afb7),
         (SIG_DEFAULT_EXCLUSION_BACKOFF_CAP, 0xd4c30c1a),
         (SIG_MAX_MIN_VERDICT_DUE_BLOCKS, 0x9b9a11ba),
@@ -1621,20 +1612,11 @@ fn staking_is_a_genesis_rwasm_contract_not_a_system_precompile() {
 #[test]
 fn embedded_chain_config_exposes_solidity_public_constants() {
     let mut harness = Harness::new(0);
-    for (selector, expected) in [
-        (
-            SIG_DEFAULT_SLASH_REPORTER_BPS,
-            DEFAULT_SLASH_REPORTER_REWARD_BPS,
-        ),
-        (
-            SIG_MAX_ACTIVE_VALIDATORS,
-            MAX_ACTIVE_VALIDATORS_LENGTH as u32,
-        ),
-        (SIG_MAX_SLASH_REPORTER_BPS, MAX_SLASH_REPORTER_REWARD_BPS),
-    ] {
-        let (_, output) = harness.call(encode_empty_call(selector));
-        assert_eq!(decode_output::<u32>(&output), expected);
-    }
+    let (_, output) = harness.call(encode_empty_call(SIG_MAX_ACTIVE_VALIDATORS));
+    assert_eq!(
+        decode_output::<u32>(&output),
+        MAX_ACTIVE_VALIDATORS_LENGTH as u32
+    );
     let (_, output) = harness.call(encode_empty_call(SIG_MAX_BLEND_STIPEND_PER_EPOCH));
     assert_eq!(decode_output::<U256>(&output), MAX_BLEND_STIPEND_PER_EPOCH);
 }
@@ -1722,8 +1704,8 @@ fn governance_updates_embedded_chain_configuration() {
     assert_eq!(
         harness
             .call(encode_call(
-                SIG_SET_SLASH_REPORTER_REWARD_BPS,
-                &U32Command { value: 3 },
+                SIG_SET_ACTIVE_VALIDATORS_LENGTH,
+                &U32Command { value: 31 },
             ))
             .0,
         ExitCode::Panic
@@ -1754,7 +1736,6 @@ fn governance_updates_embedded_chain_configuration() {
         );
     }
     for (selector, value) in [
-        (SIG_SET_SLASH_REPORTER_REWARD_BPS, 2_500),
         (SIG_SET_ACTIVE_VALIDATORS_LENGTH, 31),
         (SIG_SET_UNDELEGATE_PERIOD, 9),
     ] {
@@ -1788,7 +1769,6 @@ fn governance_updates_embedded_chain_configuration() {
     );
 
     for (selector, expected) in [
-        (SIG_GET_SLASH_REPORTER_REWARD_BPS, 2_500),
         (SIG_GET_ACTIVE_VALIDATORS_LENGTH, 31),
         (SIG_GET_UNDELEGATE_PERIOD, 9),
     ] {
@@ -2440,7 +2420,8 @@ fn leader_weights_are_frozen_at_the_selection_epoch_vintage() {
         SIG_GET_EPOCH_COMMITTEE_WITH_STAKES,
         &U64Command { value: 2 },
     ));
-    let (_, _, stakes): (Vec<Address>, Vec<ConsensusKeys>, Vec<U256>) = decode_returns(&output);
+    let (_, _, stakes, _): (Vec<Address>, Vec<ConsensusKeys>, Vec<U256>, Vec<bool>) =
+        decode_returns(&output);
     assert_eq!(
         stakes[0], initial,
         "epoch 2 was selected from epoch 0 and must carry epoch 0's weight"
@@ -2451,7 +2432,8 @@ fn leader_weights_are_frozen_at_the_selection_epoch_vintage() {
         SIG_GET_EPOCH_COMMITTEE_WITH_STAKES,
         &U64Command { value: 2 },
     ));
-    let (_, _, stakes): (Vec<Address>, Vec<ConsensusKeys>, Vec<U256>) = decode_returns(&output);
+    let (_, _, stakes, _): (Vec<Address>, Vec<ConsensusKeys>, Vec<U256>, Vec<bool>) =
+        decode_returns(&output);
     assert_eq!(
         stakes[0], initial,
         "a committed epoch's weights do not move when stake changes afterwards"
@@ -2496,7 +2478,7 @@ fn pruning_drops_leader_weights_with_their_committee() {
         &U64Command { value: 0 },
     ));
     assert_eq!(exit, ExitCode::Ok);
-    let (validators, _, stakes): (Vec<Address>, Vec<ConsensusKeys>, Vec<U256>) =
+    let (validators, _, stakes, _): (Vec<Address>, Vec<ConsensusKeys>, Vec<U256>, Vec<bool>) =
         decode_returns(&output);
     assert!(
         validators.is_empty() && stakes.is_empty(),
@@ -3460,7 +3442,7 @@ fn committee_commit_is_system_gated_and_returns_epoch_stakes() {
         SIG_GET_EPOCH_COMMITTEE_WITH_STAKES,
         &U64Command { value: 0 },
     ));
-    let (validators, keys, stakes): (Vec<Address>, Vec<ConsensusKeys>, Vec<U256>) =
+    let (validators, keys, stakes, _): (Vec<Address>, Vec<ConsensusKeys>, Vec<U256>, Vec<bool>) =
         decode_returns(&output);
     assert_eq!(validators, expected_committee);
     assert_eq!(
@@ -3886,13 +3868,6 @@ fn chain_config_guards_match_solidity_boundaries() {
             &U32Command { value: 52 },
         )),
         ERR_MAX_ACTIVE_VALIDATORS_EXCEEDED,
-    );
-    assert_revert_selector(
-        harness.call(encode_call(
-            SIG_SET_SLASH_REPORTER_REWARD_BPS,
-            &U32Command { value: 0 },
-        )),
-        ERR_ZERO_VALUE,
     );
     assert_revert_selector(
         harness.call(encode_call(
@@ -5359,11 +5334,9 @@ fn external_dependency_flows_fail_closed_before_calls() {
                 Vec::<u8>::new(),
                 Vec::<u8>::new(),
                 Vec::<u8>::new(),
-                validator,
-                B256::ZERO,
             ),
         )),
-        ERR_NO_EQUIVOCATION_COMMITMENT,
+        ERR_INVALID_EVIDENCE_ENCODING,
     );
     assert_revert_selector(
         harness.call(encode_call(
@@ -5375,319 +5348,9 @@ fn external_dependency_flows_fail_closed_before_calls() {
 }
 
 #[test]
-fn equivocation_commitments_bind_every_reward_domain_field() {
-    let beneficiary = Address::with_last_byte(0xa1);
-    let staking = GENESIS_STAKING;
-    let evidence_hash = keccak256(b"equivocation evidence");
-    let salt = B256::with_last_byte(0x51);
-    let commitment = consensus::report_commitment_hash(
-        1337,
-        staking,
-        EQUIVOCATION_PROOF_KIND_NOTARIZE,
-        evidence_hash,
-        beneficiary,
-        salt,
-    );
-
-    for changed in [
-        consensus::report_commitment_hash(
-            1338,
-            staking,
-            EQUIVOCATION_PROOF_KIND_NOTARIZE,
-            evidence_hash,
-            beneficiary,
-            salt,
-        ),
-        consensus::report_commitment_hash(
-            1337,
-            Address::with_last_byte(0x99),
-            EQUIVOCATION_PROOF_KIND_NOTARIZE,
-            evidence_hash,
-            beneficiary,
-            salt,
-        ),
-        consensus::report_commitment_hash(
-            1337,
-            staking,
-            EQUIVOCATION_PROOF_KIND_FINALIZE,
-            evidence_hash,
-            beneficiary,
-            salt,
-        ),
-        consensus::report_commitment_hash(
-            1337,
-            staking,
-            EQUIVOCATION_PROOF_KIND_NOTARIZE,
-            keccak256(b"modified evidence"),
-            beneficiary,
-            salt,
-        ),
-        consensus::report_commitment_hash(
-            1337,
-            staking,
-            EQUIVOCATION_PROOF_KIND_NOTARIZE,
-            evidence_hash,
-            Address::with_last_byte(0xa2),
-            salt,
-        ),
-        consensus::report_commitment_hash(
-            1337,
-            staking,
-            EQUIVOCATION_PROOF_KIND_NOTARIZE,
-            evidence_hash,
-            beneficiary,
-            B256::with_last_byte(0x52),
-        ),
-    ] {
-        assert_ne!(commitment, changed);
-    }
-}
-
-#[test]
-fn equivocation_commit_reveal_prevents_copied_reveal_reward_redirection() {
-    let owner = Address::with_last_byte(0xa0);
-    let beneficiary = Address::with_last_byte(0xa1);
-    let competing_beneficiary = Address::with_last_byte(0xa2);
-    let front_runner = Address::with_last_byte(0xf0);
-    let evidence = Bytes::from_static(b"public equivocation evidence");
-    let salt = B256::with_last_byte(0x51);
-    let competing_salt = B256::with_last_byte(0x52);
-    let mut harness = Harness::new(1_000);
-    harness.set_caller(owner);
-    assert_eq!(
-        harness.initialize(owner, Vec::new(), Vec::new(), 0),
-        ExitCode::Ok
-    );
-
-    harness.set_caller(Address::ZERO);
-    assert_revert_selector(
-        harness.call(encode_args_call(
-            SIG_COMMIT_EQUIVOCATION_REPORT,
-            &(B256::with_last_byte(1),),
-        )),
-        ERR_ZERO_EQUIVOCATION_BENEFICIARY,
-    );
-    harness.set_caller(beneficiary);
-    assert_revert_selector(
-        harness.call(encode_args_call(
-            SIG_COMMIT_EQUIVOCATION_REPORT,
-            &(B256::ZERO,),
-        )),
-        ERR_ZERO_EQUIVOCATION_COMMITMENT,
-    );
-    assert_revert_selector(
-        harness.call(encode_args_call(
-            SIG_COMPUTE_EQUIVOCATION_REPORT_COMMITMENT,
-            &(
-                beneficiary,
-                EQUIVOCATION_PROOF_KIND_COUNT,
-                keccak256(&evidence),
-                salt,
-            ),
-        )),
-        ERR_INVALID_EQUIVOCATION_PROOF_KIND,
-    );
-
-    let (_, commitment_output) = harness.call(encode_args_call(
-        SIG_COMPUTE_EQUIVOCATION_REPORT_COMMITMENT,
-        &(
-            beneficiary,
-            EQUIVOCATION_PROOF_KIND_NOTARIZE,
-            keccak256(&evidence),
-            salt,
-        ),
-    ));
-    let (commitment,) = decode_returns::<(B256,)>(&commitment_output);
-    assert_eq!(
-        commitment,
-        consensus::report_commitment_hash(
-            0,
-            GENESIS_STAKING,
-            EQUIVOCATION_PROOF_KIND_NOTARIZE,
-            keccak256(&evidence),
-            beneficiary,
-            salt,
-        )
-    );
-    assert_eq!(
-        harness
-            .call(encode_args_call(
-                SIG_COMMIT_EQUIVOCATION_REPORT,
-                &(commitment,),
-            ))
-            .0,
-        ExitCode::Ok
-    );
-
-    let competing_commitment = consensus::report_commitment_hash(
-        0,
-        GENESIS_STAKING,
-        EQUIVOCATION_PROOF_KIND_NOTARIZE,
-        keccak256(&evidence),
-        competing_beneficiary,
-        competing_salt,
-    );
-    harness.set_caller(competing_beneficiary);
-    assert_eq!(
-        harness
-            .call(encode_args_call(
-                SIG_COMMIT_EQUIVOCATION_REPORT,
-                &(competing_commitment,),
-            ))
-            .0,
-        ExitCode::Ok
-    );
-
-    // Copying the first transaction creates only a front-runner-owned entry.
-    // It cannot replace or authenticate the beneficiary's commitment.
-    harness.set_caller(front_runner);
-    assert_eq!(
-        harness
-            .call(encode_args_call(
-                SIG_COMMIT_EQUIVOCATION_REPORT,
-                &(commitment,),
-            ))
-            .0,
-        ExitCode::Ok
-    );
-    let (_, stored_output) = harness.call(encode_args_call(
-        SIG_GET_EQUIVOCATION_REPORT_COMMITMENT,
-        &(beneficiary,),
-    ));
-    assert_eq!(
-        decode_returns::<(B256, u64)>(&stored_output),
-        (commitment, 1_000)
-    );
-
-    let command = EquivocationCommand {
-        evidence: evidence.clone(),
-        pk_uncompressed: Bytes::new(),
-        sig1_uncompressed: Bytes::new(),
-        sig2_uncompressed: Bytes::new(),
-        beneficiary,
-        salt,
-    };
-    assert_direct_revert(
-        consensus::verify_report_commitment(
-            &mut harness.sdk,
-            &command,
-            EQUIVOCATION_PROOF_KIND_NOTARIZE,
-        ),
-        &harness.sdk,
-        ERR_EQUIVOCATION_COMMITMENT_NOT_MATURE,
-    );
-
-    harness.set_block_number(1_001);
-    harness.set_caller(front_runner);
-
-    // A copied reveal may execute, but the authenticated reward beneficiary
-    // remains the account that made the mature commitment.
-    assert_eq!(
-        consensus::verify_report_commitment(
-            &mut harness.sdk,
-            &command,
-            EQUIVOCATION_PROOF_KIND_NOTARIZE,
-        ),
-        Ok(())
-    );
-
-    let redirected = EquivocationCommand {
-        beneficiary: front_runner,
-        ..EquivocationCommand {
-            evidence: evidence.clone(),
-            pk_uncompressed: Bytes::new(),
-            sig1_uncompressed: Bytes::new(),
-            sig2_uncompressed: Bytes::new(),
-            beneficiary,
-            salt,
-        }
-    };
-    assert_direct_revert(
-        consensus::verify_report_commitment(
-            &mut harness.sdk,
-            &redirected,
-            EQUIVOCATION_PROOF_KIND_NOTARIZE,
-        ),
-        &harness.sdk,
-        ERR_EQUIVOCATION_COMMITMENT_MISMATCH,
-    );
-
-    let wrong_salt = EquivocationCommand {
-        salt: B256::with_last_byte(0x53),
-        ..EquivocationCommand {
-            evidence: evidence.clone(),
-            pk_uncompressed: Bytes::new(),
-            sig1_uncompressed: Bytes::new(),
-            sig2_uncompressed: Bytes::new(),
-            beneficiary,
-            salt,
-        }
-    };
-    assert_direct_revert(
-        consensus::verify_report_commitment(
-            &mut harness.sdk,
-            &wrong_salt,
-            EQUIVOCATION_PROOF_KIND_NOTARIZE,
-        ),
-        &harness.sdk,
-        ERR_EQUIVOCATION_COMMITMENT_MISMATCH,
-    );
-
-    let wrong_evidence = EquivocationCommand {
-        evidence: Bytes::from_static(b"modified evidence"),
-        ..EquivocationCommand {
-            evidence: evidence.clone(),
-            pk_uncompressed: Bytes::new(),
-            sig1_uncompressed: Bytes::new(),
-            sig2_uncompressed: Bytes::new(),
-            beneficiary,
-            salt,
-        }
-    };
-    assert_direct_revert(
-        consensus::verify_report_commitment(
-            &mut harness.sdk,
-            &wrong_evidence,
-            EQUIVOCATION_PROOF_KIND_NOTARIZE,
-        ),
-        &harness.sdk,
-        ERR_EQUIVOCATION_COMMITMENT_MISMATCH,
-    );
-
-    consensus::consume_report_commitment(&mut harness.sdk, beneficiary).unwrap();
-    assert_direct_revert(
-        consensus::verify_report_commitment(
-            &mut harness.sdk,
-            &command,
-            EQUIVOCATION_PROOF_KIND_NOTARIZE,
-        ),
-        &harness.sdk,
-        ERR_NO_EQUIVOCATION_COMMITMENT,
-    );
-
-    let competing_command = EquivocationCommand {
-        evidence,
-        pk_uncompressed: Bytes::new(),
-        sig1_uncompressed: Bytes::new(),
-        sig2_uncompressed: Bytes::new(),
-        beneficiary: competing_beneficiary,
-        salt: competing_salt,
-    };
-    assert_eq!(
-        consensus::verify_report_commitment(
-            &mut harness.sdk,
-            &competing_command,
-            EQUIVOCATION_PROOF_KIND_NOTARIZE,
-        ),
-        Ok(())
-    );
-}
-
-#[test]
 fn equivocation_seizes_active_and_pending_self_delegation() {
     let owner = Address::with_last_byte(0xa0);
     let validator = Address::with_last_byte(0x01);
-    let reporter = Address::with_last_byte(0xb0);
     let token = Address::with_last_byte(0xc0);
     let active_stake = DEFAULT_MIN_VALIDATOR_STAKE;
     let pending_operation = DEFAULT_MIN_VALIDATOR_STAKE;
@@ -5747,16 +5410,11 @@ fn equivocation_seizes_active_and_pending_self_delegation() {
             SyscallResult::new(Bytes::new(), 0, 0, ExitCode::Ok)
         });
 
-    consensus::seize_self_stake(&mut harness.sdk, validator, validator, reporter).unwrap();
+    consensus::seize_self_stake(&mut harness.sdk, validator, validator).unwrap();
 
-    let reporter_reward =
-        total_stake * U256::from(DEFAULT_SLASH_REPORTER_REWARD_BPS) / U256::from(10_000);
     assert_eq!(
         transfers.borrow().as_slice(),
-        &[
-            (reporter, reporter_reward),
-            (EQUIVOCATION_BURN_SINK, total_stake - reporter_reward),
-        ]
+        &[(EQUIVOCATION_BURN_SINK, total_stake)]
     );
     assert_eq!(delegates.len_checked(&harness.sdk).unwrap(), 0);
     assert_eq!(undelegates.len_checked(&harness.sdk).unwrap(), 0);
@@ -5794,33 +5452,29 @@ fn equivocation_seizes_active_and_pending_self_delegation() {
             .0,
         ExitCode::Ok
     );
-    assert_eq!(transfers.borrow().len(), 2);
+    assert_eq!(transfers.borrow().len(), 1);
 }
 
-/// One slashable conflict shape and the three things that must agree on it: the
-/// entry point that accepts it, the proof kind its commitment is bound to, and
-/// the corpus blob carrying it.
+/// One slashable conflict shape and the two things that must agree on it: the
+/// entry point that accepts it and the corpus blob carrying it.
 ///
 /// Routing a kind to the wrong arm makes that kind permanently unslashable
 /// on-chain while every other kind keeps working, so each test names the route
 /// it drives instead of inheriting one.
 struct ProofRoute {
     selector: u32,
-    proof_kind: u8,
     shape: evidence::EvidenceShape,
     blob: &'static [u8],
 }
 
 const NOTARIZE_ROUTE: ProofRoute = ProofRoute {
     selector: SIG_SLASH_EQUIVOCATION_NOTARIZE,
-    proof_kind: EQUIVOCATION_PROOF_KIND_NOTARIZE,
     shape: evidence::EvidenceShape::ConflictingNotarize,
     blob: &evidence::tests::CONFLICTING_NOTARIZE,
 };
 
 const FINALIZE_ROUTE: ProofRoute = ProofRoute {
     selector: SIG_SLASH_EQUIVOCATION_FINALIZE,
-    proof_kind: EQUIVOCATION_PROOF_KIND_FINALIZE,
     shape: evidence::EvidenceShape::ConflictingFinalize,
     blob: &evidence::tests::CONFLICTING_FINALIZE,
 };
@@ -5829,7 +5483,6 @@ const FINALIZE_ROUTE: ProofRoute = ProofRoute {
 /// round rather than a proposal, so it only parses under its own shape.
 const NULLIFY_FINALIZE_ROUTE: ProofRoute = ProofRoute {
     selector: SIG_SLASH_EQUIVOCATION_NULLIFY_FINALIZE,
-    proof_kind: EQUIVOCATION_PROOF_KIND_NULLIFY_FINALIZE,
     shape: evidence::EvidenceShape::NullifyFinalize,
     blob: &evidence::tests::NULLIFY_FINALIZE,
 };
@@ -5839,13 +5492,12 @@ const NULLIFY_FINALIZE_ROUTE: ProofRoute = ProofRoute {
 ///
 /// The evidence is the node-side corpus blob and the two uncompressed signatures
 /// are that blob's own signature bytes padded to the 128-byte G1 width the mock
-/// verifier compresses back down, so the reveal carries exactly what the parser
+/// verifier compresses back down, so the report carries exactly what the parser
 /// will find inside the blob.
 fn equivocation_report(
     sdk: &mut TestingContextImpl,
     route: &ProofRoute,
     pk_byte: u8,
-    beneficiary: Address,
 ) -> EquivocationCommand {
     let blob = Bytes::copy_from_slice(route.blob);
     let decoded = evidence::decode(sdk, &blob, route.shape).expect("the corpus blob parses");
@@ -5859,8 +5511,6 @@ fn equivocation_report(
         pk_uncompressed: Bytes::from(vec![pk_byte; BLS_PUBKEY_UNCOMPRESSED_LENGTH]),
         sig1_uncompressed: uncompressed(&decoded.sig1),
         sig2_uncompressed: uncompressed(&decoded.sig2),
-        beneficiary,
-        salt: B256::with_last_byte(0x51),
     }
 }
 
@@ -5868,42 +5518,18 @@ fn equivocation_report(
 /// It is the epoch a slash used to need a live committee record for.
 const CORPUS_EPOCH: u64 = 7;
 
-/// Sends the reveal in every slash test.
-///
-/// Never a beneficiary, because the reward must follow the committed
-/// beneficiary rather than whoever submits the reveal — a reveal sitting in the
-/// mempool is copyable, and paying its sender is exactly the theft the
-/// commit/reveal split exists to stop.
+/// Sends the evidence-carrying slash in every test on that route. It is an
+/// ordinary account, deliberately: the route is permissionless and pays its
+/// submitter nothing, so who sends it changes nothing about where stake goes.
 const EQUIVOCATION_RELAYER: Address = Address::with_last_byte(0xd7);
 
-/// Drives the real two-step report: the beneficiary commits, a block passes so
-/// the commitment matures, and the relayer reveals. Logs are drained in
-/// between, so what the caller reads back belongs to the slash alone.
-fn commit_and_slash(
+/// Drives the evidence-carrying route. Logs are drained first, so what the
+/// caller reads back belongs to the slash alone.
+fn slash_with_evidence(
     harness: &mut Harness,
     route: &ProofRoute,
     command: &EquivocationCommand,
 ) -> (ExitCode, Vec<u8>) {
-    let commitment = consensus::report_commitment_hash(
-        harness.sdk.context().block_chain_id(),
-        GENESIS_STAKING,
-        route.proof_kind,
-        keccak256(&command.evidence),
-        command.beneficiary,
-        command.salt,
-    );
-    harness.set_caller(command.beneficiary);
-    assert_eq!(
-        harness
-            .call(encode_args_call(
-                SIG_COMMIT_EQUIVOCATION_REPORT,
-                &(commitment,),
-            ))
-            .0,
-        ExitCode::Ok
-    );
-    let matured = harness.sdk.context().block_number() + 1;
-    harness.set_block_number(matured);
     harness.sdk.take_logs();
     harness.set_caller(EQUIVOCATION_RELAYER);
     harness.call(encode_args_call(
@@ -5913,8 +5539,6 @@ fn commit_and_slash(
             command.pk_uncompressed.clone(),
             command.sig1_uncompressed.clone(),
             command.sig2_uncompressed.clone(),
-            command.beneficiary,
-            command.salt,
         ),
     ))
 }
@@ -5955,6 +5579,158 @@ fn record_transfers(
     transfers
 }
 
+/// The exact bytes `consensus::namespace` must produce, spelled out rather than
+/// derived. Calling the private builder would only assert it equals itself; a
+/// swapped kind constant has to fail here.
+///
+/// Layout: `b"FLUENT_DPOS_V1_"` ‖ chain id as u64 big-endian ‖ suffix. The
+/// harness never sets a chain id and `fluentbase-testing` exposes no setter, so
+/// it is zero.
+const NS_NOTARIZE: &[u8] = b"FLUENT_DPOS_V1_\x00\x00\x00\x00\x00\x00\x00\x00_NOTARIZE";
+const NS_NULLIFY: &[u8] = b"FLUENT_DPOS_V1_\x00\x00\x00\x00\x00\x00\x00\x00_NULLIFY";
+const NS_FINALIZE: &[u8] = b"FLUENT_DPOS_V1_\x00\x00\x00\x00\x00\x00\x00\x00_FINALIZE";
+const NS_ALL: &[&[u8]] = &[NS_NOTARIZE, NS_NULLIFY, NS_FINALIZE];
+
+/// Records the namespace of every BLS verify the contract performs, and accepts
+/// a signature only under the namespaces listed in `accept`.
+///
+/// The shared handler answers `true` for any namespace at all
+/// (`mock_external_return`, `SIG_BLS_VERIFY`), which makes the whole
+/// kind -> domain-separator -> verifier chain invisible to tests: the message
+/// bytes of a legal notarize/nullify pair and of a slashable pair are identical,
+/// and the namespace is the only thing that tells them apart.
+fn record_verify_namespaces(
+    harness: &Harness,
+    accept: &'static [&'static [u8]],
+) -> Rc<RefCell<Vec<Bytes>>> {
+    let seen = Rc::new(RefCell::new(Vec::<Bytes>::new()));
+    let recorder = seen.clone();
+    harness
+        .sdk
+        .set_call_handler(move |_address, _value, input, _fuel_limit| {
+            if input.len() < SIG_LEN_BYTES {
+                return SyscallResult::new(Bytes::new(), 0, 0, ExitCode::MalformedBuiltinParams);
+            }
+            let selector = u32::from_be_bytes(input[..SIG_LEN_BYTES].try_into().unwrap());
+            if selector == SIG_BLS_VERIFY {
+                // verify(bytes,bytes,bytes,bytes,bytes)
+                //       = (namespace, message, dst, signature, pubkey)
+                let (namespace, _msg, _dst, _sig, _pk) =
+                    SolidityABI::<(Bytes, Bytes, Bytes, Bytes, Bytes)>::decode_function_args(
+                        &&input[SIG_LEN_BYTES..],
+                    )
+                    .unwrap();
+                let accepted = accept.contains(&namespace.as_ref());
+                recorder.borrow_mut().push(namespace);
+                return SyscallResult::new(encode_mock_return(&accepted), 0, 0, ExitCode::Ok);
+            }
+            match mock_external_return(selector, &input[SIG_LEN_BYTES..]) {
+                Some(output) => SyscallResult::new(output, 0, 0, ExitCode::Ok),
+                None => SyscallResult::new(Bytes::new(), 0, 0, ExitCode::MalformedBuiltinParams),
+            }
+        });
+    seen
+}
+
+/// Each slash route must hash its two messages under the domain separators its
+/// message kinds name. This is the only thing separating a legal Simplex vote
+/// pair from a slashable one: in Simplex a correct validator may notarize view
+/// V and then nullify V on timeout, and those bytes are shape-identical to a
+/// real conflict. Swap a kind constant and every other slash test stays green.
+#[test]
+fn each_slash_route_verifies_under_the_domain_its_kinds_name() {
+    for (route, expected) in [
+        (&NOTARIZE_ROUTE, [NS_NOTARIZE, NS_NOTARIZE]),
+        (&FINALIZE_ROUTE, [NS_FINALIZE, NS_FINALIZE]),
+        (&NULLIFY_FINALIZE_ROUTE, [NS_NULLIFY, NS_FINALIZE]),
+    ] {
+        let sponsor = Address::with_last_byte(0xa0);
+        let offender = Address::with_last_byte(0x01);
+        let bystander = Address::with_last_byte(0x02);
+        let stake = DEFAULT_MIN_VALIDATOR_STAKE * U256::from(4);
+        let mut harness = Harness::new(1_000);
+        assert_eq!(
+            harness.initialize(sponsor, vec![offender, bystander], vec![stake, stake], 0),
+            ExitCode::Ok
+        );
+        let seen = record_verify_namespaces(&harness, NS_ALL);
+
+        let command = equivocation_report(&mut harness.sdk, route, 0x11);
+        assert_eq!(
+            slash_with_evidence(&mut harness, route, &command).0,
+            ExitCode::Ok
+        );
+
+        assert_eq!(
+            seen.borrow()
+                .iter()
+                .map(|namespace| namespace.to_vec())
+                .collect::<Vec<_>>(),
+            expected
+                .iter()
+                .map(|namespace| namespace.to_vec())
+                .collect::<Vec<_>>(),
+            "route {:#010x} hashed under the wrong domain separators",
+            route.selector
+        );
+    }
+}
+
+/// A conflicting-notarize blob fed to the finalize entry point. The two 168-byte
+/// conflicting corpora are byte-structurally identical, so this decodes cleanly
+/// and reaches the verifier with `kind1 == kind2 == FINALIZE`; only the domain
+/// separator stops it. Without that binding an attacker could route a blob
+/// through whichever entry point suits it.
+const NOTARIZE_BLOB_ON_FINALIZE_ROUTE: ProofRoute = ProofRoute {
+    selector: SIG_SLASH_EQUIVOCATION_FINALIZE,
+    shape: evidence::EvidenceShape::ConflictingFinalize,
+    blob: &evidence::tests::CONFLICTING_NOTARIZE,
+};
+
+#[test]
+fn a_blob_routed_through_the_wrong_entry_point_fails_verification() {
+    let sponsor = Address::with_last_byte(0xa0);
+    let offender = Address::with_last_byte(0x01);
+    let bystander = Address::with_last_byte(0x02);
+    let stake = DEFAULT_MIN_VALIDATOR_STAKE * U256::from(4);
+    let mut harness = Harness::new(1_000);
+    assert_eq!(
+        harness.initialize(sponsor, vec![offender, bystander], vec![stake, stake], 0),
+        ExitCode::Ok
+    );
+    // The corpus signatures were minted under the notarize domain, so the
+    // verifier accepts nothing else — exactly as a real BLS verifier would.
+    let seen = record_verify_namespaces(&harness, &[NS_NOTARIZE]);
+
+    let command = equivocation_report(&mut harness.sdk, &NOTARIZE_BLOB_ON_FINALIZE_ROUTE, 0x11);
+    assert_revert_selector(
+        slash_with_evidence(&mut harness, &NOTARIZE_BLOB_ON_FINALIZE_ROUTE, &command),
+        ERR_EQUIVOCATION_SIGNATURE_INVALID,
+    );
+    // ERR_EQUIVOCATION_SIGNATURE_INVALID is raised at two sites: the signature
+    // hash gate that precedes the verifies, and the verify gate itself. Two
+    // recorded namespaces are what tell them apart, so this count is the only
+    // evidence the revert came from the domain and not from the earlier gate.
+    // Two rather than one because both verifies are computed before the guard
+    // reads either.
+    assert_eq!(seen.borrow().len(), 2);
+
+    // The rejection must be inert, not poisonous: the same offender still
+    // slashes through the entry point its blob was actually signed for. A
+    // wrong-route attempt that wrote partial state would let an attacker burn
+    // somebody else's evidence for nothing.
+    let honest = equivocation_report(&mut harness.sdk, &NOTARIZE_ROUTE, 0x11);
+    assert_eq!(
+        slash_with_evidence(&mut harness, &NOTARIZE_ROUTE, &honest).0,
+        ExitCode::Ok
+    );
+    assert!(consensus_storage()
+        .tombstoned_accessor()
+        .entry(offender)
+        .get_checked(&harness.sdk)
+        .unwrap());
+}
+
 fn find_log<'a>(
     logs: &'a [(Bytes, Vec<B256>)],
     selector: [u8; 32],
@@ -5966,11 +5742,10 @@ fn find_log<'a>(
 }
 
 #[test]
-fn equivocation_slash_tombstones_jails_and_splits_the_seized_self_stake() {
+fn equivocation_slash_tombstones_jails_and_seizes_the_self_stake_whole() {
     let sponsor = Address::with_last_byte(0xa0);
     let offender = Address::with_last_byte(0x01);
     let bystander = Address::with_last_byte(0x02);
-    let reporter = Address::with_last_byte(0xb0);
     let stake = DEFAULT_MIN_VALIDATOR_STAKE * U256::from(4);
     let mut harness = Harness::new(1_000);
     assert_eq!(
@@ -5979,9 +5754,9 @@ fn equivocation_slash_tombstones_jails_and_splits_the_seized_self_stake() {
     );
     let transfers = record_transfers(&harness, true);
 
-    let command = equivocation_report(&mut harness.sdk, &NOTARIZE_ROUTE, 0x11, reporter);
+    let command = equivocation_report(&mut harness.sdk, &NOTARIZE_ROUTE, 0x11);
     assert_eq!(
-        commit_and_slash(&mut harness, &NOTARIZE_ROUTE, &command).0,
+        slash_with_evidence(&mut harness, &NOTARIZE_ROUTE, &command).0,
         ExitCode::Ok
     );
 
@@ -6021,11 +5796,10 @@ fn equivocation_slash_tombstones_jails_and_splits_the_seized_self_stake() {
         0
     );
 
-    let reward = stake * U256::from(DEFAULT_SLASH_REPORTER_REWARD_BPS) / U256::from(10_000);
     assert_eq!(
         transfers.borrow().as_slice(),
-        &[(reporter, reward), (EQUIVOCATION_BURN_SINK, stake - reward)],
-        "the reward follows the committed beneficiary, not the relayer that revealed"
+        &[(EQUIVOCATION_BURN_SINK, stake)],
+        "the whole seizure goes to the fund; nobody is paid for reporting"
     );
 
     let logs = harness.sdk.take_logs();
@@ -6036,7 +5810,6 @@ fn equivocation_slash_tombstones_jails_and_splits_the_seized_self_stake() {
     let (slashed_data, slashed_topics) =
         find_log(&logs, events::EquivocationSlashed::SELECTOR, "slash");
     assert_eq!(&slashed_topics[1].0[12..], offender.as_slice());
-    assert_eq!(&slashed_topics[2].0[12..], reporter.as_slice());
     assert_eq!(
         decode_output::<u64>(slashed_data),
         CORPUS_EPOCH,
@@ -6046,8 +5819,8 @@ fn equivocation_slash_tombstones_jails_and_splits_the_seized_self_stake() {
         find_log(&logs, events::EquivocationStakeSeized::SELECTOR, "seizure");
     assert_eq!(&seized_topics[1].0[12..], offender.as_slice());
     assert_eq!(
-        decode_output::<(U256, U256, Address)>(seized_data),
-        (reward, stake - reward, EQUIVOCATION_BURN_SINK)
+        decode_output::<(U256, Address)>(seized_data),
+        (stake, EQUIVOCATION_BURN_SINK)
     );
 }
 
@@ -6098,7 +5871,6 @@ fn a_seizure_stops_the_seized_bond_counting_as_stake() {
     let sponsor = Address::with_last_byte(0xa0);
     let offender = Address::with_last_byte(0x01);
     let bystander = Address::with_last_byte(0x02);
-    let reporter = Address::with_last_byte(0xb0);
     let stake = DEFAULT_MIN_VALIDATOR_STAKE * U256::from(4);
     let warmup = DEFAULT_MIN_STAKING_AMOUNT;
     let mut harness = Harness::new(1_000);
@@ -6119,9 +5891,9 @@ fn a_seizure_stops_the_seized_bond_counting_as_stake() {
     );
 
     let transfers = record_transfers(&harness, true);
-    let command = equivocation_report(&mut harness.sdk, &NOTARIZE_ROUTE, 0x11, reporter);
+    let command = equivocation_report(&mut harness.sdk, &NOTARIZE_ROUTE, 0x11);
     assert_eq!(
-        commit_and_slash(&mut harness, &NOTARIZE_ROUTE, &command).0,
+        slash_with_evidence(&mut harness, &NOTARIZE_ROUTE, &command).0,
         ExitCode::Ok
     );
 
@@ -6157,134 +5929,81 @@ fn a_seizure_stops_the_seized_bond_counting_as_stake() {
         "the view stops reporting a bond the contract no longer holds"
     );
 
-    let reward =
-        (stake + warmup) * U256::from(DEFAULT_SLASH_REPORTER_REWARD_BPS) / U256::from(10_000);
     assert_eq!(
         transfers.borrow().as_slice(),
-        &[
-            (reporter, reward),
-            (EQUIVOCATION_BURN_SINK, stake + warmup - reward),
-        ]
+        &[(EQUIVOCATION_BURN_SINK, stake + warmup)]
     );
 }
 
+/// The two refusal vectors `try_transfer` handles in different branches, driven
+/// against the one recipient a seizure has. Covering only one leaves the other
+/// live, and the recipient is a burn sink no caller chooses — so a refusal that
+/// propagated would make equivocation unslashable chain-wide.
 #[test]
-fn a_refused_reporter_payment_folds_into_the_remainder() {
-    let sponsor = Address::with_last_byte(0xa0);
-    let offender = Address::with_last_byte(0x01);
-    let bystander = Address::with_last_byte(0x02);
-    let reporter = Address::with_last_byte(0xb0);
-    let stake = DEFAULT_MIN_VALIDATOR_STAKE * U256::from(4);
-    let mut harness = Harness::new(1_000);
-    assert_eq!(
-        harness.initialize(sponsor, vec![offender, bystander], vec![stake, stake], 500),
-        ExitCode::Ok
-    );
-    let transfers = record_transfers_refusing(&harness, vec![reporter], false);
+fn a_slash_survives_a_fund_that_refuses_the_seizure() {
+    for hard_revert in [false, true] {
+        let sponsor = Address::with_last_byte(0xa0);
+        let offender = Address::with_last_byte(0x01);
+        let bystander = Address::with_last_byte(0x02);
+        let stake = DEFAULT_MIN_VALIDATOR_STAKE * U256::from(4);
+        let mut harness = Harness::new(1_000);
+        assert_eq!(
+            harness.initialize(sponsor, vec![offender, bystander], vec![stake, stake], 500),
+            ExitCode::Ok
+        );
+        let transfers =
+            record_transfers_refusing(&harness, vec![EQUIVOCATION_BURN_SINK], hard_revert);
 
-    let command = equivocation_report(&mut harness.sdk, &NOTARIZE_ROUTE, 0x11, reporter);
-    assert_eq!(
-        commit_and_slash(&mut harness, &NOTARIZE_ROUTE, &command).0,
-        ExitCode::Ok,
-        "a token that turns the reporter away must not roll the slash back"
-    );
-    assert!(consensus_storage()
-        .tombstoned_accessor()
-        .entry(offender)
-        .get_checked(&harness.sdk)
-        .unwrap());
-    assert_eq!(
-        staking_storage()
-            .validators_accessor()
+        let command = equivocation_report(&mut harness.sdk, &NOTARIZE_ROUTE, 0x11);
+        assert_eq!(
+            slash_with_evidence(&mut harness, &NOTARIZE_ROUTE, &command).0,
+            ExitCode::Ok
+        );
+        assert!(consensus_storage()
+            .tombstoned_accessor()
             .entry(offender)
-            .status_accessor()
             .get_checked(&harness.sdk)
-            .unwrap(),
-        STATUS_JAIL
-    );
+            .unwrap());
+        assert_eq!(
+            staking_storage()
+                .validators_accessor()
+                .entry(offender)
+                .status_accessor()
+                .get_checked(&harness.sdk)
+                .unwrap(),
+            STATUS_JAIL
+        );
+        assert_eq!(
+            staking_storage()
+                .validator_delegations_accessor()
+                .entry(offender)
+                .entry(offender)
+                .delegate_queue_accessor()
+                .len_checked(&harness.sdk)
+                .unwrap(),
+            0
+        );
 
-    let reward = stake * U256::from(DEFAULT_SLASH_REPORTER_REWARD_BPS) / U256::from(10_000);
-    assert_eq!(
-        transfers.borrow().as_slice(),
-        &[(reporter, reward), (EQUIVOCATION_BURN_SINK, stake)],
-        "the refused cut joins the remainder instead of stranding here"
-    );
-    let logs = harness.sdk.take_logs();
-    let (seized_data, _) = find_log(&logs, events::EquivocationStakeSeized::SELECTOR, "seizure");
-    assert_eq!(
-        decode_output::<(U256, U256, Address)>(seized_data),
-        (U256::ZERO, stake, EQUIVOCATION_BURN_SINK),
-        "the event reports what moved, not what was intended"
-    );
-}
-
-#[test]
-fn a_slash_survives_a_token_that_refuses_every_recipient() {
-    let sponsor = Address::with_last_byte(0xa0);
-    let offender = Address::with_last_byte(0x01);
-    let bystander = Address::with_last_byte(0x02);
-    let reporter = Address::with_last_byte(0xb0);
-    let stake = DEFAULT_MIN_VALIDATOR_STAKE * U256::from(4);
-    let mut harness = Harness::new(1_000);
-    assert_eq!(
-        harness.initialize(sponsor, vec![offender, bystander], vec![stake, stake], 500),
-        ExitCode::Ok
-    );
-    // The remainder's default recipient is a burn sink the caller does not
-    // choose, so a token that rejects it would otherwise make equivocation
-    // unslashable chain-wide.
-    let transfers =
-        record_transfers_refusing(&harness, vec![reporter, EQUIVOCATION_BURN_SINK], true);
-
-    let command = equivocation_report(&mut harness.sdk, &NOTARIZE_ROUTE, 0x11, reporter);
-    assert_eq!(
-        commit_and_slash(&mut harness, &NOTARIZE_ROUTE, &command).0,
-        ExitCode::Ok
-    );
-    assert!(consensus_storage()
-        .tombstoned_accessor()
-        .entry(offender)
-        .get_checked(&harness.sdk)
-        .unwrap());
-    assert_eq!(
-        staking_storage()
-            .validators_accessor()
-            .entry(offender)
-            .status_accessor()
-            .get_checked(&harness.sdk)
-            .unwrap(),
-        STATUS_JAIL
-    );
-    assert_eq!(
-        staking_storage()
-            .validator_delegations_accessor()
-            .entry(offender)
-            .entry(offender)
-            .delegate_queue_accessor()
-            .len_checked(&harness.sdk)
-            .unwrap(),
-        0
-    );
-
-    let reward = stake * U256::from(DEFAULT_SLASH_REPORTER_REWARD_BPS) / U256::from(10_000);
-    assert_eq!(
-        transfers.borrow().as_slice(),
-        &[(reporter, reward), (EQUIVOCATION_BURN_SINK, stake)],
-        "both legs are attempted, and neither refusal propagates"
-    );
-    let logs = harness.sdk.take_logs();
-    let (seized_data, _) = find_log(&logs, events::EquivocationStakeSeized::SELECTOR, "seizure");
-    assert_eq!(
-        decode_output::<(U256, U256, Address)>(seized_data),
-        (U256::ZERO, U256::ZERO, EQUIVOCATION_BURN_SINK)
-    );
+        assert_eq!(
+            transfers.borrow().as_slice(),
+            &[(EQUIVOCATION_BURN_SINK, stake)],
+            "the payout is attempted, and the refusal does not propagate"
+        );
+        let logs = harness.sdk.take_logs();
+        let (seized_data, _) =
+            find_log(&logs, events::EquivocationStakeSeized::SELECTOR, "seizure");
+        assert_eq!(
+            decode_output::<(U256, Address)>(seized_data),
+            (U256::ZERO, EQUIVOCATION_BURN_SINK),
+            "the event reports what moved, not what was intended"
+        );
+    }
 }
 
 #[test]
 fn a_pruned_evidence_epoch_no_longer_blocks_a_slash() {
     let sponsor = Address::with_last_byte(0xa0);
     let offender = Address::with_last_byte(0x01);
-    let reporter = Address::with_last_byte(0xb0);
     let mut harness = Harness::new(1_000);
     let (validators, stakes) = with_filler_validators(&[(offender, DEFAULT_MIN_VALIDATOR_STAKE)]);
     assert_eq!(
@@ -6337,9 +6056,9 @@ fn a_pruned_evidence_epoch_no_longer_blocks_a_slash() {
         "the epoch the evidence names has been retired"
     );
 
-    let command = equivocation_report(&mut harness.sdk, &NOTARIZE_ROUTE, 0x11, reporter);
+    let command = equivocation_report(&mut harness.sdk, &NOTARIZE_ROUTE, 0x11);
     assert_eq!(
-        commit_and_slash(&mut harness, &NOTARIZE_ROUTE, &command).0,
+        slash_with_evidence(&mut harness, &NOTARIZE_ROUTE, &command).0,
         ExitCode::Ok
     );
     assert!(consensus
@@ -6364,7 +6083,6 @@ fn a_registered_but_never_activated_validator_can_be_slashed() {
     let seated = Address::with_last_byte(0x01);
     let offender = Address::with_last_byte(0x02);
     let offender_owner = Address::with_last_byte(0xa2);
-    let reporter = Address::with_last_byte(0xb0);
     let stake = DEFAULT_MIN_VALIDATOR_STAKE;
     let mut harness = Harness::new(1_000);
     assert_eq!(
@@ -6403,9 +6121,9 @@ fn a_registered_but_never_activated_validator_can_be_slashed() {
     // Driven through the finalize entry point: a conflicting finalize is as
     // slashable as a conflicting notarize, and an arm is only told apart from
     // the other two by a test that reveals through it.
-    let command = equivocation_report(&mut harness.sdk, &FINALIZE_ROUTE, 0x40, reporter);
+    let command = equivocation_report(&mut harness.sdk, &FINALIZE_ROUTE, 0x40);
     assert_eq!(
-        commit_and_slash(&mut harness, &FINALIZE_ROUTE, &command).0,
+        slash_with_evidence(&mut harness, &FINALIZE_ROUTE, &command).0,
         ExitCode::Ok
     );
 
@@ -6418,10 +6136,9 @@ fn a_registered_but_never_activated_validator_can_be_slashed() {
         record.status_accessor().get_checked(&harness.sdk).unwrap(),
         STATUS_JAIL
     );
-    let reward = stake * U256::from(DEFAULT_SLASH_REPORTER_REWARD_BPS) / U256::from(10_000);
     assert_eq!(
         transfers.borrow().as_slice(),
-        &[(reporter, reward), (EQUIVOCATION_BURN_SINK, stake - reward)],
+        &[(EQUIVOCATION_BURN_SINK, stake)],
         "the bond of a validator that never activated is still seizable"
     );
     assert_eq!(
@@ -6434,16 +6151,14 @@ fn a_registered_but_never_activated_validator_can_be_slashed() {
     );
 }
 
-/// The third arm carries both bindings the other two cannot cover for it: the
-/// entry point decodes under `NullifyFinalize`, so the 135-byte blob would not
-/// parse under either conflicting shape, and the reveal only finds its
-/// commitment if the handler names the nullify/finalize proof kind.
+/// The third arm decodes under `NullifyFinalize`, so its 135-byte blob would not
+/// parse under either conflicting shape — a binding neither of the other two
+/// entry points can cover for it.
 #[test]
 fn a_nullify_finalize_conflict_is_slashable_through_its_own_entry_point() {
     let sponsor = Address::with_last_byte(0xa0);
     let offender = Address::with_last_byte(0x01);
     let bystander = Address::with_last_byte(0x02);
-    let reporter = Address::with_last_byte(0xb0);
     let stake = DEFAULT_MIN_VALIDATOR_STAKE * U256::from(4);
     let mut harness = Harness::new(1_000);
     assert_eq!(
@@ -6452,9 +6167,9 @@ fn a_nullify_finalize_conflict_is_slashable_through_its_own_entry_point() {
     );
     let transfers = record_transfers(&harness, true);
 
-    let command = equivocation_report(&mut harness.sdk, &NULLIFY_FINALIZE_ROUTE, 0x11, reporter);
+    let command = equivocation_report(&mut harness.sdk, &NULLIFY_FINALIZE_ROUTE, 0x11);
     assert_eq!(
-        commit_and_slash(&mut harness, &NULLIFY_FINALIZE_ROUTE, &command).0,
+        slash_with_evidence(&mut harness, &NULLIFY_FINALIZE_ROUTE, &command).0,
         ExitCode::Ok
     );
 
@@ -6472,17 +6187,15 @@ fn a_nullify_finalize_conflict_is_slashable_through_its_own_entry_point() {
             .unwrap(),
         STATUS_JAIL
     );
-    let reward = stake * U256::from(DEFAULT_SLASH_REPORTER_REWARD_BPS) / U256::from(10_000);
     assert_eq!(
         transfers.borrow().as_slice(),
-        &[(reporter, reward), (EQUIVOCATION_BURN_SINK, stake - reward)]
+        &[(EQUIVOCATION_BURN_SINK, stake)]
     );
 
     let logs = harness.sdk.take_logs();
     let (slashed_data, slashed_topics) =
         find_log(&logs, events::EquivocationSlashed::SELECTOR, "slash");
     assert_eq!(&slashed_topics[1].0[12..], offender.as_slice());
-    assert_eq!(&slashed_topics[2].0[12..], reporter.as_slice());
     assert_eq!(decode_output::<u64>(slashed_data), CORPUS_EPOCH);
 }
 
@@ -6491,7 +6204,6 @@ fn a_slash_with_nothing_to_seize_still_tombstones() {
     let sponsor = Address::with_last_byte(0xa0);
     let seated = Address::with_last_byte(0x01);
     let offender = Address::with_last_byte(0x02);
-    let reporter = Address::with_last_byte(0xb0);
     let mut harness = Harness::new(1_000);
     assert_eq!(
         harness.initialize(sponsor, vec![seated], vec![DEFAULT_MIN_VALIDATOR_STAKE], 0),
@@ -6558,9 +6270,9 @@ fn a_slash_with_nothing_to_seize_still_tombstones() {
     );
 
     let transfers = record_transfers(&harness, true);
-    let command = equivocation_report(&mut harness.sdk, &NOTARIZE_ROUTE, 0x40, reporter);
+    let command = equivocation_report(&mut harness.sdk, &NOTARIZE_ROUTE, 0x40);
     assert_eq!(
-        commit_and_slash(&mut harness, &NOTARIZE_ROUTE, &command).0,
+        slash_with_evidence(&mut harness, &NOTARIZE_ROUTE, &command).0,
         ExitCode::Ok
     );
 
@@ -6589,7 +6301,6 @@ fn a_slash_with_nothing_to_seize_still_tombstones() {
 fn a_slash_naming_an_unregistered_key_is_rejected() {
     let sponsor = Address::with_last_byte(0xa0);
     let validator = Address::with_last_byte(0x01);
-    let reporter = Address::with_last_byte(0xb0);
     let mut harness = Harness::new(1_000);
     assert_eq!(
         harness.initialize(
@@ -6602,9 +6313,9 @@ fn a_slash_naming_an_unregistered_key_is_rejected() {
     );
 
     // 0x77 compresses to a key nobody registered; the seated validator's is 0x11.
-    let command = equivocation_report(&mut harness.sdk, &NOTARIZE_ROUTE, 0x77, reporter);
+    let command = equivocation_report(&mut harness.sdk, &NOTARIZE_ROUTE, 0x77);
     assert_revert_selector(
-        commit_and_slash(&mut harness, &NOTARIZE_ROUTE, &command),
+        slash_with_evidence(&mut harness, &NOTARIZE_ROUTE, &command),
         ERR_EQUIVOCATION_KEY_NOT_REGISTERED,
     );
 }
@@ -6613,7 +6324,6 @@ fn a_slash_naming_an_unregistered_key_is_rejected() {
 fn a_slash_whose_signatures_fail_verification_is_rejected() {
     let sponsor = Address::with_last_byte(0xa0);
     let offender = Address::with_last_byte(0x01);
-    let reporter = Address::with_last_byte(0xb0);
     let stake = DEFAULT_MIN_VALIDATOR_STAKE * U256::from(4);
     let mut harness = Harness::new(1_000);
     assert_eq!(
@@ -6624,9 +6334,9 @@ fn a_slash_whose_signatures_fail_verification_is_rejected() {
     // everything up to the pairing passes; only the verifier's verdict rejects.
     let transfers = record_transfers(&harness, false);
 
-    let command = equivocation_report(&mut harness.sdk, &NOTARIZE_ROUTE, 0x11, reporter);
+    let command = equivocation_report(&mut harness.sdk, &NOTARIZE_ROUTE, 0x11);
     assert_revert_selector(
-        commit_and_slash(&mut harness, &NOTARIZE_ROUTE, &command),
+        slash_with_evidence(&mut harness, &NOTARIZE_ROUTE, &command),
         ERR_EQUIVOCATION_SIGNATURE_INVALID,
     );
 
@@ -6641,7 +6351,6 @@ fn re_slashing_a_tombstoned_validator_is_refused() {
     let sponsor = Address::with_last_byte(0xa0);
     let offender = Address::with_last_byte(0x01);
     let bystander = Address::with_last_byte(0x02);
-    let reporter = Address::with_last_byte(0xb0);
     let stake = DEFAULT_MIN_VALIDATOR_STAKE * U256::from(4);
     let mut harness = Harness::new(1_000);
     assert_eq!(
@@ -6650,24 +6359,272 @@ fn re_slashing_a_tombstoned_validator_is_refused() {
     );
     let transfers = record_transfers(&harness, true);
 
-    let command = equivocation_report(&mut harness.sdk, &NOTARIZE_ROUTE, 0x11, reporter);
+    let command = equivocation_report(&mut harness.sdk, &NOTARIZE_ROUTE, 0x11);
     assert_eq!(
-        commit_and_slash(&mut harness, &NOTARIZE_ROUTE, &command).0,
+        slash_with_evidence(&mut harness, &NOTARIZE_ROUTE, &command).0,
         ExitCode::Ok
     );
     let paid = transfers.borrow().clone();
-    assert_eq!(paid.len(), 2);
+    assert_eq!(paid.len(), 1);
 
     assert_revert_selector(
-        commit_and_slash(&mut harness, &NOTARIZE_ROUTE, &command),
+        slash_with_evidence(&mut harness, &NOTARIZE_ROUTE, &command),
         ERR_ALREADY_SLASHED_FOR_EQUIVOCATION,
     );
     assert_eq!(
         transfers.borrow().as_slice(),
         paid.as_slice(),
-        "the refused re-slash must not pay a second reward"
+        "the refused re-slash must not seize a second time"
     );
     assert!(harness.sdk.take_logs().is_empty());
+}
+
+fn system_slash_calldata(epoch: u64, signer_idx: u32) -> Vec<u8> {
+    encode_call(
+        SIG_SLASH_EQUIVOCATION,
+        &EpochSignerCommand { epoch, signer_idx },
+    )
+}
+
+/// Drives the system entry the way the node's pre-execution stage does. Logs are
+/// drained first, so what the caller reads back belongs to this verdict alone.
+fn system_slash(harness: &mut Harness, epoch: u64, signer_idx: u32) -> (ExitCode, Vec<u8>) {
+    harness.sdk.take_logs();
+    harness.set_caller(SYSTEM_CALLER);
+    harness.call(system_slash_calldata(epoch, signer_idx))
+}
+
+#[test]
+fn the_system_slash_entry_refuses_every_other_caller() {
+    let sponsor = Address::with_last_byte(0xa0);
+    let offender = Address::with_last_byte(0x01);
+    let bystander = Address::with_last_byte(0x02);
+    let stake = DEFAULT_MIN_VALIDATOR_STAKE * U256::from(4);
+    let mut harness = Harness::new(1_000);
+    assert_eq!(
+        harness.initialize(sponsor, vec![offender, bystander], vec![stake, stake], 0),
+        ExitCode::Ok
+    );
+    commit_test_committee(
+        &mut harness.sdk,
+        0,
+        &[(offender, stake), (bystander, stake)],
+    );
+
+    for caller in [Address::with_last_byte(0xb0), GENESIS_GOVERNANCE, offender] {
+        harness.set_caller(caller);
+        assert_revert_selector(
+            harness.call(system_slash_calldata(0, 0)),
+            ERR_ONLY_SYSTEM_CALL,
+        );
+    }
+    assert!(!consensus_storage()
+        .tombstoned_accessor()
+        .entry(offender)
+        .get_checked(&harness.sdk)
+        .unwrap());
+}
+
+#[test]
+fn a_system_verdict_tombstones_jails_and_sends_the_whole_seizure_to_the_fund() {
+    let sponsor = Address::with_last_byte(0xa0);
+    let offender = Address::with_last_byte(0x01);
+    let bystander = Address::with_last_byte(0x02);
+    let fund = Address::with_last_byte(0xc1);
+    let stake = DEFAULT_MIN_VALIDATOR_STAKE * U256::from(4);
+    let mut harness = Harness::new(1_000);
+    assert_eq!(
+        harness.initialize(sponsor, vec![offender, bystander], vec![stake, stake], 500),
+        ExitCode::Ok
+    );
+    harness.set_caller(GENESIS_GOVERNANCE);
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_SET_SLASH_FUND_ADDRESS,
+                &AddressCommand { value: fund },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+    commit_test_committee(
+        &mut harness.sdk,
+        0,
+        &[(offender, stake), (bystander, stake)],
+    );
+    let transfers = record_transfers(&harness, true);
+
+    assert_eq!(system_slash(&mut harness, 0, 0).0, ExitCode::Ok);
+
+    assert!(consensus_storage()
+        .tombstoned_accessor()
+        .entry(offender)
+        .get_checked(&harness.sdk)
+        .unwrap());
+    assert_eq!(
+        staking_storage()
+            .validators_accessor()
+            .entry(offender)
+            .status_accessor()
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        STATUS_JAIL
+    );
+    let active = staking_storage().active_validators_accessor();
+    assert_eq!(active.len_checked(&harness.sdk).unwrap(), 1);
+    assert_eq!(active.at(0).get_checked(&harness.sdk).unwrap(), bystander);
+    // The penalty is stamped at epoch 0, so it lands from epoch 1 on.
+    assert!(!staking::selection_visible_at(&harness.sdk, offender, 1).unwrap());
+    assert!(staking::selection_visible_at(&harness.sdk, bystander, 1).unwrap());
+
+    assert_eq!(
+        transfers.borrow().as_slice(),
+        &[(fund, stake)],
+        "the configured fund receives the seizure whole"
+    );
+    let logs = harness.sdk.take_logs();
+    let (seized_data, _) = find_log(&logs, events::EquivocationStakeSeized::SELECTOR, "seizure");
+    assert_eq!(decode_output::<(U256, Address)>(seized_data), (stake, fund));
+    let (slashed_data, _) = find_log(&logs, events::EquivocationSlashed::SELECTOR, "slash");
+    assert_eq!(decode_output::<u64>(slashed_data), 0);
+}
+
+/// The node decides whose proposals it will still bind from the committee
+/// snapshot it already reads, so a verdict invisible there changes nothing off
+/// chain. The flag is positional: it names the member at its own index and no
+/// other.
+#[test]
+fn the_committee_snapshot_reports_the_tombstone_against_its_own_member() {
+    let sponsor = Address::with_last_byte(0xa0);
+    let offender = Address::with_last_byte(0x01);
+    let bystander = Address::with_last_byte(0x02);
+    let stake = DEFAULT_MIN_VALIDATOR_STAKE * U256::from(4);
+    let mut harness = Harness::new(1_000);
+    assert_eq!(
+        harness.initialize(sponsor, vec![offender, bystander], vec![stake, stake], 0),
+        ExitCode::Ok
+    );
+    commit_test_committee(
+        &mut harness.sdk,
+        0,
+        &[(offender, stake), (bystander, stake)],
+    );
+
+    let snapshot = |harness: &mut Harness| -> (Vec<Address>, Vec<bool>) {
+        let (exit, output) = harness.call(encode_call(
+            SIG_GET_EPOCH_COMMITTEE_WITH_STAKES,
+            &U64Command { value: 0 },
+        ));
+        assert_eq!(exit, ExitCode::Ok);
+        let (validators, _, _, tombstoned): (
+            Vec<Address>,
+            Vec<ConsensusKeys>,
+            Vec<U256>,
+            Vec<bool>,
+        ) = decode_returns(&output);
+        (validators, tombstoned)
+    };
+
+    let (validators, tombstoned) = snapshot(&mut harness);
+    assert_eq!(validators, vec![offender, bystander]);
+    assert_eq!(tombstoned, vec![false, false]);
+
+    assert_eq!(system_slash(&mut harness, 0, 0).0, ExitCode::Ok);
+
+    let (validators, tombstoned) = snapshot(&mut harness);
+    assert_eq!(
+        validators,
+        vec![offender, bystander],
+        "the frozen membership does not move when a member is slashed"
+    );
+    assert_eq!(
+        tombstoned,
+        vec![true, false],
+        "the flag names the slashed member and only it"
+    );
+}
+
+/// Two proposers may carry the same charge, and the epoch-boundary fallback may
+/// land beside a block-borne one. The second verdict has to be inert rather than
+/// a failed system call.
+#[test]
+fn a_second_system_verdict_against_the_same_validator_is_a_no_op() {
+    let sponsor = Address::with_last_byte(0xa0);
+    let offender = Address::with_last_byte(0x01);
+    let bystander = Address::with_last_byte(0x02);
+    let stake = DEFAULT_MIN_VALIDATOR_STAKE * U256::from(4);
+    let mut harness = Harness::new(1_000);
+    assert_eq!(
+        harness.initialize(sponsor, vec![offender, bystander], vec![stake, stake], 500),
+        ExitCode::Ok
+    );
+    commit_test_committee(
+        &mut harness.sdk,
+        0,
+        &[(offender, stake), (bystander, stake)],
+    );
+    let transfers = record_transfers(&harness, true);
+
+    assert_eq!(system_slash(&mut harness, 0, 0).0, ExitCode::Ok);
+    let paid = transfers.borrow().clone();
+    assert_eq!(paid.as_slice(), &[(EQUIVOCATION_BURN_SINK, stake)]);
+
+    assert_eq!(system_slash(&mut harness, 0, 0).0, ExitCode::Ok);
+    assert_eq!(
+        transfers.borrow().as_slice(),
+        paid.as_slice(),
+        "the repeat must not seize a second time"
+    );
+    assert!(harness.sdk.take_logs().is_empty());
+    assert_eq!(
+        staking_storage()
+            .validators_accessor()
+            .entry(offender)
+            .status_accessor()
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        STATUS_JAIL
+    );
+}
+
+/// Called directly rather than through `Harness::call`, which restores storage on
+/// any revert and would hide the write this pins. On a chain the revert unwinds
+/// the frame too — the point is that the tombstone is never written, not that
+/// something else undoes it.
+#[test]
+fn a_verdict_naming_a_validator_with_no_record_writes_no_tombstone() {
+    let sponsor = Address::with_last_byte(0xa0);
+    let seated = Address::with_last_byte(0x01);
+    let stranger = Address::with_last_byte(0x03);
+    let stake = DEFAULT_MIN_VALIDATOR_STAKE * U256::from(4);
+    let mut harness = Harness::new(1_000);
+    assert_eq!(
+        harness.initialize(sponsor, vec![seated], vec![stake], 0),
+        ExitCode::Ok
+    );
+    commit_test_committee(&mut harness.sdk, 0, &[(seated, stake), (stranger, stake)]);
+    assert_eq!(
+        staking_storage()
+            .validators_accessor()
+            .entry(stranger)
+            .status_accessor()
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        STATUS_NOT_FOUND
+    );
+
+    harness.set_caller(SYSTEM_CALLER);
+    let calldata = system_slash_calldata(0, 1);
+    assert_direct_revert(
+        consensus::slash_equivocation(&mut harness.sdk, &calldata[SIG_LEN_BYTES..]),
+        &harness.sdk,
+        ERR_VALIDATOR_NOT_FOUND,
+    );
+    assert!(!consensus_storage()
+        .tombstoned_accessor()
+        .entry(stranger)
+        .get_checked(&harness.sdk)
+        .unwrap());
 }
 
 #[test]

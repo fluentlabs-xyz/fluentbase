@@ -46,10 +46,8 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
         SIG_INITIALIZE => initializer::initialize(sdk, params),
 
         // ChainConfig
-        SIG_DEFAULT_SLASH_REPORTER_BPS => config::default_slash_reporter_bps(sdk),
         SIG_MAX_ACTIVE_VALIDATORS => config::max_active_validators(sdk),
         SIG_MAX_BLEND_STIPEND_PER_EPOCH => config::max_blend_stipend_per_epoch(sdk),
-        SIG_MAX_SLASH_REPORTER_BPS => config::max_slash_reporter_bps(sdk),
         SIG_DEFAULT_MIN_VERDICT_DUE_BLOCKS => config::default_min_verdict_due_blocks(sdk),
         SIG_DEFAULT_EXCLUSION_BACKOFF_CAP => config::default_exclusion_backoff_cap(sdk),
         SIG_MAX_MIN_VERDICT_DUE_BLOCKS => config::max_min_verdict_due_blocks(sdk),
@@ -61,8 +59,6 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
         SIG_GET_UNDELEGATE_PERIOD => config::get_undelegate_period(sdk),
         SIG_GET_MIN_VALIDATOR_STAKE_AMOUNT => config::get_min_validator_stake_amount(sdk),
         SIG_GET_MIN_STAKING_AMOUNT => config::get_min_staking_amount(sdk),
-        SIG_GET_SLASH_REPORTER_REWARD_BPS => config::get_slash_reporter_reward_bps(sdk),
-        SIG_SET_SLASH_REPORTER_REWARD_BPS => config::set_slash_reporter_reward_bps(sdk, params),
         SIG_GET_SLASH_FUND_ADDRESS => config::get_slash_fund_address(sdk),
         SIG_SET_SLASH_FUND_ADDRESS => config::set_slash_fund_address(sdk, params),
         SIG_GET_BLEND_STIPEND_PER_EPOCH => config::get_blend_stipend_per_epoch(sdk),
@@ -147,11 +143,7 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
         SIG_GET_EPOCH_COMMITTEE_WITH_STAKES => {
             consensus::get_epoch_committee_with_stakes(sdk, params)
         }
-        SIG_COMMIT_EQUIVOCATION_REPORT => consensus::commit_report(sdk, params),
-        SIG_COMPUTE_EQUIVOCATION_REPORT_COMMITMENT => {
-            consensus::compute_report_commitment(sdk, params)
-        }
-        SIG_GET_EQUIVOCATION_REPORT_COMMITMENT => consensus::get_report_commitment(sdk, params),
+        SIG_SLASH_EQUIVOCATION => consensus::slash_equivocation(sdk, params),
         SIG_SLASH_EQUIVOCATION_NOTARIZE => consensus::slash_notarize(sdk, params),
         SIG_SLASH_EQUIVOCATION_FINALIZE => consensus::slash_finalize(sdk, params),
         SIG_SLASH_EQUIVOCATION_NULLIFY_FINALIZE => consensus::slash_nullify_finalize(sdk, params),

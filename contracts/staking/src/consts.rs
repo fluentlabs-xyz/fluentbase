@@ -77,16 +77,11 @@ pub const SIG_REGISTER_VALIDATOR: u32 =
 pub const SIG_DELEGATE: u32 = derive_keccak256_id!("delegate(address,uint256)");
 // 0x4d99dd16
 pub const SIG_UNDELEGATE: u32 = derive_keccak256_id!("undelegate(address,uint256)");
-// 0x6cc69027
-pub const SIG_DEFAULT_SLASH_REPORTER_BPS: u32 =
-    derive_keccak256_id!("DEFAULT_SLASH_REPORTER_BPS()");
 // 0x5d887462
 pub const SIG_MAX_ACTIVE_VALIDATORS: u32 = derive_keccak256_id!("MAX_ACTIVE_VALIDATORS()");
 // 0x2bc2fec4
 pub const SIG_MAX_BLEND_STIPEND_PER_EPOCH: u32 =
     derive_keccak256_id!("MAX_BLEND_STIPEND_PER_EPOCH()");
-// 0x0a3a6183
-pub const SIG_MAX_SLASH_REPORTER_BPS: u32 = derive_keccak256_id!("MAX_SLASH_REPORTER_BPS()");
 // 0x6fd3afb7
 pub const SIG_DEFAULT_MIN_VERDICT_DUE_BLOCKS: u32 =
     derive_keccak256_id!("DEFAULT_MIN_VERDICT_DUE_BLOCKS()");
@@ -101,12 +96,6 @@ pub const SIG_ERC20_TRANSFER_FROM: u32 =
     derive_keccak256_id!("transferFrom(address,address,uint256)");
 // 0xa9059cbb
 pub const SIG_ERC20_TRANSFER: u32 = derive_keccak256_id!("transfer(address,uint256)");
-// 0xce534df5
-pub const SIG_GET_SLASH_REPORTER_REWARD_BPS: u32 =
-    derive_keccak256_id!("getSlashReporterRewardBps()");
-// 0x58702003
-pub const SIG_SET_SLASH_REPORTER_REWARD_BPS: u32 =
-    derive_keccak256_id!("setSlashReporterRewardBps(uint32)");
 // 0xc910df38
 pub const SIG_GET_SLASH_FUND_ADDRESS: u32 = derive_keccak256_id!("getSlashFundAddress()");
 // 0xa79e7263
@@ -233,25 +222,17 @@ pub const SIG_GET_EPOCH_COMMITTEE_WITH_STAKES: u32 =
 pub const SIG_BLS_COMPRESS_G2_UNCHECKED: u32 = derive_keccak256_id!("compressG2Unchecked(bytes)");
 // 0x8bf26133
 pub const SIG_BLS_VERIFY: u32 = derive_keccak256_id!("verify(bytes,bytes,bytes,bytes,bytes)");
-// 0x32890bc0
-pub const SIG_COMMIT_EQUIVOCATION_REPORT: u32 =
-    derive_keccak256_id!("commitEquivocationReport(bytes32)");
-// 0xc289d76e
-pub const SIG_COMPUTE_EQUIVOCATION_REPORT_COMMITMENT: u32 =
-    derive_keccak256_id!("computeEquivocationReportCommitment(address,uint8,bytes32,bytes32)");
-// 0xa3aae5dd
-pub const SIG_GET_EQUIVOCATION_REPORT_COMMITMENT: u32 =
-    derive_keccak256_id!("getEquivocationReportCommitment(address)");
-// 0x2bc5fb10
+// 0xdc6fb3f2
+pub const SIG_SLASH_EQUIVOCATION: u32 = derive_keccak256_id!("slashEquivocation(uint64,uint32)");
+// 0xe28d2f63
 pub const SIG_SLASH_EQUIVOCATION_NOTARIZE: u32 =
-    derive_keccak256_id!("slashEquivocationNotarize(bytes,bytes,bytes,bytes,address,bytes32)");
-// 0xb034c58b
+    derive_keccak256_id!("slashEquivocationNotarize(bytes,bytes,bytes,bytes)");
+// 0xadd07a3e
 pub const SIG_SLASH_EQUIVOCATION_FINALIZE: u32 =
-    derive_keccak256_id!("slashEquivocationFinalize(bytes,bytes,bytes,bytes,address,bytes32)");
-// 0x337e1437
-pub const SIG_SLASH_EQUIVOCATION_NULLIFY_FINALIZE: u32 = derive_keccak256_id!(
-    "slashEquivocationNullifyFinalize(bytes,bytes,bytes,bytes,address,bytes32)"
-);
+    derive_keccak256_id!("slashEquivocationFinalize(bytes,bytes,bytes,bytes)");
+// 0xa10827e9
+pub const SIG_SLASH_EQUIVOCATION_NULLIFY_FINALIZE: u32 =
+    derive_keccak256_id!("slashEquivocationNullifyFinalize(bytes,bytes,bytes,bytes)");
 // 0x8f498050
 pub const SIG_BLS_COMPRESS_G1_UNCHECKED: u32 = derive_keccak256_id!("compressG1Unchecked(bytes)");
 
@@ -301,8 +282,6 @@ pub const ERR_UNALIGNED_ACTIVATION_BLOCK: u32 = derive_keccak256_id!("UnalignedA
 pub const ERR_ACTIVATION_BLOCK_IN_PAST: u32 = derive_keccak256_id!("ActivationBlockInPast()");
 pub const ERR_UNDELEGATE_WINDOW_TOO_SHORT: u32 =
     derive_keccak256_id!("UndelegateWindowTooShort(uint256,uint256)");
-pub const ERR_SLASH_REPORTER_REWARD_BPS_TOO_HIGH: u32 =
-    derive_keccak256_id!("SlashReporterRewardBpsTooHigh(uint32,uint32)");
 pub const ERR_BLEND_STIPEND_PER_EPOCH_TOO_HIGH: u32 =
     derive_keccak256_id!("BlendStipendPerEpochTooHigh(uint256,uint256)");
 pub const ERR_MIN_VERDICT_DUE_BLOCKS_TOO_HIGH: u32 =
@@ -342,24 +321,11 @@ pub const ERR_EVIDENCE_ROUND_MISMATCH: u32 =
     derive_keccak256_id!("EvidenceRoundMismatch(uint64,uint64,uint64,uint64)");
 pub const ERR_EVIDENCE_PROPOSALS_IDENTICAL: u32 =
     derive_keccak256_id!("EvidenceProposalsIdentical(uint64,uint64)");
-pub const ERR_ZERO_EQUIVOCATION_BENEFICIARY: u32 =
-    derive_keccak256_id!("ZeroEquivocationBeneficiary()");
-pub const ERR_ZERO_EQUIVOCATION_COMMITMENT: u32 =
-    derive_keccak256_id!("ZeroEquivocationCommitment()");
-pub const ERR_NO_EQUIVOCATION_COMMITMENT: u32 =
-    derive_keccak256_id!("NoEquivocationCommitment(address)");
-pub const ERR_EQUIVOCATION_COMMITMENT_MISMATCH: u32 =
-    derive_keccak256_id!("EquivocationCommitmentMismatch(address,bytes32,bytes32)");
-pub const ERR_EQUIVOCATION_COMMITMENT_NOT_MATURE: u32 =
-    derive_keccak256_id!("EquivocationCommitmentNotMature(address,uint64,uint64)");
-pub const ERR_INVALID_EQUIVOCATION_PROOF_KIND: u32 =
-    derive_keccak256_id!("InvalidEquivocationProofKind(uint8)");
 
 /// Scale of every rate expressed in basis points: `10_000` bps == 100%.
 ///
-/// Every bps figure in this file — `COMMISSION_RATE_MAX`,
-/// `DEFAULT_SLASH_REPORTER_REWARD_BPS`, `MAX_SLASH_REPORTER_REWARD_BPS` — is
-/// meaningless without it, and both sites that apply a rate divide by it.
+/// `COMMISSION_RATE_MAX` is meaningless without it, and the site that applies a
+/// rate divides by it.
 pub const BPS_DENOMINATOR: u32 = 10_000;
 
 /// Wei per compact stake unit: `10^10`.
@@ -497,31 +463,11 @@ pub const PROPOSAL_PAYLOAD_LENGTH: usize = 32;
 
 /// Message kinds as `consensus::namespace` reads them.
 ///
-/// NOT the same numbering as `EQUIVOCATION_PROOF_KIND_*` below, which indexes
-/// the commitment domain: there `1` is FINALIZE, here `1` is NULLIFY. One
-/// nullify-finalize proof carries two different message kinds, so the two
-/// spaces cannot be one enum.
+/// One nullify-finalize proof carries two different message kinds, so an
+/// evidence shape cannot be reduced to a single kind.
 pub const EVIDENCE_MESSAGE_KIND_NOTARIZE: u8 = 0;
 pub const EVIDENCE_MESSAGE_KIND_NULLIFY: u8 = 1;
 pub const EVIDENCE_MESSAGE_KIND_FINALIZE: u8 = 2;
-
-pub const EQUIVOCATION_PROOF_KIND_NOTARIZE: u8 = 0;
-pub const EQUIVOCATION_PROOF_KIND_FINALIZE: u8 = 1;
-pub const EQUIVOCATION_PROOF_KIND_NULLIFY_FINALIZE: u8 = 2;
-pub const EQUIVOCATION_PROOF_KIND_COUNT: u8 = 3;
-
-/// Share of seized self-stake paid to an equivocation reporter when governance
-/// has not configured one: 3000 bps == 30% of the seizure.
-///
-/// Applied by `consensus::seize_self_stake`, which reads it whenever the stored
-/// value is zero. The remainder goes to [`EQUIVOCATION_BURN_SINK`].
-pub const DEFAULT_SLASH_REPORTER_REWARD_BPS: u32 = 3_000;
-
-/// Highest reporter share governance may set: 5000 bps == 50% of the seizure.
-///
-/// Keeps the majority of a seizure out of the reporter's hands whatever
-/// governance chooses. No derivation is recorded for 50%.
-pub const MAX_SLASH_REPORTER_REWARD_BPS: u32 = 5_000;
 
 /// A committee member passes an epoch's liveness verdict when it produced at
 /// least `1 / MIN_PRODUCTION_SHARE_DENOMINATOR` of the blocks its stake weight

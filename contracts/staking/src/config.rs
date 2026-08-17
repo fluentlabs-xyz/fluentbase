@@ -187,14 +187,6 @@ fn validate_initialization<SDK: SharedAPI>(
     Ok(())
 }
 
-/// Public handler `0x6cc69027` (`DEFAULT_SLASH_REPORTER_BPS`).
-///
-/// Returns the protocol default slash reporter BPS constant.
-pub fn default_slash_reporter_bps<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
-    ensure_non_payable(sdk)?;
-    write_abi(sdk, &DEFAULT_SLASH_REPORTER_REWARD_BPS)
-}
-
 /// Public handler `0x5d887462` (`MAX_ACTIVE_VALIDATORS`).
 ///
 /// Returns the protocol max active validators limit.
@@ -209,14 +201,6 @@ pub fn max_active_validators<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCo
 pub fn max_blend_stipend_per_epoch<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     ensure_non_payable(sdk)?;
     write_abi(sdk, &MAX_BLEND_STIPEND_PER_EPOCH)
-}
-
-/// Public handler `0x0a3a6183` (`MAX_SLASH_REPORTER_BPS`).
-///
-/// Returns the protocol max slash reporter BPS limit.
-pub fn max_slash_reporter_bps<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
-    ensure_non_payable(sdk)?;
-    write_abi(sdk, &MAX_SLASH_REPORTER_REWARD_BPS)
 }
 
 /// Public handler `0x6fd3afb7` (`DEFAULT_MIN_VERDICT_DUE_BLOCKS`).
@@ -425,53 +409,6 @@ fn require_undelegate_window<SDK: SharedAPI>(
         return revert_with(sdk, ERR_UNDELEGATE_WINDOW_TOO_SHORT, &(window, minimum));
     }
     Ok(())
-}
-
-/// Public handler `0xce534df5` (`getSlashReporterRewardBps`).
-///
-/// Returns the configured slash reporter reward BPS.
-pub fn get_slash_reporter_reward_bps<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
-    ensure_non_payable(sdk)?;
-    let stored = chain_config_storage()
-        .slash_reporter_reward_bps_accessor()
-        .get_checked(sdk)?;
-    write_abi(
-        sdk,
-        &(if stored == 0 {
-            DEFAULT_SLASH_REPORTER_REWARD_BPS
-        } else {
-            stored
-        }),
-    )
-}
-
-/// Public handler `0x58702003` (`setSlashReporterRewardBps`).
-///
-/// Updates the configured slash reporter reward BPS.
-pub fn set_slash_reporter_reward_bps<SDK: SharedAPI>(
-    sdk: &mut SDK,
-    input: &[u8],
-) -> Result<(), ExitCode> {
-    ensure_governance_mutation(sdk)?;
-    let value = decode::<U32Command>(input)?.value;
-    if value == 0 {
-        return zero_value(sdk, "slashReporterRewardBps");
-    }
-    if value > MAX_SLASH_REPORTER_REWARD_BPS {
-        return revert_with(
-            sdk,
-            ERR_SLASH_REPORTER_REWARD_BPS_TOO_HIGH,
-            &(value, MAX_SLASH_REPORTER_REWARD_BPS),
-        );
-    }
-    let field = chain_config_storage().slash_reporter_reward_bps_accessor();
-    let previous = field.get_checked(sdk)?;
-    field.set_checked(sdk, value)?;
-    events::SlashReporterRewardBpsChanged {
-        prev_value: previous,
-        new_value: value,
-    }
-    .emit(sdk)
 }
 
 /// Public handler `0xc910df38` (`getSlashFundAddress`).

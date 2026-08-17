@@ -131,6 +131,4 @@ pub struct EquivocationCommand {
     pub pk_uncompressed: Bytes,
     pub sig1_uncompressed: Bytes,
     pub sig2_uncompressed: Bytes,
-    pub beneficiary: Address,
-    pub salt: B256,
 }

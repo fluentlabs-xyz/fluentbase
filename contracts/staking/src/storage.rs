@@ -30,7 +30,6 @@ pub struct ChainConfigStorage {
     dpos_activation_block: StorageU64,
     min_validator_stake_amount: StorageU256,
     min_staking_amount: StorageU256,
-    slash_reporter_reward_bps: StorageU32,
     slash_fund_address: StorageAddress,
     blend_stipend_per_epoch: StorageU256,
     bls_verifier: StorageAddress,
@@ -168,13 +167,6 @@ pub struct ConsensusKeysStorage {
     activation_epoch: StorageU64,
 }
 
-/// One beneficiary's active equivocation-report commitment.
-#[derive(Storage)]
-pub struct EquivocationCommitmentStorage {
-    commitment: StorageBytes32,
-    committed_at: StorageU64,
-}
-
 /// One committed committee member: the validator and the weight frozen with it.
 ///
 /// These used to be two parallel vectors, aligned only by every writer doing the
@@ -206,7 +198,6 @@ pub struct ConsensusStorage {
     last_committed_epoch_p1: StorageU64,
     pruned_up_to_p1: StorageU64,
     tombstoned: StorageMap<Address, StorageBool>,
-    equivocation_commitments: StorageMap<Address, EquivocationCommitmentStorage>,
     /// Validator owning a canonical compressed BLS key, indexed by its keccak256 hash.
     ///
     /// Consensus identities are immutable in v1, so ownership is never released.

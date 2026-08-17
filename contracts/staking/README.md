@@ -93,34 +93,36 @@ validator-creation call; there is no separate key-registration phase.
 - Leader weights are frozen at commit time from the selection epoch, and are never recomputed on
   read. An unfrozen weight would depend on the block height each node reads at, and the leader is
   drawn from those weights.
-- Equivocation reporter rewards use a beneficiary-owned commit/reveal flow; the transaction sender that reveals evidence
-  is never used as the reward recipient.
+- A seizure has one recipient — the configured slash fund, or the burn sink when none is set. Nobody
+  is paid for reporting, so no submitter of a slash can profit from copying another's evidence.
 - A validator's `owner` is its immutable administrative, validator-fee, self-stake, and slashing identity.
   `changeValidatorOwner` remains in the compatibility ABI but always reverts with
   `ValidatorOwnerImmutable()`.
 
-## Equivocation reporting
+## Equivocation slashing
 
-Reporting remains permissionless, but requires two transactions so an observer cannot copy public evidence from the
-mempool and redirect the reporter reward:
+Two entry points reach the same terminal effects — tombstone, jail, removal from the selection view, and
+seizure of the offender's self-stake. They differ only in who established that the offender equivocated.
 
-1. The reward beneficiary computes
-   `keccak256(abi.encode(domainHash, chainId, staking, proofKind, keccak256(evidence), beneficiary, salt))`, where
-   `domainHash = keccak256("FluentStakingEquivocationReportV1")` and proof kinds are
-   `0 = notarize`, `1 = finalize`, and `2 = nullify-finalize`. The
-   `computeEquivocationReportCommitment` view returns this value without duplicating the encoding. The salt must be an
-   unpredictable 32-byte value and must remain private until reveal.
-2. The beneficiary sends `commitEquivocationReport(bytes32)`. One active commitment is stored per beneficiary, so a
-   later commit from that beneficiary replaces its earlier one.
-3. In a later block, any account may call the matching `slashEquivocation*` method with the four evidence values plus
-   the beneficiary and salt. A copied reveal still resolves and pays the original beneficiary; changing the beneficiary,
-   proof kind, evidence, or salt no longer matches the prior commitment.
-4. A successful slash consumes the commitment and permanently tombstones the validator. Failed evidence verification
-   leaves the commitment available for retry.
+`slashEquivocation(uint64 epoch, uint32 signerIdx)` is **system-caller only** and carries no evidence. It
+records a verdict the committee has already reached: every member verified the charge against the block it
+rode in before voting for that block, which is the same trust basis as any other state transition. The
+signer index is resolved against `epoch`'s frozen committee, the same lookup `resolveSigner` answers. A
+repeat verdict against an already-tombstoned validator returns successfully and changes nothing — two
+proposers may carry the same charge, and a system caller must not be able to fail a pre-execution call on a
+race.
 
-The repository does not contain a node-side equivocation submitter. Integrations only need an ordinary beneficiary
-account for the commit transaction; the reveal may be sent by any funded account after observing that the commit is
-included in an earlier block.
+The three `slashEquivocation{Notarize,Finalize,NullifyFinalize}(bytes,bytes,bytes,bytes)` entry points are
+permissionless and carry the evidence itself: the encoded conflict, the uncompressed public key, and the two
+uncompressed signatures. Here the contract verifies — it resolves identity from the registered BLS key,
+which is write-once and never released, so this route works for any epoch, including one whose committee has
+long rotated out. That is why it stays: a charge that fails to reach a block before its epoch ends can no
+longer be verified by any live committee, and this is the only way it still lands. A repeat here reverts
+with `AlreadySlashedForEquivocation(address)`.
+
+The seizure has a single recipient: the configured slash fund, or `EQUIVOCATION_BURN_SINK` when none is set.
+A recipient that refuses the transfer does not roll the slash back — the tombstone, the jail and the
+active-set removal are already written, and the recipient is not chosen by whoever submitted the slash.
 
 ## Solidity parity
 

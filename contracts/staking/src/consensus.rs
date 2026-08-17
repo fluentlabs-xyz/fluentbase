@@ -597,6 +597,35 @@ pub fn get_dkg_qual<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), E
     )
 }
 
+/// The validator seated at `signer_idx` of `epoch`'s frozen committee.
+///
+/// The committee array is the consensus index space, so this is the only
+/// mapping from a signer index to an identity. `resolveSigner` and the
+/// system-call slash entry share it rather than each walking the array, because
+/// a disagreement between them would resolve a verdict onto the wrong validator.
+fn committee_member_at<SDK: SharedAPI>(
+    sdk: &mut SDK,
+    epoch: u64,
+    signer_idx: u32,
+) -> Result<Address, ExitCode> {
+    let committee = consensus_storage().epoch_committees_accessor().entry(epoch);
+    let len = committee.len_checked(sdk)?;
+    if len == 0 {
+        return revert_with(sdk, ERR_EPOCH_COMMITTEE_NOT_COMMITTED, &epoch);
+    }
+    if signer_idx as u64 >= len {
+        return revert_with(
+            sdk,
+            ERR_SIGNER_INDEX_OUT_OF_RANGE,
+            &(epoch, signer_idx, U256::from(len)),
+        );
+    }
+    committee
+        .at(signer_idx as u64)
+        .validator_accessor()
+        .get_checked(sdk)
+}
+
 /// Public handler `0xd7f1733d` (`resolveSigner`).
 ///
 /// Resolves a committee signer index to its validator address and consensus key.
@@ -604,27 +633,8 @@ pub fn resolve_signer<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(),
     ensure_non_payable(sdk)?;
     ensure_initialized(sdk)?;
     let command = decode::<EpochSignerCommand>(input)?;
-    let committee = consensus_storage()
-        .epoch_committees_accessor()
-        .entry(command.epoch);
-    let len = committee.len_checked(sdk)?;
-    if len == 0 {
-        return revert_with(sdk, ERR_EPOCH_COMMITTEE_NOT_COMMITTED, &command.epoch);
-    }
-    if command.signer_idx as u64 >= len {
-        return revert_with(
-            sdk,
-            ERR_SIGNER_INDEX_OUT_OF_RANGE,
-            &(command.epoch, command.signer_idx, U256::from(len)),
-        );
-    }
-    write_abi(
-        sdk,
-        &committee
-            .at(command.signer_idx as u64)
-            .validator_accessor()
-            .get_checked(sdk)?,
-    )
+    let validator = committee_member_at(sdk, command.epoch, command.signer_idx)?;
+    write_abi(sdk, &validator)
 }
 
 fn read_committee<SDK: SharedAPI>(sdk: &SDK, epoch: u64) -> Result<Vec<Address>, ExitCode> {
@@ -672,7 +682,15 @@ pub fn get_epoch_committee_length<SDK: SharedAPI>(
 
 /// Public handler `0xa4d160c1` (`getEpochCommitteeWithStakes`).
 ///
-/// Returns an epoch committee with consensus keys and historical stakes.
+/// Returns an epoch committee with consensus keys, historical stakes and the
+/// per-member equivocation tombstone.
+///
+/// The tombstone rides this snapshot rather than a view of its own because the
+/// node already reads the snapshot on the path where it needs the flag; a
+/// dedicated `isTombstoned(address)` would add one call per member per read.
+/// Unlike the other three legs it is read LIVE rather than frozen at the commit:
+/// a verdict landing mid-epoch has to be visible to the committee it names,
+/// which is the whole reason for reporting it.
 pub fn get_epoch_committee_with_stakes<SDK: SharedAPI>(
     sdk: &mut SDK,
     input: &[u8],
@@ -680,7 +698,7 @@ pub fn get_epoch_committee_with_stakes<SDK: SharedAPI>(
     ensure_non_payable(sdk)?;
     ensure_initialized(sdk)?;
     let epoch = decode::<U64Command>(input)?.value;
-    // The three returned arrays are built from one stored vector, so they are
+    // The returned arrays are built from one stored vector, so they are
     // equal-length and correctly paired by construction. This used to read two
     // parallel vectors and revert when their lengths disagreed; there is no
     // longer a state in which they can.
@@ -689,6 +707,7 @@ pub fn get_epoch_committee_with_stakes<SDK: SharedAPI>(
     let mut validators = Vec::with_capacity(len as usize);
     let mut keys = Vec::with_capacity(len as usize);
     let mut stakes = Vec::with_capacity(len as usize);
+    let mut tombstoned = Vec::with_capacity(len as usize);
     for index in 0..len {
         let entry = committee.at(index);
         let validator = entry.validator_accessor().get_checked(sdk)?;
@@ -696,182 +715,19 @@ pub fn get_epoch_committee_with_stakes<SDK: SharedAPI>(
         stakes.push(math::expand_balance(
             entry.weight_accessor().get_checked(sdk)?,
         ));
+        tombstoned.push(
+            consensus_storage()
+                .tombstoned_accessor()
+                .entry(validator)
+                .get_checked(sdk)?,
+        );
         validators.push(validator);
     }
-    write_returns(sdk, &(validators, keys, stakes))
+    write_returns(sdk, &(validators, keys, stakes, tombstoned))
 }
 // Equivocation proofs and permanent validator tombstoning.
 
 const BLS_SIG_DST: &[u8] = b"BLS_SIG_BLS12381G1_XMD:SHA-256_SSWU_RO_POP_";
-const REPORT_COMMITMENT_DOMAIN: &[u8] = b"FluentStakingEquivocationReportV1";
-
-/// Computes the commitment consumed by an equivocation reveal.
-///
-/// This is equivalent to:
-/// `keccak256(abi.encode(domainHash, chainId, staking, proofKind,
-/// keccak256(evidence), beneficiary, salt))`.
-pub(crate) fn report_commitment_hash(
-    chain_id: u64,
-    staking: Address,
-    proof_kind: u8,
-    evidence_hash: B256,
-    beneficiary: Address,
-    salt: B256,
-) -> B256 {
-    /// Word-wide fields in the preimage below, in `extend_from_slice` order:
-    /// domain hash, chain id, staking address, proof kind, evidence hash,
-    /// beneficiary, salt.
-    const FIELDS: usize = 7;
-
-    let mut encoded = Vec::with_capacity(U256::BYTES * FIELDS);
-    encoded.extend_from_slice(keccak256(REPORT_COMMITMENT_DOMAIN).as_slice());
-    encoded.extend_from_slice(&U256::from(chain_id).to_be_bytes::<{ U256::BYTES }>());
-    encoded.extend_from_slice(staking.into_word().as_slice());
-    encoded.extend_from_slice(&U256::from(proof_kind).to_be_bytes::<{ U256::BYTES }>());
-    encoded.extend_from_slice(evidence_hash.as_slice());
-    encoded.extend_from_slice(beneficiary.into_word().as_slice());
-    encoded.extend_from_slice(salt.as_slice());
-    keccak256(&encoded)
-}
-
-fn command_commitment<SDK: SharedAPI>(
-    sdk: &SDK,
-    command: &EquivocationCommand,
-    proof_kind: u8,
-) -> B256 {
-    report_commitment_hash(
-        sdk.context().block_chain_id(),
-        sdk.context().contract_address(),
-        proof_kind,
-        keccak256(&command.evidence),
-        command.beneficiary,
-        command.salt,
-    )
-}
-
-pub(crate) fn verify_report_commitment<SDK: SharedAPI>(
-    sdk: &mut SDK,
-    command: &EquivocationCommand,
-    proof_kind: u8,
-) -> Result<(), ExitCode> {
-    let beneficiary = command.beneficiary;
-    if beneficiary.is_zero() {
-        return revert(sdk, ERR_ZERO_EQUIVOCATION_BENEFICIARY);
-    }
-    let expected = command_commitment(sdk, command, proof_kind);
-    let entry = consensus_storage()
-        .equivocation_commitments_accessor()
-        .entry(beneficiary);
-    let stored = entry.commitment_accessor().get_checked(sdk)?;
-    if stored.is_zero() {
-        return revert_with(sdk, ERR_NO_EQUIVOCATION_COMMITMENT, &beneficiary);
-    }
-    if stored != expected {
-        return revert_with(
-            sdk,
-            ERR_EQUIVOCATION_COMMITMENT_MISMATCH,
-            &(beneficiary, stored, expected),
-        );
-    }
-    let committed_at = entry.committed_at_accessor().get_checked(sdk)?;
-    let current_block = sdk.context().block_number();
-    if current_block <= committed_at {
-        return revert_with(
-            sdk,
-            ERR_EQUIVOCATION_COMMITMENT_NOT_MATURE,
-            &(beneficiary, committed_at, current_block),
-        );
-    }
-    Ok(())
-}
-
-pub(crate) fn consume_report_commitment<SDK: SharedAPI>(
-    sdk: &mut SDK,
-    beneficiary: Address,
-) -> Result<(), ExitCode> {
-    let entry = consensus_storage()
-        .equivocation_commitments_accessor()
-        .entry(beneficiary);
-    entry.commitment_accessor().set_checked(sdk, B256::ZERO)?;
-    entry.committed_at_accessor().set_checked(sdk, 0)
-}
-
-/// Public handler `0x32890bc0` (`commitEquivocationReport`).
-///
-/// Commits an equivocation-report hash for the caller.
-pub fn commit_report<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), ExitCode> {
-    ensure_non_payable(sdk)?;
-    ensure_mutable(sdk)?;
-    ensure_initialized(sdk)?;
-    let (commitment,) = decode_args::<(B256,)>(input)?;
-    if commitment.is_zero() {
-        return revert(sdk, ERR_ZERO_EQUIVOCATION_COMMITMENT);
-    }
-    let beneficiary = sdk.context().contract_caller();
-    if beneficiary.is_zero() {
-        return revert(sdk, ERR_ZERO_EQUIVOCATION_BENEFICIARY);
-    }
-    let committed_at = sdk.context().block_number();
-    let entry = consensus_storage()
-        .equivocation_commitments_accessor()
-        .entry(beneficiary);
-    entry.commitment_accessor().set_checked(sdk, commitment)?;
-    entry
-        .committed_at_accessor()
-        .set_checked(sdk, committed_at)?;
-    events::EquivocationReportCommitted {
-        beneficiary,
-        commitment,
-        block_number: committed_at,
-    }
-    .emit(sdk)
-}
-
-/// Public handler `0xc289d76e` (`computeEquivocationReportCommitment`).
-///
-/// Computes the commitment hash for an equivocation report.
-pub fn compute_report_commitment<SDK: SharedAPI>(
-    sdk: &mut SDK,
-    input: &[u8],
-) -> Result<(), ExitCode> {
-    ensure_non_payable(sdk)?;
-    let (beneficiary, proof_kind, evidence_hash, salt) =
-        decode_args::<(Address, u8, B256, B256)>(input)?;
-    if beneficiary.is_zero() {
-        return revert(sdk, ERR_ZERO_EQUIVOCATION_BENEFICIARY);
-    }
-    if proof_kind >= EQUIVOCATION_PROOF_KIND_COUNT {
-        return revert_with(sdk, ERR_INVALID_EQUIVOCATION_PROOF_KIND, &proof_kind);
-    }
-    let commitment = report_commitment_hash(
-        sdk.context().block_chain_id(),
-        sdk.context().contract_address(),
-        proof_kind,
-        evidence_hash,
-        beneficiary,
-        salt,
-    );
-    write_returns(sdk, &(commitment,))
-}
-
-/// Public handler `0xa3aae5dd` (`getEquivocationReportCommitment`).
-///
-/// Returns a beneficiary's pending equivocation-report commitment.
-pub fn get_report_commitment<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), ExitCode> {
-    ensure_non_payable(sdk)?;
-    ensure_initialized(sdk)?;
-    let (beneficiary,) = decode_args::<(Address,)>(input)?;
-    let entry = consensus_storage()
-        .equivocation_commitments_accessor()
-        .entry(beneficiary);
-    write_returns(
-        sdk,
-        &(
-            entry.commitment_accessor().get_checked(sdk)?,
-            entry.committed_at_accessor().get_checked(sdk)?,
-        ),
-    )
-}
 
 fn call_decode<SDK, T, R>(
     sdk: &mut SDK,
@@ -888,10 +744,9 @@ where
     SolidityABI::<R>::decode(&output, 0).map_err(|_| ExitCode::MalformedBuiltinParams)
 }
 
-/// `kind` is an `EVIDENCE_MESSAGE_KIND_*`, NOT an `EQUIVOCATION_PROOF_KIND_*`.
-/// The two spaces disagree on `1` — nullify here, finalize there — and every
-/// caller reaches this through a decoded evidence message, never through a
-/// proof kind.
+/// `kind` is an `EVIDENCE_MESSAGE_KIND_*`: the kind of one message, not of the
+/// conflict. A nullify/finalize proof carries two different kinds and reaches
+/// this twice with different values.
 fn namespace<SDK: SharedAPI>(sdk: &SDK, kind: u8) -> Bytes {
     let mut result = b"FLUENT_DPOS_V1_".to_vec();
     result.extend_from_slice(&sdk.context().block_chain_id().to_be_bytes());
@@ -907,7 +762,6 @@ pub(crate) fn seize_self_stake<SDK: SharedAPI>(
     sdk: &mut SDK,
     validator: Address,
     owner: Address,
-    reporter: Address,
 ) -> Result<(), ExitCode> {
     let storage = staking_storage();
     let delegation = storage
@@ -946,60 +800,113 @@ pub(crate) fn seize_self_stake<SDK: SharedAPI>(
     delegation.undelegate_gap_accessor().set_checked(sdk, 0)?;
     pending_undelegated.set_checked(sdk, U256::ZERO)?;
 
-    let config = chain_config_storage();
-    let stored_bps = config
-        .slash_reporter_reward_bps_accessor()
+    let configured_fund = chain_config_storage()
+        .slash_fund_address_accessor()
         .get_checked(sdk)?;
-    let bps = if stored_bps == 0 {
-        DEFAULT_SLASH_REPORTER_REWARD_BPS
-    } else {
-        stored_bps
-    };
-    let mut reporter_reward = seized
-        .checked_mul(U256::from(bps))
-        .ok_or(ExitCode::IntegerOverflow)?
-        / U256::from(BPS_DENOMINATOR);
-    let mut remainder = seized - reporter_reward;
-    // The seizure must never revert on a payout. The tombstone, the jail and the
-    // active-set removal are already written and would roll back with it, so a
-    // token that refuses a recipient could otherwise make equivocation
-    // unslashable — and the remainder's default recipient is a burn sink the
-    // caller does not choose. A refused reporter forfeits its cut into the
-    // remainder, the same way a zero reporter does; a refused remainder stays
-    // here. Both amounts reported below are what actually moved.
-    if reporter.is_zero() || !try_transfer(sdk, reporter, reporter_reward)? {
-        remainder = remainder
-            .checked_add(reporter_reward)
-            .ok_or(ExitCode::IntegerOverflow)?;
-        reporter_reward = U256::ZERO;
-    }
-    let configured_fund = config.slash_fund_address_accessor().get_checked(sdk)?;
     let recipient = if configured_fund.is_zero() {
         EQUIVOCATION_BURN_SINK
     } else {
         configured_fund
     };
-    if !try_transfer(sdk, recipient, remainder)? {
-        remainder = U256::ZERO;
+    // The seizure must never revert on a payout. The tombstone, the jail and the
+    // active-set removal are already written and would roll back with it, so a
+    // token that refuses the recipient could otherwise make equivocation
+    // unslashable — and the default recipient is a burn sink no caller chooses.
+    // A refused transfer leaves the stake here; the amount reported below is
+    // what actually moved.
+    if !try_transfer(sdk, recipient, seized)? {
+        seized = U256::ZERO;
     }
     events::EquivocationStakeSeized {
         validator,
-        reporter,
-        reporter_reward,
-        remainder,
+        seized,
         recipient,
     }
     .emit(sdk)
 }
 
-fn slash_equivocation<SDK: SharedAPI>(
+/// The terminal effects of a proven equivocation, whichever route proved it.
+///
+/// `conflict_epoch` is the epoch the conflict happened in; the penalty is
+/// stamped at the current epoch, which is later whenever a charge lands after
+/// its own epoch closed.
+///
+/// The status is read before the tombstone is written. The other order made the
+/// `ValidatorNotFound` revert roll the tombstone back, so a charge naming an
+/// unregistered address left no trace at all.
+fn apply_equivocation_penalty<SDK: SharedAPI>(
+    sdk: &mut SDK,
+    validator: Address,
+    conflict_epoch: u64,
+) -> Result<(), ExitCode> {
+    let record = staking_storage().validators_accessor().entry(validator);
+    let status = record.status_accessor().get_checked(sdk)?;
+    if status == STATUS_NOT_FOUND {
+        return revert_with(sdk, ERR_VALIDATOR_NOT_FOUND, &validator);
+    }
+    // A verified conflict is terminal: the validator cannot re-register keys.
+    consensus_storage()
+        .tombstoned_accessor()
+        .entry(validator)
+        .set_checked(sdk, true)?;
+    if status == STATUS_ACTIVE {
+        remove_active(sdk, validator)?;
+    }
+    record.status_accessor().set_checked(sdk, STATUS_JAIL)?;
+    let penalty_epoch = current_epoch(sdk)?;
+    set_selection_visible(sdk, validator, false, penalty_epoch)?;
+    let owner = record.owner_accessor().get_checked(sdk)?;
+    seize_self_stake(sdk, validator, owner)?;
+    events::ValidatorJailed {
+        validator,
+        epoch: penalty_epoch,
+    }
+    .emit(sdk)?;
+    events::EquivocationSlashed {
+        validator,
+        epoch: conflict_epoch,
+    }
+    .emit(sdk)
+}
+
+/// Public handler `0xdc6fb3f2` (`slashEquivocation`).
+///
+/// Applies a verdict the committee already reached: position `signerIdx` of
+/// `epoch` equivocated.
+///
+/// No evidence is carried and none is verified here. Every committee member
+/// checked the charge against the block it rode in before voting for that
+/// block, which is the same trust basis as any other state transition. The
+/// evidence-carrying handlers below exist for the charges that outlive their
+/// epoch, where no live committee can verify and the contract must.
+pub fn slash_equivocation<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), ExitCode> {
+    ensure_non_payable(sdk)?;
+    ensure_mutable(sdk)?;
+    ensure_initialized(sdk)?;
+    if sdk.context().contract_caller() != SYSTEM_CALLER {
+        return revert(sdk, ERR_ONLY_SYSTEM_CALL);
+    }
+    let command = decode::<EpochSignerCommand>(input)?;
+    let validator = committee_member_at(sdk, command.epoch, command.signer_idx)?;
+    // A duplicate is a race, not a fault: two proposers may carry the same
+    // charge, and the epoch-boundary fallback transaction may land beside a
+    // block-borne one. Reverting would let a system caller turn that race into a
+    // failed pre-execution call.
+    if consensus_storage()
+        .tombstoned_accessor()
+        .entry(validator)
+        .get_checked(sdk)?
+    {
+        return Ok(());
+    }
+    apply_equivocation_penalty(sdk, validator, command.epoch)
+}
+
+fn slash_from_evidence<SDK: SharedAPI>(
     sdk: &mut SDK,
     command: EquivocationCommand,
     shape: EvidenceShape,
-    proof_kind: u8,
 ) -> Result<(), ExitCode> {
-    verify_report_commitment(sdk, &command, proof_kind)?;
-    let storage = staking_storage();
     let consensus = consensus_storage();
     let config = chain_config_storage();
     let evidence = evidence::decode(sdk, &command.evidence, shape)?;
@@ -1082,94 +989,58 @@ fn slash_equivocation<SDK: SharedAPI>(
     if !valid1 || !valid2 {
         return revert(sdk, ERR_EQUIVOCATION_SIGNATURE_INVALID);
     }
-
-    // A verified conflict is terminal: the validator cannot re-register keys.
-    consensus
-        .tombstoned_accessor()
-        .entry(validator)
-        .set_checked(sdk, true)?;
-    let record = storage.validators_accessor().entry(validator);
-    let status = record.status_accessor().get_checked(sdk)?;
-    if status == STATUS_NOT_FOUND {
-        return revert_with(sdk, ERR_VALIDATOR_NOT_FOUND, &validator);
-    }
-    if status == STATUS_ACTIVE {
-        remove_active(sdk, validator)?;
-    }
-    record.status_accessor().set_checked(sdk, STATUS_JAIL)?;
-    let penalty_epoch = current_epoch(sdk)?;
-    set_selection_visible(sdk, validator, false, penalty_epoch)?;
-    let owner = record.owner_accessor().get_checked(sdk)?;
-    let reporter = command.beneficiary;
-    consume_report_commitment(sdk, reporter)?;
-    seize_self_stake(sdk, validator, owner, reporter)?;
-    events::ValidatorJailed {
-        validator,
-        epoch: penalty_epoch,
-    }
-    .emit(sdk)?;
-    events::EquivocationSlashed {
-        validator,
-        epoch: evidence.epoch,
-        reporter,
-    }
-    .emit(sdk)
+    apply_equivocation_penalty(sdk, validator, evidence.epoch)
 }
 
-/// Public handler `0x2bc5fb10` (`slashEquivocationNotarize`).
+/// Public handler `0xe28d2f63` (`slashEquivocationNotarize`).
 ///
 /// Verifies conflicting notarizations and applies equivocation slashing.
 pub fn slash_notarize<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), ExitCode> {
     ensure_non_payable(sdk)?;
     ensure_mutable(sdk)?;
     ensure_initialized(sdk)?;
-    slash_equivocation(
+    slash_from_evidence(
         sdk,
         decode_equivocation(input)?,
         EvidenceShape::ConflictingNotarize,
-        EQUIVOCATION_PROOF_KIND_NOTARIZE,
     )
 }
 
-/// Public handler `0xb034c58b` (`slashEquivocationFinalize`).
+/// Public handler `0xadd07a3e` (`slashEquivocationFinalize`).
 ///
 /// Verifies conflicting finalizations and applies equivocation slashing.
 pub fn slash_finalize<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), ExitCode> {
     ensure_non_payable(sdk)?;
     ensure_mutable(sdk)?;
     ensure_initialized(sdk)?;
-    slash_equivocation(
+    slash_from_evidence(
         sdk,
         decode_equivocation(input)?,
         EvidenceShape::ConflictingFinalize,
-        EQUIVOCATION_PROOF_KIND_FINALIZE,
     )
 }
 
-/// Public handler `0x337e1437` (`slashEquivocationNullifyFinalize`).
+/// Public handler `0xa10827e9` (`slashEquivocationNullifyFinalize`).
 ///
 /// Verifies a nullify/finalize conflict and applies equivocation slashing.
 pub fn slash_nullify_finalize<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), ExitCode> {
     ensure_non_payable(sdk)?;
     ensure_mutable(sdk)?;
     ensure_initialized(sdk)?;
-    slash_equivocation(
+    slash_from_evidence(
         sdk,
         decode_equivocation(input)?,
         EvidenceShape::NullifyFinalize,
-        EQUIVOCATION_PROOF_KIND_NULLIFY_FINALIZE,
     )
 }
 
 pub(crate) fn decode_equivocation(input: &[u8]) -> Result<EquivocationCommand, ExitCode> {
-    let (evidence, pk_uncompressed, sig1_uncompressed, sig2_uncompressed, beneficiary, salt) =
-        decode_args::<(Bytes, Bytes, Bytes, Bytes, Address, B256)>(input)?;
+    let (evidence, pk_uncompressed, sig1_uncompressed, sig2_uncompressed) =
+        decode_args::<(Bytes, Bytes, Bytes, Bytes)>(input)?;
     Ok(EquivocationCommand {
         evidence,
         pk_uncompressed,
         sig1_uncompressed,
         sig2_uncompressed,
-        beneficiary,
-        salt,
     })
 }

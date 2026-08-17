@@ -43,7 +43,6 @@ use fluentbase_sdk::{Bytes, ExitCode, SharedAPI};
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct DecodedEvidence {
     pub epoch: u64,
-    pub signer_idx: u32,
     pub kind1: u8,
     pub msg1: Bytes,
     pub sig1: Bytes,
@@ -107,7 +106,6 @@ fn decode_conflicting<SDK: SharedAPI>(
     }
     Ok(DecodedEvidence {
         epoch: first.epoch,
-        signer_idx: att1.signer,
         kind1: kind,
         msg1: evidence.slice(first.span),
         sig1: evidence.slice(att1.signature),
@@ -143,7 +141,6 @@ fn decode_nullify_finalize<SDK: SharedAPI>(
     // The finalize vote's parent and payload are parsed for their length only.
     Ok(DecodedEvidence {
         epoch: round.epoch,
-        signer_idx: att1.signer,
         kind1: EVIDENCE_MESSAGE_KIND_NULLIFY,
         msg1: evidence.slice(round.span),
         sig1: evidence.slice(att1.signature),
@@ -384,7 +381,6 @@ pub(crate) mod tests {
     fn conflicting_notarize_corpus_decodes_to_pinned_fields() {
         let got = run(&CONFLICTING_NOTARIZE, EvidenceShape::ConflictingNotarize).unwrap();
         assert_eq!(got.epoch, 7);
-        assert_eq!(got.signer_idx, 3);
         assert_eq!(got.kind1, EVIDENCE_MESSAGE_KIND_NOTARIZE);
         assert_eq!(got.kind2, EVIDENCE_MESSAGE_KIND_NOTARIZE);
         assert_eq!(
@@ -415,7 +411,6 @@ pub(crate) mod tests {
     fn conflicting_finalize_corpus_decodes_to_pinned_fields() {
         let got = run(&CONFLICTING_FINALIZE, EvidenceShape::ConflictingFinalize).unwrap();
         assert_eq!(got.epoch, 7);
-        assert_eq!(got.signer_idx, 3);
         assert_eq!(got.kind1, EVIDENCE_MESSAGE_KIND_FINALIZE);
         assert_eq!(got.kind2, EVIDENCE_MESSAGE_KIND_FINALIZE);
         assert_eq!(
@@ -446,7 +441,6 @@ pub(crate) mod tests {
     fn nullify_finalize_corpus_decodes_to_pinned_fields() {
         let got = run(&NULLIFY_FINALIZE, EvidenceShape::NullifyFinalize).unwrap();
         assert_eq!(got.epoch, 7);
-        assert_eq!(got.signer_idx, 3);
         assert_eq!(got.kind1, EVIDENCE_MESSAGE_KIND_NULLIFY);
         assert_eq!(got.kind2, EVIDENCE_MESSAGE_KIND_FINALIZE);
         // A nullify signs the bare round, so `msg1` is two bytes and carries no
@@ -719,6 +713,11 @@ pub(crate) mod tests {
 
     #[test]
     fn widest_signer_index_is_accepted() {
+        // The decoded evidence no longer carries the signer index — it is
+        // outside both signed spans, so it proves nothing the two verifies do
+        // not already prove. The parser still reads it to advance the cursor
+        // and still bounds it to `u32`, so what this pins is that the widest
+        // in-range index parses rather than tripping that bound.
         let blob = [
             proposal(&[0x07], &[0x2a], &[0x29], 0xaa),
             attestation(&U32_MAX_VARINT, 0x11),
@@ -727,7 +726,9 @@ pub(crate) mod tests {
         ]
         .concat();
         let got = run(&blob, EvidenceShape::ConflictingNotarize).unwrap();
-        assert_eq!(got.signer_idx, u32::MAX);
+        assert_eq!(got.epoch, 7);
+        assert_eq!(got.sig1[..], [0x11u8; BLS_SIGNATURE_LENGTH][..]);
+        assert_eq!(got.sig2[..], [0x22u8; BLS_SIGNATURE_LENGTH][..]);
     }
 
     #[test]

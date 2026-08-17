@@ -64,12 +64,6 @@ pub struct DposActivationBlockChanged {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Event)]
-pub struct SlashReporterRewardBpsChanged {
-    pub prev_value: u32,
-    pub new_value: u32,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Event)]
 pub struct SlashFundAddressChanged {
     pub prev_value: Address,
     pub new_value: Address,
@@ -250,30 +244,20 @@ pub struct ValidatorJailed {
 }
 
 #[derive(Event)]
-pub struct EquivocationReportCommitted {
-    #[indexed]
-    pub beneficiary: Address,
-    #[indexed]
-    pub commitment: B256,
-    pub block_number: u64,
-}
-
-#[derive(Event)]
 pub struct EquivocationSlashed {
     #[indexed]
     pub validator: Address,
+    /// The epoch the conflict happened in, not the epoch the penalty is stamped
+    /// at — the two differ whenever a charge lands after its own epoch.
     pub epoch: u64,
-    #[indexed]
-    pub reporter: Address,
 }
 
 #[derive(Event)]
 pub struct EquivocationStakeSeized {
     #[indexed]
     pub validator: Address,
-    #[indexed]
-    pub reporter: Address,
-    pub reporter_reward: U256,
-    pub remainder: U256,
+    /// What actually moved, not what was owed: a recipient that refuses the
+    /// transfer leaves this zero rather than reverting the slash.
+    pub seized: U256,
     pub recipient: Address,
 }
