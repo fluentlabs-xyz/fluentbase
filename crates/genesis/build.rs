@@ -208,6 +208,34 @@ fn main() {
     println!("cargo:rerun-if-env-changed=DEBUG");
     println!("cargo:rerun-if-env-changed=TARGET");
 
+    // Emitting any `cargo:rerun-if-*` directive opts this script out of Cargo's default
+    // "rescan the whole package directory" behaviour, so every file input has to be listed
+    // explicitly or the script silently never re-runs.
+    //
+    // Careful: this script writes `genesis-devnet.json`, `genesis-mainnet.json` and
+    // `evm-runtime-permissive.rwasm` back into CARGO_MANIFEST_DIR. Never register the
+    // package directory (or anything containing those three files) here — that would make
+    // the script dirty its own inputs and re-run on every single build.
+    let fluentbase_root_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("../..");
+    // `include_bytes!`-ed below for the create2-factory genesis account. Nothing else in the
+    // build graph reads this file, so without this line an edit to it never reaches genesis.
+    println!(
+        "cargo:rerun-if-changed={}",
+        fluentbase_root_dir
+            .join("contracts/create2-factory/deterministic-deployment-proxy.bin")
+            .display()
+    );
+    // Every other genesis account embeds a WASM artifact compiled out of these two source
+    // trees by `crates/contracts/build.rs`, which registers the same two directories.
+    println!(
+        "cargo:rerun-if-changed={}",
+        fluentbase_root_dir.join("contracts").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        fluentbase_root_dir.join("examples").display()
+    );
+
     let mut alloc = BTreeMap::new();
 
     let mut code = Vec::new();
