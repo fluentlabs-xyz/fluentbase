@@ -151,15 +151,6 @@ mod abi {
     }
 }
 
-/// On-chain epoch-committee retention margin: the contract prunes committees
-/// older than `currentEpoch - (undelegatePeriod + MARGIN)`. The cache mirrors
-/// this exact window (epoch_transition).
-///
-/// MUST mirror the staking contract's `EPOCH_COMMITTEE_RETENTION_MARGIN`
-/// (`consts.rs:436`). Any drift silently mis-prunes the off-chain cache vs
-/// on-chain pruning — update both in the same PR.
-pub const EPOCH_COMMITTEE_RETENTION_MARGIN: u64 = 8;
-
 /// Smallest committee the contract will commit: `commitEpochCommittee` reverts
 /// `ERR_COMMITTEE_TOO_SMALL` below it (`consensus.rs:523-529`), and
 /// `setActiveValidatorsLength` refuses to store a cap under it
@@ -498,9 +489,8 @@ fn decode_view<Ev: Evm, C: SolCall>(
 
 /// In-process staking reader over a reth provider + EVM config.
 ///
-/// `epoch_block_interval` and `undelegate_period` are NO LONGER
-/// cached via `OnceLock`. Both are governance-mutable on-chain
-/// (`ChainConfig.setEpochBlockInterval` / `setUndelegatePeriod`); caching
+/// `epoch_block_interval` is NOT cached via `OnceLock`. It is
+/// governance-mutable on-chain (`ChainConfig.setEpochBlockInterval`); caching
 /// the first read forever produces a consensus split if governance ever
 /// changes the value while nodes are live. Re-reading per call costs one
 /// extra in-process EVM STATICCALL (~tens of µs) — negligible relative to
@@ -635,19 +625,6 @@ where
             0 => None,
             h => Some(h),
         })
-    }
-
-    /// `getUndelegatePeriod()` (epochs) at block `at`.
-    ///
-    /// Re-read on every call. Drives the epoch-committee retention
-    /// window (`undelegatePeriod + EPOCH_COMMITTEE_RETENTION_MARGIN`) and
-    /// mirrors the contract's own committee pruning.
-    pub fn undelegate_period(&self, at: B256) -> Result<u32, ReadError> {
-        self.call(
-            self.cfg.staking_address,
-            &abi::getUndelegatePeriodCall {},
-            at,
-        )
     }
 
     /// `getActiveValidatorsLength()`. Used at startup by the host adapter to
@@ -788,9 +765,6 @@ pub trait StakingStateRead {
         at: B256,
     ) -> Result<ValidatorSetSnapshot, ReadError>;
 
-    /// `ChainConfig.getUndelegatePeriod()` (epochs) at `at`.
-    fn undelegate_period(&self, at: B256) -> Result<u32, ReadError>;
-
     /// `ChainConfig.getEpochBlockInterval()` (blocks per epoch) at `at`.
     /// Read per call (no OnceLock cache).
     fn epoch_block_interval(&self, at: B256) -> Result<u32, ReadError>;
@@ -841,9 +815,6 @@ where
         at: B256,
     ) -> Result<ValidatorSetSnapshot, ReadError> {
         RethStakingStateReader::epoch_committee_snapshot(self, epoch, at)
-    }
-    fn undelegate_period(&self, at: B256) -> Result<u32, ReadError> {
-        RethStakingStateReader::undelegate_period(self, at)
     }
     fn epoch_block_interval(&self, at: B256) -> Result<u32, ReadError> {
         RethStakingStateReader::epoch_block_interval(self, at)

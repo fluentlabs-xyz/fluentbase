@@ -41,7 +41,7 @@ use fluentbase_bls::{
 };
 use fluentbase_consensus::slasher::{
     self,
-    actor::{SlasherTxSink, StaleEpochFallback, SubmitOutcome},
+    actor::{SlasherTxSink, SubmitOutcome},
     evidence::{extract_from_conflicting_notarize, SlashKind},
 };
 use fluentbase_staking_reader::{
@@ -192,8 +192,8 @@ impl StakingStateRead for StubReader {
         _at: B256,
     ) -> Result<ValidatorSetSnapshot, ReadError> {
         if self.empty {
-            // Simulate the contract's prune cursor having advanced past
-            // this epoch by returning an empty validator set.
+            // An epoch with no committee on chain — never committed, since
+            // committees are no longer pruned.
             Ok(ValidatorSetSnapshot {
                 block_hash: B256::ZERO,
                 block_number: 0,
@@ -204,9 +204,6 @@ impl StakingStateRead for StubReader {
             Ok(self.snapshot.clone())
         }
     }
-    fn undelegate_period(&self, _at: B256) -> Result<u32, ReadError> {
-        Ok(7)
-    }
     fn epoch_block_interval(&self, _at: B256) -> Result<u32, ReadError> {
         Ok(100)
     }
@@ -215,27 +212,6 @@ impl StakingStateRead for StubReader {
     }
     fn active_registry_peers(&self, _at: B256) -> Result<Vec<PeerPubkey>, ReadError> {
         Ok(vec![])
-    }
-}
-
-#[derive(Default)]
-struct StubFallback {
-    snapshot: Option<ValidatorSetSnapshot>,
-}
-
-impl StaleEpochFallback for StubFallback {
-    fn get_by_epoch<'a>(
-        &'a self,
-        _epoch: u64,
-    ) -> std::pin::Pin<
-        Box<
-            dyn core::future::Future<Output = Result<Option<ValidatorSetSnapshot>, ReadError>>
-                + Send
-                + 'a,
-        >,
-    > {
-        let snap = self.snapshot.clone();
-        Box::pin(async move { Ok(snap) })
     }
 }
 
@@ -348,7 +324,6 @@ fn reporter_multiplex_routes_conflicting_notarize_to_slasher() {
 async fn spawn_actor_with_stubs(
     ctx: commonware_runtime::deterministic::Context,
     reader: StubReader,
-    fallback: Arc<dyn StaleEpochFallback>,
     sink_outcome: SubmitOutcomeKind,
     partition: &str,
     // Retained in the signature (callers pass their committee) but no longer used
@@ -361,7 +336,7 @@ async fn spawn_actor_with_stubs(
     commonware_runtime::Handle<()>,
 ) {
     // These cases drive the mailbox directly; no evidence channel is wired.
-    spawn_actor_with_evidence(ctx, reader, fallback, sink_outcome, partition, None).await
+    spawn_actor_with_evidence(ctx, reader, sink_outcome, partition, None).await
 }
 
 /// As [`spawn_actor_with_stubs`], but with the evidence-gossip bridge wired so a
@@ -369,7 +344,6 @@ async fn spawn_actor_with_stubs(
 async fn spawn_actor_with_evidence(
     ctx: commonware_runtime::deterministic::Context,
     reader: StubReader,
-    fallback: Arc<dyn StaleEpochFallback>,
     sink_outcome: SubmitOutcomeKind,
     partition: &str,
     evidence: Option<slasher::EvidenceBridge>,
@@ -405,7 +379,6 @@ async fn spawn_actor_with_evidence(
         chain_id: C_MAIN,
         reader,
         latest_finalized_hash: latest,
-        stale_fallback: fallback,
         sink,
         wal_writer,
         wal_reader,
@@ -459,12 +432,10 @@ fn a_charge_stranded_by_the_epoch_boundary_lands_by_transaction() {
             snapshot,
             empty: false,
         };
-        let fallback: Arc<dyn StaleEpochFallback> = Arc::new(StubFallback::default());
         let (ev, _kps, _bimap_d) = build_consensus_digest_conflicting_notarize();
         let (mailbox, calls, charges, handle) = spawn_actor_with_stubs(
             ctx.clone(),
             reader,
-            fallback,
             SubmitOutcomeKind::Mined,
             "slasher_boundary_fallback",
             &bimap,
@@ -533,11 +504,9 @@ fn a_charge_assembled_after_the_boundary_goes_straight_to_the_sink() {
             snapshot,
             empty: false,
         };
-        let fallback: Arc<dyn StaleEpochFallback> = Arc::new(StubFallback::default());
         let (mailbox, calls, charges, handle) = spawn_actor_with_stubs(
             ctx.clone(),
             reader,
-            fallback,
             SubmitOutcomeKind::Mined,
             "slasher_late_match",
             &bimap,
@@ -624,12 +593,10 @@ fn a_gossiped_vote_naming_a_future_epoch_neither_moves_the_cursor_nor_flushes_th
             snapshot: snapshot_from_bimap(&bimap),
             empty: false,
         };
-        let fallback: Arc<dyn StaleEpochFallback> = Arc::new(StubFallback::default());
         let (bridge, _publications) = slasher::EvidenceBridge::new();
         let (mailbox, calls, charges, handle) = spawn_actor_with_evidence(
             ctx.clone(),
             reader,
-            fallback,
             SubmitOutcomeKind::Mined,
             "slasher_gossip_cursor",
             Some(bridge.clone()),
@@ -693,12 +660,10 @@ fn a_gossiped_vote_inside_the_window_still_assembles_a_charge() {
             snapshot: snapshot_from_bimap(&bimap),
             empty: false,
         };
-        let fallback: Arc<dyn StaleEpochFallback> = Arc::new(StubFallback::default());
         let (bridge, _publications) = slasher::EvidenceBridge::new();
         let (mailbox, calls, charges, handle) = spawn_actor_with_evidence(
             ctx.clone(),
             reader,
-            fallback,
             SubmitOutcomeKind::Mined,
             "slasher_gossip_in_window",
             Some(bridge.clone()),
@@ -741,29 +706,29 @@ fn a_gossiped_vote_inside_the_window_still_assembles_a_charge() {
     });
 }
 
+// There is no second source for a committee any more. This case used to assert
+// that an empty on-chain read fell through to the durable cache and still
+// submitted; the cache is gone, because it could only ever be consulted in a
+// state where it had nothing to give. An empty read now means the epoch was
+// never committed, which is permanent — so the evidence is dropped, not
+// submitted.
 #[test]
-fn slasher_falls_back_to_cache_on_empty_snapshot() {
+fn slasher_drops_evidence_for_an_uncommitted_epoch() {
     let runtime = commonware_runtime::deterministic::Runner::default();
     runtime.start(|ctx| async move {
         let (kps, bimap) = committee(1);
-        let snapshot = snapshot_from_bimap(&bimap);
-        // Reader returns empty; fallback returns the real snapshot.
         let reader = StubReader {
-            snapshot: snapshot.clone(),
+            snapshot: snapshot_from_bimap(&bimap),
             empty: true,
         };
-        let fallback: Arc<dyn StaleEpochFallback> = Arc::new(StubFallback {
-            snapshot: Some(snapshot),
-        });
 
         let (ev, _kps_unused, _bimap_d) = build_consensus_digest_conflicting_notarize();
         let _kps_keep = kps;
         let (mailbox, calls, _charges, handle) = spawn_actor_with_stubs(
             ctx.clone(),
             reader,
-            fallback,
             SubmitOutcomeKind::Mined,
-            "slasher_h17_fallback",
+            "slasher_h17_uncommitted",
             &bimap,
         )
         .await;
@@ -772,8 +737,8 @@ fn slasher_falls_back_to_cache_on_empty_snapshot() {
         report_and_close_epoch(&mut mb, Activity::ConflictingNotarize(ev)).await;
 
         assert!(
-            wait_for_sink_calls(&calls, 1).await,
-            "fallback path should still result in a sink.submit call"
+            !wait_for_sink_calls(&calls, 1).await,
+            "an epoch that was never committed cannot be resolved, so nothing is submitted"
         );
 
         drop(mb);
@@ -796,7 +761,6 @@ fn slasher_rejects_tampered_evidence_at_verify_pre_submit() {
             snapshot,
             empty: false,
         };
-        let fallback: Arc<dyn StaleEpochFallback> = Arc::new(StubFallback::default());
 
         // Evidence signed by committee 1 (a DIFFERENT committee from the snapshot).
         let (ev, _kps_unused, _bimap_d) = build_consensus_digest_conflicting_notarize();
@@ -804,7 +768,6 @@ fn slasher_rejects_tampered_evidence_at_verify_pre_submit() {
         let (mailbox, calls, _charges, handle) = spawn_actor_with_stubs(
             ctx.clone(),
             reader,
-            fallback,
             SubmitOutcomeKind::Mined,
             "slasher_verify_reject",
             &bimap_b,
@@ -946,10 +909,8 @@ fn dedup_call_count(outcome: SubmitOutcomeKind, partition: &'static str) -> usiz
             snapshot,
             empty: false,
         };
-        let fallback: Arc<dyn StaleEpochFallback> = Arc::new(StubFallback::default());
         let (mailbox, calls, _charges, handle) =
-            spawn_actor_with_stubs(ctx.clone(), reader, fallback, outcome, &partition, &bimap)
-                .await;
+            spawn_actor_with_stubs(ctx.clone(), reader, outcome, &partition, &bimap).await;
         let mut mb = mailbox;
         use commonware_consensus::Reporter as _;
 
@@ -1018,11 +979,9 @@ fn slasher_pipeline_handles_conflicting_finalize() {
             snapshot,
             empty: false,
         };
-        let fallback: Arc<dyn StaleEpochFallback> = Arc::new(StubFallback::default());
         let (mailbox, calls, _charges, handle) = spawn_actor_with_stubs(
             ctx.clone(),
             reader,
-            fallback,
             SubmitOutcomeKind::Mined,
             "slasher_conflicting_finalize",
             &bimap,
@@ -1061,11 +1020,9 @@ fn slasher_pipeline_handles_nullify_finalize() {
             snapshot,
             empty: false,
         };
-        let fallback: Arc<dyn StaleEpochFallback> = Arc::new(StubFallback::default());
         let (mailbox, calls, _charges, handle) = spawn_actor_with_stubs(
             ctx.clone(),
             reader,
-            fallback,
             SubmitOutcomeKind::Mined,
             "slasher_nullify_finalize",
             &bimap,

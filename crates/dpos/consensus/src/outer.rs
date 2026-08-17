@@ -597,9 +597,6 @@ pub struct OuterBuilder<B, P, BE, D, XC, A, R: slasher::StakingStateRead + Send 
     pub slasher_reader: R,
     /// Latest finalized hash provider (closure wrapping `node.provider`).
     pub slasher_latest_finalized_hash: slasher::actor::LatestFinalizedHash,
-    /// Stale-epoch cache fallback (built in dpos.rs over the same
-    /// `Arc<Mutex<ValidatorSetCache>>` that `EpochTransition` writes).
-    pub slasher_stale_fallback: std::sync::Arc<dyn slasher::actor::StaleEpochFallback>,
     /// TxPool transport (signer + pool + provider wrapper from dpos.rs).
     pub slasher_sink: std::sync::Arc<dyn slasher::actor::SlasherTxSink>,
     /// WAL storage partition name. The actual `queue::shared` handles
@@ -1204,8 +1201,6 @@ where
                 chain_id: self.chain_id,
                 reader: self.slasher_reader,
                 latest_finalized_hash: self.slasher_latest_finalized_hash,
-                // Stale-epoch cache fallback.
-                stale_fallback: self.slasher_stale_fallback,
                 // TxPool transport (signer + pool + provider).
                 sink: self.slasher_sink,
                 // Durable WAL split between producer/consumer tasks.

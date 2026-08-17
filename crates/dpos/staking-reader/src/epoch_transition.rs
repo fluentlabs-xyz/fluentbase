@@ -9,12 +9,13 @@
 //! - finality-gated apply;
 //! - write-once `track` (no re-track of a covered epoch; no reorg handling
 //!   — finalized ⇒ irreversible);
-//! - the frozen-committee snapshot is what is persisted;
 //! - committee-size pre-check (typed error, not a deep commonware panic);
 //! - cold-start reads the *current* finalized committee once (no point
-//!   taking an outdated state);
-//! - retention mirrors the contract's own `_pruneStaleCommittees`
-//!   (`undelegatePeriod + EPOCH_COMMITTEE_RETENTION_MARGIN`).
+//!   taking an outdated state).
+//!
+//! The durable validator-set cache this module used to write is gone: it existed
+//! to answer a committee the contract had pruned, and the contract no longer
+//! prunes.
 //!
 //! Retry / outcome invariants:
 //! - `last_tracked_epoch` advances only after `boundary_tx.try_send`
@@ -25,18 +26,13 @@
 //!   no-ops.
 
 use alloy_primitives::B256;
-use commonware_runtime::{BufferPooler, Metrics, Storage};
 use commonware_utils::ordered::Set;
 use core::future::Future;
 use fluentbase_bls::PeerPubkey;
 
 use crate::{
-    cache::ValidatorSetCache,
     error::ReadError,
-    reader::{
-        check_peer_set_size, epoch_of_block, is_epoch_boundary, StakingStateRead,
-        EPOCH_COMMITTEE_RETENTION_MARGIN,
-    },
+    reader::{check_peer_set_size, epoch_of_block, is_epoch_boundary, StakingStateRead},
 };
 
 /// Freeze a governance-mutable geometry field on its first observation, then
@@ -135,21 +131,16 @@ pub trait PeerSetSink {
 }
 
 /// Drives finality-gated epoch boundaries: detect → frozen-committee
-/// snapshot → size-check → persist (final) → `track` once → prune to the
-/// contract's retention window.
+/// snapshot → size-check → persist (final) → `track` once → prune to the node's
+/// own retention window.
 ///
-/// Cache is held behind `Arc<tokio::sync::Mutex<_>>` so the slasher
-/// can take a read lock from a separate task to fall back to historical
-/// committees when the on-chain prune cursor has advanced past evidence
-/// epoch (`get_by_epoch`). Only ET writes; the slasher only reads.
 /// Re-poke cadence for a parked boundary (see
 /// [`EpochTransition::has_pending_boundary`]): callers retry `on_finalized`
 /// with this backoff until the park clears.
 pub const PENDING_RETRY_BACKOFF: std::time::Duration = std::time::Duration::from_millis(200);
 
-pub struct EpochTransition<R, S, E: Storage + Metrics + BufferPooler> {
+pub struct EpochTransition<R, S> {
     reader: R,
-    cache: std::sync::Arc<tokio::sync::Mutex<ValidatorSetCache<E>>>,
     sink: S,
     /// commonware `max_peer_set_size` (injected by the node; committee-size guard input).
     max_peer_set_size: usize,
@@ -203,27 +194,22 @@ pub struct EpochTransition<R, S, E: Storage + Metrics + BufferPooler> {
     warned_empty_boundary: Option<u64>,
 }
 
-impl<R, S, E> EpochTransition<R, S, E>
+impl<R, S> EpochTransition<R, S>
 where
     R: StakingStateRead,
     S: PeerSetSink,
-    E: Storage + Metrics + BufferPooler,
 {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         reader: R,
-        cache: std::sync::Arc<tokio::sync::Mutex<ValidatorSetCache<E>>>,
         sink: S,
         max_peer_set_size: usize,
         boundary_tx: Option<tokio::sync::mpsc::Sender<(u64, crate::reader::ValidatorSetSnapshot)>>,
-        executed_hash: std::sync::Arc<
-            dyn Fn(u64) -> Result<Option<B256>, ReadError> + Send + Sync,
-        >,
+        executed_hash: std::sync::Arc<dyn Fn(u64) -> Result<Option<B256>, ReadError> + Send + Sync>,
         result_lag: u64,
     ) -> Self {
         Self {
             reader,
-            cache,
             sink,
             max_peer_set_size,
             last_tracked_epoch: None,
@@ -442,7 +428,10 @@ where
                 );
                 self.pending_boundary = Some(number);
             }
-            return Ok(merge_replay_outcome(replay_advance, TransitionOutcome::Intra));
+            return Ok(merge_replay_outcome(
+                replay_advance,
+                TransitionOutcome::Intra,
+            ));
         };
         let outcome = self.apply_at(number, at).await?;
         Ok(merge_replay_outcome(replay_advance, outcome))
@@ -613,7 +602,7 @@ where
     /// committee (tier-2: every activated validator — ejected, upcoming, the
     /// sequencer — keeps consensus-plane connectivity; the committee union
     /// covers the mid-epoch-jailed member that already left the registry but
-    /// is still in the frozen committee). The cache/schemes/bridge continue
+    /// is still in the frozen committee). The schemes and the bridge continue
     /// to consume the COMMITTEE snapshot only.
     async fn track_and_trigger(
         &mut self,
@@ -624,13 +613,6 @@ where
         let mut tracked = self.reader.active_registry_peers(at)?;
         tracked.extend(snap.validators.iter().map(|v| v.keys.peer_pubkey.clone()));
         check_peer_set_size(epoch, tracked.len(), self.max_peer_set_size)?; // typed, not panic
-        let retention =
-            self.reader.undelegate_period(at)? as u64 + EPOCH_COMMITTEE_RETENTION_MARGIN;
-        {
-            let mut cache = self.cache.lock().await;
-            cache.persist_final(snap.clone()).await?; // finality-gated — idempotent
-            cache.prune(epoch.saturating_sub(retention)).await?; // mirror on-chain prune
-        }
         self.sink.track(epoch, Set::from_iter_dedup(tracked)).await; // one-shot
 
         // Gate `last_tracked_epoch` advance on `try_send` success. A
@@ -762,10 +744,9 @@ mod tests {
         }
     }
 
-    /// Canned reader: fixed committee size + undelegate period + interval.
+    /// Canned reader: fixed committee size + interval.
     struct MockReader {
         committee: usize,
-        undelegate: u32,
         interval: u32,
     }
     impl StakingStateRead for MockReader {
@@ -782,9 +763,6 @@ mod tests {
                     .map(|i| validator(epoch * 1000 + i))
                     .collect(),
             })
-        }
-        fn undelegate_period(&self, _at: B256) -> Result<u32, ReadError> {
-            Ok(self.undelegate)
         }
         fn epoch_block_interval(&self, _at: B256) -> Result<u32, ReadError> {
             Ok(self.interval)
@@ -804,15 +782,13 @@ mod tests {
     /// every height is executed), result_lag = 3.
     fn et(
         reader: MockReader,
-        cache: std::sync::Arc<tokio::sync::Mutex<ValidatorSetCache<deterministic::Context>>>,
         sink: RecordingSink,
         max: usize,
         tx: Option<tokio::sync::mpsc::Sender<(u64, crate::reader::ValidatorSetSnapshot)>>,
         h: B256,
-    ) -> EpochTransition<MockReader, RecordingSink, deterministic::Context> {
+    ) -> EpochTransition<MockReader, RecordingSink> {
         EpochTransition::new(
             reader,
-            cache,
             sink,
             max,
             tx,
@@ -835,9 +811,6 @@ mod tests {
             at: B256,
         ) -> Result<ValidatorSetSnapshot, ReadError> {
             self.inner.epoch_committee_snapshot(epoch, at)
-        }
-        fn undelegate_period(&self, at: B256) -> Result<u32, ReadError> {
-            self.inner.undelegate_period(at)
         }
         fn epoch_block_interval(&self, at: B256) -> Result<u32, ReadError> {
             self.inner.epoch_block_interval(at)
@@ -873,9 +846,6 @@ mod tests {
             }
             self.inner.epoch_committee_snapshot(epoch, at)
         }
-        fn undelegate_period(&self, at: B256) -> Result<u32, ReadError> {
-            self.inner.undelegate_period(at)
-        }
         fn epoch_block_interval(&self, at: B256) -> Result<u32, ReadError> {
             self.inner.epoch_block_interval(at)
         }
@@ -906,9 +876,6 @@ mod tests {
         ) -> Result<ValidatorSetSnapshot, ReadError> {
             self.inner.epoch_committee_snapshot(epoch, at)
         }
-        fn undelegate_period(&self, at: B256) -> Result<u32, ReadError> {
-            self.inner.undelegate_period(at)
-        }
         fn epoch_block_interval(&self, at: B256) -> Result<u32, ReadError> {
             self.inner.epoch_block_interval(at)
         }
@@ -934,17 +901,13 @@ mod tests {
 
     #[test]
     fn tracked_set_is_registry_union_committee() {
-        deterministic::Runner::default().start(|ctx| async move {
-            let cache = std::sync::Arc::new(tokio::sync::Mutex::new(
-                ValidatorSetCache::init(ctx).await.unwrap(),
-            ));
+        deterministic::Runner::default().start(|_ctx| async move {
             let sink = RecordingSink::default();
             let h = B256::repeat_byte(0x33);
             // 2 registry-only peers (seeds far from the committee's) + committee of 3.
             let reader = RegistryReader {
                 inner: MockReader {
                     committee: 3,
-                    undelegate: 7,
                     interval: 100,
                 },
                 registry: vec![
@@ -954,7 +917,6 @@ mod tests {
             };
             let mut et = EpochTransition::new(
                 reader,
-                cache,
                 sink.clone(),
                 51,
                 None,
@@ -969,19 +931,14 @@ mod tests {
 
     #[test]
     fn boundary_apply_persists_and_tracks_once() {
-        deterministic::Runner::default().start(|ctx| async move {
-            let cache = std::sync::Arc::new(tokio::sync::Mutex::new(
-                ValidatorSetCache::init(ctx).await.unwrap(),
-            ));
+        deterministic::Runner::default().start(|_ctx| async move {
             let sink = RecordingSink::default();
             let h = B256::repeat_byte(0x11);
             let mut et = et(
                 MockReader {
                     committee: 5,
-                    undelegate: 7,
                     interval: 100,
                 },
-                cache,
                 sink.clone(),
                 64,
                 None,
@@ -1000,10 +957,6 @@ mod tests {
                 let log = sink.0.lock().unwrap();
                 assert_eq!(*log, vec![(5, 5)], "tracked once, 5 peers, epoch 5");
             }
-            assert!(
-                et.cache.lock().await.contains(h).await.unwrap(),
-                "snapshot persisted"
-            );
         });
     }
 
@@ -1013,10 +966,7 @@ mod tests {
         // next (intra-epoch) delivery, must SURFACE its `EpochAdvanced` rather
         // than be dropped in favour of the new delivery's `Intra` — else the
         // engine's consecutive-error counter never resets and false-shuts-down.
-        deterministic::Runner::default().start(|ctx| async move {
-            let cache = std::sync::Arc::new(tokio::sync::Mutex::new(
-                ValidatorSetCache::init(ctx).await.unwrap(),
-            ));
+        deterministic::Runner::default().start(|_ctx| async move {
             let sink = RecordingSink::default();
             let h = B256::repeat_byte(0x21);
             // Gate hash resolution so a boundary can be parked (unresolvable) then
@@ -1026,10 +976,8 @@ mod tests {
             let mut et = EpochTransition::new(
                 MockReader {
                     committee: 5,
-                    undelegate: 7,
                     interval: 100,
                 },
-                cache,
                 sink.clone(),
                 64,
                 None,
@@ -1067,19 +1015,14 @@ mod tests {
 
     #[test]
     fn last_block_of_epoch_spawns_next_epoch() {
-        deterministic::Runner::default().start(|ctx| async move {
-            let cache = std::sync::Arc::new(tokio::sync::Mutex::new(
-                ValidatorSetCache::init(ctx).await.unwrap(),
-            ));
+        deterministic::Runner::default().start(|_ctx| async move {
             let sink = RecordingSink::default();
             let h = B256::repeat_byte(0x22);
             let mut et = et(
                 MockReader {
                     committee: 5,
-                    undelegate: 7,
                     interval: 100,
                 },
-                cache,
                 sink.clone(),
                 64,
                 None,
@@ -1111,19 +1054,14 @@ mod tests {
 
     #[test]
     fn cold_start_on_boundary_enters_next_epoch() {
-        deterministic::Runner::default().start(|ctx| async move {
-            let cache = std::sync::Arc::new(tokio::sync::Mutex::new(
-                ValidatorSetCache::init(ctx).await.unwrap(),
-            ));
+        deterministic::Runner::default().start(|_ctx| async move {
             let sink = RecordingSink::default();
             let h = B256::repeat_byte(0x55);
             let mut et = et(
                 MockReader {
                     committee: 5,
-                    undelegate: 7,
                     interval: 100,
                 },
-                cache,
                 sink.clone(),
                 64,
                 None,
@@ -1147,18 +1085,13 @@ mod tests {
 
     #[test]
     fn oversize_committee_is_typed_error_not_panic() {
-        deterministic::Runner::default().start(|ctx| async move {
-            let cache = std::sync::Arc::new(tokio::sync::Mutex::new(
-                ValidatorSetCache::init(ctx).await.unwrap(),
-            ));
+        deterministic::Runner::default().start(|_ctx| async move {
             let h = B256::repeat_byte(0x22);
             let mut et = et(
                 MockReader {
                     committee: 10,
-                    undelegate: 7,
                     interval: 100,
                 },
-                cache,
                 RecordingSink::default(),
                 4, // max_peer_set_size < tracked union (registry ∅ + committee 10)
                 None,
@@ -1177,18 +1110,13 @@ mod tests {
 
     #[test]
     fn zero_interval_is_typed_error_not_panic() {
-        deterministic::Runner::default().start(|ctx| async move {
-            let cache = std::sync::Arc::new(tokio::sync::Mutex::new(
-                ValidatorSetCache::init(ctx).await.unwrap(),
-            ));
+        deterministic::Runner::default().start(|_ctx| async move {
             let h = B256::repeat_byte(0x01);
             let mut et = et(
                 MockReader {
                     committee: 3,
-                    undelegate: 7,
                     interval: 0,
                 },
-                cache,
                 RecordingSink::default(),
                 64,
                 None,
@@ -1203,19 +1131,14 @@ mod tests {
 
     #[test]
     fn missed_commit_epoch_skipped_not_tracked_empty() {
-        deterministic::Runner::default().start(|ctx| async move {
-            let cache = std::sync::Arc::new(tokio::sync::Mutex::new(
-                ValidatorSetCache::init(ctx).await.unwrap(),
-            ));
+        deterministic::Runner::default().start(|_ctx| async move {
             let sink = RecordingSink::default();
             let h = B256::repeat_byte(0x44);
             let mut et = et(
                 MockReader {
                     committee: 0,
-                    undelegate: 7,
                     interval: 100,
                 }, // no commit ⇒ empty
-                cache,
                 sink.clone(),
                 64,
                 None,
@@ -1228,10 +1151,6 @@ mod tests {
                 sink.0.lock().unwrap().is_empty(),
                 "no empty peer set tracked"
             );
-            assert!(
-                !et.cache.lock().await.contains(h).await.unwrap(),
-                "empty snapshot not persisted"
-            );
             assert_eq!(et.last_tracked_epoch, None, "epoch NOT write-once-locked");
         });
     }
@@ -1242,10 +1161,7 @@ mod tests {
         // last_tracked_epoch un-advanced so the next finalized block retries.
         // Outcome must be `Intra` so the dpos.rs hook does NOT reset its
         // consecutive-error counter.
-        deterministic::Runner::default().start(|ctx| async move {
-            let cache = std::sync::Arc::new(tokio::sync::Mutex::new(
-                ValidatorSetCache::init(ctx).await.unwrap(),
-            ));
+        deterministic::Runner::default().start(|_ctx| async move {
             let sink = RecordingSink::default();
             // Capacity-1 channel; pre-fill it so try_send returns Full on
             // the next attempt without needing a real consumer.
@@ -1263,10 +1179,8 @@ mod tests {
             let mut et = et(
                 MockReader {
                     committee: 3,
-                    undelegate: 7,
                     interval: 100,
                 },
-                cache,
                 sink.clone(),
                 64,
                 Some(boundary_tx),
@@ -1291,10 +1205,7 @@ mod tests {
         // channel must KEEP the boundary parked (so the re-poke loop retries the
         // send) and advance only once the channel drains — the wedge the
         // Err-only clear missed (a Full returns Ok(Intra), not Err).
-        deterministic::Runner::default().start(|ctx| async move {
-            let cache = std::sync::Arc::new(tokio::sync::Mutex::new(
-                ValidatorSetCache::init(ctx).await.unwrap(),
-            ));
+        deterministic::Runner::default().start(|_ctx| async move {
             let sink = RecordingSink::default();
             // Capacity-1 channel: cold_start fills it with epoch 5, so the
             // epoch-6 boundary send then hits Full.
@@ -1303,10 +1214,8 @@ mod tests {
             let mut et = et(
                 MockReader {
                     committee: 3,
-                    undelegate: 7,
                     interval: 100,
                 },
-                cache,
                 sink.clone(),
                 64,
                 Some(boundary_tx),
@@ -1354,18 +1263,13 @@ mod tests {
         // a missed-commit epoch) is replayed through the cold-start branch — which
         // must RELEASE the park once the bootstrap advances, else the re-poke loop
         // spins on a slot nothing will ever clear.
-        deterministic::Runner::default().start(|ctx| async move {
-            let cache = std::sync::Arc::new(tokio::sync::Mutex::new(
-                ValidatorSetCache::init(ctx).await.unwrap(),
-            ));
+        deterministic::Runner::default().start(|_ctx| async move {
             let h = B256::repeat_byte(0x77);
             let mut et = et(
                 MockReader {
                     committee: 3,
-                    undelegate: 7,
                     interval: 100,
                 },
-                cache,
                 RecordingSink::default(),
                 64,
                 None,
@@ -1391,20 +1295,15 @@ mod tests {
         // A `Closed` bridge (forwarder gone) is unrecoverable — unlike `Full`, the
         // boundary must NOT stay parked, or the re-poke loop spins against a dead
         // channel during teardown.
-        deterministic::Runner::default().start(|ctx| async move {
-            let cache = std::sync::Arc::new(tokio::sync::Mutex::new(
-                ValidatorSetCache::init(ctx).await.unwrap(),
-            ));
+        deterministic::Runner::default().start(|_ctx| async move {
             let sink = RecordingSink::default();
             let (boundary_tx, mut boundary_rx) = tokio::sync::mpsc::channel(8);
             let h = B256::repeat_byte(0x78);
             let mut et = et(
                 MockReader {
                     committee: 3,
-                    undelegate: 7,
                     interval: 100,
                 },
-                cache,
                 sink,
                 64,
                 Some(boundary_tx),
@@ -1436,20 +1335,15 @@ mod tests {
 
     #[test]
     fn boundary_tx_fires_once_per_epoch() {
-        deterministic::Runner::default().start(|ctx| async move {
-            let cache = std::sync::Arc::new(tokio::sync::Mutex::new(
-                ValidatorSetCache::init(ctx).await.unwrap(),
-            ));
+        deterministic::Runner::default().start(|_ctx| async move {
             let sink = RecordingSink::default();
             let (boundary_tx, mut boundary_rx) = tokio::sync::mpsc::channel(8);
             let h = B256::repeat_byte(0xCD);
             let mut et = et(
                 MockReader {
                     committee: 4,
-                    undelegate: 7,
                     interval: 100,
                 },
-                cache,
                 sink.clone(),
                 64,
                 Some(boundary_tx),
@@ -1466,19 +1360,14 @@ mod tests {
 
     #[test]
     fn cold_start_reads_current_finalized_once() {
-        deterministic::Runner::default().start(|ctx| async move {
-            let cache = std::sync::Arc::new(tokio::sync::Mutex::new(
-                ValidatorSetCache::init(ctx).await.unwrap(),
-            ));
+        deterministic::Runner::default().start(|_ctx| async move {
             let sink = RecordingSink::default();
             let h = B256::repeat_byte(0x33);
             let mut et = et(
                 MockReader {
                     committee: 3,
-                    undelegate: 7,
                     interval: 100,
                 },
-                cache,
                 sink.clone(),
                 64,
                 None,
@@ -1495,10 +1384,7 @@ mod tests {
         // remembered; a subsequent NON-boundary unresolved height must NOT
         // clobber it; once execution catches up, the next delivery replays the
         // boundary and epoch 6 enters.
-        deterministic::Runner::default().start(|ctx| async move {
-            let cache = std::sync::Arc::new(tokio::sync::Mutex::new(
-                ValidatorSetCache::init(ctx).await.unwrap(),
-            ));
+        deterministic::Runner::default().start(|_ctx| async move {
             let sink = RecordingSink::default();
             let h = B256::repeat_byte(0x66);
             let resolvable = Arc::new(Mutex::new(true));
@@ -1506,10 +1392,8 @@ mod tests {
             let mut et = EpochTransition::new(
                 MockReader {
                     committee: 5,
-                    undelegate: 7,
                     interval: 100,
                 },
-                cache,
                 sink.clone(),
                 64,
                 None,
@@ -1554,22 +1438,17 @@ mod tests {
         // epoch ≤ committed_to, empty above. soft_enter_span must register exactly
         // [from ..= committed_to], return committed_to, hand back snapshots equal
         // to the boundary-path read, and touch NO EpochTransition state.
-        deterministic::Runner::default().start(|ctx| async move {
-            let cache = std::sync::Arc::new(tokio::sync::Mutex::new(
-                ValidatorSetCache::init(ctx).await.unwrap(),
-            ));
+        deterministic::Runner::default().start(|_ctx| async move {
             let h = B256::repeat_byte(0x9A);
             let committed_to = 5u64;
             let et = EpochTransition::new(
                 PrefixReader {
                     inner: MockReader {
                         committee: 4,
-                        undelegate: 7,
                         interval: 100,
                     },
                     committed_to,
                 },
-                cache,
                 RecordingSink::default(),
                 64,
                 None,
@@ -1577,14 +1456,18 @@ mod tests {
                 3,
             );
 
-            let recorded: Arc<Mutex<Vec<(u64, ValidatorSetSnapshot)>>> = Arc::new(Mutex::new(vec![]));
+            let recorded: Arc<Mutex<Vec<(u64, ValidatorSetSnapshot)>>> =
+                Arc::new(Mutex::new(vec![]));
             let rec = recorded.clone();
             let register = move |epoch: u64, snap: ValidatorSetSnapshot| {
                 rec.lock().unwrap().push((epoch, snap));
             };
             let registered = et.soft_enter_span(2, 8, 500, &register).await;
 
-            assert_eq!(registered, committed_to, "truncates at the committed prefix");
+            assert_eq!(
+                registered, committed_to,
+                "truncates at the committed prefix"
+            );
             let recorded = recorded.lock().unwrap();
             assert_eq!(
                 recorded.iter().map(|(e, _)| *e).collect::<Vec<_>>(),
@@ -1594,17 +1477,20 @@ mod tests {
             // Each handed-back snapshot equals the boundary-path read at the
             // result-final state (read_height_for(500) resolves to `h`).
             for (epoch, snap) in recorded.iter() {
-                let expected = et
-                    .reader
-                    .epoch_committee_snapshot(*epoch, h)
-                    .unwrap();
+                let expected = et.reader.epoch_committee_snapshot(*epoch, h).unwrap();
                 assert_eq!(snap.epoch, expected.epoch);
                 assert_eq!(snap.validators.len(), expected.validators.len());
                 assert_eq!(snap.block_hash, expected.block_hash);
             }
             // Side-effect-free: no ET state advanced.
-            assert_eq!(et.last_tracked_epoch, None, "soft_enter_span advances no epoch state");
-            assert!(!et.has_pending_boundary(), "soft_enter_span parks no boundary");
+            assert_eq!(
+                et.last_tracked_epoch, None,
+                "soft_enter_span advances no epoch state"
+            );
+            assert!(
+                !et.has_pending_boundary(),
+                "soft_enter_span parks no boundary"
+            );
         });
     }
 
@@ -1612,17 +1498,12 @@ mod tests {
     fn soft_enter_span_unresolvable_read_state_registers_nothing() {
         // When the executed tip hasn't reached the result-final read height, the
         // read state is unresolvable → register nothing, return from − 1.
-        deterministic::Runner::default().start(|ctx| async move {
-            let cache = std::sync::Arc::new(tokio::sync::Mutex::new(
-                ValidatorSetCache::init(ctx).await.unwrap(),
-            ));
+        deterministic::Runner::default().start(|_ctx| async move {
             let et = EpochTransition::new(
                 MockReader {
                     committee: 4,
-                    undelegate: 7,
                     interval: 100,
                 },
-                cache,
                 RecordingSink::default(),
                 64,
                 None,
@@ -1635,7 +1516,10 @@ mod tests {
                 *c.lock().unwrap() += 1;
             };
             let registered = et.soft_enter_span(3, 8, 500, &register).await;
-            assert_eq!(registered, 2, "from − 1 when the read state is unresolvable");
+            assert_eq!(
+                registered, 2,
+                "from − 1 when the read state is unresolvable"
+            );
             assert_eq!(*calls.lock().unwrap(), 0, "nothing registered");
         });
     }
@@ -1647,10 +1531,7 @@ mod tests {
         // it is not a boundary). The pre-fix `saturating_sub` underflow classified
         // every pre-activation block as a boundary → `cold_epoch = epoch_e + 1 = 1`,
         // tracking a phantom committee[1] on the sequencer→DPoS migration path.
-        deterministic::Runner::default().start(|ctx| async move {
-            let cache = std::sync::Arc::new(tokio::sync::Mutex::new(
-                ValidatorSetCache::init(ctx).await.unwrap(),
-            ));
+        deterministic::Runner::default().start(|_ctx| async move {
             let sink = RecordingSink::default();
             let (boundary_tx, mut boundary_rx) = tokio::sync::mpsc::channel(8);
             let h = B256::repeat_byte(0x3A);
@@ -1658,12 +1539,10 @@ mod tests {
                 FutureActivationReader {
                     inner: MockReader {
                         committee: 3,
-                        undelegate: 7,
                         interval: 100,
                     },
                     activation: 1000,
                 },
-                cache,
                 sink.clone(),
                 64,
                 Some(boundary_tx),
@@ -1686,7 +1565,9 @@ mod tests {
                 Some(0),
                 "epoch 0 tracked; last_tracked_epoch never prematurely Some(1)"
             );
-            let fired = boundary_rx.try_recv().expect("epoch-0 boundary trigger delivered");
+            let fired = boundary_rx
+                .try_recv()
+                .expect("epoch-0 boundary trigger delivered");
             assert_eq!(fired.0, 0, "the boundary trigger carries epoch 0");
             assert_eq!(fired.1.validators.len(), 3);
         });
@@ -1698,22 +1579,17 @@ mod tests {
         // relative offset of 0 — the exact value the pre-fix underflow mapped to a
         // boundary. It must classify as pre-activation (not a boundary) and bootstrap
         // epoch 0.
-        deterministic::Runner::default().start(|ctx| async move {
-            let cache = std::sync::Arc::new(tokio::sync::Mutex::new(
-                ValidatorSetCache::init(ctx).await.unwrap(),
-            ));
+        deterministic::Runner::default().start(|_ctx| async move {
             let sink = RecordingSink::default();
             let h = B256::repeat_byte(0x3B);
             let mut et = EpochTransition::new(
                 FutureActivationReader {
                     inner: MockReader {
                         committee: 3,
-                        undelegate: 7,
                         interval: 100,
                     },
                     activation: 1000,
                 },
-                cache,
                 sink.clone(),
                 64,
                 None,
@@ -1787,10 +1663,6 @@ mod tests {
             self.gate(at)?;
             self.inner.epoch_committee_snapshot(epoch, at)
         }
-        fn undelegate_period(&self, at: B256) -> Result<u32, ReadError> {
-            self.gate(at)?;
-            self.inner.undelegate_period(at)
-        }
         fn epoch_block_interval(&self, at: B256) -> Result<u32, ReadError> {
             self.gate(at)?;
             self.inner.epoch_block_interval(at)
@@ -1808,7 +1680,6 @@ mod tests {
     fn state_lag_mock() -> MockReader {
         MockReader {
             committee: 5,
-            undelegate: 7,
             interval: 100,
         }
     }
@@ -1841,10 +1712,7 @@ mod tests {
         // ERRORS` ⇒ `shutdown.cancel()`). The hook lives inside a reth-heavy fn
         // (not unit-isolable), so this pins the counted `Err`; the shutdown
         // mapping is cited, not re-simulated.
-        deterministic::Runner::default().start(|ctx| async move {
-            let cache = std::sync::Arc::new(tokio::sync::Mutex::new(
-                ValidatorSetCache::init(ctx).await.unwrap(),
-            ));
+        deterministic::Runner::default().start(|_ctx| async move {
             let materialized = Arc::new(Mutex::new(500u64));
             let reads = Arc::new(Mutex::new(vec![]));
             let mut et = EpochTransition::new(
@@ -1853,7 +1721,6 @@ mod tests {
                     materialized: materialized.clone(),
                     reads,
                 },
-                cache,
                 RecordingSink::default(),
                 64,
                 None,
@@ -1891,10 +1758,7 @@ mod tests {
         // the committee read is DEFERRED (the reader is never even called for the
         // band). Once the materialized head catches up, the next delivery replays
         // the boundary → `EpochAdvanced` (heals).
-        deterministic::Runner::default().start(|ctx| async move {
-            let cache = std::sync::Arc::new(tokio::sync::Mutex::new(
-                ValidatorSetCache::init(ctx).await.unwrap(),
-            ));
+        deterministic::Runner::default().start(|_ctx| async move {
             let best = Arc::new(Mutex::new(500u64));
             let reads = Arc::new(Mutex::new(vec![]));
             let mut et = EpochTransition::new(
@@ -1903,7 +1767,6 @@ mod tests {
                     materialized: best.clone(),
                     reads: reads.clone(),
                 },
-                cache,
                 RecordingSink::default(),
                 64,
                 None,
@@ -1944,10 +1807,7 @@ mod tests {
         // corruption/pruned) → REAL error → counter" are cleanly distinguished.
         // Here the CLOSURE reports materialized (best high ⇒ Ok(Some)) but the
         // reader errors the state read anyway — the error MUST surface, not park.
-        deterministic::Runner::default().start(|ctx| async move {
-            let cache = std::sync::Arc::new(tokio::sync::Mutex::new(
-                ValidatorSetCache::init(ctx).await.unwrap(),
-            ));
+        deterministic::Runner::default().start(|_ctx| async move {
             let closure_best = Arc::new(Mutex::new(700u64));
             let reader_materialized = Arc::new(Mutex::new(500u64));
             let mut et = EpochTransition::new(
@@ -1956,7 +1816,6 @@ mod tests {
                     materialized: reader_materialized,
                     reads: Arc::new(Mutex::new(vec![])),
                 },
-                cache,
                 RecordingSink::default(),
                 64,
                 None,
@@ -1987,10 +1846,7 @@ mod tests {
         // re-poke loop is not unit-isolable — cf. the header-lead test — so this
         // pins the ET park the loop re-pokes; give-up removal is verified in the
         // diff + end-to-end.)
-        deterministic::Runner::default().start(|ctx| async move {
-            let cache = std::sync::Arc::new(tokio::sync::Mutex::new(
-                ValidatorSetCache::init(ctx).await.unwrap(),
-            ));
+        deterministic::Runner::default().start(|_ctx| async move {
             let best = Arc::new(Mutex::new(500u64));
             let mut et = EpochTransition::new(
                 StateLagReader {
@@ -1998,7 +1854,6 @@ mod tests {
                     materialized: best.clone(),
                     reads: Arc::new(Mutex::new(vec![])),
                 },
-                cache,
                 RecordingSink::default(),
                 64,
                 None,
@@ -2035,10 +1890,7 @@ mod tests {
         // hash — the park derives/tracks NOTHING; it only DEFERS. Then, once state
         // materializes, the SAME committee is tracked exactly once (deferred, not
         // skipped).
-        deterministic::Runner::default().start(|ctx| async move {
-            let cache = std::sync::Arc::new(tokio::sync::Mutex::new(
-                ValidatorSetCache::init(ctx).await.unwrap(),
-            ));
+        deterministic::Runner::default().start(|_ctx| async move {
             let best = Arc::new(Mutex::new(500u64));
             let reads = Arc::new(Mutex::new(vec![]));
             let sink = RecordingSink::default();
@@ -2048,7 +1900,6 @@ mod tests {
                     materialized: best.clone(),
                     reads: reads.clone(),
                 },
-                cache,
                 sink.clone(),
                 64,
                 None,
@@ -2060,10 +1911,7 @@ mod tests {
             reads.lock().unwrap().clear();
 
             for n in 596..=599 {
-                assert_eq!(
-                    et.on_finalized(n).await.unwrap(),
-                    TransitionOutcome::Intra
-                );
+                assert_eq!(et.on_finalized(n).await.unwrap(), TransitionOutcome::Intra);
             }
             assert!(
                 reads.lock().unwrap().is_empty(),
@@ -2087,7 +1935,10 @@ mod tests {
                 .iter()
                 .filter(|(e, _)| *e == 6)
                 .count();
-            assert_eq!(epoch6_tracks, 1, "the deferred committee is tracked exactly once");
+            assert_eq!(
+                epoch6_tracks, 1,
+                "the deferred committee is tracked exactly once"
+            );
         });
     }
 
@@ -2097,13 +1948,7 @@ mod tests {
         // honest nodes fed the SAME `best_block_number` sequence and the same
         // deliveries make IDENTICAL park/advance decisions — no non-deterministic
         // input feeds the consensus-relevant outcome.
-        async fn run(
-            ctx: deterministic::Context,
-            best_script: &[u64],
-        ) -> Vec<TransitionOutcome> {
-            let cache = std::sync::Arc::new(tokio::sync::Mutex::new(
-                ValidatorSetCache::init(ctx).await.unwrap(),
-            ));
+        async fn run(best_script: &[u64]) -> Vec<TransitionOutcome> {
             let best = Arc::new(Mutex::new(500u64));
             let mut et = EpochTransition::new(
                 StateLagReader {
@@ -2111,7 +1956,6 @@ mod tests {
                     materialized: best.clone(),
                     reads: Arc::new(Mutex::new(vec![])),
                 },
-                cache,
                 RecordingSink::default(),
                 64,
                 None,
@@ -2126,12 +1970,12 @@ mod tests {
             }
             outcomes
         }
-        deterministic::Runner::default().start(|ctx| async move {
+        deterministic::Runner::default().start(|_ctx| async move {
             // Flat below the read height, then a jump — the two nodes must agree
             // step-for-step (park, park, park, advance).
             let script = [500u64, 500, 500, 600];
-            let a = run(ctx.with_label("node_a"), &script).await;
-            let b = run(ctx.with_label("node_b"), &script).await;
+            let a = run(&script).await;
+            let b = run(&script).await;
             assert_eq!(a, b, "honest nodes park/advance identically");
             assert_eq!(
                 a,
@@ -2192,10 +2036,6 @@ mod tests {
             self.gate(at)?;
             self.inner.epoch_committee_snapshot(epoch, at)
         }
-        fn undelegate_period(&self, at: B256) -> Result<u32, ReadError> {
-            self.gate(at)?;
-            self.inner.undelegate_period(at)
-        }
         fn epoch_block_interval(&self, at: B256) -> Result<u32, ReadError> {
             self.gate(at)?;
             self.inner.epoch_block_interval(at)
@@ -2217,10 +2057,7 @@ mod tests {
     /// floor, and every read fails.
     #[test]
     fn landing_entry_at_production_geometry_reads_inside_the_retention_window() {
-        deterministic::Runner::default().start(|ctx| async move {
-            let cache = std::sync::Arc::new(tokio::sync::Mutex::new(
-                ValidatorSetCache::init(ctx).await.unwrap(),
-            ));
+        deterministic::Runner::default().start(|_ctx| async move {
             let best = Arc::new(Mutex::new(100_000u64));
             let retained_from = Arc::new(Mutex::new(0u64));
             let reads = Arc::new(Mutex::new(vec![]));
@@ -2228,13 +2065,11 @@ mod tests {
                 PrunedStateReader {
                     inner: MockReader {
                         committee: 5,
-                        undelegate: 7,
                         interval: PROD_INTERVAL,
                     },
                     retained_from: retained_from.clone(),
                     reads: reads.clone(),
                 },
-                cache,
                 RecordingSink::default(),
                 64,
                 None,
@@ -2283,18 +2118,13 @@ mod tests {
     /// duplicate landing cannot re-open the pruned window an earlier one closed.
     #[test]
     fn raise_anchor_height_never_lowers_the_floor() {
-        deterministic::Runner::default().start(|ctx| async move {
-            let cache = std::sync::Arc::new(tokio::sync::Mutex::new(
-                ValidatorSetCache::init(ctx).await.unwrap(),
-            ));
+        deterministic::Runner::default().start(|_ctx| async move {
             let h = B256::repeat_byte(0x77);
             let mut et = et(
                 MockReader {
                     committee: 3,
-                    undelegate: 7,
                     interval: 100,
                 },
-                cache,
                 RecordingSink::default(),
                 64,
                 None,
@@ -2316,10 +2146,7 @@ mod tests {
     /// read stays at the result-final height it has always used.
     #[test]
     fn delivered_boundary_still_reads_at_number_minus_k() {
-        deterministic::Runner::default().start(|ctx| async move {
-            let cache = std::sync::Arc::new(tokio::sync::Mutex::new(
-                ValidatorSetCache::init(ctx).await.unwrap(),
-            ));
+        deterministic::Runner::default().start(|_ctx| async move {
             let best = Arc::new(Mutex::new(100_000u64));
             let retained_from = Arc::new(Mutex::new(0u64));
             let reads = Arc::new(Mutex::new(vec![]));
@@ -2327,13 +2154,11 @@ mod tests {
                 PrunedStateReader {
                     inner: MockReader {
                         committee: 5,
-                        undelegate: 7,
                         interval: PROD_INTERVAL,
                     },
                     retained_from: retained_from.clone(),
                     reads: reads.clone(),
                 },
-                cache,
                 RecordingSink::default(),
                 64,
                 None,

@@ -11,7 +11,7 @@ use crate::{
     executed::executed_state_hash,
     order_block::{anchor_order_block, OrderBlock, K},
     scheme::epoch_committee_from_snapshot,
-    slasher::actor::{SharedCacheFallback, SlasherTxSink, StaleEpochFallback},
+    slasher::actor::SlasherTxSink,
     sync_metrics::{SyncMetrics, SyncReason},
     timeouts::ConsensusTimeouts,
     OuterBuilder, SoftEnterCommittees,
@@ -34,7 +34,7 @@ use fluentbase_bls::{
 use fluentbase_p2p::NoopBlocker;
 use fluentbase_staking_reader::{
     reader::{StakingReaderConfig, ValidatorSetSnapshot},
-    EpochTransition, RethStakingStateReader, TransitionOutcome, ValidatorSetCache,
+    EpochTransition, RethStakingStateReader, TransitionOutcome,
 };
 use prometheus_client::metrics::{counter::Counter, family::Family, gauge::Gauge};
 use reth_ethereum_primitives::{Block as RethBlock, EthPrimitives};
@@ -882,21 +882,11 @@ pub struct SharedBeaconPlane {
     /// backup receiver and forwards each catch-up item to the currently-active
     /// `EpochManager`; each promotion `subscribe()`s a fresh receiver.
     pub vote_backup: ResettableForward<VoteBackupItem>,
-    /// The single durable validator-set cache (`vsc-key`/`vsc-val` `prunable::Archive`
-    /// at `<datadir>/dpos/`). Built ONCE by the always-on beacon plane; the per-engine
-    /// `EpochTransition` and the slasher fallback CLONE this `Arc` so there is exactly
-    /// ONE `Archive` over the vsc partitions per process. A second independent handle
-    /// (the old per-`launch` `dpos_cache`) was a dual-writer: one pruned a section the
-    /// other still referenced → `BlobMissing` on `prune` → `track_and_trigger` aborted
-    /// before the boundary handoff → share-gate → finalize-stall. Single owner makes
-    /// that impossible by construction (mutations serialize under the one `Mutex`;
-    /// `persist_final`/`prune` are idempotent, so two ETs sharing it stays consistent).
-    pub cache: Arc<Mutex<ValidatorSetCache<Context>>>,
     /// Committee members observed slashed for equivocation. Written by the plane's
     /// tombstone watcher (the sole writer, riding the finalized-height poller);
-    /// read by every promoted engine's `FluentApp`. Carried here for the same
-    /// reason as `cache`: one instance per process, and the reader must be handed
-    /// the writer's own handle rather than a second empty one.
+    /// read by every promoted engine's `FluentApp`. One instance per process, and
+    /// the reader must be handed the writer's own handle rather than a second
+    /// empty one.
     pub tombstones: crate::slasher::TombstoneSet,
 }
 
@@ -1763,7 +1753,6 @@ impl DposLayer {
             broadcast_mux,
             marshal_mux,
             vote_backup,
-            cache,
             tombstones,
         } = beacon_plane;
         let vote_backup_rx = vote_backup.subscribe().await;
@@ -1854,8 +1843,8 @@ impl DposLayer {
         )?;
         // The legal deep-`Restart` arm reached with an EMPTY archive (archive at/below
         // activation) anchors at `archive_finalized` = genesis until the jump lands, so
-        // it MUST land: an un-landed jump would leave staking reads (§`undelegate_period`
-        // below) pointed at the genesis hash, where a runtime-deployed ChainConfig is
+        // it MUST land: an un-landed jump would leave the staking reads below
+        // pointed at the genesis hash, where a runtime-deployed ChainConfig is
         // codeless → an opaque "evm read call reverted" crash. A populated Restart (real
         // archived finalized block) has no such hazard — the anchor is already readable.
         let empty_archive_requires_landed_jump =
@@ -2128,9 +2117,6 @@ impl DposLayer {
         }
         let (initial_head_num, initial_head_hash) = (head_num, head_hash);
 
-        let undelegate = reader.undelegate_period(latest_finalized_hash)?;
-        let retention =
-            undelegate as u64 + fluentbase_staking_reader::reader::EPOCH_COMMITTEE_RETENTION_MARGIN;
         let initial_epoch_u64 = fluentbase_staking_reader::reader::epoch_of_block(
             latest_finalized,
             interval,
@@ -2158,7 +2144,6 @@ impl DposLayer {
         info!(
             chain_id,
             interval,
-            retention,
             max_committee_size = fluentbase_p2p::constants::MAX_COMMITTEE_SIZE,
             active_validators_length,
             initial_epoch = initial_epoch_u64,
@@ -2188,15 +2173,6 @@ impl DposLayer {
             );
         }
 
-        // `cache` is the ONE process-wide validator-set Archive, owned by the always-on
-        // beacon plane and destructured from `SharedBeaconPlane` above — NOT a second
-        // `ValidatorSetCache::init` over the same `vsc-key`/`vsc-val` partitions (that
-        // dual-writer raised `BlobMissing` on `prune` → finalize-stall). Two consumers
-        // clone it: `EpochTransition` (read+write on the boundary path) and the slasher
-        // (read-only via `SharedCacheFallback`); the one `Mutex` serializes them.
-        let slasher_stale_fallback: Arc<dyn StaleEpochFallback> =
-            Arc::new(SharedCacheFallback(cache.clone()));
-
         // The single `FluentP2P` is built ONCE per process by the node crate's
         // always-on beacon plane (and stays up across the follower↔signer switch);
         // this signer engine consumes a CLONE of that one network's `oracle` plus
@@ -2220,7 +2196,6 @@ impl DposLayer {
         let provider_for_et = provider.clone();
         let mut epoch_transition = EpochTransition::new(
             reader,
-            cache,
             oracle.clone(),
             fluentbase_p2p::constants::MAX_REGISTRY_PEER_SET as usize,
             Some(bridge_tx.clone()),
@@ -2917,7 +2892,6 @@ impl DposLayer {
             slasher_staking_address: staking_address,
             slasher_reader: reader_for_slasher,
             slasher_latest_finalized_hash,
-            slasher_stale_fallback,
             slasher_sink,
             slasher_wal_partition: "slasher-wal".into(),
             seed_journal_partition: SEED_JOURNAL_PARTITION.into(),
@@ -3414,13 +3388,6 @@ impl DposLayer {
             evm_config.clone(),
             staking_config.clone(),
         );
-        let cache = Arc::new(Mutex::new(
-            ValidatorSetCache::init(ctx.with_label("follower_slasher_cache"))
-                .await
-                .wrap_err("failed initializing follower slasher ValidatorSetCache")?,
-        ));
-        let slasher_stale_fallback: Arc<dyn StaleEpochFallback> =
-            Arc::new(SharedCacheFallback(cache));
         let provider_for_finalized = provider.clone();
         let slasher_latest_finalized_hash: Arc<dyn Fn() -> Option<B256> + Send + Sync> =
             Arc::new(move || {
@@ -3668,7 +3635,6 @@ impl DposLayer {
             slasher_staking_address: staking_config.staking_address,
             slasher_reader,
             slasher_latest_finalized_hash,
-            slasher_stale_fallback,
             slasher_sink: Arc::new(NoopSlasherSink),
             slasher_wal_partition: "slasher-wal".into(),
             seed_journal_partition: SEED_JOURNAL_PARTITION.into(),

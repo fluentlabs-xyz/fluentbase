@@ -204,7 +204,7 @@ const SLASHER_MAX_RETRIES: u32 = 30;
 /// TRANSIENT failures (startup races: no finalized hash, RPC/state read error,
 /// scheme/committee not yet registered, storage hiccup) are re-attempted by the
 /// producer; PERMANENT failures (malformed/variant-mismatch evidence, BiMap
-/// divergence, prune-pruned uncached committee) are dropped — retrying the same
+/// divergence, an epoch that was never committed) are dropped — retrying the same
 /// bytes can never succeed.
 enum HandleError {
     Transient(eyre::Report),
@@ -217,87 +217,6 @@ impl HandleError {
     }
     fn permanent(msg: impl Into<String>) -> Self {
         Self::Permanent(eyre::eyre!("{}", msg.into()))
-    }
-}
-
-/// Stale-epoch fallback abstraction.
-///
-/// Trait-object-friendly read view of the cache so the slasher's Config
-/// doesn't need to carry the cache's storage-backend generic. The
-/// production impl (in dpos.rs) wraps an
-/// `Arc<tokio::sync::Mutex<fluentbase_staking_reader::ValidatorSetCache<E>>>`.
-///
-pub trait StaleEpochFallback: Send + Sync + 'static {
-    fn get_by_epoch<'a>(
-        &'a self,
-        epoch: u64,
-    ) -> std::pin::Pin<
-        Box<
-            dyn core::future::Future<
-                    Output = Result<
-                        Option<fluentbase_staking_reader::reader::ValidatorSetSnapshot>,
-                        fluentbase_staking_reader::error::ReadError,
-                    >,
-                > + Send
-                + 'a,
-        >,
-    >;
-}
-
-/// Production wrapper: an `Arc<tokio::sync::Mutex<ValidatorSetCache<E>>>`
-/// that satisfies [`StaleEpochFallback`]. The slasher reads through this
-/// trait object so its `Config` doesn't need to carry the cache's
-/// storage-backend generic. dpos.rs constructs this wrapper over the
-/// same `Arc<Mutex<...>>` instance threaded into `EpochTransition`.
-/// Storage backend usable by [`fluentbase_staking_reader::ValidatorSetCache`]
-/// (`Storage + Metrics + BufferPooler`) AND shareable across the slasher's
-/// async task (the `Send + Sync + 'static` the boxed `get_by_epoch` future
-/// needs). Collapses the otherwise-repeated six-line bound into one name; the
-/// blanket impl makes any qualifying runtime context satisfy it automatically,
-/// so the `dpos.rs` construction site needs no annotation.
-pub trait CacheBackend:
-    commonware_runtime::Storage
-    + commonware_runtime::Metrics
-    + commonware_runtime::BufferPooler
-    + Send
-    + Sync
-    + 'static
-{
-}
-
-impl<T> CacheBackend for T where
-    T: commonware_runtime::Storage
-        + commonware_runtime::Metrics
-        + commonware_runtime::BufferPooler
-        + Send
-        + Sync
-        + 'static
-{
-}
-
-pub struct SharedCacheFallback<EStorage: CacheBackend>(
-    pub Arc<TokioMutex<fluentbase_staking_reader::ValidatorSetCache<EStorage>>>,
-);
-
-impl<EStorage: CacheBackend> StaleEpochFallback for SharedCacheFallback<EStorage> {
-    fn get_by_epoch<'a>(
-        &'a self,
-        epoch: u64,
-    ) -> std::pin::Pin<
-        Box<
-            dyn core::future::Future<
-                    Output = Result<
-                        Option<fluentbase_staking_reader::reader::ValidatorSetSnapshot>,
-                        fluentbase_staking_reader::error::ReadError,
-                    >,
-                > + Send
-                + 'a,
-        >,
-    > {
-        Box::pin(async move {
-            let cache = self.0.lock().await;
-            cache.get_by_epoch(epoch).await
-        })
     }
 }
 
@@ -354,13 +273,12 @@ where
     pub staking_address: Address,
     /// L2 chain id — used to rebuild a verifier scheme (`fluent_namespace`) for
     /// an evidence epoch whose scheme the provider has pruned but whose
-    /// committee the stale fallback still holds (§14).
+    /// committee is still on chain (§14).
     pub chain_id: u64,
     /// Reader for committee resolution (dedicated instance, NOT shared with ET).
     pub reader: R,
     /// Latest finalized hash provider (used as `at` block for snapshot lookup).
     pub latest_finalized_hash: LatestFinalizedHash,
-    pub stale_fallback: Arc<dyn StaleEpochFallback>,
     /// TxPool transport. Production impl wraps signer + pool + provider.
     pub sink: Arc<dyn SlasherTxSink>,
     /// WAL writer half. Producer (`handle`) enqueues
@@ -747,7 +665,6 @@ where
     chain_id: u64,
     reader: R,
     latest_finalized_hash: LatestFinalizedHash,
-    stale_fallback: Arc<dyn StaleEpochFallback>,
     sink: Arc<dyn SlasherTxSink>,
     wal_writer: wal_queue::Writer<E, Vec<u8>>,
     /// WAL reader; consumer side. `Option` so it can be moved into the
@@ -800,7 +717,6 @@ where
             chain_id: cfg.chain_id,
             reader: cfg.reader,
             latest_finalized_hash: cfg.latest_finalized_hash,
-            stale_fallback: cfg.stale_fallback,
             sink: cfg.sink,
             wal_writer: cfg.wal_writer,
             wal_reader: Some(cfg.wal_reader),
@@ -895,10 +811,18 @@ where
         info!("slasher producer exiting");
     }
 
-    /// Resolve an epoch's committee: on-chain at the latest finalized block,
-    /// falling back to the durable cache when the on-chain array is already
-    /// empty. The snapshot is returned alongside the typed committee because
-    /// victim resolution needs the validator addresses the BiMap does not carry.
+    /// Resolve an epoch's committee on-chain at the latest finalized block. The
+    /// snapshot is returned alongside the typed committee because victim
+    /// resolution needs the validator addresses the BiMap does not carry.
+    ///
+    /// There is no second source. This used to fall back to a durable local
+    /// cache when the on-chain array read empty, because the contract pruned old
+    /// committees. It does not any more, so an empty array means the epoch was
+    /// never committed — and the cache could not have answered that either: it
+    /// was written from a FINALIZED snapshot, so a hit implied this node's
+    /// finalized head was already at or past the commit, at which head the
+    /// on-chain read is not empty. Finalized heads never move backwards, so the
+    /// fallback could not change an outcome in any reachable state.
     async fn resolve_committee(
         &self,
         epoch: u64,
@@ -910,20 +834,10 @@ where
         let snap = match self.reader.epoch_committee_snapshot(epoch, head) {
             Ok(s) if !s.validators.is_empty() => s,
             Ok(_) => {
-                // Empty on-chain committee → fall through to durable cache.
-                // A cache read error is transient (storage hiccup); a genuine
-                // miss (prune cursor past the evidence epoch) is permanent.
-                self.stale_fallback
-                    .get_by_epoch(epoch)
-                    .await
-                    .map_err(|e| HandleError::transient(format!("stale cache read failed: {e:?}")))?
-                    .ok_or_else(|| {
-                        HandleError::permanent(format!(
-                            "epoch {epoch} evidence: empty on-chain committee AND \
-                             not in cache (prune cursor advanced past evidence epoch); \
-                             this evidence is unrecoverable"
-                        ))
-                    })?
+                return Err(HandleError::permanent(format!(
+                    "epoch {epoch} evidence: no committee was ever committed for that epoch; \
+                     this evidence is unrecoverable"
+                )))
             }
             // An on-chain read error (RPC / state lookup) is transient.
             Err(e) => {

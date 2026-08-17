@@ -18,7 +18,8 @@
 //! honest mint at `m` byte-identical (players == the committed candidate), so
 //! serving the stored mint at `chain_key_epoch(E)` IS serving the chain's
 //! current key — no player-set comparison, no span proof, and no on-chain
-//! committee reads (whose pruning forced the former async block rung). A newer
+//! committee reads (whose pruning, since retired, forced the former async block
+//! rung). A newer
 //! local mint the chain DECLINED (its epoch's bit is clear — soak v47) is simply
 //! UNUSED; a missed re-mint during downtime (departure-then-backfill, soak
 //! 2026-07-14) is a set bit in the span the node holds no mint for ⇒ refuse.

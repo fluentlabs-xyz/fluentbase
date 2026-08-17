@@ -25,9 +25,7 @@ use fluentbase_p2p::{
     bootstrappers::{classify_spec, load_from_dns, load_from_json_path, BootstrapperSpec},
     FluentP2P, FluentP2PConfig,
 };
-use fluentbase_staking_reader::{
-    reader::RethStakingStateReader, EpochTransition, ValidatorSetCache,
-};
+use fluentbase_staking_reader::{reader::RethStakingStateReader, EpochTransition};
 use reth_chain_state::CanonicalInMemoryState;
 use reth_chainspec::EthChainSpec as _;
 use reth_ethereum_engine_primitives::EthEngineTypes;
@@ -1316,11 +1314,6 @@ where
     // who this node personally caught misbehaving would not.
     let tombstones = fluentbase_consensus::slasher::TombstoneSet::default();
     let (dkg_height_tx, dkg_height_rx) = mpsc::channel::<u64>(256);
-    let cache = Arc::new(Mutex::new(
-        ValidatorSetCache::init(ctx.with_label("beacon_plane_cache"))
-            .await
-            .wrap_err("failed initializing beacon-plane ValidatorSetCache")?,
-    ));
     let et_reader = RethStakingStateReader::new(
         node.provider.clone(),
         node.evm_config.clone(),
@@ -1329,7 +1322,6 @@ where
     let provider_for_et = node.provider.clone();
     let epoch_transition = EpochTransition::new(
         et_reader,
-        cache.clone(), // clone: the ONE Archive is also published into SharedBeaconPlane below
         handles.oracle.clone(),
         fluentbase_p2p::constants::MAX_REGISTRY_PEER_SET as usize,
         None,
@@ -1733,7 +1725,6 @@ where
             broadcast_mux: Arc::new(Mutex::new(broadcast_mux)),
             marshal_mux: Arc::new(Mutex::new(marshal_mux)),
             vote_backup,
-            cache, // the ONE process-wide vsc Archive; signer `launch` clones it (no 2nd opener)
             tombstones,
         },
         live_height,
