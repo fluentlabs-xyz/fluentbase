@@ -110,10 +110,14 @@ pub(crate) fn set_validator<SDK: SharedAPI>(
         .status_accessor()
         .set_checked(sdk, validator_status)?;
     record.changed_at_accessor().set_checked(sdk, changed_at)?;
-    record.first_snapshot_epoch_p1_accessor().set_checked(
-        sdk,
-        changed_at.checked_add(1).ok_or(ExitCode::IntegerOverflow)?,
-    )?;
+    // The reward cursor starts where the validator does. Left at zero, a
+    // validator registered at epoch N would have to walk MAX_EPOCHS_PER_CLAIM
+    // epochs of empty history per call before reaching its first payable
+    // epoch. The delegator side reaches the same floor on read instead
+    // (`delegate_claim_start`, `max(cursor, first)`), because its first epoch
+    // is per delegator-validator pair; an owner has exactly one birth epoch and
+    // it is already known here.
+    record.claimed_at_accessor().set_checked(sdk, changed_at)?;
     storage
         .owner_validators_accessor()
         .entry(validator_owner)

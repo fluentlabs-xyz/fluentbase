@@ -65,11 +65,6 @@ pub struct ValidatorStorage {
     status: StorageU8,
     changed_at: StorageU64,
     claimed_at: StorageU64,
-    /// First initialized snapshot epoch plus one (`0` means no snapshot).
-    ///
-    /// Appended to preserve the existing storage layout while bounding
-    /// historical snapshot lookups.
-    first_snapshot_epoch_p1: StorageU64,
 }
 
 /// Per-epoch validator accounting snapshot.

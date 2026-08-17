@@ -80,11 +80,6 @@ fn compact_storage_matches_solidity_struct_layouts() {
     assert_eq!(validator.status_accessor().offset(), 11);
     assert_eq!(validator.changed_at_accessor().offset(), 3);
     assert_eq!(validator.claimed_at_accessor().slot(), slot + U256::from(1));
-    assert_eq!(
-        validator.first_snapshot_epoch_p1_accessor().slot(),
-        slot + U256::from(1)
-    );
-    assert_eq!(validator.first_snapshot_epoch_p1_accessor().offset(), 16);
 
     assert_eq!(CapCheckpointStorage::SLOTS, 1);
     assert_eq!(<CapCheckpointStorage as StorageLayout>::BYTES, 12);
@@ -5187,6 +5182,82 @@ fn reward_claims_are_bounded_to_one_thousand_epochs() {
             },
         )),
         ERR_INVALID_CLAIM_EPOCH,
+    );
+}
+
+/// A validator that registers at a high epoch starts its reward cursor there,
+/// not at zero. Left at zero the cursor would have to be walked forward
+/// MAX_EPOCHS_PER_CLAIM epochs per call across history the validator did not
+/// exist for, so the first payable epoch would cost hundreds of transactions
+/// that all sum to zero.
+#[test]
+fn a_validator_registered_late_starts_its_reward_cursor_at_registration() {
+    let owner = Address::with_last_byte(0xa0);
+    let genesis = Address::with_last_byte(0x01);
+    let latecomer = Address::with_last_byte(0x02);
+    let activation = DEFAULT_EPOCH_BLOCK_INTERVAL;
+    let mut harness = Harness::new(activation);
+    harness.set_caller(owner);
+    assert_eq!(
+        harness.initialize(owner, vec![genesis], vec![DEFAULT_MIN_VALIDATOR_STAKE], 500),
+        ExitCode::Ok
+    );
+
+    // The genesis validator is the control: its changed_at is 0, so a zero
+    // cursor was always correct for it and must stay zero.
+    assert_eq!(
+        staking_storage()
+            .validators_accessor()
+            .entry(genesis)
+            .claimed_at_accessor()
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        0,
+        "the genesis path is unchanged: changed_at is 0, so the cursor is 0"
+    );
+
+    // Register far enough in that a zero cursor would be unusable.
+    let late_epoch = MAX_EPOCHS_PER_CLAIM * 3;
+    harness.set_block_number(activation + DEFAULT_EPOCH_BLOCK_INTERVAL * late_epoch);
+    harness.set_caller(latecomer);
+    assert_eq!(
+        harness
+            .call(encode_args_call(
+                SIG_REGISTER_VALIDATOR,
+                &RegisterValidatorCommand {
+                    validator: latecomer,
+                    commission_rate: 500,
+                    initial_stake: DEFAULT_MIN_VALIDATOR_STAKE,
+                    bls_pubkey_uncompressed: Bytes::from(vec![
+                        0x33;
+                        BLS_PUBKEY_UNCOMPRESSED_LENGTH
+                    ]),
+                    bls_pop_uncompressed: Bytes::from(vec![0x44; BLS_POP_UNCOMPRESSED_LENGTH]),
+                    peer_pubkey: B256::with_last_byte(2),
+                },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+
+    let record = staking_storage().validators_accessor().entry(latecomer);
+    let changed_at = record
+        .changed_at_accessor()
+        .get_checked(&harness.sdk)
+        .unwrap();
+    assert_eq!(
+        changed_at,
+        late_epoch + 1,
+        "registration lands at next_epoch"
+    );
+    assert_eq!(
+        record
+            .claimed_at_accessor()
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        changed_at,
+        "the cursor starts at registration, so the first claim window covers \
+         the validator's own history instead of the empty epochs before it"
     );
 }
 
