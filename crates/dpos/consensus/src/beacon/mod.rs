@@ -31,5 +31,6 @@ pub mod log_resolver;
 pub mod metrics;
 pub mod outcome;
 pub mod seed;
+pub mod seed_journal;
 pub mod share_state;
 pub mod wire;

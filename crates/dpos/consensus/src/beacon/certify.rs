@@ -81,7 +81,7 @@ use std::{
     collections::BTreeMap,
     sync::{Arc, Mutex},
 };
-use tokio::sync::Notify;
+use tokio::sync::{mpsc, Notify};
 use tracing::{info, warn};
 
 /// Bound on retained `round → seed` entries. The certify gate reads the seed for
@@ -92,7 +92,7 @@ use tracing::{info, warn};
 /// notarizations — evicting it would drop a still-certifiable round and force a
 /// `false` verdict (an unnecessary Nullify). Size the window well past any
 /// realistic in-flight certify backlog so an active round is never evicted.
-const SEED_RETENTION: usize = 4096;
+pub(crate) const SEED_RETENTION: usize = 4096;
 
 /// Shared, bounded `round → recovered seed` map. Written by the notarization
 /// [`Reporter`](commonware_consensus::Reporter) ([`crate::spec_exec::Mailbox`])
@@ -106,18 +106,58 @@ const SEED_RETENTION: usize = 4096;
 /// race, formerly closed by the `SpecNotarized` Poke). `notify_one` stores a
 /// permit even with no waiter, so a record that lands between the executor's
 /// miss lookup and its next await is NOT lost — no lost-notification window.
+///
+/// The map is RAM; [`crate::beacon::seed_journal`] is its durable mirror, and
+/// [`SeedStore::with_persistence`] is how the two are joined at startup. Reads
+/// never touch disk — [`lookup`](SeedStore::lookup) has to stay synchronous
+/// because `certify` and `build_proposal` call it without an await.
 #[derive(Clone)]
 pub struct SeedStore {
     seeds: Arc<Mutex<BTreeMap<Round, BlsSignature>>>,
     notify: Arc<Notify>,
+    /// Durable sink. `None` ⇒ RAM-only, the pre-durability behaviour, which is
+    /// what every test and any config without a journal partition gets.
+    ///
+    /// `UnboundedSender::send` is SYNCHRONOUS and never blocks, which is what
+    /// lets the durable write sit inside [`record`](SeedStore::record) without
+    /// breaking the ORDERING-CRITICAL contract in [`crate::spec_exec`]. That
+    /// contract constrains in-RAM visibility before the same round's certify
+    /// scan; durability is only ever read by a LATER process. Do NOT swap this
+    /// for a bounded channel — `send().await` would put the reporter behind an
+    /// await, which the contract forbids.
+    persist: Option<mpsc::UnboundedSender<(Round, BlsSignature)>>,
 }
 
 impl SeedStore {
-    /// Construct an empty store.
+    /// Construct an empty, RAM-only store.
     pub fn new() -> Self {
         Self {
             seeds: Arc::new(Mutex::new(BTreeMap::new())),
             notify: Arc::new(Notify::new()),
+            persist: None,
+        }
+    }
+
+    /// Construct a store backed by the durable journal, pre-loaded with the
+    /// window replayed from it.
+    ///
+    /// `rehydrated` is inserted directly rather than through
+    /// [`record`](Self::record): those entries came OUT of the journal and must
+    /// not be written back into it. Truncating here preserves the reason
+    /// [`record`] is the only other insertion path — the map cannot exceed
+    /// [`SEED_RETENTION`] by this route either.
+    pub fn with_persistence(
+        rehydrated: Vec<(Round, BlsSignature)>,
+        persist: mpsc::UnboundedSender<(Round, BlsSignature)>,
+    ) -> Self {
+        let mut map: BTreeMap<Round, BlsSignature> = rehydrated.into_iter().collect();
+        while map.len() > SEED_RETENTION {
+            map.pop_first();
+        }
+        Self {
+            seeds: Arc::new(Mutex::new(map)),
+            notify: Arc::new(Notify::new()),
+            persist: Some(persist),
         }
     }
 
@@ -135,7 +175,7 @@ impl SeedStore {
             warn!("beacon certify seed store poisoned; dropping recorded seed");
             return;
         };
-        map.insert(round, seed);
+        let fresh = map.insert(round, seed).is_none();
         while map.len() > SEED_RETENTION {
             // Evict the oldest (lowest-round) entry. `BTreeMap` orders by `Round`, so
             // `pop_first` is the lowest round (matches the `outer.rs` eviction idiom).
@@ -146,6 +186,18 @@ impl SeedStore {
         // just landed). `notify_one` stores a permit if no waiter is parked, so
         // the wakeup survives a record that races the executor's miss→await.
         self.notify.notify_one();
+        // Durable half, strictly AFTER the notify so the wakeup latency is
+        // unchanged, and strictly non-blocking so the reporter never parks.
+        // Only on a fresh insert: a re-report writes the same bytes (the seed is
+        // unique per round), so appending again would only grow the journal. The
+        // notify above stays unconditional, as its own comment requires.
+        if fresh {
+            if let Some(tx) = self.persist.as_ref() {
+                if tx.send((round, seed)).is_err() {
+                    warn!("seed journal writer is gone; seed recorded in memory only");
+                }
+            }
+        }
     }
 
     /// The recovered seed for `round`, if present. `pub`: read by the certify
@@ -767,5 +819,108 @@ mod tests {
             matches!(f1.as_mut().poll(&mut cx), Poll::Ready(())),
             "the parked waiter is woken by the record"
         );
+    }
+
+    // The same two waiter orderings against a PERSISTING store. The durable sink
+    // sits after `notify_one` in `record`, so it must not change either verdict —
+    // if it ever did, the executor's eager-derive arm would silently lose the
+    // record-vs-delivery race that this permit closes.
+    #[test]
+    fn a_persisting_store_still_notifies_without_a_lost_wakeup() {
+        use std::future::Future;
+        use std::task::{Context, Poll};
+
+        let ns = seed_namespace(&fluent_namespace(20994));
+        let (outcome, shares) = deal_committee(1, 5);
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let store = SeedStore::with_persistence(Vec::new(), tx);
+        let notifier = store.notifier();
+        let waker = futures::task::noop_waker();
+        let mut cx = Context::from_waker(&waker);
+
+        let r0 = round_at(0);
+        store.record(r0, recover_seed_for(&outcome, &shares, &ns, r0));
+        let f0 = notifier.notified();
+        futures::pin_mut!(f0);
+        assert!(
+            matches!(f0.as_mut().poll(&mut cx), Poll::Ready(())),
+            "the permit still survives a record with no parked waiter"
+        );
+
+        let f1 = notifier.notified();
+        futures::pin_mut!(f1);
+        assert!(f1.as_mut().poll(&mut cx).is_pending());
+        let r1 = round_at(1);
+        store.record(r1, recover_seed_for(&outcome, &shares, &ns, r1));
+        assert!(
+            matches!(f1.as_mut().poll(&mut cx), Poll::Ready(())),
+            "the parked waiter is still woken by a persisting record"
+        );
+
+        assert_eq!(rx.try_recv().map(|(r, _)| r), Ok(r0));
+        assert_eq!(rx.try_recv().map(|(r, _)| r), Ok(r1));
+        assert!(
+            rx.try_recv().is_err(),
+            "exactly one queued write per record"
+        );
+    }
+
+    // Rehydrated entries came OUT of the journal; writing them back would double
+    // the journal on every restart. Only a genuinely new round is queued, and a
+    // re-report of a round already held is not queued at all (the seed is unique
+    // per round, so the bytes would be identical).
+    #[test]
+    fn rehydrated_entries_are_not_written_back_to_the_journal() {
+        let ns = seed_namespace(&fluent_namespace(20994));
+        let (outcome, shares) = deal_committee(1, 5);
+        let r0 = round_at(0);
+        let seed0 = recover_seed_for(&outcome, &shares, &ns, r0);
+
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let store = SeedStore::with_persistence(vec![(r0, seed0)], tx);
+        assert_eq!(
+            store.lookup(r0),
+            Some(seed0),
+            "rehydrated round is readable"
+        );
+        assert!(
+            rx.try_recv().is_err(),
+            "construction from the journal queues no writes"
+        );
+
+        store.record(r0, seed0);
+        assert!(
+            rx.try_recv().is_err(),
+            "re-recording an already-held round queues no write"
+        );
+
+        let r1 = round_at(1);
+        store.record(r1, recover_seed_for(&outcome, &shares, &ns, r1));
+        assert_eq!(
+            rx.try_recv().map(|(r, _)| r),
+            Ok(r1),
+            "a genuinely new round IS queued"
+        );
+    }
+
+    // The rehydrated map obeys the same bound as `record`'s eviction path, so a
+    // journal window larger than the store's cannot grow it unbounded.
+    #[test]
+    fn rehydration_is_capped_at_the_retention_bound() {
+        let ns = seed_namespace(&fluent_namespace(20994));
+        let (outcome, shares) = deal_committee(1, 5);
+        let over = SEED_RETENTION as u64 + 25;
+        let rehydrated: Vec<_> = (0..over)
+            .map(|v| {
+                let r = round_at(v);
+                (r, recover_seed_for(&outcome, &shares, &ns, r))
+            })
+            .collect();
+
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let store = SeedStore::with_persistence(rehydrated, tx);
+        assert_eq!(store.seeds.lock().unwrap().len(), SEED_RETENTION);
+        assert_eq!(store.lookup(round_at(0)), None, "oldest dropped");
+        assert!(store.lookup(round_at(over - 1)).is_some(), "newest kept");
     }
 }

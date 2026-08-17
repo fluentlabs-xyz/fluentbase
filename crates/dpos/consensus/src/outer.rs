@@ -606,6 +606,12 @@ pub struct OuterBuilder<B, P, BE, D, XC, A, R: slasher::StakingStateRead + Send 
     /// are initialised inside [`OuterBuilder::build`] under the slasher's
     /// own context label.
     pub slasher_wal_partition: String,
+    /// Storage partition for the durable `Round → σ` store that backs the
+    /// [`SeedStore`](crate::beacon::certify::SeedStore). Empty ⇒ the store is
+    /// RAM-only and every consumer misses after a restart, which is what it did
+    /// before the journal existed. The handle is opened and replayed inside
+    /// [`OuterBuilder::build`], under its own context label.
+    pub seed_journal_partition: String,
     /// Evidence-channel bridge to the node's gossip task
     /// ([`slasher::gossip`]). `None` on the follower path, whose slasher is
     /// constructed but never started.
@@ -666,6 +672,11 @@ where
     /// a Phase-3 SafetyHalt (park, keep marshal/RPC alive); not engaged ⇒ a real
     /// crash (abort-all).
     safety_halt: crate::sync_metrics::SafetyHalt,
+    /// The durable seed-journal writer, parked here only so the caller can lift
+    /// it out with [`OuterEngine::take_seed_writer`] before [`OuterEngine::start`]
+    /// consumes `self`. `None` when no journal partition is configured (RAM-only
+    /// seed store — every test, and any node without durability).
+    seed_writer: Option<Handle<()>>,
 }
 
 /// What the OuterEngine supervisor does when the FIRST subsystem handle resolves.
@@ -709,7 +720,23 @@ where
     /// Construct the engine in dependency order:
     /// `buffered + archives + scheme_provider → marshal → executor →
     /// FluentApp → epoch_manager`.
-    pub async fn build<E>(self, context: E) -> eyre::Result<OuterEngine<E, B, P, BE, D, XC, A, R>>
+    ///
+    /// `seed_writer_context` MUST be a SIBLING of `context`, never a clone of
+    /// it. commonware supervision aborts every DESCENDANT of a task's context
+    /// when that task finishes or is aborted (`Spawner::spawn`, "Mandatory
+    /// Supervision"), and `context` is what [`OuterEngine::start`] spawns the
+    /// engine task from. A writer spawned from `context.with_label(..)` would be
+    /// such a descendant, so the `engine.abort()` on the shutdown path would
+    /// kill it in the same beat that drops the store — i.e. exactly when it is
+    /// supposed to be draining its tail to disk — and awaiting it would then
+    /// yield `Err(Error::Closed)` with the tail unwritten. Cloning the LAUNCH
+    /// context instead keeps the writer out of that subtree, so it outlives the
+    /// engine's teardown by the drain it still owes.
+    pub async fn build<E>(
+        self,
+        context: E,
+        seed_writer_context: E,
+    ) -> eyre::Result<OuterEngine<E, B, P, BE, D, XC, A, R>>
     where
         E: BufferPooler + Clock + CryptoRngCore + Spawner + Storage + Metrics + RNetwork + Pacer,
     {
@@ -993,7 +1020,47 @@ where
         // wrapper reads it, and the executor holds a clone for the speculative
         // seed re-canonicalisation. Cross-epoch singleton — created BEFORE the
         // executor (its first consumer below).
-        let seed_store = crate::beacon::certify::SeedStore::new();
+        //
+        // The durable store is opened and REPLAYED here, ahead of the executor,
+        // `FluentApp` and every engine, so no consumer can observe a
+        // half-rehydrated store. It is a singleton with the store it backs: a
+        // second handle over the same partition would be a dual-writer, one of
+        // which prunes a blob the other still holds open.
+        //
+        // The writer task is spawned from `seed_writer_context` — a SIBLING of
+        // `context`, see this method's doc — so that the shutdown drain is
+        // possible at all. The store handle itself stays on `context` (it
+        // spawns nothing; the context is only its `Storage`+`Clock`+`Metrics`
+        // face, so the supervision subtree is irrelevant to it) which keeps its
+        // metric prefix where it was.
+        let mut seed_writer = None;
+        let seed_store = if self.seed_journal_partition.is_empty() {
+            crate::beacon::certify::SeedStore::new()
+        } else {
+            use crate::beacon::{certify::SEED_RETENTION, seed_journal::SeedJournal};
+            let journal = SeedJournal::init(
+                context.with_label("seed_journal"),
+                self.seed_journal_partition.clone(),
+            )
+            .await
+            .map_err(|e| eyre::eyre!("opening the durable seed store: {e}"))?;
+            let rehydrated = journal
+                .replay_window(SEED_RETENTION)
+                .await
+                .map_err(|e| eyre::eyre!("replaying the durable seed store: {e}"))?;
+            info!(
+                entries = rehydrated.len(),
+                "rehydrated the seed store from disk"
+            );
+            let (seed_tx, seed_rx) = tokio::sync::mpsc::unbounded_channel();
+            seed_writer = Some(crate::beacon::seed_journal::spawn_writer(
+                seed_writer_context,
+                journal,
+                seed_rx,
+                SEED_RETENTION as u64,
+            ));
+            crate::beacon::certify::SeedStore::with_persistence(rehydrated, seed_tx)
+        };
 
         // The cross-epoch shared `epoch → PK_epoch` group-key map (§5 b). Same
         // lifetime class as `seed_store`: it must outlive every per-epoch engine
@@ -1204,6 +1271,7 @@ where
             resolver_timeout: self.resolver_timeout,
             resolver_fetch_retry: self.resolver_fetch_retry,
             safety_halt: self.safety_halt,
+            seed_writer,
         })
     }
 }
@@ -1229,6 +1297,21 @@ where
     /// so its feed actor can answer `get_finalization`+`get_block` by height.
     pub fn marshal_mailbox(&self) -> MarshalMailbox {
         self.cert_mailbox.clone()
+    }
+
+    /// Lift out the durable seed-journal writer handle. Call before
+    /// [`OuterEngine::start`] (which consumes `self`) and hand it up to the node
+    /// so the graceful-shutdown path can AWAIT the writer's final drain+sync.
+    ///
+    /// This is emphatically NOT a supervision handle: it resolving means "the
+    /// writer finished the work it owed", whereas a `supervised` handle
+    /// resolving means "a subsystem died, take the node down". Keep them in
+    /// separate carriers — see `DposLayerHandle::drain_on_shutdown`.
+    ///
+    /// `None` when the seed store is RAM-only (no journal partition), in which
+    /// case there is nothing to drain.
+    pub fn take_seed_writer(&mut self) -> Option<Handle<()>> {
+        self.seed_writer.take()
     }
 
     /// Cold-start: register the initial (pre-finalization) scheme.

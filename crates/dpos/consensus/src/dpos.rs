@@ -91,6 +91,20 @@ const PARKED_BOUNDARY_WARN_EVERY: u64 = 150;
 /// itself (`OuterBuilder.partition_prefix`) so the two never drift.
 const MARSHAL_PARTITION_PREFIX: &str = "consensus_marshal";
 
+/// Partition for the durable `Round → σ` store behind the
+/// [`SeedStore`](crate::beacon::certify::SeedStore). Deliberately NOT under
+/// [`MARSHAL_PARTITION_PREFIX`]: this is a Fluent-side store beside the marshal's,
+/// not part of it, and it must stay independently prunable.
+///
+/// Renamed from `beacon-seed-journal` when the backing primitive moved from
+/// `journal::segmented::fixed` to `ordinal::Ordinal`: the two on-disk formats are
+/// incompatible, and pointing at a fresh name lets the retention window simply
+/// refill. That is free ONLY while the data is miss-if-lost — `parent_seed` still
+/// couriers σ in the child block, so a cold seed store costs nothing but a
+/// re-derive. **The next format change after `parent_seed` is removed is NOT
+/// free** and will need a real migration.
+const SEED_JOURNAL_PARTITION: &str = "beacon-seed-ordinal";
+
 /// Reth handles needed by the DPoS layer. The host adapter at
 /// `crates/node/src/dpos.rs` assembles this from `FullNode<N, AddOns>`;
 /// `transaction_pool`, `chain_spec`, and `data_dir` are intentionally
@@ -1655,6 +1669,22 @@ pub struct DposLayerHandle {
     ///
     /// Appended into the host's `Vec<SupervisedHandle>` — same tuple shape.
     pub supervised: Vec<(&'static str, Handle<()>)>,
+    /// Layer-internal tasks the host must LET FINISH on a graceful stop, each
+    /// with the label the host's drain log prints. Today: the durable
+    /// seed-journal writer, whose last act is to append and fsync whatever the
+    /// store queued but had not written yet.
+    ///
+    /// Same tuple shape as `supervised`, OPPOSITE semantics, and the two must
+    /// never be merged: a `supervised` handle resolving means "a subsystem
+    /// died, cancel the node", while one of these resolving means "the task
+    /// finished the work it owed, shutdown may proceed". Putting a drain task
+    /// in `supervised` would make its normal completion look like a crash;
+    /// putting a supervised task here would make its crash look like success.
+    ///
+    /// Every one of these tasks is spawned OUTSIDE the consensus engine's
+    /// supervision subtree, because the host awaits them only AFTER aborting
+    /// that engine — see `crate::outer::OuterBuilder::build`.
+    pub drain_on_shutdown: Vec<(&'static str, Handle<()>)>,
 }
 
 /// Namespace type for the launch entry point.
@@ -2820,7 +2850,7 @@ impl DposLayer {
                 }) as crate::cert_follow::BoundaryFetchFn
             });
 
-        let outer = OuterBuilder {
+        let mut outer = OuterBuilder {
             me: me.clone(),
             // Bug A: no-op the consensus vote/cert-plane blocker (parity with the
             // beacon-resolver NoopBlocker, review [1013]). The simplex batcher's
@@ -2890,6 +2920,7 @@ impl DposLayer {
             slasher_stale_fallback,
             slasher_sink,
             slasher_wal_partition: "slasher-wal".into(),
+            seed_journal_partition: SEED_JOURNAL_PARTITION.into(),
             slasher_evidence: Some(evidence),
 
             feed,
@@ -2897,8 +2928,20 @@ impl DposLayer {
             #[cfg(feature = "dpos-devnet-byzantine")]
             byzantine,
         }
-        .build(ctx.with_label("outer_engine"))
+        // `seed_journal_writer` is cloned off `ctx`, NOT off the `outer_engine`
+        // context: it must be a sibling of the engine task so `engine.abort()`
+        // does not cascade into the writer before it has drained (see
+        // `OuterBuilder::build`).
+        .build(
+            ctx.with_label("outer_engine"),
+            ctx.with_label("seed_journal_writer"),
+        )
         .await?;
+
+        // Lifted out before `start` consumes the engine. Rides up on
+        // `DposLayerHandle::drain_on_shutdown`, NOT on `supervised` — see that
+        // field's doc for why the two must not be conflated.
+        let seed_writer = outer.take_seed_writer();
 
         // Register the initial epoch's BlsScheme so marshal can verify
         // certificates from this epoch before any boundary fires.
@@ -2974,6 +3017,10 @@ impl DposLayer {
             consensus_handle,
             cert_mailbox,
             supervised: vec![("epoch_bridge", epoch_bridge_handle)],
+            drain_on_shutdown: seed_writer
+                .into_iter()
+                .map(|h| ("seed_journal_writer", h))
+                .collect(),
         })
     }
 }
@@ -3557,7 +3604,7 @@ impl DposLayer {
                 }) as crate::cert_follow::BoundaryFetchFn
             });
 
-        let outer = OuterBuilder {
+        let mut outer = OuterBuilder {
             me: me.clone(),
             // Bug A: no-op the blocker on the follower too. The follower spawns no
             // simplex batcher, but it DOES run the marshal cert resolver, whose
@@ -3624,6 +3671,7 @@ impl DposLayer {
             slasher_stale_fallback,
             slasher_sink: Arc::new(NoopSlasherSink),
             slasher_wal_partition: "slasher-wal".into(),
+            seed_journal_partition: SEED_JOURNAL_PARTITION.into(),
             // A follower runs no slasher (built, never started) and registers
             // no evidence channel, so there is nothing to bridge to.
             slasher_evidence: None,
@@ -3633,8 +3681,17 @@ impl DposLayer {
             #[cfg(feature = "dpos-devnet-byzantine")]
             byzantine: None,
         }
-        .build(ctx.with_label("outer_engine"))
+        // Sibling of the engine context, not a child — see the validator path
+        // and `OuterBuilder::build` for why the writer must sit outside the
+        // engine's supervision subtree.
+        .build(
+            ctx.with_label("outer_engine"),
+            ctx.with_label("seed_journal_writer"),
+        )
         .await?;
+
+        // Lifted out before `start_follower` consumes the engine.
+        let seed_writer = outer.take_seed_writer();
 
         // Register the initial epoch's verify-only scheme so the marshal can
         // verify the inlet's certs from cold-start (before any boundary fires).
@@ -3913,6 +3970,10 @@ impl DposLayer {
             consensus_handle,
             cert_mailbox,
             supervised: vec![("cert_inlet", cert_inlet_handle)],
+            drain_on_shutdown: seed_writer
+                .into_iter()
+                .map(|h| ("seed_journal_writer", h))
+                .collect(),
         })
     }
 }

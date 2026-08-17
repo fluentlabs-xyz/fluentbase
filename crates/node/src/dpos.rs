@@ -503,8 +503,68 @@ where
     //    handle, uniform for both modes. On any unexpected exit cancel the shared
     //    token (so reth/main bring everything down) then abort the survivors. ──
     let exit_reason = supervise(&shutdown_token, &mut engine.consensus_handle, supervised).await;
+
+    // ── ORDERING INVARIANT, and it is the entire reason this call sits HERE ──
+    // `supervise` has just aborted the consensus engine. The engine is what owns
+    // the last `SeedStore` clone; dropping it drops the seed record channel's
+    // SENDER, which is what makes the seed-journal writer's `recv()` return
+    // `None` — its cue to append and fsync whatever is still queued and exit.
+    //
+    // So the drain must be awaited AFTER the engine is down. Awaiting it first
+    // would DEADLOCK: the sender would still be alive, `recv()` would never
+    // return `None`, and we would sit here until the timeout every single stop.
+    //
+    // The mirror-image constraint lives in `OuterBuilder::build`: the drain
+    // tasks are spawned from a context OUTSIDE the engine's supervision subtree,
+    // because commonware aborts a task's whole descendant subtree when that task
+    // is aborted — a writer spawned under the engine's context would be killed
+    // by the very `engine.abort()` that is supposed to release it.
+    drain_shutdown_tasks(std::mem::take(&mut engine.drain_on_shutdown)).await;
+
     info!(reason = exit_reason, "node thread exiting");
     Ok(())
+}
+
+/// One graceful-shutdown drain task: a label (for the drain log) + its handle.
+///
+/// Structurally identical to [`SupervisedHandle`] and deliberately a SEPARATE
+/// alias, because the semantics are opposite: a supervised handle resolving
+/// means "a subsystem died, take the node down", while a drain handle resolving
+/// means "this task finished the work it owed, shutdown may proceed". The two
+/// lists must never be merged.
+pub(crate) type DrainHandle = (&'static str, Handle<()>);
+
+/// How long ONE shutdown-drain task gets before the node stops waiting for it.
+/// Bounded on purpose: a wedged writer — a stuck fsync on a dying disk — must
+/// not be able to hang the node's exit. Generous next to the work actually owed
+/// (a final drain is at most a few hundred 68-byte appends plus one fsync per
+/// touched section), so it fires only on a genuinely stuck device.
+const SHUTDOWN_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Let every graceful-shutdown drain task finish, each under its own bounded
+/// timeout, then return regardless.
+///
+/// On timeout we `warn` and proceed rather than refuse to exit: what these tasks
+/// flush is a durability optimisation, and losing a seed-journal tail degrades
+/// to post-restart store MISSES (the pre-durability behaviour), never to a wrong
+/// σ. Hanging the node's shutdown would be the strictly worse failure.
+///
+/// MUST be called only once whatever owns each task's input channel is down —
+/// see the ordering invariant at the call site.
+async fn drain_shutdown_tasks(drains: Vec<DrainHandle>) {
+    for (label, handle) in drains {
+        match tokio::time::timeout(SHUTDOWN_DRAIN_TIMEOUT, handle).await {
+            Ok(Ok(())) => info!(task = label, "shutdown drain finished"),
+            Ok(Err(e)) => {
+                warn!(task = label, error = ?e, "shutdown drain task did not finish cleanly")
+            }
+            Err(_) => warn!(
+                task = label,
+                timeout = ?SHUTDOWN_DRAIN_TIMEOUT,
+                "shutdown drain timed out; exiting without it"
+            ),
+        }
+    }
 }
 
 /// One supervised overlay task: a label (for the exit log) + its abortable
