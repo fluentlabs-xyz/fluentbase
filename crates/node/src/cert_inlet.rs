@@ -19,7 +19,7 @@ use alloy_consensus::Header;
 use alloy_primitives::B256;
 use commonware_runtime::{tokio::Context, Handle, Metrics as _, Spawner as _};
 use fluentbase_consensus::{
-    beacon::keys::{BeaconKeys, BoundaryWalk},
+    beacon::keys::{AgreedKeys, BeaconKeys},
     cert_inlet::LiveFrontierTee,
     CertInlet, CertUpstream as _, CommitteeSource, MarshalMailbox, RethCommitteeSource,
     RotateUpstream,
@@ -84,7 +84,7 @@ pub(crate) fn spawn_cert_inlet<C>(
     committees: C,
     urls: Vec<String>,
     tee: LiveFrontierTee,
-    walk: BoundaryWalk,
+    held_keys: AgreedKeys,
     beacon_keys: BeaconKeys,
 ) -> Handle<()>
 where
@@ -111,7 +111,7 @@ where
         let mut inlet = CertInlet::new(marshal, committees, c)
             .with_tee(tee)
             .with_rotate(rotate)
-            .with_boundary_walk(walk)
+            .with_held_keys(held_keys)
             .with_beacon_keys(beacon_keys)
             .with_connection_token(conn_gen);
         info!("cert-inlet SHADOW producer started");

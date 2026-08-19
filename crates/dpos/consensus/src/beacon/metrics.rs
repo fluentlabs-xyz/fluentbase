@@ -34,10 +34,10 @@ pub struct BeaconMetrics {
     /// out of the epoch's committee (`RotatedOut`).
     pub engine_demoted_rotated_out: Counter,
     /// A would-be signer was demoted to verify-only by the promote VALUE-gate:
-    /// its locally-resolved `PK_epoch` differs from the network-attested key
-    /// (W4 observed-outcome entry / the finalized boundary block's own
-    /// `beacon_outcome`). Non-zero = a diverged local key reconstruction was
-    /// caught before it could sign/publish (soak 2026-07-14 class).
+    /// its locally-resolved `PK_epoch` differs from the quorum-attested key (the
+    /// agreement artifact's entry). Non-zero = a diverged local key
+    /// reconstruction was caught before it could sign/publish (soak 2026-07-14
+    /// class).
     pub engine_demoted_key_divergence: Counter,
     /// A would-be signer was demoted to verify-only by the promote SHARE-gate: its
     /// resolved DKG share does not verify against its own sharing. Distinct from
@@ -86,12 +86,71 @@ pub struct BeaconMetrics {
     /// non-zero means such a dead engine was detected and revived (or the engine
     /// exited early for any other reason). 0 on a healthy chain.
     pub engine_respawned: Counter,
+    /// Dealer logs this node held, body-checked, that the AGREED pinned set left
+    /// out. Observability only — the agreement's acceptance predicate must never
+    /// read local state, so this counter influences no vote. A rare non-zero is a
+    /// delivery race (the proposer had not received that log yet); a persistent
+    /// non-zero on one target epoch is a proposer systematically dropping
+    /// entries, which is the only signal that separates the two.
+    pub dkg_agree_logs_omitted: Counter,
+    /// An agreement instance held a finalization certificate and never obtained the
+    /// body it names, so it tore itself down without producing an artifact. The
+    /// restart case: the certificate is journaled, the body buffer is in memory
+    /// only, and no live sender re-broadcasts a decided proposal. Non-zero means
+    /// that target epoch has to re-agree on a fresh instance.
+    pub dkg_agree_body_lost: Counter,
+    /// Target epochs whose agreement could not propose because too few members had
+    /// confirmed they hold the pinned dealer logs. Counted once per epoch per
+    /// reason, beside the warn that names which of the two it was: below the
+    /// quorum the members are genuinely absent, between quorum and the bar the
+    /// epoch starts on its own at the margin release view. Never fatal — the plane
+    /// keeps trying.
+    pub dkg_agree_bar_unmet: Counter,
+    /// Artifact requests this node answered with the artifact itself.
+    pub dkg_artifact_served: Counter,
+    /// Artifact requests this node answered `NotYet`. The NORMAL answer for most
+    /// of an epoch — a peer asking before the target's plane has converged — so a
+    /// high count is not a fault on its own; read it against `served`.
+    pub dkg_artifact_not_yet: Counter,
+    /// Served artifacts refused as proven misbehaviour: bytes that do not decode,
+    /// an answer about another epoch, or a certificate that fails against
+    /// `committee[epoch]`. The ONLY path that costs a peer its standing on this
+    /// engine (commonware's resolver `excluded` set has no removal path), so a
+    /// non-zero here is a real accusation and should be rare.
+    pub dkg_artifact_rejected: Counter,
+    /// Served artifacts this node could not CHECK, because `committee[epoch]` was
+    /// not readable — dropped without storing and without blaming the peer. A
+    /// property of this node's chain view, not of the artifact.
+    pub dkg_artifact_unverifiable: Counter,
+    /// Pulls that ended with nobody answering inside the window. This is the
+    /// exhausted one-pass walk, surfaced instead of the resolver's silent
+    /// unbounded retry.
+    pub dkg_artifact_pull_exhausted: Counter,
 }
 
 impl BeaconMetrics {
     /// Register every counter on the commonware registry. Call once, against the
     /// launch context (mirrors `executor.rs`'s `pending_finalizations` gauge).
     pub fn register(&self, ctx: &impl Metrics) {
+        ctx.register(
+            "dkg_agree_body_lost_total",
+            "Agreement instances that certified a payload whose body never arrived, so no \
+             artifact was produced and the target epoch must re-agree.",
+            self.dkg_agree_body_lost.clone(),
+        );
+        ctx.register(
+            "dkg_agree_bar_unmet_total",
+            "Target epochs whose agreement could not propose because too few members confirmed \
+             they hold the pinned dealer logs (once per epoch per reason). The plane keeps \
+             trying; the paired warn says whether the quorum or only the margin was missing.",
+            self.dkg_agree_bar_unmet.clone(),
+        );
+        ctx.register(
+            "dkg_agree_logs_omitted_total",
+            "Body-checked dealer logs this node held that the agreed pinned set omitted. \
+             Vote-neutral; a persistent non-zero means a censoring proposer.",
+            self.dkg_agree_logs_omitted.clone(),
+        );
         ctx.register(
             "beacon_seed_active_total",
             "Blocks whose prev_randao was the verified threshold seed.",
@@ -160,6 +219,35 @@ impl BeaconMetrics {
             "Ceremonies that reached their settle deadline unqualified and deferred to the \
              epoch boundary (once per epoch per reason).",
             self.dkg_finalize_deferred.clone(),
+        );
+        ctx.register(
+            "dpos_dkg_artifact_served_total",
+            "Agreement-artifact requests answered with the artifact.",
+            self.dkg_artifact_served.clone(),
+        );
+        ctx.register(
+            "dpos_dkg_artifact_not_yet_total",
+            "Agreement-artifact requests answered NotYet (the target epoch has not converged \
+             here yet). The normal answer for most of an epoch, not a fault.",
+            self.dkg_artifact_not_yet.clone(),
+        );
+        ctx.register(
+            "dpos_dkg_artifact_rejected_total",
+            "Served artifacts refused as proven misbehaviour (undecodable, wrong epoch, or a \
+             certificate that fails against committee[epoch]). The only path that costs a peer \
+             its standing on this engine.",
+            self.dkg_artifact_rejected.clone(),
+        );
+        ctx.register(
+            "dpos_dkg_artifact_unverifiable_total",
+            "Served artifacts dropped unchecked because committee[epoch] was not readable here. \
+             A property of this node's chain view, never a verdict on the peer.",
+            self.dkg_artifact_unverifiable.clone(),
+        );
+        ctx.register(
+            "dpos_dkg_artifact_pull_exhausted_total",
+            "Artifact pulls that ended with no peer answering inside the window.",
+            self.dkg_artifact_pull_exhausted.clone(),
         );
         ctx.register(
             "epoch_engine_respawned_total",

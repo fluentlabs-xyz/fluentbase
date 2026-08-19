@@ -69,7 +69,7 @@ pub enum CarryVerdict {
 /// outer is "the chain could not be read, retry later" and the inner is "this
 /// epoch predates the beacon entirely". Conflating them turns a transient into a
 /// permanent verdict.
-pub fn chain_key_epoch(epoch: u64, dkg_qual: &DkgQualFor) -> Option<Option<u64>> {
+pub(crate) fn chain_key_epoch(epoch: u64, dkg_qual: &DkgQualFor) -> Option<Option<u64>> {
     if epoch < DETERMINISTIC_BOOTSTRAP_EPOCH {
         return Some(None); // seedless pre-beacon epochs — nothing to serve
     }
@@ -109,7 +109,7 @@ pub fn select_carry_scheme(
 /// read. The committee leg answers only whether the epoch exists on-chain yet —
 /// a committee read fault reports `false` (not yet committed), which is the same
 /// undecided outcome by a different route.
-pub type DkgQualProbe = Arc<dyn Fn(u64, B256) -> Option<(bool, bool)> + Send + Sync>;
+pub(crate) type DkgQualProbe = Arc<dyn Fn(u64, B256) -> Option<(bool, bool)> + Send + Sync>;
 
 /// Build the FROZEN [`DkgQualFor`] reader over a chain-state probe.
 ///

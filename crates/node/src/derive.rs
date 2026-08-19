@@ -724,8 +724,6 @@ mod tests {
             )),
             result: B256::ZERO,
             txs: vec![signed_transfer(&signer, 0), signed_transfer(&signer, 7)],
-            beacon_outcome: None,
-            dkg_logs: Vec::new(),
             parent_seed: None,
             // Consensus-only: the evidence stays off the EVM path, and this test
             // asserts below that the header still carries the verdict without it.
@@ -1441,8 +1439,8 @@ mod tests {
         use commonware_consensus::types::{Epoch, Round, View};
         use commonware_cryptography::bls12381::{dkg::deal_anonymous, primitives::variant::MinSig};
         use commonware_utils::{test_rng, N3f1, NZU32};
-        use fluentbase_bls::beacon::{recover_seed, sign_seed_partial};
-        use fluentbase_consensus::beacon::seed::{prev_randao_from_seed, seed_namespace};
+        use fluentbase_bls::beacon::{recover_seed, seed_namespace, sign_seed_partial};
+        use fluentbase_consensus::beacon::seed::prev_randao_from_seed;
 
         let mut rng = test_rng();
         let (sharing, shares) =

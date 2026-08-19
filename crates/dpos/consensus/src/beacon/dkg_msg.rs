@@ -14,6 +14,15 @@
 //! - `Ack` — a player's acknowledgement of a dealer's commitment+share.
 //! - `Reveal` — a dealer's signed log (public reveal for un-acked players).
 //!
+//! One variant is NOT a Joint-Feldman step: `Confirm` carries a
+//! [`crate::beacon::dkg_agree::ShareConfirm`], a member's signed statement of which
+//! dealer logs it holds with the body checked. It rides this envelope because it is
+//! addressed to the same committee over the same channel, but it is consumed by the
+//! epoch-key agreement plane and never by a ceremony — the actor intercepts it
+//! before any ceremony dispatch. Its `ceremony_epoch` framing is UNSIGNED, which is
+//! why the confirmation signs its own `target_epoch`: it is lifted out of this
+//! envelope into an agreement proposal, where the framing does not travel with it.
+//!
 //! DKG-log RECOVERY (a mid-window-restarted member re-fetching never-received dealer
 //! logs) is NOT a body here — it rides the `commonware_resolver::p2p` engine on
 //! `BEACON_RESOLVER_CHANNEL`, keyed by `{epoch, dealer}` (see
@@ -31,23 +40,26 @@ use commonware_cryptography::{
 };
 use core::mem::size_of;
 use fluentbase_bls::PeerPubkey;
+
+use crate::beacon::dkg_agree::ShareConfirm;
 use std::num::NonZeroU32;
 
 const TAG_COMMITMENT: u8 = 0;
 const TAG_SHARE: u8 = 1;
 const TAG_ACK: u8 = 2;
 const TAG_REVEAL: u8 = 3;
+const TAG_CONFIRM: u8 = 4;
 
 /// A dealer's public commitment broadcast.
-pub type DealerCommitment = DealerPubMsg<MinSig>;
+pub(crate) type DealerCommitment = DealerPubMsg<MinSig>;
 /// A player's acknowledgement of a dealer.
 pub type Ack = PlayerAck<PeerPubkey>;
 /// A dealer's signed log (the public reveal for un-acked players).
-pub type DealerReveal = SignedDealerLog<MinSig, Ed25519PrivateKey>;
+pub(crate) type DealerReveal = SignedDealerLog<MinSig, Ed25519PrivateKey>;
 
 /// One DKG ceremony protocol message.
 #[derive(Clone, Debug)]
-pub enum DkgBody {
+pub(crate) enum DkgBody {
     // Commitment + Reveal carry the (large) commitment polynomial / signed log;
     // boxed so the enum isn't sized to the largest variant (clippy
     // `large_enum_variant`).
@@ -55,12 +67,15 @@ pub enum DkgBody {
     Share(DealerPrivMsg),
     Ack(Ack),
     Reveal(Box<DealerReveal>),
+    /// A member's signed statement of the dealer logs it holds body-checked — the
+    /// count the epoch-key agreement's entry bar reads. Not ceremony traffic.
+    Confirm(ShareConfirm),
 }
 
 /// A DKG message tagged with the ceremony epoch it belongs to (the epoch-tag
 /// filter the actor uses to drop stale / cross-ceremony traffic).
 #[derive(Clone, Debug)]
-pub struct DkgMsg {
+pub(crate) struct DkgMsg {
     pub ceremony_epoch: u64,
     pub body: DkgBody,
 }
@@ -88,6 +103,10 @@ impl Write for DkgMsg {
                 TAG_REVEAL.write(buf);
                 m.write(buf);
             }
+            DkgBody::Confirm(m) => {
+                TAG_CONFIRM.write(buf);
+                m.write(buf);
+            }
         }
     }
 }
@@ -101,6 +120,7 @@ impl EncodeSize for DkgMsg {
                 DkgBody::Share(m) => m.encode_size(),
                 DkgBody::Ack(m) => m.encode_size(),
                 DkgBody::Reveal(m) => m.encode_size(),
+                DkgBody::Confirm(m) => m.encode_size(),
             }
     }
 }
@@ -124,6 +144,7 @@ impl Read for DkgMsg {
             TAG_REVEAL => {
                 DkgBody::Reveal(Box::new(SignedDealerLog::read_cfg(buf, committee_size)?))
             }
+            TAG_CONFIRM => DkgBody::Confirm(ShareConfirm::read_cfg(buf, &())?),
             _ => return Err(Error::Invalid("dkg_msg", "unknown DKG message tag")),
         };
         Ok(DkgMsg {
@@ -228,6 +249,39 @@ mod tests {
             },
             n,
         );
+    }
+
+    /// The fifth variant is not a ceremony step, and its framing is exactly why
+    /// the confirmation signs its own epoch: `ceremony_epoch` here is plain bytes
+    /// that a relay could rewrite and that does not travel with the confirmation
+    /// once it is lifted into an agreement proposal.
+    #[test]
+    fn confirm_variant_round_trips() {
+        let mut rng = StdRng::seed_from_u64(19);
+        let key = Ed25519PrivateKey::random(&mut rng);
+        let pool = crate::beacon::dkg_agree::ConfirmPool::new(b"FLUENT_TEST_MSG");
+        let confirm = ShareConfirm::sign(
+            pool.namespace(),
+            &key,
+            2,
+            11,
+            vec![
+                (0, alloy_primitives::B256::repeat_byte(0xAA)),
+                (3, alloy_primitives::B256::repeat_byte(0xBB)),
+            ],
+        );
+        let msg = DkgMsg {
+            ceremony_epoch: 11,
+            body: DkgBody::Confirm(confirm.clone()),
+        };
+        assert_round_trips(&msg, NZU32!(4));
+
+        let encoded = msg.encode();
+        let decoded = DkgMsg::read_cfg(&mut encoded.as_ref(), &NZU32!(4)).expect("decode");
+        match decoded.body {
+            DkgBody::Confirm(back) => assert_eq!(back, confirm),
+            other => panic!("the confirm tag decoded as {other:?}"),
+        }
     }
 
     #[test]

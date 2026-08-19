@@ -1025,7 +1025,7 @@ mod watchdog_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{beacon::seed::GroupPublic, digest::Digest, order_block::OrderBlock};
+    use crate::{digest::Digest, order_block::OrderBlock};
     use alloy_primitives::{Address, Bytes};
     use commonware_codec::DecodeExt as _;
     use commonware_consensus::{
@@ -1036,6 +1036,7 @@ mod tests {
     use commonware_math::algebra::Random as _;
     use commonware_runtime::{deterministic, Runner as _};
     use commonware_utils::{ordered::BiMap, TryCollect as _};
+    use fluentbase_bls::beacon::GroupPublic;
     use fluentbase_bls::{
         fluent_namespace, keys::ValidatorBlsKeypair, scheme::build_signer, BlsPubkey, PeerPubkey,
         Scheme as BlsScheme,
@@ -1093,8 +1094,6 @@ mod tests {
             extra_data: Bytes::new(),
             result,
             txs: Vec::new(),
-            beacon_outcome: None,
-            dkg_logs: Vec::new(),
             parent_seed: None,
             equivocation: None,
         }

@@ -75,8 +75,9 @@ pub fn parse_txt_record(record: &str) -> eyre::Result<Bootstrapper<PeerPubkey>> 
     })?;
     let bytes = commonware_utils::from_hex_formatted(pubkey_hex.trim())
         .ok_or_else(|| eyre::eyre!("bootstrapper TXT record {record:?} has a non-hex pubkey"))?;
-    let pk = PeerPubkey::decode(bytes.as_slice())
-        .map_err(|e| eyre::eyre!("bootstrapper TXT record {record:?} pubkey decode failed: {e:?}"))?;
+    let pk = PeerPubkey::decode(bytes.as_slice()).map_err(|e| {
+        eyre::eyre!("bootstrapper TXT record {record:?} pubkey decode failed: {e:?}")
+    })?;
     let ingress = parse_ingress(addr.trim())
         .map_err(|e| eyre::eyre!("bootstrapper TXT record {record:?} address parse failed: {e}"))?;
     Ok((pk, ingress))
@@ -178,7 +179,11 @@ async fn resolve_txt(
     let mut out = Vec::new();
     for txt in lookup.iter() {
         // A TXT RR is a sequence of character-strings; concatenate them.
-        let joined: Vec<u8> = txt.txt_data().iter().flat_map(|s| s.iter().copied()).collect();
+        let joined: Vec<u8> = txt
+            .txt_data()
+            .iter()
+            .flat_map(|s| s.iter().copied())
+            .collect();
         let record = String::from_utf8_lossy(&joined);
         match parse_txt_record(&record) {
             Ok(bootstrapper) => out.push(bootstrapper),
@@ -301,7 +306,10 @@ mod tests {
         let hex = hex::encode(sk.public_key().encode().as_ref());
         let json = format!(r#"[{{"peer_pubkey":"0x{hex}","socket":"validator-3:9000"}}]"#);
         let dir = std::env::temp_dir();
-        let path = dir.join(format!("bootstrappers_test_dns_{}.json", std::process::id()));
+        let path = dir.join(format!(
+            "bootstrappers_test_dns_{}.json",
+            std::process::id()
+        ));
         std::fs::write(&path, json).unwrap();
 
         let loaded = load_from_json_path(&path).expect("dns socket");
@@ -433,7 +441,10 @@ mod tests {
             Err::<Vec<Bootstrapper<PeerPubkey>>, _>(eyre::eyre!("simulated SERVFAIL"))
         })
         .await;
-        assert!(out.is_empty(), "lookup failure must yield an empty list, not an error");
+        assert!(
+            out.is_empty(),
+            "lookup failure must yield an empty list, not an error"
+        );
     }
 
     #[tokio::test]
@@ -443,8 +454,7 @@ mod tests {
             max: Duration::from_millis(0),
             window: Duration::from_millis(0),
         };
-        let out =
-            drive_txt_retry("seed.soak.local", schedule, || async { Ok(Vec::new()) }).await;
+        let out = drive_txt_retry("seed.soak.local", schedule, || async { Ok(Vec::new()) }).await;
         assert!(out.is_empty());
     }
 

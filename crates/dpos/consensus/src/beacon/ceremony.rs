@@ -21,6 +21,7 @@
 //! `Player::finalize` is intentionally DEFERRED to [`finalize`] (the boundary),
 //! never over a locally-selected `Q` mid-flight.
 
+use crate::beacon::dkg_agree::PinnedDerive;
 use crate::beacon::dkg_msg::{Ack, DealerCommitment, DealerReveal, DkgBody, DkgMsg};
 use crate::beacon::share_state::JournalRecord;
 use alloy_primitives::{keccak256, B256};
@@ -44,7 +45,7 @@ use rand_core::CryptoRngCore;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// The agreed group output of a finished ceremony (`PK_E` + public polynomial).
-pub type CeremonyOutput = Output<MinSig, PeerPubkey>;
+pub(crate) type CeremonyOutput = Output<MinSig, PeerPubkey>;
 
 /// Where an outgoing ceremony message is sent.
 #[derive(Clone, Debug)]
@@ -57,7 +58,7 @@ pub enum Target {
 
 /// A ceremony message paired with its delivery target.
 #[derive(Clone, Debug)]
-pub struct Outgoing {
+pub(crate) struct Outgoing {
     pub target: Target,
     pub msg: DkgMsg,
 }
@@ -65,7 +66,7 @@ pub struct Outgoing {
 /// What one ceremony step produced: outgoing messages to broadcast/send AND the
 /// durable [`JournalRecord`]s the actor appends so a restart can `resume` (§8.11.1).
 #[derive(Default)]
-pub struct Step {
+pub(crate) struct Step {
     pub outgoing: Vec<Outgoing>,
     pub journal: Vec<JournalRecord>,
 }
@@ -113,13 +114,13 @@ impl Step {
 ///   iff we had already sealed, our journaled own log re-broadcast VERBATIM. A node that
 ///   crashed BEFORE sealing sits out as one of the ≤f tolerated absent dealers — the
 ///   ceremony still finalizes on the n−f survivors and we recover our SHARE as a player.
-pub struct Resumed {
+pub(crate) struct Resumed {
     pub ceremony: DkgCeremony,
     pub outgoing: Vec<Outgoing>,
 }
 
 /// One node's live DKG ceremony for a single epoch.
-pub struct DkgCeremony {
+pub(crate) struct DkgCeremony {
     epoch: u64,
     info: Info<MinSig, PeerPubkey>,
     /// This node's dealer (consumed by `seal_dealings`).
@@ -187,7 +188,7 @@ pub(crate) fn info_for(
 /// peers); records that fail `check` are dropped. A bad committee/namespace surfaces as
 /// `Err` so the caller declines to serve (retry-elsewhere), never serving un-verifiable
 /// logs.
-pub fn checked_serve_map(
+pub(crate) fn checked_serve_map(
     namespace: &[u8],
     epoch: u64,
     committee: Set<PeerPubkey>,
@@ -380,6 +381,10 @@ impl DkgCeremony {
                 }
                 step
             }
+            // A share-confirmation is not ceremony traffic: it is consumed by the
+            // epoch-key agreement plane, and the actor intercepts it before this
+            // dispatch. Present so the match stays exhaustive over the envelope.
+            DkgBody::Confirm(_) => Step::default(),
         }
     }
 
@@ -862,8 +867,8 @@ impl DkgCeremony {
     }
 
     /// The content hash `keccak256(encode(SignedDealerLog))` of the recorded log for
-    /// `dealer`, if held — the deterministic INDEX over the recorded bodies that
-    /// rides `OrderBlock.dkg_logs` (AMENDMENT 5). `None` if not recorded.
+    /// `dealer`, if held — the deterministic INDEX over the recorded bodies the
+    /// agreement plane proposes over. `None` if not recorded.
     pub fn signed_log_hash(&self, dealer: &PeerPubkey) -> Option<B256> {
         self.signed_logs.get(dealer).map(|s| keccak256(s.encode()))
     }
@@ -872,11 +877,12 @@ impl DkgCeremony {
     /// set (AMENDMENT 5 determinism core): for each `(idx, hash)` in `pinned` map
     /// `idx → committee[idx]` (position order — the agreed on-chain committee), and
     /// include our recorded signed log for that dealer IFF its CONTENT HASH matches
-    /// `hash` (content-addressed: a mismatched/absent body is DROPPED and
-    /// `all_held=false`, so every honest node fetches the SAME pinned bytes and
-    /// selects over the IDENTICAL set → identical `PK_E`). Returns `(scoped_logs,
-    /// all_held)`; `all_held=false` ⇒ a pinned body is MISSING OR MISMATCHED (the
-    /// caller WAITS, never subset-finalizes — the resolver fetches it).
+    /// `hash` (content-addressed: a mismatched/absent body is DROPPED and its `idx`
+    /// reported, so every honest node fetches the SAME pinned bytes and selects over
+    /// the IDENTICAL set → identical `PK_E`). Returns `(scoped_logs, missing)`; a
+    /// non-empty `missing` ⇒ those seats' pinned bodies are MISSING OR MISMATCHED
+    /// (the caller WAITS, never subset-finalizes — the resolver fetches exactly
+    /// those).
     ///
     /// An idx with no position in `committee` is a different case and is SKIPPED, not
     /// counted against `all_held`: nothing can ever satisfy it, because the resolver
@@ -893,9 +899,9 @@ impl DkgCeremony {
         &self,
         committee: &Set<PeerPubkey>,
         pinned: &BTreeMap<u8, B256>,
-    ) -> (Logs<MinSig, PeerPubkey, N3f1>, bool) {
+    ) -> (Logs<MinSig, PeerPubkey, N3f1>, Vec<u8>) {
         let mut logs = Logs::<MinSig, PeerPubkey, N3f1>::new(self.info.clone());
-        let mut all_held = true;
+        let mut missing = Vec::new();
         for (idx, hash) in pinned {
             let Some(pk) = committee.iter().nth(*idx as usize) else {
                 continue; // unmappable idx — deterministic skip, see the docstring
@@ -907,13 +913,13 @@ impl DkgCeremony {
                     if let Some((cpk, log)) = signed.clone().check(&self.info) {
                         logs.record(cpk, log);
                     } else {
-                        all_held = false;
+                        missing.push(*idx);
                     }
                 }
-                _ => all_held = false, // missing OR a different body than the pinned hash
+                _ => missing.push(*idx), // missing OR a different body than the pinned hash
             }
         }
-        (logs, all_held)
+        (logs, missing)
     }
 
     /// Non-destructive AM5 finalize probe over the PINNED set: `(ready, all_held)`.
@@ -929,10 +935,56 @@ impl DkgCeremony {
         committee: &Set<PeerPubkey>,
         pinned: &BTreeMap<u8, B256>,
     ) -> (bool, bool) {
-        let (logs, all_held) = self.scoped_pinned_logs(committee, pinned);
+        let (logs, missing) = self.scoped_pinned_logs(committee, pinned);
         let ready =
             observe::<MinSig, PeerPubkey, N3f1, ed25519::Batch>(rng, logs, &Sequential).is_ok();
-        (ready, all_held)
+        (ready, missing.is_empty())
+    }
+
+    /// The public half of the ceremony over EXACTLY `pinned` — the ceremony-side
+    /// half of [`crate::beacon::dkg_agree::PinnedLogs`].
+    ///
+    /// The arms are not interchangeable and the split is safety-critical: only
+    /// [`PinnedDerive::Unusable`] is a property of the pinned set itself, and it is
+    /// reached ONLY with every named body in hand. A body this node has not received
+    /// is [`PinnedDerive::Missing`] naming exactly the seats to fetch, never
+    /// `Unusable` — the agreement's `verify` turns `Unusable` into a nullified view
+    /// for the whole network, and a node-local delivery gap must never cost that.
+    /// The caller supplies the [`PinnedDerive::Unavailable`] arm for the cases that
+    /// never reach a ceremony at all.
+    ///
+    /// `rng` feeds verification only (batched ack check, reveal recombination,
+    /// dealer sampling), so the derived key is a pure function of `pinned` — which
+    /// is what lets the agreement carry it as a checkable field.
+    ///
+    /// An `idx` with no position in `committee` answers `Unavailable` HERE, where
+    /// [`scoped_pinned_logs`](Self::scoped_pinned_logs) silently skips it. The two
+    /// contracts differ because the callers do: on the ordering plane the pinned
+    /// set is already agreed and the skip is what stops one unmappable index from
+    /// wedging the ceremony forever, whereas here the set is a CANDIDATE and the
+    /// skip would let `Unusable` — a `verify → false`, i.e. a nullified view for
+    /// the whole network — be returned over a body this node never examined. The
+    /// two roster reads are independent (`committee` here is the caller's
+    /// `committee_for(epoch)`; the agreement's own structural bound counts seats
+    /// off the roster baked in at spawn), so they CAN disagree, and a disagreement
+    /// is a property of this node, not of the proposal.
+    pub fn derive_pinned<R: CryptoRngCore>(
+        &self,
+        rng: &mut R,
+        committee: &Set<PeerPubkey>,
+        pinned: &BTreeMap<u8, B256>,
+    ) -> PinnedDerive {
+        if pinned.keys().any(|idx| *idx as usize >= committee.len()) {
+            return PinnedDerive::Unavailable;
+        }
+        let (logs, missing) = self.scoped_pinned_logs(committee, pinned);
+        if !missing.is_empty() {
+            return PinnedDerive::Missing(missing);
+        }
+        match observe::<MinSig, PeerPubkey, N3f1, ed25519::Batch>(rng, logs, &Sequential) {
+            Ok(output) => PinnedDerive::Derived(Box::new(output)),
+            Err(_) => PinnedDerive::Unusable,
+        }
     }
 
     /// AM5 deterministic finalize: `Player::finalize` over EXACTLY the pinned set
@@ -947,7 +999,7 @@ impl DkgCeremony {
         committee: &Set<PeerPubkey>,
         pinned: &BTreeMap<u8, B256>,
     ) -> Result<(CeremonyOutput, Share), DkgError> {
-        let (logs, _all_held) = self.scoped_pinned_logs(committee, pinned);
+        let (logs, _missing) = self.scoped_pinned_logs(committee, pinned);
         let player = self.player.take().expect("can_finalize gates this");
         player.finalize::<N3f1, ed25519::Batch>(rng, logs, &Sequential)
     }
@@ -1257,6 +1309,92 @@ mod tests {
             !all_held,
             "a pinned hash with no matching held body ⇒ WAIT (all_held=false)"
         );
+    }
+
+    /// The three arms of [`PinnedDerive`] the ceremony can reach, and the one
+    /// distinction the agreement's safety rests on: a body this node does not hold
+    /// is `Missing` naming exactly the seats to fetch — never `Unusable`, which is
+    /// the only arm the agreement may turn into a nullified view.
+    #[test]
+    fn derive_pinned_separates_a_missing_body_from_an_unusable_set() {
+        let mut rng = StdRng::seed_from_u64(404);
+        let (committee, ceremonies) = run_to_all_sealed(404);
+        let node = ceremonies.keys().next().unwrap().clone();
+
+        // n=5, N3f1 ⇒ dealer quorum 4: a held quorum derives a key, and every node
+        // derives the SAME one, which is what lets it ride in the proposal.
+        let quorum = pinned_for(&committee, &ceremonies[&node], &[0, 1, 2, 3]);
+        let PinnedDerive::Derived(key) =
+            ceremonies[&node].derive_pinned(&mut rng, &committee, &quorum)
+        else {
+            panic!("a held quorum must derive a key");
+        };
+        for other in ceremonies.keys() {
+            let PinnedDerive::Derived(theirs) =
+                ceremonies[other].derive_pinned(&mut rng, &committee, &quorum)
+            else {
+                panic!("every holder of the set derives from it");
+            };
+            assert_eq!(
+                *theirs, *key,
+                "the derived key is not a function of the set alone"
+            );
+        }
+
+        // A pinned hash no held body matches: a delivery race, reported per seat.
+        let mut raced = quorum.clone();
+        raced.insert(3, B256::repeat_byte(0xEE));
+        assert!(
+            matches!(
+                ceremonies[&node].derive_pinned(&mut rng, &committee, &raced),
+                PinnedDerive::Missing(ref idxs) if idxs == &vec![3u8]
+            ),
+            "a body this node does not hold must be Missing(seat), never Unusable"
+        );
+
+        // Every named body held, and still no key: below the dealer quorum, so no
+        // selection exists. This one IS a property of the set.
+        let short = pinned_for(&committee, &ceremonies[&node], &[0, 1, 2]);
+        assert!(
+            matches!(
+                ceremonies[&node].derive_pinned(&mut rng, &committee, &short),
+                PinnedDerive::Unusable
+            ),
+            "a fully-held set that yields no key is Unusable"
+        );
+    }
+
+    /// The keystone invariant, and the reason it lives in `derive_pinned` and not in
+    /// `scoped_pinned_logs`: an `idx` this node cannot map to a committee seat leaves
+    /// its body unexamined, so the remaining set can fall below the dealer quorum and
+    /// answer `Unusable` — a `verify → false` — over a proposal no honest node with
+    /// the same roster would reject. `Unavailable` parks instead.
+    #[test]
+    fn derive_pinned_is_unavailable_when_a_pinned_idx_has_no_committee_seat() {
+        let mut rng = StdRng::seed_from_u64(405);
+        let (committee, ceremonies) = run_to_all_sealed(405);
+        let node = ceremonies.keys().next().unwrap().clone();
+
+        // A full, derivable set plus one seat this node's roster does not have. The
+        // skip would leave a quorum, so the arm has to come from the unmappable idx
+        // itself and not from what is left after it.
+        let mut over = pinned_for(&committee, &ceremonies[&node], &[0, 1, 2, 3]);
+        over.insert(committee.len() as u8, B256::repeat_byte(0xAB));
+        assert!(
+            matches!(
+                ceremonies[&node].derive_pinned(&mut rng, &committee, &over),
+                PinnedDerive::Unavailable
+            ),
+            "an unmappable idx is a disagreement about the roster — park, never vote"
+        );
+
+        // The same set MINUS the unmappable entry still derives, so the arm above is
+        // not a blanket refusal.
+        let mapped = pinned_for(&committee, &ceremonies[&node], &[0, 1, 2, 3]);
+        assert!(matches!(
+            ceremonies[&node].derive_pinned(&mut rng, &committee, &mapped),
+            PinnedDerive::Derived(_)
+        ));
     }
 
     /// AMENDMENT 5 (test c): a pinned set BELOW the reconstruction threshold at the

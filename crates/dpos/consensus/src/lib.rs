@@ -75,9 +75,7 @@ pub use feed_sink::FeedSink;
 pub use order_block::{
     anchor_order_block, result_final_height, result_target, OrderBlock, ResultTarget, K,
 };
-pub use outer::{
-    boundary_outcome_reader, MarshalMailbox, OuterBuilder, OuterEngine, SoftEnterCommittees,
-};
+pub use outer::{MarshalMailbox, OuterBuilder, OuterEngine, SoftEnterCommittees};
 pub use plane_upstream::{FrontierKey, PlaneUpstreamHandle};
 pub use timeouts::ConsensusTimeouts;
 

@@ -6,7 +6,6 @@
 
 use crate::{
     application::{ExecutedChain, FluentApp, OrderingAssembler},
-    beacon::certify::{BeaconCertify, SeedStore},
     digest::Digest,
     epocher::OriginEpocher,
     order_block::OrderBlock,
@@ -32,7 +31,6 @@ use commonware_runtime::{
     buffer::paged::CacheRef, BufferPooler, Clock, ContextCell, Handle, Metrics, Spawner, Storage,
 };
 use fluentbase_bls::{
-    beacon::seed_namespace,
     fluent_namespace,
     keys::ValidatorBlsKeypair,
     scheme::{build_signer, build_verifier, BeaconKey},
@@ -44,10 +42,12 @@ use std::sync::Arc;
 
 const FETCH_CONCURRENT: usize = 4;
 
-/// The automaton+relay handed to simplex: `Inline` plus the Stage-2 beacon
-/// seed-verify at `certify` ([`crate::beacon::certify`]). `BeaconCertify` wraps a
-/// per-epoch `Inline` (built in [`EpochEngine::new`]).
-type AutomatonFor<E, XC, A> = BeaconCertify<E, XC, A>;
+/// The automaton+relay handed to simplex: the per-epoch `Inline` built in
+/// [`EpochEngine::new`]. It used to be wrapped for a beacon seed-verify at
+/// `certify`; the epoch key no longer rides a block, so there is nothing left to
+/// check there and `Inline`'s own availability gate stands alone
+/// ([`crate::beacon::certify`] records why).
+type AutomatonFor<E, XC, A> = Inline<E, BlsScheme, FluentApp<XC, A>, OrderBlock, OriginEpocher>;
 
 type ConsensusEngine<E, B, XC, A> = simplex::Engine<
     E,
@@ -102,11 +102,6 @@ pub struct EpochEngineConfig<B, XC, A> {
     /// node-LOCAL DKG material — used to SIGN only when its group key matches
     /// the authoritative on-chain key below.
     pub beacon: Option<BeaconKey>,
-    /// Shared `round → recovered seed` map for the Stage-2 beacon certify gate
-    /// ([`crate::beacon::certify`]). Cross-epoch singleton from
-    /// [`crate::outer::OuterEngine`]; written by the spec-exec reporter, read by
-    /// this epoch's [`BeaconCertify`] wrapper.
-    pub seed_store: SeedStore,
     /// DEVNET/TEST-ONLY byzantine validator behaviour (gated behind
     /// `dpos-devnet-byzantine`). `None` on every honest node. When
     /// `Some(ByzantineMode::Equivocate)` (and this node can sign), `new()` builds
@@ -275,18 +270,7 @@ where
             marshal_mailbox.clone(),
             cfg.epocher.clone(),
         );
-        // Stage-2 beacon seed-verify at `certify`: wrap `Inline` so the boundary
-        // block's seed is checked against its OWN asserted PK_E before
-        // finalization (see `crate::beacon::certify`). Non-boundary blocks are
-        // left to `CombinedScheme::verify_certificate` (already seed-checked at
-        // notarization). The wrapper delegates Automaton/Relay verbatim.
-        let automaton = BeaconCertify::new(
-            inline,
-            context.with_label("beacon_certify_ctx"),
-            marshal_mailbox.clone(),
-            cfg.seed_store,
-            seed_namespace(&namespace),
-        );
+        let automaton = inline;
 
         let t = cfg.timeouts;
         let consensus = simplex::Engine::new(

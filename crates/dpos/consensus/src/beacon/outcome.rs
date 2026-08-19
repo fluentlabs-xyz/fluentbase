@@ -1,10 +1,12 @@
-//! Decode + inspect the per-epoch DKG outcome embedded in a boundary
-//! `OrderBlock` (`beacon_outcome`). The aggregated commonware [`Output`]
-//! (group key `PK_epoch` + public polynomial + dealer/player sets) is stored as
-//! opaque bytes at the block-codec layer because `Output`'s decode needs the
-//! committee-size config; this module supplies that config and extracts the
-//! group public key the seed sub-protocol verifies against and the system call
-//! publishes to L2.
+//! Decode + inspect the per-epoch DKG outcome. The aggregated commonware
+//! [`Output`] (group key `PK_epoch` + public polynomial + dealer/player sets)
+//! is stored as opaque bytes wherever it travels, because `Output`'s decode
+//! needs the committee-size config; this module supplies that config and
+//! extracts the group public key the seed sub-protocol verifies against and the
+//! system call publishes to L2.
+//!
+//! Its one carrier is the epoch-key agreement plane's artifact
+//! ([`crate::beacon::artifact`]); it used to also ride a boundary block.
 
 use commonware_codec::{Encode as _, Read as _};
 use commonware_cryptography::bls12381::{
@@ -13,35 +15,33 @@ use commonware_cryptography::bls12381::{
 };
 use commonware_utils::ordered::Set;
 use core::num::NonZeroU32;
-use fluentbase_bls::PeerPubkey;
+use fluentbase_bls::{beacon::GroupPublic, PeerPubkey};
 use fluentbase_p2p::constants::MAX_COMMITTEE_SIZE;
-
-use crate::beacon::seed::GroupPublic;
 
 /// Decode cap for an embedded DKG outcome (the encoded commonware `Output`
 /// for a committee ≤ `MAX_COMMITTEE_SIZE`: a MinSig public polynomial of
 /// degree `quorum-1` in G2 plus the dealer/player/revealed sets). 64 KiB is
 /// generous headroom over the ~5 KiB worst case at n=51.
-pub const MAX_BEACON_OUTCOME_SIZE: usize = 64 * 1024;
+pub(crate) const MAX_BEACON_OUTCOME_SIZE: usize = 64 * 1024;
 
 /// The DKG outcome for our committee: MinSig keys, participants identified by
 /// their ed25519 peer pubkey (the commonware participant-ordering key).
-pub type DkgOutcome =
+pub(crate) type DkgOutcome =
     Output<commonware_cryptography::bls12381::primitives::variant::MinSig, PeerPubkey>;
 
 /// Errors decoding an embedded outcome — any of these means the boundary block
 /// does not carry a well-formed agreed beacon key.
 #[derive(Debug)]
-pub enum OutcomeError {
+pub(crate) enum OutcomeError {
     /// Bytes are not a valid encoded `Output` for a committee ≤ MAX_COMMITTEE_SIZE.
     Decode(commonware_codec::Error),
     /// Trailing bytes after the outcome (a well-formed `Output` consumes all).
     TrailingBytes,
 }
 
-/// Decode the embedded `beacon_outcome` bytes into the typed DKG [`DkgOutcome`],
+/// Decode the opaque outcome bytes into the typed DKG [`DkgOutcome`],
 /// bounding the committee to `MAX_COMMITTEE_SIZE` (NonZeroCounter mode, v0).
-pub fn parse_outcome(bytes: &[u8]) -> Result<DkgOutcome, OutcomeError> {
+pub(crate) fn parse_outcome(bytes: &[u8]) -> Result<DkgOutcome, OutcomeError> {
     let max = NonZeroU32::new(MAX_COMMITTEE_SIZE as u32).expect("MAX_COMMITTEE_SIZE > 0");
     let mut buf = bytes;
     let outcome =
@@ -52,8 +52,8 @@ pub fn parse_outcome(bytes: &[u8]) -> Result<DkgOutcome, OutcomeError> {
     Ok(outcome)
 }
 
-/// Encode a DKG outcome to the opaque bytes carried in `OrderBlock.beacon_outcome`.
-pub fn encode_outcome(outcome: &DkgOutcome) -> Vec<u8> {
+/// Encode a DKG outcome to the opaque bytes the agreement artifact carries.
+pub(crate) fn encode_outcome(outcome: &DkgOutcome) -> Vec<u8> {
     outcome.encode().to_vec()
 }
 
@@ -96,7 +96,7 @@ pub fn group_public_key(outcome: &DkgOutcome) -> &GroupPublic {
 ///
 /// Observers (no share) cannot run this — the caller must WITHHOLD the qualifying
 /// vote for them, never accept on shape alone.
-pub fn validate_share_on_poly(
+pub(crate) fn validate_share_on_poly(
     outcome: &DkgOutcome,
     committee: &Set<PeerPubkey>,
     my_share: &Share,

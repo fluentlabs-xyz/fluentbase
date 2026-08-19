@@ -5,7 +5,7 @@
 //! [`fluentbase_bls::beacon`] — the combined consensus scheme recovers the seed
 //! from the notarization/finalization certificate. This module defines the
 //! per-height [`Seed`] wire type, the EVM-facing pieces (it owns the alloy
-//! types) and the key loaders, and re-exports the verifier the deriver needs.
+//! types) and the key loaders.
 
 use alloy_primitives::{keccak256, B256};
 use bytes::{Buf, BufMut};
@@ -13,8 +13,6 @@ use commonware_codec::{Encode as _, EncodeSize, Read, ReadExt as _, Write};
 use commonware_consensus::types::Round;
 use commonware_cryptography::bls12381::primitives::group::Share;
 use fluentbase_bls::BlsSignature;
-
-pub use fluentbase_bls::beacon::{seed_namespace, verify_seed, GroupPublic};
 
 /// The per-round threshold randomness seed: the recovered BLS threshold
 /// signature over `(seed_namespace ‖ round)`, unique by construction (any ≥t
@@ -57,7 +55,7 @@ impl Read for Seed {
 
 /// Decode a single DKG `Share` from its encoded bytes (a node's loaded
 /// `beacon-share.hex`). Rejects trailing bytes.
-pub fn parse_share(bytes: &[u8]) -> Result<Share, commonware_codec::Error> {
+pub(crate) fn parse_share(bytes: &[u8]) -> Result<Share, commonware_codec::Error> {
     let mut buf = bytes;
     let share = Share::read_cfg(&mut buf, &())?;
     if !buf.is_empty() {
@@ -81,7 +79,7 @@ mod tests {
     use commonware_consensus::types::{Epoch, View};
     use commonware_cryptography::bls12381::{dkg::deal_anonymous, primitives::variant::MinSig};
     use commonware_utils::{test_rng, N3f1, NZU32};
-    use fluentbase_bls::beacon::{recover_seed, sign_seed_partial};
+    use fluentbase_bls::beacon::{recover_seed, seed_namespace, sign_seed_partial};
 
     fn recover_at(round: Round) -> Seed {
         let mut rng = test_rng();

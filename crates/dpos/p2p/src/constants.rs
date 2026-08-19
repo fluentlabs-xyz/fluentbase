@@ -69,6 +69,29 @@ pub const FRONTIER_CHANNEL: u64 = 7;
 // slasher's vote store. MUST be byte-identical across the network.
 pub const EVIDENCE_CHANNEL: u64 = 8;
 
+// Sub-channel id space
+//
+// The three Muxed top-level channels (VOTE/CERT/RESOLVER) and the broadcast /
+// marshal muxes carry sub-channels keyed by a `u64`. A per-epoch consensus
+// engine registers the EPOCH NUMBER itself as its sub-channel id
+// (`consensus::epoch_manager::spawn_engine`), and the global singletons take 0
+// (`consensus::outer`), so the epoch-key AGREEMENT instance takes a slice of the
+// id space that no epoch number can reach: `DKG_SUBCHANNEL_BASE | target_epoch`,
+// with `target_epoch < DKG_SUBCHANNEL_BASE` enforced by the caller. At one epoch
+// per day 2^32 epochs is ~11.7 million years, so the two spaces are disjoint by
+// construction — and the construction is CHECKED rather than trusted: the caller
+// range-tests the epoch, and the muxer answers `AlreadyRegistered` on a collision
+// instead of overwriting the live route.
+//
+// Reusing sub-channel ids rather than adding top-level channels rests on two
+// grounds: it avoids six mechanical edit sites (a const, a `network.register`,
+// handle/plane fields, three doc comments and a unit test) and keeps the agreement
+// traffic on quotas that already exist. A third ground — "it avoids a coordinated
+// network-wide release" — HAS EXPIRED: `OrderBlock` has since dropped
+// `beacon_outcome` and `dkg_logs`, which moved the block digest and made the
+// release coordinated anyway. Do not carry the release argument forward.
+pub const DKG_SUBCHANNEL_BASE: u64 = 1 << 32;
+
 // Per-channel rate quotas
 //
 // Aligned to alto/tempo precedent (tempo `config.rs:37-43`, alto

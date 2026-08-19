@@ -81,28 +81,89 @@ pub fn reject_insecure_mode(_path: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Write `data` to `path` with mode 0600 (truncate-create). The single shared
-/// 0600-write helper for both the validator plaintext key file and the on-disk
-/// DKG-share persistor.
+/// Where the atomic write stages its bytes: a SIBLING of the target.
+///
+/// Sibling because `rename` is only atomic within one filesystem (a cross-mount
+/// rename fails `EXDEV`), and because the staging file holds the same secret as
+/// the target and must live under the same 0600 directory. The suffix is outside
+/// every reader's filename pattern (`beacon-share-e<E>.bin`,
+/// `beacon-dkgjournal-e<E>.bin`), so a leftover from a crashed write is ignored by
+/// the loaders rather than half-loaded, and is reused-and-truncated by the next
+/// write to the same path.
+fn staging_path(path: &Path) -> std::path::PathBuf {
+    let mut name = path.as_os_str().to_os_string();
+    name.push(".tmp");
+    std::path::PathBuf::from(name)
+}
+
+/// Write `data` to `path` with mode 0600, ATOMICALLY: stage into a sibling temp
+/// file, `sync_all`, then `rename` over the target. The single shared 0600-write
+/// helper for both the validator plaintext key file and the on-disk DKG-share
+/// persistor.
+///
+/// A truncate-then-write in place would leave the target half-written between the
+/// truncate and the flush — for these files that is a key a node cannot load,
+/// i.e. a validator that cannot rejoin. Under rename the target is either the
+/// whole old record or the whole new one, and `sync_all` before the rename is what
+/// makes that true across a power loss rather than only across a process crash.
 #[cfg(unix)]
 pub fn write_mode_0600(path: &Path, data: &[u8]) -> std::io::Result<()> {
     use std::io::Write as _;
     use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
+    let staging = staging_path(path);
     let mut file = std::fs::OpenOptions::new()
         .write(true)
         .create(true)
         .truncate(true)
         .mode(0o600)
-        .open(path)?;
-    // `OpenOptions::mode` only applies at CREATION (bug 13): a truncate-open of a
-    // pre-existing 0644 file keeps its loose mode, so tighten it explicitly.
+        .open(&staging)?;
+    // `OpenOptions::mode` only applies at CREATION (bug 13): a leftover staging
+    // file from a crashed write (or one restored at 0644) keeps its loose mode
+    // through the rename, so tighten it explicitly.
     file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
-    file.write_all(data)
+    let staged = file.write_all(data).and_then(|()| file.sync_all());
+    drop(file);
+    if let Err(e) = staged.and_then(|()| std::fs::rename(&staging, path)) {
+        // Never leave a partial record behind under a name a later write would
+        // reuse without truncating first.
+        let _ = std::fs::remove_file(&staging);
+        return Err(e);
+    }
+    sync_parent_dir(path);
+    Ok(())
+}
+
+/// fsync the directory holding `path`, so the renamed-in NAME survives a power
+/// loss and not merely the file's contents. Best-effort: a directory that cannot
+/// be opened or synced (some filesystems refuse) does not make the write a
+/// failure — the bytes are already durable.
+fn sync_parent_dir(path: &Path) {
+    let dir = match path.parent() {
+        Some(dir) if !dir.as_os_str().is_empty() => dir,
+        _ => Path::new("."),
+    };
+    if let Ok(handle) = std::fs::File::open(dir) {
+        let _ = handle.sync_all();
+    }
 }
 
 #[cfg(not(unix))]
 pub fn write_mode_0600(path: &Path, data: &[u8]) -> std::io::Result<()> {
-    std::fs::write(path, data)
+    use std::io::Write as _;
+    let staging = staging_path(path);
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(&staging)?;
+    let staged = file.write_all(data).and_then(|()| file.sync_all());
+    drop(file);
+    if let Err(e) = staged.and_then(|()| std::fs::rename(&staging, path)) {
+        let _ = std::fs::remove_file(&staging);
+        return Err(e);
+    }
+    sync_parent_dir(path);
+    Ok(())
 }
 
 /// Append `data` to `path`, creating it mode 0600 if absent. The append sibling of
@@ -167,14 +228,47 @@ mod tests {
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o644)).unwrap();
     }
 
-    // bug 13: `OpenOptions::mode` is ignored on a pre-existing file, so both write
-    // helpers must explicitly re-tighten a restored-0644 secret to 0600.
+    // bug 13: a secret restored at 0644 must end at 0600 whichever helper writes it
+    // next. `append_mode_0600` gets there by re-tightening in place;
+    // `write_mode_0600` by renaming a 0600 staging file over the loose target.
     #[test]
     fn write_mode_0600_tightens_a_preexisting_0644_file() {
         let p = temp_path("write");
         make_0644(&p);
         write_mode_0600(&p, b"secret").unwrap();
         assert_eq!(mode_of(&p), 0o600);
+        std::fs::remove_file(&p).ok();
+    }
+
+    /// The atomic write must not leave its staging file behind on success — a
+    /// surviving `.tmp` sibling is a second copy of the secret nothing ever reaps.
+    #[test]
+    fn write_mode_0600_replaces_content_and_leaves_no_staging_file() {
+        let dir = temp_path("atomic-dir");
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("secret.bin");
+        write_mode_0600(&p, b"first-and-longer").unwrap();
+        write_mode_0600(&p, b"second").unwrap();
+        assert_eq!(std::fs::read(&p).unwrap(), b"second");
+        let entries: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(entries, vec![std::ffi::OsString::from("secret.bin")]);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A staging file left by a crashed write is reused, so its mode must be
+    /// re-tightened before the rename — otherwise the crash silently downgrades
+    /// the next write's target to whatever mode the leftover carried.
+    #[test]
+    fn write_mode_0600_does_not_inherit_a_leftover_0644_staging_file() {
+        let p = temp_path("atomic-stale");
+        let staging = super::staging_path(&p);
+        make_0644(&staging);
+        write_mode_0600(&p, b"secret").unwrap();
+        assert_eq!(mode_of(&p), 0o600);
+        assert_eq!(std::fs::read(&p).unwrap(), b"secret");
         std::fs::remove_file(&p).ok();
     }
 

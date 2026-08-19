@@ -90,7 +90,7 @@ pub fn build_signer(
 /// against `PK_epoch`; `None` ⇒ a fallback (pure-multisig) epoch.
 ///
 /// `cert_seed_pin` is the epoch group key `PK_epoch` sourced from an agreed
-/// boundary-block `beacon_outcome` (the carry-forward cursor in the cert-inlet /
+/// agreement artifact (the carry-forward resolve in the cert-inlet /
 /// the marshal-blocks backward walk in the catch-up paths): when present it
 /// makes `verify_certificate` reject a wire cert whose recovered seed slot fails
 /// `verify_seed` against `PK_epoch`. `None` ⇒ vote-only cert verify (the key is

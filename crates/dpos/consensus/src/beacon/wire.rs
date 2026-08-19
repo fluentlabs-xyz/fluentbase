@@ -11,13 +11,13 @@ use core::mem::size_of;
 
 /// Decode cap for an opaque DKG protocol message (a signed dealer log for a
 /// committee ≤ MAX_COMMITTEE_SIZE is the largest; 64 KiB is ample headroom).
-pub const MAX_DKG_MSG_SIZE: usize = 64 * 1024;
+pub(crate) const MAX_DKG_MSG_SIZE: usize = 64 * 1024;
 
 const TAG_DKG: u8 = 0;
 
 /// A message on the beacon plane.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum BeaconMessage {
+pub(crate) enum BeaconMessage {
     /// An opaque encoded commonware DKG protocol message (dealer public/private
     /// message, player ack, or signed dealer log). Opaque at this layer because
     /// their decode needs the round `Info`; the DKG actor parses with that context.

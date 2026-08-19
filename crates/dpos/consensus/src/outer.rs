@@ -198,7 +198,7 @@ where
 /// [`OuterBuilder::soft_enter_committees`].
 pub type SoftEnterCommittees =
     Arc<dyn Fn(Epoch, Epoch) -> BoxFuture<'static, Vec<(u64, ValidatorSetSnapshot)>> + Send + Sync>;
-use crate::beacon::{actor::DETERMINISTIC_BOOTSTRAP_EPOCH, seed::GroupPublic};
+use crate::beacon::actor::DETERMINISTIC_BOOTSTRAP_EPOCH;
 use commonware_parallel::Sequential;
 use commonware_runtime::{
     buffer::paged::CacheRef, spawn_cell, BufferPooler, Clock, ContextCell, Handle, IoBuf, Metrics,
@@ -206,7 +206,9 @@ use commonware_runtime::{
 };
 use commonware_storage::archive::{immutable, Archive as _, Identifier};
 use commonware_utils::{NZUsize, NZU16, NZU64};
-use fluentbase_bls::{keys::ValidatorBlsKeypair, PeerPubkey, Scheme as BlsScheme};
+use fluentbase_bls::{
+    beacon::GroupPublic, keys::ValidatorBlsKeypair, PeerPubkey, Scheme as BlsScheme,
+};
 use fluentbase_staking_reader::reader::ValidatorSetSnapshot;
 use futures::future::BoxFuture;
 use rand_core::CryptoRngCore;
@@ -433,29 +435,6 @@ type FinalizationsArchive<E> = immutable::Archive<E, Digest, Finalization<BlsSch
 type FinalizedBlocksArchive<E> = immutable::Archive<E, Digest, OrderBlock>;
 pub type MarshalMailbox = marshal::core::Mailbox<BlsScheme, Standard<OrderBlock>>;
 
-/// Build the [`crate::beacon::actor::BoundaryOutcomeAt`] READ handle the DkgActor's
-/// demote-heal recompute uses (§8.11.1), over a DEFERRED marshal mailbox. The mailbox
-/// is created by the layer launch AFTER the always-on beacon plane (and its DkgActor)
-/// are built, so the caller passes an EMPTY `OnceLock` here and fills it once the
-/// mailbox exists; until then the reader returns `None` and the recompute-heal simply
-/// waits (safe). Reads the pinned `beacon_outcome` from the boundary block at `height`
-/// via the SAME by-height marshal pull `beacon::keys::BoundaryWalk::key_for` performs.
-pub fn boundary_outcome_reader(
-    slot: std::sync::Arc<std::sync::OnceLock<MarshalMailbox>>,
-) -> crate::beacon::actor::BoundaryOutcomeAt {
-    std::sync::Arc::new(move |height: u64| {
-        let slot = slot.clone();
-        Box::pin(async move {
-            let mailbox = slot.get()?.clone();
-            let block = mailbox
-                .get_block(commonware_consensus::types::Height::new(height))
-                .await?;
-            let bytes = block.beacon_outcome.as_ref()?;
-            crate::beacon::outcome::parse_outcome(bytes.as_ref()).ok()
-        })
-    })
-}
-
 /// Open the marshal's `finalized_blocks` immutable archive for a given
 /// `partition_prefix`. Single source of the archive config so the cold-start
 /// crash-survivor recovery (`dpos.rs`, opens it standalone before the engine is
@@ -610,15 +589,16 @@ pub struct OuterBuilder<B, P, BE, D, XC, A, R: slasher::StakingStateRead + Send 
     /// in rather than defaulted here because the writer lives in the node crate;
     /// a default would be a set nothing fills.
     pub tombstones: crate::slasher::TombstoneSet,
-    /// Live-DKG verify/propose context for `FluentApp` (the boundary "C" gate +
-    /// the proposer's `beacon_outcome` assertion). `None` ⇒ no beacon gating.
+    /// Beacon context for `FluentApp`'s parent-seed witness arm (the `PK_epoch`
+    /// resolver + the seed-signing domain). `None` ⇒ the witness arm takes its
+    /// accept-biased branch.
     pub beacon_verify: Option<BeaconVerify>,
     /// The cross-epoch shared `epoch → PK_epoch` group-key map (§5 b). Created at
     /// the launch site (`dpos.rs`) so the DKG resolvers threaded into
-    /// `beacon_verify`/`beacon_resolver` can read its network-attested (W4
-    /// ObservedOutcome) entries for the carry-divergence guard, then handed here
-    /// as the SAME Arc that `FluentApp` (writer W4) and `epoch_manager` (writers
-    /// W1/W3) fill — one map, never two.
+    /// `beacon_verify`/`beacon_resolver` can read its attested entries for the
+    /// carry-divergence guard, then handed here as the SAME Arc that
+    /// `epoch_manager` (writers W1/W3) and the agreement write-back fill — one
+    /// map, never two.
     pub group_keys: crate::beacon::keys::BeaconKeys,
     pub timeouts: ConsensusTimeouts,
     pub mailbox_size: usize,
@@ -664,11 +644,13 @@ pub struct OuterBuilder<B, P, BE, D, XC, A, R: slasher::StakingStateRead + Send 
     /// [`Self::marshal_floor`] is about to bury. `None` when no upstream is
     /// configured.
     pub boundary_fetch: Option<crate::cert_follow::BoundaryFetchFn>,
-    /// FROZEN on-chain `dkgQual[e]` reader, for the epoch manager's repair sweep.
-    /// Both launch paths build one (see
-    /// [`crate::beacon::carry::frozen_dkg_qual`]); `None` is for tests and for a
-    /// node with no staking state to read it from.
-    pub dkg_qual_for: Option<crate::beacon::carry::DkgQualFor>,
+    /// The `PK_epoch` ladder's artifact rungs, handed to the epoch manager:
+    /// `held` reads the artifacts this node already has, `pull` fetches the
+    /// minting epoch's from a peer. Built at the launch site, which is where the
+    /// artifact store and the resolver live; `None` for tests and for a node
+    /// with no agreement plane.
+    pub held_keys: Option<crate::beacon::keys::AgreedKeys>,
+    pub pull_keys: Option<crate::beacon::keys::AgreedKeys>,
     /// Epoch-entry seam — the height-keyed half of [`Self::boundary_hook`], handed to the
     /// executor so a steady-state re-jump enters its LANDING epoch. Without it the landing
     /// epoch is entered only at the NEXT boundary, leaving a seated member verify-only for
@@ -711,6 +693,18 @@ pub struct OuterBuilder<B, P, BE, D, XC, A, R: slasher::StakingStateRead + Send 
     /// ([`slasher::gossip`]). `None` on the follower path, whose slasher is
     /// constructed but never started.
     pub slasher_evidence: Option<slasher::EvidenceBridge>,
+    /// Supervisor handles of the epoch-key agreement instances the beacon plane
+    /// starts, so [`epoch_manager::Actor`] prunes them on the SAME frontier cutoff
+    /// as the per-epoch engines and tears them down with itself. `None` ⇒ no
+    /// agreement plane wired (the follower path, and any test) ⇒ the manager's
+    /// intake branch parks forever and its map stays empty.
+    ///
+    /// A passthrough and nothing else: the receiver is move-only and the manager
+    /// is constructed inside [`OuterBuilder::build`], so there is no other way for
+    /// the plane to hand it over. The instances themselves never enter the
+    /// supervisor's `select!` — they are SUPPOSED to complete, and a completed
+    /// handle there would read as a dead subsystem.
+    pub agreement_intake: Option<mpsc::Receiver<(Epoch, Handle<()>)>>,
 
     /// DEVNET/TEST-ONLY byzantine validator behaviour (gated behind
     /// `dpos-devnet-byzantine`). `None` on every honest node. Threaded into
@@ -898,16 +892,14 @@ where
             (Some(floor), Some(_)) => {
                 let mut wanted = Vec::new();
                 if let Some(b) = epocher.terminal_at_or_below(floor) {
-                    // `b` feeds `Inline::genesis(E)` and the engine-spawn gate;
-                    // `b + 1` is the epoch's first block, which the promote VALUE-gate
-                    // reads for the network-attested key. Seeding `b` alone would
-                    // promote the member at exactly the moment that gate degrades to a
-                    // no-op — the diverged-`PK_E` signing hole. So: both or neither
-                    // whenever both are buried.
-                    for h in [b.get(), b.get() + 1] {
-                        if h > floor.get() {
-                            continue; // above the floor — ordinary repair fetches it
-                        }
+                    // `b` feeds `Inline::genesis(E)` and the engine-spawn gate,
+                    // and it is the ONE height this seeding needs. It used to
+                    // fetch `b + 1` alongside it, because the promote VALUE-gate
+                    // read the epoch's first block for the network-attested key;
+                    // that gate now compares against the agreement artifact,
+                    // which no block carries and no floor can bury.
+                    let h = b.get();
+                    if h <= floor.get() {
                         let present = finalized_blocks
                             .get(Identifier::Index(h))
                             .await
@@ -961,9 +953,6 @@ where
         // is a no-op and the by-height read consults no floor — which is what lets the
         // engine-spawn gate and `Inline::genesis` find it afterwards.
         //
-        // Both-or-neither: `b` alone would satisfy the spawn gate while leaving the
-        // promote VALUE-gate blind (it reads `b + 1` for the network-attested key), so
-        // a partial fetch injects nothing and the member keeps today's behaviour.
         if !boundary_seed_heights.is_empty() {
             let fetch = self
                 .boundary_fetch
@@ -1333,19 +1322,23 @@ where
                 peers_for_finalization,
                 slasher_mailbox,
                 spec_exec_mailbox,
-                seed_store,
                 group_keys,
                 beacon_metrics: self.beacon_metrics,
                 page_cache,
                 register_scheme,
                 scheme_pins: scheme_provider.clone(),
-                dkg_qual_for: self.dkg_qual_for.clone(),
-                boundary_fetch: self.boundary_fetch.clone(),
+                held_keys: self.held_keys.clone(),
+                pull_keys: self.pull_keys.clone(),
                 soft_enter_span,
                 #[cfg(feature = "dpos-devnet-byzantine")]
                 byzantine: self.byzantine,
             },
         );
+
+        let epoch_manager = match self.agreement_intake {
+            Some(intake) => epoch_manager.with_agreement_intake(intake),
+            None => epoch_manager,
+        };
 
         Ok(OuterEngine {
             context: ContextCell::new(context),

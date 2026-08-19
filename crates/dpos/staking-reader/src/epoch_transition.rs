@@ -599,11 +599,12 @@ where
     /// boundary branch share identical (idempotent) side effects.
     ///
     /// The tracked peer set is the Active validator REGISTRY ∪ the frozen
-    /// committee (tier-2: every activated validator — ejected, upcoming, the
-    /// sequencer — keeps consensus-plane connectivity; the committee union
-    /// covers the mid-epoch-jailed member that already left the registry but
-    /// is still in the frozen committee). The schemes and the bridge continue
-    /// to consume the COMMITTEE snapshot only.
+    /// committee ∪ `committee[epoch + 1]` (tier-2: every activated validator —
+    /// ejected, upcoming, the sequencer — keeps consensus-plane connectivity;
+    /// the committee union covers the mid-epoch-jailed member that already left
+    /// the registry but is still in the frozen committee; the incoming-committee
+    /// union is what the epoch-key agreement plane needs, see below). The schemes
+    /// and the bridge continue to consume the COMMITTEE snapshot only.
     async fn track_and_trigger(
         &mut self,
         epoch: u64,
@@ -612,6 +613,37 @@ where
     ) -> Result<TriggerResult, ReadError> {
         let mut tracked = self.reader.active_registry_peers(at)?;
         tracked.extend(snap.validators.iter().map(|v| v.keys.peer_pubkey.clone()));
+        // The epoch-key agreement instance for `epoch + 1` runs DURING `epoch`, and
+        // its `buffered` body engine retains a proposal body only when the SENDER is
+        // in the tracked primary set (`CW/broadcast/src/buffered/engine.rs:298`). An
+        // incoming member missing from the set is therefore dropped in silence —
+        // `verify` parks on a body that never arrives and the plane never converges,
+        // with nothing above `debug` anywhere in the logs. The registry branch above
+        // covers most incoming members incidentally; this makes it a guarantee.
+        //
+        // Deliberately NOT `?`. An `Err` here would take the boundary trigger down
+        // with it, and the authoritative path retries a failed `on_finalized` every
+        // `PENDING_RETRY_BACKOFF` forever WITHOUT advancing `last_tracked_epoch`
+        // (`consensus/src/dpos.rs:2468-2485`) — a degraded peer set that the next
+        // finalized block re-reads is strictly better than a stalled epoch, and this
+        // function is idempotent so the retry costs nothing. An `Ok` with no
+        // validators means "not committed yet" (`reader.rs:673`), never "the
+        // committee is empty".
+        match self.reader.epoch_committee_snapshot(epoch + 1, at) {
+            Ok(next) if !next.validators.is_empty() => {
+                tracked.extend(next.validators.iter().map(|v| v.keys.peer_pubkey.clone()));
+            }
+            Ok(_) => tracing::debug!(
+                epoch = epoch + 1,
+                "incoming committee not committed yet; peer-set union skipped"
+            ),
+            Err(e) => tracing::warn!(
+                epoch = epoch + 1,
+                ?e,
+                "incoming committee read failed; peer-set union skipped (degraded \
+                 agreement-plane reachability, retried on the next finalized block)"
+            ),
+        }
         check_peer_set_size(epoch, tracked.len(), self.max_peer_set_size)?; // typed, not panic
         self.sink.track(epoch, Set::from_iter_dedup(tracked)).await; // one-shot
 
@@ -888,6 +920,66 @@ mod tests {
         }
     }
 
+    /// A committee read above `ok_through` is UNAVAILABLE — either empty (the
+    /// epoch is not committed yet) or a hard read failure. Those are the two ways
+    /// `committee[epoch + 1]` can be missing when the peer-set union asks for it,
+    /// and neither may cost the boundary trigger. Every requested epoch is
+    /// recorded so a test can prove the union read was actually attempted.
+    struct IncomingUnavailableReader {
+        inner: MockReader,
+        ok_through: u64,
+        fail: bool,
+        requested: Arc<Mutex<Vec<u64>>>,
+    }
+    impl StakingStateRead for IncomingUnavailableReader {
+        fn epoch_committee_snapshot(
+            &self,
+            epoch: u64,
+            at: B256,
+        ) -> Result<ValidatorSetSnapshot, ReadError> {
+            self.requested.lock().unwrap().push(epoch);
+            if epoch > self.ok_through {
+                if self.fail {
+                    return Err(ReadError::Backend(format!(
+                        "committee[{epoch}] read failed"
+                    )));
+                }
+                return Ok(ValidatorSetSnapshot {
+                    block_hash: at,
+                    block_number: epoch * 100,
+                    epoch,
+                    validators: vec![],
+                    weights: None,
+                });
+            }
+            self.inner.epoch_committee_snapshot(epoch, at)
+        }
+        fn epoch_block_interval(&self, at: B256) -> Result<u32, ReadError> {
+            self.inner.epoch_block_interval(at)
+        }
+        fn dpos_activation_block(&self, at: B256) -> Result<u64, ReadError> {
+            self.inner.dpos_activation_block(at)
+        }
+        fn active_registry_peers(&self, at: B256) -> Result<Vec<PeerPubkey>, ReadError> {
+            self.inner.active_registry_peers(at)
+        }
+    }
+
+    /// Records the full tracked SET, not just its size — the peer-set union's
+    /// whole point is WHICH keys reach the agreement plane, and a size match can
+    /// be satisfied by any three keys.
+    type TrackedSets = Arc<Mutex<Vec<(u64, Set<PeerPubkey>)>>>;
+    #[derive(Clone, Default)]
+    struct KeySink(TrackedSets);
+    impl PeerSetSink for KeySink {
+        fn track(&mut self, epoch: u64, peers: Set<PeerPubkey>) -> impl Future<Output = ()> + Send {
+            let log = self.0.clone();
+            async move {
+                log.lock().unwrap().push((epoch, peers));
+            }
+        }
+    }
+
     /// Records every `track` call.
     #[derive(Clone, Default)]
     struct RecordingSink(Arc<Mutex<Vec<(u64, usize)>>>);
@@ -905,7 +997,9 @@ mod tests {
         deterministic::Runner::default().start(|_ctx| async move {
             let sink = RecordingSink::default();
             let h = B256::repeat_byte(0x33);
-            // 2 registry-only peers (seeds far from the committee's) + committee of 3.
+            // 2 registry-only peers (seeds far from the committee's) + committee[2]
+            // of 3 + committee[3] of 3 — MockReader seeds per epoch, so the incoming
+            // committee is disjoint from the current one.
             let reader = RegistryReader {
                 inner: MockReader {
                     committee: 3,
@@ -926,7 +1020,161 @@ mod tests {
             );
             et.cold_start(h, 200).await.unwrap();
             let log = sink.0.lock().unwrap();
-            assert_eq!(log.as_slice(), &[(2, 5)]);
+            assert_eq!(log.as_slice(), &[(2, 8)]);
+        });
+    }
+
+    #[test]
+    fn incoming_committee_is_in_the_tracked_peer_set() {
+        // The epoch-key agreement instance for E+1 runs DURING E, and `buffered`
+        // retains a body only from a sender inside the tracked set — so every
+        // committee[E+1] member must already be there when E starts, or the plane
+        // silently never converges.
+        deterministic::Runner::default().start(|_ctx| async move {
+            let sink = KeySink::default();
+            let (boundary_tx, mut boundary_rx) = tokio::sync::mpsc::channel(8);
+            let h = B256::repeat_byte(0x5E);
+            let mut et = EpochTransition::new(
+                MockReader {
+                    committee: 3,
+                    interval: 100,
+                },
+                sink.clone(),
+                64,
+                Some(boundary_tx),
+                std::sync::Arc::new(move |_n| Ok(Some(h))),
+                3,
+            );
+            assert_eq!(
+                et.cold_start(h, 500).await.unwrap(),
+                TransitionOutcome::EpochAdvanced(5)
+            );
+
+            let tracked = sink.0.lock().unwrap();
+            let [(epoch, peers)] = tracked.as_slice() else {
+                panic!("expected exactly one track call, got {tracked:?}");
+            };
+            assert_eq!(*epoch, 5);
+            let reader = MockReader {
+                committee: 3,
+                interval: 100,
+            };
+            for member in reader.epoch_committee_snapshot(6, h).unwrap().validators {
+                assert!(
+                    peers.position(&member.keys.peer_pubkey).is_some(),
+                    "committee[6] member {:?} missing from the epoch-5 peer set",
+                    member.address
+                );
+            }
+            assert_eq!(peers.len(), 6, "committee[5] ∪ committee[6], both of 3");
+
+            // The union is additive only — the boundary trigger still carries the
+            // CURRENT committee, unchanged.
+            let fired = boundary_rx.try_recv().expect("boundary trigger delivered");
+            assert_eq!(fired.0, 5);
+            assert_eq!(fired.1.validators.len(), 3);
+        });
+    }
+
+    #[test]
+    fn uncommitted_incoming_committee_skips_the_union_and_still_triggers() {
+        // `committee[E+1]` not yet committed reads back EMPTY, which means "not
+        // committed yet", never "the committee is empty" — skip the union, keep the
+        // boundary.
+        deterministic::Runner::default().start(|_ctx| async move {
+            let sink = RecordingSink::default();
+            let (boundary_tx, mut boundary_rx) = tokio::sync::mpsc::channel(8);
+            let requested = Arc::new(Mutex::new(vec![]));
+            let h = B256::repeat_byte(0x5F);
+            let mut et = EpochTransition::new(
+                IncomingUnavailableReader {
+                    inner: MockReader {
+                        committee: 3,
+                        interval: 100,
+                    },
+                    ok_through: 5,
+                    fail: false,
+                    requested: requested.clone(),
+                },
+                sink.clone(),
+                64,
+                Some(boundary_tx),
+                std::sync::Arc::new(move |_n| Ok(Some(h))),
+                3,
+            );
+            assert_eq!(
+                et.cold_start(h, 500).await.unwrap(),
+                TransitionOutcome::EpochAdvanced(5)
+            );
+            assert!(
+                requested.lock().unwrap().contains(&6),
+                "the union must have ASKED for committee[6] — else this proves nothing"
+            );
+            assert_eq!(
+                *sink.0.lock().unwrap(),
+                vec![(5, 3)],
+                "committee[5] only; the empty incoming read adds nothing"
+            );
+            assert_eq!(et.last_tracked_epoch, Some(5));
+            assert_eq!(
+                boundary_rx
+                    .try_recv()
+                    .expect("boundary trigger delivered")
+                    .0,
+                5
+            );
+        });
+    }
+
+    #[test]
+    fn failed_incoming_committee_read_degrades_the_peer_set_not_the_trigger() {
+        // An `Err` on the union read must NOT propagate: the authoritative path
+        // retries a failed `on_finalized` every PENDING_RETRY_BACKOFF forever
+        // without advancing the epoch, so a briefly-short peer set is the far
+        // cheaper failure.
+        deterministic::Runner::default().start(|_ctx| async move {
+            let sink = RecordingSink::default();
+            let (boundary_tx, mut boundary_rx) = tokio::sync::mpsc::channel(8);
+            let requested = Arc::new(Mutex::new(vec![]));
+            let h = B256::repeat_byte(0x60);
+            let mut et = EpochTransition::new(
+                IncomingUnavailableReader {
+                    inner: MockReader {
+                        committee: 3,
+                        interval: 100,
+                    },
+                    ok_through: 5,
+                    fail: true,
+                    requested: requested.clone(),
+                },
+                sink.clone(),
+                64,
+                Some(boundary_tx),
+                std::sync::Arc::new(move |_n| Ok(Some(h))),
+                3,
+            );
+            assert_eq!(
+                et.cold_start(h, 500).await.unwrap(),
+                TransitionOutcome::EpochAdvanced(5),
+                "a failed incoming-committee read must not sink the boundary"
+            );
+            assert!(
+                requested.lock().unwrap().contains(&6),
+                "the union must have ASKED for committee[6] — else this proves nothing"
+            );
+            assert_eq!(
+                *sink.0.lock().unwrap(),
+                vec![(5, 3)],
+                "peer set degrades to committee[5]"
+            );
+            assert_eq!(et.last_tracked_epoch, Some(5));
+            assert_eq!(
+                boundary_rx
+                    .try_recv()
+                    .expect("boundary trigger delivered")
+                    .0,
+                5
+            );
         });
     }
 
@@ -956,7 +1204,11 @@ mod tests {
             assert_eq!(outcome_second, TransitionOutcome::Intra);
             {
                 let log = sink.0.lock().unwrap();
-                assert_eq!(*log, vec![(5, 5)], "tracked once, 5 peers, epoch 5");
+                assert_eq!(
+                    *log,
+                    vec![(5, 10)],
+                    "tracked once for epoch 5: committee[5] ∪ the incoming committee[6]"
+                );
             }
         });
     }
@@ -1047,7 +1299,7 @@ mod tests {
             let log = sink.0.lock().unwrap();
             assert_eq!(
                 *log,
-                vec![(5, 5), (6, 5)],
+                vec![(5, 10), (6, 10)],
                 "bootstrap epoch 5, then spawn epoch 6 at its boundary"
             );
         });
@@ -1078,7 +1330,7 @@ mod tests {
             );
             assert_eq!(
                 *sink.0.lock().unwrap(),
-                vec![(6, 5)],
+                vec![(6, 10)],
                 "boundary cold-start tracks epoch 6"
             );
         });
@@ -1094,7 +1346,9 @@ mod tests {
                     interval: 100,
                 },
                 RecordingSink::default(),
-                4, // max_peer_set_size < tracked union (registry ∅ + committee 10)
+                // Below the tracked union: registry ∅ + committee[2] of 10 + the
+                // incoming committee[3] of 10.
+                4,
                 None,
                 h,
             );
@@ -1102,7 +1356,7 @@ mod tests {
                 et.cold_start(h, 200).await,
                 Err(ReadError::PeerSetTooLarge {
                     epoch: 2,
-                    size: 10,
+                    size: 20,
                     max: 4
                 })
             ));
@@ -1376,7 +1630,7 @@ mod tests {
                 h,
             );
             et.cold_start(h, 1200).await.unwrap();
-            assert_eq!(*sink.0.lock().unwrap(), vec![(12, 3)]);
+            assert_eq!(*sink.0.lock().unwrap(), vec![(12, 6)]);
         });
     }
 
@@ -1428,7 +1682,7 @@ mod tests {
             );
             assert_eq!(
                 *sink.0.lock().unwrap(),
-                vec![(5, 5), (6, 5)],
+                vec![(5, 10), (6, 10)],
                 "epoch 6 entered via the pending-boundary replay"
             );
         });
@@ -1559,8 +1813,9 @@ mod tests {
             );
             assert_eq!(
                 *sink.0.lock().unwrap(),
-                vec![(0, 3)],
-                "committee[0] tracked — never a phantom committee[1]"
+                vec![(0, 6)],
+                "epoch 0 tracked (peer set = committee[0] ∪ the incoming committee[1]) \
+                 — never a phantom TRACK of epoch 1"
             );
             assert_eq!(
                 et.last_tracked_epoch,
@@ -1604,7 +1859,7 @@ mod tests {
                 "block activation-1 is pre-activation ⇒ epoch 0, not epoch 1"
             );
             assert_eq!(et.last_tracked_epoch, Some(0));
-            assert_eq!(*sink.0.lock().unwrap(), vec![(0, 3)]);
+            assert_eq!(*sink.0.lock().unwrap(), vec![(0, 6)]);
         });
     }
 

@@ -14,15 +14,8 @@
 
 use crate::{
     application::{ExecutedChain, FluentApp, OrderingAssembler},
-    beacon::carry::DkgQualFor,
-    beacon::{
-        keys::{
-            classify, marshal_boundary_reader, pk_prefix, BeaconKeys, BoundaryBlockFetch,
-            BoundaryFetch, BoundaryOutcome, BoundaryWalk, KeySource, KeySources, OwnKeyFor,
-        },
-        seed::GroupPublic,
-    },
-    cert_follow::BoundaryFetchFn,
+    beacon::dkg_engine::agreement_partition,
+    beacon::keys::{pk_prefix, AgreedKeys, BeaconKeys, KeySource, KeySources, OwnKeyFor},
     engine::{EpochEngine, EpochEngineConfig},
     epocher::OriginEpocher,
     order_block::OrderBlock,
@@ -44,8 +37,8 @@ use commonware_runtime::{
 };
 use commonware_utils::vec::NonEmptyVec;
 use fluentbase_bls::{
-    beacon as beacon_bls, fluent_namespace, keys::ValidatorBlsKeypair, scheme::BeaconKey,
-    Scheme as BlsScheme,
+    beacon as beacon_bls, beacon::GroupPublic, fluent_namespace, keys::ValidatorBlsKeypair,
+    scheme::BeaconKey, Scheme as BlsScheme,
 };
 use fluentbase_staking_reader::reader::ValidatorSetSnapshot;
 use futures::future::BoxFuture;
@@ -57,7 +50,7 @@ use std::{
     sync::Arc,
     task::{Context, Poll},
 };
-use tokio::sync::{mpsc, Notify};
+use tokio::sync::{mpsc, watch, Notify};
 use tracing::{debug, info, warn};
 
 /// The per-epoch validator role — a pure function of current state, NOT the
@@ -177,6 +170,80 @@ pub type BeaconResolver = Arc<dyn Fn(u64) -> BeaconResolve + Send + Sync>;
 /// Bounded mpsc capacity for boundary triggers (tokio `mpsc::channel(N)`).
 const BOUNDARY_BUFFER: usize = 64;
 
+/// Target epochs below the cutoff whose agreement journal partition is swept on
+/// every prune.
+///
+/// The sweep is what makes the removal survive CANCELLATION. An agreement
+/// supervisor removes its own partition after it delivers, but every external
+/// `abort()` — this prune, the SafetyHalt unwind, the manager's own exit —
+/// cancels it at an await and that removal never runs. Nothing else reclaims
+/// `dkg_epoch_{n}`, and unlike the ceremony journals there is no reconciler for
+/// it, so the directory and its one blob per traversed view survive forever.
+///
+/// A band swept on every prune reclaims them all: it is driven by epoch NUMBER
+/// rather than by a map this process populated, so it also collects a previous
+/// process's leftovers on the first boundary after a restart, and it re-collects a
+/// partition that an aborted-but-not-yet-stopped voter recreated with one last
+/// journal write. The band is the trailing scheme-retention window — the same
+/// distance the rest of this actor keeps state for.
+const AGREEMENT_SWEEP_SPAN: u64 = SCHEME_RETENTION_EPOCHS as u64;
+
+/// Drop every epoch-key agreement instance whose target is below `cutoff`,
+/// aborting it on the way out, and reclaim the journal partitions of the targets
+/// below the cutoff that no longer have one.
+///
+/// The SAME cutoff the per-epoch engines are pruned on, and for a matching
+/// reason: below the frontier an instance has either delivered its artifact —
+/// its supervisor has already returned, so the abort is a no-op — or it is still
+/// agreeing a key for an epoch the chain has gone past.
+async fn prune_agreements<E: Storage>(
+    context: &E,
+    agreements: &mut BTreeMap<Epoch, Handle<()>>,
+    cutoff: u64,
+) {
+    let stale: Vec<Epoch> = agreements
+        .keys()
+        .copied()
+        .filter(|e| e.get() < cutoff)
+        .collect();
+    for e in stale {
+        if let Some(handle) = agreements.remove(&e) {
+            handle.abort();
+            info!(?e, "epoch-key agreement instance pruned (transition)");
+        }
+    }
+    for epoch in cutoff.saturating_sub(AGREEMENT_SWEEP_SPAN)..cutoff {
+        // A live instance still owns its partition even below the cutoff (it was
+        // adopted after this prune's abort pass, or it is mid-teardown).
+        if agreements.contains_key(&Epoch::new(epoch)) {
+            continue;
+        }
+        match context.remove(&agreement_partition(epoch), None).await {
+            Ok(()) => info!(epoch, "epoch-key agreement journal partition reclaimed"),
+            // Nothing to reclaim: the overwhelmingly common case, since the band is
+            // swept on every prune whether or not an instance ever ran there.
+            Err(commonware_runtime::Error::PartitionMissing(_)) => {}
+            Err(err) => warn!(
+                epoch,
+                ?err,
+                "could not reclaim the epoch-key agreement journal partition"
+            ),
+        }
+    }
+}
+
+/// `recv()` on an optional receiver, or park forever when it is `None` — so the
+/// agreement-intake branch of the manager's `select!` is inert on a node with no
+/// agreement plane wired, without a second loop shape.
+async fn recv_agreement(
+    rx: Option<&mut mpsc::Receiver<(Epoch, Handle<()>)>>,
+) -> Option<(Epoch, Handle<()>)> {
+    match rx {
+        Some(rx) => rx.recv().await,
+        None => std::future::pending().await,
+    }
+}
+
 /// The 3 plane-owned simplex broker handles a SIGNER engine registers per-epoch
 /// sub-channels against (vote/cert/resolver). Bundled into one struct so the
 /// manager threads a single `Option<Muxes>` instead of 3 positional handles —
@@ -218,6 +285,23 @@ where
 {
     context: ContextCell<E>,
     active_epochs: BTreeMap<Epoch, Handle<()>>,
+    /// Supervisor handles of the epoch-key AGREEMENT instances, keyed by their
+    /// TARGET epoch — a SECOND map, and it must stay separate from
+    /// `active_epochs`.
+    ///
+    /// `reconcile_roles` polls `engine_handle_dead` over `active_epochs` and reads
+    /// a COMPLETED handle as a caught panic: it drops the entry, bumps
+    /// `engine_respawned` and spawns a replacement. An agreement instance is
+    /// SUPPOSED to complete — it aborts itself the moment its own finalization
+    /// lands ([`crate::beacon::dkg_engine`]) — so an entry over there would be
+    /// resurrected on every reconcile, for the life of the process. Here nothing
+    /// polls it: a completed supervisor simply sits until `abort_below` drops it,
+    /// and `abort()` on an already-completed handle is a no-op.
+    dkg_agreements: BTreeMap<Epoch, Handle<()>>,
+    /// Where those handles come from. `None` ⇒ no agreement plane wired ⇒ the
+    /// branch parks forever and the map stays empty; the beacon plane holds the
+    /// sending half and posts a handle per instance it starts.
+    agreement_intake: Option<mpsc::Receiver<(Epoch, Handle<()>)>>,
     boundary_rx: mpsc::Receiver<(Epoch, ValidatorSetSnapshot)>,
     /// Highest epoch we have entered (full or soft) — i.e. the highest epoch
     /// whose committee scheme is registered, so the marshal can verify its
@@ -332,10 +416,6 @@ pub struct Config<B, XC, A> {
     /// notarization arm of the simplex reporter, forwarding `SpecNotarized`
     /// commands to the executor for speculative execution.
     pub spec_exec_mailbox: crate::spec_exec::Mailbox,
-    /// Cross-epoch singleton from [`crate::outer::OuterEngine`]: the shared
-    /// `round → recovered seed` map for the Stage-2 beacon certify gate. Written
-    /// by `spec_exec_mailbox`, read by each per-epoch [`crate::beacon::certify::BeaconCertify`].
-    pub seed_store: crate::beacon::certify::SeedStore,
     /// Cross-epoch singleton from [`crate::outer::OuterEngine`]: the SAME
     /// `Arc` handed to [`FluentApp`] (an `Arc` clone, not a second map — W1
     /// writes here and the vote path reads through `FluentApp`). The manager
@@ -357,15 +437,17 @@ pub struct Config<B, XC, A> {
     /// the answer covers registration paths the epoch manager never sees (the
     /// bulk catch-up span, `cold_start_register`).
     pub scheme_pins: EpochSchemeProvider,
-    /// FROZEN on-chain `dkgQual[e]` reader — the repair sweep's only way to name
-    /// the height its fetch should ask for. See [`Actor::boundary_fetch`].
-    /// `None` makes that rung absent rather than answering "undecided" forever;
-    /// both production launch paths supply one.
-    pub dkg_qual_for: Option<DkgQualFor>,
-    /// Authenticated by-height fetch of one finalized block. `None` where no
-    /// upstream is configured, which makes the seeder rung absent rather than
-    /// failing — the sweep still resolves everything the local walk can reach.
-    pub boundary_fetch: Option<BoundaryFetchFn>,
+    /// The `PK_epoch` ladder's held-artifact rung: the agreement artifacts this
+    /// node already holds, keyed through the chain's `dkgQual` record. `None`
+    /// where the node has no artifact store (unit tests, a pure follower), which
+    /// makes the rung absent rather than answering "undecided" forever — the
+    /// store rung still answers.
+    pub held_keys: Option<AgreedKeys>,
+    /// The same ladder's NETWORK rung: one bounded pull of the minting epoch's
+    /// artifact from a peer. Spent only by the off-vote-path repair sweep — never
+    /// by `soft_enter`, whose caller is on the reconcile loop. `None` where there
+    /// is no plane to pull through.
+    pub pull_keys: Option<AgreedKeys>,
     /// Bulk catch-up soft-enter: register a verify-only scheme for EVERY epoch in
     /// the inclusive span `[from, to]`, reading each committee from the CURRENT
     /// finalized state (at the result-final read height — see
@@ -403,6 +485,8 @@ where
         let actor = Self {
             context: ContextCell::new(context),
             active_epochs: BTreeMap::new(),
+            dkg_agreements: BTreeMap::new(),
+            agreement_intake: None,
             boundary_rx,
             highest_entered_epoch: Epoch::new(0),
             highest_observed_epoch: Epoch::new(0),
@@ -416,6 +500,18 @@ where
             cfg,
         };
         (actor, boundary_tx)
+    }
+
+    /// Take ownership of the epoch-key agreement instances the beacon plane
+    /// starts, so they are pruned on the same frontier cutoff as the per-epoch
+    /// engines and torn down with the manager. Left unwired the manager owns none
+    /// and the branch is inert.
+    pub fn with_agreement_intake(
+        mut self,
+        agreement_intake: mpsc::Receiver<(Epoch, Handle<()>)>,
+    ) -> Self {
+        self.agreement_intake = Some(agreement_intake);
+        self
     }
 
     /// Start the manager. The 3 simplex broker handles (vote/cert/resolver) are
@@ -460,6 +556,13 @@ where
         // iteration below cannot lose a fill; re-deriving the handle each
         // iteration is what would (see `beacon::keys`).
         let key_notify = self.cfg.group_keys.notifier();
+        // The repair sweep runs OFF this loop — see `spawn_repair_sweep`. Waking
+        // it is a synchronous `send_replace`, so no arm below can be held by it.
+        // Dropping this sender on the way out is what stops the task.
+        let (sweep_wake, sweep_handle) = self.spawn_repair_sweep();
+        // Taken out so the intake branch borrows the local rather than `self` (the
+        // arms below take `&mut self`).
+        let mut agreement_intake = self.agreement_intake.take();
         loop {
             // Arm the edge wakeups BEFORE the select. The producers use `notify_one`
             // (permit-storing), so even a signal that fires while no waiter is armed —
@@ -484,6 +587,16 @@ where
                             (demote to verify-only permanently)");
                         handle.abort();
                     }
+                    // The agreement plane goes with them. Its output is a share
+                    // this node will never get to sign with — the latch is
+                    // permanent and `reconcile_roles` keeps it a Verifier forever
+                    // — so leaving it voting on a second plane after a fork-safety
+                    // halt buys nothing and costs the network a vote it should
+                    // not be casting.
+                    for (epoch, handle) in std::mem::take(&mut self.dkg_agreements) {
+                        warn!(?epoch, "SafetyHalt engaged — aborting epoch-key agreement instance");
+                        handle.abort();
+                    }
                     self.deferred_spawns.clear();
                     for role in self.roles.values_mut() {
                         *role = Role::Verifier;
@@ -496,12 +609,13 @@ where
                             // non-boundary edges, then reconcile (folds enter + prune_old).
                             self.latest_live = Some((epoch, snap.clone()));
                             self.reconcile_roles(epoch, snap, muxes.as_ref()).await;
-                            // AFTER the reconcile, never before: a boundary
-                            // handoff spawns this epoch's engine here, and the
-                            // sweep walks the marshal for up to a retention
-                            // window of past epochs. Ordering it first would put
-                            // that walk in front of the spawn.
-                            self.repair_unpinned_pins().await;
+                            // AFTER the reconcile, so the frontier the sweep runs
+                            // under already includes this boundary's epoch and it
+                            // cannot pin under the engine just spawned for it.
+                            sweep_wake.send_replace((
+                                self.highest_observed_epoch,
+                                self.highest_entered_epoch,
+                            ));
                         }
                         None => {
                             info!("boundary_rx closed, epoch_manager exiting");
@@ -563,19 +677,35 @@ where
                 // This arm CANNOT be the only trigger, and that is the whole reason
                 // the boundary arm also sweeps. It fires on a `BeaconKeys::record`,
                 // and every production writer of that store needs either this node's
-                // own DKG material or a change-epoch block carrying a
-                // `beacon_outcome`. A node with no DKG material on a committee that
-                // has not changed — the case this repair exists for — never fires it
-                // at all.
+                // own DKG material or a change epoch's agreement artifact. A node
+                // with no DKG material on a committee that has not changed — the
+                // case this repair exists for — never fires it at all.
                 //
-                // NB a near-miss that makes a cheaper fix tempting and wrong: a W4
-                // insert IS followed one task-hop later by `spawn_unblocked`, but
+                // NB a near-miss that makes a cheaper fix tempting and wrong: an
+                // attested insert IS followed one task-hop later by `spawn_unblocked`, but
                 // that arm is gated on a non-empty `deferred_spawns`, and a node
                 // demoted by the promote value-gate never enters that set. Same
                 // event, wrong gate.
                 _ = &mut key_n => {
-                    self.repair_unpinned_pins().await;
+                    sweep_wake.send_replace((
+                        self.highest_observed_epoch,
+                        self.highest_entered_epoch,
+                    ));
                 }
+                // Edge: the beacon plane started an epoch-key agreement instance
+                // and handed us its supervisor. Adopting it here is what puts the
+                // instance under the same frontier cutoff as the engines; a second
+                // handle for an epoch we already hold replaces the first, aborting
+                // it so two instances never run for one target.
+                adopted = recv_agreement(agreement_intake.as_mut()) => match adopted {
+                    Some((epoch, handle)) => {
+                        if let Some(previous) = self.dkg_agreements.insert(epoch, handle) {
+                            warn!(?epoch, "replacing a live epoch-key agreement instance");
+                            previous.abort();
+                        }
+                    }
+                    None => agreement_intake = None,
+                },
             }
         }
 
@@ -588,6 +718,14 @@ where
             info!(?epoch, "aborting active epoch engine on exit");
             handle.abort();
         }
+        for (epoch, handle) in std::mem::take(&mut self.dkg_agreements) {
+            info!(?epoch, "aborting epoch-key agreement instance on exit");
+            handle.abort();
+        }
+        // Aborted, not left to notice the dropped sender: it can be parked inside
+        // a peer pull for the whole `PULL_TIMEOUT`, and nothing it could still do
+        // matters once the manager that owns the scheme registry is gone.
+        sweep_handle.abort();
     }
 
     /// A vote arrived for an epoch with no registered sub-channel — the network
@@ -730,7 +868,7 @@ where
         // Exit-at-transition: abort every engine strictly below the live epoch
         // (folded `prune_old`; `e < cutoff` only, so a stale/replayed boundary for
         // an OLD epoch can never abort a newer engine).
-        self.abort_below(epoch);
+        self.abort_below(epoch).await;
 
         // Below the live frontier → soft-enter (verify-only scheme, NO engine): a
         // Simplex engine for a stale epoch has no live peers and would drive a dead
@@ -859,30 +997,34 @@ where
                 };
 
                 // Promote-gate VALUE check (defense-in-depth; f297cc36 extended
-                // from key PRESENCE to key VALUE): when the network already
-                // attests a `PK_epoch` for E — the W4 observed-outcome map
-                // entry (agreed chain data) or the finalized boundary block's
-                // own `beacon_outcome` — a resolver key that DIFFERS is a
-                // diverged local reconstruction, whatever produced it. Never
-                // sign, W1-publish, or witness-check under it: demote to
-                // verify-only; the recompute-heal stores the correct
+                // from key PRESENCE to key VALUE): when a `committee[E]` quorum
+                // has already certified a `PK_epoch` for E, a resolver key that
+                // DIFFERS is a diverged local reconstruction, whatever produced
+                // it. Never sign, W1-publish, or witness-check under it: demote
+                // to verify-only; the recompute-heal stores the correct
                 // exact-epoch `(PK_E, share)` and its `share_notify` edge
-                // re-runs this reconcile, which then promotes with the
-                // matching key.
+                // re-runs this reconcile, which then promotes with the matching
+                // key.
+                //
+                // The comparand is the agreement artifact, reached through the
+                // store (`attested`). It used to be a second, weaker source
+                // underneath: the boundary block's own `beacon_outcome`, read
+                // by height. That source is strictly worse and no longer
+                // exists — it required a block of E to have been produced and
+                // stored, so it was blind at exactly the moment the gate is
+                // asked (the epoch's first spawn), whereas the artifact is
+                // certified BEFORE the epoch starts and covers a stable
+                // carry-forward epoch, which no boundary block ever did.
                 if let Some((sharing, _, _)) = beacon.as_ref() {
                     let pk = *sharing.public();
-                    let observed = match self.cfg.group_keys.attested(epoch.get()) {
-                        Some(net) => Some(net),
-                        None => self.boundary_outcome_key(epoch).await,
-                    };
-                    if let Some(net) = observed {
+                    if let Some(net) = self.cfg.group_keys.attested(epoch.get()) {
                         if net != pk {
                             self.cfg.beacon_metrics.engine_demoted_key_divergence.inc();
                             warn!(
                                 ?epoch,
                                 resolved = %pk_prefix(&pk),
                                 network = %pk_prefix(&net),
-                                "resolved PK_epoch DIVERGES from the network-attested \
+                                "resolved PK_epoch DIVERGES from the quorum-attested \
                                  key — verify-only (promote value-gate)"
                             );
                             self.soft_enter(epoch, &snap).await;
@@ -925,20 +1067,53 @@ where
                 // share-gate above demoted the shareless case to verify-only.
                 // One epoch later this same entry IS the boundary warm (W2):
                 // `E+1`'s gate needs `PK_E` and reads the map, no I/O.
+                //
+                // It stands down where the epoch-key agreement plane already
+                // spoke: an artifact is a `committee[epoch]` quorum over this
+                // exact key, and a local reconstruction has nothing to add to
+                // it. Rung 1 of the ladder is answered by the artifact's entry
+                // either way, which is what `repair_unpinned_schemes` depends on
+                // (`own` is `None` there BECAUSE W1 fills the store).
                 if let Some((sharing, _, _)) = beacon.as_ref() {
                     let pk = *sharing.public();
-                    // The value fingerprint is the point: a restarted signer whose
-                    // carried-forward key diverged from the network's is only
-                    // diagnosable by grepping this line across nodes (soak
-                    // 2026-07-14 v5@epoch77 reject{bad_signature}).
-                    info!(
-                        ?epoch,
-                        group_public = %pk_prefix(&pk),
-                        "W1: publishing own epoch group key"
-                    );
-                    self.cfg
-                        .group_keys
-                        .set_pk(epoch.get(), pk, KeySource::LocalDkg);
+                    match own_key_publication(self.cfg.group_keys.attested(epoch.get()), pk) {
+                        OwnKeyPublication::Publish => {
+                            // The value fingerprint is the point: a restarted signer whose
+                            // carried-forward key diverged from the network's is only
+                            // diagnosable by grepping this line across nodes (soak
+                            // 2026-07-14 v5@epoch77 reject{bad_signature}).
+                            info!(
+                                ?epoch,
+                                group_public = %pk_prefix(&pk),
+                                "W1: publishing own epoch group key"
+                            );
+                            self.cfg
+                                .group_keys
+                                .set_pk(epoch.get(), pk, KeySource::LocalDkg);
+                        }
+                        OwnKeyPublication::DeferAgreeing => debug!(
+                            ?epoch,
+                            group_public = %pk_prefix(&pk),
+                            "W1: the agreement plane already published this epoch's key"
+                        ),
+                        // The divergence witness the suppressed `set_pk` used to
+                        // raise from inside the store. Same metric name, so a
+                        // dashboard watching for a split key still sees this one.
+                        OwnKeyPublication::DeferDiverging(agreed) => {
+                            metrics::counter!(
+                                "dpos_group_key_conflict_total",
+                                "winner" => "agreed_kept"
+                            )
+                            .increment(1);
+                            warn!(
+                                ?epoch,
+                                resolved = %pk_prefix(&pk),
+                                agreed = %pk_prefix(&agreed),
+                                "resolved PK_epoch DIVERGES from the quorum-agreed key; \
+                                 keeping the agreed one"
+                            );
+                        }
+                    }
                 }
                 if self
                     .spawn_engine(epoch, snap, beacon, fallback_seed, muxes)
@@ -976,14 +1151,10 @@ where
             BeaconResolve::Key((sharing, _, _)) => Some(*sharing.public()),
             BeaconResolve::Absent => None,
         });
-        let walk = BoundaryWalk::new(
-            marshal_boundary_reader(self.cfg.marshal_mailbox.clone()),
-            self.cfg.epocher.clone(),
-        );
         register_soft_entered(
             &self.cfg.group_keys,
             Some(&own),
-            Some(&walk),
+            self.cfg.held_keys.as_ref(),
             epoch,
             snap,
             self.cfg.chain_id,
@@ -993,78 +1164,60 @@ where
         self.roles.insert(epoch, Role::Verifier);
     }
 
-    /// The chain's OWN attested `PK_epoch` from the finalized first block of
-    /// `epoch`, when that block is already in marshal storage and carries a
-    /// `beacon_outcome` (i.e. `epoch` is a change epoch that finalized without
-    /// us). `None` ⇒ no network observation available (a stable epoch, or the
-    /// boundary block not yet produced/stored) — NOT "no divergence".
-    async fn boundary_outcome_key(&mut self, epoch: Epoch) -> Option<GroupPublic> {
-        let first = self.cfg.epocher.first(epoch)?;
-        let block = self.cfg.marshal_mailbox.get_block(first).await;
-        match classify(block.as_ref()) {
-            BoundaryOutcome::Minted(pk) => Some(pk),
-            _ => None,
-        }
-    }
-
-    /// The fetch rung, ready to run — `None` where there is no upstream seam, no
-    /// `dkgQual` reader (a follower has neither) or no live snapshot to
-    /// authenticate the committee at.
+    /// Start the repair sweep on its OWN task and return the handle that wakes
+    /// it. Called once, before [`Self::run`]'s `select!`.
     ///
-    /// The closure is what keeps [`BoundaryFetch`] free of the cert-follow types:
-    /// it hides the authenticated seam and the hash the committee is read at, and
-    /// hands back a plain block.
-    fn boundary_fetch(&self) -> Option<BoundaryFetch> {
-        let fetch = self.cfg.boundary_fetch.clone()?;
-        let dkg_qual = self.cfg.dkg_qual_for.clone()?;
-        let (_, snap) = self.latest_live.clone()?;
-        let at_hash = snap.block_hash;
-        let block_at: BoundaryBlockFetch = Arc::new(move |height: Height| {
-            let fetch = fetch.clone();
-            Box::pin(async move { fetch(height.get(), at_hash).await.map(|uf| uf.block) })
-                as BoxFuture<'static, Option<OrderBlock>>
+    /// **The sweep must not run on that `select!`.** Its ladder spends one
+    /// bounded peer pull per unpinned epoch, and the pull's caller-side rate
+    /// bound SLEEPS until the epoch's next slot before it even issues the fetch
+    /// (`PULL_MIN_INTERVAL` + `PULL_TIMEOUT`), once per epoch in a work list
+    /// bounded only by [`SCHEME_RETENTION_EPOCHS`]. Awaited inline that is a
+    /// ~100 s section during which `share_n`, `spawn_unblocked` and `vote_backup`
+    /// do not run — the three arms that turn this node into a signer.
+    ///
+    /// Everything the sweep touches is a cross-epoch singleton this actor holds
+    /// by `Arc`, so the task needs no borrow of `self`; the only per-wake state
+    /// is the frontier, which rides the wake. A `watch` (not a `Notify`) because
+    /// the frontier has to ride it and because its receiver is created ONCE here,
+    /// before the task's loop — the baseline-at-subscribe hazard that rules
+    /// `watch` out in [`crate::beacon::keys`] needs a per-iteration `subscribe`,
+    /// which this is not.
+    fn spawn_repair_sweep(&self) -> (watch::Sender<(Epoch, Epoch)>, Handle<()>) {
+        let (wake_tx, wake_rx) =
+            watch::channel((self.highest_observed_epoch, self.highest_entered_epoch));
+        let hint: RepairHint = {
+            let epocher = self.cfg.epocher.clone();
+            let peers = self.cfg.peers_for_finalization.clone();
+            let mailbox = self.cfg.marshal_mailbox.clone();
+            Arc::new(move |upgraded: Vec<Epoch>| {
+                let epocher = epocher.clone();
+                let peers = peers.clone();
+                let mailbox = mailbox.clone();
+                Box::pin(async move {
+                    for epoch in upgraded {
+                        let (Some(boundary), Some(targets)) = (epocher.last(epoch), peers()) else {
+                            continue;
+                        };
+                        info!(
+                            ?epoch,
+                            boundary = boundary.get(),
+                            "below-frontier epoch pinned by a late beacon key — re-driving its \
+                             finalization fetch"
+                        );
+                        mailbox.hint_finalized(boundary, targets).await;
+                    }
+                }) as BoxFuture<'static, ()>
+            })
+        };
+        let handle = self.context.with_label("repair_sweep").spawn({
+            let provider = self.cfg.scheme_pins.clone();
+            let store = self.cfg.group_keys.clone();
+            let held = self.cfg.held_keys.clone();
+            let pull = self.cfg.pull_keys.clone();
+            let namespace = fluent_namespace(self.cfg.chain_id);
+            move |_| run_repair_sweep(wake_rx, provider, store, held, pull, namespace, hint)
         });
-        Some(BoundaryFetch::new(
-            block_at,
-            dkg_qual,
-            self.cfg.epocher.clone(),
-        ))
-    }
-
-    async fn repair_unpinned_pins(&mut self) {
-        let walk = BoundaryWalk::new(
-            marshal_boundary_reader(self.cfg.marshal_mailbox.clone()),
-            self.cfg.epocher.clone(),
-        );
-        let fetch = self.boundary_fetch();
-        let upgraded = repair_unpinned_schemes(
-            &self.cfg.scheme_pins,
-            &self.cfg.group_keys,
-            Some(&walk),
-            fetch.as_ref(),
-            &fluent_namespace(self.cfg.chain_id),
-            self.highest_observed_epoch,
-            self.highest_entered_epoch,
-        )
-        .await;
-        for epoch in upgraded {
-            let (Some(boundary), Some(targets)) = (
-                self.cfg.epocher.last(epoch),
-                (self.cfg.peers_for_finalization)(),
-            ) else {
-                continue;
-            };
-            info!(
-                ?epoch,
-                boundary = boundary.get(),
-                "below-frontier epoch pinned by a late beacon key — re-driving its \
-                 finalization fetch"
-            );
-            self.cfg
-                .marshal_mailbox
-                .hint_finalized(boundary, targets)
-                .await;
-        }
+        (wake_tx, handle)
     }
 
     /// Re-run [`Self::reconcile_roles`] for the CURRENT live epoch (the cached most
@@ -1126,7 +1279,7 @@ where
     /// (a no-op for the stale E) on EVERY finalized block for the process
     /// lifetime. Pruning here makes an EMPTY set the true "no pending promotion"
     /// signal that the `spawn_unblocked` edge gates on.
-    fn abort_below(&mut self, current: Epoch) {
+    async fn abort_below(&mut self, current: Epoch) {
         let cutoff = current.get();
         let to_drop: Vec<Epoch> = self
             .active_epochs
@@ -1141,6 +1294,8 @@ where
                 info!(?e, "epoch exited (transition)");
             }
         }
+        let context = self.context.as_present().clone();
+        prune_agreements(&context, &mut self.dkg_agreements, cutoff).await;
         self.deferred_spawns.retain(|e| e.get() >= cutoff);
         // Prune `roles` to the trailing scheme-retention window: the sole reader is
         // `soft_enter`'s `roles.get(&epoch)` for the epoch under reconcile
@@ -1202,7 +1357,6 @@ where
                 mailbox_size: self.cfg.mailbox_size,
                 register_scheme: self.cfg.register_scheme.clone(),
                 beacon,
-                seed_store: self.cfg.seed_store.clone(),
                 #[cfg(feature = "dpos-devnet-byzantine")]
                 byzantine: self.cfg.byzantine,
             },
@@ -1257,13 +1411,47 @@ where
     }
 }
 
+/// What W1 does with the key it resolved for an epoch it is about to sign.
+///
+/// A free fn so the suppression rule is testable without an `Actor`, and so the
+/// three outcomes are named rather than implied by a nested `if`.
+// A `GroupPublic` (G2) is ~288 B; this is a transient return value matched
+// immediately by its one caller and never stored, so the stack copy is cheaper
+// than the heap allocation boxing would add — the identical trade `BoundaryOutcome`
+// makes (`beacon::keys`).
+#[allow(clippy::large_enum_variant)]
+#[derive(Debug, PartialEq, Eq)]
+enum OwnKeyPublication {
+    /// No quorum-agreed key is recorded for the epoch: publish, exactly as W1
+    /// always has. This is every stable (carry-forward) epoch, where no agreement
+    /// instance runs at all — and it is why the suppression is conditional: an
+    /// unconditional one would stop answering ladder rung 1 for those, and
+    /// `repair_unpinned_schemes` would leave them unpinned and vote-only.
+    Publish,
+    /// A quorum already published this exact key. The store entry answers rung 1
+    /// at a strictly higher provenance, so W1 has nothing to add.
+    DeferAgreeing,
+    /// A quorum published a DIFFERENT key for this epoch. The agreed one holds
+    /// (the tiering in `BeaconKeys::insert` would have kept it anyway); the
+    /// divergence is the thing worth saying out loud.
+    DeferDiverging(GroupPublic),
+}
+
+fn own_key_publication(agreed: Option<GroupPublic>, resolved: GroupPublic) -> OwnKeyPublication {
+    match agreed {
+        None => OwnKeyPublication::Publish,
+        Some(agreed) if agreed == resolved => OwnKeyPublication::DeferAgreeing,
+        Some(agreed) => OwnKeyPublication::DeferDiverging(agreed),
+    }
+}
+
 /// Resolve `PK_epoch` through the ONE ladder ([`resolve`]) and register the
 /// verify-only scheme for `epoch`. Returns whether the registered scheme carries
 /// a pin — which is how the beacon-key repair edge tells "this fill upgraded a
 /// pin-less epoch" from "already pinned, nothing to re-drive".
 ///
-/// The ladder's ORDER and the walk's absent-boundary refusal are documented on
-/// [`resolve`] and [`BoundaryWalk::key_for`] — do NOT re-derive either here.
+/// The ladder's ORDER is documented on [`BeaconKeys::get_pk`] — do NOT re-derive
+/// it here.
 ///
 /// A free fn over the pieces so the pin-less-then-pinned upgrade is testable
 /// without standing up the full generic `Actor` (which needs a live marshal, a
@@ -1272,7 +1460,7 @@ where
 async fn register_soft_entered(
     store: &BeaconKeys,
     own: Option<&OwnKeyFor>,
-    walk: Option<&BoundaryWalk>,
+    held: Option<&AgreedKeys>,
     epoch: Epoch,
     snap: &ValidatorSetSnapshot,
     chain_id: u64,
@@ -1283,7 +1471,7 @@ async fn register_soft_entered(
             epoch.get(),
             KeySources {
                 own,
-                walk,
+                held,
                 ..Default::default()
             },
         )
@@ -1299,6 +1487,56 @@ async fn register_soft_entered(
             cert_seed_pin.is_some()
         }
         None => false,
+    }
+}
+
+/// What the sweep does with the epochs it upgraded: re-drive each one's
+/// finalization fetch. A callback rather than the mailbox itself so the sweep's
+/// own loop is testable without a marshal.
+type RepairHint = Arc<dyn Fn(Vec<Epoch>) -> BoxFuture<'static, ()> + Send + Sync>;
+
+/// The repair sweep's driver: one sweep per wake, never two at once, on a task
+/// of its own. Exits when the last wake sender drops (the epoch manager left).
+///
+/// Wakes COALESCE rather than queue — several arriving during a sweep produce one
+/// more sweep, not one each — which is the property that keeps a sweep whose
+/// ladder is spending network pulls from stacking concurrent pulls for the same
+/// epoch behind the pull throttle.
+///
+/// The frontier it sweeps under is the one from the wake it consumed, so an
+/// in-flight sweep can be running under a frontier the manager has already
+/// advanced past. That is safe in ONE direction only, and it is this one: a stale
+/// frontier is a LOWER frontier, and the frontier is an upper exclusion bound, so
+/// staleness can only make the sweep skip an epoch it could have repaired — never
+/// pin under a live epoch's engine. The next wake repairs the skipped one.
+async fn run_repair_sweep(
+    mut wake: watch::Receiver<(Epoch, Epoch)>,
+    provider: EpochSchemeProvider,
+    store: BeaconKeys,
+    held: Option<AgreedKeys>,
+    pull: Option<AgreedKeys>,
+    namespace: Vec<u8>,
+    hint: RepairHint,
+) {
+    loop {
+        let (observed, entered) = *wake.borrow_and_update();
+        let upgraded = repair_unpinned_schemes(
+            &provider,
+            &store,
+            held.as_ref(),
+            pull.as_ref(),
+            &namespace,
+            observed,
+            entered,
+        )
+        .await;
+        if !upgraded.is_empty() {
+            hint(upgraded).await;
+        }
+        if wake.changed().await.is_err() {
+            debug!("epoch manager gone — repair sweep stopping");
+            return;
+        }
     }
 }
 
@@ -1331,17 +1569,29 @@ async fn register_soft_entered(
 /// advances `entered` to `E` first, so a live epoch is at or above the frontier
 /// under either input.
 ///
-/// `own` is deliberately `None`. The own-DKG rung is the only one that can
-/// return a key this node derived rather than one the network attested, and a
-/// wrong pin makes the marshal reject every valid cert of the epoch. The promote
-/// path guards that with a value-gate; this path has none and should not grow
-/// one. It costs nothing: for any epoch this node signed, W1 published the same
-/// key into the shared store before the engine spawned, so rung 1 answers.
+/// **A pin is write-once and a wrong one is terminal for that epoch on this
+/// node**, so the ladder is run with a PROVENANCE FLOOR and not just with `own`
+/// dropped. `apply_pin` refuses an already-pinned entry and nothing re-registers
+/// a below-frontier epoch's scheme, so a locally reconstructed key that diverged
+/// from the network's (soak 2026-07-14) makes the marshal reject every valid
+/// certificate of the epoch for the life of the process — a later `Agreed` write
+/// corrects the STORE and leaves the pin wrong. The promote path can afford the
+/// own-DKG rung because it has a value-gate that demotes on a mismatch; this path
+/// has none and should not grow one.
+///
+/// Dropping `own` alone does NOT deliver that, which is what the floor fixes:
+/// rung 1 is the shared store, W1/W3 write locally reconstructed keys into it
+/// under [`KeySource::LocalDkg`], and a provenance-blind rung 1 returns before
+/// `held`/`pull` are ever consulted. `store_floor: Carried` refuses exactly that
+/// tier and nothing else. Rung 1 stays load-bearing: the agreement write-back
+/// publishes at `KeySource::Agreed` and both later rungs memoise their answers at
+/// `Agreed`/`Carried`, so every epoch whose key this node legitimately knows is
+/// still a map hit rather than a re-walk or a re-fetch.
 async fn repair_unpinned_schemes(
     provider: &EpochSchemeProvider,
     store: &BeaconKeys,
-    walk: Option<&BoundaryWalk>,
-    fetch: Option<&BoundaryFetch>,
+    held: Option<&AgreedKeys>,
+    pull: Option<&AgreedKeys>,
     namespace: &[u8],
     observed: Epoch,
     entered: Epoch,
@@ -1356,13 +1606,12 @@ async fn repair_unpinned_schemes(
             .get_pk(
                 epoch.get(),
                 KeySources {
-                    // `own` stays None: that rung is the only one that can return
-                    // a locally diverged key, a wrong pin makes the marshal
-                    // silently reject every valid cert of the epoch, and this path
-                    // has no value-gate. W1 publishes the same key into the store
-                    // for any epoch this node signed, so rung 1 already covers it.
-                    walk,
-                    fetch,
+                    held,
+                    pull,
+                    // `own` absent AND the store floored at the weakest tier
+                    // nothing local can write — see this function's docs. Either
+                    // half alone leaves the locally-derived key reachable.
+                    store_floor: Some(KeySource::Carried),
                     ..Default::default()
                 },
             )
@@ -1636,11 +1885,12 @@ mod tests {
         );
         assert!(!pinned_now());
 
-        // The key lands — via W4, the inlet, or a DKG share — and the SAME call
-        // path now pins. Nothing re-ran a boundary read; the store rung answered.
+        // The key lands — via the agreement write-back or a DKG share — and the
+        // SAME call path now pins. Nothing re-ran an artifact read; the store rung
+        // answered.
         let (sharing, _) =
             deal_anonymous::<MinSig, N3f1>(&mut test_rng(), Default::default(), NZU32!(4));
-        store.set_pk(epoch.get(), *sharing.public(), KeySource::ObservedOutcome);
+        store.set_pk(epoch.get(), *sharing.public(), KeySource::Agreed);
         assert!(
             register_soft_entered(&store, None, None, epoch, &snap, 1, &register).await,
             "the late key must be picked up by the next soft-enter"
@@ -1693,6 +1943,16 @@ mod tests {
 
     /// Register `epoch` pin-less the way the bulk catch-up span does — straight
     /// into the provider, touching neither `roles` nor any epoch-manager state.
+    /// A group key distinct from [`some_group_key`].
+    fn some_other_group_key() -> GroupPublic {
+        let mut rng = StdRng::seed_from_u64(0xC0FFEE);
+        let (sharing, _) = commonware_cryptography::bls12381::dkg::deal_anonymous::<
+            commonware_cryptography::bls12381::primitives::variant::MinSig,
+            commonware_utils::N3f1,
+        >(&mut rng, Default::default(), commonware_utils::NZU32!(4));
+        *sharing.public()
+    }
+
     fn register_pin_less(provider: &EpochSchemeProvider, epoch: Epoch) {
         let (snap, _) = repair_fixture(epoch);
         let scheme = soft_enter_verifier(&snap, 1, None).expect("valid committee");
@@ -1721,17 +1981,17 @@ mod tests {
             soft_enter_verifier(&snap, 1, Some(some_group_key())).expect("valid committee"),
         );
 
-        let exploding_walk = BoundaryWalk::new(
+        let exploding = AgreedKeys::new(
             Arc::new(|_| {
                 Box::pin(async { panic!("an already-pinned epoch must not be resolved for") })
             }),
-            OriginEpocher::new(1, std::num::NonZeroU64::new(10).unwrap()),
+            Arc::new(|_| Some(true)),
         );
 
         let upgraded = repair_unpinned_schemes(
             &provider,
             &BeaconKeys::new(),
-            Some(&exploding_walk),
+            Some(&exploding),
             None,
             &fluent_namespace(1),
             Epoch::new(7),
@@ -1757,7 +2017,7 @@ mod tests {
         register_pin_less(&provider, newer);
 
         let store = BeaconKeys::new();
-        store.set_pk(older.get(), some_group_key(), KeySource::ObservedOutcome);
+        store.set_pk(older.get(), some_group_key(), KeySource::Agreed);
 
         let upgraded = repair_unpinned_schemes(
             &provider,
@@ -1792,11 +2052,7 @@ mod tests {
         register_pin_less(&provider, pre_beacon);
 
         let store = BeaconKeys::new();
-        store.set_pk(
-            pre_beacon.get(),
-            some_group_key(),
-            KeySource::ObservedOutcome,
-        );
+        store.set_pk(pre_beacon.get(), some_group_key(), KeySource::Agreed);
 
         let upgraded = repair_unpinned_schemes(
             &provider,
@@ -1831,7 +2087,7 @@ mod tests {
         provider.register(epoch, signer);
 
         let store = BeaconKeys::new();
-        store.set_pk(epoch.get(), some_group_key(), KeySource::ObservedOutcome);
+        store.set_pk(epoch.get(), some_group_key(), KeySource::Agreed);
 
         let upgraded = repair_unpinned_schemes(
             &provider,
@@ -1862,7 +2118,7 @@ mod tests {
         register_pin_less(&provider, epoch);
 
         let store = BeaconKeys::new();
-        store.set_pk(epoch.get(), some_group_key(), KeySource::ObservedOutcome);
+        store.set_pk(epoch.get(), some_group_key(), KeySource::Agreed);
 
         let upgraded = repair_unpinned_schemes(
             &provider,
@@ -1892,7 +2148,7 @@ mod tests {
         register_pin_less(&provider, epoch);
 
         let store = BeaconKeys::new();
-        store.set_pk(epoch.get(), some_group_key(), KeySource::ObservedOutcome);
+        store.set_pk(epoch.get(), some_group_key(), KeySource::Agreed);
 
         let namespace = fluent_namespace(1);
         let never_corroborated = Epoch::new(0);
@@ -1943,7 +2199,7 @@ mod tests {
         register_pin_less(&provider, epoch);
 
         let store = BeaconKeys::new();
-        store.set_pk(epoch.get(), some_group_key(), KeySource::ObservedOutcome);
+        store.set_pk(epoch.get(), some_group_key(), KeySource::Agreed);
 
         let namespace = fluent_namespace(1);
         let sweep = || {
@@ -1960,6 +2216,155 @@ mod tests {
         assert_eq!(sweep().await, vec![epoch]);
         assert_eq!(sweep().await, Vec::<Epoch>::new());
         assert!(is_pinned(&provider, epoch));
+    }
+
+    /// The sweep's pin is WRITE-ONCE (`apply_pin` refuses an already-pinned
+    /// entry) and nothing re-registers a below-frontier scheme, so a pin taken
+    /// from a key this node reconstructed itself is terminal for that epoch on
+    /// this node if the reconstruction diverged (soak 2026-07-14) — every valid
+    /// certificate of the epoch rejects, and the later `Agreed` write that
+    /// corrects the STORE leaves the pin wrong. Dropping the own-DKG rung does
+    /// NOT prevent that: W1/W3 write the same locally derived key into the shared
+    /// store, and the store rung answers before `held`/`pull` are consulted.
+    ///
+    /// The floor is a floor and not an `Agreed`-only gate, because that would
+    /// hollow out rung 1: `Carried` is derived from chain facts alone (an
+    /// attested mint plus the chain's `dkgQual` bit) and is how the ladder
+    /// memoises a resolved carry.
+    ///
+    /// Reds if the store rung goes back to being provenance-blind.
+    #[tokio::test]
+    async fn the_sweep_refuses_a_locally_derived_store_key() {
+        let (local, carried) = (Epoch::new(5), Epoch::new(6));
+        let provider = EpochSchemeProvider::new();
+        register_pin_less(&provider, local);
+        register_pin_less(&provider, carried);
+
+        let store = BeaconKeys::new();
+        store.set_pk(local.get(), some_group_key(), KeySource::LocalDkg);
+        store.set_pk(carried.get(), some_other_group_key(), KeySource::Carried);
+
+        let upgraded = repair_unpinned_schemes(
+            &provider,
+            &store,
+            None,
+            None,
+            &fluent_namespace(1),
+            Epoch::new(9),
+            Epoch::new(0),
+        )
+        .await;
+
+        assert_eq!(upgraded, vec![carried]);
+        assert!(
+            !is_pinned(&provider, local),
+            "a key this node reconstructed itself must not become a write-once pin"
+        );
+        assert!(is_pinned(&provider, carried));
+    }
+
+    /// The sweep spends one bounded peer pull per unpinned epoch, and that pull
+    /// SLEEPS on its caller-side rate bound before it even issues the fetch — up
+    /// to `SCHEME_RETENTION_EPOCHS` × (`PULL_MIN_INTERVAL` + `PULL_TIMEOUT`) of
+    /// awaiting per sweep. Awaited on the epoch manager's `select!`, that is a
+    /// ~100 s window in which `share_n`, `spawn_unblocked` and `vote_backup` do
+    /// not run — the three arms that turn this node into a signer.
+    ///
+    /// So the driver here is the manager's loop in miniature: a second arm with
+    /// work queued on it, and the sweep wake sent from that arm exactly as the
+    /// manager sends it. The whole window under test is the one in which the
+    /// sweep is parked inside its pull, and the assertion is that the second arm
+    /// is served throughout it. Under the pre-fix inline shape that count is
+    /// zero, and `parked.notified()` below is never even reached.
+    ///
+    /// The timeout is there so a regression FAILS instead of hanging the suite.
+    /// It costs nothing on the passing path — the future is dropped, not awaited.
+    #[tokio::test]
+    async fn a_parked_sweep_does_not_hold_its_driver() {
+        const OTHER_ARM_EVENTS: usize = 8;
+        let epoch = Epoch::new(5);
+        let provider = EpochSchemeProvider::new();
+        register_pin_less(&provider, epoch);
+
+        // Both directions are permit-storing, so neither side can miss the
+        // other's signal by being late to await it.
+        let parked = Arc::new(Notify::new());
+        let gate = Arc::new(Notify::new());
+        let pulls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let pk = some_group_key();
+        let pull = AgreedKeys::new(
+            Arc::new({
+                let (parked, gate, pulls) = (parked.clone(), gate.clone(), pulls.clone());
+                move |_| {
+                    let (parked, gate, pulls) = (parked.clone(), gate.clone(), pulls.clone());
+                    Box::pin(async move {
+                        pulls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        parked.notify_one();
+                        gate.notified().await;
+                        Some(pk)
+                    }) as BoxFuture<'static, Option<GroupPublic>>
+                }
+            }),
+            Arc::new(|_| Some(true)),
+        );
+
+        let (hint_tx, mut hint_rx) = mpsc::unbounded_channel();
+        let hint: RepairHint = Arc::new(move |upgraded| {
+            let hint_tx = hint_tx.clone();
+            Box::pin(async move {
+                drop(hint_tx.send(upgraded));
+            }) as BoxFuture<'static, ()>
+        });
+
+        let frontier = (Epoch::new(9), Epoch::new(0));
+        let (wake, wake_rx) = watch::channel(frontier);
+        let sweep = tokio::spawn(run_repair_sweep(
+            wake_rx,
+            provider.clone(),
+            BeaconKeys::new(),
+            None,
+            Some(pull),
+            fluent_namespace(1),
+            hint,
+        ));
+
+        let served = tokio::time::timeout(std::time::Duration::from_secs(30), async move {
+            let (work_tx, mut work_rx) = mpsc::unbounded_channel();
+            for _ in 0..OTHER_ARM_EVENTS {
+                work_tx.send(()).expect("receiver is alive");
+            }
+            parked.notified().await;
+
+            let mut served = 0usize;
+            while served < OTHER_ARM_EVENTS {
+                tokio::select! {
+                    Some(()) = work_rx.recv() => {
+                        served += 1;
+                        wake.send_replace(frontier);
+                    }
+                }
+            }
+            assert_eq!(
+                pulls.load(std::sync::atomic::Ordering::SeqCst),
+                1,
+                "wakes arriving during a sweep must coalesce into one more sweep, \
+                 not stack concurrent pulls behind the pull throttle"
+            );
+
+            gate.notify_one();
+            assert_eq!(
+                hint_rx.recv().await,
+                Some(vec![epoch]),
+                "the released sweep still re-drives the epoch it pinned"
+            );
+            served
+        })
+        .await
+        .expect("a sweep awaited on its driver never lets the driver reach these assertions");
+
+        assert_eq!(served, OTHER_ARM_EVENTS);
+        assert!(is_pinned(&provider, epoch));
+        sweep.abort();
     }
 
     /// The seedless arm must inherit the E-1 terminal block's witness whenever the
@@ -2005,6 +2410,66 @@ mod tests {
 
     // A single peer (even naming u64::MAX) must NOT advance the live frontier —
     // the P2-11 permanent-soft-enter halt. n = 4 ⇒ f = 1 ⇒ threshold f+1 = 2.
+    /// W1's suppression rule, and the reason it is CONDITIONAL.
+    ///
+    /// Where the agreement plane has published a key, a locally reconstructed one
+    /// has nothing to add and W1 stands down. Where it has not — every stable
+    /// carry-forward epoch, which runs no agreement instance at all — W1 must still
+    /// publish, or ladder rung 1 stops answering for epochs this node signed and
+    /// `repair_unpinned_schemes` (which passes `own: None` precisely BECAUSE W1
+    /// fills the store) leaves them unpinned and vote-only.
+    #[test]
+    fn w1_defers_to_an_agreed_key_and_publishes_where_there_is_none() {
+        let mine = some_group_key();
+        let theirs = {
+            let mut rng = StdRng::seed_from_u64(0xB0B);
+            let (sharing, _) =
+                commonware_cryptography::bls12381::dkg::deal_anonymous::<
+                    commonware_cryptography::bls12381::primitives::variant::MinSig,
+                    commonware_utils::N3f1,
+                >(&mut rng, Default::default(), commonware_utils::NZU32!(4));
+            *sharing.public()
+        };
+        assert_ne!(mine, theirs, "the fixture must produce two distinct keys");
+
+        assert_eq!(own_key_publication(None, mine), OwnKeyPublication::Publish);
+        assert_eq!(
+            own_key_publication(Some(mine), mine),
+            OwnKeyPublication::DeferAgreeing
+        );
+        assert_eq!(
+            own_key_publication(Some(theirs), mine),
+            OwnKeyPublication::DeferDiverging(theirs)
+        );
+    }
+
+    /// The suppression is only sound because the artifact's entry answers the rung
+    /// W1's did — and it is now ALSO the promote value-gate's comparand, which is
+    /// what the shrink changed: the gate used to read a finalized boundary block's
+    /// outcome, and no block carries one.
+    #[tokio::test]
+    async fn an_agreed_key_answers_rung_one_and_is_the_value_gate_comparand() {
+        let store = BeaconKeys::new();
+        let pk = some_group_key();
+        store.set_pk(9, pk, KeySource::Agreed);
+        assert_eq!(
+            store.get_pk(9, KeySources::default()).await,
+            Some(pk),
+            "the artifact must answer the store rung W1 used to"
+        );
+        assert_eq!(
+            store.attested(9),
+            Some(pk),
+            "and it is what the promote value-gate compares against"
+        );
+        // Tiering: a local reconstruction can never displace it, whatever the
+        // write order — which is what makes W1 standing down a no-op for
+        // readers rather than a loss.
+        store.set_pk(9, some_other_group_key(), KeySource::LocalDkg);
+        assert_eq!(store.cached_only(9), Some(pk));
+        assert_eq!(store.attested(9), Some(pk));
+    }
+
     #[test]
     fn single_peer_cannot_advance_frontier() {
         let keys = distinct_keys(4);
@@ -2343,6 +2808,109 @@ mod tests {
             assert!(
                 !engine_handle_dead(&mut pending),
                 "the still-parked child reads alive throughout"
+            );
+        });
+    }
+
+    /// The agreement instances live in their OWN map and are pruned on the same
+    /// frontier cutoff as the engines — and pruning really aborts them, which for
+    /// a still-running instance is the only thing that stops it.
+    #[test]
+    fn agreement_instances_prune_on_the_engine_cutoff_and_are_aborted() {
+        use commonware_runtime::{deterministic, Clock, Runner as _, Spawner};
+        use std::{
+            sync::atomic::{AtomicUsize, Ordering},
+            time::Duration,
+        };
+
+        /// Set on drop, which for an aborted task is the moment its future is
+        /// dropped — the observable proof that `abort()` reached it.
+        struct Tombstone(Arc<AtomicUsize>);
+        impl Drop for Tombstone {
+            fn drop(&mut self) {
+                self.0.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+
+        let runner = deterministic::Runner::timed(Duration::from_secs(10));
+        runner.start(|ctx| async move {
+            let dropped = Arc::new(AtomicUsize::new(0));
+            let mut agreements: BTreeMap<Epoch, Handle<()>> = BTreeMap::new();
+            for epoch in [3u64, 4, 5] {
+                let mark = Tombstone(dropped.clone());
+                agreements.insert(
+                    Epoch::new(epoch),
+                    ctx.with_label("agreement").spawn(move |_| async move {
+                        let _mark = mark;
+                        std::future::pending::<()>().await;
+                    }),
+                );
+            }
+            // Let the spawned tasks reach their park before anything is aborted.
+            ctx.sleep(Duration::from_millis(1)).await;
+
+            prune_agreements(&ctx, &mut agreements, 5).await;
+            assert_eq!(
+                agreements.keys().copied().collect::<Vec<_>>(),
+                vec![Epoch::new(5)],
+                "the frontier's own instance must survive its cutoff"
+            );
+
+            for _ in 0..2_000 {
+                if dropped.load(Ordering::SeqCst) == 2 {
+                    break;
+                }
+                ctx.sleep(Duration::from_millis(1)).await;
+            }
+            assert_eq!(
+                dropped.load(Ordering::SeqCst),
+                2,
+                "a pruned agreement instance was dropped from the map but never aborted"
+            );
+        });
+    }
+
+    /// An agreement supervisor removes its own journal partition after it
+    /// delivers, but every EXTERNAL abort — this prune, the SafetyHalt unwind, the
+    /// manager's exit — cancels it at an await and that removal never runs. Nothing
+    /// else reclaims `dkg_epoch_{n}`, so the prune sweeps the band below the cutoff
+    /// itself, by epoch number and not by the map, which also collects what a
+    /// previous process left behind.
+    #[test]
+    fn pruning_reclaims_the_journal_partitions_an_abort_left_behind() {
+        use commonware_runtime::{deterministic, Runner as _, Spawner as _, Storage as _};
+        use std::time::Duration;
+
+        let runner = deterministic::Runner::timed(Duration::from_secs(10));
+        runner.start(|ctx| async move {
+            // Epoch 3: aborted by an earlier prune (or a previous process) — the
+            // leak. Epoch 5: the frontier's own live instance. Epoch 20: outside the
+            // swept band, so a sweep that ignored the band would look identical.
+            for epoch in [3u64, 5, 20] {
+                ctx.open(&agreement_partition(epoch), b"blob")
+                    .await
+                    .expect("partition");
+            }
+            let mut agreements: BTreeMap<Epoch, Handle<()>> = BTreeMap::new();
+            agreements.insert(
+                Epoch::new(5),
+                ctx.with_label("live")
+                    .spawn(move |_| async move { std::future::pending::<()>().await }),
+            );
+
+            prune_agreements(&ctx, &mut agreements, 5).await;
+
+            assert!(
+                ctx.scan(&agreement_partition(3)).await.is_err(),
+                "the partition an aborted supervisor left behind was never reclaimed"
+            );
+            assert!(
+                ctx.scan(&agreement_partition(5)).await.is_ok(),
+                "the live instance's own partition must survive"
+            );
+            assert!(
+                ctx.scan(&agreement_partition(20)).await.is_ok(),
+                "the sweep must stay inside its band"
             );
         });
     }

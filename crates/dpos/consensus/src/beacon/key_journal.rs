@@ -6,10 +6,16 @@
 //!
 //! [`KeySource`] has three tiers and exactly one reaches the disk.
 //!
-//! - [`KeySource::ObservedOutcome`] — read out of a finalized, quorum-certified
-//!   block. Agreed chain data, and the expensive tier to re-obtain after a
-//!   restart: a node with no ceremony material of its own has to walk boundary
-//!   blocks or fetch one from a peer. **Persisted.**
+//! - [`KeySource::Agreed`] — the key a `committee[epoch]` quorum certified on the
+//!   agreement plane. Attested data, and the expensive tier to re-obtain: a node
+//!   with no ceremony material of its own gets it back only by re-reading the
+//!   chain's `dkgQual` record and then its artifact store or a peer, and the
+//!   `dkgQual` read is exactly what is NOT answerable while a restarted node's
+//!   EL is still catching up. That gap is what this store closes, and it is why
+//!   the artifact's own durable home
+//!   ([`ArtifactStore`](crate::beacon::artifact::ArtifactStore)) does not make
+//!   this one redundant: that store is keyed by MINTING epoch and needs the chain
+//!   read to be addressed at all. **Persisted.**
 //! - [`KeySource::LocalDkg`] — this node's own reconstruction from the shares it
 //!   received. It CAN diverge from what the network agreed (soak 2026-07-14: a
 //!   stale local write beat the network's and poisoned the epoch), and today a
@@ -19,7 +25,7 @@
 //!   under `<datadir>/beacon/` and regenerates it at startup. **Never persisted.**
 //! - [`KeySource::Carried`] — the memo saying an epoch that did not re-mint uses
 //!   an earlier epoch's key. A cache of a derivation, not a fact; losing it costs
-//!   one local walk over blocks already on disk. **Not persisted.**
+//!   one resolve through the tier above. **Not persisted.**
 //!
 //! ## Why the durable write may lag the RAM write
 //!
@@ -34,7 +40,7 @@
 //! Deliberate, and the one place this store differs from the seed journal, which
 //! keeps a rolling window of rounds.
 //!
-//! An `ObservedOutcome` entry is written once per COMMITTEE CHANGE, not once per
+//! An `Agreed` entry is written once per COMMITTEE CHANGE, not once per
 //! epoch — and the store is keyed by the epoch that MINTED the key, so on a
 //! committee that has been stable for a long time the entry worth having is the
 //! OLDEST one. Any window measured in epochs therefore drops the valuable record
@@ -47,15 +53,13 @@
 //! at a day-long epoch writes ~37 KB/year. A realistic one writes a few hundred
 //! bytes a year.
 
-use crate::beacon::{
-    keys::{BeaconKeys, KeySource},
-    seed::GroupPublic,
-};
+use crate::beacon::keys::{BeaconKeys, KeySource};
 use bytes::{Buf, BufMut};
 use commonware_codec::{Error as CodecError, FixedSize, Read, ReadExt as _, Write};
 use commonware_runtime::{BufferPooler, Clock, Handle, Metrics, Spawner, Storage};
 use commonware_storage::ordinal::{Config as OrdinalConfig, Error as OrdinalError, Ordinal};
 use commonware_utils::{NZUsize, NZU64};
+use fluentbase_bls::beacon::GroupPublic;
 use std::num::{NonZeroU64, NonZeroUsize};
 use tokio::sync::mpsc::UnboundedReceiver;
 use tracing::warn;
@@ -77,7 +81,7 @@ const MAX_BATCH: usize = 64;
 
 /// Failures of the durable key store.
 #[derive(Debug, thiserror::Error)]
-pub enum Error {
+pub(crate) enum Error {
     #[error("key store: {0}")]
     Store(#[from] OrdinalError),
 }
@@ -90,7 +94,7 @@ pub enum Error {
 /// provenance it did not have — which is the property
 /// [`BeaconKeys::attested`](crate::beacon::keys::BeaconKeys::attested) rests on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct KeyRecord {
+pub(crate) struct KeyRecord {
     pub pk: GroupPublic,
     pub source: KeySource,
 }
@@ -98,13 +102,16 @@ pub struct KeyRecord {
 impl KeyRecord {
     const LOCAL_DKG: u8 = 0;
     const CARRIED: u8 = 1;
-    const OBSERVED_OUTCOME: u8 = 2;
+    // 2 is RETIRED: it tagged the `ObservedOutcome` tier, whose source was a
+    // boundary block's `beacon_outcome`. Left reserved so a future tier cannot
+    // silently re-use it and read old records as itself.
+    const AGREED: u8 = 3;
 
     fn tag(source: KeySource) -> u8 {
         match source {
             KeySource::LocalDkg => Self::LOCAL_DKG,
             KeySource::Carried => Self::CARRIED,
-            KeySource::ObservedOutcome => Self::OBSERVED_OUTCOME,
+            KeySource::Agreed => Self::AGREED,
         }
     }
 }
@@ -127,7 +134,7 @@ impl Read for KeyRecord {
         let source = match u8::read(buf)? {
             Self::LOCAL_DKG => KeySource::LocalDkg,
             Self::CARRIED => KeySource::Carried,
-            Self::OBSERVED_OUTCOME => KeySource::ObservedOutcome,
+            Self::AGREED => KeySource::Agreed,
             _ => return Err(CodecError::Invalid("KeyRecord", "unknown key source tag")),
         };
         Ok(Self { pk, source })
@@ -136,7 +143,7 @@ impl Read for KeyRecord {
 
 /// The durable half of the key store. Exactly ONE instance per process: a second
 /// handle over the same partition is a dual-writer.
-pub struct KeyJournal<E: Storage + Metrics + Clock + BufferPooler> {
+pub(crate) struct KeyJournal<E: Storage + Metrics + Clock + BufferPooler> {
     store: Ordinal<E, KeyRecord>,
 }
 
@@ -166,7 +173,7 @@ impl<E: Storage + Metrics + Clock + BufferPooler> KeyJournal<E> {
         pk: GroupPublic,
         source: KeySource,
     ) -> Result<bool, Error> {
-        if source != KeySource::ObservedOutcome {
+        if source != KeySource::Agreed {
             return Ok(false);
         }
         self.store.put(epoch, KeyRecord { pk, source }).await?;
@@ -316,17 +323,13 @@ mod tests {
     /// The record carries its provenance, and the codec is what makes that true
     /// on disk. Dropping the tag would make every restored entry take whatever
     /// default the reader picked — and the two defaults are both wrong (all
-    /// `Carried` disables the divergence guard, all `ObservedOutcome` lies to
+    /// `Carried` disables the divergence guard, all `Agreed` lies to
     /// `attested`).
     ///
     /// Reds if the tag leaves the on-disk shape.
     #[test]
     fn a_record_round_trips_with_its_source() {
-        for source in [
-            KeySource::LocalDkg,
-            KeySource::Carried,
-            KeySource::ObservedOutcome,
-        ] {
+        for source in [KeySource::LocalDkg, KeySource::Carried, KeySource::Agreed] {
             let record = KeyRecord { pk: key(1), source };
             let back = KeyRecord::decode(record.encode()).expect("round trip");
             assert_eq!(back, record, "{source:?} must survive the codec");
@@ -362,7 +365,7 @@ mod tests {
             );
             assert!(
                 journal
-                    .append(9, key(3), KeySource::ObservedOutcome)
+                    .append(9, key(3), KeySource::Agreed)
                     .await
                     .expect("append"),
                 "and the attested one does"
@@ -390,7 +393,7 @@ mod tests {
                     .await
                     .expect("init");
                 journal
-                    .append(12, expected, KeySource::ObservedOutcome)
+                    .append(12, expected, KeySource::Agreed)
                     .await
                     .expect("append");
                 journal.sync().await.expect("sync");
@@ -406,7 +409,7 @@ mod tests {
             assert_eq!(loaded[0].1.pk, expected);
             assert_eq!(
                 loaded[0].1.source,
-                KeySource::ObservedOutcome,
+                KeySource::Agreed,
                 "provenance is restored, never defaulted"
             );
         });

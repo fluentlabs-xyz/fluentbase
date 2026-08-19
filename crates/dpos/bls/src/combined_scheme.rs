@@ -210,8 +210,8 @@ pub struct CombinedScheme {
     /// tampered/cleared seed on an otherwise-valid multisig quorum). A
     /// beacon-active scheme derives it from its own `BeaconPart`; a
     /// verifier-flavored scheme (`beacon = None`) may receive it externally
-    /// from the finalized change-boundary block's `beacon_outcome` (agreed,
-    /// multisig-bound data — NOT on-chain storage, which stays deleted).
+    /// from the epoch-key agreement plane's quorum-signed artifact, resolved
+    /// through `beacon::keys::BeaconKeys::get_pk`.
     /// `None` ⇒ vote-only cert verify (pre-beacon fallback epoch, or the key
     /// cursor is unresolved — e.g. right after a deep cold-start jump landing).
     cert_seed_pin: Option<(GroupPublic, Vec<u8>)>,
@@ -234,8 +234,8 @@ impl CombinedScheme {
     /// mis-attribute a partial.
     ///
     /// `external_pin` supplies the cert-time seed pin for a verifier-flavored
-    /// scheme (`beacon = None`) whose key comes from an agreed boundary-block
-    /// `beacon_outcome`; when `beacon` is present the pin is derived from it and
+    /// scheme (`beacon = None`) whose key comes from the agreement artifact;
+    /// when `beacon` is present the pin is derived from it and
     /// `external_pin` is ignored (a beacon-active scheme already holds `PK_epoch`).
     pub(crate) fn new(
         vote: VoteScheme,
@@ -260,8 +260,9 @@ impl CombinedScheme {
         // presence as "this epoch is beacon-active" and rejects any seedless cert
         // under it — so a pin on a pre-beacon epoch would reject every legal cert
         // there. Holds today because both sources are unreachable that early: a
-        // `BeaconPart` needs a dealt key, and `external_pin` comes from a boundary
-        // block's `beacon_outcome`, the first of which is epoch 2's.
+        // `BeaconPart` needs a dealt key, and `external_pin` comes from an
+        // agreement artifact, and `chain_key_epoch` returns none below the
+        // bootstrap epoch.
         let cert_seed_pin = match &beacon {
             Some(b) => Some((*b.sharing.public(), b.seed_namespace.clone())),
             None => external_pin,
@@ -487,7 +488,7 @@ impl CertScheme for CombinedScheme {
             // ANY cert in a beacon-active epoch MUST carry a seed — Nullify included.
             // The pin's presence is what "beacon-active" means here, so this arm is
             // unreachable below `DETERMINISTIC_BOOTSTRAP_EPOCH`: a sub-bootstrap
-            // epoch has no `BeaconPart` and no boundary `beacon_outcome`, hence no
+            // epoch has no `BeaconPart` and no agreement artifact, hence no
             // pin, hence the early return above. Keep that invariant intact — if a
             // pin ever became attachable to a pre-beacon epoch, this arm would
             // reject every legal seedless cert on it.

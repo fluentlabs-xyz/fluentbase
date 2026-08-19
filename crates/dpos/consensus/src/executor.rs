@@ -3250,8 +3250,6 @@ mod tests {
             extra_data: Bytes::new(),
             result,
             txs: Vec::new(),
-            beacon_outcome: None,
-            dkg_logs: Vec::new(),
             parent_seed: None,
             equivocation: None,
         }

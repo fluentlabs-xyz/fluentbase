@@ -18,21 +18,25 @@
 //! actors live in [`actor`] / [`ceremony`].
 
 pub mod actor;
+pub mod artifact;
 pub mod carry;
-pub mod ceremony;
-pub mod certify;
-pub mod dkg_msg;
-/// Local single-process DKG oracle — used only by tests across the crate (the
+pub(crate) mod ceremony;
+pub(crate) mod certify;
+pub mod dkg_agree;
+pub mod dkg_engine;
+pub(crate) mod dkg_msg;
+/// Local single-process DKG oracle — used only by the beacon's own tests (the
 /// production path is the networked [`actor`]/[`ceremony`]). `#[cfg(test)]`-gated
 /// so it is not compiled into release builds.
 #[cfg(test)]
-pub mod dkg_oracle;
-pub mod key_journal;
+pub(crate) mod dkg_oracle;
+pub(crate) mod dkg_transport;
+pub(crate) mod key_journal;
 pub mod keys;
 pub mod log_resolver;
 pub mod metrics;
 pub mod outcome;
 pub mod seed;
-pub mod seed_journal;
+pub(crate) mod seed_journal;
 pub mod share_state;
-pub mod wire;
+pub(crate) mod wire;

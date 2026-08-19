@@ -4,7 +4,7 @@
 //! agreeing OrderBlock N+K is the committee's attestation of block N's
 //! execution result.
 
-use crate::beacon::{outcome::MAX_BEACON_OUTCOME_SIZE, seed::Seed};
+use crate::beacon::seed::Seed;
 use crate::digest::Digest;
 use crate::slasher::evidence::MAX_EQUIVOCATION_SIZE;
 use alloy_primitives::{keccak256, Address, Bytes, B256};
@@ -37,41 +37,17 @@ pub const MAX_ORDER_BLOCK_SIZE: usize = 4 * 1024 * 1024;
 /// Tx-list byte budget for ordering assembly: [`MAX_ORDER_BLOCK_SIZE`] minus the
 /// [`MAX_EXTRA_DATA_SIZE`] allowance for the non-tx fields (parent/height/result,
 /// extra_data, codec framing) and one allowance per optional field ANY block may
-/// carry — [`PARENT_SEED_FRAMING`] for `proposal_view` + `parent_seed`,
-/// [`DKG_LOGS_FRAMING`] for `dkg_logs`, [`EQUIVOCATION_FRAMING`] for
-/// `equivocation` — so an assembled artifact always fits its own decode cap.
-/// `beacon_outcome` is carved out separately ([`TX_BYTE_BUDGET_AT_BOUNDARY`]),
-/// because only a change-epoch boundary block can carry it.
-pub const TX_BYTE_BUDGET: usize = MAX_ORDER_BLOCK_SIZE
-    - MAX_EXTRA_DATA_SIZE
-    - PARENT_SEED_FRAMING
-    - DKG_LOGS_FRAMING
-    - EQUIVOCATION_FRAMING;
-
-/// Decode cap for the `dkg_logs` field (AMENDMENT 5): up to `MAX_COMMITTEE_SIZE`
-/// entries, each `idx(u8) ‖ hash([u8;32])`. A dealer-log hash index over the
-/// committee, so it is committee-size-bounded like the leader index.
-pub const MAX_DKG_LOGS_SIZE: usize =
-    (fluentbase_p2p::constants::MAX_COMMITTEE_SIZE as usize) * (u8::SIZE + 32);
-
-/// Worst-case wire cost of the `dkg_logs` field: its decode cap plus the `u32`
-/// count prefix. Reserved out of [`TX_BYTE_BUDGET`] for EVERY block (any block in
-/// the seal→settle window MAY carry dealer-log hashes), the same composed-oversize
-/// carve-out (bug 1) [`BEACON_OUTCOME_FRAMING`] documents.
-pub const DKG_LOGS_FRAMING: usize = MAX_DKG_LOGS_SIZE + u32::SIZE;
-
-/// Worst-case wire cost of the `beacon_outcome` field: its decode cap plus the
-/// `u32` length prefix. Reserved out of the tx budget on a change-epoch boundary
-/// block (the ONE block that carries `beacon_outcome`) — `TX_BYTE_BUDGET`'s
-/// carve-out list omits it, so a boundary block at the full tx budget could
-/// exceed `MAX_ORDER_BLOCK_SIZE` / the byte-identical p2p frame cap (bug 1).
-pub const BEACON_OUTCOME_FRAMING: usize = MAX_BEACON_OUTCOME_SIZE + u32::SIZE;
+/// carry — [`PARENT_SEED_FRAMING`] for `proposal_view` + `parent_seed` and
+/// [`EQUIVOCATION_FRAMING`] for `equivocation` — so an assembled artifact always
+/// fits its own decode cap.
+pub const TX_BYTE_BUDGET: usize =
+    MAX_ORDER_BLOCK_SIZE - MAX_EXTRA_DATA_SIZE - PARENT_SEED_FRAMING - EQUIVOCATION_FRAMING;
 
 /// Worst-case wire cost of the `equivocation` field: its decode cap plus the
-/// `u32` length prefix. Reserved out of [`TX_BYTE_BUDGET`] for EVERY block —
-/// unlike `beacon_outcome`, which only a change-epoch boundary block carries, a
-/// charge can ride any block whose proposer holds one. Same composed-oversize
-/// carve-out (bug 1) [`BEACON_OUTCOME_FRAMING`] documents.
+/// `u32` length prefix. Reserved out of [`TX_BYTE_BUDGET`] for EVERY block — a
+/// charge can ride any block whose proposer holds one — so a full-budget block
+/// carrying one still fits `MAX_ORDER_BLOCK_SIZE` / the byte-identical p2p frame
+/// cap (the composed-oversize class, bug 1).
 pub const EQUIVOCATION_FRAMING: usize = MAX_EQUIVOCATION_SIZE + u32::SIZE;
 
 /// Worst-case wire cost of the fields the parent-seed witness added:
@@ -81,13 +57,8 @@ pub const EQUIVOCATION_FRAMING: usize = MAX_EQUIVOCATION_SIZE + u32::SIZE;
 /// the flag bit rides the pre-existing `beacon_flags` byte). Reserved out of
 /// [`TX_BYTE_BUDGET`] so a full-budget block carrying the witness still fits
 /// `MAX_ORDER_BLOCK_SIZE` / the byte-identical p2p frame cap — the same
-/// composed-oversize class (bug 1) [`BEACON_OUTCOME_FRAMING`] documents.
+/// composed-oversize class (bug 1) [`EQUIVOCATION_FRAMING`] documents.
 pub const PARENT_SEED_FRAMING: usize = u64::SIZE + 2 * MAX_U64_VARINT_SIZE + BlsSignature::SIZE;
-
-/// Tx-list byte budget for a change-epoch BOUNDARY block: [`TX_BYTE_BUDGET`]
-/// minus [`BEACON_OUTCOME_FRAMING`], so a boundary block carrying `beacon_outcome`
-/// still fits `MAX_ORDER_BLOCK_SIZE` and the p2p frame cap.
-pub const TX_BYTE_BUDGET_AT_BOUNDARY: usize = TX_BYTE_BUDGET - BEACON_OUTCOME_FRAMING;
 
 /// Decode cap for `extra_data`. Deliberately far above the 3-byte production
 /// record it actually carries: this cap only has to compose with the
@@ -158,24 +129,6 @@ pub struct OrderBlock {
     pub result: B256,
     /// Ordered raw transactions.
     pub txs: Vec<TransactionSigned>,
-    /// Per-epoch DKG outcome (the encoded commonware `Output` = group key
-    /// `PK_{E+1}` + public polynomial), present ONLY on the epoch-boundary
-    /// block that agrees the next committee's beacon key. Opaque at this codec
-    /// layer (parsed by `beacon` with the committee-size config — `Output`'s
-    /// decode needs it); the system call then publishes `PK_{E+1}` to L2.
-    pub beacon_outcome: Option<Bytes>,
-    /// AMENDMENT 5 determinism core: the content hashes of the E+1 DKG dealer logs
-    /// this block's proposer has recorded (a `check`-valid body it holds), as
-    /// `(idx, hash)` where `idx` = the dealer's position in the agreed
-    /// `committee[epoch_of(height)+1]` and `hash = keccak256(SignedDealerLog)`.
-    /// CANONICAL: strictly ascending by `idx`, no duplicate `idx` (enforced at
-    /// decode so the digest is unambiguous). Accumulated across finalized blocks
-    /// into the FINALIZED dealer-log set that the DKG finalize `select` runs over —
-    /// making `PK_{E+1}` a pure function of agreed consensus data (honest divergence
-    /// impossible). Empty on every block outside the seal→settle window. `verify` is
-    /// FORMAT-ONLY (`idx < n`, sorted, no dups, cap) — a verifier need NOT hold the
-    /// bodies (off-chain-first; they ride the dealer `Reveal` + the recovery resolver).
-    pub dkg_logs: Vec<(u8, B256)>,
     /// Threshold randomness seed of the round in which the PARENT block was
     /// certified, carried by the child (Design B′): `prev_randao(parent) =
     /// H(seed.signature)`. Delivers the parent's seed via the one object that
@@ -200,9 +153,9 @@ pub struct OrderBlock {
     /// whether the evidence gossip reached that voter in time.
     ///
     /// Opaque at this codec layer (the decode needs the epoch committee, which
-    /// this layer does not hold). Never reaches the EVM — like `beacon_outcome`
-    /// it is a consensus-only artifact; the verdict the executor acts on rides
-    /// in `extra_data`, which the derived header copies verbatim.
+    /// this layer does not hold). Never reaches the EVM — it is a consensus-only
+    /// artifact; the verdict the executor acts on rides in `extra_data`, which
+    /// the derived header copies verbatim.
     pub equivocation: Option<Bytes>,
 }
 
@@ -297,8 +250,6 @@ pub fn anchor_order_block(
         extra_data: Bytes::new(),
         result: anchor.hash(),
         txs: Vec::new(),
-        beacon_outcome: None,
-        dkg_logs: Vec::new(),
         parent_seed: None,
         equivocation: None,
     })
@@ -307,24 +258,39 @@ pub fn anchor_order_block(
 // Wire format (all integers big-endian via commonware primitives):
 //   parent(32) ‖ height(8) ‖ proposal_view(8) ‖ timestamp(8) ‖ fee_recipient(20)
 //   ‖ gas_limit(8) ‖ result(32) ‖ extra_data_len(4)+bytes ‖ txs as one RLP list
-//   ‖ beacon_flags(1) ‖ [beacon_outcome_len(4)+bytes]
-//   ‖ [dkg_logs_count(4) + count*(idx(1) ‖ hash(32))]
+//   ‖ beacon_flags(1)
 //   ‖ [parent_seed: Round(varint epoch ‖ varint view) ‖ signature(48)]
 //   ‖ [equivocation_len(4)+bytes].
-// `beacon_flags` bit0 = outcome present; bit1 = parent_seed present; bit2 =
-// equivocation present; bit3 = dkg_logs present (each optional body written iff
-// its bit is set — the fixed-layout Seed needs no length prefix). Body write
-// order follows the STRUCT field order (outcome, dkg_logs, parent_seed,
-// equivocation), independent of the flag-bit numbering. `dkg_logs` is CANONICAL
-// — strictly ascending `idx`, no dups (enforced at decode); so is
-// `equivocation`, whose flag-set-but-empty encoding is rejected because it is a
-// second spelling of an absent charge. The RLP tx list reuses alloy's canonical
-// encoding so tx bytes are identical to their EVM-block representation.
-// `beacon_outcome`, `dkg_logs`, `proposal_view`, `parent_seed` and
-// `equivocation` are all part of the encoding (hence the digest): an unagreed
-// next-epoch key, dealer-log set or randomness input under one digest would
-// diverge derive/STF, a `proposal_view` outside the digest would be forgeable,
-// and evidence outside it could be swapped after the committee attested it.
+// `beacon_flags` bit1 = parent_seed present; bit2 = equivocation present (each
+// optional body written iff its bit is set — the fixed-layout Seed needs no
+// length prefix). Body write order follows the STRUCT field order, independent
+// of the flag-bit numbering.
+//
+// BIT 0 and BIT 3 ARE RESERVED AND MUST STAY CLEAR. They carried the retired
+// `beacon_outcome` and `dkg_logs` bodies; the epoch key is now agreed on the
+// p2p agreement plane and delivered as a quorum-signed artifact, so no block
+// carries beacon material at all. They were NOT renumbered — bit1/bit2 and
+// their bodies stay byte-identical to the pre-shrink encoding — and decode
+// REJECTS either bit being set, because a set-but-unread bit would be a second
+// spelling of the same block and the flags byte is inside `digest()`.
+//
+// RELEASE DISCIPLINE FOR THAT REMOVAL: COORDINATED, NOT ROLLING. The flags byte
+// and every optional body sit inside `digest()`, so an old binary and a new one
+// disagree on the digest of any block that carried an outcome or dealer logs —
+// they cannot be run against each other on one chain, at any overlap. There is
+// no migration to perform and none is provided: this is acceptable ONLY because
+// Fluent networks are relaunched from block 0, so no live chain has to cross the
+// change. A future deployment that must survive a rolling upgrade cannot reuse
+// this pattern.
+//
+// `equivocation` is CANONICAL: its flag-set-but-empty encoding is rejected
+// because it is a second spelling of an absent charge. The RLP tx list reuses
+// alloy's canonical encoding so tx bytes are identical to their EVM-block
+// representation. `proposal_view`, `parent_seed` and `equivocation` are all part
+// of the encoding (hence the digest): an unagreed randomness input under one
+// digest would diverge derive/STF, a `proposal_view` outside the digest would be
+// forgeable, and evidence outside it could be swapped after the committee
+// attested it.
 
 impl Write for OrderBlock {
     fn write(&self, buf: &mut impl BufMut) {
@@ -339,24 +305,12 @@ impl Write for OrderBlock {
         (self.extra_data.len() as u32).write(buf);
         buf.put_slice(&self.extra_data);
         self.txs.encode(buf);
-        // bit0 = outcome present; bit1 = parent_seed present; bit2 = equivocation
-        // present; bit3 = dkg_logs present.
-        let flags = self.beacon_outcome.is_some() as u8
-            | (self.parent_seed.is_some() as u8) << 1
-            | (self.equivocation.is_some() as u8) << 2
-            | ((!self.dkg_logs.is_empty()) as u8) << 3;
+        // bit1 = parent_seed present; bit2 = equivocation present. Bits 0 and 3
+        // are RESERVED (retired `beacon_outcome` / `dkg_logs`) and stay clear —
+        // no renumbering, so bit1/bit2 keep their pre-shrink positions.
+        let flags =
+            (self.parent_seed.is_some() as u8) << 1 | (self.equivocation.is_some() as u8) << 2;
         flags.write(buf);
-        if let Some(outcome) = &self.beacon_outcome {
-            (outcome.len() as u32).write(buf);
-            buf.put_slice(outcome);
-        }
-        if !self.dkg_logs.is_empty() {
-            (self.dkg_logs.len() as u32).write(buf);
-            for (idx, hash) in &self.dkg_logs {
-                idx.write(buf);
-                buf.put_slice(hash.as_slice());
-            }
-        }
         if let Some(seed) = &self.parent_seed {
             seed.write(buf);
         }
@@ -390,15 +344,6 @@ impl EncodeSize for OrderBlock {
             + self.extra_data.len()
             + self.txs.length()
             + FLAGS
-            + self
-                .beacon_outcome
-                .as_ref()
-                .map_or(0, |o| LEN_PREFIX + o.len())
-            + if self.dkg_logs.is_empty() {
-                0
-            } else {
-                LEN_PREFIX + self.dkg_logs.len() * (u8::SIZE + 32)
-            }
             + self.parent_seed.as_ref().map_or(0, |s| s.encode_size())
             + self
                 .equivocation
@@ -449,73 +394,16 @@ impl Read for OrderBlock {
         let txs: Vec<TransactionSigned> = alloy_rlp::Decodable::decode(&mut bytes.as_ref())
             .map_err(|e| commonware_codec::Error::Wrapped("reading tx list", e.into()))?;
         let flags = u8::read_cfg(buf, &())?;
-        let beacon_outcome = if flags & 1 != 0 {
-            let len = u32::read_cfg(buf, &())? as usize;
-            if len > MAX_BEACON_OUTCOME_SIZE {
-                return Err(commonware_codec::Error::Invalid(
-                    "order_block",
-                    "beacon_outcome exceeds MAX_BEACON_OUTCOME_SIZE",
-                ));
-            }
-            if len > buf.remaining() {
-                return Err(commonware_codec::Error::EndOfBuffer);
-            }
-            Some(Bytes::from(buf.copy_to_bytes(len)))
-        } else {
-            None
-        };
-        let dkg_logs: Vec<(u8, B256)> = if flags & 8 != 0 {
-            let count = u32::read_cfg(buf, &())? as usize;
-            if count > fluentbase_p2p::constants::MAX_COMMITTEE_SIZE as usize {
-                return Err(commonware_codec::Error::Invalid(
-                    "order_block",
-                    "dkg_logs exceeds MAX_COMMITTEE_SIZE entries",
-                ));
-            }
-            if count == 0 {
-                // bit3 set but empty is non-canonical (would encode as a cleared bit).
-                return Err(commonware_codec::Error::Invalid(
-                    "order_block",
-                    "dkg_logs flag set with zero entries",
-                ));
-            }
-            if count * (u8::SIZE + 32) > buf.remaining() {
-                return Err(commonware_codec::Error::EndOfBuffer);
-            }
-            let mut logs = Vec::with_capacity(count);
-            let mut prev: Option<u8> = None;
-            for _ in 0..count {
-                let idx = u8::read_cfg(buf, &())?;
-                // The COUNT bound above does not bound the VALUE: idx is a u8, so without
-                // this an entry could name participant 200 of a 51-seat committee. Such an
-                // entry survives the vote gate whenever `committee_for` is unreadable
-                // (accept-biased, `application.rs::beacon_gate_decision`) and then wedges
-                // the ceremony that consumes it. MAX_COMMITTEE_SIZE is a network-wide
-                // constant, so this rejects identically on every node — unlike a bound
-                // against the live committee length, which would make decoding depend on
-                // node-local state.
-                if idx as usize >= fluentbase_p2p::constants::MAX_COMMITTEE_SIZE as usize {
-                    return Err(commonware_codec::Error::Invalid(
-                        "order_block",
-                        "dkg_logs idx exceeds MAX_COMMITTEE_SIZE",
-                    ));
-                }
-                // CANONICAL: strictly ascending idx (no dups, sorted) so the digest is
-                // unambiguous — a permuted/duplicated encoding is rejected.
-                if prev.is_some_and(|p| idx <= p) {
-                    return Err(commonware_codec::Error::Invalid(
-                        "order_block",
-                        "dkg_logs idx not strictly ascending",
-                    ));
-                }
-                prev = Some(idx);
-                let hash = B256::from(<[u8; 32]>::read_cfg(buf, &())?);
-                logs.push((idx, hash));
-            }
-            logs
-        } else {
-            Vec::new()
-        };
+        // Bits 0 and 3 carried the retired `beacon_outcome` / `dkg_logs` bodies.
+        // They were not renumbered, and a set-but-unread bit would be a second
+        // spelling of the same block under a different digest (the flags byte is
+        // inside `digest()`), so reject rather than ignore.
+        if flags & 0b0000_1001 != 0 {
+            return Err(commonware_codec::Error::Invalid(
+                "order_block",
+                "beacon_flags: a reserved bit is set",
+            ));
+        }
         let parent_seed = if flags & 2 != 0 {
             Some(Seed::read_cfg(buf, &())?)
         } else {
@@ -555,15 +443,13 @@ impl Read for OrderBlock {
             extra_data,
             result,
             txs,
-            beacon_outcome,
-            dkg_logs,
             parent_seed,
             equivocation,
         };
         // Combined-size gate (bug 1): each variable-length field is bounded
-        // against its OWN cap above (extra_data, tx list, beacon_outcome), but the
-        // TOTAL is not — a boundary block at the full tx budget plus beacon_outcome
-        // could exceed MAX_ORDER_BLOCK_SIZE and rely only on the p2p frame drop.
+        // against its OWN cap above (extra_data, tx list, equivocation), but the
+        // TOTAL is not — a block at the full tx budget plus a charge could exceed
+        // MAX_ORDER_BLOCK_SIZE and rely only on the p2p frame drop.
         // Reject the composed over-cap artifact here so every honest verifier
         // rejects deterministically. `encode_size` is the single drift-proof size
         // source (pinned == `encode().len()`), so this rejects strictly what would
@@ -625,8 +511,6 @@ mod tests {
             extra_data: Bytes::from(vec![1u8, 2, 3]),
             result: B256::repeat_byte(0x33),
             txs: Vec::new(),
-            beacon_outcome: None,
-            dkg_logs: Vec::new(),
             parent_seed: None,
             equivocation: None,
         }
@@ -668,16 +552,6 @@ mod tests {
     }
 
     #[test]
-    fn codec_round_trip_with_beacon_outcome() {
-        let mut original = sample_order_block();
-        original.beacon_outcome = Some(Bytes::from(vec![7u8; 96]));
-        let encoded = original.encode();
-        assert_eq!(original.encode_size(), encoded.len());
-        let decoded = OrderBlock::read(&mut encoded.as_ref()).expect("decode");
-        assert_eq!(original, decoded);
-    }
-
-    #[test]
     fn codec_round_trip_with_parent_seed() {
         let mut original = sample_order_block();
         original.parent_seed = Some(sample_seed());
@@ -688,57 +562,11 @@ mod tests {
     }
 
     #[test]
-    fn codec_round_trip_with_beacon_outcome_and_parent_seed() {
-        // Both optional trailers present: outcome first, seed after (the
-        // decoder must consume them in that order off one flags byte).
+    fn codec_round_trip_with_every_optional_trailer() {
+        // bit1 + bit2 — the decoder must consume parent_seed then equivocation
+        // off the one flags byte, in the struct's field order rather than the
+        // flag-bit order.
         let mut original = sample_order_block();
-        original.beacon_outcome = Some(Bytes::from(vec![7u8; 96]));
-        original.parent_seed = Some(sample_seed());
-        let encoded = original.encode();
-        assert_eq!(original.encode_size(), encoded.len());
-        let decoded = OrderBlock::read(&mut encoded.as_ref()).expect("decode");
-        assert_eq!(original, decoded);
-    }
-
-    #[test]
-    fn codec_round_trip_with_all_optional_trailers() {
-        // bit0 + bit1 both set: outcome, then parent_seed — the full
-        // optional-trailer ordering off one flags byte.
-        let mut original = sample_order_block();
-        original.beacon_outcome = Some(Bytes::from(vec![7u8; 96]));
-        original.parent_seed = Some(sample_seed());
-        let encoded = original.encode();
-        assert_eq!(original.encode_size(), encoded.len());
-        let decoded = OrderBlock::read(&mut encoded.as_ref()).expect("decode");
-        assert_eq!(original, decoded);
-    }
-
-    #[test]
-    fn codec_round_trip_with_dkg_logs() {
-        // bit3 (dkg_logs) present alongside outcome + parent_seed — the decoder must
-        // consume outcome, then dkg_logs, then parent_seed off the one flags byte.
-        let mut original = sample_order_block();
-        original.beacon_outcome = Some(Bytes::from(vec![7u8; 96]));
-        original.dkg_logs = vec![
-            (0, B256::repeat_byte(0xA1)),
-            (3, B256::repeat_byte(0xB2)),
-            (9, B256::repeat_byte(0xC3)),
-        ];
-        original.parent_seed = Some(sample_seed());
-        let encoded = original.encode();
-        assert_eq!(original.encode_size(), encoded.len());
-        let decoded = OrderBlock::read(&mut encoded.as_ref()).expect("decode");
-        assert_eq!(original, decoded);
-    }
-
-    #[test]
-    fn codec_round_trip_with_equivocation_and_every_other_trailer() {
-        // bit2 (equivocation) alongside bit0/bit1/bit3 — the decoder must consume
-        // outcome, dkg_logs, parent_seed, then equivocation off the one flags
-        // byte, in the struct's field order rather than the flag-bit order.
-        let mut original = sample_order_block();
-        original.beacon_outcome = Some(Bytes::from(vec![7u8; 96]));
-        original.dkg_logs = vec![(0, B256::repeat_byte(0xA1)), (3, B256::repeat_byte(0xB2))];
         original.parent_seed = Some(sample_seed());
         original.equivocation = Some(Bytes::from(vec![0x5Au8; 291]));
         let encoded = original.encode();
@@ -809,39 +637,46 @@ mod tests {
         }
     }
 
+    /// The wire-shrink's byte-identity claim, pinned against a golden capture
+    /// taken from the pre-shrink codec: bits 0 and 3 lost their bodies WITHOUT
+    /// renumbering, so a block carrying `parent_seed` + `equivocation` encodes to
+    /// the exact same bytes — flags `0b0000_0110`, seed body first, charge second
+    /// — as it did while `beacon_outcome`/`dkg_logs` still existed. Renumbering
+    /// bit1→bit0 and bit2→bit1 would flip the flags byte to `0b0000_0011` and
+    /// silently move the digest of every block that carries either field.
     #[test]
-    fn read_rejects_non_ascending_dkg_logs() {
-        // A non-canonical dkg_logs (idx not strictly ascending, or a dup) must be
-        // rejected at decode so the digest is unambiguous.
-        let mut buf = Vec::new();
-        let b = sample_order_block();
-        write_header_prefix(&mut buf, &b);
-        (b.extra_data.len() as u32).write(&mut buf);
-        buf.extend_from_slice(&b.extra_data);
-        {
-            use alloy_rlp::Encodable as _;
-            b.txs.encode(&mut buf);
-        }
-        8u8.write(&mut buf); // beacon_flags: dkg_logs present (bit3)
-        2u32.write(&mut buf); // count = 2
-        1u8.write(&mut buf); // idx 1
-        buf.extend_from_slice(B256::repeat_byte(0x11).as_slice());
-        1u8.write(&mut buf); // idx 1 again — NOT strictly ascending
-        buf.extend_from_slice(B256::repeat_byte(0x22).as_slice());
-        let err = OrderBlock::read(&mut buf.as_slice()).expect_err("non-ascending dkg_logs");
-        assert!(matches!(err, commonware_codec::Error::Invalid(_, m) if m.contains("ascending")));
+    fn the_shrink_leaves_bits_1_and_2_byte_identical() {
+        const PRE_SHRINK_GOLDEN: &str = "\
+1111111111111111111111111111111111111111111111111111111111111111\
+000000000000002a0000000000000007000000006553f100\
+22222222222222222222222222222222222222220000000002faf080\
+3333333333333333333333333333333333333333333333333333333333333333\
+00000003010203c006\
+0329a93e3650784460b9fbb7ecee979071be6e66b2323d1ab3f3db62f0d6cf09edecd42caf78223d2c7b675b3fee79c2cd25\
+000000085a5a5a5a5a5a5a5a";
+
+        let mut block = sample_order_block();
+        block.parent_seed = Some(sample_seed());
+        block.equivocation = Some(Bytes::from(vec![0x5Au8; 8]));
+        let encoded = block.encode();
+        assert_eq!(
+            alloy_primitives::hex::encode(&encoded),
+            PRE_SHRINK_GOLDEN,
+            "the shrink moved bytes that must not move"
+        );
+
+        // Spelt out separately from the golden so a future reader sees WHICH
+        // byte carries the claim: 0b0000_0110, not the renumbered 0b0000_0011.
+        let flags_at = encoded.len() - sample_seed().encode_size() - u32::SIZE - 8 - 1;
+        assert_eq!(encoded[flags_at], 0b0000_0110);
     }
 
     #[test]
-    fn read_rejects_dkg_logs_idx_beyond_max_committee_size() {
-        // The COUNT bound does not bound the VALUE: idx is a u8, so a single entry can
-        // name participant 200 of a 51-seat committee. Such an entry survives the vote
-        // gate whenever the committee is unreadable (accept-biased) and then reaches the
-        // ceremony, which can never satisfy it. Rejecting at decode against the
-        // network-wide constant is node-local-state-free and therefore identical on
-        // every node.
-        let max = fluentbase_p2p::constants::MAX_COMMITTEE_SIZE as u8;
-        for bad_idx in [max, 255u8] {
+    fn read_rejects_a_set_reserved_flag_bit() {
+        // Bits 0 and 3 are retired, not renumbered. Ignoring a set one would give
+        // a block two spellings under two digests (the flags byte is inside
+        // `digest()`), so decode must refuse it.
+        for bit in [0b0000_0001u8, 0b0000_1000] {
             let mut buf = Vec::new();
             let b = sample_order_block();
             write_header_prefix(&mut buf, &b);
@@ -851,47 +686,13 @@ mod tests {
                 use alloy_rlp::Encodable as _;
                 b.txs.encode(&mut buf);
             }
-            8u8.write(&mut buf); // bit3
-            1u32.write(&mut buf); // count = 1
-            bad_idx.write(&mut buf);
-            buf.extend_from_slice(B256::repeat_byte(0x33).as_slice());
-            let err = OrderBlock::read(&mut buf.as_slice()).expect_err("out-of-range dkg_logs idx");
+            bit.write(&mut buf);
+            let err = OrderBlock::read(&mut buf.as_slice()).expect_err("reserved flag bit");
             assert!(
-                matches!(err, commonware_codec::Error::Invalid(_, m) if m.contains("idx exceeds")),
-                "idx {bad_idx} must be rejected, got {err:?}"
+                matches!(err, commonware_codec::Error::Invalid(_, m) if m.contains("reserved bit")),
+                "bit {bit:#010b} must be rejected, got {err:?}"
             );
         }
-    }
-
-    #[test]
-    fn read_accepts_dkg_logs_idx_at_the_last_committee_position() {
-        // The bound is exclusive: the last legal position must still round-trip.
-        let mut original = sample_order_block();
-        let last = (fluentbase_p2p::constants::MAX_COMMITTEE_SIZE - 1) as u8;
-        original.dkg_logs = vec![(last, B256::repeat_byte(0x44))];
-        let encoded = original.encode();
-        let decoded = OrderBlock::read(&mut encoded.as_ref()).expect("round-trip");
-        assert_eq!(decoded.dkg_logs, original.dkg_logs);
-    }
-
-    #[test]
-    fn read_rejects_oversize_dkg_logs() {
-        // A dkg_logs count above MAX_COMMITTEE_SIZE is rejected before allocation.
-        let mut buf = Vec::new();
-        let b = sample_order_block();
-        write_header_prefix(&mut buf, &b);
-        (b.extra_data.len() as u32).write(&mut buf);
-        buf.extend_from_slice(&b.extra_data);
-        {
-            use alloy_rlp::Encodable as _;
-            b.txs.encode(&mut buf);
-        }
-        8u8.write(&mut buf); // bit3
-        ((fluentbase_p2p::constants::MAX_COMMITTEE_SIZE as u32) + 1).write(&mut buf);
-        let err = OrderBlock::read(&mut buf.as_slice()).expect_err("oversize dkg_logs");
-        assert!(
-            matches!(err, commonware_codec::Error::Invalid(_, m) if m.contains("MAX_COMMITTEE_SIZE"))
-        );
     }
 
     #[test]
@@ -930,14 +731,6 @@ mod tests {
                 ..base.clone()
             },
             OrderBlock {
-                beacon_outcome: Some(Bytes::from(vec![9u8; 48])),
-                ..base.clone()
-            },
-            OrderBlock {
-                dkg_logs: vec![(0, B256::repeat_byte(0x5A))],
-                ..base.clone()
-            },
-            OrderBlock {
                 proposal_view: base.proposal_view + 1,
                 ..base.clone()
             },
@@ -966,26 +759,6 @@ mod tests {
         buf.extend_from_slice(b.fee_recipient.as_slice());
         b.gas_limit.write(buf);
         buf.extend_from_slice(b.result.as_slice());
-    }
-
-    #[test]
-    fn read_rejects_oversize_beacon_outcome() {
-        // Hand-encode a block with the outcome flag set and an oversize length prefix.
-        let mut buf = Vec::new();
-        let b = sample_order_block();
-        write_header_prefix(&mut buf, &b);
-        (b.extra_data.len() as u32).write(&mut buf);
-        buf.extend_from_slice(&b.extra_data);
-        {
-            use alloy_rlp::Encodable as _;
-            b.txs.encode(&mut buf);
-        }
-        1u8.write(&mut buf); // beacon_flags: outcome present
-        ((MAX_BEACON_OUTCOME_SIZE + 1) as u32).write(&mut buf);
-        buf.resize(buf.len() + MAX_BEACON_OUTCOME_SIZE + 1, 0);
-
-        let err = OrderBlock::read(&mut buf.as_slice()).expect_err("oversize beacon_outcome");
-        assert!(matches!(err, commonware_codec::Error::Invalid(_, _)));
     }
 
     #[test]
@@ -1072,48 +845,12 @@ mod tests {
         assert_eq!(decoded.parent_seed, Some(seed));
     }
 
-    #[test]
-    fn read_rejects_combined_oversize_even_when_each_field_is_within_its_cap() {
-        use alloy_primitives::{Signature, TxKind};
-        use reth_ethereum_primitives::Transaction;
-        // One EIP-1559 tx whose calldata makes the tx list a bit under the 4 MiB
-        // per-field cap — fine on its own — but combined with a max-size (64 KiB)
-        // beacon_outcome the composed artifact exceeds MAX_ORDER_BLOCK_SIZE. Each
-        // field passes its OWN decode cap; only the combined gate (bug 1) rejects.
-        let tx = alloy_consensus::TxEip1559 {
-            chain_id: 1,
-            nonce: 0,
-            gas_limit: 21_000,
-            max_fee_per_gas: 0,
-            max_priority_fee_per_gas: 0,
-            to: TxKind::Call(Address::ZERO),
-            value: U256::ZERO,
-            input: Bytes::from(vec![0u8; 4_140_000]),
-            ..Default::default()
-        };
-        let sig = Signature::new(U256::from(1u64), U256::from(1u64), false);
-        let signed = TransactionSigned::new_unhashed(Transaction::Eip1559(tx), sig);
-
-        let mut block = sample_order_block();
-        block.txs = vec![signed];
-        block.beacon_outcome = Some(Bytes::from(vec![0u8; MAX_BEACON_OUTCOME_SIZE]));
-        block.parent_seed = Some(sample_seed());
-        assert!(
-            block.encode_size() > MAX_ORDER_BLOCK_SIZE,
-            "the composed block must be over the cap"
-        );
-
-        let encoded = block.encode();
-        let err = OrderBlock::read(&mut encoded.as_ref())
-            .expect_err("combined-oversize block must be rejected at decode");
-        // The COMBINED gate must fire (not the per-field tx cap) — else the test
-        // would pass on the pre-fix code too.
-        assert!(
-            matches!(err, commonware_codec::Error::Invalid(_, m) if m.contains("composed")),
-            "expected the composed-size rejection, got {err:?}"
-        );
-    }
-
+    /// The composed-size gate (bug 1), and that it counts the equivocation field.
+    ///
+    /// It used to have a twin that composed an oversize block out of a max-size
+    /// `beacon_outcome`; with that field gone the two state the same property, and
+    /// this is the stronger one — it MEASURES the headroom instead of assuming a
+    /// field big enough to blow past it.
     #[test]
     fn the_composed_size_gate_counts_the_equivocation_field() {
         use alloy_primitives::{Signature, TxKind};

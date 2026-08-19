@@ -8,10 +8,10 @@
 //! (= position in the sorted list) is the protocol-canonical identifier
 //! used by simplex's elector and slashing evidence.
 
-use crate::beacon::seed::GroupPublic;
 use commonware_utils::ordered::Error as OrderedError;
 use fluentbase_bls::{
-    fluent_namespace, scheme::build_verifier, EpochCommittee, Scheme as BlsScheme,
+    beacon::GroupPublic, fluent_namespace, scheme::build_verifier, EpochCommittee,
+    Scheme as BlsScheme,
 };
 use fluentbase_staking_reader::reader::ValidatorSetSnapshot;
 use tracing::warn;

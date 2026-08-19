@@ -28,6 +28,9 @@ use crate::BlsSignature;
 /// never be replayed as a consensus signature (or vice versa).
 const BEACON_SEED_SUFFIX: &[u8] = b"_BEACON_SEED";
 
+/// Domain separator suffix for the epoch-key agreement instance.
+const DKG_AGREE_SUFFIX: &[u8] = b"_DKG_AGREE";
+
 /// The group public key `PK_epoch` a verifier checks recovered seeds against.
 pub type GroupPublic =
     <MinSig as commonware_cryptography::bls12381::primitives::variant::Variant>::Public;
@@ -37,6 +40,32 @@ pub fn seed_namespace(chain_namespace: &[u8]) -> Vec<u8> {
     let mut ns = Vec::with_capacity(chain_namespace.len() + BEACON_SEED_SUFFIX.len());
     ns.extend_from_slice(chain_namespace);
     ns.extend_from_slice(BEACON_SEED_SUFFIX);
+    ns
+}
+
+/// The signing namespace for the epoch-key AGREEMENT instance — a second
+/// `simplex` running over `committee[E+1]` during epoch `E`:
+/// `chain_namespace ‖ "_DKG_AGREE"`.
+///
+/// It MUST be distinct from the chain namespace and from every other namespace
+/// derived from it. Distinct is the whole requirement, and it is enough: a signed
+/// message is `union_unique(namespace, msg)`, which LENGTH-PREFIXES the namespace
+/// (`CW/utils/src/lib.rs:176-185`), so no two `(namespace, message)` pairs collide
+/// and the derivation needs no prefix-freedom against the base — which it does not
+/// have anyway, since it appends to it. The tuple a simplex scheme signs
+/// carries only `Round{epoch, view}` and the payload — nothing identifies the
+/// instance — so under a shared base an honest validator's agreement vote at
+/// `Round(E+1, v)` and its ordering vote at that same round are two different
+/// payloads from one signer at one round: exactly the shape equivocation
+/// evidence is extracted from. The hazard is NOT a local self-slash. Evidence
+/// submission is permissionless and the pre-submit verifier is rebuilt from the
+/// bare chain namespace with no instance discriminator, so ANY observer of the
+/// DKG sub-channel can assemble that pair into calldata and slash an honest
+/// validator (`fluentbase_consensus::slasher::evidence`).
+pub fn dkg_namespace(chain_namespace: &[u8]) -> Vec<u8> {
+    let mut ns = Vec::with_capacity(chain_namespace.len() + DKG_AGREE_SUFFIX.len());
+    ns.extend_from_slice(chain_namespace);
+    ns.extend_from_slice(DKG_AGREE_SUFFIX);
     ns
 }
 
@@ -92,4 +121,49 @@ pub fn verify_seed(
     signature: &BlsSignature,
 ) -> bool {
     ops::verify_message::<MinSig>(group_public, namespace, &seed_message(round), signature).is_ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::fluent_namespace;
+
+    /// What actually separates the derived namespaces, stated as the code has it
+    /// rather than as prefix-freedom against the base — which the construction does
+    /// NOT have, since every derivation appends to the base. The separation is
+    /// `union_unique`'s length prefix plus distinct suffixes, and that is the
+    /// stronger property: it makes the `(namespace, message)` pair injective, so
+    /// even the one concatenation that would collide under a bare `union` cannot.
+    /// The prefix relation that DOES matter is between the derived namespaces, and
+    /// it is asserted below — this repo was bitten by exactly that once already
+    /// (`fluent/leader/fallback` vs `fluent/seedless-leader` in `weighted_vrf`).
+    #[test]
+    fn derived_namespaces_are_distinct_and_cannot_collide_when_signed() {
+        let base = fluent_namespace(20994);
+        let dkg = dkg_namespace(&base);
+        let seed = seed_namespace(&base);
+
+        assert_ne!(dkg, seed);
+        assert!(!seed.starts_with(&dkg));
+        assert!(!dkg.starts_with(&seed));
+
+        // Not prefix-free against the base, by construction.
+        assert!(dkg.starts_with(&base));
+        assert!(seed.starts_with(&base));
+
+        // The pair that a bare `union` WOULD collide: signing `msg` under the DKG
+        // namespace, and signing `DKG_AGREE_SUFFIX ‖ msg` under the base.
+        let msg = b"round-payload";
+        let shifted: Vec<u8> = [DKG_AGREE_SUFFIX, msg].concat();
+        assert_eq!(
+            commonware_utils::union(&dkg, msg),
+            commonware_utils::union(&base, &shifted),
+            "the collision this test exists to rule out must be real under `union`"
+        );
+        assert_ne!(
+            commonware_utils::union_unique(&dkg, msg),
+            commonware_utils::union_unique(&base, &shifted),
+            "the length prefix is what rules it out, not prefix-freedom"
+        );
+    }
 }

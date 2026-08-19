@@ -41,7 +41,10 @@ pub fn parse_ingress(s: &str) -> eyre::Result<Ingress> {
     // never a legitimate DNS name for a peer address — it's a malformed IP that
     // just missed the `SocketAddr` fast path (out-of-range octet, too few/many
     // groups). Fail fast rather than silently dialing it as a hostname.
-    if host.split('.').all(|label| !label.is_empty() && label.bytes().all(|b| b.is_ascii_digit())) {
+    if host
+        .split('.')
+        .all(|label| !label.is_empty() && label.bytes().all(|b| b.is_ascii_digit()))
+    {
         return Err(eyre::eyre!(
             "peer address {s:?} looks like a malformed IP address (all-numeric host {host:?}); \
              expected a valid IP literal or a DNS hostname"
