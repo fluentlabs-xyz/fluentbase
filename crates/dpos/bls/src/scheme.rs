@@ -13,8 +13,8 @@ use commonware_cryptography::bls12381::primitives::{
 use commonware_utils::{ordered::BiMap, TryCollect};
 
 use crate::{
-    beacon::{seed_namespace, GroupPublic},
-    combined_scheme::CombinedScheme,
+    beacon::GroupPublic,
+    combined_scheme::{cert_seed_pin_of, CombinedScheme},
     keys::ValidatorBlsKeypair,
     BlsPubkey, PeerPubkey, Scheme, VoteScheme,
 };
@@ -102,7 +102,7 @@ pub fn build_verifier(
     cert_seed_pin: Option<GroupPublic>,
 ) -> Scheme {
     let vote = VoteScheme::verifier(namespace, participants);
-    let external_pin = cert_seed_pin.map(|gp| (gp, seed_namespace(namespace)));
+    let external_pin = cert_seed_pin.map(|gp| cert_seed_pin_of(gp, namespace));
     CombinedScheme::new(vote, beacon, external_pin)
 }
 

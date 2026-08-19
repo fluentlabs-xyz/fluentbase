@@ -153,7 +153,7 @@ fn offender_notarize(
 }
 
 fn snapshot_from_bimap(bimap: &BiMap<PeerPubkey, BlsPubkey>) -> ValidatorSetSnapshot {
-    let validators = bimap
+    let validators: Vec<ValidatorWithKeys> = bimap
         .iter_pairs()
         .enumerate()
         .map(|(i, (peer, bls))| {
@@ -166,16 +166,17 @@ fn snapshot_from_bimap(bimap: &BiMap<PeerPubkey, BlsPubkey>) -> ValidatorSetSnap
                     peer_pubkey: peer.clone(),
                     activation_epoch: 0,
                 },
-                stake: 1,
                 tombstoned: false,
             }
         })
         .collect();
+    let weights = vec![1u128; validators.len()];
     ValidatorSetSnapshot {
         block_hash: B256::ZERO,
         block_number: 0,
         epoch: EPOCH,
         validators,
+        weights: Some(weights),
     }
 }
 
@@ -199,6 +200,7 @@ impl StakingStateRead for StubReader {
                 block_number: 0,
                 epoch: 0,
                 validators: vec![],
+                weights: None,
             })
         } else {
             Ok(self.snapshot.clone())

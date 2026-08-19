@@ -47,10 +47,11 @@ use crate::beacon::{
     share_state::{self, JournalLoad, JournalRecord, ShareState},
     wire::BeaconMessage,
 };
-use crate::outer::SCHEME_RETENTION_EPOCHS;
+use crate::{epocher::OriginEpocher, outer::SCHEME_RETENTION_EPOCHS};
 use alloy_primitives::B256;
 use bytes::Bytes;
 use commonware_codec::{Encode as _, Read as _, ReadExt as _};
+use commonware_consensus::types::{Epoch, Epocher as _, Height};
 use commonware_cryptography::{
     bls12381::primitives::group::Share, ed25519::PrivateKey as Ed25519PrivateKey, Signer as _,
 };
@@ -62,7 +63,7 @@ use rand_core::CryptoRngCore;
 use std::{
     collections::{BTreeMap, BTreeSet},
     future::Future,
-    num::NonZeroU32,
+    num::{NonZeroU32, NonZeroU64},
     path::PathBuf,
     pin::Pin,
     sync::{Arc, RwLock},
@@ -142,7 +143,7 @@ pub const DETERMINISTIC_BOOTSTRAP_EPOCH: u64 = 2;
 pub const JOURNAL_RETENTION_EPOCHS: u64 = 1;
 
 /// Reads the pinned per-epoch DKG `Output` from the boundary block at a given height —
-/// the SAME by-height marshal pull `epoch_manager::resolve_beacon_key` performs
+/// the SAME by-height marshal pull `keys::BoundaryWalk::key_for` performs
 /// (`marshal_mailbox.get_block(epoch_start(E))` + `parse_outcome`), threaded into the
 /// actor as a READ handle (NOT a cross-actor push channel). Returns `Some(outcome)`
 /// only for a CHANGE-epoch boundary block that carries a `beacon_outcome`; `None` for a
@@ -279,9 +280,10 @@ pub struct DkgActor<Se, Re, R> {
     /// in-plane source) and handed in as plain values at spawn AFTER that freeze.
     /// The actor never re-reads the chain for it, so there is no codeless/genesis-
     /// fallback race in this path: the spawn site only constructs the actor once the
-    /// geometry is frozen (see `build_beacon_plane`).
-    dpos_activation: u64,
-    epoch_interval: u64,
+    /// geometry is frozen (see `build_beacon_plane`). Held as the ONE epoch↔height
+    /// authority rather than as two raw numbers, so this actor's deal/seal
+    /// schedule cannot drift from every other epoch→height computation.
+    epocher: OriginEpocher,
     metrics: crate::beacon::metrics::BeaconMetrics,
     /// Directory for on-disk persistence of the live-DKG per-epoch shares this
     /// actor memoizes into [`CeremonyStore`] — the always-on plane passes
@@ -397,8 +399,13 @@ where
             committee_for,
             store,
             share_notify,
-            dpos_activation,
-            epoch_interval,
+            // Fail LOUD and at construction on a zero interval, which the previous
+            // raw-field form turned into a div-by-zero at the first `epoch_of`.
+            // Every production caller already `ensure!`s it non-zero.
+            epocher: OriginEpocher::new(
+                dpos_activation,
+                NonZeroU64::new(epoch_interval).expect("epochBlockInterval must be > 0"),
+            ),
             metrics,
             share_dir,
             share_state,
@@ -438,13 +445,22 @@ where
         self
     }
 
+    /// Pre-activation heights have no relative epoch; they answer 0, as the
+    /// previous saturating form did.
     fn epoch_of(&self, height: u64) -> u64 {
-        height.saturating_sub(self.dpos_activation) / self.epoch_interval
+        self.epocher
+            .containing(Height::new(height))
+            .map_or(0, |info| info.epoch().get())
     }
 
-    /// First-block height of an epoch (relative to DPoS activation).
+    /// First-block height of an epoch (relative to DPoS activation). `u64::MAX`
+    /// only on `epoch * interval` overflowing u64 — unreachable at any real epoch,
+    /// and every reader here compares a real height against it or subtracts a
+    /// margin from it, both of which degrade to "not yet" rather than misfiring.
     fn epoch_start(&self, epoch: u64) -> u64 {
-        self.dpos_activation + epoch * self.epoch_interval
+        self.epocher
+            .first(Epoch::new(epoch))
+            .map_or(u64::MAX, |h| h.get())
     }
 
     /// Append the ceremony's journal records for `epoch` so a restart can `resume` AND
@@ -493,11 +509,7 @@ where
         mut heights: tokio::sync::mpsc::Receiver<u64>,
         mut rng: impl CryptoRngCore,
     ) {
-        tracing::info!(
-            activation = self.dpos_activation,
-            interval = self.epoch_interval,
-            "live DKG: actor started"
-        );
+        tracing::info!(epocher = ?self.epocher, "live DKG: actor started");
         // The resolver inbound channel is taken out so the loop can borrow it
         // alongside `&mut self`; `None` (no resolver wired) parks the branch forever.
         let mut resolver_rx = self.resolver_rx.take();
@@ -1458,7 +1470,7 @@ where
                 continue; // not a member of committee[E] — no share obligation
             }
             // Read the pinned boundary Output (the SAME by-height marshal pull
-            // `resolve_beacon_key` performs). `Some` ⇒ a change-epoch demote to
+            // `keys::BoundaryWalk::key_for` performs). `Some` ⇒ a change-epoch demote to
             // recompute; `None` ⇒ carry-forward or marshal-miss ⇒ skip (retry next tick).
             let Some(outcome) = outcome_at(self.epoch_start(e)).await else {
                 continue;

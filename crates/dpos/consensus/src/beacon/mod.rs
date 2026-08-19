@@ -27,6 +27,8 @@ pub mod dkg_msg;
 /// so it is not compiled into release builds.
 #[cfg(test)]
 pub mod dkg_oracle;
+pub mod key_journal;
+pub mod keys;
 pub mod log_resolver;
 pub mod metrics;
 pub mod outcome;

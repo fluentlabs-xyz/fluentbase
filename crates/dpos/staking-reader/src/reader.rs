@@ -215,22 +215,6 @@ pub struct ConsensusKeys {
 pub struct ValidatorWithKeys {
     pub address: Address,
     pub keys: ConsensusKeys,
-    /// The committee member's LEADER WEIGHT, compacted
-    /// (`totalDelegated / BALANCE_COMPACT_PRECISION`). Leader weight only; NOT
-    /// voting power.
-    ///
-    /// Literally frozen since 2026-07-31: stamped into `leaderStakes[epoch]` at
-    /// `commitEpochCommittee` from the SELECTION epoch (`epoch − 2`) — the same
-    /// vintage that ranked the membership — so it is byte-identical across nodes
-    /// no matter which block hash each one reads at. It previously came from a
-    /// live at-or-before walk, which made "same frozen source as committee
-    /// selection" false: same helper, different epoch argument.
-    ///
-    /// Consequence of that vintage worth knowing: a member whose stake was not yet
-    /// effective at the selection epoch carries weight 0 for that epoch — it is in
-    /// the committee (an under-full committee does not filter by stake) but cannot
-    /// be elected leader and earns no stipend share for it.
-    pub stake: u128,
     /// Whether this member has been slashed for equivocation.
     ///
     /// The ONE field of the snapshot that is NOT frozen at the epoch commit: it is
@@ -253,6 +237,18 @@ pub struct ValidatorSetSnapshot {
     pub block_number: u64,
     pub epoch: u64,
     pub validators: Vec<ValidatorWithKeys>,
+    /// Frozen leader weights, or `None` once the contract's weight ring has
+    /// wrapped past this epoch.
+    ///
+    /// Membership is retained forever; weights are not, so the two legs have
+    /// genuinely different lifetimes and the type has to say so. Absent is NOT
+    /// a vector of zeros: the leader elector reads these, and a uniform lottery
+    /// nobody asked for is a per-node leader split rather than a visible failure.
+    ///
+    /// When present it is the same length as `validators` — the contract emits
+    /// an empty `stakes` leg to mean absence and equal length to mean presence,
+    /// and any other disagreement is still a decode error.
+    pub weights: Option<Vec<u128>>,
 }
 
 /// Startup configuration. The staking address is not pinned in-tree; it arrives
@@ -662,7 +658,7 @@ where
     /// One `getEpochCommitteeWithStakes` call returns the complete per-epoch
     /// snapshot — `(addrs, keys, stakes, tombstoned)` — keeping the full
     /// [`ConsensusKeys`] (bls + peer + activationEpoch) the codec needs plus the
-    /// per-member [`ValidatorWithKeys::stake`] the leader elector consumes. The
+    /// per-epoch [`ValidatorSetSnapshot::weights`] the leader elector consumes. The
     /// first three legs are frozen at the epoch commit; `tombstoned` is read live
     /// at `at` (see [`ValidatorWithKeys::tombstoned`]), which is what lets a
     /// mid-epoch verdict reach the committee it names. A keyless committee member ⇒
@@ -680,7 +676,7 @@ where
         at: B256,
     ) -> Result<ValidatorSetSnapshot, ReadError> {
         let staking = self.cfg.staking_address;
-        let (block_number, validators) = self.with_evm(at, |evm, header| {
+        let (block_number, validators, weights) = self.with_evm(at, |evm, header| {
             // Block number from the already-read header — no second header read.
             let block_number = header.number();
             let ret = decode_view(
@@ -688,21 +684,35 @@ where
                 staking,
                 &abi::getEpochCommitteeWithStakesCall { epoch },
             )?;
-            if ret.addrs.len() != ret.keys.len()
-                || ret.addrs.len() != ret.stakes.len()
-                || ret.addrs.len() != ret.tombstoned.len()
-            {
+            if ret.addrs.len() != ret.keys.len() || ret.addrs.len() != ret.tombstoned.len() {
                 return Err(ReadError::AbiDecode(
-                    "committee/keys/stakes/tombstoned length mismatch".into(),
+                    "committee/keys/tombstoned length mismatch".into(),
                 ));
             }
+            // The stakes leg is the ONE that may legitimately disagree in
+            // length, and only by being empty: that is how the contract says
+            // the weight ring has wrapped past this epoch. Any other length is
+            // still corruption.
+            let weights = match ret.stakes.len() {
+                0 if !ret.addrs.is_empty() => None,
+                n if n == ret.addrs.len() => Some(
+                    ret.stakes
+                        .into_iter()
+                        .map(compact_stake)
+                        .collect::<Result<Vec<_>, ReadError>>()?,
+                ),
+                _ => {
+                    return Err(ReadError::AbiDecode(
+                        "committee/stakes length mismatch".into(),
+                    ))
+                }
+            };
             let validators = ret
                 .addrs
                 .into_iter()
                 .zip(ret.keys)
-                .zip(ret.stakes)
                 .zip(ret.tombstoned)
-                .map(|(((address, k), stake_wei), tombstoned)| {
+                .map(|((address, k), tombstoned)| {
                     if is_unset(&k) {
                         return Err(ReadError::CommitteeMemberKeyless {
                             epoch,
@@ -712,19 +722,19 @@ where
                     Ok(ValidatorWithKeys {
                         address,
                         keys: decode_consensus_keys(k)?,
-                        stake: compact_stake(stake_wei)?,
                         tombstoned,
                     })
                 })
                 .collect::<Result<Vec<_>, ReadError>>()?;
             check_committee_ordering(epoch, &validators)?;
-            Ok((block_number, validators))
+            Ok((block_number, validators, weights))
         })?;
         Ok(ValidatorSetSnapshot {
             block_hash: at,
             block_number,
             epoch,
             validators,
+            weights,
         })
     }
 
@@ -1034,7 +1044,6 @@ mod tests {
                 ValidatorWithKeys {
                     address: Address::with_last_byte(i as u8 + 1),
                     keys,
-                    stake: 0,
                     tombstoned: false,
                 }
             })
@@ -1158,10 +1167,11 @@ mod tests {
     /// a head-stride defect shifts the keys against the addresses and the node
     /// signs on behalf of the wrong validator.
     ///
-    /// The vector below is the NODE's four-array shape, generated independently
-    /// with `cast abi-encode` — a real literal pin, not a re-encoding of the
-    /// `sol!` under test. It is not what the contract emits today: see
-    /// [`epoch_committee_return_arity_is_pinned`] for the three-vs-four drift.
+    /// The vector below is the four-array shape, generated independently with
+    /// `cast abi-encode` — a real literal pin, not a re-encoding of the `sol!`
+    /// under test. It IS what the contract emits: the three-vs-four drift this
+    /// used to point at is closed, see
+    /// [`epoch_committee_return_arity_is_pinned`].
     ///
     /// Vector produced by (0x…01/02/03 abbreviated, `0xa1`×96 / `0xb2` / `0xc3`×33,
     /// peer keys `0x11`×32 / `0x22`×32 / `0x33`×32):
@@ -1297,33 +1307,28 @@ mod tests {
     /// The hole a selector pin cannot cover: **return types do not enter a
     /// selector**, so `view_selectors_are_pinned` below agrees with the contract
     /// on `getEpochCommitteeWithStakes(uint64)` == `0xa4d160c1` while the two
-    /// sides disagree about what comes back.
+    /// sides could still disagree about what comes back.
     ///
-    /// KNOWN DRIFT, recorded not fixed (2026-08-14):
+    /// **The drift this test recorded is closed.** It used to say the contract
+    /// returned three arrays against the node's four, with no contract-side
+    /// source for the tombstone leg; the contract now returns four
+    /// (`consensus.rs`, `write_returns(sdk, &(validators, keys, stakes,
+    /// tombstoned))`), closed by `00fc3790`.
     ///
-    /// * node     `returns (address[], ConsensusKeys[], uint256[], bool[] tombstoned)`
-    ///   — the `sol!` above, four arrays.
-    /// * contract `returns (address[], ConsensusKeys[], uint256[])` — three
-    ///   arrays. `feat/flu-989-port-solidity-delta`, `contracts/staking/src/
-    ///   consensus.rs`, `write_returns(sdk, &(validators, keys, stakes))`;
-    ///   `origin/feat/flu-989-rust-staking` is identical.
-    ///
-    /// Reconciling needs the contract owner (the tombstone leg has no
-    /// contract-side source yet), so this test only makes the shape explicit:
-    /// the node's four-array return round-trips, the contract's three-array
-    /// return does NOT decode into it, and the size difference is exactly the
-    /// one extra `bool[]`. If someone adds or drops an array on either side,
-    /// this fails and says which.
+    /// What the test pins instead is the shape that actually ships, and the one
+    /// length disagreement that is now LEGAL: an empty `stakes` leg beside a
+    /// non-empty `addrs` leg is how the contract says the weight ring has
+    /// wrapped past the epoch. That has to decode, because the reader turns it
+    /// into `weights: None`. Every other length disagreement stays an error, and
+    /// that distinction is the whole reason this test exists rather than a
+    /// length assertion at the call site.
     #[test]
     fn epoch_committee_return_arity_is_pinned() {
-        use alloy_sol_types::SolValue as _;
-
         let addr = Address::with_last_byte(1);
         let key = keys(11);
         let stake = U256::from(42u64);
 
-        // What the NODE expects: four arrays.
-        let node_shape = abi::getEpochCommitteeWithStakesCall::abi_encode_returns(
+        let full = abi::getEpochCommitteeWithStakesCall::abi_encode_returns(
             &abi::getEpochCommitteeWithStakesReturn {
                 addrs: vec![addr],
                 keys: vec![key.clone()],
@@ -1331,42 +1336,31 @@ mod tests {
                 tombstoned: vec![true],
             },
         );
-
-        // What the CONTRACT returns today: three arrays. Encoded from the ABI
-        // tuple directly, NOT through the `sol!` under test — the point is that
-        // the two sides are asserted independently.
-        let contract_shape = (vec![addr], vec![key], vec![stake]).abi_encode_params();
-
-        assert_ne!(
-            node_shape, contract_shape,
-            "if these ever match, the drift recorded on this test is gone and the \
-             doc comment above must go with it"
-        );
-        // Head offset word (32) + array length word (32) + one element (32).
-        assert_eq!(
-            node_shape.len(),
-            contract_shape.len() + 96,
-            "the node's return must exceed the contract's by exactly the extra \
-             one-element `bool[] tombstoned` leg (offset + length + element)"
-        );
-
-        // The drift is a hard decode failure, not a silent mis-pairing: a node
-        // pointed at the contract as it stands would error, not tombstone the
-        // wrong validator.
-        assert!(
-            abi::getEpochCommitteeWithStakesCall::abi_decode_returns(&contract_shape).is_err(),
-            "the contract's three-array return (feat/flu-989-port-solidity-delta) must not \
-             decode into the node's four-array expectation — if it starts to, the fourth leg \
-             is being silently mis-read and the tombstone would name the wrong validator"
-        );
-
-        // And the node's own shape survives the round trip with the leg intact.
-        let ret = abi::getEpochCommitteeWithStakesCall::abi_decode_returns(&node_shape)
-            .expect("the node's own four-array return must decode");
+        let ret = abi::getEpochCommitteeWithStakesCall::abi_decode_returns(&full)
+            .expect("the four-array return must decode");
         assert_eq!(ret.addrs.len(), 1);
         assert_eq!(ret.keys.len(), 1);
         assert_eq!(ret.stakes, vec![stake]);
         assert_eq!(ret.tombstoned, vec![true]);
+
+        // Not-retained: membership and tombstones present, weights absent.
+        let not_retained = abi::getEpochCommitteeWithStakesCall::abi_encode_returns(
+            &abi::getEpochCommitteeWithStakesReturn {
+                addrs: vec![addr],
+                keys: vec![key],
+                stakes: vec![],
+                tombstoned: vec![true],
+            },
+        );
+        let ret = abi::getEpochCommitteeWithStakesCall::abi_decode_returns(&not_retained)
+            .expect("an empty stakes leg is a legal encoding, not a decode failure");
+        assert_eq!(ret.addrs.len(), 1);
+        assert!(
+            ret.stakes.is_empty(),
+            "the reader turns exactly this into `weights: None`; if it ever \
+             arrives padded with zeros instead, the leader lottery goes uniform \
+             and nothing says so"
+        );
     }
 
     /// The rWasm contract dispatches on the raw 4-byte selector, so a signature

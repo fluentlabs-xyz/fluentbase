@@ -600,6 +600,13 @@ alloy_sol_types::sol! {
     // epoch its verdicts and the tier reads as enabled while judging nothing. Alert
     // on any occurrence outside epoch 0 (partial by construction).
     event PartialEpoch(uint64 indexed epoch, uint32 recorded, uint32 expected);
+    // The contract keeps only the last `WEIGHT_RING_EPOCHS` epochs of frozen
+    // leader weights, so an epoch closed far enough behind can be neither judged
+    // nor paid. It forfeits rather than reverting — the close is a pre-execution
+    // system call — and this event is the ONLY thing that says so: on chain the
+    // result is indistinguishable from the four legitimate zero-epochs. Should
+    // be unreachable; an occurrence means the bound behind that constant is wrong.
+    event EpochWeightsUnavailable(uint64 indexed epoch, uint32 members);
     event ProductionVerdictFailed(
         uint64 indexed epoch,
         address indexed validator,
@@ -627,19 +634,13 @@ alloy_sol_types::sol! {
     // the EL from peers has no OrderBlock — which is why only the one-byte
     // verdict rides in `extra_data`, verbatim into the header.
     //
-    // KNOWN CONTRACT DRIFT (verified 2026-08-14): there is NO counterpart. No
-    // `SIG_SLASH_EQUIVOCATION` exists in `contracts/staking/src/consts.rs` and
-    // nothing dispatches `0xdc6fb3f2` in `lib.rs` — on `feat/flu-989-port-
-    // solidity-delta`, on `origin/feat/flu-989-rust-staking`, or on any other
-    // branch in this repo carrying the contract. This call would revert
-    // `ERR_UNKNOWN_METHOD`, and since it is deliberately soft-failed the only
-    // symptom is verdicts that never land.
-    //
-    // Do NOT "fix" this one-sidedly — reconciling the verdict path needs the
-    // contract owner. Merge checklist:
-    // `crates/dpos/consensus/src/slasher/actor.rs`, entry 4.
-    // `slash_equivocation_calldata_is_pinned` pins the node side literally so a
-    // rename here stays loud in the meantime.
+    // The drift note that stood here is RETIRED (2026-08-17). It said no
+    // `SIG_SLASH_EQUIVOCATION` existed and nothing dispatched `0xdc6fb3f2`, so
+    // verdicts silently never landed, and it carried a "do NOT fix one-sidedly"
+    // instruction. Both halves were true when written and both are false now:
+    // `[contract] consts.rs` defines the constant and `lib.rs` dispatches it,
+    // closed by `00fc3790`. `slash_equivocation_calldata_is_pinned` still pins
+    // the node side literally, so a rename on either side stays loud.
     function slashEquivocation(uint64 epoch, uint32 signerIdx) external;
 
     // Stipend-settlement events emitted by the settle leg the epoch CLOSE drives —
@@ -692,9 +693,13 @@ fn encode_slash_equivocation_call(epoch: u64, accused: u8) -> Vec<u8> {
 /// The liveness events AND the stipend events arrive on this one call from the
 /// one staking contract, so they are told apart by TOPIC, not by `log.address`.
 /// `SolEvent::decode_log` verifies topic0 itself, so this decode chain IS the
-/// topic match: the six signatures are distinct — including the same-arity pair
+/// topic match: the seven signatures are distinct — including the same-arity pair
 /// `StipendLegSkipped` / `StipendSkipped`, which differ by name and therefore by
 /// topic0 — and a log that matches none of them falls through untouched.
+///
+/// The chain being CLOSED is the trap worth naming: adding an event to the
+/// contract means adding an arm here too, or it is emitted into silence on the
+/// one call path that would otherwise have surfaced it.
 fn emit_close_observability(logs: &[alloy_primitives::Log]) {
     use alloy_sol_types::SolEvent;
     for log in logs {
@@ -750,6 +755,18 @@ fn emit_close_observability(logs: &[alloy_primitives::Log]) {
                 "epoch_stipend_skipped"
             );
             metrics::counter!("dpos_epoch_stipend_skipped_total").increment(1);
+        } else if let Ok(lost) = EpochWeightsUnavailable::decode_log(log) {
+            // `error!`, not `warn!`: the epoch forfeited BOTH its verdicts and
+            // its stipend, and on chain the outcome is byte-identical to an epoch
+            // that legitimately owed nothing. This line is the only thing that
+            // tells them apart.
+            tracing::error!(
+                target: "fluentbase::rewards",
+                epoch = lost.epoch,
+                members = lost.members,
+                "epoch_weights_unavailable"
+            );
+            metrics::counter!("dpos_epoch_weights_unavailable_total").increment(1);
         }
     }
 }
@@ -1356,9 +1373,10 @@ mod tests {
     /// events out of the discarded `recordProduction` system-call logs. The Rust
     /// `sol!` event ABI must stay byte-identical to
     /// `contracts/staking/src/events.rs` or the `decode_log` topic match silently
-    /// never fires — and for `PartialEpoch` that silence is the whole failure mode
-    /// it exists to break. Pin all six canonical signatures and prove a fabricated
-    /// log decodes to the exact field values.
+    /// never fires — and for `PartialEpoch` and `EpochWeightsUnavailable` that
+    /// silence is the whole failure mode they exist to break. Pin all seven
+    /// canonical signatures and prove a fabricated log decodes to the exact field
+    /// values.
     ///
     /// Every log is fabricated at ONE address, because that is now the truth: the
     /// liveness recorder and the stipend settlement are the same contract, so the
@@ -1367,8 +1385,8 @@ mod tests {
     #[test]
     fn close_events_decode_from_fabricated_logs() {
         use super::{
-            CorrelatedFailureEpoch, EpochBlendRewardsCommitted, PartialEpoch,
-            ProductionVerdictFailed, StipendLegSkipped, StipendSkipped,
+            CorrelatedFailureEpoch, EpochBlendRewardsCommitted, EpochWeightsUnavailable,
+            PartialEpoch, ProductionVerdictFailed, StipendLegSkipped, StipendSkipped,
         };
         use alloy_sol_types::SolEvent;
 
@@ -1390,6 +1408,10 @@ mod tests {
             "EpochBlendRewardsCommitted(uint64,uint256)"
         );
         assert_eq!(StipendSkipped::SIGNATURE, "StipendSkipped(uint64)");
+        assert_eq!(
+            EpochWeightsUnavailable::SIGNATURE,
+            "EpochWeightsUnavailable(uint64,uint32)"
+        );
 
         // The same-arity pair. Only the NAME separates them, so only topic0 can —
         // which is the property the address-free router now rests on.
@@ -1417,6 +1439,18 @@ mod tests {
         assert_eq!(decoded.epoch, 7);
         assert_eq!(decoded.recorded, 31);
         assert_eq!(decoded.expected, 32);
+
+        let lost_log = fabricate(
+            EpochWeightsUnavailable {
+                epoch: 11,
+                members: 51,
+            }
+            .encode_log_data(),
+        );
+        let decoded =
+            EpochWeightsUnavailable::decode_log(&lost_log).expect("fabricated log must decode");
+        assert_eq!(decoded.epoch, 11);
+        assert_eq!(decoded.members, 51);
 
         let failed_log = fabricate(
             ProductionVerdictFailed {

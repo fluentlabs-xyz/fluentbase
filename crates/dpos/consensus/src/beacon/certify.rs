@@ -19,8 +19,8 @@
 //! [`CombinedScheme::verify_certificate`](fluentbase_bls) verifies the recovered
 //! seed against each node's resolvable `PK_E` — a signer's own DKG sharing, or,
 //! on the wire-ingress paths, the group key carried in the finalized
-//! change-boundary block's `beacon_outcome` (the cert-inlet carry-forward cursor
-//! / the soft-enter marshal walk). So a *non-boundary* block's seed is pinned at
+//! change-boundary block's `beacon_outcome` (both wire paths now resolve it
+//! through the one [`crate::beacon::keys::BeaconKeys::get_pk`] ladder). So a *non-boundary* block's seed is pinned at
 //! notarization-accept whenever that key is resolvable (`None` ⇒ vote-only, the
 //! accepted residual right after a deep cold-start jump). What it does NOT cover
 //! is the boundary block: the honest recovered seed legitimately verifies against
@@ -58,10 +58,7 @@
 
 use crate::{
     application::{ExecutedChain, FluentApp, OrderingAssembler},
-    beacon::{
-        outcome::{group_public_key, parse_outcome},
-        seed::GroupPublic,
-    },
+    beacon::keys::asserted_key,
     epocher::OriginEpocher,
     order_block::OrderBlock,
 };
@@ -444,8 +441,8 @@ fn seed_certify_verdict(
     let Some(bytes) = block.beacon_outcome.as_ref() else {
         return true; // non-boundary block: covered by verify_certificate
     };
-    let outcome = match parse_outcome(bytes) {
-        Ok(o) => o,
+    let pk_e = match asserted_key(bytes) {
+        Ok(pk) => pk,
         Err(e) => {
             warn!(
                 height = block.height,
@@ -455,7 +452,6 @@ fn seed_certify_verdict(
             return false;
         }
     };
-    let pk_e: &GroupPublic = group_public_key(&outcome);
     // DETERMINISM TRIPWIRE: false-on-missing-seed is cross-node deterministic ONLY because
     // every honest node runs SeedStore::record (spec_exec.rs) from the Notarization report
     // BEFORE the simplex voter scans certify_candidates() for this round (module doc "Seed
@@ -470,7 +466,7 @@ fn seed_certify_verdict(
         );
         return false;
     };
-    let ok = verify_seed(pk_e, namespace, round, &seed);
+    let ok = verify_seed(&pk_e, namespace, round, &seed);
     if ok {
         info!(
             height = block.height,
@@ -505,6 +501,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::beacon::outcome::group_public_key;
     use crate::{
         beacon::outcome::{encode_outcome, DkgOutcome},
         digest::Digest,

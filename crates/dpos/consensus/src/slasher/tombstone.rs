@@ -87,7 +87,6 @@ mod tests {
                 peer_pubkey: peer,
                 activation_epoch: 0,
             },
-            stake: 1,
             tombstoned,
         }
     }
@@ -98,6 +97,7 @@ mod tests {
             block_number: 1,
             epoch: 1,
             validators,
+            weights: None,
         }
     }
 

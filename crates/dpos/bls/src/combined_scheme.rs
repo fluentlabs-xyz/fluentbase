@@ -27,7 +27,6 @@
 
 use bytes::{Buf, BufMut};
 use commonware_codec::{EncodeSize, Error as CodecError, FixedSize, Read, ReadExt as _, Write};
-use core::mem::size_of;
 use commonware_consensus::{simplex::types::Subject, types::Round};
 use commonware_cryptography::{
     bls12381::primitives::{
@@ -40,6 +39,7 @@ use commonware_cryptography::{
 };
 use commonware_parallel::Strategy;
 use commonware_utils::{ordered::Set, Faults, Participant};
+use core::mem::size_of;
 use rand_core::CryptoRngCore;
 
 use crate::{
@@ -65,9 +65,9 @@ fn subject_round<D: Digest>(subject: &Subject<'_, D>) -> Round {
 /// Encode an optional seed as a FIXED-size slot: a 1-byte present flag + a
 /// 48-byte G1 slot (the signature when present, all-zero when absent). An
 /// explicit flag — not a sentinel point — is REQUIRED because the BLS12-381 G1
-/// identity is not a decodable point (`G1::read` rejects infinity), so a "no
-/// seed" (Nullify / fallback-epoch) vote could not otherwise round-trip while
-/// keeping the `CodecFixed` constant size.
+/// identity is not a decodable point (`G1::read` rejects infinity), so a
+/// fallback-epoch vote, which carries no seed at all, could not otherwise
+/// round-trip while keeping the `CodecFixed` constant size.
 fn write_seed_slot(seed: &Option<BlsSignature>, buf: &mut impl BufMut) {
     match seed {
         Some(s) => {
@@ -95,8 +95,13 @@ fn read_seed_slot(buf: &mut impl Buf) -> Result<Option<BlsSignature>, CodecError
 }
 
 /// Per-vote signature: the attributable multisig share + the threshold seed
-/// partial. FIXED 97 B (vote 48 ‖ flag 1 ‖ seed-slot 48); `seed = None` on a
-/// Nullify vote or in a fallback (no-beacon) epoch.
+/// partial. FIXED 97 B (vote 48 ‖ flag 1 ‖ seed-slot 48); `seed = None` ONLY in
+/// a fallback (no-beacon) epoch.
+///
+/// NOT on a Nullify — a beacon-active epoch carries a partial on every subject,
+/// Nullify included (`sign`, and the module doc's last paragraph for why). A
+/// reader who believes otherwise will conclude a nullified view produces no seed,
+/// which is exactly the property the fixed-width slot exists to deny.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct CombinedSignature {
     pub vote: BlsSignature,
@@ -132,7 +137,9 @@ impl Read for CombinedSignature {
 
 /// Certificate assembled from a quorum of [`CombinedSignature`]s: the
 /// attributable multisig certificate (bitmap + aggregate vote) plus the
-/// recovered threshold seed (`None` for a Nullify/fallback cert).
+/// recovered threshold seed (`None` for a FALLBACK cert only — a nullification
+/// in a beacon-active epoch recovers the same σ a notarization of that view
+/// would).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct CombinedCertificate {
     pub vote: VoteCertificate,
@@ -140,7 +147,7 @@ pub struct CombinedCertificate {
 }
 
 impl CombinedCertificate {
-    /// The recovered seed signature, or `None` when absent (Nullify/fallback).
+    /// The recovered seed signature, or `None` in a fallback (no-beacon) epoch.
     pub fn seed(&self) -> Option<BlsSignature> {
         self.seed
     }
@@ -178,6 +185,18 @@ struct BeaconPart {
     sharing: Sharing<MinSig>,
     share: Option<Share>,
     seed_namespace: Vec<u8>,
+}
+
+/// The cert-time pin tuple: the epoch group key plus the seed namespace derived
+/// from the consensus namespace.
+///
+/// One function because two paths build a pin — `build_verifier` at
+/// construction and [`CombinedScheme::with_cert_seed_pin`] on the repair path —
+/// and a namespace disagreement between them is not a compile error. It would
+/// surface as a repaired scheme rejecting exactly the certs a constructed one
+/// accepts, at one epoch, on one node.
+pub(crate) fn cert_seed_pin_of(pk: GroupPublic, namespace: &[u8]) -> (GroupPublic, Vec<u8>) {
+    (pk, beacon::seed_namespace(namespace))
 }
 
 /// Combined attributable + threshold consensus scheme.
@@ -251,6 +270,35 @@ impl CombinedScheme {
             vote,
             beacon,
             cert_seed_pin,
+        }
+    }
+
+    /// Whether this scheme carries a cert-time seed pin, i.e. whether
+    /// `verify_certificate` checks the recovered seed against `PK_epoch` rather
+    /// than early-returning after the multisig quorum. Public because a pin is
+    /// the STRICTER state and a registry that replaces schemes has to be able to
+    /// refuse a replacement that drops one — the pin is invisible through
+    /// `participants()`/`me()`, the only other things such a registry can compare.
+    pub fn is_seed_pinned(&self) -> bool {
+        self.cert_seed_pin.is_some()
+    }
+
+    /// A copy of this scheme carrying `pk` as its cert-time seed pin.
+    ///
+    /// For upgrading an ALREADY-REGISTERED verifier whose key arrived after it
+    /// was built: rebuilding from a committee snapshot is not possible on that
+    /// path, because the epoch's snapshot is no longer held anywhere.
+    ///
+    /// Overwrites unconditionally. The pin must only ever be added, never
+    /// changed or dropped, but this type cannot enforce that — the epoch number
+    /// the pin belongs to is not part of the scheme, so the two rules that
+    /// matter (add-only, and never below the bootstrap epoch — see the INVARIANT
+    /// in [`Self::new`]) can only be checked where epochs are known. The caller
+    /// enforces both; today that is `EpochSchemeProvider::apply_pin`.
+    pub fn with_cert_seed_pin(&self, pk: GroupPublic, namespace: &[u8]) -> Self {
+        Self {
+            cert_seed_pin: Some(cert_seed_pin_of(pk, namespace)),
+            ..self.clone()
         }
     }
 
@@ -662,11 +710,11 @@ mod tests {
         let cert_x = assemble_over(&schemes, Subject::Nullify { round });
 
         assert_eq!(
-            cert_n
+            cert_n.seed().expect("notarization carries a seed").encode(),
+            cert_x
                 .seed()
-                .expect("notarization carries a seed")
+                .expect("nullification carries a seed")
                 .encode(),
-            cert_x.seed().expect("nullification carries a seed").encode(),
         );
     }
 

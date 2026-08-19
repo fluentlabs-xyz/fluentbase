@@ -60,6 +60,29 @@ pub trait CertUpstream: Clone + Send + Sync + 'static {
         height: Height,
     ) -> impl Future<Output = Option<UpstreamFinalized>> + Send;
 
+    /// [`Self::get_finalization`], but on an explicit CONTENT miss — the upstream
+    /// answering that it does not hold the height — asks the REST of the
+    /// configured sources before giving up.
+    ///
+    /// **Default: identical to `get_finalization`, and that is correct for the
+    /// plane.** An Active-registered node's resolver already walks peers on the
+    /// existing authenticated connections and retries until someone serves. Only
+    /// the WS handle overrides this: an unregistered follower cannot join the
+    /// plane at all, so it has no peers — only an operator's URL list.
+    ///
+    /// Use this ONLY where a miss is semantically expensive and the caller runs
+    /// on its own cadence: boundary seeding at boot, the re-jump landing, and
+    /// crash recovery. Do NOT use it for the marshal's gap repair, which issues
+    /// up to `MAX_REPAIR` concurrent by-height pulls per sweep at roughly one
+    /// sweep per second — a walk there is `MAX_REPAIR × (urls − 1)` connections
+    /// per second, forever, on a height nobody holds.
+    fn get_finalization_everywhere(
+        &self,
+        height: Height,
+    ) -> impl Future<Output = Option<UpstreamFinalized>> + Send {
+        self.get_finalization(height)
+    }
+
     /// Fetch the upstream's latest finalized block. Used at cold-start to obtain a
     /// (trusted, for EL-sync only) head to drive the follower's reth devp2p
     /// backward-sync into the DPoS era. The head *hash* is the only trusted input:
@@ -145,7 +168,15 @@ where
         None
     };
 
-    let Some(uf) = upstream.get_finalization(Height::new(height)).await else {
+    // `_everywhere`: this seam serves the SEMANTIC callers — boundary seeding at
+    // boot, the re-jump landing, and the beacon-key repair rung — each of which
+    // runs on its own cadence and each of which pays for a miss with an epoch of
+    // verify-only. The marshal's gap repair deliberately does NOT come through
+    // here; see the method's own doc for why a walk there is pathological.
+    let Some(uf) = upstream
+        .get_finalization_everywhere(Height::new(height))
+        .await
+    else {
         return failed("upstream does not serve the height");
     };
     if uf.block.height != height {

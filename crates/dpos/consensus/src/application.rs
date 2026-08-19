@@ -22,10 +22,12 @@ use crate::{
         },
         ceremony::CeremonyOutput,
         certify::SeedStore,
-        outcome::{encode_outcome, group_public_key, parse_outcome, validate_share_on_poly},
+        keys::{asserted_key, pk_prefix, BeaconKeys, KeySource},
+        outcome::{encode_outcome, parse_outcome, validate_share_on_poly},
         seed::{verify_seed, GroupPublic, Seed},
     },
     digest::Digest,
+    epocher::OriginEpocher,
     executor, extra_data,
     fault::TransportError,
     order_block::{
@@ -44,7 +46,7 @@ use commonware_consensus::{
         Update,
     },
     simplex::types::Context as SimplexContext,
-    types::{Epoch, Round, View},
+    types::{Epoch, Epocher as _, Height, Round, View},
     Application, Reporter, VerifyingApplication,
 };
 use commonware_cryptography::{bls12381::primitives::group::Share, ed25519::PublicKey};
@@ -59,11 +61,13 @@ use futures::StreamExt as _;
 use rand_08::Rng;
 use reth_ethereum_primitives::{Block as RethBlock, TransactionSigned};
 use reth_primitives_traits::SealedBlock;
+#[cfg(test)]
+use std::{collections::BTreeMap, sync::RwLock};
 use std::{
-    collections::BTreeMap,
+    num::NonZeroU64,
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc, RwLock,
+        Arc,
     },
     time::Duration,
 };
@@ -284,35 +288,6 @@ pub enum KeyLookup {
     ReadFailed,
 }
 
-/// Provenance tier of a [`GroupKeys`] entry. Ordered: attested outranks
-/// local — on a CONFLICTING insert an observed value DISPLACES a local one,
-/// never vice-versa (see [`insert_group_key`]). The prior untiered
-/// first-write-wins policy let a diverged local W1 write beat the network's
-/// W4 observed-outcome write by 1.3 s of timing — trust inverted (soak
-/// 2026-07-14, v5@epoch77).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub enum KeySource {
-    /// This node's OWN DKG material (writers W1/W3 and the ladder-dkg
-    /// memoize) — locally reconstructed, can diverge from the chain.
-    LocalDkg,
-    /// Agreed chain data: a finalized change-epoch boundary block's
-    /// `beacon_outcome` (writer W4) — validated by quorum at vote time.
-    ObservedOutcome,
-}
-
-/// The CROSS-EPOCH shared per-epoch group-key map (`epoch → (PK_epoch,
-/// provenance)`). Created ONCE next to the `SeedStore` singleton (`outer.rs`)
-/// and cloned by `Arc` into every [`FluentApp`] clone (hence every per-epoch
-/// engine) and into `epoch_manager::Config` — it must OUTLIVE every engine
-/// (engines are aborted at the transition) and be the SAME map for `E` and
-/// `E+1` (writer W2 = W1 of the previous epoch). Insert-only WITHIN a
-/// provenance tier: an epoch's group key is immutable agreed data, so a
-/// same-tier differing re-insert is a divergence witness and the first write
-/// wins; ACROSS tiers the attested source wins (see [`insert_group_key`]).
-/// NEVER build a second map: the writers fill one map and the vote path reads
-/// it — two maps silently re-open the boundary forge arm.
-pub type GroupKeys = Arc<RwLock<BTreeMap<u64, (GroupPublic, KeySource)>>>;
-
 /// The lazy 3-state group-key resolver (ladder step 1: the node's OWN live-DKG
 /// material, carry-forward + committee-equality gated). Built at the launch
 /// site (`dpos.rs`) — the only place the `CeremonyStore` exists — and threaded
@@ -341,79 +316,6 @@ fn witness_link(ctx: &SimplexContext<Digest, PublicKey>) -> (Option<u64>, bool) 
     (ep, required)
 }
 
-/// Tiered, idempotent write into the shared [`GroupKeys`] map — the
-/// ATTESTED-SOURCE-WINS conflict policy. An epoch's group key is agreed chain
-/// data; on a DIFFERING re-insert the higher-provenance value holds the entry:
-/// a [`KeySource::ObservedOutcome`] write (agreed chain data) DISPLACES a
-/// differing [`KeySource::LocalDkg`] one, never vice-versa, and WITHIN a tier
-/// the first write wins. Same-value re-inserts keep the strongest provenance
-/// (an observed confirm upgrades a local entry to attested — the promote
-/// value-gate's input, [`attested_group_key`]). Failures are never inserted
-/// (the callers only reach here with a resolved key).
-pub(crate) fn insert_group_key(map: &GroupKeys, epoch: u64, pk: GroupPublic, source: KeySource) {
-    let Ok(mut m) = map.write() else {
-        tracing::warn!(epoch, "group-key map poisoned; dropping resolved key");
-        return;
-    };
-    let Some(&(existing, existing_src)) = m.get(&epoch) else {
-        m.insert(epoch, (pk, source));
-        return;
-    };
-    if existing == pk {
-        if source > existing_src {
-            m.insert(epoch, (pk, source));
-        }
-        return;
-    }
-    // A DIFFERING value for one epoch is the network-wide key-divergence
-    // witness (soak 2026-07-14: v5's own W1 value vs the network's ⇒ a lone
-    // reject{bad_signature}) — keep it LOUD + counted whichever side wins.
-    let winner = match source.cmp(&existing_src) {
-        std::cmp::Ordering::Greater => "observed_displaces_local",
-        std::cmp::Ordering::Less => "attested_kept",
-        std::cmp::Ordering::Equal => "first_write_kept",
-    };
-    tracing::warn!(
-        epoch,
-        existing = %pk_prefix(&existing),
-        existing_source = ?existing_src,
-        offered = %pk_prefix(&pk),
-        offered_source = ?source,
-        winner,
-        "group-key re-insert with a DIFFERING value"
-    );
-    metrics::counter!("dpos_group_key_conflict_total", "winner" => winner).increment(1);
-    if source > existing_src {
-        m.insert(epoch, (pk, source));
-    }
-    // Two DIFFERING observed-outcome values would mean two finalized boundary
-    // blocks disagree on one epoch's mint — fork-grade, never a handled state.
-    debug_assert!(
-        !(source == KeySource::ObservedOutcome && existing_src == KeySource::ObservedOutcome),
-        "two observed agreed group keys differ for epoch {epoch}"
-    );
-}
-
-/// The NETWORK-ATTESTED `PK_epoch` for `epoch`, if one is known: a
-/// [`KeySource::ObservedOutcome`] map entry only. Local-sourced entries are
-/// deliberately invisible here — the promote value-gate must never compare a
-/// local resolve against another local resolve.
-pub(crate) fn attested_group_key(map: &GroupKeys, epoch: u64) -> Option<GroupPublic> {
-    map.read().ok().and_then(|m| {
-        m.get(&epoch)
-            .and_then(|&(pk, src)| (src == KeySource::ObservedOutcome).then_some(pk))
-    })
-}
-
-/// First 8 serialized bytes of a group public key, hex — a stable, greppable
-/// value fingerprint. Enough to byte-diff key VALUES across nodes from logs
-/// alone (the reject-triage need); the full G2 hex is 192 chars of log noise.
-pub(crate) fn pk_prefix(pk: &GroupPublic) -> String {
-    let mut s = pk.to_string();
-    s.truncate(16);
-    s
-}
-
 /// The per-epoch beacon-DKG context threaded into [`FluentApp`]'s verify/propose
 /// path: the boundary "C" share-on-polynomial qualification + the proposer's
 /// `beacon_outcome` assertion. `None` on `FluentApp` ⇒ no beacon context
@@ -423,7 +325,7 @@ pub struct BeaconVerify {
     beacon_for_epoch: BeaconForEpoch,
     committee_for: CommitteeFor,
     /// Lazy 3-state `PK_epoch` resolver (ladder step 1) — consulted by
-    /// [`FluentApp::group_public_for`] on a [`GroupKeys`] map miss; the map
+    /// [`FluentApp::group_public_for`] on a [`BeaconKeys`] store miss; the map
     /// memoizes `Resolved` only. Distinct from `beacon_for_epoch`: that is an
     /// EXACT-epoch lookup (misses on every stable epoch after the last change)
     /// and it exposes the share; this one is carry-forward + committee-gated
@@ -433,8 +335,11 @@ pub struct BeaconVerify {
     /// (`seed_namespace(fluent_namespace(chain_id))`) — the domain the witness
     /// signature is verified under (`verify_seed`).
     seed_namespace: Vec<u8>,
-    dpos_activation: u64,
-    epoch_interval: u64,
+    /// The ONE epoch↔height authority (`origin = dposActivationBlock`,
+    /// `length = epochBlockInterval`). Held instead of the two raw numbers so
+    /// `epoch_start` here cannot drift from every other epoch→height computation
+    /// in the tree.
+    epocher: OriginEpocher,
     /// AMENDMENT 5 determinism core (both `None` ⇒ propose carries no `dkg_logs`,
     /// report accumulates nothing — the finalize stays legacy). `recorded_dkg_logs`
     /// is the DKG actor's published `idx→hash` of logs THIS node holds (read at
@@ -464,8 +369,14 @@ impl BeaconVerify {
             committee_for,
             group_key_for,
             seed_namespace,
-            dpos_activation,
-            epoch_interval,
+            // Fail LOUD and at construction on a zero interval. Every production
+            // caller already `ensure!`s it non-zero before getting here; the two
+            // things this replaces did neither — one divided by it, the other
+            // silently substituted 1 and computed a wrong epoch.
+            epocher: OriginEpocher::new(
+                dpos_activation,
+                NonZeroU64::new(epoch_interval).expect("epochBlockInterval must be > 0"),
+            ),
             recorded_dkg_logs: None,
             finalized_dkg_logs: None,
             #[cfg(feature = "dpos-devnet-byzantine")]
@@ -575,12 +486,21 @@ impl BeaconVerify {
         }
     }
 
+    /// Pre-activation heights have no relative epoch; they answer 0, which is
+    /// what the previous saturating form did.
     fn epoch_of(&self, height: u64) -> u64 {
-        height.saturating_sub(self.dpos_activation) / self.epoch_interval.max(1)
+        self.epocher
+            .containing(Height::new(height))
+            .map_or(0, |info| info.epoch().get())
     }
 
+    /// `u64::MAX` only on `epoch * interval` overflowing u64 — unreachable at any
+    /// real epoch, and both readers degrade safely there (no height equals it, so
+    /// no block is a change-epoch first block; `H_settle` saturates high).
     fn epoch_start(&self, epoch: u64) -> u64 {
-        self.dpos_activation + epoch * self.epoch_interval
+        self.epocher
+            .first(Epoch::new(epoch))
+            .map_or(u64::MAX, |h| h.get())
     }
 
     /// A height is a CHANGE-epoch first block iff it is the first block of an
@@ -629,11 +549,11 @@ pub struct FluentApp<XC, A> {
     /// `outer.rs`). Read by the propose-side `parent_seed` embed (the witness
     /// rollout); `None` for tests / followers that run no consensus plane.
     seed_store: Option<SeedStore>,
-    /// The cross-epoch shared `epoch → PK_epoch` map (see [`GroupKeys`]).
+    /// The cross-epoch shared `epoch → PK_epoch` store (see [`BeaconKeys`]).
     /// Written OFF the vote path (W1 at engine spawn in `epoch_manager`, W4 in
     /// [`Reporter::report`] below); read + lazily filled (memoize-on-success
     /// only) by [`Self::group_public_for`].
-    group_keys: GroupKeys,
+    group_keys: BeaconKeys,
     genesis: Arc<OrderBlock>,
     executor: executor::Mailbox,
     /// Observer for `Update::Block` finalizations — NOT a state-advancing
@@ -737,7 +657,7 @@ where
         // A constructor ARGUMENT, deliberately not an internal default: the
         // same `Arc` must also reach `epoch_manager::Config` (writer W1) — a
         // silently-forgotten second map would split writers from readers.
-        group_keys: GroupKeys,
+        group_keys: BeaconKeys,
         chain_id: u64,
         // Same reasoning as `group_keys`: the same handle must also reach
         // `slasher::Config`, and a second store would be a queue nothing fills.
@@ -829,7 +749,7 @@ where
     }
 
     /// Resolve `PK_epoch` for the witness-signature arm: the shared
-    /// [`GroupKeys`] map first (the common case — no I/O; every voting node
+    /// [`BeaconKeys`] store first (the common case — no I/O; every voting node
     /// finds its OWN epoch there via W1), then the lazy 3-state resolver
     /// (ladder step 1), memoizing ONLY on `Resolved`. `Unknown` and
     /// `ReadFailed` are NEVER cached — a later call re-runs the resolve and
@@ -839,12 +759,7 @@ where
     /// resolver's `CeremonyStore`/committee snapshot) — no await, no in-flight
     /// state on the vote path.
     pub fn group_public_for(&self, epoch: u64) -> KeyLookup {
-        if let Some(pk) = self
-            .group_keys
-            .read()
-            .ok()
-            .and_then(|m| m.get(&epoch).map(|&(pk, _)| pk))
-        {
+        if let Some(pk) = self.group_keys.cached_only(epoch) {
             metrics::counter!("dpos_group_public_source_total", "ladder" => "map").increment(1);
             return KeyLookup::Resolved(pk);
         }
@@ -861,7 +776,7 @@ where
                     group_public = %pk_prefix(&pk),
                     "group key resolved from own DKG material (ladder=dkg); memoizing"
                 );
-                insert_group_key(&self.group_keys, epoch, pk, KeySource::LocalDkg);
+                self.group_keys.set_pk(epoch, pk, KeySource::LocalDkg);
                 KeyLookup::Resolved(pk)
             }
             miss => miss,
@@ -1804,17 +1719,17 @@ where
             // publishes no outcome, so this cursor alone is NOT sufficient —
             // ladder step 1 covers the restarted signer).
             if let (Some(bv), Some(bytes)) = (self.beacon.as_ref(), block.beacon_outcome.as_ref()) {
-                match parse_outcome(bytes) {
-                    Ok(outcome) => {
+                match asserted_key(bytes) {
+                    Ok(pk) => {
                         let epoch = bv.epoch_of(block.height);
-                        let pk = *group_public_key(&outcome);
                         tracing::debug!(
                             epoch,
                             height = block.height,
                             group_public = %pk_prefix(&pk),
                             "W4: memoizing observed-outcome group key"
                         );
-                        insert_group_key(&self.group_keys, epoch, pk, KeySource::ObservedOutcome);
+                        self.group_keys
+                            .set_pk(epoch, pk, KeySource::ObservedOutcome);
                     }
                     // The outcome was already validated at vote time; a parse
                     // failure here is diagnostic, never state-advancing.
@@ -1997,8 +1912,8 @@ mod tests {
     /// The domain separator every test signature is produced and verified under.
     const TEST_CHAIN_ID: u64 = 20_994;
 
-    fn test_group_keys() -> GroupKeys {
-        Arc::new(RwLock::new(BTreeMap::new()))
+    fn test_group_keys() -> BeaconKeys {
+        BeaconKeys::new()
     }
 
     // The monotone finalized-execution cursor: tier-F resolves reth's canonical
@@ -2276,7 +2191,7 @@ mod tests {
     /// A `FluentApp` over the GIVEN group-key map + 3-state resolver — the
     /// group-key-ladder fixtures (P1).
     fn build_app_with_keys(
-        group_keys: GroupKeys,
+        group_keys: BeaconKeys,
         group_key_for: GroupKeyFor,
     ) -> FluentApp<NoChain, NoTxs> {
         let (mailbox, _rx) = fresh_mailbox();
@@ -2318,91 +2233,6 @@ mod tests {
         *sharing.public()
     }
 
-    /// A second, distinct group key (a fresh deal over the same rng stream).
-    fn other_group_public() -> GroupPublic {
-        use commonware_cryptography::bls12381::dkg::deal_anonymous;
-        use commonware_utils::{test_rng, N3f1, NZU32};
-        let mut rng = test_rng();
-        let (_first, _) = deal_anonymous::<
-            commonware_cryptography::bls12381::primitives::variant::MinSig,
-            N3f1,
-        >(&mut rng, Default::default(), NZU32!(4));
-        let (sharing, _shares) = deal_anonymous::<
-            commonware_cryptography::bls12381::primitives::variant::MinSig,
-            N3f1,
-        >(&mut rng, Default::default(), NZU32!(4));
-        *sharing.public()
-    }
-
-    // ─────────────── group-key conflict policy (attested-source-wins) ───────
-
-    /// The soak-2026-07-14 inversion, fixed: a stale LOCAL W1 write landed
-    /// first, then the network's W4 observed-outcome key arrived and was
-    /// DROPPED by first-write-wins — the poisoned entry then failed the next
-    /// epoch's parent-seed witness. Attested-source-wins: the observed
-    /// (agreed-chain-data) write must DISPLACE the differing local one.
-    #[test]
-    fn observed_outcome_displaces_a_differing_local_write() {
-        let (local, network) = (sample_group_public(), other_group_public());
-        assert_ne!(local, network);
-        let map = test_group_keys();
-        insert_group_key(&map, 77, local, KeySource::LocalDkg); // W1 (stale)
-        insert_group_key(&map, 77, network, KeySource::ObservedOutcome); // W4
-        assert_eq!(
-            map.read().unwrap().get(&77),
-            Some(&(network, KeySource::ObservedOutcome)),
-            "agreed chain data must beat local reconstruction regardless of timing"
-        );
-        assert_eq!(attested_group_key(&map, 77), Some(network));
-    }
-
-    /// The inverse ordering: once an observed key holds the entry, no later
-    /// local resolve may displace it (last-write-wins would re-open the
-    /// boundary-forge arm the insert-only map exists to close).
-    #[test]
-    fn local_write_never_displaces_an_attested_entry() {
-        let (local, network) = (sample_group_public(), other_group_public());
-        let map = test_group_keys();
-        insert_group_key(&map, 77, network, KeySource::ObservedOutcome);
-        insert_group_key(&map, 77, local, KeySource::LocalDkg);
-        assert_eq!(
-            map.read().unwrap().get(&77),
-            Some(&(network, KeySource::ObservedOutcome))
-        );
-    }
-
-    /// Same value, stronger provenance: an observed confirm UPGRADES a local
-    /// entry to attested (the promote value-gate's input); within a tier the
-    /// first write wins and the map stays insert-only.
-    #[test]
-    fn same_value_reinsert_upgrades_provenance_only() {
-        let pk = sample_group_public();
-        let map = test_group_keys();
-        insert_group_key(&map, 9, pk, KeySource::LocalDkg);
-        assert_eq!(
-            attested_group_key(&map, 9),
-            None,
-            "a local-only entry is NOT network-attested"
-        );
-        insert_group_key(&map, 9, pk, KeySource::ObservedOutcome);
-        assert_eq!(attested_group_key(&map, 9), Some(pk));
-        // And it never downgrades back.
-        insert_group_key(&map, 9, pk, KeySource::LocalDkg);
-        assert_eq!(attested_group_key(&map, 9), Some(pk));
-    }
-
-    /// The promote value-gate compares ONLY against network-attested entries:
-    /// a differing local entry (our own earlier write — possibly the same
-    /// stale source) must not masquerade as a network observation.
-    #[test]
-    fn attested_group_key_is_blind_to_local_entries() {
-        let pk = sample_group_public();
-        let map = test_group_keys();
-        insert_group_key(&map, 5, pk, KeySource::LocalDkg);
-        assert_eq!(attested_group_key(&map, 5), None);
-        assert_eq!(attested_group_key(&map, 6), None);
-    }
-
     /// (P1-a) — the sticky-`None` regression, at the resolver/map level: a
     /// TRANSIENT `committee_for` outage must produce `ReadFailed`, cache
     /// NOTHING (no entry of any kind — a one-shot-at-spawn resolution would
@@ -2432,7 +2262,7 @@ mod tests {
         // During the outage: ReadFailed, and the failure is NOT cached.
         assert_eq!(app.group_public_for(7), KeyLookup::ReadFailed);
         assert!(
-            group_keys.read().unwrap().get(&7).is_none(),
+            group_keys.cached_only(7).is_none(),
             "a failure must never be inserted into the map"
         );
 
@@ -2440,10 +2270,8 @@ mod tests {
         // memoized) and the success is cached.
         outage.store(false, Ordering::SeqCst);
         assert_eq!(app.group_public_for(7), KeyLookup::Resolved(pk));
-        assert_eq!(
-            group_keys.read().unwrap().get(&7),
-            Some(&(pk, KeySource::LocalDkg))
-        );
+        assert_eq!(group_keys.cached_only(7), Some(pk));
+        assert_eq!(group_keys.attested(7), None, "a W1 memoize is local-tier");
 
         // Subsequent reads hit the map — the resolver is not consulted again.
         let before = calls.load(Ordering::SeqCst);
@@ -2472,14 +2300,12 @@ mod tests {
         let app = build_app_with_keys(group_keys.clone(), resolver);
 
         assert_eq!(app.group_public_for(9), KeyLookup::Unknown);
-        assert!(group_keys.read().unwrap().is_empty());
+        assert!(group_keys.is_empty());
 
         has_material.store(true, Ordering::SeqCst);
         assert_eq!(app.group_public_for(9), KeyLookup::Resolved(pk));
-        assert_eq!(
-            group_keys.read().unwrap().get(&9),
-            Some(&(pk, KeySource::LocalDkg))
-        );
+        assert_eq!(group_keys.cached_only(9), Some(pk));
+        assert_eq!(group_keys.attested(9), None, "a W1 memoize is local-tier");
     }
 
     /// W1/W2 — a map entry written at engine spawn is read with ZERO resolver
@@ -2493,7 +2319,7 @@ mod tests {
             panic!("the resolver must not run on a map hit");
         });
         let group_keys = test_group_keys();
-        insert_group_key(&group_keys, 4, pk, KeySource::LocalDkg); // as W1 does, before the engine
+        group_keys.set_pk(4, pk, KeySource::LocalDkg); // as W1 does, before the engine
         let app = build_app_with_keys(group_keys, resolver);
 
         assert_eq!(app.group_public_for(4), KeyLookup::Resolved(pk));
@@ -2569,7 +2395,7 @@ mod tests {
     /// the REAL seed namespace so `verify_seed` runs for real.
     fn witness_app<XC: ExecutedChain>(
         executed: XC,
-        group_keys: GroupKeys,
+        group_keys: BeaconKeys,
         group_key_for: GroupKeyFor,
         ns: Vec<u8>,
     ) -> FluentApp<XC, NoTxs> {
@@ -2733,10 +2559,10 @@ mod tests {
                         peer_pubkey: peer.clone(),
                         activation_epoch: 0,
                     },
-                    stake: 1,
                     tombstoned: peer == leader,
                 })
                 .collect(),
+            weights: None,
         }
     }
 
@@ -3165,11 +2991,7 @@ mod tests {
         // The chain minted at the change epoch (bit set) and never re-minted.
         let mint = ec - 9;
         let dkg_qual: crate::beacon::carry::DkgQualFor = Arc::new(move |e| Some(e == mint));
-        let resolver = crate::dpos::group_key_resolver(
-            store,
-            dkg_qual,
-            Arc::new(RwLock::new(BTreeMap::new())),
-        );
+        let resolver = crate::dpos::group_key_resolver(store, dkg_qual, BeaconKeys::new());
 
         let recorder = DebuggingRecorder::new();
         let snap = recorder.snapshotter();
@@ -3234,11 +3056,7 @@ mod tests {
                 Some(e == 3)
             }
         });
-        let resolver = crate::dpos::group_key_resolver(
-            store,
-            dkg_qual,
-            Arc::new(RwLock::new(BTreeMap::new())),
-        );
+        let resolver = crate::dpos::group_key_resolver(store, dkg_qual, BeaconKeys::new());
         let pinned = Round::new(Epoch::new(ec - 1), View::new(7));
         let group_keys = test_group_keys();
 
@@ -3273,10 +3091,7 @@ mod tests {
                 0,
                 "the two non-Resolved states must be distinguishable"
             );
-            assert!(
-                group_keys.read().unwrap().is_empty(),
-                "no negative-cache entry of any kind"
-            );
+            assert!(group_keys.is_empty(), "no negative-cache entry of any kind");
 
             // 2. Outage clears ⇒ the key RESOLVES (nothing negative was
             //    memoized), the vote is true BY VERIFICATION, the map fills.
@@ -3291,7 +3106,7 @@ mod tests {
                 before,
                 "verified for real — the unverified counter must not move"
             );
-            assert!(group_keys.read().unwrap().contains_key(&(ec - 1)));
+            assert!(group_keys.cached_only(ec - 1).is_some());
 
             // 3. …and a FORGED seed on the recovered fixture votes FALSE —
             //    under a one-shot/sticky resolution it would still be accepted
@@ -3326,11 +3141,7 @@ mod tests {
                 Some(e == 3)
             }
         });
-        let resolver = crate::dpos::group_key_resolver(
-            store,
-            dkg_qual,
-            Arc::new(RwLock::new(BTreeMap::new())),
-        );
+        let resolver = crate::dpos::group_key_resolver(store, dkg_qual, BeaconKeys::new());
         let pinned = Round::new(Epoch::new(ec - 1), View::new(7));
         let group_keys = test_group_keys();
 
@@ -3352,7 +3163,7 @@ mod tests {
                 0,
                 "resolved WITHIN the budget ⇒ verified, not accepted-by-fall-through"
             );
-            assert!(group_keys.read().unwrap().contains_key(&(ec - 1)));
+            assert!(group_keys.cached_only(ec - 1).is_some());
         });
 
         // `Unknown` (a churn-in member with no material at all) resolves on
@@ -3367,7 +3178,7 @@ mod tests {
             let resolver = crate::dpos::group_key_resolver(
                 empty_store,
                 Arc::new(move |e| Some(e == 3)),
-                Arc::new(RwLock::new(BTreeMap::new())),
+                BeaconKeys::new(),
             );
             let (parent, block) = witness_pair(7, 3, Some(cc.seed_at(pinned)));
             let ctx = ctx_boundary(ec, 3, &parent);
@@ -3456,7 +3267,7 @@ mod tests {
                     Some(e == 3)
                 }
             });
-            crate::dpos::group_key_resolver(store, dkg_qual, Arc::new(RwLock::new(BTreeMap::new())))
+            crate::dpos::group_key_resolver(store, dkg_qual, BeaconKeys::new())
         };
 
         // Variant 1: both recover inside the budget ⇒ true, VERIFIED (no
@@ -3490,7 +3301,7 @@ mod tests {
                 "the result gate must be polled ~every tick, not once: {}",
                 chain.calls.load(Ordering::SeqCst)
             );
-            assert!(group_keys.read().unwrap().contains_key(&(ec - 1)));
+            assert!(group_keys.cached_only(ec - 1).is_some());
         });
         assert_eq!(
             counter_at(&snap, "dpos_parent_seed_boundary_unverified_total", None),

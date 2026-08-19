@@ -105,6 +105,9 @@ const MARSHAL_PARTITION_PREFIX: &str = "consensus_marshal";
 /// free** and will need a real migration.
 const SEED_JOURNAL_PARTITION: &str = "beacon-seed-ordinal";
 
+/// Partition of the durable `epoch → PK_epoch` store. Empty would mean RAM-only.
+const KEY_JOURNAL_PARTITION: &str = "beacon-key-ordinal";
+
 /// Reth handles needed by the DPoS layer. The host adapter at
 /// `crates/node/src/dpos.rs` assembles this from `FullNode<N, AddOns>`;
 /// `transaction_pool`, `chain_spec`, and `data_dir` are intentionally
@@ -406,7 +409,10 @@ where
              real local consensus data loss; re-sync the EL disk from a snapshot"
         ));
     };
-    let Some(uf) = up.get_finalization(Height::new(height)).await else {
+    // `_everywhere`: this arm exits FATAL and tells the operator to re-sync the EL
+    // disk from a snapshot. Asking ONE upstream before saying that is not enough
+    // when the operator configured several and the block sits on the second.
+    let Some(uf) = up.get_finalization_everywhere(Height::new(height)).await else {
         return Err(eyre!(
             "crash-survivor recovery: marshal {which} has a below-floor hole at height {height} \
              and the upstream no longer serves it — the consensus record is gone everywhere; \
@@ -1190,7 +1196,7 @@ pub async fn peek_consensus_archive_last_finalized(ctx: &Context) -> eyre::Resul
 pub(crate) fn group_key_resolver(
     store: crate::beacon::actor::CeremonyStore,
     dkg_qual: crate::beacon::carry::DkgQualFor,
-    group_keys: crate::application::GroupKeys,
+    group_keys: crate::beacon::keys::BeaconKeys,
 ) -> crate::application::GroupKeyFor {
     use crate::application::KeyLookup;
     use crate::beacon::carry::{select_carry_scheme, CarryVerdict};
@@ -1220,7 +1226,7 @@ pub(crate) fn group_key_resolver(
                 // mint), so ONE observed outcome demotes the mint AND every
                 // stable epoch that carries it. Absent attestation ⇒ unchanged
                 // (the restarted-signer carry).
-                if let Some(net) = crate::application::attested_group_key(&group_keys, minted_at) {
+                if let Some(net) = group_keys.attested(minted_at) {
                     if net != pk {
                         metrics::counter!(
                             "dpos_carry_forward_refused_total",
@@ -1264,7 +1270,7 @@ pub(crate) fn beacon_share_resolver(
     store: crate::beacon::actor::CeremonyStore,
     dkg_qual: crate::beacon::carry::DkgQualFor,
     namespace: Vec<u8>,
-    group_keys: crate::application::GroupKeys,
+    group_keys: crate::beacon::keys::BeaconKeys,
 ) -> crate::epoch_manager::BeaconResolver {
     use crate::beacon::carry::{select_carry_scheme, CarryVerdict};
     use crate::epoch_manager::BeaconResolve;
@@ -1293,7 +1299,7 @@ pub(crate) fn beacon_share_resolver(
                 let (out, share) = m.get(&minted_at).expect("select returned a stored mint");
                 let pk = out.public().clone();
                 let pk_g2 = *crate::beacon::outcome::group_public_key(out);
-                if let Some(net) = crate::application::attested_group_key(&group_keys, minted_at) {
+                if let Some(net) = group_keys.attested(minted_at) {
                     if net != pk_g2 {
                         tracing::debug!(
                             epoch,
@@ -1365,8 +1371,8 @@ mod group_key_resolver_tests {
     /// An empty group-key map: no network-attested (W4 ObservedOutcome) entries,
     /// so the resolvers' carry-divergence guard never fires — the pre-guard
     /// behavior these arbitration tests assert.
-    fn no_attested() -> crate::application::GroupKeys {
-        Arc::new(RwLock::new(BTreeMap::new()))
+    fn no_attested() -> crate::beacon::keys::BeaconKeys {
+        crate::beacon::keys::BeaconKeys::new()
     }
 
     /// A frozen on-chain `dkgQual` history: the given epochs have the bit set.
@@ -1542,7 +1548,7 @@ mod group_key_resolver_tests {
     /// attestation (the correctly-qualified restarted signer) stays trusted.
     #[test]
     fn divergent_carry_is_refused_against_the_attested_mint_key() {
-        use crate::application::KeySource;
+        use crate::beacon::keys::KeySource;
         use crate::epoch_manager::BeaconResolve;
 
         let players = committee(0xC0, 4);
@@ -1565,10 +1571,8 @@ mod group_key_resolver_tests {
             *crate::beacon::outcome::group_public_key(&other_out)
         };
         assert_ne!(attested_pk, local_pk, "test needs a genuine divergence");
-        let diverged: crate::application::GroupKeys = Arc::new(RwLock::new(BTreeMap::from([(
-            5u64,
-            (attested_pk, KeySource::ObservedOutcome),
-        )])));
+        let diverged = crate::beacon::keys::BeaconKeys::new();
+        diverged.set_pk(5, attested_pk, KeySource::ObservedOutcome);
 
         // Vote path — carry to STABLE epoch 7 ⇒ Unknown (accept-biased), never Resolved.
         let verify = group_key_resolver(store.clone(), qual(&[5]), diverged.clone());
@@ -1587,10 +1591,8 @@ mod group_key_resolver_tests {
 
         // A MATCHING attestation (own == network) leaves the key trusted — the
         // correctly-qualified restarted signer is NOT over-blocked.
-        let agreeing: crate::application::GroupKeys = Arc::new(RwLock::new(BTreeMap::from([(
-            5u64,
-            (local_pk, KeySource::ObservedOutcome),
-        )])));
+        let agreeing = crate::beacon::keys::BeaconKeys::new();
+        agreeing.set_pk(5, local_pk, KeySource::ObservedOutcome);
         let verify_ok = group_key_resolver(store, qual(&[5]), agreeing);
         assert_eq!(
             verify_ok(7),
@@ -1675,6 +1677,82 @@ pub struct DposLayerHandle {
     /// supervision subtree, because the host awaits them only AFTER aborting
     /// that engine — see `crate::outer::OuterBuilder::build`.
     pub drain_on_shutdown: Vec<(&'static str, Handle<()>)>,
+    /// The epoch geometry (`dposActivationBlock`, `epochBlockInterval`) the layer
+    /// resolved at launch, handed up so the host does not read it a second time.
+    /// The validator overlay needs it to build its cert-inlet's
+    /// [`crate::beacon::keys::BoundaryWalk`], and a host-side re-read would
+    /// be both a second source of truth for a value the layer already resolved
+    /// authoritatively and, on a runtime-deployed chain, a read that is only
+    /// guaranteed to succeed BECAUSE the layer's own has already succeeded.
+    pub dpos_activation_block: u64,
+    pub epoch_length_blocks: NonZeroU64,
+    /// The layer's ONE cross-epoch beacon-key store, handed up for the same
+    /// reason as the geometry: the validator overlay's cert-inlet must join THIS
+    /// store, not build a second one. A private inlet store is precisely the
+    /// split where a node's inlet can hold `PK_E` while every other consumer sees
+    /// nothing.
+    pub beacon_keys: crate::beacon::keys::BeaconKeys,
+}
+
+/// Read `committee[epoch]` for the follower's boundary trigger. `None` ⇒ not
+/// readable yet — no executed anchor, or the epoch's committee not committed at
+/// it — which the trigger treats as "retry on the next finalized block", never as
+/// an empty committee.
+type FollowerCommitteeAt = Arc<dyn Fn(u64) -> Option<ValidatorSetSnapshot> + Send + Sync>;
+
+/// Hand one `(epoch, snapshot)` to the epoch manager's boundary receiver.
+/// `false` ⇒ the receiver is gone (the manager exited); the trigger stops.
+type FollowerBoundaryDeliver = Arc<
+    dyn Fn(Epoch, ValidatorSetSnapshot) -> futures::future::BoxFuture<'static, bool> + Send + Sync,
+>;
+
+/// One step of the follower's epoch-boundary trigger: deliver `(epoch, snapshot)`
+/// for the epoch the finalized stream has entered, at most once per epoch.
+/// Returns whether the trigger should keep running.
+///
+/// A validator gets its boundary deliveries from `EpochTransition`, which rides
+/// the beacon plane. A follower has no plane, so it derives the same delivery
+/// from the finalized `OrderBlock`s its own marshal reports — the seam
+/// `boundary_hook` already exists for. Three things downstream need it and all
+/// three were dead on a follower without it: `soft_enter` registering the current
+/// epoch's verify-only scheme (without which a resolver-delivered cert for any
+/// epoch above the cold-start one finds NO scheme and the marshal answers the
+/// fetch `true` without storing — a re-request loop that never closes),
+/// `highest_entered_epoch` (the repair sweep's only frontier evidence here, since
+/// the vote-backup arm that feeds the corroborated one is parked), and
+/// `latest_live` (the snapshot hash the sweep's boundary FETCH authenticates its
+/// committee read at).
+///
+/// **`last_delivered` advances only after a delivery.** An unreadable committee
+/// must leave the epoch unconsumed: `committee[E]` is committed during `E-1` but
+/// the read runs at the EL-finalized hash, which trails the ordering-finalized
+/// height by `K`, so the first blocks of `E` can legitimately read back nothing.
+/// Consuming the epoch there would skip its registration until the NEXT boundary.
+///
+/// Epochs the finalized stream skipped entirely (a cold-start or re-jump moves
+/// the marshal floor forward) are deliberately not back-filled: no block of a
+/// skipped epoch is ever dispatched, so no certificate of it is ever fetched.
+async fn enter_finalized_epoch(
+    last_delivered: &mut Option<u64>,
+    finalized_height: u64,
+    activation: u64,
+    interval: u32,
+    committee_at: &FollowerCommitteeAt,
+    deliver: &FollowerBoundaryDeliver,
+) -> bool {
+    let epoch =
+        fluentbase_staking_reader::reader::epoch_of_block(finalized_height, interval, activation);
+    if *last_delivered >= Some(epoch) {
+        return true;
+    }
+    let Some(snap) = committee_at(epoch) else {
+        return true;
+    };
+    if !deliver(Epoch::new(epoch), snap).await {
+        return false;
+    }
+    *last_delivered = Some(epoch);
+    true
 }
 
 /// Namespace type for the launch entry point.
@@ -2494,8 +2572,12 @@ impl DposLayer {
         // carry-divergence guard. It is threaded into `OuterBuilder` as the SAME
         // Arc that `FluentApp` (W4) and `epoch_manager` (W1/W3) write — one map,
         // never two.
-        let group_keys: crate::application::GroupKeys =
-            Arc::new(std::sync::RwLock::new(std::collections::BTreeMap::new()));
+        let (group_keys, key_writer) = crate::beacon::key_journal::open(
+            ctx.with_label("key_journal"),
+            ctx.with_label("key_journal_writer"),
+            KEY_JOURNAL_PARTITION,
+        )
+        .await?;
         let beacon_verify = {
             let beacon_for_epoch: crate::application::BeaconForEpoch = {
                 let store = ceremony_store.clone();
@@ -2840,6 +2922,7 @@ impl DposLayer {
             epoch_length_blocks,
             dpos_activation_block,
             signer_keypair: Some(bls_keypair),
+            dkg_qual_for: Some(dkg_qual_for.clone()),
             beacon_resolver,
             beacon_share_notify: share_notify,
             spawn_unblocked,
@@ -2850,7 +2933,7 @@ impl DposLayer {
             safety_halt: safety_halt.clone(),
             tombstones,
             beacon_verify,
-            group_keys,
+            group_keys: group_keys.clone(),
             timeouts: ConsensusTimeouts::fluent_1s(),
             mailbox_size: 256,
             deque_size: 64,
@@ -2994,7 +3077,11 @@ impl DposLayer {
             drain_on_shutdown: seed_writer
                 .into_iter()
                 .map(|h| ("seed_journal_writer", h))
+                .chain(key_writer.into_iter().map(|h| ("key_journal_writer", h)))
                 .collect(),
+            dpos_activation_block,
+            epoch_length_blocks,
+            beacon_keys: group_keys,
         })
     }
 }
@@ -3571,6 +3658,66 @@ impl DposLayer {
                 }) as crate::cert_follow::BoundaryFetchFn
             });
 
+        // FROZEN on-chain `dkgQual[e]` reader — the repair sweep's only way to
+        // name the height its boundary FETCH should ask for. A follower has no
+        // beacon plane, which is where the validator's copy happens to be built,
+        // but the read itself needs nothing from the plane: the same reth reader
+        // and the same finalized anchor the committee reads above already use.
+        // Without it `Actor::boundary_fetch` is `None` and the sweep loses the one
+        // rung that reaches a boundary block the cold-start jump buried below the
+        // marshal floor — which is precisely the follower's situation.
+        let dkg_qual_for: Option<crate::beacon::carry::DkgQualFor> = {
+            let reader = RethStakingStateReader::new(
+                provider.clone(),
+                evm_config.clone(),
+                staking_config.clone(),
+            );
+            let provider = provider.clone();
+            Some(crate::beacon::carry::frozen_dkg_qual(
+                Arc::new(move || {
+                    let fin = provider.finalized_block_number().ok().flatten()?;
+                    provider.block_hash(fin).ok().flatten()
+                }),
+                Arc::new(move |epoch, at| {
+                    let bit = reader.dkg_qual(epoch, at).ok()?;
+                    // A SET bit is proof the commit happened, so the committee
+                    // read is skipped for it.
+                    let committed = bit
+                        || reader
+                            .epoch_committee_snapshot(epoch, at)
+                            .map(|s| !s.validators.is_empty())
+                            .unwrap_or(false);
+                    Some((bit, committed))
+                }),
+            ))
+        };
+
+        // The follower's boundary trigger, producer half. `boundary_hook` fires
+        // synchronously inside the marshal's reporter for every finalized
+        // `OrderBlock`, so it may only stamp and wake — the committee read and the
+        // delivery run on the driver task below. `fetch_max` + a permit-storing
+        // `Notify` is lossless in the only sense that matters here: the driver
+        // reads the LATEST height, and a wake landing while it is not armed is held
+        // as a permit rather than dropped.
+        let follower_finalized = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let follower_finalized_wake = Arc::new(tokio::sync::Notify::new());
+        let boundary_hook: Arc<dyn Fn(OrderBlock) + Send + Sync> = {
+            let height = follower_finalized.clone();
+            let wake = follower_finalized_wake.clone();
+            Arc::new(move |block: OrderBlock| {
+                height.fetch_max(block.height, std::sync::atomic::Ordering::Relaxed);
+                wake.notify_one();
+            })
+        };
+
+        // The follower's cross-epoch beacon-key store: shared by `epoch_manager`'s
+        // ladder (reader + pruner) and the cert-inlet (its sole writer).
+        let (beacon_keys, key_writer) = crate::beacon::key_journal::open(
+            ctx.with_label("key_journal"),
+            ctx.with_label("key_journal_writer"),
+            KEY_JOURNAL_PARTITION,
+        )
+        .await?;
         let mut outer = OuterBuilder {
             me: me.clone(),
             // Bug A: no-op the blocker on the follower too. The follower spawns no
@@ -3584,6 +3731,7 @@ impl DposLayer {
             epoch_length_blocks,
             dpos_activation_block: activation,
             signer_keypair: None,
+            dkg_qual_for,
             beacon_resolver,
             beacon_share_notify: Arc::new(tokio::sync::Notify::new()),
             spawn_unblocked: Arc::new(tokio::sync::Notify::new()),
@@ -3599,9 +3747,12 @@ impl DposLayer {
             tombstones: crate::slasher::TombstoneSet::default(),
             beacon_verify: None,
             // The follower runs no DKG resolver (beacon_resolver is a constant
-            // `Absent`, beacon_verify `None`); a fresh map is the same Arc its
-            // `FluentApp` W4 cursor + `epoch_manager` fill inside `build`.
-            group_keys: Arc::new(std::sync::RwLock::new(std::collections::BTreeMap::new())),
+            // `Absent`, beacon_verify `None`), so its ONLY writer is the cert-inlet
+            // below — which is exactly why the store has to be created here and
+            // shared, rather than left to `build`: a store `epoch_manager` prunes
+            // and the ladder reads, but nothing ever fills, is the three-stores
+            // split this phase exists to close.
+            group_keys: beacon_keys.clone(),
             timeouts: ConsensusTimeouts::fluent_1s(),
             mailbox_size: 256,
             deque_size: 64,
@@ -3617,7 +3768,7 @@ impl DposLayer {
             assembler,
             fee_recipient,
             target_gas_limit,
-            boundary_hook: Arc::new(|_| {}),
+            boundary_hook,
 
             last_execution_finalized_height,
             initial_finalized: (Height::new(anchor_height), anchor_hash),
@@ -3626,6 +3777,11 @@ impl DposLayer {
                 jumped_marshal_floor.unwrap_or_else(|| Height::new(finalized_floor)),
             ),
             boundary_fetch,
+            // Height-keyed epoch entry, and the read floor a re-jump publishes:
+            // both exist to serve `EpochTransition`, which a follower does not
+            // run. Its epoch entry rides `boundary_hook` above instead, and it
+            // clamps no committee read to a jump landing because the trigger reads
+            // at the CURRENT finalized hash, never at a historical one.
             boundary_enter: Arc::new(|_| {}),
             boundary_read_floor: Arc::new(|_| Box::pin(async {})),
             fcu_heartbeat_interval,
@@ -3687,6 +3843,73 @@ impl DposLayer {
             outer.cold_start_register(Epoch::new(initial_epoch_u64), scheme);
         }
 
+        // The follower's boundary trigger, consumer half — the twin of the
+        // validator path's `epoch_bridge` forwarder, and SUPERVISED for the same
+        // reason: if it dies the node keeps following certificates while silently
+        // never entering another epoch, so its committee schemes and its repair
+        // sweep freeze at whatever the cold-start left.
+        //
+        // Committee reads run at the CURRENT EL-finalized hash — the same anchor
+        // `soft_enter_committees` uses, and the same reason: the committee array
+        // and the one-shot keys are frozen storage, so any in-epoch executed hash
+        // at or past the commit yields the identical snapshot. `None` (no
+        // finalized block yet, or `committee[E]` not committed at that hash) leaves
+        // the epoch unconsumed and the next finalized block retries.
+        let follower_boundary_tx = outer.boundary_sender();
+        let follower_boundary_handle = {
+            let canonical = canonical_state.clone();
+            let reader = RethStakingStateReader::new(
+                provider.clone(),
+                evm_config.clone(),
+                staking_config.clone(),
+            );
+            let committee_at: FollowerCommitteeAt = Arc::new(move |epoch: u64| {
+                let at = canonical.get_finalized_num_hash()?.hash;
+                match reader.epoch_committee_snapshot(epoch, at) {
+                    Ok(snap) if !snap.validators.is_empty() => Some(snap),
+                    _ => None,
+                }
+            });
+            let deliver: FollowerBoundaryDeliver = Arc::new(move |epoch, snap| {
+                let tx = follower_boundary_tx.clone();
+                Box::pin(async move { tx.send((epoch, snap)).await.is_ok() })
+                    as futures::future::BoxFuture<'static, bool>
+            });
+            let wake = follower_finalized_wake.clone();
+            let height = follower_finalized.clone();
+            ctx.with_label("follower_boundary")
+                .spawn(move |_| async move {
+                    let mut last_delivered: Option<u64> = None;
+                    loop {
+                        // `notify_one` stores a permit when nobody is waiting, so
+                        // a block reported while this task is inside the read
+                        // below wakes the NEXT iteration instead of being lost —
+                        // the same object-scoped-permit argument the epoch
+                        // manager's own edges rest on.
+                        let woken = wake.notified();
+                        let finalized = height.load(std::sync::atomic::Ordering::Relaxed);
+                        if finalized != 0
+                            && !enter_finalized_epoch(
+                                &mut last_delivered,
+                                finalized,
+                                activation,
+                                interval,
+                                &committee_at,
+                                &deliver,
+                            )
+                            .await
+                        {
+                            error!(
+                                "epoch_manager boundary receiver dropped — follower epoch \
+                                 entry stopping"
+                            );
+                            return;
+                        }
+                        woken.await;
+                    }
+                })
+        };
+
         // Two clones: one drives the inlet, one is returned to the node for the
         // `consensus`-RPC feed (`set_marshal`/`set_window`).
         let cert_mailbox = outer.marshal_mailbox();
@@ -3730,37 +3953,24 @@ impl DposLayer {
             committee_read_deferred.clone(),
         );
         // Stale-cursor observability: verify failures under a CARRY-FORWARD seed
-        // pin (the dropped-boundary-cert poison signature) vs genuine forged-
+        // pin (a key carried forward from an earlier mint) vs genuine forged-
         // upstream data faults. Registered once here, moved into the inlet.
         let carry_forward_verify_failed = Counter::default();
         ctx.register(
             "dpos_cert_inlet_carry_forward_pin_verify_failed",
-            "Upstream cert BLS-verify failures where the seed pin came from the \
-             carry-forward cursor (stale-pin regime, e.g. a dropped change-epoch \
-             boundary cert), as opposed to a this-block / marshal-boundary pin.",
+            "Upstream cert BLS-verify failures where the seed pin was DERIVED by the \
+             ladder (the shared store, or an earlier epoch's boundary block via the \
+             bounded walk) rather than asserted by the block itself.",
             carry_forward_verify_failed.clone(),
         );
-        // Authoritative boundary-key re-pin source over the follower's OWN marshal
-        // archive: `PK_E` from the change-epoch-E boundary block's `beacon_outcome`
-        // at `epoch_start(E) = activation + E*interval`. `None` for a non-change
-        // epoch or while the boundary block is not yet backfilled (the inlet then
-        // falls back to its carry-forward cursor — strictly no regression); once
-        // the marshal's gap-repair lands the boundary block, the read heals a
-        // cursor poisoned by a DROPPED (deferred) boundary cert.
-        let boundary_key_marshal = cert_mailbox.clone();
-        let boundary_key_at: crate::cert_inlet::BoundaryKeyAt = Arc::new(move |epoch: u64| {
-            let marshal = boundary_key_marshal.clone();
-            let height = activation.saturating_add(epoch.saturating_mul(interval as u64));
-            Box::pin(async move {
-                let block = marshal
-                    .get_block(commonware_consensus::types::Height::new(height))
-                    .await?;
-                let bytes = block.beacon_outcome.as_ref()?;
-                crate::beacon::outcome::parse_outcome(bytes.as_ref())
-                    .ok()
-                    .map(|o| *crate::beacon::outcome::group_public_key(&o))
-            }) as futures::future::BoxFuture<'static, _>
-        });
+        // The ladder's walk rung over the follower's OWN marshal archive: once the
+        // marshal's gap-repair lands the boundary block, the walk recovers a key a
+        // DROPPED (deferred) boundary cert never delivered.
+        let boundary_walk = crate::beacon::keys::BoundaryWalk::over_marshal(
+            cert_mailbox.clone(),
+            activation,
+            epoch_length_blocks,
+        );
         let inlet_committees = crate::cert_inlet::RethCommitteeSource::new(
             RethStakingStateReader::new(
                 provider.clone(),
@@ -3841,6 +4051,7 @@ impl DposLayer {
             },
         );
         let shutdown_for_inlet = shutdown.clone();
+        let inlet_beacon_keys = beacon_keys.clone();
         // DATA-fault rotation trigger (#7): after MAX_UPSTREAM_FAULTS consecutive
         // unverifiable certs over a healthy connection the inlet rotates to the
         // next configured upstream URL (connection-level failover can never see a
@@ -3886,7 +4097,8 @@ impl DposLayer {
                 .with_epoch_math(activation, interval)
                 .with_committee_read_deferred_metric(committee_read_deferred)
                 .with_carry_forward_fail_metric(carry_forward_verify_failed)
-                .with_boundary_key_source(boundary_key_at)
+                .with_boundary_walk(boundary_walk)
+                .with_beacon_keys(inlet_beacon_keys)
                 .with_tee(crate::cert_inlet::LiveFrontierTee {
                     live_height: live_frontier,
                     // Same atomic the steady-state re-jump trigger reads: the inlet
@@ -3935,11 +4147,18 @@ impl DposLayer {
         Ok(DposLayerHandle {
             consensus_handle,
             cert_mailbox,
-            supervised: vec![("cert_inlet", cert_inlet_handle)],
+            supervised: vec![
+                ("cert_inlet", cert_inlet_handle),
+                ("follower_boundary", follower_boundary_handle),
+            ],
             drain_on_shutdown: seed_writer
                 .into_iter()
                 .map(|h| ("seed_journal_writer", h))
+                .chain(key_writer.into_iter().map(|h| ("key_journal_writer", h)))
                 .collect(),
+            dpos_activation_block: activation,
+            epoch_length_blocks,
+            beacon_keys,
         })
     }
 }
@@ -4822,5 +5041,153 @@ mod refetch_hole_tests {
                 "{err:#}"
             );
         });
+    }
+}
+
+#[cfg(test)]
+mod follower_boundary_tests {
+    use super::{enter_finalized_epoch, FollowerBoundaryDeliver, FollowerCommitteeAt};
+    use alloy_primitives::B256;
+    use commonware_consensus::types::Epoch;
+    use fluentbase_staking_reader::reader::ValidatorSetSnapshot;
+    use std::sync::{Arc, Mutex};
+
+    const ACTIVATION: u64 = 100;
+    const INTERVAL: u32 = 10;
+
+    fn snapshot(epoch: u64) -> ValidatorSetSnapshot {
+        ValidatorSetSnapshot {
+            block_hash: B256::repeat_byte(0x33),
+            block_number: 7,
+            epoch,
+            validators: Vec::new(),
+            weights: None,
+        }
+    }
+
+    /// Records what reached the epoch manager, and lets a test make the committee
+    /// read or the delivery fail on demand.
+    #[derive(Default)]
+    struct Recorder {
+        delivered: Mutex<Vec<u64>>,
+        committee_readable: Mutex<bool>,
+        receiver_alive: Mutex<bool>,
+    }
+
+    fn seams(
+        readable: bool,
+        alive: bool,
+    ) -> (Arc<Recorder>, FollowerCommitteeAt, FollowerBoundaryDeliver) {
+        let rec = Arc::new(Recorder {
+            delivered: Mutex::new(Vec::new()),
+            committee_readable: Mutex::new(readable),
+            receiver_alive: Mutex::new(alive),
+        });
+        let for_read = rec.clone();
+        let committee_at: FollowerCommitteeAt = Arc::new(move |epoch| {
+            (*for_read.committee_readable.lock().unwrap()).then(|| snapshot(epoch))
+        });
+        let for_deliver = rec.clone();
+        let deliver: FollowerBoundaryDeliver = Arc::new(move |epoch: Epoch, _snap| {
+            let rec = for_deliver.clone();
+            Box::pin(async move {
+                if !*rec.receiver_alive.lock().unwrap() {
+                    return false;
+                }
+                rec.delivered.lock().unwrap().push(epoch.get());
+                true
+            }) as futures::future::BoxFuture<'static, bool>
+        });
+        (rec, committee_at, deliver)
+    }
+
+    /// `boundary_hook` fires per finalized block — ~1/s in production — while
+    /// `reconcile_roles` prunes, re-registers and sweeps on each delivery. Reds if
+    /// the once-per-epoch gate is dropped.
+    #[tokio::test]
+    async fn every_finalized_block_of_one_epoch_delivers_one_boundary() {
+        let (rec, committee_at, deliver) = seams(true, true);
+        let mut last = None;
+
+        for height in [100, 103, 109, 110, 117] {
+            assert!(
+                enter_finalized_epoch(
+                    &mut last,
+                    height,
+                    ACTIVATION,
+                    INTERVAL,
+                    &committee_at,
+                    &deliver
+                )
+                .await
+            );
+        }
+
+        assert_eq!(*rec.delivered.lock().unwrap(), vec![0, 1]);
+        assert_eq!(last, Some(1));
+    }
+
+    /// `committee[E]` is committed during `E-1`, but the read runs at the
+    /// EL-finalized hash, which trails the ordering-finalized height by K — so the
+    /// first blocks of `E` can legitimately read back nothing. Consuming the epoch
+    /// there would skip its scheme registration for the whole epoch.
+    ///
+    /// Reds if `last_delivered` advances on an unreadable committee.
+    #[tokio::test]
+    async fn an_unreadable_committee_leaves_the_epoch_for_the_next_block() {
+        let (rec, committee_at, deliver) = seams(false, true);
+        let mut last = None;
+
+        assert!(
+            enter_finalized_epoch(
+                &mut last,
+                100,
+                ACTIVATION,
+                INTERVAL,
+                &committee_at,
+                &deliver
+            )
+            .await
+        );
+        assert!(rec.delivered.lock().unwrap().is_empty());
+        assert_eq!(last, None);
+
+        *rec.committee_readable.lock().unwrap() = true;
+        assert!(
+            enter_finalized_epoch(
+                &mut last,
+                101,
+                ACTIVATION,
+                INTERVAL,
+                &committee_at,
+                &deliver
+            )
+            .await
+        );
+        assert_eq!(*rec.delivered.lock().unwrap(), vec![0]);
+    }
+
+    /// A closed boundary receiver means the epoch manager has exited. The trigger
+    /// stops and the supervisor takes the node down, rather than spinning on a
+    /// dead channel for every finalized block.
+    ///
+    /// Reds if the send result stops being propagated.
+    #[tokio::test]
+    async fn a_dropped_boundary_receiver_stops_the_trigger() {
+        let (_rec, committee_at, deliver) = seams(true, false);
+        let mut last = None;
+
+        assert!(
+            !enter_finalized_epoch(
+                &mut last,
+                100,
+                ACTIVATION,
+                INTERVAL,
+                &committee_at,
+                &deliver
+            )
+            .await
+        );
+        assert_eq!(last, None, "an undelivered epoch must not be consumed");
     }
 }

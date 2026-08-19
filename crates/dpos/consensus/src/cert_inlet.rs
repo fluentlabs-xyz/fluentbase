@@ -16,11 +16,12 @@
 use crate::fault::{DeferReason, FaultClass};
 use crate::{
     beacon::{
-        outcome::{group_public_key, parse_outcome},
+        keys::{minted_key, BeaconKeys, BoundaryWalk, KeySource, KeySources},
         seed::GroupPublic,
     },
     cert_follow::UpstreamFinalized,
     digest::Digest,
+    outer::SCHEME_RETENTION_EPOCHS,
     scheme::epoch_committee_from_snapshot,
 };
 use alloy_consensus::Header;
@@ -115,19 +116,6 @@ fn committee_read_fault(err: &eyre::Report) -> FaultClass {
 /// persistently bad upstream is failed-over quickly.
 pub const MAX_UPSTREAM_FAULTS: u32 = 3;
 
-/// Authoritative per-epoch beacon-key resolver over the node's OWN marshal
-/// archive: `epoch -> PK_epoch` read from the CHANGE-EPOCH boundary block's
-/// `beacon_outcome` at `epoch_start(epoch)` (`None` for a non-change epoch, or
-/// while the boundary block is not yet in the archive — the caller then falls
-/// back to the carry-forward cursor, strictly no regression). Closes the
-/// scheme-cache poison: when the boundary CERT of change-epoch E is dropped
-/// (deferred on a transient committee read), the cursor still holds `PK_{E-1}`
-/// and every later epoch-E cert would pin stale — this source re-pins from the
-/// marshal-stored boundary BLOCK once the marshal's gap-repair backfills it.
-/// Async (the marshal read is a mailbox round-trip); consulted once per epoch
-/// (the `schemes` Vacant path), never per cert.
-pub type BoundaryKeyAt = Arc<dyn Fn(u64) -> BoxFuture<'static, Option<GroupPublic>> + Send + Sync>;
-
 /// Boxed rotation callback the inlet calls after [`MAX_UPSTREAM_FAULTS`]
 /// CONSECUTIVE data faults — drops the current upstream connection and moves to
 /// the next configured URL (the node-side [`crate::cert_follow::CertUpstream::rotate`]
@@ -141,7 +129,7 @@ pub type RotateUpstream = Arc<dyn Fn() -> BoxFuture<'static, ()> + Send + Sync>;
 /// can inject a canned committee.
 ///
 /// `cert_seed_pin` (the epoch beacon group key `PK_epoch`) is threaded from the
-/// caller's carry-forward cursor: when present the built verifier's
+/// caller's pin ladder: when present the built verifier's
 /// `verify_certificate` also pins the recovered seed slot (bug 2); `None`
 /// degrades to vote-only (the accepted residual window). The verifier read
 /// itself is committee-only — the pin comes from the caller, never from chain
@@ -211,7 +199,7 @@ where
 
     /// Build the verifier for `epoch` from the committee snapshot at `at_hash`,
     /// pinning the recovered-seed check to `cert_seed_pin` (the epoch beacon
-    /// group key from the caller's carry-forward cursor) when present.
+    /// group key from the caller's pin ladder) when present.
     fn build_at(
         &self,
         epoch: u64,
@@ -363,6 +351,25 @@ pub struct LiveFrontierTee {
     pub dkg_height_tx: tokio::sync::mpsc::Sender<u64>,
 }
 
+/// A cached per-epoch verifier plus the one fact the cache must remember about
+/// it: whether it was built with a resolved `cert_seed_pin`.
+///
+/// Without the flag an entry built while `PK_E` was unresolvable is
+/// indistinguishable from a pinned one, and a pin that becomes resolvable a
+/// moment later can never be applied — the only path that rebuilds an entry is
+/// the verify-FAIL eviction in [`CertInlet::ingest`], and an UNPINNED scheme is
+/// the more PERMISSIVE one (`verify_certificate` returns early before the seed
+/// check), so honest certs pass it and the eviction never fires. The degraded
+/// mode would then outlive every chance to repair itself.
+struct CachedScheme {
+    scheme: BlsScheme,
+    /// Built with `cert_seed_pin = Some` — the verifier checks the recovered
+    /// seed against `PK_epoch`. Only ever rewritten `false -> true`: a pinned
+    /// entry is authoritative and is never replaced by an unpinned one, so no
+    /// cert can become LESS verified than it was.
+    pinned: bool,
+}
+
 /// One of two producers into the singleton marshal (the other is the local BFT
 /// engine). BLS-verifies each upstream cert against the on-chain committee,
 /// makes the body local via [`MarshalSink::verify_block`], then reports the cert.
@@ -385,21 +392,36 @@ pub struct CertInlet<C, E, M> {
     /// AFTER the verify gate), so the served window can never expose an
     /// unverified cert.
     window_tx: Option<tokio::sync::mpsc::UnboundedSender<UpstreamFinalized>>,
-    /// Per-epoch verifier cache, pruned to {prev, cur} on registration.
-    schemes: BTreeMap<u64, BlsScheme>,
-    /// Carry-forward beacon group-key cursor (bug 2): an entry is inserted at
-    /// each epoch whose VERIFIED first block carried a `beacon_outcome` (a
-    /// change-epoch DKG rotation). The key for ANY epoch E is the entry at the
-    /// greatest observed change-epoch ≤ E — `PK_E` carries forward across
-    /// non-change epochs. Empty until the first boundary block flows through
-    /// (verify then degrades to vote-only). Pruned like `schemes`, but the
-    /// carry-forward anchor is always preserved.
-    beacon_keys: BTreeMap<u64, GroupPublic>,
-    /// Authoritative boundary-key re-pin source (see [`BoundaryKeyAt`]). `Some`
-    /// on the follower inlet (wired over its own marshal archive +
-    /// epoch geometry); `None` on a validator inlet (its consensus plane
-    /// re-derives the key) and in unit tests that don't exercise the re-pin.
-    boundary_key_at: Option<BoundaryKeyAt>,
+    /// Per-epoch verifier cache, pruned to {prev, cur} on registration. Each
+    /// entry carries its pin provenance — see [`CachedScheme`].
+    schemes: BTreeMap<u64, CachedScheme>,
+    /// The node's SHARED beacon-key store (see [`BeaconKeys`]) — the same handle
+    /// `FluentApp` and `epoch_manager` hold on a validator, and the follower's
+    /// only writer. This inlet writes each VERIFIED boundary block's asserted
+    /// `PK_E` into it (agreed chain data, so [`KeySource::ObservedOutcome`]) and
+    /// reads it back as the store rung of [`BeaconKeys::get_pk`]'s ladder.
+    ///
+    /// It replaced a PRIVATE carry-forward cursor that answered "what is `PK_E`"
+    /// as "the greatest observed change-epoch ≤ E" — an UNBOUNDED walk forward
+    /// from the last key it happened to see. That is the answer
+    /// `epoch_manager` refuses to give, because an unseen boundary means UNKNOWN,
+    /// not "no rotation": carrying past a change boundary pins the stale
+    /// pre-rotation key and the marshal then silently rejects every valid cert of
+    /// that epoch. The bounded walk in [`crate::beacon::keys`] is the one policy
+    /// both planes now use.
+    ///
+    /// A default-constructed store on an inlet nobody wired one into is a private
+    /// empty one — the unit-test shape, where the inlet is the only writer anyway.
+    beacon_keys: BeaconKeys,
+    /// The ladder's walk rung over this node's own marshal archive (see
+    /// [`BoundaryWalk`]). `Some` on BOTH production inlets — the follower's and
+    /// the validator's shadow inlet; `None` only in unit tests that don't exercise
+    /// it, where the store rung still answers. The validator is not covered by its
+    /// consensus plane here: that plane's `EpochSchemeProvider` and this cache sit
+    /// on DISJOINT ingress paths (the marshal's `Verified`/`Finalization` do no
+    /// crypto, the provider is consulted only for resolver-delivered certs), so no
+    /// shared code path exists along which one could repair the other.
+    boundary_walk: Option<BoundaryWalk>,
     /// commonware ctx (the `CryptoRngCore` source the cert `verify()` needs).
     ctx: E,
     /// DATA-fault upstream-rotation trigger. `Some` on an upstream-configured
@@ -450,11 +472,13 @@ pub struct CertInlet<C, E, M> {
     committee_read_deferred: Family<CommitteeReadDeferLabels, Counter>,
     /// `dpos_cert_inlet_carry_forward_pin_verify_failed_total` — ticks once per
     /// BLS-verify failure of a cert whose scheme was built THIS ingest with a
-    /// CARRY-FORWARD seed pin (no `beacon_outcome` on the block, no authoritative
-    /// [`BoundaryKeyAt`] hit). Splits the stale-cursor regime (a dropped
-    /// change-epoch boundary cert leaving `PK_{E-1}` in force) from genuine
-    /// forged-upstream data faults on dashboards. Default (unregistered) on
-    /// inlets not wired via [`Self::with_carry_forward_fail_metric`].
+    /// DERIVED seed pin: one the ladder resolved (the shared store, or an earlier
+    /// epoch's boundary block via the walk) rather than one this block asserted
+    /// itself. Splits that regime from genuine forged-upstream data faults on
+    /// dashboards — the metric NAME is kept because the regime it names is the
+    /// same one, now bounded: a key carried forward from an earlier mint.
+    /// Default (unregistered) on inlets not wired via
+    /// [`Self::with_carry_forward_fail_metric`].
     carry_forward_verify_failed: Counter,
     /// Rate-limits the state-not-materialized WARN to once per episode: set on
     /// entry to a backfill state-miss, cleared on the next clean verified ingest,
@@ -485,8 +509,8 @@ where
             tee: None,
             window_tx: None,
             schemes: BTreeMap::new(),
-            beacon_keys: BTreeMap::new(),
-            boundary_key_at: None,
+            beacon_keys: BeaconKeys::new(),
+            boundary_walk: None,
             ctx,
             rotate: None,
             consecutive_faults: 0,
@@ -521,13 +545,21 @@ where
         self
     }
 
-    /// Attach the authoritative boundary-key re-pin source (see [`BoundaryKeyAt`]).
-    /// Builder-style: the follower inlet wires a closure over its own marshal
-    /// archive + epoch geometry; a validator inlet / unit test leaves it `None`
-    /// (pin resolution then stays `this_block_key` → carry-forward, the prior
-    /// behaviour).
-    pub fn with_boundary_key_source(mut self, source: BoundaryKeyAt) -> Self {
-        self.boundary_key_at = Some(source);
+    /// Attach the ladder's walk rung (see [`BoundaryWalk`]). Builder-style: both
+    /// production inlets wire one over their own marshal archive + epoch geometry;
+    /// a unit test that does not exercise it leaves it `None` and pin resolution
+    /// falls back to this-block + the shared store.
+    pub fn with_boundary_walk(mut self, walk: BoundaryWalk) -> Self {
+        self.boundary_walk = Some(walk);
+        self
+    }
+
+    /// Join this inlet to the node's SHARED [`BeaconKeys`] store. Builder-style:
+    /// both production inlets pass the one store the rest of the node holds, so a
+    /// key this inlet observes is visible to `epoch_manager`'s ladder and vice
+    /// versa. Left unset the inlet keeps a private empty store.
+    pub fn with_beacon_keys(mut self, keys: BeaconKeys) -> Self {
+        self.beacon_keys = keys;
         self
     }
 
@@ -585,16 +617,18 @@ where
         self
     }
 
-    /// Carry-forward lookup for the epoch beacon group key (see `beacon_keys`):
-    /// the greatest observed change-epoch ≤ `epoch`, or `None` until the first
-    /// boundary outcome has been ingested (verify then stays vote-only).
-    fn beacon_key_for(&self, epoch: u64) -> Option<GroupPublic> {
-        self.beacon_keys
-            .range(..=epoch)
-            .next_back()
-            .map(|(_, k)| *k)
+    /// The rungs the cert-inlet may spend resolving `PK_epoch` on cert ingress.
+    ///
+    /// **No `fetch`, and that is why this is named rather than built inline.**
+    /// Ingress runs against a ~1 s verify budget; the network rung's is seconds.
+    /// A `fetch` handed in here moves a peer round-trip onto the vote path, where
+    /// a missing pin costs a vote-only admission and a stall costs a missed view.
+    fn ingress_sources(&self) -> KeySources<'_> {
+        KeySources {
+            walk: self.boundary_walk.as_ref(),
+            ..Default::default()
+        }
     }
-
     /// BLS-verify one upstream cert, then drive the marshal with it.
     ///
     /// On verify-FAIL: WARN + skip + return `Ok` (NOT `Err` — Risk-3: a single
@@ -669,48 +703,47 @@ where
             return Ok(());
         }
         // Resolve the epoch beacon key BEFORE the `schemes` borrow so the seed
-        // pin threads into the built verifier. A change-epoch first block asserts
-        // its OWN `PK_E` in `beacon_outcome`, and its own seed verifies against
-        // THAT key (the ≤1-block boundary edge — see `beacon::certify`), so a
-        // block carrying an outcome pins to its own asserted key; every other
-        // block carries forward from the cursor.
-        let this_block_key = uf
-            .block
-            .beacon_outcome
-            .as_ref()
-            .and_then(|bytes| parse_outcome(bytes).ok())
-            .map(|o| *group_public_key(&o));
-        // Pin precedence: `this_block_key` (a change-boundary block asserts its
-        // own key) → the AUTHORITATIVE marshal-stored boundary key
-        // (`boundary_key_at`, closing the dropped-boundary-cert poison: the
-        // carry-forward cursor still holds `PK_{E-1}` when the boundary cert of
-        // change-epoch E deferred and was dropped) → the carry-forward cursor
-        // LAST. The marshal read is consulted only when the pin would otherwise
-        // fall to carry-forward AND the scheme is not cached yet (once per epoch,
-        // not per cert; on the Occupied path the pin is baked into the cached
-        // scheme anyway). A `Some` hit is also inserted into `beacon_keys` so the
-        // cursor SELF-CORRECTS for subsequent epoch-E certs and carry-forward.
+        // pin threads into the built verifier. TWO rungs, in this order:
+        //
+        // 1. THIS block's own asserted `PK_E`. A change-epoch first block asserts
+        //    its own key in `beacon_outcome` and its own seed verifies against
+        //    THAT key (the ≤1-block boundary edge — see `beacon::certify`), so it
+        //    can only ever be pinned to itself.
+        // 2. otherwise the shared ladder: the store, then the BOUNDED backward
+        //    marshal walk (`boundary_walk`). That walk is what closes the
+        //    dropped-boundary-cert poison — when change-epoch E's boundary cert
+        //    deferred and was dropped, the key is recovered from the block once
+        //    the marshal's gap-repair lands it — and, unlike the private
+        //    carry-forward cursor it replaced, it REFUSES at an absent boundary
+        //    instead of pinning the stale pre-rotation key.
+        //
+        // What bounds the ladder read is the cached scheme's OWN pin, not the
+        // mere presence of a cache entry: a PINNED entry already holds the key
+        // and never re-consults, an unpinned one asks again on every cert. It
+        // has to — the epoch's first cert arrives BEFORE the boundary block the
+        // read needs, so a once-per-epoch read is guaranteed to miss and a
+        // presence gate would freeze the miss for the epoch's whole life.
+        let this_block_key = minted_key(&uf.block);
+        let cached_pinned = self.schemes.get(&epoch).is_some_and(|c| c.pinned);
         let mut cert_seed_pin = this_block_key;
-        if cert_seed_pin.is_none() && !self.schemes.contains_key(&epoch) {
-            if let Some(source) = &self.boundary_key_at {
-                if let Some(key) = source(epoch).await {
-                    self.beacon_keys.insert(epoch, key);
-                    cert_seed_pin = Some(key);
-                }
-            }
-        }
-        // Whether the pin fell through to (and was supplied by) the carry-forward
-        // cursor — provenance for the verify-fail metric split (meaningful only
+        // Whether the pin came from the ladder rather than from this block's own
+        // assertion — provenance for the verify-fail metric split (meaningful only
         // when the scheme is BUILT this ingest; see `built_with_carry_forward_pin`).
         let mut pin_is_carry_forward = false;
-        if cert_seed_pin.is_none() {
-            cert_seed_pin = self.beacon_key_for(epoch);
+        if cert_seed_pin.is_none() && !cached_pinned {
+            cert_seed_pin = self.beacon_keys.get_pk(epoch, self.ingress_sources()).await;
             pin_is_carry_forward = cert_seed_pin.is_some();
         }
         let mut built_with_carry_forward_pin = false;
-        let scheme = match self.schemes.entry(epoch) {
-            Entry::Occupied(o) => o.into_mut(),
-            Entry::Vacant(v) => {
+        // A cached entry is (re)built in exactly one case beyond a cache miss: it
+        // is UNPINNED and a pin has now resolved. `Some` never yields to `None`,
+        // so the upgrade is monotone and no cert ends up less verified than it
+        // would have been before. The rebuild is also OPPORTUNISTIC — see the
+        // defer arms, which keep the cached scheme rather than skipping a cert
+        // that was ingestible a moment ago.
+        let cached: &CachedScheme = match self.schemes.entry(epoch) {
+            Entry::Occupied(o) if o.get().pinned || cert_seed_pin.is_none() => o.into_mut(),
+            slot => {
                 // Read committee[E] at the node's CURRENT FINALIZED tip — a
                 // GUARANTEED-committed block where committee[E] is committed
                 // (ahead-committed at epoch-(E-1)-start). If it is not yet
@@ -723,7 +756,8 @@ where
                 // here would stop draining and starve the very executor we
                 // wait on (producer↔consumer cycle); returning `Err` would
                 // shut the whole node down on a transient lag. Instead SKIP
-                // this first-of-epoch cert and keep draining — the executor
+                // this first-of-epoch cert (a REBUILD keeps its cached scheme
+                // instead — see the defer arms) and keep draining — the executor
                 // catches up in the background, and the NEXT cert of this
                 // epoch re-reads committee[E] (now committed) and ingests
                 // normally. The marshal stalls naturally at the gap until
@@ -743,7 +777,17 @@ where
                 {
                     Ok(Some(s)) => {
                         built_with_carry_forward_pin = pin_is_carry_forward;
-                        v.insert(s)
+                        let fresh = CachedScheme {
+                            scheme: s,
+                            pinned: cert_seed_pin.is_some(),
+                        };
+                        match slot {
+                            Entry::Occupied(mut o) => {
+                                o.insert(fresh);
+                                o.into_mut()
+                            }
+                            Entry::Vacant(v) => v.insert(fresh),
+                        }
                     }
                     Ok(None) => {
                         // Count every deferred cert (this is the PRIMARY defer
@@ -771,7 +815,16 @@ where
                         // away from a HEALTHY upstream over normal lag would be
                         // a churn footgun. Leave `consecutive_faults` untouched
                         // (neither increment nor reset).
-                        return Ok(());
+                        match slot {
+                            // A failed PIN UPGRADE must not cost the cert: keep
+                            // verifying under the scheme already cached. Skipping
+                            // instead would be a fresh wedge — the read is anchored
+                            // on a tip only the executor THIS inlet feeds can
+                            // advance, so deferring every cert of an epoch that was
+                            // ingesting fine freezes both sides of that cycle.
+                            Entry::Occupied(o) => o.into_mut(),
+                            Entry::Vacant(_) => return Ok(()),
+                        }
                     }
                     // Family-5 taxonomy: `Defer(StateNotMaterialized)` skips the
                     // cert non-blockingly; any other class is `Corruption` and
@@ -800,29 +853,36 @@ where
                             );
                         }
                         // Same posture as the not-committed defer: NOT a data
-                        // fault, leave `consecutive_faults` untouched.
-                        return Ok(());
+                        // fault, leave `consecutive_faults` untouched, and a
+                        // failed pin upgrade keeps the cached scheme.
+                        match slot {
+                            Entry::Occupied(o) => o.into_mut(),
+                            Entry::Vacant(_) => return Ok(()),
+                        }
                     }
                     Err(e) => return Err(e),
                 }
             }
         };
-        if !uf.finalization.verify(&mut self.ctx, scheme, &Sequential) {
+        if !uf
+            .finalization
+            .verify(&mut self.ctx, &cached.scheme, &Sequential)
+        {
             warn!(
                 height = uf.block.height,
                 epoch, "cert-inlet: BLS verify FAILED; skipping (marshal stalls naturally)"
             );
             // Evict the just-failed scheme so a possibly-STALE seed pin never
             // sticks in the cache: the next epoch-E cert re-enters the Vacant
-            // path and re-resolves the pin (this-block-key → marshal boundary
-            // key → carry-forward) — the poison self-heals the moment the
-            // authoritative key becomes readable, instead of every later epoch-E
-            // cert re-failing against the frozen cached scheme until E+1.
+            // path and re-resolves the pin (this-block key, then the ladder) —
+            // the poison self-heals the moment the key becomes resolvable,
+            // instead of every later epoch-E cert re-failing against the frozen
+            // cached scheme until E+1.
             self.schemes.remove(&epoch);
-            // Regime split: a failure under a CARRY-FORWARD pin on a scheme
-            // built THIS ingest is the stale-cursor signature (dropped
-            // change-epoch boundary cert), not necessarily a forged upstream —
-            // count it separately so dashboards can tell the two apart.
+            // Regime split: a failure under a pin the LADDER derived (rather than
+            // one this block asserted) on a scheme built THIS ingest points at a
+            // key carried forward from the wrong mint, not necessarily a forged
+            // upstream — count it separately so dashboards can tell the two apart.
             if built_with_carry_forward_pin {
                 self.carry_forward_verify_failed.inc();
             }
@@ -842,21 +902,27 @@ where
         // Retain {prev, cur} only.
         let keep_from = epoch.saturating_sub(1);
         self.schemes.retain(|e, _| *e >= keep_from);
-        // Carry-forward the beacon-key cursor off this VERIFIED boundary block:
-        // the outcome it agreed is `PK_E` for epoch E and forward (bug 2). Insert
-        // for the entered epoch, then prune but KEEP the carry-forward anchor for
-        // `keep_from` (the greatest change-epoch ≤ keep_from) plus every later one
-        // — the {prev, cur} prune must not drop a still-in-force key.
+        // Publish this VERIFIED boundary block's asserted `PK_E` into the shared
+        // store. It is agreed chain data validated by a committee quorum at vote
+        // time — the same provenance tier as `FluentApp`'s W4 write, and the only
+        // writer a follower has (its `beacon_verify` is `None`, so W4 never runs
+        // there).
+        //
+        // Same trailing window `epoch_manager` uses, keyed on the CERT's epoch. Both
+        // prune, on different clocks: an inlet running far ahead of
+        // the manager during a deep catch-up can drop an entry the manager's
+        // `soft_enter` would have read for a catch-up epoch. That is a vote-only
+        // degrade — the same residual the bulk catch-up span already takes, and the
+        // walk still answers where the block is local — never a wrong pin. Every
+        // reader that must not miss (the vote path's `group_public_for`, the promote
+        // value-gate, the W3 backfill) reads the LIVE epoch or `live − 1`, which is
+        // at the inlet's own frontier and so never in the pruned tail.
         if let Some(key) = this_block_key {
-            self.beacon_keys.insert(epoch, key);
+            self.beacon_keys
+                .set_pk(epoch, key, KeySource::ObservedOutcome);
         }
-        let anchor = self
-            .beacon_keys
-            .range(..=keep_from)
-            .next_back()
-            .map(|(e, _)| *e)
-            .unwrap_or(0);
-        self.beacon_keys.retain(|e, _| *e >= anchor);
+        self.beacon_keys
+            .retain_from(epoch.saturating_sub(SCHEME_RETENTION_EPOCHS as u64));
         // Re-homed live-frontier tee: advance the beacon-plane cursors off the
         // VERIFIED live upstream tip (skipped/tampered certs above never reach
         // here). `committee_for` then resolves committee[E+1] and the DkgActor
@@ -933,12 +999,19 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{beacon::outcome::encode_outcome, order_block::OrderBlock};
+    use crate::{
+        beacon::{
+            keys::BoundaryBlockAt,
+            outcome::{encode_outcome, group_public_key, parse_outcome},
+        },
+        epocher::OriginEpocher,
+        order_block::OrderBlock,
+    };
     use alloy_primitives::{Address, Bytes};
     use commonware_codec::DecodeExt as _;
     use commonware_consensus::{
         simplex::types::{Finalization, Finalize, Proposal},
-        types::{Epoch, Round, View},
+        types::{Epoch, Height, Round, View},
     };
     use commonware_cryptography::{
         bls12381::{
@@ -952,7 +1025,7 @@ mod tests {
     use commonware_runtime::{deterministic, Runner as _};
     use commonware_utils::{
         ordered::{BiMap, Set},
-        N3f1, TryCollect as _,
+        N3f1, TryCollect as _, NZU64,
     };
     use fluentbase_bls::{
         beacon::seed_namespace, fluent_namespace, keys::ValidatorBlsKeypair, scheme::build_signer,
@@ -1093,6 +1166,25 @@ mod tests {
             ctx,
         );
         (inlet, marshal, reads)
+    }
+
+    /// The guard the whole rung split exists for: the cert-inlet resolves
+    /// `PK_epoch` on the VOTE path, against a ~1 s verify budget, and must never
+    /// be handed the network rung, whose budget is seconds. A missing pin costs a
+    /// vote-only admission; a stall costs the view.
+    ///
+    /// Reds the moment anyone adds `fetch:` to `ingress_sources`.
+    #[test]
+    fn the_inlet_never_spends_the_network_rung() {
+        let ctx = deterministic::Runner::default();
+        ctx.start(|ctx| async move {
+            let c = committee(1);
+            let (inlet, _marshal, _reads) = inlet(ctx, &c);
+            assert!(
+                inlet.ingress_sources().fetch.is_none(),
+                "a peer round-trip must never sit on the cert-ingress path"
+            );
+        });
     }
 
     #[test]
@@ -1877,8 +1969,8 @@ mod tests {
     /// recovers the round seed into the finalization cert, and the encoded DKG
     /// `Output` a change-boundary block carries in `beacon_outcome`. Its group key
     /// `PK_epoch` is exactly what `parse_outcome(outcome_bytes)`/`group_public_key`
-    /// resolve to — so the inlet's carry-forward key cursor pins seeds against the
-    /// same key the signers produce them under.
+    /// resolve to — so the inlet's resolved pin checks seeds against the same key
+    /// the signers produce them under.
     struct BeaconFixture {
         signers: Vec<BlsScheme>,
         assembler: BlsScheme,
@@ -1972,16 +2064,16 @@ mod tests {
         }
     }
 
-    /// A committee source that REBUILDS the verifier with the pin the inlet threads
-    /// from its key cursor — exactly what production `RethCommitteeSource::build_at`
-    /// does (`build_verifier(ns, bimap, None, cert_seed_pin)`). Records
+    /// A committee source that REBUILDS the verifier with the pin the inlet
+    /// resolved — exactly what production `RethCommitteeSource::build_at` does
+    /// (`build_verifier(ns, bimap, None, cert_seed_pin)`). Records
     /// `(epoch, pin.is_some())` per finalized-tip read, so a test can observe the
-    /// cursor resolution directly (not only the downstream verify outcome). Unlike
-    /// `CannedCommittees` — which discards the pin and is thus blind to the ingest
-    /// cursor — this exercises the real cursor → build_verifier → verify_certificate
-    /// seed-pin path.
+    /// pin resolution directly (not only the downstream verify outcome). Unlike
+    /// `CannedCommittees` — which discards the pin and is thus blind to it — this
+    /// exercises the real ladder → build_verifier → verify_certificate seed-pin
+    /// path.
     /// Recorded `(epoch, pin.is_some())` per finalized-tip committee read — the
-    /// cursor-resolution trail a beacon-aware test asserts against.
+    /// pin-resolution trail a beacon-aware test asserts against.
     type PinReads = Arc<Mutex<Vec<(u64, bool)>>>;
 
     struct BeaconAwareCommittees {
@@ -2042,6 +2134,20 @@ mod tests {
         (inlet, reads)
     }
 
+    /// A [`BoundaryWalk`] over a canned archive with geometry `first(E) = 64·E`,
+    /// so a walk for epoch E reads height `64·E` first. `at` returns the block
+    /// stored at a height — `None` is an ABSENT block, which the walk refuses at
+    /// rather than stepping past.
+    fn canned_walk(at: impl Fn(u64) -> Option<OrderBlock> + Send + Sync + 'static) -> BoundaryWalk {
+        BoundaryWalk::new(
+            Arc::new(move |h: Height| {
+                let block = at(h.get());
+                Box::pin(async move { block }) as BoxFuture<'static, Option<OrderBlock>>
+            }),
+            OriginEpocher::new(0, NZU64!(64)),
+        )
+    }
+
     fn count_rotations() -> (Arc<std::sync::atomic::AtomicU32>, RotateUpstream) {
         let rotations = Arc::new(std::sync::atomic::AtomicU32::new(0));
         let rotate: RotateUpstream = {
@@ -2058,8 +2164,8 @@ mod tests {
 
     #[test]
     fn boundary_pin_admits_genuine_seed_and_rejects_tampered_seed_as_data_fault() {
-        // Bug 2, ingest path: a change-boundary block's `beacon_outcome` pins the
-        // key cursor; a later cert whose recovered seed slot is tampered (a valid
+        // Bug 2, ingest path: a change-boundary block's `beacon_outcome` pins its
+        // own epoch; a later cert whose recovered seed slot is tampered (a valid
         // seed for the WRONG round, on an otherwise-valid multisig quorum) is a DATA
         // FAULT — never archived (marshal), never teed (window) — while the genuine
         // seeded cert for the same epoch verifies and IS processed. If the ingest
@@ -2135,19 +2241,38 @@ mod tests {
     }
 
     #[test]
-    fn carry_forward_key_pins_seed_across_a_non_change_stretch() {
-        // Bug 2, carry-forward + anchor-preserving prune: the key dealt at the
-        // change-boundary (epoch 1) keys epochs 3 and 5 too (no new boundary block),
-        // resolved from the cursor even though each ingest prunes `beacon_keys` to a
-        // {prev,cur} window. A naive `keep_from` prune would drop the in-force key
-        // after the epoch-3 ingest → epoch 5 would resolve None → its seed-tampered
-        // cert would pass. The `(epoch, pin.is_some())` reads observe the cursor
-        // resolving Some for every epoch across the stretch.
+    fn a_non_change_stretch_pins_from_the_shared_ladder_not_a_forward_cursor() {
+        // The stable-stretch property, now carried by the ONE ladder rather than
+        // by a private forward cursor: the key minted at change-epoch 1 keys
+        // epochs 3 and 5 too (neither has a boundary outcome of its own). The
+        // difference that matters is WHERE it comes from — the shared store this
+        // inlet wrote at the boundary, consulted per epoch, instead of "the
+        // greatest key I happen to have seen", which is the unbounded answer that
+        // pins a stale pre-rotation key past an unseen change boundary.
         let runtime = deterministic::Runner::default();
         runtime.start(|ctx| async move {
             let bc = beacon_committee(2);
+            let pk1 = *group_public_key(&parse_outcome(&bc.outcome_bytes).expect("outcome"));
             let marshal = FakeMarshal::default();
-            let (mut inlet, reads) = beacon_inlet(ctx, &bc, marshal.clone());
+            let (inlet, reads) = beacon_inlet(ctx, &bc, marshal.clone());
+            // The walk rung over a canned archive holding ONLY epoch 1's mint:
+            // epochs 2..=5 each have a PRESENT, outcome-less first block, so the
+            // walk steps back through them to the mint. That is the stable-stretch
+            // answer taken from the chain, where the retired cursor took it from
+            // "the greatest key I happen to have seen".
+            let keys = BeaconKeys::new();
+            let outcome = bc.outcome_bytes.clone();
+            let read: BoundaryBlockAt = Arc::new(move |h: Height| {
+                let block = match h.get() {
+                    64 => Some(beacon_order(64, Some(outcome.clone()))),
+                    128 | 192 | 256 | 320 => Some(beacon_order(h.get(), None)),
+                    _ => None,
+                };
+                Box::pin(async move { block }) as BoxFuture<'static, Option<OrderBlock>>
+            });
+            let mut inlet = inlet
+                .with_beacon_keys(keys.clone())
+                .with_boundary_walk(BoundaryWalk::new(read, OriginEpocher::new(0, NZU64!(64))));
 
             let wrong = certify_seeded(&bc, 9, &beacon_order(999, None))
                 .finalization
@@ -2162,6 +2287,17 @@ mod tests {
                 ))
                 .await
                 .expect("boundary ok");
+            assert_eq!(
+                keys.cached_only(1),
+                Some(pk1),
+                "a VERIFIED boundary block publishes its key into the SHARED store"
+            );
+            assert_eq!(
+                keys.attested(1),
+                Some(pk1),
+                "quorum-validated agreed chain data, so the attested tier"
+            );
+
             inlet
                 .ingest(certify_seeded(&bc, 3, &beacon_order(200, None)))
                 .await
@@ -2175,7 +2311,7 @@ mod tests {
                 *reads.lock().unwrap(),
                 vec![(1, true), (3, true), (5, true)],
                 "the in-force key resolves Some for the boundary AND every later \
-                 carry-forward epoch (the anchor-preserving prune keeps it)"
+                 carry-forward epoch"
             );
             assert_eq!(
                 marshal.calls.lock().unwrap().len(),
@@ -2201,12 +2337,12 @@ mod tests {
 
     #[test]
     fn pre_boundary_epoch_is_not_pinned_to_the_new_key() {
-        // Bug 2, epoch keying: the cursor maps FORWARD from a change-boundary — an
-        // epoch BEFORE the boundary resolves no key (vote-only), so it is NOT
-        // verified against the new epoch's key. A seed-tampered pre-boundary cert is
-        // therefore ADMITTED (the documented residual-window degrade); if the cursor
-        // wrongly back-applied the new key to the earlier epoch, that cert would be
-        // rejected instead.
+        // Epoch keying: a key minted at a change boundary is `PK_E` for that epoch
+        // and FORWARD, never backward. An epoch BEFORE the boundary resolves no key
+        // (vote-only), so it is NOT verified against the new epoch's key, and a
+        // seed-tampered pre-boundary cert is therefore ADMITTED (the documented
+        // residual-window degrade). If resolution ever back-applied the new key to
+        // an earlier epoch, that cert would be rejected instead.
         let runtime = deterministic::Runner::default();
         runtime.start(|ctx| async move {
             let bc = beacon_committee(3);
@@ -2237,7 +2373,7 @@ mod tests {
             assert_eq!(
                 *reads.lock().unwrap(),
                 vec![(1, true), (0, false)],
-                "epoch 0 (pre-boundary) resolves NO key from the forward cursor"
+                "epoch 0 (pre-boundary) resolves NO key"
             );
             assert_eq!(
                 *marshal.calls.lock().unwrap(),
@@ -2314,21 +2450,26 @@ mod tests {
 
     #[test]
     fn boundary_key_source_repins_after_a_dropped_change_boundary_cert() {
-        // The scheme-cache poison: change-epoch-2's BOUNDARY cert (the sole live
-        // carrier of PK_2) deferred on a transient committee read and was DROPPED,
-        // so the carry-forward cursor still holds PK_1 when the SECOND (non-
-        // boundary) epoch-2 cert arrives. WITHOUT the marshal boundary-key source
-        // that cert pins stale PK_1, its PK_2 seed fails the pinned slot → data
-        // fault, marshal driven zero further times (the poison). WITH the source
-        // the pin re-resolves PK_2 authoritatively, the cert verifies + drives the
-        // marshal, and the cursor self-corrects so a subsequent epoch-2 cert
-        // verifies too.
+        // The scheme-cache poison and both halves of its fix. Change-epoch-2's
+        // BOUNDARY cert (the sole live carrier of PK_2) deferred on a transient
+        // committee read and was DROPPED, so nothing local has ever seen PK_2 when
+        // the SECOND (non-boundary) epoch-2 cert arrives.
+        //
+        // WITHOUT a source the epoch resolves NO key and the cert is admitted
+        // vote-only. That is already a change: the retired forward cursor would
+        // have answered PK_1 here — the greatest key it had seen — and that stale
+        // pin rejects the PK_2-seeded cert, driving the marshal zero further
+        // times. Refusing beats guessing.
+        //
+        // WITH the source the pin re-resolves PK_2 authoritatively off the
+        // marshal-backfilled boundary block, the cert verifies + drives the
+        // marshal, and the now-pinned cache entry carries a subsequent epoch-2
+        // cert too.
         let runtime = deterministic::Runner::default();
         runtime.start(|ctx| async move {
             let (f1, f2) = beacon_committee_pair(4);
-            let pk2 = *group_public_key(&parse_outcome(&f2.outcome_bytes).expect("outcome"));
 
-            // WITHOUT the source: reproduce the poison.
+            // WITHOUT the source: no key for epoch 2, so vote-only admission.
             let marshal = FakeMarshal::default();
             let (mut inlet, _reads) = beacon_inlet(ctx.clone(), &f1, marshal.clone());
             inlet
@@ -2342,23 +2483,22 @@ mod tests {
             inlet
                 .ingest(certify_seeded(&f2, 2, &beacon_order(129, None)))
                 .await
-                .expect("stale-pinned cert is a non-fatal skip");
+                .expect("unpinned epoch-2 cert is admitted vote-only");
             assert_eq!(
                 *marshal.calls.lock().unwrap(),
-                vec!["verified", "report"],
-                "without the source the stale carry-forward PK_1 pin rejects the \
-                 PK_2-seeded epoch-2 cert (data fault, marshal not driven)"
+                vec!["verified", "report", "verified", "report"],
+                "epoch 1's key is never carried forward onto epoch 2: the cert is \
+                 admitted vote-only rather than rejected against a stale pin"
             );
 
             // WITH a source resolving PK_2 for epoch 2 (the marshal-backfilled
             // boundary block): the same sequence verifies end-to-end.
             let marshal = FakeMarshal::default();
             let (inlet, _reads) = beacon_inlet(ctx, &f1, marshal.clone());
-            let source: BoundaryKeyAt = Arc::new(move |epoch: u64| {
-                Box::pin(async move { (epoch == 2).then_some(pk2) })
-                    as BoxFuture<'static, Option<GroupPublic>>
-            });
-            let mut inlet = inlet.with_boundary_key_source(source);
+            let outcome = f2.outcome_bytes.clone();
+            let mut inlet = inlet.with_boundary_walk(canned_walk(move |h| {
+                (h == 128).then(|| beacon_order(128, Some(outcome.clone())))
+            }));
             inlet
                 .ingest(certify_seeded(
                     &f1,
@@ -2371,8 +2511,8 @@ mod tests {
                 .ingest(certify_seeded(&f2, 2, &beacon_order(129, None)))
                 .await
                 .expect("re-pinned epoch-2 cert ok");
-            // Cursor self-corrected (`beacon_keys[2] = PK_2`): the next epoch-2
-            // cert rides the cached scheme / corrected cursor and verifies too.
+            // The cache entry is now pinned, so the next epoch-2 cert rides it
+            // without re-consulting the source, and verifies too.
             inlet
                 .ingest(certify_seeded(&f2, 2, &beacon_order(130, None)))
                 .await
@@ -2382,6 +2522,154 @@ mod tests {
                 vec!["verified", "report", "verified", "report", "verified", "report"],
                 "with the source the boundary-dropped epoch verifies: re-pinned \
                  cert AND the subsequent cert both drive the marshal"
+            );
+        });
+    }
+
+    #[test]
+    fn an_epoch_cached_unpinned_starts_pinning_once_the_key_resolves() {
+        // The cached negative, and the only exit from it that does not cost a
+        // cert: epoch 2 is first seen while PK_2 is unresolvable everywhere (no
+        // outcome on the block, no boundary block in the marshal yet, an empty
+        // store), so it caches an UNPINNED scheme and admits the
+        // cert vote-only. When the boundary block later backfills, the epoch must
+        // start pinning off its own next cert — with NO BLS failure in between,
+        // which is the point: an unpinned scheme is the more permissive one, so
+        // the verify-fail eviction (the only other rebuild path) never fires for
+        // honest traffic and the degraded mode would otherwise outlive the epoch.
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            let (f1, f2) = beacon_committee_pair(5);
+            // The epoch-2 boundary block is ABSENT from the archive until
+            // `backfilled` flips — the marshal gap-repair landing it.
+            let backfilled = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let outcome = f2.outcome_bytes.clone();
+            let seen = backfilled.clone();
+            let walk = canned_walk(move |h| {
+                (h == 128 && seen.load(std::sync::atomic::Ordering::Relaxed))
+                    .then(|| beacon_order(128, Some(outcome.clone())))
+            });
+
+            let marshal = FakeMarshal::default();
+            let (inlet, reads) = beacon_inlet(ctx, &f1, marshal.clone());
+            let mut inlet = inlet.with_boundary_walk(walk);
+
+            inlet
+                .ingest(certify_seeded(&f2, 2, &beacon_order(129, None)))
+                .await
+                .expect("unpinned epoch-2 cert is admitted vote-only");
+            inlet
+                .ingest(certify_seeded(&f2, 2, &beacon_order(130, None)))
+                .await
+                .expect("still unpinned, still admitted");
+            assert_eq!(
+                *reads.lock().unwrap(),
+                vec![(2, false)],
+                "while the key is unresolvable the epoch stays unpinned on ONE committee read"
+            );
+
+            backfilled.store(true, std::sync::atomic::Ordering::Relaxed);
+            inlet
+                .ingest(certify_seeded(&f2, 2, &beacon_order(131, None)))
+                .await
+                .expect("the newly-resolvable key rebuilds the entry");
+            assert_eq!(
+                *reads.lock().unwrap(),
+                vec![(2, false), (2, true)],
+                "the cached UNPINNED entry is rebuilt with the resolved pin"
+            );
+            assert_eq!(
+                marshal.calls.lock().unwrap().len(),
+                6,
+                "all three certs verified — the pin arrived without a BLS failure"
+            );
+
+            // The rebuilt scheme genuinely pins: a seed-tampered epoch-2 cert (a
+            // valid seed for a foreign round) is now rejected, where the unpinned
+            // scheme above would have admitted it.
+            let wrong = certify_seeded(&f2, 9, &beacon_order(999, None))
+                .finalization
+                .certificate
+                .seed;
+            let mut tampered = certify_seeded(&f2, 2, &beacon_order(132, None));
+            tampered.finalization.certificate.seed = wrong;
+            inlet
+                .ingest(tampered)
+                .await
+                .expect("tampered cert is a non-fatal skip");
+            assert_eq!(
+                marshal.calls.lock().unwrap().len(),
+                6,
+                "the rebuilt entry is pinned: the seed-tampered cert drives the marshal zero times"
+            );
+        });
+    }
+
+    #[test]
+    fn a_pinned_entry_is_never_replaced_by_an_unpinned_one() {
+        // Monotonicity of the rebuild, in the inlet's OWN cache: once epoch 2 is
+        // pinned, an ingest that resolves NO pin must leave the entry alone. A
+        // source that answers exactly once makes the downgrade reachable.
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            let (f1, f2) = beacon_committee_pair(6);
+            // An archive that serves epoch 2's boundary block exactly ONCE, so a
+            // second resolve would come back empty and could only downgrade.
+            let consults = Arc::new(std::sync::atomic::AtomicU32::new(0));
+            let outcome = f2.outcome_bytes.clone();
+            let seen = consults.clone();
+            let walk = canned_walk(move |h| {
+                let first = seen.fetch_add(1, std::sync::atomic::Ordering::Relaxed) == 0;
+                (h == 128 && first).then(|| beacon_order(128, Some(outcome.clone())))
+            });
+
+            let marshal = FakeMarshal::default();
+            let (inlet, reads) = beacon_inlet(ctx, &f1, marshal.clone());
+            let mut inlet = inlet.with_boundary_walk(walk);
+
+            inlet
+                .ingest(certify_seeded(&f2, 2, &beacon_order(129, None)))
+                .await
+                .expect("epoch-2 cert pins off the boundary-key source");
+            assert!(
+                inlet.schemes.get(&2).is_some_and(|c| c.pinned),
+                "the source hit must record the entry as pinned"
+            );
+
+            inlet
+                .ingest(certify_seeded(&f2, 2, &beacon_order(130, None)))
+                .await
+                .expect("pin-less ingest of an already-pinned epoch");
+            assert_eq!(
+                consults.load(std::sync::atomic::Ordering::Relaxed),
+                1,
+                "a pinned entry never re-consults the boundary walk"
+            );
+            assert_eq!(
+                *reads.lock().unwrap(),
+                vec![(2, true)],
+                "a pinned entry is not rebuilt, so the committee is read once"
+            );
+            assert!(
+                inlet.schemes.get(&2).is_some_and(|c| c.pinned),
+                "the entry stays pinned across a pin-less ingest"
+            );
+
+            let wrong = certify_seeded(&f2, 9, &beacon_order(999, None))
+                .finalization
+                .certificate
+                .seed;
+            let mut tampered = certify_seeded(&f2, 2, &beacon_order(131, None));
+            tampered.finalization.certificate.seed = wrong;
+            inlet
+                .ingest(tampered)
+                .await
+                .expect("tampered cert is a non-fatal skip");
+            assert_eq!(
+                marshal.calls.lock().unwrap().len(),
+                4,
+                "the surviving pin still rejects a seed-tampered cert — had the \
+                 pin-less ingest replaced the entry, this one would have been admitted"
             );
         });
     }
@@ -2583,6 +2871,13 @@ where
                         inflight: &inflight,
                         height: h,
                     };
+                    // DELIBERATELY the single-shot pull, not `_everywhere`. This
+                    // is the marshal's gap repair: up to `MAX_REPAIR` concurrent
+                    // by-height pulls per sweep, roughly one sweep per second. A
+                    // walk here would be that many short-lived connections per
+                    // second, forever, for a height nobody holds. The escape from
+                    // a permanently unservable gap on this path is the re-jump,
+                    // not a wider search.
                     if let Some(uf) = upstream.get_finalization(height).await {
                         let key = MarshalRequest::Finalized { height };
                         let value = (uf.finalization, uf.block).encode();

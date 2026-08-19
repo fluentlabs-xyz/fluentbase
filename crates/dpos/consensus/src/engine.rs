@@ -293,7 +293,7 @@ where
             context.with_label("simplex"),
             simplex::Config {
                 scheme,
-                elector: WeightedVrf::new(&cfg.snapshot, cfg.fallback_seed),
+                elector: WeightedVrf::try_new(&cfg.snapshot, cfg.fallback_seed)?,
                 blocker: cfg.blocker,
                 automaton: automaton.clone(),
                 relay: automaton,

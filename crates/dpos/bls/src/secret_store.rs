@@ -40,7 +40,8 @@ impl SecretBackend<'_> {
         match self {
             SecretBackend::Plaintext => {
                 let raw = Zeroizing::new(std::fs::read_to_string(path)?);
-                let bytes = commonware_utils::from_hex_formatted(raw.trim()).ok_or(Error::InvalidHex)?;
+                let bytes =
+                    commonware_utils::from_hex_formatted(raw.trim()).ok_or(Error::InvalidHex)?;
                 Ok(Zeroizing::new(bytes))
             }
             SecretBackend::Eip2335 { password } => {

@@ -792,6 +792,12 @@ where
                 upstream_frontier: upstream_frontier.clone(),
                 dkg_height_tx: plane.dkg_height_tx.clone(),
             },
+            fluentbase_consensus::beacon::keys::BoundaryWalk::over_marshal(
+                handle.cert_mailbox.clone(),
+                handle.dpos_activation_block,
+                handle.epoch_length_blocks,
+            ),
+            handle.beacon_keys.clone(),
         )
     });
 
@@ -1223,11 +1229,9 @@ where
     // FROZEN on-chain `dkgQual[e]` bit reader — the carry-forward arbiter input
     // (`beacon::carry`): the chain's key epoch for E is the last set bit in
     // (BOOTSTRAP, E]. FINALIZED hash only (same determinism discipline as the
-    // committee readers). The contract sets the bit DETERMINISTICALLY at the commit
-    // (`dkgQual[epoch] = committee[epoch] != committee[epoch−1]`) and never mutates
-    // it after, so a SET bit is cacheable unconditionally and a CLEAR bit once the epoch's
-    // committee exists — the scan over a long stable span costs one state read
-    // per epoch ONCE, then serves from the cache.
+    // committee readers). The freeze/memo rule and its FLU-1134 history live at
+    // `frozen_dkg_qual`; this site supplies only the reads, so the follower
+    // launch's own reader (`DposLayer::launch_follower`) cannot drift from it.
     let dkg_qual_for: fluentbase_consensus::beacon::carry::DkgQualFor = {
         let reader = RethStakingStateReader::new(
             node.provider.clone(),
@@ -1235,27 +1239,23 @@ where
             staking_config.clone(),
         );
         let provider = node.provider.clone();
-        let cache: Arc<std::sync::Mutex<std::collections::BTreeMap<u64, bool>>> =
-            Arc::new(std::sync::Mutex::new(std::collections::BTreeMap::new()));
-        Arc::new(move |epoch: u64| {
-            if let Some(v) = cache.lock().ok().and_then(|c| c.get(&epoch).copied()) {
-                return Some(v);
-            }
-            let fin = provider.finalized_block_number().ok().flatten()?;
-            let hash = provider.block_hash(fin).ok().flatten()?;
-            let bit = reader.dkg_qual(epoch, hash).ok()?;
-            let frozen = bit
-                || reader
-                    .epoch_committee_snapshot(epoch, hash)
-                    .map(|s| !s.validators.is_empty())
-                    .unwrap_or(false);
-            if frozen {
-                if let Ok(mut c) = cache.lock() {
-                    c.insert(epoch, bit);
-                }
-            }
-            Some(bit)
-        })
+        fluentbase_consensus::beacon::carry::frozen_dkg_qual(
+            Arc::new(move || {
+                let fin = provider.finalized_block_number().ok().flatten()?;
+                provider.block_hash(fin).ok().flatten()
+            }),
+            Arc::new(move |epoch, at| {
+                let bit = reader.dkg_qual(epoch, at).ok()?;
+                // A SET bit is proof the commit happened, so the committee read
+                // is skipped for it — that is the only read this probe can save.
+                let committed = bit
+                    || reader
+                        .epoch_committee_snapshot(epoch, at)
+                        .map(|s| !s.validators.is_empty())
+                        .unwrap_or(false);
+                Some((bit, committed))
+            }),
+        )
     };
 
     // Beacon counters — registered ONCE here (the persistent layer); cloned (never

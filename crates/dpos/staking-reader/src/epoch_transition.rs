@@ -739,7 +739,6 @@ mod tests {
                 peer_pubkey: peer,
                 activation_epoch: 1,
             },
-            stake: 1,
             tombstoned: false,
         }
     }
@@ -762,6 +761,7 @@ mod tests {
                 validators: (0..self.committee as u64)
                     .map(|i| validator(epoch * 1000 + i))
                     .collect(),
+                weights: None,
             })
         }
         fn epoch_block_interval(&self, _at: B256) -> Result<u32, ReadError> {
@@ -842,6 +842,7 @@ mod tests {
                     block_number: epoch * 100,
                     epoch,
                     validators: vec![],
+                    weights: None,
                 });
             }
             self.inner.epoch_committee_snapshot(epoch, at)
@@ -1172,6 +1173,7 @@ mod tests {
                 block_number: 0,
                 epoch: 999,
                 validators: vec![],
+                weights: None,
             };
             boundary_tx.try_send((999, dummy)).expect("first slot");
             // Now channel is full.

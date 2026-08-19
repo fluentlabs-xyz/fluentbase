@@ -75,18 +75,75 @@ impl WeightedVrf {
     /// Build from the epoch's frozen committee snapshot and the epoch's
     /// seedless-arm base. The base is the previous epoch's terminal-block
     /// witness seed when one exists, else [`constant_fallback_seed`].
-    pub fn new(snap: &ValidatorSetSnapshot, fallback_seed: [u8; 32]) -> Self {
-        let weights = snap
-            .validators
-            .iter()
-            .map(|v| (v.keys.peer_pubkey.clone(), v.stake))
-            .collect();
-        Self {
-            weights,
+    ///
+    /// **Fails rather than degrading when the weights are absent.** The contract
+    /// keeps membership forever but only the last N epochs of weights, so a
+    /// snapshot can legitimately arrive with `weights: None`. Falling back to a
+    /// uniform lottery there would be the worst available answer: every node
+    /// that still had the weights would elect a different leader, and the split
+    /// would be silent. An error is recoverable — the caller skips the epoch and
+    /// retries — where a wrong leader is not.
+    pub fn try_new(
+        snap: &ValidatorSetSnapshot,
+        fallback_seed: [u8; 32],
+    ) -> Result<Self, WeightsUnavailable> {
+        let Some(frozen) = snap.weights.as_ref() else {
+            return Err(WeightsUnavailable {
+                epoch: snap.epoch,
+                members: snap.validators.len(),
+                weights: None,
+            });
+        };
+        if frozen.len() != snap.validators.len() {
+            return Err(WeightsUnavailable {
+                epoch: snap.epoch,
+                members: snap.validators.len(),
+                weights: Some(frozen.len()),
+            });
+        }
+        Ok(Self {
+            weights: snap
+                .validators
+                .iter()
+                .zip(frozen)
+                .map(|(v, weight)| (v.keys.peer_pubkey.clone(), *weight))
+                .collect(),
             fallback_seed,
+        })
+    }
+}
+
+/// The epoch's frozen leader weights are gone or do not line up with its
+/// membership, so no leader schedule can be derived for it.
+#[derive(Debug, Clone, Copy)]
+pub struct WeightsUnavailable {
+    pub epoch: u64,
+    pub members: usize,
+    /// `None` when the contract reported the weight ring had wrapped; `Some(n)`
+    /// when it returned `n` weights for a committee of a different size, which
+    /// is corruption rather than absence.
+    pub weights: Option<usize>,
+}
+
+impl core::fmt::Display for WeightsUnavailable {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self.weights {
+            None => write!(
+                f,
+                "epoch {}: frozen leader weights are no longer retained on chain \
+                 (committee of {} members); the weight ring has wrapped past it",
+                self.epoch, self.members
+            ),
+            Some(n) => write!(
+                f,
+                "epoch {}: {} frozen leader weights for a committee of {} members",
+                self.epoch, n, self.members
+            ),
         }
     }
 }
+
+impl core::error::Error for WeightsUnavailable {}
 
 /// Last-resort base for the seedless arm: `sha256(epoch_be ‖ sorted peer
 /// pubkeys)`, derivable from constants and therefore predictable an epoch ahead.
@@ -278,7 +335,7 @@ mod tests {
         let validators = stakes
             .iter()
             .enumerate()
-            .map(|(i, &stake)| {
+            .map(|(i, _)| {
                 let mut rng = StdRng::seed_from_u64(epoch * 1000 + i as u64);
                 let peer = Ed25519PrivateKey::random(&mut rng).public_key();
                 let bls = BlsPubkey::decode(
@@ -294,7 +351,6 @@ mod tests {
                         peer_pubkey: peer,
                         activation_epoch: 1,
                     },
-                    stake,
                     tombstoned: false,
                 }
             })
@@ -304,6 +360,7 @@ mod tests {
             block_number: epoch * 100,
             epoch,
             validators,
+            weights: Some(stakes.to_vec()),
         }
     }
 
@@ -323,18 +380,61 @@ mod tests {
             .collect()
     }
 
+    /// Absent weights must FAIL the elector, never degrade it to uniform.
+    ///
+    /// The degraded answer is the dangerous one: a node that still holds the
+    /// weights and a node that does not would elect different leaders for the
+    /// same round, and neither would log anything. The error is recoverable —
+    /// `EpochEngine::new` propagates it and `epoch_manager` skips and retries the
+    /// epoch — where a leader split is not.
+    #[test]
+    fn absent_or_mismatched_weights_fail_the_elector_instead_of_going_uniform() {
+        let mut s = snapshot(7, &[3, 5, 2]);
+
+        s.weights = None;
+        let Err(err) = WeightedVrf::try_new(&s, constant_fallback_seed(&s)) else {
+            panic!("a wrapped ring must not build an elector");
+        };
+        assert_eq!(err.epoch, 7);
+        assert_eq!(err.members, 3);
+        assert!(err.weights.is_none());
+
+        s.weights = Some(vec![3, 5]);
+        let Err(err) = WeightedVrf::try_new(&s, constant_fallback_seed(&s)) else {
+            panic!("a short weight vector is corruption, not absence");
+        };
+        assert_eq!(err.weights, Some(2));
+
+        s.weights = Some(vec![3, 5, 2]);
+        assert!(
+            WeightedVrf::try_new(&s, constant_fallback_seed(&s)).is_ok(),
+            "and the matching case still builds"
+        );
+    }
+
     #[test]
     fn build_is_deterministic_and_order_invariant() {
         // Cross-node agreement: nodes observing the epoch's keys in any order build
         // the byte-identical elector.
         let s = snapshot(7, &[3, 5, 2]);
         let p = participants(&s);
-        let e1 = WeightedVrf::new(&s, constant_fallback_seed(&s)).build(&p);
-        let e2 = WeightedVrf::new(&s, constant_fallback_seed(&s)).build(&p);
+        let e1 = WeightedVrf::try_new(&s, constant_fallback_seed(&s))
+            .unwrap()
+            .build(&p);
+        let e2 = WeightedVrf::try_new(&s, constant_fallback_seed(&s))
+            .unwrap()
+            .build(&p);
         let mut s_rev = s.clone();
         s_rev.validators.reverse();
-        let e3 =
-            WeightedVrf::new(&s_rev, constant_fallback_seed(&s_rev)).build(&participants(&s_rev));
+        // Weights are paired with members by position, so a reversal has to
+        // carry them along — reversing one leg alone would reassign the weights,
+        // which is a different test.
+        if let Some(w) = s_rev.weights.as_mut() {
+            w.reverse();
+        }
+        let e3 = WeightedVrf::try_new(&s_rev, constant_fallback_seed(&s_rev))
+            .unwrap()
+            .build(&participants(&s_rev));
 
         assert_eq!(e1.cum, e2.cum);
         assert_eq!(e1.total, e2.total);
@@ -365,7 +465,9 @@ mod tests {
         // `elect` over many views (the fallback randomness, uniform per view) Monte-
         // Carlo-samples the weighted CDF — distributionally identical to the σ path.
         let s = snapshot(1, &[1, 2, 7]);
-        let e = WeightedVrf::new(&s, constant_fallback_seed(&s)).build(&participants(&s));
+        let e = WeightedVrf::try_new(&s, constant_fallback_seed(&s))
+            .unwrap()
+            .build(&participants(&s));
         let weights = per_index_weights(&e);
         let n = e.cum.len();
         let samples = 30_000u64;
@@ -395,7 +497,9 @@ mod tests {
     #[test]
     fn zero_total_weight_is_uniform() {
         let s = snapshot(1, &[0, 0, 0]);
-        let e = WeightedVrf::new(&s, constant_fallback_seed(&s)).build(&participants(&s));
+        let e = WeightedVrf::try_new(&s, constant_fallback_seed(&s))
+            .unwrap()
+            .build(&participants(&s));
         assert_eq!(e.total, 3, "all-zero guard sets each weight to 1");
         for view in 1..=50 {
             let idx: usize = e
@@ -411,7 +515,9 @@ mod tests {
         // a seedless view ≥ 2 (here `None`; `Some(cert{seed:None})` is equivalent)
         // must elect, not panic.
         let s = snapshot(1, &[1, 1, 1]);
-        let e = WeightedVrf::new(&s, constant_fallback_seed(&s)).build(&participants(&s));
+        let e = WeightedVrf::try_new(&s, constant_fallback_seed(&s))
+            .unwrap()
+            .build(&participants(&s));
         let idx: usize = e
             .elect(Round::new(Epoch::new(1), View::new(2)), None)
             .into();
@@ -421,7 +527,9 @@ mod tests {
     #[test]
     fn sigma_path_deterministic_and_differs_from_fallback() {
         let s = snapshot(1, &[1, 1, 1]);
-        let e = WeightedVrf::new(&s, constant_fallback_seed(&s)).build(&participants(&s));
+        let e = WeightedVrf::try_new(&s, constant_fallback_seed(&s))
+            .unwrap()
+            .build(&participants(&s));
         let mut rng = StdRng::seed_from_u64(42);
         let sk = Private::random(&mut rng);
         let sigma: BlsSignature = ops::sign_message::<MinSig>(&sk, b"ns", b"leader-test");
@@ -477,7 +585,9 @@ mod tests {
         let s = snapshot(2, &[1; 7]);
         let round = |view| Round::new(Epoch::new(2), View::new(view));
         let sequence = |base: [u8; 32]| -> Vec<usize> {
-            let e = WeightedVrf::new(&s, base).build(&participants(&s));
+            let e = WeightedVrf::try_new(&s, base)
+                .unwrap()
+                .build(&participants(&s));
             (1..=8).map(|v| e.elect(round(v), None).into()).collect()
         };
         let witness = |seed| {
@@ -549,7 +659,7 @@ mod xlang_conformance {
     ];
 
     fn elector_for(epoch: u64) -> WeightedVrfElector {
-        let validators = PKS
+        let validators: Vec<ValidatorWithKeys> = PKS
             .iter()
             .enumerate()
             .map(|(i, hex)| {
@@ -570,22 +680,25 @@ mod xlang_conformance {
                         peer_pubkey: PeerPubkey::decode(raw.as_slice()).unwrap(),
                         activation_epoch: 1,
                     },
-                    stake: COMPACTED_STAKE,
                     tombstoned: false,
                 }
             })
             .collect();
+        let weights = vec![COMPACTED_STAKE; validators.len()];
         let snap = ValidatorSetSnapshot {
             block_hash: B256::repeat_byte(0xAB),
             block_number: 1,
             epoch,
             validators,
+            weights: Some(weights),
         };
         let parts = commonware_utils::ordered::Set::try_from_iter(
             snap.validators.iter().map(|v| v.keys.peer_pubkey.clone()),
         )
         .unwrap();
-        WeightedVrf::new(&snap, constant_fallback_seed(&snap)).build(&parts)
+        WeightedVrf::try_new(&snap, constant_fallback_seed(&snap))
+            .unwrap()
+            .build(&parts)
     }
 
     #[test]
@@ -629,21 +742,24 @@ mod xlang_conformance {
                         peer_pubkey: PeerPubkey::decode(raw.as_slice()).unwrap(),
                         activation_epoch: 1,
                     },
-                    stake,
                     tombstoned: false,
                 })
-                .collect();
+                .collect::<Vec<_>>();
+            let weights = vec![stake; validators.len()];
             let snap = ValidatorSetSnapshot {
                 block_hash: B256::repeat_byte(0xAB),
                 block_number: 1,
                 epoch: 2,
                 validators,
+                weights: Some(weights),
             };
             let parts = commonware_utils::ordered::Set::try_from_iter(
                 snap.validators.iter().map(|v| v.keys.peer_pubkey.clone()),
             )
             .unwrap();
-            let e = WeightedVrf::new(&snap, constant_fallback_seed(&snap)).build(&parts);
+            let e = WeightedVrf::try_new(&snap, constant_fallback_seed(&snap))
+                .unwrap()
+                .build(&parts);
             let idx: usize = e
                 .elect(Round::new(Epoch::new(2), View::new(1)), None)
                 .into();

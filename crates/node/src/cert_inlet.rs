@@ -19,8 +19,10 @@ use alloy_consensus::Header;
 use alloy_primitives::B256;
 use commonware_runtime::{tokio::Context, Handle, Metrics as _, Spawner as _};
 use fluentbase_consensus::{
-    cert_inlet::LiveFrontierTee, CertInlet, CertUpstream as _, CommitteeSource, MarshalMailbox,
-    RethCommitteeSource, RotateUpstream,
+    beacon::keys::{BeaconKeys, BoundaryWalk},
+    cert_inlet::LiveFrontierTee,
+    CertInlet, CertUpstream as _, CommitteeSource, MarshalMailbox, RethCommitteeSource,
+    RotateUpstream,
 };
 use fluentbase_staking_reader::reader::{RethStakingStateReader, StakingReaderConfig};
 use reth_ethereum_primitives::EthPrimitives;
@@ -61,6 +63,16 @@ where
 /// beacon plane), so committee[E+1] resolves and the DKG deals at the LIVE
 /// frontier rather than this node's lagging EL-finalized state.
 ///
+/// `walk` is the ladder's boundary-walk rung over this node's own marshal, built
+/// by the caller from the layer's frozen epoch geometry (`DposLayerHandle`). The
+/// validator inlet needs it as much as the follower's does: its cache and the
+/// consensus plane's `EpochSchemeProvider` sit on disjoint ingress paths, so a pin
+/// the plane holds never reaches this cache.
+///
+/// `beacon_keys` is the layer's ONE beacon-key store, not a fresh one: joining it
+/// is what lets a key the plane's DKG published reach this inlet's ladder, and a
+/// boundary key this inlet verified reach the plane's.
+///
 /// Fail-closed-on-TOTAL-loss (Risk-3): a single bad cert is skipped inside
 /// `ingest` (WARN + `Ok`), but if the WS `finalized_rx` closes (every upstream
 /// URL dead) the loop breaks → the returned `Handle` resolves → the supervisor
@@ -72,6 +84,8 @@ pub(crate) fn spawn_cert_inlet<C>(
     committees: C,
     urls: Vec<String>,
     tee: LiveFrontierTee,
+    walk: BoundaryWalk,
+    beacon_keys: BeaconKeys,
 ) -> Handle<()>
 where
     C: CommitteeSource,
@@ -97,6 +111,8 @@ where
         let mut inlet = CertInlet::new(marshal, committees, c)
             .with_tee(tee)
             .with_rotate(rotate)
+            .with_boundary_walk(walk)
+            .with_beacon_keys(beacon_keys)
             .with_connection_token(conn_gen);
         info!("cert-inlet SHADOW producer started");
         loop {
