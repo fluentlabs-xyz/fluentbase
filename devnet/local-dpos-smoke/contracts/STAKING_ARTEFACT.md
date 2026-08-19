@@ -64,59 +64,53 @@ was missed.
 The per-epoch beacon key (`commitEpochBeaconKey` `0x6ece9cb1` /
 `getEpochBeaconKey` `0xc9adaf5c`) was added on 2026-08-16 and REMOVED again on
 2026-08-17 together with the whole on-chain `PK_E` layer. A blob that still
-contains either selector is the 2026-08-16 build and is STALE — see the rebuild
-note below.
+contains either selector is the 2026-08-16 build and is STALE. The current build
+is below; its selector scan lists these two as required ABSENCES.
 
-## This build — 2026-08-16 (STALE — rebuild required)
+## This build — 2026-08-18
 
-**STALE as of 2026-08-17.** The beacon-key rollback edited
-`consts.rs` / `storage.rs` / `events.rs` / `lib.rs` / `consensus.rs` /
-`tests.rs` / `README.md` in the worktree, so every source hash, size and SHA-256
-in this section is from a source tree that no longer exists, and the blobs beside
-this file still CONTAIN `commitEpochBeaconKey` / `getEpochBeaconKey`. They must be
-rebuilt (build command above), copied here by hand, and the smoke image rebuilt —
-it bakes the genesis. Replace this whole section wholesale when you do.
+Rebuilt after the on-chain `PK_E` rollback (2026-08-17) and FLU-1134 (committee
+retention + the three-structure storage layout). The 2026-08-16 section this
+replaces is gone wholesale, per the rule above.
 
-- worktree HEAD: `bb7d231d`
-- worktree was DIRTY at build time. That is deliberate: the uncommitted delta is
-  what makes the contract match this node. It adds
-  `slashEquivocation(uint64,uint32)` and moves the three evidence variants from 6
-  args to 4. A build from a clean HEAD would produce a contract the node cannot
-  talk to.
-- `git status --porcelain contracts/staking` at build time — 12 modified files,
-  `12 files changed, 1273 insertions(+), 1179 deletions(-)`. The diffstat is
-  indicative only; the per-file source hashes below are the authoritative
-  record, and `README.md` is in the list but is not compiled, so it cannot move
-  the blob:
+- worktree HEAD: `29ae97ef`
+  (`refactor(staking)!: retain epoch committees instead of pruning them (FLU-1134)`)
+- worktree was DIRTY at build time, deliberately: the uncommitted delta is
+  FLU-1134 phases 2-4 — the `committee_records` / `epoch_index` / `weight_ring`
+  split, the ring-miss forfeit, and the deletion of `resolveSigner` and
+  `getEpochCommitteeLength`. A build from clean HEAD would produce a contract
+  with the OLD `epoch_committees` layout, which this node's reader cannot decode
+  (it expects the four-array return with a possibly-empty stakes leg).
+- `git status --porcelain contracts/staking` at build time — 10 modified files,
+  `10 files changed, 884 insertions(+), 184 deletions(-)`. Indicative only; the
+  per-file hashes below are the record, and `README.md` is not compiled:
 
       M contracts/staking/README.md
-      M contracts/staking/src/config.rs
       M contracts/staking/src/consensus.rs
       M contracts/staking/src/consts.rs
       M contracts/staking/src/events.rs
-      M contracts/staking/src/evidence.rs
       M contracts/staking/src/initializer.rs
       M contracts/staking/src/lib.rs
+      M contracts/staking/src/liveness.rs
       M contracts/staking/src/staking.rs
       M contracts/staking/src/storage.rs
       M contracts/staking/src/tests.rs
-      M contracts/staking/src/types.rs
 
 - SHA-256 of every source file in `contracts/staking/src` as built (dirty
   content, not the committed content — `git show` will NOT reproduce these):
 
       205ef64f73269a7ed948ba28bbe75c550d3d9a88c375b8327bb1ba42ed07c1bc  src/config.rs
-      0e3ea8429fd93a5c0a6b79f26e302a2578382fe12da193df9da570968f89438b  src/consensus.rs
-      a277320be1a2feb49c70bd91fda3ab3c12610c35deafae0efc205266814809b2  src/consts.rs
-      37bb6514f95a44b2327b72baf7a68ee9fec21803786c01636627f71c5bd511cd  src/events.rs
+      e518d0f98f62b2853b235c25ada2e85424f76a258dc6f63286d760ca1b3aeaef  src/consensus.rs
+      a9c28d73e53546e8138a1418c20b2e273a8c8bca74747cf6553b9054e2758c58  src/consts.rs
+      19b44f8d3b01c1c0aba484cd32193bb98675a5398e8e512aefa01c80370b5584  src/events.rs
       3f69dfe02d27be45e6b723e3f128b7049d74abe5c1b6dafac82b5af47d8b5576  src/evidence.rs
       6e19613ec6ba6bc6ffe405b70ad998cc5ba4a1d05c42e851c11fc2f7f38e33f3  src/initializer.rs
-      ed90bab3f5ce5150aed3a12831be8762b5d3f5bfc5064e06f44d0fd02d7219e6  src/lib.rs
-      98c034427e88fe85923b724de90591fb8cdfbf7b000bce06d3544ec570a12948  src/liveness.rs
+      41664ada99d94f2761d511883215d0a36ca2e765b05a410e3f661367a9ba9d20  src/lib.rs
+      2cb2284aa8385220c1e23a6c633f98b2954c4d2866f2626d206458fd6883f65e  src/liveness.rs
       87fdd853b1c4d37cbc7421a07c8a6458afc486ff4300289b52015d9958fdf20f  src/math.rs
-      5e0784a467b4b7abc5a6c1375e442fd488840c7e1ebb896f03dbbb74a1c1234a  src/staking.rs
-      529a4d8a69eef8598a4f4a1cfafc5585fef0aabb4529b58e2c80959c21ab4b67  src/storage.rs
-      da4dcce271edeaf3d65f175da484b9ba90dd6c6121debfa8d8f13e37427aefb9  src/tests.rs
+      f2ecf55fb1ab645347f78753e897bb1b8bc63c8c013967a8edfb9e92e323b74c  src/staking.rs
+      94a01f24f8fa81415ad0a9b5a9ded60d05c44d7cdbb1f35ca5a9f7d34a509f53  src/storage.rs
+      e0d7192e14f66a0bc9b468d952d7b5809a0986de2362b45a0c16f9e8ca223360  src/tests.rs
       de3751f4f574a205ae8d9aa6cf800d7098f040ac37415debc89cf106634ebe19  src/types.rs
       6c2256b44b8c57d4ea0b34ca2adaf485591c2a0ba9f7d4f123ba6fe7b27f91a6  src/util.rs
 
@@ -124,22 +118,41 @@ it bakes the genesis. Replace this whole section wholesale when you do.
 
       find src -name '*.rs' | sort | xargs sha256sum
 
-- `fluentbase_contracts_staking.wasm` — 425,932 bytes
-  (runtime-upgrade payload; the contract compiles it on-chain)
-  `f7eb669f6c6af5e5052c7168f5bbdc1f732fd7a15adfcb13b1348428011f49ba`
-- `fluentbase_contracts_staking.rwasm` — 2,950,957 bytes
-  (genesis install; already compiled with the address-aware config)
-  `f4a530f988a02a4838f37f20d055a8bd39c13545a4ae230a34a255297fc321d8`
-- Selector scan on the `.rwasm` at build time: all six selectors of that build
-  present (the four above plus the two beacon-key ones, since removed), exactly
-  one occurrence each.
-- **Reproducibility data point:** these blobs were built twice from this
-  worktree, the second time after a doc-comment-only edit to `src/consensus.rs`
-  (hence the hash above differing from the first build's record). Both builds
-  produced BIT-IDENTICAL `.wasm` and `.rwasm`. So the toolchain is deterministic
-  for this crate, and a source hash that moves without the blob moving means the
-  change emitted no code — which is worth checking before assuming a rebuild is
-  needed.
+- `fluentbase_contracts_staking.wasm` — 414,513 bytes (was 425,932 on 2026-08-16)
+  `8f5895a586f172afb97a4894ccf66f18367118802f895ca7424b88426bf79797`
+- `fluentbase_contracts_staking.rwasm` — 2,854,198 bytes (was 2,950,957)
+  `f30deb0d6a9a0d15a3ac0344076139f301b9d2a29b8cbb1281a993d5df33529e`
+- Both shrank: the beacon-key layer came out and the committee storage lost
+  `prune_committees`, `resolveSigner` and `getEpochCommitteeLength`.
+- Selector scan on the `.rwasm`, extended beyond the four the check above lists
+  because this build DELETES selectors as well as adding them — an absence is as
+  much a correctness claim as a presence:
+
+      present, 1 each:  recordProduction commitEpochCommittee slashEquivocation
+                        producedAt getEpochCommitteeWithStakes getEpochCommittee
+                        getEpochRewards getDkgQual
+      absent, 0 each:   commitEpochBeaconKey getEpochBeaconKey
+                        resolveSigner getEpochCommitteeLength
+
+  The two beacon-key selectors are the 2026-08-16 staleness marker; the other two
+  are FLU-1134's deletions. A blob carrying any of the four is not this build.
+- **Determinism re-confirmed on this build.** Two release builds an hour apart,
+  separated only by doc-comment edits to `consensus.rs` / `storage.rs` /
+  `staking.rs`, produced BIT-IDENTICAL `.rwasm`
+  (`f30deb0d…`, 2026-08-17 23:48 and 2026-08-18 00:44). Consistent with the
+  earlier data point below: source hashes that move without the blob moving mean
+  the delta was comment-only.
+- **NOT yet done for this build:** the smoke docker image has not been rebuilt,
+  so no golden snapshot is trustworthy against these blobs yet, and the devnet has
+  not been run at all against FLU-1134.
+
+- **Reproducibility data point, from the 2026-08-16 build** (kept because it is
+  the original observation the note above re-confirms): those blobs were built
+  twice from this worktree, the second time after a doc-comment-only edit to
+  `src/consensus.rs`. Both builds produced BIT-IDENTICAL `.wasm` and `.rwasm`. So
+  the toolchain is deterministic for this crate, and a source hash that moves
+  without the blob moving means the change emitted no code — worth checking
+  before assuming a rebuild is needed.
 
 ### Previous build — 2026-08-08 (superseded)
 
