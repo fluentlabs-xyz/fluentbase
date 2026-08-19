@@ -1,4 +1,4 @@
-"""The five production-path case DRIVERS: wiring, transcript ORDER, and the two seams they need.
+"""The four production-path case DRIVERS: wiring, transcript ORDER, and the seams they need.
 
 The verdicts are covered in `test_prod_case_verdicts.py`. What is covered here is everything a
 verdict cannot see — that the reads and writes happen, in the right order, against the right
@@ -13,12 +13,11 @@ THREE THINGS THIS FILE EXISTS FOR:
   * **Order is the evidence.** A restart issued before the corruption it is meant to expose, or a
     kill issued before the gate that establishes the window, is a different test that still passes.
     Each destructive case's write sequence is pinned as an ordered list of notes.
-  * **The two seams `case-byzantine-vrf` needs.** Its bash builds a bring-up of its own; routing it
-    through the shared one is only safe if the overlay reaches the COLD RESTART and not phase A,
-    and if its five extra transfers land after DeployStaking and before the first governance write.
-    Both are pinned here, because both are silent when wrong: an overlay applied to phase A builds
-    a stack the bash never builds, and a transfer sent early shifts DeployStaking's CREATE
-    addresses off the prediction baked into `staking-reader.json`.
+  * **The bring-up's two parameterised seams.** `ProductionPathProfile.extra_overlays` must reach
+    the COLD RESTART and not phase A, and `RotationBringUp.post_manifest` must fire after the
+    module is installed and before the first governance write. Both are pinned below on the
+    profile/bring-up objects themselves — their last case-level user, `smoke-byzantine-vrf`, is
+    retired, and a seam nothing exercises end to end is exactly the one that rots silently.
 """
 
 from __future__ import annotations
@@ -31,18 +30,16 @@ import sys
 import pytest
 
 from dpos_harness import cli
-from dpos_harness.cases.smoke import asserts_byzantine_vrf as B
-from dpos_harness.cases.smoke import byzantine_vrf, prod, verdicts_rotation as VR
+from dpos_harness.cases.smoke import prod, verdicts_rotation as VR
 from dpos_harness.core.proc import Runner
 from dpos_harness.stack import production_path as PP
 
-#: The five, and the module each maps to in `cli.CASES`.
+#: The four, and the module each maps to in `cli.CASES`.
 PROD_CASES = {
     "smoke-production-path": "smoke.production_path",
     "smoke-vrf-rotation": "smoke.vrf_rotation",
     "smoke-vrf-dkg-halt": "smoke.vrf_dkg_halt",
     "smoke-vrf-dkg-durability": "smoke.vrf_dkg_durability",
-    "smoke-byzantine-vrf": "smoke.byzantine_vrf",
 }
 
 SMOKE_DIR = pathlib.Path(__file__).resolve().parents[2]
@@ -190,9 +187,10 @@ def _spammer_spy(monkeypatch):
 
 def test_the_halt_kills_PRE_SEAL_then_RESTARTS_and_only_then_measures(transcripts):
     """The restart is the whole design: on n=5 the DKG dealer-quorum and the consensus quorum are
-    both 4, so KEEPING the two down stalls consensus BELOW the boundary and the `skipping propose`
-    line never fires. Restarting restores consensus quorum so the chain climbs to the boundary,
-    where the DKG-None skip wedges it. Stop → sleep → start, in that order and nothing between."""
+    both 4, so KEEPING the two down stalls consensus BELOW the boundary and the freeze happens at
+    the kill point instead. Restarting restores consensus quorum so the chain climbs to the
+    boundary, where the shareless committee wedges it. Stop → sleep → start, in that order and
+    nothing between."""
     _, text = transcripts["smoke-vrf-dkg-halt"]
     notes = _notes(text)
     assert "halt-preseal-stop" in notes and "halt-preseal-start" in notes
@@ -349,112 +347,6 @@ def test_the_production_path_stops_the_victim_only_after_syncing_to_an_epoch_sta
     assert before.count("read  (current_epoch())") >= 2
 
 
-# ══ the two byzantine-vrf seams ════════════════════════════════════════════════════════════
-
-def test_the_byzantine_overlay_reaches_the_COLD_RESTART_and_not_phase_A(transcripts):
-    """Phase A is the BARE genesis chain; bash exports the bare name at `:85` and only widens it at
-    the restart (`:288`). An overlay applied to the phase-A `up --build` would build a stack the
-    bash never builds."""
-    _, text = transcripts["smoke-byzantine-vrf"]
-    exports = [ln for ln in text.splitlines() if "COMPOSE_FILE=" in ln]
-    assert exports[0].endswith("COMPOSE_FILE=docker-compose.production-path.yml)")
-    assert exports[1].endswith("docker-compose.production-path.yml:"
-                               "docker-compose.production-path.dpos.yml:"
-                               "docker-compose.byzantine-vrf.yml)")
-
-
-def test_the_byzantine_overlay_file_exists_and_flags_the_configured_node():
-    """The overlay hardcodes ONE service. A `BYZ_VRF_IDX` pointing anywhere else would flag
-    nothing — compose would ignore a service that is not in the file — and the case would spend its
-    whole budget waiting for a forge that cannot happen."""
-    text = (SMOKE_DIR / byzantine_vrf.BYZANTINE_OVERLAY).read_text()
-    assert "FLUENT_DPOS_BYZANTINE: forge-beacon-pk" in text
-    assert f"validator-{VR.DEFAULT_BYZ_IDX}:" in text
-
-
-def test_the_other_four_cases_carry_no_overlay(transcripts):
-    for case in PROD_CASES:
-        if case == "smoke-byzantine-vrf":
-            continue
-        _, text = transcripts[case]
-        assert "overlays=[]" in text.splitlines()[0], case
-        assert "byzantine-vrf.yml" not in text, case
-
-
-def test_the_extra_transfers_land_AFTER_THE_MODULE_and_BEFORE_the_first_governance_write(
-        transcripts):
-    """The load-bearing half of the second seam. Its ORIGINAL justification — that an earlier
-    transfer would advance the deployer nonce and shift the CREATE addresses off the prediction in
-    `staking-reader.json` — is gone with the prediction. The position still matters for a reason
-    that justification hid: the hook moves BLEND and reads through a `Chain`, so it cannot run
-    before the token exists and the module has been installed, and its writes must still precede
-    the first governance action so the deployer's tx sequence matches the bash."""
-    _, text = transcripts["smoke-byzantine-vrf"]
-    notes = _notes(text)
-    deploy = notes.index("install-staking-module")
-    first_gov = notes.index("gov-propose")
-    for note in ("toggle-key", "toggle-addr", "fund-toggle-delegator"):
-        assert deploy < notes.index(note) < first_gov, note
-    # SIX BLEND transfers: the shared bring-up's one to the joiner, then the hook's five — the
-    # byzantine owner, the toggle delegator, and the three floor-bumped owners (v1/v3/v4; the
-    # byzantine is skipped there because it already got its own).
-    transfers = [ln for ln in text.splitlines() if "# token-transfer" in ln]
-    assert len(transfers) == 6
-    assert VR.BYZ_BLEND_WEI in transfers[1] and VR.TOGGLE_BLEND_WEI in transfers[2]
-    assert all(VR.FLOOR_BLEND_WEI in ln for ln in transfers[3:])
-
-
-def test_the_stake_setup_boosts_the_byzantine_and_lifts_the_other_floor(transcripts):
-    """(i) the byzantine permanently in the top-5 so it holds a share at every boundary; (ii) the
-    joiner the only clean swing member, which needs the OTHER 1e18 validators lifted above its
-    self-stake floor or a joiner-OUT ties them."""
-    _, text = transcripts["smoke-byzantine-vrf"]
-    notes = _notes(text)
-    assert "delegate-byz-boost" in notes
-    bumped = [n for n in notes if n.startswith("delegate-floor-bump-")]
-    assert bumped == ["delegate-floor-bump-v1", "delegate-floor-bump-v3", "delegate-floor-bump-v4"]
-    assert VR.BYZ_BOOST_WEI in text and VR.FLOOR_BUMP_WEI in text
-
-
-def test_the_toggles_come_from_the_dedicated_delegator_not_the_joiners_own_key(transcripts):
-    """An `undelegate` from the joiner's owner key would trip `OwnerSelfStakeBelowMinimum`, so the
-    OUT half of the drive would fail on every iteration."""
-    _, text = transcripts["smoke-byzantine-vrf"]
-    toggle = next(ln for ln in text.splitlines() if "# toggle-in-v5" in ln)
-    approve = next(ln for ln in text.splitlines() if "# approve-toggle-delegator" in ln)
-    key = approve.split("--private-key ")[1].split()[0]
-    assert toggle.split("--private-key ")[1].split()[0] == key
-    assert VR.V5_IN_AMOUNT in toggle
-
-
-def test_the_drive_watches_the_forge_count_before_and_after_every_flip(transcripts):
-    """The loop watches three things in one poll — the forge count, the committee timeline and
-    whether THIS flip landed. Splitting them would triple the RPC load on a chain the case is also
-    measuring, and dropping the pre-flip read would issue a toggle after the forge already fired."""
-    _, text = transcripts["smoke-byzantine-vrf"]
-    counts = [i for i, ln in enumerate(text.splitlines()) if VR.FORGE_LINE in ln
-              and "log_count" in ln]
-    toggle = next(i for i, ln in enumerate(text.splitlines()) if "# toggle-in-v5" in ln)
-    assert any(i < toggle for i in counts) and any(i > toggle for i in counts)
-
-
-def test_the_drive_reads_its_knobs_from_the_environment(monkeypatch):
-    monkeypatch.setenv("BYZ_VRF_IDX", "3")
-    monkeypatch.setenv("BYZ_VRF_MAX_TOGGLES", "9")
-    monkeypatch.setenv("BYZ_VRF_BUDGET_MIN", "12")
-    drive = B.ByzantineDrive()
-    assert (drive.byz_idx, drive.max_toggles, drive.budget_min) == (3, 9, 12)
-    assert drive.service == "validator-3"
-    assert "validator-3" not in drive.honest_nodes
-
-
-def test_the_honest_set_is_every_deriving_node_but_the_byzantine():
-    from dpos_harness.cases.smoke.asserts_prod import PROD_NODES
-    drive = B.ByzantineDrive(byz_idx=2)
-    assert set(drive.honest_nodes) == set(PROD_NODES) - {"validator-2"}
-    assert len(drive.honest_nodes) == len(PROD_NODES) - 1
-
-
 # ══ the profile seam ═══════════════════════════════════════════════════════════════════════
 
 def test_overlays_ride_the_dpos_phase_only():
@@ -466,14 +358,14 @@ def test_overlays_ride_the_dpos_phase_only():
 
 
 def test_a_profile_without_overlays_is_unchanged():
-    """Four of the five cases pass none, and their compose environment must stay byte-identical to
+    """Every shipping prod case passes none, and their compose environment must stay byte-identical to
     what chunk 5a shipped."""
     assert PP.ProductionPathProfile().compose_files("dpos") == (
         PP.PRODUCTION_BASE, PP.PRODUCTION_DPOS_OVERLAY)
 
 
 def test_the_post_manifest_hook_fires_once_after_the_module_and_before_the_first_gov():
-    """The seam's contract, pinned independently of the byzantine case that uses it: the hook needs
+    """The seam's contract, pinned on the bring-up itself now that no case wires it: the hook needs
     a `Chain` over an installed module (so it must run after the delivery) and its writes must
     precede the first governance action (so the deployer's tx sequence matches the bash)."""
     seen = []

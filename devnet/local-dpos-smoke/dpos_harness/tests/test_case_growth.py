@@ -1,24 +1,40 @@
 """Pure-logic tests for the bug-B GROWTH case verdict layer (no docker / no chain).
 
-Covers the NEW helpers case_growth introduces: the dkg_logs idx-out-of-committee
-log-signature matcher, the per-height verify-false clustering, and the combined
-growth verdict (liveness advance + signature absence). The live bring-up/growth is
-exercised by `make case-growth` against the real devnet — NOT here."""
+Covers the helpers `cases/growth.py` introduces: the pinned-idx-out-of-committee log
+matcher, the per-node counter verdict, the per-height verify-false clustering, and the
+combined growth verdict. The live bring-up/growth is exercised by `make case-growth`
+against the real devnet — NOT here.
+
+WHY THE FIXTURE LINE CHANGED. The old one was the WARN `beacon_gate_decision` emitted at
+verify time. That code path went away with the epoch key's departure from `OrderBlock`,
+so the string it produced has zero occurrences in the tree — and an ABSENCE verdict over
+an unproducible string is green against every possible chain, which is the defect this
+file's fixture must not encode. The fixture below is the surviving ERROR, from
+`beacon/actor.rs`'s finalize-deferral path."""
 
 from __future__ import annotations
 
 from dpos_harness.cases.growth import (
+    BUGB_IDX_METRIC,
     BUGB_IDX_SIGNATURE,
     apply_case_env_defaults,
     cluster_verify_false,
     evaluate_growth_case,
+    evaluate_idx_metric,
     growth_voter_idx,
     scan_idx_stall,
 )
 
-# The exact bug-B line application.rs::beacon_gate_decision emits on a rejected idx.
-_BUGB_LINE = ("WARN dpos::application height=27021 epoch=41 n=5 dkg_logs: an idx is out "
-              "of committee[E+1] range — voting false")
+# The surviving pinned-idx ERROR (`beacon/actor.rs`, the finalize-deferral arm). Rendered
+# as one line the way the tracing writer emits it — the Rust source splits it with `\`
+# line-continuations, which is exactly why a source grep for it finds a shorter string
+# than the runtime one.
+_BUGB_LINE = ("ERROR dpos::beacon epoch=41 reason=below-quorum unmappable=1 DKG finalize "
+              "deferred past the settle deadline and the pinned set names indices outside "
+              "the committed committee — the pinned set and this node's committee disagree")
+
+#: Every scanned validator reporting a clean counter — the shape a healthy run produces.
+_CLEAN = {"validator-0": 0, "validator-1": 0}
 
 
 def test_scan_idx_stall_finds_the_signature():
@@ -28,7 +44,45 @@ def test_scan_idx_stall_finds_the_signature():
     hits = scan_idx_stall(log)
     assert len(hits) == 1
     assert BUGB_IDX_SIGNATURE in hits[0]
-    assert hits[0].startswith("WARN")  # returned stripped
+    assert hits[0].startswith("ERROR")  # returned stripped
+
+
+# ── the counter verdict: the PRIMARY witness ──────────────────────────────────
+
+def test_a_non_zero_counter_on_any_node_fails():
+    """The condition is chain-wide (the pinned set is agreed data), so one node is enough
+    to convict. RED when a pinned idx has no seat in the committed committee."""
+    ok, reason = evaluate_idx_metric({"validator-0": 0, "validator-3": 2})
+    assert ok is False
+    assert BUGB_IDX_METRIC in reason and "validator-3=2" in reason
+
+
+def test_an_unreadable_counter_everywhere_fails_rather_than_passing():
+    """THE POINT OF THIS VERDICT. `beacon_metric` answers -1 for an unreachable endpoint or
+    an absent family; treating that as zero is how an absence assertion comes to assert its
+    own blindness. RED when nothing answers — e.g. the metric is renamed, the registry
+    moves off :9100, or every scrape times out."""
+    ok, reason = evaluate_idx_metric({"validator-0": -1, "validator-1": -1})
+    assert ok is False
+    assert "unreadable on ALL 2" in reason and "never evaluated" in reason
+
+
+def test_an_empty_scrape_set_fails():
+    ok, reason = evaluate_idx_metric({})
+    assert ok is False and "no validator was scraped" in reason
+
+
+def test_a_partly_readable_clean_set_passes_and_names_the_blind_nodes():
+    """One readable node is enough to assert (battery._inv_dkg_pinned_idx's floor), but a
+    thinning detector must be visible in the PASS text before it reaches zero."""
+    ok, reason = evaluate_idx_metric({"validator-0": 0, "validator-1": -1})
+    assert ok is True
+    assert "1/2" in reason and "unreadable: validator-1" in reason
+
+
+def test_a_fully_readable_clean_set_names_no_blind_nodes():
+    ok, reason = evaluate_idx_metric(_CLEAN)
+    assert ok is True and "unreadable" not in reason
 
 
 def test_scan_idx_stall_clean_log_is_empty():
@@ -62,29 +116,54 @@ def test_evaluate_growth_case_pass():
     logs = {"validator-0": "INFO finalized height=200 ok",
             "validator-1": "INFO beacon dkg ok epoch=6"}
     ok, reason = evaluate_growth_case(fin0=100, fin_now=140, min_advance=32,
-                                      per_node_logs=logs)
+                                      per_node_logs=logs, per_node_idx_metric=_CLEAN)
     assert ok is True
     assert "advanced 40" in reason
-    assert "no idx-stall" in reason and "2 validator" in reason
+    assert f"{BUGB_IDX_METRIC}=0" in reason and "2 validator" in reason
 
 
 def test_evaluate_growth_case_fails_on_finalize_stall():
     # finalized did not move a full epoch across the growth window => bug B present.
     ok, reason = evaluate_growth_case(fin0=100, fin_now=108, min_advance=32,
-                                      per_node_logs={"validator-0": "clean"})
+                                      per_node_logs={"validator-0": "clean"},
+                                      per_node_idx_metric=_CLEAN)
     assert ok is False
     assert "finalize-stall" in reason
     assert "advanced 8" in reason and "fin0=100" in reason
 
 
+def test_the_stall_reason_carries_the_verify_false_height_bursts():
+    """The diagnostic that separates "the whole committee rejected the same proposal" from
+    "the chain is slow". RED if the clustering is dropped from the reason."""
+    burst = "\n".join(["WARN verify height=27021 voting false"] * 3
+                       + ["WARN verify height=27099 voting false"])
+    ok, reason = evaluate_growth_case(fin0=100, fin_now=100, min_advance=32,
+                                      per_node_logs={"validator-0": burst},
+                                      per_node_idx_metric=_CLEAN)
+    assert ok is False
+    assert "h=27021x3" in reason and "h=27099x1" in reason
+
+
+def test_evaluate_growth_case_fails_on_a_hot_counter_even_with_clean_logs():
+    """The counter is the PRIMARY witness precisely because the ERROR is emitted once per
+    (epoch, reason) and only on the deferral path — the counter can be non-zero with no
+    line at all. RED whenever a pinned idx is unmappable, log or no log."""
+    ok, reason = evaluate_growth_case(fin0=100, fin_now=200, min_advance=32,
+                                      per_node_logs={"validator-0": "all quiet"},
+                                      per_node_idx_metric={"validator-0": 1})
+    assert ok is False
+    assert BUGB_IDX_METRIC in reason and "MUST be 0" in reason
+
+
 def test_evaluate_growth_case_fails_on_bugb_signature():
-    # liveness advanced fine, but a node carries the idx-out-of-committee line.
+    # liveness advanced fine and the counter is clean, but a node carries the ERROR.
     logs = {"validator-0": "INFO finalized height=300 ok",
             "validator-2": _BUGB_LINE}
     ok, reason = evaluate_growth_case(fin0=100, fin_now=200, min_advance=32,
-                                      per_node_logs=logs)
+                                      per_node_logs=logs,
+                                      per_node_idx_metric={"validator-0": 0, "validator-2": 0})
     assert ok is False
-    assert "idx-out-of-committee" in reason
+    assert "pinned-idx-out-of-committee ERROR" in reason
     assert "validator-2" in reason
 
 
@@ -93,7 +172,7 @@ def test_signature_failure_wins_only_after_liveness_gate():
     # liveness gate is checked before the log scan) — deterministic ordering.
     logs = {"validator-1": _BUGB_LINE}
     ok, reason = evaluate_growth_case(fin0=100, fin_now=100, min_advance=32,
-                                      per_node_logs=logs)
+                                      per_node_logs=logs, per_node_idx_metric={"validator-1": 3})
     assert ok is False
     assert "finalize-stall" in reason
 

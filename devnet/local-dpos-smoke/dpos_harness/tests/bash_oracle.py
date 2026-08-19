@@ -62,6 +62,23 @@ ROUND_CASES = (
     ("0", 4, 7, 0.4, 40),          # minimal committee, no eligible victims (v0/v1) → <none>
 )
 
+#: The BASH pools the frozen schedules were captured against, keyed by `nactions`. Held here, not
+#: derived from `SimConfig.actions_pool()`, because the two answer different questions and the
+#: difference became load-bearing when `byzantine_forge_pk` was deleted from the production pool.
+#:
+#: `test_replay` exists to prove the PYTHON DRAW ARITHMETIC (4 draws/round, the modulus, the calm
+#: bit) is bit-identical to the bash it replaced — a claim about `draw_round`, not about which
+#: faults the sim currently ships. Letting it read the live pool made every pool edit look like a
+#: PRNG regression, and the fixture cannot be regenerated to absorb one (`soak-prng.sh` is gone).
+#: So the replay feeds these historical pools through `SIM_ACTIONS`, and the live pool's
+#: composition is asserted separately by `test_actions_pure.test_actions_pool_composition`.
+BASH_ROUND_POOLS = {
+    5: ("graceful_stop_restart", "sigkill_restart", "cpu_throttle", "dkg_midwindow_restart",
+        "delegate_shift"),
+    7: ("graceful_stop_restart", "sigkill_restart", "cpu_throttle", "dkg_midwindow_restart",
+        "delegate_shift", "byzantine_equivocate", "byzantine_forge_pk"),
+}
+
 
 def bash_available() -> bool:
     """True while a real bash AND a real soak-prng.sh are on disk. False after P6 deletes it."""
@@ -83,6 +100,9 @@ _ROUND_DRIVER = r'''
 set -euo pipefail
 SOAK_SEED="$1"; ncommittee="$2"; nactions="$3"; calm_fraction="$4"; rounds="$5"
 source "$PRNG_SH"
+# The HISTORICAL bash pools — the same lists `BASH_ROUND_POOLS` holds for the Python side. They
+# name `byzantine_forge_pk`, which the shipping pool no longer has: the fixture was captured
+# against this bash and cannot be regenerated, so the pool this driver reproduces is frozen too.
 ACTIONS=(graceful_stop_restart sigkill_restart cpu_throttle dkg_midwindow_restart delegate_shift)
 (( nactions == 7 )) && ACTIONS+=(byzantine_equivocate byzantine_forge_pk)
 _vpool=(); for ((i=2;i<ncommittee;i++)); do _vpool+=("validator-$i"); done

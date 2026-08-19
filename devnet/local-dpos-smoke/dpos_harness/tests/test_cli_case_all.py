@@ -78,14 +78,14 @@ def test_the_suite_is_the_aggregates_and_never_their_constituents(monkeypatch):
 
 def test_every_suite_entry_is_a_registered_case():
     assert not [n for n in cli.SUITE if n not in cli.CASES]
-    assert len(cli.SUITE) == 20
+    assert len(cli.SUITE) == 19
 
 
 def test_the_production_path_substrate_runs_LAST():
-    """The five prod cases need foundry and a contracts checkout and are the long ones; putting
+    """The four prod cases need foundry and a contracts checkout and are the long ones; putting
     them first would spend the run's budget before anything cheap had a chance to go red."""
     prod = ["smoke-production-path", "smoke-vrf-rotation", "smoke-vrf-dkg-halt",
-            "smoke-vrf-dkg-durability", "smoke-byzantine-vrf"]
+            "smoke-vrf-dkg-durability"]
     assert cli.SUITE[-len(prod):] == prod
 
 

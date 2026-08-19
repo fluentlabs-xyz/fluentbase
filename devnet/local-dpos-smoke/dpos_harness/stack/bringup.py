@@ -97,6 +97,8 @@ class StackSpec:
                           (not truthiness), faithfully to the env contract it came from.
       byzantine         — 1 runs the `--dpos.byzantine equivocate --help` flag-parse assert
                           BEFORE anything schedules a byzantine action. Same ==1 comparison.
+                          The probed mode is pinned to `sim.actions.SUPPORTED_BYZANTINE_MODES`
+                          by `tests/test_bringup.py` (the layering forbids importing it here).
     """
     validators: int
     val_containers: int
@@ -336,6 +338,16 @@ class BringUp:
 
         # 3. byzantine flag parse assert (BEFORE scheduling byz). Lifecycle `compose run --rm`:
         # checked so a flag that no longer parses aborts loudly instead of being swallowed.
+        #
+        # THE PROBED MODE IS NOT FREE TEXT. `stack` sits below `sim` in the layering, so the
+        # declared vocabulary (`sim.actions.SUPPORTED_BYZANTINE_MODES`) cannot be imported here —
+        # instead `tests/test_bringup.test_the_probed_byzantine_mode_is_one_the_sim_can_actuate`
+        # runs this bring-up and asserts the mode below is one of the declared ones. Without that
+        # pin the probe passes on a mode the sim never uses while the sim actuates a RETIRED one,
+        # which is exactly how `forge-beacon-pk` went on hard-killing its victim with this assert
+        # green in front of it. (`--help` exits before the parse reaches the retirement arms, so
+        # what this proves is that the FLAG exists and the binary carries the devnet feature;
+        # `tests/test_byzantine_modes.py` is what proves the mode is still ACCEPTED.)
         if spec.byzantine == 1:
             self.p.run_checked(["docker", "compose", "run", "--rm", "--no-deps", "-T",
                                 "--entrypoint", "/usr/local/bin/fluent", topology.GENESIS_INIT,

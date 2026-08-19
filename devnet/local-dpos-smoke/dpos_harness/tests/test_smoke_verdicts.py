@@ -375,3 +375,121 @@ def test_the_boundary_window_straddles_the_boundary():
     b = verdicts.boundary_block(64, 32)
     lo, hi = b - verdicts.BOUNDARY_HALF_WINDOW, b + verdicts.BOUNDARY_HALF_WINDOW
     assert lo < b < hi and (hi - lo) == 2 * verdicts.BOUNDARY_HALF_WINDOW
+
+
+# ══ the EPOCH-KEY AGREEMENT PLANE ══════════════════════════════════════════
+#
+# The case-level table in `test_smoke_cases.py` drives these through
+# `assert_agreement_plane`. What is here is the part that table cannot reach: the FIELD PARSERS,
+# and the partial-readability branches of the counter verdict.
+
+
+def test_the_epoch_grep_is_right_anchored():
+    """`epoch=3` must not also answer for `epoch=30`. Without the anchor a node that ran the whole
+    story for a different epoch scores as having run it for this one — and on a 32-block epoch the
+    two-digit collision is not hypothetical."""
+    line = f"INFO {verdicts.AGREE_STARTED_LINE} epoch=30"
+    assert verdicts.epoch_lines(line, verdicts.AGREE_STARTED_LINE, 3) == []
+    assert len(verdicts.epoch_lines(line, verdicts.AGREE_STARTED_LINE, 30)) == 1
+
+
+def test_the_epoch_grep_needs_BOTH_the_message_and_the_field():
+    """Two greps and not one, so neither half can carry the match alone: a line with the right
+    epoch and the wrong message is a different event."""
+    assert verdicts.epoch_lines("INFO something else epoch=3",
+                                verdicts.AGREE_STARTED_LINE, 3) == []
+    assert verdicts.epoch_lines(f"INFO {verdicts.AGREE_STARTED_LINE} epoch=9",
+                                verdicts.AGREE_STARTED_LINE, 3) == []
+
+
+@pytest.mark.parametrize("line,want", [
+    (f"INFO {verdicts.AGREE_DECIDED_LINE} epoch=3 view=1 pinned=4", 1),
+    (f"INFO epoch=3 view=17 pinned=4 {verdicts.AGREE_DECIDED_LINE}", 17),
+    (f"INFO {verdicts.AGREE_DECIDED_LINE} epoch=3 pinned=4", None),
+    ("", None),
+])
+def test_the_decided_view_is_parsed_or_honestly_absent(line, want):
+    """None is a REAL outcome and never a zero. The view is the number the whole observation is
+    for — scoring a line that lost the field as "view 0" would make the happy-path bound pass on
+    exactly the reading that says nothing."""
+    assert verdicts.agreed_view(line) == want
+
+
+def test_the_view_parser_is_word_anchored():
+    """`view=` must not be matched inside another field name — `preview=9` is not a view."""
+    assert verdicts.agreed_view("INFO preview=9") is None
+
+
+@pytest.mark.parametrize("line,want", [
+    (f"INFO {verdicts.AGREE_DECIDED_LINE} epoch=3 view=1 pinned=4", 4),
+    (f"INFO {verdicts.AGREE_DECIDED_LINE} epoch=3 view=1", None),
+])
+def test_the_pinned_size_is_parsed_or_honestly_absent(line, want):
+    assert verdicts.agreed_pinned(line) == want
+
+
+def test_the_happy_view_bound_is_one():
+    """`view = 1` is the whole claim: the first leader proposed and the instance decided in one
+    round. The plane's leader timeout is 30 s, which on its own exceeds the pre-boundary window
+    the key has to be ready in, so a bound above 1 is a different claim about the product."""
+    assert verdicts.AGREE_HAPPY_VIEW == 1
+    assert verdicts.evaluate_agree_view({"validator-0": 1}, 3)[0]
+    assert not verdicts.evaluate_agree_view({"validator-0": 2}, 3)[0]
+
+
+def test_the_view_verdict_refuses_an_empty_reading():
+    """Nothing measured is not a converged plane. Same rule as every other reading in this suite:
+    an unread property was never evaluated, and reporting it as held is the lie the suite exists
+    to remove."""
+    ok, msg = verdicts.evaluate_agree_view({}, 3)
+    assert not ok and "nothing measured" in msg
+
+
+def test_the_stage_verdict_refuses_an_empty_reading():
+    ok, msg = verdicts.evaluate_agree_stage("set agreed", {}, 3)
+    assert not ok and "nothing was read for" in msg
+
+
+def test_the_pinned_verdict_refuses_an_empty_reading():
+    assert not verdicts.evaluate_agree_pinned({}, 3)[0]
+
+
+def test_the_rejection_counter_tolerates_a_partly_blind_scrape_and_names_it():
+    """One readable node is enough to assert (the condition is chain-wide), but a thinning
+    detector must be visible in the PASS text before it reaches zero and the verdict turns into
+    the blind pass it was designed to prevent."""
+    ok, msg = verdicts.evaluate_agree_rejections({"validator-0": "0", "validator-1": ""})
+    assert ok
+    assert "1/2" in msg and "unreadable: validator-1" in msg
+
+
+def test_the_rejection_counter_parses_a_prometheus_float():
+    """commonware renders counters as floats (`…_total 3`), and a rename that turned the value
+    into `3.0` must not read as unreadable."""
+    assert not verdicts.evaluate_agree_rejections({"validator-0": "2.0"})[0]
+    assert verdicts.evaluate_agree_rejections({"validator-0": "0.0"})[0]
+
+
+def test_the_silence_diagnostic_names_which_of_the_three_fired():
+    logs = {"validator-1": f"WARN {verdicts.AGREE_NO_SET_LINE} epoch=3",
+            "validator-2": f"INFO {verdicts.AGREE_NOT_MEMBER_LINE} epoch=3"}
+    diag = verdicts.agree_silence_diag(logs, 3)
+    assert "validator-1" in diag and "ended without agreeing a set" in diag
+    assert "validator-2" in diag and "not a member" in diag
+
+
+def test_the_silence_diagnostic_is_epoch_scoped():
+    """A silence logged for ANOTHER epoch is not this epoch's diagnosis, and offering it as one
+    sends the reader after the wrong boundary."""
+    logs = {"validator-1": f"WARN {verdicts.AGREE_BELOW_QUORUM_LINE} epoch=9"}
+    assert "never logged" in verdicts.agree_silence_diag(logs, 3)
+
+
+def test_the_durable_store_verdict_is_an_absence_that_can_fail():
+    """The silent downgrade this exists for: `build_artifact_store` returns an IN-MEMORY store on
+    an empty partition and logs nothing at all, so the missing line is the only witness."""
+    assert verdicts.evaluate_artifact_store_durable({"validator-0": True})[0]
+    ok, msg = verdicts.evaluate_artifact_store_durable({"validator-0": True,
+                                                       "validator-1": False})
+    assert not ok and "validator-1" in msg and "IN-MEMORY" in msg
+    assert not verdicts.evaluate_artifact_store_durable({})[0]

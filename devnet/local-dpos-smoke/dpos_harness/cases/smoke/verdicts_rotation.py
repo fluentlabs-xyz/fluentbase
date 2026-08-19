@@ -30,12 +30,11 @@ failure mode.
    in `tests/` by a fixture where the forbidden line IS present, which is the only direction that
    can tell a working grep from a dead one.
 
-2. **`evaluate_honest_beacon_window` is NOT `evaluate_beacon_window`.** `case-byzantine-vrf.sh:112`
-   defines its own copy that OMITS the across-height distinctness check lib.sh's has. That is
-   preserved rather than unified: on the byzantine stack the honest set is being compared while one
-   node churns forged boundary views, and adding a check bash does not run would fail a case bash
-   passes. It is expressed as `require_distinct=False` on the shared verdict, so the two windows
-   cannot drift in any other respect.
+2. **There is ONE beacon window and it runs all four checks.** There used to be a second, weaker
+   spelling — the honest-set window of `case-byzantine-vrf`, which dropped the across-height
+   distinctness check, the only one of the four able to catch a STUCK beacon. It is retired with
+   that case, along with the `require_distinct=False` knob that expressed it. Do not re-introduce
+   a window that can skip a check.
 
 3. **The committee is compared as a SET STRING.** `pp_committee` already returns sorted+lowercased
    (`verdicts_prod.committee_set`), so `==` between two epochs is a genuine set compare and a
@@ -156,8 +155,16 @@ def committee_has(committee: str, addr: str) -> bool:
 #: `case-production-path.sh:288` — the in-process Verifier→Signer transition. A RESTART-based join
 #: would never log it, which is exactly the thing this case exists to distinguish.
 PROMOTED_LINE = "promoted to Signer in-process"
-#: `:370` — the LEGACY silent-verifier watchdog WARN. Its ABSENCE from v5's whole log is the
-#: assertion; any occurrence means v5 fell back to the wedge the supervisor exists to eliminate.
+#: The LEGACY silent-verifier watchdog WARN. Its ABSENCE from v5's whole log is the assertion; any
+#: occurrence means v5 fell back to the wedge the supervisor exists to eliminate.
+#:
+#: DO NOT DELETE THIS AS A "ZERO-HIT GREP". A plain `grep -rF "NOT in the current committee"` over
+#: `crates/` finds nothing, and the string is nevertheless emitted verbatim: the warn is written
+#: with a Rust line-continuation, `"… is NOT in the current \" / "committee — run unified mode …"`
+#: (`crates/dpos/consensus/src/dpos.rs`, the `committee_watchdog` task), and `\`+newline eats the
+#: newline AND the next line's leading whitespace, so the RUNTIME message contains the phrase
+#: while the SOURCE never does. Verify a witness against the message the tracing macro builds, not
+#: against a source grep.
 WATCHDOG_LINE = "NOT in the current committee"
 #: `:315` — the demotion probe's settle window. A fixed sleep, not a poll: the question is whether
 #: the demoted node is STILL FOLLOWING, and a poll would answer "eventually" where bash asks
@@ -438,6 +445,12 @@ def evaluate_early_join(hits, epoch, window_closed=False, budget_s=None):
 DKG_AUDIT_TAIL = 40
 
 
+#: The tracing `epoch=<N>` field, parsed out of a log line. Lives HERE, beside its only surviving
+#: reader: it used to sit at the bottom of the file in the byzantine-vrf section and was read from
+#: 500 lines above, so retiring that case took the constant with it.
+_EPOCH_FIELD_RE = re.compile(r"epoch=(\d+)")
+
+
 def dkg_lifecycle_audit(logs: str, tail: int = DKG_AUDIT_TAIL):
     """EVERY lifecycle line with its epoch parsed out, UNFILTERED — `[(epoch, line), …]`.
 
@@ -565,9 +578,41 @@ TORN_POLL_GAP_S = 3
 
 # ── case-vrf-dkg-halt ─────────────────────────────────────────────────────────────────
 
-#: `case-vrf-dkg-halt.sh:88` — the POSITIVE boundary-skip proof. Fires only when the DKG outcome
-#: is genuinely None at the change-epoch boundary (application.rs:473-479).
-SKIP_PROPOSE_LINE = "beacon: change-epoch boundary but DKG outcome not ready; skipping propose"
+#: The POSITIVE no-share proof, and the successor to a witness that no longer exists.
+#:
+#: `smoke-vrf-dkg-halt` used to name the mechanism with a propose-time line — "beacon: change-epoch
+#: boundary but DKG outcome not ready; skipping propose" — emitted by the boundary gate in
+#: `application.rs`. THAT GATE IS GONE: since the epoch key left `OrderBlock` a block asserts
+#: nothing about the beacon and there is no boundary gate at all
+#: (`application.rs`, `BeaconVerify`'s docstring says so outright). The string had zero hits in the
+#: tree, so the case's positive log could only ever print its "not yet flushed" branch.
+#:
+#: What still happens on a shareless committee is one layer down: `EpochManager::reconcile_roles`
+#: resolves the member's beacon share for the epoch, gets `Absent`, and soft-enters a VERIFY-ONLY
+#: scheme instead of spawning a participating engine
+#: (`crates/dpos/consensus/src/epoch_manager.rs`, the `Role::Signer` share-gate, counted by
+#: `epoch_engine_demoted_no_polynomial_total`). With every member demoted the epoch has no signer,
+#: the boundary block is never proposed, and the head freezes at the boundary edge — the same
+#: observable the case has always asserted, reached by a different road.
+SHARE_GATE_LINE = "committee member without a usable DKG share — verify-only (share-gate)"
+#: The share-gate line renders its epoch with `?epoch` over a `#[derive(Debug)]` newtype, so the
+#: field reads `epoch=Epoch(7)` and NOT `epoch=7`. `epoch_field_lines` (which anchors on the bare
+#: number) therefore cannot match it — a witness filtered with the wrong spelling is a witness that
+#: never fires.
+SHARE_GATE_EPOCH_FMT = "epoch=Epoch({})"
+
+
+def share_gate_lines(logs: str, epoch):
+    """Lines where a node demoted itself to verify-only for `epoch` for lack of a DKG share.
+
+    MESSAGE first, then the epoch FIELD, in the two-grep shape `epoch_field_lines` uses and for the
+    same reason (tracing renders fields in an order the case does not control). The field spelling
+    is the Debug one — see `SHARE_GATE_EPOCH_FMT`."""
+    field = SHARE_GATE_EPOCH_FMT.format(int(epoch))
+    return [ln for ln in (logs or "").splitlines()
+            if SHARE_GATE_LINE in ln and field in ln]
+
+
 #: `:77` / `:81` — the seal and finalize product logs, grepped MESSAGE-then-`epoch=` (the
 #: order-independent idiom `verdicts_onchain.epoch_field_lines` owns).
 SEAL_LINE = "live DKG: dealings sealed"
@@ -692,8 +737,8 @@ def evaluate_climbed(head, edge):
 
     This is the discriminator, not a warm-up: only a chain whose consensus quorum was RESTORED
     (the two restarted nodes rejoined → 4 of 5 online) can reach `boundary-1`. A genuine consensus
-    stall would freeze at the kill point and never get here, and the "skipping propose" line would
-    never fire — an indistinct stall rather than the DKG-None boundary skip this case isolates."""
+    stall would freeze at the KILL POINT and never get here — an indistinct stall rather than the
+    shareless-committee freeze AT THE BOUNDARY EDGE that this case isolates."""
     if int(head) >= int(edge):
         return True, ""
     return False, (f"chain did not climb to the boundary edge ({edge}) within {CLIMB_S} s after "
@@ -1020,164 +1065,3 @@ def equiv_hits(logs: str, addr: str):
     the two-grep shape (markers AND address, both `-i`, the `0x` stripped because events render the
     address bare) is identical and is exactly the part a copy would get subtly wrong."""
     return VO.slash_hits(logs, addr, markers=EQUIV_MARKERS)
-
-
-# ── case-byzantine-vrf ────────────────────────────────────────────────────────────────
-
-#: `case-byzantine-vrf.sh:419` — the forge's own `warn!`. It carries a structured `epoch=<E>` field
-#: that the SAFETY window is anchored on.
-FORGE_LINE = "BYZANTINE: proposing forged PK_E at boundary"
-#: `:581` — the honest C-gate rejection. The f=1 safety mechanism: the honest share-holders' real
-#: shares do not lie on the forged poly, so the forge cannot pass C → cannot notarize → never
-#: reaches certify.
-CFAIL_LINE = "C share-on-poly FAILED for asserted outcome"
-#: `:82` — the byzantine stayer. NOT validator-0 (the host-RPC node kept honest for greps).
-DEFAULT_BYZ_IDX = 2
-#: `:320-326` — the stake boost that makes the byzantine rotation-proof AND dominant: +29e18 on top
-#: of its 1e18 self-stake ⇒ 30e18 ≈ 72% of committee stake, so the weighted view-1 fallback elects
-#: it at ~72% of change-epoch boundaries.
-BYZ_BOOST_WEI = "29000000000000000000"
-#: `:330` — the floor bump on the OTHER 1e18 validators. Exactly `minStakingAmount`; a smaller
-#: bump reverts AmountTooLow.
-FLOOR_BUMP_WEI = "1000000000000000000"
-#: `:238` — the byzantine owner's BLEND, and `:243` the toggle delegator's (2e18 × 16 in-flips plus
-#: headroom, because undelegate parks BLEND in a non-respendable queue).
-BYZ_BLEND_WEI = "30000000000000000000"
-TOGGLE_BLEND_WEI = "40000000000000000000"
-#: `:249` — the BLEND each floor-bumped owner needs. They hold genesis ETH but no runtime BLEND.
-FLOOR_BLEND_WEI = "10000000000000000000"
-#: `:239` — the toggle delegator's gas.
-TOGGLE_ETH_WEI = "1000000000000000"
-#: `:375` — the delegation that flips v5 in and out of the committee.
-V5_IN_AMOUNT = "2000000000000000000"
-#: `:198` — the toggle delegator's mnemonic index. Distinct from the spammer's 6 and from every
-#: validator owner key, so its nonce races nothing.
-TOGGLE_MNEMONIC_INDEX = "7"
-#: `:420` — confirmed flips to drive. At ~72% leader share, P(never leads any of 5) ≈ 0.17%.
-DEFAULT_MAX_TOGGLES = 5
-#: `:429` — the whole-drive wall budget, in minutes.
-DEFAULT_BUDGET_MIN = 45
-#: `:455` — a single flip surfaces ~2-3 epochs after its toggle.
-FLIP_S = 300
-#: `:488,520` — the toggle-loop and drain poll gaps.
-FLIP_POLL_S = 3
-DRAIN_POLL_S = 4
-#: `:564,570` — the SAFETY-window waits.
-FORGE_BOUNDARY_S = 900
-FORGE_RELIVE_S = 180
-
-
-def honest_nodes(all_nodes, byz_service: str):
-    """`:108-110` — every deriving node EXCEPT the byzantine one.
-
-    The exclusion is not politeness: the byzantine node's own reth may diverge while it churns
-    forged boundary views, so including it would fail the cross-node compare for the very behaviour
-    the case is provoking. What must agree is the HONEST set — that is the safety claim."""
-    return tuple(s for s in all_nodes if s != byz_service)
-
-
-def toggle_landed(desc: str, ahead: str, joiner: str) -> bool:
-    """`:485-486` — THIS flip has surfaced in the ahead-committed committee: IN ⇒ the joiner is now
-    present, OUT ⇒ now absent.
-
-    Waiting for each flip before issuing the next is the fix for the ASYMMETRIC warmup
-    (delegate→snapshot[e+2], undelegate→snapshot[e+1]): an IN at epoch e and an OUT at e+1 write
-    the SAME snapshot epoch and CANCEL, so `committee[*]` never changes and the forge gets zero
-    draws. Waiting puts consecutive flips on distinct snapshot epochs."""
-    if not ahead:
-        return False
-    return _has(ahead, joiner) if desc == "IN" else not _has(ahead, joiner)
-
-
-def evaluate_byz_in_committee(cur_set: str, byz_addr: str, byz_idx, e_new):
-    """`:471-476` — the byzantine is STILL in committee[E_new] after the rotation it drove.
-
-    It has to be: it can only forge at a boundary it LEADS, and it can only lead as a member. A
-    byzantine that got swapped out means the stake boost is too small relative to v5's in-flip, and
-    bash names that fix rather than reporting "the forge never fired" ten minutes later."""
-    if _has(cur_set, byz_addr):
-        return True, ""
-    return False, (f"the Byzantine node validator-{byz_idx} ({byz_addr}) is NOT in "
-                   f"committee[E_new={e_new}] despite the rotation-proof stake boost — raise the "
-                   f"byzantine boost above v5's V5_IN_AMOUNT.\n  committee[E_new={e_new}]: "
-                   f"{cur_set}")
-
-
-def evaluate_forged(count, byz_idx, changes_seen):
-    """`:524-531` — the forge fired at least once.
-
-    The failure message enumerates the FOUR causes bash lists, because they are genuinely
-    different fixes and the run took ~45 minutes to get here: it never led a boundary (raise the
-    budget), too few boundaries surfaced (a warmup-timing problem), the image lacks the
-    `dpos-devnet-byzantine` feature, or the byzantine fell out of the committee."""
-    if int(count or 0) >= 1:
-        return True, ""
-    return False, (f"validator-{byz_idx} never logged '{FORGE_LINE}' across {changes_seen} "
-                   "change-epoch boundaries — the forge never fired. Possible causes: it never led "
-                   "ANY change-epoch boundary (raise BYZ_VRF_MAX_TOGGLES / BYZ_VRF_BUDGET_MIN), "
-                   "too few committee changes actually surfaced (EffBal/warmup timing), the image "
-                   "was NOT built with --features dpos-devnet-byzantine, or the byzantine fell out "
-                   "of the committee (boost too small)")
-
-
-_EPOCH_FIELD_RE = re.compile(r"epoch=(\d+)")
-
-
-def forge_epoch(logs: str, fallback=None):
-    """`:547-549` — the LAST `epoch=<N>` on a forge line, ANSI-STRIPPED first.
-
-    The strip is the bug this line already had once: the tracing renderer wraps the `=` in colour
-    escapes (`epoch<ESC>[…m=<ESC>[…m4`), so the regex never matched and — under `set -euo
-    pipefail` — the unguarded `$( … | grep … )` exited non-zero and aborted the whole case with NO
-    diagnostic. The strip happens in the reading half; this half is given clean text.
-
-    LAST, not first: the most recent forged boundary is the one certain to be finalised by the time
-    the SAFETY window is asserted. The `fallback` is a last resort only — `evaluate_forge_epoch`
-    gates on the LOG hits, so a run that reaches this function's fallback arm has already failed."""
-    hits = forge_epoch_hits(logs)
-    if hits:
-        return hits[-1]
-    return str(fallback) if fallback not in (None, "") else ""
-
-
-def forge_epoch_hits(logs: str):
-    """Every `epoch=<N>` on a forge line, in order, over ANSI-STRIPPED text."""
-    return _EPOCH_FIELD_RE.findall("\n".join(
-        line for line in (logs or "").splitlines() if FORGE_LINE in line))
-
-
-def evaluate_forge_epoch(hits, fallback):
-    """The forged epoch was READ FROM THE LOG, not substituted.
-
-    The silent fallback to `e_new` returned a real digit, so the verdict passed while the safety
-    window anchored on an HONEST boundary — the one where an honest leader committed the real
-    key — and the boundary the byzantine actually forged at was never inspected."""
-    if not hits:
-        return False, (f"could not read the forged epoch from the byzantine node's log; refusing "
-                       f"to anchor the safety window on the fallback {fallback}")
-    return True, ""
-
-
-def evaluate_c_gate_rejected(count):
-    """`:583-587` — an honest share-holder REJECTED the forged boundary at the C gate.
-
-    The POSITIVE half of the safety proof. The beacon window says the honest set agreed on the real
-    seed; this says WHY — the forge could not pass C, so it could not notarize and never reached
-    certify. Without it, a run where the byzantine simply never proposed to validator-0 would look
-    identical to a run where the gate worked."""
-    if int(count or 0) >= 1:
-        return True, ""
-    return False, (f"validator-0 (honest share-holder) never logged '{CFAIL_LINE}' — it did not "
-                   "reject the forged boundary at verify (did the byzantine never get to propose "
-                   "to it, or is the forge not differing from the real key?)")
-
-
-def evaluate_byz_liveness(before, after):
-    """`:596` — the chain kept finalizing past the boundary under tx load.
-
-    Same shape as `evaluate_still_finalizing` and a DIFFERENT message: here a frozen chain means a
-    byzantine stayer wedged liveness, which is the second half of what the case claims."""
-    if int(after) > int(before):
-        return True, ""
-    return False, (f"chain not finalizing past the boundary under tx load ({after} <= {before}) — "
-                   "a byzantine stayer wedged liveness")

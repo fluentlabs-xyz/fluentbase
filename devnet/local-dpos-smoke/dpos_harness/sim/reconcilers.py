@@ -168,8 +168,6 @@ class Reconcilers:
                 self.act.act_sigkill_start(v)
             elif kind == "cpu_throttle":
                 self.act.act_cpu_restore(v)
-            elif kind == "byzantine_forge_pk":
-                self.act.act_byzantine_restore(v)
             c.recovering[v] = now
             c.recover_over_ticks[v] = 0
             c.recover_leadfin[v] = self.finalized_dec()

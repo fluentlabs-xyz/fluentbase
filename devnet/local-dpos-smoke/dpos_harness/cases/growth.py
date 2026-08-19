@@ -9,6 +9,16 @@ WHAT BUG B WAS
     boundary FINALIZE-STALLED. The fix (2-epoch warm-up) freezes the committee once
     so record and verify read the SAME slot → the idx is always in range.
 
+WHERE ITS FINGERPRINT LIVES NOW
+    `beacon_gate_decision` and the whole `dkg_logs` block field are gone with the
+    epoch key's departure from `OrderBlock`, so that WARN cannot be emitted and an
+    absence-grep for it is green against every possible chain. The condition it named
+    is still detectable, one layer down: the pinned dealer-log set is agreed on the
+    epoch-key agreement plane, and an index in it with no seat in the committed
+    committee is counted on `dpos_dkg_pinned_idx_out_of_range_total` and reported by
+    an ERROR when the ceremony then misses its settle deadline. Step 5 below asserts
+    both, per validator. See the comment above `BUGB_IDX_METRIC`.
+
 WHAT THIS CASE DOES (deterministic, SCRIPTED — not the random churn sim)
     1. Bring up a MINIMAL fast devnet (few validators, geo-latency OFF, short epoch,
        cascade OFF) via the shared Bringup, reusing SimConfig + the env contract.
@@ -23,8 +33,9 @@ WHAT THIS CASE DOES (deterministic, SCRIPTED — not the random churn sim)
     4. ASSERT LIVENESS: finalized_dec() must advance by >= a full epoch's worth of
        blocks within a deadline spanning several boundaries. A flat finalized =
        finalize-stall = bug B present = FAIL.
-    5. ASSERT NO BUG-B SIGNATURE: scan EVERY running validator's logs for the
-       dkg_logs idx-out-of-committee line. Presence = FAIL.
+    5. ASSERT NO PINNED-IDX STALL: on EVERY running validator, read
+       `dpos_dkg_pinned_idx_out_of_range_total` (non-zero = FAIL, unreadable on all of
+       them = FAIL) and scan its log for the pinned-idx ERROR (presence = FAIL).
     6. On FAIL: dump a bundle (reuse core/events.py) and exit non-zero. On PASS: print
        the CASE-GROWTH PASS line and exit 0. Always teardown unless SIM_KEEP_UP=1.
 
@@ -46,18 +57,71 @@ from ..core.policy import gov_live_voter_idx
 
 # ── PURE VERDICT LAYER (docker-free, unit-tested in tests/test_case_growth.py) ──
 
-# The definitive bug-B fingerprint, emitted by every verifier that rejects an
-# over-large dealer-log idx (crates/dpos/consensus/src/application.rs:1100). A
-# substring match is version-robust (the surrounding height=/epoch=/n= tracing
-# fields vary; this phrase is pinned to the reject).
-BUGB_IDX_SIGNATURE = "idx is out of committee"
+# THE BUG-B FINGERPRINT MOVED, AND THE OLD ONE HAD ZERO HITS.
+#
+# It used to be `"idx is out of committee"`, the WARN a verifier emitted from
+# `application.rs::beacon_gate_decision` when a proposed `dkg_logs` entry named an idx
+# past the end of `committee[E+1]`. That whole verify path is GONE with the epoch key's
+# departure from `OrderBlock` — a block carries no `dkg_logs` and asserts nothing about
+# the beacon — so the string occurs NOWHERE in the tree, and an ABSENCE verdict over a
+# string that cannot be emitted passes by construction, on every input, forever.
+#
+# The MECHANISM did not go away; it moved to the ceremony. The pinned dealer-log set is
+# agreed on the epoch-key agreement plane, and `Ceremony::scoped_pinned_logs` SKIPS a
+# pinned idx that has no seat in the committed committee (holding it would wedge the
+# ceremony silently). The actor counts every such skip on
+# `dpos_dkg_pinned_idx_out_of_range_total` and, when the ceremony then misses its settle
+# deadline, logs an ERROR naming it.
+#
+# The COUNTER is the primary witness — it fires on every occurrence — and the log line is
+# the secondary one, because it is emitted once per (epoch, reason) and only on the
+# deferral path, so the counter can be non-zero with no line. The sim's invariant battery
+# asserts the same counter (`checks/battery._inv_dkg_pinned_idx`); this is the
+# scripted-case half of the same detector.
+BUGB_IDX_METRIC = "dpos_dkg_pinned_idx_out_of_range_total"
+BUGB_IDX_SIGNATURE = "names indices outside the committed committee"
 
 
 def scan_idx_stall(log_text: str):
-    """Return the list of log lines carrying the bug-B dkg_logs idx-out-of-range
-    signature. Non-empty ⇒ a proposer numbered a dealer-log idx against a stale /
-    over-large selection view → every verifier votes false → finalize-stall."""
+    """Return the log lines carrying the pinned-idx-out-of-committee ERROR. Non-empty ⇒
+    the consensus-agreed pinned set named a dealer position that does not exist in the
+    committed committee, the ceremony skipped it, and the DKG then missed its settle
+    deadline — the 2026-07-21 idx-stall class in its surviving form."""
     return [ln.strip() for ln in log_text.splitlines() if BUGB_IDX_SIGNATURE in ln]
+
+
+def evaluate_idx_metric(per_node: dict):
+    """Verdict over `{service: dpos_dkg_pinned_idx_out_of_range_total}`, where a value
+    below 0 means the scrape did not answer (`nodes.beacon_metric`'s -1 sentinel).
+
+    Returns `(ok, reason)`. TWO ways to go red, and the second is the point:
+
+      * any node reporting >= 1 — a pinned idx had no seat in the committed committee;
+      * NO node answering at all — an unreadable counter is not a zero one, and "no
+        idx-stall" over a detector that never spoke is the exact false-green this
+        verdict replaced.
+
+    One readable node is enough to assert, following `battery._inv_dkg_pinned_idx`: the
+    pinned set is AGREED data, so the condition is chain-wide and any honest member that
+    can be scraped sees it. Unreadable nodes are named in the PASS reason too, so a
+    thinning detector is visible before it reaches zero."""
+    if not per_node:
+        return (False, f"{BUGB_IDX_METRIC}: no validator was scraped at all — refusing to "
+                       "report 'no idx-stall' over an empty detector")
+    hot = {s: v for s, v in per_node.items() if v >= 1}
+    if hot:
+        detail = ", ".join(f"{s}={v}" for s, v in sorted(hot.items()))
+        return (False, f"{BUGB_IDX_METRIC} non-zero ({detail}) — a consensus-pinned dealer-log "
+                       "index named a position OUTSIDE the committed committee and the ceremony "
+                       "skipped it (the 2026-07-21 idx-stall class). MUST be 0.")
+    readable = [s for s, v in per_node.items() if v >= 0]
+    if not readable:
+        return (False, f"{BUGB_IDX_METRIC} was unreadable on ALL {len(per_node)} scanned "
+                       f"validator(s) ({', '.join(sorted(per_node))}) — an unread counter is not "
+                       "a zero one, so the idx-stall property was never evaluated")
+    blind = sorted(set(per_node) - set(readable))
+    note = f" ({len(blind)} unreadable: {', '.join(blind)})" if blind else ""
+    return (True, f"{BUGB_IDX_METRIC}=0 on {len(readable)}/{len(per_node)} validator(s){note}")
 
 
 def cluster_verify_false(log_text: str, needle: str = "voting false"):
@@ -75,23 +139,42 @@ def cluster_verify_false(log_text: str, needle: str = "voting false"):
     return out
 
 
-def evaluate_growth_case(fin0: int, fin_now: int, min_advance: int, per_node_logs: dict):
-    """Pure verdict for the growth case (both live inputs pre-gathered). Returns
-    (ok, reason). FAILS if finalized did not advance by `min_advance` across the
-    growth window (finalize-stall) OR any node emitted the bug-B idx-out-of-range
-    signature. Deterministic; no I/O."""
+def evaluate_growth_case(fin0: int, fin_now: int, min_advance: int, per_node_logs: dict,
+                         per_node_idx_metric: dict):
+    """Pure verdict for the growth case (every live input pre-gathered). Returns
+    (ok, reason). Deterministic; no I/O.
+
+    THREE ways to go red:
+
+      * finalized did not advance by `min_advance` across the growth window — the
+        finalize-stall bug B produced. The verify-false HEIGHT CLUSTERS ride the reason,
+        because a burst of rejections at ONE height is what separates "the whole committee
+        rejected the same proposal" from "the chain is merely slow";
+      * `dpos_dkg_pinned_idx_out_of_range_total` non-zero anywhere, or unreadable
+        everywhere (see `evaluate_idx_metric`);
+      * the pinned-idx ERROR line present in any node's log."""
     advanced = fin_now - fin0
     if advanced < min_advance:
+        clusters: dict[int, int] = {}
+        for text in per_node_logs.values():
+            for height, n in cluster_verify_false(text).items():
+                clusters[height] = clusters.get(height, 0) + n
+        worst = sorted(clusters.items(), key=lambda kv: -kv[1])[:3]
+        burst = ("; verify-false bursts by height: "
+                 + ", ".join(f"h={h}x{n}" for h, n in worst)) if worst else ""
         return (False, f"finalize-stall: finalized advanced {advanced} block(s) < required "
                        f"{min_advance} across the growth window (fin0={fin0} finN={fin_now}) — "
-                       "the boundary did not finalize (bug B present)")
+                       f"the boundary did not finalize{burst}")
+    ok, reason = evaluate_idx_metric(per_node_idx_metric)
+    if not ok:
+        return (False, reason)
     hits = {svc: lines for svc, lines in
             ((s, scan_idx_stall(t)) for s, t in per_node_logs.items()) if lines}
     if hits:
         detail = "; ".join(f"{s}: {len(v)} line(s) e.g. {v[0]!r}" for s, v in hits.items())
-        return (False, f"bug-B dkg_logs idx-out-of-committee signature present — {detail}")
-    return (True, f"finalized advanced {advanced} block(s) (>= {min_advance}); no idx-stall "
-                  f"across {len(per_node_logs)} validator node(s)")
+        return (False, f"pinned-idx-out-of-committee ERROR present — {detail}")
+    return (True, f"finalized advanced {advanced} block(s) (>= {min_advance}); {reason}; no "
+                  f"pinned-idx ERROR across {len(per_node_logs)} validator node(s)")
 
 
 # ── ENV PROFILE (minimal, fast, deterministic) ─────────────────────────────────
@@ -387,29 +470,38 @@ def run_case(argv=None) -> int:
             time.sleep(5)
             fin_now = nodes.finalized_dec()
 
-        # 5. NO BUG-B SIGNATURE: scan every running validator's logs over the growth window.
+        # 5. NO PINNED-IDX STALL: over every running validator, the counter AND the log.
+        #
+        # The counter is read per node off the in-container commonware registry (:9100) — only
+        # validator-0 publishes a host port, so a v0-only read would be the hub's view of every
+        # other node's ceremony. `beacon_metric` answers -1 for an unreachable endpoint or an
+        # absent family, and `evaluate_idx_metric` treats -1 as UNREAD rather than as zero.
         window = f"{int(time.monotonic() - growth_start) + 60}s"
         running = measured("running_services()", nodes.running_services, list(_DRY_SERVICES))
         if not running:
             return fail("`docker compose ps` returned no running services — refusing to report "
                         "'no idx-stall' over an empty node set")
+        validators = [svc for svc in running if topology.is_validator(svc)]
         per_node_logs = {svc: measured(f"logs_since({svc}, {window})",
                                        lambda s=svc: nodes.logs_since(s, window), "")
-                         for svc in running if topology.is_validator(svc)}
-        print(f"CASE-GROWTH: scanned {len(per_node_logs)} validator log(s) over the last {window}",
-              flush=True)
+                         for svc in validators}
+        per_node_idx = {svc: measured(f"beacon_metric({svc}, {BUGB_IDX_METRIC})",
+                                      lambda s=svc: nodes.beacon_metric(s, BUGB_IDX_METRIC), 0)
+                        for svc in validators}
+        print(f"CASE-GROWTH: scanned {len(per_node_logs)} validator log(s) over the last {window} "
+              f"and their {BUGB_IDX_METRIC}", flush=True)
 
         # 6. verdict
         if dry:
             teardown()
             print(f"# {len(runner.log)} commands")
             return RC_PASS
-        ok, reason = evaluate_growth_case(fin0, fin_now, min_advance, per_node_logs)
+        ok, reason = evaluate_growth_case(fin0, fin_now, min_advance, per_node_logs, per_node_idx)
         if not ok:
             return fail(reason)
         span = (fin_now - fin0) // max(interval, 1)
         print(f"CASE-GROWTH PASS: committee grew across {boundaries} boundaries, finalized "
-              f"advanced fin0={fin0}→finN={fin_now} (~{span} epoch-span), no dkg_logs idx-stall",
+              f"advanced fin0={fin0}→finN={fin_now} (~{span} epoch-span); {reason}",
               flush=True)
         teardown()
         return RC_PASS

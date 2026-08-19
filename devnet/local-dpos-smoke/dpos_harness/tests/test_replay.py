@@ -30,26 +30,48 @@ from dpos_harness.tests import bash_oracle
 
 
 def _py_schedule(seed, ncommittee, nactions, calm_fraction, rounds):
+    """Drive the Python round decision over the FROZEN BASH POOL for `nactions`.
+
+    The pool is pinned through `SIM_ACTIONS` rather than reconstructed from `SIM_BYZANTINE`,
+    because the two answer different questions and they parted company when `byzantine_forge_pk`
+    was deleted from the shipping pool. What this test proves is the DRAW ARITHMETIC — four draws
+    a round, the modulus the 2nd reduces against, the calm bit — and that claim is about
+    `draw_round`, not about which faults the sim currently ships. Reading the live pool made every
+    pool edit read as a PRNG regression against a fixture that can no longer be regenerated
+    (`soak-prng.sh` is gone). The live pool's composition is asserted on its own by
+    `test_actions_pure.test_actions_pool_composition`.
+
+    `SIM_ACTIONS` is restored on the way out: it is read by `SimConfig.actions_pool()` at CALL
+    time, so a leaked value would silently re-pool every later test in the process."""
+    pool = bash_oracle.BASH_ROUND_POOLS[nactions]
+    had_actions = "SIM_ACTIONS" in os.environ
+    prev_actions = os.environ.get("SIM_ACTIONS")
     os.environ.update(
         SIM_SEED=str(seed), SIM_VALIDATORS=str(ncommittee),
         SIM_INITIAL_COMMITTEE=str(ncommittee), SIM_SPARES="0", SIM_ROTATION_SLOTS="0",
         SIM_BYZANTINE=("1" if nactions == 7 else "0"), SIM_VOLUNTARY_EXIT="0",
         SIM_CALM_FRACTION=str(calm_fraction), SIM_FORCE_BYZANTINE_EPOCH="0",
-        SIM_FORCE_VOLUNTARY_EXIT_EPOCH="0",
+        SIM_FORCE_VOLUNTARY_EXIT_EPOCH="0", SIM_ACTIONS=" ".join(pool),
     )
-    # fresh import so SimConfig re-reads the env
-    import importlib
-    from dpos_harness.sim import orchestrator
-    importlib.reload(orchestrator)
-    o = orchestrator.Orchestrator(dry_run=True)
-    addrs = [f"0x{i:040x}" for i in range(ncommittee)]
-    o.state.cur_committee = " ".join(addrs)
-    o.state.address.addr2idx = {a: f"validator-{i}" for i, a in enumerate(addrs)}
-    sched = []
-    for r in range(1, rounds + 1):
-        d = o.decide_round(r)
-        sched.append([d.action, d.victim or "<none>", str(d.is_calm), str(d.aparam)])
-    return sched
+    try:
+        # fresh import so SimConfig re-reads the env
+        import importlib
+        from dpos_harness.sim import orchestrator
+        importlib.reload(orchestrator)
+        o = orchestrator.Orchestrator(dry_run=True)
+        addrs = [f"0x{i:040x}" for i in range(ncommittee)]
+        o.state.cur_committee = " ".join(addrs)
+        o.state.address.addr2idx = {a: f"validator-{i}" for i, a in enumerate(addrs)}
+        sched = []
+        for r in range(1, rounds + 1):
+            d = o.decide_round(r)
+            sched.append([d.action, d.victim or "<none>", str(d.is_calm), str(d.aparam)])
+        return sched
+    finally:
+        if had_actions:
+            os.environ["SIM_ACTIONS"] = prev_actions
+        else:
+            os.environ.pop("SIM_ACTIONS", None)
 
 
 _FIXTURE_CASES = bash_oracle.round_fixture()
@@ -89,8 +111,12 @@ def test_frozen_fixture_still_matches_live_bash(case):
 
 def test_stream_position_is_4R():
     """The stream position after R rounds is exactly 4·R (four draws per round, unconditional) —
-    the analysis §3.1 invariant that makes replay hold. Verified via the Python PRNG counter."""
+    the analysis §3.1 invariant that makes replay hold. Verified via the Python PRNG counter.
+
+    Pool-independent by construction (the four draws are unconditional), so this one runs against
+    the LIVE pool and needs no `SIM_ACTIONS` pin."""
     from dpos_harness.sim.orchestrator import Orchestrator
+    os.environ.pop("SIM_ACTIONS", None)
     os.environ.update(SIM_SEED="20260717", SIM_VALIDATORS="7", SIM_INITIAL_COMMITTEE="7",
                       SIM_SPARES="0", SIM_ROTATION_SLOTS="0", SIM_BYZANTINE="1",
                       SIM_VOLUNTARY_EXIT="0", SIM_FORCE_BYZANTINE_EPOCH="0",

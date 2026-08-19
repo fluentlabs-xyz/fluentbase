@@ -208,20 +208,36 @@ class SimConfig:
         )
 
     def actions_pool(self):
-        """ACTIONS (case-soak.sh) — base FIVE, +byzantine pair iff SIM_BYZANTINE, +voluntary_exit
-        iff SIM_VOLUNTARY_EXIT. The append ORDER and the pool SIZE are load-bearing: they fix the
-        modulus the 2nd draw reduces against, so this list must stay byte-identical to the bash
-        ACTIONS array or the two stop replaying the same schedule. The base pool dropped from six
-        to five when `liveness_jail` was deleted — pre-deletion seeds do NOT replay against this
-        pool, by design (that sixth slot could only log a skip). SIM_ACTIONS override (B' §9 item
-        4 rolling restart) honored when set."""
+        """ACTIONS — base FIVE, +`byzantine_equivocate` iff SIM_BYZANTINE, +voluntary_exit iff
+        SIM_VOLUNTARY_EXIT. The append ORDER and the pool SIZE are load-bearing: they fix the
+        modulus the 2nd draw reduces against, so a seed only replays against the pool it was
+        drawn with. The base pool dropped from six to five when `liveness_jail` was deleted, and
+        the byzantine APPEND dropped from a pair to one when `byzantine_forge_pk` was deleted —
+        pre-deletion seeds do NOT replay against this pool, by design, exactly as for
+        `liveness_jail`.
+
+        WHY `byzantine_forge_pk` IS GONE rather than substituted or gated. It actuated
+        `FLUENT_DPOS_BYZANTINE=forge-beacon-pk`, and that mode is RETIRED in the product: the
+        epoch key left `OrderBlock`, so there is no asserted PK_E to forge and the node now
+        `bail!`s at DPoS start on it (`crates/node/src/dpos.rs`, the `Some("forge-beacon-pk")`
+        arm). The sim therefore did not make a validator byzantine — it HARD-KILLED it, on a
+        default-on action, and then measured the cluster's response to a fault it never injected.
+        Substituting `equivocate` was rejected: that is already `byzantine_equivocate`, and it
+        would run under this arm's RECOVERABLE bookkeeping (`restore_at = cur_epoch + 1`,
+        `act_byzantine_restore`) while the product treats equivocation as a PERMANENT tombstone —
+        the reconcilers would then wait forever for a rejoin that on-chain jailing forbids.
+        Gating it would leave a lottery slot that can only ever log a skip, which is the exact
+        shape `liveness_jail`'s deletion removed. `tests/test_byzantine_modes.py` pins what is
+        left against the node's own match arms so this cannot silently recur.
+
+        SIM_ACTIONS override (B' §9 item 4 rolling restart) honored when set."""
         override = os.environ.get("SIM_ACTIONS")
         if override:
             return override.split()
         acts = ["graceful_stop_restart", "sigkill_restart", "cpu_throttle",
                 "dkg_midwindow_restart", "delegate_shift"]
         if self.byzantine == 1:
-            acts += ["byzantine_equivocate", "byzantine_forge_pk"]
+            acts += ["byzantine_equivocate"]
         if self.voluntary_exit == 1:
             acts += ["voluntary_exit"]
         return acts

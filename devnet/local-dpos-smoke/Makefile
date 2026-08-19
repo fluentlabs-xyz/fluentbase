@@ -1,7 +1,7 @@
 SOLIDITY_CONTRACTS_DIR ?= ../../../solidity-contracts
 
 .PHONY: case-growth case-quorum case-seed-continuity clean down golden logs regen-contracts \
-        smoke-all smoke-base smoke-base-dry-run smoke-byzantine smoke-byzantine-vrf \
+        smoke-all smoke-base smoke-base-dry-run smoke-byzantine \
         smoke-cert-cascade smoke-cert-catchup smoke-cert-follow smoke-crash-survivor \
         smoke-deferred smoke-epoch smoke-fault smoke-fault-dry-run smoke-follow-dry-run \
         smoke-full-restart smoke-liveness smoke-onchain-dry-run smoke-peers smoke-prod-dry-run \
@@ -136,14 +136,10 @@ smoke-weighted-vrf:
 # dynamic registration; same prerequisites as smoke-production-path. Long (~6-9 min).
 smoke-vrf-rotation:
 	@python3 -m dpos_harness case smoke-vrf-rotation $(ARGS)
-# Byzantine beacon: a committee STAYER forges a PK_E at the change-epoch boundary;
-# the honest share-holders reject it at the "C" gate so it never finalizes, and an
-# honest leader crosses the boundary with the real key (SAFETY + LIVENESS). Runs on
-# the rotation stack (the forge only fires on a real committee change); requires the
-# image built with the `dpos-devnet-byzantine` feature. Long (~8-10 min), needs
-# foundry; NOT in run-all (like smoke-byzantine / smoke-production-path).
-smoke-byzantine-vrf:
-	@python3 -m dpos_harness case smoke-byzantine-vrf $(ARGS)
+# (`smoke-byzantine-vrf` was here — RETIRED. It drove a committee STAYER to forge a
+# PK_E at a change-epoch boundary; the epoch key has left `OrderBlock`, so no block
+# asserts a key, the forgery is inexpressible, and `--dpos.byzantine forge-beacon-pk`
+# now fails loud at DPoS start. Equivocation is still covered by `smoke-byzantine`.)
 # Full production path: runtime contract deploy + dynamic registration + governance
 # activation + live committee rotation + liveness ejection. Long (~5-8 min),
 # first-of-its-kind, and gated on the EIP-170 Staking-codesize fix; NOT in run-all.
@@ -179,8 +175,7 @@ smoke-vrf-dkg-restart-midwindow:
 # fleet recovery + consensus-quorum stall (G1, subsumes the single-victim midwindow
 # baseline) on the epoch-2 ceremony -> torn-journal sit-out (G5) on the first driven
 # rotation. Runtime forge deploy + governance-driven rotation; needs foundry. Long
-# (~12-18 min); NOT in run-all (like smoke-vrf-rotation / smoke-byzantine-vrf /
-# smoke-production-path).
+# (~12-18 min); NOT in run-all (like smoke-vrf-rotation / smoke-production-path).
 smoke-vrf-dkg-durability:
 	@python3 -m dpos_harness case smoke-vrf-dkg-durability $(ARGS)
 # >f PRE-SEAL TERMINAL halt (G2) — the negative control for smoke-vrf-dkg-durability's
@@ -298,24 +293,22 @@ smoke-onchain-dry-run:
 	          smoke-vrf-dkg-restart-midwindow; do \
 	  echo "===== $$c ====="; python3 -m dpos_harness case $$c --dry-run; done
 
-# The production-path five. These are the ONLY targets here that run on the PRODUCTION-PATH devnet: six validators, a
+# The production-path four. These are the ONLY targets here that run on the PRODUCTION-PATH devnet: six validators, a
 # BARE genesis, and a staking cluster deployed at RUNTIME by `forge script DeployStaking` whose
 # addresses are DISCOVERED from the deploy manifest. So they need foundry (forge/cast) on the host
 # and a solidity-contracts checkout at $$SOLIDITY_CONTRACTS_DIR, they take 6-18 minutes each, and
 # none of them is in run-all.
 #
 # Each runs ALONE and never chained: every one leaves a rotated (and for production-path, a
-# permanently shrunk + jailed) committee behind, smoke-vrf-dkg-halt leaves the chain DELIBERATELY
-# and PERMANENTLY halted, and smoke-byzantine-vrf needs the image built with the
-# `dpos-devnet-byzantine` cargo feature.
-# The production-path five, docker-free. Here the
+# permanently shrunk + jailed) committee behind, and smoke-vrf-dkg-halt leaves the chain
+# DELIBERATELY and PERMANENTLY halted.
+# The production-path four, docker-free. Here the
 # 14-phase bring-up dominates the diff, so read it in two halves: the phases up to `DPoS chain live
 # past anchor` must match lib.sh's pp_bring_up_rotation, and everything after must match the case
-# script. For smoke-byzantine-vrf the header's `overlays=` must name docker-compose.byzantine-vrf.yml
-# and the cold-restart `up` must carry all THREE compose files.
+# script.
 smoke-prod-dry-run:
 	@for c in smoke-vrf-rotation smoke-vrf-dkg-halt smoke-vrf-dkg-durability \
-	          smoke-byzantine-vrf smoke-production-path; do \
+	          smoke-production-path; do \
 	  echo "===== $$c ====="; python3 -m dpos_harness case $$c --dry-run; done
 
 # Aggregate (CI entry point).

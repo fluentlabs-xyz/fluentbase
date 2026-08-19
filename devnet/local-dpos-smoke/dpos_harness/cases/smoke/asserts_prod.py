@@ -1,5 +1,5 @@
-"""asserts_prod.py — the READING half of `case-production-path`, `case-vrf-rotation` and
-`case-byzantine-vrf`, plus the trigger the four rotation-driving cases share.
+"""asserts_prod.py — the READING half of `smoke-production-path` and `smoke-vrf-rotation`, plus
+the trigger the rotation-driving cases share.
 
 `verdicts_rotation.py` decides what the readings MEAN; this module decides WHAT to read and WHEN,
 and it is where the ordering that makes each assertion meaningful lives. `asserts_prod_dkg.py`
@@ -17,14 +17,13 @@ deliberately COMPUTES that by watching the chain rather than hardcoding it, "so 
 timeline does not silently skew us" (`case-vrf-rotation.sh:193`). A ported case that hardcoded E0+3
 would still pass today and would start testing nothing the moment the warmup constants move.
 
-═══ THE BEACON WINDOW, TWICE ══════════════════════════════════════════════════════════════
+═══ THE BEACON WINDOW ═════════════════════════════════════════════════════════════════════
 
-`assert_beacon_window` here is `lib.sh:332-365` and reads the FULL seven-node set.
-`assert_honest_beacon_window` is `case-byzantine-vrf.sh:112-139`, which reads the six honest ones
-and — deliberately — omits the across-height distinctness check. Both route through
-`verdicts.evaluate_beacon_window`, the second with `require_distinct=False`, so the three
-properties they DO share cannot drift apart. See that function's note for why the difference is
-kept rather than tidied away.
+`assert_beacon_window` here is `lib.sh:332-365` and reads the FULL seven-node set, through
+`verdicts.evaluate_beacon_window`. There was a second, weaker spelling — `assert_honest_beacon_
+window`, which read only the honest subset and dropped the across-height variance check — and it
+is retired with its single caller, `smoke-byzantine-vrf`. Nothing may re-introduce a window that
+skips the only check able to catch a STUCK beacon.
 
 ═══ WHY THE DIAGNOSTIC PRINTS SURVIVED THE PORT ═══════════════════════════════════════════
 
@@ -138,26 +137,15 @@ def _has_block(ctx, service: str, block) -> bool:
     return bool(mh) and mh != "null"
 
 
-def assert_beacon_window(ctx, lo, hi, label: str, nodes=PROD_NODES, require_distinct=True):
+def assert_beacon_window(ctx, lo, hi, label: str, nodes=PROD_NODES):
     """`assert_beacon_window <lo> <hi> <label>` (lib.sh:332-365) — read the window, apply the
     verdict, dump the offending node's tail on failure exactly as bash does."""
     rows = [(n, [ctx.mixhash_of(svc, n) for svc in nodes]) for n in range(int(lo), int(hi) + 1)]
-    ok, msg, mixes = V.evaluate_beacon_window(list(nodes), rows, label,
-                                              require_distinct=require_distinct)
+    ok, msg, mixes = V.evaluate_beacon_window(list(nodes), rows, label)
     ctx.check(ok, f"(beacon-window) {msg}", on_fail=lambda: _dump_offender(ctx, msg, nodes))
     _say(ctx, f"[{label}] blocks [{lo}..{hi}]: {len(mixes)}/{len(mixes)} distinct non-zero "
               f"prev_randao, byte-identical across all {len(nodes)} nodes")
     return mixes
-
-
-def assert_honest_beacon_window(ctx, lo, hi, label: str, nodes):
-    """`assert_honest_beacon_window` (`case-byzantine-vrf.sh:112-139`) — the same window over the
-    HONEST set only, and WITHOUT the across-height distinctness check.
-
-    Both differences are the case's: the byzantine node's own reth may diverge while it churns
-    forged boundary views, so including it would fail the compare for the behaviour being
-    provoked; and bash's copy simply does not run the variance check, so neither does this."""
-    return assert_beacon_window(ctx, lo, hi, label, nodes=nodes, require_distinct=False)
 
 
 def _dump_offender(ctx, msg: str, nodes) -> None:

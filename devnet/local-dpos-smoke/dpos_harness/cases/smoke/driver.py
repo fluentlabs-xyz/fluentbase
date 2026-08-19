@@ -681,6 +681,22 @@ class SmokeCtx:
             return nodes.gauge_val(text, name)
         return self._delegated("node_metric", f"{service}, {name}", live, dry_value)
 
+    def node_metrics_text(self, service: str, dry_value="") -> str:
+        """The WHOLE in-container commonware registry (:9100) of one service, as text.
+
+        `node_metric` above answers ONE family and costs one `docker compose exec … curl`. A
+        caller that wants eight families off four nodes would pay thirty-two of them for four
+        readings-worth of data, on a chain it is also measuring — and the eight would then be
+        sampled at eight different instants, so a set of counters read as one snapshot would not
+        be one. This reads each node once; parse it with `nodes.gauge_val`, the same anchored
+        matcher `node_metric` uses.
+
+        Returns "" when the scrape fails, exactly like `node_metric` — the caller decides what an
+        empty text means, and every caller in this tree treats it as UNREAD rather than as zero."""
+        def live():
+            return rpc.metrics_get_exec(IN_CONTAINER_GAUGE_URL, rpc.compose_exec(service))
+        return self._delegated("node_metrics_text", service, live, dry_value)
+
     def consensus_metrics(self, dry_value="") -> str:
         """validator-0's host-published :19100 registry — the COMMONWARE one only.
 

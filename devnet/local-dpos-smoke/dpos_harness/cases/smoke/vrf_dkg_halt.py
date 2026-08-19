@@ -13,11 +13,18 @@ case green and testing nothing. Both budgets are copied from the bash verbatim
 drives every one of the absences with the forbidden evidence present.
 
 WHY THE VICTIMS ARE RESTARTED rather than kept down: on n=5 the DKG dealer-quorum and the consensus
-notarization quorum are BOTH 4. Keeping two down stalls CONSENSUS below the boundary, so the
-proposer never reaches the boundary view and the `skipping propose` line never fires — an
-indistinct consensus stall, not the DKG-None boundary skip this case isolates. Restarting restores
-consensus quorum so the chain CLIMBS to the boundary, while the two nodes resume PLAYER-ONLY and
-never re-deal, leaving the DKG permanently at 3 dealers < 4. Bringing them back does not heal it.
+notarization quorum are BOTH 4. Keeping two down stalls CONSENSUS below the boundary, so the chain
+never reaches the boundary view at all — an indistinct consensus stall, not the shareless-committee
+freeze this case isolates. Restarting restores consensus quorum so the chain CLIMBS to the
+boundary, while the two nodes resume PLAYER-ONLY and never re-deal, leaving the DKG permanently at
+3 dealers < 4. Bringing them back does not heal it.
+
+WHAT FREEZES IT AT THE EDGE: no member resolves a share for the new epoch, so every one of them
+soft-enters a VERIFY-ONLY scheme at the `EpochManager` share-gate rather than spawning a
+participating engine — an epoch with no signer never proposes its first block. This replaced a
+propose-time boundary gate that went away with the epoch key's departure from `OrderBlock`; the
+observable is identical and `asserts_prod_dkg.assert_vrf_dkg_halt`'s header carries the full
+reasoning.
 
 WHY ITS OWN BRING-UP (plan §6.2 fallback): the durability case sequences its two RECOVERABLE phases
 on one bring-up. Sharing that bring-up would need a SECOND committee change after the first, and on

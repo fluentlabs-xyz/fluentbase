@@ -209,10 +209,48 @@ def assert_vrf_dkg_halt(ctx) -> None:
     On the first driven rotation ceremony, TWO committee[E_new] STAYERS are stopped BEFORE they
     seal, have their E_new ceremony journals TORN on disk, and are restarted. Each comes back into
     `JournalLoad::Torn` and sits out E_new permanently, so the new committee's DKG can never reach
-    dealer-quorum 4 → `beacon_for_epoch(E_new)` stays None → on E_new's first block every proposer
-    hits the `skipping propose` arm and SKIPS the boundary view FOREVER. The chain can never
-    produce E_new's first block, so it can never reach a later change-epoch to self-heal. A
-    TERMINAL halt, not a heal-at-next-epoch.
+    dealer-quorum 4 → NO member ever resolves an E_new share → the chain can never produce E_new's
+    first block, so it can never reach a later change-epoch to self-heal. A TERMINAL halt, not a
+    heal-at-next-epoch.
+
+    WHERE THE FREEZE COMES FROM, AS OF THE EPOCH KEY LEAVING `OrderBlock`. It used to come from a
+    propose-time BOUNDARY GATE: `beacon_for_epoch(E_new) == None` made every proposer take a
+    `skipping propose` arm at the change-epoch first block. That gate is GONE — a block asserts
+    nothing about the beacon any more (`application.rs`, `BeaconVerify`) — and its log line has
+    zero occurrences in the tree.
+
+    The freeze survives one layer down, at ENGINE SPAWN. `EpochManager::reconcile_roles` resolves
+    each member's beacon share for the epoch; `Absent` soft-enters a VERIFY-ONLY scheme instead of
+    a participating engine (`epoch_manager.rs`, the `Role::Signer` share-gate, counted by
+    `epoch_engine_demoted_no_polynomial_total`). Carry-forward cannot rescue it: E_new is a CHANGE
+    epoch, so the previous key does not carry, and a refused resolve is exactly what the share-gate
+    demotes on. With every member of committee[E_new] demoted the epoch has no signer at all, the
+    boundary block is never proposed, and the head freezes at `boundary − 1`. The recompute-heal
+    that would re-promote a late share needs the boundary block, which is precisely what is never
+    produced.
+
+    CARRY-FORWARD CANNOT RESCUE IT, AND THAT LINK IS NOW CONFIRMED (2026-08-19, read against the
+    tree rather than assumed — it was the one step the harness could not close on its own).
+    `chain_key_epoch` walks the dkgQual bits newest-first over `(BOOTSTRAP, epoch]` and stops at the
+    target the moment its own bit is set (`beacon/carry.rs:76-83`), so for a real change epoch it
+    never reaches an older epoch's mint; `select_carry_scheme` then demands `has_mint(E_new)`
+    locally and yields `NoUsableMint` when there is none (`carry.rs:97-103`), which becomes
+    `BeaconResolve::Absent` (`consensus/dpos.rs:1329`, `:1346`) and reaches the share-gate as
+    `beacon.is_none()`. The reason this forecloses carry is that `dkgQual[e]` is set purely from the
+    committee-membership diff at `commitEpochCommittee` — `dkgQual[e] = (committee[e] !=
+    committee[e-1])` (`staking-reader/reader.rs:139`, `:643`) — i.e. **independently of whether any
+    member's DKG actually succeeded**. A genuine committee change therefore forbids carry even when
+    the incoming committee cannot resolve a single share. The one arm that does rescue via carry
+    (`declined_candidate_mint_is_skipped_carried_mint_served`, `carry.rs:191-197`) fires only when
+    the contract decided NOT to change the committee, i.e. not a change epoch by the bit's own
+    definition, so it does not contradict this.
+
+    So the case's OBSERVABLE — head frozen at the boundary edge, permanently, finalized never
+    crossing `boundary` — is unchanged, and every hard verdict below still holds. What changed is
+    the diagnostic that NAMES the mechanism, re-pointed at the share-gate demotion
+    (`VR.share_gate_lines`). If this case ever comes back RED with the chain CROSSING the boundary
+    on a committee where no member computed a share, the share-gate is the thing to read, not this
+    case.
 
     WHY THE JOURNAL IS TORN AND NOT MERELY THE NODE KILLED. The case used to just stop the two
     victims and start them again, on the premise that a pre-seal restart resumes player-only. That
@@ -230,8 +268,8 @@ def assert_vrf_dkg_halt(ctx) -> None:
 
     WHY THE VICTIMS COME BACK rather than staying down: on n=5 the DKG dealer-quorum and the
     consensus notarization quorum are BOTH 4. Keeping two down stalls CONSENSUS below the boundary
-    (3 < 4), so the proposer never even reaches the boundary view and `skipping propose` never
-    fires — an indistinct consensus stall, not the DKG-None boundary skip this case isolates.
+    (3 < 4), so the chain never even reaches the boundary view — an indistinct consensus stall,
+    not the shareless-committee boundary freeze this case isolates.
     Restarting restores consensus quorum (the chain CLIMBS to the boundary) while the torn sit-out
     leaves the DKG permanently at 3 dealers, so the boundary is reached and skipped.
 
@@ -326,16 +364,28 @@ def assert_vrf_dkg_halt(ctx) -> None:
 
     # ── the POSITIVE log, best-effort ───────────────────────────────────────────────
     #
-    # It may lag the head reaching the edge (the proposer's first boundary attempt plus a log
+    # It may lag the head reaching the edge (the first reconcile at the boundary edge plus a log
     # flush), so it is NOT the hard gate — the freeze plus the no-share proof below is
     # authoritative and timing-robust. Printed either way, because when it IS there it names the
     # mechanism outright.
-    if _has_line(ctx.logs_all_project(), VR.SKIP_PROPOSE_LINE, e_new):
-        _say(ctx, f"POSITIVE log — a proposer reached + SKIPPED the E_new={e_new} boundary view "
-                  "(beacon=None)")
+    #
+    # THE MECHANISM MOVED, AND SO DID THIS WITNESS. It used to grep the propose-time boundary gate
+    # ("… DKG outcome not ready; skipping propose"), which no longer exists anywhere: with the
+    # epoch key out of `OrderBlock` a block asserts nothing about the beacon and there is no
+    # boundary gate. That string had ZERO hits in the tree, so this diagnostic could only ever
+    # print its negative branch. The surviving mechanism is the EpochManager share-gate — a
+    # committee member with no resolvable share for the epoch soft-enters verify-only instead of
+    # spawning a participating engine, so a wholly shareless committee has no signer and the
+    # boundary block is never proposed. `VR.share_gate_lines` names WHICH nodes demoted, which is
+    # the number that separates "the whole committee is shareless" from "one node is".
+    demoted = VR.share_gate_lines(ctx.logs_all_project(), e_new)
+    if demoted:
+        _say(ctx, f"POSITIVE log — {len(demoted)} share-gate demotion(s) for E_new={e_new}: "
+                  "committee members with no DKG share soft-entered verify-only, so the boundary "
+                  "view has no signer")
     else:
-        _say(ctx, "(skipping-propose log not yet flushed; the head-frozen-at-edge + no-share proof "
-                  "below is authoritative)")
+        _say(ctx, "(share-gate demotion log not yet flushed; the head-frozen-at-edge + no-share "
+                  "proof below is authoritative)")
 
     # ── the TERMINAL halt: a SUSTAINED no-progress window ───────────────────────────
     halt_head = ctx.tip_dec(dry_value=edge)
@@ -375,10 +425,10 @@ def assert_vrf_dkg_halt(ctx) -> None:
              f"journals of 2 committee stayers (v{k0}+v{k1}) PRE-seal and restarting them restored "
              "CONSENSUS quorum (the chain climbed to the boundary) while both sat out on the "
              "JournalLoad::Torn arm with no re-deal, leaving the DKG permanently below "
-             f"DEALER-quorum 4 → beacon_for_epoch(E{e_new})=None → the proposer SKIPPED the "
-             f"boundary view → the chain FROZE at the boundary (finalized never crossed {boundary})"
-             " and stayed frozen: a clean permanent option-A halt, no panic, no E_new share. "
-             "Tearing down.")
+             f"DEALER-quorum 4 → NO member resolved an E{e_new} share → every committee member "
+             "soft-entered VERIFY-ONLY at the share-gate, so the boundary view had no signer → the "
+             f"chain FROZE at the boundary (finalized never crossed {boundary}) and stayed frozen: "
+             "a clean permanent option-A halt, no panic, no E_new share. Tearing down.")
 
 
 def _frozen_for(ctx, seconds) -> bool:

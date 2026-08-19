@@ -24,7 +24,6 @@ shaped a signature (e.g. enqueue returns its seat as a value, not via a global).
 from __future__ import annotations
 
 import os
-import pathlib
 import time
 from dataclasses import dataclass, field
 
@@ -34,9 +33,17 @@ from ..core.counters import counter_progress
 
 # ── pure classifiers ─────────────────────────────────────────────────────────
 
+#: The byzantine mode strings this module is allowed to hand `act_byzantine`, i.e. to put in
+#: `FLUENT_DPOS_BYZANTINE`. It is EXHAUSTIVE and it is pinned against the node's own match arms by
+#: `tests/test_byzantine_modes.py`: an unknown or retired value makes the node `bail!` at DPoS
+#: start, which turns a fault INJECTION into a silent container death and makes the sim measure
+#: the cluster's response to a fault it never applied (`forge-beacon-pk`, retired with the epoch
+#: key's departure from `OrderBlock`, did exactly that on a default-on action).
+SUPPORTED_BYZANTINE_MODES = ("equivocate",)
+
 _DISRUPTION_ACTIONS = {
     "graceful_stop_restart", "sigkill_restart", "cpu_throttle",
-    "dkg_midwindow_restart", "byzantine_equivocate", "byzantine_forge_pk",
+    "dkg_midwindow_restart", "byzantine_equivocate",
 }
 
 
@@ -262,7 +269,7 @@ def gate_accept(ga: GateInputs):
     # Refuse such a restart whenever an imminent OR in-flight committee change overlaps its
     # ~2-epoch down+REJOIN window. dkg_midwindow_restart stays the ALLOWED exception; cpu_throttle
     # is not listed (no recreate → no mesh churn). Only DEFERS (retries next round).
-    if ga.action in ("sigkill_restart", "graceful_stop_restart", "byzantine_forge_pk"):
+    if ga.action in ("sigkill_restart", "graceful_stop_restart"):
         if ga.victim and (ga.change_imminent == 1 or ga.change_pending == 1):
             return (False, "rule2b-dkg-mesh-window (kill/recreate restart churns an imminent/"
                            "in-flight committee[E] DKG gossip window)")
@@ -613,7 +620,20 @@ class Actuators:
 
     def act_byzantine(self, v, mode):
         """Restart the victim under a single-service env overlay carrying FLUENT_DPOS_BYZANTINE.
-        Stays on the COMPOSE_FILE seam (NO -f) + --no-deps (never re-run genesis-init)."""
+        Stays on the COMPOSE_FILE seam (NO -f) + --no-deps (never re-run genesis-init).
+
+        REFUSES a mode outside `SUPPORTED_BYZANTINE_MODES`, BEFORE the overlay is written and
+        before dry_run returns. The node fails-loud on an unknown/retired mode
+        (`crates/node/src/dpos.rs`), so writing one here does not produce a byzantine validator —
+        it produces a container that dies at DPoS start while every downstream reconciler goes on
+        treating it as a live byzantine member. A caller must not be able to spell that.
+        Deliberately ahead of the `dry_run` return: a dry walk that accepts a mode a live run
+        would kill on is a transcript that lies about what the live run does."""
+        if mode not in SUPPORTED_BYZANTINE_MODES:
+            raise ValueError(
+                f"unsupported byzantine mode {mode!r} for {v}: the node accepts only "
+                f"{list(SUPPORTED_BYZANTINE_MODES)} and `bail!`s on anything else, so this would "
+                "KILL the container instead of making it byzantine")
         if self.dry_run:
             return
         overlay = f"docker-compose.sim.byz-{v}.gen.yml"
@@ -634,34 +654,6 @@ class Actuators:
         # 120s (not the 90s default): a --force-recreate pulls the container down and back up.
         self._run_ok(self._compose("up", "-d", "--no-deps", "--force-recreate", v),
                      env_overlay={"COMPOSE_FILE": merged}, timeout=120)
-
-    def act_byzantine_restore(self, v):
-        """Restore a byzantine victim to HONEST (soak-actions.sh:605-611): drop its env overlay and
-        recreate the container from the PLAIN ambient COMPOSE_FILE, so the next launch carries no
-        FLUENT_DPOS_BYZANTINE. The restore pair for the RECOVERABLE byzantine_forge_pk action (the
-        honest C-gate rejected its forged PK; once honest it rejoins). byzantine_equivocate has no
-        restore (permanent tombstone), so this is never called for it.
-
-        THIS MUST RUN BARE — `_run_ok` with NO env_overlay, inheriting the ambient env unmodified.
-        act_byzantine applies its overlay EPHEMERALLY for one call (an `env_overlay=` on that one
-        invocation; os.environ is never mutated), so the ambient COMPOSE_FILE never carried the
-        overlay and a bare recreate is exactly what drops the byzantine env. Passing the merged
-        compose list here too would RE-APPLY FLUENT_DPOS_BYZANTINE and leave the victim byzantine —
-        the defect that kept four forgers running against f=3 for four days and produced two false
-        product-bug diagnoses. The comment at :526-535 is about act_byzantine, which needs the
-        merge; this one must not have it.
-
-        --no-deps: never re-run genesis-init (it would clobber addresses.json/peers.json back to
-        genesis). Fire-and-forget like bash (`|| true`, output swallowed) — the generic Phase-2
-        restore confirm (reconcilers.process_restores) owns the rejoin assert, so there is no
-        confirm step here."""
-        if self.dry_run:
-            return
-        try:
-            pathlib.Path(f"docker-compose.sim.byz-{v}.gen.yml").unlink(missing_ok=True)
-        except OSError:                    # bash `rm -f ... 2>/dev/null || true`
-            pass
-        self._run_ok(self._compose("up", "-d", "--no-deps", "--force-recreate", v))
 
     def _node_finalized(self, v) -> int:
         """Own finalized height of a container (lib.sh node_finalized). -1 if unreachable — the

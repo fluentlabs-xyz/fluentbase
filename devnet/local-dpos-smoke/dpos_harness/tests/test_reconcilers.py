@@ -71,23 +71,6 @@ def test_process_restores_issues_then_confirms_and_frees():
     assert "validator-1" not in s.container.restore_at
 
 
-def test_process_restores_byzantine_forge_pk_recreates_the_victim():
-    """F4.2 integration: a byzantine_forge_pk victim is restored through act_byzantine_restore —
-    the arm that, for the whole life of the harness, called a method NO object defined. It was
-    invisible because every actuator double was a catch-all that manufactured the name; against
-    the strict autospec (which raises on an unknown name) this test is the real check that the
-    forge-pk victim is actually recreated instead of left running byzantine forever."""
-    rec, s = _rec()
-    s.disrupted = "validator-2"
-    s.container.restore_at["validator-2"] = 0
-    s.container.disrupt_kind["validator-2"] = "byzantine_forge_pk"
-    rec.process_restores(5)
-    rec.act.act_byzantine_restore.assert_called_once_with("validator-2")
-    # and ONLY that actuator — a forge-pk restore is a recreate, never a plain start
-    assert [c[0] for c in rec.act.method_calls] == ["act_byzantine_restore"]
-    assert "validator-2" in s.container.recovering     # still held against-f until confirmed
-
-
 def test_process_restores_defers_while_dkg_fragile():
     rec, s = _rec()
     rec.dkg_window_fragile = 1

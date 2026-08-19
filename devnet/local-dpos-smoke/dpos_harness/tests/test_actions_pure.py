@@ -62,10 +62,48 @@ def test_dkg_member_ready_states():
 # ── _adds_disruption: voluntary_exit / delegate / register add none ───────────
 def test_adds_disruption_classification():
     for a in ("graceful_stop_restart", "sigkill_restart", "cpu_throttle",
-              "dkg_midwindow_restart", "byzantine_equivocate", "byzantine_forge_pk"):
+              "dkg_midwindow_restart", "byzantine_equivocate"):
         assert adds_disruption(a)
     for a in ("voluntary_exit", "delegate_shift", "register_activate"):
         assert not adds_disruption(a)
+
+
+# ── the shipping lottery pool ─────────────────────────────────────────────────
+@pytest.mark.parametrize("byz,vex,want", [
+    (0, 0, ["graceful_stop_restart", "sigkill_restart", "cpu_throttle",
+            "dkg_midwindow_restart", "delegate_shift"]),
+    (1, 0, ["graceful_stop_restart", "sigkill_restart", "cpu_throttle",
+            "dkg_midwindow_restart", "delegate_shift", "byzantine_equivocate"]),
+    (1, 1, ["graceful_stop_restart", "sigkill_restart", "cpu_throttle",
+            "dkg_midwindow_restart", "delegate_shift", "byzantine_equivocate",
+            "voluntary_exit"]),
+])
+def test_actions_pool_composition(monkeypatch, byz, vex, want):
+    """The pool the sim actually draws from, in ORDER — the guard `test_replay` stopped being
+    when its bash pool was frozen. `byzantine_forge_pk` must not come back: it actuates a mode the
+    node `bail!`s on, so its presence turns a fault-injection draw into a container kill.
+
+    Goes red when a name is added, removed or reordered without the author saying so, and when a
+    seed's modulus changes underneath a replayable run."""
+    from dpos_harness.sim.orchestrator import SimConfig
+    monkeypatch.delenv("SIM_ACTIONS", raising=False)
+    monkeypatch.setenv("SIM_BYZANTINE", str(byz))
+    monkeypatch.setenv("SIM_VOLUNTARY_EXIT", str(vex))
+    assert SimConfig().actions_pool() == want
+
+
+def test_every_pool_action_has_an_apply_arm(monkeypatch):
+    """A drawn action with no arm in `apply_action` is a lottery slot that can only log a skip —
+    the shape `liveness_jail`'s deletion removed. Red the day a name is added to the pool and not
+    to the dispatch (or vice versa)."""
+    from dpos_harness.sim import rounds
+    from dpos_harness.sim.orchestrator import SimConfig
+    monkeypatch.delenv("SIM_ACTIONS", raising=False)
+    monkeypatch.setenv("SIM_BYZANTINE", "1")
+    monkeypatch.setenv("SIM_VOLUNTARY_EXIT", "1")
+    pool = SimConfig().actions_pool()
+    assert set(pool) == set(rounds.APPLY_ACTIONS), (
+        f"pool {sorted(pool)} != apply arms {sorted(rounds.APPLY_ACTIONS)}")
 
 
 # ── staking_reader_json: ONE field, lowercased, and no way to omit it ────────

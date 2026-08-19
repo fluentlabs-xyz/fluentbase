@@ -258,12 +258,14 @@ class ProductionPathProfile(StackProfile):
         self.committee_size = int(
             committee_size if committee_size is not None
             else os.environ.get("PP_COMMITTEE_SIZE", DEFAULT_COMMITTEE_SIZE))
-        #: The case's own compose overlay, appended to the DPoS pair at the COLD RESTART and
-        #: nowhere else. One case uses it: `case-byzantine-vrf.sh:288` re-exports a THREE-file
-        #: `COMPOSE_FILE` there so `docker-compose.byzantine-vrf.yml` puts
-        #: `FLUENT_DPOS_BYZANTINE=forge-beacon-pk` on one validator. It is a profile field for the
-        #: reason `StaticProfile.extra_overlays` is: the file list must have exactly one home, or a
-        #: case starts assembling `COMPOSE_FILE` strings of its own.
+        #: A case's own compose overlay, appended to the DPoS pair at the COLD RESTART and
+        #: nowhere else. NO shipping case passes one today — the last that did,
+        #: `smoke-byzantine-vrf`, is retired — so the field is currently exercised only by
+        #: `tests/test_prod_cases.py`. It is kept, and kept as a PROFILE field, for the reason
+        #: `StaticProfile.extra_overlays` (four live users) is one: the compose file list must
+        #: have exactly one home, or the next case that needs an overlay starts assembling
+        #: `COMPOSE_FILE` strings of its own — which is the shape that silently dropped the base
+        #: files and made a `--force-recreate` a no-op.
         self.extra_overlays = tuple(extra_overlays or ())
 
     @classmethod
@@ -352,14 +354,12 @@ class RotationBringUp:
                                                              "../../../solidity-contracts")
         self.spammers = spammers if spammers is not None else SpammerPool(dry=runner.dry)
         #: `fn(bringup)`, invoked ONCE, after the staking module exists and the `Chain` does, and
-        #: BEFORE the first governance write. One case needs it: `case-byzantine-vrf.sh:235-250`
-        #: sends five further DEPLOYER-funded transfers (the byzantine owner's BLEND, the toggle
-        #: delegator's gas and BLEND, and BLEND for the three floor-bumped owners). Its original
-        #: justification for sitting exactly here — that an earlier transfer would advance the
-        #: deployer nonce and shift the CREATE addresses off the prediction in
-        #: `staking-reader.json` — is GONE with the prediction. The position still matters for a
-        #: reason the old one hid: the transfers move BLEND, and the token does not exist until
-        #: step 1 of the sequence has run.
+        #: BEFORE the first governance write — the slot for a case that must fund or stake before
+        #: governance runs. NO shipping case wires one today (the last, `smoke-byzantine-vrf`, is
+        #: retired); the POSITION is what the seam is for and it is pinned by
+        #: `tests/test_prod_cases.py`. Why exactly here: a hook's writes move tokens through a
+        #: `Chain`, so the module must already be installed, and they must precede the first
+        #: governance action or the deployer's tx sequence stops matching.
         self.post_manifest = post_manifest
         # Facts the case reads afterwards. The three contract addresses are CONSTANTS, not deploy
         # outcomes — one module at a fixed address, with `chain_config_rt` / `liveness_rt` as

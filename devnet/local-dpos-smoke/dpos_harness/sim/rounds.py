@@ -191,7 +191,7 @@ def _apply_chain_write(fn, arg, event, label) -> bool:
 # tally would record a fire for a round in which nothing happened.
 APPLY_ACTIONS = ("graceful_stop_restart", "sigkill_restart", "cpu_throttle",
                  "dkg_midwindow_restart", "delegate_shift", "byzantine_equivocate",
-                 "byzantine_forge_pk", "voluntary_exit")
+                 "voluntary_exit")
 
 
 def apply_action(state, act: "actions.Actuators", action: str, victim: str,
@@ -219,7 +219,7 @@ def apply_action(state, act: "actions.Actuators", action: str, victim: str,
 
     if action in ("graceful_stop_restart", "sigkill_restart", "cpu_throttle",
                   "dkg_midwindow_restart", "byzantine_equivocate",
-                  "byzantine_forge_pk", "voluntary_exit") and victim:
+                  "voluntary_exit") and victim:
         state.identity.ever_faulted[state.ident_idx(victim)] = action
 
     c = state.container
@@ -259,9 +259,6 @@ def apply_action(state, act: "actions.Actuators", action: str, victim: str,
         state.settle_until_epoch = cur_epoch + cfg.membership_settle
         seat = actions.enqueue_backfill_obligation(state, victim, cur_epoch)
         state.identity.tombstone_settle_epoch[seat] = cur_epoch + cfg.membership_settle
-    elif action == "byzantine_forge_pk":
-        act.act_byzantine(victim, "forge-beacon-pk"); state.mark_disrupted(victim)
-        c.disrupt_kind[victim] = action; c.restore_at[victim] = cur_epoch + 1
     elif action == "voluntary_exit":
         # REVERSIBLE departure-then-backfill OUT half. Open the settle window / enqueue ONLY on a
         # REAL exit (a govern round-trip that never landed must NOT open a phantom window). NO

@@ -19,7 +19,8 @@ from __future__ import annotations
 
 import pytest
 
-from dpos_harness.cases.smoke import asserts, base, driver, epoch, tx, verdicts, vrf, vrf_boundary
+from dpos_harness.cases.smoke import (asserts, base, beacon, driver, epoch, tx, verdicts, vrf,
+                                      vrf_boundary)
 from dpos_harness.cases.smoke.driver import SmokeCtx, SmokeFailure
 from dpos_harness.core import proc
 from dpos_harness.core.exit_codes import RC_ERROR
@@ -638,11 +639,48 @@ def test_assert_vrf_samples_only_epoch_2_and_later(monkeypatch):
 
 # ── vrf-boundary ───────────────────────────────────────────────────────────
 
+#: A healthy agreement-plane log for the boundary case's target epoch, as ONE node emits it. The
+#: fields the parsers read (`epoch=`, `view=`, `pinned=`) are spelled exactly as the tracing writer
+#: renders them.
+_PLANE_EPOCH = asserts.BOUNDARY_TARGET_EPOCH
+_PLANE_OK = "\n".join([
+    f"INFO {verdicts.AGREE_REHYDRATE_LINE} entries=0",
+    f"INFO {verdicts.AGREE_STARTED_LINE} epoch={_PLANE_EPOCH}",
+    f"INFO {verdicts.AGREE_DECIDED_LINE} epoch={_PLANE_EPOCH} view=1 pinned=4",
+    f"INFO {verdicts.AGREE_ADOPTED_LINE} epoch={_PLANE_EPOCH} pinned=4",
+    f"INFO {verdicts.AGREE_SHARE_LINE} epoch={_PLANE_EPOCH}",
+])
+
+
+def _plane_logs(**per_node):
+    """`logs_required` stub: `_PLANE_OK` for every node, overridden per service."""
+    def read(svc, case, what, dry_value=""):
+        return per_node.get(svc, _PLANE_OK)
+    return read
+
+
+#: Every family the plane observation parses, at zero — a healthy node's registry.
+_PLANE_METRIC_TEXT = "\n".join(
+    f"{m} 0" for m in (verdicts.AGREE_REJECT_METRIC,) + verdicts.AGREE_REPORTED_METRICS)
+
+
+def _plane_metrics(**per_node):
+    """`node_metrics_text` stub: a clean registry for every node unless overridden by service.
+
+    A per-service value REPLACES that node's whole registry text, so `""` is "the scrape said
+    nothing" — the unreadable case `SmokeCtx.node_metrics_text` returns on a failed exec."""
+    def read(svc, dry_value=""):
+        return per_node.get(svc, _PLANE_METRIC_TEXT)
+    return read
+
+
 def _boundary_world(monkeypatch, **over):
     world = dict(
         wait_finalized_ge=lambda target, timeout: True,
         mixhash_of=lambda svc, block, **kw: _blockmix(block),
         dump_logs=lambda *a, **kw: None,
+        logs_required=_plane_logs(),
+        node_metrics_text=_plane_metrics(),
     )
     world.update(over)
     return _live_ctx(monkeypatch, **world)
@@ -689,3 +727,113 @@ def test_assert_vrf_boundary_fails_if_the_chain_never_reaches_the_window(monkeyp
     ctx, _ = _boundary_world(monkeypatch, wait_finalized_ge=lambda t, to: False)
     with pytest.raises(SmokeFailure, match="did not reach finalized 168"):
         asserts.assert_vrf_boundary(ctx)
+
+
+# ── vrf-boundary: the EPOCH-KEY AGREEMENT PLANE ────────────────────────────
+#
+# Every one of these is a world in which the plane is broken in exactly one way while the
+# `prev_randao` window above stays PERFECTLY GREEN — which is the whole reason the observation
+# exists. If any of them stopped raising, the case would be back to proving only that the beacon
+# produced some output.
+
+def _without(*lines):
+    """`_PLANE_OK` with the given stage line(s) removed — one silent node."""
+    return "\n".join(ln for ln in _PLANE_OK.splitlines()
+                      if not any(m in ln for m in lines))
+
+
+_PLANE_FAILURES = [
+    (lambda: dict(logs_required=_plane_logs(**{"validator-2": _without(
+        verdicts.AGREE_STARTED_LINE)})),
+     "never logged 'instance started'", "a_node_opened_no_instance"),
+    (lambda: dict(logs_required=_plane_logs(**{"validator-1": _without(
+        verdicts.AGREE_DECIDED_LINE)})),
+     "never logged 'set agreed'", "an_instance_ran_and_never_decided"),
+    (lambda: dict(logs_required=_plane_logs(**{"validator-3": _without(
+        verdicts.AGREE_ADOPTED_LINE)})),
+     "never logged 'agreed set adopted'", "the_artifact_never_reached_the_ceremony"),
+    (lambda: dict(logs_required=_plane_logs(**{"validator-0": _without(
+        verdicts.AGREE_SHARE_LINE)})),
+     r"never logged 'PK_epoch \+ share stored'", "the_ceremony_never_finished"),
+    (lambda: dict(logs_required=_plane_logs(**{"validator-2": _without(
+        verdicts.AGREE_REHYDRATE_LINE)})),
+     "IN-MEMORY store", "the_artifact_store_is_not_durable"),
+    # THE VIEW. A leader timeout on its own outlasts the pre-boundary window.
+    (lambda: dict(logs_required=_plane_logs(**{
+        "validator-1": _PLANE_OK.replace("view=1", "view=2")})),
+     "DIFFERENT views", "nodes_decided_at_different_views"),
+    (lambda: dict(logs_required=_plane_logs(**{
+        svc: _PLANE_OK.replace("view=1", "view=2") for svc in beacon.COMMITTEE_NODES})),
+     "agreed at view 2, not 1", "a_leader_timeout_was_paid"),
+    (lambda: dict(logs_required=_plane_logs(**{
+        svc: _PLANE_OK.replace(" view=1", "") for svc in beacon.COMMITTEE_NODES})),
+     "carried no `view=` field", "the_view_field_disappeared"),
+    # THE PINNED SET. Two sizes = two selections = two PK_epoch.
+    (lambda: dict(logs_required=_plane_logs(**{
+        "validator-3": _PLANE_OK.replace("pinned=4", "pinned=3")})),
+     "DIFFERENT pinned-set sizes", "nodes_pinned_different_sets"),
+    (lambda: dict(logs_required=_plane_logs(**{
+        svc: _PLANE_OK.replace("pinned=4", "pinned=0") for svc in beacon.COMMITTEE_NODES})),
+     "EMPTY pinned set", "the_agreed_set_is_empty"),
+    # THE REJECTION COUNTER.
+    (lambda: dict(node_metrics_text=_plane_metrics(**{
+        "validator-0": _PLANE_METRIC_TEXT.replace(
+            f"{verdicts.AGREE_REJECT_METRIC} 0", f"{verdicts.AGREE_REJECT_METRIC} 1")})),
+     "non-zero", "a_served_artifact_was_refused_as_misbehaviour"),
+    (lambda: dict(node_metrics_text=_plane_metrics(**{
+        svc: "" for svc in beacon.COMMITTEE_NODES})),
+     "unreadable on ALL 4", "the_rejection_counter_never_answered"),
+    # A metric RENAME is the same reading as a dead scrape and must not read as "all clear".
+    (lambda: dict(node_metrics_text=_plane_metrics(**{
+        svc: "some_other_total 0" for svc in beacon.COMMITTEE_NODES})),
+     "unreadable on ALL 4", "the_rejection_family_was_renamed"),
+]
+
+
+@pytest.mark.parametrize("world,match", [(w, m) for w, m, _ in _PLANE_FAILURES],
+                         ids=[i for _, _, i in _PLANE_FAILURES])
+def test_assert_vrf_boundary_fails_on_a_broken_agreement_plane(monkeypatch, world, match):
+    ctx, _ = _boundary_world(monkeypatch, **world())
+    with pytest.raises(SmokeFailure, match=match):
+        asserts.assert_vrf_boundary(ctx)
+
+
+def test_a_missing_stage_names_which_silence_the_plane_hit(monkeypatch):
+    """The three silence lines are NOT verdicts (the plane retries, so any of them can appear on a
+    run that converges) — they are the diagnostic that says WHICH silence a missing stage was. A
+    failure that does not carry them sends the reader back to the raw logs."""
+    broken = _without(verdicts.AGREE_DECIDED_LINE) + (
+        f"\nWARN {verdicts.AGREE_BELOW_QUORUM_LINE} epoch={_PLANE_EPOCH}")
+    ctx, _ = _boundary_world(monkeypatch,
+                             logs_required=_plane_logs(**{"validator-1": broken}))
+    with pytest.raises(SmokeFailure, match="below quorum, not proposing"):
+        asserts.assert_vrf_boundary(ctx)
+
+
+def test_a_missing_stage_with_no_silence_line_says_so_explicitly(monkeypatch):
+    """The other half: a stage missing with none of the three silences logged is a DIFFERENT
+    finding (the plane never named a reason), and the message must not read as if it had."""
+    ctx, _ = _boundary_world(monkeypatch, logs_required=_plane_logs(
+        **{"validator-1": _without(verdicts.AGREE_DECIDED_LINE)}))
+    with pytest.raises(SmokeFailure, match="a reason the plane never logged"):
+        asserts.assert_vrf_boundary(ctx)
+
+
+def test_the_plane_scan_filters_by_epoch(monkeypatch):
+    """Every stage line carries `epoch=<N>`. A node that ran the whole story for a DIFFERENT epoch
+    has not run it for this one — and an unanchored grep would score it as if it had."""
+    wrong = _PLANE_OK.replace(f"epoch={_PLANE_EPOCH}", f"epoch={_PLANE_EPOCH}0")
+    ctx, _ = _boundary_world(monkeypatch, logs_required=_plane_logs(**{"validator-2": wrong}))
+    with pytest.raises(SmokeFailure, match="never logged 'instance started'"):
+        asserts.assert_vrf_boundary(ctx)
+
+
+def test_the_plane_reads_the_committee_and_not_the_import_follower(monkeypatch):
+    """`full-node` is not a `--dpos` node and runs no agreement instance, so including it would
+    make every stage verdict a guaranteed red. The scan set is the four validators."""
+    seen = []
+    ctx, _ = _boundary_world(monkeypatch, logs_required=lambda svc, case, what, dry_value="": (
+        seen.append(svc), _PLANE_OK)[1])
+    asserts.assert_vrf_boundary(ctx)
+    assert seen == list(beacon.COMMITTEE_NODES)
+    assert "full-node" not in seen

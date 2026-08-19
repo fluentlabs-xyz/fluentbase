@@ -42,7 +42,7 @@ constraint prod will face during migration.
 
     make regen-contracts        # one-time, after a Solidity change
     make smoke-base             # the read-only case suite on one bring-up (~4 min)
-    make smoke-all              # the whole gate, 20 cases, one subprocess each (3-5 h)
+    make smoke-all              # the whole gate, 19 cases, one subprocess each (3-5 h)
 
     python3 -m dpos_harness case list          # every case name
     python3 -m dpos_harness case <name>        # one case
@@ -217,6 +217,43 @@ consensus-plane connectivity (push dissemination is participant-scoped) and
 idles behind the committee watchdog WARN until its committee epoch — run
 unified mode instead.
 
+## Observing the epoch-key agreement plane
+
+The epoch key is agreed peer-to-peer during epoch E on a second consensus instance and published
+as a quorum-signed artifact — it is not carried by a block and has no on-chain mirror, so the
+plane's own logs and counters are the only place the mechanism is visible. `smoke-vrf-boundary`
+(and therefore `smoke-base`, and therefore the gate) asserts the whole happy path for the epoch
+its boundary opens into, on every committee member:
+
+    dkg agree: epoch-key agreement instance started
+    dkg agree: pinned dealer-log set agreed, instance torn down     (epoch, view, pinned)
+    live DKG: adopting the agreed dealer-log set as this epoch's pinned set
+    live DKG: PK_epoch + share computed + stored
+
+plus the durable artifact store's `rehydrated the agreement-artifact store from disk` (its absence
+means the store silently fell back to memory-only), one agreed `view` and one `pinned` size across
+all four validators, and `dpos_dkg_artifact_rejected_total == 0`.
+
+**Read the `view` first when something is slow.** `view = 1` is the happy path — the first leader
+proposed and the instance decided in one round. `view > 1` means a 30 s leader timeout was paid,
+which on its own exceeds the whole pre-boundary window the key has to be ready in, so the case
+fails on it by design rather than letting it resurface later as a missing share. It is printed on
+every run, pass or fail, beside the pinned-set size.
+
+Six further counters are **reported, never asserted** — `dkg_agree_body_lost_total`,
+`dkg_agree_bar_unmet_total`, `dkg_agree_logs_omitted_total`, `dpos_dkg_artifact_served_total`,
+`dpos_dkg_artifact_not_yet_total`, `dpos_dkg_artifact_unverifiable_total`,
+`dpos_dkg_artifact_pull_exhausted_total`. Each has a legitimate non-zero on a healthy converging
+run (a delivery race, a peer asking early, a node whose chain view has not caught up), so a
+zero-gate on them would be a flaky red; they are printed so drift is visible, and they ride the
+failure diagnostic together with the three agreement-silence lines (`the instance ended without
+agreeing a set`, `below quorum, not proposing`, `not a member of committee[epoch]`).
+
+Still unobserved, and the natural next step: the RESTART witnesses — `beacon: reloaded the agreed
+artifact from the share file` and `beacon: replaying locally-stored agreement artifacts into the
+write-back`. They need a case whose restart lands after an artifact exists (`smoke-crash-survivor`,
+`smoke-full-restart`, `smoke-vrf-dkg-restart-midwindow`).
+
 ## What this is NOT
 
 - Adversarial scenarios (slashing, view-change, equivocation) —
@@ -259,7 +296,7 @@ Needs foundry (`forge`/`cast`) and the smoke image built with the
 | `SIM_CHURN_PERIOD` | `90s` | `20s` | mean delay between churn actions |
 | `SIM_CHECK_PERIOD` | `10s` | `5s` | invariant battery cadence |
 | `SIM_CALM_FRACTION` | `0.4` | `0.4` | fraction of epochs with zero churn |
-| `SIM_BYZANTINE` / `SIM_QUORUM_PROBE` | `1` / `1` | `0` / `0` | enable byzantine actions / the quorum-loss probe |
+| `SIM_BYZANTINE` / `SIM_QUORUM_PROBE` | `1` / `1` | `0` / `0` | enable the byzantine action (`byzantine_equivocate` — the pool's second byzantine draw, `byzantine_forge_pk`, is DELETED: its `--dpos.byzantine forge-beacon-pk` mode is retired in the node and now fails loud at DPoS start, so the action hard-killed the victim instead of corrupting it) / the quorum-loss probe |
 | `SIM_SEED` | fresh, printed | fresh, printed | PRNG seed — set it to replay the intent schedule |
 | `SIM_EXEC_SAT_THRESHOLD` / `SIM_EXEC_SAT_TICKS` / `SIM_EXEC_SAT_EARLY` | `0.7` / `3` / `0.4` | same | exec-saturation watch (reported-not-asserted): warn event when the chain-wide mean per-block EL derive+import time (`reth_dpos_derive_el_apply_duration_seconds` Δsum/Δcount over the tick window) exceeds THRESHOLD of the 1s block interval for TICKS consecutive measured ticks; one-time info event on first sighting above EARLY |
 | `SIM_RATE_REPORT_TICKS` / `SIM_RATE_WARN` | `20` / `0.5` | same | block-rate watch (reported-not-asserted): periodic info timeline event every N measured ticks with `rate=Δfinalized/Δwall blk/s`; warn when rate < `SIM_RATE_WARN` for 2+ consecutive measured ticks (SLOW-without-stalling — a full stall is hard-asserted by finalize-stall) |

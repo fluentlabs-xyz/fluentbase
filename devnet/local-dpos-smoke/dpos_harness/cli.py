@@ -62,14 +62,17 @@ CASES = {
     "smoke-byzantine": "smoke.byzantine",
     "smoke-cert-catchup": "smoke.cert_catchup",
     "smoke-vrf-dkg-restart-midwindow": "smoke.vrf_dkg_restart_midwindow",
-    # The PRODUCTION-PATH cluster (chunk 5b). These five run on a DIFFERENT devnet from the twenty
+    # The PRODUCTION-PATH cluster (chunk 5b). These four run on a DIFFERENT devnet from the twenty
     # above — six validators, a bare genesis and a staking cluster deployed at runtime by forge —
-    # so they need foundry and a solidity-contracts checkout, and they are the long ones.
+    # so they need foundry and a solidity-contracts checkout, and they are the long ones. There
+    # was a fifth, `smoke-byzantine-vrf`; it is RETIRED. Its whole subject was a proposer forging
+    # the `PK_E` a change-boundary block asserted, and no block asserts a key any more — the
+    # forgery is inexpressible, its `--dpos.byzantine forge-beacon-pk` mode `bail!`s at DPoS
+    # start, and both of its witness greps had zero hits in the tree.
     "smoke-production-path": "smoke.production_path",
     "smoke-vrf-rotation": "smoke.vrf_rotation",
     "smoke-vrf-dkg-halt": "smoke.vrf_dkg_halt",
     "smoke-vrf-dkg-durability": "smoke.vrf_dkg_durability",
-    "smoke-byzantine-vrf": "smoke.byzantine_vrf",
 }
 
 
@@ -88,7 +91,7 @@ SUITE = [
     "smoke-byzantine", "smoke-cert-catchup", "smoke-vrf-dkg-restart-midwindow",
     "growth", "quorum", "seed-continuity",
     "smoke-production-path", "smoke-vrf-rotation", "smoke-vrf-dkg-halt",
-    "smoke-vrf-dkg-durability", "smoke-byzantine-vrf",
+    "smoke-vrf-dkg-durability",
 ]
 
 _RC_NAME = {RC_PASS: "PASS", RC_FAIL: "FAIL", RC_USAGE: "USAGE",

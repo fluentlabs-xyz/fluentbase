@@ -349,6 +349,34 @@ def test_CEREMONY_STARTED_LINE_is_a_string_the_product_ACTUALLY_EMITS():
 
 # ══ case-vrf-dkg-halt ══════════════════════════════════════════════════════════════════════
 
+def test_the_share_gate_witness_matches_the_debug_epoch_spelling():
+    """The share-gate line is logged with `?epoch` over a `#[derive(Debug)]` newtype, so its field
+    reads `epoch=Epoch(7)`. The bare-number matcher every OTHER witness in this file uses cannot
+    see that, and a witness filtered with the wrong spelling never fires — which is exactly how the
+    predecessor it replaces (`skipping propose`) sat in the case for a whole release printing its
+    negative branch.
+
+    RED if the matcher is re-pointed at the bare spelling, or if the message text drifts."""
+    logs = ("noise\n"
+            f"INFO {VR.SHARE_GATE_LINE} epoch=Epoch(7)\n"
+            f"INFO {VR.SHARE_GATE_LINE} epoch=Epoch(8)\n")
+    assert len(VR.share_gate_lines(logs, 7)) == 1
+    assert len(VR.share_gate_lines(logs, 8)) == 1
+    assert VR.share_gate_lines(logs, 9) == []
+    # the bare spelling must NOT be what the matcher looks for
+    assert VR.share_gate_lines(f"INFO {VR.SHARE_GATE_LINE} epoch=7", 7) == []
+    # and a line carrying only the epoch field is not a demotion
+    assert VR.share_gate_lines("INFO something else epoch=Epoch(7)", 7) == []
+
+
+def test_the_share_gate_epoch_field_is_right_anchored_by_the_closing_paren():
+    """`Epoch(7)` must not also answer for `Epoch(70)`. The closing paren is what anchors it, which
+    is why the format string carries it."""
+    logs = f"INFO {VR.SHARE_GATE_LINE} epoch=Epoch(70)"
+    assert VR.share_gate_lines(logs, 7) == []
+    assert len(VR.share_gate_lines(logs, 70)) == 1
+
+
 def test_the_kill_set_is_committee_stayers_from_v1_to_v4_in_index_order():
     kills = VR.kill_candidates(INITIAL + [A5], ROTATED)
     assert kills == [1, 2]
@@ -576,101 +604,24 @@ def test_the_equivocation_grep_needs_BOTH_a_marker_AND_the_address():
     assert not VR.equiv_hits("WARN equivocation who=" + A4[2:], A3)
 
 
-# ══ case-byzantine-vrf ═════════════════════════════════════════════════════════════════════
-
-def test_the_honest_set_excludes_the_byzantine_node():
-    nodes = ("validator-0", "validator-1", "validator-2", "full-node")
-    assert VR.honest_nodes(nodes, "validator-2") == ("validator-0", "validator-1", "full-node")
-
-
-@pytest.mark.parametrize("desc,ahead,want", [
-    ("IN", ROTATED, True),
-    ("IN", SET5, False),
-    ("OUT", SET5, True),
-    ("OUT", ROTATED, False),
-    ("IN", "", False),      # unreadable is not a landed flip in either direction
-    ("OUT", "", False),
-])
-def test_a_flip_lands_only_when_the_ahead_committed_set_agrees(desc, ahead, want):
-    assert VR.toggle_landed(desc, ahead, A5) is want
-
-
-def test_a_byzantine_that_fell_out_of_the_committee_is_named_as_such():
-    """It can only forge at a boundary it LEADS, and only as a member. bash names the FIX — raise
-    the boost — rather than reporting "the forge never fired" forty minutes later."""
-    assert VR.evaluate_byz_in_committee(ROTATED, A2, 2, 5)[0]
-    without_byz = " ".join(sorted([A0, A1, A3, A4, A5]))
-    ok, msg = VR.evaluate_byz_in_committee(without_byz, A2, 2, 5)
-    assert not ok and "raise the byzantine boost" in msg
-
-
-def test_the_forge_verdict_enumerates_the_four_causes():
-    assert VR.evaluate_forged(2, 2, 5)[0]
-    ok, msg = VR.evaluate_forged(0, 2, 5)
-    assert not ok
-    for cause in ("BYZ_VRF_MAX_TOGGLES", "EffBal/warmup", "dpos-devnet-byzantine", "boost too "):
-        assert cause in msg, cause
-
-
-def test_the_forge_epoch_is_the_LAST_one_and_needs_an_ANSI_STRIPPED_log():
-    """The strip is not the reader's discretion. The tracing renderer wraps the `=` in colour
-    escapes, so a raw log yields NOTHING — and in bash the unguarded `$( … | grep … )` then exited
-    non-zero and aborted the case with no diagnostic at all (`case-byzantine-vrf.sh:540-545`)."""
-    clean = (f"WARN {VR.FORGE_LINE} epoch=3\n"
-             f"WARN {VR.FORGE_LINE} epoch=7\n")
-    assert VR.forge_epoch(clean) == "7"
-    raw = f"WARN {VR.FORGE_LINE} epoch\x1b[0m=\x1b[0m7"
-    assert VR.forge_epoch(raw, fallback=None) == ""
-    assert VR.forge_epoch(strip_ansi(raw)) == "7"
-
-
-def test_the_forged_epoch_must_be_READ_from_the_log_and_never_substituted():
-    """The fallback still RESOLVES an anchor; it no longer SATISFIES the gate.
-
-    `e_new` is a real digit, so the old verdict passed on it while the safety window anchored on
-    an HONEST boundary — the one where an honest leader committed the real key — and the boundary
-    the byzantine actually forged at was never inspected."""
-    assert VR.forge_epoch("nothing", fallback=5) == "5"
-    ok, msg = VR.evaluate_forge_epoch(VR.forge_epoch_hits("nothing"), 5)
-    assert not ok and "refusing to anchor the safety window on the fallback 5" in msg
-    assert VR.evaluate_forge_epoch(VR.forge_epoch_hits(f"WARN {VR.FORGE_LINE} epoch=7"), 5)[0]
-
-
-def test_a_line_that_is_not_a_forge_line_never_contributes_an_epoch():
-    assert VR.forge_epoch("INFO some other line epoch=9", fallback=None) == ""
-
-
-def test_the_c_gate_rejection_is_the_POSITIVE_half_of_the_safety_proof():
-    """Without it, a run where the byzantine simply never proposed to validator-0 would look
-    identical to a run where the gate worked."""
-    assert VR.evaluate_c_gate_rejected(3)[0]
-    ok, msg = VR.evaluate_c_gate_rejected(0)
-    assert not ok and "did not reject the forged boundary at verify" in msg
-
-
-def test_the_byzantine_liveness_message_differs_from_the_shared_one():
-    """Same shape, different diagnosis: here a frozen chain means a byzantine stayer wedged
-    liveness, which is the second half of what the case claims."""
-    assert VR.evaluate_byz_liveness(10, 11)[0]
-    ok, msg = VR.evaluate_byz_liveness(10, 10)
-    assert not ok and "byzantine stayer wedged liveness" in msg
-    assert "byzantine" not in VR.evaluate_still_finalizing(10, 10)[1]
-
-
-# ══ the two shared-verdict extensions ══════════════════════════════════════════════════════
+# ══ the shared beacon window ═══════════════════════════════════════════════════════════════
 
 def _rows(values):
     return [(100 + i, list(v)) for i, v in enumerate(values)]
 
 
-def test_the_honest_window_drops_ONLY_the_distinctness_check():
-    """`case-byzantine-vrf.sh:112` omits the variance check that `lib.sh:332` runs. A STUCK beacon
-    must therefore pass the honest window and FAIL the shared one — and every other property must
-    behave identically in both."""
+def test_a_stuck_beacon_fails_the_window():
+    """The variance check is the ONLY one of the four that can see a stuck beacon: it converges
+    perfectly and is non-zero, so readability, non-zero-ness and cross-node agreement all pass it.
+
+    There used to be a `require_distinct=False` spelling that dropped exactly this check, for
+    exactly one caller (`smoke-byzantine-vrf`'s honest-set window). The case is retired and so is
+    the knob — this test is what fails if either comes back."""
     stuck = _rows([("0xaa", "0xaa"), ("0xaa", "0xaa")])
     names = ["validator-0", "validator-1"]
     assert not V.evaluate_beacon_window(names, stuck, "x")[0]
-    assert V.evaluate_beacon_window(names, stuck, "x", require_distinct=False)[0]
+    with pytest.raises(TypeError):
+        V.evaluate_beacon_window(names, stuck, "x", require_distinct=False)
 
 
 @pytest.mark.parametrize("rows,fragment", [
@@ -678,9 +629,8 @@ def test_the_honest_window_drops_ONLY_the_distinctness_check():
     (_rows([("0x0000", "0x0000")]), "prev_randao is zero"),
     (_rows([("0xaa", "0xbb")]), "disagree on prev_randao"),
 ])
-def test_the_other_three_properties_still_fire_in_the_honest_window(rows, fragment):
-    ok, msg, _ = V.evaluate_beacon_window(["validator-0", "validator-1"], rows, "x",
-                                          require_distinct=False)
+def test_the_other_three_properties_fire(rows, fragment):
+    ok, msg, _ = V.evaluate_beacon_window(["validator-0", "validator-1"], rows, "x")
     assert not ok and fragment in msg
 
 

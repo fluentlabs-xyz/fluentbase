@@ -28,7 +28,7 @@ from __future__ import annotations
 # run with the flag off still reports the class as an explicit zero.
 LOTTERY_CLASSES = (
     "graceful_stop_restart", "sigkill_restart", "cpu_throttle", "dkg_midwindow_restart",
-    "delegate_shift", "byzantine_equivocate", "byzantine_forge_pk", "voluntary_exit",
+    "delegate_shift", "byzantine_equivocate", "voluntary_exit",
 )
 
 # The membership TRACKS. They are not drawn from the lottery — the dispatcher fires them from its

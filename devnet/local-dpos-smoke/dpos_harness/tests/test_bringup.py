@@ -250,6 +250,32 @@ def test_byzantine_flag_assert_present():
     assert _idx(_lines(r), "--dpos.byzantine", "equivocate", "--help") >= 0
 
 
+def test_the_probed_byzantine_mode_is_one_the_sim_can_actuate():
+    """The probe and the actuator must speak the SAME vocabulary.
+
+    `stack` sits below `sim`, so `bringup.py` cannot import `SUPPORTED_BYZANTINE_MODES` and spells
+    its mode literally. That literal drifting away from what the sim actually writes into
+    `FLUENT_DPOS_BYZANTINE` is not hypothetical: it is how `forge-beacon-pk` kept hard-killing its
+    victim while a green `--dpos.byzantine equivocate --help` probe ran in front of it every
+    bring-up. This is the pin the layering rule costs.
+
+    RED when the probe is re-pointed at a mode the sim cannot actuate, or when a mode is retired
+    from `SUPPORTED_BYZANTINE_MODES` and the probe is not updated with it."""
+    from dpos_harness.sim.actions import SUPPORTED_BYZANTINE_MODES
+
+    cfg = SimConfig(validators=4, initial_committee=3, spares=1, rotation_slots=1, byzantine=1)
+    r = Runner(dry=True)
+    BringUp(cfg.stack_spec(), r).run()
+    probed = [a.argv[a.argv.index("--dpos.byzantine") + 1]
+              for a in r.log if "--dpos.byzantine" in a.argv]
+    assert probed, "the byzantine flag-parse probe did not run at all"
+    unknown = sorted(set(probed) - set(SUPPORTED_BYZANTINE_MODES))
+    assert not unknown, (
+        f"bringup probes {unknown}, which the sim cannot actuate (declared: "
+        f"{list(SUPPORTED_BYZANTINE_MODES)}) — the probe would stay green while the sim writes a "
+        "mode the node bails on")
+
+
 
 
 

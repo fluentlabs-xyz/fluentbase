@@ -82,7 +82,8 @@ def strict_actuators():
 
     Why not a `__getattr__` catch-all (what every actuator double here used to be): a catch-all
     manufactures ANY name asked of it, so 482 green tests coexisted with three names the production
-    code called and no object defined — `act_byzantine_restore` (missing outright) plus
+    code called and no object defined — `act_byzantine_restore` (missing outright; the arm that
+    called it, `byzantine_forge_pk`, is since deleted along with the method) plus
     `sim_delegate_shift` / `sim_voluntary_exit` (methods of `Chain`, reached for on `Actuators`).
     The doubles answered all three and the harness silently no-op'd for its entire life.
 

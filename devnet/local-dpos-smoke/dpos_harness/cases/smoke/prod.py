@@ -770,14 +770,12 @@ def run(case: str, assertions, argv=None, contracts_dir=None,
     — see the module header. It runs on EVERY path including a failed BRING-UP, which is the case
     bash covered with `exit 1` and a Python `raise` does not.
 
-    `overlays` and `post_manifest` are the two seams `case-byzantine-vrf` needs, and they are the
-    reason it does NOT get a bring-up of its own. Its bash builds one inline (`:163-297`), and a
-    line-by-line diff against `pp_bring_up_rotation` leaves two differences: a THIRD compose file
-    at the cold restart (`overlays`), and five further deployer-funded transfers that must
-    post-date the token deploy (`post_manifest`). The third — the staking-reader assert hoisted
-    ahead of `setBlsVerifier` — is gone with both of those steps. Two seams is a much smaller
-    surface than a second copy of the bring-up, which is where the bug density in this family
-    actually lives.
+    `overlays` and `post_manifest` are the two PARAMETERS a case can bend the shared bring-up
+    with instead of writing one of its own — a third compose file at the cold restart, and a hook
+    that lands writes after the module and before the first governance action. No shipping case
+    passes either today (the last, `smoke-byzantine-vrf`, is retired), and they stay because two
+    parameters are a far smaller surface than the second copy of a 14-phase bring-up the next case
+    would otherwise write. That copy is where the bug density in this family actually lives.
 
     `bring_up=False` remains for a case that wants the ctx, the cleanup and the argv contract
     without a stack coming up underneath it.

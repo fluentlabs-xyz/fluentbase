@@ -388,14 +388,30 @@ def _dump_beacon_families(text: str) -> None:
 
 # ══ smoke-vrf-boundary ════════════════════════════════════════════════════════════════
 
+#: The epoch the `smoke-vrf-boundary` window opens into — `boundary_block` is `epoch_start(…, 3)`,
+#: so the boundary it straddles is the first block of epoch 3. The agreement plane targets `now+1`,
+#: so THIS is the epoch whose key had to be agreed during epoch 2 for the boundary to be crossable.
+BOUNDARY_TARGET_EPOCH = 3
+
+
 def assert_vrf_boundary(ctx) -> None:
-    """F1 — the threshold beacon survives an EPOCH BOUNDARY on a STABLE committee.
+    """F1 — the threshold beacon survives an EPOCH BOUNDARY on a STABLE committee, and the
+    EPOCH-KEY AGREEMENT PLANE that produced the key is observed doing it.
 
     The beacon activates at epoch 2 (deterministic bootstrap), so the first stable CARRY-FORWARD
     boundary is 2→3; 0→1 and 1→2 are keyless / the bootstrap commit and would prove something
     else. The carry-forward itself has no on-chain mirror to read, so "the beacon stayed live,
-    node-agreed and varying ACROSS the boundary" is the whole of the proof — which is why the
-    window straddles the boundary block rather than starting after it.
+    node-agreed and varying ACROSS the boundary" is the whole of the OUTPUT proof — which is why
+    the window straddles the boundary block rather than starting after it.
+
+    WHY THE PLANE OBSERVATION IS HERE AND NOT SOMEWHERE ELSE. The `prev_randao` window reads the
+    beacon's OUTPUT, and the output is exactly as green when the key was agreed in one view as
+    when it took four leader timeouts, or when the ceremony silently carried a stale key forward.
+    Since the epoch key left `OrderBlock` there is no on-chain mirror of it at all, so the plane's
+    own logs and counters are the ONLY place the mechanism is visible. This is the cheap read-only
+    case whose subject is the boundary the key is needed for, and it rides `smoke-base`, so the
+    observation lands in the gate rather than in an opt-in extra. It runs AFTER the window: the
+    window is the cheaper check, and a failure there makes the plane detail moot.
     """
     case = "smoke-vrf-boundary"
     boundary = verdicts.boundary_block(ctx.activation_block, ctx.interval)
@@ -413,9 +429,17 @@ def assert_vrf_boundary(ctx) -> None:
     print(f"smoke-vrf-boundary: F1 — beacon active + byte-identical across the epoch-2→3 "
           f"boundary (block {boundary})", flush=True)
 
+    beacon.assert_agreement_plane(ctx, case, BOUNDARY_TARGET_EPOCH)
+    print(f"smoke-vrf-boundary: the epoch-{BOUNDARY_TARGET_EPOCH} key was AGREED on the plane — "
+          "every committee member started an instance, decided one pinned set at the same view, "
+          "adopted it and stored its share", flush=True)
+
     _ok(ctx, case, f"threshold beacon active + node-agreed + varying across the epoch-2→3 "
                    f"boundary (block {boundary}); the per-epoch carry-forward kept the beacon "
-                   "live with no break in node-agreed prev_randao")
+                   f"live with no break in node-agreed prev_randao; and the epoch-"
+                   f"{BOUNDARY_TARGET_EPOCH} key behind it was agreed peer-to-peer on the "
+                   "agreement plane by every committee member, at one view, over one pinned set, "
+                   "with no artifact rejected and a durable artifact store on every node")
 
 
 def _ok(ctx, case: str, message: str) -> None:
