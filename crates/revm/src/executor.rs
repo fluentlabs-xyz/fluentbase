@@ -346,7 +346,11 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
                     } else {
                         ctx.cfg().gas_params().warm_storage_read_cost()
                     };
-                    // We charge for gas in advance because we don't charge inside system contracts
+                    // We charge for gas in advance because we don't charge inside system contracts.
+                    // Note: this SLOAD-priced preload is the *only* storage gas charged for
+                    // system-runtime writes — see the FLU-1160 note above the `sstore` commit
+                    // loop in `process_runtime_execution_outcome` for why no SSTORE write cost
+                    // is charged on commit.
                     if !interpreter.gas.record_regular_cost(gas_cost) {
                         return Ok(NextAction::out_of_fuel(Gas::new_spent(
                             interpreter.gas.remaining(),
@@ -681,6 +685,21 @@ fn process_runtime_execution_outcome<CTX: ContextTr>(
         return Ok(());
     }
 
+    // KNOWN LIMITATION (FLU-1160): these buffered writes are committed without charging the
+    // EIP-2200 SSTORE dynamic cost or the new-slot state gas — the only storage gas paid on
+    // this path is the SLOAD-priced preload in `execute_rwasm_frame` (see
+    // `preloaded_slot_costs`), so system-runtime writes are cheaper than the equivalent EVM
+    // SSTOREs. This is accepted behavior rather than an oversight:
+    // - Only runtimes in `EXECUTE_USING_SYSTEM_RUNTIME_ADDRESSES` reach this path. They are
+    //   maintained by the team, so the set of slots written per call is fixed and small
+    //   (e.g. a handful of balance/allowance slots for the universal token), not
+    //   attacker-controlled code.
+    // - Gas pricing here is consensus-critical: repricing these writes would change gas
+    //   semantics for already-deployed networks and therefore requires a coordinated
+    //   network fork, which is not planned.
+    // If write pricing is ever revisited, use the `SStoreResult` returned by `sstore` to
+    // charge the EIP-2200 dynamic cost (mirroring `sstore_gas` in `syscall.rs`), crediting
+    // the read cost already charged by the preloader for that slot.
     for (k, v) in storage.unwrap_or_default() {
         ctx.journal_mut().sstore(*target_address, k, v)?;
     }
