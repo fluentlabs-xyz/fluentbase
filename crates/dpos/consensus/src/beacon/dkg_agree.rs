@@ -78,6 +78,7 @@ use std::{
         Arc, Mutex,
     },
 };
+use tokio::sync::watch;
 use tracing::{debug, warn};
 
 use crate::{
@@ -320,6 +321,10 @@ pub(crate) fn entry_bar(n: usize, view: View) -> usize {
 pub struct ConfirmPool {
     namespace: Arc<Vec<u8>>,
     confirms: Arc<Mutex<BTreeMap<u64, BTreeMap<u8, ShareConfirm>>>>,
+    /// Bumped whenever EITHER of `build_proposal`'s two node-local inputs grows —
+    /// this map, or the beacon actor's recorded dealer-log index. See
+    /// [`ConfirmPool::subscribe`].
+    inputs: Arc<watch::Sender<u64>>,
 }
 
 impl ConfirmPool {
@@ -331,11 +336,36 @@ impl ConfirmPool {
         Self {
             namespace: Arc::new(namespace),
             confirms: Arc::new(Mutex::new(BTreeMap::new())),
+            inputs: Arc::new(watch::channel(0).0),
         }
     }
 
     pub fn namespace(&self) -> &[u8] {
         &self.namespace
+    }
+
+    /// A subscription that fires when a leader's refusal could have become stale.
+    ///
+    /// `build_proposal` reads two node-local inputs — this pool and the beacon
+    /// actor's recorded dealer-log index — and a leader that cannot build yet has
+    /// to be woken by whichever of them grows. Both edges land here rather than one
+    /// each: the index is a bare `Arc<RwLock<_>>` shared with the plane, so giving
+    /// it a channel of its own would mean two subscriptions and two wakeups for one
+    /// predicate. The actor bumps it from [`ConfirmPool::record`] and from
+    /// `publish_recorded_logs`.
+    ///
+    /// `watch` and not `Notify`: the subscription marks the current value seen at
+    /// subscribe time, so a growth landing between the subscribe and the failed
+    /// build is still delivered. `Notify::notify_waiters` would drop it, and the
+    /// leader would then sleep out its whole view holding an answer it already had.
+    pub(crate) fn subscribe(&self) -> watch::Receiver<u64> {
+        self.inputs.subscribe()
+    }
+
+    /// Wake every subscriber. Called by the beacon actor when the recorded
+    /// dealer-log index grows; [`ConfirmPool::record`] does it for this map.
+    pub(crate) fn note_inputs_grew(&self) {
+        self.inputs.send_modify(|seq| *seq = seq.wrapping_add(1));
     }
 
     /// Verify `confirm` against `committee[confirm.target_epoch]` and keep it if it
@@ -351,7 +381,7 @@ impl ConfirmPool {
             return false;
         }
         let mut pool = self.lock();
-        match pool
+        let stored = match pool
             .entry(confirm.target_epoch)
             .or_default()
             .entry(confirm.idx)
@@ -368,7 +398,12 @@ impl ConfirmPool {
                 seat.insert(confirm);
                 true
             }
+        };
+        if stored {
+            drop(pool);
+            self.note_inputs_grew();
         }
+        stored
     }
 
     /// The confirmations for `epoch` that cover `logs`, ascending by member index —
@@ -1002,30 +1037,77 @@ impl Drop for AgreementHold {
 }
 
 impl<E, R, L: PinnedLogs> DkgAgree<E, R, L> {
-    /// The proposal this node would put to the instance at `view`, or `None` when
-    /// it has nothing it can justify.
+    /// The proposal this node puts to the instance at `view`, waiting inside the
+    /// leader's own window until it has one.
     ///
-    /// `None` is not an error: below quorum, below the entry bar, or without the
-    /// bodies to derive the key, a proposer must stay silent and let the view time
-    /// out rather than propose a set no honest voter could accept. Runs inside the
-    /// spawned propose task, not on the voter's own loop — `derive` is a round-trip
-    /// to the ceremony owner, and the voter must not block on it.
+    /// The two node-local inputs — the recorded dealer-log set and the covering
+    /// share-confirmations — do not exist yet at the instant the instance spawns:
+    /// the instance is announced on the ceremony's seal edge, and the peers' sealed
+    /// logs and the confirmations minted from them are still in flight. A leader
+    /// that answered once and then parked spent its whole `leader_timeout` holding
+    /// an answer that went stale in milliseconds. Measured on the docker stand
+    /// (2026-08-19, `case growth`, two committee changes): `view = 2` both times and
+    /// `T_agree` = 30.07 s / 30.09 s, i.e. exactly one `LEADER_TIMEOUT`, view 1
+    /// nullified with nothing proposed. Re-reading on the growth edge is what makes
+    /// view 1 decide.
     ///
-    /// The confirmations attached are exactly those that COVER the set being
-    /// proposed. A confirmation of a narrower set says nothing about a member's
-    /// ability to finalize over this one, so counting it would inflate the very
-    /// number the bar exists to measure.
-    async fn build_proposal(self, view: View) -> Option<DkgProposal> {
-        let n = self.committee.len();
-        let target_epoch = self.target_epoch;
-        if n == 0 {
+    /// Park-don't-error is UNCHANGED and is why the retry is expressible at all:
+    /// resolving the request as an error trips the leader deadline at once, so the
+    /// window a late dealer log has to arrive in only exists while the request is
+    /// held open. The wait ends by itself when the view moves on — the voter drops
+    /// the receiver, and [`drive`] cancels on that.
+    ///
+    /// It wakes on [`ConfirmPool::subscribe`] rather than on a clock: a poll
+    /// interval would be a second timeout to tune beside `leader_timeout`, and the
+    /// edge it would sample is already published by the writer.
+    ///
+    /// The FIRST admissible set is proposed, not the widest one. Waiting for the
+    /// set to stop growing would be the quiescence timer this design does not have,
+    /// and a narrower pinned set is not a weaker one: `derive_pinned` needs a
+    /// quorum, and a set that stalls below the full committee is exactly the case
+    /// where pinning what is actually there is the right answer. In practice the
+    /// dealers seal on one height tick and the set fills before any confirmation
+    /// covering it circulates, so the first admissible set is the full one.
+    async fn build_proposal(self, view: View) -> Option<DkgProposal>
+    where
+        Self: Clone,
+    {
+        if self.committee.is_empty() {
             debug!(
-                epoch = target_epoch,
+                epoch = self.target_epoch,
                 "dkg agree: no committee to propose against"
             );
             self.notes.refuse(Some("no_committee"));
             return None;
         }
+        // Subscribed BEFORE the first attempt: a growth landing between the two is
+        // still delivered, so the leader can never sleep holding a usable answer.
+        let mut grew = self.confirms.subscribe();
+        loop {
+            if let Some(proposal) = self.clone().attempt_proposal(view).await {
+                return Some(proposal);
+            }
+            // Only the pool's own clones keep the sender alive, and this task holds
+            // one; an error here means the runtime is tearing down.
+            if grew.changed().await.is_err() {
+                return None;
+            }
+        }
+    }
+
+    /// One attempt at [`Self::build_proposal`]'s value. Records why it refused, on
+    /// the warn-once ledger, so a retry loop cannot turn a stall into a log flood.
+    ///
+    /// The confirmations attached are exactly those that COVER the set being
+    /// proposed. A confirmation of a narrower set says nothing about a member's
+    /// ability to finalize over this one, so counting it would inflate the very
+    /// number the bar exists to measure.
+    ///
+    /// Runs inside the spawned propose task, not on the voter's own loop — `derive`
+    /// is a round-trip to the ceremony owner, and the voter must not block on it.
+    async fn attempt_proposal(self, view: View) -> Option<DkgProposal> {
+        let n = self.committee.len();
+        let target_epoch = self.target_epoch;
         let local = local_set(&self.recorded, target_epoch, n);
         let quorum = N3f1::quorum(n) as usize;
         if local.len() < quorum {
@@ -2565,6 +2647,105 @@ mod tests {
                     _ = rx => true,
                 };
                 assert!(!resolved, "propose resolved with fewer dealers than quorum");
+            });
+        }
+
+        /// A leader that could not build when it was asked must build when the
+        /// missing input lands, INSIDE its own view.
+        ///
+        /// This is the shape the first live run measured (2026-08-19, `case
+        /// growth`): the instance is announced on the ceremony's seal edge, so at
+        /// the instant view 1's leader is asked, the dealer logs and the
+        /// confirmations minted from them are still in flight. Answering once and
+        /// parking cost a full `LEADER_TIMEOUT` — 30.07 s and 30.09 s, `view = 2`
+        /// both times — for inputs that land in milliseconds.
+        ///
+        /// Here the confirmations are the late half.
+        #[test]
+        fn propose_rebuilds_when_the_confirmations_arrive() {
+            let runner = deterministic::Runner::timed(Duration::from_secs(600));
+            runner.start(|context| async move {
+                let seats = Committee::new(N, 21);
+                let committee = seats.members.clone();
+                let key = outcome(22);
+                let held: Vec<(u8, B256)> = quorum_logs();
+                let (mut agree, _bodies) = agree_over(
+                    &context,
+                    committee.clone(),
+                    index_holding(&held),
+                    MockPinned::new(PinnedDerive::Derived(Box::new(key.clone()))),
+                    RecordingResolver::default(),
+                    seats.pool.clone(),
+                )
+                .await;
+
+                let rx = agree.propose(ctx_for(&committee)).await;
+                context.sleep(Duration::from_millis(500)).await;
+                assert_eq!(
+                    agree.refusal().get(),
+                    Some(BAR_QUORUM_UNMET),
+                    "the first attempt must have run and refused before the inputs land"
+                );
+
+                seats.seed_pool(&held, seats.bar());
+                let digest = settle_digest(&context, rx)
+                    .await
+                    .expect("a leader must re-read its inputs, not wait out its whole view");
+                assert_eq!(digest, seats.proposal(held, key).digest());
+                assert_eq!(
+                    agree.refusal().get(),
+                    None,
+                    "a successful rebuild must clear the reason its refusal left behind"
+                );
+            });
+        }
+
+        /// The same, with the dealer log as the late half — the edge the confirm
+        /// pool does not raise itself, so the beacon actor raises it from
+        /// `publish_recorded_logs`. Both inputs must wake the leader or the retry
+        /// only covers half the race.
+        #[test]
+        fn propose_rebuilds_when_a_late_dealer_log_lands() {
+            let runner = deterministic::Runner::timed(Duration::from_secs(600));
+            runner.start(|context| async move {
+                let seats = Committee::new(N, 23);
+                let committee = seats.members.clone();
+                let key = outcome(24);
+                let held: Vec<(u8, B256)> = quorum_logs();
+                let short: Vec<(u8, B256)> = held.iter().copied().take(3).collect();
+                let recorded = index_holding(&short);
+                seats.seed_pool(&held, seats.bar());
+                let (mut agree, _bodies) = agree_over(
+                    &context,
+                    committee.clone(),
+                    recorded.clone(),
+                    MockPinned::new(PinnedDerive::Derived(Box::new(key.clone()))),
+                    RecordingResolver::default(),
+                    seats.pool.clone(),
+                )
+                .await;
+
+                let rx = agree.propose(ctx_for(&committee)).await;
+                context.sleep(Duration::from_millis(500)).await;
+                assert_eq!(
+                    agree.refusal().get(),
+                    Some("quorum_not_met"),
+                    "the first attempt must have run and refused before the log lands"
+                );
+
+                let (idx, hash) = held[3];
+                recorded
+                    .write()
+                    .expect("index")
+                    .entry(TARGET)
+                    .or_default()
+                    .insert(idx, hash);
+                seats.pool.note_inputs_grew();
+
+                let digest = settle_digest(&context, rx)
+                    .await
+                    .expect("a late dealer log must wake the leader, not the leader timeout");
+                assert_eq!(digest, seats.proposal(held, key).digest());
             });
         }
 

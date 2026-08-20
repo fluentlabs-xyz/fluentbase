@@ -16,10 +16,10 @@
 //! Two things live here because they were previously answered twice, differently:
 //!
 //! - **The store** ([`BeaconKeys`]). Shaped on [`crate::beacon::certify::SeedStore`]:
-//!   a newtype so [`BeaconKeys::record`] is the only insertion path, a synchronous
-//!   [`BeaconKeys::lookup`] that never blocks and never does I/O (the vote path
-//!   calls it without an await), and an `Arc<Notify>` whose permit survives having
-//!   no waiter, handed out by [`BeaconKeys::notifier`].
+//!   a newtype so [`BeaconKeys::set_pk`] is the only insertion path, a synchronous
+//!   [`BeaconKeys::cached_only`] that never blocks and never does I/O (the vote
+//!   path calls it without an await), and an `Arc<Notify>` whose permit survives
+//!   having no waiter, handed out by [`BeaconKeys::notifier`].
 //!
 //! - **The ladder** ([`BeaconKeys::get_pk`]). Its ORDER is load-bearing — see
 //!   each function's docs.
@@ -29,7 +29,7 @@
 //! A consumer must capture the notifier ONCE, before its loop, and re-arm
 //! `notified()` per iteration. That is exactly what `epoch_manager`'s run loop
 //! does with the other edges, and it is safe because a `Notify` permit is
-//! object-scoped: a [`record`](BeaconKeys::record) landing between iteration N
+//! object-scoped: a [`set_pk`](BeaconKeys::set_pk) landing between iteration N
 //! and N+1 is held and consumed by N+1. A `watch` receiver is baselined at the
 //! CURRENT version when it is subscribed, so a per-iteration `subscribe()` would
 //! silently swallow exactly that fill — reproducing the stuck-consumer bug this
@@ -53,7 +53,7 @@ use tracing::{debug, warn};
 
 /// Provenance tier of a [`BeaconKeys`] entry. Ordered: attested outranks
 /// local — on a CONFLICTING insert an observed value DISPLACES a local one,
-/// never vice-versa (see [`BeaconKeys::record`]). The prior untiered
+/// never vice-versa (see [`BeaconKeys::set_pk`]). The prior untiered
 /// first-write-wins policy let a diverged local W1 write beat the network's
 /// W4 observed-outcome write by 1.3 s of timing — trust inverted (soak
 /// 2026-07-14, v5@epoch77).
@@ -327,7 +327,7 @@ impl BeaconKeys {
 
     /// A clone of the record-notifier, for a consumer's `select!` arm. Capture it
     /// ONCE, before the loop — see the module docs. `notified()` on the returned
-    /// handle consumes any permit stored by a [`record`](Self::record) that fired
+    /// handle consumes any permit stored by a [`set_pk`](Self::set_pk) that fired
     /// before the waiter parked, so a fill landing while nobody is parked is still
     /// seen by the next waiter.
     pub fn notifier(&self) -> Arc<Notify> {

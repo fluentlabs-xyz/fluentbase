@@ -78,12 +78,37 @@ use std::{
 /// and dealers seal (broadcast their signed logs) — the echo-settle tail. Pinned
 /// off the on-chain `epochBlockInterval`, not an absolute window (see Q4).
 ///
-/// v41 shifted 10→16 (circular-finality fix); AMENDMENT 5 shifts 16→20 so the
-/// dealer-log HASHES (which ride the OrderBlock only AFTER seal `B−20` and must
-/// FINALIZE — `K`-lag — by `H_settle = B−12`) have an includable-and-finalizable
-/// window of `SETTLE − K = 8 − 3 = 5` blocks. The whole tail: seal `B−20`, settle
-/// `B−12`, submit window `(B−12, B−8)`, binding commit `H_qual = B−8` — all moved
-/// earlier so the deferred `commitEpochCommittee` FINALIZES before the boundary `B`.
+/// This is the WHOLE budget the epoch key has: the value to be agreed does not
+/// exist anywhere in the network before the seal, so `B − MARGIN` is the earliest
+/// instant the agreement plane can start and `B` is when the boundary block needs
+/// the key. 20 blocks at the 1 blk/s target is 20 s.
+///
+/// It stays 20 on a measurement rather than on comfort. The first live run
+/// (2026-08-19, docker stand, `case growth`, two committee changes at
+/// `epochBlockInterval = 32`) measured `T_agree` = 30.07 s and 30.09 s — exactly
+/// one `LEADER_TIMEOUT`, with `view = 2` both times — which overran this window by
+/// ~11 s and cost a `verify-only` demotion at each boundary. The cause was a
+/// leader that evaluated its proposal once and parked for the rest of its view,
+/// NOT a window that was too narrow: the inputs land in milliseconds on a LAN, and
+/// every member agreed a byte-identical set within a 1-3 ms span once one leader
+/// proposed. `DkgAgree::build_proposal` now re-reads on the growth edge, which puts
+/// a view-1 decision at roughly three network delays and leaves this window with
+/// more than an order of magnitude of headroom. Widening it instead would have
+/// hidden the 30 s and slowed every epoch-waiting smoke case by the same factor.
+///
+/// So: do NOT raise this to buy time for the agreement without first re-measuring
+/// `T_agree` — a raise that is not answering a measured overrun is buying nothing,
+/// and it costs a proportionally longer `epochBlockInterval` everywhere. The one
+/// case that still overruns is a view-1 leader that is down; that pays one
+/// `LEADER_TIMEOUT` and lands in the measured ~11 s verify-only window, which
+/// recovers on its own and is the accepted BFT residual, not a halt.
+///
+/// v41 shifted 10→16 (circular-finality fix); AMENDMENT 5 shifted 16→20 so the
+/// dealer-log hashes — which then rode the OrderBlock and had to finalize by
+/// `K`-lag — had an includable window. That carrier is gone (the field left
+/// `OrderBlock`, and the set is agreed off-chain), so 20 now stands only on the
+/// budget above.
+///
 /// Requires `epochBlockInterval > DKG_MARGIN_BLOCKS` for a positive deal window
 /// (devnet `I=32` ⇒ deal window `I−20 = 12`; the production target is ~1200).
 pub(crate) const DKG_MARGIN_BLOCKS: u64 = 20;
@@ -98,24 +123,17 @@ pub(crate) const DKG_MARGIN_BLOCKS: u64 = 20;
 /// The 4→8 shift dates from AMENDMENT 5, when the finalize input was the
 /// finalized dealer-log HASH set carried by blocks, so a hash sealed at `B−20`
 /// had to be INCLUDED in a block AND that block FINALIZED (`K`-lag) by
-/// `H_settle = B−(MARGIN−SETTLE) = B−12`. The includable-and-finalizable window
-/// was `[B−MARGIN, H_settle−K]`, width `SETTLE − K`; want `≥ 1` (with slack) ⇒
-/// `SETTLE ≥ K + 1`. We take `SETTLE = 8` (width `8 − 3 = 5`). The set is now
-/// agreed off-chain and this deadline is only the no-artifact fallback's; Phase
-/// 12 retunes it. `H_settle = B−12` is UNCHANGED from the pre-AM5 schedule
-/// (`MARGIN−SETTLE = 20−8 = 12`), so the submit window `(B−12, B−8)` is unchanged.
+/// `H_settle = B−(MARGIN−SETTLE) = B−12`. That carrier is gone: the set is agreed
+/// off-chain, a certified artifact settles its epoch the moment it lands, and this
+/// deadline now governs ONLY the legacy no-plane arm of `drive_finalization`
+/// (in-process and test wiring). It stays 8 because nothing measures it any more —
+/// with a plane wired the finalize path never reaches it, so retuning it would be
+/// tuning a number no live run exercises. `H_settle = B−12` is unchanged from the
+/// pre-AM5 schedule (`MARGIN−SETTLE = 20−8 = 12`).
 pub(crate) const DKG_SETTLE_BLOCKS: u64 = 8;
 const _: () = assert!(
     DKG_SETTLE_BLOCKS < DKG_MARGIN_BLOCKS,
     "settle window must finalize before the epoch boundary"
-);
-const _: () = assert!(
-    // Includable-and-finalizable window width `SETTLE − K ≥ 1`: a dealer-log hash
-    // sealed at `B−MARGIN` must be includable in a block finalizable (`K`-lag) by
-    // `H_settle = B−(MARGIN−SETTLE)`. AM5 finalized-hash-set determinism invariant.
-    DKG_SETTLE_BLOCKS > crate::order_block::K,
-    "AM5: the dealer-log hashes need an includable-and-finalizable window \
-     SETTLE − K ≥ 1 (a hash sealed at B−MARGIN finalizes by H_settle)"
 );
 
 /// The epoch the beacon goes live at, deterministically. `committee[2]` runs its
@@ -831,6 +849,7 @@ where
             target: "dpos::beacon",
             epoch,
             pinned = pinned.len(),
+            height = self.last_height,
             "live DKG: adopting the agreed dealer-log set as this epoch's pinned set"
         );
         self.agreed_pinned.insert(
@@ -1157,14 +1176,26 @@ where
         let Ok(mut map) = shared.write() else {
             return;
         };
+        let mut grew = false;
         for (e, c) in &self.ceremonies {
             let Some(committee) = (self.committee_for)(*e) else {
                 continue;
             };
             for (idx, pk) in committee.iter().enumerate() {
                 if let Some(hash) = c.signed_log_hash(pk) {
-                    map.entry(*e).or_default().insert(idx as u8, hash);
+                    grew |= map.entry(*e).or_default().insert(idx as u8, hash).is_none();
                 }
+            }
+        }
+        drop(map);
+        // A parked agreement leader re-reads this index when it wakes, and this is
+        // the only edge that grows it. The confirmation pool carries both wakeups
+        // (see `ConfirmPool::subscribe`), so a leader whose last missing input was a
+        // dealer log — not a confirmation — is woken here rather than sleeping out
+        // its view.
+        if grew {
+            if let Some(pool) = self.share_confirms.as_ref() {
+                pool.note_inputs_grew();
             }
         }
     }
@@ -1476,7 +1507,11 @@ where
                     // and the ceremony-retention hold that rode with it are spent.
                     self.agreed_pinned.remove(&e);
                     self.metrics.dkg_ceremony_ok.inc();
-                    tracing::info!(epoch = e, "live DKG: PK_epoch + share computed + stored");
+                    tracing::info!(
+                        epoch = e,
+                        height = self.last_height,
+                        "live DKG: PK_epoch + share computed + stored"
+                    );
                 }
                 Err(err) => {
                     self.metrics.dkg_ceremony_fail.inc();
