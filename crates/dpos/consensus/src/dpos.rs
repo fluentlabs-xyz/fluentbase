@@ -3687,11 +3687,15 @@ impl DposLayer {
             epoch_length_blocks,
             dpos_activation_block: activation,
             signer_keypair: None,
-            // A follower runs no agreement plane, so it holds no artifacts and has
-            // nowhere to pull one from: both ladder rungs are absent and its
-            // `PK_epoch` resolution is the store rung alone. Anything it cannot
-            // answer degrades to vote-only admission — the accepted residual for a
-            // node that runs no agreement instance.
+            // A follower runs no agreement plane, so it holds no artifact, and it
+            // has no peer to pull one from either: the seam delivers over
+            // `BEACON_RESOLVER_CHANNEL` and this node's p2p identity is ephemeral,
+            // bootstrapper-less and never tracked into any committee's peer set.
+            // So both ladder rungs are absent PERMANENTLY, not until one resolves,
+            // and every cert takes vote-only admission for the life of the process
+            // — the residual `beacon::keys::BeaconKeys`'s ladder doc states in
+            // full. The multisig quorum is verified regardless; the seed check is
+            // what a follower does without.
             held_keys: None,
             pull_keys: None,
             beacon_resolver,
@@ -3708,12 +3712,14 @@ impl DposLayer {
             // the honest state, not a lost signal.
             tombstones: crate::slasher::TombstoneSet::default(),
             beacon_verify: None,
-            // The follower runs no DKG resolver (beacon_resolver is a constant
-            // `Absent`, beacon_verify `None`), so its ONLY writer is the cert-inlet
-            // below — which is exactly why the store has to be created here and
-            // shared, rather than left to `build`: a store `epoch_manager` prunes
-            // and the ladder reads, but nothing ever fills, is the three-stores
-            // split this phase exists to close.
+            // Created here and SHARED rather than left to `build`, so the ladder
+            // `epoch_manager` reads and the one the cert-inlet below resolves
+            // against are the same object — the three-stores split this phase
+            // exists to close. On this path it stays EMPTY: every writer of it is
+            // plane-side (W1/W3, the agreement write-back, and the ladder's own
+            // memoisation of an artifact-rung answer), and a follower runs none of
+            // them and passes no rung. That is the vote-only-admission residual
+            // recorded at `held_keys` above, not a store waiting to be filled.
             group_keys: beacon_keys.clone(),
             timeouts: ConsensusTimeouts::fluent_1s(),
             mailbox_size: 256,

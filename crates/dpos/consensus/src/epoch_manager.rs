@@ -209,12 +209,22 @@ async fn prune_agreements<E: Storage>(
     for e in stale {
         if let Some(handle) = agreements.remove(&e) {
             handle.abort();
+            // JOINED, and before the sweep below — for the same reason
+            // `run_agreement` joins before destroying its own partition: `abort`
+            // only REQUESTS cancellation, so the simplex voter under this
+            // supervisor runs on to its next await and its `on_stopped` still
+            // syncs the journal. A sweep that ran while it was still stopping
+            // would remove a partition the voter then recreates with one last
+            // write, and nothing reclaims that one. The map removal above is what
+            // makes the guard below unable to protect these epochs, so the wait
+            // has to be here.
+            drop(handle.await);
             info!(?e, "epoch-key agreement instance pruned (transition)");
         }
     }
     for epoch in cutoff.saturating_sub(AGREEMENT_SWEEP_SPAN)..cutoff {
-        // A live instance still owns its partition even below the cutoff (it was
-        // adopted after this prune's abort pass, or it is mid-teardown).
+        // A live instance still owns its partition even below the cutoff: it was
+        // adopted after this prune's abort pass.
         if agreements.contains_key(&Epoch::new(epoch)) {
             continue;
         }
@@ -2815,6 +2825,12 @@ mod tests {
     /// The agreement instances live in their OWN map and are pruned on the same
     /// frontier cutoff as the engines — and pruning really aborts them, which for
     /// a still-running instance is the only thing that stops it.
+    ///
+    /// It also WAITS for them. The partition sweep that follows the abort pass
+    /// cannot see these epochs any more — the abort pass removed them from the map
+    /// the sweep's guard consults — so an instance still stopping while the sweep
+    /// runs would have its partition removed and then recreated by its voter's
+    /// last journal write, leaving a directory nothing ever reclaims.
     #[test]
     fn agreement_instances_prune_on_the_engine_cutoff_and_are_aborted() {
         use commonware_runtime::{deterministic, Clock, Runner as _, Spawner};
@@ -2856,16 +2872,11 @@ mod tests {
                 "the frontier's own instance must survive its cutoff"
             );
 
-            for _ in 0..2_000 {
-                if dropped.load(Ordering::SeqCst) == 2 {
-                    break;
-                }
-                ctx.sleep(Duration::from_millis(1)).await;
-            }
             assert_eq!(
                 dropped.load(Ordering::SeqCst),
                 2,
-                "a pruned agreement instance was dropped from the map but never aborted"
+                "prune returned before the instances it aborted had stopped, so the partition \
+                 sweep it runs next races their last journal write"
             );
         });
     }

@@ -817,6 +817,15 @@ where
     /// immediately. With the chain halted neither would ever run again.
     async fn on_artifact(&mut self, artifact: AgreedArtifact, rng: &mut impl CryptoRngCore) {
         let epoch = artifact.0.target_epoch;
+        // Claimed FIRST, so every early return below releases it. A local instance
+        // parks its ceremony-retention hold on delivery rather than letting it die
+        // with its own future — its `send` returns two hops short of here — and an
+        // artifact that arrived any other way (a peer pull, a restart replay)
+        // parked nothing and needs a hold of its own.
+        let hold = self
+            .agreement_targets
+            .take_handover(epoch)
+            .unwrap_or_else(|| self.agreement_targets.hold(epoch));
         // Already holding this epoch's share: the ceremony is consumed, there is
         // nothing left for the artifact to unblock, and adopting the set would
         // only take a retention hold nothing would release.
@@ -857,7 +866,7 @@ where
             AgreedSet {
                 pinned,
                 encoded_artifact: encode_artifact(&artifact),
-                _hold: self.agreement_targets.hold(epoch),
+                _hold: hold,
             },
         );
         self.drive_finalization(self.last_height, rng);
@@ -4373,6 +4382,57 @@ mod clock_tests {
                 actor.derive_pinned(&ask(TARGET), &mut arng),
                 PinnedDerive::Unavailable
             ));
+        });
+    }
+
+    /// A delivering instance hands its retention hold to this arm rather than
+    /// letting it die with its own future — its `send` returns two hops short of
+    /// here — so ONLY this arm can release it. It therefore has to claim the parked
+    /// hold on every path, including the ones that adopt nothing: a hold it took
+    /// for itself instead would leave the parked one owner-less and the ceremony it
+    /// covers retained for the life of the process.
+    #[test]
+    fn on_artifact_releases_the_parked_hold_even_when_it_adopts_nothing() {
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            let oracle: Oracle<PeerPubkey, SimContext> = {
+                let (network, oracle) = Network::new(
+                    ctx.with_label("sim_net"),
+                    SimConfig {
+                        max_size: 1024 * 1024,
+                        disconnect_on_block: false,
+                        tracked_peer_sets: NZUsize!(4),
+                    },
+                );
+                network.start();
+                oracle
+            };
+            let mut rng = StdRng::seed_from_u64(0x6D);
+            const TARGET: u64 = 5;
+            let keys: Vec<Ed25519PrivateKey> = (0..4)
+                .map(|_| Ed25519PrivateKey::random(&mut rng))
+                .collect();
+            let committee = Set::from_iter_dedup(keys.iter().map(|k| k.public_key()));
+            oracle.manager().track(0, committee.clone()).await;
+            let mut actor =
+                standalone_actor(&oracle, keys[0].clone(), committee.clone(), None).await;
+
+            let targets = actor.agreement_targets.clone();
+            targets.hand_over(targets.hold(TARGET));
+            assert!(
+                targets.live().contains(&TARGET),
+                "the instance's hold must survive the instance"
+            );
+
+            // Names no dealer logs, so there is nothing to pin and `on_artifact`
+            // returns before it adopts anything.
+            actor
+                .on_artifact(agreed_artifact(TARGET, Vec::new()), &mut rng)
+                .await;
+            assert!(
+                targets.live().is_empty(),
+                "the parked hold outlived the arm that was supposed to release it"
+            );
         });
     }
 

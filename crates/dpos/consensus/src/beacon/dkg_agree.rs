@@ -53,7 +53,7 @@ use commonware_consensus::{
         types::{Activity, Context as SimplexContext, Finalization},
         Plan,
     },
-    types::{Epoch, View},
+    types::{Epoch, Round, View},
     Automaton, CertifiableAutomaton, Relay, Reporter,
 };
 use commonware_cryptography::{
@@ -701,6 +701,67 @@ pub(crate) trait PinnedLogs: Clone + Send + 'static {
     fn derive(&self, pinned: BTreeMap<u8, B256>) -> impl Future<Output = PinnedDerive> + Send;
 }
 
+/// The body `propose` built for the relay to broadcast, and the round it built it
+/// for.
+///
+/// ROUND-KEYED, and it has to be: a propose task can outlive its own view. Since
+/// [`DkgAgree::build_proposal`] waits inside the leader's window and resolves
+/// whenever an input grows, a task asked at round `r` can still be inside
+/// `derive` when the voter has moved on and a second task has already armed the
+/// slot for a later round `r'`. On an unkeyed slot that late write replaces `r'`'s
+/// body: the relay then finds a body whose digest is not the one consensus asked
+/// it to broadcast, refuses to send it, and `r'` burns its whole certification
+/// timeout while its peers park in `verify` on a body that never left.
+///
+/// So a write only ever moves the round forward, and the round OUTLIVES the body:
+/// the relay takes the proposal but leaves the round behind, because a late task
+/// would otherwise just re-arm the emptied slot with its stale body.
+#[derive(Clone, Default)]
+struct BuiltProposal(Arc<Mutex<Option<Armed>>>);
+
+struct Armed {
+    round: Round,
+    /// `None` once the relay has taken the body; the round stays.
+    proposal: Option<DkgProposal>,
+}
+
+impl BuiltProposal {
+    /// Offer `proposal` as the body for `round`. Returns whether the relay will
+    /// find it — `false` means a later round owns the slot and this proposal is
+    /// stale, or the lock is poisoned.
+    fn arm(&self, round: Round, proposal: DkgProposal) -> bool {
+        let Ok(mut slot) = self.0.lock() else {
+            warn!(
+                epoch = round.epoch().get(),
+                view = round.view().get(),
+                "dkg agree: the built-proposal slot is poisoned, not proposing"
+            );
+            return false;
+        };
+        if slot.as_ref().is_some_and(|held| held.round > round) {
+            debug!(
+                epoch = round.epoch().get(),
+                view = round.view().get(),
+                "dkg agree: built a proposal for a round the instance has left, discarding it"
+            );
+            return false;
+        }
+        *slot = Some(Armed {
+            round,
+            proposal: Some(proposal),
+        });
+        true
+    }
+
+    /// The body the relay broadcasts, once.
+    fn take(&self) -> Option<DkgProposal> {
+        self.0
+            .lock()
+            .ok()
+            .and_then(|mut slot| slot.as_mut().and_then(|held| held.proposal.take()))
+    }
+}
+
 /// The `Automaton`/`Relay` half of the epoch-key agreement instance.
 ///
 /// One instance per target epoch, and it agrees exactly one value: the pinned
@@ -729,7 +790,7 @@ pub(crate) struct DkgAgree<E, R, L> {
     /// Set by `propose`, taken by `Relay::broadcast(Plan::Propose)`. Shared
     /// because the voter holds independent clones for the two roles — mirrors
     /// `Inline`'s `last_built`.
-    last_built: Arc<Mutex<Option<DkgProposal>>>,
+    last_built: BuiltProposal,
     notes: AgreementNotes,
 }
 
@@ -780,7 +841,7 @@ impl<E, R, L> DkgAgree<E, R, L> {
             recorded: cfg.recorded,
             pinned: cfg.pinned,
             confirms: cfg.confirms,
-            last_built: Arc::new(Mutex::new(None)),
+            last_built: BuiltProposal::default(),
             notes: AgreementNotes::new(cfg.metrics),
         }
     }
@@ -985,23 +1046,82 @@ impl AgreementNotes {
 /// runs the `Drop` of everything it owns. A count rather than a set so a
 /// replacement instance for one target cannot un-hold it while the first is still
 /// being torn down.
+///
+/// The retention has to outlive the instance, though, because the artifact reaches
+/// its adopter two channel hops later — see [`AgreementTargets::hand_over`].
 #[derive(Clone, Default)]
-pub struct AgreementTargets(Arc<Mutex<BTreeMap<u64, usize>>>);
+pub struct AgreementTargets(Arc<Mutex<Retention>>);
+
+#[derive(Default)]
+struct Retention {
+    /// Live holds per target epoch.
+    held: BTreeMap<u64, usize>,
+    /// How many of `held`'s holds for that epoch are OWNERLESS — parked by a
+    /// delivering instance for whoever adopts its artifact. Always `<= held`, and
+    /// released only by [`AgreementTargets::take_handover`].
+    parked: BTreeMap<u64, usize>,
+}
 
 impl AgreementTargets {
     /// Hold `target_epoch` until the returned guard is dropped.
     pub(crate) fn hold(&self, target_epoch: u64) -> AgreementHold {
-        *self.lock().entry(target_epoch).or_insert(0) += 1;
+        *self.lock().held.entry(target_epoch).or_insert(0) += 1;
         AgreementHold {
             targets: self.clone(),
             target_epoch,
         }
     }
 
+    /// Give up `hold` but leave the target held, for whoever adopts the artifact
+    /// the instance just delivered.
+    ///
+    /// The delivering instance's hold dies with its own future, and the artifact is
+    /// still two channel hops from `DkgActor::on_artifact` — where the adopting
+    /// hold is taken — when that future ends. A height tick in that gap sweeps the
+    /// very ceremony the artifact exists to finalize over, and the node stays
+    /// shareless until something else heals it. So the hold survives the instance
+    /// and the ADOPTER releases it.
+    ///
+    /// Taking the guard by value is the point: a caller cannot park a hold and keep
+    /// running on its own, which would double the retention with nothing to release
+    /// the second one.
+    pub(crate) fn hand_over(&self, hold: AgreementHold) {
+        {
+            let mut state = self.lock();
+            let epoch = hold.target_epoch;
+            *state.held.entry(epoch).or_insert(0) += 1;
+            *state.parked.entry(epoch).or_insert(0) += 1;
+        }
+        // Outside the lock: `AgreementHold::drop` takes it too.
+        drop(hold);
+    }
+
+    /// Take ownership of a hold [`Self::hand_over`] parked for `target_epoch`, if
+    /// one is waiting. `None` ⇒ this artifact came from somewhere that parked
+    /// nothing (a peer pull, a restart replay) and the adopter needs its own.
+    pub(crate) fn take_handover(&self, target_epoch: u64) -> Option<AgreementHold> {
+        let mut state = self.lock();
+        let std::collections::btree_map::Entry::Occupied(mut parked) =
+            state.parked.entry(target_epoch)
+        else {
+            return None;
+        };
+        *parked.get_mut() -= 1;
+        if *parked.get() == 0 {
+            parked.remove();
+        }
+        drop(state);
+        // No increment: this guard inherits the count `hand_over` left behind.
+        Some(AgreementHold {
+            targets: self.clone(),
+            target_epoch,
+        })
+    }
+
     /// The held targets, as a snapshot the caller can filter against without
     /// keeping the lock.
     pub fn live(&self) -> BTreeSet<u64> {
-        self.lock().keys().copied().collect()
+        self.lock().held.keys().copied().collect()
     }
 
     /// A poisoned lock recovers rather than propagating: this map only ever
@@ -1009,7 +1129,7 @@ impl AgreementTargets {
     /// than the alternatives — treating poison as "nothing is held" would sweep the
     /// state a running instance needs, and panicking here would take down the
     /// beacon actor over a bookkeeping map.
-    fn lock(&self) -> std::sync::MutexGuard<'_, BTreeMap<u64, usize>> {
+    fn lock(&self) -> std::sync::MutexGuard<'_, Retention> {
         self.0
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -1024,9 +1144,9 @@ pub(crate) struct AgreementHold {
 
 impl Drop for AgreementHold {
     fn drop(&mut self) {
-        let mut held = self.targets.lock();
+        let mut state = self.targets.lock();
         if let std::collections::btree_map::Entry::Occupied(mut entry) =
-            held.entry(self.target_epoch)
+            state.held.entry(self.target_epoch)
         {
             *entry.get_mut() -= 1;
             if *entry.get() == 0 {
@@ -1376,7 +1496,7 @@ where
         let bodies = self.bodies.clone();
         let refusal = self.notes.refusal.clone();
         let last_built = self.last_built.clone();
-        let epoch = self.target_epoch;
+        let round = context.round;
         let (tx, rx) = oneshot::channel();
         self.context
             .clone()
@@ -1411,11 +1531,9 @@ where
                         }
                     };
                     let digest = proposal.digest();
-                    let Ok(mut slot) = last_built.lock() else {
-                        warn!(epoch, "dkg agree: last_built is poisoned, not proposing");
+                    if !last_built.arm(round, proposal) {
                         return std::future::pending().await;
-                    };
-                    *slot = Some(proposal);
+                    }
                     digest
                 };
                 drive(tx, decision).await;
@@ -1474,8 +1592,7 @@ where
     async fn broadcast(&mut self, payload: Digest, plan: Plan<PeerPubkey>) {
         match plan {
             Plan::Propose => {
-                let built = self.last_built.lock().ok().and_then(|mut slot| slot.take());
-                let Some(proposal) = built else {
+                let Some(proposal) = self.last_built.take() else {
                     warn!(
                         epoch = self.target_epoch,
                         "dkg agree: no built proposal to broadcast"
@@ -1906,6 +2023,45 @@ mod tests {
             }
         }
 
+        /// A `PinnedLogs` whose FIRST caller parks inside `derive` until released
+        /// and whose later callers answer at once — a `derive` round-trip that
+        /// outlives its own view, which is the only way one propose task can still
+        /// be running when a later round's task has already built.
+        #[derive(Clone)]
+        struct GatedPinned {
+            answer: PinnedDerive,
+            open: Arc<watch::Sender<bool>>,
+            calls: Arc<std::sync::atomic::AtomicUsize>,
+        }
+
+        impl GatedPinned {
+            fn new(answer: PinnedDerive) -> Self {
+                Self {
+                    answer,
+                    open: Arc::new(watch::channel(false).0),
+                    calls: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+                }
+            }
+
+            fn release(&self) {
+                self.open.send_replace(true);
+            }
+        }
+
+        impl PinnedLogs for GatedPinned {
+            async fn derive(&self, _pinned: BTreeMap<u8, B256>) -> PinnedDerive {
+                if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                    let mut open = self.open.subscribe();
+                    while !*open.borrow_and_update() {
+                        if open.changed().await.is_err() {
+                            return PinnedDerive::Unavailable;
+                        }
+                    }
+                }
+                self.answer.clone()
+            }
+        }
+
         /// Records the keys the automaton asked the dealer-log resolver for, so a
         /// parked `verify` can be shown to have ALSO driven the repair that ends
         /// the park.
@@ -2128,16 +2284,16 @@ mod tests {
             mailbox
         }
 
-        type Agree = DkgAgree<deterministic::Context, RecordingResolver, MockPinned>;
+        type Agree<L = MockPinned> = DkgAgree<deterministic::Context, RecordingResolver, L>;
 
-        async fn agree_over(
+        async fn agree_over<L: PinnedLogs>(
             context: &deterministic::Context,
             committee: Vec<PeerPubkey>,
             recorded: DkgLogIndex,
-            pinned: MockPinned,
+            pinned: L,
             resolver: RecordingResolver,
             confirms: ConfirmPool,
-        ) -> (Agree, BodyMailbox) {
+        ) -> (Agree<L>, BodyMailbox) {
             let bodies = body_mailbox(context, committee[0].clone()).await;
             let agree = DkgAgree::new(
                 context.clone(),
@@ -2620,6 +2776,66 @@ mod tests {
                 let body = bodies.get(digest).await.expect("relay broadcast the body");
                 assert_eq!(body.digest(), digest);
                 assert_eq!(body.target_epoch, TARGET);
+            });
+        }
+
+        /// A propose task that finishes after its own view is gone must not
+        /// replace the body the current view's leader armed.
+        ///
+        /// `build_proposal` waits inside the leader's window, so a task asked at
+        /// view 1 can still be inside `derive` when view 2 has already proposed
+        /// and armed the slot. On an unkeyed slot that late write lands on top of
+        /// view 2's body, `Relay::broadcast` then finds a digest consensus never
+        /// asked for and refuses to send it, and view 2's peers park in `verify`
+        /// on a body that never left — a whole certification timeout on the plane
+        /// whose entire point is boundary latency.
+        ///
+        /// View 1's receiver is held to the end on purpose. Live, the voter drops
+        /// it; holding it here fixes the order of the two writes instead of
+        /// leaving it to a race the test would have to win.
+        #[test]
+        fn a_late_propose_task_cannot_replace_a_newer_rounds_body() {
+            let runner = deterministic::Runner::timed(Duration::from_secs(600));
+            runner.start(|context| async move {
+                let seats = Committee::new(N, 41);
+                let committee = seats.members.clone();
+                let held: Vec<(u8, B256)> = quorum_logs();
+                seats.seed_pool(&held, seats.bar());
+                let pinned = GatedPinned::new(PinnedDerive::Derived(Box::new(outcome(42))));
+                let (mut agree, bodies) = agree_over(
+                    &context,
+                    committee.clone(),
+                    index_holding(&held),
+                    pinned.clone(),
+                    RecordingResolver::default(),
+                    seats.pool.clone(),
+                )
+                .await;
+
+                let view1_rx = agree.propose(ctx_at(&committee, VIEW1)).await;
+                context.sleep(Duration::from_millis(500)).await;
+
+                // One confirmation more than view 1's task read, so the two bodies
+                // are different values and a clobber is observable at all.
+                for confirm in seats.confirms(&held, N).into_iter().skip(seats.bar()) {
+                    assert!(seats.pool.record(&committee, confirm));
+                }
+
+                let rx = agree.propose(ctx_at(&committee, View::new(2))).await;
+                let digest = settle_digest(&context, rx)
+                    .await
+                    .expect("view 2 must build over the wider confirmation set");
+
+                pinned.release();
+                context.sleep(Duration::from_millis(500)).await;
+
+                agree.broadcast(digest, Plan::Propose).await;
+                let body = bodies.get(digest).await.expect(
+                    "the relay held back view 2's body: view 1's task overwrote it after the \
+                     instance had left that view",
+                );
+                assert_eq!(body.digest(), digest);
+                drop(view1_rx);
             });
         }
 

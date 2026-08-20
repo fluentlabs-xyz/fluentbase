@@ -439,10 +439,19 @@ pub struct KeySources<'a> {
 /// (a follower) or cannot reach it (the cert-inlet, which sits outside the beacon
 /// plane): on a validator W1 publishes that same key into the store BEFORE the
 /// engine spawns, so rung 1 already covers it there and the missing rung costs
-/// nothing. `held`/`pull` are `None` where there is no artifact store to read or
-/// no plane to pull through — a pure follower has neither, and stays on the
-/// store rung and otherwise on vote-only admission, which is the accepted
-/// residual for a node that runs no agreement instance.
+/// nothing.
+///
+/// `held`/`pull` are `None` where there is no artifact store to read or no plane
+/// to pull through, and a `--cert-follow` follower has neither. It is worth
+/// being exact about what that costs it, because rung 1 does not rescue it: the
+/// store's writers are W1/W3, the agreement write-back, and this ladder's own
+/// memoisation of a rung answer — every one of them plane-side. A follower runs
+/// none of them, so its store is empty for the life of the process and its
+/// `get_pk` answers `None` for every epoch. Its certs therefore take vote-only
+/// admission always, not just until a key arrives. The quorum is still fully
+/// verified; the seed check is what it does without. Closing it means giving the
+/// follower a delivery route for the artifact over its cert upstream, the one
+/// peer relationship it has — see [`crate::beacon::artifact`].
 impl BeaconKeys {
     /// The key in force at `epoch`, spending only the rungs `sources` permits.
     ///

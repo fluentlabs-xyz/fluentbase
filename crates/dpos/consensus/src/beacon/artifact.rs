@@ -3,13 +3,29 @@
 //!
 //! # Why this exists at all
 //!
-//! No block carries the epoch key any more, so every node
-//! that never ran the ceremony — followers, observers, a cold-started node, the
-//! STF verifier — holds no dealer logs, cannot recompute `PK_E`, and has no
-//! other source for it. **This artifact is their only one.** So it must be
-//! checkable by someone who has nothing but the staking contract:
+//! No block carries the epoch key any more, so a node that never ran the
+//! ceremony — a cold-started member, a validator that sat outside
+//! `committee[E]`, the STF verifier — holds no dealer logs, cannot recompute
+//! `PK_E`, and this artifact is the only form the key still reaches it in. So it
+//! must be checkable by someone who has nothing but the staking contract:
 //! [`verify_artifact`] takes the artifact and `committee[epoch]` and needs no
 //! local ceremony state, no share, no journal and no block.
+//!
+//! # Who this seam does NOT reach
+//!
+//! The check is that cheap, but the DELIVERY rides
+//! `BEACON_RESOLVER_CHANNEL`, so the seam reaches exactly the nodes that are on
+//! the consensus plane. A `--cert-follow` follower is not one: it mints an
+//! ephemeral p2p identity, configures no bootstrappers, listens on an ephemeral
+//! loopback port and never tracks a peer set (`node/src/cert_follow/mod.rs`), so
+//! it has no peer to ask and no peer asks it — which is why
+//! `DposLayer::launch_follower` wires neither artifact rung and its cert-inlet
+//! stays on vote-only admission for the life of the process. See
+//! [`crate::beacon::keys::BeaconKeys`]'s ladder doc for the residual in full.
+//! Nothing this module lacks is what blocks it: [`verify_artifact`] already
+//! needs only a staking read the follower makes on every cert. What is missing
+//! is a delivery route over the ONE relationship a follower has — its cert
+//! upstream — which would be a `CertUpstream` + `consensus`-RPC addition.
 //!
 //! # The three pieces
 //!

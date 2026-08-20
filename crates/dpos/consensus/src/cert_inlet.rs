@@ -408,10 +408,18 @@ pub struct CertInlet<C, E, M> {
     /// A default-constructed store on an inlet nobody wired one into is a private
     /// empty one — the unit-test shape.
     beacon_keys: BeaconKeys,
-    /// The ladder's held-artifact rung (see [`AgreedKeys`]). `Some` on BOTH
-    /// production inlets — the follower's and the validator's shadow inlet;
-    /// `None` only in unit tests that don't exercise it, and on a node with no
-    /// artifact store at all, where the store rung still answers.
+    /// The ladder's held-artifact rung (see [`AgreedKeys`]). `Some` on ONE
+    /// production inlet, the validator's shadow inlet, which is wired over the
+    /// beacon plane's artifact store.
+    ///
+    /// `None` on the `--cert-follow` follower's inlet, and that absence is
+    /// permanent rather than a gap waiting to be filled: the artifact seam
+    /// delivers over `BEACON_RESOLVER_CHANNEL` and a follower has no peer there
+    /// (see [`crate::beacon::artifact`]). With no rung the ladder is the store
+    /// rung alone, whose writers are all plane-side, so `cert_seed_pin` stays
+    /// `None` and every cert takes vote-only admission — the residual
+    /// [`crate::beacon::keys::BeaconKeys`]'s ladder doc states in full. The
+    /// multisig quorum is verified either way; what is lost is the seed check.
     held_keys: Option<AgreedKeys>,
     /// commonware ctx (the `CryptoRngCore` source the cert `verify()` needs).
     ctx: E,
@@ -537,9 +545,10 @@ where
     }
 
     /// Attach the ladder's held-artifact rung (see [`AgreedKeys`]).
-    /// Builder-style: both production inlets wire one over the node's artifact
-    /// store; a unit test that does not exercise it leaves it `None` and pin
-    /// resolution falls back to the shared store alone.
+    /// Builder-style: the validator's shadow inlet wires one over the beacon
+    /// plane's artifact store. A follower inlet and a unit test leave it `None`
+    /// and pin resolution falls back to the shared store alone — see the
+    /// `held_keys` field doc for why a follower cannot have one.
     pub fn with_held_keys(mut self, held: AgreedKeys) -> Self {
         self.held_keys = Some(held);
         self

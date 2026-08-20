@@ -330,15 +330,14 @@ where
     let committee: Vec<PeerPubkey> = cfg.committee.keys().iter().cloned().collect();
     // Taken BEFORE the task starts: between the spawn and the task's first poll the
     // beacon actor could otherwise sweep the very ceremony this instance is about to
-    // derive against.
+    // derive against. Moved into the supervisor's future from there, so an external
+    // `abort()` releases it by dropping that future — the ordinary way an instance
+    // ends. An instance that DELIVERS hands it over instead; see the send below.
     let hold = cfg.targets.hold(target_epoch);
 
     let handle = context
         .with_label("dkg_agreement")
         .spawn(move |ctx| async move {
-            // Owned by the supervisor's future, so an external `abort()` releases it
-            // by dropping the future — the ordinary way this instance ends.
-            let _hold = hold;
             let (bodies_engine, bodies) =
                 build_body_engine(ctx.with_label("dkg_bodies"), cfg.me, cfg.peers);
             let bodies_handle = bodies_engine.start(networks.bodies);
@@ -465,7 +464,14 @@ where
                 pinned = artifact.0.logs.len(),
                 "dkg agree: pinned dealer-log set agreed, instance torn down"
             );
-            drop(out.send(artifact).await);
+            if out.send(artifact).await.is_ok() {
+                // The retention hold outlives this task, because the artifact
+                // outlives it: `send` returns as soon as the artifact is buffered,
+                // and it is still two hops from `DkgActor::on_artifact` — where the
+                // adopting hold is taken. Released by that adopter, so a failed
+                // send leaves nothing parked.
+                cfg.targets.hand_over(hold);
+            }
         });
     Ok(handle)
 }
@@ -1223,6 +1229,9 @@ mod tests {
         key: DkgOutcome,
         /// `committee[TARGET]` as a standalone verifier would read it off chain.
         committee: EpochCommittee,
+        /// SHARED by all four members, so a test reads the cohort's retention as
+        /// one registry instead of four.
+        targets: AgreementTargets,
     }
 
     impl Cohort {
@@ -1337,6 +1346,7 @@ mod tests {
         let pool = ConfirmPool::new(b"FLUENT_TEST_COHORT");
         let stores: Vec<ArtifactStore> = (0..N).map(|_| ArtifactStore::new()).collect();
         let (out_tx, out_rx) = tokio::sync::mpsc::channel(N);
+        let targets = AgreementTargets::default();
         let mut handles = Vec::new();
         for (i, mut nets) in channels.into_iter().enumerate() {
             let bodies = nets.pop().expect("body channel");
@@ -1365,7 +1375,7 @@ mod tests {
                     pinned: FixedPinned(if silent { None } else { Some(key.clone()) }),
                     confirms: pool.clone(),
                     metrics: BeaconMetrics::default(),
-                    targets: AgreementTargets::default(),
+                    targets: targets.clone(),
                     artifacts: stores[i].clone(),
                     mailbox_size: 64,
                     // The coarse production set is asserted separately; here the
@@ -1403,6 +1413,7 @@ mod tests {
             members,
             key,
             committee: EpochCommittee::from_unverified(TARGET, bimap),
+            targets,
         }
     }
 
@@ -1617,6 +1628,33 @@ mod tests {
                     "the agreement journal partition survived the teardown"
                 );
             }
+        });
+    }
+
+    /// The ceremony-retention hold has to outlive the instance that took it.
+    ///
+    /// The supervisor's own hold dies with its future, and that future's last act is
+    /// a `send` which returns as soon as the artifact is buffered — two hops short
+    /// of `DkgActor::on_artifact`, where the adopting hold is taken. If the hold
+    /// ended there, an `on_height` tick at or past the boundary would sweep the very
+    /// ceremony the artifact exists to finalize over, and the node would stay
+    /// shareless for the epoch until something else healed it.
+    #[test]
+    fn the_retention_hold_outlives_the_instance_that_delivered() {
+        let runner = deterministic::Runner::timed(Duration::from_secs(3600));
+        runner.start(|context| async move {
+            let mut cohort = start_cohort(&context, 5).await;
+            cohort.confirm(0..entry_bar(N, View::new(1)));
+            cohort.out_rx.recv().await.expect("an artifact");
+
+            for handle in cohort.handles {
+                handle.await.expect("supervisor returned cleanly");
+            }
+            assert!(
+                cohort.targets.live().contains(&TARGET),
+                "every instance released the target as it ended, so the ceremony can be swept \
+                 out from under an artifact nothing has adopted yet"
+            );
         });
     }
 
