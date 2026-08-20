@@ -19,6 +19,9 @@ COMMONWARE_METRICS = """\
 # HELP beacon_seed_active_total the beacon seed active counter
 # TYPE beacon_seed_active_total counter
 beacon_seed_active_total_total 5963
+# HELP beacon_digest_fallback_total Beacon-active blocks that fell back to order.digest() (seed absent/unverified). 0 post-anchor on a healthy chain..
+# TYPE beacon_digest_fallback_total counter
+beacon_digest_fallback_total_total 0
 # HELP dkg_ceremony_fail_total dkg ceremony failures
 dkg_ceremony_fail_total_total 0
 # HELP dkg_ceremony_ok_total dkg ceremony successes
@@ -78,3 +81,24 @@ def test_labelled_gauge_last_value():
     """metric_val takes the LAST matching line's last field — a labelled family's final label set.
     `reth_dpos_executor_eager_finalized_derive_total{outcome="miss"} 238` is last → 238."""
     assert nodes.metric_val(RETH_METRICS, "eager_finalized_derive", "") == "238"
+
+
+# ── the DOUBLED `_total`, against the same production bytes ──────────────────────────────
+
+def test_counter_sample_matches_the_captured_scrape():
+    """`nodes.counter_sample` is the harness's ONLY statement of how a registered counter name
+    becomes a sample name, and this pins it to bytes rather than to belief.
+
+    `beacon_digest_fallback_total` is the literal `BeaconMetrics::register` passes to
+    `ctx.register` (`crates/dpos/consensus/src/beacon/metrics.rs`); the three lines above are
+    VERBATIM from the capture, and the sample carries a SECOND `_total`. `# HELP`/`# TYPE` keep
+    the registered name, which is why the registered spelling looks present to a careless eye.
+
+    Both directions are asserted. If `gauge_val` ever answered for the registered spelling,
+    `counter_sample` would be double-counting the suffix and every caller would be reading a
+    family that does not exist."""
+    family = "beacon_digest_fallback_total"
+    assert nodes.counter_sample(family) == "beacon_digest_fallback_total_total"
+    assert nodes.gauge_val(COMMONWARE_METRICS, nodes.counter_sample(family)) == "0"
+    assert nodes.gauge_val(COMMONWARE_METRICS, family) == "", (
+        "the REGISTERED spelling matched a sample line — counter_sample() has become a lie")

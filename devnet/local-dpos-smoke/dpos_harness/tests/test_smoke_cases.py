@@ -22,7 +22,7 @@ import pytest
 from dpos_harness.cases.smoke import (asserts, base, beacon, driver, epoch, tx, verdicts, vrf,
                                       vrf_boundary)
 from dpos_harness.cases.smoke.driver import SmokeCtx, SmokeFailure
-from dpos_harness.core import proc
+from dpos_harness.core import nodes, proc
 from dpos_harness.core.exit_codes import RC_ERROR
 from dpos_harness.core.proc import Runner
 from dpos_harness.stack.profiles import StaticProfile
@@ -652,16 +652,64 @@ _PLANE_OK = "\n".join([
 ])
 
 
-def _plane_logs(**per_node):
-    """`logs_required` stub: `_PLANE_OK` for every node, overridden per service."""
+#: A QUIESCENT node's log: the artifact store rehydrated, and not one ceremony stage — what every
+#: committee member emits for an epoch whose `dkgQual` bit is clear, i.e. every epoch on this
+#: stand, whose committee never rotates.
+_PLANE_QUIET = f"INFO {verdicts.AGREE_REHYDRATE_LINE} entries=0"
+
+
+def _plane_logs(default=_PLANE_OK, **per_node):
+    """`logs_required` stub: `default` for every node, overridden per service."""
     def read(svc, case, what, dry_value=""):
-        return per_node.get(svc, _PLANE_OK)
+        return per_node.get(svc, default)
     return read
 
 
+#: The two committee readings the plane branch is chosen from. `_COMMITTEE_B` rotates ONE seat out
+#: of `_COMMITTEE_A`, which is exactly the diff `commitEpochCommittee` sets `dkgQual` from.
+_COMMITTEE_A = "[" + ", ".join("0x" + c * 40 for c in "1234") + "]"
+_COMMITTEE_B = "[" + ", ".join("0x" + c * 40 for c in "1235") + "]"
+
+
+def _committees(mapping=None, default=_COMMITTEE_A):
+    """`staking_call` stub answering `getEpochCommittee(<epoch>)` from `mapping` (epoch -> raw
+    `cast` stdout) and `default` everywhere else."""
+    mapping = {str(k): v for k, v in (mapping or {}).items()}
+
+    def read(sig, *args, **kw):
+        if sig != beacon.COMMITTEE_SIG:
+            pytest.fail(f"the plane branch issued an unexpected staking call: {sig}")
+        return mapping.get(str(args[0]), default)
+    return read
+
+
+#: committee[3] != committee[2] — a ceremony was due, so the four-stage story must be there.
+_CHANGED = _committees({_PLANE_EPOCH: _COMMITTEE_B})
+#: every epoch reads the same committee — no ceremony was due, carry-forward served the key.
+_UNCHANGED = _committees()
+
+
 #: Every family the plane observation parses, at zero — a healthy node's registry.
+#:
+#: IN THE SPELLING THE REGISTRY ACTUALLY RENDERS, which is the whole point of this fixture. The
+#: first version wrote `f"{m} 0"` over the REGISTERED names — the same names the reader passes to
+#: `gauge_val` — so it agreed with the reader by construction and every test below passed while
+#: live run #2 reported all eight families unreadable on all four nodes. A metrics fixture written
+#: in the reader's vocabulary tests nothing about the metric. See `_plane_metric_line`.
+_PLANE_METRIC_ZERO = "0"
+
+
+def _plane_metric_line(family: str, value: str = _PLANE_METRIC_ZERO) -> str:
+    """One family as a commonware `:9100` scrape renders it: `# HELP`/`# TYPE` under the REGISTERED
+    name, the sample under `nodes.counter_sample` of it (the doubled `_total`)."""
+    return (f"# HELP {family} agreement-plane counter.\n"
+            f"# TYPE {family} counter\n"
+            f"{nodes.counter_sample(family)} {value}")
+
+
 _PLANE_METRIC_TEXT = "\n".join(
-    f"{m} 0" for m in (verdicts.AGREE_REJECT_METRIC,) + verdicts.AGREE_REPORTED_METRICS)
+    _plane_metric_line(m)
+    for m in (verdicts.AGREE_REJECT_METRIC,) + verdicts.AGREE_REPORTED_METRICS)
 
 
 def _plane_metrics(**per_node):
@@ -675,15 +723,26 @@ def _plane_metrics(**per_node):
 
 
 def _boundary_world(monkeypatch, **over):
+    """A healthy boundary case on the COMMITTEE-CHANGED branch — the epoch's committee differs
+    from its predecessor's, so the plane owes the full four-stage story."""
     world = dict(
         wait_finalized_ge=lambda target, timeout: True,
         mixhash_of=lambda svc, block, **kw: _blockmix(block),
         dump_logs=lambda *a, **kw: None,
+        staking_call=_CHANGED,
         logs_required=_plane_logs(),
         node_metrics_text=_plane_metrics(),
     )
     world.update(over)
     return _live_ctx(monkeypatch, **world)
+
+
+def _carry_world(monkeypatch, **over):
+    """The same case on the CARRY-FORWARD branch — the committee is frozen (which is what the
+    static stand actually does), so no ceremony was due and every node's log is quiescent."""
+    world = dict(staking_call=_UNCHANGED, logs_required=_plane_logs(_PLANE_QUIET))
+    world.update(over)
+    return _boundary_world(monkeypatch, **world)
 
 
 def test_assert_vrf_boundary_passes_across_a_live_boundary(monkeypatch):
@@ -778,7 +837,8 @@ _PLANE_FAILURES = [
     # THE REJECTION COUNTER.
     (lambda: dict(node_metrics_text=_plane_metrics(**{
         "validator-0": _PLANE_METRIC_TEXT.replace(
-            f"{verdicts.AGREE_REJECT_METRIC} 0", f"{verdicts.AGREE_REJECT_METRIC} 1")})),
+            _plane_metric_line(verdicts.AGREE_REJECT_METRIC),
+            _plane_metric_line(verdicts.AGREE_REJECT_METRIC, "1"))})),
      "non-zero", "a_served_artifact_was_refused_as_misbehaviour"),
     (lambda: dict(node_metrics_text=_plane_metrics(**{
         svc: "" for svc in beacon.COMMITTEE_NODES})),
@@ -837,3 +897,159 @@ def test_the_plane_reads_the_committee_and_not_the_import_follower(monkeypatch):
     asserts.assert_vrf_boundary(ctx)
     assert seen == list(beacon.COMMITTEE_NODES)
     assert "full-node" not in seen
+
+
+# ── vrf-boundary: the CARRY-FORWARD branch of the plane observation ────────
+#
+# A ceremony runs only where the committee CHANGED (`dkgQual[e] = committee[e] != committee[e-1]`,
+# `staking-reader/reader.rs:139`). The static stand never rotates, so every one of its epochs takes
+# the branch below — the four-stage demand above was a red on a healthy chain, the mirror of the
+# false greens this observation exists to remove. Both branches assert, and both are driven here.
+
+
+def test_the_plane_branch_is_read_from_the_two_committees(monkeypatch):
+    """The branch must come from the CHAIN and never from "no stage line was logged" — inferring
+    the absence of a ceremony from the absence of its logs would let the assertion agree with
+    itself in both directions, which is what made the unconditional demand circular."""
+    seen = []
+    ctx, _ = _carry_world(monkeypatch, staking_call=lambda sig, *a, **kw: (
+        seen.append((sig, a[0])), _COMMITTEE_A)[1])
+    asserts.assert_vrf_boundary(ctx)
+    assert seen == [(beacon.COMMITTEE_SIG, _PLANE_EPOCH - 1),
+                    (beacon.COMMITTEE_SIG, _PLANE_EPOCH)]
+
+
+def test_a_frozen_committee_passes_with_no_ceremony_at_all(monkeypatch):
+    """The live shape of `smoke-base`: no instance started for the target epoch, and the boundary
+    window shows the epoch was served a key anyway — carry-forward did its job."""
+    ctx, _ = _carry_world(monkeypatch)
+    asserts.assert_vrf_boundary(ctx)
+
+
+def test_a_ceremony_on_an_unchanged_committee_FAILS(monkeypatch):
+    """The carry branch's first red, and it is a real defect: `chain_key_epoch` never names a
+    bit-clear epoch, so a node that ran an instance here holds a key the chain declines to serve —
+    the plane's trigger has drifted off the on-chain committee diff."""
+    ctx, _ = _carry_world(monkeypatch,
+                          logs_required=_plane_logs(_PLANE_QUIET, **{"validator-2": _PLANE_OK}))
+    with pytest.raises(SmokeFailure, match="ran an epoch-key ceremony for epoch 3"):
+        asserts.assert_vrf_boundary(ctx)
+
+
+def test_the_carry_branch_names_which_stages_it_saw(monkeypatch):
+    """Which stage appeared says WHERE the trigger drifted — an instance that started and never
+    decided is a different finding from a full ceremony that minted a declined key."""
+    started_only = f"{_PLANE_QUIET}\nINFO {verdicts.AGREE_STARTED_LINE} epoch={_PLANE_EPOCH}"
+    ctx, _ = _carry_world(monkeypatch,
+                          logs_required=_plane_logs(_PLANE_QUIET,
+                                                    **{"validator-1": started_only}))
+    with pytest.raises(SmokeFailure, match="validator-1: instance started"):
+        asserts.assert_vrf_boundary(ctx)
+
+
+def test_the_carry_branch_FAILS_when_the_window_never_reaches_the_target_epoch(monkeypatch):
+    """The carry branch's second red. Its key evidence is the boundary window this case already
+    verified, and the window's geometry is computed independently of the target epoch — so a
+    re-pointed target (or a drifted `BOUNDARY_HALF_WINDOW`) would otherwise let the branch report
+    a green carried key from readings taken entirely in a DIFFERENT epoch."""
+    monkeypatch.setattr(asserts, "BOUNDARY_TARGET_EPOCH", 5)
+    ctx, _ = _carry_world(monkeypatch)
+    with pytest.raises(SmokeFailure, match="does not reach into epoch 5"):
+        asserts.assert_vrf_boundary(ctx)
+
+
+def test_the_carry_branch_still_asserts_the_durable_artifact_store(monkeypatch):
+    """The store is a property of the node's WIRING, not of this epoch's ceremony — an epoch that
+    ran none is no reason to stop reading it, and its absence is silent by construction."""
+    ctx, _ = _carry_world(monkeypatch, logs_required=_plane_logs(_PLANE_QUIET,
+                                                                **{"validator-3": "INFO up"}))
+    with pytest.raises(SmokeFailure, match="IN-MEMORY store"):
+        asserts.assert_vrf_boundary(ctx)
+
+
+# ══ the plane's eight families are read in the spelling the REGISTRY renders ══════════════
+
+def test_the_plane_reads_the_DOUBLED_total_the_registry_renders(monkeypatch, capsys):
+    """THE DEFECT LIVE RUN #2 FOUND, pinned in both halves.
+
+    All eight plane families are `Counter`s whose REGISTERED name already ends in `_total`
+    (`beacon/metrics.rs`), and the registry appends its own — so the scrape says `…_total_total`
+    while `nodes.gauge_val` matches the name ANCHORED at its end. Reading them under the
+    registered spelling returned "" from every node: the gating verdict reported
+    `dpos_dkg_artifact_rejected_total` as "unreadable on ALL 4 node(s)" against four nodes that
+    were exporting it, and the seven reported families all printed `na`.
+
+    IT PASSED EVERY UNIT TEST AT THE TIME because the canned registry was written in the reader's
+    own vocabulary — one bare `f"{family} 0"` line per family, which the anchored matcher happily
+    answered for. This test uses registry text in the shape the registry actually produces
+    (`# HELP`/`# TYPE` under the registered name, the sample under `counter_sample`), so it fails
+    if the read path ever drops back to the registered spelling.
+
+    The reported family is asserted too, and not only the gating one: all eight go through the
+    SAME call, seven of them only print, and printing `na` forever is how the eighth's spelling
+    bug stayed invisible until it happened to gate something.
+    """
+    reported = verdicts.AGREE_REPORTED_METRICS[0]
+    scrape = "\n".join([
+        _plane_metric_line(verdicts.AGREE_REJECT_METRIC, "0"),
+        _plane_metric_line(reported, "7"),
+    ])
+    assert nodes.counter_sample(verdicts.AGREE_REJECT_METRIC) in scrape
+    assert f"\n{verdicts.AGREE_REJECT_METRIC} " not in scrape, (
+        "the fixture rendered the REGISTERED spelling as a sample line — it would agree with a "
+        "reader that has the bug, which is exactly how this defect reached a live run")
+
+    ctx, _ = _carry_world(monkeypatch, node_metrics_text=_plane_metrics(**{
+        svc: scrape for svc in beacon.COMMITTEE_NODES}))
+    asserts.assert_vrf_boundary(ctx)
+
+    out = capsys.readouterr().out
+    assert f"{verdicts.AGREE_REJECT_METRIC}=0 on 4/4 node(s)" in out, (
+        "the gating counter was not EVALUATED over the registry the registry renders")
+    assert f"{reported}: " in out and "=7" in out, (
+        f"{reported} read as unavailable off a scrape that carries it — the seven "
+        "reported families are read through the same call as the gating one")
+    assert f"{reported}: validator-0=na" not in out
+
+
+def test_the_dry_plane_registry_is_shaped_like_a_real_one():
+    """The `--dry-run` canned registry must carry the SAMPLE spelling too. A dry fixture written in
+    the reader's vocabulary walks the happy branch of `_assert_artifact_rejections` no matter what
+    the reader passes, which is a transcript that proves nothing about the metric half."""
+    for m in (verdicts.AGREE_REJECT_METRIC,) + verdicts.AGREE_REPORTED_METRICS:
+        assert f"{nodes.counter_sample(m)} 0" in beacon._DRY_PLANE_METRICS
+        assert nodes.gauge_val(beacon._DRY_PLANE_METRICS, nodes.counter_sample(m)) == "0"
+        assert nodes.gauge_val(beacon._DRY_PLANE_METRICS, m) == ""
+
+
+def test_the_carry_branch_still_asserts_the_rejection_counter(monkeypatch):
+    """Same reason: an epoch that agreed nothing can still be SERVED (and refuse) an artifact for
+    another one, and a rejection is a peer excluded with no way back."""
+    ctx, _ = _carry_world(monkeypatch, node_metrics_text=_plane_metrics(**{
+        "validator-0": _PLANE_METRIC_TEXT.replace(
+            _plane_metric_line(verdicts.AGREE_REJECT_METRIC),
+            _plane_metric_line(verdicts.AGREE_REJECT_METRIC, "1"))}))
+    with pytest.raises(SmokeFailure, match="non-zero"):
+        asserts.assert_vrf_boundary(ctx)
+
+
+@pytest.mark.parametrize("reading,match", [
+    ("", "returned NOTHING"),
+    ("[]", "is EMPTY"),
+    ("0x" + "1" * 40, "did not decode as an address array"),
+])
+def test_an_unreadable_committee_picks_NEITHER_branch(monkeypatch, reading, match):
+    """Both branches rest on the committee diff, so a committee nobody could read leaves both
+    unfounded. Guessing one would assert a ceremony — or its absence — over nothing."""
+    ctx, _ = _carry_world(monkeypatch,
+                          staking_call=_committees({_PLANE_EPOCH: reading}))
+    with pytest.raises(SmokeFailure, match=match):
+        asserts.assert_vrf_boundary(ctx)
+
+
+def test_a_changed_committee_still_demands_the_whole_ceremony(monkeypatch):
+    """The routing, from the other side: with committee[3] != committee[2] a quiescent plane is a
+    missing key, not a carry-forward, and must fail on the FIRST stage."""
+    ctx, _ = _boundary_world(monkeypatch, logs_required=_plane_logs(_PLANE_QUIET))
+    with pytest.raises(SmokeFailure, match="never logged 'instance started'"):
+        asserts.assert_vrf_boundary(ctx)

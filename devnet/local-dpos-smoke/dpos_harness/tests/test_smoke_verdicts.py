@@ -493,3 +493,101 @@ def test_the_durable_store_verdict_is_an_absence_that_can_fail():
                                                        "validator-1": False})
     assert not ok and "validator-1" in msg and "IN-MEMORY" in msg
     assert not verdicts.evaluate_artifact_store_durable({})[0]
+
+
+# ══ the plane's BRANCH: ceremony vs carry-forward ═══════════════════════════
+#
+# `dkgQual[e] = (committee[e] != committee[e-1])` decides whether an epoch gets a ceremony at all.
+# The verdicts below are the harness's own reading of that same diff, and they are what keeps the
+# plane observation from demanding a ceremony on a stand whose committee never rotates.
+
+_A, _B, _C = ("0x" + c * 40 for c in "abc")
+
+
+def _arr(*addrs):
+    """`cast call …(address[])` stdout for a committee."""
+    return "[" + ", ".join(addrs) + "]"
+
+
+def test_a_rotated_seat_reads_as_a_committee_CHANGE():
+    ok, msg, changed = verdicts.evaluate_committee_change(_arr(_A, _B), _arr(_A, _C), 3)
+    assert ok and msg == "" and changed is True
+
+
+def test_an_identical_committee_reads_as_NO_change():
+    ok, _, changed = verdicts.evaluate_committee_change(_arr(_A, _B), _arr(_A, _B), 3)
+    assert ok and changed is False
+
+
+def test_the_committee_compare_normalizes_order_and_case():
+    """The contract refuses a committee that is not strictly ascending, so the stored order IS
+    sorted order — normalizing here cannot flip a verdict, but a node whose `cast` renders the
+    array in another order (or checksummed) must not read as a rotation that never happened."""
+    checksummed = _B[:2] + _B[2:].upper()
+    ok, _, changed = verdicts.evaluate_committee_change(_arr(_A, _B),
+                                                       _arr(checksummed, _A), 3)
+    assert ok and changed is False
+
+
+@pytest.mark.parametrize("prev,cur,match", [
+    ("", _arr(_A), "getEpochCommittee(2) returned NOTHING"),
+    (_arr(_A), "  \n", "getEpochCommittee(3) returned NOTHING"),
+    (_arr(_A), _A, "did not decode as an address array"),
+    (_arr(_A), "[]", "is EMPTY"),
+    ("[]", _arr(_A), "is EMPTY"),
+])
+def test_a_committee_that_cannot_be_read_picks_NEITHER_branch(prev, cur, match):
+    """`changed is None`, not False. Both branches rest on the diff, so an unread committee leaves
+    both unfounded — and a bare address decoding as "a committee" is exactly how a wrong signature
+    reads as a plausible one."""
+    ok, msg, changed = verdicts.evaluate_committee_change(prev, cur, 3)
+    assert not ok and changed is None and match in msg
+
+
+def test_a_quiescent_plane_is_what_an_unchanged_committee_owes():
+    assert verdicts.evaluate_agree_quiescent({"validator-0": [], "validator-1": []}, 3)[0]
+
+
+def test_a_ceremony_without_a_committee_change_FAILS_and_names_the_stages():
+    """Not a harmless extra: `chain_key_epoch` never names a bit-clear epoch, so the key such a
+    ceremony mints is one the chain declines to serve, and the node paid a full agreement instance
+    for it."""
+    ok, msg = verdicts.evaluate_agree_quiescent(
+        {"validator-0": [], "validator-2": ["instance started", "set agreed"]}, 3)
+    assert not ok
+    assert "1/2" in msg and "validator-2: instance started, set agreed" in msg
+
+
+def test_the_quiescence_verdict_refuses_an_empty_reading():
+    """Same rule as every stage verdict: nothing read is not a quiet plane."""
+    ok, msg = verdicts.evaluate_agree_quiescent({}, 3)
+    assert not ok and "nothing was read for" in msg
+
+
+def test_a_carried_key_is_evidenced_by_a_reading_INSIDE_the_epoch():
+    ok, msg = verdicts.evaluate_carry_forward_key(3, [(159, _mix("a")), (160, _mix("b"))],
+                                                  160, 191)
+    assert ok and "1 verified block(s) inside epoch 3" in msg
+
+
+def test_a_window_that_misses_the_epoch_proves_NOTHING_about_its_key():
+    """The reuse of the boundary window is what makes this branch cheap, and this is its price:
+    the window's geometry is computed independently of the target epoch, so a drift in either
+    would otherwise report a green carried key from readings taken in the epoch BEFORE it."""
+    ok, msg = verdicts.evaluate_carry_forward_key(3, [(154, _mix("a")), (159, _mix("b"))],
+                                                  160, 191)
+    assert not ok and "does not reach into epoch 3" in msg
+
+
+def test_an_epoch_that_carried_no_key_FAILS():
+    """What a broken carry-forward looks like from outside: no key resolves, the deriver falls
+    back to `order.digest()` and the epoch's blocks carry a zero mixHash."""
+    ok, msg = verdicts.evaluate_carry_forward_key(3, [(160, "0x" + "0" * 64)], 160, 191)
+    assert not ok and "carried no usable key" in msg
+
+
+def test_an_empty_window_is_not_a_carried_key():
+    """`evaluate_beacon_window` hands back an EMPTY list on failure. Scoring that as "no bad
+    reading found" would turn the branch green on precisely the run that measured nothing."""
+    ok, msg = verdicts.evaluate_carry_forward_key(3, [], 160, 191)
+    assert not ok and "NO verified prev_randao at all" in msg

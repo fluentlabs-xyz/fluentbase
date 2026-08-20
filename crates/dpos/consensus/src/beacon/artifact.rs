@@ -182,7 +182,10 @@ pub enum ArtifactError {
     /// The committee could not be read at all. NOT a fault of the artifact.
     #[error("committee[{0}] is not readable yet")]
     CommitteeUnreadable(u64),
-    /// The snapshot does not form a committee (duplicate peer or BLS key).
+    /// The snapshot does not form a committee (duplicate peer or BLS key). Only
+    /// [`verify_artifact_from_snapshot`] reaches it, and that entry point is
+    /// itself test-only.
+    #[cfg(test)]
     #[error("committee[{epoch}] snapshot is not a valid participant set: {source}")]
     Committee {
         epoch: u64,
@@ -446,6 +449,7 @@ impl ArtifactStore {
     }
 
     /// Whether this node can answer `Have` for `epoch`.
+    #[cfg(test)]
     pub fn has(&self, epoch: u64) -> bool {
         self.lock().contains_key(&epoch)
     }
@@ -698,11 +702,6 @@ impl ArtifactBridge {
             adopt_tx,
             metrics,
         }
-    }
-
-    /// The store this bridge serves from.
-    pub fn store(&self) -> &ArtifactStore {
-        &self.store
     }
 
     /// Serve `epoch`. ALWAYS an answer, never a dropped responder.

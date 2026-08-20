@@ -686,10 +686,6 @@ where
     // `None` ⇒ plaintext-dev ⇒ TAG_PLAINTEXT.
     let chain_id = node.chain_spec().chain_id();
     let (bls_keypair, share_seal_key) = load_bls_keypair(&cfg, chain_id).await?;
-    let share_state = match share_seal_key {
-        Some(key) => fluentbase_consensus::beacon::share_state::ShareState::Encrypted(key),
-        None => fluentbase_consensus::beacon::share_state::ShareState::Plaintext,
-    };
 
     // Cert-inlet: a SECOND producer into this validator's own marshal, armed
     // whenever `--dpos.follower-upstream` URLs are configured (the production-path
@@ -737,34 +733,9 @@ where
         })
         .transpose()?;
 
-    // The epoch-key agreement plane's write-back, in two hops rather than one.
-    // Instances deliver their agreed artifact on `agreed_tx`; the hop below
-    // publishes its `PK_epoch` into the shared `BeaconKeys` — which only exists
-    // once the consensus layer has launched — and then hands the artifact to the
-    // `DkgActor` on `artifact_adopt_tx`, where it becomes the pinned dealer-log set
-    // the existing finalize rails run over.
-    let (agreed_tx, mut agreed_rx) =
-        mpsc::channel::<fluentbase_consensus::beacon::dkg_agree::AgreedArtifact>(16);
-    // The restart replay's send half. It enters the write-back at the SAME point a
-    // live instance does, so the actor's adoption / first-wins / retention-hold path
-    // stays the only one, and `PK_epoch` is republished at `KeySource::Agreed` on the
-    // way through.
-    let replay_tx = agreed_tx.clone();
-    let (artifact_adopt_tx, artifact_adopt_rx) =
-        mpsc::channel::<fluentbase_consensus::beacon::dkg_agree::AgreedArtifact>(16);
-
     // Always-on beacon plane (one FluentP2P + 5 persistent Muxers + persistent
     // DkgActor + shared store), built ONCE — the engine CLONES the shared plane.
-    let mut plane = build_beacon_plane(
-        &ctx,
-        &node,
-        &cfg,
-        share_state,
-        bls_keypair.clone(),
-        agreed_tx,
-        artifact_adopt_rx,
-    )
-    .await?;
+    let plane = build_beacon_plane(&ctx, &node, &cfg, share_seal_key, bls_keypair.clone()).await?;
     // Rule Y: ONE shared upstream-frontier atomic threaded into BOTH the validator
     // inlet tee (writer) and the layer's `executor::ReJump` (reader), so an
     // inlet-fed joiner validator self-heals off the frontier exactly like a
@@ -800,54 +771,10 @@ where
     // still leaves ladder rung 1 answered for `repair_unpinned_schemes`. Then it
     // hands the artifact to the `DkgActor`, where its dealer-log set becomes the
     // pinned set the existing finalize rails run over — the write-back proper.
-    let artifact_adopt_handle = {
-        let beacon_keys = handle.beacon_keys.clone();
-        keepalive_ctx
-            .with_label("agreement_write_back")
-            .spawn(move |_| async move {
-                while let Some(artifact) = agreed_rx.recv().await {
-                    let epoch = artifact.0.target_epoch;
-                    let pk = *fluentbase_consensus::beacon::outcome::group_public_key(
-                        &artifact.0.group_key,
-                    );
-                    info!(
-                        epoch,
-                        "beacon: epoch-key agreement artifact adopted — publishing PK_epoch"
-                    );
-                    beacon_keys.set_pk(
-                        epoch,
-                        pk,
-                        fluentbase_consensus::beacon::keys::KeySource::Agreed,
-                    );
-                    if artifact_adopt_tx.send(artifact).await.is_err() {
-                        warn!("beacon: the DkgActor is gone; agreement write-back stopped");
-                        break;
-                    }
-                }
-                // PARK, never return. This handle is supervised, where a clean exit
-                // means "a subsystem died, take the node down" — and the ordinary way
-                // this loop ends is the launcher dropping its sender during shutdown,
-                // which must not be the thing that cancels the node.
-                std::future::pending::<()>().await;
-            })
-    };
-    // The restart replay, sent only now: the hop above is this channel's only drain,
-    // so a send issued before it was spawned would deadlock on a store holding more
-    // records than the channel's depth. Late is harmless — the replay matters for a
-    // target the chain has NOT yet entered (the actor sweeps a ceremony the instant
-    // `now` reaches its epoch), which is the whole of the epoch before it, and from
-    // the boundary on the heal is `drive_recompute` reading the same store directly.
-    for artifact in plane.artifact_replay.drain(..) {
-        let epoch = artifact.0.target_epoch;
-        if replay_tx.send(artifact).await.is_err() {
-            warn!(
-                epoch,
-                "beacon: the agreement write-back is gone; the artifact replay stopped"
-            );
-            break;
-        }
-    }
-    drop(replay_tx);
+    let artifact_adopt_handle = plane
+        .write_back
+        .arm(&keepalive_ctx, handle.beacon_keys.clone())
+        .await;
 
     // Fill the DkgActor's deferred marshal READ handle now that the layer launch has
     // created the marshal mailbox — the demote-heal recompute (§8.11.1) reads pinned
@@ -877,7 +804,7 @@ where
                 upstream_frontier: upstream_frontier.clone(),
                 dkg_height_tx: plane.dkg_height_tx.clone(),
             },
-            plane.shared.held_keys.clone(),
+            plane.shared.beacon.held_keys().clone(),
             handle.beacon_keys.clone(),
         )
     });
@@ -1044,15 +971,10 @@ pub(crate) struct BeaconPlane {
     /// The durable artifact store's writer. A DRAIN handle, not a supervised one:
     /// it returns when the store's last sender drops, which is shutdown.
     pub artifact_writer_handle: Option<Handle<()>>,
-    /// Locally-stored agreement artifacts this restart has to push back through the
-    /// write-back before they can do anything (see
-    /// [`fluentbase_consensus::beacon::artifact::restart_replay`]). Data rather than a
-    /// handle, and it rides out on the plane because the selection needs the artifact
-    /// store, the reloaded shares and the beacon dir — all of which are locals of the
-    /// build. Drained exactly once, in `run_dpos_stack`, and only AFTER the write-back
-    /// hop is spawned: that hop is the channel's only drain, so a send made here would
-    /// deadlock the build on a store deeper than the channel.
-    pub artifact_replay: Vec<fluentbase_consensus::beacon::dkg_agree::AgreedArtifact>,
+    /// The agreement write-back, held back until the consensus layer's key store
+    /// exists. Armed exactly once, in `run_dpos_stack`, with `handle.beacon_keys`;
+    /// arming it also pushes this restart's locally-stored artifacts through it.
+    pub write_back: fluentbase_consensus::beacon::BeaconWriteBack,
     /// Supervisor handles of the agreement instances the launcher starts, for
     /// `epoch_manager` to adopt so they prune on the engine cutoff. Move-only, so
     /// it is handed over exactly once — into `launch_dpos_layer`.
@@ -1074,32 +996,31 @@ pub(crate) struct BeaconPlane {
     /// finalized poller feeds it `fin + K`; the DkgActor `on_height` clamps both
     /// feeders to its running max (never rewound).
     pub dkg_height_tx: mpsc::Sender<u64>,
-    /// Deferred marshal READ handle for the DkgActor's demote-heal recompute
-    /// (§8.11.1). Created EMPTY here (the marshal mailbox does not exist until the
-    /// later layer launch); `run_dpos_stack` fills it with `handle.cert_mailbox` after
-    /// `launch_dpos_layer`, at which point the DkgActor's `outcome_at` reader starts
-    /// resolving pinned boundary outcomes. A `OnceLock` — set exactly once, read-only
-    /// thereafter (no lock on the read path).
+    /// Deferred marshal READ handle for the plane-native frontier resolver, which
+    /// serves peers this node's LOCAL marshal tip/archive. Created EMPTY here (the
+    /// marshal mailbox does not exist until the later layer launch);
+    /// `run_dpos_stack` fills it with `handle.cert_mailbox` after
+    /// `launch_dpos_layer`, at which point the handler starts answering. A
+    /// `OnceLock` — set exactly once, read-only thereafter (no lock on the read
+    /// path).
     pub marshal_slot: Arc<std::sync::OnceLock<fluentbase_consensus::MarshalMailbox>>,
 }
 
 /// Build the always-on beacon plane for a registered `--dpos` validator. Mirrors
 /// the network/EpochTransition/DkgActor construction that used to live inside
 /// `DposLayer::launch`, lifted UP so it persists across the consensus role switch.
-#[allow(clippy::too_many_arguments)]
+///
+/// The beacon proper is built by [`fluentbase_consensus::beacon::build`]; what is
+/// assembled here is everything around it — the one `FluentP2P`, the 5 persistent
+/// `Muxer` brokers, the finalized-height poller driving the EpochTransition, the
+/// evidence gossip, the frontier resolver, and the staking-state closures the
+/// beacon takes as inputs.
 pub(crate) async fn build_beacon_plane<N, AddOns>(
     ctx: &Context,
     node: &FullNode<N, AddOns>,
     cfg: &DposConfig,
-    share_state: fluentbase_consensus::beacon::share_state::ShareState,
+    share_seal_key: Option<fluentbase_bls::ShareSealKey>,
     bls_keypair: fluentbase_bls::keys::ValidatorBlsKeypair,
-    // The agreement plane's two ends of the write-back: instances deliver their
-    // agreed artifact on `agreed_tx`, and the `DkgActor` takes adopted artifacts
-    // back on `artifacts_rx`. They are NOT joined here — the hop between them
-    // publishes the agreed key into the shared `BeaconKeys`, which does not exist
-    // until the consensus layer launches (see `run_dpos_stack`).
-    agreed_tx: mpsc::Sender<fluentbase_consensus::beacon::dkg_agree::AgreedArtifact>,
-    artifacts_rx: mpsc::Receiver<fluentbase_consensus::beacon::dkg_agree::AgreedArtifact>,
 ) -> eyre::Result<BeaconPlane>
 where
     N: FullNodeComponents<
@@ -1140,8 +1061,6 @@ where
             cfg.staking_config_path.display()
         )
     })?;
-    // Taken before the keypair is moved into the `DkgActor`.
-    let me_peer = peer_keypair.public_key();
     let bootstrappers = match classify_spec(&cfg.bootstrappers) {
         BootstrapperSpec::Dns(domain) => load_from_dns(domain)
             .await
@@ -1260,49 +1179,9 @@ where
             })
     });
 
-    // Shared live-DKG store, reloaded from `<datadir>/beacon/` ONCE.
+    // The per-epoch DKG share files, and the agreement artifacts persisted beside
+    // them. Reloaded ONCE, inside the beacon build.
     let beacon_dir = node.data_dir.data_dir().join("beacon");
-    let ceremony_store: fluentbase_consensus::beacon::actor::CeremonyStore =
-        Arc::new(std::sync::RwLock::new(std::collections::BTreeMap::new()));
-    // Edge-trigger the DkgActor fires when a share lands; the EpochManager's
-    // `enter` waits on it (instead of polling) so a signer that reaches the
-    // boundary before its share is memoized wakes the instant it lands.
-    // SINGLE-CONSUMER Notify (notify_one): the ONLY awaiter is EpochManager::run
-    // (epoch_manager.rs select). notify_one wakes exactly one waiter, so adding a second
-    // .notified() consumer of this Arc would silently swallow share-landed wakes.
-    let share_notify = Arc::new(tokio::sync::Notify::new());
-    let reloaded = fluentbase_consensus::beacon::share_state::load_all(&beacon_dir, &share_state);
-    // The artifacts ride out of the share files here but land further down, once the
-    // artifact store is open (it does not exist yet at this point in the build).
-    let mut reloaded_artifacts: Vec<(u64, Vec<u8>)> = Vec::new();
-    if !reloaded.is_empty() {
-        if let Ok(mut store) = ceremony_store.write() {
-            for (epoch, output, share, artifact) in reloaded {
-                info!(
-                    epoch,
-                    artifact = artifact.is_some(),
-                    "beacon: reloaded persisted live-DKG share from disk"
-                );
-                if let Some(bytes) = artifact {
-                    reloaded_artifacts.push((epoch, bytes));
-                }
-                store.insert(epoch, (output, share));
-            }
-        }
-    }
-
-    // QUALIFY-BEFORE-COMMIT (AMENDMENT 5): "qualified(E+1)" is now the node's own
-    // deterministic finalize verdict — the share landing in the shared
-    // `ceremony_store`. No separate QualCert store / gossip / aggregation. The
-    // vote-time marker gate reads `ceremony_store` presence via `beacon_for_epoch`;
-    // the marker relayer reads it via a `qualified` closure below.
-    //
-    // The shared dealer-log hash index: the DkgActor publishes idx→hash of every
-    // log it has recorded, and the agreement plane proposes over it (its
-    // share-confirmations state the same set). Wired into the DkgActor via
-    // `with_recorded_logs`; nothing above the plane reads it.
-    let recorded_dkg_logs: fluentbase_consensus::beacon::actor::DkgLogIndex =
-        Arc::new(std::sync::RwLock::new(std::collections::BTreeMap::new()));
 
     // Live cursor (consensus-finalized ≈ EL-finalized + K) for catch-up reads.
     // The cert-inlet (on upstream-configured nodes) tees the live upstream cert
@@ -1319,7 +1198,7 @@ where
     // and the cursor is cert-finalized (no reorg), so reading at the executed-but-
     // not-yet-EL-finalized tip is sound and surfaces an ahead-committed committee[E]
     // K blocks sooner.
-    let committee_for: fluentbase_consensus::beacon::actor::CommitteeFor = {
+    let committee_for = {
         let reader = RethStakingStateReader::new(
             node.provider.clone(),
             node.evm_config.clone(),
@@ -1363,7 +1242,7 @@ where
     // committee is. Read at the same cursor as `committee_for` above and for the
     // same reason: committee[E] is content-invariant across any in-epoch executed
     // hash, and the live cursor is cert-finalized.
-    let committee_source: fluentbase_consensus::beacon::artifact::CommitteeSource = {
+    let committee_source = {
         let reader = RethStakingStateReader::new(
             node.provider.clone(),
             node.evm_config.clone(),
@@ -1400,226 +1279,36 @@ where
     // DkgActor's default `active_committee_for = committee_for.clone()` covers the
     // `cur` side of the change-test against the same committed slot.
 
-    // FROZEN on-chain `dkgQual[e]` bit reader — the carry-forward arbiter input
-    // (`beacon::carry`): the chain's key epoch for E is the last set bit in
-    // (BOOTSTRAP, E]. FINALIZED hash only (same determinism discipline as the
-    // committee readers). The freeze/memo rule and its FLU-1134 history live at
-    // `frozen_dkg_qual`; this site supplies only the reads, so the follower
-    // launch's own reader (`DposLayer::launch_follower`) cannot drift from it.
-    let dkg_qual_for: fluentbase_consensus::beacon::carry::DkgQualFor = {
+    // The raw on-chain `dkgQual[e]` reads behind the carry-forward arbiter: the
+    // chain's key epoch for E is the last set bit in (BOOTSTRAP, E]. FINALIZED hash
+    // only (same determinism discipline as the committee readers). This site
+    // supplies ONLY the reads — the freeze/memo rule that turns them into the
+    // arbiter lives at `beacon::carry::frozen_dkg_qual`, so the follower launch's
+    // own reader (`DposLayer::launch_follower`) cannot drift from it.
+    let dkg_qual_at = {
+        let provider = node.provider.clone();
+        Arc::new(move || {
+            let fin = provider.finalized_block_number().ok().flatten()?;
+            provider.block_hash(fin).ok().flatten()
+        })
+    };
+    let dkg_qual_probe = {
         let reader = RethStakingStateReader::new(
             node.provider.clone(),
             node.evm_config.clone(),
             staking_config.clone(),
         );
-        let provider = node.provider.clone();
-        fluentbase_consensus::beacon::carry::frozen_dkg_qual(
-            Arc::new(move || {
-                let fin = provider.finalized_block_number().ok().flatten()?;
-                provider.block_hash(fin).ok().flatten()
-            }),
-            Arc::new(move |epoch, at| {
-                let bit = reader.dkg_qual(epoch, at).ok()?;
-                // A SET bit is proof the commit happened, so the committee read
-                // is skipped for it — that is the only read this probe can save.
-                let committed = bit
-                    || reader
-                        .epoch_committee_snapshot(epoch, at)
-                        .map(|s| !s.validators.is_empty())
-                        .unwrap_or(false);
-                Some((bit, committed))
-            }),
-        )
-    };
-
-    // Beacon counters — registered ONCE here (the persistent layer); cloned (never
-    // re-registered) into the DkgActor + each per-epoch signer engine.
-    let beacon_metrics = fluentbase_consensus::beacon::metrics::BeaconMetrics::default();
-    beacon_metrics.register(ctx);
-
-    let dkg_namespace =
-        fluentbase_bls::beacon::seed_namespace(&fluentbase_bls::fluent_namespace(chain_id));
-    // The epoch-key agreement plane's shared state, all of it created ONCE and
-    // handed to BOTH the `DkgActor` and every instance the launcher starts.
-    //
-    // `confirm_pool` carries the namespace share-confirmations are signed under, so
-    // handing the same pool to both sides is what makes it impossible for them to
-    // disagree about it — a second pool built from a different base would reject
-    // every honest confirmation and the entry bar would never be met, silently.
-    // `agreement_targets` is the registry that exempts a live target from the
-    // actor's height-driven ceremony sweep; the actor also takes its own hold on it
-    // while a write-back is in flight.
-    let confirm_pool = fluentbase_consensus::beacon::dkg_agree::ConfirmPool::new(&dkg_namespace);
-    let agreement_targets = fluentbase_consensus::beacon::dkg_agree::AgreementTargets::default();
-    let (pinned_tx, pinned_rx) =
-        mpsc::channel::<fluentbase_consensus::beacon::actor::PinnedRequest>(256);
-    // The actor's dealing-closed edge. Bounded and `try_send`-driven: the actor
-    // re-announces every open target on each height tick, so a full channel costs a
-    // tick of latency and never a lost instance.
-    let (agreement_request_tx, agreement_request_rx) = mpsc::channel::<u64>(16);
-    let (agreement_intake_tx, agreement_intake_rx) =
-        mpsc::channel::<(commonware_consensus::types::Epoch, Handle<()>)>(16);
-
-    // DKG-log recovery resolver (`commonware_resolver::p2p`) on BEACON_RESOLVER_CHANNEL
-    // — a mid-window-restarted committee member re-fetches the public dealer logs it
-    // never received, keyed by `{epoch, dealer}`, from peers that still hold them. The
-    // `Provider` is the SAME `OracleHandle` the EpochTransition tracks
-    // `registry ∪ committee[E]` on, so the log holders are in `latest.primary` during
-    // E-1 (committee[E] ⊆ registry); `fetch_targeted` aims at the roster. The `Blocker`
-    // is an isolated `NoopBlocker` (NOT the shared oracle): a `deliver=false` on a bad
-    // DKG-log response must never partition a peer from consensus channels (review
-    // [1013] / fix-plan-v3 Fix B). The
-    // `LogHandler` bridges the engine's Producer/Consumer to the DkgActor run loop
-    // (which owns the ceremony state single-threaded). Replaces the former
-    // best-effort BEACON_CHANNEL LogRequest/LogResponse gossip pull (§8.11.1).
-    //
-    // The engine carries a SECOND subject on the same channel: the epoch-key
-    // agreement artifact (`BeaconFetchKey::Artifact`). It rides here rather than on
-    // a channel of its own because this one is already the right quota (16/s, never
-    // a 128/s consensus quota — an inbound over-quota sleeps a peer's WHOLE
-    // connection), already tracks the right peer set, and is already wired.
-    // `LogFetcher` keeps the ceremony's own handle narrowed to `DkgLogKey`, so the
-    // widened key never leaks into the DKG actor or the agreement automaton.
-    let (log_resolver_tx, log_resolver_rx) =
-        mpsc::channel::<fluentbase_consensus::beacon::log_resolver::LogMessage>(256);
-    let log_handler = fluentbase_consensus::beacon::log_resolver::LogHandler::new(log_resolver_tx);
-    // The per-epoch artifact store: RAM for every in-process reader, plus a durable
-    // mirror so the value survives the restart that today loses it outright. ONE
-    // instance per process — a second handle over this partition is a dual-writer.
-    let (artifact_store, artifact_writer_handle) = fluentbase_consensus::beacon::artifact::open(
-        ctx.with_label("artifact_store"),
-        ctx.with_label("artifact_store_writer"),
-        fluentbase_consensus::dpos::ARTIFACT_JOURNAL_PARTITION,
-    )
-    .await?;
-    // Refill from the share files, AFTER the journal's own rehydration. `insert` is
-    // first-wins, so the journal's copy always stands and this only fills a gap —
-    // an epoch whose share was persisted but whose journal record never synced.
-    // Not re-verified against `committee[epoch]` here, matching the journal replay:
-    // both read a 0600 file this node wrote itself, and refusing to start over an
-    // unreadable one would forfeit the very key the store exists to serve.
-    for (epoch, bytes) in reloaded_artifacts {
-        match fluentbase_consensus::beacon::artifact::decode_artifact(&bytes) {
-            Ok(artifact) => {
-                if artifact_store.insert(epoch, artifact) {
-                    info!(
-                        epoch,
-                        "beacon: reloaded the agreed artifact from the share file"
-                    );
-                }
-            }
-            Err(e) => warn!(
-                epoch,
-                ?e,
-                "beacon: the share file's agreed artifact does not decode; re-agreeing"
-            ),
-        }
-    }
-    // Pick the artifacts this restart owes the `DkgActor`. Nothing else reads the
-    // store back INTO the actor, so a member that went down between adopting an
-    // artifact and finalizing over it would otherwise wait for a re-agreement its
-    // peers have already marked started. Selection + rationale live in
-    // `restart_replay`; the send happens in `run_dpos_stack`, once the write-back
-    // hop that drains the channel exists.
-    let artifact_replay = fluentbase_consensus::beacon::artifact::restart_replay(
-        &artifact_store,
-        &beacon_dir,
-        &ceremony_store
-            .read()
-            .map(|shares| shares.keys().copied().collect())
-            .unwrap_or_default(),
-    );
-    if !artifact_replay.is_empty() {
-        info!(
-            epochs = artifact_replay.len(),
-            "beacon: replaying locally-stored agreement artifacts into the write-back"
-        );
-    }
-    // The seam's adopt end is the write-back's OWN inbound channel, the same one a
-    // live instance and the restart replay enter on. A pulled artifact therefore
-    // takes the identical route — republished as `PK_epoch` at `KeySource::Agreed`,
-    // then adopted by `on_artifact` under its existing first-wins and
-    // retention-hold rules — instead of a second adoption path with its own
-    // semantics to keep in step.
-    let artifact_bridge = fluentbase_consensus::beacon::artifact::ArtifactBridge::new(
-        chain_id,
-        artifact_store.clone(),
-        committee_source.clone(),
-        agreed_tx.clone(),
-        beacon_metrics.clone(),
-    );
-    let beacon_fetch = fluentbase_consensus::beacon::log_resolver::BeaconFetchHandler::new(
-        log_handler,
-        artifact_bridge.clone(),
-    );
-    let (log_resolver_engine, beacon_fetch_mailbox) = commonware_resolver::p2p::Engine::new(
-        ctx.with_label("beacon_log_resolver"),
-        commonware_resolver::p2p::Config {
-            peer_provider: handles.oracle.clone(),
-            blocker: fluentbase_p2p::NoopBlocker,
-            consumer: beacon_fetch.clone(),
-            producer: beacon_fetch,
-            mailbox_size: 256,
-            me: Some(peer_keypair.public_key()),
-            // Mirror the MARSHAL resolver's backfill cadence (the other resolver
-            // rider). A DKG-log fetch is rare (one restarted member's catch-up).
-            initial: Duration::from_millis(100),
-            timeout: Duration::from_secs(5),
-            fetch_retry_timeout: Duration::from_millis(500),
-            priority_requests: false,
-            priority_responses: false,
-        },
-    );
-    let beacon_resolver_handle = log_resolver_engine.start((
-        handles.beacon_resolver_sender,
-        handles.beacon_resolver_receiver,
-    ));
-    let log_resolver_mailbox =
-        fluentbase_consensus::beacon::log_resolver::LogFetcher::new(beacon_fetch_mailbox.clone());
-
-    // The `PK_epoch` ladder's two artifact rungs. Both answer the same question of
-    // the same object — the minting epoch's agreed artifact — and differ only in
-    // where they look: `held_keys` reads the local store (memory, then the durable
-    // mirror), `pull_keys` spends one bounded peer fetch on top of it. Splitting
-    // them is what lets the vote-path caller (the cert-inlet) take the cheap one
-    // and the off-path repair sweep take both.
-    let held_keys = {
-        let store = artifact_store.clone();
-        fluentbase_consensus::beacon::keys::AgreedKeys::new(
-            Arc::new(move |epoch: u64| {
-                let key = store.get(epoch).map(|a| {
-                    *fluentbase_consensus::beacon::outcome::group_public_key(&a.0.group_key)
-                });
-                Box::pin(async move { key }) as futures::future::BoxFuture<'static, _>
-            }),
-            dkg_qual_for.clone(),
-        )
-    };
-    let pull_keys = {
-        let pull = fluentbase_consensus::beacon::artifact::ArtifactPull::new(
-            ctx.with_label("artifact_pull"),
-            artifact_bridge,
-        );
-        fluentbase_consensus::beacon::keys::AgreedKeys::new(
-            Arc::new(move |epoch: u64| {
-                let pull = pull.clone();
-                let mut resolver = beacon_fetch_mailbox.clone();
-                Box::pin(async move {
-                    match pull.pull(&mut resolver, epoch).await {
-                        Some(fluentbase_consensus::beacon::artifact::PullAnswer::Have(a)) => {
-                            Some(*fluentbase_consensus::beacon::outcome::group_public_key(
-                                &a.0.group_key,
-                            ))
-                        }
-                        // `NotYet` and an exhausted walk are the same answer to
-                        // this caller: nobody can give it the key right now, so
-                        // the rung yields and the caller stays unpinned.
-                        _ => None,
-                    }
-                }) as futures::future::BoxFuture<'static, _>
-            }),
-            dkg_qual_for.clone(),
-        )
+        Arc::new(move |epoch, at| {
+            let bit = reader.dkg_qual(epoch, at).ok()?;
+            // A SET bit is proof the commit happened, so the committee read is
+            // skipped for it — that is the only read this probe can save.
+            let committed = bit
+                || reader
+                    .epoch_committee_snapshot(epoch, at)
+                    .map(|s| !s.validators.is_empty())
+                    .unwrap_or(false);
+            Some((bit, committed))
+        })
     };
 
     // EpochTransition-driven Oracle peer set + the `dkg_height` clock, both fed by a
@@ -1805,33 +1494,12 @@ where
             })
     };
 
-    // The persistent DkgActor — spawned ONCE, runs for the whole process. It is
-    // constructed AFTER the poller has frozen the geometry, so it takes plain
-    // `(activation, interval)` from the EpochTransition (the single in-plane source)
-    // and never re-reads the chain — there is no codeless/genesis-fallback race in
-    // this path. The wrapper awaits `geometry_ready` (the poller's freeze signal);
-    // height ticks accumulate in `dkg_height_rx` meanwhile (bounded buffer) and are
-    // drained by `on_height`'s monotone-max clamp once the actor runs — the first
-    // epoch boundary is one interval away (≫ the ~one-tick freeze latency), so no
-    // deal/seal is missed.
-    // Deferred marshal READ handle for the DkgActor's demote-heal recompute (§8.11.1):
-    // the marshal mailbox is created by the LATER layer launch (`launch_dpos_layer`),
-    // so create the slot EMPTY here and fill it in `run_dpos_stack` once the mailbox
-    // exists. Until filled the reader returns `None` and the recompute-heal waits (safe).
+    // Deferred marshal READ handle for the plane-native frontier resolver: the
+    // marshal mailbox is created by the LATER layer launch (`launch_dpos_layer`), so
+    // create the slot EMPTY here and fill it in `run_dpos_stack` once the mailbox
+    // exists. Until filled the handler serves nothing (safe).
     let marshal_slot: Arc<std::sync::OnceLock<fluentbase_consensus::MarshalMailbox>> =
         Arc::new(std::sync::OnceLock::new());
-    // The DkgActor's demote-heal reads the agreed `Output` for an EPOCH out of the
-    // artifact store. It used to read the boundary block at `epoch_start(E)`, which
-    // was a chicken-and-egg — the heal exists for a member that could not enter `E`,
-    // and `E`'s own first block is what such an epoch does not produce.
-    let outcome_at: fluentbase_consensus::beacon::actor::AgreedOutcomeAt = {
-        let store = artifact_store.clone();
-        Arc::new(move |epoch: u64| {
-            let outcome = store.get(epoch).map(|a| a.0.group_key.clone());
-            Box::pin(async move { outcome })
-                as std::pin::Pin<Box<dyn std::future::Future<Output = _> + Send>>
-        })
-    };
 
     // Plane-native `CertUpstream` frontier resolver (`commonware_resolver::p2p`) on
     // FRONTIER_CHANNEL — the seam that lets a plain `--dpos` validator run the cold-start
@@ -1967,102 +1635,50 @@ where
         })
     };
 
-    let dkg_handle = {
-        let et = et_arc.clone();
-        let geometry_ready = geometry_ready.clone();
-        // Clones for the actor (the originals flow into `BeaconPlane.shared`). Under
-        // the 2-epoch warm-up the DkgActor's roster IS the committed-slot reader
-        // (`committee[target]` frozen a full epoch before its DKG runs), the same
-        // closure the verify/consensus paths use — no separate candidate reader. The
-        // DkgActor's default `active_committee_for = committee_for.clone()` covers the
-        // change-test `cur` side.
-        let committee_for = committee_for.clone();
-        let ceremony_store = ceremony_store.clone();
-        let share_notify = share_notify.clone();
-        let beacon_metrics = beacon_metrics.clone();
-        let recorded_dkg_logs = recorded_dkg_logs.clone();
-        // The agreement plane's halves the actor owns: it answers the instances'
-        // pinned-set questions, mints and takes share-confirmations, announces the
-        // dealing-closed edge, and adopts the artifact that comes back.
-        let confirm_pool = confirm_pool.clone();
-        let agreement_targets = agreement_targets.clone();
-        let log_resolver_mailbox = log_resolver_mailbox.clone();
-        ctx.with_label("dkg_actor").spawn(move |c| async move {
-            geometry_ready.notified().await;
-            let Some((activation, interval)) = et.lock().await.frozen_geometry() else {
-                // `notify_one` is only fired post-freeze, so this is unreachable for a
-                // healthy node. A validator whose geometry is unreadable/unscheduled
-                // already failed loud at launch (the raw-`0` guard + the ChainConfig
-                // `?` in `DposLayer::launch`, which runs after this wrapper is spawned
-                // and tears the process down), so this soft path is reached only by a
-                // mis-configured non-validator — where staying network/Muxers up
-                // (follower connectivity) with no DKG is the intended fail-soft.
-                error!("beacon plane: geometry_ready fired but geometry unfrozen; DkgActor not started");
-                return;
-            };
-            let dkg_actor = fluentbase_consensus::beacon::actor::DkgActor::new(
-                dkg_namespace,
-                peer_keypair,
-                handles.beacon_sender,
-                handles.beacon_receiver,
-                Some(log_resolver_mailbox),
-                Some(log_resolver_rx),
-                committee_for,
-                ceremony_store,
-                share_notify,
-                activation,
-                interval,
-                beacon_metrics,
-                Some(beacon_dir),
-                share_state,
-                Some(outcome_at),
-            )
-            .with_recorded_logs(recorded_dkg_logs)
-            .with_share_confirms(confirm_pool)
-            .with_pinned_requests(pinned_rx, agreement_targets)
-            .with_agreement_plane(agreement_request_tx, artifacts_rx);
-            dkg_actor.run(dkg_height_rx, c).await
-        })
-    };
-
-    // The epoch-key agreement launcher. It owns everything the `DkgActor` cannot
-    // reach — the four mux sub-channel registrations, the staking committee read
-    // and the runtime context an instance is spawned on — and turns the actor's
-    // dealing-closed edge into a running instance. The instance's supervisor goes
-    // to `epoch_manager` (through `agreement_intake_rx`), which prunes it on the
-    // same frontier cutoff as the per-epoch engines.
-    let agreement_launcher_handle =
-        fluentbase_consensus::beacon::dkg_engine::spawn_agreement_launcher(
-            ctx.clone(),
-            fluentbase_consensus::beacon::dkg_engine::AgreementPlaneConfig {
-                chain_id,
-                keypair: bls_keypair,
-                me: me_peer,
-                // The plane's own oracle: its `EpochTransition` tracks
-                // `active_registry ∪ committee[E]` on it, which is the
-                // `latest.primary` precondition the body engine needs.
-                peers: handles.oracle.clone(),
-                logs: log_resolver_mailbox.clone(),
-                recorded: recorded_dkg_logs.clone(),
-                pinned_requests: pinned_tx,
-                confirms: confirm_pool.clone(),
-                metrics: beacon_metrics.clone(),
-                targets: agreement_targets.clone(),
-                artifacts: artifact_store,
-                committee: committee_source,
-                mailbox_size: 256,
-                timeouts: fluentbase_consensus::beacon::dkg_engine::AgreementTimeouts::coarse(),
-            },
-            fluentbase_consensus::beacon::dkg_engine::AgreementMuxes {
-                vote: vote_mux.clone(),
-                cert: cert_mux.clone(),
-                resolver: resolver_mux.clone(),
-                bodies: broadcast_mux.clone(),
-            },
-            agreement_request_rx,
-            agreed_tx,
-            agreement_intake_tx,
-        );
+    // The beacon proper: the persistent `DkgActor` (committee[E] deals during E-1
+    // regardless of this node's current consensus role), the dealer-log + artifact
+    // recovery seam, the durable artifact store and the epoch-key agreement
+    // launcher. Everything inside it is the beacon module's; what stays here is the
+    // network, the mux brokers, the finalized-height poller and the three
+    // staking-state closures — the dependencies that run the other way.
+    //
+    // The actor is constructed AFTER the poller has frozen the geometry, so it takes
+    // plain `(activation, interval)` from the EpochTransition (the single in-plane
+    // source) and never re-reads the chain — no codeless/genesis-fallback race in
+    // this path. Height ticks accumulate in `dkg_height_rx` meanwhile (bounded
+    // buffer) and are drained by `on_height`'s monotone-max clamp once the actor
+    // runs; the first epoch boundary is one interval away (≫ the ~one-tick freeze
+    // latency), so no deal/seal is missed.
+    let beacon = fluentbase_consensus::beacon::build(
+        ctx,
+        fluentbase_consensus::beacon::BeaconConfig {
+            chain_id,
+            peer_keypair,
+            bls_keypair,
+            share_dir: beacon_dir,
+            share_seal_key,
+            peers: handles.oracle.clone(),
+            beacon_channel: (handles.beacon_sender, handles.beacon_receiver),
+            resolver_channel: (
+                handles.beacon_resolver_sender,
+                handles.beacon_resolver_receiver,
+            ),
+            vote_mux: vote_mux.clone(),
+            cert_mux: cert_mux.clone(),
+            resolver_mux: resolver_mux.clone(),
+            bodies_mux: broadcast_mux.clone(),
+            committee_for,
+            committee_source,
+            dkg_qual_at,
+            dkg_qual_probe,
+            heights: dkg_height_rx,
+            geometry: Box::pin(async move {
+                geometry_ready.notified().await;
+                et_arc.lock().await.frozen_geometry()
+            }),
+        },
+    )
+    .await?;
 
     // The `dkgQual[e]` bit is now set DETERMINISTICALLY by the contract at
     // `commitEpochCommittee` (= committee[e] != committee[e−1]); there is no
@@ -2075,26 +1691,21 @@ where
 
     Ok(BeaconPlane {
         net_handle,
-        dkg_handle,
+        dkg_handle: beacon.dkg_handle,
         poller_handle,
-        beacon_resolver_handle,
+        beacon_resolver_handle: beacon.resolver_handle,
         frontier_resolver_handle,
         evidence_handle,
         evidence: evidence_bridge,
         plane_upstream,
         mux_handles,
-        agreement_launcher_handle,
-        artifact_writer_handle,
-        artifact_replay,
-        agreement_intake: agreement_intake_rx,
+        agreement_launcher_handle: beacon.agreement_launcher_handle,
+        artifact_writer_handle: beacon.artifact_writer_handle,
+        write_back: beacon.write_back,
+        agreement_intake: beacon.agreement_intake,
         shared: SharedBeaconPlane {
             oracle: handles.oracle,
-            ceremony_store,
-            share_notify,
-            dkg_qual_for,
-            held_keys,
-            pull_keys,
-            beacon_metrics,
+            beacon: beacon.shared,
             vote_mux,
             cert_mux,
             resolver_mux,

@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import re
 
-from ...core import nodes
+from ...core import nodes, rpc
 
 # ══ smoke-tx ══════════════════════════════════════════════════════════════════════════
 
@@ -397,6 +397,17 @@ AGREE_DECIDED_LINE = "dkg agree: pinned dealer-log set agreed, instance torn dow
 AGREE_ADOPTED_LINE = "live DKG: adopting the agreed dealer-log set as this epoch's pinned set"
 AGREE_SHARE_LINE = "live DKG: PK_epoch + share computed + stored"
 
+#: The four stages in the order the plane emits them, each with the label a verdict names it by.
+#: ONE list because BOTH branches of the plane observation walk it — the committee-change branch
+#: asserting every stage is PRESENT for the target epoch, the carry-forward branch asserting every
+#: one is ABSENT — and two copies of it would let the two branches drift apart.
+AGREE_STAGES = (
+    ("instance started", AGREE_STARTED_LINE),
+    ("set agreed", AGREE_DECIDED_LINE),
+    ("agreed set adopted", AGREE_ADOPTED_LINE),
+    ("PK_epoch + share stored", AGREE_SHARE_LINE),
+)
+
 #: The three SILENT-NOTHING discriminators. They are NOT verdicts — the plane retries, so any of
 #: them can appear on a run that then converges (`dkg_agree_bar_unmet_total`'s own registration
 #: text says "Never fatal — the plane keeps trying"). Asserting their absence would be a flaky
@@ -436,6 +447,12 @@ AGREE_HAPPY_VIEW = 1
 #: legitimate non-zero on a healthy converging run (a delivery race, a peer asking early, a node
 #: whose chain view has not caught up), so a zero-gate on them would be a flaky red. They are
 #: printed every run so a drift is visible, and they ride the failure diagnostic.
+#: ALL EIGHT NAMES BELOW ARE THE REGISTERED ONES — the literals `BeaconMetrics::register` passes
+#: to `ctx.register` (`beacon/metrics.rs`), so they can be grepped against the Rust verbatim. They
+#: are NOT what the scrape calls the samples: every one is a `Counter`, and the registry appends
+#: its own `_total` on top of the one already there. Read them through `nodes.counter_sample`, or
+#: `nodes.gauge_val`'s anchored matcher answers "" for all eight and the gating verdict below
+#: reports the family as absent on a node that is exporting it (which is what live run #2 did).
 AGREE_REJECT_METRIC = "dpos_dkg_artifact_rejected_total"
 AGREE_REPORTED_METRICS = (
     "dkg_agree_body_lost_total",
@@ -626,3 +643,116 @@ def agree_silence_diag(per_node_logs: dict, epoch):
         return ("; none of the three agreement-silence lines fired for this epoch either — the "
                 "stage is missing for a reason the plane never logged")
     return "; agreement-silence lines: " + " | ".join(found)
+
+
+# ── the BRANCH: did the committee actually change for the target epoch? ───────────────
+#
+# WHY THE PLANE OBSERVATION IS TWO-SIDED AT ALL.
+#
+# A ceremony runs only on a COMMITTEE CHANGE. `commitEpochCommittee` sets
+# `dkgQual[e] = (committee[e] != committee[e-1])` from the membership diff
+# (`staking-reader/reader.rs:139,:643`), and that bit is the only thing that announces an
+# agreement target. With it CLEAR, `beacon::carry::chain_key_epoch` walks back to the last set bit
+# and the node serves the mint stored there — carry-forward — so no instance is ever started and
+# the four stage lines never appear. On this stand the committee is frozen for the whole run
+# (rotation exists only in `asserts_prod_dkg`), so the unconditional "every node started an
+# instance" demand was a red on a healthy chain: the mirror of the false greens this observation
+# was built to remove.
+#
+# The branch is therefore taken from the on-chain committees and NEVER from the absence of a log
+# line — inferring "no ceremony ran" from "no ceremony was logged" would make the assertion agree
+# with itself in both directions, which is the circularity that produced the false red.
+
+
+def evaluate_committee_change(prev_out, cur_out, epoch):
+    """Did `committee[epoch]` differ from `committee[epoch-1]`? — the plane's branch selector.
+
+    Both readings are the raw `cast call … getEpochCommittee(uint64)(address[])` stdout, decoded
+    STRICTLY (`rpc.cast_addr_array`): a regex sweep would accept a bare address or a truncated
+    decode as a plausible committee, and either would pick a branch over a committee nobody read.
+
+    The compare is over the SORTED addresses. That is a normalization and not a weakening: the
+    contract refuses a committee that is not strictly ascending (`CommitteeNotStrictlyAscending`),
+    so the stored order IS sorted order and the two comparisons cannot disagree.
+
+    Returns `(ok, message, changed)`. `changed` is None when the property cannot be judged — an
+    undecodable or EMPTY committee leaves BOTH branches unfounded, and an empty one is a finding
+    of its own (a boundary that handed off to nobody).
+    """
+    sides = []
+    for raw, e in ((prev_out, int(epoch) - 1), (cur_out, int(epoch))):
+        what = f"getEpochCommittee({e})"
+        if not (raw or "").strip():
+            return False, (f"agreement plane: {what} returned NOTHING (unreachable node / RPC "
+                           "brownout) — refusing to pick a plane branch (ceremony vs "
+                           "carry-forward) over a committee nobody read"), None
+        try:
+            addrs = rpc.cast_addr_array(raw, what)
+        except rpc.CastDecodeError as exc:
+            return False, (f"agreement plane: {what} did not decode as an address array "
+                           f"({exc}) — refusing to pick a plane branch (ceremony vs "
+                           "carry-forward) over a committee nobody read"), None
+        if not addrs:
+            return False, (f"agreement plane: {what} is EMPTY — the epoch has no committee at "
+                           "all, so neither a ceremony nor a carry-forward can be asserted "
+                           "over it"), None
+        sides.append(sorted(addrs))
+    return True, "", sides[0] != sides[1]
+
+
+def evaluate_agree_quiescent(seen, epoch):
+    """The CARRY-FORWARD branch's ceremony check — `seen` = `{service: [stage labels observed]}`.
+
+    RED when any committee node logged ANY of the four stages for an epoch whose `dkgQual` bit is
+    clear. That is not a harmless extra: `chain_key_epoch` never names a bit-clear epoch, so the
+    key such a ceremony mints is one the chain declines to serve (the soak-v47 "newer local mint
+    the chain declined" arm), and the node paid a full agreement instance for it. A plane that
+    spawns where the on-chain diff says nothing changed has drifted off the bit it is supposed to
+    follow — and if the drift ever went the other way it would be a silent missing key."""
+    if not seen:
+        return False, (f"agreement plane: no node was scanned for ceremony traces at epoch "
+                       f"{epoch} — refusing to report a quiescent plane nothing was read for")
+    noisy = {s: st for s, st in sorted(seen.items()) if st}
+    if noisy:
+        detail = "; ".join(f"{s}: {', '.join(st)}" for s, st in noisy.items())
+        return False, (f"agreement plane: {len(noisy)}/{len(seen)} node(s) ran an epoch-key "
+                       f"ceremony for epoch {epoch} although committee[{epoch}] == "
+                       f"committee[{int(epoch) - 1}] ({detail}) — the chain's dkgQual bit for "
+                       "this epoch is CLEAR, so `chain_key_epoch` never names a mint here and "
+                       "whatever those nodes agreed is a key the chain will not serve. The "
+                       "plane's trigger has drifted off the on-chain committee diff.")
+    return True, ""
+
+
+def evaluate_carry_forward_key(epoch, window, first_block, last_block):
+    """The CARRY-FORWARD branch's KEY check — the epoch had a usable key even though no ceremony
+    ran for it.
+
+    `window` = `[(height, agreed prev_randao)]`, the per-height values `evaluate_beacon_window`
+    handed back for the boundary window this case already verified: readable on every node,
+    non-zero, node-agreed and varying. A non-zero agreed `prev_randao` at a height INSIDE `epoch`
+    IS the carried key being served — the deriver falls back to `order.digest()` (mixHash zero)
+    exactly when no key resolves for the epoch, which is what a broken carry-forward looks like.
+
+    It reuses that evidence rather than probing again, and what it adds is COVERAGE, which is not
+    free: the window's geometry (`boundary_block` + `BOUNDARY_HALF_WINDOW`) is computed
+    independently of the target epoch, so a drift in either — or a re-pointed target — would leave
+    this branch reporting a green carried key from readings taken entirely in the epoch BEFORE the
+    one it is about."""
+    lo, hi = int(first_block), int(last_block)
+    if not window:
+        return False, (f"agreement plane: epoch {epoch} ran no ceremony (committee unchanged) and "
+                       "the boundary window handed back NO verified prev_randao at all — nothing "
+                       "says the carried key was ever served")
+    inside = [(h, mh) for h, mh in window if lo <= int(h) <= hi]
+    if not inside:
+        got = f"{window[0][0]}..{window[-1][0]}"
+        return False, (f"agreement plane: the verified beacon window [{got}] does not reach into "
+                       f"epoch {epoch} (blocks {lo}..{hi}) — the carry-forward claim for that "
+                       "epoch rests on no reading taken inside it")
+    dead = [f"{h}={mh or '<empty>'}" for h, mh in inside if not mh or nodes.is_zero_hash(mh)]
+    if dead:
+        return False, (f"agreement plane: epoch {epoch} carried no usable key — prev_randao fell "
+                       f"to the digest fallback at {', '.join(dead)}, which is what the deriver "
+                       "emits when no key resolves for the epoch")
+    return True, f"{len(inside)} verified block(s) inside epoch {epoch} ({lo}..{hi})"

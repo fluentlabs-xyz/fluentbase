@@ -7,6 +7,7 @@ use crate::{
         derive_with_visibility_retry, BeaconEngineLike, DerivedBlock as _, DerivedBlockBuilder,
         ExecutedChain, OrderingAssembler,
     },
+    beacon::BeaconShared,
     cold_start_jump::ElSync as _,
     executed::executed_state_hash,
     order_block::{anchor_order_block, OrderBlock, K},
@@ -864,26 +865,11 @@ pub struct SharedBeaconPlane {
     /// The single network's Oracle (the one `Clone` p2p handle), used by the
     /// engine's blocker/provider + its EpochTransition peer-set sink.
     pub oracle: fluentbase_p2p::OracleHandle,
-    /// The shared live-DKG store: written by the always-on `DkgActor`, read by the
-    /// per-engine `BeaconVerify` (C gate + propose) and `beacon_resolver` (sign).
-    pub ceremony_store: crate::beacon::actor::CeremonyStore,
-    /// Edge-trigger the `DkgActor` fires (`notify_one`) when a share lands in
-    /// `ceremony_store`, so `EpochManager::run` wakes the instant its share is
-    /// memoized instead of polling. Same `Arc` held by the actor (the producer) and
-    /// the manager (the single consumer).
-    pub share_notify: Arc<tokio::sync::Notify>,
-    /// On-chain FROZEN `dkgQual[e]` bit reader (the carry-forward arbiter input,
-    /// `beacon::carry`), built once over the persistent reader+provider (finalized
-    /// hash, frozen-bit cache) and shared by both DKG resolvers.
-    pub dkg_qual_for: crate::beacon::carry::DkgQualFor,
-    /// The `PK_epoch` ladder's two artifact rungs, built once over the plane's
-    /// artifact store and its resolver: `held_keys` reads what this node already
-    /// has, `pull_keys` fetches the minting epoch's artifact from a peer.
-    pub held_keys: crate::beacon::keys::AgreedKeys,
-    pub pull_keys: crate::beacon::keys::AgreedKeys,
-    /// Beacon counters, registered ONCE at the persistent layer; cloned (never
-    /// re-registered) into the executor + each per-epoch engine.
-    pub beacon_metrics: crate::beacon::metrics::BeaconMetrics,
+    /// Everything the beacon module publishes downward: the live-DKG ceremony
+    /// store, the share-landed edge trigger, the frozen `dkgQual` reader, the two
+    /// `PK_epoch` artifact rungs and the beacon counters. One opaque bundle rather
+    /// than six handles, because nothing above the beacon assembles them.
+    pub beacon: BeaconShared,
     /// The 5 plane-owned non-beacon channel broker handles (vote/cert/resolver are
     /// per-epoch register/deregister; broadcast/marshal register subchannel 0 once
     /// per promotion). Cloned per promotion; the Muxer tasks live in the plane.
@@ -1843,12 +1829,7 @@ impl DposLayer {
         // halves are consumed here, so a later demote→re-promote re-clones cleanly.
         let SharedBeaconPlane {
             oracle,
-            ceremony_store,
-            share_notify,
-            dkg_qual_for,
-            held_keys,
-            pull_keys,
-            beacon_metrics,
+            beacon,
             vote_mux,
             cert_mux,
             resolver_mux,
@@ -1857,6 +1838,14 @@ impl DposLayer {
             vote_backup,
             tombstones,
         } = beacon_plane;
+        let BeaconShared {
+            ceremony_store,
+            share_notify,
+            dkg_qual_for,
+            held_keys,
+            pull_keys,
+            metrics: beacon_metrics,
+        } = beacon;
         let vote_backup_rx = vote_backup.subscribe().await;
 
         let RethHandle {

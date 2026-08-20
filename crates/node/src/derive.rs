@@ -7,7 +7,7 @@
 use alloy_consensus::Header;
 use alloy_primitives::B256;
 use eyre::WrapErr as _;
-use fluentbase_consensus::beacon::seed::{prev_randao_from_seed, Seed};
+use fluentbase_consensus::beacon::{prev_randao_from_seed, Seed};
 use fluentbase_consensus::{
     DerivedBlock, DerivedBlockBuilder, FaultClass, OrderBlock, ParentHeaderMissing,
 };
@@ -1440,7 +1440,7 @@ mod tests {
         use commonware_cryptography::bls12381::{dkg::deal_anonymous, primitives::variant::MinSig};
         use commonware_utils::{test_rng, N3f1, NZU32};
         use fluentbase_bls::beacon::{recover_seed, seed_namespace, sign_seed_partial};
-        use fluentbase_consensus::beacon::seed::prev_randao_from_seed;
+        use fluentbase_consensus::beacon::prev_randao_from_seed;
 
         let mut rng = test_rng();
         let (sharing, shares) =

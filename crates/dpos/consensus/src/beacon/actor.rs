@@ -330,7 +330,7 @@ pub struct DkgActor<Se, Re, R> {
     /// The `cur`-side roster reader for `maybe_start`'s change-test
     /// (`committee(target−1)` vs `committee(target)`). Defaults to `committee_for`
     /// (the same committed slot in production — both sides read the immutable
-    /// committed committee); a test may override it via [`Self::with_active_committee`]
+    /// committed committee); a test may override it via `with_active_committee`
     /// to exercise a divergent-reader change-detect.
     active_committee_for: CommitteeFor,
     store: CeremonyStore,
@@ -633,6 +633,7 @@ where
     /// — which is what production uses (both sides read the same committed slot under
     /// the 2-epoch warm-up). A test uses this to inject a divergent `cur` reader and
     /// exercise change-detect (see [`Self::active_committee_for`]).
+    #[cfg(test)]
     pub fn with_active_committee(mut self, active_committee_for: CommitteeFor) -> Self {
         self.active_committee_for = active_committee_for;
         self

@@ -222,8 +222,31 @@ unified mode instead.
 The epoch key is agreed peer-to-peer during epoch E on a second consensus instance and published
 as a quorum-signed artifact — it is not carried by a block and has no on-chain mirror, so the
 plane's own logs and counters are the only place the mechanism is visible. `smoke-vrf-boundary`
-(and therefore `smoke-base`, and therefore the gate) asserts the whole happy path for the epoch
-its boundary opens into, on every committee member:
+(and therefore `smoke-base`, and therefore the gate) observes it for the epoch its boundary opens
+into, on every committee member.
+
+**The observation is TWO-SIDED, because a ceremony only runs where the committee CHANGED.**
+`commitEpochCommittee` sets `dkgQual[e] = (committee[e] != committee[e-1])`, and that bit is the
+only thing that announces an agreement target: with it clear, `chain_key_epoch` walks back to the
+last set bit and carry-forward serves the key — no instance is started and not one of the four
+lines below is ever logged. The case reads `getEpochCommittee(E)` and `getEpochCommittee(E-1)` and
+takes the branch from that diff, NEVER from the absence of a log line (that inference is circular:
+the log lines are the very thing the branch then judges). Both branches assert, and neither can be
+satisfied by silence:
+
+- **committee changed** — the four stages below on every member, one agreed `view`
+  (`<= 1`), one identical non-zero `pinned` size, the durable artifact store, and
+  `dpos_dkg_artifact_rejected_total == 0`;
+- **committee unchanged** — NOT ONE of the four stages appears for that epoch on any member (a
+  node that ran an instance here minted a key `chain_key_epoch` will never name, i.e. the plane's
+  trigger has drifted off the on-chain diff), and the epoch was served a key anyway: the boundary
+  `prev_randao` window this case already verified must carry at least one non-zero node-agreed
+  reading from a height INSIDE that epoch. The durable store and the rejection counter are asserted
+  here too — both are properties of the node's wiring, not of this epoch's ceremony.
+
+On this stand the committee is frozen for the whole run (rotation exists only in the
+production-path DKG case), so the live `smoke-base` verdict is the carry-forward one. The
+committee-changed branch is what a rotating stand takes; its four stages are:
 
     dkg agree: epoch-key agreement instance started
     dkg agree: pinned dealer-log set agreed, instance torn down     (epoch, view, pinned)
@@ -238,7 +261,8 @@ all four validators, and `dpos_dkg_artifact_rejected_total == 0`.
 proposed and the instance decided in one round. `view > 1` means a 30 s leader timeout was paid,
 which on its own exceeds the whole pre-boundary window the key has to be ready in, so the case
 fails on it by design rather than letting it resurface later as a missing share. It is printed on
-every run, pass or fail, beside the pinned-set size.
+every run of that branch, pass or fail, beside the pinned-set size — the carry-forward branch has
+no view to read and prints the committee diff it took the branch on instead.
 
 Six further counters are **reported, never asserted** — `dkg_agree_body_lost_total`,
 `dkg_agree_bar_unmet_total`, `dkg_agree_logs_omitted_total`, `dpos_dkg_artifact_served_total`,

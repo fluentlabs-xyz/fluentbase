@@ -404,6 +404,14 @@ def assert_vrf_boundary(ctx) -> None:
     node-agreed and varying ACROSS the boundary" is the whole of the OUTPUT proof — which is why
     the window straddles the boundary block rather than starting after it.
 
+    THE PLANE OBSERVATION IS TWO-SIDED, because an epoch key has two healthy provenances and the
+    chain says which one applies: a ceremony runs iff `committee[E] != committee[E-1]`
+    (`dkgQual[E]`, set at `commitEpochCommittee`). On THIS stand the committee never rotates, so
+    the honest verdict here is the carry-forward one — "no instance was started, and the epoch had
+    a key anyway" — and demanding the four ceremony stages unconditionally was a red on a healthy
+    chain. `beacon.assert_epoch_key_plane` reads both committees and takes the branch; both
+    branches assert, neither can be satisfied by silence.
+
     WHY THE PLANE OBSERVATION IS HERE AND NOT SOMEWHERE ELSE. The `prev_randao` window reads the
     beacon's OUTPUT, and the output is exactly as green when the key was agreed in one view as
     when it took four leader timeouts, or when the ceremony silently carried a stale key forward.
@@ -425,21 +433,24 @@ def assert_vrf_boundary(ctx) -> None:
     lo = boundary - verdicts.BOUNDARY_HALF_WINDOW
     hi = boundary + verdicts.BOUNDARY_HALF_WINDOW
     ctx.check(case, beacon.wait_nodes_have(ctx, hi), f"not all nodes reached block {hi}")
-    beacon.assert_beacon_window(ctx, case, lo, hi, f"epoch-boundary-{boundary}")
+    mixes = beacon.assert_beacon_window(ctx, case, lo, hi, f"epoch-boundary-{boundary}")
     print(f"smoke-vrf-boundary: F1 — beacon active + byte-identical across the epoch-2→3 "
           f"boundary (block {boundary})", flush=True)
 
-    beacon.assert_agreement_plane(ctx, case, BOUNDARY_TARGET_EPOCH)
-    print(f"smoke-vrf-boundary: the epoch-{BOUNDARY_TARGET_EPOCH} key was AGREED on the plane — "
-          "every committee member started an instance, decided one pinned set at the same view, "
-          "adopted it and stored its share", flush=True)
+    # The verified window, height by height. `assert_beacon_window` reads `[lo..hi]` inclusive and
+    # returns ONE agreed value per height in that order, so the pairing is exact — and it is the
+    # evidence the carry-forward branch of the plane observation judges the epoch's key by,
+    # instead of issuing a second set of reads for a property this case already measured.
+    window = list(zip(range(lo, hi + 1), mixes))
+    plane = beacon.assert_epoch_key_plane(ctx, case, BOUNDARY_TARGET_EPOCH, window)
+    if not ctx.dry:
+        print(f"smoke-vrf-boundary: {plane}", flush=True)
 
     _ok(ctx, case, f"threshold beacon active + node-agreed + varying across the epoch-2→3 "
                    f"boundary (block {boundary}); the per-epoch carry-forward kept the beacon "
-                   f"live with no break in node-agreed prev_randao; and the epoch-"
-                   f"{BOUNDARY_TARGET_EPOCH} key behind it was agreed peer-to-peer on the "
-                   "agreement plane by every committee member, at one view, over one pinned set, "
-                   "with no artifact rejected and a durable artifact store on every node")
+                   f"live with no break in node-agreed prev_randao; and on the epoch-key "
+                   f"agreement plane, {plane}, with no artifact rejected and a durable artifact "
+                   "store on every node")
 
 
 def _ok(ctx, case: str, message: str) -> None:

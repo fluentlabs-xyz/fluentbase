@@ -19,7 +19,7 @@ use alloy_consensus::Header;
 use alloy_primitives::B256;
 use commonware_runtime::{tokio::Context, Handle, Metrics as _, Spawner as _};
 use fluentbase_consensus::{
-    beacon::keys::{AgreedKeys, BeaconKeys},
+    beacon::{AgreedKeys, BeaconKeys},
     cert_inlet::LiveFrontierTee,
     CertInlet, CertUpstream as _, CommitteeSource, MarshalMailbox, RethCommitteeSource,
     RotateUpstream,

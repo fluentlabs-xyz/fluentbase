@@ -448,6 +448,37 @@ def gauge_val(text: str, suffix: str) -> str:
     return v
 
 
+#: `prometheus-client` (the Rust crate behind the commonware registry) appends `_total` to a
+#: COUNTER's sample name whatever the REGISTERED name already ends in. So a counter registered
+#: `X_total` renders as `X_total_total`.
+COUNTER_SAMPLE_SUFFIX = "_total"
+
+
+def counter_sample(name: str) -> str:
+    """The REGISTERED counter name -> the name its SAMPLE line carries in the scrape.
+
+    `[VERIFIED]` against a captured scrape in this repo
+    (`soak-out/bundle-20260720T170507Z/rpc/metrics-19100.txt`): `beacon_digest_fallback_total` is
+    the literal passed to `ctx.register` (`beacon/metrics.rs`) and the sample line reads
+
+        # HELP beacon_digest_fallback_total …
+        # TYPE beacon_digest_fallback_total counter
+        beacon_digest_fallback_total_total 0
+
+    Note that only the SAMPLE line doubles the suffix; `# HELP` / `# TYPE` carry the registered
+    name, and `gauge_val` skips comment lines, so the two never cross.
+
+    WHY THIS IS ONE FUNCTION AND WHY IT LIVES NEXT TO `gauge_val`. `gauge_val` matches the metric
+    name ANCHORED at its end, so handing it a registered `X_total` against a scrape that says
+    `X_total_total` returns `""` — indistinguishable from a counter that is absent or never moved.
+    That is a metric which reads as a flat 0 forever, i.e. a verdict that can never evaluate. It
+    has now been written twice: `verdicts_boundary` learned it from a captured scrape, and the
+    agreement-plane observation re-learned it from a live `smoke-base` run whose eight plane
+    families were all unreadable. The alternative to one place is every reader remembering the
+    double suffix and one of them not doing so, which is exactly what happened."""
+    return name + COUNTER_SAMPLE_SUFFIX
+
+
 def summary_agg(text: str, family: str):
     """Aggregate a metrics-rs SUMMARY family: (sum, count) over every
     `<family>_sum{...}` / `_sum` line and `<family>_count{...}` / `_count` line

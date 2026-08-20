@@ -38,8 +38,11 @@ the sample line reads
 
 So a case reading the REGISTERED spelling through `nodes.gauge_val`'s anchored matcher gets ""
 back — indistinguishable from a counter that never moved, i.e. a silent green on the metric half
-of the case. `counter_sample()` is the one place that suffix is applied; the constants stay the
-registered names so they can be grepped against the Rust `ctx.register(…)` literal verbatim
+of the case. `nodes.counter_sample()` is the one place that suffix is applied — it lives beside
+`gauge_val` in `core/nodes.py` and is re-exported here under the name this module published, since
+the trap belongs to the registry rather than to this case (the agreement-plane observation in
+`cases/smoke/beacon.py` re-learned it live). The constants stay the registered names so they can
+be grepped against the Rust `ctx.register(…)` literal verbatim
 (`tests/test_smoke_boundary_cases.py`).
 """
 
@@ -48,6 +51,7 @@ from __future__ import annotations
 import re
 
 from . import verdicts_onchain as vo
+from ...core import nodes
 
 #: The two floor-raise sites log distinct success lines, so a case can tell WHICH injection
 #: site ran. Both carry a `height` field.
@@ -148,8 +152,14 @@ M_REFETCHED = "dpos_jump_boundary_refetched_total"
 M_REFETCH_FAILED = "dpos_jump_boundary_refetch_failed_total"
 M_SPAWN_DEFERRED = "epoch_engine_spawn_deferred_total"
 
-#: `prometheus-client`'s counter-sample suffix.
-COUNTER_SAMPLE_SUFFIX = "_total"
+#: `prometheus-client`'s counter-sample suffix, and the one function that applies it. Both live in
+#: `core/nodes.py` now, beside `gauge_val` — the matcher whose anchoring is what makes the doubled
+#: suffix load-bearing — because the trap is a property of the REGISTRY and not of this case. It
+#: was re-learned the hard way by the agreement-plane observation, which read eight families
+#: through the registered spelling and got "" from every one of them. Re-exported under the names
+#: this module already published so its callers and tests keep their spelling.
+COUNTER_SAMPLE_SUFFIX = nodes.COUNTER_SAMPLE_SUFFIX
+counter_sample = nodes.counter_sample
 
 #: The `epoch_engine_spawn_deferred_total` BELT (brief §4). A defer or two while the marshal
 #: backfills is NORMAL and self-heals on the next derived block; the DEFECT is a defer that
@@ -210,14 +220,6 @@ PROPOSE_POLL_S = 2
 #: failure still leaves the landing epoch's diagnostics meaningful.
 PROMOTE_WAIT_S = 30
 PROMOTE_POLL_S = 2
-
-
-def counter_sample(name: str) -> str:
-    """The registered counter name -> the name its SAMPLE line carries in the scrape.
-
-    One place, because the alternative is every reader remembering the double suffix and one of
-    them not doing so — and that failure mode is a metric that reads as a flat 0 forever."""
-    return name + COUNTER_SAMPLE_SUFFIX
 
 
 def counter_delta(before, after) -> int:
