@@ -16,11 +16,14 @@ use commonware_p2p::{
 };
 use commonware_runtime::{tokio::Context, Clock as _, Handle, Metrics as _, Spawner as _};
 use eyre::{eyre, OptionExt as _, WrapErr as _};
-use fluentbase_consensus::dpos::{
-    DposLayer, DposLayerConfig, DposLayerHandle, ResettableForward, RethHandle, SharedBeaconPlane,
-    VoteBackupItem,
-};
 pub use fluentbase_consensus::FeedSink;
+use fluentbase_consensus::{
+    beacon::BeaconKeys,
+    dpos::{
+        DposLayer, DposLayerConfig, DposLayerHandle, ResettableForward, RethHandle,
+        SharedBeaconPlane, VoteBackupItem,
+    },
+};
 use fluentbase_p2p::{
     bootstrappers::{classify_spec, load_from_dns, load_from_json_path, BootstrapperSpec},
     FluentP2P, FluentP2PConfig,
@@ -503,21 +506,37 @@ where
     let exit_reason = supervise(&shutdown_token, &mut engine.consensus_handle, supervised).await;
 
     // ── ORDERING INVARIANT, and it is the entire reason this call sits HERE ──
-    // `supervise` has just aborted the consensus engine. The engine is what owns
-    // the last `SeedStore` clone; dropping it drops the seed record channel's
-    // SENDER, which is what makes the seed-journal writer's `recv()` return
-    // `None` — its cue to append and fsync whatever is still queued and exit.
+    // Every drain writer is a `while let Some(_) = rx.recv().await` loop, so each
+    // one exits only once the LAST sender for its channel is gone. The rule for
+    // adding a drain participant is therefore about SENDERS, not about where the
+    // task was spawned: at the instant `drain_shutdown_tasks` is entered, no
+    // sender feeding it may still be reachable from anything alive. Miss that and
+    // the drain cannot do anything but burn `SHUTDOWN_DRAIN_TIMEOUT` and warn —
+    // and that warning's whole job is to mean "the disk is stuck".
     //
-    // So the drain must be awaited AFTER the engine is down. Awaiting it first
-    // would DEADLOCK: the sender would still be alive, `recv()` would never
-    // return `None`, and we would sit here until the timeout every single stop.
+    // Two of today's three drain writers need something arranged HERE, and the
+    // two arrangements are different — neither generalizes to the other. (The
+    // third, `artifact_store_writer`, needs neither: its `ArtifactStore` is the
+    // same sender-carrying `Clone` shape, but no clone of it reaches the layer
+    // handle — every one that exists dies with a task `supervise` aborts.)
     //
-    // The mirror-image constraint lives in `OuterBuilder::build`: the drain
-    // tasks are spawned from a context OUTSIDE the engine's supervision subtree,
-    // because commonware aborts a task's whole descendant subtree when that task
-    // is aborted — a writer spawned under the engine's context would be killed
-    // by the very `engine.abort()` that is supposed to release it.
-    drain_shutdown_tasks(std::mem::take(&mut engine.drain_on_shutdown)).await;
+    //  - The seed-journal writer's sender lives in `SeedStore`, whose last clone
+    //    the consensus engine owns. `supervise` has just aborted that engine, so
+    //    awaiting AFTER it is what releases the sender. Awaiting first would
+    //    deadlock. The mirror-image constraint lives in `OuterBuilder::build`:
+    //    the drain tasks are spawned from a context OUTSIDE the engine's
+    //    supervision subtree, because commonware aborts a task's whole descendant
+    //    subtree — a writer spawned under the engine's context would be killed by
+    //    the very `engine.abort()` that is supposed to release it.
+    //
+    //  - The key-journal writer's sender lives in `BeaconKeys`, which is a plain
+    //    `Clone` field on the layer handle. Aborting the engine and the overlay
+    //    does NOT release it: `engine` is still alive right here, and its
+    //    `beacon_keys` is a full clone, sender and all. `take_shutdown_drains`
+    //    swaps that field for a sender-less store so the host stops being an
+    //    owner before anything is awaited.
+    let drains = take_shutdown_drains(&mut engine.beacon_keys, &mut engine.drain_on_shutdown);
+    drain_shutdown_tasks(drains).await;
 
     info!(reason = exit_reason, "node thread exiting");
     Ok(())
@@ -538,6 +557,25 @@ pub(crate) type DrainHandle = (&'static str, Handle<()>);
 /// (a final drain is at most a few hundred 68-byte appends plus one fsync per
 /// touched section), so it fires only on a genuinely stuck device.
 const SHUTDOWN_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Take the layer's drain list, releasing the host's own hold on what feeds it.
+///
+/// The layer handle's `beacon_keys` is a plain `Clone` of the cross-epoch key
+/// store, so it carries a live clone of the key-journal channel's SENDER. The
+/// host outlives `supervise`, so aborting the engine and the overlay leaves that
+/// clone standing and the writer's `recv()` never returns `None`. Swapping the
+/// field for a sender-less store is what makes the drain finishable at all.
+///
+/// Split out from the call site because it is the only part of the shutdown tail
+/// a test can drive: `DposLayerHandle` is not constructible outside the consensus
+/// crate.
+fn take_shutdown_drains(
+    beacon_keys: &mut BeaconKeys,
+    drain_on_shutdown: &mut Vec<DrainHandle>,
+) -> Vec<DrainHandle> {
+    drop(std::mem::take(beacon_keys));
+    std::mem::take(drain_on_shutdown)
+}
 
 /// Let every graceful-shutdown drain task finish, each under its own bounded
 /// timeout, then return regardless.
@@ -2260,5 +2298,59 @@ mod tests {
             !err.contains("forbidden on deployed network"),
             "local chain_id must bypass the deployed-network gate, got: {err}"
         );
+    }
+
+    /// The two layer-handle fields the shutdown tail plays off each other. The
+    /// real `DposLayerHandle` cannot be built here — its `cert_mailbox` is a
+    /// commonware `marshal::core::Mailbox`, whose constructor is `pub(crate)` to
+    /// that crate — so this reproduces the shape that matters: an owner that
+    /// holds a `BeaconKeys` CLONE across the drain.
+    struct LayerHandleShape {
+        beacon_keys: BeaconKeys,
+        drain_on_shutdown: Vec<DrainHandle>,
+    }
+
+    /// A drain writer leaves its loop when `recv()` returns `None`, and that
+    /// needs every sender gone — including the one riding on the layer handle the
+    /// host still owns while it awaits the drain. Reds by leaving `writer_exited`
+    /// false after `drain_shutdown_tasks` has burnt the full
+    /// `SHUTDOWN_DRAIN_TIMEOUT`.
+    ///
+    /// Runs on the commonware `tokio` runtime, not the deterministic one, because
+    /// that is what the node runs on and what gives `drain_shutdown_tasks` a real
+    /// timer to time out against.
+    #[test]
+    fn taking_the_drains_releases_the_key_store_sender_the_host_holds() {
+        use commonware_runtime::{tokio::Runner as TokioRunner, Runner as _};
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        TokioRunner::default().start(|ctx| async move {
+            let (persist, mut records) = mpsc::unbounded_channel();
+            let writer_exited = Arc::new(AtomicBool::new(false));
+
+            // `beacon::key_journal` is private to the consensus crate, so this
+            // stands in for `spawn_writer` with the one property under test: the
+            // loop it exits by.
+            let exited = writer_exited.clone();
+            let writer = ctx
+                .with_label("key_journal_writer")
+                .spawn(move |_| async move {
+                    while records.recv().await.is_some() {}
+                    exited.store(true, Ordering::SeqCst);
+                });
+
+            let mut handle = LayerHandleShape {
+                beacon_keys: BeaconKeys::with_persistence(Vec::new(), persist),
+                drain_on_shutdown: vec![("key_journal_writer", writer)],
+            };
+            let drains =
+                take_shutdown_drains(&mut handle.beacon_keys, &mut handle.drain_on_shutdown);
+            drain_shutdown_tasks(drains).await;
+
+            assert!(
+                writer_exited.load(Ordering::SeqCst),
+                "the writer must resolve while its host is still alive"
+            );
+        });
     }
 }
