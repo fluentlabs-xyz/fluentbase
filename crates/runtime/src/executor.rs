@@ -455,11 +455,17 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
         exit_code: i32,
     ) -> ExecutionResult {
         let timer = RuntimeTimer::start();
+        // The call_id must reference a runtime saved by this transaction. If it doesn't, that's a
+        // host-side invariant break; return a deterministic error instead of panicking, because
+        // with `panic = "abort"` a panic here would kill the node.
         let Some(mut runtime) = self.recoverable_runtimes.remove(&call_id) else {
-            unreachable!(
-                "runtime: missing recoverable runtime for resume, this should never happen: call_id={}, fuel_consumed={}, exit_code={}",
-                call_id, fuel_consumed, exit_code
-            )
+            return ExecutionResult {
+                exit_code: ExitCode::UnknownError.into_i32(),
+                fuel_consumed,
+                fuel_refunded: 0,
+                output: vec![],
+                return_data: vec![],
+            };
         };
         metrics::set_recoverable_runtimes(self.recoverable_runtimes.len());
         let (mode, state) = runtime_labels(&runtime);
@@ -523,9 +529,12 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
         offset: usize,
         buffer: &mut [u8],
     ) -> Result<(), TrapCode> {
-        let runtime_ref = self.recoverable_runtimes.get_mut(&call_id).expect(
-            "runtime: missing recoverable runtime for memory read, this should never happen",
-        );
+        // Reads must target a live suspended runtime. If the runtime is gone, surface a trap the
+        // callers already handle gracefully instead of panicking (with `panic = "abort"` a panic
+        // here would kill the node).
+        let Some(runtime_ref) = self.recoverable_runtimes.get_mut(&call_id) else {
+            return Err(TrapCode::MemoryOutOfBounds);
+        };
         runtime_ref.memory_read(offset, buffer)
     }
 }
@@ -556,7 +565,7 @@ mod tests {
         MAX_IN_FLIGHT_MEMORY_BYTES,
     };
     use rwasm::{
-        ExecutionEngine, RwasmModule, StrategyDefinition, N_BYTES_PER_MEMORY_PAGE,
+        ExecutionEngine, RwasmModule, StrategyDefinition, TrapCode, N_BYTES_PER_MEMORY_PAGE,
         N_DEFAULT_MAX_MEMORY_PAGES,
     };
 
@@ -591,6 +600,30 @@ mod tests {
         assert_eq!(result.fuel_consumed, 100);
         assert_eq!(result.fuel_refunded, 0);
         assert!(result.output.is_empty());
+    }
+
+    #[test]
+    fn resume_with_missing_recoverable_runtime_returns_deterministic_error() {
+        let mut executor = RuntimeFactoryExecutor::new(import_linker_v1_preview());
+
+        // No runtime was ever saved under this call_id; resume must fail cleanly, not panic.
+        let result = executor.resume(42, &[], 0, 100, 0, ExitCode::Ok.into_i32());
+
+        assert_eq!(result.exit_code, ExitCode::UnknownError.into_i32());
+        assert_eq!(result.fuel_consumed, 100);
+        assert_eq!(result.fuel_refunded, 0);
+        assert!(result.output.is_empty());
+        assert!(result.return_data.is_empty());
+    }
+
+    #[test]
+    fn memory_read_with_missing_recoverable_runtime_returns_trap() {
+        let mut executor = RuntimeFactoryExecutor::new(import_linker_v1_preview());
+
+        let mut buffer = [0u8; 4];
+        let result = executor.memory_read(42, 0, &mut buffer);
+
+        assert_eq!(result, Err(TrapCode::MemoryOutOfBounds));
     }
 
     /// Initial pages the Rust/Wasm toolchain emits for a contract that allocates nothing of its

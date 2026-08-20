@@ -476,7 +476,7 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
 ///
 /// This function re-enters the runtime via `syscall_resume_impl`, charges gas, and then
 /// routes the final result through the normal halt path.
-fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
+pub(crate) fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
     frame: &mut RwasmFrame,
     ctx: &mut CTX,
     interruption_outcome: SystemInterruptionOutcome,
@@ -490,8 +490,20 @@ fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
     } = interruption_outcome;
 
     // `result` is expected to exist if we got here; interruption plumbing guarantees it.
-    let result = result.unwrap();
+    // If the handler failed to fill it, halt the transaction deterministically instead of
+    // panicking: with `panic = "abort"` a panic here would kill the node.
     let call_id = inputs.call_id;
+    let Some(result) = result else {
+        warn!(
+            call_id,
+            "revm: missing interruption result on resume, halting frame"
+        );
+        default_runtime_executor().forget_runtime(call_id);
+        return Ok(NextAction::error(
+            ExitCode::UnknownError,
+            frame.interpreter.gas,
+        ));
+    };
     let preloaded_slot_costs = inputs.preloaded_slot_costs.clone();
 
     // Convert REVM gas accounts into runtime fuel units.
@@ -542,8 +554,17 @@ fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
         inputs.fuel16_ptr,
     ) else {
         // Note: this should never happen, because we always call resume here at 0 depth level, but
-        //  it's the only error that can be triggered inside
-        unreachable!("revm: received exit code from resume, this should never happen");
+        //  it's the only error that can be triggered inside. Halt deterministically instead of
+        //  panicking: with `panic = "abort"` a panic here would kill the node.
+        warn!(
+            call_id,
+            "revm: received exit code from resume, halting frame"
+        );
+        default_runtime_executor().forget_runtime(call_id);
+        return Ok(NextAction::error(
+            ExitCode::UnknownError,
+            frame.interpreter.gas,
+        ));
     };
 
     let return_data: Bytes = runtime_context.execution_result.return_data.into();
@@ -622,7 +643,7 @@ fn get_ownable_account_mut<'a, CTX: ContextTr + 'a>(
 /// - update ownable account metadata if present
 ///
 /// This is effectively the bridge from system runtime semantics back into REVM journal writes.
-fn process_runtime_execution_outcome<CTX: ContextTr>(
+pub(crate) fn process_runtime_execution_outcome<CTX: ContextTr>(
     target_address: &Address,
     ctx: &mut CTX,
     gas: &mut Gas,
@@ -713,11 +734,16 @@ fn process_runtime_execution_outcome<CTX: ContextTr>(
 
     if let Some(new_metadata) = new_metadata {
         // Safety: `new_metadata` should only be set by ownable accounts. If a non-ownable system
-        // contract sets it, that indicates a severe invariant break.
-        let owner_address = ownable_account_bytecode
-            .as_ref()
-            .map(|v| v.owner_address)
-            .unwrap();
+        // contract sets it, that indicates a severe invariant break; fail the frame
+        // deterministically instead of panicking (with `panic = "abort"` a panic kills the node).
+        let Some(owner_address) = ownable_account_bytecode.as_ref().map(|v| v.owner_address) else {
+            warn!(
+                ?target_address,
+                "revm: new_metadata returned for a non-ownable account, halting frame"
+            );
+            *exit_code = ExitCode::UnknownError;
+            return Ok(());
+        };
         ctx.journal_mut().set_code(
             *target_address,
             Bytecode::new_ownable_account(owner_address, new_metadata),
@@ -818,7 +844,7 @@ fn process_execution_result<CTX: ContextTr, INSP: Inspector<CTX>>(
 ///
 /// For interruptions, we decode invocation params from return bytes and delegate to the
 /// host interruption executor.
-fn process_exec_result<CTX: ContextTr, INSP: Inspector<CTX>>(
+pub(crate) fn process_exec_result<CTX: ContextTr, INSP: Inspector<CTX>>(
     frame: &mut RwasmFrame,
     ctx: &mut CTX,
     inspector: Option<&mut INSP>,
@@ -842,12 +868,21 @@ fn process_exec_result<CTX: ContextTr, INSP: Inspector<CTX>>(
     let call_id = exit_code as u32;
 
     // Decode syscall invocation parameters from return data.
+    //
+    // Interruption params are produced by the trusted SDK and must always decode. If they don't,
+    // drop the saved runtime and halt the frame deterministically instead of panicking: with
+    // `panic = "abort"` a panic here would kill the node.
     let Some(syscall_params) = SyscallInvocationParams::decode(&return_data) else {
-        unreachable!(
-            "revm: can't decode invocation params: exit_code={}, return_data={}",
-            exit_code,
-            return_data.len()
+        warn!(
+            call_id,
+            return_data_len = return_data.len(),
+            "revm: can't decode invocation params, halting frame"
         );
+        default_runtime_executor().forget_runtime(call_id);
+        return Ok(NextAction::error(
+            ExitCode::UnknownError,
+            frame.interpreter.gas,
+        ));
     };
 
     let gas = frame.interpreter.gas;
