@@ -1099,3 +1099,118 @@ mod storage_inspector_tests {
         assert_eq!(inspector.step_end_value, Some(new_value));
     }
 }
+
+/// Regression tests for the rWASM↔REVM resume boundary: host-side invariant violations must
+/// resolve into deterministic transaction halts, never panics (the release profile is
+/// `panic = "abort"`, so a panic on this path kills the node).
+#[cfg(test)]
+mod resume_boundary_tests {
+    use super::*;
+    use crate::executor::{
+        execute_rwasm_resume, process_exec_result, process_runtime_execution_outcome,
+    };
+    use fluentbase_sdk::{system::RuntimeExecutionOutcomeV1, ExitCode};
+    use revm::handler::system_interruption::{SystemInterruptionInputs, SystemInterruptionOutcome};
+
+    fn new_context() -> RwasmContext<InMemoryDB> {
+        let mut ctx = RwasmContext::new(InMemoryDB::default(), RwasmSpecId::PRAGUE);
+        ctx.cfg = CfgEnv::new_with_spec(RwasmSpecId::PRAGUE);
+        ctx.block = BlockEnv::default();
+        ctx.tx = TxEnv::default();
+        ctx
+    }
+
+    #[test]
+    fn malformed_interruption_params_halt_instead_of_panicking() {
+        let mut ctx = new_context();
+        let mut frame = RwasmFrame::default();
+        frame.interpreter.gas = Gas::new(100_000);
+
+        // A positive exit code marks an interruption whose invocation params must decode from
+        // return data; feed undecodable garbage and expect a clean deterministic halt.
+        let next_action = process_exec_result::<_, NoOpInspector>(
+            &mut frame,
+            &mut ctx,
+            None,
+            5,
+            bytes!("deadbeef"),
+            None,
+        )
+        .unwrap();
+
+        match next_action {
+            NextAction::Return(result) => {
+                assert_eq!(result.result, InstructionResult::UnknownError);
+            }
+            _ => panic!("expected a returned halt"),
+        }
+    }
+
+    #[test]
+    fn missing_resume_result_halts_instead_of_panicking() {
+        let mut ctx = new_context();
+        let mut frame = RwasmFrame::default();
+        frame.interpreter.gas = Gas::new(100_000);
+
+        // The interruption handler must fill `result` before resume; simulate the broken
+        // ordering where it did not.
+        let outcome = SystemInterruptionOutcome {
+            inputs: SystemInterruptionInputs {
+                call_id: 7,
+                code_hash: B256::ZERO,
+                input: 0..0,
+                fuel_limit: 0,
+                state: STATE_MAIN,
+                fuel16_ptr: 0,
+                gas: Gas::new(0),
+                preloaded_slot_costs: None,
+            },
+            result: None,
+            halted_frame: false,
+        };
+
+        let next_action =
+            execute_rwasm_resume::<_, NoOpInspector>(&mut frame, &mut ctx, outcome, None).unwrap();
+
+        match next_action {
+            NextAction::Return(result) => {
+                assert_eq!(result.result, InstructionResult::UnknownError);
+            }
+            _ => panic!("expected a returned halt"),
+        }
+    }
+
+    #[test]
+    fn new_metadata_without_ownable_account_fails_frame_instead_of_panicking() {
+        let mut ctx = new_context();
+        let target = address!("2222222222222222222222222222222222222222");
+        let mut gas = Gas::new(100_000);
+        let mut exit_code = ExitCode::Ok;
+
+        // A structured outcome carrying `new_metadata` while the executing account is not an
+        // ownable account is a severe invariant break; it must fail the frame, not the node.
+        let outcome = RuntimeExecutionOutcomeV1 {
+            exit_code: ExitCode::Ok,
+            output: Bytes::new(),
+            storage: None,
+            logs: vec![],
+            new_metadata: Some(bytes!("1234")),
+            touched_storage_slots: None,
+            transfers: None,
+        };
+        let mut return_data: Bytes = outcome.encode().into();
+
+        process_runtime_execution_outcome(
+            &target,
+            &mut ctx,
+            &mut gas,
+            &mut return_data,
+            &mut exit_code,
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(exit_code, ExitCode::UnknownError);
+    }
+}

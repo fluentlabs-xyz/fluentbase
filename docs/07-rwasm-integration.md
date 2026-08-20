@@ -67,6 +67,12 @@ A dependency bump can silently change any of these.
 2. rerun interruption/resume e2e paths,
 3. recheck allocation/bounds safety on memory helper paths,
 4. verify gas/fuel settlement remains deterministic,
-5. update docs in same PR.
+5. re-audit the invariant-violation halt paths on the rWASM↔REVM resume boundary
+   (`crates/revm/src/executor.rs`: `execute_rwasm_resume`, `process_exec_result`,
+   `process_runtime_execution_outcome`; `crates/runtime/src/executor.rs`: `resume`,
+   `memory_read`) — an upgrade that changes trap/interruption behavior may make these
+   deterministic `UnknownError` halts reachable, and they must stay halts, not panics
+   (release profile is `panic = "abort"`),
+6. update docs in same PR.
 
 If one of these steps is skipped, regressions can escape into consensus path.
