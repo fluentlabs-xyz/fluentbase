@@ -860,10 +860,13 @@ where
         if epoch == self.highest_entered_epoch {
             self.committee_size = snap.validators.len();
         }
-        // Prune the cross-epoch beacon-key store to the same trailing
-        // scheme-retention window: every reader is an exact `lookup` for the epoch
-        // under reconcile (near the entered frontier — W1/W3/attested/ladder), so
-        // entries older than that can never be read again.
+        // Prune the cross-epoch beacon-key store's DERIVED tiers to the same
+        // trailing scheme-retention window: every reader of a W1/W3 or carried
+        // entry is an exact `lookup` for the epoch under reconcile (near the
+        // entered frontier), so those can never be read again. The attested
+        // entries are exempt inside `retain_from` — they are mint-keyed and the
+        // carry-divergence tripwires ask for the mint, which on a stable committee
+        // never moves.
         self.cfg.group_keys.retain_from(
             self.highest_entered_epoch
                 .get()

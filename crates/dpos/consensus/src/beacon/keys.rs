@@ -308,13 +308,38 @@ impl BeaconKeys {
         );
     }
 
-    /// Drop every entry below `oldest`. Every reader is an exact per-epoch ask for an
-    /// epoch near the entered frontier, oldest bounded by the scheme-retention
-    /// window, so entries older than that can never be read again — without this
-    /// the store grows unbounded across a months-long process.
+    /// Drop every DERIVED entry below `oldest`. [`KeySource::Agreed`] entries are
+    /// kept for the life of the process, whatever their epoch.
+    ///
+    /// The window is what bounds the derived tiers, and only they need it:
+    /// [`KeySource::LocalDkg`] (a W1/W3 publication) and [`KeySource::Carried`]
+    /// (a [`memoise_carry`](Self::memoise_carry) memo) are written once per epoch
+    /// ENTERED, so without a trailing window they grow unbounded across a
+    /// months-long process, and every reader of them asks for an epoch near the
+    /// entered frontier.
+    ///
+    /// `Agreed` is the opposite shape, and must not take the same window for the
+    /// reason [`crate::beacon::key_journal`] already states for the durable half
+    /// of this same map: it is written once per COMMITTEE CHANGE and filed under
+    /// the epoch that MINTED the key, so on a long-stable committee the entry
+    /// worth having is the OLDEST one. Both carry-divergence tripwires
+    /// ([`crate::dpos::group_key_resolver`] on the vote path,
+    /// [`crate::dpos::beacon_share_resolver`] on the share gate) ask
+    /// [`Self::attested`] for the MINTING epoch, which on a committee that never
+    /// changes is the bootstrap mint forever — an epoch-measured window disarms
+    /// them once the frontier passes it, and nothing re-inserts the entry on a
+    /// node that reaches neither the write-back nor a ladder rung. Keeping them
+    /// is also what makes this half agree with the disk half, which retains every
+    /// agreed record and rehydrates all of them at boot.
+    ///
+    /// Worst case that costs: one entry per committee change this process ever
+    /// saw, at 304 B of `(epoch, key, tag)` plus its map node. A pathological
+    /// chain that re-minted EVERY epoch at a day-long epoch holds ~365 of them a
+    /// year — ~0.1 MB — against the ~101 B/record the journal already accepts for
+    /// the same set on disk.
     pub fn retain_from(&self, oldest: u64) {
         if let Ok(mut m) = self.map.write() {
-            m.retain(|e, _| *e >= oldest);
+            m.retain(|e, (_, src)| *e >= oldest || *src == KeySource::Agreed);
         }
     }
 

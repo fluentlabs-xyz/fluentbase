@@ -897,10 +897,11 @@ where
         // `soft_enter` would have read for a catch-up epoch. That is a vote-only
         // degrade — the same residual the bulk catch-up span already takes, and the
         // artifact rung still answers where this node holds one — never a wrong
-        // pin. Every reader that must not miss (the vote path's
-        // `group_public_for`, the promote value-gate, the W3 backfill) reads the
-        // LIVE epoch or `live − 1`, which is at the inlet's own frontier and so
-        // never in the pruned tail.
+        // pin. Every reader that must not miss reads at the inlet's own frontier
+        // and so never in the pruned tail: the vote path's `group_public_for`, the
+        // promote value-gate and the W3 backfill ask for the LIVE epoch or
+        // `live − 1`, and the carry-divergence tripwires ask for the MINT, which
+        // `retain_from` exempts from the window at any age.
         self.beacon_keys
             .retain_from(epoch.saturating_sub(SCHEME_RETENTION_EPOCHS as u64));
         // Re-homed live-frontier tee: advance the beacon-plane cursors off the

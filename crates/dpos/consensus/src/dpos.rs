@@ -1595,6 +1595,81 @@ mod group_key_resolver_tests {
         );
     }
 
+    /// The tripwire above is keyed on the MINT, and on a committee that never
+    /// changes the mint is the deterministic bootstrap epoch forever, while the
+    /// pruners (`epoch_manager`'s reconcile and the cert-inlet's per-cert sweep)
+    /// run frontier-relative. An epoch-measured window over the whole store
+    /// therefore deletes the one entry the guard reads once the frontier passes
+    /// `mint + SCHEME_RETENTION_EPOCHS`, and nothing re-inserts it: the only
+    /// `Agreed` producers at a mint epoch are the agreement write-back (a
+    /// committee CHANGE only) and the ladder's own memoisation, neither of which a
+    /// plain validator reaches on a healthy stable chain. Both resolvers would
+    /// then serve the divergent local material they refuse above.
+    ///
+    /// Reds if `retain_from` stops exempting [`KeySource::Agreed`].
+    #[test]
+    fn a_stable_committees_attested_mint_outlives_the_retention_window() {
+        use crate::beacon::keys::KeySource;
+        use crate::epoch_manager::BeaconResolve;
+
+        let bootstrap = crate::beacon::actor::DETERMINISTIC_BOOTSTRAP_EPOCH;
+        let players = committee(0xC0, 4);
+        let (outcome, share) = ceremony(&players);
+        let local_pk = *crate::beacon::outcome::group_public_key(&outcome);
+        let store = Arc::new(RwLock::new(BTreeMap::from([(bootstrap, (outcome, share))])));
+
+        let attested_pk = {
+            let mut rng = StdRng::seed_from_u64(0xF00D);
+            let (other_out, _) = deal::<MinSig, PeerPubkey, N3f1>(
+                &mut rng,
+                Mode::NonZeroCounter,
+                committee(0xEE, 4),
+            )
+            .expect("deal");
+            *crate::beacon::outcome::group_public_key(&other_out)
+        };
+        assert_ne!(attested_pk, local_pk, "test needs a genuine divergence");
+        let diverged = crate::beacon::keys::BeaconKeys::new();
+        diverged.set_pk(bootstrap, attested_pk, KeySource::Agreed);
+
+        // A W1 publication and a carry memo for a long-past epoch: the derived
+        // tiers the window exists to bound, so the prune must still take them.
+        diverged.set_pk(bootstrap + 1, local_pk, KeySource::LocalDkg);
+        diverged.set_pk(bootstrap + 2, local_pk, KeySource::Carried);
+
+        // The frontier walks well past `bootstrap + SCHEME_RETENTION_EPOCHS`, one
+        // prune per epoch entered, exactly as both live callers do.
+        let frontier = bootstrap + 10 * crate::outer::SCHEME_RETENTION_EPOCHS as u64;
+        for epoch in bootstrap..=frontier {
+            diverged
+                .retain_from(epoch.saturating_sub(crate::outer::SCHEME_RETENTION_EPOCHS as u64));
+        }
+        assert_eq!(
+            diverged.cached_only(bootstrap + 1),
+            None,
+            "a local publication far below the frontier is still pruned"
+        );
+        assert_eq!(
+            diverged.cached_only(bootstrap + 2),
+            None,
+            "and so is a carry memo"
+        );
+
+        // A stable epoch at the far frontier still carries the bootstrap mint, so
+        // both tripwires must still see the attestation and refuse.
+        let verify = group_key_resolver(store.clone(), qual(&[]), diverged.clone());
+        assert_eq!(
+            verify(frontier),
+            KeyLookup::Unknown,
+            "the divergence guard must stay armed for the life of a stable committee"
+        );
+        let sign = beacon_share_resolver(store, qual(&[]), b"ns".to_vec(), diverged);
+        assert!(
+            matches!(sign(frontier), BeaconResolve::Absent),
+            "and the share gate must keep demoting rather than W1-publish a divergent key"
+        );
+    }
+
     /// Defect 2 (soak v47, epoch 4→5): at a CHANGE boundary the local candidate
     /// ceremony COMPLETED (players = candidate committee) but its DKG
     /// under-qualified on-chain — `dkgQual[5]` never landed, so the contract
@@ -3664,11 +3739,18 @@ impl DposLayer {
         };
 
         // The follower's cross-epoch beacon-key store: shared by `epoch_manager`'s
-        // ladder (reader + pruner) and the cert-inlet (its sole writer).
+        // ladder and the cert-inlet, both of which only READ and prune it.
+        //
+        // RAM-only, and the empty partition is how `key_journal::open` is told so.
+        // The journal persists `KeySource::Agreed` and nothing else, and every
+        // producer of that tier is plane-side — a follower runs none of them and
+        // passes no ladder rung (see `held_keys` / `group_keys` below). A durable
+        // half here would open an `Ordinal` partition, replay a store that can
+        // never hold a record, and park a writer task in the shutdown drain.
         let (beacon_keys, key_writer) = crate::beacon::key_journal::open(
             ctx.with_label("key_journal"),
             ctx.with_label("key_journal_writer"),
-            KEY_JOURNAL_PARTITION,
+            "",
         )
         .await?;
         let mut outer = OuterBuilder {
