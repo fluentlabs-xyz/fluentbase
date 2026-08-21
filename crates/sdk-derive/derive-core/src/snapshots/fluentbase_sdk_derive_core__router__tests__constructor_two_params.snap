@@ -244,6 +244,10 @@ impl<SDK: SharedAPI> App<SDK> {
         let (selector, params) = call_data.split_at(4);
         match [selector[0], selector[1], selector[2], selector[3]] {
             [112u8, 160u8, 130u8, 49u8] => {
+                use fluentbase_sdk::ContextReader as _;
+                if !self.sdk.context().contract_value().is_zero() {
+                    panic!("nonpayable method cannot receive value");
+                }
                 let param0 = match BalanceOfCall::decode(&params) {
                     Ok(decoded) => decoded.0.0,
                     Err(err) => {

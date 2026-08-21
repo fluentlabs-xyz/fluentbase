@@ -5,7 +5,9 @@ use crate::{
         structs::StructResolver,
     },
     attr::{
-        function_id::FunctionID, state_mutability::resolve_state_mutability, FunctionIDAttribute,
+        function_id::FunctionID,
+        state_mutability::{resolve_state_mutability, StateMutabilityExt},
+        FunctionIDAttribute,
     },
     signature::ParsedSignature,
 };
@@ -295,6 +297,17 @@ impl<T: MethodLike> ParsedMethod<T> {
 
         let call_struct = format_ident!("ConstructorCall");
 
+        let value_guard = if self.state_mutability().allows_value() {
+            quote! {}
+        } else {
+            quote! {
+                use fluentbase_sdk::ContextReader as _;
+                if !self.sdk.context().contract_value().is_zero() {
+                    panic!("nonpayable constructor cannot receive value");
+                }
+            }
+        };
+
         // Generate parameter handling based on parameter count
         let param_handling = match param_count {
             0 => quote! {},
@@ -337,6 +350,7 @@ impl<T: MethodLike> ParsedMethod<T> {
 
         // Generate complete deploy body
         quote! {
+            #value_guard
             let input_length = self.sdk.input_size();
             let mut call_data = alloc::vec![0u8; input_length as usize];
             self.sdk.read(&mut call_data, 0);

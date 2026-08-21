@@ -166,6 +166,10 @@ impl<SDK: SharedAPI> App<SDK> {
         let (selector, params) = call_data.split_at(4);
         match [selector[0], selector[1], selector[2], selector[3]] {
             [32u8, 150u8, 82u8, 85u8] => {
+                use fluentbase_sdk::ContextReader as _;
+                if !self.sdk.context().contract_value().is_zero() {
+                    panic!("nonpayable method cannot receive value");
+                }
                 let output = self.get_value();
                 let encoded_output = GetValueReturn::new((output,)).encode();
                 self.sdk.write(&encoded_output);
