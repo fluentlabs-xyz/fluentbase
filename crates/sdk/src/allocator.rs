@@ -9,7 +9,7 @@ pub use self::{block_list::BlockListAllocator, heap_base::HeapBaseAllocator};
 #[inline(always)]
 pub fn alloc_ptr_unaligned(len: usize) -> *mut u8 {
     if len == 0 {
-        return core::ptr::null_mut();
+        return core::ptr::NonNull::<u8>::dangling().as_ptr();
     }
     let layout = core::alloc::Layout::from_size_align(len, 1).unwrap();
     unsafe { alloc::alloc::alloc(layout) }
@@ -35,4 +35,14 @@ fn test_pages_needed() {
     assert_eq!(calc_pages_needed(1, 65535), 0);
     assert_eq!(calc_pages_needed(1, 65536 + 65536), 1);
     assert_eq!(calc_pages_needed(5, 327680), 0);
+}
+
+#[test]
+fn zero_sized_allocation_returns_a_valid_slice_pointer() {
+    let ptr = alloc_ptr_unaligned(0);
+    assert!(!ptr.is_null());
+
+    // SAFETY: `ptr` is non-null and aligned, and a zero-length slice accesses no memory.
+    let slice = unsafe { core::slice::from_raw_parts(ptr, 0) };
+    assert!(slice.is_empty());
 }
