@@ -26,13 +26,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - name: Extract and sanitize version
-        id: extract_version
-        run: |
-          VERSION="${GITHUB_REF_NAME}"
-          VERSION="${VERSION//\//-}"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
@@ -43,15 +36,21 @@ jobs:
         with:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Verify crate version matches tag
+      - name: Verify canonical release tag
+        # crates.io publishing is irreversible, so only the exact canonical
+        # stable tag v<workspace-version> may publish. A workflow_dispatch dry
+        # run from a non-tag ref has no tag to validate and publishes nothing.
         run: |
-          tag="${{ steps.extract_version.outputs.version }}"
-          tag="${tag#v}"
-          cargo_ver=$(grep -m1 '^version' Cargo.toml | awk -F'=' '{print $2}' | tr -d ' "')
-          [[ "$tag" == "$cargo_ver"* ]] || {
-            echo "Tag $tag doesn't match the Cargo version $cargo_ver"
+          if [[ "${GITHUB_REF_TYPE}" != "tag" ]]; then
+            echo "Not a tag ref; skipping tag validation (dry run only)"
+            exit 0
+          fi
+          channel="$(./.github/scripts/check-release-tag.sh "${GITHUB_REF_NAME}")"
+          echo "$channel"
+          if [[ "${GITHUB_EVENT_NAME}" != "workflow_dispatch" && "$channel" != "channel=stable" ]]; then
+            echo "crates.io publishing requires the canonical stable release tag" >&2
             exit 1
-          }
+          fi
 
       - name: Publish to crates.io
         if: ${{ github.event_name != 'workflow_dispatch' || !inputs.dry_run }}

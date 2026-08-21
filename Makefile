@@ -226,6 +226,8 @@ docker-build-push-git-sha: ## Build and push a cross-arch Docker image tagged wi
 # `docker buildx create --use --driver docker-container --name cross-builder`
 .PHONY: docker-build-push-latest
 docker-build-push-latest: ## Build and push a cross-arch Docker image tagged with the latest git tag and `latest`.
+	@./.github/scripts/check-release-tag.sh "$(GIT_TAG)" | grep -qx "channel=stable" || { \
+		echo "Refusing to move 'latest': '$(GIT_TAG)' is not the canonical stable release tag" >&2; exit 1; }
 	$(call docker_build_push,$(GIT_TAG),latest)
 
 # Note: This requires a buildx builder with emulation support. For example:

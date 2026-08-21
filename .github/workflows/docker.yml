@@ -20,8 +20,23 @@ env:
   CXX: clang++
 
 jobs:
+  check-version:
+    name: check release tag
+    runs-on: ubuntu-24.04
+    outputs:
+      channel: ${{ steps.tag.outputs.channel }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Validate release tag
+        id: tag
+        # Both build jobs depend on this gate: only the canonical
+        # v<workspace-version> tag (channel=stable) may advance the public
+        # `latest` image, and only v<workspace-version>-rc.N builds an rc image.
+        run: ./.github/scripts/check-release-tag.sh "${GITHUB_REF_NAME}"
+
   build-rc:
-    if: contains(github.ref, '-rc')
+    needs: check-version
+    if: ${{ needs.check-version.outputs.channel == 'prerelease' }}
     name: build and push as release candidate
     runs-on: ubuntu-24.04
     permissions:
@@ -58,7 +73,8 @@ jobs:
         run: ${{ matrix.build.command }}
 
   build:
-    if: ${{ !contains(github.ref, '-rc') }}
+    needs: check-version
+    if: ${{ needs.check-version.outputs.channel == 'stable' }}
     name: build and push as latest
     runs-on: ubuntu-24.04
     permissions:

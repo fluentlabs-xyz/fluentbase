@@ -35,6 +35,14 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
+      - name: Validate release tag
+        id: tag
+        if: ${{ github.ref_type == 'tag' }}
+        # Tag pushes publish a public image tag and may advance `latest`, so the
+        # tag must be canonical (v<workspace-version> or v<workspace-version>-rc.N).
+        # Emits channel=stable|prerelease; only `stable` may move `latest`.
+        run: ./.github/scripts/check-release-tag.sh "${GITHUB_REF_NAME}"
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
 
@@ -62,6 +70,7 @@ jobs:
           INPUT_DOCKER_TAG: ${{ inputs.docker_tag }}
           INPUT_BRANCH: ${{ inputs.branch }}
           INPUT_PUSH_LATEST: ${{ inputs.push_latest }}
+          TAG_CHANNEL: ${{ steps.tag.outputs.channel }}
         run: |
           set -euo pipefail
 
@@ -96,8 +105,14 @@ jobs:
           IS_RC=true
           fi
 
+          # `latest` moves only for the canonical stable tag (channel=stable,
+          # emitted by check-release-tag.sh) or an explicit non-rc dispatch.
           PUSH_LATEST=false
-          if [[ "$IS_RC" != "true" ]] && { [[ "$EVENT" == "workflow_dispatch" && "${INPUT_PUSH_LATEST}" == "true" ]] || [[ "$REF_TYPE" == "tag" ]]; }; then
+          if [[ "$EVENT" == "workflow_dispatch" ]]; then
+          if [[ "$IS_RC" != "true" && "${INPUT_PUSH_LATEST}" == "true" ]]; then
+          PUSH_LATEST=true
+          fi
+          elif [[ "$REF_TYPE" == "tag" && "${TAG_CHANNEL}" == "stable" ]]; then
           PUSH_LATEST=true
           fi
           TAGS="${IMAGE}:${VERSION}"
