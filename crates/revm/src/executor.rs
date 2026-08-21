@@ -49,6 +49,11 @@ use std::{
 };
 use tracing::warn;
 
+fn out_of_fuel_with_current_gas(gas: &mut Gas) -> NextAction {
+    gas.spend_all();
+    NextAction::out_of_fuel(*gas)
+}
+
 fn should_overwrite_delegated_bytecode<'a, CTX: ContextTr>(
     frame: &mut RwasmFrame,
     ctx: &mut CTX,
@@ -352,18 +357,14 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
                     // loop in `process_runtime_execution_outcome` for why no SSTORE write cost
                     // is charged on commit.
                     if !interpreter.gas.record_regular_cost(gas_cost) {
-                        return Ok(NextAction::out_of_fuel(Gas::new_spent(
-                            interpreter.gas.remaining(),
-                        )));
+                        return Ok(out_of_fuel_with_current_gas(&mut interpreter.gas));
                     }
                     _ = storage.insert(k, data.data);
                     preloaded_slot_costs.push((k, gas_cost));
                 }
                 // We need more gas to execute the cold sload
                 Err(JournalLoadError::ColdLoadSkipped) => {
-                    return Ok(NextAction::out_of_fuel(Gas::new_spent(
-                        interpreter.gas.remaining(),
-                    )))
+                    return Ok(out_of_fuel_with_current_gas(&mut interpreter.gas))
                 }
                 // Return database error
                 Err(JournalLoadError::DBError(err)) => return Err(ContextError::Db(err)),
@@ -941,4 +942,28 @@ fn process_halt<CTX: ContextTr, INSP: Inspector<CTX>>(
         output: return_data,
         gas: frame.interpreter.gas,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn preload_out_of_fuel_preserves_the_original_gas_tracker() {
+        let mut gas = Gas::new_with_regular_gas_and_reservoir(3_000, 500);
+        assert!(gas.record_regular_cost(2_100));
+        assert!(!gas.record_regular_cost(2_100));
+
+        let NextAction::Return(result) = out_of_fuel_with_current_gas(&mut gas) else {
+            panic!("out-of-fuel must return the current frame");
+        };
+
+        assert_eq!(
+            result.result,
+            instruction_result_from_exit_code(ExitCode::OutOfFuel, true)
+        );
+        assert_eq!(result.gas.limit(), 3_000);
+        assert_eq!(result.gas.remaining(), 0);
+        assert_eq!(result.gas.reservoir(), 500);
+    }
 }

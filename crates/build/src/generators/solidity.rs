@@ -7,6 +7,7 @@ use fluentbase_sdk_derive_core::{
         function::FunctionABI,
         structs::{StructRegistry, StructResolver},
     },
+    attr::StateMutabilityExt,
     constructor::{process_constructor_with_structs, Constructor},
     method::ParsedMethod,
     router::{process_router_with_structs, Router},
@@ -198,11 +199,12 @@ fn constructor_entry(
     constructor: &ParsedMethod<ImplItemFn>,
     resolver: &StructResolver,
 ) -> Result<Value> {
-    constructor
+    let mut abi = constructor
         .parsed_signature()
         .constructor_abi_with(resolver)
-        .map_err(|error| anyhow!("Failed to build the constructor ABI: {error}"))?
-        .to_json_value()
+        .map_err(|error| anyhow!("Failed to build the constructor ABI: {error}"))?;
+    abi.state_mutability = constructor.state_mutability().as_str().to_string();
+    abi.to_json_value()
         .context("Failed to serialize the constructor ABI")
 }
 

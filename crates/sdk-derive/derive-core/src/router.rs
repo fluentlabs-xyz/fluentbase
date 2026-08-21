@@ -1,6 +1,6 @@
 use crate::{
     abi::structs::StructResolver,
-    attr::{mode::Mode, STATE_MUTABILITY_ATTR},
+    attr::{mode::Mode, state_mutability::StateMutabilityExt, STATE_MUTABILITY_ATTR},
     codec::CodecGenerator,
     method::{combine_errors, MethodCollector, ParsedMethod},
 };
@@ -374,6 +374,17 @@ impl Router {
         let param_count = params.len();
         let return_type_count = route.parsed_signature().return_type().len();
 
+        let value_guard = if route.state_mutability().allows_value() {
+            quote! {}
+        } else {
+            quote! {
+                use fluentbase_sdk::ContextReader as _;
+                if !self.sdk.context().contract_value().is_zero() {
+                    panic!("nonpayable method cannot receive value");
+                }
+            }
+        };
+
         // Generate parameter handling based on parameter count
         let param_handling = match param_count {
             0 => quote! {},
@@ -439,6 +450,7 @@ impl Router {
 
         Ok(quote! {
             [#(#function_id),*] => {
+                #value_guard
                 #param_handling
                 #result_handling
             }
@@ -718,5 +730,38 @@ mod b {
         let formatted = prettyplease::unparse(&file);
 
         assert_snapshot!("constructor_two_params", formatted);
+    }
+
+    #[test]
+    fn test_nonpayable_routes_and_constructor_reject_value() {
+        let impl_block: syn::ItemImpl = parse_quote! {
+            impl<SDK: SharedAPI> App<SDK> {
+                #[state_mutability("nonpayable")]
+                pub fn constructor(&mut self) {}
+
+                #[state_mutability("nonpayable")]
+                pub fn mutate(&mut self) {}
+
+                #[state_mutability("payable")]
+                pub fn deposit(&mut self) {}
+            }
+        };
+
+        let router = process_router(quote! { mode = "solidity" }, impl_block.into_token_stream())
+            .expect("Failed to process router");
+        let generated = router
+            .generate()
+            .expect("Failed to generate router code")
+            .to_string()
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect::<String>();
+
+        assert_eq!(
+            generated
+                .matches("if!self.sdk.context().contract_value().is_zero()")
+                .count(),
+            2
+        );
     }
 }

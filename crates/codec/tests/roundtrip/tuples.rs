@@ -78,6 +78,14 @@ fn test_tuple_single_solidity() {
 }
 
 #[test]
+fn malformed_singleton_tuple_offset_returns_error() {
+    let mut encoded = vec![0u8; 32];
+    encoded[28..].copy_from_slice(&u32::MAX.to_be_bytes());
+
+    assert!(SolidityABI::<(Bytes,)>::decode(&Bytes::from(encoded), 0).is_err());
+}
+
+#[test]
 fn test_tuple_wasm() {
     // Define expected encoding with clear structure:
     // - First 4 bytes: offset to bytes data (4)

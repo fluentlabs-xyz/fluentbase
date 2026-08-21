@@ -1,6 +1,6 @@
 use crate::{
     alloc::string::ToString,
-    encoder::{align_up, read_u32_aligned, write_u32_aligned, Encoder},
+    encoder::{align_up, checked_decode_slice_from, read_u32_aligned, write_u32_aligned, Encoder},
     error::{CodecError, DecodingError},
 };
 use byteorder::ByteOrder;
@@ -68,9 +68,9 @@ where
     fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
         let chunk = if Self::IS_DYNAMIC {
             let dynamic_offset = read_u32_aligned::<B, ALIGN>(&buf.chunk(), offset)? as usize;
-            &buf.chunk()[dynamic_offset..]
+            checked_decode_slice_from(buf, dynamic_offset, "tuple body exceeds input")?
         } else {
-            &buf.chunk()[offset..]
+            checked_decode_slice_from(buf, offset, "tuple head exceeds input")?
         };
 
         Ok((T::decode(&chunk, 0)?,))

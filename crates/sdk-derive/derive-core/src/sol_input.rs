@@ -629,7 +629,7 @@ library SomeLibrary {
         ));
         assert_eq!(
             generated
-                .matches("self.sdk.static_call(contract_address,&input,Some(gas_limit),)")
+                .matches("self.sdk.static_call(contract_address,&input,Some(fuel_limit),)")
                 .count(),
             2
         );
@@ -639,12 +639,14 @@ library SomeLibrary {
             "pubfnreset(&mutself,contract_address:fluentbase_sdk::Address,gas_limit:u64,)"
         ));
         assert!(generated.contains(
-            "self.sdk.call(contract_address,fluentbase_sdk::U256::ZERO,&input,Some(gas_limit),)"
+            "self.sdk.call(contract_address,fluentbase_sdk::U256::ZERO,&input,Some(fuel_limit),)"
         ));
         assert!(generated.contains(
             "pubfndeposit(&mutself,contract_address:fluentbase_sdk::Address,value:fluentbase_sdk::U256,gas_limit:u64,)"
         ));
-        assert!(generated.contains("self.sdk.call(contract_address,value,&input,Some(gas_limit),)"));
+        assert!(
+            generated.contains("self.sdk.call(contract_address,value,&input,Some(fuel_limit),)")
+        );
     }
 
     #[test]
@@ -658,7 +660,7 @@ library SomeLibrary {
         );
 
         assert!(
-            generated.contains("self.sdk.static_call(contract_address,&input,Some(gas_limit),)")
+            generated.contains("self.sdk.static_call(contract_address,&input,Some(fuel_limit),)")
         );
         assert!(!generated.contains("self.sdk.call("));
     }

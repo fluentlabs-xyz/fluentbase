@@ -274,7 +274,7 @@ impl<T: MethodLike> Client<T> {
                 self.sdk.static_call(
                     contract_address,
                     &input,
-                    Some(gas_limit),
+                    Some(fuel_limit),
                 )
             }
         } else {
@@ -289,7 +289,7 @@ impl<T: MethodLike> Client<T> {
                     contract_address,
                     #value,
                     &input,
-                    Some(gas_limit),
+                    Some(fuel_limit),
                 )
             }
         };
@@ -314,6 +314,9 @@ impl<T: MethodLike> Client<T> {
                     }
                 }
 
+                let fuel_limit = gas_limit
+                    .checked_mul(fluentbase_sdk::FUEL_DENOM_RATE)
+                    .expect("gas limit is too large to convert to fuel");
                 let result = #host_call;
 
                 if !fluentbase_sdk::SyscallResult::is_ok(result.status) {
@@ -404,7 +407,7 @@ mod tests {
             let generated = generated_method(method);
 
             assert!(generated
-                .contains("self.sdk.static_call(contract_address,&input,Some(gas_limit),)"));
+                .contains("self.sdk.static_call(contract_address,&input,Some(fuel_limit),)"));
             assert!(!generated.contains("self.sdk.call("));
             // No value can be attached, and none has to be checked
             assert!(!generated.contains("value:fluentbase_sdk::U256"));
@@ -420,7 +423,7 @@ mod tests {
         });
 
         assert!(generated.contains(
-            "self.sdk.call(contract_address,fluentbase_sdk::U256::ZERO,&input,Some(gas_limit),)"
+            "self.sdk.call(contract_address,fluentbase_sdk::U256::ZERO,&input,Some(fuel_limit),)"
         ));
         assert!(!generated.contains("static_call"));
         assert!(!generated.contains("value:fluentbase_sdk::U256"));
@@ -443,9 +446,8 @@ mod tests {
             let generated = generated_method(method);
 
             assert!(generated.contains("value:fluentbase_sdk::U256,gas_limit:u64"));
-            assert!(
-                generated.contains("self.sdk.call(contract_address,value,&input,Some(gas_limit),)")
-            );
+            assert!(generated
+                .contains("self.sdk.call(contract_address,value,&input,Some(fuel_limit),)"));
             assert!(generated.contains("context.tx_value()<value"));
             assert!(!generated.contains("static_call"));
         }

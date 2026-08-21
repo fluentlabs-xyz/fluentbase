@@ -5,7 +5,9 @@ use crate::{
         structs::StructResolver,
     },
     attr::{
-        function_id::FunctionID, state_mutability::resolve_state_mutability, FunctionIDAttribute,
+        function_id::FunctionID,
+        state_mutability::{resolve_state_mutability, StateMutabilityExt},
+        FunctionIDAttribute,
     },
     signature::ParsedSignature,
 };
@@ -156,7 +158,10 @@ impl<T: MethodLike> ParsedMethod<T> {
         if let Some((attr, _)) = &attr {
             if !attr.is_validation_enabled() {
                 let function_id = attr.function_id_bytes()?;
-                let abi = sig.function_abi_with(resolver).ok();
+                let abi = sig.function_abi_with(resolver).ok().map(|mut abi| {
+                    abi.state_mutability = state_mutability;
+                    abi
+                });
                 let signature = attr
                     .signature()
                     .or_else(|| abi.as_ref().and_then(|abi| abi.signature().ok()))
@@ -173,7 +178,7 @@ impl<T: MethodLike> ParsedMethod<T> {
             }
         }
 
-        let abi = sig.function_abi_with(resolver).map_err(|error| {
+        let mut abi = sig.function_abi_with(resolver).map_err(|error| {
             let help = matches!(error, ABIError::StructResolution(_)).then_some(
                 "\nhelp: define the struct in this crate, or pin the selector with \
                  #[function_id(\"name((...))\")] using the components callers encode",
@@ -181,6 +186,7 @@ impl<T: MethodLike> ParsedMethod<T> {
 
             syn::Error::new(sig.span(), format!("{error}{}", help.unwrap_or_default()))
         })?;
+        abi.state_mutability = state_mutability;
         let signature = abi.signature()?;
         let function_id = abi.function_id()?;
 
@@ -218,7 +224,8 @@ impl<T: MethodLike> ParsedMethod<T> {
     pub fn new_constructor(inner: T, resolver: &StructResolver) -> syn::Result<Self> {
         let sig = ParsedSignature::new(inner.sig().clone());
         let state_mutability = inner.state_mutability()?;
-        let abi = sig.function_abi_with(resolver)?;
+        let mut abi = sig.function_abi_with(resolver)?;
+        abi.state_mutability = state_mutability;
         let signature = abi.signature()?;
 
         // For constructor, use zero function_id as it doesn't need a selector
@@ -295,6 +302,17 @@ impl<T: MethodLike> ParsedMethod<T> {
 
         let call_struct = format_ident!("ConstructorCall");
 
+        let value_guard = if self.state_mutability().allows_value() {
+            quote! {}
+        } else {
+            quote! {
+                use fluentbase_sdk::ContextReader as _;
+                if !self.sdk.context().contract_value().is_zero() {
+                    panic!("nonpayable constructor cannot receive value");
+                }
+            }
+        };
+
         // Generate parameter handling based on parameter count
         let param_handling = match param_count {
             0 => quote! {},
@@ -337,6 +355,7 @@ impl<T: MethodLike> ParsedMethod<T> {
 
         // Generate complete deploy body
         quote! {
+            #value_guard
             let input_length = self.sdk.input_size();
             let mut call_data = alloc::vec![0u8; input_length as usize];
             self.sdk.read(&mut call_data, 0);
@@ -741,6 +760,33 @@ mod tests {
         assert_eq!(constructor.parsed_signature().rust_name(), "constructor");
         // Constructor should have zero function_id
         assert_eq!(constructor.function_id(), [0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn test_function_abi_uses_resolved_state_mutability() {
+        let resolver = StructResolver::default();
+
+        let cases: [(ImplItemFn, StateMutability); 2] = [
+            (
+                parse_quote! {
+                    #[state_mutability("pure")]
+                    pub fn read(&self) {}
+                },
+                StateMutability::Pure,
+            ),
+            (
+                parse_quote! {
+                    #[state_mutability("payable")]
+                    pub fn deposit(&mut self) {}
+                },
+                StateMutability::Payable,
+            ),
+        ];
+
+        for (method, expected) in cases {
+            let method = ParsedMethod::new(method, &resolver).unwrap();
+            assert_eq!(method.function_abi().unwrap().state_mutability, expected);
+        }
     }
 
     #[test]

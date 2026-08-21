@@ -282,7 +282,11 @@ pub(crate) fn checked_decode_slice<'a>(
 }
 
 /// Returns the remaining contiguous data starting at `offset` after validating the offset.
-pub(crate) fn checked_decode_slice_from<'a>(
+///
+/// This is public for code emitted by `fluentbase-codec-derive`; it is not part of the stable
+/// high-level codec API.
+#[doc(hidden)]
+pub fn checked_decode_slice_from<'a>(
     buf: &'a impl Buf,
     offset: usize,
     msg: &'static str,
