@@ -196,6 +196,11 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
     }
 
     #[allow(clippy::int_plus_one)]
+    // Allocation safety invariant: ordinary rWASM modules reach `_exec` only after the
+    // translator-injected EXEC fuel procedure has charged the input length (including its
+    // quadratic bound). The system EVM runtime calls the lazy readers below only after the
+    // corresponding EVM call and memory costs have been charged. Keep these allocations behind
+    // those two metering points; moving them earlier would make an untrusted length unmetered.
     macro_rules! get_input_validated {
         (== $length:expr) => {{
             assert_halt!(
