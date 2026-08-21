@@ -391,7 +391,9 @@ fn nested_struct_selectors_agree_with_the_router() {
     let interface = generate_interface("Nested", &abi).expect("generate interface");
     assert!(
         interface
-            .contains("function createUser(User calldata user) external returns (address _0);"),
+            .contains(
+                "function createUser(User calldata user) external payable returns (address _0);"
+            ),
         "unexpected interface: {interface}"
     );
 }
