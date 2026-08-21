@@ -46,11 +46,21 @@ impl StorageBytes {
 
         if last_byte & 1 == 0 {
             // Short form
-            Ok(((last_byte / 2) as usize, false))
+            let len = (last_byte / 2) as usize;
+            if len > 31 {
+                return Err(ExitCode::InputOutputOutOfBounds);
+            }
+            Ok((len, false))
         } else {
             // Long form
             let len = U256::from_be_bytes(word.0) / U256::from(2);
-            Ok((len.try_into().unwrap_or(0), true))
+            if len < U256::from(32) {
+                return Err(ExitCode::InputOutputOutOfBounds);
+            }
+            let len = len
+                .try_into()
+                .map_err(|_| ExitCode::InputOutputOutOfBounds)?;
+            Ok((len, true))
         }
     }
 
@@ -62,7 +72,9 @@ impl StorageBytes {
     /// Load entire byte array.
     pub fn load<S: StorageAPI>(&self, sdk: &S) -> Result<Vec<u8>, ExitCode> {
         let (len, is_long) = self.read_metadata(sdk)?;
-        let mut result = Vec::with_capacity(len);
+        // Grow after each metered storage read instead of trusting an attacker-controlled length
+        // for one large allocation up front.
+        let mut result = Vec::new();
 
         if !is_long {
             // Short form
@@ -455,5 +467,24 @@ mod tests {
         // Verify it's in long form
         let base_value = sdk.get_slot(U256::from(500));
         assert_eq!(base_value, U256::from(65)); // 32*2+1
+    }
+
+    #[test]
+    fn malformed_storage_lengths_are_rejected() {
+        let slot = U256::from(600);
+        let bytes = StorageBytes::new(slot);
+        let mut sdk = MockStorage::new();
+
+        // Even metadata is short form and can encode at most 31 bytes.
+        sdk.storage.insert(slot, U256::from(64));
+        assert_eq!(bytes.load(&sdk), Err(ExitCode::InputOutputOutOfBounds));
+
+        // Odd metadata is long form and must encode at least 32 bytes.
+        sdk.storage.insert(slot, U256::from(3));
+        assert_eq!(bytes.load(&sdk), Err(ExitCode::InputOutputOutOfBounds));
+
+        // A valid U256 length that does not fit in host usize must not wrap or become zero.
+        sdk.storage.insert(slot, U256::MAX);
+        assert_eq!(bytes.load(&sdk), Err(ExitCode::InputOutputOutOfBounds));
     }
 }
