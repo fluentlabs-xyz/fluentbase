@@ -174,7 +174,10 @@ impl<SDK: fluentbase_sdk::SharedAPI> TestContractClient<SDK> {
                 ::core::panic!("Insufficient gas limit for transaction");
             }
         }
-        let result = self.sdk.static_call(contract_address, &input, Some(gas_limit));
+        let fuel_limit = gas_limit
+            .checked_mul(fluentbase_sdk::FUEL_DENOM_RATE)
+            .expect("gas limit is too large to convert to fuel");
+        let result = self.sdk.static_call(contract_address, &input, Some(fuel_limit));
         if !fluentbase_sdk::SyscallResult::is_ok(result.status) {
             ::core::panic!("Contract call failed");
         }
@@ -195,7 +198,10 @@ impl<SDK: fluentbase_sdk::SharedAPI> TestContractClient<SDK> {
                 ::core::panic!("Insufficient gas limit for transaction");
             }
         }
-        let result = self.sdk.static_call(contract_address, &input, Some(gas_limit));
+        let fuel_limit = gas_limit
+            .checked_mul(fluentbase_sdk::FUEL_DENOM_RATE)
+            .expect("gas limit is too large to convert to fuel");
+        let result = self.sdk.static_call(contract_address, &input, Some(fuel_limit));
         if !fluentbase_sdk::SyscallResult::is_ok(result.status) {
             ::core::panic!("Contract call failed");
         }
