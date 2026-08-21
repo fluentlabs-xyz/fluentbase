@@ -114,6 +114,19 @@ mod solidity {
     use super::*;
 
     #[test]
+    fn malformed_dynamic_struct_offset_returns_error() {
+        #[derive(Codec, Debug, PartialEq)]
+        struct DynamicStruct {
+            value: Bytes,
+        }
+
+        let mut encoded = vec![0u8; 32];
+        encoded[28..].copy_from_slice(&u32::MAX.to_be_bytes());
+
+        assert!(SolidityABI::<DynamicStruct>::decode(&Bytes::from(encoded), 0).is_err());
+    }
+
+    #[test]
     fn test_one_field_struct() {
         let expected_encoded = hex::decode(
             "00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000e48656c6c6f2c20576f726c642121000000000000000000000000000000000000"

@@ -57,9 +57,17 @@ impl<
                 B,
                 ALIGN,
             >(&buf.chunk(), aligned_offset)? as usize;
-            &buf.chunk()[offset..]
+            ::fluentbase_sdk::codec::checked_decode_slice_from(
+                buf,
+                offset,
+                "struct body exceeds input",
+            )?
         } else {
-            &buf.chunk()[aligned_offset..]
+            ::fluentbase_sdk::codec::checked_decode_slice_from(
+                buf,
+                aligned_offset,
+                "struct head exceeds input",
+            )?
         };
         let mut current_offset = 0;
         Ok(EmptyStruct {})
@@ -156,9 +164,17 @@ impl<
                 B,
                 ALIGN,
             >(&buf.chunk(), aligned_offset)? as usize;
-            &buf.chunk()[offset..]
+            ::fluentbase_sdk::codec::checked_decode_slice_from(
+                buf,
+                offset,
+                "struct body exceeds input",
+            )?
         } else {
-            &buf.chunk()[aligned_offset..]
+            ::fluentbase_sdk::codec::checked_decode_slice_from(
+                buf,
+                aligned_offset,
+                "struct head exceeds input",
+            )?
         };
         let mut current_offset = 0;
         Ok(EmptyStruct {})
