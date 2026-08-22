@@ -633,14 +633,6 @@ alloy_sol_types::sol! {
     // committee already agreed. The evidence cannot travel here — a node syncing
     // the EL from peers has no OrderBlock — which is why only the one-byte
     // verdict rides in `extra_data`, verbatim into the header.
-    //
-    // The drift note that stood here is RETIRED (2026-08-17). It said no
-    // `SIG_SLASH_EQUIVOCATION` existed and nothing dispatched `0xdc6fb3f2`, so
-    // verdicts silently never landed, and it carried a "do NOT fix one-sidedly"
-    // instruction. Both halves were true when written and both are false now:
-    // `[contract] consts.rs` defines the constant and `lib.rs` dispatches it,
-    // closed by `00fc3790`. `slash_equivocation_calldata_is_pinned` still pins
-    // the node side literally, so a rename on either side stays loud.
     function slashEquivocation(uint64 epoch, uint32 signerIdx) external;
 
     // Stipend-settlement events emitted by the settle leg the epoch CLOSE drives —

@@ -15,11 +15,13 @@
 //!    round-trip before seal is never reveal-forced by a single dropped packet.
 //! 2. At the deadline [`DkgCeremony::seal_dealings`] finalizes this node's dealer
 //!    into a signed log (broadcast as `Reveal`, recorded locally); incoming
-//!    `Reveal`s are recorded. [`DkgCeremony::finalize`] then derives the agreed
-//!    [`Output`] (`PK_E`) + this node's secret [`Share`] over the collected logs.
+//!    `Reveal`s are recorded. [`DkgCeremony::finalize_over_pinned`] then derives the
+//!    agreed [`Output`] (`PK_E`) + this node's secret [`Share`] over EXACTLY the
+//!    dealer-log set the epoch-key agreement certified.
 //!
-//! `Player::finalize` is intentionally DEFERRED to [`finalize`] (the boundary),
-//! never over a locally-selected `Q` mid-flight.
+//! `Player::finalize` is intentionally DEFERRED to
+//! [`finalize_over_pinned`](DkgCeremony::finalize_over_pinned) (the boundary), never
+//! over a locally-selected `Q` mid-flight.
 
 use crate::beacon::dkg_agree::PinnedDerive;
 use crate::beacon::dkg_msg::{Ack, DealerCommitment, DealerReveal, DkgBody, DkgMsg};
@@ -543,24 +545,10 @@ impl DkgCeremony {
         step
     }
 
-    /// Non-destructively probe whether the ceremony can now derive its agreed
-    /// output — i.e. a quorum of valid dealer logs is selectable. Uses `observe`
-    /// over a CLONE of the collected logs (`Logs` is `Clone`; `Player` is not),
-    /// so the ceremony is left intact: the supervisor calls this each tick after
-    /// [`seal_dealings`](Self::seal_dealings) until it returns `true`, THEN
-    /// [`finalize`](Self::finalize). A `true` means a subsequent `finalize` will
-    /// select the same quorum and succeed — the share can be memoized before the
-    /// epoch boundary block is proposed/verified.
-    pub fn ready<R: CryptoRngCore>(&self, rng: &mut R) -> bool {
-        observe::<MinSig, PeerPubkey, N3f1, ed25519::Batch>(rng, self.logs.clone(), &Sequential)
-            .is_ok()
-    }
-
     /// Count of DISTINCT dealer logs recorded so far (our own at seal + each peer's
     /// `Reveal`). When this equals the committee size, every reachable log is in;
-    /// combined with [`ready`](Self::ready) (a valid quorum is selectable) it is the
-    /// supervisor's "all-in" signal — every honest node then holds the IDENTICAL log
-    /// set, so the deterministic `select` derives the identical `PK_E`.
+    /// combined with [`pinned_ready`](Self::pinned_ready) (a valid quorum is
+    /// selectable within the agreed set) it is the supervisor's "all-in" signal.
     pub fn recorded_log_count(&self) -> usize {
         self.recorded.len()
     }
@@ -601,7 +589,7 @@ impl DkgCeremony {
     }
 
     /// Take this ceremony's recorded signed logs, leaving it with an empty map. The
-    /// actor calls this immediately BEFORE [`finalize`](Self::finalize) (which
+    /// actor calls this immediately BEFORE the finalize (which
     /// consumes `self`) to eagerly seed the finalized epoch's `serve_cache` (a bounded
     /// subset-copy of the journal), so the DKG-log recovery `Producer` can keep serving
     /// them to a late-restarting peer until the past-boundary sweep — an O(1) lookup
@@ -826,44 +814,15 @@ impl DkgCeremony {
         })
     }
 
-    /// Whether this ceremony can still attempt [`finalize`](Self::finalize) — i.e. its
-    /// `Player` has not already been consumed by a prior finalize. A finalize-`Err`
-    /// (transient `MissingPlayerDealing` race, see [`finalize`](Self::finalize))
-    /// consumes the player; the supervisor's finalize gate derives from this so the
+    /// Whether this ceremony can still attempt
+    /// [`finalize_over_pinned`](Self::finalize_over_pinned) — i.e. its `Player` has
+    /// not already been consumed by a prior finalize. A finalize-`Err` (transient
+    /// `MissingPlayerDealing` race, see
+    /// [`finalize_over_pinned`](Self::finalize_over_pinned)) consumes the player; the supervisor's finalize gate derives from this so the
     /// ceremony is NOT re-pulled into a destructive finalize, yet stays in the map to
     /// keep SERVING its recorded logs to recovering peers until the boundary sweep.
     pub fn can_finalize(&self) -> bool {
         self.player.is_some()
-    }
-
-    /// Derive the agreed [`CeremonyOutput`] (`PK_E`) + this node's secret [`Share`]
-    /// over the collected logs. NON-DESTRUCTIVE to the ceremony object: it borrows
-    /// `&mut self` and CONSUMES only the `Player` (the commonware `Player::finalize`
-    /// takes it by value either way), leaving the recorded `logs`/`recorded`/`signed_logs`
-    /// intact so the ceremony keeps serving peers.
-    ///
-    /// CALLER CONTRACT (the supervisor enforces timing):
-    /// - [`seal_dealings`](Self::seal_dealings) MUST have run first — it is the only
-    ///   place this node's own dealer log enters `self.logs` and is broadcast, so
-    ///   finalizing without sealing drops this dealer from the quorum (locally AND for
-    ///   every peer).
-    /// - At least a dealer-quorum of VALID logs must be recorded, else
-    ///   `Player::finalize` returns `Err(DkgFailed)`.
-    ///
-    /// On `Err` the ceremony is NOT destroyed — the supervisor removes it from its map
-    /// ONLY on `Ok`. A transient `MissingPlayerDealing` race (`observe`/`ready` returns
-    /// `Ok` while `Player::finalize` over the just-`select`ed set returns `Err` because a
-    /// freshly-resumed node's rebuilt `view` lags a delivered log) thus no longer forfeits
-    /// the share by destroying the whole ceremony; the ceremony sits out gracefully
-    /// ([`can_finalize`](Self::can_finalize) is now false, so the gate stops re-pulling it)
-    /// while still serving its recorded logs. `self.logs` is cloned (cheap, `Logs: Clone`)
-    /// so the recorded set survives.
-    pub fn finalize<R: CryptoRngCore>(
-        &mut self,
-        rng: &mut R,
-    ) -> Result<(CeremonyOutput, Share), DkgError> {
-        let player = self.player.take().expect("can_finalize gates this");
-        player.finalize::<N3f1, ed25519::Batch>(rng, self.logs.clone(), &Sequential)
     }
 
     /// The content hash `keccak256(encode(SignedDealerLog))` of the recorded log for
@@ -924,7 +883,7 @@ impl DkgCeremony {
 
     /// Non-destructive AM5 finalize probe over the PINNED set: `(ready, all_held)`.
     /// `ready` = a selectable quorum exists WITHIN the pinned+held dealers (`observe`
-    /// over the scoped `Logs`, the SAME quorum logic as [`ready`](Self::ready));
+    /// over the scoped `Logs`);
     /// `all_held` = every MAPPABLE pinned body is held with a matching hash (fetch-
     /// before-finalize; unmappable indices are skipped, see
     /// [`scoped_pinned_logs`](Self::scoped_pinned_logs)). Finalize only when
@@ -988,11 +947,31 @@ impl DkgCeremony {
     }
 
     /// AM5 deterministic finalize: `Player::finalize` over EXACTLY the pinned set
-    /// ([`scoped_pinned_logs`](Self::scoped_pinned_logs)). Consumes the player like
-    /// [`finalize`](Self::finalize). The caller MUST have confirmed `all_held &&
-    /// ready` via [`pinned_ready`](Self::pinned_ready) — scoping `select` to the
-    /// finalized-consensus set is what makes the derived `PK_E` a pure function of
-    /// agreed data (honest divergence impossible by construction).
+    /// ([`scoped_pinned_logs`](Self::scoped_pinned_logs)). Scoping `select` to the
+    /// agreed set is what makes the derived `PK_E` a pure function of agreed data
+    /// (honest divergence impossible by construction).
+    ///
+    /// NON-DESTRUCTIVE to the ceremony object: it borrows `&mut self` and CONSUMES
+    /// only the `Player` (the commonware `Player::finalize` takes it by value either
+    /// way), leaving the recorded `logs`/`recorded`/`signed_logs` intact so the
+    /// ceremony keeps serving peers.
+    ///
+    /// CALLER CONTRACT (the supervisor enforces timing):
+    /// - [`seal_dealings`](Self::seal_dealings) MUST have run first — it is the only
+    ///   place this node's own dealer log enters `self.logs` and is broadcast, so
+    ///   finalizing without sealing drops this dealer from the quorum (locally AND
+    ///   for every peer).
+    /// - `all_held && ready` MUST have been confirmed via
+    ///   [`pinned_ready`](Self::pinned_ready), else `Player::finalize` returns
+    ///   `Err(DkgFailed)`.
+    ///
+    /// On `Err` the ceremony is NOT destroyed — the supervisor removes it from its
+    /// map ONLY on `Ok`. A transient `MissingPlayerDealing` race (`pinned_ready`
+    /// returns ready while `Player::finalize` over the just-scoped set returns `Err`
+    /// because a freshly-resumed node's rebuilt `view` lags a delivered log) thus does
+    /// not forfeit the share by destroying the whole ceremony; the ceremony sits out
+    /// gracefully ([`can_finalize`](Self::can_finalize) is now false, so the gate stops
+    /// re-pulling it) while still serving its recorded logs.
     pub fn finalize_over_pinned<R: CryptoRngCore>(
         &mut self,
         rng: &mut R,
@@ -1075,6 +1054,21 @@ mod tests {
     use rand_08::rngs::StdRng;
     use rand_core::SeedableRng as _;
 
+    /// The ceremony's own recorded dealer logs as a pinned set: every committee seat
+    /// whose log it holds, under the hash it holds. The epoch-key agreement certifies
+    /// exactly such a map, so a node driven to a full recorded set finalizes over the
+    /// same input a live one does.
+    fn pinned_over_recorded(cer: &DkgCeremony, committee: &Set<PeerPubkey>) -> BTreeMap<u8, B256> {
+        committee
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, pk)| {
+                cer.signed_log_hash(pk)
+                    .map(|hash| (u8::try_from(idx).expect("committee fits a u8"), hash))
+            })
+            .collect()
+    }
+
     /// Drive N ceremonies to completion purely through the event API (start →
     /// exchange Outgoing → seal → exchange → finalize), then assert every node
     /// agreed on `PK_E` and that the resulting shares recover a verifiable seed —
@@ -1114,7 +1108,10 @@ mod tests {
         let mut outputs = Vec::new();
         let mut shares = BTreeMap::new();
         for (pk, mut cer) in ceremonies {
-            let (out, share) = cer.finalize(&mut rng).expect("finalize");
+            let pinned = pinned_over_recorded(&cer, &committee);
+            let (out, share) = cer
+                .finalize_over_pinned(&mut rng, &committee, &pinned)
+                .expect("finalize");
             shares.insert(pk, share);
             outputs.push(out);
         }
@@ -1593,7 +1590,12 @@ mod tests {
         deliver_all(&mut ceremonies, &mut queue);
         let outputs: Vec<CeremonyOutput> = ceremonies
             .into_values()
-            .map(|mut c| c.finalize(&mut rng).expect("finalize").0)
+            .map(|mut c| {
+                let pinned = pinned_over_recorded(&c, &committee);
+                c.finalize_over_pinned(&mut rng, &committee, &pinned)
+                    .expect("finalize")
+                    .0
+            })
             .collect();
         let pk0 = group_public_key(&outputs[0]);
         for o in &outputs[1..] {
@@ -1734,6 +1736,7 @@ mod tests {
     #[test]
     fn resume_after_own_seal_reproduces_identical_share() {
         let (committee, key0, journal0) = run_to_node0_sealed(31);
+        let roster = committee.clone();
 
         // Live node-0: rebuild + finalize from the same network.
         let (committee2, key0b, journal0b) = run_to_node0_sealed(31);
@@ -1756,9 +1759,10 @@ mod tests {
             live.ceremony.dealing_closed(),
             "player-only restore retires the dealer role"
         );
+        let pinned_live = pinned_over_recorded(&live.ceremony, &roster);
         let (out_live, share_live) = live
             .ceremony
-            .finalize(&mut rng_live)
+            .finalize_over_pinned(&mut rng_live, &roster, &pinned_live)
             .expect("finalize live");
 
         // Resumed node-0: rebuild from the journal alone (a DIFFERENT rng seed for
@@ -1769,9 +1773,10 @@ mod tests {
             DkgCeremony::resume(b"FLUENT_DPOS_V1_test", 0, committee, key0, journal0, false)
                 .expect("resume");
         assert!(resumed.ceremony.own_log_recorded(&me0));
+        let pinned_res = pinned_over_recorded(&resumed.ceremony, &roster);
         let (out_res, share_res) = resumed
             .ceremony
-            .finalize(&mut rng_res)
+            .finalize_over_pinned(&mut rng_res, &roster, &pinned_res)
             .expect("finalize resumed");
 
         assert_eq!(
@@ -1981,7 +1986,11 @@ mod tests {
             false,
         )
         .expect("resume");
-        let (outcome, canonical_share) = canon.ceremony.finalize(&mut rng).expect("finalize");
+        let pinned_canon = pinned_over_recorded(&canon.ceremony, &committee);
+        let (outcome, canonical_share) = canon
+            .ceremony
+            .finalize_over_pinned(&mut rng, &committee, &pinned_canon)
+            .expect("finalize");
 
         // Recompute scoped to the pinned dealer set from an independent journal copy.
         let mut rng2 = StdRng::seed_from_u64(999); // a DIFFERENT rng — recompute is deterministic

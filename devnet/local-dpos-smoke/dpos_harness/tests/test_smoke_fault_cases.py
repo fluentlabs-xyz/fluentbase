@@ -21,8 +21,8 @@ import time
 import pytest
 
 from dpos_harness.cases.smoke import (asserts_fault, crash_survivor, deferred, driver, fault,
-                                      full_restart, peers, verdicts_fault as vf,
-                                      vrf_dkg_liveness, vrf_fault)
+                                      full_restart, peers, verdicts, verdicts_fault as vf,
+                                      vrf_dkg_live_heal, vrf_fault)
 from dpos_harness.cases.smoke.driver import SmokeCtx, SmokeFailure
 from dpos_harness.core import proc
 from dpos_harness.core.proc import Runner
@@ -255,31 +255,61 @@ def test_full_restart_checks_every_validator_flushed_between_the_stop_and_the_st
     assert flat[stop + 1:start] == [f"shutdown_flushed({v})" for v in VALS]
 
 
-def test_dkg_liveness_stops_the_victim_before_anything_else_reads_the_chain():
-    """`asserts-fault.sh:389-397` + `case-vrf-dkg-liveness.sh`. THE TIMING IS THE ASSERTION: the
-    victim must be down before its epoch-2 DKG window opens, so the only read that may precede
-    the stop is the window guard itself."""
-    rc, r = _dry(vrf_dkg_liveness)
+def test_live_heal_stops_the_victim_before_anything_else_reads_the_chain():
+    """THE TIMING IS THE ASSERTION: the victim must be down before its epoch-2 DKG window opens,
+    so the only read that may precede the stop is the window guard itself. The victim's on-chain
+    address is resolved AFTER the stop for exactly this reason — it costs a `docker compose exec`
+    and nothing may widen the gap between reading the height and taking the node down."""
+    rc, r = _dry(vrf_dkg_live_heal)
     assert rc == 0
     flat = _flat(r)
     stop = flat.index("docker compose stop", 1 + flat.index("docker compose stop"))
     before = [x for x in flat[stop - 1:stop]]
     assert before == ["finalized_dec()"], f"reads before the victim was stopped: {flat[:stop]}"
     assert _cmds(r) == [UP, STOP, RECREATE,
-                            ["docker", "compose", "stop", "validator-3"],
-                            ["docker", "compose", "start", "validator-3"], DOWN]
+                        ["docker", "compose", "stop", "validator-3"],
+                        ["docker", "compose", "exec", "-T", "validator-0", "cat",
+                         "/runtime/addresses.json"],
+                        ["docker", "compose", "start", "validator-3"], DOWN]
 
 
-def test_dkg_liveness_reads_the_share_log_after_the_victim_caught_up():
-    """`asserts-fault.sh:418-430` — the log is only complete for epoch 2 once the restarted node
-    has caught up to the boundary. Grepping earlier would find no share line for a node that is
-    merely still replaying, and would report the absence as a QUAL exclusion."""
-    _, r = _dry(vrf_dkg_liveness)
+def test_live_heal_exports_both_spellings_of_the_tuned_interval():
+    """`EPOCH_BLOCK_INTERVAL` is what the compose file interpolates into genesis-init;
+    `EPOCH_INTERVAL` is what the host profile reads for its epoch arithmetic. Exporting one and
+    not the other gives the case a 64-block stack and 32-block math, silently — the trap
+    `smoke-vrf-dkg-restart-midwindow` records and the only reason the value appears twice."""
+    _, r = _dry(vrf_dkg_live_heal)
+    flat = _flat(r)
+    n = vrf_dkg_live_heal.EPOCH_INTERVAL
+    assert f"EPOCH_BLOCK_INTERVAL={n}" in flat and f"EPOCH_INTERVAL={n}" in flat
+    assert f"DPOS_ACTIVATION_BLOCK={vrf_dkg_live_heal.ACTIVATION_BLOCK}" in flat
+
+
+def test_live_heal_reads_the_recovery_log_after_the_victim_caught_up():
+    """The log is only complete for epoch 2 once the restarted node has caught up to the boundary
+    AND the off-tick reconstruction has had time to run. Grepping earlier would find no share line
+    for a node that is merely still replaying, and would report the absence as a failed pull."""
+    _, r = _dry(vrf_dkg_live_heal)
     flat = _flat(r)
     start = flat.index("docker compose start")
     log = flat.index("logs_all(validator-3)")
     catchup = flat.index(f"has_it (<= {vf.DKG_CATCHUP_S}s)")
-    assert start < catchup < log
+    recovered = flat.index(f"recovered (<= {vf.DKG_HEAL_S}s)")
+    assert start < catchup < recovered <= log
+
+
+def test_live_heal_reads_production_only_after_the_victims_own_blocks_ran():
+    """`producedAt` is a per-epoch counter and the load-bearing leg: it climbs for as long as the
+    epoch runs, so a sample taken right after the member is seated reports the slots it has won SO
+    FAR. A live run read 0 at that instant and 10 of 64 once the epoch finished, which is how this
+    case first went red. The wait must precede the read."""
+    _, r = _dry(vrf_dkg_live_heal)
+    flat = _flat(r)
+    recovered = flat.index(f"recovered (<= {vf.DKG_HEAL_S}s)")
+    prod = flat.index("producedAt(epoch=2) (<= 5, 4s apart)")
+    waits = [i for i, x in enumerate(flat)
+             if x.startswith("wait_finalized_ge(") and x.endswith(f"{vf.DKG_EPOCH_END_S}s)")]
+    assert waits and recovered < waits[0] < prod
 
 
 def test_fault_runs_all_five_on_exactly_one_bring_up():
@@ -303,10 +333,10 @@ def test_fault_orders_the_five_least_to_most_invasive():
 
 def test_fault_excludes_liveness_and_dkg_liveness():
     """`case-fault.sh:20-22` — `smoke-liveness` can JAIL a validator, which permanently shrinks
-    the committee and is unrecoverable. `smoke-vrf-dkg-liveness` needs a DKG window that opens
+    the committee and is unrecoverable. `smoke-vrf-dkg-live-heal` needs a DKG window that opens
     once near bring-up, which five chained cases would have consumed."""
     names = [f.__name__ for f in fault.ASSERTIONS]
-    assert "assert_vrf_dkg_liveness" not in names
+    assert "assert_vrf_dkg_live_heal" not in names
     assert not any("liveness" in n for n in names)
 
 
@@ -334,7 +364,7 @@ def test_a_dry_run_never_spawns_a_process(monkeypatch):
     matters more for the destructive seven than for the read-only five."""
     monkeypatch.setattr(proc.subprocess, "run",
                         lambda *a, **k: pytest.fail("the dry run executed a command"))
-    for mod in (deferred, peers, vrf_fault, crash_survivor, full_restart, vrf_dkg_liveness,
+    for mod in (deferred, peers, vrf_fault, crash_survivor, full_restart, vrf_dkg_live_heal,
                 fault):
         assert mod.run_case(["--dry-run"]) == 0
 
@@ -352,7 +382,7 @@ def test_every_fault_case_is_registered_in_the_cli():
                       ("smoke-crash-survivor", "smoke.crash_survivor"),
                       ("smoke-full-restart", "smoke.full_restart"),
                       ("smoke-vrf-fault", "smoke.vrf_fault"),
-                      ("smoke-vrf-dkg-liveness", "smoke.vrf_dkg_liveness")]:
+                      ("smoke-vrf-dkg-live-heal", "smoke.vrf_dkg_live_heal")]:
         assert cli.CASES[name] == mod
 
 
@@ -362,9 +392,10 @@ def test_no_destructive_wrapper_opts_into_keep_up(monkeypatch):
     next case's bring-up would inherit a throttled or half-stopped devnet."""
     seen = {}
     monkeypatch.setattr(driver, "run",
-                        lambda case, a, argv=None, converge_exclude=None, honours_keep_up=False:
+                        lambda case, a, argv=None, converge_exclude=None, honours_keep_up=False,
+                        overlays=None, exports=None:
                         seen.__setitem__(case, honours_keep_up) or 0)
-    for mod in (deferred, peers, vrf_fault, crash_survivor, full_restart, vrf_dkg_liveness,
+    for mod in (deferred, peers, vrf_fault, crash_survivor, full_restart, vrf_dkg_live_heal,
                 fault):
         mod.run_case([])
     assert set(seen.values()) == {False}
@@ -657,16 +688,46 @@ def test_assert_vrf_fault_fails_when_the_victim_fell_back_to_the_digest(monkeypa
         asserts_fault.assert_vrf_fault(ctx)
 
 
-# ── vrf-dkg-liveness ───────────────────────────────────────────────────────
+# ── vrf-dkg-live-heal ──────────────────────────────────────────────────────
+
+def _heal_log(fresh=True, road=vf.SHARE_LINE, pin=True, promote=True, pre_stop_ceremony=False):
+    """The victim's log, assembled leg by leg so each test can remove exactly one.
+
+    `pre_stop_ceremony` writes a `ceremony started` BEFORE the boot marker — the shape a victim
+    stopped mid-deal-phase leaves behind, and the one the setup gate has to reject."""
+    out = []
+    if pre_stop_ceremony:
+        out.append(f"INFO {vf.CEREMONY_STARTED_LINE} epoch=2")
+    out.append(f"INFO {vf.ACTOR_STARTED_LINE} epocher=(test)")
+    if fresh:
+        out.append(f"INFO {vf.CEREMONY_STARTED_LINE} epoch=2")
+    if road:
+        out.append(f"INFO {road} epoch=2 height=257")
+    if pin:
+        out.append(f"INFO {vf.PIN_LINE} " + vf.PIN_EPOCH_FMT.format(2))
+    if promote:
+        out.append(f"INFO {vf.PROMOTE_LINE} " + vf.PIN_EPOCH_FMT.format(2))
+    return "\n".join(out) or "INFO nothing of interest"
+
 
 def _dkg_world(monkeypatch, **over):
+    # THE TUNED GEOMETRY, set here and not left on the profile default. `_live_ctx` builds a
+    # `StaticProfile` off the environment, while the case's exports are applied by `driver.run`,
+    # which these wiring tests bypass — so without this the body would be walked on 32/64 epoch
+    # arithmetic while the real case runs on 64/128, and every height below would be describing a
+    # chain the case never sees.
+    monkeypatch.setenv("EPOCH_INTERVAL", str(vrf_dkg_live_heal.EPOCH_INTERVAL))
+    monkeypatch.setenv("DPOS_ACTIVATION_BLOCK", str(vrf_dkg_live_heal.ACTIVATION_BLOCK))
     world = dict(
         finalized_dec=lambda **kw: 100,
         wait_finalized_ge=lambda target, timeout: True,
+        runtime_addresses=lambda **kw: ["0x" + f"{0xa0 + i:02x}" * 20 for i in range(4)],
         mixhash_of=lambda svc, block, **kw: _mix(block),
         mixhash_in=lambda svc, block, **kw: _mix(block),
         mixhash_at=lambda block, **kw: _mix(block),
-        logs_all=lambda svc, **kw: "INFO nothing about a share here",
+        logs_all=lambda svc, **kw: _heal_log(),
+        node_metric=lambda svc, name, **kw: "3",
+        production=lambda epoch, addr, **kw: (10, 64),
         sleep=lambda s: None,
         dump_logs=lambda *a, **kw: None,
     )
@@ -674,54 +735,198 @@ def _dkg_world(monkeypatch, **over):
     return _live_ctx(monkeypatch, **world)
 
 
-def test_assert_vrf_dkg_liveness_passes_when_the_member_sits_out(monkeypatch):
-    ctx, _ = _dkg_world(monkeypatch, finalized_dec=_seq(100, 128, 134))
-    asserts_fault.assert_vrf_dkg_liveness(ctx)
+#: The case's `finalized_dec` readings, IN ORDER: the deal-window guard, the shorthanded pacing
+#: pair, the height at which the victim was seated, and the two that bracket the post-rejoin
+#: liveness check. Under the tuned 64/128 geometry epoch 2 is [256, 320) and the DEAL window opens
+#: at 189, so a guard reading of 145 is in-window and a seating at 272 leaves 48 blocks —
+#: comfortably above `MIN_POST_HEAL_BLOCKS`. The guard, the seating and the pacing delta are the
+#: numbers live runs actually produced.
+#:
+#: The ORDER is the case's own and changing it here to make a test pass would hide a reordering in
+#: the body: pacing rides the SHORTHANDED window (victim down) because there is no room for a 60 s
+#: window after the victim is seated 16 blocks into a 64-block epoch.
+def _fin(guard=145, pace=None, seated=272, before=274, after=280):
+    """`finalized_dec` for a passing run, with a pacing pair inside the band."""
+    lo = guard + 5
+    hi = lo + (verdicts.PACING_MIN_BLOCKS + 5 if pace is None else pace)
+    return _seq(guard, lo, hi, seated, before, after)
 
 
-def test_assert_vrf_dkg_liveness_refuses_to_run_past_the_window(monkeypatch):
-    """`asserts-fault.sh:390` — the victim would already hold a share, and the case would be
-    asserting that a share-HOLDER sits out. Fail loud rather than measure something else."""
+def test_assert_vrf_dkg_live_heal_passes_when_the_member_recovers_inside_the_epoch(monkeypatch):
+    ctx, _ = _dkg_world(monkeypatch, finalized_dec=_fin())
+    asserts_fault.assert_vrf_dkg_live_heal(ctx)
+
+
+def test_assert_vrf_dkg_live_heal_passes_on_EITHER_road_to_the_share(monkeypatch):
+    """Both were observed live, minutes apart on the same geometry: the live ceremony's
+    finalize-over-pinned when it beats the past-boundary sweep, the demote-heal's recompute when
+    it does not. Pinning one made a legitimate outcome red."""
+    for marker, _road in vf.SHARE_ROADS:
+        ctx, _ = _dkg_world(monkeypatch, finalized_dec=_fin(),
+                            logs_all=lambda svc, m=marker, **kw: _heal_log(road=m))
+        asserts_fault.assert_vrf_dkg_live_heal(ctx)
+
+
+def test_assert_vrf_dkg_live_heal_refuses_to_run_past_the_DEAL_window(monkeypatch):
+    """The victim would already be journaling dealings, and the case would be watching a member
+    that had taken part. Fail loud rather than measure something else."""
     ctx, _ = _dkg_world(monkeypatch, finalized_dec=lambda **kw: 200)
-    with pytest.raises(SmokeFailure, match="already at/past the epoch-2 DKG window"):
-        asserts_fault.assert_vrf_dkg_liveness(ctx)
+    with pytest.raises(SmokeFailure, match="already at/past the epoch-2 DKG DEAL window"):
+        asserts_fault.assert_vrf_dkg_live_heal(ctx)
 
 
-def test_assert_vrf_dkg_liveness_fails_when_the_victim_holds_an_epoch_2_share(monkeypatch):
-    """The negative edge, inverted: the member was offline for its window and logged a share
-    anyway, which would mean QUAL did not exclude it."""
+def test_assert_vrf_dkg_live_heal_fails_when_the_victim_came_back_with_a_journal(monkeypatch):
+    """THE SETUP GATE. No `ceremony started` on the restarted process means `load_journal` was
+    `Present` — the victim had received and ACKED the dealings before it went down, so it rebuilds
+    from its own records and no dealer reveals its point. Every other leg here stays green on that
+    run, which is why the gate exists and why it reads the RESTARTED process's slice."""
+    ctx, _ = _dkg_world(monkeypatch, finalized_dec=_fin(),
+                        logs_all=lambda svc, **kw: _heal_log(fresh=False))
+    with pytest.raises(SmokeFailure, match="came back holding a journal"):
+        asserts_fault.assert_vrf_dkg_live_heal(ctx)
+
+
+def test_the_setup_gate_ignores_a_ceremony_start_from_BEFORE_the_restart(monkeypatch):
+    """`docker compose logs` returns the whole container log, pre-stop lines included. A
+    `ceremony started` from the process that was stopped means the OPPOSITE of what this gate
+    witnesses, so the slice at the last boot marker is load-bearing, not tidiness."""
+    ctx, _ = _dkg_world(monkeypatch, finalized_dec=_fin(),
+                        logs_all=lambda svc, **kw: _heal_log(fresh=False,
+                                                             pre_stop_ceremony=True))
+    with pytest.raises(SmokeFailure, match="came back holding a journal"):
+        asserts_fault.assert_vrf_dkg_live_heal(ctx)
+
+
+def test_assert_vrf_dkg_live_heal_fails_when_the_share_never_arrives(monkeypatch):
+    """THE INVERSION ITSELF. Under the old behaviour this log — absent, and nothing after — was
+    the PASSING one; it is now the failure the case exists to catch."""
+    ctx, _ = _dkg_world(monkeypatch, finalized_dec=_fin(),
+                        logs_all=lambda svc, **kw: _heal_log(road=None))
+    with pytest.raises(SmokeFailure, match="did not recover its epoch-2 share"):
+        asserts_fault.assert_vrf_dkg_live_heal(ctx)
+
+
+def test_assert_vrf_dkg_live_heal_fails_when_the_artifact_pull_never_landed(monkeypatch):
+    """The mechanism, named. A zero here says the live-epoch pull did not happen, which is the
+    exact shape of the FLU-1166 regression. Verified live to move on BOTH roads."""
+    ctx, _ = _dkg_world(monkeypatch, finalized_dec=_fin(),
+                        node_metric=lambda svc, name, **kw: "0")
+    with pytest.raises(SmokeFailure, match="never obtained the LIVE epoch's agreed artifact"):
+        asserts_fault.assert_vrf_dkg_live_heal(ctx)
+
+
+def test_assert_vrf_dkg_live_heal_fails_when_the_pull_counter_is_unread(monkeypatch):
+    """An UNREAD counter is not a zero and not a pass: `node_metric` answers "" for both an absent
+    family and a dead scrape, and coercing that to 0 would make the one assertion that names the
+    fix satisfiable by an endpoint nobody served."""
+    ctx, _ = _dkg_world(monkeypatch, finalized_dec=_fin(),
+                        node_metric=lambda svc, name, **kw: "")
+    with pytest.raises(SmokeFailure, match="could not be read off validator-3"):
+        asserts_fault.assert_vrf_dkg_live_heal(ctx)
+
+
+def test_assert_vrf_dkg_live_heal_fails_when_the_epoch_scheme_stays_unpinned(monkeypatch):
+    """A member can hold the share and still verify certificates seed-blind. The pin is a separate
+    consequence and gets a separate reading."""
+    ctx, _ = _dkg_world(monkeypatch, finalized_dec=_fin(),
+                        logs_all=lambda svc, **kw: _heal_log(pin=False))
+    with pytest.raises(SmokeFailure, match="still UNPINNED"):
+        asserts_fault.assert_vrf_dkg_live_heal(ctx)
+
+
+def test_assert_vrf_dkg_live_heal_fails_when_the_member_is_never_seated(monkeypatch):
+    """…and a share that lands with no edge to wake is a share nobody votes with. Without this the
+    production leg below would fail for a reason that is not about the key."""
+    ctx, _ = _dkg_world(monkeypatch, finalized_dec=_fin(),
+                        logs_all=lambda svc, **kw: _heal_log(promote=False))
+    with pytest.raises(SmokeFailure, match="never seated as a signer"):
+        asserts_fault.assert_vrf_dkg_live_heal(ctx)
+
+
+def test_assert_vrf_dkg_live_heal_fails_when_seating_left_no_room_to_produce(monkeypatch):
+    """A member seated with four blocks of its epoch left can be perfectly recovered and still
+    produce nothing. Reporting that as `producedAt=0` is a misdiagnosis, so the case says which
+    of the two it is."""
+    ctx, _ = _dkg_world(monkeypatch, finalized_dec=_fin(seated=310))
+    with pytest.raises(SmokeFailure, match="only 10 blocks of epoch 2 left"):
+        asserts_fault.assert_vrf_dkg_live_heal(ctx)
+
+
+def test_assert_vrf_dkg_live_heal_fails_when_the_seated_member_produced_nothing(monkeypatch):
+    """THE LOAD-BEARING LEG. Every reading above can be green on a node that recovered its share
+    and never won a slot; only production observes the whole chain of consequences."""
+    ctx, _ = _dkg_world(monkeypatch, finalized_dec=_fin(),
+                        production=lambda epoch, addr, **kw: (0, 64))
+    with pytest.raises(SmokeFailure, match="produced NOTHING in epoch 2"):
+        asserts_fault.assert_vrf_dkg_live_heal(ctx)
+
+
+def test_the_production_credit_is_read_only_after_the_victims_own_blocks_ran(monkeypatch):
+    """WHY THIS CASE FIRST WENT RED. `producedAt(2, idx)` climbs for as long as epoch 2 runs, so a
+    read taken seconds after the member is seated reports the slots it has won SO FAR — on a live
+    run that was 0 at height ~260 and 10 of 64 by the time the epoch finished. The wait must
+    therefore cover `MIN_POST_HEAL_BLOCKS` of the victim's own blocks plus the K-block
+    deferred-execution lag (the counter for height h is written when h EXECUTES), and must precede
+    the counter read.
+
+    It targets the VICTIM'S blocks and not the epoch-3 boundary on purpose: a chain that stalls at
+    a boundary would otherwise be reported as "the counters never became final", a diagnosis about
+    the reader. The liveness and pacing legs are where a stall belongs."""
+    seen = []
     ctx, _ = _dkg_world(
-        monkeypatch, finalized_dec=_seq(100, 128, 134),
-        logs_all=lambda svc, **kw: f"INFO {vf.SHARE_LINE} epoch=2 idx=3")
-    with pytest.raises(SmokeFailure, match="should be SHARELESS for epoch 2"):
-        asserts_fault.assert_vrf_dkg_liveness(ctx)
+        monkeypatch, finalized_dec=_fin(),
+        wait_finalized_ge=lambda target, timeout: seen.append(target) or True,
+        production=lambda epoch, addr, **kw: (seen.append("read") or (10, 64)))
+    asserts_fault.assert_vrf_dkg_live_heal(ctx)
+    floor = 272 + vf.MIN_POST_HEAL_BLOCKS + vf.RESULT_LAG_K
+    epoch3 = vrf_dkg_live_heal.ACTIVATION_BLOCK + 3 * vrf_dkg_live_heal.EPOCH_INTERVAL
+    assert floor in seen and seen.index(floor) < seen.index("read")
+    # …and the floor the room check guarantees is still inside epoch 2.
+    assert floor <= epoch3 + vf.RESULT_LAG_K
+    assert epoch3 + vf.RESULT_LAG_K not in seen
 
 
-def test_assert_vrf_dkg_liveness_fails_when_the_chain_stalls_after_the_rejoin(monkeypatch):
-    ctx, _ = _dkg_world(monkeypatch, finalized_dec=_seq(100, 128, 128))
+def test_the_pacing_window_rides_the_SHORTHANDED_span_and_not_the_recovery(monkeypatch):
+    """WHERE the 60 s window sits is a property of the case, not a detail. The victim is seated
+    ~16 blocks into a 64-block epoch 2 and the production leg claims 32 more, so a window opened
+    after the recovery runs off the end of the epoch — and this case deliberately takes every
+    reading inside epoch 2 (the epoch-2→3 boundary is unreliable in this scenario for an unrelated
+    reason). So the window brackets the n-f=3 span with the victim DOWN, which is where the fault
+    this case injects actually is."""
+    _, r = _dry(vrf_dkg_live_heal)
+    flat = _flat(r)
+    # The SECOND `docker compose stop` is the victim's; the first is the migration's
+    # graceful-stop of the whole committee.
+    stop = flat.index("docker compose stop", 1 + flat.index("docker compose stop"))
+    pace = flat.index(f"{verdicts.PACING_WINDOW_S}s")
+    restart = flat.index("docker compose start")
+    assert stop < pace < restart
+
+
+def test_assert_vrf_dkg_live_heal_fails_when_the_chain_stalls_after_the_rejoin(monkeypatch):
+    ctx, _ = _dkg_world(monkeypatch, finalized_dec=_fin(before=274, after=274))
     with pytest.raises(SmokeFailure, match="not finalizing after validator-3 rejoined"):
-        asserts_fault.assert_vrf_dkg_liveness(ctx)
+        asserts_fault.assert_vrf_dkg_live_heal(ctx)
 
 
-def test_assert_vrf_dkg_liveness_fails_when_the_rejoined_member_derives_a_different_seed(
+def test_assert_vrf_dkg_live_heal_fails_when_the_rejoined_member_derives_a_different_seed(
         monkeypatch):
-    """It re-derives prev_randao from the CERT seed like any verify-only node. A divergence here
-    means a shareless member fell to the digest fallback instead."""
-    ctx, _ = _dkg_world(monkeypatch, finalized_dec=_seq(100, 128, 134),
+    """It re-derives prev_randao from the CERT seed. A divergence means it fell to the digest
+    fallback instead — the thing the recovered share is supposed to make unnecessary."""
+    ctx, _ = _dkg_world(monkeypatch, finalized_dec=_fin(),
                         mixhash_in=lambda svc, block, **kw: (
-                            "0x" + "ff" * 32 if int(block) == 130 else _mix(block)))
+                            "0x" + "ff" * 32 if int(block) == 258 else _mix(block)))
     with pytest.raises(SmokeFailure, match="did not recover the cert seed"):
-        asserts_fault.assert_vrf_dkg_liveness(ctx)
+        asserts_fault.assert_vrf_dkg_live_heal(ctx)
 
 
-def test_assert_vrf_dkg_liveness_honours_the_margin_override(monkeypatch):
-    """The margin knob must move the window guard, or it is decoration. With
-    interval 32 and activation 64, epoch 2 starts at 128; a margin of 40 opens the window at 88,
-    so a chain at 100 is already past it."""
-    monkeypatch.setenv(vf.DKG_MARGIN_ENV, "40")
-    ctx, _ = _dkg_world(monkeypatch, finalized_dec=lambda **kw: 100)
-    with pytest.raises(SmokeFailure, match=r"window \(88\)"):
-        asserts_fault.assert_vrf_dkg_liveness(ctx)
+def test_assert_vrf_dkg_live_heal_fails_when_the_block_rate_falls_out_of_band(monkeypatch):
+    """The pacing instrument, measured on the fleet that has just re-admitted a recovered signer.
+    `evaluate_still_finalizing` above passes on ONE block in six seconds; the historical
+    regression was 26-27 blk/60s, which is exactly that shape."""
+    ctx, _ = _dkg_world(monkeypatch, finalized_dec=_fin(pace=27))
+    with pytest.raises(SmokeFailure, match="block rate off target: 27 blocks"):
+        asserts_fault.assert_vrf_dkg_live_heal(ctx)
 
 
 # ── crash-survivor ─────────────────────────────────────────────────────────

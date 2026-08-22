@@ -47,6 +47,7 @@ leaving it green (§2.4 item 3). They are copied.
 
 from __future__ import annotations
 
+from . import verdicts
 from . import verdicts_onchain as VO
 from . import verdicts_rotation as VR
 from .asserts_prod import (JOINER_IDX, JOINER_SERVICE, _ok, _say, assert_beacon_window,
@@ -409,7 +410,17 @@ def assert_vrf_dkg_halt(ctx) -> None:
     # successful-DKG stall, where the survivors WOULD hold one. An ABSENCE per node.
     for i in range(PP_VAL_COUNT):
         ctx.check(*VR.evaluate_no_share_computed(i, share_computed(ctx, i, e_new), e_new))
-    _say(ctx, "no committee member finalized an E_new share (the DKG stayed below dealer-quorum 4)")
+        # The positive half of the same claim, per node. The absence above says nobody FINALIZED
+        # a ceremony share; this says nobody ended up with a usable one by any road — including
+        # the recompute-heal, which the live-epoch artifact pull now reaches for. Here the whole
+        # committee is torn or below dealer-quorum, so no artifact exists to pull and the heal has
+        # nothing to work from; a promotion would mean the ceremony completed after all, and the
+        # frozen head above would have some other cause.
+        ctx.check(*VR.evaluate_did_not_promote(
+            VR.promote_lines(_logs(ctx, i), e_new), i, e_new),
+            on_fail=lambda idx=i: ctx.dump_logs(120, topology.validator(idx)))
+    _say(ctx, "no committee member finalized an E_new share and none promoted to Signer for it "
+              "(the DKG stayed below dealer-quorum 4)")
 
     # A clean option-A stall, not a crash.
     ctx.check(*VR.evaluate_no_panic(VR.panic_lines(ctx.logs_all_project())))
@@ -477,6 +488,22 @@ def assert_vrf_dkg_durability(ctx) -> None:
     torn = _phase3_torn_sitout(ctx, got0, addrs)
 
     assert_still_finalizing(ctx)
+
+    # PACING, with a torn member sitting out the live epoch. `assert_still_finalizing` only asks
+    # whether the height moved at all, which a chain limping at a third of its rate satisfies —
+    # and that is exactly the shape the historical 26-27 blk/60s regression took. Same instrument
+    # and same band (45..66 per 60 s) as `smoke-base`, deliberately not a second one: two
+    # instruments for one property drift, and this one has already caught the regression once.
+    #
+    # The halt case gets NO such check and must not: it asserts a PERMANENTLY FROZEN head, so a
+    # block rate inside any positive band would be its failure condition.
+    r0 = ctx.finalized_dec()
+    ctx.sleep(verdicts.PACING_WINDOW_S)
+    r1 = ctx.finalized_dec(dry_value=r0 + verdicts.PACING_MIN_BLOCKS)
+    ctx.check(*verdicts.evaluate_pacing(r1 - r0))
+    _say(ctx, f"pacing with the torn member sitting out: {r1 - r0} "
+              f"blk/{verdicts.PACING_WINDOW_S}s")
+
     _ok(ctx, "consolidated live-DKG durability suite on ONE rotation-stack bring-up — PHASE 1 "
              "(epoch-2): a 2-of-5 POST-seal kill STALLED the chain below the consensus quorum, "
              "both victims recovered their epoch-2 share from disk, the beacon stayed "
@@ -633,7 +660,17 @@ def _phase3_torn_sitout(ctx, got0: str, addrs):
     # ── the sit-out: the Torn arm fired, it did NOT re-deal, it is shareless ────────
     assert_sat_out_torn(ctx, torn, e_new)
     ctx.check(*VR.evaluate_shareless(share_computed(ctx, torn, e_new), torn, e_new))
-    _say(ctx, f"v{torn} sat out gracefully — Torn arm fired, NO re-deal, shareless for E_new")
+    # …and it did NOT promote. The share-line absence alone stopped being sufficient once the
+    # live-epoch artifact pull landed: a member with no share now PULLS the epoch's artifact and
+    # tries to recompute, and a successful recompute logs a DIFFERENT line from the one above. The
+    # torn victim still cannot complete it — the recompute needs `JournalLoad::Present` and a torn
+    # journal never becomes that — but "cannot" is a claim about the product, and this is the
+    # reading that checks it instead of assuming it.
+    ctx.check(*VR.evaluate_did_not_promote(
+        VR.promote_lines(_logs(ctx, torn), e_new), torn, e_new),
+        on_fail=lambda: ctx.dump_logs(160, torn_svc))
+    _say(ctx, f"v{torn} sat out gracefully — Torn arm fired, NO re-deal, shareless for E_new, "
+              "and it never promoted to Signer for it")
 
     # ── the ceremony finalized among the OTHER committee members ───────────────────
     finalized_members = 0

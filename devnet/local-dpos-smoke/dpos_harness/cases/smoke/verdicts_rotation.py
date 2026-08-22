@@ -785,6 +785,50 @@ def evaluate_permanent_halt(frozen: bool):
                    "terminal >f pre-seal halt must never self-heal)")
 
 
+#: `epoch_manager.rs` — the in-process Verifier→Signer promotion. A stable greppable token (the
+#: production-path smoke keys on it too), and its epoch field is the Debug newtype spelling, for
+#: the reason `SHARE_GATE_EPOCH_FMT` records: `reconcile_roles` takes `epoch: Epoch` and renders it
+#: through `?epoch`, so the field reads `epoch=Epoch(7)`.
+PROMOTE_LINE = "promoted to Signer in-process"
+PROMOTE_EPOCH_FMT = SHARE_GATE_EPOCH_FMT
+
+
+def promote_lines(logs: str, epoch):
+    """Lines where a node PROMOTED itself to Signer for `epoch`. MESSAGE then epoch FIELD, the
+    two-grep shape `share_gate_lines` owns."""
+    field = PROMOTE_EPOCH_FMT.format(int(epoch))
+    return [ln for ln in (logs or "").splitlines()
+            if PROMOTE_LINE in ln and field in ln]
+
+
+def evaluate_did_not_promote(lines, idx, epoch):
+    """The POSITIVE half of every "this node sat the epoch out" claim in these two cases.
+
+    WHY THE SHARE-LINE ABSENCE IS NOT ENOUGH ON ITS OWN. Both cases concluded "shareless" purely
+    from the absence of the ceremony-finalize log, whose sole emitter is one arm of one function.
+    An absence is satisfied by a node that never logged anything, by a log read that returned
+    nothing (which `logs_required` now refuses), and — the one that actually matters here — by a
+    node that acquired its share through a DIFFERENT road than the one being watched. Since the
+    live-epoch artifact pull landed, that second road exists: a member with no share now asks for
+    the epoch's artifact and recomputes from the retained dealer logs, and it emits its own line
+    when it does, not the ceremony-finalize one. So the absence these cases assert has grown a way
+    to be true while the property is false.
+
+    Promotion is the consequence both roads share. A node that holds a usable share for `epoch`
+    spawns its per-epoch engine and says so; a node that sits the epoch out cannot. Checking that
+    is checking the thing the cases mean, once, instead of checking one of the ways to reach it.
+
+    Both cases stay TRUE negatives for the right reason, and it is worth writing down which:
+    the torn journal loads as `JournalLoad::Torn`, and the recompute-heal bails on anything but
+    `Present`, so the artifact pull (which does now happen, and does now land) can never complete
+    the heal. The sit-out is structural, not a race."""
+    if not lines:
+        return True, ""
+    listing = "\n".join(f"    {ln}" for ln in lines)
+    return False, (f"v{idx} PROMOTED to Signer for epoch {epoch} — it is not sitting the epoch "
+                   f"out, whatever its share log says:\n{listing}")
+
+
 def evaluate_no_share_computed(idx, has_share: bool, epoch):
     """`:265-268` — the DKG-None discriminator: NO committee member finalized an E_new share.
 

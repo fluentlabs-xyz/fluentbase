@@ -148,6 +148,194 @@ def test_the_two_followers_are_not_the_same_node():
     assert (vf.CF_SERVICE, vf.TAMPER_SERVICE) == ("cert-follower", "cert-follower-tamper")
 
 
+# ══ smoke-cert-follow phase 4 (FLU-1167) ═══════════════════════════════════
+
+KEYLOG = f"INFO {vf.CF_KEY_LINE} epoch=2 group_public=ab12"
+
+
+def test_the_key_line_is_the_adoption_witness_in_both_directions():
+    ok, msg, line = vf.evaluate_key_obtained(KEYLOG, vf.CF_SERVICE)
+    assert ok and line == KEYLOG.strip()
+    ok, msg, line = vf.evaluate_key_obtained("INFO nothing of the sort", vf.CF_SERVICE)
+    assert not ok and "did not obtain PK_epoch" in msg and line == ""
+
+
+def test_the_two_adoption_witnesses_live_on_two_different_registries():
+    """The counter and the log line count the same adoption, and the counter is the SECOND
+    witness — it is read beside the log line, never instead of it, because a `--cert-follow` node
+    serves the commonware registry only under a devnet build plus a `--dpos.metrics-port` the
+    compose overlay has to pass. Pinned so nobody "upgrades" the witness to the counter and
+    quietly makes FLU-1167's proof contingent on two devnet knobs.
+
+    The families are pinned too: `dpos_cert_vote_only_admissions_total` is a `metrics::counter!`
+    on RETH's recorder and `dpos_follower_artifact_*` are `BeaconMetrics` on the commonware one.
+    Reading either from the other endpoint returns nothing forever, and a phase that did would be
+    green on an unread family."""
+    assert vf.CF_VOTE_ONLY_FAMILY == "dpos_cert_vote_only_admissions_total"
+    assert vf.CF_ADOPTED_FAMILY == "dpos_follower_artifact_adopted_total"
+    assert vf.CF_MISS_FAMILY == "dpos_follower_artifact_miss_total"
+    assert "follower_artifact_adopted" not in vf.CF_KEY_LINE
+
+
+def test_the_adoption_counter_reads_the_DOUBLED_sample_name():
+    """A `prometheus-client` counter registered `X_total` renders its SAMPLE as `X_total_total`
+    (`nodes.counter_sample`). A verdict that matched the registered name would find nothing on a
+    live scrape and report a keyed follower as unadopted — so the doubling is asserted here
+    against the exact text a follower's `:9100` produced live, not against a paraphrase."""
+    live = ("dpos_follower_artifact_adopted_total_total 1\n"
+            "dpos_follower_artifact_miss_total_total 0\n")
+    ok, msg, pair = vf.evaluate_artifact_adopted_counter(live, vf.CF_SERVICE)
+    assert ok and msg == ""
+    assert "dpos_follower_artifact_adopted_total=1" in pair
+    assert "dpos_follower_artifact_miss_total=0" in pair
+
+
+def test_the_adoption_counter_fails_UNREAD_and_ZERO_apart():
+    """The two ways it can not-say-yes are different things and get different messages: an empty
+    scrape is a measurement that never happened, a zero on an answering endpoint is the counter
+    contradicting the log line. Collapsing them would let a missing `--dpos.metrics-port` read as
+    a product bug, and a real disagreement read as a config gap."""
+    ok, msg, pair = vf.evaluate_artifact_adopted_counter("", vf.CF_SERVICE)
+    assert not ok and "did not answer" in msg and pair == ""
+    ok, msg, _ = vf.evaluate_artifact_adopted_counter(
+        "dpos_follower_artifact_adopted_total_total 0\n", vf.CF_SERVICE)
+    assert not ok and "still 0" in msg
+    # An endpoint that answered with OTHER families but none of the follower's: the beacon never
+    # registered them, which is not the same as "adopted zero artifacts".
+    ok, msg, _ = vf.evaluate_artifact_adopted_counter("runtime_tasks_running 3\n", vf.CF_SERVICE)
+    assert not ok and "carries no" in msg
+
+
+def test_vote_only_admissions_must_stop_once_the_key_lands():
+    assert vf.evaluate_vote_only_flat("4", "4", True)[0]
+    # An absent family on an endpoint that ANSWERED is a real zero on both samples.
+    assert vf.evaluate_vote_only_flat("", "", True)[0]
+    ok, msg = vf.evaluate_vote_only_flat("4", "5", True)
+    assert not ok and "grew 4 -> 5" in msg
+
+
+def test_an_UNREAD_metrics_endpoint_is_not_a_flat_counter():
+    """THE TRAP THIS VERDICT IS SHAPED AROUND. "" means an absent family OR a dead scrape, and
+    one is a pass while the other is a measurement that never happened. Without the third value
+    the strongest reading in the phase would be green forever on a follower with no `--metrics`."""
+    ok, msg = vf.evaluate_vote_only_flat("", "", False)
+    assert not ok and "did not answer" in msg
+    assert not vf.evaluate_vote_only_flat("4", "4", False)[0]
+
+
+def test_the_key_grep_reads_the_WHOLE_log_and_the_count_grep_does_not():
+    """Two greps, two depths, and each depth is the answer to a different question.
+
+    `CF_KEY_LINE` is written ONCE in the follower's first seconds, and both followers now run for
+    the better part of ten minutes before phase 4b reads them — a bounded tail scrolls it away and
+    reports a healthy, keyed, block-deriving follower as one that never obtained the key. That
+    happened on a live run. The refusal COUNT is a delta whose two ends are both recent, so it
+    stays bounded and keeps the read off a megabyte log."""
+    assert vf.SEED_LOG_TAIL is None
+    assert isinstance(vf.SEED_COUNT_TAIL, int) and vf.SEED_COUNT_TAIL > 0
+
+
+def test_the_seed_follower_must_be_CAUGHT_UP_before_the_arming():
+    """The gate that decides whether the phase measures anything. Holding the key says the
+    follower CAN reject; being caught up says a rejection is the only thing that can stop it.
+    Armed while back-filling, it rides certificates the proxy never touched."""
+    assert vf.evaluate_seed_follower_caught_up("0x140|0xcc", 300)[0]
+    ok, msg = vf.evaluate_seed_follower_caught_up(None, 300)
+    assert not ok and "did not catch up with v0 past 300" in msg
+    assert "BEFORE the proxy was armed" in msg
+
+
+def test_the_caught_up_gate_is_separate_from_the_key_gate():
+    """Two different failures with two different fixes: no key means the follower cannot reject
+    at all (a product or delivery problem); a backlog means it can, but the window measured
+    something else (a harness problem). Collapsing them would send the reader to the wrong one —
+    which is exactly what happened before this gate existed."""
+    assert not vf.evaluate_seed_follower_caught_up(None, 1)[0]
+    assert not vf.evaluate_key_obtained("", vf.SEED_TAMPER_SERVICE)[0]
+    a = vf.evaluate_seed_follower_caught_up(None, 1)[1]
+    b = vf.evaluate_key_obtained("", vf.SEED_TAMPER_SERVICE)[1]
+    assert a != b and "PK_epoch" in b and "catch up" in a
+
+
+def test_the_seed_proxy_must_witness_its_own_tampering():
+    """Both failures are distinguishable, and they call for different reading: never ARMED means
+    the arm file did not reach the proxy; armed but nothing CLEARED means every certificate was
+    already seedless or the trailing flag+slot offsets no longer match the wire format."""
+    good = f"{vf.SEED_ARMED_LINE}\n{vf.SEED_CLEARED_LINE} (first): aabb -> 0000"
+    assert vf.evaluate_seed_tamper_landed(good)[0]
+    ok, msg = vf.evaluate_seed_tamper_landed("cert-mitm: listening")
+    assert not ok and "never logged" in msg and vf.SEED_ARMED_LINE in msg
+    ok, msg = vf.evaluate_seed_tamper_landed(vf.SEED_ARMED_LINE)
+    assert not ok and "cleared NO seed slot" in msg
+
+
+def test_the_pinned_follower_must_REFUSE_every_cleared_certificate():
+    """The negative, measured on the refusals. A growing count proves two things the follower's
+    HEIGHT proved neither of: certificates were still being delivered, and every one was refused."""
+    assert vf.evaluate_seed_tamper_refused_every_cert(0, vf.MIN_SEED_REJECTS)[0]
+    assert vf.evaluate_seed_tamper_refused_every_cert(12, 12 + vf.MIN_SEED_REJECTS)[0]
+    ok, msg = vf.evaluate_seed_tamper_refused_every_cert(0, vf.MIN_SEED_REJECTS - 1)
+    assert not ok and "the seed slot is not being checked" in msg
+    ok, msg = vf.evaluate_seed_tamper_refused_every_cert(0, 0)
+    assert not ok and "refused only 0 certificates" in msg
+
+
+def test_the_refusal_count_replaced_a_HEIGHT_reading_that_measured_the_EL_transport():
+    """WHY THE INSTRUMENT CHANGED, pinned so it cannot drift back. A follower fed a poisoned
+    stream refuses every certificate, counts the refusals as upstream data faults, rotates, and
+    its EL keeps syncing over devp2p from the validator in `--trusted-peers`; the steady-state
+    re-jump then fast-forwards the anchor onto that EL tip. Live, with every certificate correctly
+    refused and `dpos_cert_vote_only_admissions_total` flat, `finalized` still advanced 238 → 271.
+    A height-delta verdict called that "the seed slot is not being checked"."""
+    assert not hasattr(vf, "evaluate_seed_tamper_frozen")
+    assert not hasattr(vf, "SEED_SLACK_BLOCKS")
+    assert vf.seed_reject_count("\n".join([f"WARN {vf.SEED_REJECT_LINE} h=1"] * 7)) == 7
+    assert vf.seed_reject_count("nothing here\nnor here") == 0
+    assert vf.seed_reject_count("") == 0
+
+
+def test_the_refusals_must_come_from_a_PINNED_scheme_and_not_a_downgrade():
+    """`verify_certificate` early-returns `true` after the quorum arm when the scheme carries no
+    `cert_seed_pin`, so an UNPINNED follower ACCEPTS a cleared slot and ticks the vote-only
+    counter. Flat is the statement "nothing was admitted with the seed unchecked", which is what
+    the refusal count has to be paired with."""
+    assert vf.evaluate_seed_vote_only_flat("1", "1", True)[0]
+    assert vf.evaluate_seed_vote_only_flat("", "", True)[0]
+    ok, msg = vf.evaluate_seed_vote_only_flat("1", "9", True)
+    assert not ok and "grew 1 -> 9" in msg and "lost the pin" in msg
+    ok, msg = vf.evaluate_seed_vote_only_flat("", "", False)
+    assert not ok and "did not answer" in msg
+
+
+def test_the_seed_refusal_line_is_the_VERIFY_one_and_not_phase_3s_decode_lines():
+    """The two phases cannot share a constant. A flipped nibble breaks the G1 point so the
+    certificate fails DECODE and never reaches `CertInlet::ingest`; a cleared slot decodes
+    perfectly and fails at VERIFY, which is the only arm that can prove the follower is using
+    `PK_epoch`."""
+    assert vf.SEED_REJECT_LINE not in vf.TAMPER_REJECT_LINES
+    assert vf.seed_reject_count(f"WARN {vf.SEED_REJECT_LINE}; skipping") == 1
+    # Phase 3's lines are a DIFFERENT event and must not be counted as seed refusals — a decode
+    # failure says nothing about whether the seed slot was checked.
+    for line in vf.TAMPER_REJECT_LINES:
+        assert vf.seed_reject_count(f"WARN {line}") == 0
+
+
+def test_the_phase_4_services_are_their_own_nodes():
+    """Four distinct services now. Reading phase 4's verdict off phase 3's follower — which
+    refuses every certificate and so never calls `observe_cert` — would report "no key obtained"
+    as a property of the product rather than of the topology."""
+    names = {vf.CF_SERVICE, vf.TAMPER_SERVICE, vf.SEED_MITM_SERVICE, vf.SEED_TAMPER_SERVICE}
+    assert len(names) == 4
+
+
+def test_the_post_arm_observation_window_is_a_budget_and_not_a_settle_time():
+    """THE WINDOW IS THE ASSERTION (§2.4 item 3): the phase concludes "it stopped" from the
+    absence of movement across it, so shortening it weakens the claim by exactly that much and
+    nothing goes red. Pinned at the value the case was written against."""
+    assert vf.SEED_OBSERVE_S == 45
+    assert vf.CF_VOTE_ONLY_WINDOW_S == 30
+
+
 # ══ smoke-cert-cascade ═════════════════════════════════════════════════════
 
 def test_l1_checkpoint_verified_needs_the_line():

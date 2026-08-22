@@ -7,7 +7,7 @@ SOLIDITY_CONTRACTS_DIR ?= ../../../solidity-contracts
         smoke-full-restart smoke-liveness smoke-onchain-dry-run smoke-peers smoke-prod-dry-run \
         smoke-production-path smoke-rejump-signer smoke-sim smoke-sim-quick smoke-sim-ram \
         smoke-tx smoke-tx-cascade smoke-vrf smoke-vrf-boundary smoke-vrf-dkg-durability \
-        smoke-vrf-dkg-halt smoke-vrf-dkg-liveness smoke-vrf-dkg-restart-midwindow smoke-vrf-fault \
+        smoke-vrf-dkg-halt smoke-vrf-dkg-live-heal smoke-vrf-dkg-restart-midwindow smoke-vrf-fault \
         smoke-vrf-rotation smoke-weighted-vrf up
 
 regen-contracts:
@@ -95,7 +95,12 @@ golden:
 # Additional NOW-tier cases (Phase 6).
 smoke-full-restart:
 	@python3 -m dpos_harness case smoke-full-restart $(ARGS)
-# Trustless cert-follower: subscribe-align + gap back-fill + tampered-cert reject.
+# Trustless cert-follower, FOUR phases: subscribe-align + gap back-fill + tampered-cert reject
+# (phase 3, refused at DECODE) + PK_epoch delivery (phase 4, FLU-1167). Phase 4 is the only one
+# that reaches the SEED check: the follower obtains the epoch key over its cert upstream, stops
+# taking vote-only admissions, and then refuses a certificate whose seed slot was CLEARED behind a
+# still-valid multisig quorum — which a vote-only follower accepts. Heavy (~15-22 min: phases 1-3
+# are ~10-12, phase 4 adds two key waits, an arming round-trip and two observation windows).
 smoke-cert-follow:
 	@python3 -m dpos_harness case smoke-cert-follow $(ARGS)
 # Lean-follower serving + L1 trust root: MockRollup checkpoint align +
@@ -155,12 +160,22 @@ smoke-vrf-fault:
 # (~3-4 min); NOT in run-all.
 smoke-vrf-boundary:
 	@python3 -m dpos_harness case smoke-vrf-boundary $(ARGS)
-# DKG-liveness negative edge (NO reshare): a member offline during its epoch-2 DKG
-# window misses the ceremony, is shareless for that epoch, and SITS OUT the seed
-# quorum while the chain stays live on the n−f survivors; it re-derives prev_randao
-# from the cert seed on restart. Heavy (~4-5 min); NOT in run-all.
-smoke-vrf-dkg-liveness:
-	@python3 -m dpos_harness case smoke-vrf-dkg-liveness $(ARGS)
+# LIVE-EPOCH KEY DELIVERY (FLU-1166). This target was `smoke-vrf-dkg-liveness` and it
+# asserted the OPPOSITE: a member offline through its whole epoch-2 DKG window misses the
+# ceremony and now obtains the epoch key ANYWAY — it pulls epoch 2's agreed artifact,
+# recomputes its share from the dealers' public reveals (the reveal-fallback path, whose
+# only coverage anywhere in the repo this is), leaves vote-only certificate admission, and
+# PRODUCES inside epoch 2. The chain-liveness half (finalizing on the n−f=3 survivors,
+# byte-identical prev_randao) is still asserted; it is no longer the point. ONE victim and
+# never two: absentees must stay ≤ f, or every honest dealer withholds its whole log on
+# TooManyReveals and the ceremony fails outright — a different test. Tuned genesis
+# (epochBlockInterval=64) for two reasons: the recovered member needs room to be elected before
+# the epoch ends, and the victim must be stopped before the DEAL phase opens one interval after
+# the migration anchor. Production credit is read only AFTER epoch 2 ends — the counter climbs
+# until then, and sampling it at the moment of recovery reads a coin toss.
+# Heavy (~8-10 min); NOT in run-all.
+smoke-vrf-dkg-live-heal:
+	@python3 -m dpos_harness case smoke-vrf-dkg-live-heal $(ARGS)
 # Durable mid-window DKG restart: a committee[2] member restarts AFTER its epoch-2 seal
 # but BEFORE the boundary; it RESUMES its ceremony from the on-disk journal + pull,
 # converges to (PK_2, share), and then PRODUCES in epoch 2 — which a shareless node
@@ -251,15 +266,17 @@ smoke-base-dry-run:
 # test that still passes.
 smoke-fault-dry-run:
 	@for c in smoke-deferred smoke-peers smoke-vrf-fault smoke-crash-survivor \
-	          smoke-full-restart smoke-vrf-dkg-liveness smoke-fault; do \
+	          smoke-full-restart smoke-vrf-dkg-live-heal smoke-fault; do \
 	  echo "===== $$c ====="; python3 -m dpos_harness case $$c --dry-run; done
 
 # The follower three. Each runs ALONE — never chained: cert-follow leaves a man-in-the-middle
 # poisoning validator-0's certificate plane, cert-cascade leaves two per-run contract addresses in
-# the compose environment, and tx-cascade widens the sentry's trusted-peer set. cert-follow's
-# phase 3 also SKIPS (exit 0) when the `cert-mitm` sidecar cannot pip-install `websockets`, so a
-# green run on an offline host proves the two POSITIVE phases only — look for
-# `SKIP (phase 3 tampered-reject)` in the output.
+# the compose environment, and tx-cascade widens the sentry's trusted-peer set. cert-follow now
+# leaves a SECOND poisoned stream too (`cert-mitm-seed`, armed and clearing seed slots).
+# Its phases 3 and 4b SKIP (exit 0) when their sidecar cannot pip-install `websockets`, so a green
+# run on an offline host proves the positive phases only — look for `SKIP (phase 3
+# tampered-reject)` / `SKIP (phase 4b cleared-seed reject)` in the output. Phase 4a is unaffected
+# by either skip: the honest follower talks to validator-0 directly.
 #
 # Here the `-f` overlay array and the exported
 # ${MOCK_ROLLUP_ADDR}/${BOGUS_ROLLUP_ADDR} are part of the evidence: an export printed after the

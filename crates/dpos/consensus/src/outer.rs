@@ -12,8 +12,7 @@
 
 use crate::{
     application::{
-        BeaconEngineLike, BeaconVerify, DerivedBlockBuilder, ExecutedChain, FluentApp,
-        OrderingAssembler,
+        BeaconEngineLike, DerivedBlockBuilder, ExecutedChain, FluentApp, OrderingAssembler,
     },
     digest::Digest,
     epoch_manager,
@@ -198,7 +197,7 @@ where
 /// [`OuterBuilder::soft_enter_committees`].
 pub type SoftEnterCommittees =
     Arc<dyn Fn(Epoch, Epoch) -> BoxFuture<'static, Vec<(u64, ValidatorSetSnapshot)>> + Send + Sync>;
-use crate::beacon::actor::DETERMINISTIC_BOOTSTRAP_EPOCH;
+use crate::SCHEME_RETENTION_EPOCHS;
 use commonware_parallel::Sequential;
 use commonware_runtime::{
     buffer::paged::CacheRef, spawn_cell, BufferPooler, Clock, ContextCell, Handle, IoBuf, Metrics,
@@ -237,13 +236,8 @@ const FREEZER_VALUE_TARGET_SIZE: u64 = 1 << 30;
 const FREEZER_VALUE_COMPRESSION: Option<u8> = Some(3);
 
 // EpochSchemeProvider — minimal per-epoch BlsScheme registry; pruned to the
-// trailing SCHEME_RETENTION_EPOCHS (a validator keeps one process alive across
-// months — unbounded growth is no longer hypothetical).
-
-/// Trailing epochs of BLS schemes retained for cross-epoch cert verification
-/// (marshal backfill / catch-up register epochs in order, so older schemes
-/// are never re-read once the frontier passes them).
-pub(crate) const SCHEME_RETENTION_EPOCHS: usize = 8;
+// trailing [`crate::SCHEME_RETENTION_EPOCHS`] (a validator keeps one process
+// alive across months — unbounded growth is no longer hypothetical).
 
 /// Ticks once per re-registration refused for dropping an existing entry's
 /// cert-seed pin (see [`EpochSchemeProvider::register`]). Its normal value is
@@ -254,12 +248,23 @@ pub(crate) const PIN_DROP_REFUSED: &str = "dpos_epoch_scheme_pin_drop_refused_to
 #[derive(Clone)]
 pub struct EpochSchemeProvider {
     map: Arc<Mutex<BTreeMap<Epoch, Arc<BlsScheme>>>>,
+    /// Is randomness mandatory at this epoch? Threaded in rather than read off a
+    /// beacon constant, so this registry and the application's witness gate
+    /// answer the question from ONE source — see [`Self::apply_pin`], where
+    /// getting it wrong rejects every legal certificate of a pre-beacon epoch.
+    mandatory_at: MandatoryAt,
 }
 
+/// See [`EpochSchemeProvider::mandatory_at`]. Matches
+/// [`crate::beacon::Randomness::mandatory_at`] by construction: the production
+/// wiring passes that method.
+pub type MandatoryAt = Arc<dyn Fn(u64) -> bool + Send + Sync>;
+
 impl EpochSchemeProvider {
-    pub fn new() -> Self {
+    pub fn new(mandatory_at: MandatoryAt) -> Self {
         Self {
             map: Arc::new(Mutex::new(BTreeMap::new())),
+            mandatory_at,
         }
     }
 
@@ -334,6 +339,18 @@ impl EpochSchemeProvider {
                     );
                     return;
                 }
+                // The positive edge for "this epoch left vote-only admission". It is
+                // logged HERE because this is the only place where the old and the
+                // new pin state are both in hand; everywhere else it can only be
+                // inferred from the ABSENCE of a vote-only admission, which is green
+                // for the wrong reasons whenever certificates simply stopped arriving.
+                if !existing.is_seed_pinned() && scheme.is_seed_pinned() {
+                    tracing::info!(
+                        ?epoch,
+                        "epoch scheme upgraded to PINNED — certificates for this epoch \
+                         leave vote-only admission"
+                    );
+                }
                 o.insert(Arc::new(scheme));
             }
         }
@@ -378,7 +395,7 @@ impl EpochSchemeProvider {
     /// [`Self::unpinned_epochs`], because the lock is dropped between the two
     /// calls and the sweep awaits in between.
     ///
-    /// Refuses `epoch < DETERMINISTIC_BOOTSTRAP_EPOCH` — MANDATORY, not
+    /// Refuses an epoch where randomness is not mandatory — MANDATORY, not
     /// defensive. `verify_certificate` reads pin presence as "this epoch is
     /// beacon-active" and rejects any seedless cert under it, so a pin on a
     /// pre-beacon epoch rejects every legal cert there. Until this method
@@ -391,7 +408,7 @@ impl EpochSchemeProvider {
     /// monotonicity guard.
     pub fn apply_pin(&self, epoch: Epoch, pk: GroupPublic, namespace: &[u8]) -> bool {
         use commonware_cryptography::certificate::Scheme as _;
-        if epoch.get() < DETERMINISTIC_BOOTSTRAP_EPOCH {
+        if !(self.mandatory_at)(epoch.get()) {
             return false;
         }
         let mut map = self.map.lock().unwrap();
@@ -404,12 +421,6 @@ impl EpochSchemeProvider {
         let pinned = existing.with_cert_seed_pin(pk, namespace);
         map.insert(epoch, Arc::new(pinned));
         true
-    }
-}
-
-impl Default for EpochSchemeProvider {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -541,14 +552,11 @@ pub struct OuterBuilder<B, P, BE, D, XC, A, R: slasher::StakingStateRead + Send 
     /// (`OriginEpocher`). Zero ⇒ absolute (non-migration / pristine genesis).
     pub dpos_activation_block: u64,
     pub signer_keypair: Option<ValidatorBlsKeypair>,
-    /// Per-epoch beacon resolver: returns each epoch's `BeaconKey` (live-DKG
-    /// store + `dkgQual`-bit-gated carry-forward) so every per-epoch consensus
-    /// scheme carries the seed partial under that epoch's `PK_epoch`.
-    pub beacon_resolver: epoch_manager::BeaconResolver,
-    /// Edge-trigger the `DkgActor` fires when a share lands, so the reconciler
-    /// re-runs the instant its share is memoized rather than polling. Threaded to
-    /// the manager.
-    pub beacon_share_notify: std::sync::Arc<tokio::sync::Notify>,
+    /// The ONE randomness handle, built by `beacon::build` and handed in whole.
+    /// It replaced six separate beacon fields — the resolver, the share edge, the
+    /// key map, the two agreement rungs and the verify context — none of which
+    /// this layer can name any more.
+    pub randomness: std::sync::Arc<dyn crate::beacon::Randomness>,
     /// Edge-trigger the executor fires when it records a finalized block — the
     /// mid-epoch promotion trigger. Threaded to BOTH the executor (producer) and
     /// the manager (consumer).
@@ -570,9 +578,14 @@ pub struct OuterBuilder<B, P, BE, D, XC, A, R: slasher::StakingStateRead + Send 
     /// consensus side where they live. `None` ⇒ no catch-up span (tests / nodes
     /// without an `EpochTransition`); the manager then never pre-registers.
     pub soft_enter_committees: SoftEnterCommittees,
-    /// Beacon counters (cross-epoch singleton from `dpos.rs::launch`, already
-    /// registered there). Threaded to the executor + each per-epoch engine.
-    pub beacon_metrics: crate::beacon::metrics::BeaconMetrics,
+    /// Membership / `Inline::genesis` counters (cross-launch singleton from
+    /// `dpos.rs::launch`, already registered there). Core-owned on BOTH node
+    /// classes.
+    pub epoch_metrics: crate::epoch_manager::EpochEngineMetrics,
+    /// The executor's per-derived-block seed observation (cross-launch singleton
+    /// from `dpos.rs::launch`, already registered there). Executor-owned on BOTH
+    /// node classes — the executor runs on both and cannot tell which.
+    pub executor_metrics: crate::executor::ExecutorMetrics,
     /// Self-heal stuck-detector (cross-launch singleton from `dpos.rs::launch`,
     /// already registered there). Threaded to the executor for the #14 finalize-FCU
     /// transport-retry + #1 steady-state re-jump `AuthFailed` rotate gauges.
@@ -589,17 +602,10 @@ pub struct OuterBuilder<B, P, BE, D, XC, A, R: slasher::StakingStateRead + Send 
     /// in rather than defaulted here because the writer lives in the node crate;
     /// a default would be a set nothing fills.
     pub tombstones: crate::slasher::TombstoneSet,
-    /// Beacon context for `FluentApp`'s parent-seed witness arm (the `PK_epoch`
-    /// resolver + the seed-signing domain). `None` ⇒ the witness arm takes its
-    /// accept-biased branch.
-    pub beacon_verify: Option<BeaconVerify>,
-    /// The cross-epoch shared `epoch → PK_epoch` group-key map (§5 b). Created at
-    /// the launch site (`dpos.rs`) so the DKG resolvers threaded into
-    /// `beacon_verify`/`beacon_resolver` can read its attested entries for the
-    /// carry-divergence guard, then handed here as the SAME Arc that
-    /// `epoch_manager` (writers W1/W3) and the agreement write-back fill — one
-    /// map, never two.
-    pub group_keys: crate::beacon::keys::BeaconKeys,
+    /// The ordering-vs-DKG clock pair. Threaded to `FluentApp`, which writes the
+    /// ordering half off marshal's tip — the ONE observer of finalization that
+    /// survives a `SafetyHalt` park and every engine abort.
+    pub plane_clock: crate::sync_metrics::PlaneClock,
     pub timeouts: ConsensusTimeouts,
     pub mailbox_size: usize,
     pub deque_size: usize,
@@ -645,12 +651,6 @@ pub struct OuterBuilder<B, P, BE, D, XC, A, R: slasher::StakingStateRead + Send 
     /// configured.
     pub boundary_fetch: Option<crate::cert_follow::BoundaryFetchFn>,
     /// The `PK_epoch` ladder's artifact rungs, handed to the epoch manager:
-    /// `held` reads the artifacts this node already has, `pull` fetches the
-    /// minting epoch's from a peer. Built at the launch site, which is where the
-    /// artifact store and the resolver live; `None` for tests and for a node
-    /// with no agreement plane.
-    pub held_keys: Option<crate::beacon::keys::AgreedKeys>,
-    pub pull_keys: Option<crate::beacon::keys::AgreedKeys>,
     /// Epoch-entry seam — the height-keyed half of [`Self::boundary_hook`], handed to the
     /// executor so a steady-state re-jump enters its LANDING epoch. Without it the landing
     /// epoch is entered only at the NEXT boundary, leaving a seated member verify-only for
@@ -683,12 +683,6 @@ pub struct OuterBuilder<B, P, BE, D, XC, A, R: slasher::StakingStateRead + Send 
     /// are initialised inside [`OuterBuilder::build`] under the slasher's
     /// own context label.
     pub slasher_wal_partition: String,
-    /// Storage partition for the durable `Round → σ` store that backs the
-    /// [`SeedStore`](crate::beacon::certify::SeedStore). Empty ⇒ the store is
-    /// RAM-only and every consumer misses after a restart, which is what it did
-    /// before the journal existed. The handle is opened and replayed inside
-    /// [`OuterBuilder::build`], under its own context label.
-    pub seed_journal_partition: String,
     /// Evidence-channel bridge to the node's gossip task
     /// ([`slasher::gossip`]). `None` on the follower path, whose slasher is
     /// constructed but never started.
@@ -761,11 +755,6 @@ where
     /// a Phase-3 SafetyHalt (park, keep marshal/RPC alive); not engaged ⇒ a real
     /// crash (abort-all).
     safety_halt: crate::sync_metrics::SafetyHalt,
-    /// The durable seed-journal writer, parked here only so the caller can lift
-    /// it out with [`OuterEngine::take_seed_writer`] before [`OuterEngine::start`]
-    /// consumes `self`. `None` when no journal partition is configured (RAM-only
-    /// seed store — every test, and any node without durability).
-    seed_writer: Option<Handle<()>>,
 }
 
 /// What the OuterEngine supervisor does when the FIRST subsystem handle resolves.
@@ -783,6 +772,18 @@ enum SupervisorAction {
     /// `executor::Actor::park_halted`), so this arm fires only if some OTHER
     /// subsystem exits while the latch is engaged.
     ParkHalted,
+}
+
+/// Never-returning supervisor park for the SafetyHalt backstop.
+///
+/// Takes the surviving handles BY VALUE and parks: commonware's `Handle` has no
+/// `Drop` impl, so holding them keeps their tasks alive, while *awaiting* them
+/// would re-poll the handle that already resolved in the supervisor's `select!`
+/// — `Handle::poll` forwards to a tokio oneshot that panics "called after
+/// complete", turning "stay up, verify-only" into a task panic and, under
+/// `with_catch_panics(true)`, a full node teardown.
+async fn park_supervisor(_surviving: Vec<Handle<()>>) {
+    std::future::pending::<()>().await
 }
 
 /// The supervisor decision, factored out so the fork-safety property — a
@@ -810,22 +811,7 @@ where
     /// `buffered + archives + scheme_provider → marshal → executor →
     /// FluentApp → epoch_manager`.
     ///
-    /// `seed_writer_context` MUST be a SIBLING of `context`, never a clone of
-    /// it. commonware supervision aborts every DESCENDANT of a task's context
-    /// when that task finishes or is aborted (`Spawner::spawn`, "Mandatory
-    /// Supervision"), and `context` is what [`OuterEngine::start`] spawns the
-    /// engine task from. A writer spawned from `context.with_label(..)` would be
-    /// such a descendant, so the `engine.abort()` on the shutdown path would
-    /// kill it in the same beat that drops the store — i.e. exactly when it is
-    /// supposed to be draining its tail to disk — and awaiting it would then
-    /// yield `Err(Error::Closed)` with the tail unwritten. Cloning the LAUNCH
-    /// context instead keeps the writer out of that subtree, so it outlives the
-    /// engine's teardown by the drain it still owes.
-    pub async fn build<E>(
-        self,
-        context: E,
-        seed_writer_context: E,
-    ) -> eyre::Result<OuterEngine<E, B, P, BE, D, XC, A, R>>
+    pub async fn build<E>(self, context: E) -> eyre::Result<OuterEngine<E, B, P, BE, D, XC, A, R>>
     where
         E: BufferPooler + Clock + CryptoRngCore + Spawner + Storage + Metrics + RNetwork + Pacer,
     {
@@ -874,7 +860,15 @@ where
         // epoch_manager::Config so all per-epoch engines + marshal share
         // one source of truth — no risk of divergent epoch math after a
         // hypothetical interval re-read (defense-in-depth).
-        let scheme_provider = EpochSchemeProvider::new();
+        // The randomness handle arrives BUILT — this layer no longer assembles it
+        // from six separate beacon handles, because it no longer holds them: the
+        // key store, the seed store, both resolvers and the two agreement rungs
+        // are created inside `beacon::build` and never cross back out.
+        let randomness = self.randomness;
+        let scheme_provider = EpochSchemeProvider::new({
+            let r = randomness.clone();
+            Arc::new(move |epoch| r.mandatory_at(epoch))
+        });
         let epocher = OriginEpocher::new(self.dpos_activation_block, self.epoch_length_blocks);
 
         // Which epoch-boundary heights the floor about to be applied would bury, and
@@ -1098,64 +1092,6 @@ where
             })
         };
 
-        // Shared `round → recovered seed` map for the Stage-2 beacon certify gate
-        // (`crate::beacon::certify`). The spec-exec reporter writes it (it already
-        // recovers the seed per notarization); each per-epoch `BeaconCertify`
-        // wrapper reads it, and the executor holds a clone for the speculative
-        // seed re-canonicalisation. Cross-epoch singleton — created BEFORE the
-        // executor (its first consumer below).
-        //
-        // The durable store is opened and REPLAYED here, ahead of the executor,
-        // `FluentApp` and every engine, so no consumer can observe a
-        // half-rehydrated store. It is a singleton with the store it backs: a
-        // second handle over the same partition would be a dual-writer, one of
-        // which prunes a blob the other still holds open.
-        //
-        // The writer task is spawned from `seed_writer_context` — a SIBLING of
-        // `context`, see this method's doc — so that the shutdown drain is
-        // possible at all. The store handle itself stays on `context` (it
-        // spawns nothing; the context is only its `Storage`+`Clock`+`Metrics`
-        // face, so the supervision subtree is irrelevant to it) which keeps its
-        // metric prefix where it was.
-        let mut seed_writer = None;
-        let seed_store = if self.seed_journal_partition.is_empty() {
-            crate::beacon::certify::SeedStore::new()
-        } else {
-            use crate::beacon::{certify::SEED_RETENTION, seed_journal::SeedJournal};
-            let journal = SeedJournal::init(
-                context.with_label("seed_journal"),
-                self.seed_journal_partition.clone(),
-            )
-            .await
-            .map_err(|e| eyre::eyre!("opening the durable seed store: {e}"))?;
-            let rehydrated = journal
-                .replay_window(SEED_RETENTION)
-                .await
-                .map_err(|e| eyre::eyre!("replaying the durable seed store: {e}"))?;
-            info!(
-                entries = rehydrated.len(),
-                "rehydrated the seed store from disk"
-            );
-            let (seed_tx, seed_rx) = tokio::sync::mpsc::unbounded_channel();
-            seed_writer = Some(crate::beacon::seed_journal::spawn_writer(
-                seed_writer_context,
-                journal,
-                seed_rx,
-                SEED_RETENTION as u64,
-            ));
-            crate::beacon::certify::SeedStore::with_persistence(rehydrated, seed_tx)
-        };
-
-        // The cross-epoch shared `epoch → PK_epoch` group-key map (§5 b). Same
-        // lifetime class as `seed_store`: it must outlive every per-epoch engine
-        // (engines are aborted at the transition) and be the SAME map for `E` and
-        // `E+1`. Cloned by `Arc` into `FluentApp` (reader + writer W4) and into
-        // `epoch_manager::Config` (writers W1/W3) — one map, never two. Created at
-        // the launch site (`dpos.rs`) and threaded in via `self.group_keys` so the
-        // DKG resolvers baked into `beacon_verify`/`beacon_resolver` (built there,
-        // BEFORE this map existed) share it for their carry-divergence guard.
-        let group_keys: crate::beacon::keys::BeaconKeys = self.group_keys;
-
         // Executor — depends on marshal_mailbox.
         let (executor, executor_mailbox) = executor::Actor::init(
             context.with_label("executor"),
@@ -1180,12 +1116,12 @@ where
                 dpos_activation_block: self.dpos_activation_block,
                 fcu_pace: self.fcu_pace,
                 peers_for_finalization: peers_for_finalization.clone(),
-                beacon_metrics: self.beacon_metrics.clone(),
+                metrics: self.executor_metrics.clone(),
                 sync_metrics: self.sync_metrics.clone(),
                 safety_halt: self.safety_halt.clone(),
                 spawn_unblocked: self.spawn_unblocked.clone(),
                 re_jump: self.re_jump,
-                seed_store: Some(seed_store.clone()),
+                randomness: randomness.clone(),
                 epocher: epocher.clone(),
             },
         );
@@ -1195,7 +1131,7 @@ where
         // before `FluentApp` consumes `executor_mailbox`. Also writes the recovered
         // seed into `seed_store` for the certify gate.
         let spec_exec_mailbox =
-            crate::spec_exec::Mailbox::new(executor_mailbox.clone(), Some(seed_store.clone()));
+            crate::spec_exec::Mailbox::new(executor_mailbox.clone(), randomness.clone());
 
         // The slasher's verified-charge queue: filled by the slasher below,
         // drained one charge per block by the proposer. Created here because the
@@ -1207,27 +1143,21 @@ where
         // The beacon seed feed lives here, NOT on the executor: the partial is
         // triggered at notarize-time (verify→true / own propose), so seed(h) is
         // recovered by the time h finalizes (sign-at-notarize).
-        let app = {
-            let app = FluentApp::new(
-                self.genesis,
-                executor_mailbox,
-                self.boundary_hook,
-                self.executed,
-                self.assembler,
-                self.fee_recipient,
-                self.target_gas_limit,
-                self.dpos_activation_block,
-                Some(seed_store.clone()),
-                group_keys.clone(),
-                self.chain_id,
-                Some(charges.clone()),
-                self.tombstones,
-            );
-            match self.beacon_verify {
-                Some(bv) => app.with_beacon(bv),
-                None => app,
-            }
-        };
+        let app = FluentApp::new(
+            self.genesis,
+            executor_mailbox,
+            self.boundary_hook,
+            self.executed,
+            self.assembler,
+            self.fee_recipient,
+            self.target_gas_limit,
+            self.dpos_activation_block,
+            self.chain_id,
+            Some(charges.clone()),
+            self.tombstones,
+        )
+        .with_plane_clock(self.plane_clock)
+        .with_randomness(randomness.clone());
         let marshal_reporter_app = app.clone();
 
         let scheme_provider_for_cb = scheme_provider.clone();
@@ -1306,6 +1236,7 @@ where
         let (epoch_manager, boundary_tx) = epoch_manager::Actor::new(
             context.with_label("epoch_manager"),
             epoch_manager::Config {
+                randomness: randomness.clone(),
                 me: self.me.clone(),
                 blocker: self.blocker.clone(),
                 chain_id: self.chain_id,
@@ -1314,21 +1245,16 @@ where
                 app,
                 timeouts: self.timeouts,
                 mailbox_size: self.mailbox_size,
-                beacon_resolver: self.beacon_resolver,
-                beacon_share_notify: self.beacon_share_notify,
                 spawn_unblocked: self.spawn_unblocked,
                 safety_halt: self.safety_halt.clone(),
                 marshal_mailbox: marshal_mailbox.clone(),
                 peers_for_finalization,
                 slasher_mailbox,
                 spec_exec_mailbox,
-                group_keys,
-                beacon_metrics: self.beacon_metrics,
+                epoch_metrics: self.epoch_metrics,
                 page_cache,
                 register_scheme,
                 scheme_pins: scheme_provider.clone(),
-                held_keys: self.held_keys.clone(),
-                pull_keys: self.pull_keys.clone(),
                 soft_enter_span,
                 #[cfg(feature = "dpos-devnet-byzantine")]
                 byzantine: self.byzantine,
@@ -1361,7 +1287,6 @@ where
             resolver_timeout: self.resolver_timeout,
             resolver_fetch_retry: self.resolver_fetch_retry,
             safety_halt: self.safety_halt,
-            seed_writer,
         })
     }
 }
@@ -1387,21 +1312,6 @@ where
     /// so its feed actor can answer `get_finalization`+`get_block` by height.
     pub fn marshal_mailbox(&self) -> MarshalMailbox {
         self.cert_mailbox.clone()
-    }
-
-    /// Lift out the durable seed-journal writer handle. Call before
-    /// [`OuterEngine::start`] (which consumes `self`) and hand it up to the node
-    /// so the graceful-shutdown path can AWAIT the writer's final drain+sync.
-    ///
-    /// This is emphatically NOT a supervision handle: it resolving means "the
-    /// writer finished the work it owed", whereas a `supervised` handle
-    /// resolving means "a subsystem died, take the node down". Keep them in
-    /// separate carriers — see `DposLayerHandle::drain_on_shutdown`.
-    ///
-    /// `None` when the seed store is RAM-only (no journal partition), in which
-    /// case there is nothing to drain.
-    pub fn take_seed_writer(&mut self) -> Option<Handle<()>> {
-        self.seed_writer.take()
     }
 
     /// Cold-start: register the initial (pre-finalization) scheme.
@@ -1653,7 +1563,14 @@ where
                      alive (verify-only, observable); NOT aborting-all. Recovery is the L1 SP1 \
                      validity proof + governance."
                 );
-                let _ = tokio::join!(buffered_handle, marshal_handle, slasher_handle, em_handle);
+                park_supervisor(vec![
+                    buffered_handle,
+                    marshal_handle,
+                    slasher_handle,
+                    em_handle,
+                    executor_handle,
+                ])
+                .await;
             }
             SupervisorAction::AbortAll => {
                 buffered_handle.abort();
@@ -1803,7 +1720,13 @@ where
                     "SafetyHalt engaged — parking follower: marshal + consensus-RPC stay alive; \
                      NOT aborting-all. Recovery is the L1 SP1 validity proof + governance."
                 );
-                let _ = tokio::join!(buffered_handle, marshal_handle, em_handle);
+                park_supervisor(vec![
+                    buffered_handle,
+                    marshal_handle,
+                    em_handle,
+                    executor_handle,
+                ])
+                .await;
             }
             SupervisorAction::AbortAll => {
                 buffered_handle.abort();
@@ -1817,8 +1740,43 @@ where
 
 #[cfg(test)]
 mod supervisor_tests {
-    use super::{supervisor_action, SupervisorAction};
+    use super::{park_supervisor, supervisor_action, SupervisorAction};
     use crate::sync_metrics::{SafetyHalt, SyncMetrics, SyncReason};
+    use commonware_runtime::{deterministic, Handle, Metrics as _, Runner as _, Spawner as _};
+    use futures::FutureExt as _;
+    use std::time::Duration;
+
+    // The park must survive the handle that ALREADY resolved in the supervisor's
+    // `select!`: awaiting it again re-polls a completed tokio oneshot, which panics
+    // "called after complete" and tears the whole node down through
+    // `with_catch_panics(true)`. Every subsystem takes a turn as the exiter because
+    // the arm is reachable from each of them.
+    #[test]
+    fn park_supervisor_holds_a_resolved_handle_without_repolling_it() {
+        let runner = deterministic::Runner::timed(Duration::from_secs(5));
+        runner.start(|ctx| async move {
+            for exiter in 0..5usize {
+                let mut handles: Vec<Handle<()>> = (0..5usize)
+                    .map(|i| {
+                        ctx.with_label("subsystem").spawn(move |_| async move {
+                            if i != exiter {
+                                std::future::pending::<()>().await;
+                            }
+                        })
+                    })
+                    .collect();
+                // Mirror the supervisor: its `select!` polls the handles by `&mut`
+                // and returns the first that resolves.
+                let _ = (&mut handles[exiter]).await;
+
+                let mut park = park_supervisor(handles).boxed();
+                assert!(
+                    (&mut park).now_or_never().is_none(),
+                    "park must not resolve (returning cancels the shutdown token)"
+                );
+            }
+        });
+    }
 
     // Fork-safety: a subsystem exit while the SafetyHalt latch is engaged PARKS
     // (marshal + consensus-RPC stay up, gauge raised) instead of abort-all; a
@@ -1851,6 +1809,14 @@ mod supervisor_tests {
 mod scheme_provider_tests {
     use super::EpochSchemeProvider;
     use crate::beacon::actor::DETERMINISTIC_BOOTSTRAP_EPOCH;
+
+    /// A provider under the production rule. The predicate is what `apply_pin`
+    /// refuses on, so a test that fakes it is not testing the shipped refusal.
+    fn test_provider() -> EpochSchemeProvider {
+        EpochSchemeProvider::new(std::sync::Arc::new(|e: u64| {
+            e >= DETERMINISTIC_BOOTSTRAP_EPOCH
+        }))
+    }
     use commonware_codec::DecodeExt as _;
     use commonware_consensus::types::Epoch;
     use commonware_cryptography::{
@@ -1930,7 +1896,7 @@ mod scheme_provider_tests {
         let ns = fluent_namespace(1);
         let live = Epoch::new(DETERMINISTIC_BOOTSTRAP_EPOCH + 3);
 
-        let provider = EpochSchemeProvider::new();
+        let provider = test_provider();
         provider.register(live, signer);
         assert!(
             !provider.apply_pin(live, key, &ns),
@@ -1938,7 +1904,7 @@ mod scheme_provider_tests {
              `register` refuse that engine's own unpinned (share-less) scheme"
         );
 
-        let provider = EpochSchemeProvider::new();
+        let provider = test_provider();
         provider.register(live, verifier(&bimap, None));
         assert!(provider.apply_pin(live, key, &ns), "the transition itself");
         assert!(
@@ -1948,7 +1914,7 @@ mod scheme_provider_tests {
         );
 
         let pre_beacon = Epoch::new(DETERMINISTIC_BOOTSTRAP_EPOCH - 1);
-        let provider = EpochSchemeProvider::new();
+        let provider = test_provider();
         provider.register(pre_beacon, verifier(&bimap, None));
         assert!(
             !provider.apply_pin(pre_beacon, key, &ns),
@@ -1956,7 +1922,7 @@ mod scheme_provider_tests {
              pre-beacon epochs are legitimately seedless"
         );
 
-        let provider = EpochSchemeProvider::new();
+        let provider = test_provider();
         assert!(
             !provider.apply_pin(live, key, &ns),
             "an unregistered epoch has no scheme to pin"
@@ -1976,7 +1942,7 @@ mod scheme_provider_tests {
         let (_, other_pin) = committee(2);
         assert_ne!(pin, other_pin);
         let epoch = Epoch::new(3);
-        let provider = EpochSchemeProvider::new();
+        let provider = test_provider();
 
         provider.register(epoch, verifier(&bimap, Some(pin)));
         assert!(pinned(&provider, epoch));
@@ -1999,6 +1965,81 @@ mod scheme_provider_tests {
         assert!(!pinned(&provider, fresh));
         provider.register(fresh, verifier(&bimap, Some(pin)));
         assert!(pinned(&provider, fresh));
+    }
+
+    /// The property the live-epoch pin repair rests on: pinning the LIVE epoch's
+    /// verifier entry must not lock its own engine out.
+    ///
+    /// Until the `key_edge` arm re-ran `reconcile_live`, the frontier's entry
+    /// could not become pinned while it was still the frontier, so a signer
+    /// registration for it never met a pinned predecessor. Now it can — and
+    /// `register` refuses a replacement that DROPS a pin, so a signer that built
+    /// an unpinned scheme would be refused and the node would silently fail to
+    /// enter as a signer.
+    ///
+    /// It does not happen, and the reason is structural rather than lucky: on a
+    /// beacon-active epoch `signer_scheme` returns `Signs` only when it holds
+    /// beacon material, and `CombinedScheme::new` derives the pin from that
+    /// material. Reds if either of those two stops being true.
+    #[test]
+    fn a_beacon_active_signer_registers_over_a_pinned_verifier() {
+        use commonware_cryptography::bls12381::primitives::group::Share;
+        use commonware_cryptography::certificate::Scheme as _;
+        use fluentbase_bls::scheme::BeaconKey;
+
+        let mut rng = StdRng::seed_from_u64(0x5164);
+        let mut keypairs = Vec::new();
+        let bimap: BiMap<PeerPubkey, BlsPubkey> = (0..4)
+            .map(|_| {
+                let peer = Ed25519PrivateKey::random(&mut rng).public_key();
+                let bls = ValidatorBlsKeypair::generate(&mut rng);
+                let pk = BlsPubkey::decode(bls.public_bytes().as_slice()).unwrap();
+                keypairs.push(bls);
+                (peer, pk)
+            })
+            .try_collect()
+            .unwrap();
+        let (sharing, shares) =
+            deal_anonymous::<MinSig, N3f1>(&mut rng, Default::default(), NZU32!(4));
+        let ns = fluent_namespace(1);
+        // The share index must equal this member's CONSENSUS participant index —
+        // `CombinedScheme::new` asserts it, and that index comes from the
+        // committee's sorted order, not from the order the keypairs were made in.
+        let seat: usize = build_signer(&ns, bimap.clone(), &keypairs[0], None)
+            .and_then(|s| s.me())
+            .expect("the fixture's member is in its own committee")
+            .into();
+        let material: BeaconKey = (sharing, Some(shares[seat].clone()), ns.clone());
+        let _: &Share = material.1.as_ref().expect("dealt share");
+
+        // The live epoch enters vote-only, then its artifact lands and
+        // `reconcile_live` re-registers the SAME verifier carrying the pin.
+        let epoch = Epoch::new(DETERMINISTIC_BOOTSTRAP_EPOCH + 4);
+        let provider = test_provider();
+        provider.register(epoch, verifier(&bimap, None));
+        assert!(!pinned(&provider, epoch));
+        provider.register(epoch, verifier(&bimap, Some(*material.0.public())));
+        assert!(
+            pinned(&provider, epoch),
+            "the live epoch's entry upgrades in place — this is what leaves it              vote-only admission"
+        );
+
+        // The share heal then completes and the engine registers its signer.
+        let signer = build_signer(&ns, bimap.clone(), &keypairs[0], Some(material))
+            .expect("keypair is a committee member");
+        assert!(
+            signer.is_seed_pinned(),
+            "a beacon-active signer carries its own pin, derived from its material"
+        );
+        provider.register(epoch, signer);
+        assert!(
+            {
+                use commonware_cryptography::certificate::Provider as _;
+                provider.scoped(epoch).expect("registered").me().is_some()
+            },
+            "the signer registration LANDED — the pin the repair applied did not              lock the engine out of its own epoch"
+        );
+        assert!(pinned(&provider, epoch));
     }
 
     fn pinned(provider: &EpochSchemeProvider, epoch: Epoch) -> bool {

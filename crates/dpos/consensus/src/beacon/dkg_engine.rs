@@ -31,23 +31,14 @@
 //! cascades to them; started from an outer context they would outlive it, since
 //! `Handle` has no `Drop`.
 //!
-//! That external abort is a CANCELLATION, and it shapes two things here. What must
-//! survive it is held in the supervisor's own future, so dropping the future
-//! releases it — that is how the ceremony-retention hold
-//! ([`crate::beacon::dkg_agree::AgreementTargets`]) is taken. What CANNOT be done
-//! that way is the partition removal, which is async and therefore unreachable
-//! under cancellation: the epoch manager sweeps the leftovers by partition name
-//! instead (`epoch_manager::prune_agreements`).
+//! That external abort is a CANCELLATION, and what CANNOT be done under it is the
+//! partition removal, which is async and therefore unreachable: the epoch manager
+//! sweeps the leftovers by partition name instead
+//! (`epoch_manager::prune_agreements`).
 
 use commonware_consensus::{
-    simplex::{
-        self,
-        config::ForwardingPolicy,
-        elector::RoundRobin,
-        types::{Activity, Nullification},
-    },
-    types::{Epoch, View, ViewDelta},
-    Reporter, Reporters,
+    simplex::{self, config::ForwardingPolicy, elector::RoundRobin},
+    types::{Epoch, ViewDelta},
 };
 use commonware_cryptography::Sha256;
 use commonware_p2p::{Receiver, Sender};
@@ -63,14 +54,7 @@ use fluentbase_bls::{
 };
 use fluentbase_p2p::NoopBlocker;
 use rand_core::CryptoRngCore;
-use std::{
-    collections::BTreeSet,
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc,
-    },
-    time::Duration,
-};
+use std::{collections::BTreeSet, time::Duration};
 use tracing::{info, warn};
 
 use crate::{
@@ -78,34 +62,20 @@ use crate::{
         actor::{DkgLogIndex, PinnedMailbox, PinnedRequest},
         artifact::{ArtifactStore, CommitteeSource},
         dkg_agree::{
-            note_omissions, AgreedArtifact, AgreementTargets, ConfirmPool, DkgAgree,
-            DkgAgreeConfig, DkgReporter, PinnedLogs, RefusalReason,
+            note_omissions, AgreedArtifact, ConfirmPool, DkgAgree, DkgAgreeConfig, DkgReporter,
+            PinnedLogs,
         },
         dkg_transport::{build_body_engine, register_dkg_subchannel},
         log_resolver::DkgLogKey,
         metrics::BeaconMetrics,
     },
     digest::Digest,
-    outer::{SharedMux, SCHEME_RETENTION_EPOCHS},
-    REPLAY_BUFFER, WRITE_BUFFER,
+    outer::SharedMux,
+    REPLAY_BUFFER, SCHEME_RETENTION_EPOCHS, WRITE_BUFFER,
 };
 
 /// Concurrent certificate-backfill requests, matching the ordering plane's.
 const FETCH_CONCURRENT: usize = 4;
-
-/// Views on one target epoch beyond which the plane is spinning for a reason
-/// nobody predicted.
-///
-/// A NET, not the mechanism that bounds journal growth — that is the coarse
-/// [`AgreementTimeouts`] below. It exists so such a plane is visible in logs long
-/// before it is visible in `ulimit -n`, and it deliberately neither aborts nor
-/// restarts the instance: the agreement has no deadline, and killing a plane that
-/// is merely slow would forfeit the epoch it is converging on.
-const IMPLAUSIBLE_ROUNDS: u64 = 200;
-
-/// Views between repeats of the safety-net warning once it has fired, so a plane
-/// that stays over the threshold for hours does not become the log.
-const IMPLAUSIBLE_ROUNDS_STRIDE: u64 = 100;
 
 /// The six `simplex::Config` timeouts for the agreement instance.
 ///
@@ -254,11 +224,6 @@ pub(crate) struct AgreementConfig<P, R, L> {
     /// be met, with no error anywhere — the plane would simply keep nullifying views.
     pub confirms: ConfirmPool,
     pub metrics: BeaconMetrics,
-    /// The registry that exempts `target_epoch` from the beacon actor's
-    /// height-driven ceremony sweep while this instance runs. Without it the
-    /// ceremony the instance derives against is dropped the moment the chain
-    /// enters the target epoch — see [`AgreementTargets`].
-    pub targets: AgreementTargets,
     /// Where the agreed artifact lands, and what peers are served from.
     ///
     /// Written HERE rather than by whoever reads `out`, so the artifact is
@@ -328,13 +293,6 @@ where
     let scheme = build_signer(&namespace, cfg.committee.clone(), &cfg.keypair, None)
         .ok_or(AgreementError::NotAMember(target_epoch))?;
     let committee: Vec<PeerPubkey> = cfg.committee.keys().iter().cloned().collect();
-    // Taken BEFORE the task starts: between the spawn and the task's first poll the
-    // beacon actor could otherwise sweep the very ceremony this instance is about to
-    // derive against. Moved into the supervisor's future from there, so an external
-    // `abort()` releases it by dropping that future — the ordinary way an instance
-    // ends. An instance that DELIVERS hands it over instead; see the send below.
-    let hold = cfg.targets.hold(target_epoch);
-
     let handle = context
         .with_label("dkg_agreement")
         .spawn(move |ctx| async move {
@@ -355,12 +313,8 @@ where
                     metrics: cfg.metrics.clone(),
                 },
             );
-            let refusal = agree.refusal();
             let (verdict_tx, mut verdict_rx) = tokio::sync::mpsc::channel(1);
-            let reporter = Reporters::from((
-                DkgReporter::new(target_epoch, verdict_tx),
-                RoundWatch::new(target_epoch, refusal),
-            ));
+            let reporter = DkgReporter::new(target_epoch, verdict_tx);
 
             let partition = agreement_partition(target_epoch);
             let engine = simplex::Engine::new(
@@ -413,8 +367,14 @@ where
 
             let artifact = match certificate {
                 Some(certificate) => {
-                    let resolved =
-                        resolve_artifact(&ctx, &bodies, certificate, timeouts.certification).await;
+                    let resolved = resolve_artifact(
+                        &ctx,
+                        &bodies,
+                        &cfg.artifacts,
+                        certificate,
+                        timeouts.certification,
+                    )
+                    .await;
                     if resolved.is_none() {
                         cfg.metrics.dkg_agree_body_lost.inc();
                         warn!(
@@ -464,14 +424,7 @@ where
                 pinned = artifact.0.logs.len(),
                 "dkg agree: pinned dealer-log set agreed, instance torn down"
             );
-            if out.send(artifact).await.is_ok() {
-                // The retention hold outlives this task, because the artifact
-                // outlives it: `send` returns as soon as the artifact is buffered,
-                // and it is still two hops from `DkgActor::on_artifact` — where the
-                // adopting hold is taken. Released by that adopter, so a failed
-                // send leaves nothing parked.
-                cfg.targets.hand_over(hold);
-            }
+            let _ = out.send(artifact).await;
         });
     Ok(handle)
 }
@@ -487,19 +440,33 @@ where
 /// the certificate is replayed from the journal. `subscribe` is the await that the
 /// first case satisfies.
 ///
-/// The second case is why the wait ENDS. No live sender re-broadcasts a decided
-/// proposal, so waiting forever would leave the instance never torn down and its
-/// journal partition never reclaimed — the hang this function exists to remove. A
-/// durable artifact store is what would let a restart recover the value instead of
-/// giving up; until then the target epoch re-agrees on a fresh instance. The bound
-/// is one view's certification budget because that is exactly how long a live view
-/// gives a body to land.
+/// The second case is what [`ArtifactStore`] now answers, and it is tried FIRST:
+/// a restart rehydrates the store from its journal, so the body the empty
+/// in-memory buffer cannot produce is already on disk and the wait is skipped
+/// outright. The store is consulted only for a held artifact whose proposal
+/// digests to the certificate's payload — first-wins per epoch makes a mismatch
+/// unreachable, and treating it as an error here would be a verdict this function
+/// has no committee read to justify, so it simply falls through to the wait.
+///
+/// What remains for the wait is the body that arrived NOWHERE — no store record
+/// and no live sender, since nothing re-broadcasts a decided proposal. That is
+/// why it still ends: waiting forever would leave the instance never torn down
+/// and its journal partition never reclaimed, and the target epoch re-agrees on a
+/// fresh instance instead. The bound is one view's certification budget because
+/// that is exactly how long a live view gives a body to land.
 async fn resolve_artifact<E: Clock>(
     ctx: &E,
     bodies: &crate::beacon::dkg_transport::BodyMailbox,
+    artifacts: &ArtifactStore,
     certificate: commonware_consensus::simplex::types::Finalization<BlsScheme, Digest>,
     wait: Duration,
 ) -> Option<AgreedArtifact> {
+    let epoch = certificate.proposal.round.epoch().get();
+    if let Some(held) = artifacts.get(epoch) {
+        if held.0.digest() == certificate.proposal.payload {
+            return Some((held.0.clone(), certificate));
+        }
+    }
     let body = bodies.subscribe(certificate.proposal.payload).await;
     tokio::select! {
         received = body => received.ok().map(|proposal| (proposal, certificate)),
@@ -546,7 +513,6 @@ pub struct AgreementPlaneConfig<P, R> {
     pub pinned_requests: tokio::sync::mpsc::Sender<PinnedRequest>,
     pub confirms: ConfirmPool,
     pub metrics: BeaconMetrics,
-    pub targets: AgreementTargets,
     pub artifacts: ArtifactStore,
     /// `committee[epoch]` as the on-chain staking read gives it — the same source
     /// the artifact seam verifies against, so an instance and a verifier can never
@@ -720,7 +686,6 @@ where
             pinned: PinnedMailbox::new(target_epoch, cfg.pinned_requests.clone()),
             confirms: cfg.confirms.clone(),
             metrics: cfg.metrics.clone(),
-            targets: cfg.targets.clone(),
             artifacts: cfg.artifacts.clone(),
             mailbox_size: cfg.mailbox_size,
             timeouts: cfg.timeouts,
@@ -759,64 +724,6 @@ where
     }
 }
 
-/// The coarse safety net: a `Reporter` that only ever warns.
-///
-/// It observes CERTIFICATES rather than votes, because a certificate is what
-/// actually advances a view — a plane below quorum does not advance at all and
-/// accrues nothing, so counting anything else would report a stall that is not
-/// happening.
-#[derive(Clone)]
-struct RoundWatch {
-    target_epoch: u64,
-    refusal: RefusalReason,
-    /// The view at which the next warning is due. Shared so the stride survives
-    /// the clones simplex hands its actors.
-    warn_at: Arc<AtomicU64>,
-}
-
-impl RoundWatch {
-    fn new(target_epoch: u64, refusal: RefusalReason) -> Self {
-        Self {
-            target_epoch,
-            refusal,
-            warn_at: Arc::new(AtomicU64::new(IMPLAUSIBLE_ROUNDS)),
-        }
-    }
-}
-
-/// The view a certificate settles, or `None` for activity that does not move one.
-fn certified_view(activity: &Activity<BlsScheme, Digest>) -> Option<View> {
-    match activity {
-        Activity::Notarization(n) | Activity::Certification(n) => Some(n.proposal.round.view()),
-        Activity::Nullification(Nullification { round, .. }) => Some(round.view()),
-        Activity::Finalization(f) => Some(f.proposal.round.view()),
-        _ => None,
-    }
-}
-
-impl Reporter for RoundWatch {
-    type Activity = Activity<BlsScheme, Digest>;
-
-    async fn report(&mut self, activity: Self::Activity) {
-        let Some(view) = certified_view(&activity) else {
-            return;
-        };
-        let view = view.get();
-        if view < self.warn_at.load(Ordering::Relaxed) {
-            return;
-        }
-        self.warn_at
-            .store(view + IMPLAUSIBLE_ROUNDS_STRIDE, Ordering::Relaxed);
-        warn!(
-            epoch = self.target_epoch,
-            view,
-            reason = self.refusal.get().unwrap_or("none recorded"),
-            "dkg agree: the agreement plane has run an implausible number of rounds for one \
-             target epoch — it is still running (the plane has no deadline by design)"
-        );
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -829,8 +736,8 @@ mod tests {
     use commonware_broadcast::Broadcaster as _;
     use commonware_codec::{varint::UInt, DecodeExt as _, EncodeSize as _};
     use commonware_consensus::{
-        simplex::types::{Artifact, Nullify},
-        types::Round,
+        simplex::types::{Artifact, Nullification, Nullify},
+        types::{Round, View},
     };
     use commonware_cryptography::{
         bls12381::{dkg::deal, primitives::sharing::Mode, primitives::variant::MinSig},
@@ -849,7 +756,10 @@ mod tests {
     use fluentbase_bls::{scheme::build_verifier, EpochCommittee};
     use fluentbase_p2p::constants::{self, MAX_COMMITTEE_SIZE};
     use rand_08::{rngs::StdRng, SeedableRng as _};
-    use std::{collections::BTreeMap, sync::RwLock};
+    use std::{
+        collections::BTreeMap,
+        sync::{Arc, RwLock},
+    };
 
     const TARGET: u64 = 6;
     const CHAIN_ID: u64 = 20_994;
@@ -974,10 +884,10 @@ mod tests {
     /// slower clock is a sufficient answer or an evasion, so both are measured.
     ///
     /// Bytes do not bind, by three orders of magnitude: a waiting view writes about
-    /// a fifth of a kilobyte, so the whole partition is still tens of kilobytes at
-    /// the round count [`IMPLAUSIBLE_ROUNDS`] already calls implausible. Open blobs
-    /// are the real budget, and they are a pure function of the view count — which
-    /// is what the coarse timeout buys down.
+    /// a fifth of a kilobyte, so the whole partition is still tens of kilobytes at a
+    /// round count nobody expects a plane to reach. Open blobs are the real budget,
+    /// and they are a pure function of the view count — which is what the coarse
+    /// timeout buys down.
     ///
     /// The certificate carries a FIXED-WIDTH signer bitmap, so its size is set by
     /// the committee and not by how many of it signed: these are bounds on a
@@ -999,12 +909,17 @@ mod tests {
         let (nullify, nullification) = waiting_view_records(CAP, quorum);
         assert_eq!((nullify, nullification), (102, 116));
 
-        let at_the_safety_net = (nullify + nullification) * IMPLAUSIBLE_ROUNDS as usize;
+        // Views on one target epoch beyond which the plane is spinning for a reason
+        // nobody predicted — a yardstick for the byte budget, not a threshold the
+        // code acts on.
+        const SPINNING_ROUNDS: usize = 200;
+        let at_the_yardstick = (nullify + nullification) * SPINNING_ROUNDS;
         assert!(
-            at_the_safety_net < 64 * 1024,
-            "a plane already loud enough to warn about has written {at_the_safety_net} B; \
-             if that ever approaches a real disk budget, bytes have become a second \
-             constraint and the coarse timeout stops being a sufficient answer"
+            at_the_yardstick < 64 * 1024,
+            "a plane spinning past every plausible round count has written \
+             {at_the_yardstick} B; if that ever approaches a real disk budget, bytes \
+             have become a second constraint and the coarse timeout stops being a \
+             sufficient answer"
         );
     }
 
@@ -1012,39 +927,6 @@ mod tests {
     fn partition_is_disjoint_from_the_ordering_plane() {
         assert_eq!(agreement_partition(7), "dkg_epoch_7");
         assert_ne!(agreement_partition(7), format!("consensus_epoch_{}", 7));
-    }
-
-    /// The safety net is loud and inert: it warns on an implausible round count,
-    /// repeats only on the stride, and does nothing else — no abort, no restart.
-    #[test]
-    fn round_watch_warns_on_stride_and_never_acts() {
-        let runner = deterministic::Runner::default();
-        runner.start(|_| async move {
-            let refusal = RefusalReason::default();
-            let watch = RoundWatch::new(TARGET, refusal);
-            let due = || watch.warn_at.load(Ordering::Relaxed);
-            assert_eq!(due(), IMPLAUSIBLE_ROUNDS);
-
-            let mut w = watch.clone();
-            w.report(Activity::Nullification(nullification_at(1))).await;
-            assert_eq!(due(), IMPLAUSIBLE_ROUNDS, "warned below the threshold");
-
-            w.report(Activity::Nullification(nullification_at(
-                IMPLAUSIBLE_ROUNDS,
-            )))
-            .await;
-            assert_eq!(due(), IMPLAUSIBLE_ROUNDS + IMPLAUSIBLE_ROUNDS_STRIDE);
-
-            w.report(Activity::Nullification(nullification_at(
-                IMPLAUSIBLE_ROUNDS + 1,
-            )))
-            .await;
-            assert_eq!(
-                due(),
-                IMPLAUSIBLE_ROUNDS + IMPLAUSIBLE_ROUNDS_STRIDE,
-                "warned again inside the stride"
-            );
-        });
     }
 
     fn signing_set(seed: u64, n: usize) -> (Vec<Ed25519PrivateKey>, Vec<ValidatorBlsKeypair>) {
@@ -1073,31 +955,6 @@ mod tests {
             })
             .try_collect()
             .expect("unique committee")
-    }
-
-    fn nullification_at(view: u64) -> Nullification<BlsScheme> {
-        let (peers, bls) = signing_set(77, N);
-        let bimap = bimap_of(&peers, &bls);
-        let ns = dkg_namespace(&fluent_namespace(CHAIN_ID));
-        let round = Round::new(Epoch::new(TARGET), View::new(view));
-        let signers: Vec<BlsScheme> = bls
-            .iter()
-            .map(|kp| build_signer(&ns, bimap.clone(), kp, None).expect("member"))
-            .collect();
-        let nullifies: Vec<_> = signers
-            .iter()
-            .take(3)
-            .map(|s| {
-                commonware_consensus::simplex::types::Nullify::sign::<Digest>(s, round)
-                    .expect("sign")
-            })
-            .collect();
-        Nullification::from_nullifies(
-            &build_verifier(&ns, bimap, None, None),
-            nullifies.iter(),
-            &Sequential,
-        )
-        .expect("quorum")
     }
 
     /// The two shapes a certificate can arrive in, and the reason the reporter no
@@ -1154,9 +1011,15 @@ mod tests {
 
             // NO BODY: the wait ends and the supervisor gets to tear down.
             assert!(
-                resolve_artifact(&context, &bodies, certificate.clone(), WAIT)
-                    .await
-                    .is_none(),
+                resolve_artifact(
+                    &context,
+                    &bodies,
+                    &ArtifactStore::new(),
+                    certificate.clone(),
+                    WAIT
+                )
+                .await
+                .is_none(),
                 "a certificate with no body must not park the teardown forever"
             );
 
@@ -1178,10 +1041,61 @@ mod tests {
                         );
                     })
             };
-            let (artifact, _) =
-                tokio::join!(resolve_artifact(&context, &bodies, certificate, WAIT), late);
+            let empty = ArtifactStore::new();
+            let (artifact, _) = tokio::join!(
+                resolve_artifact(&context, &bodies, &empty, certificate, WAIT),
+                late
+            );
             let (delivered, _cert) = artifact.expect("a late body must still be paired");
             assert_eq!(delivered, proposal);
+        });
+    }
+
+    /// The post-restart shape, once the artifact store is durable: the certificate
+    /// is replayed from the journal and the in-memory body buffer is empty, but the
+    /// rehydrated artifact answers the pairing outright. The body engine here is
+    /// built and NEVER started, so the only way to reach `subscribe` is to hang on
+    /// it until the wait expires — which is what the clock assertion catches.
+    #[test]
+    fn a_rehydrated_artifact_short_circuits_the_wait() {
+        let runner = deterministic::Runner::timed(Duration::from_secs(600));
+        runner.start(|context| async move {
+            let mut rng = StdRng::seed_from_u64(44);
+            let me = Ed25519PrivateKey::random(&mut rng).public_key();
+            let (network, oracle) = Network::new(
+                context.with_label("network"),
+                SimConfig {
+                    max_size: 1024 * 1024,
+                    disconnect_on_block: false,
+                    tracked_peer_sets: NZUsize!(4),
+                },
+            );
+            network.start();
+            let (_engine, bodies) = crate::beacon::dkg_transport::build_body_engine(
+                context.with_label("bodies"),
+                me,
+                oracle.manager(),
+            );
+
+            let proposal = crate::beacon::dkg_agree::DkgProposal {
+                target_epoch: TARGET,
+                logs: (0..3u8).map(|i| (i, B256::repeat_byte(0x90 + i))).collect(),
+                group_key: group_key(44),
+                confirms: Vec::new(),
+            };
+            let certificate = finalization_over(proposal.digest());
+            let store = ArtifactStore::new();
+            assert!(store.insert(TARGET, (proposal.clone(), certificate.clone())));
+
+            let before = context.current();
+            let artifact = resolve_artifact(&context, &bodies, &store, certificate, WAIT).await;
+            let (delivered, _cert) = artifact.expect("a held artifact must pair without the wait");
+            assert_eq!(delivered, proposal);
+            assert_eq!(
+                context.current(),
+                before,
+                "the store answered, so not one tick of the certification budget may be spent"
+            );
         });
     }
 
@@ -1229,9 +1143,6 @@ mod tests {
         key: DkgOutcome,
         /// `committee[TARGET]` as a standalone verifier would read it off chain.
         committee: EpochCommittee,
-        /// SHARED by all four members, so a test reads the cohort's retention as
-        /// one registry instead of four.
-        targets: AgreementTargets,
     }
 
     impl Cohort {
@@ -1346,7 +1257,6 @@ mod tests {
         let pool = ConfirmPool::new(b"FLUENT_TEST_COHORT");
         let stores: Vec<ArtifactStore> = (0..N).map(|_| ArtifactStore::new()).collect();
         let (out_tx, out_rx) = tokio::sync::mpsc::channel(N);
-        let targets = AgreementTargets::default();
         let mut handles = Vec::new();
         for (i, mut nets) in channels.into_iter().enumerate() {
             let bodies = nets.pop().expect("body channel");
@@ -1375,7 +1285,6 @@ mod tests {
                     pinned: FixedPinned(if silent { None } else { Some(key.clone()) }),
                     confirms: pool.clone(),
                     metrics: BeaconMetrics::default(),
-                    targets: targets.clone(),
                     artifacts: stores[i].clone(),
                     mailbox_size: 64,
                     // The coarse production set is asserted separately; here the
@@ -1413,7 +1322,6 @@ mod tests {
             members,
             key,
             committee: EpochCommittee::from_unverified(TARGET, bimap),
-            targets,
         }
     }
 
@@ -1507,7 +1415,6 @@ mod tests {
                     pinned_requests: pinned_tx,
                     confirms: ConfirmPool::new(b"FLUENT_TEST_LAUNCHER"),
                     metrics: BeaconMetrics::default(),
-                    targets: AgreementTargets::default(),
                     artifacts: ArtifactStore::new(),
                     committee,
                     mailbox_size: 64,
@@ -1628,33 +1535,6 @@ mod tests {
                     "the agreement journal partition survived the teardown"
                 );
             }
-        });
-    }
-
-    /// The ceremony-retention hold has to outlive the instance that took it.
-    ///
-    /// The supervisor's own hold dies with its future, and that future's last act is
-    /// a `send` which returns as soon as the artifact is buffered — two hops short
-    /// of `DkgActor::on_artifact`, where the adopting hold is taken. If the hold
-    /// ended there, an `on_height` tick at or past the boundary would sweep the very
-    /// ceremony the artifact exists to finalize over, and the node would stay
-    /// shareless for the epoch until something else healed it.
-    #[test]
-    fn the_retention_hold_outlives_the_instance_that_delivered() {
-        let runner = deterministic::Runner::timed(Duration::from_secs(3600));
-        runner.start(|context| async move {
-            let mut cohort = start_cohort(&context, 5).await;
-            cohort.confirm(0..entry_bar(N, View::new(1)));
-            cohort.out_rx.recv().await.expect("an artifact");
-
-            for handle in cohort.handles {
-                handle.await.expect("supervisor returned cleanly");
-            }
-            assert!(
-                cohort.targets.live().contains(&TARGET),
-                "every instance released the target as it ended, so the ceremony can be swept \
-                 out from under an artifact nothing has adopted yet"
-            );
         });
     }
 

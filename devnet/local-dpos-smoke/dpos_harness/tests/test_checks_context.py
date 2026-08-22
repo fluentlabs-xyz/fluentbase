@@ -187,7 +187,7 @@ def _ids(methods):
 def test_classification_matches_the_documented_table():
     chain, sim = _detectors("ChainBattery"), _detectors("Battery")
     assert chain & sim == set()
-    assert len(chain) == 26 and len(sim) == 4, (
+    assert len(chain) == 27 and len(sim) == 4, (
         f"detector classification moved: {len(chain)} chain-only / {len(sim)} sim-coupled. That "
         f"is the deliverable of this split — update the count here AND the table in battery.py.")
     assert _ids(chain) == _documented("CHAIN-ONLY"), "battery.py's CHAIN-ONLY table drifted"

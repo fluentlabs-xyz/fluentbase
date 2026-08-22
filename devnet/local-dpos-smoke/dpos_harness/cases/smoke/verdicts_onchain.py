@@ -528,25 +528,65 @@ EXIT_LOG = "OuterEngine exited cleanly"               # node/dpos.rs:539, the co
 #: default 32 the pure-park window (`gap < re_jump_threshold`) is too shallow to force a
 #: multi-block derive-walk at all, so this is the assertion's premise, not a preference.
 #:
-#: ═══ DO NOT RAISE THIS TO 128. IT DOES NOT BOOT. ═══════════════════════════════════════════
+#: ═══ THE "128 DOES NOT BOOT" PROHIBITION THAT USED TO LIVE HERE IS WITHDRAWN ═══════════════
 #:
-#: The interval IS the re-jump ceiling (`min(JUMP_THRESHOLD=1024, epochBlockInterval)`,
-#: dpos.rs:2543 validator / :3237 follower), so raising it is the obvious way to buy the
-#: derive-walk more headroom — see `catchup_gap_ceiling`. It was tried, live, on 2026-07-31, and
-#: the stack never reached the case at all:
+#: It said, in capitals, that 128 was a STRUCTURAL REJECT and that "no budget anywhere makes it
+#: pass". Both halves were wrong, and the error was expensive: the prohibition is what forced
+#: `CATCHUP_GAP` down to 28 with four blocks of headroom (see its comment) instead of buying the
+#: headroom from the interval, and it stands recorded in `WEIGHTED_EPOCH_INTERVAL` and in two
+#: `asserts_onchain` messages as a product bug that was never one.
+#:
+#: WHAT WAS ACTUALLY OBSERVED on 2026-07-31, at interval 128 / activation 256, is real and is
+#: kept verbatim:
 #:
 #:     waiting for the sequencer to finalize >= dposActivationBlock=256 (relative epoch 0)
 #:       sequencer finalized 256 >= activation 256; proceeding to swap
 #:     FAIL: DPoS chain did not converge past anchor 0x100
 #:
-#: The chain produced ZERO blocks past the anchor. validator-0 logged `dpos: proposing order
-#: block height=257` and every view from 4 to 115 answered `proposal failed verification` —
-#: including on the proposer's OWN node — for the full 120 s converge budget, at EPOCH 0, before
-#: any DKG and before any of this case's logic ran. It is a structural reject, not a timeout: no
-#: budget anywhere makes it pass. Intervals 32 and 64 both reached `DPoS stack live` on the SAME
-#: build in the same run (`smoke-vrf-dkg-durability`, `smoke-vrf-dkg-halt`), so the interval is
-#: the variable. The rejection itself is a real product finding with its own ticket; it is not
-#: this case's to carry. The lever here is the GAP instead — see `CATCHUP_GAP`.
+#: The chain produced ZERO blocks past the anchor; validator-0 logged `dpos: proposing order
+#: block height=257` and every view from 4 to 115 answered `proposal failed verification`,
+#: including on the proposer's OWN node.
+#:
+#: WHAT IT WAS: a CLOCK-DRIFT TIMEOUT, and the drift is the harness's own doing. The static
+#: sequencer used to pace at 250 ms while a block's timestamp is `max(parent + 1, now)`
+#: (crates/node/src/payload.rs:31-34) off a genesis timestamp of 0 — so chain time gained 0.75 s
+#: on the wall clock per block and stood ~0.75 × (activation − 1) seconds in the future at the
+#: swap. Post-swap the proposer stamps `max(now, parent + 1)` (application.rs:741-746) and
+#: EVERY node, its own included, rejects a block more than
+#: `TIMESTAMP_FUTURE_TOLERANCE_SECS = 1` ahead of its clock (application.rs:104, enforced :631).
+#: So the chain cannot produce a block until real time catches the drift up, and the numbers are
+#: exactly the observed behaviour: ~47 s at activation 64, ~95 s at 128, ~191 s at 256, against
+#: a `DPOS_CONVERGE_S` of 120. That is also why intervals 32 and 64 came up on the same build in
+#: the same run — 47 s and 95 s fit under 120, 191 s does not.
+#:
+#: THE INTERVAL WAS NEVER THE VARIABLE — the ACTIVATION HEIGHT was, and the interval only sets
+#: it (`2 * interval`). A probe on 2026-08-20, STILL ON THE 250 ms SEQUENCER, one pinned image:
+#:
+#:     interval 128 / activation 256, converge 120  ->  did not come up
+#:     interval  64 / activation 256, converge 120  ->  did not come up   (interval exonerated)
+#:     interval 128 / activation 128, converge 120  ->  up in 137 s        (height exonerates it)
+#:     interval 128 / activation 256, converge 400  ->  up in 263 s        (it was a timeout)
+#:
+#: WHAT FIXED IT: the sequencer now paces at 1 blk/s (`docker-compose.yml`, matching
+#: `docker-compose.production-path.yml:133` and the sim/soak pair), so chain time tracks the wall
+#: clock and the drift is ZERO at every activation height. `_wait_activation` was made
+#: chain-paced in the same change, because a 1 s cadence turns the old 180 s wall-clock
+#: activation budget into a ~180-block ceiling — the same trap one interval further out.
+#:
+#: CONFIRMED LIVE on the fixed stand, 2026-08-20, one pinned image, `DPOS_CONVERGE_S` left at
+#: its unchanged 120 — the budget the old note said "no budget anywhere" could rescue:
+#:
+#:     interval  32 / activation  64  ->  up in 343 s, +29 blocks in the 30 s past the anchor
+#:     interval 128 / activation 256  ->  up in 287 s, +30 blocks in the 30 s past the anchor
+#:
+#: Both reported a tip age of 0 s — chain time level with the wall clock, where the 250 ms
+#: sequencer would have left it 47 s and 191 s in the future. (The 343 s at the SMALLER interval
+#: is not a contradiction: that arm paid for the one-time image build.)
+#:
+#: SO 128 IS AVAILABLE NOW, and this constant stays at 64 only because nothing has re-tuned the
+#: case for it: `CATCHUP_GAP` is measured against `catchup_gap_ceiling(64, 3000) = 32` and every
+#: budget below is sized off `2 * interval = 128` (see `CATCHUP_DKG_WAIT_S`). Raising the
+#: interval means re-deriving the gap and re-running the case live — not editing a literal.
 CATCHUP_EPOCH_INTERVAL = 64
 #: `:72-74` — victim, gap and the optional deep cycle. validator-2 is a SPOKE that pins the hub
 #: as a trusted peer, which is the prod-observed victim shape.
@@ -588,8 +628,12 @@ CATCHUP_EPOCH_INTERVAL = 64
 #: WHAT WOULD REOPEN THIS: a re-jump landing at the default (the model's failure mode, and the
 #: thing 4 blocks of headroom is thin against), or a park count that drops back toward zero. Either
 #: means the margin really is too thin, and the answer then is a SMALLER GAP at this delay —
-#: `catchup_gap_ceiling(64, 3000)` = 32 leaves room to come down, and the interval cannot go up
-#: (it does not boot).
+#: `catchup_gap_ceiling(64, 3000)` = 32 leaves room to come down. RAISING THE INTERVAL IS ALSO AN
+#: OPTION AGAIN as of 2026-08-20 — the "128 does not boot" finding it was closed against was a
+#: sequencer clock-drift timeout in the STAND, now fixed (`CATCHUP_EPOCH_INTERVAL`) — but it is a
+#: bigger change than it looks: the gap must be re-derived against `catchup_gap_ceiling(128,
+#: 3000)` and every budget sized off `2 * interval` moved with it, and the result is only worth
+#: anything if the case is re-run live. Nothing here may move on the argument alone.
 CATCHUP_VICTIM = "validator-2"
 CATCHUP_GAP = 28
 #: `:76` — the effective re-jump gate is `min(JUMP_THRESHOLD=1024, epochBlockInterval)`
@@ -725,7 +769,8 @@ def catchup_gap_ceiling(interval, delay_ms=CATCHUP_NETEM_DELAY_MS,
     exactly 7 while `ceil(64/20) = 4` rounds gives 9. `test_smoke_onchain_verdicts.py` pins the 57.
 
     At interval 64 / delay 1000 ms the ceiling is 46; at 64 / 3000 ms it is 32; at 128 / 1000
-    ms it would be 104, but 128 does not boot (see `CATCHUP_EPOCH_INTERVAL`). The literal 52
+    ms it would be 104 — reachable now that the stand's interval ceiling is gone (see
+    `CATCHUP_EPOCH_INTERVAL`), though this case has not been re-tuned for it. The literal 52
     this constant used to be is refused by both (`effective(52, 1000)` = 71, past the threshold).
 
     WHERE IT IS NOW MORE PERMISSIVE, stated plainly: this is a FIRST-ORDER fixed point, not an
@@ -1121,10 +1166,12 @@ HEAVY_STAKE_MULT = 9
 #: ~17% that at least one of the three does — a coin-flip gate. 64 views bring those to 0.37% and
 #: ~1.1%.
 #:
-#: 128 WOULD BE BETTER AND IS NOT AVAILABLE: it is proven not to boot — see
-#: `CATCHUP_EPOCH_INTERVAL`, where the chain produced zero blocks past the anchor at that interval
-#: and every view answered `proposal failed verification`. 64 is the ceiling on the INTERVAL, so
-#: the sample is bought in EPOCHS instead — see `WEIGHTED_EPOCHS`.
+#: 128 WOULD BE BETTER AND WAS BELIEVED UNAVAILABLE: the "it does not boot" finding this used to
+#: cite is WITHDRAWN — it was a clock-drift timeout in the stand's own sequencer pacing, fixed on
+#: 2026-08-20, and `CATCHUP_EPOCH_INTERVAL` carries the whole record. So 128 is reachable, and
+#: this constant stays at 64 only because the case has not been re-run on it: `WEIGHTED_EPOCHS`
+#: already buys the same sample in epochs, at a runtime cost 128 would roughly halve. A live
+#: re-run is what would settle it, not this comment.
 WEIGHTED_EPOCH_INTERVAL = 64
 
 #: How many consecutive epochs the measurement spans. TWO, because one is not enough sample and

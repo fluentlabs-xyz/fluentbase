@@ -186,6 +186,315 @@ def evaluate_tamper_rejected(logs: str):
                    "REJECTED rather than never delivered"), ""
 
 
+# ══ smoke-cert-follow phase 4: the follower obtains PK_epoch (FLU-1167) ═══════════════
+
+#: The phase-4 services (`docker-compose.cert-follow.yml`). The proxy relays VERBATIM until it is
+#: armed; the follower behind it therefore follows normally first, which is what lets it obtain
+#: the key at all.
+SEED_MITM_SERVICE = "cert-mitm-seed"
+SEED_TAMPER_SERVICE = "cert-follower-seed"
+#: The file whose EXISTENCE arms the seed-slot clearing, on the proxy's tmpfs.
+SEED_ARM_FILE = "/armed/arm"
+
+#: `beacon/follower.rs` — the INFO a follower writes ONCE per epoch key it adopted, after
+#: verifying the upstream's artifact against `committee[epoch]` read off its OWN chain state.
+#:
+#: THIS IS THE ADOPTION WITNESS, and it stays the load-bearing one. It is a POSITIVE witness
+#: rather than an absence: the follower prints it only after `verify_artifact_for_epoch` accepted
+#: the upstream's artifact against the committee this node read from its OWN chain state, so a
+#: lying upstream cannot produce it.
+#:
+#: `CF_ADOPTED_FAMILY` below counts the same event and is read BESIDE it, not instead of it. The
+#: counter lives on the COMMONWARE registry, which a `--cert-follow` node serves only under a
+#: devnet build plus a `--dpos.metrics-port` the compose overlay has to pass; the log line needs
+#: neither. A witness with two devnet preconditions does not get to be the one a verdict rests on.
+CF_KEY_LINE = "cert-follow: PK_epoch obtained and verified against committee[epoch]"
+
+#: `beacon/metrics.rs` — the SAME adoption event as `CF_KEY_LINE`, counted. Registered under this
+#: name; the scrape line doubles the suffix (`nodes.counter_sample`), which is why no caller
+#: hand-writes the sample name.
+#:
+#: It is read as CORROBORATION, and the split between the two witnesses is the point: the log line
+#: says the follower's own beacon announced the adoption, the counter says the family that only a
+#: follower registers moved on the endpoint that only a follower now serves. The second is what
+#: went from unscrapeable to scrapeable when `spawn_devnet_metrics` moved into `run_node_stack`,
+#: ahead of the validator/follower branch, and the compose overlay caught up.
+CF_ADOPTED_FAMILY = "dpos_follower_artifact_adopted_total"
+#: Its sibling — the upstream had nothing to give. Printed, never asserted: a miss before the
+#: first hit is ordinary (the follower can ask while its own executor is still short of the block
+#: that committed `committee[epoch]`), so a bound on it would be a bound on timing, not on
+#: correctness.
+CF_MISS_FAMILY = "dpos_follower_artifact_miss_total"
+
+#: `cert_inlet.rs` — incremented for every certificate of a beacon-active epoch admitted while
+#: the epoch's scheme is UNPINNED, i.e. with the multisig quorum checked and the seed slot not.
+#: The acceptance criterion for FLU-1167 is that this STOPS moving once the key lands.
+CF_VOTE_ONLY_FAMILY = "dpos_cert_vote_only_admissions_total"
+
+#: How long the follower gets to obtain `PK_epoch` after it has aligned. Generous: the fetch is
+#: off-path, rate-limited to one upstream round-trip per epoch per 5 s, and the follower asks
+#: only for the epoch that MINTED the key a live epoch verifies under — a stable epoch mints
+#: nothing, so on a chain sitting inside a long stable epoch the ask is for an older epoch and the
+#: upstream must still hold it.
+CF_KEY_S = 180
+#: Slower than the other polls on purpose: each iteration reads a follower's WHOLE log (see
+#: `SEED_LOG_TAIL`), which is megabytes by phase 4.
+CF_KEY_POLL_S = 5
+#: The window over which the vote-only counter must not move. Same shape as `TAMPER_OBSERVE_S`
+#: and the same warning applies: THE WINDOW IS THE ASSERTION. At ~1 blk/s an unpinned follower
+#: takes one vote-only admission per second, so 30 s of flatness is 30 admissions that did not
+#: happen.
+CF_VOTE_ONLY_WINDOW_S = 30
+
+#: `scripts/cert-mitm-proxy.py` — the proxy's own three witnesses. It counts what it rewrote and
+#: prints the first rewrite's before/after, which is what makes "the tamper landed" an assertion
+#: rather than an assumption (the `tear_journal_to_torn` readback rule, applied to a proxy).
+SEED_ARMED_LINE = "cert-mitm: ARMED"
+SEED_CLEARED_LINE = "cert-mitm: seed slot CLEARED"
+#: How long the proxy gets to notice the arm file and clear its first certificate.
+SEED_ARM_S = 90
+SEED_ARM_POLL_S = 3
+#: The post-arm observation window. Again: THE WINDOW IS THE ASSERTION.
+SEED_OBSERVE_S = 45
+#: The fewest refusals the window must contain. At ~1 certificate per second across
+#: `SEED_OBSERVE_S` the live runs show forty-odd; this floor is low enough that a slow host cannot
+#: trip it and high enough that a stream which simply stopped cannot pass. It replaces a
+#: "finalized did not advance" reading that measured the EL transport rather than the cert check —
+#: see `evaluate_seed_tamper_refused_every_cert`.
+MIN_SEED_REJECTS = 5
+
+#: `cert_inlet.rs` — the refusal a PINNED scheme writes when a certificate's seed slot does not
+#: verify (here: is absent on a beacon-active epoch, the `None => false` arm of
+#: `combined_scheme.rs`'s `verify_certificate`).
+#:
+#: NOTE how this differs from `TAMPER_REJECT_LINES`, and why the two phases cannot share a
+#: constant: phase 3's nibble flip breaks the G1 point so the certificate fails DECODE and never
+#: reaches `CertInlet::ingest` at all. Phase 4's cleared slot decodes perfectly and fails at
+#: VERIFY, which is the only arm that can prove the follower is using `PK_epoch`.
+SEED_REJECT_LINE = "cert-inlet: BLS verify FAILED"
+#: How deep the phase-4 greps read — `None` is the WHOLE log, and it has to be.
+#:
+#: `CF_KEY_LINE` is written ONCE, in the follower's first seconds. Both followers now run for the
+#: better part of ten minutes before phase 4b reads them, at roughly six log lines per block, so
+#: any bounded tail scrolls that line away long before it is looked for. A 400-line tail turned a
+#: healthy, keyed, block-deriving follower into "it did not obtain PK_epoch" on a live run — a
+#: presence grep over a growing log cannot be depth-limited.
+SEED_LOG_TAIL = None
+#: …and how deep the REFUSAL COUNT reads. BOUNDED, unlike the presence grep above, and for the
+#: opposite reason: it is a DELTA across one window, both of whose ends are recent — the baseline
+#: is taken at the arming and the refusals arrive after it. A bound keeps the read off a
+#: ten-minute log while still covering far more than the window can contain (~1 refusal per second
+#: over `SEED_OBSERVE_S`).
+SEED_COUNT_TAIL = 4000
+
+
+def evaluate_key_obtained(logs: str, service: str):
+    """The POSITIVE half of FLU-1167: the follower says it holds `PK_epoch`.
+
+    A POSITIVE witness rather than an absence: the follower prints it only after
+    `verify_artifact_for_epoch` accepted the upstream's artifact against the committee this node
+    read from its own chain state, so a lying upstream cannot produce it. `evaluate_artifact_
+    adopted_counter` below reads the same event off the follower's commonware registry; see
+    `CF_KEY_LINE` for why this one, and not that one, is the witness the verdict rests on.
+
+    Returns the matched line third, the shape `evaluate_tamper_rejected` uses, because the case
+    tears its stack down and the container log is gone before anyone can read it afterwards."""
+    for line in (logs or "").splitlines():
+        if CF_KEY_LINE in line:
+            return True, "", line.strip()
+    return False, (f"{service} never logged {CF_KEY_LINE!r} — it did not obtain PK_epoch over its "
+                   "cert upstream, so its certificates are still taking vote-only admission "
+                   "(FLU-1167)"), ""
+
+
+def evaluate_artifact_adopted_counter(text: str, service: str):
+    """…and the SECOND witness to the same adoption, off a different endpoint.
+
+    Added because the log line, on its own, is a claim about one `info!` in one function. The
+    counter is incremented on the line above that `info!` and rendered by a registry the follower
+    only serves at all under `--dpos.metrics-port` — so agreement between them says the adoption
+    path ran end to end on a node whose beacon really is a follower beacon, not merely that a
+    string was printed. It does NOT replace the log check: the endpoint is devnet-only, and a
+    verdict that can be silenced by a missing build feature is not one to hang FLU-1167 on.
+
+    An UNREAD scrape fails, for `evaluate_vote_only_flat`'s reason and with the opposite polarity
+    to that one's trap: here `""` from an empty scrape and `0` from a real zero would both read as
+    "not adopted", and only one of them is evidence. So the emptiness of the whole text is checked
+    first and reported as its own failure.
+
+    Returns the two counts third, as a printable pair — the stack is torn down immediately after
+    and the endpoint is gone with it."""
+    if not (text or "").strip():
+        return False, (f"{service}'s commonware registry (:{topology.CONSENSUS_METRICS_PORT}) did "
+                       f"not answer — {CF_ADOPTED_FAMILY} was never read, so it is no witness "
+                       "either way (is `--dpos.metrics-port` on the follower, and is the binary "
+                       "built with `dpos-devnet-metrics`?)"), ""
+    adopted = nodes.gauge_val(text, nodes.counter_sample(CF_ADOPTED_FAMILY))
+    miss = nodes.gauge_val(text, nodes.counter_sample(CF_MISS_FAMILY))
+    pair = f"{CF_ADOPTED_FAMILY}={adopted or '<absent>'} {CF_MISS_FAMILY}={miss or '<absent>'}"
+    if not adopted:
+        return False, (f"{service} answered on the commonware registry but carries no "
+                       f"{CF_ADOPTED_FAMILY} sample — the follower beacon never registered its "
+                       f"families, so nothing on this node adopted an epoch artifact ({pair})"), ""
+    if _counter(adopted) < 1:
+        return False, (f"{service} logged the adoption but {CF_ADOPTED_FAMILY} is still 0 — the "
+                       f"log line and the counter disagree about the same event ({pair})"), ""
+    return True, "", pair
+
+
+def evaluate_vote_only_flat(before, after, scrape_ok: bool, window=CF_VOTE_ONLY_WINDOW_S):
+    """…and the consequence: vote-only admissions STOP.
+
+    Three-valued on purpose, and the third value is the trap. `""` from the scrape means EITHER
+    "metrics-rs never registered this family because it was never incremented" (a real zero, and a
+    pass) OR "the endpoint did not answer" (nothing was measured, and a pass would be a lie). The
+    caller reads the whole scrape once to tell them apart and passes the verdict here as
+    `scrape_ok`; an unread endpoint fails.
+
+    The bound is `after == before`, not `after <= before + slack`: the counter is monotone and the
+    claim is that the epoch left vote-only admission, which is exact. At ~1 blk/s an unpinned
+    follower takes one admission per second, so a single increment across the window is a follower
+    still verifying blind."""
+    if not scrape_ok:
+        return False, ("the follower's reth metrics endpoint did not answer — "
+                       f"{CF_VOTE_ONLY_FAMILY} was never read, so its flatness is not evidence "
+                       "that vote-only admission stopped (is `--metrics` set on the follower?)")
+    b, a = _counter(before), _counter(after)
+    if a == b:
+        return True, ""
+    return False, (f"{CF_VOTE_ONLY_FAMILY} grew {b} -> {a} over {window}s AFTER the follower "
+                   "obtained PK_epoch — certificates are still being admitted with the seed slot "
+                   "unchecked (the pin did not reach the cert-inlet)")
+
+
+def _counter(raw) -> int:
+    """A metrics-rs counter sample as an int; an absent family (`""`) is a real ZERO.
+
+    Absent-means-zero is safe HERE and only here, because `evaluate_vote_only_flat` has already
+    established that the scrape itself answered. The same coercion applied to an unread endpoint
+    is what makes a flat-counter verdict pass forever."""
+    text = str(raw or "").strip()
+    if not text:
+        return 0
+    try:
+        return int(float(text))
+    except ValueError:
+        return 0
+
+
+def evaluate_seed_follower_caught_up(aligned, floor):
+    """THE GATE THAT SEPARATES A REAL NEGATIVE FROM A GREEN-LOOKING ONE, and it is not the key
+    gate. Holding `PK_epoch` says the follower CAN reject; being caught up says a rejection is the
+    only thing that can stop it.
+
+    A follower started last, several hundred blocks behind, back-fills — and certificates that
+    reached it BEFORE the proxy was armed are ones the proxy could not have touched. It keeps
+    applying those for as long as the backlog lasts, which looks exactly like a follower that
+    ignored the seed slot. Live evidence, same build and same proxy, minutes apart:
+
+      * armed ~370 blocks behind → advanced 229 → 268 across the window, phase read it as
+        "the seed slot is not being checked";
+      * armed caught up          → froze on the spot at 124, one `cert-inlet: BLS verify FAILED`
+        per arriving height, `dpos_cert_vote_only_admissions_total` flat at 1.
+
+    So the backlog, not the product, produced the failure — and without this gate the phase's
+    verdict is a function of how long the three preceding phases happened to take."""
+    if aligned:
+        return True, ""
+    return False, (f"cert-follower-seed did not catch up with v0 past {floor} before the arming — "
+                   "it would then advance on certificates delivered BEFORE the proxy was armed, "
+                   "which the proxy never touched, and the negative below would read a backlog "
+                   "as a follower that ignores the seed slot")
+
+
+def evaluate_seed_tamper_landed(mitm_logs: str):
+    """THE TAMPER MUST WITNESS ITS OWN TAMPERING before anything concludes from a rejection.
+
+    Same rule as `tear_journal_to_torn`'s readback: a proxy that cleared nothing produces exactly
+    the reading a follower that rejected nothing produces — a still follower and a quiet log — and
+    the case would report that the seed check is load-bearing on the strength of an untouched
+    certificate stream. The proxy therefore re-slices the string it is about to send and prints
+    the first rewrite's before/after; this is that print."""
+    text = mitm_logs or ""
+    if SEED_ARMED_LINE not in text:
+        return False, (f"{SEED_MITM_SERVICE} never logged {SEED_ARMED_LINE!r} — the arm file did "
+                       "not reach it, so it relayed every certificate verbatim and the negative "
+                       "below would pass over an untampered stream")
+    if SEED_CLEARED_LINE not in text:
+        return False, (f"{SEED_MITM_SERVICE} armed but never logged {SEED_CLEARED_LINE!r} — it "
+                       "cleared NO seed slot (every certificate was already seedless, or the "
+                       "trailing flag+slot offsets no longer match the wire format)")
+    return True, ""
+
+
+def seed_reject_count(logs: str) -> int:
+    """How many certificates this follower refused at the cert inlet's BLS verify."""
+    return sum(1 for ln in (logs or "").splitlines() if SEED_REJECT_LINE in ln)
+
+
+def evaluate_seed_tamper_refused_every_cert(before, after, want=MIN_SEED_REJECTS,
+                                            window=SEED_OBSERVE_S):
+    """The negative, measured on the REFUSALS themselves and not on the follower's height.
+
+    WHY NOT THE HEIGHT, WHICH IS WHAT THIS PHASE ORIGINALLY MEASURED. On this stand a follower's
+    `finalized` has a SECOND source, and a poisoned certificate stream is exactly what turns it
+    on. Live, with every certificate correctly refused:
+
+        cert-inlet: BLS verify FAILED; skipping …            (×N, one per delivered cert)
+        cert-inlet: 3 consecutive upstream data faults; rotating to the next configured upstream
+        cold-start jump: EL-sync fast-forwarded the anchor from=241 to=271 floor=268
+        steady-state re-jump landed; re-seeding executor + marshal floor landing_h=271 floor=268
+
+    The follower rejects every tampered certificate, counts the rejections as upstream data
+    faults, rotates (to its single configured upstream), and meanwhile its EL keeps syncing blocks
+    over devp2p from the validator named in `--trusted-peers`. The steady-state re-jump then
+    fast-forwards the anchor onto that EL-synced tip, so `finalized` advances 238 → 271 without a
+    single certificate having been accepted. Reading that as "the seed slot is not being checked"
+    is reading the EL transport and calling it the cert check.
+
+    Phase 3 gets away with the height reading only because ITS follower never had a valid chain to
+    jump onto — it sits at the anchor with `finalized` unset, so there is nothing to fast-forward
+    to. That is a property of phase 3's setup, not a property of followers.
+
+    So the refusals are the measurement. A GROWING count over the window proves two things at
+    once that the height proved neither of: certificates were still being delivered, and every one
+    of them was refused. Paired with `evaluate_seed_vote_only_flat` below — which proves the
+    refusals came from a PINNED scheme rather than from a silent downgrade — it is the whole
+    property."""
+    b, a = int(before), int(after)
+    if a - b >= int(want):
+        return True, ""
+    return False, (f"cert-follower-seed refused only {a - b} certificates over {window}s "
+                   f"(want >= {want}) — with every certificate carrying a CLEARED seed slot it "
+                   "should refuse each one it is handed, so either the stream stopped (nothing "
+                   "was delivered, and the negative proves nothing) or the seed slot is not being "
+                   "checked and a tampered seed rides a valid quorum silently")
+
+
+def evaluate_seed_vote_only_flat(before, after, scrape_ok: bool, window=SEED_OBSERVE_S):
+    """…and the refusals came from a PINNED scheme.
+
+    THIS IS THE HALF THAT MAKES THE REFUSAL COUNT MEAN THE RIGHT THING. `verify_certificate`
+    early-returns `true` after the quorum arm when the scheme carries no `cert_seed_pin`, so an
+    UNPINNED follower ACCEPTS a cleared slot — it would refuse nothing, and every acceptance would
+    tick `dpos_cert_vote_only_admissions_total`. A flat counter across the window is therefore the
+    statement "nothing was admitted with the seed slot unchecked", which is precisely what the
+    refusals have to be paired with.
+
+    Three-valued for the same reason `evaluate_vote_only_flat` is: an empty scrape is an unread
+    endpoint, not a zero, and must never satisfy this."""
+    if not scrape_ok:
+        return False, ("cert-follower-seed's reth metrics endpoint did not answer — "
+                       f"{CF_VOTE_ONLY_FAMILY} was never read, so nothing rules out that the "
+                       "cleared certificates were admitted vote-only rather than refused")
+    b, a = _counter(before), _counter(after)
+    if a == b:
+        return True, ""
+    return False, (f"{CF_VOTE_ONLY_FAMILY} grew {b} -> {a} over {window}s — cert-follower-seed "
+                   "admitted certificates with the seed slot UNCHECKED, so its scheme lost the "
+                   "pin and the cleared slots rode a valid quorum")
+
+
 # ══ smoke-cert-cascade ════════════════════════════════════════════════════════════════
 
 #: `case-cert-cascade.sh:20-22` — the three followers' host ports.

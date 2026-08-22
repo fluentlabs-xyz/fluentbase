@@ -259,6 +259,7 @@ reth-consensus = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = 
 reth-ethereum-consensus = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched-tree-escrow" }
 reth-node-types = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched-tree-escrow" }
 reth-storage-api = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched-tree-escrow" }
+reth-prune-types = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched-tree-escrow" }
 reth-ethereum = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched-tree-escrow" }
 reth-ethereum-engine-primitives = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched-tree-escrow" }
 reth-evm = { git = "https://github.com/fluentlabs-xyz/reth.git", branch = "v2.2-patched-tree-escrow" }

@@ -12,11 +12,20 @@ compose files copied verbatim (renamed only to dodge the `docker-compose.sim*.ge
 gitignore so they check in; no logs). The bundle's knobs: N=14, COMMITTEE_TARGET=10,
 IDENTITY_POOL=20, SIM_GEO_LATENCY=1, PEER_HOST_MODE=ip, BOOTSTRAP_MODE=json, prune=full.
 
-ONE service is deliberately no longer verbatim: `genesis-init`. The bundle ran
-`genesis-bootstrap bare` and predicted the staking cluster's CREATE addresses; the staking
-module is an rWasm contract installed at a fixed genesis address by the `full` arm, so both the
-arm and the prediction changed. That block is re-pinned in the fixture, with the reasoning
-beside it — it is still an oracle, just one anchored to the generator rather than to the bash.
+THREE service blocks are deliberately no longer verbatim, each re-pinned in the fixture with the
+reasoning beside it — the oracle stays an oracle, just one anchored to the generator rather than
+to the bash for those blocks:
+
+  * `genesis-init`. The bundle ran `genesis-bootstrap bare` and predicted the staking cluster's
+    CREATE addresses; the staking module is an rWasm contract installed at a fixed genesis
+    address by the `full` arm, so both the arm and the prediction changed.
+  * `full-node` and `downstream` in the phase-B overlay, which gained `--dpos.metrics-port=9100`.
+    Both are `--cert-follow` nodes, and a follower did not serve the commonware registry when the
+    bundle was captured — `spawn_devnet_metrics` ran from the validator overlay only. It now runs
+    once per PROCESS on both node classes, so the `dpos_follower_artifact_*` families a follower
+    registers are scrapeable, and the generator emits the flag for them. The phase-A `full-node`
+    is NOT touched: it is a pre-DPoS `--cert-upstream` follower with no `--cert-follow` and no
+    beacon at all.
 
 Normalization (semantically-neutral, documented): we compare ONLY entrypoint/command/environment
 per service via yaml.safe_load, which

@@ -17,11 +17,15 @@ use prometheus_client::{
     encoding::{EncodeLabelSet, EncodeLabelValue, LabelValueEncoder},
     metrics::{counter::Counter, family::Family, gauge::Gauge},
 };
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc,
+use std::{
+    path::{Path, PathBuf},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, OnceLock,
+    },
 };
 use tokio::sync::Notify;
+use tracing::{error, warn};
 
 /// Why a node is self-healing rather than participating normally — the single
 /// bounded label set of `dpos_sync_degraded`. Set to 1 while the matching
@@ -74,6 +78,27 @@ impl SyncReason {
             Self::ElInvalid => "el_invalid",
         }
     }
+
+    /// Parse a label produced by [`Self::as_str`] — the inverse used to reload a
+    /// persisted [`SafetyHalt`] marker. `None` for a label this build does not
+    /// know (a marker written by another version).
+    pub fn from_label(label: &str) -> Option<Self> {
+        const ALL: [SyncReason; 12] = [
+            SyncReason::NoPeers,
+            SyncReason::ActivationWait,
+            SyncReason::AwaitingUpstream,
+            SyncReason::AuthRotate,
+            SyncReason::EngineRetry,
+            SyncReason::LandingWait,
+            SyncReason::CrashRecover,
+            SyncReason::BoundaryHook,
+            SyncReason::FinalizeApply,
+            SyncReason::ResultDivergence,
+            SyncReason::L1Fork,
+            SyncReason::ElInvalid,
+        ];
+        ALL.into_iter().find(|r| r.as_str() == label)
+    }
 }
 
 impl EncodeLabelValue for SyncReason {
@@ -122,6 +147,14 @@ pub struct SyncMetrics {
     /// this node is deterministically re-wedging (the divergence root cause is
     /// unknown, so the node stays observable + deferred rather than silently stuck).
     pub el_sync_stalled_with_peers: Counter,
+    /// `dpos_safety_halt_engaged` — 1 once the fork-safety latch is engaged, in
+    /// THIS process or in a previous one (a restart reloads the datadir marker
+    /// and re-engages before the first event). Separate from
+    /// `dpos_sync_degraded{reason}` because the halt is permanent and
+    /// operator-cleared while a degraded reason is a self-heal loop that clears
+    /// itself — and because a marker written by another build carries a reason
+    /// label this build cannot decode, leaving the labeled gauge silent.
+    pub safety_halt_engaged: Gauge<i64>,
 }
 
 impl SyncMetrics {
@@ -177,6 +210,11 @@ impl SyncMetrics {
              deterministically re-wedging on EL-sync.",
             self.el_sync_stalled_with_peers.clone(),
         );
+        ctx.register(
+            "dpos_safety_halt_engaged",
+            "1 once the fork-safety latch is engaged (this process or a previous one, via the              datadir marker). Permanent: it is cleared by an operator removing the marker after              the fork is resolved on L1, never by the node itself. A node reporting 1 signs,              proposes and votes on nothing.",
+            self.safety_halt_engaged.clone(),
+        );
     }
 
     /// Mark the `reason` self-heal loop as active (`dpos_sync_degraded{reason}=1`).
@@ -201,6 +239,85 @@ impl SyncMetrics {
     }
 }
 
+/// The two clocks the DPoS node runs on, published side by side.
+///
+/// The ordering plane and the execution pipeline are separate subsystems, but
+/// the beacon plane's clock is derived from the EXECUTION one: the finalized
+/// poller in `fluentbase-node`'s `dpos.rs` reads `finalized_block_number()` and
+/// feeds `fin + K` to the DkgActor and the `EpochTransition`. So every way the
+/// executor can stop — the `SafetyHalt` park, an unfillable `Corruption`, a
+/// wedge nobody has found yet — also stops DKG ceremonies and epoch boundaries,
+/// and did so with no series to show it.
+///
+/// The ordering half comes off marshal's `Update::Tip` in `FluentApp::report`,
+/// which is BFT-attested and INDEPENDENT of execution — and `FluentApp` is built
+/// once per process, so it outlives a halt and every engine abort. That is the
+/// whole point of the pair: the ordering gauge keeps climbing while the
+/// execution one freezes, and `dpos_dkg_clock_lag_blocks` is exactly the gap
+/// between "the committee is still agreeing" and "this node stopped executing".
+///
+/// Registered by the plane builder (the node crate, where the poller lives),
+/// mirroring [`SyncMetrics`]'s clone-shares-one-gauge topology.
+#[derive(Clone, Debug, Default)]
+pub struct PlaneClock {
+    ordering: Gauge<i64>,
+    dkg: Gauge<i64>,
+    lag: Gauge<i64>,
+}
+
+impl PlaneClock {
+    /// Register on the commonware registry. Call once, against the launch
+    /// context. A `PlaneClock` that is never registered publishes nothing — the
+    /// honest state for a node that runs no DKG clock at all.
+    pub fn register(&self, ctx: &impl Metrics) {
+        ctx.register(
+            "dpos_ordering_finalized_height",
+            "Marshal's BFT-attested ordering finalization tip. Advances on committee agreement \
+             alone — it does not wait for this node to execute anything.",
+            self.ordering.clone(),
+        );
+        ctx.register(
+            "dpos_dkg_clock_height",
+            "The ordering height the beacon plane's clock has reached: the EL finalized block \
+             number plus K, as fed to the DkgActor and the EpochTransition. Frozen ⇒ no DKG \
+             ceremony progress and no epoch boundary detection, whatever the ordering plane does.",
+            self.dkg.clone(),
+        );
+        ctx.register(
+            "dpos_dkg_clock_lag_blocks",
+            "dpos_ordering_finalized_height − dpos_dkg_clock_height, floored at 0. Bounded and \
+             flat = execution is keeping up; growing at the block rate = execution has stopped \
+             while the committee keeps finalizing without this node.",
+            self.lag.clone(),
+        );
+    }
+
+    /// Marshal reported a new BFT-attested ordering finalization tip.
+    pub fn record_ordering_tip(&self, height: u64) {
+        self.ordering.set(height as i64);
+        self.refresh_lag();
+    }
+
+    /// The finalized poller fed the beacon plane a new clock height (`fin + K`).
+    pub fn record_dkg_clock(&self, height: u64) {
+        self.dkg.set(height as i64);
+        self.refresh_lag();
+    }
+
+    /// Floored at 0 because the two gauges are written by different tasks: the
+    /// DKG clock legitimately reads one block ahead of the ordering tip between
+    /// the two writes, and a negative lag would render as a spike rather than as
+    /// the "nothing to report" it is.
+    fn refresh_lag(&self) {
+        self.lag.set((self.ordering.get() - self.dkg.get()).max(0));
+    }
+
+    /// Current `(ordering, dkg, lag)` — test/assert helper.
+    pub fn snapshot(&self) -> (i64, i64, i64) {
+        (self.ordering.get(), self.dkg.get(), self.lag.get())
+    }
+}
+
 /// Fork-safety latch (Phase 3 `SafetyHalt`). A node that detects it would extend
 /// a branch honest peers reject — #2/#3 result divergence, #15 an EL `Invalid`
 /// verdict on a locally-derived block, #10 an L1-fork (`holds()==false`) after an
@@ -222,32 +339,183 @@ impl SyncMetrics {
 /// a permanent latch: there is deliberately no `disengage` — recovery is
 /// external (a fresh, re-synced start after the fork is resolved on L1).
 ///
+/// "Permanent" has to survive a process restart, so engaging also writes a
+/// one-line marker into the datadir ([`Self::restoring`]). Without it a
+/// `docker restart` silently cleared a latch that has no in-process
+/// `disengage`: the node came back a full signer, on the same disk, with no
+/// record of what it had refused. The marker is cleared by an OPERATOR deleting
+/// the file — never by the node. Automatic recovery is deliberately absent:
+/// neither arming class is separable from network evidence with the data the
+/// node holds at arming time, and "wipe local state and resync" after network
+/// evidence destroys the only thing that distinguishes this node's view from
+/// the disputed quorum certificate.
+///
 /// Arc-backed → cheap to clone; every clone shares one latch + one gauge family.
 #[derive(Clone, Default)]
 pub struct SafetyHalt {
     engaged: Arc<AtomicBool>,
+    /// The verdict that engaged the latch — the FIRST one wins (a later engage
+    /// is a consequence of the first, not a second diagnosis). Typed rather
+    /// than reconstructed from a prometheus label or an eyre display string, so
+    /// the restart gate and the operator log read the same value the arming
+    /// site decided.
+    reason: Arc<OnceLock<SyncReason>>,
+    /// Datadir marker path. `None` for in-process / test latches, which have no
+    /// datadir and must not write one.
+    marker: Option<Arc<PathBuf>>,
     notify: Arc<Notify>,
     metrics: SyncMetrics,
 }
 
 impl SafetyHalt {
     /// Build a latch that raises its `reason` gauge on the SHARED (already
-    /// registered) [`SyncMetrics`] from `dpos.rs::launch`.
+    /// registered) [`SyncMetrics`] from `dpos.rs::launch`. No datadir marker:
+    /// for in-process and test use only.
     pub fn new(metrics: SyncMetrics) -> Self {
         Self {
             engaged: Arc::default(),
+            reason: Arc::default(),
+            marker: None,
             notify: Arc::default(),
             metrics,
         }
     }
 
-    /// Latch the halt + raise `dpos_sync_degraded{reason}=1`. Idempotent; the
-    /// epoch-manager wakeup fires once, on the 0→1 edge.
-    pub fn engage(&self, reason: SyncReason) {
-        self.metrics.degrade(reason);
+    /// Build the production latch: bound to a datadir `marker` path, and
+    /// ALREADY ENGAGED when a previous run of this node left one behind.
+    ///
+    /// This is the restart gate. A restored latch raises
+    /// `dpos_safety_halt_engaged` + `dpos_sync_degraded{reason}` and logs the
+    /// reason BEFORE the first consensus event, and
+    /// `epoch_manager::reconcile_roles` reads `is_engaged()` when deciding
+    /// membership — so the node comes up permanently verify-only (signs
+    /// nothing, proposes nothing, votes on nothing) until an operator removes
+    /// the file.
+    ///
+    /// A marker this build cannot decode still latches: the file's EXISTENCE is
+    /// the halt record; its content only names the reason.
+    pub fn restoring(metrics: SyncMetrics, marker: PathBuf) -> Self {
+        let halt = Self {
+            engaged: Arc::default(),
+            reason: Arc::default(),
+            marker: Some(Arc::new(marker)),
+            notify: Arc::default(),
+            metrics,
+        };
+        halt.restore_marker();
+        halt
+    }
+
+    /// Re-engage from an existing datadir marker, if there is one.
+    fn restore_marker(&self) {
+        let Some(path) = self.marker.as_deref() else {
+            return;
+        };
+        let raw = match std::fs::read_to_string(path) {
+            Ok(raw) => raw,
+            // A missing marker is the normal, healthy start.
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+            Err(error) => {
+                // Present-but-unreadable: latch, because a marker we cannot read
+                // is not evidence that there is none.
+                error!(
+                    marker = %path.display(),
+                    %error,
+                    "SafetyHalt marker exists but could not be read — coming up HALTED \
+                     (verify-only). Resolve the fork on L1, then delete the marker to \
+                     restore this node."
+                );
+                self.latch();
+                return;
+            }
+        };
+        let label = raw.trim();
+        match SyncReason::from_label(label) {
+            Some(reason) => {
+                error!(
+                    marker = %path.display(),
+                    reason = label,
+                    "node was SafetyHalted in a previous run — coming up HALTED (verify-only): \
+                     no signing, no proposing, no voting. Recovery is the L1 SP1 validity proof \
+                     + governance, then a fresh re-synced start; delete the marker to clear."
+                );
+                self.engage(reason);
+            }
+            None => {
+                error!(
+                    marker = %path.display(),
+                    content = label,
+                    "SafetyHalt marker holds an unrecognised reason (written by another build) \
+                     — coming up HALTED (verify-only) anyway; the marker's existence is the \
+                     halt record. Delete it to clear."
+                );
+                self.latch();
+            }
+        }
+    }
+
+    /// Set the latch bit + the unlabeled gauge and fire the one-shot edge.
+    /// Shared by [`Self::engage`] and the reason-less restore paths.
+    fn latch(&self) {
+        self.metrics.safety_halt_engaged.set(1);
         if !self.engaged.swap(true, Ordering::SeqCst) {
             self.notify.notify_one();
         }
+    }
+
+    /// Latch the halt + raise `dpos_sync_degraded{reason}=1`, and persist the
+    /// reason to the datadir marker so a restart re-engages instead of silently
+    /// clearing. Idempotent; the epoch-manager wakeup fires once, on the 0→1
+    /// edge, and the FIRST reason is the one recorded.
+    pub fn engage(&self, reason: SyncReason) {
+        self.metrics.degrade(reason);
+        let first = self.reason.set(reason).is_ok();
+        self.latch();
+        // Only the first verdict is persisted: a later engage is downstream of
+        // it, and rewriting would replace the diagnosis with its consequence.
+        if first {
+            self.persist_marker(reason);
+        }
+    }
+
+    /// Best-effort marker write. A failure NEVER fails the halt — the in-process
+    /// latch already holds — but it is loud, because it means this node WILL
+    /// come back as a signer after a restart.
+    fn persist_marker(&self, reason: SyncReason) {
+        let Some(path) = self.marker.as_deref() else {
+            return;
+        };
+        if let Some(parent) = path.parent() {
+            if let Err(error) = std::fs::create_dir_all(parent) {
+                warn!(dir = %parent.display(), %error, "could not create the SafetyHalt marker directory");
+            }
+        }
+        match std::fs::write(path, format!("{}\n", reason.as_str())) {
+            Ok(()) => error!(
+                marker = %path.display(),
+                reason = reason.as_str(),
+                "SafetyHalt marker written — this node stays verify-only across restarts until \
+                 an operator deletes the marker"
+            ),
+            Err(error) => error!(
+                marker = %path.display(),
+                %error,
+                reason = reason.as_str(),
+                "could not persist the SafetyHalt marker — a restart of this node WILL clear \
+                 the latch and it will sign again; write the marker by hand or keep the node down"
+            ),
+        }
+    }
+
+    /// The verdict that engaged the latch, `None` while healthy (or when the
+    /// latch was restored from a marker this build cannot decode).
+    pub fn reason(&self) -> Option<SyncReason> {
+        self.reason.get().copied()
+    }
+
+    /// The datadir marker path an operator must delete to clear this latch.
+    pub fn marker_path(&self) -> Option<&Path> {
+        self.marker.as_deref().map(PathBuf::as_path)
     }
 
     /// Whether the node is safety-halted — read by `reconcile_roles` (never
@@ -268,6 +536,33 @@ impl SafetyHalt {
 mod tests {
     use super::*;
     use commonware_runtime::{deterministic::Runner, Runner as _};
+
+    // The lag is the whole point of the pair, and it is written by TWO
+    // independent tasks — so it must be recomputed by whichever wrote last, and
+    // must not render the ordinary between-writes overshoot as a negative spike.
+    #[test]
+    fn plane_clock_lag_is_recomputed_by_either_writer_and_floored() {
+        let clock = PlaneClock::default();
+        clock.record_dkg_clock(1_000);
+        assert_eq!(
+            clock.snapshot(),
+            (0, 1_000, 0),
+            "DKG ahead of a silent ordering half"
+        );
+
+        clock.record_ordering_tip(1_006);
+        assert_eq!(clock.snapshot(), (1_006, 1_000, 6));
+
+        // The ordering writer moved last; the DKG writer catching up must clear
+        // the lag without a further tip.
+        clock.record_dkg_clock(1_006);
+        assert_eq!(clock.snapshot(), (1_006, 1_006, 0));
+
+        // Execution one block ahead of the tip this node has observed is the
+        // ordinary interleaving, not a fault.
+        clock.record_dkg_clock(1_007);
+        assert_eq!(clock.snapshot().2, 0);
+    }
 
     #[test]
     fn degrade_and_recover_round_trip() {
@@ -300,6 +595,114 @@ mod tests {
         // engaged and never clears — recovery is external, not in-node.
         halt.engage(SyncReason::L1Fork);
         assert!(halt.is_engaged());
+        // ...and the FIRST verdict stays the recorded diagnosis; the second is
+        // downstream of it.
+        assert_eq!(halt.reason(), Some(SyncReason::ResultDivergence));
+        assert_eq!(metrics.safety_halt_engaged.get(), 1);
+    }
+
+    fn scratch_marker(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "fluent-safety-halt-{tag}-{}-{:?}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock after epoch")
+                .as_nanos()
+        ));
+        dir.join("safety_halt")
+    }
+
+    // The defect this closes: the latch has no `disengage` by design, yet a
+    // restart re-created it clear — a halted node came back a full signer with
+    // no record of what it refused.
+    #[test]
+    fn a_restart_re_engages_from_the_datadir_marker_with_the_reason() {
+        let marker = scratch_marker("restart");
+        let first = SafetyHalt::restoring(SyncMetrics::default(), marker.clone());
+        assert!(!first.is_engaged(), "a fresh datadir starts healthy");
+        first.engage(SyncReason::ResultDivergence);
+
+        // A new process, a new latch, the SAME datadir.
+        let metrics = SyncMetrics::default();
+        let restarted = SafetyHalt::restoring(metrics.clone(), marker.clone());
+        assert!(restarted.is_engaged(), "the marker re-engages the latch");
+        assert_eq!(restarted.reason(), Some(SyncReason::ResultDivergence));
+        // Both the labeled reason and the unlabeled halt gauge are up BEFORE the
+        // first consensus event — `register` ran on this same `SyncMetrics`.
+        assert_eq!(metrics.degraded_value(SyncReason::ResultDivergence), 1);
+        assert_eq!(metrics.safety_halt_engaged.get(), 1);
+
+        // Operator clears it the only way there is: delete the file.
+        std::fs::remove_file(&marker).expect("marker written");
+        let cleared = SafetyHalt::restoring(SyncMetrics::default(), marker.clone());
+        assert!(!cleared.is_engaged());
+        assert_eq!(cleared.reason(), None);
+        let _ = std::fs::remove_dir_all(marker.parent().expect("marker has a parent"));
+    }
+
+    // A marker written by another build names a reason this one cannot decode.
+    // The FILE is the halt record, so it must still latch — losing the reason
+    // must not lose the halt.
+    #[test]
+    fn an_undecodable_marker_still_comes_up_halted() {
+        let marker = scratch_marker("undecodable");
+        std::fs::create_dir_all(marker.parent().expect("marker has a parent"))
+            .expect("scratch dir");
+        std::fs::write(&marker, "some_future_reason\n").expect("write marker");
+
+        let metrics = SyncMetrics::default();
+        let halt = SafetyHalt::restoring(metrics.clone(), marker.clone());
+        assert!(
+            halt.is_engaged(),
+            "an unknown reason must not clear the halt"
+        );
+        assert_eq!(halt.reason(), None);
+        assert_eq!(
+            metrics.safety_halt_engaged.get(),
+            1,
+            "the unlabeled gauge is what makes an undecodable halt visible"
+        );
+        let _ = std::fs::remove_dir_all(marker.parent().expect("marker has a parent"));
+    }
+
+    // A latch with no datadir (tests, in-process fixtures) must not write a
+    // marker into whatever the process CWD happens to be.
+    #[test]
+    fn a_markerless_latch_persists_nothing() {
+        let halt = SafetyHalt::new(SyncMetrics::default());
+        halt.engage(SyncReason::ElInvalid);
+        assert!(halt.is_engaged());
+        assert_eq!(halt.reason(), Some(SyncReason::ElInvalid));
+        assert_eq!(halt.marker_path(), None);
+    }
+
+    // The marker round-trips through the label, so a reason added without a
+    // `from_label` arm cannot silently become an undecodable marker.
+    #[test]
+    fn every_sync_reason_label_round_trips() {
+        for reason in [
+            SyncReason::NoPeers,
+            SyncReason::ActivationWait,
+            SyncReason::AwaitingUpstream,
+            SyncReason::AuthRotate,
+            SyncReason::EngineRetry,
+            SyncReason::LandingWait,
+            SyncReason::CrashRecover,
+            SyncReason::BoundaryHook,
+            SyncReason::FinalizeApply,
+            SyncReason::ResultDivergence,
+            SyncReason::L1Fork,
+            SyncReason::ElInvalid,
+        ] {
+            assert_eq!(
+                SyncReason::from_label(reason.as_str()),
+                Some(reason),
+                "{} does not round-trip",
+                reason.as_str()
+            );
+        }
+        assert_eq!(SyncReason::from_label("not_a_reason"), None);
     }
 
     #[test]
@@ -343,6 +746,10 @@ mod tests {
             assert!(
                 scrape.contains("el_sync_stalled_with_peers_total"),
                 "connected-but-wedged counter registered: {scrape}"
+            );
+            assert!(
+                scrape.contains("dpos_safety_halt_engaged"),
+                "halt latch gauge registered: {scrape}"
             );
         });
     }

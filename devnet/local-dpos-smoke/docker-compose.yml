@@ -79,12 +79,33 @@ services:
       - node
       - --chain=/runtime/genesis-local.json
       - --validator
-      # Pre-swap SEQUENCER pacing only: speeds the pre-DPoS activation runway (the
-      # ~ACTIVATION blocks produced before the --dpos swap, which only position the
-      # migration anchor — not the system under test). Phase-2 (--dpos,
-      # docker-compose.dpos.yml) carries NO --validator.block-time; DPoS pacing is the
-      # application-layer BLOCK_INTERVAL=1s and is unchanged.
-      - --validator.block-time=250ms
+      # Pre-swap SEQUENCER pacing. 1s — NOT a preference, and NOT a knob to speed the
+      # runway with. It must equal the DPoS BLOCK_INTERVAL, because CHAIN TIME IS SHARED
+      # ACROSS THE SWAP and a faster sequencer runs it into the future:
+      #
+      #   * genesis `timestamp = 0` (genesis-bootstrap/src/genesis.rs:35), so block 1
+      #     takes wall-clock `now` and every later block takes
+      #     `max(parent.timestamp + 1, now)` (crates/node/src/payload.rs:31-34) — at a
+      #     SUB-SECOND cadence the `parent + 1` arm always wins.
+      #   * so chain time advances 1 s per block while the wall clock advances the block
+      #     time. At 250 ms that was 0.75 s of drift per block, i.e. ~0.75 × (ACTIVATION−1)
+      #     seconds of chain time ahead of real time at the migration anchor: ~47 s at the
+      #     default activation 64, ~95 s at 128, ~191 s at 256.
+      #   * after the swap the DPoS proposer stamps `max(now, parent + 1)`
+      #     (application.rs:741-746) and every verifier — INCLUDING THE PROPOSER'S OWN
+      #     NODE — rejects a block more than TIMESTAMP_FUTURE_TOLERANCE_SECS = 1 ahead of
+      #     its clock (application.rs:104, enforced :631). The chain therefore produces
+      #     NOTHING past the anchor until the wall clock catches the drift up, and every
+      #     view answers `proposal failed verification` meanwhile.
+      #
+      # That is what made `DPOS_CONVERGE_S = 120` look like a hard interval ceiling (see
+      # `verdicts_onchain.CATCHUP_EPOCH_INTERVAL`). At 1 s the drift is zero at every
+      # activation height and the converge budget measures boot + DKG, which is what it
+      # is for. Matches `docker-compose.production-path.yml:133` and the sim/soak pair.
+      #
+      # Phase-2 (--dpos, docker-compose.dpos.yml) carries NO --validator.block-time; DPoS
+      # pacing is the application-layer BLOCK_INTERVAL and is unchanged.
+      - --validator.block-time=1s
       - --dpos.staking-config=/runtime/staking-reader.json
       - --builder.extradata=
       - --http

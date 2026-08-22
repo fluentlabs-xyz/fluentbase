@@ -50,6 +50,13 @@ enum UpstreamMsg {
         height: Height,
         response: oneshot::Sender<Option<UpstreamFinalized>>,
     },
+    /// Off-path pull of an epoch-key artifact. Spawned like every other pull so
+    /// it can never stall the live subscription, and answered `None` on every
+    /// negative alike — see [`CertUpstream::get_epoch_artifact`].
+    GetEpochArtifact {
+        epoch: u64,
+        response: oneshot::Sender<Option<Vec<u8>>>,
+    },
     /// Engine-requested rotation: the current upstream served unverifiable
     /// DATA (which a connection-level failover can never detect) — drop the
     /// connection and move to the next URL.
@@ -95,6 +102,16 @@ impl CertUpstream for UpstreamHandle {
         async move {
             let (response, rx) = oneshot::channel();
             tx.send(UpstreamMsg::GetLatest { response }).ok()?;
+            rx.await.ok().flatten()
+        }
+    }
+
+    fn get_epoch_artifact(&self, epoch: u64) -> impl Future<Output = Option<Vec<u8>>> + Send {
+        let tx = self.tx.clone();
+        async move {
+            let (response, rx) = oneshot::channel();
+            tx.send(UpstreamMsg::GetEpochArtifact { epoch, response })
+                .ok()?;
             rx.await.ok().flatten()
         }
     }
@@ -265,6 +282,12 @@ impl UpstreamActor {
                                 let _ = response.send(fetch_finalization(&client, Query::Latest).await);
                             }));
                         }
+                        Some(UpstreamMsg::GetEpochArtifact { epoch, response }) => {
+                            let client = client.clone();
+                            drop(self.ctx.with_label("get_epoch_artifact").spawn(move |_| async move {
+                                let _ = response.send(fetch_epoch_artifact(&client, epoch).await);
+                            }));
+                        }
                         Some(UpstreamMsg::Rotate { response }) => {
                             warn!(url = %url, "cert-follow: rotating upstream on engine request (data fault)");
                             let _ = response.send(());
@@ -297,6 +320,12 @@ impl UpstreamActor {
                                         drop(self.ctx.with_label("get_finalization_everywhere").spawn(move |_| async move {
                                             let _ = response.send(
                                                 walk_for_height(&client, &urls, next_url, height).await);
+                                        }));
+                                    }
+                                    UpstreamMsg::GetEpochArtifact { epoch, response } => {
+                                        let client = client.clone();
+                                        drop(self.ctx.with_label("get_epoch_artifact").spawn(move |_| async move {
+                                            let _ = response.send(fetch_epoch_artifact(&client, epoch).await);
                                         }));
                                     }
                                     UpstreamMsg::Rotate { .. } => {
@@ -465,6 +494,45 @@ async fn fetch_finalization(client: &WsClient, query: Query) -> Option<UpstreamF
     }
 }
 
+/// JSON-RPC code jsonrpsee answers an unknown method with. Nothing versions the
+/// `consensus` namespace, so an upstream predating `getEpochArtifact` answers
+/// this rather than [`NO_CONTENT`] — and to the caller the two mean the same
+/// thing, "no artifact from here". Mapping it to a DATA fault instead would let
+/// one old upstream in a failover list rotate a healthy follower off every peer
+/// it has.
+const METHOD_NOT_FOUND: i32 = -32601;
+
+/// Pull one epoch-key artifact and hex-decode it. Every negative — no content, a
+/// method-not-found from an old server, a transport failure, malformed hex — is
+/// `None`: the caller's answer to all four is the same (stay unpinned, re-ask on
+/// the next certificate), and the bytes are checked against `committee[epoch]`
+/// downstream regardless of which server produced them.
+async fn fetch_epoch_artifact(client: &WsClient, epoch: u64) -> Option<Vec<u8>> {
+    match client.get_epoch_artifact(epoch).await {
+        Ok(hex_bytes) => match hex::decode(&hex_bytes) {
+            Ok(bytes) => Some(bytes),
+            Err(e) => {
+                warn!(epoch, error = %e, "cert-follow: malformed getEpochArtifact hex");
+                None
+            }
+        },
+        Err(ClientError::Call(obj))
+            if obj.code() == NO_CONTENT || obj.code() == METHOD_NOT_FOUND =>
+        {
+            debug!(
+                epoch,
+                code = obj.code(),
+                "cert-follow: upstream serves no artifact for this epoch"
+            );
+            None
+        }
+        Err(e) => {
+            debug!(epoch, error = %e, "cert-follow getEpochArtifact failed");
+            None
+        }
+    }
+}
+
 #[cfg(test)]
 mod walk_tests {
     use super::*;
@@ -492,10 +560,23 @@ mod walk_tests {
         Malformed,
     }
 
+    /// What a stub upstream does with a `getEpochArtifact` ask. The first two
+    /// are the two ways a server says "nothing here", and the whole point is
+    /// that the caller cannot tell them apart.
+    #[derive(Clone)]
+    enum ArtifactAnswer {
+        NoContent,
+        /// An upstream predating the method. Nothing versions the `consensus`
+        /// namespace, so this is what a mixed-version failover list produces.
+        MethodNotFound,
+        Hex(String),
+    }
+
     #[derive(Clone)]
     struct Stub {
         behaviour: Behaviour,
         asks: Arc<AtomicUsize>,
+        artifact: ArtifactAnswer,
     }
 
     #[jsonrpsee::core::async_trait]
@@ -521,12 +602,35 @@ mod walk_tests {
         async fn get_latest(&self) -> RpcResult<ConsensusState> {
             Ok(ConsensusState::default())
         }
+        async fn get_epoch_artifact(&self, _epoch: u64) -> RpcResult<String> {
+            self.asks.fetch_add(1, Ordering::SeqCst);
+            match &self.artifact {
+                ArtifactAnswer::NoContent => Err(ErrorObject::owned(
+                    NO_CONTENT,
+                    "no artifact for that epoch",
+                    None::<()>,
+                )),
+                ArtifactAnswer::MethodNotFound => Err(ErrorObject::owned(
+                    METHOD_NOT_FOUND,
+                    "Method not found",
+                    None::<()>,
+                )),
+                ArtifactAnswer::Hex(hex) => Ok(hex.clone()),
+            }
+        }
         async fn subscribe_events(&self, _p: PendingSubscriptionSink) -> SubscriptionResult {
             Ok(())
         }
     }
 
     async fn serve(behaviour: Behaviour) -> (String, Arc<AtomicUsize>, ServerHandle) {
+        serve_artifacts(behaviour, ArtifactAnswer::NoContent).await
+    }
+
+    async fn serve_artifacts(
+        behaviour: Behaviour,
+        artifact: ArtifactAnswer,
+    ) -> (String, Arc<AtomicUsize>, ServerHandle) {
         let asks = Arc::new(AtomicUsize::new(0));
         let server = ServerBuilder::default()
             .build("127.0.0.1:0")
@@ -537,6 +641,7 @@ mod walk_tests {
             Stub {
                 behaviour,
                 asks: asks.clone(),
+                artifact,
             }
             .into_rpc(),
         );
@@ -567,6 +672,61 @@ mod walk_tests {
         assert_eq!(asks_a.load(Ordering::SeqCst), 1, "the live one, once");
         assert_eq!(asks_b.load(Ordering::SeqCst), 1);
         assert_eq!(asks_c.load(Ordering::SeqCst), 1);
+    }
+
+    /// Nothing versions the `consensus` namespace, so a mixed-version failover
+    /// list WILL contain servers that do not know `getEpochArtifact`. Such a
+    /// server answers METHOD_NOT_FOUND rather than NO_CONTENT, and the two must
+    /// reach the caller identically as "no artifact from here".
+    ///
+    /// The stake is not cosmetic: this pull shares its mailbox with the by-height
+    /// one, whose explicit-miss/failure split drives rotation. If an old server
+    /// surfaced here as anything other than a plain negative, one such upstream
+    /// would be enough to rotate a healthy follower off every peer it has, over a
+    /// method that is optional by design. The third case is what stops the first
+    /// two from being vacuous — a client that returned `None` unconditionally
+    /// would pass them and fail it.
+    #[tokio::test]
+    async fn an_old_server_is_a_missing_artifact_and_a_served_one_decodes() {
+        let (no_content, asks_nc, _h1) =
+            serve_artifacts(Behaviour::NoContent, ArtifactAnswer::NoContent).await;
+        let (old, asks_old, _h2) =
+            serve_artifacts(Behaviour::NoContent, ArtifactAnswer::MethodNotFound).await;
+        let (serving, _asks_s, _h3) =
+            serve_artifacts(Behaviour::NoContent, ArtifactAnswer::Hex("00ff10".into())).await;
+
+        let c = WsClientBuilder::default()
+            .build(&no_content)
+            .await
+            .expect("nc");
+        assert_eq!(fetch_epoch_artifact(&c, 9).await, None);
+        assert_eq!(
+            asks_nc.load(Ordering::SeqCst),
+            1,
+            "the server was really asked"
+        );
+
+        let c = WsClientBuilder::default().build(&old).await.expect("old");
+        assert_eq!(
+            fetch_epoch_artifact(&c, 9).await,
+            None,
+            "an old server is a missing artifact, never a fault and never bytes"
+        );
+        assert_eq!(
+            asks_old.load(Ordering::SeqCst),
+            1,
+            "the server was really asked"
+        );
+
+        let c = WsClientBuilder::default()
+            .build(&serving)
+            .await
+            .expect("serving");
+        assert_eq!(
+            fetch_epoch_artifact(&c, 9).await,
+            Some(vec![0x00, 0xff, 0x10]),
+            "a served artifact is hex-decoded, or the two negatives above prove nothing"
+        );
     }
 
     /// A `Failed` pull is NOT a content miss and must not advance the walk.

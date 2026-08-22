@@ -104,6 +104,7 @@ pub(crate) fn resolve_node_modes(
                 }),
             )),
             follower: None,
+            metrics_port: ext.dpos_cfg.dpos_metrics_port,
         });
     }
 
@@ -145,6 +146,7 @@ pub(crate) fn resolve_node_modes(
                     .clone()
                     .expect("requires_all guarantees --dpos.staking-config"),
             }),
+            metrics_port: ext.dpos_cfg.dpos_metrics_port,
         });
         modes.consensus_url = None;
     }

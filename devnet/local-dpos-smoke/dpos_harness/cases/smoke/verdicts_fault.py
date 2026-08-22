@@ -407,7 +407,7 @@ def evaluate_gap_mixhashes(rows, victim, reason, reference="validator-0"):
     """The per-height compare of the RESTARTED victim's gap blocks against the reference chain.
 
     `rows` = [(height, victim_mixhash, reference_mixhash)]. Shared by `assert_vrf_fault`'s B4
-    (`asserts-fault.sh:338-349`) and `assert_vrf_dkg_liveness`'s step 3 (`:443-449`), which run
+    (`asserts-fault.sh:338-349`) and `assert_vrf_dkg_live_heal`'s prev_randao leg (`:443-449`), which run
     the identical loop under two different claims — `reason` carries which.
 
     A "null"/empty reading is a MISS, not a skip. That is the difference between "the victim
@@ -426,7 +426,7 @@ def evaluate_gap_mixhashes(rows, victim, reason, reference="validator-0"):
     return True, ""
 
 
-# ══ smoke-vrf-dkg-liveness ════════════════════════════════════════════════════════════
+# ══ smoke-vrf-dkg-live-heal ═══════════════════════════════════════════════════════════
 
 #: `asserts-fault.sh:379` — `DKG_MARGIN_BLOCKS` (consensus/beacon/actor.rs; 10→16→20 for the AM5
 #: fetch-before-finalize schedule). The epoch-2 DKG window is [epoch_start(2) − 20, epoch_start(2)).
@@ -446,6 +446,19 @@ DKG_BOUNDARY_WAIT_S = 400
 DKG_NODES_HAVE_S = 120
 DKG_CATCHUP_S = 150
 DKG_CATCHUP_POLL_S = 2
+#: How long the restarted victim gets to pull the live epoch's artifact and finish the recompute,
+#: and the poll cadence. It is NOT the catch-up budget: the heal runs off the beacon's own height
+#: tick AFTER the node is caught up, the pull is throttled to one attempt per epoch per 5 s, and
+#: the recompute waits on the dealer logs the resolver fetches. Generous rather than tight,
+#: because a budget that expires reports "it never healed" for a heal that merely had not landed
+#: — the wrong bug, and the one the case exists to deny.
+DKG_HEAL_S = 240
+DKG_HEAL_POLL_S = 3
+#: How long the chain gets to finish epoch 2 after the heal, so `producedAt(2, …)` is FINAL when
+#: it is read. Sized off the epoch, not off a guess: at ~1 blk/s a 64-block epoch is ~64 s from
+#: its first block, and the heal lands ~20 blocks in — this is that with room for a slow host.
+DKG_EPOCH_END_S = 240
+
 #: `:450` — the post-rejoin liveness window. Short on purpose: at 1 blk/s six seconds is several
 #: blocks, and the question is only whether the chain is still moving.
 DKG_LIVENESS_WINDOW_S = 6
@@ -457,7 +470,13 @@ SHARE_LINE = "live DKG: PK_epoch + share computed + stored"
 
 
 def dkg_margin_blocks(env=None) -> int:
-    """The bash `: "${<margin>:=20}"` default (asserts-fault.sh:379), under the renamed knob."""
+    """The seal-deadline margin, under the renamed knob shared with the SIM's DKG barrier.
+
+    NO LONGER READ BY THE LIVE-HEAL CASE, deliberately: that case keys on where the deal phase
+    OPENS (`dkg_deal_window_open`), and this is where it CLOSES. Kept because the knob is the one
+    `sim/reconcilers.py` reads for the same product constant, and because
+    `test_the_DEAL_window_opens_at_epoch_1_and_not_at_the_seal_deadline` needs both edges to state
+    the difference the case got wrong."""
     raw = (env if env is not None else os.environ).get(DKG_MARGIN_ENV, "")
     try:
         return int(raw) if str(raw).strip() else DKG_MARGIN_BLOCKS
@@ -465,16 +484,51 @@ def dkg_margin_blocks(env=None) -> int:
         return DKG_MARGIN_BLOCKS
 
 
-def evaluate_window_open(fin, window_open):
-    """`asserts-fault.sh:390-392` — the victim must be stopped BEFORE its DKG window opens.
+#: The finalized-height LEAD the beacon's clock runs at. `dkg_height = finalized + K`
+#: (`crates/node/src/dpos.rs`, the finalized-height poller; `K = 3`, `order_block.rs`), and the
+#: ceremony's phases are keyed on THAT clock, so every window edge below is an actor-clock edge
+#: converted back into a finalized height by subtracting this.
+DKG_CLOCK_LEAD = RESULT_LAG_K
 
-    The TIMING is the assertion. Stopping it after the window opened means it may already hold a
-    share, and the case would then be asserting that a share-holder sits out — which is not true
-    and not what it claims. Fail loud rather than run a test that measures something else."""
+
+def dkg_deal_window_open(activation_block, interval, lead=DKG_CLOCK_LEAD):
+    """The finalized height at which the epoch-2 ceremony's DEAL phase OPENS.
+
+    THIS IS NOT `epoch_start(2) - DKG_MARGIN_BLOCKS`, AND THE DIFFERENCE COST A GREEN-FOR-THE-
+    WRONG-REASON RUN. `on_height` calls `maybe_start(now + 1)` on every tick, so committee[2]'s
+    ceremony starts the moment the actor's clock first enters epoch 1 and the whole of epoch 1 is
+    its deal phase (`beacon/actor.rs`). `DKG_MARGIN_BLOCKS` is only where that phase CLOSES — the
+    seal deadline. A victim stopped between the two has already received, ACKED and journaled
+    every dealing, which changes what the case tests twice over:
+
+      * its own journal now completes the recompute, so the heal never fetches a dealer log and
+        never touches the reveal fallback — the one path this case exists to cover;
+      * having acked, no honest dealer reveals its point at all, so the fallback could not run
+        even if the logs were fetched.
+
+    Both leave every assertion in the case green. Only `want == dealers` at the recompute sees it,
+    which is why this guard and `evaluate_victim_held_nothing` are BOTH gates and neither is
+    redundant."""
+    return epoch_start_1(activation_block, interval) - int(lead)
+
+
+def epoch_start_1(activation_block, interval):
+    """First block of relative epoch 1 — the epoch during which committee[2] deals."""
+    return int(activation_block) + int(interval)
+
+
+def evaluate_window_open(fin, window_open):
+    """The victim must be stopped BEFORE the epoch-2 ceremony's DEAL phase opens.
+
+    The TIMING is the assertion. Fail loud rather than run a test that measures something else:
+    the case cannot wait for the next opportunity, because there is no next one — committee[2]'s
+    ceremony is the deterministic bootstrap and it happens once per stack."""
     if int(fin) >= int(window_open):
-        return False, (f"chain already at/past the epoch-2 DKG window ({window_open}) — cannot "
-                       "stop the victim before its ceremony (raise the activation gap or run "
-                       "earlier)")
+        return False, (f"chain already at/past the epoch-2 DKG DEAL window ({window_open}) — the "
+                       "victim would receive and ACK the dealings before it is stopped, which "
+                       "makes its own journal sufficient for the heal and takes the reveal "
+                       "fallback out of the run entirely. Re-run (the bring-up was slow), or "
+                       "raise EPOCH_INTERVAL so the migration finishes further ahead of epoch 1")
     return True, ""
 
 
@@ -494,14 +548,252 @@ def epoch_share_lines(log_text, epoch=2, marker=SHARE_LINE):
             if marker in ln and pat.search(ln)]
 
 
-def evaluate_no_epoch_share(lines, victim, epoch=2):
-    """`asserts-fault.sh:432-436` — the offline member holds NO share for the epoch it missed."""
+#: `beacon/actor.rs` — logged ONCE per process by the DkgActor at boot.
+#:
+#: The case uses it as a PROCESS BOUNDARY: every witness below has to be about the RESTARTED
+#: victim, and the restarted victim's log still carries everything the pre-stop process wrote.
+ACTOR_STARTED_LINE = "live DKG: actor started"
+
+#: `beacon/actor.rs` — emitted by `start_fresh`, and by NOTHING else. `maybe_start`'s journal
+#: tri-state routes `NoFile` to `start_fresh`, `Present` to `resume_from_journal` and `Torn` to
+#: the sit-out warn; only the first of the three logs this.
+#:
+#: THAT EXCLUSIVITY IS THE SETUP WITNESS, and it is the sharpest one available. A `ceremony
+#: started epoch=2` on the RESTARTED process says `load_journal(2) == NoFile`, i.e. the victim
+#: came back holding no journal for epoch 2 at all — so it received no dealing, sent no ack, and
+#: the only way any dealer's sealed log can carry its point is as a public REVEAL. That is the
+#: precondition of the reveal-fallback path, established from the log rather than assumed from
+#: the stop instant (which is a race against a moving chain, and lost that race once).
+CEREMONY_STARTED_LINE = "live DKG: ceremony started"
+
+#: `beacon/actor.rs` — the recompute-heal's ADOPT log, one of the TWO roads a restarted absentee
+#: can reach its share by. See `SHARE_ROADS`.
+HEAL_LINE = "live DKG: demoted committee member recomputed its share"
+#: The same path's ENTRY log, one rung earlier. Printed as a diagnostic on the failure path: its
+#: presence with no share line says the artifact arrived and the recompute did not.
+HEAL_START_LINE = "starting share recompute-heal"
+
+#: THE TWO ROADS, and why the case must accept EITHER.
+#:
+#: A victim absent through the whole deal phase replays its DKG clock through epoch 1 as it
+#: catches up, so `maybe_start(now + 1)` fires for epoch 2 with `NoFile` and it starts a FRESH
+#: ceremony. That ceremony fetches the pinned dealers' logs over the resolver and reconstructs the
+#: victim's share from their reveals. What differs between runs is only WHO finishes the job:
+#:
+#:   * the live ceremony itself, via `finalize_over_pinned` — `SHARE_LINE`, when the
+#:     reconstruction completes before the past-boundary sweep takes the ceremony away;
+#:   * the demote-heal, via `recompute_scoped` over the journal that ceremony just built —
+#:     `HEAL_LINE`, when the sweep gets there first.
+#:
+#: Both were observed live on the same case, on the same geometry, minutes apart. The reveal
+#: fallback is what reconstructs the share on both; the race is between the victim's catch-up
+#: speed and the boundary. So the case asserts the DISJUNCTION and names which road ran, and does
+#: NOT assert the absence of either line — an earlier version asserted "no `SHARE_LINE`", which
+#: made one of the two legitimate outcomes a red run.
+SHARE_ROADS = ((SHARE_LINE, "the live ceremony's finalize-over-pinned"),
+               (HEAL_LINE, "the demote-heal's scoped recompute"))
+
+#: `outer.rs` — the positive edge for "this epoch left vote-only admission", logged inside
+#: `EpochSchemeProvider::register`, the only place the OLD and the NEW pin state are both in hand.
+#: Waiting on this rather than on the ABSENCE of a vote-only admission is deliberate: an absence
+#: is green whenever certificates merely stopped arriving.
+PIN_LINE = "epoch scheme upgraded to PINNED"
+#: `epoch_manager.rs` — the in-process Verifier→Signer promotion, the consequence that makes the
+#: production leg reachable at all.
+PROMOTE_LINE = "promoted to Signer in-process"
+#: …and the epoch field spelling those two share. `register` takes `epoch: Epoch` and
+#: `reconcile_roles` takes `epoch: Epoch`, both rendered through `?epoch`, so the field reads
+#: `epoch=Epoch(2)` and NOT `epoch=2` — `epoch_share_lines`, which anchors on the bare number,
+#: cannot match it. Same trap `verdicts_rotation.SHARE_GATE_EPOCH_FMT` records; a witness filtered
+#: with the wrong spelling is a witness that never fires.
+PIN_EPOCH_FMT = "epoch=Epoch({})"
+
+#: `beacon/metrics.rs` — live-epoch artifact pulls that came back with the artifact. The PULLING
+#: side had no success counter before this ticket; only `served` (the serving side) existed, and a
+#: served count on some other node cannot say that THIS node received one.
+ARTIFACT_PULL_OK_FAMILY = "dpos_dkg_artifact_pull_ok_total"
+#: The name that counter's SAMPLE line carries. `prometheus-client` appends `_total` to a counter
+#: sample whatever the registered name ends in, so a registered `X_total` renders `X_total_total`
+#: — and `node_metric`'s matcher is ANCHORED, so handing it the registered name returns "", which
+#: is indistinguishable from a counter that never moved. `nodes.counter_sample` is the one place
+#: that doubling lives.
+ARTIFACT_PULL_OK_SAMPLE = nodes.counter_sample(ARTIFACT_PULL_OK_FAMILY)
+
+
+def started_fresh_after_restart(log_text, epoch=2):
+    """The `ceremony started` line for `epoch` written by the RESTARTED process, if any.
+
+    Sliced at the LAST `ACTOR_STARTED_LINE`: `docker compose logs` returns the whole container
+    log, pre-stop lines included, and a `ceremony started` from before the stop would mean the
+    exact opposite of what this witnesses (a victim that WAS present for the deal phase). The
+    slice is what makes the reading about the process the case restarted."""
+    lines = (log_text or "").splitlines()
+    boot = max((i for i, ln in enumerate(lines) if ACTOR_STARTED_LINE in ln), default=-1)
+    tail = "\n".join(lines[boot + 1:]) if boot >= 0 else ""
+    hits = epoch_share_lines(tail, epoch=epoch, marker=CEREMONY_STARTED_LINE)
+    return hits[0] if hits else ""
+
+
+def evaluate_started_fresh(line, victim, epoch=2):
+    """THE CASE MUST VERIFY IT SET UP WHAT IT CLAIMS TO TEST — the same rule the seed-slot MITM
+    follows when it reads back its own corruption before anything concludes from a rejection.
+
+    `start_fresh` is the ONLY emitter of this line and `NoFile` is the only arm that reaches it,
+    so its presence on the restarted process is proof that the victim came back with no epoch-2
+    journal: no dealing received, no ack sent, and therefore no dealer able to do anything with
+    its point except REVEAL it publicly. Everything the case says about the reveal fallback rests
+    on this one reading.
+
+    Its absence is the failure this case shipped with and did not catch: a victim stopped after
+    the deal phase opened has journaled and ACKED every dealing, resumes from that journal instead
+    of starting fresh, reconstructs from its own records, and passes every other assertion here
+    while testing a path the case is not for."""
+    if line:
+        return True, ""
+    return False, (f"{victim} did not log {CEREMONY_STARTED_LINE!r} for epoch {epoch} after its "
+                   "restart — it came back holding a journal, which means it was stopped AFTER "
+                   f"the epoch-{epoch} DEAL phase opened and had already received and ACKED the "
+                   "dealings. It then reconstructs from its own records and no dealer reveals its "
+                   "point, so the reveal-fallback path this case exists to cover did NOT run. "
+                   "Re-run; if it recurs the bring-up is landing inside epoch 1 and EPOCH_INTERVAL "
+                   "needs raising")
+
+
+def share_road(log_text, epoch=2):
+    """`(line, road)` for whichever road actually delivered the epoch's share, or `None`.
+
+    Checked in `SHARE_ROADS` order, and the ORDER is arbitrary because the two are mutually
+    exclusive in practice — the sweep either beat the ceremony or it did not."""
+    for marker, road in SHARE_ROADS:
+        hits = epoch_share_lines(log_text, epoch=epoch, marker=marker)
+        if hits:
+            return hits[0], road
+    return None
+
+
+def evaluate_share_acquired(road, victim, epoch=2):
+    """The INVERTED verdict (FLU-1166): the member that missed its own ceremony gets the epoch key
+    and its share INSIDE the epoch it was elected for.
+
+    This case used to assert the opposite — that the member sat the epoch out — because nothing
+    fetched the agreed artifact for the LIVE epoch: the epoch manager's repair sweep excludes
+    `epoch >= frontier` by design, so a demoted member waited for a fetch that was never going to
+    be issued and self-healed one epoch too late, if at all.
+
+    EITHER road counts; see `SHARE_ROADS` for why the case cannot pin one."""
+    if road is not None:
+        return True, ""
+    wanted = " or ".join(repr(m) for m, _ in SHARE_ROADS)
+    return False, (f"{victim} logged none of {wanted} for epoch {epoch} — it did not recover its "
+                   f"epoch-{epoch} share inside the epoch by either road. Either the live-epoch "
+                   "artifact pull never landed (FLU-1166 regressed), or the reconstruction ran "
+                   f"and was refused by the fork-safety self-check. Grep it for "
+                   f"{HEAL_START_LINE!r}: present means the artifact arrived and the recompute "
+                   "did not finish")
+
+
+def epoch_debug_lines(log_text, epoch=2, marker=PIN_LINE):
+    """Lines carrying `marker` and the DEBUG-spelled epoch field for `epoch`.
+
+    MESSAGE first, then the epoch FIELD, in the two-grep shape `verdicts_rotation.share_gate_lines`
+    owns and for the same reason: tracing renders fields in an order the case does not control, so
+    a single combined pattern would depend on it."""
+    field = PIN_EPOCH_FMT.format(int(epoch))
+    return [ln for ln in (log_text or "").splitlines()
+            if marker in ln and field in ln]
+
+
+def pin_upgrade_lines(log_text, epoch=2, marker=PIN_LINE):
+    """The victim's unpinned → PINNED transitions for `epoch`, if any."""
+    return epoch_debug_lines(log_text, epoch=epoch, marker=marker)
+
+
+def promote_lines(log_text, epoch=2, marker=PROMOTE_LINE):
+    """The victim's in-process Verifier→Signer promotions for `epoch`, if any."""
+    return epoch_debug_lines(log_text, epoch=epoch, marker=marker)
+
+
+def evaluate_pin_upgraded(lines, victim, epoch=2):
+    """…and the consequence on the VALIDATOR side: its own certificates for the live epoch leave
+    vote-only admission.
+
+    Distinct from the share and not implied by it. A node can hold the share and still verify
+    certificates seed-blind if nothing re-registers its epoch scheme with the pin attached; before
+    this ticket that state lasted `for the LIVE epoch, until the process exits`."""
     if lines:
-        listing = "\n".join(f"    {ln}" for ln in lines)
-        return False, (f"{victim} logged an epoch-{epoch} share despite being offline during the "
-                       f"epoch-{epoch} DKG window — it should be SHARELESS for epoch {epoch} "
-                       f"(QUAL exclusion):\n{listing}")
-    return True, ""
+        return True, ""
+    return False, (f"{victim} never logged {PIN_LINE!r} for {PIN_EPOCH_FMT.format(int(epoch))} — "
+                   f"its epoch-{epoch} scheme is still UNPINNED, so it is admitting that epoch's "
+                   "certificates with the multisig quorum checked and the seed slot not")
+
+
+def evaluate_promoted(lines, victim, epoch=2):
+    """…and the other consequence, without which the production leg below cannot be reached: the
+    share it recovered actually seated it.
+
+    Not implied by the share line either. `reconcile_roles` re-resolves the share on its own edge,
+    and a share that lands with no edge to wake is a share nobody votes with."""
+    if lines:
+        return True, ""
+    return False, (f"{victim} never logged {PROMOTE_LINE!r} for "
+                   f"{PIN_EPOCH_FMT.format(int(epoch))} — it recovered the share but was never "
+                   f"seated as a signer for epoch {epoch}, so it cannot produce and the "
+                   "production leg below would fail for a reason that is not about the key")
+
+
+def evaluate_artifact_pull_ok(raw, victim, family=ARTIFACT_PULL_OK_SAMPLE):
+    """The mechanism, named: the victim PULLED the live epoch's artifact and got it.
+
+    Read on BOTH roads and it moves on both — verified live: on the run where the live ceremony
+    finalized the share itself, this still read 1, because `drive_recompute` had already asked for
+    the epoch's artifact while the ceremony was still catching up.
+
+    `""` is UNREAD, not zero, and it fails. `node_metric` answers "" for both an absent family and
+    a failed scrape, and this is a counter on a devnet-only endpoint (`--dpos.metrics-port`) that
+    a mis-flagged container simply does not serve — coercing that to 0 would let an unscraped node
+    satisfy the one assertion that names the fix."""
+    text = str(raw or "").strip()
+    if not text:
+        return False, (f"{family} could not be read off {victim} (absent family or unreachable "
+                       "commonware registry) — the live-epoch artifact pull is unwitnessed, and "
+                       "an unread counter must never satisfy a positive assertion")
+    try:
+        n = int(float(text))
+    except ValueError:
+        return False, f"{family} on {victim} read {text!r}, which is not a number"
+    if n > 0:
+        return True, ""
+    return False, (f"{family}={n} on {victim} — it never obtained the LIVE epoch's agreed "
+                   "artifact over the beacon resolver, so nothing could have keyed its share "
+                   "(FLU-1166: the repair sweep excludes the frontier by design, and this pull is "
+                   "the only thing that covers it)")
+
+
+#: How many blocks of epoch 2 must remain AFTER the share lands for the production leg to be a
+#: test rather than a coin toss. Leader election is a stake-weighted lottery over the 4
+#: equal-stake members, so a seated member wins ~1 slot in 4: over 32 blocks the chance of winning
+#: none is ~1e-4, over the 8 a slow run might leave it is ~10%. Below this the case has not
+#: produced the conditions it measures, and says so instead of reporting a lottery loss as a
+#: broken heal.
+#:
+#: Calibrated against a live run: the victim was seated at height 257 — the first block of a
+#: [256, 320) epoch — and finished the epoch with 10 of its 64 blocks.
+MIN_POST_HEAL_BLOCKS = 32
+
+
+def evaluate_heal_left_room(heal_at, epoch_end, victim, want=MIN_POST_HEAL_BLOCKS):
+    """…and the same rule again, for the production leg.
+
+    A member seated with four blocks of its epoch left can be perfectly healed and still produce
+    nothing. That is a fact about the schedule, not about the fix, and reporting it as
+    `producedAt=0` would be the same misdiagnosis the deal-window guard prevents upstream."""
+    left = int(epoch_end) - int(heal_at)
+    if left >= int(want):
+        return True, ""
+    return False, (f"{victim} was seated at finalized={heal_at} with only {left} blocks of epoch 2 "
+                   f"left (want >= {want}) — too few leader slots for `producedAt > 0` to mean "
+                   "anything. The recovery itself is fine; the schedule is not. Re-run, or raise "
+                   "EPOCH_INTERVAL")
 
 
 def evaluate_still_finalizing(before, after, victim):

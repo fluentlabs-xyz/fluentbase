@@ -11,8 +11,9 @@ use alloy_primitives::{keccak256, B256};
 use bytes::{Buf, BufMut};
 use commonware_codec::{Encode as _, EncodeSize, Read, ReadExt as _, Write};
 use commonware_consensus::types::Round;
-use commonware_cryptography::bls12381::primitives::group::Share;
+use commonware_cryptography::{bls12381::primitives::group::Share, Hasher as _, Sha256};
 use fluentbase_bls::BlsSignature;
+use fluentbase_staking_reader::reader::ValidatorSetSnapshot;
 
 /// The per-round threshold randomness seed: the recovered BLS threshold
 /// signature over `(seed_namespace ‖ round)`, unique by construction (any ≥t
@@ -71,6 +72,47 @@ pub(crate) fn parse_share(bytes: &[u8]) -> Result<Share, commonware_codec::Error
 /// Deterministic across nodes (the threshold signature is unique).
 pub fn prev_randao_from_seed(seed: &Seed) -> B256 {
     keccak256(seed.signature.encode())
+}
+
+// ── The seedless arm's base ───────────────────────────────────────────────────
+//
+// The leader elector falls back to these where a round's certificate carries no
+// threshold seed (view 1 of an epoch, nullify-justified views). They live HERE,
+// not beside the elector, because choosing what stands in for randomness is a
+// randomness decision: an implementation that computes the seed from a hash
+// substitutes its own base with it, and the consensus core reads both only as
+// opaque 32-byte values.
+
+/// Last-resort base for the seedless arm: `sha256(epoch_be ‖ sorted peer
+/// pubkeys)`, derivable from constants and therefore predictable an epoch ahead.
+/// Reached only where no witness seed can exist — epoch 0, a non-computable
+/// terminal height, and pre-bootstrap links whose terminal block legitimately
+/// carries no witness. Sorting the peers makes it invariant under any snapshot
+/// iteration order, so honest nodes that observe the epoch's keys in any order
+/// derive the identical base.
+pub fn constant_fallback_seed(snap: &ValidatorSetSnapshot) -> [u8; 32] {
+    let mut h = Sha256::new();
+    h.update(&snap.epoch.to_be_bytes());
+    let mut peers: Vec<&[u8]> = snap
+        .validators
+        .iter()
+        .map(|v| v.keys.peer_pubkey.as_ref())
+        .collect();
+    peers.sort_unstable();
+    for p in peers {
+        h.update(p);
+    }
+    <[u8; 32]>::try_from(h.finalize().as_ref()).expect("sha256 is 32 bytes")
+}
+
+/// Compress a terminal-block witness seed into the seedless arm's base.
+/// Deliberately NOT [`prev_randao_from_seed`]: that value is a header field, and
+/// D6 requires the leader draw to stay disjoint from it.
+///
+pub fn witness_fallback_seed(seed: &Seed) -> [u8; 32] {
+    let mut h = Sha256::new();
+    h.update(seed.signature.encode().as_ref());
+    <[u8; 32]>::try_from(h.finalize().as_ref()).expect("sha256 is 32 bytes")
 }
 
 #[cfg(test)]

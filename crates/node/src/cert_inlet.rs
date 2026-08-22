@@ -19,10 +19,8 @@ use alloy_consensus::Header;
 use alloy_primitives::B256;
 use commonware_runtime::{tokio::Context, Handle, Metrics as _, Spawner as _};
 use fluentbase_consensus::{
-    beacon::{AgreedKeys, BeaconKeys},
-    cert_inlet::LiveFrontierTee,
-    CertInlet, CertUpstream as _, CommitteeSource, MarshalMailbox, RethCommitteeSource,
-    RotateUpstream,
+    cert_inlet::LiveFrontierTee, CertInlet, CertUpstream as _, CommitteeSource, MarshalMailbox,
+    RethCommitteeSource, RotateUpstream,
 };
 use fluentbase_staking_reader::reader::{RethStakingStateReader, StakingReaderConfig};
 use reth_ethereum_primitives::EthPrimitives;
@@ -63,15 +61,17 @@ where
 /// beacon plane), so committee[E+1] resolves and the DKG deals at the LIVE
 /// frontier rather than this node's lagging EL-finalized state.
 ///
-/// `walk` is the ladder's boundary-walk rung over this node's own marshal, built
-/// by the caller from the layer's frozen epoch geometry (`DposLayerHandle`). The
-/// validator inlet needs it as much as the follower's does: its cache and the
-/// consensus plane's `EpochSchemeProvider` sit on disjoint ingress paths, so a pin
-/// the plane holds never reaches this cache.
+/// There is no `walk` parameter and no epoch geometry here: the ladder's
+/// boundary-walk rung was deleted 2026-08-19 with the agreement plane, and pin
+/// resolution now lives entirely behind `randomness`.
 ///
-/// `beacon_keys` is the layer's ONE beacon-key store, not a fresh one: joining it
-/// is what lets a key the plane's DKG published reach this inlet's ladder, and a
-/// boundary key this inlet verified reach the plane's.
+/// `randomness` is the layer's ONE provider, not a fresh one: joining it is what
+/// lets a key the plane's DKG published reach this inlet's ladder, and a boundary
+/// key this inlet verified reach the plane's. The validator inlet needs that as
+/// much as the follower's does — its cache and the consensus plane's
+/// `EpochSchemeProvider` sit on disjoint ingress paths, so a pin the plane holds
+/// never reaches this cache otherwise. A private provider would also make this
+/// inlet's `observe_cert` prune a store nothing else reads.
 ///
 /// Fail-closed-on-TOTAL-loss (Risk-3): a single bad cert is skipped inside
 /// `ingest` (WARN + `Ok`), but if the WS `finalized_rx` closes (every upstream
@@ -84,8 +84,7 @@ pub(crate) fn spawn_cert_inlet<C>(
     committees: C,
     urls: Vec<String>,
     tee: LiveFrontierTee,
-    held_keys: AgreedKeys,
-    beacon_keys: BeaconKeys,
+    randomness: Arc<dyn fluentbase_consensus::beacon::Randomness>,
 ) -> Handle<()>
 where
     C: CommitteeSource,
@@ -111,8 +110,7 @@ where
         let mut inlet = CertInlet::new(marshal, committees, c)
             .with_tee(tee)
             .with_rotate(rotate)
-            .with_held_keys(held_keys)
-            .with_beacon_keys(beacon_keys)
+            .with_randomness(randomness)
             .with_connection_token(conn_gen);
         info!("cert-inlet SHADOW producer started");
         loop {

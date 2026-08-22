@@ -54,7 +54,7 @@ CASES = {
     "smoke-crash-survivor": "smoke.crash_survivor",
     "smoke-full-restart": "smoke.full_restart",
     "smoke-vrf-fault": "smoke.vrf_fault",
-    "smoke-vrf-dkg-liveness": "smoke.vrf_dkg_liveness",
+    "smoke-vrf-dkg-live-heal": "smoke.vrf_dkg_live_heal",
     "smoke-cert-follow": "smoke.cert_follow",
     "smoke-cert-cascade": "smoke.cert_cascade",
     "smoke-tx-cascade": "smoke.tx_cascade",
@@ -86,7 +86,7 @@ CASES = {
 #: are the long ones that need foundry and a solidity-contracts checkout.
 SUITE = [
     "smoke-base", "smoke-weighted-vrf", "smoke-rejump-signer",
-    "smoke-liveness", "smoke-fault", "smoke-vrf-dkg-liveness",
+    "smoke-liveness", "smoke-fault", "smoke-vrf-dkg-live-heal",
     "smoke-cert-follow", "smoke-cert-cascade", "smoke-tx-cascade",
     "smoke-byzantine", "smoke-cert-catchup", "smoke-vrf-dkg-restart-midwindow",
     "growth", "quorum", "seed-continuity",

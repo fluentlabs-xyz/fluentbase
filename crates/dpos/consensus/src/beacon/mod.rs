@@ -18,10 +18,16 @@
 //! This module is CLOSED: every submodule is `pub(crate)` and what leaves it is
 //! exactly what is re-exported here — the [`Seed`] wire type with its
 //! `prev_randao` derivation, the two opaque key handles ([`BeaconKeys`],
-//! [`AgreedKeys`]), and the plane facade ([`build`] and its config/result). How
-//! the epoch key is agreed, where the artifact is stored, how a share is derived
-//! and how a peer is served are all internal, and nothing above the beacon
-//! assembles them.
+//! [`AgreedKeys`]), the plane facade ([`build`] and its config/result) and the
+//! follower facade ([`for_follower`] and its config/result). How the epoch key is
+//! agreed, where the artifact is stored, how a share is derived and how a peer is
+//! served are all internal, and nothing above the beacon assembles them.
+//!
+//! The follower facade exists so that closing FLU-1167 did not have to open the
+//! module: a follower needs `verify_artifact_for_epoch` and the artifact types,
+//! both `pub(crate)`, so its provider is built INSIDE and the node hands in
+//! capabilities (a fetch closure, a committee source, a `DkgQualFor`) exactly as
+//! it already does for the plane.
 
 pub(crate) mod actor;
 pub(crate) mod artifact;
@@ -37,17 +43,27 @@ pub(crate) mod dkg_msg;
 #[cfg(test)]
 pub(crate) mod dkg_oracle;
 pub(crate) mod dkg_transport;
+pub(crate) mod follower;
 pub(crate) mod key_journal;
 pub(crate) mod keys;
 pub(crate) mod log_resolver;
 pub(crate) mod metrics;
 pub(crate) mod outcome;
 pub(crate) mod plane;
+pub(crate) mod resolve;
 pub(crate) mod seed;
 pub(crate) mod seed_journal;
 pub(crate) mod share_state;
+pub(crate) mod surface;
 pub(crate) mod wire;
 
+pub use actor::CommitteePairFor;
+pub use follower::{for_follower, ArtifactFetch, FollowerBeacon, FollowerRandomnessConfig};
 pub use keys::{AgreedKeys, BeaconKeys};
-pub use plane::{build, Beacon, BeaconConfig, BeaconShared, BeaconWriteBack};
-pub use seed::{prev_randao_from_seed, Seed};
+pub use plane::{build, ArtifactSource, Beacon, BeaconConfig};
+pub use resolve::{BeaconVerify, KeyLookup};
+pub use seed::{constant_fallback_seed, prev_randao_from_seed, witness_fallback_seed, Seed};
+pub use surface::{
+    absent, for_keys, for_seeds, BeaconResolve, BeaconResolver, PinEffort, Randomness, ShareProbe,
+    SignerVerdict, WithheldReason, WitnessCheck,
+};

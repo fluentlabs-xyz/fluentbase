@@ -17,7 +17,7 @@
 
 plus nineteen case entrypoints mirroring the nineteen `case-*.sh` files one-for-one: `tx`,
 `epoch`, `vrf`, `vrf_boundary` and their aggregate `base`; `deferred`, `peers`, `vrf_fault`,
-`crash_survivor`, `full_restart` and their aggregate `fault`; the standalone `vrf_dkg_liveness`;
+`crash_survivor`, `full_restart` and their aggregate `fault`; the standalone `vrf_dkg_live_heal`;
 the three standalone followers `cert_follow`, `cert_cascade`, `tx_cascade`; and the four
 standalone on-chain cases `liveness`, `byzantine`, `cert_catchup`,
 `vrf_dkg_restart_midwindow`.
@@ -45,6 +45,9 @@ soundness claim, not a saved bring-up.
 The four ON-CHAIN cases each run alone for the STRONGEST version of that reason: none of them
 restores what it broke. `byzantine` can leave a TOMBSTONED validator and a permanently shrunk
 committee; `cert-catchup` and `vrf-dkg-restart-midwindow` bring up a TUNED GENESIS (64-block
-epochs), which is a different chain, not a different phase of the same one. `liveness`'s exclusion from the `fault` aggregate is recorded in `fault.py` too,
+epochs), which is a different chain, not a different phase of the same one. `vrf-dkg-live-heal`
+runs the same tuned genesis and still shares nothing with them: its whole premise is a DKG window
+that opens once, near bring-up, with the victim already down through it — the opposite of
+`vrf-dkg-restart-midwindow`, which needs its victim UP and mid-ceremony at that same instant. `liveness`'s exclusion from the `fault` aggregate is recorded in `fault.py` too,
 and the two notes must not drift apart.
 """

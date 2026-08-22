@@ -30,12 +30,7 @@ use commonware_parallel::Sequential;
 use commonware_runtime::{
     buffer::paged::CacheRef, BufferPooler, Clock, ContextCell, Handle, Metrics, Spawner, Storage,
 };
-use fluentbase_bls::{
-    fluent_namespace,
-    keys::ValidatorBlsKeypair,
-    scheme::{build_signer, build_verifier, BeaconKey},
-    Scheme as BlsScheme,
-};
+use fluentbase_bls::Scheme as BlsScheme;
 use fluentbase_staking_reader::reader::ValidatorSetSnapshot;
 use rand_core::CryptoRngCore;
 use std::sync::Arc;
@@ -87,8 +82,6 @@ pub struct EpochEngineConfig<B, XC, A> {
     /// [`crate::outer::OuterBuilder::build`] (no per-epoch re-construction;
     /// marshal and engine share the same instance). `origin = dposActivationBlock`.
     pub epocher: OriginEpocher,
-    pub chain_id: u64,
-    pub signer_keypair: Option<ValidatorBlsKeypair>,
     pub app: FluentApp<XC, A>,
     pub timeouts: ConsensusTimeouts,
     pub mailbox_size: usize,
@@ -96,12 +89,12 @@ pub struct EpochEngineConfig<B, XC, A> {
     /// [`crate::outer::EpochSchemeProvider`] so marshal can verify
     /// cross-epoch finalization certificates (trailing-window pruned; see SCHEME_RETENTION_EPOCHS).
     pub register_scheme: Arc<dyn Fn(Epoch, BlsScheme) + Send + Sync>,
-    /// Per-epoch threshold beacon key (`PK_epoch` polynomial + this node's
-    /// share + seed namespace), threaded so the combined scheme emits/verifies
-    /// the seed partial. `None` ⇒ a fallback (pure-multisig) epoch. This is the
-    /// node-LOCAL DKG material — used to SIGN only when its group key matches
-    /// the authoritative on-chain key below.
-    pub beacon: Option<BeaconKey>,
+    /// The scheme this engine votes and verifies with, built by the randomness
+    /// subsystem and handed down whole ([`crate::beacon::Randomness::signer_scheme`]).
+    /// The engine no longer knows what a beacon key is: whether this scheme
+    /// carries a seed partial, and whether it can sign at all, were decided
+    /// above it.
+    pub scheme: BlsScheme,
     /// DEVNET/TEST-ONLY byzantine validator behaviour (gated behind
     /// `dpos-devnet-byzantine`). `None` on every honest node. When
     /// `Some(ByzantineMode::Equivocate)` (and this node can sign), `new()` builds
@@ -182,44 +175,22 @@ where
         // so the app and the scheme demonstrably share one snapshot. See the
         // injection at the `Inline::new` site for why that adjacency matters.
         let committee_index = Arc::new(bimap.clone());
-        let namespace = fluent_namespace(cfg.chain_id);
 
-        // The reconciler ([`crate::epoch_manager::Actor::reconcile_roles`]) owns
-        // the role decision: it routes non-members (Verifier) and shareless
-        // beacon-active members (the share-gate) to a verify-only scheme WITHOUT a
-        // participating engine, so this engine is built only for a signing member
-        // that holds a usable scheme — a member with the local polynomial+share,
-        // or a pre-beacon pure-multisig signer (`cfg.beacon == None` only for a
-        // pre-beacon epoch; a beacon-active no-share member never reaches here).
-        // `build_signer` returns `None` exactly when the keypair's BLS key is not
-        // in the committee BiMap; the `None` arm is therefore reachable only on a
-        // (peer,bls)-key mismatch — a misconfiguration safety net, not the wedge
-        // path. The reconciler aborts this engine on its next reconcile when it
-        // sees the node is not a signer for the epoch.
-        let member_signer = cfg.signer_keypair.as_ref().and_then(|keypair| {
-            build_signer(&namespace, bimap.clone(), keypair, cfg.beacon.clone())
-        });
-        // Verify-only scheme for the engine's adjacent-committee reads: no local
-        // beacon key here, so `cert_seed_pin = None` ⇒ vote-only cert verify (the
-        // accepted degrade; the pinned ingress paths are the inlet/soft-enter).
-        let verify_only = |bimap| build_verifier(&namespace, bimap, None, None);
-        // DEVNET/TEST-ONLY: only a signing committee member can equivocate.
-        #[cfg(feature = "dpos-devnet-byzantine")]
-        let can_sign = member_signer.is_some();
-        let scheme: BlsScheme = match member_signer {
-            Some(signer) => signer,
-            None => {
-                if cfg.signer_keypair.is_some() {
-                    metrics::counter!("epoch_engine_rotated_out_total").increment(1);
-                    tracing::warn!(
-                        epoch = ?cfg.epoch,
-                        "validator BLS key not in committee BiMap — verify-only \
-                         (reconciler aborts this engine on its next reconcile)"
-                    );
-                }
-                verify_only(bimap)
-            }
-        };
+        // The scheme arrives BUILT. The reconciler
+        // ([`crate::epoch_manager::Actor::reconcile_roles`]) owns the role
+        // decision and asks the randomness subsystem for the scheme; non-members
+        // (Verifier) and shareless beacon-active members (the share-gate) are
+        // routed to a verify-only scheme WITHOUT a participating engine, so this
+        // engine exists only for a member that holds a usable scheme. The one
+        // exception is the rotated-out safety net — a (peer,bls)-key mismatch
+        // yields a verify-only scheme here too, and the reconciler aborts this
+        // engine on its next reconcile.
+        //
+        // The committee decode above is therefore performed twice for one spawn
+        // (here, and inside `signer_scheme`). Deliberate: this decode feeds the
+        // app's `committee_index`, and threading the decoded value through the
+        // verdict would put a committee type back on the randomness surface.
+        let scheme = cfg.scheme;
 
         (cfg.register_scheme)(cfg.epoch, scheme.clone());
 
@@ -234,8 +205,14 @@ where
         if matches!(
             cfg.byzantine,
             Some(crate::byzantine::ByzantineMode::Equivocate)
-        ) && can_sign
-        {
+        ) && {
+            // Only a SIGNING member can equivocate. Asked of the scheme itself
+            // rather than carried alongside it as a bool: `me()` is `Some`
+            // exactly for the signer scheme `signer_scheme` builds, so the two
+            // cannot drift apart.
+            use commonware_cryptography::certificate::Scheme as _;
+            scheme.me().is_some()
+        } {
             tracing::warn!(
                 epoch = ?cfg.epoch,
                 "BYZANTINE: this validator will EQUIVOCATE its votes — NEVER use in production"
@@ -248,15 +225,16 @@ where
 
         // Inject THIS epoch's pubkey→index map into the app the engine is about
         // to run. The injection sits here, adjacent to the `Inline::new` move,
-        // for a reason worth stating: `bimap` is the same map `build_signer`
-        // above derived this engine's scheme from, so the index the app computes
-        // for a block's leader and the committee this engine votes with are one
-        // agreed snapshot by construction — no shared registry, no lookup that
-        // can miss, nothing node-local on a vote path with zero quorum slack.
+        // for a reason worth stating: `bimap` is decoded from `cfg.snapshot`, the
+        // SAME snapshot the reconciler handed `signer_scheme` to derive
+        // `cfg.scheme` from, so the index the app computes for a block's leader
+        // and the committee this engine votes with are one agreed snapshot by
+        // construction — no shared registry, no lookup that can miss, nothing
+        // node-local on a vote path with zero quorum slack.
         //
         // Every engine-owning instance reaches here — a signing member, and also
-        // the key-mismatch verify-only safety net at :209 that the reconciler
-        // aborts on its next pass. Both get a correct map. What does NOT reach
+        // the key-mismatch verify-only safety net (`SignerVerdict::RotatedKey`)
+        // that the reconciler aborts on its next pass. Both get a correct map. What does NOT reach
         // here is an instance with no engine at all, which is why
         // `FluentApp::committee_index` being `None` elsewhere is sound: those
         // instances cast no votes.

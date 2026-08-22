@@ -17,15 +17,10 @@
 #[cfg(test)]
 use crate::beacon::ceremony::CeremonyOutput;
 use crate::{
-    beacon::{
-        actor::DETERMINISTIC_BOOTSTRAP_EPOCH,
-        certify::SeedStore,
-        keys::{pk_prefix, BeaconKeys, KeySource},
-        seed::Seed,
-    },
+    beacon::{seed::Seed, WitnessCheck},
     digest::Digest,
     executor, extra_data,
-    fault::TransportError,
+    fault::EngineError,
     order_block::{
         result_matches, result_target, OrderBlock, ResultTarget, MIN_GAS_LIMIT, TX_BYTE_BUDGET,
     },
@@ -53,10 +48,7 @@ use commonware_utils::ordered::BiMap;
 use commonware_utils::ordered::Set;
 /// The signing scheme bound for this Application.
 pub use fluentbase_bls::Scheme as BlsScheme;
-use fluentbase_bls::{
-    beacon::{verify_seed, GroupPublic},
-    BlsPubkey, PeerPubkey,
-};
+use fluentbase_bls::{BlsPubkey, PeerPubkey};
 use futures::StreamExt as _;
 use rand_08::Rng;
 use reth_ethereum_primitives::{Block as RethBlock, TransactionSigned};
@@ -116,15 +108,14 @@ pub trait ExecutedChain: Clone + Send + Sync + 'static {
     /// `spec_execute`, NOT yet beyond reorg. The head can carry a sibling the
     /// finalization will replace, so this tier is read ONLY by the executor's
     /// own parent-linkage / backward cross-checks — NEVER by the result gate
-    /// (that would re-open bundle-20260716T150148Z).
+    /// (that would re-open the whole-committee SafetyHalt divergence below).
     fn spec_executed_hash(&self, height: u64) -> Option<B256>;
 
     /// Tier-F (FINALIZED): the finalized-execution result at `height`, or `None`
     /// if this node has not finalized-derived `height` yet. The result gate
     /// (propose + verify) samples THIS tier so a still-speculative sibling A at
     /// h−K can never be committed as an OrderBlock `result` and then re-finalize
-    /// as sibling B — the honest-run whole-committee SafetyHalt of
-    /// bundle-20260716T150148Z.
+    /// as sibling B — the honest-run whole-committee SafetyHalt.
     ///
     /// Tier-F IS reth's canonical chain below the monotone finalized-execution
     /// cursor ([`FinalizedCursor`]): past the `try_derive` canonical
@@ -263,30 +254,6 @@ pub fn step_gas_limit(parent: u64, target: u64) -> u64 {
     stepped.max(MIN_GAS_LIMIT)
 }
 
-/// Outcome of a group-key resolution (`PK_epoch`), 3-state. Conflating the
-/// last two states IS the P1 bug: `Unknown` = "this node structurally does not
-/// hold `PK_epoch`" (a stable fact about this node — re-polling cannot help);
-/// `ReadFailed` = "the committee read was transiently unavailable, I could not
-/// even decide" (retried, NEVER cached). The 2-state `BeaconResolver` fold
-/// (`_ => None`, `dpos.rs`) is fine for its retryable share-gate consumer but
-/// unusable on a vote path — do not collapse this enum into it.
-// A `GroupPublic` (G2) is ~288 B; the enum is a transient return value that is
-// matched immediately and never stored, so the stack copy is cheaper than the
-// per-resolve heap allocation boxing would put on the vote path.
-#[allow(clippy::large_enum_variant)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum KeyLookup {
-    Resolved(GroupPublic),
-    Unknown,
-    ReadFailed,
-}
-
-/// The lazy 3-state group-key resolver (ladder step 1: the node's OWN live-DKG
-/// material, carry-forward + committee-equality gated). Built at the launch
-/// site (`dpos.rs`) — the only place the `CeremonyStore` exists — and threaded
-/// into [`BeaconVerify`]. Reads `.public()` ONLY, never the share.
-pub type GroupKeyFor = Arc<dyn Fn(u64) -> KeyLookup + Send + Sync>;
-
 /// The parent-link classification shared by propose and the verify gate: the
 /// PARENT's epoch `Ep` and whether the parent-seed witness is REQUIRED — a
 /// pure function of the simplex context (agreed data, no local state).
@@ -296,46 +263,20 @@ pub type GroupKeyFor = Arc<dyn Fn(u64) -> KeyLookup + Send + Sync>;
 /// parent is the chain ANCHOR (never proposed, no round) ⇒ `None` ⇒ never
 /// beacon-active — this is what keeps the first post-activation block
 /// producible. The witness is required iff
-/// `Ep >= DETERMINISTIC_BOOTSTRAP_EPOCH` — deterministic, never "do I hold a
+/// `randomness.mandatory_at(Ep)` — network-agreed data, never "do I hold a
 /// key" (F8; a two-branch key-dependent gate would re-open the downgrade arm).
-fn witness_link(ctx: &SimplexContext<Digest, PublicKey>) -> (Option<u64>, bool) {
+fn witness_link(
+    randomness: &dyn crate::beacon::Randomness,
+    ctx: &SimplexContext<Digest, PublicKey>,
+) -> (Option<u64>, bool) {
     let ec = ctx.round.epoch().get();
     let ep = if ctx.parent.0 == View::zero() {
         ec.checked_sub(1)
     } else {
         Some(ec)
     };
-    let required = ep.is_some_and(|e| e >= DETERMINISTIC_BOOTSTRAP_EPOCH);
+    let required = ep.is_some_and(|e| randomness.mandatory_at(e));
     (ep, required)
-}
-
-/// The per-epoch beacon context threaded into [`FluentApp`]'s verify path.
-///
-/// Since the epoch key left `OrderBlock`, a block asserts nothing about the
-/// beacon and there is no boundary gate: what remains is the two things the
-/// parent-seed witness needs — a `PK_epoch` resolver and the seed-signing
-/// domain. `None` on `FluentApp` ⇒ no beacon context (cold-start epoch 0 /
-/// followers / tests) ⇒ [`FluentApp::group_public_for`] answers `Unknown` and the
-/// witness arm takes its accept-biased branch.
-#[derive(Clone)]
-pub struct BeaconVerify {
-    /// Lazy 3-state `PK_epoch` resolver (ladder step 1) — consulted by
-    /// [`FluentApp::group_public_for`] on a [`BeaconKeys`] store miss; the map
-    /// memoizes `Resolved` only. Carry-forward + committee-gated, key-only.
-    group_key_for: GroupKeyFor,
-    /// The chain's beacon seed-signing namespace
-    /// (`seed_namespace(fluent_namespace(chain_id))`) — the domain the witness
-    /// signature is verified under (`verify_seed`).
-    seed_namespace: Vec<u8>,
-}
-
-impl BeaconVerify {
-    pub fn new(group_key_for: GroupKeyFor, seed_namespace: Vec<u8>) -> Self {
-        Self {
-            group_key_for,
-            seed_namespace,
-        }
-    }
 }
 
 /// The Fluent consensus application.
@@ -343,17 +284,10 @@ impl BeaconVerify {
 /// Generic over `XC` (local derived-chain view) and `A` (tx assembler).
 pub struct FluentApp<XC, A> {
     /// Per-epoch beacon-DKG verify/propose context (see [`BeaconVerify`]).
-    /// `None` ⇒ no beacon gating (cold-start epoch 0 / followers / tests).
-    beacon: Option<BeaconVerify>,
-    /// Shared `round → recovered seed` map (cross-epoch singleton from
-    /// `outer.rs`). Read by the propose-side `parent_seed` embed (the witness
-    /// rollout); `None` for tests / followers that run no consensus plane.
-    seed_store: Option<SeedStore>,
-    /// The cross-epoch shared `epoch → PK_epoch` store (see [`BeaconKeys`]).
-    /// Written OFF the vote path (W1 at engine spawn in `epoch_manager`, W4 in
-    /// [`Reporter::report`] below); read + lazily filled (memoize-on-success
-    /// only) by [`Self::group_public_for`].
-    group_keys: BeaconKeys,
+    /// The ONE randomness handle. Never `Option`: a node with no beacon
+    /// material holds the permanently-negative provider, so the distinction the
+    /// old `Option` encoded now lives inside the implementation.
+    randomness: Arc<dyn crate::beacon::Randomness>,
     genesis: Arc<OrderBlock>,
     executor: executor::Mailbox,
     /// Observer for `Update::Block` finalizations — NOT a state-advancing
@@ -413,15 +347,20 @@ pub struct FluentApp<XC, A> {
     /// which is also what a test and a node whose watcher has not run yet hold —
     /// so the default is permissive, like the absent committee map.
     tombstones: TombstoneSet,
+    /// Ordering half of the clock pair, written in [`Reporter::report`]. This
+    /// app is the right writer precisely because it is built ONCE per process
+    /// and holds no execution state: it keeps reporting through a `SafetyHalt`
+    /// park, an executor death and every per-epoch engine abort, so a frozen
+    /// `dpos_dkg_clock_height` against a climbing `dpos_ordering_finalized_height`
+    /// is readable from outside instead of being two silences.
+    plane_clock: crate::sync_metrics::PlaneClock,
 }
 
 impl<XC: Clone, A> Clone for FluentApp<XC, A> {
     fn clone(&self) -> Self {
         Self {
-            beacon: self.beacon.clone(),
+            randomness: self.randomness.clone(),
             committee_index: self.committee_index.clone(),
-            seed_store: self.seed_store.clone(),
-            group_keys: self.group_keys.clone(),
             genesis: self.genesis.clone(),
             executor: self.executor.clone(),
             boundary_hook: self.boundary_hook.clone(),
@@ -434,6 +373,7 @@ impl<XC: Clone, A> Clone for FluentApp<XC, A> {
             chain_id: self.chain_id,
             charges: self.charges.clone(),
             tombstones: self.tombstones.clone(),
+            plane_clock: self.plane_clock.clone(),
         }
     }
 }
@@ -453,11 +393,6 @@ where
         fee_recipient: Address,
         target_gas_limit: u64,
         dpos_activation_block: u64,
-        seed_store: Option<SeedStore>,
-        // A constructor ARGUMENT, deliberately not an internal default: the
-        // same `Arc` must also reach `epoch_manager::Config` (writer W1) — a
-        // silently-forgotten second map would split writers from readers.
-        group_keys: BeaconKeys,
         chain_id: u64,
         // Same reasoning as `group_keys`: the same handle must also reach
         // `slasher::Config`, and a second store would be a queue nothing fills.
@@ -467,13 +402,15 @@ where
         tombstones: TombstoneSet,
     ) -> Self {
         Self {
-            beacon: None,
+            randomness: crate::beacon::surface::absent_unregistered(),
             committee_index: None,
             chain_id,
             charges,
             tombstones,
-            seed_store,
-            group_keys,
+            // Observability-only, so a setter rather than a 15th constructor
+            // argument: an instance that never receives one publishes nothing,
+            // which is what a follower and every test should publish.
+            plane_clock: crate::sync_metrics::PlaneClock::default(),
             genesis: Arc::new(genesis),
             executor,
             boundary_hook,
@@ -487,11 +424,21 @@ where
         }
     }
 
+    /// Attach the registered clock pair this app writes the ordering half of.
+    /// Only the launch site has one; everything else leaves the gauges silent.
+    pub fn with_plane_clock(mut self, plane_clock: crate::sync_metrics::PlaneClock) -> Self {
+        self.plane_clock = plane_clock;
+        self
+    }
+
     /// Attach the beacon context the parent-seed witness arm reads (the
     /// `PK_epoch` resolver + the seed-signing domain). Validators supply this;
     /// cold-start / followers / tests leave it `None`.
-    pub fn with_beacon(mut self, beacon: BeaconVerify) -> Self {
-        self.beacon = Some(beacon);
+    /// Attach the randomness provider. Builder-style for the same reason
+    /// `with_beacon` is: the provider is assembled at the launch site, after
+    /// this app exists.
+    pub fn with_randomness(mut self, randomness: Arc<dyn crate::beacon::Randomness>) -> Self {
+        self.randomness = randomness;
         self
     }
 
@@ -546,41 +493,6 @@ where
                 index: idx,
                 committee_size: bimap.len(),
             })
-    }
-
-    /// Resolve `PK_epoch` for the witness-signature arm: the shared
-    /// [`BeaconKeys`] store first (the common case — no I/O; every voting node
-    /// finds its OWN epoch there via W1), then the lazy 3-state resolver
-    /// (ladder step 1), memoizing ONLY on `Resolved`. `Unknown` and
-    /// `ReadFailed` are NEVER cached — a later call re-runs the resolve and
-    /// can succeed (the DKG actor writes the `CeremonyStore` asynchronously,
-    /// and W4 can land the key from an observed outcome block at any time).
-    /// Synchronous by construction: both inputs are in-memory (the map and the
-    /// resolver's `CeremonyStore`/committee snapshot) — no await, no in-flight
-    /// state on the vote path.
-    pub fn group_public_for(&self, epoch: u64) -> KeyLookup {
-        if let Some(pk) = self.group_keys.cached_only(epoch) {
-            metrics::counter!("dpos_group_public_source_total", "ladder" => "map").increment(1);
-            return KeyLookup::Resolved(pk);
-        }
-        let Some(bv) = self.beacon.as_ref() else {
-            // No beacon context (follower / test) ⇒ this node structurally
-            // holds no DKG material — a stable fact, not a transient.
-            return KeyLookup::Unknown;
-        };
-        match (bv.group_key_for)(epoch) {
-            KeyLookup::Resolved(pk) => {
-                metrics::counter!("dpos_group_public_source_total", "ladder" => "dkg").increment(1);
-                tracing::debug!(
-                    epoch,
-                    group_public = %pk_prefix(&pk),
-                    "group key resolved from own DKG material (ladder=dkg); memoizing"
-                );
-                self.group_keys.set_pk(epoch, pk, KeySource::LocalDkg);
-                KeyLookup::Resolved(pk)
-            }
-            miss => miss,
-        }
     }
 
     /// Pure structural validity of `block` against its parent — everything
@@ -642,21 +554,14 @@ where
         // boundary-DKG gates) — never an invalid block, never a fallback for
         // the round. Hoisted above the pace sleep so a doomed view nullifies
         // ~1 s sooner.
-        let (parent_epoch, seed_required) = witness_link(context);
+        let (parent_epoch, seed_required) = witness_link(self.randomness.as_ref(), context);
         let parent_seed = if !seed_required {
             None
         } else {
             let ep = parent_epoch.expect("required implies Some(ep)");
             let round = Round::new(Epoch::new(ep), View::new(parent.proposal_view));
-            let seed = self
-                .seed_store
-                .as_ref()
-                .and_then(|store| store.lookup(round));
-            match seed {
-                Some(signature) => Some(Seed {
-                    target_round: round,
-                    signature,
-                }),
+            match self.randomness.seed_for(round) {
+                Some(seed) => Some(seed),
                 None => {
                     metrics::counter!("dpos_parent_seed_lookup_miss_total").increment(1);
                     let boundary = context.parent.0 == View::zero();
@@ -696,7 +601,7 @@ where
         // Execution gate (proposer-≤K-behind): the result commitment needs the
         // FINALIZED-tier derived hash at height − K — NOT the speculative head
         // (a still-speculative sibling A at h−K could re-finalize as sibling B,
-        // committing a hash the network will diverge from: bundle-20260716T150148Z).
+        // committing a hash the network will diverge from).
         // K guarantees h−K is finalized-reconciled before h commits its result;
         // a proposer whose local finalize reconcile has not caught up skips the
         // view rather than guessing. Sampled after the pace sleep — the EL gets
@@ -1057,10 +962,10 @@ where
             return false;
         }
 
-        // ── Parent-seed witness gate, SYNCHRONOUS PRELUDE (§3) — no budget,
+        // Parent-seed witness gate, SYNCHRONOUS PRELUDE (§3) — no budget,
         // no await. Everything here is a pure function of agreed data (the two
         // block bodies + ctx); a `false` returns immediately.
-        let (parent_epoch, seed_required) = witness_link(ctx);
+        let (parent_epoch, seed_required) = witness_link(self.randomness.as_ref(), ctx);
         let witness = if !seed_required {
             // Pre-bootstrap / anchor link: a witness MUST be absent (a present
             // one would be unagreeable data smuggled under the digest).
@@ -1102,7 +1007,7 @@ where
             return false;
         }
 
-        // ── THE ONE INTERLEAVED POLL LOOP (Fix B): the witness-signature arm
+        // THE ONE INTERLEAVED POLL LOOP: the witness-signature arm
         // and the result gate share the SAME 40-tick budget and are evaluated
         // together on every tick — neither can starve the other (the two reads
         // correlate: `committee_for` and `executed_hash` hit the same EL
@@ -1116,7 +1021,7 @@ where
         // `ExecutedChain::finalized_executed_hash`): the honest semantics are
         // "wait for h−K to be finalized-reconciled locally", not "match the
         // speculative head" — the speculative head can carry a sibling that the
-        // finalization will replace (bundle-20260716T150148Z).
+        // finalization will replace.
         let check = |this: &Self| {
             result_matches(
                 block.result,
@@ -1143,37 +1048,28 @@ where
             }
             if !key_done {
                 let (ep, s) = witness.expect("key arm exists only with a witness");
-                match self.group_public_for(ep) {
-                    KeyLookup::Resolved(pk) => {
-                        let ns = self
-                            .beacon
-                            .as_ref()
-                            .map(|bv| bv.seed_namespace.as_slice())
-                            .unwrap_or(&[]);
-                        if !verify_seed(&pk, ns, s.target_round, &s.signature) {
-                            // Loud + byte-diffable: the resolved-key fingerprint is
-                            // what lets a lone rejecting node's PK_Ep be compared
-                            // against the quorum's from logs alone (a diverged
-                            // carried-forward key rejects here with ladder never
-                            // having run — soak 2026-07-14 v5@epoch77).
-                            tracing::warn!(
-                                height = block.height,
-                                parent_epoch = ep,
-                                round = ?s.target_round,
-                                group_public = %pk_prefix(&pk),
-                                "parent-seed witness FAILED signature verify under \
-                                 resolved PK_Ep; voting false (reject reason=bad_signature)"
-                            );
-                            metrics::counter!(
-                                "dpos_parent_seed_reject_total",
-                                "reason" => "bad_signature"
-                            )
-                            .increment(1);
-                            return false;
-                        }
+                match self.randomness.check_witness(ep, s) {
+                    WitnessCheck::Valid => {
                         key_done = true;
                     }
-                    KeyLookup::Unknown => {
+                    WitnessCheck::Invalid => {
+                        // The resolved-key fingerprint rides the warn inside
+                        // `resolve_witness` (only it holds the key); this one
+                        // carries the height and the vote.
+                        tracing::warn!(
+                            height = block.height,
+                            parent_epoch = ep,
+                            "parent-seed witness verify failed; voting false \
+                             (reject reason=bad_signature)"
+                        );
+                        metrics::counter!(
+                            "dpos_parent_seed_reject_total",
+                            "reason" => "bad_signature"
+                        )
+                        .increment(1);
+                        return false;
+                    }
+                    WitnessCheck::NoKey => {
                         // Structurally cannot know PK_Ep — re-polling cannot
                         // help; resolve NOW, burn zero further budget. Accept:
                         // safety is carried by key availability + quorum
@@ -1200,7 +1096,7 @@ where
                     }
                     // Transient — stays pending, retried NEXT tick. Never
                     // cached (§5 b).
-                    KeyLookup::ReadFailed => {}
+                    WitnessCheck::Undecided => {}
                 }
             }
             if !result_done {
@@ -1296,6 +1192,11 @@ where
             self.assembler.observe_finalized(block);
             (self.boundary_hook)(block.clone());
         }
+        // Observability only — nothing downstream reads this gauge, and the tip
+        // still travels to the executor untouched below.
+        if let Update::Tip(_, height, _) = &activity {
+            self.plane_clock.record_ordering_tip(height.get());
+        }
         // Ack flow: the `Exact` ack inside Update::Block travels INSIDE this
         // command and is fired by the executor after derive + import. Marshal
         // awaits the ack via PendingAcks; if the executor task crashes
@@ -1317,21 +1218,26 @@ pub trait BeaconEngineLike: Send + Sync + 'static {
     type ExecutionData: Send + 'static;
 
     /// Drive the fork-choice. The VERDICT (incl. a semantic
-    /// `PayloadStatusEnum::Invalid`) rides in `Ok(..)`; a TRANSPORT failure (a
-    /// closed engine channel / RPC-handle blip) is the typed
-    /// [`TransportError`] in `Err`. This split is TYPE-LEVEL (family 5): a
-    /// verdict can never be folded into the transport error, so the executor's
-    /// fork-safety rule ("retry ⇔ transport `Err`; SafetyHalt ⇔ `Ok(Invalid)`")
-    /// is a property of the return type, not a comment at each call site.
+    /// `PayloadStatusEnum::Invalid`) rides in `Ok(..)`; a failure that produced
+    /// NO verdict is the typed [`EngineError`] in `Err`. This split is
+    /// TYPE-LEVEL (family 5): a verdict can never be folded into the error, so
+    /// the executor's fork-safety rule ("retry ⇔ transport `Err`; SafetyHalt ⇔
+    /// `Ok(Invalid)`") is a property of the return type, not a comment at each
+    /// call site.
+    ///
+    /// The `Err` half is NOT uniformly transient: [`EngineError`] carries its
+    /// own [`crate::fault::FaultClass`] so an implementation can distinguish
+    /// "reth never processed this" (retry forever) from "reth processed it and
+    /// rejected the forkchoice STATE" (a permanent local inconsistency).
     fn fork_choice_updated(
         &self,
         state: ForkchoiceState,
-    ) -> impl std::future::Future<Output = Result<ForkchoiceUpdated, TransportError>> + Send;
+    ) -> impl std::future::Future<Output = Result<ForkchoiceUpdated, EngineError>> + Send;
 
     /// Import one derived block into the EL. Implementations either hand
     /// reth the pre-executed artifacts (`InsertExecutedBlock` — single
     /// execution) or fall back to `new_payload` (reth re-executes; the
-    /// conformance/escape-hatch mode). Same transport-vs-verdict split as
+    /// conformance/escape-hatch mode). Same no-verdict-vs-verdict split as
     /// [`Self::fork_choice_updated`]: this shared return type is what makes the
     /// two engine entry points get the IDENTICAL transport class
     /// ([`crate::fault::FaultClass::TransientExternal`]`(EngineRetry)`), closing the historic
@@ -1340,7 +1246,7 @@ pub trait BeaconEngineLike: Send + Sync + 'static {
     fn import_derived(
         &self,
         data: Self::ExecutionData,
-    ) -> impl std::future::Future<Output = Result<PayloadStatus, TransportError>> + Send;
+    ) -> impl std::future::Future<Output = Result<PayloadStatus, EngineError>> + Send;
 }
 
 /// The executor-facing view of one derivation's output. Identity (hash,
@@ -1446,10 +1352,14 @@ pub trait DerivedBlockBuilder: Send + Sync + 'static {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::beacon::{
+        certify::SeedStore, keys::BeaconKeys, resolve::GroupKeyFor, BeaconVerify, KeyLookup,
+    };
     use crate::slasher::Message;
     use commonware_consensus::types::{Epoch, View};
     use commonware_cryptography::{ed25519::PrivateKey as Ed25519PrivateKey, Signer as _};
     use commonware_runtime::Runner as _;
+    use fluentbase_bls::beacon::GroupPublic;
     use fluentbase_bls::keys::ValidatorBlsKeypair;
     use fluentbase_staking_reader::reader::{
         ConsensusKeys, ValidatorSetSnapshot, ValidatorWithKeys,
@@ -1715,8 +1625,6 @@ mod tests {
             // Tests anchor at activation (genesis.height == activation == 0),
             // so the pre-activation window is unchanged by the anchor/activation split.
             0,
-            None,
-            test_group_keys(),
             TEST_CHAIN_ID,
             None,
             TombstoneSet::default(),
@@ -1733,137 +1641,7 @@ mod tests {
         )
     }
 
-    /// A `FluentApp` over the GIVEN group-key map + 3-state resolver — the
-    /// group-key-ladder fixtures (P1).
-    fn build_app_with_keys(
-        group_keys: BeaconKeys,
-        group_key_for: GroupKeyFor,
-    ) -> FluentApp<NoChain, NoTxs> {
-        let (mailbox, _rx) = fresh_mailbox();
-        let bv = BeaconVerify::new(group_key_for, Vec::new());
-        FluentApp::new(
-            sample_order(Digest(B256::ZERO), 0),
-            mailbox,
-            Arc::new(|_b: OrderBlock| {}),
-            NoChain,
-            Arc::new(NoTxs),
-            Address::ZERO,
-            30_000_000,
-            0,
-            None,
-            group_keys,
-            TEST_CHAIN_ID,
-            None,
-            TombstoneSet::default(),
-        )
-        .with_beacon(bv)
-    }
-
-    /// A real `PK_epoch` value for the group-key fixtures.
-    fn sample_group_public() -> GroupPublic {
-        use commonware_cryptography::bls12381::dkg::deal_anonymous;
-        use commonware_utils::{test_rng, N3f1, NZU32};
-        let mut rng = test_rng();
-        let (sharing, _shares) = deal_anonymous::<
-            commonware_cryptography::bls12381::primitives::variant::MinSig,
-            N3f1,
-        >(&mut rng, Default::default(), NZU32!(4));
-        *sharing.public()
-    }
-
-    /// (P1-a) — the sticky-`None` regression, at the resolver/map level: a
-    /// TRANSIENT `committee_for` outage must produce `ReadFailed`, cache
-    /// NOTHING (no entry of any kind — a one-shot-at-spawn resolution would
-    /// make it sticky for the whole epoch, and staking reads fail correlated
-    /// across validators ⇒ `f+1` in the accept-arm set ⇒ the boundary forge
-    /// arm), and RESOLVE on a later call once the outage clears — memoizing
-    /// only then.
-    #[test]
-    fn a_transient_committee_read_failure_does_not_become_a_sticky_epoch_wide_none() {
-        use std::sync::atomic::{AtomicBool, AtomicU32};
-
-        let pk = sample_group_public();
-        let calls = Arc::new(AtomicU32::new(0));
-        let outage = Arc::new(AtomicBool::new(true));
-        let (c, o) = (calls.clone(), outage.clone());
-        let resolver: GroupKeyFor = Arc::new(move |_| {
-            c.fetch_add(1, Ordering::SeqCst);
-            if o.load(Ordering::SeqCst) {
-                KeyLookup::ReadFailed
-            } else {
-                KeyLookup::Resolved(pk)
-            }
-        });
-        let group_keys = test_group_keys();
-        let app = build_app_with_keys(group_keys.clone(), resolver);
-
-        // During the outage: ReadFailed, and the failure is NOT cached.
-        assert_eq!(app.group_public_for(7), KeyLookup::ReadFailed);
-        assert!(
-            group_keys.cached_only(7).is_none(),
-            "a failure must never be inserted into the map"
-        );
-
-        // Outage clears ⇒ the SAME call path resolves (nothing negative was
-        // memoized) and the success is cached.
-        outage.store(false, Ordering::SeqCst);
-        assert_eq!(app.group_public_for(7), KeyLookup::Resolved(pk));
-        assert_eq!(group_keys.cached_only(7), Some(pk));
-        assert_eq!(group_keys.attested(7), None, "a W1 memoize is local-tier");
-
-        // Subsequent reads hit the map — the resolver is not consulted again.
-        let before = calls.load(Ordering::SeqCst);
-        assert_eq!(app.group_public_for(7), KeyLookup::Resolved(pk));
-        assert_eq!(calls.load(Ordering::SeqCst), before, "map hit is I/O-free");
-    }
-
-    /// `Unknown` is a stable fact and is NEVER cached either — a later call
-    /// re-runs the resolve and can succeed (the DKG store is written
-    /// asynchronously; W4 can land the key from a block at any time).
-    #[test]
-    fn unknown_is_not_cached_and_can_become_resolved() {
-        use std::sync::atomic::AtomicBool;
-
-        let pk = sample_group_public();
-        let has_material = Arc::new(AtomicBool::new(false));
-        let h = has_material.clone();
-        let resolver: GroupKeyFor = Arc::new(move |_| {
-            if h.load(Ordering::SeqCst) {
-                KeyLookup::Resolved(pk)
-            } else {
-                KeyLookup::Unknown
-            }
-        });
-        let group_keys = test_group_keys();
-        let app = build_app_with_keys(group_keys.clone(), resolver);
-
-        assert_eq!(app.group_public_for(9), KeyLookup::Unknown);
-        assert!(group_keys.is_empty());
-
-        has_material.store(true, Ordering::SeqCst);
-        assert_eq!(app.group_public_for(9), KeyLookup::Resolved(pk));
-        assert_eq!(group_keys.cached_only(9), Some(pk));
-        assert_eq!(group_keys.attested(9), None, "a W1 memoize is local-tier");
-    }
-
-    /// W1/W2 — a map entry written at engine spawn is read with ZERO resolver
-    /// calls: a continuing member performs no `committee_for` read at the next
-    /// boundary, so a correlated staking-read outage cannot move it into the
-    /// accept-arm set.
-    #[test]
-    fn a_pre_populated_map_entry_never_touches_the_resolver() {
-        let pk = sample_group_public();
-        let resolver: GroupKeyFor = Arc::new(move |_| {
-            panic!("the resolver must not run on a map hit");
-        });
-        let group_keys = test_group_keys();
-        group_keys.set_pk(4, pk, KeySource::LocalDkg); // as W1 does, before the engine
-        let app = build_app_with_keys(group_keys, resolver);
-
-        assert_eq!(app.group_public_for(4), KeyLookup::Resolved(pk));
-    }
-
-    // ───────────────────────────── parent-seed witness (§3) ─────────────────
+    // parent-seed witness (§3)
 
     use commonware_cryptography::bls12381::primitives::sharing::Sharing;
     use commonware_cryptography::bls12381::primitives::variant::MinSig;
@@ -1947,13 +1725,15 @@ mod tests {
             Address::ZERO,
             30_000_000,
             0,
-            None,
-            group_keys,
             TEST_CHAIN_ID,
             None,
             TombstoneSet::default(),
         )
-        .with_beacon(BeaconVerify::new(group_key_for, ns))
+        .with_randomness(test_randomness(
+            SeedStore::new(),
+            group_keys,
+            Some(BeaconVerify::new(group_key_for, ns)),
+        ))
     }
 
     /// Tiny-timestamp `(parent, block)` pair for the gate tests (the
@@ -2522,7 +2302,8 @@ mod tests {
         // The chain minted at the change epoch (bit set) and never re-minted.
         let mint = ec - 9;
         let dkg_qual: crate::beacon::carry::DkgQualFor = Arc::new(move |e| Some(e == mint));
-        let resolver = crate::dpos::group_key_resolver(store, dkg_qual, BeaconKeys::new());
+        let resolver =
+            crate::beacon::resolve::group_key_resolver(store, dkg_qual, BeaconKeys::new());
 
         let recorder = DebuggingRecorder::new();
         let snap = recorder.snapshotter();
@@ -2587,7 +2368,8 @@ mod tests {
                 Some(e == 3)
             }
         });
-        let resolver = crate::dpos::group_key_resolver(store, dkg_qual, BeaconKeys::new());
+        let resolver =
+            crate::beacon::resolve::group_key_resolver(store, dkg_qual, BeaconKeys::new());
         let pinned = Round::new(Epoch::new(ec - 1), View::new(7));
         let group_keys = test_group_keys();
 
@@ -2672,7 +2454,8 @@ mod tests {
                 Some(e == 3)
             }
         });
-        let resolver = crate::dpos::group_key_resolver(store, dkg_qual, BeaconKeys::new());
+        let resolver =
+            crate::beacon::resolve::group_key_resolver(store, dkg_qual, BeaconKeys::new());
         let pinned = Round::new(Epoch::new(ec - 1), View::new(7));
         let group_keys = test_group_keys();
 
@@ -2706,7 +2489,7 @@ mod tests {
         metrics::with_local_recorder(&recorder, || {
             let empty_store: crate::beacon::actor::CeremonyStore =
                 Arc::new(RwLock::new(BTreeMap::new()));
-            let resolver = crate::dpos::group_key_resolver(
+            let resolver = crate::beacon::resolve::group_key_resolver(
                 empty_store,
                 Arc::new(move |e| Some(e == 3)),
                 BeaconKeys::new(),
@@ -2798,7 +2581,7 @@ mod tests {
                     Some(e == 3)
                 }
             });
-            crate::dpos::group_key_resolver(store, dkg_qual, BeaconKeys::new())
+            crate::beacon::resolve::group_key_resolver(store, dkg_qual, BeaconKeys::new())
         };
 
         // Variant 1: both recover inside the budget ⇒ true, VERIFIED (no
@@ -2910,7 +2693,7 @@ mod tests {
         }
     }
 
-    // ───────────────────────────── propose side (§3) ────────────────────────
+    // propose side (§3)
 
     fn propose_app(store: SeedStore, charges: Option<ChargeStore>) -> FluentApp<NoChain, NoTxs> {
         let (mailbox, _rx) = fresh_mailbox();
@@ -2923,13 +2706,33 @@ mod tests {
             Address::ZERO,
             30_000_000,
             0,
-            Some(store),
-            test_group_keys(),
             TEST_CHAIN_ID,
             charges,
             TombstoneSet::default(),
         )
         .with_committee_index(propose_committee())
+        .with_randomness(test_randomness(store, test_group_keys(), None))
+    }
+
+    /// A provider over the SAME handles the app under test was given, so the
+    /// propose and verify arms exercise the real resolution path rather than
+    /// the permanently-negative default.
+    fn test_randomness(
+        seeds: SeedStore,
+        group_keys: BeaconKeys,
+        verify: Option<BeaconVerify>,
+    ) -> Arc<dyn crate::beacon::Randomness> {
+        crate::beacon::surface::PlaneRandomness::build(
+            seeds,
+            group_keys,
+            verify,
+            Arc::new(|_| crate::beacon::BeaconResolve::Absent),
+            None,
+            None,
+            Arc::new(tokio::sync::Notify::new()),
+            crate::beacon::metrics::BeaconMetrics::default(),
+            TEST_CHAIN_ID,
+        )
     }
 
     fn tiny_parent(proposal_view: u64) -> OrderBlock {
@@ -3627,6 +3430,52 @@ mod tests {
                     panic!("FluentApp never emits SpecNotarized")
                 }
             }
+        });
+    }
+
+    // The ordering clock must ride marshal's BFT-attested TIP, never block
+    // DELIVERY: delivery is ack-gated on the executor, so a gauge fed from
+    // `Update::Block` would freeze with the very pipeline it exists to expose.
+    #[test]
+    fn the_ordering_clock_tracks_the_tip_and_not_the_delivered_block() {
+        use commonware_consensus::types::{Epoch, View};
+        use commonware_utils::{acknowledgement::Exact, Acknowledgement as _};
+
+        let runtime = commonware_runtime::deterministic::Runner::default();
+        runtime.start(|_ctx| async move {
+            let (mailbox, _rx) = fresh_mailbox();
+            let clock = crate::sync_metrics::PlaneClock::default();
+            let mut app =
+                build_app(mailbox, Arc::new(|_b: OrderBlock| {})).with_plane_clock(clock.clone());
+
+            let (ack, _waiter) = Exact::handle();
+            <FluentApp<NoChain, NoTxs> as Reporter>::report(
+                &mut app,
+                Update::Block(sample_order(Digest(B256::ZERO), 900), ack),
+            )
+            .await;
+            assert_eq!(
+                clock.snapshot().0,
+                0,
+                "a delivered block is ack-gated on the executor and must not move the clock"
+            );
+
+            <FluentApp<NoChain, NoTxs> as Reporter>::report(
+                &mut app,
+                Update::Tip(
+                    Round::new(Epoch::new(0), View::new(7)),
+                    commonware_consensus::types::Height::new(900),
+                    Digest(B256::ZERO),
+                ),
+            )
+            .await;
+            let (ordering, dkg, lag) = clock.snapshot();
+            assert_eq!(ordering, 900);
+            assert_eq!(
+                (dkg, lag),
+                (0, 900),
+                "no poller has written the DKG half, so the whole ordering tip reads as lag"
+            );
         });
     }
 }

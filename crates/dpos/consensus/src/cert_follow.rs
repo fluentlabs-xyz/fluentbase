@@ -91,6 +91,24 @@ pub trait CertUpstream: Clone + Send + Sync + 'static {
     /// is the deferred L1 anchor source.
     fn get_latest(&self) -> impl Future<Output = Option<UpstreamFinalized>> + Send;
 
+    /// Fetch the agreed epoch-key artifact minted at `epoch`, as the wire bytes
+    /// `beacon::decode_artifact` reads. `None` covers every negative alike: the
+    /// upstream holds none, it is too old to know the method, or the link is
+    /// down — all three mean "stay unpinned and ask again", never a data fault.
+    ///
+    /// **Default `None`, and that is correct for the plane.** A plane-registered
+    /// node pulls artifacts over `BEACON_RESOLVER_CHANNEL` from its committee
+    /// peers and has no use for this route. Only the WS handle overrides it: a
+    /// follower is bootstrapper-less with an ephemeral identity, so it has no
+    /// peer to ask and its cert upstream is the one relationship it has.
+    ///
+    /// The answer is NOT trusted. It is checked against `committee[epoch]` read
+    /// from the caller's own chain state before anything is kept — see
+    /// `beacon::for_follower`.
+    fn get_epoch_artifact(&self, _epoch: u64) -> impl Future<Output = Option<Vec<u8>>> + Send {
+        std::future::ready(None)
+    }
+
     /// Drop the current connection and move to the next configured upstream
     /// URL. Called by the follow loop when the CURRENT upstream served
     /// unverifiable data (tampered/mismatched cert) — connection-level

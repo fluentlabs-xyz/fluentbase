@@ -43,6 +43,7 @@
 use crate::digest::Digest;
 use crate::{
     application::{BeaconEngineLike, DerivedBlock as _, DerivedBlockBuilder, ExecutedChain},
+    fault::{DeferReason, Fault, FaultClass},
     order_block::OrderBlock,
     sync_metrics::{SyncMetrics, SyncReason},
 };
@@ -61,7 +62,7 @@ use commonware_utils::{
     acknowledgement::Exact, channel::oneshot, futures::OptionFuture, vec::NonEmptyVec,
     Acknowledgement as _,
 };
-use eyre::{ensure, WrapErr as _};
+use eyre::WrapErr as _;
 use fluentbase_bls::PeerPubkey;
 use fluentbase_bls::Scheme as BlsScheme;
 use futures::{
@@ -381,6 +382,24 @@ const FRONTIER_PROBE_FAST_BURST: u8 = 15;
 /// (Decision A: never `process::exit` on an external/correlated cause).
 const ENGINE_TRANSPORT_RETRY_BACKOFF: Duration = Duration::from_millis(200);
 
+/// How many times the finalized re-apply loop may re-walk on a still-invisible
+/// parent before it dies loudly. At `ENGINE_TRANSPORT_RETRY_BACKOFF` per
+/// iteration this is the SAME ~10 s budget `derive_with_visibility_retry`
+/// already spends on this exact transient (`application.rs`'s `DEADLINE`),
+/// expressed as a count because the loop's own backoff sets the cadence. The
+/// bound is the point: an unbounded retry here is the silent spin this gate
+/// exists to remove.
+const REAPPLY_PARENT_VISIBILITY_RETRIES: u32 = 50;
+
+/// How many times the finalized-tier postcondition re-reads the EL before an
+/// absent block at a finalized height becomes a corruption verdict. At
+/// `ENGINE_TRANSPORT_RETRY_BACKOFF` per re-read this is the SAME ~10 s budget
+/// `REAPPLY_PARENT_VISIBILITY_RETRIES` spends, for the same reason: a height the
+/// devp2p backfill just landed is by-NUMBER invisible for a moment
+/// (`reseed_forward` leans on a belt for exactly this), and killing a node that
+/// would have healed is the worse error.
+const FINALIZED_TIER_VISIBILITY_RETRIES: u32 = 50;
+
 /// Returns the current committee's peers to target for a finalization re-fetch,
 /// or `None` if no committee is known yet. Re-invoked per retry so it tracks the
 /// catch-up walk's advancing epoch.
@@ -533,6 +552,17 @@ enum DeriveOutcome {
     NeedParentVisible(Box<Deferred>),
 }
 
+/// What the run loop must do after [`Actor::dispatch_fault`] disposed of a
+/// fault. A `ForkSafety` fault never produces one of these — the router parks
+/// forever instead of returning.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Disposition {
+    /// Transient / deferred: keep looping.
+    Continue,
+    /// Idiosyncratic local corruption: `break` — the supervisor aborts-all.
+    Shutdown,
+}
+
 /// `true` for the typed parent-visibility failure, wherever it sits in the
 /// `wrap_err` chain the walk builds around it.
 fn is_parent_not_visible(error: &eyre::Report) -> bool {
@@ -574,12 +604,15 @@ pub struct Config<BE, D, XC, MarshalMailbox> {
     pub dpos_activation_block: u64,
     pub fcu_pace: Duration,
     pub peers_for_finalization: PeersForFinalization,
-    /// Shared `round → recovered seed` map (cross-epoch singleton from
-    /// `outer.rs`), for re-canonicalising the SPECULATIVE seed round to the
-    /// block's own `proposal_view` (the witness rollout). `None` in tests /
-    /// followers ⇒ the re-canonicalise arm degrades to "skip speculation on a
-    /// spin-round notarization" (never speculate with a known-wrong seed).
-    pub seed_store: Option<crate::beacon::certify::SeedStore>,
+    /// The randomness handle (cross-epoch singleton from `outer.rs`). The
+    /// executor reads exactly two operations off it: [`Randomness::seed_for`],
+    /// to re-canonicalise the SPECULATIVE seed round to the block's own
+    /// `proposal_view` (the witness rollout) and to resolve the eager
+    /// finalized-derive's own round, and [`Randomness::seed_edge`], to wake when
+    /// a seed lands. A provider with no seeds degrades both to "skip speculation
+    /// on a spin-round notarization" and "hold the tip for the child witness" —
+    /// never to speculating with a known-wrong seed.
+    pub randomness: std::sync::Arc<dyn crate::beacon::Randomness>,
     /// Cross-epoch block→epoch map (the same singleton threaded into marshal +
     /// `epoch_manager`, `outer.rs`). Used ONLY by the eager finalized-derive
     /// path to form `h`'s own seed round `Round(epocher.containing(h).epoch(),
@@ -587,9 +620,10 @@ pub struct Config<BE, D, XC, MarshalMailbox> {
     /// `application::witness_link`'s `parent_epoch`), so a `SeedStore` hit is
     /// byte-identical to the child witness and a wrong epoch can only MISS.
     pub epocher: crate::epocher::OriginEpocher,
-    /// Beacon counters (cross-epoch singleton from `dpos.rs::launch`). The
-    /// executor increments `seed_active` / `digest_fallback` per derived block.
-    pub beacon_metrics: crate::beacon::metrics::BeaconMetrics,
+    /// The executor's own counters (cross-launch singleton from
+    /// `dpos.rs::launch`, already registered there): `seed_active` /
+    /// `digest_fallback`, one increment per derived block.
+    pub metrics: ExecutorMetrics,
     /// Self-heal observability handle (cross-launch singleton from
     /// `dpos.rs::launch`, already registered there). The executor raises
     /// `dpos_sync_degraded{reason=engine_retry}` while retrying a transient
@@ -617,6 +651,46 @@ pub struct Config<BE, D, XC, MarshalMailbox> {
     pub re_jump: Option<ReJump>,
 }
 
+/// The two counters the executor owns: one per derived block, saying whether
+/// `prev_randao` was the verified threshold seed or the digest fallback.
+///
+/// Split out of `BeaconMetrics` with both family names unchanged. Owned HERE and
+/// registered on BOTH node classes, because the executor runs on both and cannot
+/// tell which it is on — making these "beacon-owned on a validator, absent-owned
+/// on a follower" would register them twice on every follower, which
+/// `prometheus_client::Registry` accepts silently and only a scrape reveals.
+#[derive(Clone, Debug, Default)]
+pub struct ExecutorMetrics {
+    /// A block's `prev_randao` was the verified threshold seed (`assurance=true`).
+    pub seed_active: prometheus_client::metrics::counter::Counter,
+    /// A beacon-active block fell back to `order.digest()` (seed absent or failed
+    /// σ-verify vs `PK_E`). The Stage-2 certify hook Nullifies a beacon-active
+    /// boundary before it finalizes, so this counts the LOCAL pre-Nullify observation
+    /// on a node that derived ahead of the Nullify; smoke D1 asserts it is 0
+    /// post-anchor on a healthy chain.
+    pub digest_fallback: prometheus_client::metrics::counter::Counter,
+}
+
+impl ExecutorMetrics {
+    /// Register both counters. Call ONCE per process, against the SAME context
+    /// the other metric structs are registered against — commonware prefixes
+    /// each family with the context's label path, so a labelled child context
+    /// would rename them in the scrape without any gate noticing.
+    pub fn register(&self, ctx: &impl commonware_runtime::Metrics) {
+        ctx.register(
+            "beacon_seed_active_total",
+            "Blocks whose prev_randao was the verified threshold seed.",
+            self.seed_active.clone(),
+        );
+        ctx.register(
+            "beacon_digest_fallback_total",
+            "Beacon-active blocks that fell back to order.digest() (seed absent/unverified). \
+             0 post-anchor on a healthy chain.",
+            self.digest_fallback.clone(),
+        );
+    }
+}
+
 pub struct Actor<E, BE, D, XC, MarshalMailbox> {
     context: ContextCell<E>,
     beacon_engine: BE,
@@ -624,7 +698,7 @@ pub struct Actor<E, BE, D, XC, MarshalMailbox> {
     executed: XC,
     marshal: MarshalMailbox,
     mailbox: mpsc::UnboundedReceiver<Message>,
-    beacon_metrics: crate::beacon::metrics::BeaconMetrics,
+    metrics: ExecutorMetrics,
     /// Self-heal stuck-detector (see [`Config::sync_metrics`]).
     sync_metrics: SyncMetrics,
     /// Fork-safety latch (see [`Config::safety_halt`]).
@@ -792,10 +866,10 @@ pub struct Actor<E, BE, D, XC, MarshalMailbox> {
     /// set, exactly like `deferred.ack`.
     awaiting_child: Option<(Span, OrderBlock, Exact)>,
 
-    /// See [`Config::seed_store`]. Read by `spec_execute`'s §4.1 round
+    /// See [`Config::randomness`]. Read by `spec_execute`'s §4.1 round
     /// re-canonicalisation AND the eager finalized-derive path
     /// ([`Self::try_eager_finalized_derive`]).
-    seed_store: Option<crate::beacon::certify::SeedStore>,
+    randomness: std::sync::Arc<dyn crate::beacon::Randomness>,
 
     /// See [`Config::epocher`]. Read ONLY by [`Self::try_eager_finalized_derive`]
     /// to form `h`'s own agreed seed round.
@@ -845,9 +919,7 @@ where
         // restart straddling such a nullify race, seeded from the head, could
         // serve the orphaned sibling as `finalized_executed_hash` to a propose
         // before the marshal re-reconciles the height — committing a wrong
-        // result (bundle-20260716T150148Z divergence, re-entered through
-        // restart; see .claude/tasks/2026_07_17__design_root_fixes/
-        // family2_finalized_tier.md §1.1).
+        // result (divergence, re-entered through restart).
         //
         // Seeding the cursor lets `finalized_executed_hash` resolve reth's
         // canonical chain across a restart (a fresh process starts the cursor at
@@ -899,12 +971,12 @@ where
             executed: cfg.executed,
             marshal: cfg.marshal,
             mailbox: rx,
-            beacon_metrics: cfg.beacon_metrics,
+            metrics: cfg.metrics,
             sync_metrics: cfg.sync_metrics,
             safety_halt: cfg.safety_halt,
             spawn_unblocked: cfg.spawn_unblocked,
             re_jump: cfg.re_jump,
-            seed_store: cfg.seed_store,
+            randomness: cfg.randomness,
             epocher: cfg.epocher,
             rejump_fault_streak: 0,
             jump_done: OptionFuture::default(),
@@ -987,16 +1059,30 @@ where
     async fn run(mut self) {
         info_span!("start").in_scope(|| info!("executor starting"));
 
-        // The seed-record notifier (piece D, family2_finalized_tier.md §2.2):
-        // `SeedStore::record` fires this on every recorded round. A clone of the
-        // `Arc<Notify>` (not `self.seed_store`) so the arm's future borrows a
-        // LOCAL, never `self` — no borrow conflict with the arm's `&mut self`
-        // body. `None` when the node runs seedless (followers / tests) — the arm
-        // then parks forever and never fires.
-        let seed_notify: Option<std::sync::Arc<tokio::sync::Notify>> =
-            self.seed_store.as_ref().map(|s| s.notifier());
+        // The seed-record edge (piece D, family2_finalized_tier.md §2.2): the
+        // randomness provider fires it on every recorded round. Captured ONCE
+        // here, before the loop — the permit is object-scoped, so re-deriving the
+        // handle per iteration would lose fills — and held as a LOCAL so the
+        // arm's future never borrows `self`, which the arm's `&mut self` body
+        // needs. A provider with no seeds hands back an idle `Notify` nothing
+        // ever fires: the arm parks forever, exactly as the old `None` did.
+        let seed_notify = self.randomness.seed_edge();
 
         loop {
+            // PRE-CLASS latch gate. `dispatch_fault` reads the latch only when a FAULT
+            // reaches it, so a latch engaged with NO fault in flight — the datadir
+            // marker restored at startup (`sync_metrics::SafetyHalt::restore_marker`)
+            // — left this actor driving reth anyway. The latch means "stop writing to
+            // the EL", and this is the writer: park before pulling any work, retaining
+            // every marshal ack.
+            if self.safety_halt.is_engaged() {
+                self.park_halted(
+                    "halt latch engaged before dispatch",
+                    eyre::eyre!("SafetyHalt latch engaged; executor parking without deriving"),
+                )
+                .await;
+            }
+
             // Do not pull more work while a block is deferred awaiting its h+K
             // attested body (guard #2) — the deferred block must derive first
             // (strict order) — nor while a
@@ -1031,9 +1117,12 @@ where
                             // SAME one-block-lookahead pipeline as live dispatch.
                             let (ack, _waiter) = Exact::handle();
                             let span = info_span!("backfill_on_start", %height);
-                            if let Err(error) = self.on_finalized_block(span, block, ack).await {
-                                self.on_fatal("backfill", error).await;
-                                break;
+                            if let Err(fault) = self.on_finalized_block(span, block, ack).await {
+                                if self.dispatch_fault("backfill", fault).await
+                                    == Disposition::Shutdown
+                                {
+                                    break;
+                                }
                             }
                         }
                         None => {
@@ -1042,13 +1131,21 @@ where
                             // skip merely relocates + mislabels the fatal — the later
                             // gap-walk (`derive_finalized_with_gap_fill`) re-hits the same height and
                             // fails naming the WRONG height. Fail loud AT the true site.
-                            error_span!("backfill_on_start", %height).in_scope(|| error!(
+                            // Routed rather than `break`n: a bare break leaves the
+                            // loop WITHOUT reading the halt latch, so an already-halted
+                            // node exits and drops every retained marshal `Exact` into
+                            // Canceled — which the marshal treats as fatal.
+                            let fault = Fault::corruption(eyre::eyre!(
                                 "marshal has no block at height {height} inside its own \
                                  floor..=last_finalized range — the finalized archives are \
                                  inconsistent (a hole below the floor cannot self-heal); \
-                                 shutting down instead of skipping (a skip fails later in the \
-                                 gap-walk at the WRONG height)"));
-                            break;
+                                 a skip would fail later in the gap-walk at the WRONG height"
+                            ));
+                            if self.dispatch_fault("backfill", fault).await
+                                == Disposition::Shutdown
+                            {
+                                break;
+                            }
                         }
                     }
                     // Restore post-completion .is_none() invariant — upstream
@@ -1067,7 +1164,13 @@ where
                     self.jump_handle = None;
                     match outcome {
                         Ok(crate::cold_start_jump::JumpOutcome::Landed { landing, hash, floor }) => {
-                            self.reseed_forward(landing, hash, floor).await;
+                            if let Err(fault) = self.reseed_forward(landing, hash, floor).await {
+                                if self.dispatch_fault("re-jump reseed", fault).await
+                                    == Disposition::Shutdown
+                                {
+                                    break;
+                                }
+                            }
                             // Progress: clear any stale fault tally + the #1 rotate gauge.
                             self.rejump_fault_streak = 0;
                             self.sync_metrics.recover(SyncReason::AuthRotate);
@@ -1148,8 +1251,8 @@ where
                             );
                         }
                         Ok(crate::cold_start_jump::JumpOutcome::AuthFailed(error)) => {
-                            // #1 SELF-HEAL (2026-07-09, Decision A — never crash on a
-                            // forged UPSTREAM): a POST-sync committee-BLS / L1 rejection
+                            // Decision A — never crash on a forged UPSTREAM: a
+                            // POST-sync committee-BLS / L1 rejection
                             // means the CURRENT upstream served a forged/unagreed
                             // far-ahead branch. Route it through the SAME `rotate_upstream`
                             // escape `BadTarget`/`InvalidTarget` use — with ≥2 upstreams
@@ -1179,16 +1282,18 @@ where
                             // one), there is nothing to rotate to; HALT (demote to
                             // verify-only, stop driving reth, stay observable) and
                             // wait for the L1 proof + governance recovery.
-                            self.safety_halt.engage(SyncReason::L1Fork);
-                            self.on_fatal(
-                                "steady-state re-jump",
+                            let fault = Fault::fork_safety(
+                                SyncReason::L1Fork,
                                 eyre::eyre!(
                                     "L1 checkpoint NOT in local chain — SafetyHalt (stop \
                                      participating, stay up): {error}"
                                 ),
-                            )
-                            .await;
-                            break;
+                            );
+                            if self.dispatch_fault("steady-state re-jump", fault).await
+                                == Disposition::Shutdown
+                            {
+                                break;
+                            }
                         }
                         Err(_canceled) => {
                             // The spawned waiter dropped its sender (task aborted /
@@ -1215,17 +1320,42 @@ where
                     && self.jump_done.is_none() => {
                     self.pending_finalizations_gauge
                         .set(self.pending_finalizations.len() as i64);
-                    if let Err(error) = self.on_finalized_block(cause, block, ack).await {
-                        self.on_fatal("finalize", error).await;
-                        break;
+                    if let Err(fault) = self.on_finalized_block(cause, block, ack).await {
+                        if self.dispatch_fault("finalize", fault).await == Disposition::Shutdown {
+                            break;
+                        }
                     }
                 }
 
                 msg = self.mailbox.recv() => {
-                    let Some(msg) = msg else { break; };
-                    if let Err(error) = self.handle_message(msg).await {
-                        self.on_fatal("message", error).await;
+                    let Some(msg) = msg else {
+                        // Not a fault — every sender dropped, the node is tearing this
+                        // executor down. The latch still governs whether we may LEAVE:
+                        // a halted executor holds marshal `Exact` acks, and returning
+                        // here drops them into Canceled, which the marshal treats as
+                        // fatal.
+                        if self.safety_halt.is_engaged() {
+                            self.park_halted(
+                                "mailbox closed",
+                                eyre::eyre!("executor mailbox closed while SafetyHalt engaged"),
+                            )
+                            .await;
+                        }
+                        // Counted BELOW the park: `park_halted` never returns, so a halted
+                        // executor is still alive holding marshal acks — reporting an exit
+                        // for it would destroy the operator's only "torn down" vs "halted
+                        // but observable" discriminator.
+                        metrics::counter!(
+                            "dpos_executor_exit_total", "cause" => "mailbox_closed"
+                        )
+                        .increment(1);
+                        info!("executor mailbox closed (all senders dropped) — clean shutdown");
                         break;
+                    };
+                    if let Err(fault) = self.handle_message(msg).await {
+                        if self.dispatch_fault("message", fault).await == Disposition::Shutdown {
+                            break;
+                        }
                     }
                 }
 
@@ -1240,24 +1370,28 @@ where
                 // lost; a spurious wake (a permit from an unrelated round) is a
                 // harmless idempotent re-check (a miss re-holds). Fires the
                 // FINALIZED-tier derive, so a SafetyHalt-class error PROPAGATES.
-                _ = async {
-                    match seed_notify.as_ref() {
-                        Some(n) => n.notified().await,
-                        None => std::future::pending::<()>().await,
-                    }
-                }, if self.awaiting_child.is_some()
+                _ = seed_notify.notified(), if self.awaiting_child.is_some()
                     && self.deferred.is_none()
                     && self.jump_done.is_none() => {
-                    if let Err(error) =
+                    if let Err(fault) =
                         self.try_eager_finalized_derive(EagerTrigger::Notified).await
                     {
-                        self.on_fatal("seed-notify eager derive", error).await;
-                        break;
+                        if self.dispatch_fault("seed-notify eager derive", fault).await
+                            == Disposition::Shutdown
+                        {
+                            break;
+                        }
                     }
                 }
 
                 _ = (&mut self.fcu_heartbeat_timer).fuse() => {
-                    self.send_forkchoice_update_heartbeat().await;
+                    if let Err(fault) = self.send_forkchoice_update_heartbeat().await {
+                        if self.dispatch_fault("fcu heartbeat", fault).await
+                            == Disposition::Shutdown
+                        {
+                            break;
+                        }
+                    }
                     // Re-evaluate the steady-state re-jump on the heartbeat tick.
                     // The re-jump's `Stalled` retry otherwise depends solely on the
                     // next `Update::Tip`; if the upstream frontier has plateaued
@@ -1272,9 +1406,12 @@ where
                     // ([[dpos-deferred-catchup-invariants]] #3). This existing tick
                     // (reused, no new timer) re-checks `get_finalization` — it never
                     // shuts down; a still-missing body just re-stays parked.
-                    if let Err(error) = self.repoke_deferred().await {
-                        self.on_fatal("deferred re-poke", error).await;
-                        break;
+                    if let Err(fault) = self.repoke_deferred().await {
+                        if self.dispatch_fault("deferred re-poke", fault).await
+                            == Disposition::Shutdown
+                        {
+                            break;
+                        }
                     }
                     self.reset_fcu_heartbeat_timer();
                 }
@@ -1303,22 +1440,98 @@ where
         // Cancel the read-only re-jump waiter on shutdown (mirror of the
         // subsystem aborts in `outer.rs`) so a spawned `sync_to` wait does not
         // outlive the executor task. All `break`s converge here (a SafetyHalt
-        // never breaks — `on_fatal` parks forever instead).
+        // never breaks — `park_halted` parks forever instead; `on_fatal` only
+        // logs, and the router then returns `Shutdown`).
         if let Some(handle) = self.jump_handle.take() {
             handle.abort();
         }
     }
 
-    /// Route a fatal executor error. With the fork-safety latch engaged (a
-    /// Phase-3 `SafetyHalt`) this parks FOREVER via [`Self::park_halted`] and
-    /// never returns; otherwise it logs and returns so the caller `break`s the
-    /// loop — a genuine crash, which the OuterEngine supervisor answers with
-    /// abort-all.
-    async fn on_fatal(&mut self, stage: &str, error: eyre::Report) {
+    /// The ONE disposition router (family 5). Every fallible executor boundary
+    /// returns a [`Fault`]; this is the only place a [`FaultClass`] becomes an
+    /// action, and therefore the only place `SafetyHalt::engage` is called.
+    ///
+    /// That relocation IS the fix, not a tidy-up. The arming sites used to
+    /// engage the latch themselves and then return an untyped `eyre::Report`,
+    /// trusting every frame above them to propagate it — so a `ForkSafety`
+    /// verdict raised on the speculative path engaged the latch and was then
+    /// reduced to `warn!("speculative execution skipped")`, leaving a node that
+    /// had latched "I refuse this chain" still driving reth forward. Engaging
+    /// only here means a fork-safety verdict cannot be latched without also
+    /// being routed.
+    ///
+    /// Dispositions, straight off [`FaultClass`]:
+    /// - `ForkSafety` → engage + [`Self::park_halted`] (DIVERGES);
+    /// - `Corruption` → loud actor death, latch untouched → `Shutdown` →
+    ///   the run loop `break`s and the supervisor aborts-all;
+    /// - the transient classes + `Defer` → degrade-visible / counted, and the
+    ///   loop CONTINUES (speculation stays best-effort).
+    ///
+    /// The is-engaged check runs BEFORE the class match so a fault arriving after
+    /// the latch is already set parks whatever its class: the latch means "stop
+    /// writing to the EL", and the executor is the writer. There are exactly two
+    /// production engage sites — this router, and the datadir marker restored at
+    /// startup (`sync_metrics::SafetyHalt::restore_marker`). The marker case is
+    /// why this check is not sufficient on its own: no fault need ever reach the
+    /// router, so the run loop carries its own pre-class gate.
+    async fn dispatch_fault(&mut self, stage: &str, fault: Fault) -> Disposition {
+        let (class, cause) = fault.into_parts();
+        metrics::counter!(
+            "dpos_executor_fault_total",
+            "class" => class.as_str(),
+            "reason" => class.reason_str(),
+        )
+        .increment(1);
+        if let FaultClass::ForkSafety(reason) = class {
+            self.safety_halt.engage(reason);
+        }
         if self.safety_halt.is_engaged() {
-            self.park_halted(stage, error).await;
+            self.park_halted(stage, cause).await;
             unreachable!("park_halted never returns");
         }
+        match class {
+            // Handled above; a `ForkSafety` always leaves the latch engaged.
+            FaultClass::ForkSafety(_) => unreachable!("engaged latch parks above"),
+            FaultClass::Corruption => {
+                self.on_fatal(stage, cause).await;
+                Disposition::Shutdown
+            }
+            FaultClass::TransientExternal(reason) => {
+                self.sync_metrics.degrade(reason);
+                warn!(
+                    error = %format_args!("{cause:#}"),
+                    stage,
+                    reason = reason.as_str(),
+                    "executor degraded on an external/correlated cause; continuing (Decision A, \
+                     no self-crash)"
+                );
+                Disposition::Continue
+            }
+            FaultClass::Defer(reason) => {
+                warn!(
+                    error = %format_args!("{cause:#}"),
+                    stage,
+                    reason = reason.as_str(),
+                    "executor work item skipped; the pipeline re-presents it"
+                );
+                Disposition::Continue
+            }
+            FaultClass::TransientBounded | FaultClass::TransientConvergent => {
+                warn!(
+                    error = %format_args!("{cause:#}"),
+                    stage,
+                    class = class.as_str(),
+                    "executor retry budget exhausted at a leaf belt; continuing"
+                );
+                Disposition::Continue
+            }
+        }
+    }
+
+    /// Log a genuine crash. Reached ONLY from the router's `Corruption` arm,
+    /// which has already ruled out an engaged latch — the caller `break`s the
+    /// loop and the OuterEngine supervisor answers with abort-all.
+    async fn on_fatal(&mut self, stage: &str, error: eyre::Report) {
         error_span!("shutdown").in_scope(|| {
             error!(
                 error = %format_args!("{error:#}"),
@@ -1406,7 +1619,7 @@ where
         cause: Span,
         block: OrderBlock,
         ack: Exact,
-    ) -> eyre::Result<()> {
+    ) -> Result<(), Fault> {
         let held = self.awaiting_child.take();
         let child_height = block.height;
         let child_seed = block.parent_seed.clone();
@@ -1452,13 +1665,13 @@ where
                     // site; park the ack in the inflight slot so a latched
                     // SafetyHalt retains it instead of dropping it in this frame.
                     self.inflight_ack = Some(held_ack);
-                    return Err(eyre::eyre!(
+                    return Err(Fault::corruption(eyre::eyre!(
                         "witness gap: marshal has no block at height {} (child of held {}) \
                          inside its own dispatched range — the finalized archives are \
                          inconsistent",
                         held_block.height + 1,
                         held_block.height
-                    ));
+                    )));
                 }
             }
         };
@@ -1471,18 +1684,18 @@ where
         // `h` one child late — recorded_tip = delivered_tip − 1. The
         // finalized-tier result gate reads `finalized_executed_hash(h−K)`, so
         // that −1 leaves ZERO margin at `propose(h)` and any nullify pushes the
-        // recorded tip below `h−K` → propose-skip → nullify storm → stall
-        // (bundle-20260716T150148Z + 162805Z). Close the lag: derive the held
+        // recorded tip below `h−K` → propose-skip → nullify storm → stall.
+        // Close the lag: derive the held
         // tip NOW from the SeedStore (its own agreed round's seed is present the
         // moment its notarization was processed) instead of waiting for `h+1`.
         self.try_eager_finalized_derive(EagerTrigger::Delivery)
             .await
     }
 
-    /// EAGER finalized derive (record-lag closer, variant iii of
-    /// bundle-20260716T150148Z + bundle-20260716T162805Z): derive the block currently HELD in
-    /// [`Self::awaiting_child`] NOW — from its OWN agreed seed round in the local
-    /// [`SeedStore`] — instead of holding it until its child delivers the witness.
+    /// EAGER finalized derive (record-lag closer): derive the block currently HELD
+    /// in [`Self::awaiting_child`] NOW — from its OWN agreed seed round in the
+    /// local [`SeedStore`] — instead of holding it until its child delivers the
+    /// witness.
     ///
     /// The round is `Round(epocher.containing(h).epoch(), h.proposal_view)` — a
     /// pure function of AGREED data (rule SA: `proposal_view` rides in the
@@ -1509,14 +1722,11 @@ where
     /// silent no-op (the seed is still not recorded — a later notify or the
     /// child witness will derive it), so the miss counter is NOT inflated on
     /// every notify while held.
-    async fn try_eager_finalized_derive(&mut self, trigger: EagerTrigger) -> eyre::Result<()> {
+    async fn try_eager_finalized_derive(&mut self, trigger: EagerTrigger) -> Result<(), Fault> {
         use commonware_consensus::types::{Epocher as _, Round, View};
         if self.deferred.is_some() || self.jump_done.is_some() {
             return Ok(());
         }
-        let Some(store) = self.seed_store.clone() else {
-            return Ok(());
-        };
         let Some((cause, block, ack)) = self.awaiting_child.take() else {
             return Ok(());
         };
@@ -1524,14 +1734,7 @@ where
             .epocher
             .containing(Height::new(block.height))
             .map(|info| Round::new(info.epoch(), View::new(block.proposal_view)));
-        let seed = round.and_then(|round| {
-            store
-                .lookup(round)
-                .map(|signature| crate::beacon::seed::Seed {
-                    target_round: round,
-                    signature,
-                })
-        });
+        let seed = round.and_then(|round| self.randomness.seed_for(round));
         let Some(seed) = seed else {
             // MISS — restore the hold; the child witness derives it as before.
             self.awaiting_child = Some((cause, block, ack));
@@ -1603,7 +1806,7 @@ where
     /// landed re-jump disposes it via `reseed_forward`). A genuine derive `Err`
     /// (FCU/execution fault) IS fatal — propagated to the caller (the only
     /// surviving shutdown, matching the normal derive arms).
-    async fn repoke_deferred(&mut self) -> eyre::Result<()> {
+    async fn repoke_deferred(&mut self) -> Result<(), Fault> {
         if self.jump_done.is_some() {
             return Ok(());
         }
@@ -1686,13 +1889,20 @@ where
     /// on the first transport success). Returns reth's `ForkchoiceUpdated` intact.
     ///
     /// **Fork-safety split (D1):** a semantic `Ok(PayloadStatusEnum::Invalid)` is
-    /// NOT a transport error — it arrives as `Ok(..)` (never folded into `Err`;
-    /// `RethImporter::fork_choice_updated` map_errs ONLY the engine-handle channel
-    /// error) and is returned here UNTOUCHED so the caller's existing `ensure!`
-    /// leaves it on its CURRENT shutdown path (#15 SafetyHalt is Phase 3, out of
-    /// scope). This helper NEVER converts an `Invalid` verdict — it only retries
-    /// the `Result::Err` transport half.
-    async fn fcu_retrying_transport(&mut self, forkchoice: ForkchoiceState) -> ForkchoiceUpdated {
+    /// NOT an engine error — it arrives as `Ok(..)` (never folded into `Err`) and
+    /// is returned here UNTOUCHED for the caller's verdict split. This helper
+    /// never converts a verdict.
+    ///
+    /// Only the TRANSIENT half of the `Err` is looped. An [`EngineError`] whose
+    /// class is not `TransientExternal` — reth PROCESSED the update and rejected
+    /// the forkchoice state we named, i.e. it cannot resolve our own
+    /// finalized/safe hash — is propagated as its own class instead. Retrying
+    /// that re-sends the same unresolvable hashes forever: the loop had no exit
+    /// because the importer flattened every `Err` into one transport class.
+    async fn fcu_retrying_transport(
+        &mut self,
+        forkchoice: ForkchoiceState,
+    ) -> Result<ForkchoiceUpdated, Fault> {
         loop {
             match self
                 .beacon_engine
@@ -1702,24 +1912,36 @@ where
             {
                 Ok(fcu) => {
                     self.sync_metrics.recover(SyncReason::EngineRetry);
-                    return fcu;
+                    return Ok(fcu);
                 }
-                Err(error) => {
-                    self.sync_metrics.degrade(SyncReason::EngineRetry);
-                    self.sync_metrics.engine_transient_retry.inc();
-                    warn!(
-                        error = %format_args!("{error:#}"),
-                        "transient engine-API transport error on the finalize FCU; backing off + \
-                         retrying (engine stays up — Decision A, no self-crash)"
-                    );
-                    self.context.sleep(ENGINE_TRANSPORT_RETRY_BACKOFF).await;
-                }
+                Err(error) => match error.fault_class() {
+                    FaultClass::TransientExternal(_) => {
+                        self.sync_metrics.degrade(SyncReason::EngineRetry);
+                        self.sync_metrics.engine_transient_retry.inc();
+                        warn!(
+                            error = %format_args!("{error:#}"),
+                            "transient engine-API transport error on the finalize FCU; backing \
+                             off + retrying (engine stays up — Decision A, no self-crash)"
+                        );
+                        self.context.sleep(ENGINE_TRANSPORT_RETRY_BACKOFF).await;
+                    }
+                    class => {
+                        return Err(Fault::new(
+                            class,
+                            eyre::eyre!("finalize FCU rejected by the EL boundary: {error}"),
+                        ))
+                    }
+                },
             }
         }
     }
 
+    /// Fire-and-forget heartbeat FCU: the next tick IS the retry, so a transport
+    /// failure is counted + degraded and swallowed here. A non-transport class
+    /// (reth rejected the forkchoice STATE) is NOT swallowed — the heartbeat
+    /// would otherwise re-send the same unresolvable anchor every tick forever.
     #[instrument(skip_all)]
-    async fn send_forkchoice_update_heartbeat(&mut self) {
+    async fn send_forkchoice_update_heartbeat(&mut self) -> Result<(), Fault> {
         if self.jump_done.is_some() {
             // A re-jump's `sync_to` is the EL driver during backfill; an interleaved
             // heartbeat FCU returns reth `SYNCING`
@@ -1728,7 +1950,7 @@ where
             // now that `Stalled` rotates — would churn rotation. The re-jump is the
             // single EL writer while in flight.
             debug!("FCU heartbeat suppressed; re-jump in flight (sync_to drives the EL)");
-            return;
+            return Ok(());
         }
         if !self.has_advanced_since_init {
             debug!(
@@ -1736,7 +1958,7 @@ where
                 finalized = %self.last_canonicalized.forkchoice.finalized_block_hash,
                 "FCU heartbeat suppressed; no consensus advance since cold-start init"
             );
-            return;
+            return Ok(());
         }
         info!(
             head = %self.last_canonicalized.forkchoice.head_block_hash,
@@ -1755,15 +1977,24 @@ where
         // invisible to the taxonomy. A successful tick clears the reason.
         match resp {
             Ok(_) => self.sync_metrics.recover(SyncReason::EngineRetry),
-            Err(error) => {
-                self.sync_metrics.degrade(SyncReason::EngineRetry);
-                self.sync_metrics.engine_transient_retry.inc();
-                warn!(error = %error, "heartbeat FCU failed (transport); counted + degraded");
-            }
+            Err(error) => match error.fault_class() {
+                FaultClass::TransientExternal(_) => {
+                    self.sync_metrics.degrade(SyncReason::EngineRetry);
+                    self.sync_metrics.engine_transient_retry.inc();
+                    warn!(error = %error, "heartbeat FCU failed (transport); counted + degraded");
+                }
+                class => {
+                    return Err(Fault::new(
+                        class,
+                        eyre::eyre!("heartbeat FCU rejected by the EL boundary: {error}"),
+                    ))
+                }
+            },
         }
+        Ok(())
     }
 
-    async fn handle_message(&mut self, message: Message) -> eyre::Result<()> {
+    async fn handle_message(&mut self, message: Message) -> Result<(), Fault> {
         let cause = message.cause;
         match message.command {
             Command::Finalize(finalized) => match *finalized {
@@ -1821,20 +2052,16 @@ where
             },
             Command::SpecNotarized(n) => {
                 let Notarized { digest, seed } = *n;
-                if let Err(error) = self.spec_execute(cause.clone(), digest, seed).await {
-                    // Speculation is best-effort: a failure here is logged, never
-                    // fatal — `try_derive` (finalized path) will derive the block at
-                    // finalization regardless.
-                    warn!(
-                        error = %format_args!("{error:#}"),
-                        %digest,
-                        "speculative execution skipped"
-                    );
-                }
+                // Speculation stays best-effort — but the CLASS decides that, not
+                // this call site. `spec_execute` classifies its own failures
+                // `Defer`/`TransientExternal`, which the router logs and
+                // continues on; a `ForkSafety` it cannot classify away reaches
+                // the router too, instead of being reduced to a `warn!`.
+                self.spec_execute(cause.clone(), digest, seed).await?;
                 // A live spec advance may unblock a parked out-of-order
                 // notarization (e.g. h+1 parked, then h arrives and advances
-                // spec_head) — drain it now. Best-effort (never fatal).
-                self.try_drain_parked(&cause).await;
+                // spec_head) — drain it now.
+                self.try_drain_parked(&cause).await?;
                 // NOTE: the eager-derive re-attempt for a HELD tip whose seed
                 // landed late (the record-vs-delivery race) is NO LONGER poked
                 // from here. It is now the executor's seed-notify `select!` arm
@@ -1871,7 +2098,7 @@ where
     /// ancestor of the landing), and `reseed_forward` disposes the parked block by
     /// `ack.acknowledge()` (Ok, never Canceled). In Case (A) the gap stays small,
     /// the gap test early-returns, and the park proceeds untouched.
-    async fn maybe_re_jump(&mut self, height: Height) -> eyre::Result<()> {
+    async fn maybe_re_jump(&mut self, height: Height) -> Result<(), Fault> {
         let Some(re_jump) = self.re_jump.clone() else {
             return Ok(());
         };
@@ -1994,7 +2221,12 @@ where
         }
     }
 
-    async fn reseed_forward(&mut self, landing_h: u64, landing_hash: B256, floor: u64) {
+    async fn reseed_forward(
+        &mut self,
+        landing_h: u64,
+        landing_hash: B256,
+        floor: u64,
+    ) -> Result<(), Fault> {
         info!(
             landing_h,
             floor, "steady-state re-jump landed; re-seeding executor + marshal floor"
@@ -2083,7 +2315,7 @@ where
         // Parked speculative notarizations below the landing are stale across a
         // deep jump (same rationale as `spec_executed` above) — drop them.
         self.parked_spec = self.parked_spec.split_off(&(landing_h + 1));
-        // STARTUP-BACKFILL FAST-FORWARD (bundle-20260717T120838Z): the
+        // STARTUP-BACKFILL FAST-FORWARD: the
         // `[last_execution+1 ..= last_consensus]` backfill iterator seeded at
         // `init` is drained by-height off the loop head, but is gated off during
         // the in-flight jump (`jump_done.is_none()` at the drain site) and is
@@ -2140,7 +2372,7 @@ where
         if let Some((_cause, _block, ack)) = self.awaiting_child.take() {
             ack.acknowledge();
         }
-        // STALE FINALIZATION BACKLOG PRUNE (bundle-20260716T034647Z):
+        // STALE FINALIZATION BACKLOG PRUNE:
         // `Update::Block` deliveries queue UNCONDITIONALLY while the drain arm
         // is gated off during a park + in-flight jump — up to MAX_PENDING_ACKS
         // stale below-landing entries. Un-pruned, the stale backlog drains
@@ -2241,7 +2473,7 @@ where
         // call and `deferred` was disposed above, so `spec_execute`'s
         // deferred/jump gate is open. The leading prune already ran (the
         // `split_off` above); entries above the landing may be live.
-        self.try_drain_parked(&Span::current()).await;
+        self.try_drain_parked(&Span::current()).await
     }
 
     /// Speculatively derive + import a NOTARIZED block, advancing the EL head
@@ -2254,7 +2486,7 @@ where
         cause: Span,
         digest: crate::digest::Digest,
         seed: Option<crate::beacon::seed::Seed>,
-    ) -> eyre::Result<()> {
+    ) -> Result<(), Fault> {
         // A finalized block is deferred awaiting its h+K attested body
         // (guard #2 — a strict-order pause).
         // Speculating past it would advance head/spec_head OVER the deferred
@@ -2287,9 +2519,12 @@ where
             }
             return Ok(());
         }
-        let parent_height = height
-            .checked_sub(1)
-            .ok_or_else(|| eyre::eyre!("speculative height 0"))?;
+        let parent_height = height.checked_sub(1).ok_or_else(|| {
+            Fault::defer(
+                DeferReason::SpecDeriveFailed,
+                eyre::eyre!("speculative height 0"),
+            )
+        })?;
         // Parent must be locally present; a transient miss (reth visibility
         // lag) PARKS the notarization (height == spec_head + 1) so the next
         // `spec_head` advance retries it — pre-fix this dropped the notarization
@@ -2320,11 +2555,8 @@ where
                     Some(s)
                 } else {
                     metrics::counter!("dpos_spec_seed_recanonicalized_total").increment(1);
-                    match self.seed_store.as_ref().and_then(|st| st.lookup(canonical)) {
-                        Some(signature) => Some(crate::beacon::seed::Seed {
-                            target_round: canonical,
-                            signature,
-                        }),
+                    match self.randomness.seed_for(canonical) {
+                        Some(seed) => Some(seed),
                         None => {
                             debug!(
                                 height,
@@ -2349,11 +2581,21 @@ where
         // The catch-up paths (gap-walk, re-apply retry) run back-to-back by design
         // and would read as false saturation of the 1 blk/s interval.
         let el_apply_started = std::time::Instant::now();
+        // Speculation is BEST-EFFORT and stays so: a derive failure here is
+        // `Defer`, never `Corruption`, because the finalized path derives this
+        // height from the child witness regardless. Classified explicitly —
+        // `Fault`'s blanket `From<eyre::Report>` is `Corruption`, so leaning on
+        // `?` here would turn a transient derive failure into actor death.
         let derived = self
             .deriver
             .derive_and_execute(order, parent_hash, seed)
             .await
-            .wrap_err("speculative derive_and_execute failed")?;
+            .map_err(|error| {
+                Fault::defer(
+                    DeferReason::SpecDeriveFailed,
+                    error.wrap_err("speculative derive_and_execute failed"),
+                )
+            })?;
         let derived_hash = derived.evm_hash();
         // DERIVE-SEED TELEMETRY (fork-root byte-confirm): label the speculative
         // (notarization-path) derive for `height` with the seed round it used, so
@@ -2377,17 +2619,58 @@ where
         let new = self
             .last_canonicalized
             .update_head(Height::new(height), derived_hash);
+        // The engine boundary's own class decides: a transport blip degrades and
+        // is retried by the next notarization, while a rejected forkchoice STATE
+        // is the permanent local condition `fcu_retrying_transport` also refuses
+        // to loop on.
         let fcu = self
             .beacon_engine
             .fork_choice_updated(new.forkchoice)
             .pace(&self.context, self.fcu_pace)
             .await
-            .wrap_err("speculative FCU failed")?;
-        ensure!(
-            fcu.is_valid() || fcu.is_syncing(),
-            "EL reported non-valid speculative FCU: {:?}",
-            fcu.payload_status
-        );
+            .map_err(|error| {
+                Fault::new(
+                    error.fault_class(),
+                    eyre::eyre!("speculative FCU failed: {error}"),
+                )
+            })?;
+        // SPECULATIVE-vs-FINALIZED VERDICT SPLIT. The finalized FCU treats this
+        // same `Ok(Invalid)` as #15 `SafetyHalt(ElInvalid)`; here it is a plain
+        // skip, and the asymmetry is deliberate.
+        //
+        // An `Ok(Invalid)` on an FCU is reth's `check_invalid_ancestor`: the head
+        // we named descends from a header sitting in reth's `invalid_headers`
+        // cache, which reth populated from blocks IT downloaded over devp2p and
+        // rejected. That is evidence about the network, not about this node's
+        // disk — but this head is NOT canonical. It is notarized-but-unfinalized,
+        // and consensus may still nullify the view and finalize a sibling, in
+        // which case nothing this verdict indicted was ever committed. Halting
+        // here would convert a branch the protocol is allowed to discard into a
+        // permanent, operator-cleared halt.
+        //
+        // Nothing is lost by waiting: every finalized derive issues an FCU whose
+        // head is at or above the finalized tip, so an invalid ancestor at or
+        // below that tip re-renders the SAME verdict on the finalized path within
+        // one block — where it engages the latch with committed evidence. The
+        // only verdict this arm swallows is one whose invalid ancestor lies
+        // strictly inside the speculative segment, i.e. exactly the blocks
+        // consensus has not committed.
+        //
+        // The IMPORT verdict is judged differently one frame up
+        // (`submit_finalized_payload` halts on `Invalid` from either path)
+        // because it is a statement about OUR derivation matching reth's
+        // re-execution — deterministic, and independent of which branch commits.
+        if !(fcu.is_valid() || fcu.is_syncing()) {
+            return Err(Fault::defer(
+                DeferReason::SpecFcuRejected,
+                eyre::eyre!(
+                    "EL reported non-valid speculative FCU at height {height}: {:?} — skipping \
+                     speculation; the finalized path re-renders this verdict if the branch \
+                     commits",
+                    fcu.payload_status
+                ),
+            ));
+        }
         self.last_canonicalized = new;
         self.has_advanced_since_init = true;
         self.spec_head = height;
@@ -2416,29 +2699,31 @@ where
     /// `spec_head` to the finalized height) it keeps entries strictly above the
     /// new tip so they re-evaluate against the finalized fork.
     ///
-    /// Best-effort (returns `()`): a `spec_execute` failure is logged and the
-    /// entry KEPT for the next advance — speculation is never fatal (the
-    /// finalized path derives the block regardless). NOT recursive: `spec_execute`
-    /// does not call back into this drain; the loop lives here.
-    async fn try_drain_parked(&mut self, cause: &Span) {
+    /// A `spec_execute` failure KEEPS the entry for the next advance and ends
+    /// the drain, then hands the [`Fault`] to the run loop's router — which
+    /// continues on the classes `spec_execute` actually produces (`Defer` /
+    /// `TransientExternal`), so speculation stays best-effort, and parks on a
+    /// `ForkSafety` one, which the old `warn!`-and-continue silently discarded.
+    /// NOT recursive: `spec_execute` does not call back into this drain; the loop
+    /// lives here.
+    async fn try_drain_parked(&mut self, cause: &Span) -> Result<(), Fault> {
         // Prune stale entries (≤ spec_head): finalized OR already speculated.
         self.parked_spec = self.parked_spec.split_off(&(self.spec_head + 1));
         let mut resumed = 0u32;
         while let Some(parked) = self.parked_spec.get(&(self.spec_head + 1)).cloned() {
             let next = self.spec_head + 1;
             let before = self.spec_head;
-            if let Err(error) = self
+            if let Err(fault) = self
                 .spec_execute(cause.clone(), parked.digest, parked.seed)
                 .await
             {
-                // Transient derive/FCU failure — keep the entry, retry on the
-                // next advance (best-effort; the finalized path is the authority).
-                warn!(
-                    error = %format_args!("{error:#}"),
+                // The entry stays parked for the next advance whatever the class;
+                // the router decides whether the executor also stops.
+                debug!(
                     height = next,
-                    "parked speculative drain failed; retrying on next advance"
+                    "parked speculative drain failed; entry retained for the next advance"
                 );
-                break;
+                return Err(fault);
             }
             if self.spec_head > before {
                 // `spec_execute` advanced past `next` ⇒ speculation resumed from
@@ -2462,6 +2747,7 @@ where
                 "resumed speculation from parked notarizations after a spec_head advance"
             );
         }
+        Ok(())
     }
 
     /// EXEC-SATURATION observability: the deferred executor's lag = consensus
@@ -2496,14 +2782,16 @@ where
         &self,
         order: &OrderBlock,
         witness: &Option<crate::beacon::seed::Seed>,
-    ) -> eyre::Result<()> {
+    ) -> Result<(), Fault> {
         if witness.is_none() && order.parent_seed.is_some() {
-            self.safety_halt.engage(SyncReason::ResultDivergence);
-            return Err(eyre::eyre!(
+            return Err(Fault::fork_safety(
+                SyncReason::ResultDivergence,
+                eyre::eyre!(
                 "block {} is on a beacon-active link (it carries a parent_seed witness itself) \
                  but its child presents NO witness — corrupted/legacy archive; deriving with the \
                  digest fallback would silently fork; SafetyHalt",
-                order.height
+                    order.height
+                ),
             ));
         }
         Ok(())
@@ -2516,6 +2804,16 @@ where
     /// `h + K` is not backfilled yet this returns `NeedAttestation` — WITHOUT
     /// mutating any finalized state or acking — so the caller PARKS it and
     /// re-pokes event-driven (the delivery stream + the FCU heartbeat).
+    ///
+    /// FAULT-CLASS INVARIANT: while this function holds the block's `Exact` in
+    /// [`Self::inflight_ack`], the only [`FaultClass`]es it may return are the
+    /// two the router does NOT continue on — `ForkSafety` (parks, and
+    /// `park_halted` retains the ack) and `Corruption` (the run loop breaks). A
+    /// class the router continues on would leave that ack orphaned in the slot,
+    /// and the NEXT derive's `inflight_ack = Some(..)` would drop it — a dropped
+    /// `Exact` is Canceled, which the marshal treats as fatal. The transient
+    /// classes appear only AFTER `take_inflight_ack().acknowledge()`, where the
+    /// slot is empty (the tail `try_drain_parked`).
     #[instrument(skip_all, parent = &cause, fields(height = order.height), err(Debug))]
     async fn try_derive(
         &mut self,
@@ -2523,7 +2821,7 @@ where
         order: OrderBlock,
         ack: Exact,
         seed: Option<crate::beacon::seed::Seed>,
-    ) -> eyre::Result<DeriveOutcome> {
+    ) -> Result<DeriveOutcome, Fault> {
         // Parked in the slot so an `Err` exit (including every SafetyHalt path,
         // several of which surface through `?`) leaves the ack ALIVE for
         // `park_halted` instead of dropping it in this frame (a drop cancels →
@@ -2627,7 +2925,7 @@ where
                 .await
             {
                 Ok(hash) => hash,
-                Err(error) if is_parent_not_visible(&error) => {
+                Err(error) if is_parent_not_visible(error.cause()) => {
                     // No-gap path: `block_hash(h)` resolving does NOT imply the
                     // header read will (reth canonicalizes eagerly on the
                     // engine-tree thread, so a block is by-number resolvable
@@ -2641,7 +2939,7 @@ where
                     warn!(
                         height,
                         parent_height,
-                        error = %format_args!("{error:#}"),
+                        error = %format_args!("{:#}", error.cause()),
                         "parent still invisible after canonicalization; PARKING \
                          (event-driven re-poke, no give-up timer)"
                     );
@@ -2702,10 +3000,13 @@ where
                         // The network-attested root at `h + K` disagrees with the
                         // hash we derived → we would serve a fork. Halt
                         // (verify-only, stay observable) BEFORE acking.
-                        self.safety_halt.engage(SyncReason::ResultDivergence);
-                        return Err(eyre::eyre!(
-                            "guard #2 at {height}: attested result at {hk} disagrees with \
-                             local executed_hash({height}); SafetyHalt — refusing to serve a fork"
+                        return Err(Fault::fork_safety(
+                            SyncReason::ResultDivergence,
+                            eyre::eyre!(
+                                "guard #2 at {height}: attested result at {hk} disagrees with \
+                                 local executed_hash({height}); SafetyHalt — refusing to serve \
+                                 a fork"
+                            ),
                         ));
                     }
                 }
@@ -2781,10 +3082,13 @@ where
             // would serve a fork. Latch the halt (demote to verify-only, stop
             // driving reth, keep marshal/RPC alive via the supervisor park) rather
             // than `process::exit`; recovery is the L1 SP1 validity proof.
-            self.safety_halt.engage(SyncReason::ResultDivergence);
-            return Err(eyre::eyre!(
-                "result divergence at height {height}: attested result {attested_result:?} != \
-                 local executed_hash; SafetyHalt — refusing to serve a forked chain"
+            return Err(Fault::fork_safety(
+                SyncReason::ResultDivergence,
+                eyre::eyre!(
+                    "result divergence at height {height}: attested result \
+                     {attested_result:?} != local executed_hash; SafetyHalt — refusing to \
+                     serve a forked chain"
+                ),
             ));
         }
 
@@ -2841,14 +3145,16 @@ where
         // returned untouched (never folded into the transport `Err` — D1) and is
         // the #15 SafetyHalt below: reth rejected our locally-derived block, so
         // extending would serve a chain reth itself disowns.
-        let fcu = self.fcu_retrying_transport(new.forkchoice).await;
+        let fcu = self.fcu_retrying_transport(new.forkchoice).await?;
         if !(fcu.is_valid() || fcu.is_syncing()) {
             // #15 SafetyHalt (Phase 3): halt (verify-only, stop driving reth,
             // stay observable) instead of exiting — recovery is the L1 proof.
-            self.safety_halt.engage(SyncReason::ElInvalid);
-            return Err(eyre::eyre!(
-                "EL reported non-valid finalize FCU: {:?}; SafetyHalt",
-                fcu.payload_status
+            return Err(Fault::fork_safety(
+                SyncReason::ElInvalid,
+                eyre::eyre!(
+                    "EL reported non-valid finalize FCU: {:?}; SafetyHalt",
+                    fcu.payload_status
+                ),
             ));
         }
 
@@ -2861,6 +3167,60 @@ where
         // fork. Until the EL actually serves `derived_hash` at `height`, re-apply
         // (re-derive + import + FCU) forever — Decision A: degraded-visible
         // (`dpos_sync_degraded{reason=finalize_apply}`), never proceed, never exit.
+        // ...but ONLY where re-applying can converge, i.e. ABOVE the finalized
+        // tier. The loop's only lever is re-sending `new.forkchoice`, whose head
+        // `update_head` refuses to move to a block at or below `finalized_height`,
+        // and reth will not reorg below its own finalized block either. At
+        // `height <= finalized_height` the loop is therefore a silent 200 ms spin
+        // with `finalize_apply` degraded forever. Healing it WOULD need an FCU that
+        // reorgs reth away from the BLS-authenticated chain — a silent fork traded
+        // for a visible stall, so this is a verdict, not a retry.
+        //
+        // The two arms are deliberately ASYMMETRIC. A CONFLICTING hash is settled:
+        // reth will not reorg below its own finalized block, so re-reading only
+        // delays the fork-safety verdict. NOTHING at the height is the transient
+        // `reseed_forward` already answers with a belt — a height the devp2p
+        // backfill just landed is by-NUMBER invisible for a moment — so it gets a
+        // bounded re-read first, and only an EL that never serves it is corruption.
+        let mut el_holds = self.executed.spec_executed_hash(height);
+        if el_holds.is_none() && height <= new.finalized_height.get() {
+            warn!(
+                height,
+                finalized_height = new.finalized_height.get(),
+                "EL serves no block at a height it holds as finalized; re-reading before \
+                 declaring corruption"
+            );
+            let mut visibility_retries: u32 = 0;
+            while el_holds.is_none() && visibility_retries < FINALIZED_TIER_VISIBILITY_RETRIES {
+                visibility_retries += 1;
+                self.context.sleep(ENGINE_TRANSPORT_RETRY_BACKOFF).await;
+                el_holds = self.executed.spec_executed_hash(height);
+            }
+        }
+        if el_holds != Some(derived_hash) && height <= new.finalized_height.get() {
+            // Bound once: re-reading for the message could report `EL holds X` with X equal
+            // to the derived hash, i.e. a permanent, marker-persisted verdict whose own text
+            // contradicts it.
+            return Err(match el_holds {
+                Some(other) => Fault::fork_safety(
+                    SyncReason::ResultDivergence,
+                    eyre::eyre!(
+                        "finalized-tier conflict at height {height}: derived {derived_hash}, \
+                         EL holds {other} at or below its finalized height {}; SafetyHalt — \
+                         healing this would need an FCU that reorgs reth away from the \
+                         authenticated chain",
+                        new.finalized_height.get()
+                    ),
+                ),
+                None => Fault::corruption(eyre::eyre!(
+                    "EL never served a block at height {height} — at or below its finalized \
+                     height {} — across {FINALIZED_TIER_VISIBILITY_RETRIES} re-reads, while \
+                     the node derived {derived_hash}",
+                    new.finalized_height.get()
+                )),
+            });
+        }
+        let mut parent_retries: u32 = 0;
         while self.executed.spec_executed_hash(height) != Some(derived_hash) {
             self.sync_metrics.degrade(SyncReason::FinalizeApply);
             warn!(
@@ -2879,37 +3239,59 @@ where
             else {
                 continue;
             };
-            let Some(parent_hash) = self.executed.spec_executed_hash(parent_height) else {
-                continue;
-            };
-            let derived = match self
-                .deriver
-                .derive_and_execute(order, parent_hash, finalization_seed_retry.clone())
+            // The SAME protected walk the first attempt used, not a hand-rolled
+            // copy of it: the old body derived straight against
+            // `spec_executed_hash(parent_height)` and `continue`d when that was
+            // absent, so a re-apply after a rollback that orphaned the parent
+            // silently span instead of gap-filling it. The walk submits the
+            // delivered element itself; its FCU stays here (the walk deliberately
+            // leaves the delivered element's forkchoice to the caller).
+            let reapplied = match self
+                .derive_finalized_with_gap_fill(order, finalization_seed_retry.clone())
                 .await
             {
-                Ok(derived) => derived,
-                Err(error) => {
+                Ok(hash) => hash,
+                // The only classes this walk can return while `inflight_ack` holds
+                // the block's `Exact` are ForkSafety and Corruption (transport is
+                // absorbed inline), so the CAUSE is the whole filter — a
+                // `FaultClass::Transient*` disjunct here would be dead code that
+                // reads as a retry guarantee.
+                Err(error)
+                    if is_parent_not_visible(error.cause())
+                        && parent_retries < REAPPLY_PARENT_VISIBILITY_RETRIES =>
+                {
+                    parent_retries += 1;
                     warn!(
-                        error = %format_args!("{error:#}"),
+                        error = %format_args!("{:#}", error.cause()),
                         height,
-                        "re-apply derive failed; retrying"
+                        parent_retries,
+                        "re-apply parent not visible yet; re-walking"
                     );
                     continue;
                 }
+                Err(error) if is_parent_not_visible(error.cause()) => {
+                    return Err(Fault::corruption(eyre::eyre!(
+                        "re-apply at height {height}: the parent never became visible after \
+                         {REAPPLY_PARENT_VISIBILITY_RETRIES} re-walks; the EL is not \
+                         canonicalizing what this node imports"
+                    )))
+                }
+                Err(error) => return Err(error),
             };
-            ensure!(
-                derived.evm_hash() == derived_hash,
-                "re-apply derived a different hash at height {height}: {} != {derived_hash} \
-                 (non-deterministic derive)",
-                derived.evm_hash()
-            );
-            self.submit_finalized_payload(derived).await?;
-            let fcu = self.fcu_retrying_transport(new.forkchoice).await;
+            if reapplied != derived_hash {
+                return Err(Fault::corruption(eyre::eyre!(
+                    "re-apply derived a different hash at height {height}: {reapplied} != \
+                     {derived_hash} (non-deterministic derive)"
+                )));
+            }
+            let fcu = self.fcu_retrying_transport(new.forkchoice).await?;
             if !(fcu.is_valid() || fcu.is_syncing()) {
-                self.safety_halt.engage(SyncReason::ElInvalid);
-                return Err(eyre::eyre!(
-                    "EL reported non-valid finalize FCU on re-apply: {:?}; SafetyHalt",
-                    fcu.payload_status
+                return Err(Fault::fork_safety(
+                    SyncReason::ElInvalid,
+                    eyre::eyre!(
+                        "EL reported non-valid finalize FCU on re-apply: {:?}; SafetyHalt",
+                        fcu.payload_status
+                    ),
                 ));
             }
         }
@@ -2925,7 +3307,7 @@ where
         // is the tier-F store — no separate hash map). Propose + verify read this
         // via `finalized_executed_hash(h−K)` so a still-speculative sibling can
         // never be committed as an OrderBlock `result` (closes the seed-blind
-        // result-commit fork at its SOURCE, bundle-20260716T150148Z; the h−K
+        // result-commit fork at its SOURCE; the h−K
         // backward cross-check above stays the safety net). The cursor lives in
         // the shared executed store, not the per-epoch engine, so it survives
         // engine restarts within the process.
@@ -2945,8 +3327,10 @@ where
         // descendant (the death-spiral recovery) AND prune parked heights the
         // finalization made stale. Placed AFTER the finalize FCU — not at the
         // `spec_head` advance itself — so a speculative FCU cannot roll the just-
-        // finalized head back. Best-effort.
-        self.try_drain_parked(&cause).await;
+        // finalized head back. The ack above already landed, so a fault here is
+        // about the SPECULATIVE tail only — the router continues on the transient
+        // classes it can produce and parks on a fork-safety one.
+        self.try_drain_parked(&cause).await?;
         Ok(DeriveOutcome::Done)
     }
 
@@ -2983,14 +3367,14 @@ where
         &mut self,
         delivered: OrderBlock,
         mut delivered_seed: Option<crate::beacon::seed::Seed>,
-    ) -> eyre::Result<B256> {
+    ) -> Result<B256, Fault> {
         let target = delivered.height;
         let mut first_missing = target;
         let mut parent_hash = loop {
             if first_missing == 0 {
-                return Err(eyre::eyre!(
+                return Err(Fault::corruption(eyre::eyre!(
                     "derive gap reaches height 0 — no executed ancestor"
-                ));
+                )));
             }
             if let Some(hash) = self.executed.spec_executed_hash(first_missing - 1) {
                 break hash;
@@ -3090,11 +3474,19 @@ where
             // idempotent and re-enters (already-derived prefix heights advance
             // `first_missing`).
             if !self.submit_finalized_payload(derived).await? {
-                return Err(eyre::eyre!(
+                // `Corruption` (actor death), NOT a transient class, even though
+                // the CAUSE was a transport blip. `try_derive` is holding this
+                // block's `Exact` in `inflight_ack` right now: a class the router
+                // continues on would leave that ack orphaned, and the next
+                // derive's `inflight_ack = Some(..)` would DROP it — a dropped
+                // `Exact` is Canceled, which the marshal treats as fatal. The
+                // walk's disposition while an ack is in flight can only be
+                // "park forever" (fork-safety) or "die loudly".
+                return Err(Fault::corruption(eyre::eyre!(
                     "gap-walk import at height {h} hit an engine-API transport failure \
                      (block not landed); aborting the walk — a re-entry re-walks the \
                      idempotent prefix"
-                ));
+                )));
             }
             // The walk hands `parent_hash` to the NEXT derive, which reads the
             // parent BY HASH — and an `InsertExecuted` import is only in reth's
@@ -3116,12 +3508,27 @@ where
                 .pace(&self.context, self.fcu_pace)
                 .await
             {
-                warn!(
-                    height = h,
-                    error = %format_args!("{error:#}"),
-                    "gap-walk canonicalization FCU failed; the next derive will \
-                     report the parent as missing and the walk will park"
-                );
+                // A transport failure is absorbed as before (the next derive is
+                // the honest judge). A rejected forkchoice STATE is not: the
+                // finalized hash this walk names is unresolvable in reth, which
+                // every subsequent walk re-sends unchanged.
+                match error.fault_class() {
+                    FaultClass::TransientExternal(_) => warn!(
+                        height = h,
+                        error = %format_args!("{error:#}"),
+                        "gap-walk canonicalization FCU failed; the next derive will \
+                         report the parent as missing and the walk will park"
+                    ),
+                    class => {
+                        return Err(Fault::new(
+                            class,
+                            eyre::eyre!(
+                                "gap-walk canonicalization FCU at height {h} rejected by the \
+                                 EL boundary: {error}"
+                            ),
+                        ))
+                    }
+                }
             }
             // SAME trustless result cross-check as `try_derive` (keyed on the
             // CHAIN activation block, NOT the cold-start anchor): the attested
@@ -3139,10 +3546,13 @@ where
             ) {
                 // #2/#3 SafetyHalt (Phase 3) — same fork-safety latch as the
                 // top-level cross-check, on a gap-range block.
-                self.safety_halt.engage(SyncReason::ResultDivergence);
-                return Err(eyre::eyre!(
-                    "result divergence at gap height {h}: attested result {attested_result:?} != \
-                     local executed_hash; SafetyHalt — refusing to serve a forked chain"
+                return Err(Fault::fork_safety(
+                    SyncReason::ResultDivergence,
+                    eyre::eyre!(
+                        "result divergence at gap height {h}: attested result \
+                         {attested_result:?} != local executed_hash; SafetyHalt — refusing to \
+                         serve a forked chain"
+                    ),
                 ));
             }
             // Hand the already-fetched child to the next iteration (each walk
@@ -3166,16 +3576,16 @@ where
     /// the flag; a caller that would ADVANCE on the derived hash without a
     /// landing re-check (the gap-walk) MUST check it, or the death one
     /// iteration later masks the transport cause.
-    async fn submit_finalized_payload(&mut self, derived: D::Derived) -> eyre::Result<bool> {
+    async fn submit_finalized_payload(&mut self, derived: D::Derived) -> Result<bool, Fault> {
         // Single chokepoint for all three derive paths (spec / finalized / gap):
         // record this block's beacon outcome before the value is moved into the EL.
         match derived.beacon_active() {
-            Some(true) => self.beacon_metrics.seed_active.inc(),
-            Some(false) => self.beacon_metrics.digest_fallback.inc(),
+            Some(true) => self.metrics.seed_active.inc(),
+            Some(false) => self.metrics.digest_fallback.inc(),
             None => 0,
         };
         // TRANSPORT-vs-VERDICT split (family 5, type-level via `BeaconEngineLike`):
-        // the verdict rides in `Ok`, transport in `Err(TransportError)`.
+        // the verdict rides in `Ok`, transport in `Err(EngineError)`.
         let status = match self
             .beacon_engine
             .import_derived(derived)
@@ -3198,24 +3608,36 @@ where
             // engine channel (a re-send cannot reopen it, and `D::Derived` is
             // non-`Clone`), so the disposition — not an in-place infinite retry —
             // is what unifies the two engine entry points.
-            Err(transport) => {
+            Err(error) if matches!(error.fault_class(), FaultClass::TransientExternal(_)) => {
                 self.sync_metrics.degrade(SyncReason::EngineRetry);
                 self.sync_metrics.engine_transient_retry.inc();
                 warn!(
-                    error = %transport,
+                    error = %error,
                     "transient engine-API import transport error; degraded + deferring to \
                      reconvergence (engine stays up — Decision A, no self-crash)"
                 );
                 return Ok(false);
             }
+            Err(error) => {
+                return Err(Fault::new(
+                    error.fault_class(),
+                    eyre::eyre!("derived-block import rejected by the EL boundary: {error}"),
+                ))
+            }
         };
         if !(status.is_valid() || status.is_syncing()) {
             // #15 SafetyHalt (Phase 3): under the new_payload fallback an `Invalid`
             // import means local derivation diverged from reth's re-execution —
-            // halt (verify-only, stay observable) rather than exit.
-            self.safety_halt.engage(SyncReason::ElInvalid);
-            return Err(eyre::eyre!(
-                "EL rejected derived block (local derivation diverged?): `{status:?}`; SafetyHalt"
+            // halt (verify-only, stay observable) rather than exit. The latch is
+            // engaged by the ROUTER, not here: this function used to engage it and
+            // then rely on every caller propagating the `Err`, and the speculative
+            // callers did not — leaving a latched node still driving reth.
+            return Err(Fault::fork_safety(
+                SyncReason::ElInvalid,
+                eyre::eyre!(
+                    "EL rejected derived block (local derivation diverged?): `{status:?}`; \
+                     SafetyHalt"
+                ),
             ));
         }
         Ok(true)
@@ -3343,6 +3765,10 @@ mod tests {
     struct ByHashVisibility {
         hash_height: Arc<Mutex<BTreeMap<B256, u64>>>,
         frontier: Arc<Mutex<u64>>,
+        /// Hashes reth resolves NO header for, whatever the frontier — the one
+        /// knob that keeps a re-apply re-walk failing with `ParentHeaderMissing`
+        /// instead of converging, so the retry bound is reachable in a test.
+        never_visible: Arc<Mutex<std::collections::BTreeSet<B256>>>,
     }
 
     impl Default for ByHashVisibility {
@@ -3350,6 +3776,7 @@ mod tests {
             Self {
                 hash_height: Arc::new(Mutex::new(BTreeMap::new())),
                 frontier: Arc::new(Mutex::new(u64::MAX)),
+                never_visible: Arc::default(),
             }
         }
     }
@@ -3358,9 +3785,16 @@ mod tests {
         fn register(&self, height: u64, hash: B256) {
             self.hash_height.lock().unwrap().insert(hash, height);
         }
+        /// Arm [`Self::never_visible`] for `hash`.
+        fn hide(&self, hash: B256) {
+            self.never_visible.lock().unwrap().insert(hash);
+        }
         /// `true` iff reth would resolve `header(hash)`. An untracked hash is
         /// treated as visible (only the explicitly-modelled segment participates).
         fn visible(&self, hash: B256) -> bool {
+            if self.never_visible.lock().unwrap().contains(&hash) {
+                return false;
+            }
             let frontier = *self.frontier.lock().unwrap();
             if frontier == u64::MAX {
                 return true;
@@ -3407,6 +3841,10 @@ mod tests {
         /// leaves nothing behind. Default off (land-at-derive, the historical
         /// model most tests rely on). Armed via `Fixture::gate_landing_on_import`.
         land_on_import: Arc<std::sync::atomic::AtomicBool>,
+        /// Heights the EL serves NOTHING for, one decrement per by-NUMBER read —
+        /// the post-devp2p-backfill window where a block is landed but not yet
+        /// index-visible. `u32::MAX` models an EL that never serves it.
+        missing_reads: Arc<Mutex<BTreeMap<u64, u32>>>,
     }
 
     impl ExecutedChain for FakeChain {
@@ -3420,6 +3858,12 @@ mod tests {
                 .unwrap_or(0)
         }
         fn spec_executed_hash(&self, height: u64) -> Option<B256> {
+            if let Some(left) = self.missing_reads.lock().unwrap().get_mut(&height) {
+                if *left > 0 {
+                    *left -= 1;
+                    return None;
+                }
+            }
             self.canonical.lock().unwrap().get(&height).copied()
         }
         fn finalized_executed_hash(&self, height: u64) -> Option<B256> {
@@ -3441,6 +3885,10 @@ mod tests {
         /// test can assert the cert-recovered seed actually reaches the deriver.
         /// Mutex<Vec> so it survives the deriver clone (Arc-shared).
         seeds_seen: SeedsSeen,
+        /// Heights whose NEXT `derive_and_execute` fails with a plain (untyped)
+        /// `eyre` error, then succeeds — the transient derive failure the
+        /// speculative path must survive without taking the node down.
+        derive_fail_once: Arc<Mutex<std::collections::BTreeSet<u64>>>,
     }
 
     impl FakeDeriver {
@@ -3448,6 +3896,7 @@ mod tests {
             Self {
                 chain,
                 seeds_seen: Arc::new(Mutex::new(Vec::new())),
+                derive_fail_once: Arc::default(),
             }
         }
     }
@@ -3466,6 +3915,12 @@ mod tests {
             // finalize-round divergence is observable in-test.
             let discriminator = seed_folded_discriminator(order.digest(), &seed);
             self.seeds_seen.lock().unwrap().push((order.height, seed));
+            if self.derive_fail_once.lock().unwrap().remove(&order.height) {
+                return Err(eyre::eyre!(
+                    "simulated transient derive failure at height {}",
+                    order.height
+                ));
+            }
             // Model derive_sync's by-HASH parent read: a parent not yet canonical
             // by hash is `ParentHeaderMissing`. Default frontier = MAX ⇒ always
             // visible (no-op for tests that don't exercise the lag).
@@ -3531,10 +3986,20 @@ mod tests {
         /// blip) before succeeding — decremented per call. Models the retryable
         /// transport half of the split (distinct from a semantic `Ok(Invalid)`).
         fcu_transport_errs: Arc<Mutex<u32>>,
+        /// Item 5: `fork_choice_updated` returns
+        /// `Err(EngineError::anchor_inconsistent)` — reth PROCESSED the update and
+        /// rejected the state ("unknown finalized/safe hash"). Sticky, not a
+        /// countdown: the condition is structurally permanent, which is exactly
+        /// why classifying it as transport made the retry loop unbounded.
+        fcu_anchor_inconsistent: Arc<Mutex<bool>>,
+        /// How many times the arm above fired. The assertion that matters is that
+        /// this stays BOUNDED: the pre-fix classification retried the same
+        /// unresolvable hashes without limit.
+        fcu_anchor_rejections: Arc<Mutex<u32>>,
         /// Override for the `import_derived` status; `None` ⇒ Valid.
         import_status: Arc<Mutex<Option<PayloadStatusEnum>>>,
         /// Gap-1 (family 5): leading `import_derived` calls that return a
-        /// transport `Err(TransportError)` (a closed engine channel) before
+        /// transport `Err(EngineError)` (a closed engine channel) before
         /// succeeding — decremented per call. Models the import transport half of
         /// the split; the executor must degrade + defer, NOT actor-death.
         import_transport_errs: Arc<Mutex<u32>>,
@@ -3554,14 +4019,20 @@ mod tests {
         async fn fork_choice_updated(
             &self,
             state: ForkchoiceState,
-        ) -> Result<ForkchoiceUpdated, crate::fault::TransportError> {
+        ) -> Result<ForkchoiceUpdated, crate::fault::EngineError> {
+            if *self.fcu_anchor_inconsistent.lock().unwrap() {
+                *self.fcu_anchor_rejections.lock().unwrap() += 1;
+                return Err(crate::fault::EngineError::anchor_inconsistent(
+                    "reth rejected the forkchoice state: invalid forkchoice state",
+                ));
+            }
             {
                 let mut errs = self.fcu_transport_errs.lock().unwrap();
                 if *errs > 0 {
                     *errs -= 1;
                     // A transport blip: reth was never reached, so nothing is
                     // recorded/canonicalized — the caller must retry.
-                    return Err(crate::fault::TransportError::new(
+                    return Err(crate::fault::EngineError::transport(
                         "simulated engine-API transport blip",
                     ));
                 }
@@ -3586,14 +4057,14 @@ mod tests {
         async fn import_derived(
             &self,
             data: RethExecBlock,
-        ) -> Result<PayloadStatus, crate::fault::TransportError> {
+        ) -> Result<PayloadStatus, crate::fault::EngineError> {
             {
                 let mut errs = self.import_transport_errs.lock().unwrap();
                 if *errs > 0 {
                     *errs -= 1;
                     // A closed engine channel: nothing imported — the executor
                     // degrades + defers to reconvergence (never actor-death).
-                    return Err(crate::fault::TransportError::new(
+                    return Err(crate::fault::EngineError::transport(
                         "simulated engine tree channel closed",
                     ));
                 }
@@ -3752,8 +4223,10 @@ mod tests {
         fcu_heartbeat: Duration,
         /// `SeedStore` handed to the built actor (`None` by default — the §4.1
         /// re-canonicalise arm then degrades to skip-speculation on a
-        /// spin-round notarization). Set via `with_seed_store`.
-        seed_store: Option<crate::beacon::certify::SeedStore>,
+        /// spin-round notarization). Set via `with_seed_store`, which wraps the
+        /// store in a real provider so the fixture exercises the same surface the
+        /// executor uses in production.
+        randomness: std::sync::Arc<dyn crate::beacon::Randomness>,
         /// Block→epoch map handed to the built actor. Default: a single huge
         /// epoch so every test height maps to epoch 0 (matching the
         /// `Epoch::new(0)` seed rounds the tests build). The epoch-boundary
@@ -3802,7 +4275,7 @@ mod tests {
                 sync_metrics,
                 safety_halt,
                 fcu_heartbeat: Duration::from_secs(60),
-                seed_store: None,
+                randomness: crate::beacon::surface::absent_unregistered(),
                 epocher: crate::epocher::OriginEpocher::new(
                     0,
                     std::num::NonZeroU64::new(1 << 40).expect("nonzero"),
@@ -3828,7 +4301,7 @@ mod tests {
         /// Give the built actor a `SeedStore` (the §4.1 re-canonicalise byte
         /// source). Set BEFORE `build`.
         fn with_seed_store(mut self, store: crate::beacon::certify::SeedStore) -> Self {
-            self.seed_store = Some(store);
+            self.randomness = crate::beacon::for_seeds(store);
             self
         }
 
@@ -3931,12 +4404,12 @@ mod tests {
                     dpos_activation_block: activation,
                     fcu_pace: Duration::from_millis(0),
                     peers_for_finalization: std::sync::Arc::new(dummy_peers),
-                    beacon_metrics: crate::beacon::metrics::BeaconMetrics::default(),
+                    metrics: ExecutorMetrics::default(),
                     sync_metrics: self.sync_metrics.clone(),
                     safety_halt: self.safety_halt.clone(),
                     spawn_unblocked: std::sync::Arc::new(tokio::sync::Notify::new()),
                     re_jump: self.re_jump.lock().unwrap().clone(),
-                    seed_store: self.seed_store.clone(),
+                    randomness: self.randomness.clone(),
                     epocher: self.epocher.clone(),
                 },
             )
@@ -4392,7 +4865,10 @@ mod tests {
             // The heartbeat is suppressed until the first consensus advance.
             actor.has_advanced_since_init = true;
 
-            actor.send_forkchoice_update_heartbeat().await;
+            actor
+                .send_forkchoice_update_heartbeat()
+                .await
+                .expect("heartbeat FCU");
             assert_eq!(
                 fx.sync_metrics.engine_transient_retry.get(),
                 1,
@@ -4406,7 +4882,10 @@ mod tests {
 
             // A subsequent clean heartbeat clears the gauge (fire-and-forget: the
             // NEXT tick is the retry, no in-place loop).
-            actor.send_forkchoice_update_heartbeat().await;
+            actor
+                .send_forkchoice_update_heartbeat()
+                .await
+                .expect("heartbeat FCU");
             assert_eq!(
                 fx.sync_metrics.degraded_value(SyncReason::EngineRetry),
                 0,
@@ -4467,6 +4946,249 @@ mod tests {
                 fx.sync_metrics.engine_transient_retry.get(),
                 0,
                 "Ok(Invalid) is never mistaken for a retryable transport error"
+            );
+        });
+    }
+
+    // FAULT-BOUNDARY (family 5). The speculative path is best-effort, and the
+    // taxonomy must not quietly change that: `spec_execute` classifies a derive
+    // failure `Defer(SpecDeriveFailed)`, so the router logs it and the loop
+    // continues. Without the explicit classification the blanket
+    // `From<eyre::Report>` would make it `Corruption` and a transient derive
+    // failure would start killing the executor.
+    #[test]
+    fn a_transient_speculative_derive_failure_never_takes_the_node_down() {
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            const ANCHOR: u64 = 100;
+            let fx = Fixture::new(ANCHOR);
+            let order = sample_order(Digest(B256::ZERO), ANCHOR + 1, B256::ZERO);
+            fx.marshal
+                .canned
+                .lock()
+                .unwrap()
+                .insert(ANCHOR + 1, order.clone());
+            // Fails at the speculative attempt, succeeds at finalization.
+            fx.deriver
+                .derive_fail_once
+                .lock()
+                .unwrap()
+                .insert(ANCHOR + 1);
+            let (actor, mailbox) = fx.build(ctx.clone(), ANCHOR, ANCHOR);
+            let mut handle = actor.start();
+
+            mailbox.send(spec_msg(&order)).expect("send spec");
+            ctx.sleep(Duration::from_millis(20)).await;
+            assert!(
+                fx.deriver.derive_fail_once.lock().unwrap().is_empty(),
+                "the speculative derive must actually have been attempted and failed"
+            );
+            assert!(
+                !fx.safety_halt.is_engaged(),
+                "a derive failure is not a fork-safety verdict"
+            );
+            assert!(
+                (&mut handle).now_or_never().is_none(),
+                "speculation is best-effort: the executor must still be running"
+            );
+
+            // The finalized path is the authority and still lands the height.
+            let (msg, waiter) = finalize_msg(order.clone());
+            mailbox.send(msg).expect("send finalize");
+            let (flush, _w) = finalize_msg(child_of(&order, None));
+            mailbox.send(flush).expect("send flush child");
+            waiter
+                .await
+                .expect("the finalized path derives the height regardless");
+
+            drop(mailbox);
+            let _ = handle.await;
+        });
+    }
+
+    // THE ASYMMETRY, PINNED. One and the same `Ok(Invalid)` FCU verdict has two
+    // dispositions, and which one applies is decided by whether the head is
+    // committed:
+    //
+    //  * SPECULATIVE head (notarized, not finalized) → skip speculation, no
+    //    latch. Consensus may still nullify the view and finalize a sibling, so
+    //    the verdict does not yet indict anything the chain committed.
+    //  * FINALIZED head → #15 SafetyHalt. The block IS committed.
+    //
+    // The second half is what makes the first half safe: nothing is swallowed,
+    // it is only deferred to the path that has committed evidence.
+    #[test]
+    fn an_invalid_fcu_skips_speculation_but_halts_on_the_finalized_path() {
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            const ANCHOR: u64 = 100;
+            let fx = Fixture::new(ANCHOR);
+            *fx.beacon.fcu_status.lock().unwrap() = Some(PayloadStatusEnum::Invalid {
+                validation_error: "head descends from a header reth rejected over devp2p".into(),
+            });
+            let order = sample_order(Digest(B256::ZERO), ANCHOR + 1, B256::ZERO);
+            fx.marshal
+                .canned
+                .lock()
+                .unwrap()
+                .insert(ANCHOR + 1, order.clone());
+            let (actor, mailbox) = fx.build(ctx.clone(), ANCHOR, ANCHOR);
+            let mut handle = actor.start();
+
+            mailbox.send(spec_msg(&order)).expect("send spec");
+            ctx.sleep(Duration::from_millis(20)).await;
+            assert_eq!(
+                fx.beacon
+                    .new_payload_calls
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .map(|p| p.number)
+                    .collect::<Vec<_>>(),
+                vec![ANCHOR + 1],
+                "the speculative block imported, so the FCU verdict below was reached"
+            );
+            assert!(
+                !fx.safety_halt.is_engaged(),
+                "an Ok(Invalid) on a NON-canonical speculative head must not latch a \
+                 permanent, operator-cleared halt"
+            );
+            assert_eq!(
+                fx.sync_metrics.degraded_value(SyncReason::ElInvalid),
+                0,
+                "no el_invalid alert is raised for a branch consensus may still discard"
+            );
+            assert!(
+                (&mut handle).now_or_never().is_none(),
+                "the executor keeps running; the finalized path is the judge"
+            );
+
+            // Same verdict, now on a committed head.
+            let (msg, waiter) = finalize_msg(order.clone());
+            mailbox.send(msg).expect("send finalize");
+            let (flush, _w) = finalize_msg(child_of(&order, None));
+            mailbox.send(flush).expect("send flush child");
+            let post_halt = sample_order(Digest(B256::ZERO), ANCHOR + 4, B256::ZERO);
+            assert_parked_retaining_acks(
+                &ctx,
+                handle,
+                waiter,
+                &mailbox,
+                &fx.safety_halt,
+                post_halt,
+            )
+            .await;
+            assert_eq!(
+                fx.sync_metrics.degraded_value(SyncReason::ElInvalid),
+                1,
+                "the finalized path raises the el_invalid alert"
+            );
+        });
+    }
+
+    // THE ORIGINAL DEFECT. `submit_finalized_payload` used to engage the latch
+    // itself and return an untyped `Err`, and the speculative caller reduced that
+    // `Err` to `warn!("speculative execution skipped")` — so the node latched "I
+    // refuse this chain" and then kept driving reth forward with it. Engaging
+    // moved into the router, so a fork-safety verdict raised on the speculative
+    // path now reaches `park_halted` like any other.
+    #[test]
+    fn a_fork_safety_verdict_on_the_speculative_path_parks_instead_of_being_logged() {
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            const ANCHOR: u64 = 100;
+            let fx = Fixture::new(ANCHOR);
+            // An `Invalid` IMPORT is a statement about our own derivation against
+            // reth's re-execution — deterministic and branch-independent, so it
+            // halts from either path (unlike the FCU verdict above).
+            *fx.beacon.import_status.lock().unwrap() = Some(PayloadStatusEnum::Invalid {
+                validation_error: "local derivation diverged from re-execution".into(),
+            });
+            let order = sample_order(Digest(B256::ZERO), ANCHOR + 1, B256::ZERO);
+            fx.marshal
+                .canned
+                .lock()
+                .unwrap()
+                .insert(ANCHOR + 1, order.clone());
+            let (actor, mailbox) = fx.build(ctx.clone(), ANCHOR, ANCHOR);
+            let mut handle = actor.start();
+
+            mailbox.send(spec_msg(&order)).expect("send spec");
+            wait_until(&ctx, "SafetyHalt engaged from the speculative path", || {
+                fx.safety_halt.is_engaged()
+            })
+            .await;
+            ctx.sleep(Duration::from_millis(20)).await;
+            assert!(
+                (&mut handle).now_or_never().is_none(),
+                "a halted executor PARKS (stays observable) — it must not exit and drop acks"
+            );
+            assert_eq!(
+                fx.safety_halt.reason(),
+                Some(SyncReason::ElInvalid),
+                "the latch carries the verdict that armed it, not just a bit"
+            );
+            // Pre-fix the executor kept consuming work after latching. A block
+            // delivered now must have its ack RETAINED by the park, never acked.
+            let (msg, mut waiter) = finalize_msg(order);
+            mailbox.send(msg).expect("mailbox stays open while parked");
+            ctx.sleep(Duration::from_millis(20)).await;
+            assert!(
+                (&mut waiter).now_or_never().is_none(),
+                "a parked executor derives nothing and acks nothing"
+            );
+        });
+    }
+
+    // ITEM 5. reth answers "unknown finalized/safe hash" with
+    // `Err(ForkchoiceUpdateError::InvalidState)` — it PROCESSED the update and
+    // rejected the state we named. The importer used to flatten that into the
+    // transport class, so `fcu_retrying_transport` re-sent the same unresolvable
+    // hashes forever. It is `Corruption` now: loud actor death, and deliberately
+    // NOT a SafetyHalt, because it says this node's anchor disagrees with this
+    // node's own EL, not that the network disagrees with the chain.
+    #[test]
+    fn an_unresolvable_forkchoice_anchor_dies_loudly_instead_of_retrying_forever() {
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            const ANCHOR: u64 = 100;
+            let fx = Fixture::new(ANCHOR);
+            *fx.beacon.fcu_anchor_inconsistent.lock().unwrap() = true;
+            let (actor, mailbox) = fx.build(ctx.clone(), ANCHOR, ANCHOR);
+            let handle = actor.start();
+
+            let order = sample_order(Digest(B256::ZERO), ANCHOR + 1, B256::ZERO);
+            let (msg, _waiter) = finalize_msg(order.clone());
+            mailbox.send(msg).expect("send finalize");
+            let (flush, _w) = finalize_msg(child_of(&order, None));
+            mailbox.send(flush).expect("send flush child");
+
+            // The whole point: this TERMINATES. Pre-fix the FCU loop had no exit.
+            let exited = futures::future::select(
+                Box::pin(handle),
+                Box::pin(ctx.sleep(Duration::from_secs(30))),
+            )
+            .await;
+            assert!(
+                matches!(exited, futures::future::Either::Left(_)),
+                "a rejected forkchoice STATE is structurally permanent — retrying it forever \
+                 is the third infinite loop of this family"
+            );
+            assert!(
+                !fx.safety_halt.is_engaged(),
+                "Corruption must not latch the fork-safety halt: nothing here says the \
+                 NETWORK disagrees with us"
+            );
+            assert_eq!(
+                fx.sync_metrics.engine_transient_retry.get(),
+                0,
+                "and it must never be counted as a retryable engine transport blip"
+            );
+            let rejections = *fx.beacon.fcu_anchor_rejections.lock().unwrap();
+            assert!(
+                (1..=4).contains(&rejections),
+                "the executor must consult the engine and STOP, not spin on it (saw \
+                 {rejections} forkchoice-state rejections)"
             );
         });
     }
@@ -4613,7 +5335,7 @@ mod tests {
                 })
                 .expect("send spec@A");
 
-            // CRUX of the result-gate fix (bundle-20260716T150148Z): once the
+            // CRUX of the result-gate fix: once the
             // speculation lands, the SPECULATIVE head shows hash_A — but the
             // FINALIZED tier is still empty. A proposer/verifier sampling
             // `finalized_executed_hash(SPEC_H)` therefore gets `None` and SKIPS
@@ -4807,6 +5529,314 @@ mod tests {
     // both assemble (their vote sets are disjoint and 2·quorum > n + f).
     // Finalization per height is UNIQUE; the fork was purely the EL apply drop.
     //
+    // The re-apply retry on a still-invisible parent is BOUNDED: an unbounded one
+    // re-creates the silent spin the finalized-tier gate removes. Above the
+    // finalized tier (so that gate does not fire), reth keeps a foreign hash at
+    // the height and drops every re-derived sibling, so the loop is really
+    // entered; the parent is then hidden MID-LOOP — the first derive must succeed
+    // for the loop to exist at all — and the walk fails `ParentHeaderMissing`
+    // forever. The bound must convert that into loud death, not a spin.
+    #[test]
+    fn reapply_parent_visibility_retry_is_bounded_and_dies_loud() {
+        let recorder = DebuggingRecorder::new();
+        let snap = recorder.snapshotter();
+        metrics::with_local_recorder(&recorder, || {
+            let runtime = deterministic::Runner::default();
+            runtime.start(|ctx| async move {
+                const ANCHOR: u64 = 100;
+                const H: u64 = ANCHOR + 1;
+                let fx = Fixture::new(ANCHOR);
+                fx.chain
+                    .canonical
+                    .lock()
+                    .unwrap()
+                    .insert(H, B256::repeat_byte(0xEE));
+                *fx.chain.sibling_drops.lock().unwrap() = u32::MAX;
+
+                let order = sample_order(Digest(B256::ZERO), H, B256::ZERO);
+                fx.marshal.canned.lock().unwrap().insert(H, order.clone());
+                let child = child_of(&order, None);
+
+                let (actor, mailbox) = fx.build(ctx.clone(), ANCHOR, ANCHOR);
+                let mut handle = actor.start();
+                let (msg, waiter) = finalize_msg(order);
+                mailbox.send(msg).expect("send finalize H");
+                let (child_msg, _child_waiter) = finalize_msg(child);
+                mailbox.send(child_msg).expect("send the flush child");
+
+                let derives_at_h = || {
+                    fx.deriver
+                        .seeds_seen
+                        .lock()
+                        .unwrap()
+                        .iter()
+                        .filter(|(h, _)| *h == H)
+                        .count()
+                };
+                wait_until(&ctx, "the re-apply loop is spinning", || {
+                    derives_at_h() >= 2
+                })
+                .await;
+                let before_hiding = derives_at_h();
+                fx.chain.vis.hide(fx.anchor_hash);
+
+                // The bound is 50 * ENGINE_TRANSPORT_RETRY_BACKOFF ~= 10 virtual s,
+                // which outlasts `wait_until`'s 2 s horizon — hence the coarser
+                // local wait, still bounded so an unbounded retry fails by timeout.
+                let mut died = false;
+                for _ in 0..2_000 {
+                    if (&mut handle).now_or_never().is_some() {
+                        died = true;
+                        break;
+                    }
+                    ctx.sleep(Duration::from_millis(20)).await;
+                }
+                assert!(
+                    died,
+                    "timed out waiting for: the re-apply parent-visibility bound to fail loud"
+                );
+                assert!(
+                    derives_at_h() - before_hiding >= REAPPLY_PARENT_VISIBILITY_RETRIES as usize,
+                    "the loop died before spending its retry budget"
+                );
+                assert!(
+                    !fx.safety_halt.is_engaged(),
+                    "an unreachable parent is local corruption, not a fork-safety verdict"
+                );
+                // Corruption is loud actor death, so the in-flight `Exact` is
+                // DROPPED (Canceled) — the opposite of the SafetyHalt park, which
+                // retains it.
+                assert!(
+                    waiter.await.is_err(),
+                    "the corruption exit cancels the in-flight ack"
+                );
+            });
+        });
+        assert_eq!(
+            counter_at(
+                &drain_counters(&snap),
+                "dpos_executor_fault_total",
+                ("class", "corruption")
+            ),
+            1,
+        );
+    }
+
+    // Below the finalized tier the re-apply loop has no lever: `update_head`
+    // refuses to move the head to `height <= finalized_height`, so every iteration
+    // re-sends the SAME forkchoice and reth (which will not reorg below its own
+    // finalized block) keeps serving the other hash. Pre-gate that is a silent
+    // 200 ms spin with `finalize_apply` degraded forever; the conflict is a
+    // fork-safety verdict, so it must LATCH.
+    #[test]
+    fn reapply_below_the_finalized_tier_halts_instead_of_spinning() {
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            // The cold-start trust anchor IS the EL's finalized height, so a block
+            // delivered below it is a finalized-tier conflict by construction.
+            const L: u64 = 100;
+            let fx = Fixture::new(L);
+            fx.chain
+                .canonical
+                .lock()
+                .unwrap()
+                .insert(L - 2, B256::repeat_byte(0xB2));
+            // What reth already holds at L-1, and will not give up: the re-derived
+            // sibling is dropped forever (the soak3 `InsertExecutedBlock` model).
+            fx.chain
+                .canonical
+                .lock()
+                .unwrap()
+                .insert(L - 1, B256::repeat_byte(0xEE));
+            *fx.chain.sibling_drops.lock().unwrap() = u32::MAX;
+
+            let order = sample_order(Digest(B256::ZERO), L - 1, B256::ZERO);
+            fx.marshal
+                .canned
+                .lock()
+                .unwrap()
+                .insert(L - 1, order.clone());
+            let child = child_of(&order, None);
+            let post_halt = sample_order(child.digest(), L + 1, B256::ZERO);
+
+            let (actor, mailbox) = fx.build(ctx.clone(), L, L);
+            let handle = actor.start();
+            let (msg, waiter) = finalize_msg(order);
+            mailbox.send(msg).expect("send finalize L-1");
+            let (child_msg, _child_waiter) = finalize_msg(child);
+            mailbox.send(child_msg).expect("send the flush child");
+
+            // `wait_until` is the bound: 2000 virtual ms, ~10 re-apply iterations at
+            // ENGINE_TRANSPORT_RETRY_BACKOFF, then a named panic — a spin fails the
+            // test instead of hanging the suite.
+            wait_until(&ctx, "SafetyHalt engaged", || fx.safety_halt.is_engaged()).await;
+            assert_eq!(
+                fx.sync_metrics.degraded_value(SyncReason::ResultDivergence),
+                1,
+                "a finalized-tier conflict is a divergence verdict, not a retry"
+            );
+            assert_parked_retaining_acks(
+                &ctx,
+                handle,
+                waiter,
+                &mailbox,
+                &fx.safety_halt,
+                post_halt,
+            )
+            .await;
+        });
+    }
+
+    // The OTHER arm of the same gate: the EL serves NOTHING at a height it holds
+    // as finalized. That is the post-devp2p-backfill by-NUMBER blind spot
+    // `reseed_forward` answers with a belt, not a settled conflict, so the gate
+    // re-reads and the node heals. Pre-belt this is immediate actor death.
+    #[test]
+    fn finalized_tier_absent_block_heals_within_the_visibility_belt() {
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            // The cold-start trust anchor IS the EL's finalized height, so a block
+            // delivered below it lands in the finalized-tier gate by construction.
+            const L: u64 = 100;
+            let fx = Fixture::new(L);
+            fx.chain
+                .canonical
+                .lock()
+                .unwrap()
+                .insert(L - 2, B256::repeat_byte(0xB2));
+            // The EL lands L-1 on derive but stays by-NUMBER blind for the next
+            // three reads — the gate's own plus two belt re-reads.
+            fx.chain.missing_reads.lock().unwrap().insert(L - 1, 3);
+
+            let order = sample_order(Digest(B256::ZERO), L - 1, B256::ZERO);
+            fx.marshal
+                .canned
+                .lock()
+                .unwrap()
+                .insert(L - 1, order.clone());
+            let child = child_of(&order, None);
+
+            let (actor, mailbox) = fx.build(ctx.clone(), L, L);
+            let mut handle = actor.start();
+            let (msg, waiter) = finalize_msg(order);
+            mailbox.send(msg).expect("send finalize L-1");
+            let (child_msg, _child_waiter) = finalize_msg(child);
+            mailbox.send(child_msg).expect("send the flush child");
+
+            waiter
+                .await
+                .expect("the belt outlives the blind spot, so L-1 acks normally");
+            assert_eq!(
+                fx.chain
+                    .missing_reads
+                    .lock()
+                    .unwrap()
+                    .get(&(L - 1))
+                    .copied(),
+                Some(0),
+                "every blinded read was actually spent"
+            );
+            assert!(
+                !fx.safety_halt.is_engaged(),
+                "a transient by-number blind spot is not a fork-safety verdict"
+            );
+            assert!(
+                (&mut handle).now_or_never().is_none(),
+                "the executor must survive a height the EL served late"
+            );
+        });
+    }
+
+    // The belt is BOUNDED: an EL that never serves a height it claims as finalized
+    // is local corruption, so the actor dies LOUD rather than stalling the ack
+    // forever. Corruption, not fork-safety — the latch must stay clear and the
+    // in-flight `Exact` is dropped (Canceled), exactly like the other corruption
+    // exits in this file.
+    #[test]
+    fn finalized_tier_absent_block_dies_loud_once_the_belt_is_spent() {
+        let recorder = DebuggingRecorder::new();
+        let snap = recorder.snapshotter();
+        metrics::with_local_recorder(&recorder, || {
+            let runtime = deterministic::Runner::default();
+            runtime.start(|ctx| async move {
+                const L: u64 = 100;
+                let fx = Fixture::new(L);
+                fx.chain
+                    .canonical
+                    .lock()
+                    .unwrap()
+                    .insert(L - 2, B256::repeat_byte(0xB2));
+                fx.chain
+                    .missing_reads
+                    .lock()
+                    .unwrap()
+                    .insert(L - 1, u32::MAX);
+
+                let order = sample_order(Digest(B256::ZERO), L - 1, B256::ZERO);
+                fx.marshal
+                    .canned
+                    .lock()
+                    .unwrap()
+                    .insert(L - 1, order.clone());
+                let child = child_of(&order, None);
+
+                let (actor, mailbox) = fx.build(ctx.clone(), L, L);
+                let mut handle = actor.start();
+                let (msg, waiter) = finalize_msg(order);
+                mailbox.send(msg).expect("send finalize L-1");
+                let (child_msg, _child_waiter) = finalize_msg(child);
+                mailbox.send(child_msg).expect("send the flush child");
+
+                // The bound is 50 * ENGINE_TRANSPORT_RETRY_BACKOFF ~= 10 virtual s,
+                // which outlasts `wait_until`'s 2 s horizon — hence the coarser
+                // local wait, still bounded so an unbounded belt fails by timeout.
+                let mut died = false;
+                for _ in 0..2_000 {
+                    if (&mut handle).now_or_never().is_some() {
+                        died = true;
+                        break;
+                    }
+                    ctx.sleep(Duration::from_millis(20)).await;
+                }
+                assert!(
+                    died,
+                    "timed out waiting for: the finalized-tier visibility belt to fail loud"
+                );
+                // The gate's own read plus the full belt: without the belt exactly
+                // one read is spent and the actor dies on the spot.
+                let reads_spent = u32::MAX
+                    - fx.chain
+                        .missing_reads
+                        .lock()
+                        .unwrap()
+                        .get(&(L - 1))
+                        .copied()
+                        .expect("the blind-spot entry survives");
+                assert!(
+                    reads_spent > FINALIZED_TIER_VISIBILITY_RETRIES,
+                    "the gate died before spending its re-read budget ({reads_spent} reads)"
+                );
+                assert!(
+                    !fx.safety_halt.is_engaged(),
+                    "an EL that never serves the height is local corruption, not a \
+                     fork-safety verdict"
+                );
+                assert!(
+                    waiter.await.is_err(),
+                    "the corruption exit cancels the in-flight ack"
+                );
+            });
+        });
+        assert_eq!(
+            counter_at(
+                &drain_counters(&snap),
+                "dpos_executor_fault_total",
+                ("class", "corruption")
+            ),
+            1,
+        );
+    }
+
     // This test arms the pre-fix EL model (`sibling_drops` = 2): the `try_derive`
     // canonical postcondition must keep RE-APPLYING (derive + import + FCU,
     // `dpos_sync_degraded{reason=finalize_apply}` raised while stuck) instead of
@@ -5150,7 +6180,8 @@ mod tests {
                 Ok(DeriveOutcome::Done) => {}
                 Ok(_) => panic!("the gap-walk parked instead of completing"),
                 Err(error) => panic!(
-                    "gap-walk must complete once each landed block is canonicalized: {error:#}"
+                    "gap-walk must complete once each landed block is canonicalized: {:#}",
+                    error.cause()
                 ),
             }
 
@@ -6405,7 +7436,7 @@ mod tests {
         });
     }
 
-    // (a) THE DEATH SPIRAL, in miniature (soak bundle-20260715T163059Z): a
+    // (a) THE DEATH SPIRAL, in miniature: a
     // notarization for a height AHEAD of `spec_head` (a gap) is PARKED, not
     // dropped, and resumes speculation once `spec_head` catches up via the
     // finalized path. Pre-fix the gap notarization was silently dropped, so once
@@ -6513,7 +7544,7 @@ mod tests {
             // STOPS at 105 (keeping it) — isolating the prune from the drain.
             actor.spec_head = ANCHOR + 4;
             fx.marshal.canned.lock().unwrap().remove(&(ANCHOR + 5));
-            actor.try_drain_parked(&cause).await;
+            actor.try_drain_parked(&cause).await.expect("drain");
 
             assert_eq!(
                 actor.parked_spec.keys().copied().collect::<Vec<_>>(),
@@ -6604,7 +7635,7 @@ mod tests {
             // the body is now gone (not yet re-buffered).
             actor.spec_head = ANCHOR + 1;
             fx.marshal.canned.lock().unwrap().remove(&GAP);
-            actor.try_drain_parked(&cause).await;
+            actor.try_drain_parked(&cause).await.expect("drain");
 
             assert!(
                 actor.parked_spec.contains_key(&GAP),
@@ -6737,7 +7768,7 @@ mod tests {
                 .lock()
                 .unwrap()
                 .insert(ANCHOR + 1, parent_hash);
-            actor.try_drain_parked(&cause).await;
+            actor.try_drain_parked(&cause).await.expect("drain");
 
             assert!(
                 fx.chain.spec_executed_hash(ANCHOR + 2).is_some(),
@@ -6755,7 +7786,7 @@ mod tests {
         });
     }
 
-    // (a) THE BUNDLE CRASH, in miniature (soak bundle-20260715T184433Z): a
+    // (a) THE SIBLING-ROLLBACK CRASH, in miniature: a
     // speculative lead h..h+2 where h finalizes as a SIBLING (seed-round
     // mismatch) → rollback + re-derive; THEN h+1 finalizes with the SAME ordering
     // digest that was speculated. Pre-fix the orphaned-parent speculated h+1
@@ -6993,7 +8024,7 @@ mod tests {
         });
     }
 
-    // EAGER FINALIZED DERIVE (record-lag closer, bundle-20260716T162805Z): a
+    // EAGER FINALIZED DERIVE (record-lag closer): a
     // delivered finalized `h` whose OWN agreed round `Round(0, proposal_view)` is
     // in the SeedStore is derived + finalized-recorded AT DELIVERY, before its
     // child `h+1` exists — closing the recorded_tip = delivered_tip − 1 lag that
@@ -7321,8 +8352,8 @@ mod tests {
         });
     }
 
-    // SEED-NOTIFY RE-ATTEMPT (the deadlock-breaker, bundle-20260716T203448Z;
-    // migrated from the deleted `SpecNotarized` Poke — the race in miniature):
+    // SEED-NOTIFY RE-ATTEMPT (the deadlock-breaker; migrated from the deleted
+    // `SpecNotarized` Poke — the race in miniature):
     // `h` is finalized-delivered BEFORE its seed is recorded → the on-delivery
     // eager derive MISSES → `h` is HELD. Then the notarization for `h`'s round
     // lands: the Reporter records the seed into the shared SeedStore (which fires
@@ -7703,7 +8734,7 @@ mod tests {
         });
     }
 
-    // ───────────────────────── steady-state re-jump (finding #6) ─────────────
+    // steady-state re-jump
 
     use crate::cold_start_jump::JUMP_THRESHOLD;
 
@@ -7933,7 +8964,7 @@ mod tests {
         });
     }
 
-    // STALE FINALIZATION BACKLOG PRUNE (bundle-20260716T034647Z): deliveries
+    // STALE FINALIZATION BACKLOG PRUNE: deliveries
     // queued while the drain arm is gated off by an IN-FLIGHT jump are stale
     // below-landing blocks; reseed_forward must prune them (ack Ok — canonical
     // post-backfill, never Canceled) so the reopened drain does not re-populate
@@ -8048,7 +9079,8 @@ mod tests {
 
             actor
                 .reseed_forward(landing_h, B256::repeat_byte(0xE1), landing_h - K)
-                .await;
+                .await
+                .expect("reseed_forward");
 
             w_below
                 .await
@@ -8237,7 +9269,10 @@ mod tests {
             let fx = Fixture::new(ANCHOR);
             let (mut actor, _mailbox) = fx.build(ctx, ANCHOR, ANCHOR);
 
-            actor.reseed_forward(landing, landing_hash, floor).await;
+            actor
+                .reseed_forward(landing, landing_hash, floor)
+                .await
+                .expect("reseed_forward");
 
             let (ordering_finalized, anchor_finalized, safe_height, finalized_height, spec_head) =
                 actor.seed_fields();
@@ -8290,8 +9325,8 @@ mod tests {
         });
     }
 
-    // STARTUP-BACKFILL FAST-FORWARD (bundle-20260717T120838Z, the v33 fresh-spare
-    // freeze in miniature): a fresh spare's `[last_execution+1 ..= last_consensus]`
+    // STARTUP-BACKFILL FAST-FORWARD (the v33 fresh-spare freeze in miniature):
+    // a fresh spare's `[last_execution+1 ..= last_consensus]`
     // backfill iterator is pending at a LOW height (377) when a fast-jump lands far
     // above it. `reseed_forward` must fast-forward the iterator so its next yielded
     // height is `landing + 1` — else the post-jump drain resumes at 377 and
@@ -8322,7 +9357,10 @@ mod tests {
             );
             let len_before = actor.finalized_heights_to_backfill.clone().count();
 
-            actor.reseed_forward(landing, landing_hash, floor).await;
+            actor
+                .reseed_forward(landing, landing_hash, floor)
+                .await
+                .expect("reseed_forward");
 
             // The next drained backfill height is landing+1 — the entire jumped
             // range [NEXT ..= landing] is skipped, and every remaining height is
@@ -8370,7 +9408,10 @@ mod tests {
             let (mut actor, _mailbox) = fx.build(ctx, ANCHOR, end);
             let before: Vec<u64> = actor.finalized_heights_to_backfill.clone().collect();
 
-            actor.reseed_forward(landing, landing_hash, floor).await;
+            actor
+                .reseed_forward(landing, landing_hash, floor)
+                .await
+                .expect("reseed_forward");
 
             let after: Vec<u64> = actor.finalized_heights_to_backfill.clone().collect();
             assert_eq!(
@@ -8444,8 +9485,8 @@ mod tests {
     // MUST seed from the acked cursor (`last_consensus_finalized_height`), NOT
     // the reth head (`last_execution_finalized_height`) — else a restart
     // straddling a nullify race serves the orphaned speculative sibling as a
-    // finalized result (the whole-committee bundle-20260716T150148Z divergence,
-    // re-entered through restart). Pre-fix (floor = reth head) the assertion
+    // finalized result (the whole-committee divergence, re-entered through
+    // restart). Pre-fix (floor = reth head) the assertion
     // below returned `Some(the speculative hash)`.
     #[test]
     fn init_floor_excludes_speculative_tail_above_acked() {
@@ -8590,7 +9631,10 @@ mod tests {
             // forward to the landing.
             let fx_re = Fixture::new(ANCHOR);
             let (mut re_actor, _m2) = fx_re.build(ctx.with_label("reseed"), ANCHOR, ANCHOR);
-            re_actor.reseed_forward(landing, landing_hash, floor).await;
+            re_actor
+                .reseed_forward(landing, landing_hash, floor)
+                .await
+                .expect("reseed_forward");
             let re_fields = re_actor.seed_fields();
 
             assert_eq!(
@@ -8650,7 +9694,10 @@ mod tests {
             );
 
             let (mut actor, _mailbox) = fx.build(ctx, ANCHOR, ANCHOR);
-            actor.reseed_forward(landing, landing_hash, floor).await;
+            actor
+                .reseed_forward(landing, landing_hash, floor)
+                .await
+                .expect("reseed_forward");
 
             // The reseed issued the canonicalization FCU: head = safe = landing
             // (covers the whole segment; the landing is BFT ordering-final),
@@ -8990,7 +10037,7 @@ mod tests {
         });
     }
 
-    // #1 SELF-HEAL (2026-07-09): a steady-state re-jump `AuthFailed` (a forged/unagreed
+    // A steady-state re-jump `AuthFailed` (a forged/unagreed
     // POST-sync branch) is NON-fatal — the executor rotates the upstream + stays
     // up-degraded (`auth_rotate=1`) instead of the old `break`/shutdown, and never
     // advances the marshal floor onto the forged branch. With a SINGLE upstream
@@ -9331,6 +10378,212 @@ mod tests {
         });
     }
 
+    use metrics_util::{
+        debugging::{DebugValue, DebuggingRecorder, Snapshotter},
+        CompositeKey,
+    };
+
+    /// `Snapshotter::snapshot` RESETS every counter it reads, so a test takes
+    /// exactly ONE snapshot and queries this drained copy.
+    fn drain_counters(snap: &Snapshotter) -> Vec<(CompositeKey, u64)> {
+        snap.snapshot()
+            .into_vec()
+            .into_iter()
+            .filter_map(|(key, _, _, value)| match value {
+                DebugValue::Counter(count) => Some((key, count)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn counter_at(drained: &[(CompositeKey, u64)], name: &str, label: (&str, &str)) -> u64 {
+        drained
+            .iter()
+            .filter(|(composite, _)| {
+                let key = composite.key();
+                key.name() == name
+                    && key
+                        .labels()
+                        .any(|l| l.key() == label.0 && l.value() == label.1)
+            })
+            .map(|(_, count)| count)
+            .sum()
+    }
+
+    // The same backfill hole as `backfill_hole_is_fatal_at_the_backfill_site`, seen
+    // at the ROUTER: a bare `break` exits the loop WITHOUT reading the halt latch,
+    // so an already-halted node would drop every retained marshal `Exact` into
+    // Canceled (fatal to the marshal). The fault counter is the only observable
+    // that separates "routed as a Corruption" from "the loop merely exited".
+    #[test]
+    fn backfill_hole_routes_through_the_fault_router() {
+        let recorder = DebuggingRecorder::new();
+        let snap = recorder.snapshotter();
+        metrics::with_local_recorder(&recorder, || {
+            let runtime = deterministic::Runner::default();
+            runtime.start(|ctx| async move {
+                const ANCHOR: u64 = 100;
+                let fx = Fixture::new(ANCHOR);
+                let (actor, _mailbox) = fx.build(ctx.clone(), ANCHOR, ANCHOR + 2);
+                let mut handle = actor.start();
+                ctx.sleep(Duration::from_millis(20)).await;
+                assert!(
+                    (&mut handle).now_or_never().is_some(),
+                    "the routed Corruption shuts the executor down"
+                );
+            });
+        });
+        assert_eq!(
+            counter_at(
+                &drain_counters(&snap),
+                "dpos_executor_fault_total",
+                ("class", "corruption")
+            ),
+            1,
+            "the backfill hole must reach the fault router, not break the loop behind its back"
+        );
+    }
+
+    // Teardown, not a fault: every sender dropped with the latch CLEAR is the node
+    // shutting this executor down. It must exit, count itself as a clean exit
+    // (the cause label is what tells an operator a stopped executor was torn down
+    // rather than killed by a fault), and raise no fault.
+    #[test]
+    fn mailbox_close_exits_cleanly_when_not_halted() {
+        let recorder = DebuggingRecorder::new();
+        let snap = recorder.snapshotter();
+        metrics::with_local_recorder(&recorder, || {
+            let runtime = deterministic::Runner::default();
+            runtime.start(|ctx| async move {
+                const ANCHOR: u64 = 100;
+                let fx = Fixture::new(ANCHOR);
+                let (actor, mailbox) = fx.build(ctx.clone(), ANCHOR, ANCHOR);
+                let mut handle = actor.start();
+                ctx.sleep(Duration::from_millis(5)).await;
+                drop(mailbox);
+                ctx.sleep(Duration::from_millis(20)).await;
+                assert!(
+                    (&mut handle).now_or_never().is_some(),
+                    "a closed mailbox with the latch clear must resolve the actor handle"
+                );
+                assert!(!fx.safety_halt.is_engaged(), "teardown is not a fault");
+            });
+        });
+        let drained = drain_counters(&snap);
+        assert_eq!(
+            counter_at(
+                &drained,
+                "dpos_executor_fault_total",
+                ("class", "corruption")
+            ),
+            0,
+        );
+        assert_eq!(
+            counter_at(
+                &drained,
+                "dpos_executor_exit_total",
+                ("cause", "mailbox_closed")
+            ),
+            1,
+        );
+    }
+
+    // The ONE case with the latch already engaged at start: `SafetyHalt::restore_marker`
+    // re-engages from the datadir marker before any actor spawns, so NO fault ever
+    // reaches the router — the router's own is-engaged check cannot fire, and without
+    // the top-of-loop gate this actor would drive reth for a chain it has already
+    // latched "I refuse".
+    #[test]
+    fn a_marker_restored_latch_parks_the_executor_before_it_drives_reth() {
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            const ANCHOR: u64 = 100;
+            let fx = Fixture::new(ANCHOR);
+            fx.safety_halt.engage(SyncReason::ResultDivergence);
+            let (actor, mailbox) = fx.build(ctx.clone(), ANCHOR, ANCHOR);
+            let handle = actor.start();
+
+            // A block plus the flush child its height needs to derive at all — so a
+            // missing gate shows up as real EL traffic, not merely as a held tip.
+            let order = sample_order(Digest(B256::ZERO), ANCHOR + 1, B256::ZERO);
+            let child = child_of(&order, None);
+            let post_halt = sample_order(child.digest(), ANCHOR + 3, B256::ZERO);
+            let (msg, waiter) = finalize_msg(order);
+            mailbox.send(msg).expect("send finalize");
+            let (child_msg, _child_waiter) = finalize_msg(child);
+            mailbox.send(child_msg).expect("send the flush child");
+            ctx.sleep(Duration::from_millis(20)).await;
+
+            assert!(
+                fx.deriver.seeds_seen.lock().unwrap().is_empty(),
+                "the executor DERIVED with the latch engaged"
+            );
+            assert!(
+                fx.beacon.new_payload_calls.lock().unwrap().is_empty(),
+                "the executor IMPORTED into reth with the latch engaged"
+            );
+            assert!(
+                fx.beacon.fcu_calls.lock().unwrap().is_empty(),
+                "the executor drove reth's FORKCHOICE with the latch engaged"
+            );
+
+            assert_parked_retaining_acks(
+                &ctx,
+                handle,
+                waiter,
+                &mailbox,
+                &fx.safety_halt,
+                post_halt,
+            )
+            .await;
+        });
+    }
+
+    // The arm's latch check is defence in depth, not a window anyone can point at
+    // today: the only production engage sites are the router (which parks and never
+    // returns) and the startup marker restore (covered by the top-of-loop pre-class
+    // gate). It exists because a latch engaged from outside this actor while the loop
+    // sits in `select!` would otherwise be missed. A mailbox close in that state must
+    // park HERE: the
+    // loop's `break` returns from the task, dropping the held marshal `Exact` into
+    // Canceled, which the marshal treats as fatal.
+    #[test]
+    fn mailbox_close_while_halted_parks_and_retains_acks() {
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            const ANCHOR: u64 = 100;
+            let fx = Fixture::new(ANCHOR);
+            let (actor, mailbox) = fx.build(ctx.clone(), ANCHOR, ANCHOR);
+            let mut handle = actor.start();
+
+            // A block with no child yet: the one-block-lookahead pipeline HOLDS it,
+            // so its ack is un-resolved and in the actor's hands when the latch trips.
+            let (msg, mut waiter) =
+                finalize_msg(sample_order(Digest(B256::ZERO), ANCHOR + 1, B256::ZERO));
+            mailbox.send(msg).expect("send finalize");
+            ctx.sleep(Duration::from_millis(20)).await;
+            assert!(
+                (&mut waiter).now_or_never().is_none(),
+                "the held tip's ack is the one the park must retain"
+            );
+
+            // Mid-flight, with the loop parked in `select!` and no timer due to wake
+            // it (the fixture's heartbeat is 60s): engage, then close.
+            fx.safety_halt.engage(SyncReason::ResultDivergence);
+            drop(mailbox);
+            ctx.sleep(Duration::from_millis(20)).await;
+
+            assert!(
+                (&mut waiter).now_or_never().is_none(),
+                "the held block's ack must stay RETAINED — a Canceled ack kills the marshal"
+            );
+            assert!(
+                (&mut handle).now_or_never().is_none(),
+                "a mailbox close under an engaged latch must PARK, not return"
+            );
+        });
+    }
+
     // bugs 6/7: while a jump is in flight (`jump_done` armed) the executor is the
     // SINGLE EL writer — NO finalize-derive and NO speculative execute may fire
     // (their FCUs would retarget reth's backfill, starving the jump's `Valid`
@@ -9486,7 +10739,7 @@ mod tests {
         });
     }
 
-    // ── REAL-marshal SafetyHalt liveness ─────────────────────────────────────
+    // REAL-marshal SafetyHalt liveness.
     // The commonware marshal treats a Canceled `Exact` ack as fatal (its `run`
     // returns), so the pre-fix halt path (executor exits, dropping the ack)
     // killed the marshal — the component that serves blocks + certs to peers —
@@ -9674,7 +10927,10 @@ mod tests {
                 .await;
                 let blocks =
                     crate::outer::init_finalized_blocks_archive(&ctx, "halt-liveness").await;
-                let provider = crate::outer::EpochSchemeProvider::new();
+                let provider =
+                    crate::outer::EpochSchemeProvider::new(std::sync::Arc::new(|e: u64| {
+                        e >= crate::beacon::actor::DETERMINISTIC_BOOTSTRAP_EPOCH
+                    }));
                 provider.register(Epoch::new(0), c.verifier.clone());
                 let (marshal_actor, marshal_mailbox, last_processed) = MarshalActor::init(
                     ctx.with_label("marshal"),
@@ -9725,12 +10981,12 @@ mod tests {
                         dpos_activation_block: 0,
                         fcu_pace: Duration::from_millis(0),
                         peers_for_finalization: std::sync::Arc::new(dummy_peers),
-                        beacon_metrics: crate::beacon::metrics::BeaconMetrics::default(),
+                        metrics: ExecutorMetrics::default(),
                         sync_metrics: fx.sync_metrics.clone(),
                         safety_halt: fx.safety_halt.clone(),
                         spawn_unblocked: std::sync::Arc::new(tokio::sync::Notify::new()),
                         re_jump: None,
-                        seed_store: None,
+                        randomness: crate::beacon::surface::absent_unregistered(),
                         epocher: crate::epocher::OriginEpocher::new(
                             0,
                             std::num::NonZeroU64::new(1 << 40).expect("nonzero"),
@@ -9836,7 +11092,10 @@ mod tests {
                 .await;
                 let blocks =
                     crate::outer::init_finalized_blocks_archive(&ctx, "seed-below-floor").await;
-                let provider = crate::outer::EpochSchemeProvider::new();
+                let provider =
+                    crate::outer::EpochSchemeProvider::new(std::sync::Arc::new(|e: u64| {
+                        e >= crate::beacon::actor::DETERMINISTIC_BOOTSTRAP_EPOCH
+                    }));
                 provider.register(Epoch::new(0), c.verifier.clone());
                 let (marshal_actor, mut marshal, _last) = MarshalActor::init(
                     ctx.with_label("marshal"),
@@ -9944,7 +11203,8 @@ mod tests {
 
                 actor
                     .reseed_forward(landing, B256::repeat_byte(0xAA), floor)
-                    .await;
+                    .await
+                    .expect("reseed_forward");
 
                 assert_eq!(
                     *fx.marshal.store_floor_order.lock().unwrap(),
@@ -9977,7 +11237,8 @@ mod tests {
 
                 actor
                     .reseed_forward(landing, B256::repeat_byte(0xAB), floor)
-                    .await;
+                    .await
+                    .expect("reseed_forward");
 
                 assert!(
                     fx.marshal.stored.lock().unwrap().is_empty(),
@@ -10004,7 +11265,8 @@ mod tests {
 
                 actor
                     .reseed_forward(landing, B256::repeat_byte(0xAC), floor)
-                    .await;
+                    .await
+                    .expect("reseed_forward");
 
                 assert!(
                     fx.marshal.stored.lock().unwrap().is_empty(),
@@ -10032,7 +11294,8 @@ mod tests {
 
                 actor
                     .reseed_forward(landing, B256::repeat_byte(0xAD), floor)
-                    .await;
+                    .await
+                    .expect("reseed_forward");
 
                 assert_eq!(
                     *entered.lock().unwrap(),
@@ -10067,7 +11330,8 @@ mod tests {
 
                 actor
                     .reseed_forward(landing, B256::repeat_byte(0xAE), floor)
-                    .await;
+                    .await
+                    .expect("reseed_forward");
 
                 assert!(
                     fx.marshal.stored.lock().unwrap().is_empty(),
@@ -10103,7 +11367,8 @@ mod tests {
 
                 actor
                     .reseed_forward(landing, B256::repeat_byte(0xB0), floor)
-                    .await;
+                    .await
+                    .expect("reseed_forward");
 
                 assert_eq!(
                     *calls.lock().unwrap(),
@@ -10133,7 +11398,8 @@ mod tests {
 
                 actor
                     .reseed_forward(landing, B256::repeat_byte(0xAF), floor)
-                    .await;
+                    .await
+                    .expect("reseed_forward");
 
                 assert_eq!(
                     *fx.marshal.stored.lock().unwrap(),

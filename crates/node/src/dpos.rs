@@ -16,14 +16,11 @@ use commonware_p2p::{
 };
 use commonware_runtime::{tokio::Context, Clock as _, Handle, Metrics as _, Spawner as _};
 use eyre::{eyre, OptionExt as _, WrapErr as _};
-pub use fluentbase_consensus::FeedSink;
-use fluentbase_consensus::{
-    beacon::BeaconKeys,
-    dpos::{
-        DposLayer, DposLayerConfig, DposLayerHandle, ResettableForward, RethHandle,
-        SharedBeaconPlane, VoteBackupItem,
-    },
+use fluentbase_consensus::dpos::{
+    DposLayer, DposLayerConfig, DposLayerHandle, ResettableForward, RethHandle, SharedBeaconPlane,
+    VoteBackupItem,
 };
+pub use fluentbase_consensus::FeedSink;
 use fluentbase_p2p::{
     bootstrappers::{classify_spec, load_from_dns, load_from_json_path, BootstrapperSpec},
     FluentP2P, FluentP2PConfig,
@@ -112,9 +109,6 @@ pub struct DposConfig {
     /// AWS KMS key id/ARN/alias for the slasher EOA — true remote signing.
     /// Mutually exclusive with `slasher_keystore_path`.
     pub slasher_kms_key_id: Option<String>,
-    /// DEVNET-ONLY: serve commonware consensus metrics (prometheus text) on this
-    /// host port for the smoke regression suite. `None` = disabled (prod default).
-    pub metrics_port: Option<u16>,
     /// Cert-feed wiring for the `consensus` RPC namespace. `None` = node does not
     /// serve the cert feed (e.g. unit tests). Set on every production node.
     pub cert_feed: Option<CertFeed>,
@@ -327,7 +321,6 @@ impl DposConfig {
             slasher_keystore_path: args.dpos_slasher_keystore_path.clone(),
             slasher_keystore_password_file: args.dpos_slasher_keystore_password_file.clone(),
             slasher_kms_key_id: args.dpos_slasher_kms_key_id.clone(),
-            metrics_port: args.dpos_metrics_port,
             cert_feed,
             follower_upstreams: args.dpos_follower_upstream.clone(),
             #[cfg(feature = "dpos-devnet-byzantine")]
@@ -371,6 +364,15 @@ pub struct NodeStackCfg {
     /// Follower overlay payload (L1 checkpoint, cert-feed, staking config).
     /// `Some` iff `!is_validator`.
     pub follower: Option<FollowerCfg>,
+    /// DEVNET-ONLY (`--dpos.metrics-port`): serve the commonware registry as
+    /// prometheus text on this host port. `None` = disabled (prod default).
+    ///
+    /// Process-level, NOT per-overlay: the endpoint binds one socket and encodes
+    /// the ONE registry the whole runtime shares, and both node classes own
+    /// families in it (the follower is the sole owner of the
+    /// `dpos_follower_artifact_*` families, via `beacon::for_follower`). A copy
+    /// per overlay payload would be two sources for one socket.
+    pub metrics_port: Option<u16>,
 }
 
 /// Follower-overlay payload (the non-validator `--cert-follow` bits). The shared
@@ -472,13 +474,16 @@ where
         cert_inlet,
         validator,
         follower,
+        metrics_port,
     } = cfg;
 
-    // ── DIVERGENCE: the overlay. Validator = full 5-Muxer beacon plane +
-    //    local-BFT engine (+ optional inlet as a 2nd producer); follower =
-    //    near-planeless broadcast Muxer + inlet-only engine. Both return the
-    //    same `(DposLayerHandle, supervised handles)` shape so the supervisor is
-    //    a single path. ──
+    spawn_devnet_metrics(&ctx, metrics_port);
+
+    // DIVERGENCE: the overlay. Validator = full 5-Muxer beacon plane +
+    // local-BFT engine (+ optional inlet as a 2nd producer); follower =
+    // near-planeless broadcast Muxer + inlet-only engine. Both return the
+    // same `(DposLayerHandle, supervised handles)` shape so the supervisor is
+    // a single path.
     let (mut engine, supervised): (DposLayerHandle, Vec<SupervisedHandle>) = if is_validator {
         let dpos_cfg = validator.ok_or_else(|| {
             eyre!("run_node_stack: is_validator=true requires a validator config")
@@ -500,12 +505,12 @@ where
         .await?
     };
 
-    // ── SHARED SPINE: the shutdown supervisor over the engine + every overlay
-    //    handle, uniform for both modes. On any unexpected exit cancel the shared
-    //    token (so reth/main bring everything down) then abort the survivors. ──
+    // SHARED SPINE: the shutdown supervisor over the engine + every overlay
+    // handle, uniform for both modes. On any unexpected exit cancel the shared
+    // token (so reth/main bring everything down) then abort the survivors.
     let exit_reason = supervise(&shutdown_token, &mut engine.consensus_handle, supervised).await;
 
-    // ── ORDERING INVARIANT, and it is the entire reason this call sits HERE ──
+    // ORDERING INVARIANT, and it is the entire reason this call sits HERE.
     // Every drain writer is a `while let Some(_) = rx.recv().await` loop, so each
     // one exits only once the LAST sender for its channel is gone. The rule for
     // adding a drain participant is therefore about SENDERS, not about where the
@@ -514,28 +519,24 @@ where
     // the drain cannot do anything but burn `SHUTDOWN_DRAIN_TIMEOUT` and warn —
     // and that warning's whole job is to mean "the disk is stuck".
     //
-    // Two of today's three drain writers need something arranged HERE, and the
-    // two arrangements are different — neither generalizes to the other. (The
-    // third, `artifact_store_writer`, needs neither: its `ArtifactStore` is the
-    // same sender-carrying `Clone` shape, but no clone of it reaches the layer
-    // handle — every one that exists dies with a task `supervise` aborts.)
+    // BOTH journal senders now live inside ONE object — the `Arc<dyn Randomness>`
+    // that owns the seed store and the key store — and that changes what has to
+    // be arranged here, so the old two-case reasoning does not carry over
+    // unchanged.
     //
-    //  - The seed-journal writer's sender lives in `SeedStore`, whose last clone
-    //    the consensus engine owns. `supervise` has just aborted that engine, so
-    //    awaiting AFTER it is what releases the sender. Awaiting first would
-    //    deadlock. The mirror-image constraint lives in `OuterBuilder::build`:
-    //    the drain tasks are spawned from a context OUTSIDE the engine's
-    //    supervision subtree, because commonware aborts a task's whole descendant
-    //    subtree — a writer spawned under the engine's context would be killed by
-    //    the very `engine.abort()` that is supposed to release it.
+    //  - Clones reachable from the aborted tasks (the consensus engine's, the
+    //    inlet's) are released by `supervise` above. Awaiting the drains BEFORE
+    //    that would deadlock. The mirror-image constraint now lives in
+    //    `beacon::build`: both writers are spawned there, outside any engine
+    //    task's spawn lineage, so `engine.abort()` cannot kill the task it is
+    //    supposed to be releasing — see
+    //    `the_journal_writer_survives_the_engine_abort_only_outside_its_spawn_lineage`.
     //
-    //  - The key-journal writer's sender lives in `BeaconKeys`, which is a plain
-    //    `Clone` field on the layer handle. Aborting the engine and the overlay
-    //    does NOT release it: `engine` is still alive right here, and its
-    //    `beacon_keys` is a full clone, sender and all. `take_shutdown_drains`
-    //    swaps that field for a sender-less store so the host stops being an
-    //    owner before anything is awaited.
-    let drains = take_shutdown_drains(&mut engine.beacon_keys, &mut engine.drain_on_shutdown);
+    //  - The HOST's own clone is the one nothing aborts, and it is released one
+    //    frame down, at the end of `launch_validator_overlay` — see the explicit
+    //    `drop(plane.shared)` there and why it is explicit. By the time this
+    //    function runs, no live `Arc<dyn Randomness>` is reachable.
+    let drains = std::mem::take(&mut engine.drain_on_shutdown);
     drain_shutdown_tasks(drains).await;
 
     info!(reason = exit_reason, "node thread exiting");
@@ -558,24 +559,11 @@ pub(crate) type DrainHandle = (&'static str, Handle<()>);
 /// touched section), so it fires only on a genuinely stuck device.
 const SHUTDOWN_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// Take the layer's drain list, releasing the host's own hold on what feeds it.
-///
-/// The layer handle's `beacon_keys` is a plain `Clone` of the cross-epoch key
-/// store, so it carries a live clone of the key-journal channel's SENDER. The
-/// host outlives `supervise`, so aborting the engine and the overlay leaves that
-/// clone standing and the writer's `recv()` never returns `None`. Swapping the
-/// field for a sender-less store is what makes the drain finishable at all.
-///
-/// Split out from the call site because it is the only part of the shutdown tail
-/// a test can drive: `DposLayerHandle` is not constructible outside the consensus
-/// crate.
-fn take_shutdown_drains(
-    beacon_keys: &mut BeaconKeys,
-    drain_on_shutdown: &mut Vec<DrainHandle>,
-) -> Vec<DrainHandle> {
-    drop(std::mem::take(beacon_keys));
-    std::mem::take(drain_on_shutdown)
-}
+/// Datadir file name of the fork-safety halt marker. Its EXISTENCE is the halt
+/// record; its one line names the [`fluentbase_consensus::sync_metrics`] reason.
+/// An operator deletes it — after the fork is resolved on L1 — to let this node
+/// participate again; nothing in the node ever removes it.
+pub const SAFETY_HALT_MARKER: &str = "dpos_safety_halt";
 
 /// Let every graceful-shutdown drain task finish, each under its own bounded
 /// timeout, then return regardless.
@@ -706,8 +694,6 @@ where
         + Sync
         + 'static,
 {
-    spawn_devnet_metrics(&ctx, &cfg);
-
     let cert_feed = cfg.cert_feed.take();
     // Claim the single-execution import escrow ONCE per process.
     let beacon_engine =
@@ -795,24 +781,10 @@ where
         plane.evidence.clone(),
         upstream_frontier.clone(),
         plane.agreement_intake,
+        plane.artifact_bytes,
         shutdown_token,
     )
     .await?;
-
-    // The agreement write-back's middle hop, spawned HERE because it is the first
-    // point at which both ends exist: the plane produced `agreed_rx` before the
-    // layer launched, and `handle.beacon_keys` — the cross-epoch `epoch → PK_epoch`
-    // store — is created inside the layer launch.
-    //
-    // It does two things and neither belongs to the actor. It publishes the agreed
-    // key at `KeySource::Agreed`, which is what lets W1 stand down for the epoch and
-    // still leaves ladder rung 1 answered for `repair_unpinned_schemes`. Then it
-    // hands the artifact to the `DkgActor`, where its dealer-log set becomes the
-    // pinned set the existing finalize rails run over — the write-back proper.
-    let artifact_adopt_handle = plane
-        .write_back
-        .arm(&keepalive_ctx, handle.beacon_keys.clone())
-        .await;
 
     // Fill the DkgActor's deferred marshal READ handle now that the layer launch has
     // created the marshal mailbox — the demote-heal recompute (§8.11.1) reads pinned
@@ -842,8 +814,10 @@ where
                 upstream_frontier: upstream_frontier.clone(),
                 dkg_height_tx: plane.dkg_height_tx.clone(),
             },
-            plane.shared.beacon.held_keys().clone(),
-            handle.beacon_keys.clone(),
+            // The SAME provider the consensus layer holds, not a second one over
+            // a private store: `observe_cert` prunes what `pin_for` reads, and a
+            // split store would make the pruning a silent no-op.
+            plane.shared.randomness.clone(),
         )
     });
 
@@ -858,7 +832,7 @@ where
         ("frontier_resolver", plane.frontier_resolver_handle),
         ("evidence", plane.evidence_handle),
         ("agreement_launcher", plane.agreement_launcher_handle),
-        ("agreement_write_back", artifact_adopt_handle),
+        ("agreement_write_back", plane.write_back_handle),
     ];
     for h in plane.mux_handles {
         supervised.push(("mux", h));
@@ -879,6 +853,19 @@ where
         handle
             .drain_on_shutdown
             .push(("artifact_store_writer", writer));
+    }
+    // The two journal writers now come off the BEACON, not off the layer: their
+    // stores moved into `beacon::build` with the randomness provider that owns
+    // them. Same drain class as the artifact store's.
+    if let Some(writer) = plane.key_writer_handle {
+        handle
+            .drain_on_shutdown
+            .push(("key_journal_writer", writer));
+    }
+    if let Some(writer) = plane.seed_writer_handle {
+        handle
+            .drain_on_shutdown
+            .push(("seed_journal_writer", writer));
     }
 
     // Frontier-resolver keepalive: the always-on plane frontier resolver
@@ -902,18 +889,36 @@ where
             });
     supervised.push(("frontier_keepalive", keepalive_handle));
 
+    // THE HOST MUST NOT OUTLIVE ITS OWN PROVIDER CLONE. Both journal writers
+    // drain by observing their last sender drop, and both senders live inside the
+    // `Arc<dyn Randomness>` that `plane.shared` holds. Every OTHER clone dies
+    // with a task the supervisor aborts; this one is owned by a plain local, so
+    // nothing aborts it. Explicit rather than left to scope exit: `plane` is
+    // partially moved above, so "it drops at the end of the function" is a fact
+    // about this function's body that the next edit can silently change — and the
+    // symptom would be two drains burning their timeout behind a warning that
+    // says "the disk is stuck". That exact failure is what `91a2f1d9` fixed for
+    // one writer; there are two behind one handle now.
+    drop(plane.shared);
+
     Ok((handle, supervised))
 }
 
 /// DEVNET-ONLY metrics endpoint (feature-gated so prod binaries can't serve
 /// it). Spawned on a child of the commonware runtime context; children share
-/// the runtime's prometheus registry, so `c.encode()` includes the p2p
-/// tracker `connected`/`tracked` gauges the DposLayer registers later (the
-/// smoke `smoke-peers` scrapes them). Must bind exactly ONCE per process, so
-/// it lives in the thread body, not inside [`launch_dpos_layer`].
-pub(crate) fn spawn_devnet_metrics(ctx: &Context, cfg: &DposConfig) {
+/// the runtime's prometheus registry, so `c.encode()` includes every family
+/// registered on any context of this runtime — the p2p tracker
+/// `connected`/`tracked` gauges the overlay registers later (the smoke
+/// `smoke-peers` scrapes them), and on a follower the `dpos_follower_artifact_*`
+/// families `beacon::for_follower` registers.
+///
+/// Called from [`run_node_stack`] BEFORE the overlay branch, for both node
+/// classes: it binds one socket, so it must run exactly once per process, and a
+/// follower that never reached it was the only node class moving the
+/// follower-artifact counters with no registry to scrape them from.
+pub(crate) fn spawn_devnet_metrics(ctx: &Context, metrics_port: Option<u16>) {
     #[cfg(feature = "dpos-devnet-metrics")]
-    if let Some(port) = cfg.metrics_port {
+    if let Some(port) = metrics_port {
         warn!(
             port,
             "DEVNET: serving commonware consensus metrics over HTTP (do not enable in prod)"
@@ -944,7 +949,7 @@ pub(crate) fn spawn_devnet_metrics(ctx: &Context, cfg: &DposConfig) {
         }));
     }
     #[cfg(not(feature = "dpos-devnet-metrics"))]
-    if cfg.metrics_port.is_some() {
+    if metrics_port.is_some() {
         let _ = ctx;
         warn!(
             "--dpos.metrics-port set but this binary was built without the \
@@ -1009,10 +1014,17 @@ pub(crate) struct BeaconPlane {
     /// The durable artifact store's writer. A DRAIN handle, not a supervised one:
     /// it returns when the store's last sender drops, which is shutdown.
     pub artifact_writer_handle: Option<Handle<()>>,
-    /// The agreement write-back, held back until the consensus layer's key store
-    /// exists. Armed exactly once, in `run_dpos_stack`, with `handle.beacon_keys`;
-    /// arming it also pushes this restart's locally-stored artifacts through it.
-    pub write_back: fluentbase_consensus::beacon::BeaconWriteBack,
+    /// The agreement write-back hop, armed inside `beacon::build` — the key store
+    /// it publishes into is created there now, so there is nothing left to arm
+    /// later. Supervised.
+    pub write_back_handle: Handle<()>,
+    /// The durable key journal's writer. A DRAIN handle, like the artifact
+    /// store's.
+    pub key_writer_handle: Option<Handle<()>>,
+    /// The durable seed journal's writer. A DRAIN handle, and the one whose
+    /// sender the CONSENSUS ENGINE holds — see the drain ordering in
+    /// `run_dpos_stack`.
+    pub seed_writer_handle: Option<Handle<()>>,
     /// Supervisor handles of the agreement instances the launcher starts, for
     /// `epoch_manager` to adopt so they prune on the engine cutoff. Move-only, so
     /// it is handed over exactly once — into `launch_dpos_layer`.
@@ -1021,6 +1033,11 @@ pub(crate) struct BeaconPlane {
     /// the vote-backup forwarder, CLONED into the signer engine per promotion (the
     /// engine never re-builds any of these or re-binds the network).
     pub shared: SharedBeaconPlane,
+    /// Serve one held epoch-key artifact over `consensus_getEpochArtifact`. The
+    /// ONE thing the node may ask of the beacon's artifact store — `beacon::build`
+    /// keeps the store itself behind the facade, so this read closure is what
+    /// crosses instead.
+    pub artifact_bytes: fluentbase_consensus::beacon::ArtifactSource,
     /// The `committee_for` live-read cursor (`max(EL-finalized, live_height)`).
     /// Handed to an upstream-configured validator's cert-inlet so it tees the
     /// LIVE upstream cert frontier here — committee[E+1] then resolves at the
@@ -1236,6 +1253,60 @@ where
     // and the cursor is cert-finalized (no reorg), so reading at the executed-but-
     // not-yet-EL-finalized tip is sound and surfaces an ahead-committed committee[E]
     // K blocks sooner.
+    // Resolving the state hash the committee is read AT, shared by the single-epoch
+    // reader below and by the PAIR reader beside it. Factored out for one reason:
+    // the pair must resolve it ONCE for both epochs, and a second copy of this
+    // logic is how the two would drift apart.
+    let committee_read_hash = {
+        let provider = node.provider.clone();
+        let live_height = live_height.clone();
+        Arc::new(move || -> Option<alloy_primitives::B256> {
+            let fin = provider.finalized_block_number().ok().flatten();
+            let live = live_height.load(std::sync::atomic::Ordering::Relaxed);
+            // No finalized marker AND no live cursor yet ⇒ not readable.
+            // `unwrap_or(0)` here would read committee at genesis
+            // (`block_hash(0)`) → the wrong committee on a genesis-committed
+            // devnet during the startup race.
+            if fin.is_none() && live == 0 {
+                return None;
+            }
+            let fin = fin.unwrap_or(0);
+            let read_at = fin.max(live);
+            // Fall back to the finalized hash if reth has not yet imported the
+            // cursor block (the cert can land a beat before the EL-sync import).
+            provider
+                .block_hash(read_at)
+                .ok()
+                .flatten()
+                .or_else(|| provider.block_hash(fin).ok().flatten())
+        }) as Arc<dyn Fn() -> Option<alloy_primitives::B256> + Send + Sync>
+    };
+
+    // `committee[target−1]` and `committee[target]` at ONE state hash — the
+    // ceremony-start decision's input. See `CommitteePairFor` for what two
+    // independent reads cost.
+    let committee_pair_for: fluentbase_consensus::beacon::CommitteePairFor = {
+        let reader = RethStakingStateReader::new(
+            node.provider.clone(),
+            node.evm_config.clone(),
+            staking_config.clone(),
+        );
+        let read_hash = committee_read_hash.clone();
+        Arc::new(move |target: u64| {
+            let hash = read_hash()?;
+            let roster = |epoch: u64| -> Option<commonware_utils::ordered::Set<_>> {
+                let snap = reader.epoch_committee_snapshot(epoch, hash).ok()?;
+                if snap.validators.is_empty() {
+                    return None;
+                }
+                Some(commonware_utils::ordered::Set::from_iter_dedup(
+                    snap.validators.iter().map(|v| v.keys.peer_pubkey.clone()),
+                ))
+            };
+            Some((roster(target.checked_sub(1)?)?, roster(target)?))
+        })
+    };
+
     let committee_for = {
         let reader = RethStakingStateReader::new(
             node.provider.clone(),
@@ -1411,10 +1482,19 @@ where
     //   - `et.on_finalized(fin)` ← raw EL-finalized `fin`: the peer-set tracker's
     //     `read_height_for(n) = n − K` contract assumes a finalized input; do NOT
     //     shift it.
+    //
+    // Published, not consumed: the poller is the ONLY driver of the beacon
+    // plane's clock, so its height is what "the plane's clock has stopped" means
+    // — and nothing scraped this node could tell that from a healthy quiet chain.
+    // Registered here because this is where the writer lives; the ordering half
+    // is written by `FluentApp` off the same process's marshal tip.
+    let plane_clock = fluentbase_consensus::sync_metrics::PlaneClock::default();
+    plane_clock.register(ctx);
     let poller_handle = {
         let provider = node.provider.clone();
         let et = et_arc.clone();
         let dkg_tx = dkg_height_tx.clone();
+        let plane_clock = plane_clock.clone();
         let geometry_ready = geometry_ready.clone();
         let tombstones = tombstones.clone();
         let tombstone_reader = RethStakingStateReader::new(
@@ -1428,6 +1508,7 @@ where
             .spawn(move |c| async move {
                 let mut sent = cs_fin_num;
                 let _ = dkg_tx.try_send(cs_fin_num + fluentbase_consensus::K);
+                plane_clock.record_dkg_clock(cs_fin_num + fluentbase_consensus::K);
                 loop {
                     c.sleep(Duration::from_millis(500)).await;
                     let Ok(Some(fin)) = provider.finalized_block_number() else {
@@ -1437,6 +1518,10 @@ where
                         sent += 1;
                         let _ = dkg_tx.try_send(sent + fluentbase_consensus::K);
                     }
+                    // The ORDERING height fed to the DkgActor, not the raw EL
+                    // number — so the lag against the ordering tip reads ~0 on a
+                    // healthy node instead of a constant K.
+                    plane_clock.record_dkg_clock(fin + fluentbase_consensus::K);
                     // Bootstrap drive (event-driven on THIS existing poll, no second
                     // timer): until the geometry is frozen, `cold_start` off the LIVE
                     // finalized cursor — anchoring to the now-readable finalized block
@@ -1706,6 +1791,7 @@ where
             resolver_mux: resolver_mux.clone(),
             bodies_mux: broadcast_mux.clone(),
             committee_for,
+            committee_pair_for,
             committee_source,
             dkg_qual_at,
             dkg_qual_probe,
@@ -1739,11 +1825,13 @@ where
         mux_handles,
         agreement_launcher_handle: beacon.agreement_launcher_handle,
         artifact_writer_handle: beacon.artifact_writer_handle,
-        write_back: beacon.write_back,
+        write_back_handle: beacon.write_back_handle,
+        key_writer_handle: beacon.key_writer_handle,
+        seed_writer_handle: beacon.seed_writer_handle,
         agreement_intake: beacon.agreement_intake,
         shared: SharedBeaconPlane {
             oracle: handles.oracle,
-            beacon: beacon.shared,
+            randomness: beacon.randomness,
             vote_mux,
             cert_mux,
             resolver_mux,
@@ -1751,7 +1839,9 @@ where
             marshal_mux,
             vote_backup,
             tombstones,
+            plane_clock,
         },
+        artifact_bytes: beacon.artifact_bytes,
         live_height,
         dkg_height_tx,
         marshal_slot,
@@ -1827,6 +1917,11 @@ pub(crate) async fn launch_dpos_layer<N, AddOns>(
     evidence: fluentbase_consensus::slasher::EvidenceBridge,
     upstream_frontier: std::sync::Arc<std::sync::atomic::AtomicU64>,
     agreement_intake: mpsc::Receiver<(commonware_consensus::types::Epoch, Handle<()>)>,
+    // The beacon plane's serving read for `consensus_getEpochArtifact` — wired
+    // into the feed beside `set_marshal` below, so a follower can obtain
+    // `PK_epoch` from this validator over the SAME namespace it already takes
+    // certificates from.
+    artifact_bytes: fluentbase_consensus::beacon::ArtifactSource,
     shutdown_token: CancellationToken,
 ) -> eyre::Result<DposLayerHandle>
 where
@@ -2000,6 +2095,10 @@ where
         slasher_sink,
         evidence,
         staking_config,
+        // Fork-safety halt marker: beside the beacon shares, in the datadir this
+        // node's chain state lives in — a halt is a property of THIS disk's view
+        // of the chain, so a fresh datadir is (correctly) a fresh start.
+        halt_marker: Some(node.data_dir.data_dir().join(SAFETY_HALT_MARKER)),
         upstream,
         deriver,
         executed,
@@ -2063,6 +2162,7 @@ where
     // ServiceUnavailable; the window is sub-finalization so no event is lost.
     if let Some(fh) = feed_handle {
         fh.set_marshal(handle.cert_mailbox.clone());
+        fh.set_artifact_source(artifact_bytes);
     }
 
     Ok(handle)
@@ -2102,9 +2202,7 @@ async fn serve_metrics(ctx: Context, port: u16) {
     }
 }
 
-// ───────────────────────────────────────────────────────────────────────────
 // Host-only key loading helpers (filesystem syscalls + permission checks)
-// ───────────────────────────────────────────────────────────────────────────
 
 /// Load the validator BLS keypair AND, IFF it came from an EIP-2335 keystore (an
 /// off-disk operator secret exists), the HKDF-derived [`ShareSealKey`] that seals
@@ -2263,7 +2361,6 @@ mod tests {
             slasher_keystore_path: None,
             slasher_keystore_password_file: None,
             slasher_kms_key_id: None,
-            metrics_port: None,
             cert_feed: None,
             follower_upstreams: vec![],
             #[cfg(feature = "dpos-devnet-byzantine")]
@@ -2300,28 +2397,28 @@ mod tests {
         );
     }
 
-    /// The two layer-handle fields the shutdown tail plays off each other. The
-    /// real `DposLayerHandle` cannot be built here — its `cert_mailbox` is a
-    /// commonware `marshal::core::Mailbox`, whose constructor is `pub(crate)` to
-    /// that crate — so this reproduces the shape that matters: an owner that
-    /// holds a `BeaconKeys` CLONE across the drain.
-    struct LayerHandleShape {
-        beacon_keys: BeaconKeys,
-        drain_on_shutdown: Vec<DrainHandle>,
-    }
-
     /// A drain writer leaves its loop when `recv()` returns `None`, and that
-    /// needs every sender gone — including the one riding on the layer handle the
-    /// host still owns while it awaits the drain. Reds by leaving `writer_exited`
-    /// false after `drain_shutdown_tasks` has burnt the full
-    /// `SHUTDOWN_DRAIN_TIMEOUT`.
+    /// needs every sender gone — including the one the HOST still owns while it
+    /// awaits the drain. Since both journal senders moved inside the randomness
+    /// provider, the thing the host owns is an `Arc<dyn Randomness>`, and the
+    /// release is the `drop(plane.shared)` at the end of
+    /// `launch_validator_overlay`.
+    ///
+    /// The fixture therefore holds a PROVIDER clone, not a bare store: a test
+    /// written against the old shape would stay green while production leaked,
+    /// because the leak now travels through the `Arc` rather than through a
+    /// `BeaconKeys` field.
+    ///
+    /// Reds by leaving `writer_exited` false after `drain_shutdown_tasks` has
+    /// burnt the full `SHUTDOWN_DRAIN_TIMEOUT`.
     ///
     /// Runs on the commonware `tokio` runtime, not the deterministic one, because
     /// that is what the node runs on and what gives `drain_shutdown_tasks` a real
     /// timer to time out against.
     #[test]
-    fn taking_the_drains_releases_the_key_store_sender_the_host_holds() {
+    fn dropping_the_host_provider_clone_releases_the_journal_writer() {
         use commonware_runtime::{tokio::Runner as TokioRunner, Runner as _};
+        use fluentbase_consensus::beacon::BeaconKeys;
         use std::sync::atomic::{AtomicBool, Ordering};
 
         TokioRunner::default().start(|ctx| async move {
@@ -2339,17 +2436,106 @@ mod tests {
                     exited.store(true, Ordering::SeqCst);
                 });
 
-            let mut handle = LayerHandleShape {
-                beacon_keys: BeaconKeys::with_persistence(Vec::new(), persist),
-                drain_on_shutdown: vec![("key_journal_writer", writer)],
-            };
-            let drains =
-                take_shutdown_drains(&mut handle.beacon_keys, &mut handle.drain_on_shutdown);
+            // The host's clone, in the shape production has it: the sender is
+            // reachable only THROUGH the provider.
+            let host_provider = fluentbase_consensus::beacon::for_keys(
+                BeaconKeys::with_persistence(Vec::new(), persist),
+                None,
+            );
+            let drains: Vec<DrainHandle> = vec![("key_journal_writer", writer)];
+
+            // The premise, asserted rather than assumed: while the host still
+            // holds the provider the writer has NOT exited. Without this the test
+            // could pass on a fixture whose sender was never wired at all.
+            assert!(
+                !writer_exited.load(Ordering::SeqCst),
+                "premise: the writer is still parked on its channel"
+            );
+
+            drop(host_provider);
             drain_shutdown_tasks(drains).await;
 
             assert!(
                 writer_exited.load(Ordering::SeqCst),
-                "the writer must resolve while its host is still alive"
+                "dropping the host's provider clone is what lets the writer resolve"
+            );
+        });
+    }
+    /// The property the whole seed-journal drain rests on, and the one the unit
+    /// test above cannot reach: the writer must survive `engine.abort()` and only
+    /// then flush its tail.
+    ///
+    /// TWO-SIDED ON PURPOSE. A one-sided "the writer survived" assertion passes
+    /// vacuously — verified, not assumed: an earlier version of this test moved
+    /// the writer under a context labelled `outer_engine` and still passed,
+    /// because commonware's supervision tree is built from SPAWN LINEAGE, not
+    /// from label strings. What actually dies with a task is what that task
+    /// spawned from its OWN context; a task spawned from the same context object
+    /// the engine was spawned from is its sibling and survives.
+    ///
+    /// So this asserts both directions. The descendant arm is what makes the
+    /// survivor arm mean something: it proves the abort really does kill, on this
+    /// runtime, in this test.
+    #[test]
+    fn the_journal_writer_survives_the_engine_abort_only_outside_its_spawn_lineage() {
+        use commonware_runtime::{tokio::Runner as TokioRunner, Metrics as _, Runner as _};
+        use std::sync::atomic::{AtomicU32, Ordering};
+
+        TokioRunner::default().start(|ctx| async move {
+            let outside_flushed = Arc::new(AtomicU32::new(0));
+            let inside_flushed = Arc::new(AtomicU32::new(0));
+            let (outside_tx, mut outside_rx) = mpsc::unbounded_channel::<u32>();
+            let (inside_tx, mut inside_rx) = mpsc::unbounded_channel::<u32>();
+
+            // The production arrangement: spawned OUTSIDE the engine's task, from
+            // the beacon's context.
+            let out = outside_flushed.clone();
+            let writer = ctx
+                .with_label("seed_journal_writer")
+                .spawn(move |_| async move {
+                    while let Some(n) = outside_rx.recv().await {
+                        out.fetch_add(n, Ordering::SeqCst);
+                    }
+                });
+
+            // The mistake this guards against: a writer spawned from INSIDE the
+            // engine task, off its own context — a true descendant.
+            let inside = inside_flushed.clone();
+            let engine = ctx.with_label("outer_engine").spawn(move |c| async move {
+                drop(
+                    c.with_label("seed_journal_writer")
+                        .spawn(move |_| async move {
+                            while let Some(n) = inside_rx.recv().await {
+                                inside.fetch_add(n, Ordering::SeqCst);
+                            }
+                        }),
+                );
+                std::future::pending::<()>().await;
+            });
+
+            engine.abort();
+            drop(engine.await);
+
+            // Queued AFTER the abort, so only a writer that is still alive can
+            // ever account for it.
+            outside_tx.send(2).expect("the outside writer is alive");
+            outside_tx.send(3).expect("the outside writer is alive");
+            let _ = inside_tx.send(5);
+            drop(outside_tx);
+            drop(inside_tx);
+
+            drain_shutdown_tasks(vec![("seed_journal_writer", writer)]).await;
+
+            assert_eq!(
+                outside_flushed.load(Ordering::SeqCst),
+                5,
+                "the writer outside the engine's spawn lineage drained its tail after the abort"
+            );
+            assert_eq!(
+                inside_flushed.load(Ordering::SeqCst),
+                0,
+                "premise: a writer spawned inside the engine task IS killed by the abort — \
+                 without this the assertion above proves nothing"
             );
         });
     }

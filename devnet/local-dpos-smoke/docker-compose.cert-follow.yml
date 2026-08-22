@@ -8,10 +8,35 @@
 #   docker compose -f docker-compose.yml -f docker-compose.dpos.yml \
 #       -f docker-compose.cert-follow.yml up -d cert-follower
 #
-# `cert-follower`        — the positive node (real v0 upstream).
-# `cert-mitm` + `cert-follower-tamper` — the negative case: a WS man-in-the-middle
+# `cert-follower`        — the positive node (real v0 upstream). Phase 4 also reads
+#   its reth metrics recorder, so it runs `--metrics` (see the METRICS RULE below).
+# `cert-mitm` + `cert-follower-tamper` — the phase-3 negative: a WS man-in-the-middle
 #   that flips a byte in every certificate, proving the follower REJECTS tampered
 #   certs (makes zero finalized progress) — verification, not trust, is load-bearing.
+# `cert-mitm-seed` + `cert-follower-seed` — the phase-4 negative (FLU-1167): the proxy
+#   relays VERBATIM until the harness arms it, then CLEARS the seed slot (flag+48 B)
+#   of every certificate, leaving the multisig quorum valid. A follower that holds
+#   PK_epoch refuses those; a vote-only follower accepts them. So the pass-through
+#   window is not a warm-up — it is what lets the follower obtain the key at all
+#   (`observe_cert` fires only on a VERIFIED certificate), and the arming file is what
+#   makes the order deterministic instead of a race.
+#
+# METRICS RULE — TWO endpoints, and which family lives on which is not a detail.
+#   * `--metrics` (:9200) is RETH's metrics-rs recorder. `dpos_cert_vote_only_admissions_total`
+#     is a `metrics::counter!`, so it lands there and NOWHERE else.
+#   * `--dpos.metrics-port` (:9100) is the commonware registry, behind the `dpos-devnet-metrics`
+#     feature. The `dpos_follower_artifact_*` families `beacon::for_follower` registers land
+#     there and nowhere else.
+# A follower DOES serve :9100 now: `spawn_devnet_metrics` moved out of `launch_validator_overlay`
+# and into `run_node_stack`, ahead of the validator/follower branch, so it runs once per PROCESS
+# on both node classes (`crates/node/src/dpos.rs`). It used to be validator-only, which is why
+# every follower here was launched without the flag and `dpos_follower_artifact_adopted_total`
+# was unscrapeable — the one node class moving those counters had no registry to read them from.
+# The flag is therefore on all three followers below.
+#
+# The follower's key adoption is still witnessed by its INFO log, and that stays the load-bearing
+# check: the counter is a devnet-only endpoint and an unreachable scrape must never be allowed to
+# read as a pass. The counter corroborates it.
 #
 # Anchors (&fluent-build) do not cross compose files, so services here reference
 # the already-built `fluent-dpos-smoke:local` image directly.
@@ -32,6 +57,8 @@ services:
           --dpos.staking-config=/runtime/staking-reader.json \
           --builder.extradata= \
           --http --http.addr=0.0.0.0 --http.port=8545 --http.api=eth,net,web3 \
+          --metrics=0.0.0.0:9200 \
+          --dpos.metrics-port=9100 \
           --trusted-peers="$(cat /runtime/v0-enode.txt)" \
           --trusted-only \
           --disable-discovery \
@@ -49,6 +76,11 @@ services:
     #     the host — 38545/48545/58545 were, Steam held 48545 and the case could not bind it.
     ports:
       - "28545:8545"
+      # The follower twin of validator-0's `19100:9100` — one publish on the primary node, none
+      # on the other two, exactly the validator asymmetry. The HARNESS does not use it (every
+      # follower read goes in-container per the rule above); it is the human `curl` affordance
+      # for `dpos_follower_artifact_*`, and 29100 is below the 32768 ephemeral floor.
+      - "29100:9100"
     networks:
       fluent-net:
         ipv4_address: 172.20.0.21
@@ -66,7 +98,8 @@ services:
         pip install --quiet --no-cache-dir websockets && \
         exec python /proxy/cert-mitm-proxy.py \
           --listen 0.0.0.0:8546 \
-          --upstream ws://172.20.0.10:8546
+          --upstream ws://172.20.0.10:8546 \
+          --mode whole-cert
     volumes:
       - ./scripts:/proxy:ro
     networks:
@@ -90,6 +123,7 @@ services:
           --dpos.staking-config=/runtime/staking-reader.json \
           --builder.extradata= \
           --http --http.addr=0.0.0.0 --http.port=8545 --http.api=eth,net,web3 \
+          --dpos.metrics-port=9100 \
           --trusted-peers="$(cat /runtime/v0-enode.txt)" \
           --trusted-only \
           --disable-discovery \
@@ -99,3 +133,71 @@ services:
     networks:
       fluent-net:
         ipv4_address: 172.20.0.23
+
+  # PHASE 4 (FLU-1167). Same proxy binary, the OTHER mode: it relays every frame
+  # verbatim until `/armed/arm` exists, and from then on clears the seed slot
+  # (present-flag + 48-byte G1 point) of every certificate while leaving the
+  # multisig quorum byte-identical.
+  #
+  # THE PASS-THROUGH WINDOW IS LOAD-BEARING, not a warm-up. `observe_cert` — the
+  # follower's only trigger for fetching `PK_epoch` — runs after a certificate
+  # VERIFIES, so a proxy that tampered from its first frame would keep the
+  # follower vote-only forever and the negative could never fire. The harness
+  # arms this only once the follower has logged that it holds the key.
+  #
+  # `/armed` is a tmpfs so the arming file cannot survive a container restart and
+  # silently pre-arm a later run.
+  cert-mitm-seed:
+    image: python:3.12-alpine
+    depends_on:
+      validator-0:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        pip install --quiet --no-cache-dir websockets && \
+        exec python /proxy/cert-mitm-proxy.py \
+          --listen 0.0.0.0:8546 \
+          --upstream ws://172.20.0.10:8546 \
+          --mode seed-slot \
+          --arm-file /armed/arm
+    volumes:
+      - ./scripts:/proxy:ro
+    tmpfs:
+      - /armed
+    networks:
+      fluent-net:
+        ipv4_address: 172.20.0.27
+
+  # Follower pointed at the seed-slot MITM. It follows normally (and obtains
+  # PK_epoch over that same upstream, which the proxy does NOT touch — it rewrites
+  # only fields named `certificate`) until the proxy is armed; after that every
+  # certificate it receives carries a cleared seed slot on a valid quorum, which
+  # only a PINNED scheme refuses. `--metrics` for the same reason `cert-follower`
+  # has it: `dpos_cert_vote_only_admissions_total` lives on reth's recorder.
+  cert-follower-seed:
+    image: fluent-dpos-smoke:local
+    depends_on:
+      cert-mitm-seed:
+        condition: service_started
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        exec /usr/local/bin/fluent node \
+          --chain=/runtime/genesis-local.json \
+          --cert-follow \
+          --cert-upstream=ws://172.20.0.27:8546 \
+          --dpos.staking-config=/runtime/staking-reader.json \
+          --builder.extradata= \
+          --http --http.addr=0.0.0.0 --http.port=8545 --http.api=eth,net,web3 \
+          --metrics=0.0.0.0:9200 \
+          --dpos.metrics-port=9100 \
+          --trusted-peers="$(cat /runtime/v0-enode.txt)" \
+          --trusted-only \
+          --disable-discovery \
+          --datadir=/runtime/reth-data/cert-follower-seed
+    volumes:
+      - runtime:/runtime
+    networks:
+      fluent-net:
+        ipv4_address: 172.20.0.28

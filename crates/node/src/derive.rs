@@ -169,7 +169,7 @@ const TRANSIENT_READ_BACKOFF: std::time::Duration = std::time::Duration::from_mi
 /// SLOW-phase bound/backoff for the whole-derive torn-read belt, entered after
 /// the fast phase ([`TRANSIENT_READ_ATTEMPTS`]) exhausts. A single
 /// mmap-append/remap window on a MULTI-HUNDRED-MB static-file segment under IO
-/// load can exceed the fast phase's 125 ms budget (bundle-20260717T074614Z: a
+/// load can exceed the fast phase's 125 ms budget (a
 /// ~152 MB segment torn read — `attempted to read an inconsistent data range
 /// 152247225..0, data size: 152247702` — killed validator-2 despite matching
 /// the classifier, i.e. the fast belt exhausted mid-append rather than the
@@ -429,9 +429,9 @@ fn with_transient_derive_retry<T>(
                 // absorbs the common sub-125 ms append/remap window; the slow
                 // phase gives a single mmap-append/remap of a multi-hundred-MB
                 // static-file segment under IO load room to settle (a ~152 MB
-                // segment append under SATA + blaster load can exceed 125 ms —
-                // bundle-20260717T074614Z). ~3.1 s total bounds any single
-                // append; genuine corruption still exhausts and propagates.
+                // segment append under SATA + blaster load can exceed 125 ms).
+                // ~3.1 s total bounds any single append; genuine corruption
+                // still exhausts and propagates.
                 let backoff = if torn_failures <= TRANSIENT_READ_ATTEMPTS {
                     TRANSIENT_READ_BACKOFF
                 } else {
@@ -1320,7 +1320,7 @@ mod tests {
         ));
     }
 
-    // bundle-20260717T074614Z (validator-2 death): the torn RANGE manifestation
+    // The validator-2 death: the torn RANGE manifestation
     // on a ~152 MB static-file segment surfaced as an INVERTED range read
     // `attempted to read an inconsistent data range 152247225..0, data size:
     // 152247702` (ProviderError::Other over NippyJarError::InconsistentData),

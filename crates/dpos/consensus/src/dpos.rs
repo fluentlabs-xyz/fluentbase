@@ -7,7 +7,6 @@ use crate::{
         derive_with_visibility_retry, BeaconEngineLike, DerivedBlock as _, DerivedBlockBuilder,
         ExecutedChain, OrderingAssembler,
     },
-    beacon::BeaconShared,
     cold_start_jump::ElSync as _,
     executed::executed_state_hash,
     order_block::{anchor_order_block, OrderBlock, K},
@@ -30,8 +29,7 @@ use commonware_storage::{
 use commonware_utils::sequence::U64;
 use eyre::{ensure, eyre, OptionExt as _, WrapErr as _};
 use fluentbase_bls::{
-    beacon::seed_namespace, fluent_namespace, keys::ValidatorBlsKeypair, scheme::build_verifier,
-    PeerPubkey,
+    fluent_namespace, keys::ValidatorBlsKeypair, scheme::build_verifier, PeerPubkey,
 };
 use fluentbase_p2p::NoopBlocker;
 use fluentbase_staking_reader::{
@@ -105,10 +103,10 @@ const MARSHAL_PARTITION_PREFIX: &str = "consensus_marshal";
 /// couriers σ in the child block, so a cold seed store costs nothing but a
 /// re-derive. **The next format change after `parent_seed` is removed is NOT
 /// free** and will need a real migration.
-const SEED_JOURNAL_PARTITION: &str = "beacon-seed-ordinal";
+pub(crate) const SEED_JOURNAL_PARTITION: &str = "beacon-seed-ordinal";
 
 /// Partition of the durable `epoch → PK_epoch` store. Empty would mean RAM-only.
-const KEY_JOURNAL_PARTITION: &str = "beacon-key-ordinal";
+pub(crate) const KEY_JOURNAL_PARTITION: &str = "beacon-key-ordinal";
 
 /// Partition of the durable `epoch → agreement artifact` store
 /// ([`crate::beacon::artifact::ArtifactStore`]). Public because the store is
@@ -172,11 +170,13 @@ pub fn derive_cold_start_heights(
     )
 }
 
-/// Bounded wait for reth to hold the DPoS activation block before adopting it as
-/// the fresh-migration consensus anchor; returns the block's local-canonical
-/// hash. Covers reth still replaying MDBX on restart. A timeout is fatal: the
-/// sequencer must have finalized the activation block before DPoS starts. No
-/// operator-hash compare — the activation height comes from the on-chain
+/// Wait for reth to hold the DPoS activation block before adopting it as the
+/// fresh-migration consensus anchor; returns the block's local-canonical hash.
+/// Covers reth still replaying MDBX on restart. There is NO give-up and no
+/// timeout: the anchor is external (the sequencer must finalize the activation
+/// block before DPoS starts), so the wait polls forever and raises
+/// `dpos_sync_degraded{reason=activation_wait}` as the stuck signal instead of
+/// failing. No operator-hash compare — the activation height comes from the on-chain
 /// `ChainConfig.dposActivationBlock` and the hash is local-canonical at a
 /// finalized height (every honest node derives the same hash).
 pub(crate) async fn wait_for_activation_block<Provider, C>(
@@ -519,7 +519,7 @@ where
 /// recovered `target`'s local hash. Standalone archive open (before the engine is
 /// built), like the metadata peek — dropped before `MarshalActor::init` re-opens it.
 ///
-/// #8/#12 self-heal (2026-07-09): a gap wider than `MAX_COLD_RECOVER` (#12 — reth
+/// A gap wider than `MAX_COLD_RECOVER` (#12 — reth
 /// deeply behind its INTACT archive) returns [`RecoverOutcome::DeferToElSync`] (WITH
 /// an upstream) for the post-engine devp2p jump. A below-floor HOLE in the marshal's
 /// own archive (#8) is instead healed INLINE by a BLS-verified by-height re-fetch
@@ -732,6 +732,12 @@ pub struct DposLayerConfig<D, XC, A, U> {
     /// halves of `EVIDENCE_CHANNEL` ([`crate::slasher::gossip`]).
     pub evidence: crate::slasher::EvidenceBridge,
     pub staking_config: StakingReaderConfig,
+    /// Datadir path of the fork-safety halt marker
+    /// ([`crate::sync_metrics::SafetyHalt::restoring`]). A marker left by a
+    /// previous run brings this node up permanently verify-only — the latch has
+    /// no in-process `disengage`, so without it a restart silently cleared a
+    /// halt and the node signed again on the same disk. `None` only in tests.
+    pub halt_marker: Option<std::path::PathBuf>,
     /// Cert upstream for the single-shot, pre-engine cold-start EL-sync JUMP
     /// ([`crate::cold_start_jump`]). `Some` ⇒ an upstream-configured node
     /// (production-path external joiner / follower): a deep cold-start gap is
@@ -865,11 +871,9 @@ pub struct SharedBeaconPlane {
     /// The single network's Oracle (the one `Clone` p2p handle), used by the
     /// engine's blocker/provider + its EpochTransition peer-set sink.
     pub oracle: fluentbase_p2p::OracleHandle,
-    /// Everything the beacon module publishes downward: the live-DKG ceremony
-    /// store, the share-landed edge trigger, the frozen `dkgQual` reader, the two
-    /// `PK_epoch` artifact rungs and the beacon counters. One opaque bundle rather
-    /// than six handles, because nothing above the beacon assembles them.
-    pub beacon: BeaconShared,
+    /// The consensus-facing randomness surface, built by `beacon::build`. The
+    /// layer threads it and never opens it.
+    pub randomness: Arc<dyn crate::beacon::Randomness>,
     /// The 5 plane-owned non-beacon channel broker handles (vote/cert/resolver are
     /// per-epoch register/deregister; broadcast/marshal register subchannel 0 once
     /// per promotion). Cloned per promotion; the Muxer tasks live in the plane.
@@ -888,6 +892,12 @@ pub struct SharedBeaconPlane {
     /// the reader must be handed the writer's own handle rather than a second
     /// empty one.
     pub tombstones: crate::slasher::TombstoneSet,
+    /// The ordering-vs-DKG clock pair (see [`crate::sync_metrics::PlaneClock`]).
+    /// Registered and half-written by the plane's finalized poller; the other
+    /// half is written by `FluentApp` off marshal's tip. Same reason as
+    /// `tombstones` for arriving from the node crate rather than being defaulted
+    /// here: a second instance would be a gauge nothing scrapes.
+    pub plane_clock: crate::sync_metrics::PlaneClock,
 }
 
 /// Cold-start kind resolved from durable state. Pure function of the inputs
@@ -986,8 +996,8 @@ enum JumpDisposition {
 /// `InvalidTarget` (both a forgeable/reth-rejected structural mismatch — one
 /// PRE-sync, one discovered DURING `sync_to`, Rule S) ⇒ `Done(Ok(None))` (boot
 /// anyway, never crash on attacker-controlled or upstream-served-bad input);
-/// `AuthFailed` ⇒ `RotateAuth` (a POST-sync forged/unagreed branch — the **#1
-/// self-heal (2026-07-09)**: rotate + backoff + re-jump forever, was `Done(Err)`);
+/// `AuthFailed` ⇒ `RotateAuth` (a POST-sync forged/unagreed branch — rotate +
+/// backoff + re-jump forever, was `Done(Err)`);
 /// `Stalled` ⇒ `RetryStalled` — the #11 no-peers self-heal (was a fatal re-fuse).
 fn classify_jump_outcome(outcome: crate::cold_start_jump::JumpOutcome) -> JumpDisposition {
     use crate::cold_start_jump::JumpOutcome;
@@ -1016,7 +1026,7 @@ fn classify_jump_outcome(outcome: crate::cold_start_jump::JumpOutcome) -> JumpDi
         // forever (same posture as `Stalled`) — a deterministic divergence keeps
         // re-wedging, but the node stays observable + un-advanced rather than crashing.
         JumpOutcome::StalledWithPeers(e) => JumpDisposition::RetryStalled(e),
-        // #1 self-heal (2026-07-09): a POST-sync committee-BLS rejection of a
+        // A POST-sync committee-BLS rejection of a
         // canonicalized branch means the CURRENT upstream is forged — rotate + backoff
         // + re-jump forever (was fail-closed `Done(Err)`); never crash on a forged
         // UPSTREAM (Decision A).
@@ -1166,551 +1176,6 @@ pub async fn peek_consensus_archive_last_finalized(ctx: &Context) -> eyre::Resul
     read_consensus_archive_last_finalized(ctx, MARSHAL_PARTITION_PREFIX).await
 }
 
-/// Build the lazy 3-state group-key resolver (§5 b, ladder step 1): resolve
-/// `PK_epoch` from the node's OWN live-DKG material under ON-CHAIN
-/// `dkgQual`-BIT ARBITRATION (`beacon::carry::select_carry_scheme`): the chain's
-/// key epoch for E is the last set bit in `(BOOTSTRAP, E]` (else the bootstrap
-/// mint), and the node serves its stored mint at exactly that epoch — a newer
-/// local mint the chain DECLINED (bit clear — soak v47) is UNUSED, a re-mint
-/// missed during downtime (departure-then-backfill, soak 2026-07-14) is a set
-/// bit the store misses ⇒ `Unknown`. A stable committee re-uses the last change
-/// epoch's key and writes no new `CeremonyStore` entry, so an exact `get(&E)`
-/// misses on every stable epoch — the bit scan IS the carry. Reads `.public()`
-/// ONLY, never the share. The 3 states are load-bearing (P1): `Unknown` = this
-/// node structurally holds no `PK_epoch` (incl. a chain-declined or superseded
-/// mint); `ReadFailed` = could not decide (a `dkgQual` read failed) — retried
-/// by the caller, NEVER cached, and accept-biased on the witness vote arm, so
-/// an undecided resolve never turns into a false reject. Do not fold them (that
-/// is `beacon_resolver`'s `Absent` arm, unusable on a vote path).
-///
-/// Survives a restart: the ceremony store reloads from `<datadir>/beacon/` at
-/// plane startup, so a restarted signer on a stable committee resolves its own
-/// epoch's key here even when the observed-outcome cursor is empty and the
-/// 8-hop marshal walk is exhausted (the R1 rolling-restart halt).
-pub(crate) fn group_key_resolver(
-    store: crate::beacon::actor::CeremonyStore,
-    dkg_qual: crate::beacon::carry::DkgQualFor,
-    group_keys: crate::beacon::keys::BeaconKeys,
-) -> crate::application::GroupKeyFor {
-    use crate::application::KeyLookup;
-    use crate::beacon::carry::{select_carry_scheme, CarryVerdict};
-    Arc::new(move |epoch: u64| {
-        let Ok(m) = store.read() else {
-            // Poisoned store lock: "could not decide" — transient-shaped, so
-            // it must not be conflated with a structural miss.
-            return KeyLookup::ReadFailed;
-        };
-        match select_carry_scheme(epoch, |e| m.contains_key(&e), &dkg_qual) {
-            CarryVerdict::Serve { minted_at } => {
-                let (out, _share) = m.get(&minted_at).expect("select returned a stored mint");
-                let pk = *crate::beacon::outcome::group_public_key(out);
-                // CARRY-DIVERGENCE guard (mirror of the epoch_manager promote
-                // VALUE-gate, on the VOTE path): the on-chain arbitration proves
-                // only that the chain minted AT `minted_at`, NOT that this
-                // node's LOCAL outcome at that mint matches the chain's. A
-                // member that finalized a divergent outcome (a torn/superset log
-                // set → a different `Logs::select` → a different `PK_E`; see
-                // `recompute_scoped`) holds a self-derived key nobody signs with.
-                // Serving it here drives a lone `reject{bad_signature}` that
-                // splits honest voters (soak v39, bundle-20260717T223227Z). The
-                // network-attested mint key (W4 ObservedOutcome — agreed chain
-                // data) is the reference: on a DIFFERING value the carried
-                // material is untrusted for verification ⇒ `Unknown`
-                // (accept-biased), NEVER `Resolved`. Keyed on `minted_at` (the
-                // mint), so ONE observed outcome demotes the mint AND every
-                // stable epoch that carries it. Absent attestation ⇒ unchanged
-                // (the restarted-signer carry).
-                if let Some(net) = group_keys.attested(minted_at) {
-                    if net != pk {
-                        metrics::counter!(
-                            "dpos_carry_forward_refused_total",
-                            "reason" => "key_divergence",
-                            "path" => "verify"
-                        )
-                        .increment(1);
-                        return KeyLookup::Unknown;
-                    }
-                }
-                KeyLookup::Resolved(pk)
-            }
-            // The node holds no mint at the chain's key epoch (never attended
-            // it, or its own newer mint was chain-declined): no usable key —
-            // a stable fact about this node, not a transient.
-            CarryVerdict::NoUsableMint => KeyLookup::Unknown,
-            CarryVerdict::ReadFailed => KeyLookup::ReadFailed,
-        }
-    })
-}
-
-/// Build the share-gate beacon resolver over the live-DKG `CeremonyStore`:
-/// each vote carries the seed partial (round-keyed), so the seed is recovered
-/// from the notarization/finalization certificate — no separate seed plane.
-/// The key ROTATES per epoch: the store holds `(PK_E, share)` for every mint
-/// this node attended; `resolve(E)` returns the most-recent such key at or
-/// before E (carry-forward across stable epochs). There is NO genesis-baked
-/// fallback key (epoch 1 is seedless; the first key is the deterministic
-/// epoch-2 live DKG), so the resolver bottoms out at `Absent`.
-///
-/// A stored share is carried forward to E under ON-CHAIN `dkgQual`-BIT
-/// ARBITRATION (`beacon::carry::select_carry_scheme`): the chain's key epoch
-/// for E is the last set bit in `(BOOTSTRAP, E]` (else the bootstrap mint) and
-/// the node serves its stored mint at exactly that epoch. A newer local mint
-/// the chain declined (bit clear — soak v47) is UNUSED; a re-mint missed during
-/// downtime (departure-then-backfill, soak 2026-07-14, v5@epoch77
-/// reject{bad_signature}) is a set bit the store misses ⇒ refuse. A refusal
-/// (`Absent`) → the `epoch_manager` share-gate demotes to verify-only and the
-/// recompute-heal later promotes with the correct key.
-pub(crate) fn beacon_share_resolver(
-    store: crate::beacon::actor::CeremonyStore,
-    dkg_qual: crate::beacon::carry::DkgQualFor,
-    namespace: Vec<u8>,
-    group_keys: crate::beacon::keys::BeaconKeys,
-) -> crate::epoch_manager::BeaconResolver {
-    use crate::beacon::carry::{select_carry_scheme, CarryVerdict};
-    use crate::epoch_manager::BeaconResolve;
-    Arc::new(move |epoch: u64| {
-        let Ok(m) = store.read() else {
-            return BeaconResolve::Absent;
-        };
-        // No local material at or below E — benign `Absent` (an observer /
-        // pre-ceremony node), NOT a divergence: emit no refusal metric.
-        if m.range(..=epoch).next_back().is_none() {
-            return BeaconResolve::Absent;
-        }
-        match select_carry_scheme(epoch, |e| m.contains_key(&e), &dkg_qual) {
-            CarryVerdict::Serve { minted_at } => {
-                // SHARE-GATE carry-divergence guard (same primitive as the
-                // vote-path `group_key_resolver`): on-chain arbitration proves
-                // only that the chain minted AT `minted_at`, NOT that
-                // our LOCAL outcome matches the chain's. When the network-attested
-                // mint key (W4 ObservedOutcome) DIFFERS from our self-derived
-                // one, the carried `(PK_E, share)` is a divergent local
-                // reconstruction — hand it to NEITHER the signer engine NOR W1
-                // (which would publish the wrong key into the shared map, the
-                // root of the cross-epoch poisoning at soak v39). `Absent` ⇒ the
-                // share-gate demotes to verify-only; the recompute-heal later
-                // stores the correct exact-epoch key and re-promotes.
-                let (out, share) = m.get(&minted_at).expect("select returned a stored mint");
-                let pk = out.public().clone();
-                let pk_g2 = *crate::beacon::outcome::group_public_key(out);
-                if let Some(net) = group_keys.attested(minted_at) {
-                    if net != pk_g2 {
-                        tracing::debug!(
-                            epoch,
-                            minted_at,
-                            "carry-forward refused: local mint key diverges from the \
-                             network-attested key (share-gate will demote to verify-only)"
-                        );
-                        metrics::counter!(
-                            "dpos_carry_forward_refused_total",
-                            "reason" => "key_divergence",
-                            "path" => "share"
-                        )
-                        .increment(1);
-                        return BeaconResolve::Absent;
-                    }
-                }
-                BeaconResolve::Key((pk, Some(share.clone()), namespace.clone()))
-            }
-            CarryVerdict::NoUsableMint => {
-                // The chain's key epoch names a mint this node never attended,
-                // or the node's own newer mint was chain-declined — no usable
-                // share for E. Never hand it to the promote path.
-                tracing::debug!(
-                    epoch,
-                    "carry-forward refused: this node holds no mint at the chain's \
-                     dkgQual key epoch (share-gate will demote to verify-only)"
-                );
-                metrics::counter!(
-                    "dpos_carry_forward_refused_total",
-                    "reason" => "no_usable_mint",
-                    "path" => "share"
-                )
-                .increment(1);
-                BeaconResolve::Absent
-            }
-            CarryVerdict::ReadFailed => BeaconResolve::Absent,
-        }
-    })
-}
-
-#[cfg(test)]
-mod group_key_resolver_tests {
-    use super::{beacon_share_resolver, group_key_resolver};
-    use crate::application::KeyLookup;
-    use crate::beacon::{carry::DkgQualFor, ceremony::CeremonyOutput};
-    use commonware_cryptography::{
-        bls12381::{
-            dkg::deal,
-            primitives::{group::Share, sharing::Mode, variant::MinSig},
-        },
-        ed25519::PrivateKey as Ed25519PrivateKey,
-        Signer as _,
-    };
-    use commonware_math::algebra::Random as _;
-    use commonware_utils::{ordered::Set, N3f1};
-    use fluentbase_bls::PeerPubkey;
-    use rand_08::rngs::StdRng;
-    use rand_core::SeedableRng as _;
-    use std::{
-        collections::BTreeMap,
-        sync::{Arc, RwLock},
-    };
-
-    fn committee(seed: u64, n: usize) -> Set<PeerPubkey> {
-        let mut rng = StdRng::seed_from_u64(seed);
-        Set::from_iter_dedup((0..n).map(|_| Ed25519PrivateKey::random(&mut rng).public_key()))
-    }
-
-    /// An empty group-key map: no network-attested (W4 ObservedOutcome) entries,
-    /// so the resolvers' carry-divergence guard never fires — the pre-guard
-    /// behavior these arbitration tests assert.
-    fn no_attested() -> crate::beacon::keys::BeaconKeys {
-        crate::beacon::keys::BeaconKeys::new()
-    }
-
-    /// A frozen on-chain `dkgQual` history: the given epochs have the bit set.
-    fn qual(bits: &[u64]) -> DkgQualFor {
-        let set: std::collections::BTreeSet<u64> = bits.iter().copied().collect();
-        Arc::new(move |e| Some(set.contains(&e)))
-    }
-
-    /// A real committee DKG over `players`, as the `DkgActor` would memoize it.
-    fn ceremony(players: &Set<PeerPubkey>) -> (CeremonyOutput, Share) {
-        let mut rng = StdRng::seed_from_u64(0xD1);
-        let (outcome, shares) =
-            deal::<MinSig, PeerPubkey, N3f1>(&mut rng, Mode::NonZeroCounter, players.clone())
-                .expect("deal");
-        let share = shares
-            .get_value(players.iter().next().expect("non-empty"))
-            .expect("share")
-            .clone();
-        (outcome, share)
-    }
-
-    /// (R1) — the rolling-restart chain-halt regression, at the resolver level.
-    /// A restarted signer of a STABLE committee holds its DKG material keyed at
-    /// the last CHANGE epoch (`Ec − 9` — a stable epoch writes no new
-    /// `CeremonyStore` entry) and its attested-key store entry is EMPTY (a
-    /// stable committee runs no agreement, so nothing is keyed at `Ec`).
-    /// Ladder step 1 (carry-forward + committee equality) MUST still
-    /// resolve `PK_Ec` — under the pre-R1 spec (cursor + walk only) this is
-    /// `None`, the node votes `false` on every honest block, and `f+1` such
-    /// nodes are a permanent self-sustaining halt (the only event that would
-    /// repopulate the cursor — a change epoch's outcome block — can never be
-    /// produced by a halted chain).
-    #[test]
-    fn restarted_signer_on_stable_committee_resolves_pk_via_carry_forward() {
-        let players = committee(0xC0, 4);
-        let (outcome, share) = ceremony(&players);
-        let pk = *crate::beacon::outcome::group_public_key(&outcome);
-
-        // Material keyed at the last change epoch, NOT at the queried epoch.
-        let change_epoch = 3u64;
-        let ec = change_epoch + 9;
-        let store = Arc::new(RwLock::new(BTreeMap::from([(
-            change_epoch,
-            (outcome, share),
-        )])));
-
-        // The chain minted at the change epoch and never re-minted since.
-        let resolve = group_key_resolver(store, qual(&[change_epoch]), no_attested());
-
-        assert_eq!(
-            resolve(ec),
-            KeyLookup::Resolved(pk),
-            "own DKG material must carry forward across stable epochs"
-        );
-    }
-
-    /// The 3 states are distinguishable — conflating the last two IS the P1
-    /// bug (`Unknown` = structurally no key; `ReadFailed` = transiently
-    /// undecidable, retried, never cached).
-    #[test]
-    fn resolver_distinguishes_unknown_from_read_failed() {
-        let players = committee(0xC0, 4);
-        let (outcome, share) = ceremony(&players);
-        let store = Arc::new(RwLock::new(BTreeMap::from([(3u64, (outcome, share))])));
-
-        // Transiently unreadable dkgQual bits ⇒ ReadFailed (NOT Unknown).
-        let unreadable: DkgQualFor = Arc::new(|_| None);
-        assert_eq!(
-            group_key_resolver(store.clone(), unreadable, no_attested())(12),
-            KeyLookup::ReadFailed
-        );
-
-        // The chain re-minted at 8 and this node holds no mint there ⇒ Unknown.
-        assert_eq!(
-            group_key_resolver(store, qual(&[3, 8]), no_attested())(12),
-            KeyLookup::Unknown
-        );
-
-        // No ceremony material at or below the epoch ⇒ Unknown.
-        let empty = Arc::new(RwLock::new(BTreeMap::new()));
-        assert_eq!(
-            group_key_resolver(empty, qual(&[]), no_attested())(12),
-            KeyLookup::Unknown
-        );
-    }
-
-    /// A→B→A committee sandwich across missed re-mints, at the VOTE-PATH
-    /// resolver: the store holds ceremony(5), but the chain's `dkgQual` bits
-    /// record re-mints at 8 and 11 this node never attended. The pre-fix
-    /// players-equality guard resolved the STALE key here (⇒ a false
-    /// `reject{bad_signature}` on a valid witness — soak 2026-07-14
-    /// v5@epoch77); the bit arbitration must return `Unknown` (structural —
-    /// our material is an older key).
-    #[test]
-    fn stale_key_across_a_missed_remint_is_unknown_not_resolved() {
-        let players = committee(0xC0, 4);
-        let (outcome, share) = ceremony(&players);
-        let store = Arc::new(RwLock::new(BTreeMap::from([(5u64, (outcome, share))])));
-
-        assert_eq!(
-            group_key_resolver(store, qual(&[5, 8, 11]), no_attested())(12),
-            KeyLookup::Unknown
-        );
-    }
-
-    /// An unreadable `dkgQual` bit is UNDECIDED — surfaced as the transient
-    /// `ReadFailed` (accept-biased on the witness arm, retried, never cached),
-    /// NOT as a resolved stale key.
-    #[test]
-    fn unreadable_bit_is_read_failed() {
-        let players = committee(0xC0, 4);
-        let (outcome, share) = ceremony(&players);
-        let store = Arc::new(RwLock::new(BTreeMap::from([(5u64, (outcome, share))])));
-
-        let holey: DkgQualFor = Arc::new(|e| (e != 7).then_some(e == 5));
-        assert_eq!(
-            group_key_resolver(store, holey, no_attested())(12),
-            KeyLookup::ReadFailed
-        );
-    }
-
-    /// The share-gate resolver enforces the same arbitration end-to-end:
-    /// no re-mint since the stored mint ⇒ the carried `(PK, share)`; a missed
-    /// re-mint ⇒ `Absent` (⇒ share-gate demote ⇒ heal); an unreadable bit ⇒
-    /// `Absent` (undecided — retried on the next resolve edge).
-    #[test]
-    fn share_resolver_refuses_stale_carry_and_undecided_bits() {
-        use crate::epoch_manager::BeaconResolve;
-        let players = committee(0xC0, 4);
-        let (outcome, share) = ceremony(&players);
-        let pk = *crate::beacon::outcome::group_public_key(&outcome);
-        let store = Arc::new(RwLock::new(BTreeMap::from([(5u64, (outcome, share))])));
-
-        // No re-mint since 5 ⇒ carried key confirmed.
-        let resolve =
-            beacon_share_resolver(store.clone(), qual(&[5]), b"ns".to_vec(), no_attested());
-        match resolve(12) {
-            BeaconResolve::Key((sharing, share, ns)) => {
-                assert_eq!(*sharing.public(), pk);
-                assert!(share.is_some());
-                assert_eq!(ns, b"ns");
-            }
-            _ => panic!("carry-forward must resolve the stored key"),
-        }
-
-        // A→B→A sandwich ⇒ Absent (pre-fix: the stale Key — the W1-poisoning root).
-        let resolve = beacon_share_resolver(
-            store.clone(),
-            qual(&[5, 8, 11]),
-            b"ns".to_vec(),
-            no_attested(),
-        );
-        assert!(matches!(resolve(12), BeaconResolve::Absent));
-
-        // Unreadable bit ⇒ Absent (undecided, retried).
-        let holey: DkgQualFor = Arc::new(|e| (e != 7).then_some(e == 5));
-        let resolve = beacon_share_resolver(store, holey, b"ns".to_vec(), no_attested());
-        assert!(matches!(resolve(12), BeaconResolve::Absent));
-    }
-
-    /// The soak-v39 carry-DIVERGENCE guard (bundle-20260717T223227Z). A member
-    /// that finalized a DIVERGENT local outcome at the mint epoch (a torn /
-    /// superset log set → a different `Logs::select` → a different `PK_E`) holds
-    /// a self-derived key nobody else signs with. The no-mint span is `Confirmed`
-    /// (the TIMING is right — `minted_at` IS the latest mint ≤ epoch), so the
-    /// pre-fix resolvers served/promoted it → a lone `reject{bad_signature}` that
-    /// split honest voters, plus a poisoned W1 map entry carried across stable
-    /// epochs. The network-attested mint key (W4 ObservedOutcome) is the
-    /// reference: on a DIFFERING value BOTH resolvers must refuse — the vote path
-    /// to `Unknown` (accept-biased, no false reject), the share gate to `Absent`
-    /// (demote to verify-only, never W1-publish) — and the refusal must carry to
-    /// every stable epoch that inherits the mint (query 7, mint 5). A MATCHING
-    /// attestation (the correctly-qualified restarted signer) stays trusted.
-    #[test]
-    fn divergent_carry_is_refused_against_the_attested_mint_key() {
-        use crate::beacon::keys::KeySource;
-        use crate::epoch_manager::BeaconResolve;
-
-        let players = committee(0xC0, 4);
-        let (outcome, share) = ceremony(&players);
-        let local_pk = *crate::beacon::outcome::group_public_key(&outcome);
-        // Our own material, minted at epoch 5 (a change epoch — bit set).
-        let store = Arc::new(RwLock::new(BTreeMap::from([(5u64, (outcome, share))])));
-
-        // A DIFFERENT network-attested key for the SAME mint epoch 5 (W4). The
-        // shared `ceremony` helper deals under a fixed seed, so a distinct PK_E
-        // needs a distinct deal seed here.
-        let attested_pk = {
-            let mut rng = StdRng::seed_from_u64(0xBEEF);
-            let (other_out, _) = deal::<MinSig, PeerPubkey, N3f1>(
-                &mut rng,
-                Mode::NonZeroCounter,
-                committee(0xEE, 4),
-            )
-            .expect("deal");
-            *crate::beacon::outcome::group_public_key(&other_out)
-        };
-        assert_ne!(attested_pk, local_pk, "test needs a genuine divergence");
-        let diverged = crate::beacon::keys::BeaconKeys::new();
-        diverged.set_pk(5, attested_pk, KeySource::Agreed);
-
-        // Vote path — carry to STABLE epoch 7 ⇒ Unknown (accept-biased), never Resolved.
-        let verify = group_key_resolver(store.clone(), qual(&[5]), diverged.clone());
-        assert_eq!(
-            verify(7),
-            KeyLookup::Unknown,
-            "a divergent carried key must not be served for verification"
-        );
-
-        // Share gate — same input ⇒ Absent (share-gate demotes; never W1-publishes).
-        let sign = beacon_share_resolver(store.clone(), qual(&[5]), b"ns".to_vec(), diverged);
-        assert!(
-            matches!(sign(7), BeaconResolve::Absent),
-            "a divergent carried key must not promote / W1-publish"
-        );
-
-        // A MATCHING attestation (own == network) leaves the key trusted — the
-        // correctly-qualified restarted signer is NOT over-blocked.
-        let agreeing = crate::beacon::keys::BeaconKeys::new();
-        agreeing.set_pk(5, local_pk, KeySource::Agreed);
-        let verify_ok = group_key_resolver(store, qual(&[5]), agreeing);
-        assert_eq!(
-            verify_ok(7),
-            KeyLookup::Resolved(local_pk),
-            "a network-corroborated own key stays trusted"
-        );
-    }
-
-    /// The tripwire above is keyed on the MINT, and on a committee that never
-    /// changes the mint is the deterministic bootstrap epoch forever, while the
-    /// pruners (`epoch_manager`'s reconcile and the cert-inlet's per-cert sweep)
-    /// run frontier-relative. An epoch-measured window over the whole store
-    /// therefore deletes the one entry the guard reads once the frontier passes
-    /// `mint + SCHEME_RETENTION_EPOCHS`, and nothing re-inserts it: the only
-    /// `Agreed` producers at a mint epoch are the agreement write-back (a
-    /// committee CHANGE only) and the ladder's own memoisation, neither of which a
-    /// plain validator reaches on a healthy stable chain. Both resolvers would
-    /// then serve the divergent local material they refuse above.
-    ///
-    /// Reds if `retain_from` stops exempting [`KeySource::Agreed`].
-    #[test]
-    fn a_stable_committees_attested_mint_outlives_the_retention_window() {
-        use crate::beacon::keys::KeySource;
-        use crate::epoch_manager::BeaconResolve;
-
-        let bootstrap = crate::beacon::actor::DETERMINISTIC_BOOTSTRAP_EPOCH;
-        let players = committee(0xC0, 4);
-        let (outcome, share) = ceremony(&players);
-        let local_pk = *crate::beacon::outcome::group_public_key(&outcome);
-        let store = Arc::new(RwLock::new(BTreeMap::from([(bootstrap, (outcome, share))])));
-
-        let attested_pk = {
-            let mut rng = StdRng::seed_from_u64(0xF00D);
-            let (other_out, _) = deal::<MinSig, PeerPubkey, N3f1>(
-                &mut rng,
-                Mode::NonZeroCounter,
-                committee(0xEE, 4),
-            )
-            .expect("deal");
-            *crate::beacon::outcome::group_public_key(&other_out)
-        };
-        assert_ne!(attested_pk, local_pk, "test needs a genuine divergence");
-        let diverged = crate::beacon::keys::BeaconKeys::new();
-        diverged.set_pk(bootstrap, attested_pk, KeySource::Agreed);
-
-        // A W1 publication and a carry memo for a long-past epoch: the derived
-        // tiers the window exists to bound, so the prune must still take them.
-        diverged.set_pk(bootstrap + 1, local_pk, KeySource::LocalDkg);
-        diverged.set_pk(bootstrap + 2, local_pk, KeySource::Carried);
-
-        // The frontier walks well past `bootstrap + SCHEME_RETENTION_EPOCHS`, one
-        // prune per epoch entered, exactly as both live callers do.
-        let frontier = bootstrap + 10 * crate::outer::SCHEME_RETENTION_EPOCHS as u64;
-        for epoch in bootstrap..=frontier {
-            diverged
-                .retain_from(epoch.saturating_sub(crate::outer::SCHEME_RETENTION_EPOCHS as u64));
-        }
-        assert_eq!(
-            diverged.cached_only(bootstrap + 1),
-            None,
-            "a local publication far below the frontier is still pruned"
-        );
-        assert_eq!(
-            diverged.cached_only(bootstrap + 2),
-            None,
-            "and so is a carry memo"
-        );
-
-        // A stable epoch at the far frontier still carries the bootstrap mint, so
-        // both tripwires must still see the attestation and refuse.
-        let verify = group_key_resolver(store.clone(), qual(&[]), diverged.clone());
-        assert_eq!(
-            verify(frontier),
-            KeyLookup::Unknown,
-            "the divergence guard must stay armed for the life of a stable committee"
-        );
-        let sign = beacon_share_resolver(store, qual(&[]), b"ns".to_vec(), diverged);
-        assert!(
-            matches!(sign(frontier), BeaconResolve::Absent),
-            "and the share gate must keep demoting rather than W1-publish a divergent key"
-        );
-    }
-
-    /// Defect 2 (soak v47, epoch 4→5): at a CHANGE boundary the local candidate
-    /// ceremony COMPLETED (players = candidate committee) but its DKG
-    /// under-qualified on-chain — `dkgQual[5]` never landed, so the contract
-    /// re-committed the incumbent. The store holds BOTH mints. The declined
-    /// candidate mint (bit clear) must be UNUSED and the incumbent's carried
-    /// key (bit set at 3) served; the pre-fix code refused → every seated node
-    /// demoted → zero proposers → freeze. Both resolvers must serve the
-    /// incumbent.
-    #[test]
-    fn declined_candidate_falls_back_to_committed_incumbent() {
-        use crate::epoch_manager::BeaconResolve;
-
-        let incumbent = committee(0xC0, 4);
-        let candidate = committee(0xCA, 4);
-        let (inc_out, inc_share) = ceremony(&incumbent);
-        let (cand_out, cand_share) = ceremony(&candidate);
-        let inc_pk = *crate::beacon::outcome::group_public_key(&inc_out);
-
-        let store = Arc::new(RwLock::new(BTreeMap::from([
-            (3u64, (inc_out, inc_share)),
-            (5u64, (cand_out, cand_share)),
-        ])));
-
-        let verify = group_key_resolver(store.clone(), qual(&[3]), no_attested());
-        assert_eq!(
-            verify(5),
-            KeyLookup::Resolved(inc_pk),
-            "the declined candidate mint is skipped; the committed incumbent's key is served"
-        );
-
-        let sign = beacon_share_resolver(store, qual(&[3]), b"ns".to_vec(), no_attested());
-        match sign(5) {
-            BeaconResolve::Key((sharing, share, _)) => {
-                assert_eq!(*sharing.public(), inc_pk);
-                assert!(share.is_some());
-            }
-            _ => panic!("share gate must serve the committed incumbent, not demote"),
-        }
-    }
-}
-
 pub struct DposLayerHandle {
     pub consensus_handle: Handle<()>,
     /// Marshal mailbox clone for the node-side cert feed/RPC (by-height
@@ -1746,21 +1211,16 @@ pub struct DposLayerHandle {
     /// supervision subtree, because the host awaits them only AFTER aborting
     /// that engine — see `crate::outer::OuterBuilder::build`.
     pub drain_on_shutdown: Vec<(&'static str, Handle<()>)>,
-    /// The epoch geometry (`dposActivationBlock`, `epochBlockInterval`) the layer
-    /// resolved at launch, handed up so the host does not read it a second time.
-    /// The validator overlay needs it to build its cert-inlet's
-    /// [`crate::beacon::keys::BoundaryWalk`], and a host-side re-read would
-    /// be both a second source of truth for a value the layer already resolved
-    /// authoritatively and, on a runtime-deployed chain, a read that is only
-    /// guaranteed to succeed BECAUSE the layer's own has already succeeded.
-    pub dpos_activation_block: u64,
-    pub epoch_length_blocks: NonZeroU64,
-    /// The layer's ONE cross-epoch beacon-key store, handed up for the same
-    /// reason as the geometry: the validator overlay's cert-inlet must join THIS
-    /// store, not build a second one. A private inlet store is precisely the
-    /// split where a node's inlet can hold `PK_E` while every other consumer sees
-    /// nothing.
-    pub beacon_keys: crate::beacon::keys::BeaconKeys,
+    /// Serve one held epoch-key artifact over `consensus_getEpochArtifact`, so a
+    /// TIER-2 follower obtains `PK_epoch` from this node exactly as it obtains
+    /// certificates from it.
+    ///
+    /// `Some` on the FOLLOWER path only, and the asymmetry is not an oversight: a
+    /// follower's artifact store is created inside `beacon::for_follower`, below
+    /// this crate boundary, so this handle is the only way out. A validator's
+    /// store belongs to its always-on beacon plane, which the node builds itself
+    /// — it reads `Beacon::artifact_bytes` directly and never needs this field.
+    pub artifact_bytes: Option<crate::beacon::ArtifactSource>,
 }
 
 /// Read `committee[epoch]` for the follower's boundary trigger. `None` ⇒ not
@@ -1883,6 +1343,7 @@ impl DposLayer {
             slasher_sink,
             evidence,
             staking_config,
+            halt_marker,
             upstream,
             deriver,
             executed,
@@ -1904,7 +1365,7 @@ impl DposLayer {
         // halves are consumed here, so a later demote→re-promote re-clones cleanly.
         let SharedBeaconPlane {
             oracle,
-            beacon,
+            randomness,
             vote_mux,
             cert_mux,
             resolver_mux,
@@ -1912,15 +1373,8 @@ impl DposLayer {
             marshal_mux,
             vote_backup,
             tombstones,
+            plane_clock,
         } = beacon_plane;
-        let BeaconShared {
-            ceremony_store,
-            share_notify,
-            dkg_qual_for,
-            held_keys,
-            pull_keys,
-            metrics: beacon_metrics,
-        } = beacon;
         let vote_backup_rx = vote_backup.subscribe().await;
 
         let RethHandle {
@@ -1942,7 +1396,12 @@ impl DposLayer {
         // Fork-safety latch (Phase 3): shared across the executor, epoch_manager, and
         // the OuterEngine supervisor. Engaging it (result divergence / EL Invalid /
         // L1 fork) halts participation while the node stays up + observable.
-        let safety_halt = crate::sync_metrics::SafetyHalt::new(sync_metrics.clone());
+        // A marker left by a previous run re-engages it HERE, before the first
+        // consensus event, so a halted node never comes back as a signer.
+        let safety_halt = match halt_marker {
+            Some(path) => crate::sync_metrics::SafetyHalt::restoring(sync_metrics.clone(), path),
+            None => crate::sync_metrics::SafetyHalt::new(sync_metrics.clone()),
+        };
 
         // Build the staking-reader layer: reader + cache + EpochTransition.
         let staking_address = staking_config.staking_address;
@@ -2647,25 +2106,6 @@ impl DposLayer {
         // signing material via `beacon_resolver`). The disk reload of
         // `<datadir>/beacon/` happened ONCE at the plane's startup — not here.
         //
-        // The cross-epoch shared `epoch → PK_epoch` group-key map (§5 b) is
-        // created HERE (not inside `OuterBuilder::build`) so both DKG resolvers
-        // can read its attested entries for their carry-divergence guard. It is
-        // threaded into `OuterBuilder` as the SAME Arc that `epoch_manager`
-        // (W1/W3) and the agreement write-back fill — one map, never two.
-        let (group_keys, key_writer) = crate::beacon::key_journal::open(
-            ctx.with_label("key_journal"),
-            ctx.with_label("key_journal_writer"),
-            KEY_JOURNAL_PARTITION,
-        )
-        .await?;
-        let beacon_verify = Some(crate::application::BeaconVerify::new(
-            group_key_resolver(
-                ceremony_store.clone(),
-                dkg_qual_for.clone(),
-                group_keys.clone(),
-            ),
-            seed_namespace(&fluent_namespace(chain_id)),
-        ));
 
         // Isolation-window watchdog: a non-committee `--dpos` node has ZERO
         // consensus-plane connectivity (the tracked peer set == the on-chain
@@ -2761,12 +2201,6 @@ impl DposLayer {
         // see `beacon_share_resolver`: carry-forward under the frozen on-chain
         // `dkgQual`-bit arbitration (`beacon::carry`); refusal ⇒ the epoch_manager
         // share-gate demotes to verify-only, the recompute-heal re-promotes.
-        let beacon_resolver: crate::epoch_manager::BeaconResolver = beacon_share_resolver(
-            ceremony_store.clone(),
-            dkg_qual_for.clone(),
-            seed_namespace(&fluent_namespace(chain_id)),
-            group_keys.clone(),
-        );
 
         // Bulk catch-up committee reader for the EpochManager span soft-enter:
         // load the node's CURRENT finalized tip (re-read every call — a catch-up
@@ -2965,7 +2399,18 @@ impl DposLayer {
                 }) as crate::cert_follow::BoundaryFetchFn
             });
 
-        let mut outer = OuterBuilder {
+        // Core- and executor-owned families, registered against the launch context
+        // — the SAME context `BeaconMetrics` is registered against inside
+        // `beacon::build`, because commonware prefixes each family with the
+        // context's label path and a labelled child would silently rename them.
+        // Registered on this path AND on the follower's, since both node classes
+        // reach the epoch manager and the executor.
+        let epoch_metrics = crate::epoch_manager::EpochEngineMetrics::default();
+        epoch_metrics.register(&ctx);
+        let executor_metrics = crate::executor::ExecutorMetrics::default();
+        executor_metrics.register(&ctx);
+
+        let outer = OuterBuilder {
             me: me.clone(),
             // The beacon plane's epoch-key agreement instances, adopted by the
             // epoch manager so they prune on the engine cutoff.
@@ -2983,19 +2428,16 @@ impl DposLayer {
             epoch_length_blocks,
             dpos_activation_block,
             signer_keypair: Some(bls_keypair),
-            held_keys: Some(held_keys.clone()),
-            pull_keys: Some(pull_keys),
-            beacon_resolver,
-            beacon_share_notify: share_notify,
+            randomness: randomness.clone(),
             spawn_unblocked,
             re_jump,
             soft_enter_committees,
-            beacon_metrics,
+            epoch_metrics: epoch_metrics.clone(),
+            executor_metrics: executor_metrics.clone(),
             sync_metrics: sync_metrics.clone(),
             safety_halt: safety_halt.clone(),
             tombstones,
-            beacon_verify,
-            group_keys: group_keys.clone(),
+            plane_clock,
             timeouts: ConsensusTimeouts::fluent_1s(),
             mailbox_size: 256,
             deque_size: 64,
@@ -3039,7 +2481,6 @@ impl DposLayer {
             slasher_latest_finalized_hash,
             slasher_sink,
             slasher_wal_partition: "slasher-wal".into(),
-            seed_journal_partition: SEED_JOURNAL_PARTITION.into(),
             slasher_evidence: Some(evidence),
 
             feed,
@@ -3051,16 +2492,8 @@ impl DposLayer {
         // context: it must be a sibling of the engine task so `engine.abort()`
         // does not cascade into the writer before it has drained (see
         // `OuterBuilder::build`).
-        .build(
-            ctx.with_label("outer_engine"),
-            ctx.with_label("seed_journal_writer"),
-        )
+        .build(ctx.with_label("outer_engine"))
         .await?;
-
-        // Lifted out before `start` consumes the engine. Rides up on
-        // `DposLayerHandle::drain_on_shutdown`, NOT on `supervised` — see that
-        // field's doc for why the two must not be conflated.
-        let seed_writer = outer.take_seed_writer();
 
         // Register the initial epoch's BlsScheme so marshal can verify
         // certificates from this epoch before any boundary fires.
@@ -3136,14 +2569,13 @@ impl DposLayer {
             consensus_handle,
             cert_mailbox,
             supervised: vec![("epoch_bridge", epoch_bridge_handle)],
-            drain_on_shutdown: seed_writer
-                .into_iter()
-                .map(|h| ("seed_journal_writer", h))
-                .chain(key_writer.into_iter().map(|h| ("key_journal_writer", h)))
-                .collect(),
-            dpos_activation_block,
-            epoch_length_blocks,
-            beacon_keys: group_keys,
+            // Both journal writers moved into `beacon::build` with the stores
+            // they back, so this layer has no drain of its own left. The node
+            // collects them off the `Beacon` instead — see its `shutdown`.
+            drain_on_shutdown: vec![],
+            // The validator serves from its beacon plane's own
+            // `Beacon::artifact_bytes`, which the node holds directly.
+            artifact_bytes: None,
         })
     }
 }
@@ -3172,6 +2604,12 @@ pub struct FollowerLayerConfig<D, XC, A, U> {
     /// `buffered::Engine` + the marshal resolver are keyed on it.
     pub me: commonware_cryptography::ed25519::PublicKey,
     pub staking_config: StakingReaderConfig,
+    /// Datadir path of the fork-safety halt marker
+    /// ([`crate::sync_metrics::SafetyHalt::restoring`]). A marker left by a
+    /// previous run brings this node up permanently verify-only — the latch has
+    /// no in-process `disengage`, so without it a restart silently cleared a
+    /// halt and the node signed again on the same disk. `None` only in tests.
+    pub halt_marker: Option<std::path::PathBuf>,
     /// L1 Rollup-checkpoint hash (B2). `Some` ⇒ fail-closed post-EL-sync assert
     /// (`cert-follow: L1 Rollup checkpoint …`); `None` ⇒ the upstream head is the
     /// only trust input (devnet fallback).
@@ -3290,6 +2728,7 @@ impl DposLayer {
         let FollowerLayerConfig {
             me,
             staking_config,
+            halt_marker,
             l1_checkpoint_hash,
             deriver,
             executed,
@@ -3313,7 +2752,10 @@ impl DposLayer {
         // Fork-safety latch (Phase 3): a follower's executor derives+imports off the
         // inlet and can hit result divergence / EL Invalid, so it too must be able to
         // halt-and-stay-up rather than crash.
-        let safety_halt = crate::sync_metrics::SafetyHalt::new(sync_metrics.clone());
+        let safety_halt = match halt_marker {
+            Some(path) => crate::sync_metrics::SafetyHalt::restoring(sync_metrics.clone(), path),
+            None => crate::sync_metrics::SafetyHalt::new(sync_metrics.clone()),
+        };
 
         let reader = RethStakingStateReader::new(
             provider.clone(),
@@ -3520,14 +2962,21 @@ impl DposLayer {
 
         let epoch_length_blocks =
             NonZeroU64::new(interval as u64).ok_or_eyre("epoch_block_interval must be > 0")?;
-
-        // A follower has NO beacon plane: no DKG share, no live-DKG store. The
-        // resolver always returns `None` (a keyless / verify-only node), and there
-        // is no `beacon_verify` propose/gate (it never proposes).
-        let beacon_resolver: crate::epoch_manager::BeaconResolver =
-            Arc::new(|_| crate::epoch_manager::BeaconResolve::Absent);
-        let beacon_metrics = crate::beacon::metrics::BeaconMetrics::default();
-        beacon_metrics.register(&ctx);
+        // The beacon-owned families are registered by `beacon::for_follower`
+        // below, which is this path's randomness provider — NOT here. A standalone
+        // `BeaconMetrics::register` next to it would register every one of them
+        // TWICE: `prometheus_client::Registry::register` neither deduplicates nor
+        // complains, so the only symptom is a duplicated family at scrape time.
+        //
+        // Registered here, on the SAME context, for the reason the metric-owner
+        // split exists: these families are core- and executor-owned on BOTH node
+        // classes, and `prometheus_client::Registry::register` neither
+        // deduplicates nor complains — a family with no owner on this path would
+        // simply stop appearing in follower scrapes.
+        let epoch_metrics = crate::epoch_manager::EpochEngineMetrics::default();
+        epoch_metrics.register(&ctx);
+        let executor_metrics = crate::executor::ExecutorMetrics::default();
+        executor_metrics.register(&ctx);
 
         // Slasher reader + fallback are required by the OuterBuilder type but the
         // slasher is never STARTED on a follower (`run_follower` drops the unstarted
@@ -3738,22 +3187,110 @@ impl DposLayer {
             })
         };
 
-        // The follower's cross-epoch beacon-key store: shared by `epoch_manager`'s
-        // ladder and the cert-inlet, both of which only READ and prune it.
+        // FROZEN on-chain `dkgQual[e]` reader — which epoch MINTED the key in
+        // force at a given epoch. A stable committee runs no agreement at all, so
+        // an artifact for the epoch being verified does not exist; without this
+        // the key-delivery rung below would ask for one that was never minted and
+        // miss forever. The read itself needs nothing from the beacon plane a
+        // follower does not run: the same reth reader and the same finalized
+        // anchor its committee reads already use. The freeze/memo rule lives in
+        // `beacon::carry::frozen_dkg_qual` so this copy cannot drift from the
+        // validator's.
+        let follower_dkg_qual = {
+            let reader = RethStakingStateReader::new(
+                provider.clone(),
+                evm_config.clone(),
+                staking_config.clone(),
+            );
+            let provider = provider.clone();
+            crate::beacon::carry::frozen_dkg_qual(
+                Arc::new(move || {
+                    let fin = provider.finalized_block_number().ok().flatten()?;
+                    provider.block_hash(fin).ok().flatten()
+                }),
+                Arc::new(move |epoch, at| {
+                    let bit = reader.dkg_qual(epoch, at).ok()?;
+                    // A SET bit is proof the commit happened, so the committee
+                    // read is skipped for it.
+                    let committed = bit
+                        || reader
+                            .epoch_committee_snapshot(epoch, at)
+                            .map(|s| !s.validators.is_empty())
+                            .unwrap_or(false);
+                    Some((bit, committed))
+                }),
+            )
+        };
+        // `committee[epoch]` with its BLS half — the SOLE authority a fetched
+        // artifact is checked against, read from THIS node's own chain state at
+        // the finalized anchor. A follower trusts its upstream for DELIVERY and
+        // for nothing else: an artifact that does not carry a quorum of this
+        // committee is rejected here exactly as a peer's would be on the plane.
+        let follower_committee_source: crate::beacon::artifact::CommitteeSource = {
+            let canonical = canonical_state.clone();
+            let reader = RethStakingStateReader::new(
+                provider.clone(),
+                evm_config.clone(),
+                staking_config.clone(),
+            );
+            Arc::new(move |epoch: u64| {
+                let at = canonical.get_finalized_num_hash()?.hash;
+                let snap = reader.epoch_committee_snapshot(epoch, at).ok()?;
+                if snap.validators.is_empty() {
+                    return None;
+                }
+                crate::scheme::epoch_committee_from_snapshot(&snap).ok()
+            })
+        };
+        // The ONE relationship a follower has. `None` (a test with no upstream)
+        // leaves the rung permanently empty, which is exactly the pre-FLU-1167
+        // behaviour: vote-only admission, never a fault.
+        let artifact_fetch: crate::beacon::ArtifactFetch = match &upstream {
+            Some(up) => {
+                let up = up.clone();
+                Arc::new(move |epoch: u64| {
+                    let up = up.clone();
+                    Box::pin(async move {
+                        crate::cert_follow::CertUpstream::get_epoch_artifact(&up, epoch).await
+                    }) as futures::future::BoxFuture<'static, _>
+                })
+            }
+            None => Arc::new(|_| Box::pin(async { None })),
+        };
+        // A follower's randomness is negative on everything it PRODUCES — no DKG,
+        // no ceremony store, no agreement instance, no share, no seed — and real
+        // on the one thing it VERIFIES: the key a certificate of an epoch must be
+        // checked against. It used to be `beacon::absent`, i.e. negative there
+        // too, BY TYPE and for the life of the process; that was the whole of
+        // FLU-1167. What was missing was never the check — `verify_artifact` needs
+        // only the chain id, an rng and a `committee[epoch]` read the inlet makes
+        // per certificate — but a DELIVERY ROUTE, which the three capabilities
+        // above now supply over the cert upstream.
         //
-        // RAM-only, and the empty partition is how `key_journal::open` is told so.
-        // The journal persists `KeySource::Agreed` and nothing else, and every
-        // producer of that tier is plane-side — a follower runs none of them and
-        // passes no ladder rung (see `held_keys` / `group_keys` below). A durable
-        // half here would open an `Ordinal` partition, replay a store that can
-        // never hold a record, and park a writer task in the shutdown drain.
-        let (beacon_keys, key_writer) = crate::beacon::key_journal::open(
-            ctx.with_label("key_journal"),
-            ctx.with_label("key_journal_writer"),
-            "",
-        )
-        .await?;
-        let mut outer = OuterBuilder {
+        // The durable key journal that used to be opened here (with an empty
+        // partition, i.e. RAM-only) stays DELETED: the store this fills is RAM-only
+        // by design, and what a restart loses is one fetch per epoch over a link
+        // the follower holds open anyway. Its seed journal goes with it, and that
+        // one has a real consequence worth stating — a node that ran as a validator
+        // and is restarted as `--cert-follow` no longer replays its seed-journal
+        // tail. Nothing on the follower path reads a seed it did not just receive,
+        // so the tail was already unreadable there; what is lost is the ability to
+        // hand it back on a later switch BACK to validator, which is a restart
+        // through this path either way.
+        let crate::beacon::FollowerBeacon {
+            randomness,
+            artifact_bytes,
+            fetch_handle: artifact_fetch_handle,
+        } = crate::beacon::for_follower(
+            &ctx,
+            crate::beacon::FollowerRandomnessConfig {
+                chain_id,
+                committees: follower_committee_source,
+                dkg_qual: follower_dkg_qual,
+                fetch: artifact_fetch,
+            },
+        );
+        let outer = OuterBuilder {
             me: me.clone(),
             // A follower runs no beacon plane, so it starts no agreement instance
             // and has none to adopt.
@@ -3769,23 +3306,22 @@ impl DposLayer {
             epoch_length_blocks,
             dpos_activation_block: activation,
             signer_keypair: None,
-            // A follower runs no agreement plane, so it holds no artifact, and it
-            // has no peer to pull one from either: the seam delivers over
+            // A follower runs no agreement plane, so it never MINTS an artifact,
+            // and the plane's pull seam does not reach it: that delivers over
             // `BEACON_RESOLVER_CHANNEL` and this node's p2p identity is ephemeral,
             // bootstrapper-less and never tracked into any committee's peer set.
-            // So both ladder rungs are absent PERMANENTLY, not until one resolves,
-            // and every cert takes vote-only admission for the life of the process
-            // — the residual `beacon::keys::BeaconKeys`'s ladder doc states in
-            // full. The multisig quorum is verified regardless; the seed check is
-            // what a follower does without.
-            held_keys: None,
-            pull_keys: None,
-            beacon_resolver,
-            beacon_share_notify: Arc::new(tokio::sync::Notify::new()),
+            // What it does have is one delivery route over its cert upstream, so
+            // its ladder is no longer permanently empty: vote-only admission now
+            // lasts until the epoch's artifact arrives and verifies against
+            // `committee[epoch]`, not until the process exits. The multisig quorum
+            // is verified either way; the seed check is what it does without in
+            // the meantime.
+            randomness: randomness.clone(),
             spawn_unblocked: Arc::new(tokio::sync::Notify::new()),
             re_jump,
             soft_enter_committees,
-            beacon_metrics,
+            epoch_metrics: epoch_metrics.clone(),
+            executor_metrics: executor_metrics.clone(),
             sync_metrics: sync_metrics.clone(),
             safety_halt: safety_halt.clone(),
             // The follower has no beacon plane, so no tombstone watcher fills a
@@ -3793,16 +3329,12 @@ impl DposLayer {
             // this handle are unreachable on the follower path — an empty set is
             // the honest state, not a lost signal.
             tombstones: crate::slasher::TombstoneSet::default(),
-            beacon_verify: None,
-            // Created here and SHARED rather than left to `build`, so the ladder
-            // `epoch_manager` reads and the one the cert-inlet below resolves
-            // against are the same object — the three-stores split this phase
-            // exists to close. On this path it stays EMPTY: every writer of it is
-            // plane-side (W1/W3, the agreement write-back, and the ladder's own
-            // memoisation of an artifact-rung answer), and a follower runs none of
-            // them and passes no rung. That is the vote-only-admission residual
-            // recorded at `held_keys` above, not a store waiting to be filled.
-            group_keys: beacon_keys.clone(),
+            // A follower runs no beacon plane, hence no finalized poller and no
+            // DKG clock — there is no second clock here to diverge from the
+            // ordering tip. An unregistered handle publishes nothing, which is
+            // the honest answer rather than a lag gauge reading the ordering tip
+            // against a permanent zero.
+            plane_clock: crate::sync_metrics::PlaneClock::default(),
             timeouts: ConsensusTimeouts::fluent_1s(),
             mailbox_size: 256,
             deque_size: 64,
@@ -3843,7 +3375,6 @@ impl DposLayer {
             slasher_latest_finalized_hash,
             slasher_sink: Arc::new(NoopSlasherSink),
             slasher_wal_partition: "slasher-wal".into(),
-            seed_journal_partition: SEED_JOURNAL_PARTITION.into(),
             // A follower runs no slasher (built, never started) and registers
             // no evidence channel, so there is nothing to bridge to.
             slasher_evidence: None,
@@ -3856,14 +3387,8 @@ impl DposLayer {
         // Sibling of the engine context, not a child — see the validator path
         // and `OuterBuilder::build` for why the writer must sit outside the
         // engine's supervision subtree.
-        .build(
-            ctx.with_label("outer_engine"),
-            ctx.with_label("seed_journal_writer"),
-        )
+        .build(ctx.with_label("outer_engine"))
         .await?;
-
-        // Lifted out before `start_follower` consumes the engine.
-        let seed_writer = outer.take_seed_writer();
 
         // Register the initial epoch's verify-only scheme so the marshal can
         // verify the inlet's certs from cold-start (before any boundary fires).
@@ -4093,7 +3618,13 @@ impl DposLayer {
             },
         );
         let shutdown_for_inlet = shutdown.clone();
-        let inlet_beacon_keys = beacon_keys.clone();
+        // The SAME provider the epoch manager holds, not a second one over a
+        // private store — and on this path that is now load-bearing twice over.
+        // `observe_cert` prunes what `pin_for` reads, so splitting them would make
+        // the pruning a no-op on a map nothing else can see; and `observe_cert` is
+        // also the key-delivery TRIGGER, so a second instance would fetch into a
+        // store the epoch manager's repair sweep never reads.
+        let inlet_randomness = randomness.clone();
         // DATA-fault rotation trigger (#7): after MAX_UPSTREAM_FAULTS consecutive
         // unverifiable certs over a healthy connection the inlet rotates to the
         // next configured upstream URL (connection-level failover can never see a
@@ -4139,7 +3670,7 @@ impl DposLayer {
                 .with_epoch_math(activation, interval)
                 .with_committee_read_deferred_metric(committee_read_deferred)
                 .with_carry_forward_fail_metric(carry_forward_verify_failed)
-                .with_beacon_keys(inlet_beacon_keys)
+                .with_randomness(inlet_randomness)
                 .with_tee(crate::cert_inlet::LiveFrontierTee {
                     live_height: live_frontier,
                     // Same atomic the steady-state re-jump trigger reads: the inlet
@@ -4191,15 +3722,17 @@ impl DposLayer {
             supervised: vec![
                 ("cert_inlet", cert_inlet_handle),
                 ("follower_boundary", follower_boundary_handle),
+                // SUPERVISED, not detached: it parks rather than returning, so a
+                // clean exit means it died — and a dead fetcher silently returns
+                // this node to vote-only admission for the rest of the process,
+                // with every liveness check still green.
+                ("follower_artifact_fetch", artifact_fetch_handle),
             ],
-            drain_on_shutdown: seed_writer
-                .into_iter()
-                .map(|h| ("seed_journal_writer", h))
-                .chain(key_writer.into_iter().map(|h| ("key_journal_writer", h)))
-                .collect(),
-            dpos_activation_block: activation,
-            epoch_length_blocks,
-            beacon_keys,
+            // A follower owns no journal: both were deleted with its key store
+            // (see where `randomness` is built above), so there is nothing to
+            // drain here.
+            drain_on_shutdown: vec![],
+            artifact_bytes: Some(artifact_bytes),
         })
     }
 }
@@ -4254,7 +3787,7 @@ mod cold_start_kind_tests {
             None,
             "InvalidTarget ⇒ Done(Ok(None)) (reth-rejected branch mid-sync — boot anyway)"
         );
-        // #1 self-heal (2026-07-09): a forged/unagreed POST-sync branch now ROTATES
+        // A forged/unagreed POST-sync branch now ROTATES
         // the upstream + re-jumps (was fail-closed `Done(Err)`) — never crash on a
         // forged UPSTREAM.
         assert!(

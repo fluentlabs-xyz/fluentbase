@@ -545,3 +545,59 @@ def test_dkg_finalize_deferred_rebaselines_on_a_node_restart():
     bat.SIM_SCRAPE_TEXT["validator-0"] = _DKG_METRICS.format(pinned=0, deferred=0)
     bat._inv_dkg_finalize_deferred()
     assert bat.events == [] and bat.SIM_DKG_DEFERRED_LAST["validator-0"] == 0
+
+
+# ── finalize_apply degraded (the executor re-apply wedge, HARD) ──────────────
+_DEGRADED = 'dpos_sync_degraded{{reason="finalize_apply"}} {v}\n'
+
+
+def _degraded_bat(**per_node):
+    """A ChainBattery whose shared per-tick scrape is pre-populated with the commonware :9100
+    text; per_node maps service -> the finalize_apply gauge value, or "" for an empty scrape."""
+    bat = ChainBattery(Ctx())
+    bat.SIM_SCRAPE_NODES = list(per_node)
+    bat.SIM_SCRAPE_TEXT = {n: (_DEGRADED.format(v=v) if v != "" else "")
+                           for n, v in per_node.items()}
+    return bat
+
+
+def test_finalize_apply_holds_at_zero():
+    bat = _degraded_bat(**{"validator-0": 0, "validator-3": 0})
+    assert bat._inv_finalize_apply() is True
+    assert bat.inv_fail_id == ""
+
+
+def test_finalize_apply_holds_when_the_series_was_never_emitted():
+    """The gauge family is emitted lazily, so a node whose re-apply loop never ran exposes NO
+    finalize_apply series at all — that is the healthy state, not an unreadable detector."""
+    bat = ChainBattery(Ctx())
+    bat.SIM_SCRAPE_NODES = ["validator-0"]
+    bat.SIM_SCRAPE_TEXT = {"validator-0": 'dpos_sync_degraded{reason="no_peers"} 0\n'}
+    assert bat._inv_finalize_apply() is True
+    assert bat.inv_fail_id == ""
+
+
+def test_finalize_apply_degraded_fails_the_run():
+    """The wedge itself: the executor is spinning in the re-apply loop with a frozen finalized
+    cursor, and nothing else in the battery can see it."""
+    bat = _degraded_bat(**{"validator-0": 0, "validator-3": 1})
+    assert bat._inv_finalize_apply() is False
+    assert bat.inv_fail_id == "finalize-apply-degraded"
+    assert "validator-3" in bat.inv_fail_msg and "finalize_apply" in bat.inv_fail_msg
+    assert "lag gauges freeze" in bat.inv_fail_msg
+
+
+def test_finalize_apply_skips_a_node_whose_scrape_came_back_empty():
+    """A read failure must not be judged as health OR as a fault — the same discipline
+    _inv_safety_halt uses on the identical scrape."""
+    bat = _degraded_bat(**{"validator-0": "", "validator-3": 1})
+    assert bat._inv_finalize_apply() is False       # the readable node still asserts
+    bat = _degraded_bat(**{"validator-0": ""})
+    assert bat._inv_finalize_apply() is True
+    assert bat.inv_fail_id == ""
+
+
+def test_finalize_apply_fail_id_is_not_demoted():
+    """A demoted id records a diagnostic and reports as HOLDING; this one must fail the run."""
+    from dpos_harness.core.policy import DEMOTED_INVARIANTS
+    assert "finalize-apply-degraded" not in DEMOTED_INVARIANTS

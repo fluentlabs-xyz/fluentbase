@@ -455,6 +455,7 @@ volumes:
           --cert-upstream=ws://{seq_ip}:{topology.WS_PORT} \\
           --cert-upstream=ws://{topology.CERT_UPSTREAM_ANCHOR_IP}:{topology.WS_PORT} \\
           --dpos.staking-config=/runtime/staking-reader.json \\
+          --dpos.metrics-port={topology.CONSENSUS_METRICS_PORT} \\
           --builder.extradata= \\
           --rpc.eth-proof-window=50000 \\
           --http --http.addr=0.0.0.0 --http.port={topology.RPC_PORT} --http.api=eth,net,web3,admin \\
@@ -477,6 +478,7 @@ volumes:
 {prune_line}          --cert-follow \\
           --cert-upstream=ws://{full_ip}:{topology.WS_PORT} \\
           --dpos.staking-config=/runtime/staking-reader.json \\
+          --dpos.metrics-port={topology.CONSENSUS_METRICS_PORT} \\
           --builder.extradata= \\
           --rpc.eth-proof-window=10000 \\
           --http --http.addr=0.0.0.0 --http.port={topology.RPC_PORT} --http.api=eth,net,web3,admin \\

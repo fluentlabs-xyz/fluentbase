@@ -23,7 +23,7 @@ use std::{
     future::Future,
     path::PathBuf,
     pin::Pin,
-    sync::{Arc, RwLock},
+    sync::{Arc, Mutex, PoisonError, RwLock},
     time::Duration,
 };
 use tokio::sync::{mpsc, Notify};
@@ -32,14 +32,15 @@ use tracing::{error, info, warn};
 use crate::{
     beacon::{
         actor::{
-            AgreedOutcomeAt, CeremonyStore, CommitteeFor, DkgActor, DkgLogIndex, PinnedRequest,
+            AgreedOutcomeAt, CeremonyStore, CommitteeFor, CommitteePairFor, DkgActor, DkgLogIndex,
+            PinnedRequest, PullArtifact,
         },
         artifact::{
             self, decode_artifact, restart_replay, ArtifactBridge, ArtifactPull, ArtifactStore,
             CommitteeSource, PullAnswer,
         },
         carry::{frozen_dkg_qual, DkgQualFor, DkgQualProbe},
-        dkg_agree::{AgreedArtifact, AgreementTargets, ConfirmPool},
+        dkg_agree::{AgreedArtifact, ConfirmPool},
         dkg_engine::{
             spawn_agreement_launcher, AgreementMuxes, AgreementPlaneConfig, AgreementTimeouts,
         },
@@ -48,8 +49,9 @@ use crate::{
         metrics::BeaconMetrics,
         outcome::group_public_key,
         share_state::{self, ShareState},
+        Randomness,
     },
-    dpos::ARTIFACT_JOURNAL_PARTITION,
+    dpos::{ARTIFACT_JOURNAL_PARTITION, KEY_JOURNAL_PARTITION, SEED_JOURNAL_PARTITION},
     outer::SharedMux,
 };
 
@@ -99,6 +101,11 @@ struct ArtifactSeam {
     /// repair sweep take both.
     held_keys: AgreedKeys,
     pull_keys: AgreedKeys,
+    /// The `DkgActor`'s live-epoch artifact pull — a SECOND consumer of the same
+    /// [`ArtifactPull`] the key ladder's `pull` rung uses, in the actor's
+    /// fire-and-forget shape. Built here because this is the only place the pull
+    /// and the resolver mailbox exist together.
+    pull_artifact: PullArtifact,
 }
 
 /// Open the beacon recovery seam: the `commonware_resolver::p2p` engine carrying
@@ -165,8 +172,11 @@ where
         }),
         dkg_qual.clone(),
     );
+    // ONE pull for both consumers, so they share the per-epoch throttle that bounds
+    // how often this node asks its peers for the same artifact.
+    let pull = ArtifactPull::new(context.with_label("artifact_pull"), bridge);
     let pull_keys = {
-        let pull = ArtifactPull::new(context.with_label("artifact_pull"), bridge);
+        let pull = pull.clone();
         let mailbox = mailbox.clone();
         AgreedKeys::new(
             Arc::new(move |epoch: u64| {
@@ -185,12 +195,49 @@ where
             dkg_qual,
         )
     };
+    // The `DkgActor`'s consumer of the same pull. Fire-and-forget by contract: the
+    // actor calls this from its height tick, which drives every live ceremony, and
+    // `pull` sleeps on the throttle and then waits out `PULL_TIMEOUT` — so it spawns
+    // and returns rather than handing back a future the caller would have to await.
+    //
+    // `inflight` is not the rate bound; the throttle is. It stops the SPAWNS from
+    // stacking: `ArtifactPull::throttle` does not de-duplicate, it sleeps until the
+    // epoch's next slot and then claims it, so N concurrent callers for one epoch
+    // would serialize `PULL_MIN_INTERVAL` apart instead of collapsing into one.
+    let pull_artifact: PullArtifact = {
+        let ctx = context.with_label("artifact_pull_live");
+        let mailbox = mailbox.clone();
+        let metrics = metrics.clone();
+        let inflight: Arc<Mutex<BTreeSet<u64>>> = Arc::default();
+        Arc::new(move |epoch: u64| {
+            {
+                let mut held = inflight.lock().unwrap_or_else(PoisonError::into_inner);
+                if !held.insert(epoch) {
+                    return;
+                }
+            }
+            let pull = pull.clone();
+            let inflight = inflight.clone();
+            let metrics = metrics.clone();
+            let mut resolver = mailbox.clone();
+            drop(ctx.with_label("epoch").spawn(move |_| async move {
+                if let Some(PullAnswer::Have(_)) = pull.pull(&mut resolver, epoch).await {
+                    metrics.dkg_artifact_pull_ok.inc();
+                }
+                inflight
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .remove(&epoch);
+            }));
+        })
+    };
 
     ArtifactSeam {
         resolver_handle,
         logs: LogFetcher::new(mailbox),
         held_keys,
         pull_keys,
+        pull_artifact,
     }
 }
 
@@ -238,91 +285,6 @@ where
         })
 }
 
-/// The shared beacon state each per-promotion signer engine reads. Built once by
-/// [`build`] and cloned down; the node holds it as a single opaque field rather
-/// than as the six handles it bundles.
-#[derive(Clone)]
-pub struct BeaconShared {
-    /// The shared live-DKG store: written by the always-on `DkgActor`, read by the
-    /// per-engine `BeaconVerify` (C gate + propose) and `beacon_resolver` (sign).
-    pub(crate) ceremony_store: CeremonyStore,
-    /// Edge-trigger the `DkgActor` fires (`notify_one`) when a share lands in
-    /// `ceremony_store`, so `EpochManager::run` wakes the instant its share is
-    /// memoized instead of polling. SINGLE-CONSUMER: `notify_one` wakes exactly
-    /// one waiter, so a second `.notified()` consumer of this `Arc` would silently
-    /// swallow share-landed wakes.
-    pub(crate) share_notify: Arc<Notify>,
-    /// On-chain FROZEN `dkgQual[e]` bit reader (the carry-forward arbiter input),
-    /// shared by both DKG resolvers.
-    pub(crate) dkg_qual_for: DkgQualFor,
-    pub(crate) held_keys: AgreedKeys,
-    pub(crate) pull_keys: AgreedKeys,
-    /// Beacon counters, registered ONCE here; cloned (never re-registered) into
-    /// the executor + each per-epoch engine.
-    pub(crate) metrics: BeaconMetrics,
-}
-
-impl BeaconShared {
-    /// The cheap `PK_epoch` rung — a local read of the artifact store, safe on the
-    /// vote path. The cert-inlet takes it; nothing else outside this crate does.
-    pub fn held_keys(&self) -> &AgreedKeys {
-        &self.held_keys
-    }
-}
-
-/// The agreement write-back, held back until the consensus layer exists.
-///
-/// The hop publishes each agreed `PK_epoch` into the layer's [`BeaconKeys`], and
-/// that store is not created until `DposLayer::launch` runs — which is after the
-/// plane is built. So the plane hands the two ends over unjoined and the node
-/// [`arm`](Self::arm)s them once it holds the store.
-pub struct BeaconWriteBack {
-    agreed_rx: mpsc::Receiver<AgreedArtifact>,
-    agreed_tx: mpsc::Sender<AgreedArtifact>,
-    adopt_tx: mpsc::Sender<AgreedArtifact>,
-    replay: Vec<AgreedArtifact>,
-}
-
-impl BeaconWriteBack {
-    /// Spawn the hop and push this restart's stored artifacts through it.
-    ///
-    /// The replay is sent HERE and not at build time because this hop is the
-    /// channel's only drain: a send issued before it was spawned would deadlock on
-    /// a store holding more records than the channel's depth. Late is harmless —
-    /// the replay matters for a target the chain has NOT yet entered, which is the
-    /// whole of the epoch before it, and from the boundary on the heal is
-    /// `drive_recompute` reading the same store directly.
-    pub async fn arm<E>(self, context: &E, beacon_keys: BeaconKeys) -> Handle<()>
-    where
-        E: Metrics + Spawner,
-    {
-        let Self {
-            agreed_rx,
-            agreed_tx,
-            adopt_tx,
-            replay,
-        } = self;
-        let handle = spawn_write_back(context, agreed_rx, adopt_tx, beacon_keys);
-        if !replay.is_empty() {
-            info!(
-                epochs = replay.len(),
-                "beacon: replaying locally-stored agreement artifacts into the write-back"
-            );
-        }
-        for artifact in replay {
-            let epoch = artifact.0.target_epoch;
-            if agreed_tx.send(artifact).await.is_err() {
-                warn!(
-                    epoch,
-                    "beacon: the agreement write-back is gone; the artifact replay stopped"
-                );
-                break;
-            }
-        }
-        handle
-    }
-}
-
 /// Everything the beacon plane needs that it cannot build itself.
 ///
 /// The three committee/qual closures stay the node's: they read the reth staking
@@ -360,6 +322,9 @@ where
     /// `committee[epoch]` as the ordered peer set — the ceremony roster and the
     /// AM5 idx→pubkey mapping.
     pub committee_for: CommitteeFor,
+    /// `committee[target−1]` and `committee[target]` at ONE state hash — the
+    /// ceremony-start decision's input. See [`CommitteePairFor`].
+    pub committee_pair_for: CommitteePairFor,
     /// The SAME frozen committee with its BLS half, projected into the participant
     /// BiMap a certificate is verified under. One closure feeds the artifact seam's
     /// verification and the agreement instance's signer construction, so an
@@ -384,6 +349,16 @@ where
     pub geometry: BoxFuture<'static, Option<(u64, u64)>>,
 }
 
+/// Read one stored artifact's wire bytes, or `None` where this node holds none.
+///
+/// A READ CLOSURE and never the [`ArtifactStore`] itself: [`build`]'s contract is
+/// that the store does not cross back out to the node. This is the one capability
+/// it grants instead — enough for `consensus_getEpochArtifact` to serve a peer,
+/// and nothing else. Serving is safe to expose unauthenticated because the
+/// artifact is self-authenticating against `committee[epoch]`, so handing one to
+/// anyone leaks nothing a staking read would not.
+pub type ArtifactSource = Arc<dyn Fn(u64) -> Option<Vec<u8>> + Send + Sync>;
+
 /// The always-on beacon: the persistent `DkgActor`, the recovery seam, the
 /// epoch-key agreement launcher and the durable artifact store's writer.
 pub struct Beacon {
@@ -402,10 +377,20 @@ pub struct Beacon {
     /// Supervisor handles of the agreement instances the launcher starts, for
     /// `epoch_manager` to adopt so they prune on the engine cutoff. Move-only.
     pub agreement_intake: mpsc::Receiver<(Epoch, Handle<()>)>,
-    /// The write-back, to be armed once the consensus layer's key store exists.
-    pub write_back: BeaconWriteBack,
-    /// What every per-promotion signer engine reads.
-    pub shared: BeaconShared,
+    /// The agreement write-back hop, armed at build. A SUPERVISED handle: a clean
+    /// exit means a subsystem died.
+    pub write_back_handle: Handle<()>,
+    /// The durable key journal's writer. A DRAIN handle. `None` ⇒ RAM-only.
+    pub key_writer_handle: Option<Handle<()>>,
+    /// The durable seed journal's writer. A DRAIN handle, and the one with the
+    /// sibling-context requirement — see where it is spawned.
+    pub seed_writer_handle: Option<Handle<()>>,
+    /// The consensus-facing randomness surface. The ONLY thing the consensus
+    /// layer receives from the beacon.
+    pub randomness: Arc<dyn Randomness>,
+    /// Serve one held artifact's bytes to a peer over `consensus_getEpochArtifact`
+    /// — see [`ArtifactSource`] for why this is a closure and not the store.
+    pub artifact_bytes: ArtifactSource,
 }
 
 /// Build the always-on beacon.
@@ -443,6 +428,7 @@ where
         resolver_mux,
         bodies_mux,
         committee_for,
+        committee_pair_for,
         committee_source,
         dkg_qual_at,
         dkg_qual_probe,
@@ -497,11 +483,7 @@ where
     // handing the same pool to both sides is what makes it impossible for them to
     // disagree about it — a second pool built from a different base would reject
     // every honest confirmation and the entry bar would never be met, silently.
-    // `agreement_targets` is the registry that exempts a live target from the
-    // actor's height-driven ceremony sweep; the actor also takes its own hold on it
-    // while a write-back is in flight.
     let confirm_pool = ConfirmPool::new(&dkg_namespace);
-    let agreement_targets = AgreementTargets::default();
     let (pinned_tx, pinned_rx) = mpsc::channel::<PinnedRequest>(PINNED_MAILBOX);
     // The actor's dealing-closed edge. Bounded and `try_send`-driven: the actor
     // re-announces every open target on each height tick, so a full channel costs a
@@ -512,6 +494,77 @@ where
     // The write-back's two ends. They are NOT joined here — the hop between them
     // publishes the agreed key into the consensus layer's `BeaconKeys`, which does
     // not exist until that layer launches.
+    // The cross-epoch `epoch → PK_epoch` store. Opened HERE, not at the layer
+    // launch, and that reordering is what lets the agreement write-back be armed
+    // in place below instead of being handed out unjoined for the node to arm
+    // later (`BeaconWriteBack`, deleted with this change).
+    let (beacon_keys, key_writer) = super::key_journal::open(
+        context.with_label("key_journal"),
+        context.with_label("key_journal_writer"),
+        KEY_JOURNAL_PARTITION,
+    )
+    .await?;
+
+    // Shared `round → recovered seed` map for the Stage-2 beacon certify gate
+    // (`crate::beacon::certify`). The spec-exec reporter writes it (it already
+    // recovers the seed per notarization); each per-epoch `BeaconCertify`
+    // wrapper reads it, and the executor holds a clone for the speculative
+    // seed re-canonicalisation. Cross-epoch singleton — created BEFORE the
+    // executor (its first consumer below).
+    //
+    // The durable store is opened and REPLAYED here, ahead of the executor,
+    // `FluentApp` and every engine, so no consumer can observe a
+    // half-rehydrated store. It is a singleton with the store it backs: a
+    // second handle over the same partition would be a dual-writer, one of
+    // which prunes a blob the other still holds open.
+    //
+    // THE WRITER MUST OUTLIVE `engine.abort()`, or the drain that is supposed to
+    // flush its tail kills it instead. commonware supervision aborts a task's
+    // descendants, and descendancy is SPAWN LINEAGE, not label path: what dies
+    // with the engine task is what that task spawned from its OWN context.
+    // (Verified on the runtime, not assumed — `crates/node/src/dpos.rs` has the
+    // two-sided test, written that way because a one-sided version passed while
+    // the writer sat under a context labelled `outer_engine`.)
+    //
+    // Spawning here satisfies that trivially: `beacon::build` runs before any
+    // engine task exists and has no access to one, so no arrangement at the call
+    // site is required to keep the property. That is the improvement over the
+    // previous shape, which threaded a second `seed_writer_context` into
+    // `OuterBuilder::build` for the caller to get right.
+    //
+    // The label path DOES change: the families become `seed_journal_*` instead
+    // of `outer_engine_seed_journal_*`. Checked before moving — the devnet
+    // harness asserts the durable store from a LOG line, not from any journal
+    // metric, so nothing scrapes the old names.
+    let (seed_store, seed_writer) = {
+        use super::{certify::SEED_RETENTION, seed_journal::SeedJournal};
+        let journal = SeedJournal::init(
+            context.with_label("seed_journal"),
+            SEED_JOURNAL_PARTITION.to_string(),
+        )
+        .await
+        .map_err(|e| eyre::eyre!("opening the durable seed store: {e}"))?;
+        let rehydrated = journal
+            .replay_window(SEED_RETENTION)
+            .await
+            .map_err(|e| eyre::eyre!("replaying the durable seed store: {e}"))?;
+        info!(
+            entries = rehydrated.len(),
+            "rehydrated the seed store from disk"
+        );
+        let (seed_tx, seed_rx) = tokio::sync::mpsc::unbounded_channel();
+        let writer = super::seed_journal::spawn_writer(
+            context.with_label("seed_journal_writer"),
+            journal,
+            seed_rx,
+            SEED_RETENTION as u64,
+        );
+        (
+            super::certify::SeedStore::with_persistence(rehydrated, seed_tx),
+            writer,
+        )
+    };
+
     let (agreed_tx, agreed_rx) = mpsc::channel::<AgreedArtifact>(EDGE_MAILBOX);
     let (adopt_tx, artifacts_rx) = mpsc::channel::<AgreedArtifact>(EDGE_MAILBOX);
 
@@ -567,6 +620,7 @@ where
         logs,
         held_keys,
         pull_keys,
+        pull_artifact,
     } = open_artifact_seam(
         context,
         chain_id,
@@ -593,6 +647,16 @@ where
         })
     };
 
+    // The serving read the node's `consensus_getEpochArtifact` handler answers
+    // from. Re-encoded per call rather than kept as bytes beside the artifact:
+    // serving is a rare, off-path request (a follower asks once per epoch it
+    // lacks), and a second copy of every artifact in RAM to save it would be paid
+    // for on every node forever.
+    let artifact_bytes: ArtifactSource = {
+        let store = artifact_store.clone();
+        Arc::new(move |epoch: u64| store.get(epoch).map(|a| artifact::encode_artifact(&a)))
+    };
+
     // The persistent `DkgActor` — spawned ONCE, runs for the whole process. It is
     // constructed AFTER the plane has frozen the geometry, so it takes plain
     // `(activation, interval)` from the single in-plane source and never re-reads
@@ -608,7 +672,6 @@ where
         let actor_metrics = metrics.clone();
         let recorded = recorded_dkg_logs.clone();
         let confirms = confirm_pool.clone();
-        let targets = agreement_targets.clone();
         let logs = logs.clone();
         context.with_label("dkg_actor").spawn(move |c| async move {
             let Some((activation, interval)) = geometry.await else {
@@ -638,10 +701,12 @@ where
                 share_state,
                 Some(outcome_at),
             )
+            .with_committee_pair(committee_pair_for)
             .with_recorded_logs(recorded)
             .with_share_confirms(confirms)
-            .with_pinned_requests(pinned_rx, targets)
-            .with_agreement_plane(agreement_request_tx, artifacts_rx);
+            .with_pinned_requests(pinned_rx)
+            .with_agreement_plane(agreement_request_tx, artifacts_rx)
+            .with_artifact_pull(pull_artifact);
             actor.run(heights, c).await
         })
     };
@@ -662,7 +727,6 @@ where
             pinned_requests: pinned_tx,
             confirms: confirm_pool,
             metrics: metrics.clone(),
-            targets: agreement_targets,
             artifacts: artifact_store,
             committee: committee_source,
             mailbox_size: AGREEMENT_MAILBOX,
@@ -679,25 +743,70 @@ where
         agreement_intake_tx,
     );
 
+    // The agreement write-back, armed IN PLACE. It used to be handed out
+    // unjoined (`BeaconWriteBack`) for the node to arm after the consensus layer
+    // had created the key store; the store is created above now, so the two ends
+    // meet here and the arm-later dance is gone.
+    let write_back_handle = spawn_write_back(context, agreed_rx, adopt_tx, beacon_keys.clone());
+    // The replay is pushed AFTER the hop is spawned and not before, because this
+    // hop is the channel's only drain: a send issued first would deadlock on a
+    // store holding more records than the channel's depth.
+    if !replay.is_empty() {
+        info!(
+            epochs = replay.len(),
+            "beacon: replaying locally-stored agreement artifacts into the write-back"
+        );
+    }
+    for artifact in replay {
+        let epoch = artifact.0.target_epoch;
+        if agreed_tx.send(artifact).await.is_err() {
+            warn!(
+                epoch,
+                "beacon: the agreement write-back is gone; the artifact replay stopped"
+            );
+            break;
+        }
+    }
+
+    // Everything randomness-shaped, behind ONE handle. This is the only place
+    // where all of its inputs exist at once — the ceremony store, the frozen
+    // `dkgQual` arbiter, the key store, the seed store and the two agreement
+    // rungs — and none of them crosses back out.
+    let namespace = seed_namespace(&fluent_namespace(chain_id));
+    let randomness = super::surface::PlaneRandomness::build(
+        seed_store,
+        beacon_keys.clone(),
+        Some(super::resolve::BeaconVerify::new(
+            super::resolve::group_key_resolver(
+                ceremony_store.clone(),
+                dkg_qual_for.clone(),
+                beacon_keys.clone(),
+            ),
+            namespace.clone(),
+        )),
+        super::resolve::beacon_share_resolver(
+            ceremony_store.clone(),
+            dkg_qual_for.clone(),
+            namespace,
+            beacon_keys.clone(),
+        ),
+        Some(held_keys.clone()),
+        Some(pull_keys),
+        share_notify.clone(),
+        metrics.clone(),
+        chain_id,
+    );
+
     Ok(Beacon {
         dkg_handle,
         resolver_handle,
         agreement_launcher_handle,
+        write_back_handle,
         artifact_writer_handle,
+        key_writer_handle: key_writer,
+        seed_writer_handle: Some(seed_writer),
         agreement_intake,
-        write_back: BeaconWriteBack {
-            agreed_rx,
-            agreed_tx,
-            adopt_tx,
-            replay,
-        },
-        shared: BeaconShared {
-            ceremony_store,
-            share_notify,
-            dkg_qual_for,
-            held_keys,
-            pull_keys,
-            metrics,
-        },
+        randomness,
+        artifact_bytes,
     })
 }

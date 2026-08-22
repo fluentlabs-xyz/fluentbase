@@ -664,8 +664,12 @@ where
     /// mid-epoch verdict reach the committee it names. A keyless committee member ⇒
     /// [`ReadError::CommitteeMemberKeyless`] (on-chain invariant violation),
     /// never silently skipped. Empty / uncommitted epoch ⇒ a snapshot with
-    /// `validators: []`. A length mismatch across the four arrays ⇒
-    /// [`ReadError::AbiDecode`] (the contract returns equal-length arrays).
+    /// `validators: []`. `addrs`/`keys`/`tombstoned` must agree in length or ⇒
+    /// [`ReadError::AbiDecode`]; `stakes` is the ONE leg allowed to disagree,
+    /// and only by being EMPTY beside a non-empty `addrs` — the contract's way
+    /// of saying the weight ring has wrapped past this epoch, decoded as
+    /// `weights: None`. Any other `stakes` length is still
+    /// [`ReadError::AbiDecode`].
     ///
     /// This is the single site [`check_committee_ordering`] runs at, so every
     /// consumer inherits the index-space invariant through the one shared
@@ -1309,13 +1313,7 @@ mod tests {
     /// on `getEpochCommitteeWithStakes(uint64)` == `0xa4d160c1` while the two
     /// sides could still disagree about what comes back.
     ///
-    /// **The drift this test recorded is closed.** It used to say the contract
-    /// returned three arrays against the node's four, with no contract-side
-    /// source for the tombstone leg; the contract now returns four
-    /// (`consensus.rs`, `write_returns(sdk, &(validators, keys, stakes,
-    /// tombstoned))`), closed by `00fc3790`.
-    ///
-    /// What the test pins instead is the shape that actually ships, and the one
+    /// What the test pins is the shape that actually ships, and the one
     /// length disagreement that is now LEGAL: an empty `stakes` leg beside a
     /// non-empty `addrs` leg is how the contract says the weight ring has
     /// wrapped past the epoch. That has to decode, because the reader turns it

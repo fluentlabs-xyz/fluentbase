@@ -86,8 +86,9 @@ pub enum JumpOutcome {
     /// ceiling tripped, or a generic transport error) — NON-fatal: the
     /// steady-state caller retries on the next `Update::Tip` (the marshal inlet
     /// keeps storing frontier certs while contiguous dispatch is stalled). The
-    /// cold-start single-shot caller deliberately re-fuses this to fatal (see
-    /// [`crate::dpos::jump_landing_or_abort`]). A genuinely-INVALID served
+    /// cold-start single-shot caller re-attempts FOREVER on the [`EL_SYNC_TICK`]
+    /// cadence under `dpos_sync_degraded{reason=no_peers}` (see
+    /// `dpos::cold_start_jump_self_heal`). A genuinely-INVALID served
     /// branch is its own [`InvalidTarget`](JumpOutcome::InvalidTarget) variant,
     /// not folded in here — reth actually rendered a verdict on the branch,
     /// which is a different (and more actionable) condition than "no verdict
@@ -97,7 +98,7 @@ pub enum JumpOutcome {
     /// block.digest()`) — a SIGNATURE-FREE, attacker-controlled structural mismatch
     /// served PRE-anchor (`el_sync_calls == 0`, tested). NON-fatal (Rule S): the
     /// steady-state caller `rotate()`s to the next upstream URL (Phase 2); the
-    /// cold-start caller boots anyway (`jump_landing_or_abort` → `Ok(None)`).
+    /// cold-start caller boots anyway (`classify_jump_outcome` → `Ok(None)`).
     /// Distinct from `AuthFailed`, which is reserved for POST-sync
     /// committee-BLS / L1 `holds()` rejection (genuine equivocation on a block
     /// that canonicalized). Distinct from [`InvalidTarget`](JumpOutcome::InvalidTarget),
@@ -173,8 +174,8 @@ pub(crate) const EL_SYNC_TICK: Duration = Duration::from_secs(2);
 /// from retargeting reth's backfill so the `Valid` terminator actually fires), not
 /// this constant's precision.
 ///
-/// There is no cold-start retry above this path (a trip is fatal at cold-start via
-/// [`crate::dpos::jump_landing_or_abort`]), so oversizing (never false-killing a
+/// A trip yields `Stalled`, which `dpos::cold_start_jump_self_heal` re-attempts
+/// forever rather than failing, so oversizing (never false-killing a
 /// healthy sync) is the cheap failure direction; 6 h ≈ a day-and-change offline at
 /// 1 blk/s. A from-genesis, millions-of-blocks deep sync remains an out-of-scope
 /// ops antipattern (bootstrap from a state snapshot, NOT this path). (User sign-off
@@ -193,9 +194,9 @@ const EL_SYNC_BACKSTOP_CEILING: Duration = Duration::from_secs(6 * 60 * 60);
 const EL_SYNC_NO_PEERS_GRACE: Duration = Duration::from_secs(90);
 
 /// TERTIARY net: reth is CONNECTED (peers > 0) but its executed head does not
-/// advance for this long — the wedge signature observed in soak v43
-/// (bundle-20260718T140358Z): reth's pipeline Execution stage hit a re-execution
-/// divergence, unwound, marked the block a bad ancestor, and went idle answering
+/// advance for this long — the wedge signature observed in soak v43: reth's
+/// pipeline Execution stage hit a re-execution divergence, unwound, marked the
+/// block a bad ancestor, and went idle answering
 /// every FCU `SYNCING` FOREVER (never `Invalid`). The pre-existing nets do not
 /// catch it: the no-peers net never fires (peers stay ≥ 1) and the 6-h backstop
 /// leaves the node SILENTLY wedged for the whole run. Sized FAR below the backstop
@@ -921,6 +922,112 @@ where
     }
 }
 
+/// PIN — the prune configuration must keep the lookup [`RethElSync::holds`] reads.
+///
+/// `holds` resolves the L1 checkpoint through
+/// [`reth_storage_api::BlockNumReader::block_number`], which on the pinned fork is one read of
+/// the `HeaderNumbers` table (hash → number,
+/// `crates/storage/provider/src/providers/database/provider.rs:1807-1808`);
+/// [`assert_l1_checkpoint`] does the same. Neither has a fallback: if that lookup were ever
+/// pruned away, the post-EL-sync L1 trust-root re-assert would read `None` and the node would
+/// refuse a chain it is actually on.
+///
+/// Nothing in this workspace constructs a `PruneModes`. `bins/fluent` runs reth's own `Cli`, so
+/// the profile is whatever `--full` / `--minimal` / `--prune.*` produce (the devnet passes
+/// `--full`; `devnet/local-dpos-smoke/dpos_harness/stack/compose_gen.py`, `SIM_PRUNE_PROFILE`),
+/// and a reth bump that made headers prunable again would land with no call site in this repo to
+/// notice it. So the pin is taken where the property actually lives — over reth's prune surface
+/// itself, which every profile is a subset of:
+///
+///  * the `PruneModes` destructure has NO `..` rest pattern, so a new prunable field stops this
+///    crate's tests COMPILING until someone classifies it here;
+///  * every segment the pruner can be handed is swept against the tables it deletes.
+///    `reth_prune` builds its entire segment set by destructuring those same seven fields
+///    (`crates/prune/prune/src/segments/set.rs::from_components`), so the two halves cover the
+///    same surface from both directions.
+///
+/// This is deliberately not an assertion about a struct's shape: the per-segment table lists are
+/// reth's own (each segment's doc comment in `crates/prune/types/src/segment.rs` and its
+/// implementation under `crates/prune/prune/src/segments/user/`), and the test goes red the
+/// moment any configurable segment claims a table the hash → number resolution needs.
+///
+/// What it does NOT catch: an EXISTING segment whose implementation starts deleting
+/// `HeaderNumbers` under an unchanged name — the per-segment table lists here are a hand
+/// transcription, and reth cannot invalidate them. It fires on a new segment, a new
+/// `PruneModes` field, a rename, or a changed count.
+#[cfg(test)]
+mod prune_config_pin {
+    use reth_prune_types::{PruneModes, PruneSegment};
+
+    /// The tables the hash → number resolution lives in. `HeaderNumbers` is the one `holds`
+    /// reads; the other two are what the retired `PruneSegment::Headers` used to take with it,
+    /// kept here so an un-deprecation is caught by table name as well as by segment name.
+    const HASH_TO_NUMBER_TABLES: [&str; 3] = ["HeaderNumbers", "CanonicalHeaders", "Headers"];
+
+    /// What each configurable segment deletes, transcribed from reth's own segment docs and
+    /// implementations. The catch-all is the point of the function: a segment nobody has
+    /// classified is treated as a threat to the lookup, not waved through.
+    fn deleted_tables(segment: PruneSegment) -> &'static [&'static str] {
+        match segment {
+            PruneSegment::SenderRecovery => &["TransactionSenders"],
+            PruneSegment::TransactionLookup => &["TransactionHashNumbers"],
+            PruneSegment::Receipts | PruneSegment::ContractLogs => &["Receipts"],
+            PruneSegment::AccountHistory => &["AccountChangeSets", "AccountsHistory"],
+            PruneSegment::StorageHistory => &["StorageChangeSets", "StoragesHistory"],
+            PruneSegment::Bodies => &["Transactions"],
+            other => panic!(
+                "reth gained prune segment {other:?} and nothing here says which tables it \
+                 deletes. `cold_start_jump::holds` resolves its L1 checkpoint through \
+                 `HeaderNumbers` (hash -> number) and fails CLOSED when the lookup misses, so \
+                 the new segment has to be classified before this pin can pass again."
+            ),
+        }
+    }
+
+    #[test]
+    fn no_prune_configuration_can_drop_the_hash_to_number_lookup() {
+        // COMPILE-TIME half. `all()` is the most aggressive profile reth offers — a strict
+        // superset of `--full`. No `..`: a new prunable field breaks this line, and the fix is
+        // to classify the new segment in `deleted_tables`, never to widen the pattern.
+        let PruneModes {
+            sender_recovery: _,
+            transaction_lookup: _,
+            receipts: _,
+            account_history: _,
+            storage_history: _,
+            bodies_history: _,
+            receipts_log_filter: _,
+        } = PruneModes::all();
+
+        // RUNTIME half: every segment the pruner can be configured with, whatever profile
+        // selected it.
+        let mut swept = 0;
+        for segment in PruneSegment::variants() {
+            assert!(
+                !format!("{segment:?}").contains("Header"),
+                "reth exposes prune segment {segment:?} — a HEADER segment is configurable \
+                 again, and `cold_start_jump::holds` resolves its L1 checkpoint through the \
+                 header hash -> number lookup"
+            );
+            for table in deleted_tables(segment) {
+                assert!(
+                    !HASH_TO_NUMBER_TABLES.contains(table),
+                    "prune segment {segment:?} deletes `{table}`, which the hash -> number \
+                     resolution `cold_start_jump::holds` and `assert_l1_checkpoint` depend on. \
+                     A node on this prune profile would read `None` for a checkpoint it \
+                     actually holds and refuse its own chain."
+                );
+            }
+            swept += 1;
+        }
+        assert_eq!(
+            swept, 7,
+            "reth's configurable prune surface moved ({swept} segments, was 7) — re-read \
+             `crates/prune/types/src/segment.rs` and re-take this pin against the new set"
+        );
+    }
+}
+
 #[cfg(test)]
 mod watchdog_tests {
     use super::{
@@ -1573,9 +1680,9 @@ mod tests {
     /// A `sync_to` transport stall is classified `Stalled` (NON-fatal) — NOT a
     /// fatal `?`-propagated error. This is the steady-state transient-stall fix:
     /// the executor's completion arm keeps the loop running on `Stalled` and
-    /// retries on the next `Update::Tip`. (The cold-start `jump_landing_or_abort`
-    /// adapter deliberately re-fuses it to fatal; that mapping is tested in
-    /// `dpos.rs`.)
+    /// retries on the next `Update::Tip`. (The cold-start
+    /// `cold_start_jump_self_heal` adapter re-attempts it forever; that mapping
+    /// is tested in `dpos.rs`.)
     #[test]
     fn sync_to_stall_is_classified_stalled() {
         struct StallingElSync;
@@ -1625,7 +1732,7 @@ mod tests {
     /// classified `InvalidTarget`, a SEPARATE variant from both `Stalled` (no
     /// verdict at all) and `BadTarget` (whose `el_sync_calls == 0` invariant,
     /// asserted by `unverifiable_jump_target_is_bad_target_before_sync`, must
-    /// stay intact). `jump_landing_or_abort`'s cold-start mapping of
+    /// stay intact). `classify_jump_outcome`'s cold-start mapping of
     /// `InvalidTarget` to `Ok(None)` ("boots anyway") is tested in `dpos.rs`.
     #[test]
     fn sync_to_invalid_branch_is_classified_invalid_target() {

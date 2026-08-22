@@ -51,10 +51,21 @@ enum ByHeightSource {
     Window(CertWindow),
 }
 
+/// Where `consensus_getEpochArtifact` reads from: a narrow READ CLOSURE over the
+/// beacon's artifact store, never the store itself. `beacon::build`'s contract is
+/// that the store does not cross back out to the node, so the beacon hands out
+/// this one capability instead — see [`fluentbase_consensus::beacon::ArtifactSource`].
+///
+/// A validator's comes off its beacon plane; a follower's off the store its own
+/// key-delivery rung fills, which is what lets a follower serve a tier-2 follower
+/// exactly as it already serves `getFinalization` out of its cert window.
+pub use fluentbase_consensus::beacon::ArtifactSource;
+
 #[derive(Clone)]
 pub struct FeedStateHandle {
     state: Arc<RwLock<FeedState>>,
     source: Arc<RwLock<Option<ByHeightSource>>>,
+    artifacts: Arc<RwLock<Option<ArtifactSource>>>,
     events_tx: broadcast::Sender<Event>,
 }
 
@@ -66,8 +77,17 @@ impl FeedStateHandle {
         Self {
             state: Arc::new(RwLock::new(FeedState::default())),
             source: Arc::new(RwLock::new(None)),
+            artifacts: Arc::new(RwLock::new(None)),
             events_tx,
         }
+    }
+
+    /// Wire the epoch-artifact read closure (validator: its beacon plane's store;
+    /// follower: the store its own key-delivery rung fills). Until this runs,
+    /// `consensus_getEpochArtifact` answers `ServiceUnavailable` — the same
+    /// not-ready shape the by-height source uses before `set_marshal`.
+    pub fn set_artifact_source(&self, artifacts: ArtifactSource) {
+        *self.artifacts.write().expect("artifact source poisoned") = Some(artifacts);
     }
 
     /// Wire the marshal mailbox (node-side, once `DposLayer::launch` returns it).
@@ -171,6 +191,22 @@ impl FeedStateHandle {
                 }
             }
         }
+    }
+
+    /// `consensus_getEpochArtifact`: the wire bytes of the artifact minted at
+    /// `epoch`, or `Missing` where this node holds none — which is the normal
+    /// answer for most of an epoch, not a fault.
+    ///
+    /// Snapshot the closure under the lock and call it OUTSIDE, the same
+    /// discipline `get_finalization` follows: the read is a store lookup plus a
+    /// re-encode, and holding a std `RwLock` across it would block the swap and
+    /// every other reader.
+    pub async fn get_epoch_artifact(&self, epoch: u64) -> Result<Vec<u8>, FeedError> {
+        let source = {
+            let guard = self.artifacts.read().expect("artifact source poisoned");
+            guard.as_ref().ok_or(FeedError::NotReady)?.clone()
+        };
+        source(epoch).ok_or(FeedError::Missing)
     }
 }
 

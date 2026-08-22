@@ -38,11 +38,14 @@ containers a per-case overlay added, which is why the bare `down` is sufficient.
 
 from __future__ import annotations
 
+import json
 import os
+import time
 
 from . import dataroot
 from .profiles import StaticProfile
-from ..core import converge, lifecycle, nodes, proc, topology
+from ..core import converge, lifecycle, nodes, proc, rpc, topology
+from ..core.chainpaced import ChainPaced
 from ..core.converge import ConvergeError
 
 #: `lib.sh:494` / `:447` — phase-A and flush-retry converge budget.
@@ -50,8 +53,33 @@ SEQUENCER_CONVERGE_S = 90
 #: `lib.sh:496` — post-swap converge budget. The DPoS cold start at a high anchor needs longer
 #: than the sequencer, which converges in seconds.
 DPOS_CONVERGE_S = 120
-#: `lib.sh:428` — how long the sequencer gets to finalize up to the activation block.
-ACTIVATION_WAIT_S = 180
+#: The activation wait is CHAIN-PACED, not wall-clock — see `_wait_activation`. These two
+#: constants are what is left of `lib.sh:428`'s `wait_finalized_ge "$ACT" 180`.
+#:
+#: WHY THE SECONDS WENT AWAY. The old budget was 180 wall-clock seconds to finalize up to
+#: `dposActivationBlock`, and it was only ever survivable because the sequencer paced at 250 ms
+#: (4 blocks/s made even a 256-block runway a 64 s job). That pacing is exactly what put chain
+#: time ahead of real time and stalled the post-swap chain — `docker-compose.yml`'s
+#: `--validator.block-time` carries the mechanism — so the sequencer now paces at 1 blk/s, one
+#: block per wall-clock second, and 180 s would cap the reachable activation block at ~180.
+#: The default (64) and the interval-64 family (128) would still fit; interval 96 (192) and
+#: 128 (256) would not, and the failure would read as "the interval does not boot" all over
+#: again, one interval further out. A budget denominated in the thing that actually has to
+#: happen — blocks — does not have that failure mode at ANY interval.
+#:
+#: Same primitive the sim/soak bring-up uses for the same wait (`stack/bringup.py:443`).
+
+#: Slack, in blocks, added to `activation - tip` so the budget is not exactly the distance:
+#: absorbs the finalize lag behind the tip plus the first blocks lost to node boot. One epoch
+#: interval, so it scales with the case's genesis instead of being a literal.
+ACTIVATION_SLACK_INTERVALS = 1
+#: Consecutive UNREADABLE cursor polls before the wait gives up. The chain-paced primitive
+#: tolerates a read failure forever by design (it is "an RPC problem, NOT a missed condition"),
+#: which is right for a transient blip and a hang for a dead RPC. 60 polls at `ALIGN_POLL_S` =
+#: ~60 s of an unanswering sequencer — and by this point in the choreography the stack has
+#: already passed `wait_converge`, so the RPC has answered at least once. It fails with the
+#: read-failure message rather than blaming the chain for being slow.
+ACTIVATION_READ_FAIL_POLLS = 60
 #: `lib.sh:434` — flush attempts. The 4th does not retry; it reports.
 FLUSH_ATTEMPTS = 4
 #: `lib.sh:436` — graceful stop timeout. Long enough for reth's `on_graceful_shutdown` to
@@ -248,6 +276,50 @@ class StaticStack:
         dataroot.data_root_wipe(self.p)
 
     # -- migration sub-steps ----------------------------------------------------------
+    def _tip_dec(self):
+        """The BLOCKS-domain cursor: the sequencer's speculative tip (`eth_blockNumber`) at the
+        pinned host RPC, or None when it cannot be read.
+
+        NOT `nodes.head_dec()`, which coerces an unreachable RPC to 0. That sentinel is fine for
+        a `>= target` poll and poison for a cursor: latched as the entry value it would make the
+        first real reading look like hundreds of blocks of progress and spend the whole budget in
+        one step. `None` routes to the primitive's `read_fail` verdict instead, which is what an
+        unreadable RPC actually is.
+
+        The tip, not `finalized`, deliberately. The CONDITION is on finalized; if the cursor were
+        finalized too the budget could never be exceeded before the condition was met, and the
+        wait would degenerate into "poll forever unless the head ages out".
+        """
+        out = rpc.rpc_post_url(nodes.RPC, rpc.rpc_body("eth_blockNumber"))
+        try:
+            res = json.loads(out).get("result")
+        except Exception:
+            return None
+        if not isinstance(res, str) or not res.startswith("0x"):
+            return None
+        return nodes.hex_to_dec(res)
+
+    def _tip_age_s(self):
+        """Wall seconds since the tip block's timestamp — the primitive's chain-frozen escape.
+        None when unreadable, which correctly disarms the escape rather than declaring a freeze.
+
+        Reads as a signed value on purpose. It can legitimately go NEGATIVE if the sequencer is
+        ever paced below 1 blk/s again (chain time then runs ahead of the wall clock — see
+        `docker-compose.yml`'s `--validator.block-time`), and a negative age simply never trips
+        the `>= froz` comparison, which is the right answer: a chain running ahead is not frozen.
+
+        Over the same JSON-RPC transport as `_tip_dec` rather than through `cast block` — one
+        subprocess per poll for a number the RPC already hands back is not worth paying for.
+        """
+        out = rpc.rpc_post_url(nodes.RPC,
+                               rpc.rpc_body("eth_getBlockByNumber", ["latest", False]))
+        try:
+            ts = json.loads(out)["result"]["timestamp"]
+        except Exception:
+            return None
+        ts = nodes.hex_to_dec(ts)
+        return int(time.time()) - ts if ts else None
+
     def _wait_activation(self) -> None:
         """Wait until the sequencer finalizes >= the activation block, so the swap anchor lands
         in RELATIVE EPOCH 0 (lib.sh:416-433).
@@ -257,27 +329,63 @@ class StaticStack:
         `activation + interval` the cold-start epoch would be >= 1 and re-hit the empty-marshal
         genesis lookup. This waits for the lower bound; `_assert_anchor_in_epoch_zero` enforces
         the upper one after the flush retries, which are what can overshoot it.
+
+        CHAIN-PACED, and that is the part worth reading. The budget is `activation - tip` blocks
+        of OBSERVED TIP PROGRESS plus one interval of slack — not a fixed number of seconds. The
+        seconds version was `wait_finalized_ge(act, 180)`, and it was survivable only because the
+        sequencer paced at 250 ms; with the sequencer back at 1 blk/s (the pacing fix, see
+        `ACTIVATION_SLACK_INTERVALS` and `docker-compose.yml`) a 180 s budget would cap the
+        reachable activation block at ~180 and re-file the same failure as "interval 128 does not
+        boot". Blocks are the unit the condition is actually written in, so the budget is too.
+
+        Three distinguishable failures, which the seconds version collapsed into one:
+          * `budget` — the chain produced the agreed blocks and finalize never reached `act`;
+          * `frozen` — the tip stopped advancing at all (head aged past `froz`);
+          * read failure — the RPC stopped answering; tolerated transiently, fatal if persistent.
         """
         act = self.profile.activation_block
         print(f"waiting for the sequencer to finalize >= dposActivationBlock={act} "
               "(relative epoch 0)", flush=True)
         if self._dry():
             return
-        if converge.wait_finalized_ge(act, ACTIVATION_WAIT_S):
-            # Re-read the height purely for the message. Bash has it in hand from its own poll
-            # (`$_fin_dec`, lib.sh:424) and printing it is what makes the line useful — how far
-            # past activation the anchor will sit is the first thing anyone asks when the
-            # epoch-0 window check below rejects it.
-            print(f"  sequencer finalized {converge.finalized_dec_pinned()} >= activation "
-                  f"{act}; proceeding to swap", flush=True)
-            return
-        print(f"FAIL: sequencer did not reach dposActivationBlock={act} within "
-              f"{ACTIVATION_WAIT_S}s", flush=True)
+
+        cp = ChainPaced(block_number=self._tip_dec, head_age_s=self._tip_age_s)
+        tip0 = self._tip_dec() or 0
+        budget = max(act - tip0, 0) + self.profile.epoch_interval * ACTIVATION_SLACK_INTERVALS
+        print(f"  chain-paced: {budget} blocks of tip progress from tip={tip0}", flush=True)
+
+        read_fails = 0
+        while True:
+            met = 1 if converge.finalized_dec_pinned() >= act else 0
+            verdict = cp.step("activation", met, "blocks", budget)
+            if verdict == "met":
+                # Re-read the height purely for the message. Bash has it in hand from its own
+                # poll (`$_fin_dec`, lib.sh:424) and printing it is what makes the line useful —
+                # how far past activation the anchor will sit is the first thing anyone asks when
+                # the epoch-0 window check below rejects it.
+                print(f"  sequencer finalized {converge.finalized_dec_pinned()} >= activation "
+                      f"{act}; proceeding to swap", flush=True)
+                return
+            if verdict == "read_fail":
+                read_fails += 1
+                if read_fails >= ACTIVATION_READ_FAIL_POLLS:
+                    why = (f"the sequencer RPC was unreadable for {read_fails} consecutive polls "
+                           "— an RPC/read failure, NOT a slow chain")
+                    break
+                time.sleep(converge.ALIGN_POLL_S)
+                continue
+            read_fails = 0
+            if verdict in ("budget", "frozen"):
+                why = (f"chain-paced '{verdict}' ({cp.detail}); finalized "
+                       f"{converge.finalized_dec_pinned()}")
+                break
+            time.sleep(converge.ALIGN_POLL_S)
+
+        print(f"FAIL: sequencer did not reach dposActivationBlock={act}: {why}", flush=True)
         self.dump_logs(LOG_TAIL_SEQUENCER)
         self.tear_down()
         raise ConvergeError("activation-wait",
-                            f"sequencer did not reach dposActivationBlock={act} within "
-                            f"{ACTIVATION_WAIT_S}s")
+                            f"sequencer did not reach dposActivationBlock={act}: {why}")
 
     def _flush_gate(self) -> str:
         """Graceful-stop the committee and verify every node persisted. Returns the anchor

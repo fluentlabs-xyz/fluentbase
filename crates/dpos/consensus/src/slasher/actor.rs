@@ -60,10 +60,8 @@ use std::{
 use tokio::sync::{mpsc, Mutex as TokioMutex};
 use tracing::{debug, error, info, instrument, warn};
 
-// ===========================================================================
 // CONTRACT ABI DELTA — MERGE CHECKLIST (canonical copy; last verified
 // 2026-08-14 against BOTH the committed branch source AND the deployed artifact)
-// ===========================================================================
 //
 // READ THIS PARAGRAPH BEFORE THE TABLE. An earlier draft of this block had the
 // conclusion exactly backwards, and the correction is the useful part.
@@ -103,7 +101,6 @@ use tracing::{debug, error, info, instrument, warn};
 // declaration the production code calls through validates the code against
 // itself and can never catch a rename.
 //
-// ---------------------------------------------------------------------------
 // 1-3. The three slash entry points (declared immediately below).
 //
 //   node     slashEquivocationNotarize(bytes,bytes,bytes,bytes)        0xe28d2f63
@@ -130,7 +127,6 @@ use tracing::{debug, error, info, instrument, warn};
 //   helper_extract_then_abi_encode_matches_pinned_calldata` and
 //   `tests/slasher_integration.rs::slash_abi_selectors_are_pinned`.
 //
-// ---------------------------------------------------------------------------
 // 4. The equivocation VERDICT syscall — `crates/node/src/evm.rs`.
 //
 //   node               slashEquivocation(uint64,uint32)                0xdc6fb3f2
@@ -146,7 +142,6 @@ use tracing::{debug, error, info, instrument, warn};
 //   back, or the node's soft-fail becomes loud, before (b) merges.
 //   Pinned by: `crates/node/src/evm.rs::tests::slash_equivocation_calldata_is_pinned`.
 //
-// ---------------------------------------------------------------------------
 // 5. Return arity — `crates/dpos/staking-reader/src/reader.rs`.
 //
 //   selector matches on both sides (return types do not enter a selector), so
@@ -166,8 +161,6 @@ use tracing::{debug, error, info, instrument, warn};
 //   dropping it means finding another carrier for the tombstone.
 //   Pinned by: `reader.rs::tests::view_selectors_are_pinned` (selector) and
 //   `reader.rs::tests::epoch_committee_return_arity_is_pinned` (shape).
-//
-// ===========================================================================
 
 // Solidity ABI bindings for the three slash entry points. This `sol!` is the
 // ONE declaration the production encoder and the tests both go through — the
@@ -628,8 +621,11 @@ impl VoteStore {
 /// verifier-flavored (`beacon = None`): `verify_attestation`'s
 /// `_ => combined.seed.is_none()` arm rejects a present seed. Vote-only adds
 /// nothing for submission even when the full scheme is available (the seed
-/// never reaches the chain) and matches the committee stale-fallback window
-/// (schemes prune ~8 deep, committees survive `undelegatePeriod + 8`).
+/// never reaches the chain), and rebuilding the verifier from the committee's
+/// own `bimap` means the gate depends on no registered per-epoch scheme:
+/// `resolve_committee` reads the frozen committee for ANY epoch off the latest
+/// finalized head, so a charge stays verifiable after the local schemes for its
+/// epoch have been pruned.
 ///
 /// Structural invariants are NOT re-checked here — `Conflicting*::new`
 /// asserted them at assembly.

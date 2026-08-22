@@ -432,26 +432,76 @@ def test_dump_logs_is_a_noop_under_dry(monkeypatch, capsys):
 
 # ══ the activation wait ════════════════════════════════════════════════════
 
-def test_activation_wait_polls_to_the_activation_block(monkeypatch):
+def _activation_wait_stack(monkeypatch, tips, fins):
+    """A live stack with the activation wait's two seams driven from lists: `tips` feeds the
+    blocks-domain cursor (`_tip_dec`) and `fins` the condition (`finalized_dec_pinned`). Both
+    hold their LAST value once exhausted, so a test states only the interesting prefix."""
     stack, _ = _live_stack(monkeypatch)
-    seen = []
-    monkeypatch.setattr(static_stack.converge, "wait_finalized_ge",
-                        lambda target, timeout: seen.append((target, timeout)) or True)
-    stack._wait_activation()
-    assert seen == [(64, static_stack.ACTIVATION_WAIT_S)]
+    monkeypatch.setattr(static_stack.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(stack, "_tip_age_s", lambda: 0)
 
+    def _pop(seq):
+        v = seq[0]
+        if len(seq) > 1:
+            seq.pop(0)
+        return v
 
-def test_activation_wait_fails_loud_and_tears_down(monkeypatch):
-    """`lib.sh:428-431`. A sequencer that never reaches the activation block cannot produce a
-    valid anchor, so continuing would cold-start every node into a fail-loud."""
-    stack, _ = _live_stack(monkeypatch)
-    monkeypatch.setattr(static_stack.converge, "wait_finalized_ge", lambda *a, **k: False)
+    monkeypatch.setattr(stack, "_tip_dec", lambda: _pop(tips))
+    monkeypatch.setattr(static_stack.converge, "finalized_dec_pinned", lambda: _pop(fins))
     torn = []
     monkeypatch.setattr(stack, "tear_down", lambda: torn.append(1))
     monkeypatch.setattr(stack, "dump_logs", lambda *a: None)
+    return stack, torn
+
+
+def test_activation_wait_is_paced_in_blocks_not_seconds(monkeypatch, capsys):
+    """The budget is `activation - tip` blocks of observed tip progress plus one interval of
+    slack — the whole point of the chain-paced rewrite. A wall-clock budget is what capped the
+    reachable activation block and got read as "interval 128 does not boot"
+    (`verdicts_onchain.CATCHUP_EPOCH_INTERVAL`); asserting the printed budget is what keeps the
+    unit honest, because a regression to seconds would still pass a "did it return" test."""
+    stack, _ = _activation_wait_stack(monkeypatch, tips=[10, 20, 70], fins=[5, 30, 64])
+    stack._wait_activation()
+    out = capsys.readouterr().out
+    # act 64, tip0 10, interval 32 -> (64-10) + 32
+    assert "chain-paced: 86 blocks of tip progress from tip=10" in out
+    assert ">= activation 64; proceeding to swap" in out
+
+
+def test_activation_wait_fails_on_budget_and_tears_down(monkeypatch):
+    """`lib.sh:428-431`. A sequencer that never reaches the activation block cannot produce a
+    valid anchor, so continuing would cold-start every node into a fail-loud. The chain made the
+    agreed progress and finalize never arrived — an honest `budget` verdict, not a timeout.
+
+    The tip must ADVANCE across two polls for this to be reachable: the primitive latches its own
+    entry cursor on its first measurable call, which is the poll AFTER the one the budget was
+    sized from. A fixture that returns one constant tip never advances, and the wait would spin
+    forever instead of failing — which is exactly what this test did before it was fixed."""
+    stack, torn = _activation_wait_stack(monkeypatch, tips=[10, 20, 500], fins=[5])
     with pytest.raises(converge.ConvergeError) as ei:
         stack._wait_activation()
     assert ei.value.reason_id == "activation-wait" and torn == [1]
+    assert "budget" in str(ei.value)
+
+
+def test_activation_wait_names_a_dead_rpc_as_a_read_failure(monkeypatch):
+    """An unreadable cursor is NOT a slow chain, and the primitive tolerates it forever by
+    design — which is a hang, not a diagnosis. The wait bounds it in POLLS and says which of the
+    two happened, so nobody re-tunes a budget because the RPC died."""
+    stack, torn = _activation_wait_stack(monkeypatch, tips=[None], fins=[5])
+    with pytest.raises(converge.ConvergeError) as ei:
+        stack._wait_activation()
+    assert torn == [1] and "unreadable" in str(ei.value)
+
+
+def test_activation_wait_fails_on_a_frozen_tip(monkeypatch):
+    """A tip that stops advancing altogether must not sit out the whole block budget: the
+    chain-frozen escape ends it early and attributes it to the freeze."""
+    stack, torn = _activation_wait_stack(monkeypatch, tips=[10], fins=[5])
+    monkeypatch.setattr(stack, "_tip_age_s", lambda: 999)
+    with pytest.raises(converge.ConvergeError) as ei:
+        stack._wait_activation()
+    assert torn == [1] and "frozen" in str(ei.value)
 
 
 # ══ teardown ═══════════════════════════════════════════════════════════════

@@ -28,14 +28,14 @@ the ordered dispatch. The sim's `sim/state_ctx.py` is the adapter that builds bo
 SimState. Classification (derived and enforced by tests/test_checks_context.py — a detector
 that starts reading sim state must MOVE to Battery, and one that stops must move up):
 
-  CHAIN-ONLY — 26 of 30, reusable by a non-simulation consumer (on ChainBattery)
-    data-root-fill, host-mem, rpc-alive, node-panic, safety-halt, witness-counters,
-    dkg-pinned-idx, beacon-active, finalize-stall, klag, deferred-park, witness-embedded,
-    witness-watch, dkg-finalize-deferred, exec-saturation, block-rate, spec-head, seed-round,
-    beacon-window, result-agreement, finalized-chain, member-liveness, battery-coverage,
-    peer-plane, cascade-liveness, write-path
+  CHAIN-ONLY — 27 of 31, reusable by a non-simulation consumer (on ChainBattery)
+    data-root-fill, host-mem, rpc-alive, node-panic, safety-halt, finalize-apply,
+    witness-counters, dkg-pinned-idx, beacon-active, finalize-stall, klag, deferred-park,
+    witness-embedded, witness-watch, dkg-finalize-deferred, exec-saturation, block-rate,
+    spec-head, seed-round, beacon-window, result-agreement, finalized-chain, member-liveness,
+    battery-coverage, peer-plane, cascade-liveness, write-path
 
-  SIM-COUPLED — 4 of 30, by nature: they judge the harness's own churn (on Battery)
+  SIM-COUPLED — 4 of 31, by nature: they judge the harness's own churn (on Battery)
     node-down             — needs the spare-band / idle-rotation-slot predicate
     dkg-commit-binding    — needs the seat + refill state machine
     wrongful-slash        — needs EVER_FAULTED to tell a wrongful jail from an expected one
@@ -152,12 +152,12 @@ class Ctx(_StrictCtx):
 # ── the SIM context: churn bookkeeping only the simulation can produce ───────
 class SimCtx(_StrictCtx):
     """The simulation's own churn bookkeeping. A non-simulation consumer has none of this and
-    should not have to fake it: it drives the five SIM-COUPLED detectors and nothing else.
+    should not have to fake it: it drives the four SIM-COUPLED detectors and nothing else.
 
     Every field here answers a question only the thing DOING the churn can answer — which
     identity a container is currently hosting, which faults this harness caused, which seat is
     mid-refill. That is why these detectors are sim-coupled by nature rather than by accident,
-    and why the split is 27/5 instead of 32/0."""
+    and why the split is 27/4 instead of 31/0."""
 
     def __init__(self, **kw):
         # identity-pool bookkeeping
@@ -851,6 +851,47 @@ class ChainBattery:
                         f"{hn} raised SafetyHalt dpos_sync_degraded{{reason={hr}}}={hv} — "
                         "the node PARKED refusing the chain (fork-safety latch, SAFETY). A "
                         "correct-minority halt this battery used to run GREEN on.")
+        return True
+
+    # ── executor re-apply wedge (finalize_apply, HARD) ──────────────────────
+    def _inv_finalize_apply(self):
+        """dpos_sync_degraded{reason="finalize_apply"} MUST be 0. The executor raises it while its
+        re-apply loop (re-derive + import + FCU) cannot get a FINALIZED derived block made
+        canonical — a dropped import or a SYNCING FCU — and it retries INSIDE that loop. The node
+        goes on participating in consensus while its own finalized cursor is frozen.
+
+        IT IS THE ONLY OBSERVABLE FOR THAT WEDGE, which is why it gets a detector of its own
+        instead of being left to the liveness belts. The lag gauges do not climb here, they
+        FREEZE: the actor is blocked inside the loop, so nothing advances the tip it measures
+        against, and a growing-lag alert can never fire. `finalize-stall` cannot see it either —
+        it judges nodes.finalized_dec, the MAX across the running containers, so one wedged node
+        stays invisible while the rest of the committee finalizes over it.
+
+        Read per node off the shared per-tick SIM_SCRAPE_TEXT (commonware :9100), skipping a
+        node whose scrape came back empty. No sampling floor — and note this is NOT the same
+        situation as `_inv_safety_halt` above, which samples a LATCHED state that never clears.
+        `finalize_apply` is raised on the first lap of the re-apply loop and recovered the moment
+        the EL serves the hash, so a single scrape can land inside a self-healing lap. It is
+        beltless deliberately: the pre-loop verdict gate already excludes the finalized-tier
+        case, so any lap of that loop is an already-diverged state we want to see immediately.
+        Absent series read healthy because the gauge family is emitted LAZILY (a `reason` label
+        appears only once its loop has run)."""
+        for fn in self.SIM_SCRAPE_NODES:
+            ftext = self.SIM_SCRAPE_TEXT.get(fn, "")
+            if not ftext:
+                continue
+            fv = self._metric_val(ftext, "dpos_sync_degraded", 'reason="finalize_apply"')
+            if fv and _num(fv) >= 1:
+                return self._inv_fail(
+                    "finalize-apply-degraded",
+                    f"{fn} raised dpos_sync_degraded{{reason=finalize_apply}}={fv} — the "
+                    "executor's re-apply loop cannot make a FINALIZED derived block canonical "
+                    "and is spinning inside it. The node keeps voting in consensus while its "
+                    "finalized cursor is FROZEN, and the lag gauges freeze WITH it (the blocked "
+                    "actor never advances the tip it measures against), so no growing-lag "
+                    "detector can fire and finalize-stall reads the max across nodes. This gauge "
+                    "is the only observable — grep the node for target dpos::executor and the "
+                    "re-apply retry")
         return True
 
     # ── witness counters (§9 hard zeros) ────────────────────────────────────
@@ -1847,15 +1888,14 @@ class ChainBattery:
 
 
 class Battery(ChainBattery):
-    """The FULL battery: the 27 chain-only detectors inherited from ChainBattery plus the 5
+    """The FULL battery: the 27 chain-only detectors inherited from ChainBattery plus the 4
     that are sim-coupled BY NATURE, and the ordered dispatch that runs them.
 
-    The five below cannot be written without simulation state and pretending otherwise would
+    The four below cannot be written without simulation state and pretending otherwise would
     be dishonest: wrongful-slash has to know which faults THIS harness caused (EVER_FAULTED)
     to tell a wrongful jail from an expected one; node-down has to know which container is a
     deliberately-idle rotation slot; the dkg-commit and committee-membership detectors judge
-    the seat/refill machine; fair-credit resolves a seated address back to a pool identity
-    through OWNER_ADDR_CACHE.
+    the seat/refill machine.
 
     They read `self.sim`, which exists ONLY on this class. A chain-only detector that reaches
     for simulation state therefore breaks on ChainBattery — the class a non-simulation
@@ -2221,6 +2261,8 @@ class Battery(ChainBattery):
         if not self._inv_committee_membership():
             return False
         if not self._inv_safety_halt():
+            return False
+        if not self._inv_finalize_apply():
             return False
         if not self._inv_witness_counters():
             return False

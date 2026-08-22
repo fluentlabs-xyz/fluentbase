@@ -5660,6 +5660,7 @@ dependencies = [
  "reth-payload-builder",
  "reth-payload-primitives",
  "reth-primitives-traits",
+ "reth-prune-types",
  "reth-storage-api",
  "thiserror 2.0.18",
  "tokio",

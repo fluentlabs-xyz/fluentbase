@@ -20,9 +20,9 @@ use alloy_rpc_types_engine::{
     ForkchoiceState, ForkchoiceUpdated, PayloadStatus, PayloadStatusEnum,
 };
 use crossbeam_channel::Sender;
-use fluentbase_consensus::{BeaconEngineLike, TransportError};
+use fluentbase_consensus::{BeaconEngineLike, EngineError};
 use reth_chain_state::{ComputedTrieData, ExecutedBlock};
-use reth_engine_primitives::ConsensusEngineHandle;
+use reth_engine_primitives::{BeaconForkChoiceUpdateError, ConsensusEngineHandle};
 use reth_engine_tree::engine::{EngineApiRequest, FromEngine};
 use reth_ethereum_engine_primitives::EthEngineTypes;
 use reth_ethereum_primitives::EthPrimitives;
@@ -75,20 +75,41 @@ impl BeaconEngineLike for RethImporter {
     async fn fork_choice_updated(
         &self,
         state: ForkchoiceState,
-    ) -> Result<ForkchoiceUpdated, TransportError> {
-        // The engine-handle send error is a TRANSPORT failure; the FCU verdict
-        // (incl. `Invalid`) rides in the `Ok`. This is the concrete-error → typed
-        // taxonomy boundary: the display is captured HERE, next to the reth type.
+    ) -> Result<ForkchoiceUpdated, EngineError> {
+        // The FCU verdict (incl. `Invalid`) rides in the `Ok`. The `Err` half is
+        // the concrete-error → typed taxonomy boundary — and it is NOT one class:
+        // reth's error enum mixes "the engine never saw this request" with "the
+        // engine saw it and rejected the forkchoice STATE we named", which have
+        // opposite dispositions.
         self.engine
             .fork_choice_updated(state, None)
             .await
-            .map_err(TransportError::new)
+            .map_err(|error| match error {
+                // reth PROCESSED the update and refused the state: the head hash
+                // was zero, or it cannot find our `finalized`/`safe` hash in its
+                // own canonical chain (engine/tree/src/tree/mod.rs
+                // `validate_forkchoice_state` / `update_finalized_block` /
+                // `update_safe_block` → `OnForkChoiceUpdated::invalid_state`).
+                // That is a structurally PERMANENT local condition: every retry
+                // re-sends the same unresolvable hashes. Classified
+                // `Corruption` — loud actor death, latch NOT engaged — rather
+                // than fork-safety, because it says this node's own anchor
+                // disagrees with this node's own EL, not that the network
+                // disagrees with the chain. It reached the executor as a
+                // transport error before, i.e. it was retried forever.
+                BeaconForkChoiceUpdateError::ForkchoiceUpdateError(inner) => {
+                    EngineError::anchor_inconsistent(format_args!(
+                        "reth rejected the forkchoice state: {inner}"
+                    ))
+                }
+                // The engine task is gone / an internal reth error swallowed the
+                // request: no verdict was rendered, so retrying is honest.
+                // Deliberately NOT collapsed with the arm above.
+                other => EngineError::transport(other),
+            })
     }
 
-    async fn import_derived(
-        &self,
-        data: DerivedExecution,
-    ) -> Result<PayloadStatus, TransportError> {
+    async fn import_derived(&self, data: DerivedExecution) -> Result<PayloadStatus, EngineError> {
         let executed = ExecutedBlock::new(
             Arc::new(data.recovered),
             Arc::new(data.output),
@@ -105,7 +126,7 @@ impl BeaconEngineLike for RethImporter {
             // A closed tree channel is a TRANSPORT failure — same class as
             // the FCU's engine-handle error. The executor degrades + defers
             // to reconvergence instead of actor-death (Decision A).
-            .map_err(|_| TransportError::new("engine tree channel closed"))?;
+            .map_err(|_| EngineError::transport("engine tree channel closed"))?;
         // The insert is fire-and-forget into the tree's FIFO; the FCU
         // that follows it (same FIFO) surfaces any rejection.
         Ok(PayloadStatus::from_status(PayloadStatusEnum::Valid))

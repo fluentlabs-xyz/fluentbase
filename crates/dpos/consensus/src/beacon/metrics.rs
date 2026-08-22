@@ -3,10 +3,22 @@
 //! which lands on reth's registry and is invisible there).
 //!
 //! A single [`BeaconMetrics`] is created + registered once in `dpos.rs::launch`
-//! (against the launch context) and cloned into the executor (`seed_active` /
-//! `digest_fallback`), the DKG actor (`dkg_ceremony_ok` / `dkg_ceremony_fail`), and
-//! each per-epoch engine (the demote counters). Each metric is `Arc`-backed, so the
-//! struct is cheap to clone and every clone shares one counter.
+//! (against the launch context) and cloned into the DKG actor, the agreement
+//! plane and the randomness provider. Each metric is `Arc`-backed, so the struct
+//! is cheap to clone and every clone shares one counter.
+//!
+//! This struct holds ONLY the families the randomness subsystem owns. Two groups
+//! that used to live here have moved to their real owners, keeping their family
+//! names byte-identical:
+//!
+//! - [`crate::epoch_manager::EpochEngineMetrics`] — the membership /
+//!   `Inline::genesis` counters, which are facts about the core's spawn decision
+//!   and survive a randomness implementation that has no DKG at all.
+//! - [`crate::executor::ExecutorMetrics`] — the per-derived-block seed
+//!   observation, incremented by the executor on BOTH node classes.
+//!
+//! Exactly one owner registers each family per node class; the split is what
+//! keeps the core from having to name a beacon type to count its own spawns.
 
 use commonware_runtime::Metrics;
 use prometheus_client::metrics::counter::Counter;
@@ -14,14 +26,6 @@ use prometheus_client::metrics::counter::Counter;
 /// Beacon counters. See the module docs for the registration + clone topology.
 #[derive(Clone, Debug, Default)]
 pub struct BeaconMetrics {
-    /// A block's `prev_randao` was the verified threshold seed (`assurance=true`).
-    pub seed_active: Counter,
-    /// A beacon-active block fell back to `order.digest()` (seed absent or failed
-    /// σ-verify vs `PK_E`). The Stage-2 certify hook Nullifies a beacon-active
-    /// boundary before it finalizes, so this counts the LOCAL pre-Nullify observation
-    /// on a node that derived ahead of the Nullify; smoke D1 asserts it is 0
-    /// post-anchor on a healthy chain.
-    pub digest_fallback: Counter,
     /// A live-DKG ceremony finalized (`PK_E` + share computed + stored).
     pub dkg_ceremony_ok: Counter,
     /// A live-DKG ceremony failed to finalize after the ready-probe (epoch beacon
@@ -30,9 +34,6 @@ pub struct BeaconMetrics {
     /// A per-epoch engine self-demoted to the cert-follow plane because it holds no
     /// local beacon polynomial for the epoch (`NoBeaconPolynomial`).
     pub engine_demoted_no_polynomial: Counter,
-    /// A per-epoch engine self-demoted because the operator's validator was rotated
-    /// out of the epoch's committee (`RotatedOut`).
-    pub engine_demoted_rotated_out: Counter,
     /// A would-be signer was demoted to verify-only by the promote VALUE-gate:
     /// its locally-resolved `PK_epoch` differs from the quorum-attested key (the
     /// agreement artifact's entry). Non-zero = a diverged local key
@@ -47,24 +48,6 @@ pub struct BeaconMetrics {
     /// plane makes the nullify quorum unreachable during a stall, when there are no
     /// proposals to expose the bad share on the notarize path.
     pub engine_demoted_bad_share: Counter,
-    /// A per-epoch engine spawn was deferred because the marshal does not hold the
-    /// previous epoch's terminal block — the `Inline::genesis(E)` precondition. The
-    /// member registers verify-only meanwhile: no proposals, no votes. Normally
-    /// transient (the block is still being backfilled and the next derived block
-    /// re-pokes the reconciler); persistently non-zero across an epoch means the
-    /// height sits below the marshal floor, where no repair path fetches it, and the
-    /// boundary seeding at the floor-raise sites either did not run or failed.
-    pub engine_spawn_deferred: Counter,
-    /// An epoch resolved the CONSTANT seedless-arm base
-    /// (`sha256(epoch ‖ sorted peers)`) instead of the previous epoch's terminal-block
-    /// witness seed, because no witness could exist there: epoch 0, a non-computable
-    /// terminal height, or a pre-bootstrap link. Counted where the base is CHOSEN, which is
-    /// upstream of the promote gates — so an epoch that resolves the constant base and is
-    /// then demoted to verify-only counts here without ever spawning an engine. That base
-    /// is derivable an epoch ahead, so the epoch's first leader is predictable — the only
-    /// signal that separates a chain on the intended unpredictable path from one silently
-    /// on the old behaviour. Expected only around bootstrap.
-    pub fallback_seed_constant: Counter,
     /// A consensus-pinned dealer-log index named a position outside the committed
     /// committee, and the ceremony skipped it. Nothing can ever satisfy such an entry
     /// (the resolver fetches per-DEALER), so before the skip it held `all_held=false`
@@ -74,18 +57,11 @@ pub struct BeaconMetrics {
     /// committee the ceremony reads disagrees with the one the logs were numbered
     /// against — the 2026-07-21 idx-stall class. 0 on a healthy chain.
     pub dkg_pinned_idx_out_of_range: Counter,
-    /// A ceremony reached its settle deadline without qualifying and deferred to the
-    /// epoch boundary. Previously this wait was completely silent, so any stall of
-    /// this family could only be diagnosed post-mortem from a wedged boundary.
-    /// Counted once per epoch per reason.
+    /// A ceremony holds an agreed pinned set it cannot yet finalize over, and
+    /// deferred to the epoch boundary. Previously this wait was completely silent,
+    /// so any stall of this family could only be diagnosed post-mortem from a wedged
+    /// boundary. Counted once per epoch per reason.
     pub dkg_finalize_deferred: Counter,
-    /// A live-epoch engine handle was found COMPLETED at a reconcile edge while
-    /// its epoch is still the live frontier, and the manager re-ran the spawn
-    /// path. Under `catch_panics(true)` a child engine panic completes the
-    /// `Handle` without reaching the manager, so nothing else respawns it —
-    /// non-zero means such a dead engine was detected and revived (or the engine
-    /// exited early for any other reason). 0 on a healthy chain.
-    pub engine_respawned: Counter,
     /// Dealer logs this node held, body-checked, that the AGREED pinned set left
     /// out. Observability only — the agreement's acceptance predicate must never
     /// read local state, so this counter influences no vote. A rare non-zero is a
@@ -126,6 +102,28 @@ pub struct BeaconMetrics {
     /// exhausted one-pass walk, surfaced instead of the resolver's silent
     /// unbounded retry.
     pub dkg_artifact_pull_exhausted: Counter,
+    /// Pulls that came back holding the artifact. The pulling side had no success
+    /// counter at all — only `served` existed, and that is the SERVING node's
+    /// view, so a member whose live-epoch pull is what unblocks it was invisible
+    /// on its own metrics.
+    pub dkg_artifact_pull_ok: Counter,
+    /// Epochs whose share is provably unrecoverable on this node — it acked a
+    /// dealer's private point and no longer holds it (`MissingPlayerDealing`).
+    /// Non-zero means one epoch is sat out as a verifier, NOT that the node is
+    /// unhealthy: the next epoch's ceremony is untouched. Persistently climbing
+    /// across epochs is the real alert, and it means the share directory is being
+    /// destroyed under a running node.
+    pub dkg_share_unrecoverable: Counter,
+    /// Artifacts a `--cert-follow` follower adopted from its cert upstream after
+    /// checking them against `committee[epoch]` read from its OWN chain state.
+    /// The follower's only key producer, so a flat zero here and a climbing
+    /// `dpos_cert_vote_only_admissions_total` is the whole of FLU-1167's symptom.
+    pub follower_artifact_adopted: Counter,
+    /// Epochs a follower wanted an artifact for and its upstream did not serve —
+    /// including an upstream too old to know the method at all. Not a fault: the
+    /// artifact of a live epoch legitimately does not exist yet, and the trigger
+    /// re-asks on the next certificate.
+    pub follower_artifact_miss: Counter,
 }
 
 impl BeaconMetrics {
@@ -152,17 +150,6 @@ impl BeaconMetrics {
             self.dkg_agree_logs_omitted.clone(),
         );
         ctx.register(
-            "beacon_seed_active_total",
-            "Blocks whose prev_randao was the verified threshold seed.",
-            self.seed_active.clone(),
-        );
-        ctx.register(
-            "beacon_digest_fallback_total",
-            "Beacon-active blocks that fell back to order.digest() (seed absent/unverified). \
-             0 post-anchor on a healthy chain.",
-            self.digest_fallback.clone(),
-        );
-        ctx.register(
             "dkg_ceremony_ok_total",
             "Live-DKG ceremonies that finalized (PK_E + share stored).",
             self.dkg_ceremony_ok.clone(),
@@ -178,11 +165,6 @@ impl BeaconMetrics {
             self.engine_demoted_no_polynomial.clone(),
         );
         ctx.register(
-            "epoch_engine_demoted_rotated_out_total",
-            "Per-epoch engines self-demoted because the validator was rotated out of the committee.",
-            self.engine_demoted_rotated_out.clone(),
-        );
-        ctx.register(
             "epoch_engine_demoted_key_divergence_total",
             "Would-be signers demoted to verify-only because the locally-resolved PK_epoch \
              differs from the network-attested key.",
@@ -195,20 +177,6 @@ impl BeaconMetrics {
             self.engine_demoted_bad_share.clone(),
         );
         ctx.register(
-            "epoch_engine_spawn_deferred_total",
-            "Per-epoch engine spawns deferred for a missing E-1 boundary block (member is \
-             verify-only meanwhile). Persistently non-zero = the height is below the marshal \
-             floor and boundary seeding did not cover it.",
-            self.engine_spawn_deferred.clone(),
-        );
-        ctx.register(
-            "dpos_fallback_seed_constant_total",
-            "Epochs that resolved the constant (predictable) seedless-arm base because no \
-             previous-epoch witness seed could exist. Counted at the choice, which precedes \
-             the promote gates, so a demoted epoch counts too. Expected only around bootstrap.",
-            self.fallback_seed_constant.clone(),
-        );
-        ctx.register(
             "dpos_dkg_pinned_idx_out_of_range_total",
             "Consensus-pinned dealer-log indices with no position in the committed committee, \
              skipped by the ceremony. 0 on a healthy chain.",
@@ -216,8 +184,8 @@ impl BeaconMetrics {
         );
         ctx.register(
             "dpos_dkg_finalize_deferred_total",
-            "Ceremonies that reached their settle deadline unqualified and deferred to the \
-             epoch boundary (once per epoch per reason).",
+            "Ceremonies that could not finalize over their agreed pinned set and deferred \
+             to the epoch boundary (once per epoch per reason).",
             self.dkg_finalize_deferred.clone(),
         );
         ctx.register(
@@ -250,10 +218,28 @@ impl BeaconMetrics {
             self.dkg_artifact_pull_exhausted.clone(),
         );
         ctx.register(
-            "epoch_engine_respawned_total",
-            "Live-frontier engines found completed at a reconcile edge (panic caught by \
-             catch_panics, or early exit) and revived via the spawn path.",
-            self.engine_respawned.clone(),
+            "dpos_dkg_artifact_pull_ok_total",
+            "Artifact pulls that came back holding the artifact, counted on the PULLING node.",
+            self.dkg_artifact_pull_ok.clone(),
+        );
+        ctx.register(
+            "dpos_dkg_share_unrecoverable_total",
+            "Epochs whose DKG share is provably unrecoverable here (this node acked a dealing \
+             it no longer holds), so nothing is retried for them and the epoch is sat out as \
+             a verifier.",
+            self.dkg_share_unrecoverable.clone(),
+        );
+        ctx.register(
+            "dpos_follower_artifact_adopted_total",
+            "Epoch-key artifacts a cert-follow follower adopted after verifying them against \
+             committee[epoch] read from its own chain state.",
+            self.follower_artifact_adopted.clone(),
+        );
+        ctx.register(
+            "dpos_follower_artifact_miss_total",
+            "Epochs a cert-follow follower asked its upstream for and got no artifact for \
+             (including an upstream too old to know the method). Not a fault.",
+            self.follower_artifact_miss.clone(),
         );
     }
 }

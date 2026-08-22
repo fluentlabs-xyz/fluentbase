@@ -34,14 +34,20 @@ from __future__ import annotations
 
 import time
 
-from . import beacon, verdicts, verdicts_fault as vf
+from . import beacon, verdicts, verdicts_fault as vf, verdicts_onchain as vo
 from .driver import BEACON_NODES, SmokeFailure
 from ...core import nodes, topology
 
-#: The dry stand-in for the restarted victim's log. Non-empty because `logs_required`
-#: refuses an empty read, and free of any share line because the ABSENCE direction is the
-#: one the case walks.
-_DRY_NO_SHARE = "(dry) victim log with no epoch share line"
+#: The dry stand-in for the restarted victim's log. Non-empty because `logs_required` refuses an
+#: empty read, and it carries one line per gate so the dry transcript walks the passing branch of
+#: each — a canned log satisfying only some of them would make the poll spin to its budget.
+_DRY_RECOVERED_LOG = "\n".join((
+    f"INFO {vf.ACTOR_STARTED_LINE} epocher=(dry)",
+    f"INFO {vf.CEREMONY_STARTED_LINE} epoch=2",
+    f"INFO {vf.SHARE_LINE} epoch=2 height=257",
+    f"INFO {vf.PIN_LINE} " + vf.PIN_EPOCH_FMT.format(2),
+    f"INFO {vf.PROMOTE_LINE} " + vf.PIN_EPOCH_FMT.format(2),
+))
 
 
 def _survivors(victim: str):
@@ -401,95 +407,285 @@ def _await_catchup(ctx, case: str, service: str, block, timeout, poll_s, message
               on_fail=lambda: ctx.dump_logs(vf.VRF_FAULT_LOG_TAIL, service))
 
 
-# ══ smoke-vrf-dkg-liveness ════════════════════════════════════════════════════════════
+# ══ smoke-vrf-dkg-live-heal ═══════════════════════════════════════════════════════════
 
-def assert_vrf_dkg_liveness(ctx) -> None:
-    """The DKG-liveness NEGATIVE edge, with NO reshare.
+def assert_vrf_dkg_live_heal(ctx) -> None:
+    """A committee member that missed its OWN epoch key agreement obtains it and signs inside
+    that epoch (FLU-1166). Same scenario as before; the verdict is the opposite one.
 
-    A committee member taken OFFLINE during its DKG window misses the ceremony, is SHARELESS for
-    that epoch, and SITS OUT seed voting while the chain stays live on the remaining n−f
-    share-holder quorum. On the genesis stack (4 validators, f=1) the deterministic epoch-2
-    ceremony is the activation DKG, so the victim is stopped BEFORE the epoch-2 window opens
-    (`epoch_start(2) − DKG_MARGIN_BLOCKS`) and kept down across the boundary.
+    WHAT INVERTED, AND WHY IT USED TO READ THE OTHER WAY. Nothing ever fetched the agreed artifact
+    for the LIVE epoch: the epoch manager's repair sweep excludes `epoch >= frontier` by design,
+    and the demoted-member recompute-heal bailed silently when the artifact was not already local.
+    So a member absent through its own DKG window sat the whole epoch out as a verifier and, if it
+    healed at all, healed into an epoch that was already over. That sit-out is what this case
+    asserted, and asserting it was pinning a hole in place. The `DkgActor` now asks for the live
+    epoch's artifact at exactly the point where "member of committee[E], holds no share, has no
+    artifact" is fully known, and everything downstream of it already worked.
 
-    THE TIMING IS THE ASSERTION. Stopping the victim after its window opened means it may already
-    hold a share, and the case would then be claiming that a share-HOLDER sits out — which is not
-    true and is not what it tests. That is why the window guard fails loud rather than waiting.
+    THIS IS THE FIRST LIVE COVERAGE OF THE REVEAL-FALLBACK PATH, which has no test anywhere in
+    the repo — unit or otherwise. The victim is offline for the WHOLE deal phase, so it receives
+    no dealing and acknowledges none; every honest dealer therefore REVEALS the victim's private
+    point publicly in its own sealed log, and the reconstruction rebuilds the share from those
+    reveals rather than from an ack the victim never sent. Nothing else in the tree exercises it.
 
-    Three legs:
+    That claim rests on ONE reading, and the case gates on it rather than on the stop instant:
+    `live DKG: ceremony started epoch=2` written by the RESTARTED process. `start_fresh` is its
+    only emitter and `JournalLoad::NoFile` is the only arm that reaches `start_fresh`, so the line
+    says the victim came back holding no epoch-2 journal at all. Inferring the same thing from
+    "we stopped it early enough" is a race against a moving chain, and that race has been lost.
+
+    TWO ROADS REACH THE SHARE, AND THE CASE ACCEPTS EITHER. As it catches up, the restarted victim
+    replays its DKG clock through epoch 1, so `maybe_start(now + 1)` fires for epoch 2 and — with
+    no journal — starts a FRESH ceremony. That ceremony fetches the pinned dealers' logs over the
+    resolver and rebuilds the share from their reveals. What differs between runs is only who
+    finishes: the live ceremony's `finalize_over_pinned` (`SHARE_LINE`) when it beats the
+    past-boundary sweep, or the demote-heal's scoped recompute (`HEAL_LINE`) over the journal that
+    ceremony just built, when the sweep gets there first. BOTH were observed live on this case,
+    on this geometry, minutes apart. An earlier version asserted the heal road AND the absence of
+    the other road's line, which made one of two legitimate outcomes a red run.
+
+    ABSENTEES MUST STAY <= f, AND AT n=4 THAT IS EXACTLY ONE. `max_reveals = f` over the PLAYER
+    set, enforced twice: a dealer withholds its ENTIRE log on `TooManyReveals`, and verifiers
+    reject such a log. Downing a second validator would therefore not make this a harder version
+    of the same test — every honest dealer's log would self-destruct, the ceremony would fail
+    outright, and the case would be measuring a failed DKG. Do not "improve" the coverage by
+    adding a victim.
+
+    THE TIMING IS STILL THE ASSERTION, AND THE EDGE IT KEYS ON MOVED. The victim must be down
+    before the DEAL phase opens, which is when the actor's clock first enters epoch 1 —
+    `epoch_start(1) - K`, because `maybe_start(now + 1)` runs on every tick and the clock is
+    `finalized + K`. It is NOT `epoch_start(2) - DKG_MARGIN_BLOCKS`; that is where the phase
+    CLOSES. See `vf.dkg_deal_window_open`.
+
+    Seven legs:
       1. the chain reaches epoch 2 and finalizes WHILE the victim is down (the beacon went live on
-         n−f survivors);
-      2. after restart the victim logs NO epoch-2 `share computed + stored` — it was excluded by
-         Joint-Feldman QUAL, so it is shareless for epoch 2 and sits out;
-      3. the chain stays live once it rejoins, and it re-derives prev_randao from the cert seed
-         byte-identically, like any verify-only node.
+         the n-f=3 survivors);
+      2. the restarted victim starts a FRESH epoch-2 ceremony — it held no journal, so it was
+         genuinely absent and its points can only come from the dealers' public reveals;
+      3. it PULLED epoch 2's agreed artifact (`dpos_dkg_artifact_pull_ok_total > 0`);
+      4. it RECOVERED the epoch-2 share, by either road;
+      5. its epoch-2 scheme is upgraded to PINNED and it is SEATED as a signer for epoch 2, so its
+         own certificate admission stops being seed-blind and it can vote;
+      6. the chain stays live with it back in the quorum and its epoch-2 prev_randao is
+         byte-identical to the survivors';
+      7. it PRODUCED in epoch 2 — `producedAt(2, victim) > 0` read once it has had 32 of its own
+         blocks to be elected in, which a share-less member cannot do and which is the only leg
+         that observes the whole chain of consequences at once.
 
-    The "rejoins the seed quorum at the NEXT DKG" leg needs a committee CHANGE and belongs to the
-    rotation stack; this proves the sit-out + liveness half on the stable genesis stack.
+    EVERY READING IS TAKEN INSIDE EPOCH 2, and that is deliberate. Pacing therefore rides the
+    shorthanded window (n-f=3, victim down) rather than the post-recovery one — there is no room
+    for a 60 s window after the victim is seated ~16 blocks into a 64-block epoch. The reason the
+    case does not simply run on into epoch 3 is a defect it found and does not own: on 2 of 3 live
+    runs, three of the four nodes reached the epoch-2→3 boundary with
+    `highest_observed_epoch = 4294967298` (= 0x1_0000_0002, a packed `Round { epoch: 1, view: 2 }`
+    read as an `Epoch`), which makes `is_live_epoch` false for every epoch, so the boundary's
+    signers soft-enter verify-only, quorum is lost and the head freezes at the last block of
+    epoch 2. The same corrupted value appears on a clean `smoke-vrf-boundary` run at this geometry
+    WITHOUT halting it, so it is pre-existing; this case is merely the first thing in the suite
+    that stays alive long enough to be halted by it. `smoke-vrf-boundary` owns the boundary
+    crossing; this case owns live-epoch key delivery, and it says so by staying inside the epoch.
     """
-    case = "smoke-vrf-dkg-liveness"
+    case = "smoke-vrf-dkg-live-heal"
     victim = topology.validator(vf.VRF_FAULT_VICTIM_IDX)
     survivors = _survivors(victim)
-    margin = vf.dkg_margin_blocks()
 
     epoch2_start = verdicts.beacon_active_epoch_start(ctx.activation_block, ctx.interval)
-    window_open = epoch2_start - margin
+    epoch3_start = verdicts.epoch_start(ctx.activation_block, ctx.interval, 3)
+    # THE DEAL WINDOW, NOT THE SEAL DEADLINE. `maybe_start(now + 1)` runs on every height tick, so
+    # committee[2]'s ceremony opens the instant the actor's clock enters epoch 1 — the whole of
+    # epoch 1 is its deal phase, and `DKG_MARGIN_BLOCKS` is only where that phase CLOSES. Guarding
+    # on the margin let the victim be stopped mid-phase, having already acked every dealing, which
+    # is a different experiment that passes every other assertion in this case. See
+    # `vf.dkg_deal_window_open`.
+    deal_open = vf.dkg_deal_window_open(ctx.activation_block, ctx.interval)
     boundary_probe = epoch2_start + vf.DKG_BOUNDARY_MARGIN
 
-    _say(ctx, f"smoke-vrf-dkg-liveness: bringing {victim} down BEFORE the epoch-2 DKG window "
-              f"opens (block < {window_open})")
-    ctx.check(case, *vf.evaluate_window_open(ctx.finalized_dec(dry_value=0), window_open))
-    ctx.compose_stop(victim, note="dkg-liveness-stop-victim")
+    _say(ctx, f"smoke-vrf-dkg-live-heal: bringing {victim} down BEFORE the epoch-2 DKG DEAL "
+              f"window opens (finalized < {deal_open} = epoch_start(1) - K) — ONE victim, "
+              "because absentees must stay <= f")
+    ctx.check(case, *vf.evaluate_window_open(ctx.finalized_dec(dry_value=0), deal_open))
+    ctx.compose_stop(victim, note="dkg-live-heal-stop-victim")
 
-    # 1) the chain crosses the epoch-2 boundary on the n−f=3 survivors: committee[2]'s DKG
+    # THE VICTIM'S ON-CHAIN ADDRESS, resolved AFTER the stop and not before it. The window guard
+    # is the ONE read that may precede the stop — the case's whole timing argument is that nothing
+    # slows the interval between reading the height and taking the node down. This read costs a
+    # `docker compose exec … cat` against validator-0's mount, needs the victim only to be a
+    # committee member (not to be running), and failing here rather than at the production leg
+    # six minutes later is the reason it is not deferred further.
+    addrs = ctx.runtime_addresses()
+    if not ctx.dry and len(addrs) <= vf.VRF_FAULT_VICTIM_IDX:
+        raise SmokeFailure(case, f"/runtime/addresses.json listed {len(addrs)} validators — "
+                                 f"cannot resolve {victim}'s on-chain address")
+    victim_addr = (addrs[vf.VRF_FAULT_VICTIM_IDX] if len(addrs) > vf.VRF_FAULT_VICTIM_IDX
+                   else "0x" + "a3" * 20)
+
+    # PACING, MEASURED SHORTHANDED, and measured HERE. The existing instrument and the existing
+    # band (45..66 per 60 s) — the one that produced the historical 26-27 blk/60s regression
+    # reading — over the window where this case's fault is actually applied: n-f=3 validators
+    # carrying the chain with a committee member down.
+    #
+    # WHY NOT AFTER THE RECOVERY, WHICH IS WHERE IT WOULD READ MORE INTERESTINGLY. There is no
+    # room. The victim is seated ~16 blocks into a 64-block epoch 2 and the production leg needs
+    # 32 more of them, so any 60 s window after that runs off the end of epoch 2 — and this case
+    # deliberately does not depend on the epoch-2→3 boundary (see the production leg). The window
+    # costs nothing here: the wait for the boundary probe below is longer than it either way.
+    r0 = ctx.finalized_dec(dry_value=deal_open - 40)
+    ctx.sleep(verdicts.PACING_WINDOW_S)
+    r1 = ctx.finalized_dec(dry_value=deal_open - 40 + verdicts.PACING_MIN_BLOCKS + 5)
+    ctx.check(case, *verdicts.evaluate_pacing(r1 - r0))
+    _say(ctx, f"smoke-vrf-dkg-live-heal: pacing on the n-f=3 survivors with {victim} down: "
+              f"{r1 - r0} blk/{verdicts.PACING_WINDOW_S}s")
+
+    # 1) the chain crosses the epoch-2 boundary on the n-f=3 survivors: committee[2]'s DKG
     #    completed WITHOUT the offline member, and the beacon is live from epoch 2.
-    _say(ctx, f"smoke-vrf-dkg-liveness: waiting for finalized >= {boundary_probe} with {victim} "
-              "down (n−f=3 quorum must seed epoch 2)")
+    _say(ctx, f"smoke-vrf-dkg-live-heal: waiting for finalized >= {boundary_probe} with {victim} "
+              "down (n-f=3 quorum must seed epoch 2)")
     ctx.check(case, ctx.wait_finalized_ge(boundary_probe, vf.DKG_BOUNDARY_WAIT_S),
-              f"chain did not reach the epoch-2 boundary with {victim} down (survivors below n−f "
+              f"chain did not reach the epoch-2 boundary with {victim} down (survivors below n-f "
               "quorum / DKG could not complete shorthanded)",
               on_fail=lambda: ctx.dump_logs(vf.VRF_FAULT_LOG_TAIL, topology.validator(0)))
     ctx.check(case, beacon.wait_nodes_have(ctx, boundary_probe, vf.DKG_NODES_HAVE_S, survivors),
               f"survivors did not all reach {boundary_probe}")
-    beacon.assert_beacon_window(ctx, case, epoch2_start, boundary_probe, "dkg-liveness-epoch2",
+    beacon.assert_beacon_window(ctx, case, epoch2_start, boundary_probe, "dkg-live-heal-epoch2",
                                 survivors)
-    _say(ctx, f"smoke-vrf-dkg-liveness: beacon went LIVE at epoch 2 on the {len(survivors)} "
-              f"survivors while {victim} was offline during its DKG window")
+    _say(ctx, f"smoke-vrf-dkg-live-heal: beacon went LIVE at epoch 2 on the {len(survivors)} "
+              f"survivors while {victim} was offline for its whole DKG window")
 
-    # 2) restart the victim; it must hold NO epoch-2 share.
-    _say(ctx, f"smoke-vrf-dkg-liveness: restarting {victim} — it must NOT hold an epoch-2 share "
-              "(excluded by QUAL)")
-    ctx.compose_start(victim, note="dkg-liveness-start-victim")
+    # 2) restart the victim; it must obtain the key and heal INSIDE epoch 2.
+    _say(ctx, f"smoke-vrf-dkg-live-heal: restarting {victim} — it must PULL epoch 2's artifact "
+              "and recompute its share from the dealers' reveals")
+    ctx.compose_start(victim, note="dkg-live-heal-start-victim")
     _await_catchup(ctx, case, victim, boundary_probe, vf.DKG_CATCHUP_S, vf.DKG_CATCHUP_POLL_S,
                    f"{victim} did not catch up to {boundary_probe} after restart")
 
-    lines = vf.epoch_share_lines(
-        ctx.logs_required(victim, case, "epoch-2 share absence", dry_value=_DRY_NO_SHARE),
-        epoch=2)
-    ctx.check(case, *vf.evaluate_no_epoch_share(lines, victim, epoch=2))
-    _say(ctx, f"smoke-vrf-dkg-liveness: {victim} holds NO epoch-2 share (correctly excluded by "
-              "QUAL — it sits out the epoch-2 seed quorum, NO reshare)")
+    # The reconstruction is off the beacon's own height tick, so it lands a few seconds after the
+    # catch-up rather than with it. ONE log read per iteration answers every grep below — they are
+    # all questions about the same text (the `asserts_onchain.resumed` trade).
+    box = {"fresh": "", "road": None, "pin": [], "promote": [], "logs": ""}
 
-    # 3) the chain stays live, and the shareless member derives the same prev_randao off the cert.
-    before = ctx.finalized_dec(dry_value=boundary_probe)
+    def recovered():
+        box["logs"] = ctx.logs_required(victim, case, "epoch-2 key recovery",
+                                        dry_value=_DRY_RECOVERED_LOG)
+        box["fresh"] = vf.started_fresh_after_restart(box["logs"], epoch=2)
+        box["road"] = vf.share_road(box["logs"], epoch=2)
+        box["pin"] = vf.pin_upgrade_lines(box["logs"], epoch=2)
+        box["promote"] = vf.promote_lines(box["logs"], epoch=2)
+        return all((box["fresh"], box["road"], box["pin"], box["promote"]))
+
+    ctx.poll(recovered, vf.DKG_HEAL_S, poll_s=vf.DKG_HEAL_POLL_S)
+    # WHERE the chain was when the victim was seated. Read here and not later: it is the input to
+    # the "did that leave enough epoch for a leader slot" gate, and every read after this moves it.
+    seated_at = ctx.finalized_dec(dry_value=boundary_probe + 12)
+
+    def dump():
+        ctx.dump_logs(vf.VRF_FAULT_LOG_TAIL, victim)
+
+    # THE CASE VERIFIES IT SET UP WHAT IT CLAIMS TO TEST, the same way the seed-slot MITM reads
+    # back its own corruption before anything concludes from a rejection. `start_fresh` is the
+    # only emitter of `ceremony started` and `JournalLoad::NoFile` is the only arm that reaches
+    # it, so this line on the RESTARTED process is proof the victim came back holding no epoch-2
+    # journal — no dealing received, no ack sent, and therefore nothing any dealer could do with
+    # its point except reveal it publicly. That is the reveal fallback's precondition, read off
+    # the log instead of inferred from the stop instant.
+    ctx.check(case, *vf.evaluate_started_fresh(box["fresh"], victim, epoch=2), on_fail=dump)
+    # …the mechanism the ticket is about…
+    ctx.check(case, *vf.evaluate_artifact_pull_ok(
+        ctx.node_metric(victim, vf.ARTIFACT_PULL_OK_SAMPLE, dry_value="1"), victim), on_fail=dump)
+    # …and the outcome, by EITHER road (see `vf.SHARE_ROADS`).
+    ctx.check(case, *vf.evaluate_share_acquired(box["road"], victim, epoch=2), on_fail=dump)
+    ctx.check(case, *vf.evaluate_pin_upgraded(box["pin"], victim, epoch=2), on_fail=dump)
+    ctx.check(case, *vf.evaluate_promoted(box["promote"], victim, epoch=2), on_fail=dump)
+    _say(ctx, f"smoke-vrf-dkg-live-heal: {victim} came back with NO epoch-2 journal, pulled the "
+              "epoch's agreed artifact, rebuilt its share from the other members' sealed dealer "
+              f"logs via {box['road'][1]}, left vote-only admission and was seated as a signer:")
+    for line in [box["fresh"], box["road"][0], *box["pin"], *box["promote"]]:
+        _say(ctx, f"    {line}")
+
+    # 3) the chain is still live with the recovered member back in the quorum, and its epoch-2
+    #    prev_randao is byte-identical to the survivors'. BEFORE the production wait, not after:
+    #    every reading in this case is deliberately taken inside epoch 2 (see the production leg),
+    #    and these two are the cheapest, so they go first.
+    before = ctx.finalized_dec(dry_value=boundary_probe + 12)
     rows = [(v, ctx.mixhash_in(victim, v, dry_value=f"0x{v:064x}"),
              ctx.mixhash_at(v, dry_value=f"0x{v:064x}"))
             for v in range(epoch2_start, boundary_probe + 1)]
     ctx.check(case, *vf.evaluate_gap_mixhashes(
         rows, victim,
-        f"restarted {victim} derived divergent prev_randao (did not recover the cert seed as a "
-        "verify-only node):"))
+        f"restarted {victim} derived divergent prev_randao (did not recover the cert seed):"))
     ctx.sleep(vf.DKG_LIVENESS_WINDOW_S)
     after = ctx.finalized_dec(dry_value=before + 6)
     ctx.check(case, *vf.evaluate_still_finalizing(before, after, victim))
-    _say(ctx, f"smoke-vrf-dkg-liveness: chain stayed live after {victim} rejoined ({before} → "
-              f"{after}); {victim} re-derived epoch-2 prev_randao from the cert seed "
-              "byte-identically")
+    _say(ctx, f"smoke-vrf-dkg-live-heal: chain still finalizing with {victim} back in the quorum "
+              f"({before} -> {after}); its epoch-2 prev_randao is byte-identical to the "
+              "survivors'")
 
-    _ok(ctx, case, "a member offline during its epoch-2 DKG window was excluded from the ceremony "
-                   "(shareless, NO reshare) and SAT OUT the epoch-2 seed quorum, while the chain "
-                   "finalized on the n−f=3 survivors and the rejoined member re-derived "
-                   "prev_randao from the cert seed")
+    # 4) THE LOAD-BEARING LEG — it PRODUCED inside the epoch it was elected for. A share-less
+    #    member cannot; every leg above is a step on the road to this one.
+    #
+    # SAMPLED A FIXED NUMBER OF THE VICTIM'S OWN BLOCKS LATER, and that is the whole of what makes
+    # it a measurement rather than a coin toss. `producedAt(2, idx)` climbs for as long as epoch 2
+    # runs, so a read taken seconds after the victim is seated reports how many slots it has won
+    # SO FAR — which on a 4-member stake-weighted lottery is frequently zero, and a zero there is
+    # indistinguishable in the failure message from a recovery that did not work. That is exactly
+    # how this case first went red: seated at height 257, read at ~260 (`producedAt=0`), 10 of the
+    # epoch's 64 blocks by the time the epoch actually ended.
+    #
+    # The floor is `seated + MIN_POST_HEAL_BLOCKS + K`: enough of the victim's slots to make the
+    # lottery decisive (~1e-4 of a false zero at 1-in-4), plus the deferred-execution lag, because
+    # the counter for height h is written when h EXECUTES and that is K heights later. The room
+    # check is what guarantees that floor still lies inside epoch 2.
+    #
+    # DELIBERATELY NOT "wait for epoch 3". The counter would be final there, but the case would
+    # then depend on the epoch-2→3 boundary crossing — and that crossing is currently unreliable
+    # in exactly this scenario for a reason that has nothing to do with this ticket: three of the
+    # four nodes end up with `highest_observed_epoch = 4294967298` (= 0x1_0000_0002, a packed
+    # `Round { epoch: 1, view: 2 }` read as an `Epoch`), which makes `is_live_epoch` false for
+    # every epoch, so the boundary's signers soft-enter verify-only and quorum is lost. Observed
+    # on 2 of 3 live runs of this case; the same corrupted value appears on a clean
+    # `smoke-vrf-boundary` run at the same geometry WITHOUT halting it, so it is a pre-existing
+    # defect this case is merely long-lived enough to be caught by. Chasing the boundary here
+    # would have reported it as "the production counters never became final" — a diagnosis about
+    # the reader.
+    ctx.check(case, *vf.evaluate_heal_left_room(seated_at, epoch3_start, victim), on_fail=dump)
+    sample_floor = seated_at + vf.MIN_POST_HEAL_BLOCKS + vf.RESULT_LAG_K
+    _say(ctx, f"smoke-vrf-dkg-live-heal: {victim} seated at finalized={seated_at}; letting it run "
+              f"{vf.MIN_POST_HEAL_BLOCKS} of its own epoch-2 blocks (to {sample_floor}) before "
+              "reading production credit")
+    ctx.check(case, ctx.wait_finalized_ge(sample_floor, vf.DKG_EPOCH_END_S),
+              f"chain did not reach {sample_floor} — {victim} was never given "
+              f"{vf.MIN_POST_HEAL_BLOCKS} blocks of epoch 2 to be elected in, so a zero credit "
+              "would say nothing about its recovery",
+              on_fail=dump)
+    produced, total = _poll_production_for(ctx, 2, victim_addr)
+    ctx.check(case, *vo.evaluate_production_readable(produced, total, victim), on_fail=dump)
+    ctx.check(case, *vo.evaluate_produced_something(produced, victim), on_fail=dump)
+    _say(ctx, f"smoke-vrf-dkg-live-heal: {victim} PRODUCED in epoch 2 (producedAt={produced} of "
+              f"blocksInEpoch={total} so far, over the {vf.MIN_POST_HEAL_BLOCKS}+ blocks it had "
+              "after being seated)")
+
+    _ok(ctx, case, "a member offline through its whole epoch-2 DKG window PULLED the epoch's "
+                   "agreed artifact, recomputed its share from the dealers' public reveals (the "
+                   "reveal-fallback path, first live coverage), left vote-only admission, and "
+                   "PRODUCED inside epoch 2 — while the chain finalized throughout on the n-f=3 "
+                   "survivors and its prev_randao stayed byte-identical to theirs")
+
+
+def _poll_production_for(ctx, epoch, addr: str):
+    """The bounded production-credit retry, in `asserts_onchain._poll_production_for`'s shape.
+
+    A SAMPLE COUNT, not a deadline: read once, then retry a few times. The retry exists for the
+    -2 read-failed sentinel and for an epoch with no recorded blocks yet; a persistent -2 or a
+    zero-block epoch must FAIL the case rather than fall through, which is what
+    `evaluate_production_readable` does with whatever this returns."""
+    box = {"p": (vo.CREDIT_READ_FAILED, vo.CREDIT_READ_FAILED)}
+
+    def sample(_i):
+        box["p"] = ctx.production(epoch, addr, dry_value=(10, 10))
+        return vo.credit_ready(box["p"][0], box["p"][1])
+
+    ctx.sample_until(vo.PART_RETRIES, sample, sleep_s=vo.PART_RETRY_SLEEP_S,
+                     label=f"producedAt(epoch={epoch})")
+    return box["p"]
 
 
 # ══ smoke-crash-survivor ══════════════════════════════════════════════════════════════

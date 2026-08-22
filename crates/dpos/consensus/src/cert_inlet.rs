@@ -15,10 +15,9 @@
 
 use crate::fault::{DeferReason, FaultClass};
 use crate::{
-    beacon::keys::{AgreedKeys, BeaconKeys, KeySources},
+    beacon::{PinEffort, Randomness},
     cert_follow::UpstreamFinalized,
     digest::Digest,
-    outer::SCHEME_RETENTION_EPOCHS,
     scheme::epoch_committee_from_snapshot,
 };
 use alloy_consensus::Header;
@@ -114,6 +113,13 @@ fn committee_read_fault(err: &eyre::Report) -> FaultClass {
 /// re-org served right at a boundary) must not trigger rotation, but a
 /// persistently bad upstream is failed-over quickly.
 pub const MAX_UPSTREAM_FAULTS: u32 = 3;
+
+/// Certificates admitted on the multisig quorum ALONE, at a beacon-active epoch
+/// whose scheme carries no seed pin. Not a fault on its own — a node legitimately
+/// starts an epoch without its key — but a count that keeps CLIMBING means the
+/// epoch's `PK_epoch` never arrived, and the seed slot of every one of those
+/// certificates went unchecked.
+pub const CERT_VOTE_ONLY_ADMISSIONS: &str = "dpos_cert_vote_only_admissions_total";
 
 /// Boxed rotation callback the inlet calls after [`MAX_UPSTREAM_FAULTS`]
 /// CONSECUTIVE data faults — drops the current upstream connection and moves to
@@ -407,20 +413,7 @@ pub struct CertInlet<C, E, M> {
     ///
     /// A default-constructed store on an inlet nobody wired one into is a private
     /// empty one — the unit-test shape.
-    beacon_keys: BeaconKeys,
-    /// The ladder's held-artifact rung (see [`AgreedKeys`]). `Some` on ONE
-    /// production inlet, the validator's shadow inlet, which is wired over the
-    /// beacon plane's artifact store.
-    ///
-    /// `None` on the `--cert-follow` follower's inlet, and that absence is
-    /// permanent rather than a gap waiting to be filled: the artifact seam
-    /// delivers over `BEACON_RESOLVER_CHANNEL` and a follower has no peer there
-    /// (see [`crate::beacon::artifact`]). With no rung the ladder is the store
-    /// rung alone, whose writers are all plane-side, so `cert_seed_pin` stays
-    /// `None` and every cert takes vote-only admission — the residual
-    /// [`crate::beacon::keys::BeaconKeys`]'s ladder doc states in full. The
-    /// multisig quorum is verified either way; what is lost is the seed check.
-    held_keys: Option<AgreedKeys>,
+    randomness: Arc<dyn Randomness>,
     /// commonware ctx (the `CryptoRngCore` source the cert `verify()` needs).
     ctx: E,
     /// DATA-fault upstream-rotation trigger. `Some` on an upstream-configured
@@ -508,8 +501,7 @@ where
             tee: None,
             window_tx: None,
             schemes: BTreeMap::new(),
-            beacon_keys: BeaconKeys::new(),
-            held_keys: None,
+            randomness: crate::beacon::surface::absent_unregistered(),
             ctx,
             rotate: None,
             consecutive_faults: 0,
@@ -544,22 +536,10 @@ where
         self
     }
 
-    /// Attach the ladder's held-artifact rung (see [`AgreedKeys`]).
-    /// Builder-style: the validator's shadow inlet wires one over the beacon
-    /// plane's artifact store. A follower inlet and a unit test leave it `None`
-    /// and pin resolution falls back to the shared store alone — see the
-    /// `held_keys` field doc for why a follower cannot have one.
-    pub fn with_held_keys(mut self, held: AgreedKeys) -> Self {
-        self.held_keys = Some(held);
-        self
-    }
-
-    /// Join this inlet to the node's SHARED [`BeaconKeys`] store. Builder-style:
-    /// both production inlets pass the one store the rest of the node holds, so a
-    /// key this inlet observes is visible to `epoch_manager`'s ladder and vice
-    /// versa. Left unset the inlet keeps a private empty store.
-    pub fn with_beacon_keys(mut self, keys: BeaconKeys) -> Self {
-        self.beacon_keys = keys;
+    /// Attach the randomness provider. Builder-style because the provider is
+    /// assembled at the launch site, after this inlet exists.
+    pub fn with_randomness(mut self, randomness: Arc<dyn Randomness>) -> Self {
+        self.randomness = randomness;
         self
     }
 
@@ -617,18 +597,6 @@ where
         self
     }
 
-    /// The rungs the cert-inlet may spend resolving `PK_epoch` on cert ingress.
-    ///
-    /// **No `pull`, and that is why this is named rather than built inline.**
-    /// Ingress runs against a ~1 s verify budget; the network rung's is seconds.
-    /// A `pull` handed in here moves a peer round-trip onto the vote path, where
-    /// a missing pin costs a vote-only admission and a stall costs a missed view.
-    fn ingress_sources(&self) -> KeySources<'_> {
-        KeySources {
-            held: self.held_keys.as_ref(),
-            ..Default::default()
-        }
-    }
     /// BLS-verify one upstream cert, then drive the marshal with it.
     ///
     /// On verify-FAIL: WARN + skip + return `Ok` (NOT `Err` — Risk-3: a single
@@ -720,7 +688,11 @@ where
         // scheme is BUILT this ingest; see `built_with_carry_forward_pin`).
         let mut pin_is_carry_forward = false;
         if !cached_pinned {
-            cert_seed_pin = self.beacon_keys.get_pk(epoch, self.ingress_sources()).await;
+            // `Local` and never `Thorough`: ingress runs against a ~1 s verify
+            // budget, and the network rung's is seconds. A pull here would move
+            // a peer round-trip onto the vote path, where a missing pin costs a
+            // vote-only admission and a stall costs a missed view.
+            cert_seed_pin = self.randomness.pin_for(epoch, PinEffort::Local).await;
             pin_is_carry_forward = cert_seed_pin.is_some();
         }
         let mut built_with_carry_forward_pin = false;
@@ -853,6 +825,20 @@ where
                 }
             }
         };
+        // The only direct witness that an epoch is being admitted WITHOUT its seed
+        // pin: the multisig quorum is checked, the seed slot is not. Silent until
+        // now — 30 mentions of vote-only across the crate, not one of them a log
+        // line or a metric — which made "certificates of those epochs stop taking
+        // vote-only admission" unassertable.
+        //
+        // Read off `cached`, i.e. the scheme that will ACTUALLY verify this
+        // certificate, and never off the `cert_seed_pin` local: that is assigned
+        // only inside the `!cached_pinned` branch above, so on a healthy PINNED
+        // epoch it stays `None` for every certificate after the first — a counter
+        // keyed on it would climb fastest exactly when nothing is wrong.
+        if !cached.pinned && self.randomness.mandatory_at(epoch) {
+            metrics::counter!(CERT_VOTE_ONLY_ADMISSIONS).increment(1);
+        }
         if !uf
             .finalization
             .verify(&mut self.ctx, &cached.scheme, &Sequential)
@@ -902,8 +888,7 @@ where
         // promote value-gate and the W3 backfill ask for the LIVE epoch or
         // `live − 1`, and the carry-divergence tripwires ask for the MINT, which
         // `retain_from` exempts from the window at any age.
-        self.beacon_keys
-            .retain_from(epoch.saturating_sub(SCHEME_RETENTION_EPOCHS as u64));
+        self.randomness.observe_cert(epoch);
         // Re-homed live-frontier tee: advance the beacon-plane cursors off the
         // VERIFIED live upstream tip (skipped/tampered certs above never reach
         // here). `committee_for` then resolves committee[E+1] and the DkgActor
@@ -980,6 +965,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::beacon::keys::{AgreedKeys, BeaconKeys};
     use crate::{
         beacon::{
             carry::DkgQualFor,
@@ -1152,19 +1138,6 @@ mod tests {
     /// be handed the network rung, whose budget is seconds. A missing pin costs a
     /// vote-only admission; a stall costs the view.
     ///
-    /// Reds the moment anyone adds `pull:` to `ingress_sources`.
-    #[test]
-    fn the_inlet_never_spends_the_network_rung() {
-        let ctx = deterministic::Runner::default();
-        ctx.start(|ctx| async move {
-            let c = committee(1);
-            let (inlet, _marshal, _reads) = inlet(ctx, &c);
-            assert!(
-                inlet.ingress_sources().pull.is_none(),
-                "a peer round-trip must never sit on the cert-ingress path"
-            );
-        });
-    }
 
     #[test]
     fn committee_read_fault_defers_transient_and_blocknotfound_else_corruption() {
@@ -1192,6 +1165,42 @@ mod tests {
             committee_read_fault(&eyre::Report::new(ReadError::CallReverted("boom".into()))),
             FaultClass::Corruption,
         );
+    }
+
+    /// Reds the moment cert ingress starts spending the NETWORK rung.
+    ///
+    /// This replaces the old `ingress_sources().pull.is_none()` assertion, which
+    /// died with the field it read. It asserts the same property one level out
+    /// and more strongly: drive a REAL `ingest` against a recording provider and
+    /// require that every pin resolution it asked for was `Local`. A helper that
+    /// merely returned `Local` would be a tautology; only the call actually made
+    /// can witness this.
+    ///
+    /// The property: ingress runs against a ~1 s verify budget while the network
+    /// rung's is seconds, so a pull here costs a missed view.
+    #[test]
+    fn cert_ingress_never_spends_the_network_rung() {
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            let c = committee(1);
+            let (mut inlet, _marshal, _reads) = inlet(ctx, &c);
+            let spy = Arc::new(crate::beacon::surface::testing::Canned::new());
+            inlet = inlet.with_randomness(spy.clone());
+
+            let block = sample_order(Digest(B256::repeat_byte(0xaa)), 65);
+            inlet.ingest(certify(&c, 0, &block)).await.expect("ok");
+
+            let efforts = spy.efforts();
+            assert!(
+                !efforts.is_empty(),
+                "the ingest must have resolved a pin at all, or this test proves nothing"
+            );
+            assert!(
+                efforts.iter().all(|(_, e)| *e == PinEffort::Local),
+                "cert ingress asked for {efforts:?}; a peer round-trip on the vote \
+                 path costs a missed view"
+            );
+        });
     }
 
     #[test]
@@ -2110,6 +2119,23 @@ mod tests {
         (inlet, reads)
     }
 
+    /// A provider over canned ladder pieces. The tests keep building the REAL
+    /// rungs (`canned_held` is an actual `AgreedKeys`), so what they pin is the
+    /// ladder's behaviour, not a stubbed answer.
+    fn canned_randomness(keys: BeaconKeys, held: Option<AgreedKeys>) -> Arc<dyn Randomness> {
+        crate::beacon::surface::PlaneRandomness::build(
+            crate::beacon::certify::SeedStore::new(),
+            keys,
+            None,
+            Arc::new(|_| crate::beacon::BeaconResolve::Absent),
+            held,
+            None,
+            Arc::new(tokio::sync::Notify::new()),
+            crate::beacon::metrics::BeaconMetrics::default(),
+            CHAIN_ID,
+        )
+    }
+
     /// The ladder's held-artifact rung over a canned store. `at` answers for a
     /// MINTING epoch; `mints` is the chain's `dkgQual` record, which is what says
     /// which epoch that is for the epoch being asked about.
@@ -2168,7 +2194,10 @@ mod tests {
             let mut inlet = inlet
                 .with_rotate(rotate)
                 .with_window(window_tx)
-                .with_held_keys(canned_held(move |e| (e == 2).then_some(pk), &[2]));
+                .with_randomness(canned_randomness(
+                    BeaconKeys::new(),
+                    Some(canned_held(move |e| (e == 2).then_some(pk), &[2])),
+                ));
 
             let boundary = certify_seeded(&bc, 2, &beacon_order(64));
             // A valid seed for a foreign round (9, 999) — stands in for a tampered
@@ -2245,9 +2274,10 @@ mod tests {
             let marshal = FakeMarshal::default();
             let (inlet, reads) = beacon_inlet(ctx, &bc, marshal.clone());
             let keys = BeaconKeys::new();
-            let mut inlet = inlet
-                .with_beacon_keys(keys.clone())
-                .with_held_keys(canned_held(move |e| (e == 2).then_some(pk2), &[2]));
+            let mut inlet = inlet.with_randomness(canned_randomness(
+                keys.clone(),
+                Some(canned_held(move |e| (e == 2).then_some(pk2), &[2])),
+            ));
 
             let wrong = certify_seeded(&bc, 9, &beacon_order(999))
                 .finalization
@@ -2321,8 +2351,10 @@ mod tests {
             let pk = fixture_key(&bc);
             let marshal = FakeMarshal::default();
             let (inlet, reads) = beacon_inlet(ctx, &bc, marshal.clone());
-            let mut inlet =
-                inlet.with_held_keys(canned_held(move |e| (e == 2).then_some(pk), &[2]));
+            let mut inlet = inlet.with_randomness(canned_randomness(
+                BeaconKeys::new(),
+                Some(canned_held(move |e| (e == 2).then_some(pk), &[2])),
+            ));
 
             let wrong = certify_seeded(&bc, 9, &beacon_order(999))
                 .finalization
@@ -2463,8 +2495,10 @@ mod tests {
             // late): the same sequence verifies end-to-end.
             let marshal = FakeMarshal::default();
             let (inlet, _reads) = beacon_inlet(ctx, &f1, marshal.clone());
-            let mut inlet =
-                inlet.with_held_keys(canned_held(move |e| (e == 3).then_some(pk3), &[3]));
+            let mut inlet = inlet.with_randomness(canned_randomness(
+                BeaconKeys::new(),
+                Some(canned_held(move |e| (e == 3).then_some(pk3), &[3])),
+            ));
             inlet
                 .ingest(certify_seeded(&f2, 3, &beacon_order(129)))
                 .await
@@ -2509,7 +2543,7 @@ mod tests {
 
             let marshal = FakeMarshal::default();
             let (inlet, reads) = beacon_inlet(ctx, &f1, marshal.clone());
-            let mut inlet = inlet.with_held_keys(held);
+            let mut inlet = inlet.with_randomness(canned_randomness(BeaconKeys::new(), Some(held)));
 
             inlet
                 .ingest(certify_seeded(&f2, 2, &beacon_order(129)))
@@ -2585,7 +2619,7 @@ mod tests {
 
             let marshal = FakeMarshal::default();
             let (inlet, reads) = beacon_inlet(ctx, &f1, marshal.clone());
-            let mut inlet = inlet.with_held_keys(held);
+            let mut inlet = inlet.with_randomness(canned_randomness(BeaconKeys::new(), Some(held)));
 
             inlet
                 .ingest(certify_seeded(&f2, 2, &beacon_order(129)))

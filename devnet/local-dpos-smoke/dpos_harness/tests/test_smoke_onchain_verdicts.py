@@ -467,9 +467,9 @@ def test_the_gap_ceiling_is_DERIVED_and_the_old_hand_set_52_FAILS_it():
     #: start at its own gap — the configuration that is now the default.
     assert vo.catchup_gap_ceiling(64, 3000) == 32 >= vo.CATCHUP_GAP
 
-    #: Raising the interval WOULD lift the ceiling — that is the obvious alternative to shrinking
-    #: the gap, and it is why `CATCHUP_EPOCH_INTERVAL` carries a do-not-raise warning: 128 lifts
-    #: this to 104 and does not boot.
+    #: Raising the interval WOULD lift the ceiling — 128 lifts this to 104 — and that is a live
+    #: option again since the stand's clock-drift fix (`CATCHUP_EPOCH_INTERVAL`). It stays a
+    #: re-tune-and-re-run, not an edit, which is why the gap is still the lever.
     assert vo.catchup_gap_ceiling(128, 1000) == 104
 
     #: A longer delay BUYS parks and COSTS ceiling — the two levers pull against each other, which
@@ -712,7 +712,8 @@ def test_the_tuned_genesis_constants_match_the_bash_exports():
     assert vo.MIDWINDOW_EPOCH_INTERVAL == 64
     assert vo.MIDWINDOW_ACTIVATION_BLOCK == 2 * vo.MIDWINDOW_EPOCH_INTERVAL
     #: cert-catchup's interval is NOT the midwindow one and must not be aliased to it: they agree
-    #: on 64 for unrelated reasons. Raising it to 128 was tried live and the stack does not boot.
+    #: on 64 for unrelated reasons — and both stay 64 pending a live re-run, not because 128 is
+    #: barred (that finding is withdrawn; see `CATCHUP_EPOCH_INTERVAL`).
     assert vo.CATCHUP_EPOCH_INTERVAL == 64
 
 
@@ -736,7 +737,8 @@ def test_the_weighted_election_passes_on_a_plausible_split():
 
 def test_the_measurement_SUMS_across_the_epochs_rather_than_scoring_one():
     """One 64-view epoch leaves ~1.1% chance that some light produces nothing by luck, which would
-    make condition (b) a coin flip. The interval cannot be raised (128 does not boot — see
+    make condition (b) a coin flip. The interval has not been raised (128 is reachable since the
+    stand's clock-drift fix but the case has not been re-run on it — see
     `CATCHUP_EPOCH_INTERVAL`), so the sample is bought in epochs: a light that is silent for ONE
     epoch and productive in the other is a PASS, and one silent across both is not."""
     assert _wv([(48, 64), (6, 64), (5, 64), (5, 64)],

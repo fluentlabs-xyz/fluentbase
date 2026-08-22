@@ -39,9 +39,11 @@ decides what the readings mean.
    trusted-peers list is. Porting the note as an assertion would make the case flaky; porting the
    `>= 1` gate as a note would delete the only check there.
 
-`scripts/cert-mitm-proxy.py` is NOT touched and NOT ported: it is already Python, the compose
-overlay launches it (`docker-compose.cert-follow.yml:58` mounts `./scripts:/proxy:ro`), and
-compose files are outside this change. It stays where it is and is referenced as-is.
+`scripts/cert-mitm-proxy.py` is not PORTED — it is already Python and the compose overlay
+launches it (`docker-compose.cert-follow.yml` mounts `./scripts:/proxy:ro`). It gained a second
+MODE for phase 4, `seed-slot`, because the original one cannot test what phase 4 tests: a flipped
+nibble breaks the G1 point and the certificate fails DECODE, never reaching the seed arm. See the
+proxy's own header, and `verdicts_follow.SEED_REJECT_LINE`.
 """
 
 from __future__ import annotations
@@ -115,16 +117,24 @@ def assert_cert_follow(ctx) -> None:
     """A trustless `--cert-follow` node pulls finality certificates from validator-0's `consensus`
     RPC, verifies each against the ON-CHAIN committee, and drives its own reth.
 
-    Three phases, and the third is the reason the first two are not enough:
+    Four phases, and each of the last two is the reason the ones before it are not enough:
 
       1. subscribe-align — it catches up and finalized-aligns with v0 across an epoch boundary;
       2. gap back-fill   — stopped past a real gap and restarted, it catches up via
                            `getFinalization` (persistent resume, not a re-sync from genesis);
       3. tampered reject — fed byte-flipped certificates through a WS man-in-the-middle, it makes
-                           ZERO finalized progress.
+                           ZERO finalized progress;
+      4. PK_epoch        — it OBTAINS the epoch key over its cert upstream, verifies the artifact
+                           against `committee[epoch]` read off its own chain, stops taking
+                           vote-only admissions, and then REFUSES a certificate whose seed slot
+                           was cleared behind a valid multisig quorum.
 
-    Phases 1 and 2 prove a follower CAN follow. Only phase 3 proves it verifies: a node that
-    accepted every certificate it was handed would pass both positive phases perfectly.
+    Phases 1 and 2 prove a follower CAN follow. Phase 3 proves it verifies SOMETHING — but only
+    at decode: a nibble flipped inside the trailing G1 point makes `into_parts()` fail, so the
+    certificate never reaches the cert inlet and the seed check is never exercised. Phase 4 is the
+    one that reaches it (FLU-1167). Its negative is impossible to pass without the key: the
+    cleared slot decodes cleanly and the quorum still verifies, so a vote-only follower ACCEPTS
+    it, and only a scheme carrying `cert_seed_pin` refuses.
     """
     case = "smoke-cert-follow"
     anchor = ctx.baseline_height()
@@ -141,6 +151,20 @@ def assert_cert_follow(ctx) -> None:
                       + _align_diag(ctx, ("cert-follower", vf.CF_SERVICE)),
               on_fail=lambda: ctx.overlay_dump_logs(vf.CF_LOG_TAIL, "cert-follower"))
     _ok(ctx, "phase 1 subscribe-align", f"cert-follower aligned with v0 at {aligned}")
+
+    # PHASE 4b's PAIR IS STARTED HERE, ~10 minutes before it is used, and the placement is a fix
+    # rather than an optimisation. Started at phase 4 it comes up 200+ blocks behind and has to
+    # cold-start, sync, verify a certificate, and only THEN ask for the epoch artifact —
+    # `observe_cert` fires on a verified certificate and on nothing else. Live, that took ~100 s
+    # on one run and ran past the 180 s budget on the next, so the phase's outcome depended on how
+    # long the three preceding phases happened to take.
+    #
+    # Starting it now is free of side effects: `cert-mitm-seed` relays VERBATIM until the harness
+    # arms it, so until phase 4b this follower is indistinguishable from the honest one. It also
+    # gives the sidecar's `pip install` the same head start, which is what the skip path below is
+    # about. Phase 1's own alignment is measured BEFORE this, so the extra containers cannot
+    # perturb it.
+    seed_pair = _start_seed_pair(ctx)
 
     # ── Phase 2: gap back-fill ────────────────────────────────────────────────────────
     _, f1, _ = ctx.overlay_reading(vf.CF_SERVICE, "cert-follower finalized", case)
@@ -215,7 +239,223 @@ def assert_cert_follow(ctx) -> None:
         f"tamper-follower made ZERO finalized progress (finalized={tamper_head}) and logged "
         f"{matched!r} while v0 advanced {v0_before}→{v0_after}")
 
-    _ok(ctx, case, "subscribe-align + gap back-fill + tampered-cert rejection all verified")
+    _cert_follow_phase4(ctx, case, seed_pair)
+
+    _ok(ctx, case, "subscribe-align + gap back-fill + tampered-cert rejection + PK_epoch delivery "
+                   "(vote-only admissions stopped, cleared-seed certificate REFUSED) all verified")
+
+
+def _start_seed_pair(ctx):
+    """Bring up phase 4b's proxy + follower early, and report whether the proxy came up.
+
+    Returns `{"ready": bool}`. A proxy that could not `pip install websockets` (offline host) is
+    NOT an error — phase 4b skips loudly, exactly as phase 3 does — but its follower must then not
+    be started at all, because a follower pointed at a dead upstream for ten minutes is a
+    container burning CPU to prove nothing."""
+    ctx.overlay_up_ok("cert-mitm-seed", note="cf-up-mitm-seed")
+
+    def ready():
+        return vf.mitm_ready(ctx.overlay_logs(vf.SEED_MITM_SERVICE))
+
+    if not ctx.poll(ready, vf.MITM_UP_S, poll_s=vf.MITM_POLL_S):
+        return {"ready": False}
+    ctx.overlay_up("cert-follower-seed", note="cf-up-follower-seed")
+    _say(ctx, "smoke-cert-follow: cert-mitm-seed + cert-follower-seed started early (relaying "
+              "VERBATIM until armed) so phase 4b's follower is caught up when it is needed")
+    return {"ready": True}
+
+
+def _cert_follow_phase4(ctx, case: str, seed_pair) -> None:
+    """Phase 4 (FLU-1167) — the follower obtains `PK_epoch`, and the seed check bites.
+
+    ON THE SAME BRING-UP, deliberately: the ticket asks for exactly this scenario and a separate
+    case would pay a second ~4 min migration to reproduce a stack phase 1 already built. It runs
+    LAST because its negative half poisons a second certificate stream, and nothing may follow a
+    poisoned stream.
+
+    THE ORDER INSIDE IT IS THE ASSERTION, and it is the one thing a re-write can quietly break.
+    `observe_cert` — the only trigger a follower has for fetching the epoch artifact — runs after
+    a certificate VERIFIES (`cert_inlet.rs`: "skipped/tampered certs above never reach here"). So
+    the seed-slot proxy must relay verbatim until the follower has the key, and the harness arms
+    it only after reading the adoption line. Arm first and the follower stays vote-only forever:
+    it would accept every cleared certificate, the negative would never fire, and the case would
+    report that as "the follower is not verifying seeds" — which would be true, but for the
+    harness's reason rather than the product's.
+    """
+    _say(ctx, "smoke-cert-follow: phase 4 — the follower must obtain PK_epoch and stop admitting "
+              "certificates vote-only")
+
+    # ── 4a. the POSITIVE half, on the HONEST follower ─────────────────────────────────
+    #
+    # Read on `cert-follower` and not on the phase-3 tamper node: that one refuses every
+    # certificate, so it never calls `observe_cert` and could never obtain a key — its silence
+    # would be a property of phase 3, not evidence about phase 4.
+    box = {"logs": ""}
+
+    def has_key():
+        box["logs"] = ctx.overlay_logs(vf.CF_SERVICE, tail=vf.SEED_LOG_TAIL,
+                                       dry_value=vf.CF_KEY_LINE + " epoch=2")
+        return vf.CF_KEY_LINE in box["logs"]
+
+    ctx.poll(has_key, vf.CF_KEY_S, poll_s=vf.CF_KEY_POLL_S)
+    got, msg, key_line = vf.evaluate_key_obtained(box["logs"], vf.CF_SERVICE)
+    ctx.check(case, got, msg,
+              on_fail=lambda: ctx.overlay_dump_logs(vf.CF_LOG_TAIL, vf.CF_SERVICE))
+    _say(ctx, f"  cert-follower holds PK_epoch: {key_line}")
+
+    # The SAME adoption, off the follower's commonware registry. An ADDITIONAL witness, read
+    # after the log line and never in place of it: the counter is incremented immediately before
+    # the `info!` that produced the line above, so once the line is present the counter is already
+    # up and there is no window to race. What the second reading adds is the endpoint — a registry
+    # only a follower beacon registers these families on, and one a `--cert-follow` container did
+    # not serve at all until `spawn_devnet_metrics` moved ahead of the validator/follower branch
+    # and the compose overlay started passing `--dpos.metrics-port`.
+    adopted_ok, adopted_msg, counters = vf.evaluate_artifact_adopted_counter(
+        ctx.overlay_node_metrics_text(
+            vf.CF_SERVICE,
+            dry_value=f"{nodes.counter_sample(vf.CF_ADOPTED_FAMILY)} 1\n"
+                      f"{nodes.counter_sample(vf.CF_MISS_FAMILY)} 0\n"),
+        vf.CF_SERVICE)
+    ctx.check(case, adopted_ok, adopted_msg,
+              on_fail=lambda: ctx.overlay_dump_logs(vf.CF_LOG_TAIL, vf.CF_SERVICE))
+    _say(ctx, f"  …and its beacon registry agrees: {counters}")
+
+    # …and the consequence. TWO reads of the whole scrape, not two `metric` calls: an ABSENT
+    # family and an UNREACHABLE endpoint both answer "" through a single-family read, and one of
+    # those is a pass while the other is a measurement that never happened.
+    text0 = ctx.overlay_el_metrics_text(vf.CF_SERVICE,
+                                        dry_value=f"{vf.CF_VOTE_ONLY_FAMILY} 4\n")
+    before = nodes.metric_val(text0, vf.CF_VOTE_ONLY_FAMILY, "")
+    # THE WINDOW IS THE ASSERTION — see the module header. Not a settle time.
+    ctx.sleep(vf.CF_VOTE_ONLY_WINDOW_S)
+    text1 = ctx.overlay_el_metrics_text(vf.CF_SERVICE,
+                                        dry_value=f"{vf.CF_VOTE_ONLY_FAMILY} 4\n")
+    after = nodes.metric_val(text1, vf.CF_VOTE_ONLY_FAMILY, "")
+    ctx.check(case, *vf.evaluate_vote_only_flat(before, after,
+                                                bool(text0.strip()) and bool(text1.strip())),
+              on_fail=lambda: ctx.overlay_dump_logs(vf.CF_LOG_TAIL, vf.CF_SERVICE))
+    _ok(ctx, "phase 4a PK_epoch obtained",
+        f"cert-follower verified the epoch artifact against committee[epoch] ({counters}) and "
+        f"took NO further vote-only admission over {vf.CF_VOTE_ONLY_WINDOW_S}s "
+        f"({vf.CF_VOTE_ONLY_FAMILY}={before or '0'} → {after or '0'})")
+
+    # ── 4b. the NEGATIVE half, on its own follower behind the seed-slot proxy ────────
+    if not seed_pair["ready"]:
+        print("SKIP (phase 4b cleared-seed reject): cert-mitm-seed did not start (offline pip / "
+              "no python) — phase 4a passed, so the follower DOES obtain PK_epoch; what is NOT "
+              "tested is that the key is then used to refuse a cleared seed slot.", flush=True)
+        return
+
+    # It must FOLLOW first — that is how it obtains its own key, and a node that never came up
+    # would satisfy every reading below by doing nothing.
+    seed_box = {"logs": ""}
+
+    def seed_has_key():
+        seed_box["logs"] = ctx.overlay_logs(vf.SEED_TAMPER_SERVICE, tail=vf.SEED_LOG_TAIL,
+                                            dry_value=vf.CF_KEY_LINE + " epoch=2")
+        return vf.CF_KEY_LINE in seed_box["logs"]
+
+    ctx.poll(seed_has_key, vf.CF_KEY_S, poll_s=vf.CF_KEY_POLL_S)
+    got, msg, seed_key_line = vf.evaluate_key_obtained(seed_box["logs"], vf.SEED_TAMPER_SERVICE)
+    ctx.check(case, got, msg,
+              on_fail=lambda: ctx.overlay_dump_logs(vf.CF_LOG_TAIL, vf.SEED_TAMPER_SERVICE,
+                                                    vf.SEED_MITM_SERVICE))
+    _say(ctx, f"  cert-follower-seed holds PK_epoch too: {seed_key_line}")
+
+    # …AND IT MUST BE CAUGHT UP BEFORE THE ARMING. Holding the key is not enough, and this gate
+    # is the difference between a real negative and a green-looking one.
+    #
+    # This follower is started LAST, after three earlier phases have run, so it comes up several
+    # hundred blocks behind and back-fills. Arming while it is still behind leaves it advancing on
+    # certificates that reached it BEFORE the proxy was armed — which the proxy, by construction,
+    # cannot have touched. Live evidence: armed while ~370 blocks behind, it advanced 229 → 268
+    # over the window and the phase read that as "the seed slot is not being checked"; armed while
+    # caught up, it froze on the spot at 124 and logged one `BLS verify FAILED` per arriving
+    # height. Same build, same proxy, opposite verdict — the only difference was the backlog.
+    #
+    # The floor is v0's finalized read a moment ago, the same idiom phase 2 uses: v0 keeps
+    # moving, so passing its earlier value bounds the remaining gap by the time this took rather
+    # than demanding an equality that a live chain can never hold.
+    _, v0_now, _ = ctx.reading(topology.HOST_RPC_PORT, "v0 finalized (pre-arm)", case)
+    caught = ctx.overlay_wait_align(vf.SEED_TAMPER_SERVICE, v0_now, vf.CF_ALIGN_S)
+    ctx.check(case, *vf.evaluate_seed_follower_caught_up(caught, v0_now),
+              on_fail=lambda: ctx.overlay_dump_logs(vf.CF_LOG_TAIL, vf.SEED_TAMPER_SERVICE,
+                                                    vf.SEED_MITM_SERVICE))
+    _say(ctx, f"  cert-follower-seed caught up with v0 at {caught} (>= {v0_now}) — nothing it "
+              "already holds can carry it past the arming")
+
+    # ARM. Everything before this instant was an honest relay; everything after carries a cleared
+    # seed slot on an untouched multisig quorum.
+    #
+    # THE BASELINES ARE READ FIRST, and they are the measurement — not the follower's height.
+    # A poisoned certificate stream turns on a SECOND source for `finalized`: the follower refuses
+    # every tampered certificate, counts the refusals as upstream data faults, rotates, and its EL
+    # meanwhile keeps syncing over devp2p from the validator in `--trusted-peers`; the
+    # steady-state re-jump then fast-forwards the anchor onto that EL tip. Live, with every
+    # certificate correctly refused, `finalized` still went 238 → 271. So the refusals and the
+    # vote-only counter are read, and the height is not.
+    seed_rejects_before = vf.seed_reject_count(
+        ctx.overlay_logs(vf.SEED_TAMPER_SERVICE, tail=vf.SEED_COUNT_TAIL, dry_value=""))
+    vo_text0 = ctx.overlay_el_metrics_text(vf.SEED_TAMPER_SERVICE,
+                                           dry_value=f"{vf.CF_VOTE_ONLY_FAMILY} 1\n")
+    vo_before = nodes.metric_val(vo_text0, vf.CF_VOTE_ONLY_FAMILY, "")
+    ctx.overlay_exec_write(vf.SEED_MITM_SERVICE, vf.SEED_ARM_FILE, "1", note="cf-arm-seed-mitm")
+
+    # THE TAMPER MUST WITNESS ITS OWN TAMPERING (the `tear_journal_to_torn` rule): the proxy
+    # re-slices the frame it is about to send and prints the first rewrite's before/after, and
+    # this waits for that print before a single conclusion is drawn.
+    def cleared():
+        return vf.SEED_CLEARED_LINE in ctx.overlay_logs(vf.SEED_MITM_SERVICE,
+                                                        dry_value=vf.SEED_ARMED_LINE + "\n" +
+                                                        vf.SEED_CLEARED_LINE)
+
+    ctx.poll(cleared, vf.SEED_ARM_S, poll_s=vf.SEED_ARM_POLL_S)
+    ctx.check(case, *vf.evaluate_seed_tamper_landed(
+        ctx.overlay_logs(vf.SEED_MITM_SERVICE,
+                         dry_value=vf.SEED_ARMED_LINE + "\n" + vf.SEED_CLEARED_LINE)),
+        on_fail=lambda: ctx.overlay_dump_logs(vf.CF_LOG_TAIL, vf.SEED_MITM_SERVICE))
+    _say(ctx, f"  cert-mitm-seed armed and CLEARING seed slots; observing for {vf.SEED_OBSERVE_S}s")
+
+    v0_before = ctx.finalized_dec()
+    # THE OBSERVATION WINDOW IS THE ASSERTION — see the module header.
+    ctx.sleep(vf.SEED_OBSERVE_S)
+    v0_after = ctx.finalized_dec()
+    seed_logs = ctx.overlay_logs(vf.SEED_TAMPER_SERVICE, tail=vf.SEED_COUNT_TAIL,
+                                 dry_value="\n".join([vf.SEED_REJECT_LINE] * 40))
+    seed_rejects_after = vf.seed_reject_count(seed_logs)
+    vo_text1 = ctx.overlay_el_metrics_text(vf.SEED_TAMPER_SERVICE,
+                                           dry_value=f"{vf.CF_VOTE_ONLY_FAMILY} 1\n")
+    vo_after = nodes.metric_val(vo_text1, vf.CF_VOTE_ONLY_FAMILY, "")
+
+    # The control first, exactly as in phase 3: a chain-wide stall makes every reading below
+    # meaningless, because nothing would have been delivered to refuse.
+    ctx.check(case, *vf.evaluate_v0_advanced(v0_before, v0_after))
+    dump_seed = lambda: ctx.overlay_dump_logs(vf.CF_LOG_TAIL, vf.SEED_TAMPER_SERVICE,
+                                              vf.SEED_MITM_SERVICE)
+    # It refused every certificate it was handed…
+    ctx.check(case, *vf.evaluate_seed_tamper_refused_every_cert(
+        seed_rejects_before, seed_rejects_after), on_fail=dump_seed)
+    # …and the refusals came from a PINNED scheme, not from a silent downgrade to vote-only, which
+    # is the one other way a cleared slot could produce this reading.
+    ctx.check(case, *vf.evaluate_seed_vote_only_flat(
+        vo_before, vo_after, bool(vo_text0.strip()) and bool(vo_text1.strip())),
+        on_fail=dump_seed)
+    _ok(ctx, "phase 4b cleared-seed reject",
+        f"cert-follower-seed refused {seed_rejects_after - seed_rejects_before} cleared-seed "
+        f"certificates over {vf.SEED_OBSERVE_S}s ({vf.SEED_REJECT_LINE!r}) while v0 advanced "
+        f"{v0_before}→{v0_after}, and admitted NONE of them vote-only "
+        f"({vf.CF_VOTE_ONLY_FAMILY}={vo_before or '0'} → {vo_after or '0'}) — the seed slot is "
+        "checked, and only PK_epoch makes that possible")
+
+    # PACING. The same instrument `smoke-base` uses and the same band (45..66 per 60 s) — the one
+    # that produced the historical 26-27 blk/60s regression reading. Measured on v0 and AFTER the
+    # negative half, so what it reports is the producer's rate with two followers, two proxies and
+    # a poisoned stream all attached.
+    r0 = ctx.finalized_dec()
+    ctx.sleep(verdicts.PACING_WINDOW_S)
+    r1 = ctx.finalized_dec()
+    ctx.check(case, *verdicts.evaluate_pacing(r1 - r0))
+    _say(ctx, f"  pacing {r1 - r0} blk/{verdicts.PACING_WINDOW_S}s")
 
 
 # ══ smoke-cert-cascade ════════════════════════════════════════════════════════════════

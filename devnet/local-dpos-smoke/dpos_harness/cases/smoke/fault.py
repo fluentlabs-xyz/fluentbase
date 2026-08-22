@@ -19,7 +19,7 @@ THE ORDER IS LEAST → MOST INVASIVE, and it is not a preference:
 
 `smoke-liveness` is deliberately EXCLUDED. Its kill/rejoin cycles can push the miss-count to a
 JAIL, which permanently shrinks the committee and is unrecoverable — it must stay an isolated
-stack. `smoke-vrf-dkg-liveness` is excluded for a different reason: it needs a DKG window that
+stack. `smoke-vrf-dkg-live-heal` is excluded for a different reason: it needs a DKG window that
 opens once, near bring-up, and by the time a chain of five cases reached it the window is gone.
 
 Heavy (~25-30 min on one stack).

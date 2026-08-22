@@ -141,7 +141,7 @@ where
     // keep reading a permanently stale finalized block off a node that still
     // answers every liveness check. The handle goes to `dpos.rs::supervise`, so
     // that death is fatal like any other overlay task's.
-    let (verified_tx, window_feed_handle) = match cfg.feed {
+    let (verified_tx, window_feed_handle) = match cfg.feed.clone() {
         Some(handle) => {
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<UpstreamFinalized>();
             let window: crate::consensus_rpc::state::CertWindow = Default::default();
@@ -214,6 +214,14 @@ where
     let follow_cfg = FollowerLayerConfig {
         me,
         staking_config,
+        // Same marker a `--dpos` validator writes: a follower derives + imports
+        // off the inlet and can hit result divergence too, and it may later be
+        // promoted, so its halt must survive a restart identically.
+        halt_marker: Some(
+            node.data_dir
+                .data_dir()
+                .join(crate::dpos::SAFETY_HALT_MARKER),
+        ),
         l1_checkpoint_hash,
         deriver,
         executed,
@@ -236,6 +244,15 @@ where
     let mut handle =
         DposLayer::launch_follower(ctx, reth, follow_cfg, oracle, broadcast_mux, shutdown_token)
             .await?;
+
+    // Serve the epoch-key artifacts this follower obtained and VERIFIED to a
+    // tier-2 follower, over the same `consensus` namespace it already serves
+    // `getFinalization` from its bounded window. The store is the follower's own
+    // — everything in it was checked against `committee[epoch]` on the way in —
+    // so relaying it forwards nothing this node has not authenticated itself.
+    if let (Some(fh), Some(artifacts)) = (&cfg.feed, handle.artifact_bytes.clone()) {
+        fh.set_artifact_source(artifacts);
+    }
 
     // Hand the WS / network / broadcast-mux handles back to the unified
     // node-stack supervisor (`dpos.rs::supervise`); the engine handle rides in

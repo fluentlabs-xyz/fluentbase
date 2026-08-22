@@ -75,6 +75,9 @@ commonware-codec = { workspace = true, features = ["std"] }
 # `executed::tests` mock provider implements `BlockNumReader`, whose `chain_info`
 # returns `reth_chainspec::ChainInfo` (not re-exported by `reth-storage-api`).
 reth-chainspec = { workspace = true }
+# `cold_start_jump::prune_config_pin` sweeps reth's prune surface so a bump that
+# made the hash -> number lookup prunable cannot break cold-start silently.
+reth-prune-types = { workspace = true }
 # The parent-seed witness-gate tests assert `metrics::counter!` values and
 # labels (reject reasons, unverified{unknown|read_failed}, ladder source) via a
 # thread-local DebuggingRecorder.

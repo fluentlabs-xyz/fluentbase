@@ -11,21 +11,27 @@
 //! [`verify_artifact`] takes the artifact and `committee[epoch]` and needs no
 //! local ceremony state, no share, no journal and no block.
 //!
-//! # Who this seam does NOT reach
+//! # Who this seam does NOT reach — and who gets a second one instead
 //!
-//! The check is that cheap, but the DELIVERY rides
-//! `BEACON_RESOLVER_CHANNEL`, so the seam reaches exactly the nodes that are on
+//! The check is that cheap, but the DELIVERY here rides
+//! `BEACON_RESOLVER_CHANNEL`, so THIS seam reaches exactly the nodes that are on
 //! the consensus plane. A `--cert-follow` follower is not one: it mints an
 //! ephemeral p2p identity, configures no bootstrappers, listens on an ephemeral
 //! loopback port and never tracks a peer set (`node/src/cert_follow/mod.rs`), so
-//! it has no peer to ask and no peer asks it — which is why
-//! `DposLayer::launch_follower` wires neither artifact rung and its cert-inlet
-//! stays on vote-only admission for the life of the process. See
-//! [`crate::beacon::keys::BeaconKeys`]'s ladder doc for the residual in full.
-//! Nothing this module lacks is what blocks it: [`verify_artifact`] already
-//! needs only a staking read the follower makes on every cert. What is missing
-//! is a delivery route over the ONE relationship a follower has — its cert
-//! upstream — which would be a `CertUpstream` + `consensus`-RPC addition.
+//! it has no peer to ask here and no peer asks it.
+//!
+//! That is still true, and it is no longer the end of the story. Nothing this
+//! module lacks was ever what blocked a follower: [`verify_artifact`] needs only
+//! a staking read it makes on every cert. What was missing was a delivery route
+//! over the ONE relationship a follower has — its cert upstream — and that route
+//! now exists as `CertUpstream::get_epoch_artifact` over the `consensus`
+//! namespace's `getEpochArtifact` (FLU-1167). It is a SECOND seam, deliberately
+//! separate from this one, built in [`crate::beacon::follower`]: same artifact,
+//! same [`verify_artifact_for_epoch`] check against `committee[minted_at]`, a
+//! different transport. So a follower's cert-inlet leaves vote-only admission
+//! when the epoch's artifact arrives, not when the process exits. See
+//! [`crate::beacon::keys::BeaconKeys`]'s ladder doc for how a caller picks which
+//! rungs it may spend.
 //!
 //! # The three pieces
 //!
@@ -144,6 +150,14 @@ type Cert = Finalization<BlsScheme, Digest>;
 /// rounded up from that, and it is a NETWORK-WIDE constant rather than a bound
 /// derived from the live committee, so every node accepts and refuses the same
 /// bytes.
+///
+/// **It may only ever GROW.** The same value is the durable journal's decode
+/// bound ([`ArtifactJournal::init`]), and that decode is infallible-by-`expect`:
+/// a record already on disk that no longer fits panics the node at STARTUP —
+/// a node that was healthy when it shut down, with a codec message that names
+/// neither this constant nor the epoch whose artifact it refused. Raising it
+/// only widens what a peer may send; lowering it retroactively invalidates
+/// history nothing can re-fetch until the node is up.
 pub(crate) const MAX_ARTIFACT_SIZE: usize = 256 * 1024;
 
 /// Shortest gap between two pulls for one target epoch.
@@ -981,6 +995,10 @@ impl<E: Clock> ArtifactPull<E> {
                 .next_allowed
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
+            // An epoch whose slot has already passed is indistinguishable from an
+            // absent one, so the map keeps only the epochs it is still holding
+            // back — otherwise it grows one entry per epoch ever pulled, forever.
+            next.retain(|_, at| *at > now);
             let at = next.get(&epoch).copied().unwrap_or(now);
             let wait = at.duration_since(now).unwrap_or_default();
             next.insert(epoch, at.max(now) + PULL_MIN_INTERVAL);

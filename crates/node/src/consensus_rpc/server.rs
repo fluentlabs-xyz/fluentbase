@@ -51,6 +51,16 @@ pub trait ConsensusApi {
     #[method(name = "getLatest")]
     async fn get_latest(&self) -> RpcResult<ConsensusState>;
 
+    /// The agreed epoch-key artifact minted at `epoch`, hex-encoded, or
+    /// `NO_CONTENT` where this node holds none.
+    ///
+    /// Serving is unauthenticated BY DESIGN: the artifact carries a
+    /// `committee[epoch]` quorum over itself, so it is self-authenticating and a
+    /// lying server is caught by the caller's own committee read. Handing one to
+    /// anyone leaks nothing a staking read would not.
+    #[method(name = "getEpochArtifact")]
+    async fn get_epoch_artifact(&self, epoch: u64) -> RpcResult<String>;
+
     /// Stream of consensus events (v1: `Finalized` only).
     #[subscription(name = "subscribe" => "event", unsubscribe = "unsubscribe", item = Event)]
     async fn subscribe_events(&self) -> SubscriptionResult;
@@ -79,6 +89,14 @@ impl ConsensusApiServer for ConsensusRpc {
 
     async fn get_latest(&self) -> RpcResult<ConsensusState> {
         Ok(self.feed.latest())
+    }
+
+    async fn get_epoch_artifact(&self, epoch: u64) -> RpcResult<String> {
+        self.feed
+            .get_epoch_artifact(epoch)
+            .await
+            .map(hex::encode)
+            .map_err(to_rpc_error)
     }
 
     async fn subscribe_events(&self, pending: PendingSubscriptionSink) -> SubscriptionResult {

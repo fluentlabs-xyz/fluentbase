@@ -11,8 +11,11 @@ derive-walk at all, so the case would pass without ever exercising the path it e
 
 64 IS ALSO THE CEILING: it bounds how far the victim may fall behind before `maybe_re_jump`
 fast-forwards past the walk. Raising it to 128 to buy headroom was tried live on 2026-07-31 and
-the stack does not boot at that interval — `vo.CATCHUP_EPOCH_INTERVAL` carries the evidence. The
-gap is the lever instead, and its bound is `vo.catchup_gap_ceiling`.
+read as "the stack does not boot at that interval"; that reading is WITHDRAWN — it was the
+stand's own sequencer clock drift and it is fixed, so 128 is reachable. `vo.CATCHUP_EPOCH_INTERVAL`
+carries the whole record and why this constant nonetheless stays at 64 until the case is re-tuned
+and re-run. The gap is still the lever the case stands on, and its bound is
+`vo.catchup_gap_ceiling`.
 
 `${EPOCH_BLOCK_INTERVAL:-64}` keeps bash's default-from-env spelling: an operator who exports a
 different interval gets it, and `EPOCH_INTERVAL` follows it unconditionally so the two can never

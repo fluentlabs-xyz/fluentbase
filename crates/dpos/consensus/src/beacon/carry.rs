@@ -59,28 +59,88 @@ pub enum CarryVerdict {
 /// bootstrap epoch. `None` when a bit read fails (undecided) or when `epoch`
 /// predates the bootstrap mint (no beacon exists at all).
 ///
-/// Public for a second consumer beyond [`select_carry_scheme`]: the boundary
-/// FETCH has to name one height and cannot walk. `Epocher::first(epoch)` is the
-/// right height only where `epoch` itself minted — on a committee that has been
-/// stable for a while, that block carries no outcome and the fetch returns
-/// something useless. This is the only way to name the height that does carry it.
+/// Visible to a second consumer beyond [`select_carry_scheme`]: the agreement
+/// rung [`crate::beacon::keys::AgreedKeys::key_for`], which has to name ONE
+/// epoch's artifact and cannot walk. The artifact is keyed by the epoch that
+/// MINTED the key, and `epoch` itself is the minting epoch only where it
+/// re-minted — a committee stable for a while ran no agreement at all, so asking
+/// for `epoch`'s own artifact returns nothing. This is the only way to name the
+/// epoch that does hold it.
 ///
 /// Note the two `Option` layers, and do not flatten them at a call site: the
 /// outer is "the chain could not be read, retry later" and the inner is "this
 /// epoch predates the beacon entirely". Conflating them turns a transient into a
 /// permanent verdict.
 pub(crate) fn chain_key_epoch(epoch: u64, dkg_qual: &DkgQualFor) -> Option<Option<u64>> {
+    chain_key_epoch_memoised(epoch, dkg_qual, &Mutex::new(BTreeMap::new()))
+}
+
+/// [`chain_key_epoch`] with the answer memoised, and the memo is what makes the
+/// provenance floor affordable on a per-certificate path.
+///
+/// **Why a SUCCESSFUL answer is eternal, so caching it adds no new trust.** Every
+/// bit this scan reads comes back through [`frozen_dkg_qual`], which answers
+/// `Some` only once the bit is DECIDED — set, or its epoch's committee committed —
+/// and `None` otherwise. A `None` aborts the scan. So a `Some` answer is a
+/// function of frozen facts alone and cannot change later. This holds for ANY
+/// epoch that yields an answer, not merely for old ones.
+///
+/// **`None` is NEVER memoised, and that is not tidiness.** A catching-up node
+/// reads at a finalized hash far behind the chain: for an epoch whose committee is
+/// not yet committed there, the bit reads as a default `false` with an empty
+/// committee, and `frozen_dkg_qual` correctly says "undecided". Recording that as
+/// an answer would pin the bootstrap key onto that epoch permanently — and a pin
+/// is write-once, so every seedless certificate of that epoch would be rejected
+/// for the life of the process. A recoverable retry turned into an unrecoverable
+/// refusal.
+///
+/// **Incremental, not a plain cache.** `chain_key_epoch(E) = max{ e <= E :
+/// dkgQual[e] }` is monotone in `E`, so a miss scans down only to the first
+/// memoised epoch and inherits its answer. Total work over a process is O(epochs),
+/// per call usually zero or one step — where the unmemoised scan costs `E -
+/// BOOTSTRAP` iterations EVERY time on a stable committee, because the answer sits
+/// at the bootstrap epoch and nothing above it is ever set. That is the shape that
+/// halved the devnet block rate when the floor put this walk behind every
+/// certificate.
+///
+/// Capping the walk instead is not an option and was already tried: on a stable
+/// committee the correct answer is arbitrarily deep, so any cap yields either a
+/// permanent retry or a false bootstrap answer — the same terminal pin. The
+/// retired `CARRY_WALK_CAP` was removed WITHOUT replacement for exactly this.
+pub(crate) fn chain_key_epoch_memoised(
+    epoch: u64,
+    dkg_qual: &DkgQualFor,
+    memo: &Mutex<BTreeMap<u64, u64>>,
+) -> Option<Option<u64>> {
     if epoch < DETERMINISTIC_BOOTSTRAP_EPOCH {
         return Some(None); // seedless pre-beacon epochs — nothing to serve
     }
+    if let Some(hit) = memo.lock().ok().and_then(|m| m.get(&epoch).copied()) {
+        return Some(Some(hit));
+    }
+    let mut answer = None;
     for e in (DETERMINISTIC_BOOTSTRAP_EPOCH + 1..=epoch).rev() {
+        // A memoised LOWER epoch answers this one too, by monotonicity: nothing
+        // between it and `epoch` had its bit set, or the scan would have stopped.
+        if let Some(hit) = memo.lock().ok().and_then(|m| m.get(&e).copied()) {
+            answer = Some(hit);
+            break;
+        }
         match dkg_qual(e) {
-            Some(true) => return Some(Some(e)),
+            Some(true) => {
+                answer = Some(e);
+                break;
+            }
             Some(false) => continue,
+            // Undecided: abort WITHOUT recording anything. See the doc above.
             None => return None,
         }
     }
-    Some(Some(DETERMINISTIC_BOOTSTRAP_EPOCH))
+    let minted_at = answer.unwrap_or(DETERMINISTIC_BOOTSTRAP_EPOCH);
+    if let Ok(mut m) = memo.lock() {
+        m.insert(epoch, minted_at);
+    }
+    Some(Some(minted_at))
 }
 
 /// Arbitrate which stored mint (if any) this node serves for `epoch`.
@@ -133,6 +193,20 @@ pub(crate) type DkgQualProbe = Arc<dyn Fn(u64, B256) -> Option<(bool, bool)> + S
 /// epoch from E down to the last change on every single call — which is exactly
 /// the long stable span this memo exists for.
 ///
+/// The memo is deliberately NOT bounded by a trailing epoch window, unlike the
+/// crate's other per-epoch maps. [`chain_key_epoch`] scans DOWNWARD from the
+/// queried epoch to the last set bit, and on the stable committee this memo
+/// exists for that bit is the bootstrap epoch — so while no bit is set in the
+/// span, every entry between the bootstrap and the tip is on the scan path and is
+/// re-read the moment it is evicted. (One set bit at `m` makes everything below
+/// `m` unreachable and safely evictable — the unbounded case is the all-clear
+/// history, which is exactly the one this memo serves.) A window of `SCHEME_RETENTION_EPOCHS` would therefore restore the
+/// pre-FLU-1134 behaviour described above (one chain read per epoch of the span,
+/// per call) on a path the vote gate takes per block, to reclaim a map that grows
+/// by one `(u64, bool)` per epoch. How much that is depends on `epochBlockInterval`,
+/// a contract-read chain parameter and not a code constant: hundreds of bytes a year
+/// at day-long epochs, two to three orders of magnitude more at the devnet's 32.
+///
 /// Shared by both launch paths deliberately: the validator builds it over its
 /// beacon plane's reader and the follower over its own, and the two differ in
 /// nothing but the reader instance. Duplicating the freeze rule is how one copy
@@ -162,6 +236,86 @@ pub fn frozen_dkg_qual(
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// The memo must never record an UNDECIDED epoch, and the cost of getting this
+    /// wrong is not a stale read — it is a permanent refusal.
+    ///
+    /// A catching-up node reads at a finalized hash far behind the chain. For an
+    /// epoch whose committee is not committed there, the bit reads as a default
+    /// `false` over an empty committee, and `frozen_dkg_qual` correctly answers
+    /// "undecided". Recording that would pin the bootstrap key onto that epoch
+    /// forever — and a pin is write-once, so every seedless certificate of the
+    /// epoch is rejected for the life of the process.
+    #[test]
+    fn an_undecided_epoch_is_never_memoised_and_stays_retryable() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let decided = Arc::new(AtomicBool::new(false));
+        let d = decided.clone();
+        // Epoch 5's bit is undecided until `decided` flips, then it is set.
+        let qual: DkgQualFor = Arc::new(move |e: u64| {
+            if e == 5 {
+                return d.load(Ordering::SeqCst).then_some(true);
+            }
+            Some(false)
+        });
+        let memo = Mutex::new(BTreeMap::new());
+
+        assert_eq!(
+            chain_key_epoch_memoised(9, &qual, &memo),
+            None,
+            "an undecided bit in the span makes the whole answer undecided"
+        );
+        assert!(
+            memo.lock().unwrap().is_empty(),
+            "nothing may be recorded from a scan that hit an undecided bit"
+        );
+
+        decided.store(true, Ordering::SeqCst);
+        assert_eq!(
+            chain_key_epoch_memoised(9, &qual, &memo),
+            Some(Some(5)),
+            "once decided, the same call resolves — proving the earlier None was not cached"
+        );
+    }
+
+    /// The memo is INCREMENTAL: a later epoch inherits a memoised earlier answer
+    /// instead of re-walking to it. That is what makes the per-certificate cost a
+    /// step rather than the whole epoch range.
+    #[test]
+    fn a_memoised_lower_epoch_answers_a_higher_one_without_re_reading_the_span() {
+        let reads = Arc::new(AtomicUsize::new(0));
+        let r = reads.clone();
+        let qual: DkgQualFor = Arc::new(move |e: u64| {
+            r.fetch_add(1, Ordering::SeqCst);
+            Some(e == 4)
+        });
+        let memo = Mutex::new(BTreeMap::new());
+
+        assert_eq!(chain_key_epoch_memoised(20, &qual, &memo), Some(Some(4)));
+        let first = reads.load(Ordering::SeqCst);
+        assert!(
+            first > 1,
+            "premise: the first call really did walk the span ({first} reads)"
+        );
+
+        // A HIGHER epoch: the walk should meet the memoised 20 after one step and
+        // stop, not descend to 4 again.
+        assert_eq!(chain_key_epoch_memoised(21, &qual, &memo), Some(Some(4)));
+        assert_eq!(
+            reads.load(Ordering::SeqCst) - first,
+            1,
+            "one step down to the memoised epoch, not a fresh walk"
+        );
+
+        // And the exact epoch is a pure hit.
+        assert_eq!(chain_key_epoch_memoised(20, &qual, &memo), Some(Some(4)));
+        assert_eq!(
+            reads.load(Ordering::SeqCst) - first,
+            1,
+            "a memoised epoch costs no chain read at all"
+        );
+    }
 
     fn qual(bits: &[u64]) -> DkgQualFor {
         let set: std::collections::BTreeSet<u64> = bits.iter().copied().collect();

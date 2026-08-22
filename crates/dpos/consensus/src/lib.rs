@@ -12,6 +12,19 @@
 //!   [`outer`], [`executor`], [`slasher`]): adapts upstream commonware
 //!   Simplex behaviour to the Fluent Reth execution layer.
 
+/// Trailing epochs retained for cross-epoch certificate verification: the BLS
+/// schemes in [`outer::EpochSchemeProvider`], and the DERIVED tiers of the
+/// beacon's cross-epoch key store, which prunes to the SAME window because a
+/// key is only ever read to verify a certificate a retained scheme covers.
+///
+/// Crate-level because it is one policy with two enforcers on opposite sides of
+/// the randomness surface. Defining it in either of them would make that one
+/// import the other, which is exactly the coupling the surface exists to remove.
+///
+/// (Marshal backfill / catch-up register epochs in order, so older schemes are
+/// never re-read once the frontier passes them.)
+pub const SCHEME_RETENTION_EPOCHS: usize = 8;
+
 pub mod application;
 pub mod beacon;
 /// DEVNET/TEST-ONLY byzantine code — the single home for all byzantine logic
@@ -70,7 +83,7 @@ pub use dpos::{
 };
 pub use epocher::OriginEpocher;
 pub use executed::executed_state_hash;
-pub use fault::{DeferReason, FaultClass, TransportError};
+pub use fault::{DeferReason, EngineError, Fault, FaultClass};
 pub use feed_sink::FeedSink;
 pub use order_block::{
     anchor_order_block, result_final_height, result_target, OrderBlock, ResultTarget, K,

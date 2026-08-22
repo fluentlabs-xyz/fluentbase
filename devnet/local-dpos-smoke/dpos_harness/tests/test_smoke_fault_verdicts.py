@@ -17,7 +17,7 @@ import re
 
 import pytest
 
-from dpos_harness.cases.smoke import verdicts_fault as vf
+from dpos_harness.cases.smoke import verdicts, verdicts_fault as vf
 
 K = vf.RESULT_LAG_K
 
@@ -367,55 +367,163 @@ def test_an_unreadable_gap_block_is_a_miss_not_a_skip(bad):
     assert not ok and "12=missing-on-validator-3" in msg
 
 
-# ══ smoke-vrf-dkg-liveness ═════════════════════════════════════════════════
+# ══ smoke-vrf-dkg-live-heal ════════════════════════════════════════════════
 
-def test_the_victim_must_be_stopped_before_its_dkg_window_opens():
-    """`:390` — the TIMING is the assertion. Stopped after the window opened, the victim may
-    already hold a share, and the case would then claim a share-HOLDER sits out."""
-    assert vf.evaluate_window_open(100, 108)[0]
-    ok, msg = vf.evaluate_window_open(108, 108)
-    assert not ok and "already at/past the epoch-2 DKG window (108)" in msg
-    assert not vf.evaluate_window_open(200, 108)[0]
+def test_the_DEAL_window_opens_at_epoch_1_and_not_at_the_seal_deadline():
+    """THE BUG THAT MADE THIS CASE GREEN FOR THE WRONG REASON, pinned in both directions.
 
-
-def test_the_dkg_margin_default_and_its_override():
-    """`:379` — the shared DKG seal margin, mirroring `DKG_MARGIN_BLOCKS` in
-    consensus/beacon/actor.rs. Read under the RENAMED spelling, which is the same name
-    `sim/reconcilers.py:64` reads: the bash deliberately shares one knob between the sim's DKG
-    barrier and this case's window, and two knobs that mean the same thing can disagree.
-    A garbage value falls back rather than crashing the case."""
-    assert vf.DKG_MARGIN_ENV == "SIM_DKG_MARGIN_BLOCKS"
-    assert vf.dkg_margin_blocks({}) == 20
-    assert vf.dkg_margin_blocks({vf.DKG_MARGIN_ENV: "16"}) == 16
-    assert vf.dkg_margin_blocks({vf.DKG_MARGIN_ENV: ""}) == 20
-    assert vf.dkg_margin_blocks({vf.DKG_MARGIN_ENV: "nonsense"}) == 20
+    `on_height` calls `maybe_start(now + 1)` every tick, so committee[2]'s ceremony opens the
+    instant the actor's clock enters epoch 1 and the whole of epoch 1 is its deal phase;
+    `DKG_MARGIN_BLOCKS` is only where that phase CLOSES. The clock is `finalized + K`, so the
+    finalized-height edge is `epoch_start(1) - K`. Under the case's tuned 64/128 geometry that is
+    189 — not the 236 the seal deadline would give, a 47-block band inside which a victim is
+    stopped having already acked every dealing."""
+    act, interval = 128, 64
+    assert vf.dkg_deal_window_open(act, interval) == 189
+    assert vf.epoch_start_1(act, interval) == 192
+    assert vf.DKG_CLOCK_LEAD == vf.RESULT_LAG_K == 3
+    seal_deadline = verdicts.beacon_active_epoch_start(act, interval) - vf.DKG_MARGIN_BLOCKS
+    assert seal_deadline == 236
+    assert vf.dkg_deal_window_open(act, interval) < seal_deadline
 
 
-SHARE = f"INFO {vf.SHARE_LINE} epoch=2 idx=3"
+def test_the_victim_must_be_stopped_before_the_deal_window_opens():
+    """The TIMING is the assertion, and the case cannot wait for the next opportunity — there is
+    none. committee[2]'s ceremony is the deterministic bootstrap; it happens once per stack."""
+    assert vf.evaluate_window_open(145, 189)[0]
+    ok, msg = vf.evaluate_window_open(189, 189)
+    assert not ok and "already at/past the epoch-2 DKG DEAL window (189)" in msg
+    assert "reveal fallback" in msg
+    assert not vf.evaluate_window_open(220, 189)[0]
 
 
-def test_an_epoch_2_share_line_is_found():
-    assert vf.epoch_share_lines(SHARE) == [SHARE]
+BOOT = f"INFO {vf.ACTOR_STARTED_LINE} epocher=(test)"
+FRESH = f"INFO {vf.CEREMONY_STARTED_LINE} epoch=2"
 
 
-def test_the_epoch_match_is_anchored_so_epoch_20_is_not_epoch_2():
-    """`:431` — `epoch=2( |,|$)`. A bare `epoch=2` would also match `epoch=20` and turn a later,
-    healthy ceremony into a false finding."""
-    assert vf.epoch_share_lines(f"INFO {vf.SHARE_LINE} epoch=20 idx=3") == []
-    assert vf.epoch_share_lines(f"INFO {vf.SHARE_LINE} epoch=2") != []
-    assert vf.epoch_share_lines(f"INFO {vf.SHARE_LINE} epoch=2,idx=3") != []
+def test_a_fresh_ceremony_after_the_restart_is_the_setup_witness():
+    """`start_fresh` is the ONLY emitter of `ceremony started`, and `JournalLoad::NoFile` is the
+    only arm that reaches it — so the line on the restarted process says the victim came back
+    holding no epoch-2 journal, i.e. it received no dealing and acked none, i.e. its points can
+    only be in the dealers' logs as public reveals."""
+    assert vf.started_fresh_after_restart(f"{BOOT}\n{FRESH}") == FRESH
+    assert vf.started_fresh_after_restart(BOOT) == ""
 
 
-def test_a_line_without_the_share_marker_is_not_a_share():
-    """The marker is logged ONLY on a finalized share. Matching `epoch=2` alone would count
-    every log line of the epoch."""
-    assert vf.epoch_share_lines("INFO something else entirely epoch=2") == []
+def test_a_ceremony_start_from_BEFORE_the_restart_does_NOT_count():
+    """`docker compose logs` returns the whole container log, pre-stop lines included. A start
+    from the process that was stopped means the OPPOSITE of what this witnesses — that the victim
+    WAS present for the deal phase — so the slice at the last boot marker is load-bearing."""
+    assert vf.started_fresh_after_restart(f"{FRESH}\n{BOOT}") == ""
+    # Two boots (a restart after a crash) still slice at the LAST one.
+    assert vf.started_fresh_after_restart(f"{BOOT}\n{FRESH}\n{BOOT}") == ""
 
 
-def test_a_shareless_victim_holds_no_epoch_share():
-    assert vf.evaluate_no_epoch_share([], "validator-3")[0]
-    ok, msg = vf.evaluate_no_epoch_share([SHARE], "validator-3")
-    assert not ok and "should be SHARELESS for epoch 2" in msg and SHARE in msg
+def test_the_fresh_ceremony_grep_is_epoch_anchored():
+    assert vf.started_fresh_after_restart(
+        f"{BOOT}\nINFO {vf.CEREMONY_STARTED_LINE} epoch=20") == ""
+
+
+def test_the_setup_gate_says_what_a_missing_fresh_start_means():
+    assert vf.evaluate_started_fresh(FRESH, "validator-3")[0]
+    ok, msg = vf.evaluate_started_fresh("", "validator-3")
+    assert not ok and "came back holding a journal" in msg and "ACKED" in msg
+
+
+def test_either_road_to_the_share_satisfies_the_recovery_gate():
+    """Both were observed live on this case, on the same geometry, minutes apart: the live
+    ceremony's finalize-over-pinned when it beats the past-boundary sweep, the demote-heal's
+    scoped recompute when it does not. Asserting one — and, worse, the ABSENCE of the other —
+    made a legitimate outcome red."""
+    for marker, road in vf.SHARE_ROADS:
+        got = vf.share_road(f"INFO {marker} epoch=2 height=257")
+        assert got is not None and got[1] == road
+        assert vf.evaluate_share_acquired(got, "validator-3")[0]
+    assert vf.share_road("INFO nothing relevant epoch=2") is None
+    ok, msg = vf.evaluate_share_acquired(None, "validator-3")
+    assert not ok and "did not recover its epoch-2 share" in msg
+    assert vf.HEAL_START_LINE in msg
+
+
+def test_the_two_roads_are_distinct_lines_and_the_share_line_is_no_longer_forbidden():
+    """The earlier version asserted `SHARE_LINE` must be ABSENT, on the premise that a member
+    absent through its own window can never reach the ceremony-finalize arm. It can: it restarts
+    the ceremony from `NoFile` while catching up and finalizes it over the AGREED pinned set."""
+    markers = [m for m, _ in vf.SHARE_ROADS]
+    assert vf.SHARE_LINE in markers and vf.HEAL_LINE in markers
+    assert len(set(markers)) == 2
+
+
+def test_the_pin_and_promote_greps_use_the_Debug_epoch_spelling():
+    """`EpochSchemeProvider::register` and `reconcile_roles` both take `epoch: Epoch` and render
+    it through `?epoch`, so the field is `epoch=Epoch(2)`. A grep anchored on the bare number
+    matches NOTHING — the same trap `verdicts_rotation.SHARE_GATE_EPOCH_FMT` records."""
+    pin = f"INFO {vf.PIN_LINE} " + vf.PIN_EPOCH_FMT.format(2)
+    promote = f"INFO {vf.PROMOTE_LINE} " + vf.PIN_EPOCH_FMT.format(2)
+    assert vf.pin_upgrade_lines(pin, 2) == [pin]
+    assert vf.promote_lines(promote, 2) == [promote]
+    assert vf.pin_upgrade_lines(f"INFO {vf.PIN_LINE} epoch=2", 2) == []
+    assert vf.promote_lines(f"INFO {vf.PROMOTE_LINE} epoch=2", 2) == []
+    assert vf.pin_upgrade_lines(f"INFO {vf.PIN_LINE} " + vf.PIN_EPOCH_FMT.format(21), 2) == []
+    assert vf.promote_lines("INFO something else " + vf.PIN_EPOCH_FMT.format(2), 2) == []
+
+
+def test_the_epoch_scheme_must_leave_vote_only_admission():
+    """A separate consequence from the share, and not implied by it: a member can hold the share
+    and still verify certificates seed-blind if nothing re-registers the scheme with the pin."""
+    assert vf.evaluate_pin_upgraded(["x"], "validator-3")[0]
+    ok, msg = vf.evaluate_pin_upgraded([], "validator-3")
+    assert not ok and "still UNPINNED" in msg
+
+
+def test_the_recovered_member_must_actually_be_SEATED():
+    """A share that lands with no edge to wake is a share nobody votes with — and the production
+    leg would then fail for a reason that is not about the key."""
+    assert vf.evaluate_promoted(["x"], "validator-3")[0]
+    ok, msg = vf.evaluate_promoted([], "validator-3")
+    assert not ok and "never seated as a signer" in msg
+
+
+def test_the_artifact_pull_counter_must_have_MOVED():
+    assert vf.evaluate_artifact_pull_ok("1", "validator-3")[0]
+    assert vf.evaluate_artifact_pull_ok("2.0", "validator-3")[0]
+    ok, msg = vf.evaluate_artifact_pull_ok("0", "validator-3")
+    assert not ok and "never obtained the LIVE epoch's agreed artifact" in msg
+
+
+def test_an_UNREAD_pull_counter_is_not_a_zero_and_not_a_pass():
+    """`node_metric` answers "" for an absent family AND for a dead scrape, and this counter lives
+    on the devnet-only commonware endpoint. Coercing "" to 0 would make the one assertion that
+    names the fix satisfiable by an endpoint nobody served."""
+    for raw in ("", "   ", None, "n/a"):
+        ok, msg = vf.evaluate_artifact_pull_ok(raw, "validator-3")
+        assert not ok, raw
+        assert ("could not be read off validator-3" in msg) or ("not a number" in msg)
+
+
+def test_the_pull_counter_sample_name_carries_the_DOUBLED_total_suffix():
+    """`prometheus-client` appends `_total` to a counter sample whatever the registered name ends
+    in, so a counter registered `X_total` renders `X_total_total`. `node_metric`'s matcher is
+    ANCHORED, so handing it the registered name returns "" — indistinguishable from a counter that
+    never moved, i.e. a leg that can never pass. Pinned against a scrape captured live."""
+    assert vf.ARTIFACT_PULL_OK_FAMILY == "dpos_dkg_artifact_pull_ok_total"
+    assert vf.ARTIFACT_PULL_OK_SAMPLE == vf.ARTIFACT_PULL_OK_FAMILY + "_total"
+    from dpos_harness.core import nodes as _n
+    scrape = "dpos_dkg_artifact_pull_ok_total_total 1\n"
+    assert _n.gauge_val(scrape, vf.ARTIFACT_PULL_OK_SAMPLE) == "1"
+    assert _n.gauge_val(scrape, vf.ARTIFACT_PULL_OK_FAMILY) == ""
+
+
+def test_the_seating_must_leave_room_for_a_leader_slot():
+    """A member seated with four blocks of its epoch left can be perfectly recovered and still
+    produce nothing. That is a fact about the schedule, and the case has to say which of the two
+    it is rather than report a lottery loss as a broken recovery."""
+    assert vf.evaluate_heal_left_room(275, 320, "validator-3")[0]
+    assert vf.evaluate_heal_left_room(320 - vf.MIN_POST_HEAL_BLOCKS, 320, "validator-3")[0]
+    ok, msg = vf.evaluate_heal_left_room(312, 320, "validator-3")
+    assert not ok and "only 8 blocks of epoch 2 left" in msg
+    # Calibrated against a live run: seated at 257 in a [256, 320) epoch, 10 of 64 blocks.
+    assert vf.evaluate_heal_left_room(257, 320, "validator-3")[0]
 
 
 def test_the_chain_must_still_be_finalizing_after_the_rejoin():

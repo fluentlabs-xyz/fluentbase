@@ -41,12 +41,12 @@
 //! genuine second consumer ever appears, hand out a per-consumer notifier then —
 //! a single `notify_one` shared by two waiters silently swallows wakes.
 
-use crate::beacon::carry::{chain_key_epoch, DkgQualFor};
+use crate::beacon::carry::{chain_key_epoch_memoised, DkgQualFor};
 use fluentbase_bls::beacon::GroupPublic;
 use futures::future::BoxFuture;
 use std::{
     collections::BTreeMap,
-    sync::{Arc, RwLock},
+    sync::{Arc, Mutex, RwLock},
 };
 use tokio::sync::Notify;
 use tracing::{debug, warn};
@@ -59,8 +59,8 @@ use tracing::{debug, warn};
 /// 2026-07-14, v5@epoch77).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum KeySource {
-    /// This node's OWN DKG material (writers W1/W3 and the ladder-dkg
-    /// memoize) — locally reconstructed, can diverge from the chain.
+    /// This node's OWN DKG material (writers W1/W3) — locally
+    /// reconstructed, can diverge from the chain.
     LocalDkg,
     /// The key in force at an epoch that did NOT re-mint, derived from an
     /// attested key at the minting epoch plus the chain's `dkgQual` bit saying
@@ -105,8 +105,10 @@ pub fn pk_prefix(pk: &GroupPublic) -> String {
 ///
 /// The one thing a consumer decides is **what it may spend**, and it says so by
 /// passing a [`KeySources`]. The rungs differ by orders of latency — memory,
-/// disk, network — and only the caller knows its own budget. The cert-inlet on
-/// the vote path passes no `fetch`; the repair sweep, off that path, does.
+/// disk, network — and only the caller knows its own budget. Callers on the vote
+/// path pass no [`pull`](KeySources::pull) — the cert-inlet, and a follower's
+/// `pin_for` at BOTH efforts; callers off it do — the repair sweep, and the
+/// follower's background fetch task.
 ///
 /// Two other reads exist and NEITHER is a cheaper tier of `get_pk`:
 ///
@@ -373,9 +375,6 @@ impl Default for BeaconKeys {
 pub(crate) type AgreedKeyAt =
     Arc<dyn Fn(u64) -> BoxFuture<'static, Option<GroupPublic>> + Send + Sync>;
 
-/// This node's OWN DKG material for an epoch, key only (never the share).
-pub type OwnKeyFor = Arc<dyn Fn(u64) -> Option<GroupPublic> + Send + Sync>;
-
 /// A ladder rung over the agreement plane's artifact, ready to run.
 ///
 /// The artifact is keyed by the epoch whose committee agreed it, which is the
@@ -390,11 +389,22 @@ pub type OwnKeyFor = Arc<dyn Fn(u64) -> Option<GroupPublic> + Send + Sync>;
 pub struct AgreedKeys {
     at: AgreedKeyAt,
     dkg_qual: DkgQualFor,
+    /// Memo for the `epoch → minting epoch` walk. Per-instance and shared by
+    /// clone, so every rung built over the same plane shares one. See
+    /// [`chain_key_epoch_memoised`] for why a successful answer is eternal and a
+    /// `None` must never land here.
+    ///
+    /// [`chain_key_epoch_memoised`]: super::carry::chain_key_epoch_memoised
+    carry_memo: Arc<Mutex<BTreeMap<u64, u64>>>,
 }
 
 impl AgreedKeys {
     pub fn new(at: AgreedKeyAt, dkg_qual: DkgQualFor) -> Self {
-        Self { at, dkg_qual }
+        Self {
+            at,
+            dkg_qual,
+            carry_memo: Arc::new(Mutex::new(BTreeMap::new())),
+        }
     }
 
     /// `(minting epoch, key)` for the key in force at `epoch`.
@@ -406,7 +416,7 @@ impl AgreedKeys {
     /// three is the same — stay unpinned, i.e. vote-only admission — so they are
     /// deliberately not distinguished here.
     pub async fn key_for(&self, epoch: u64) -> Option<(u64, GroupPublic)> {
-        let minted_at = chain_key_epoch(epoch, &self.dkg_qual)??;
+        let minted_at = chain_key_epoch_memoised(epoch, &self.dkg_qual, &self.carry_memo)??;
         let pk = (self.at)(minted_at).await?;
         debug!(
             epoch,
@@ -426,8 +436,6 @@ impl AgreedKeys {
 /// caller on the vote path: its budget is seconds against that path's one.
 #[derive(Default, Clone, Copy)]
 pub struct KeySources<'a> {
-    /// This node's own DKG material. In-memory.
-    pub own: Option<&'a OwnKeyFor>,
     /// The agreement artifacts this node already holds. Memory, then disk.
     pub held: Option<&'a AgreedKeys>,
     /// One bounded pull of the minting epoch's artifact from a peer. Network.
@@ -448,10 +456,9 @@ pub struct KeySources<'a> {
 ///
 /// 1. **the shared store** — W1 (own key, published before the engine spawns)
 ///    and the agreement plane's write-back both land here;
-/// 2. **this node's own DKG material**, key only;
-/// 3. **the artifacts this node already holds** ([`AgreedKeys`] over the local
+/// 2. **the artifacts this node already holds** ([`AgreedKeys`] over the local
 ///    store);
-/// 4. **one bounded pull** of the minting epoch's artifact from a peer.
+/// 3. **one bounded pull** of the minting epoch's artifact from a peer.
 ///
 /// Store-first because both later rungs cost a `dkgQual` chain read even when
 /// they hit, and a caller that already has the answer must not pay for it. The
@@ -460,23 +467,55 @@ pub struct KeySources<'a> {
 /// reconstructed ones — so a caller that cannot take a local reconstruction
 /// raises [`KeySources::store_floor`] rather than dropping the rung.
 ///
-/// `own` is `None` where the caller structurally has no DKG material to consult
-/// (a follower) or cannot reach it (the cert-inlet, which sits outside the beacon
-/// plane): on a validator W1 publishes that same key into the store BEFORE the
-/// engine spawns, so rung 1 already covers it there and the missing rung costs
-/// nothing.
+/// **There is no rung for this node's own DKG material, and its absence is
+/// load-bearing.** Everything this ladder resolves is a VERIFY-side value — the
+/// seed pin a wire-received certificate is checked against; no signing decision
+/// reads it. On that side the two failure directions are not symmetric. A pin is
+/// write-once and terminal when wrong: `EpochSchemeProvider` refuses a later
+/// registration that drops one, and every seedless certificate of that epoch is
+/// then rejected for the life of the process. A MISSING pin only degrades the
+/// epoch to vote-only admission, which still verifies the attributable multisig
+/// quorum, committee membership and subject binding — it loses detection of a
+/// tampered seed slot riding a valid quorum, and nothing else. A locally
+/// reconstructed key can diverge from the network's (soak 2026-07-14), so a rung
+/// handing one to the terminal side trades a recoverable failure for an undoable
+/// one. Local material is still reachable where it is safe to take it: W1/W3
+/// publish it into rung 1, and [`KeySources::store_floor`] lets each caller that
+/// cannot take that tier exclude it — one mechanism the caller controls, rather
+/// than a rung it could only take or drop whole.
 ///
-/// `held`/`pull` are `None` where there is no artifact store to read or no plane
-/// to pull through, and a `--cert-follow` follower has neither. It is worth
-/// being exact about what that costs it, because rung 1 does not rescue it: the
-/// store's writers are W1/W3, the agreement write-back, and this ladder's own
-/// memoisation of a rung answer — every one of them plane-side. A follower runs
-/// none of them, so its store is empty for the life of the process and its
-/// `get_pk` answers `None` for every epoch. Its certs therefore take vote-only
-/// admission always, not just until a key arrives. The quorum is still fully
-/// verified; the seed check is what it does without. Closing it means giving the
-/// follower a delivery route for the artifact over its cert upstream, the one
-/// peer relationship it has — see [`crate::beacon::artifact`].
+/// `held`/`pull` are `None` where there is no artifact store to read or no route
+/// to fetch over. **A `--cert-follow` follower is no longer such a caller**
+/// (FLU-1167): [`crate::beacon::follower::for_follower`] gives it a RAM-only
+/// artifact store of its own and a delivery route over its cert upstream — the
+/// one peer relationship it has — so rung 3 exists there, it is just not the
+/// plane's `BEACON_RESOLVER_CHANNEL` pull. It is the same [`AgreedKeys`] shape
+/// over a different transport, checked by the same
+/// [`crate::beacon::artifact::verify_artifact_for_epoch`] against
+/// `committee[minted_at]` before anything is kept.
+///
+/// **Which rungs each of its two callers may spend is the whole design there,
+/// and it is the rule stated above, not an exception to it.** The follower's
+/// `pin_for` runs per certificate and passes `pull: None` at BOTH efforts, so
+/// the vote path stays network-free by construction; its background fetch task
+/// passes `held` AND `pull`, off that path, on the same
+/// [`crate::beacon::artifact::PULL_MIN_INTERVAL`] per-epoch budget the plane's
+/// pull owes its peers. Rung 1 is what joins the two: a fetch that resolves
+/// writes `Agreed` under the MINTING epoch and memoises `Carried` under the
+/// asked-for one, exactly as it does on a validator, which is what makes the
+/// next per-certificate ask a map hit. A follower's store therefore has ONE
+/// writer — this ladder's own memoisation — where a validator's also has W1/W3
+/// and the agreement write-back; it is no longer empty for the life of the
+/// process, and its certificates take vote-only admission until the epoch's
+/// artifact arrives rather than always. The quorum is fully verified either way;
+/// the seed check is what it does without in the meantime.
+///
+/// The provenance floor does NOT differ by node class, and deliberately: both
+/// follower callers pass the same `store_floor: Some(KeySource::Carried)` the
+/// plane passes. A follower has no local reconstruction to floor out today —
+/// nothing on that path writes [`KeySource::LocalDkg`] — but a floor that varied
+/// by node class is exactly how one class quietly starts pinning a weaker tier
+/// than the rule above admits.
 impl BeaconKeys {
     /// The key in force at `epoch`, spending only the rungs `sources` permits.
     ///
@@ -490,9 +529,6 @@ impl BeaconKeys {
             None => self.cached_only(epoch),
         };
         if let Some(pk) = cached {
-            return Some(pk);
-        }
-        if let Some(pk) = sources.own.and_then(|f| f(epoch)) {
             return Some(pk);
         }
         for rung in [sources.held, sources.pull].into_iter().flatten() {
@@ -730,45 +766,22 @@ mod tests {
         assert!(asked.lock().unwrap().is_empty());
     }
 
-    /// The order below the store: own DKG material, then held artifacts, then one
-    /// network pull. Each earlier hit must cost nothing at the later rungs.
+    /// The order below the store: held artifacts, then one network pull. An
+    /// empty local store must not stop the pull, and the pulled value is filed
+    /// at the minting epoch under `Agreed`.
     #[tokio::test]
-    async fn the_ladder_falls_through_own_then_held_then_pull() {
+    async fn the_ladder_falls_through_held_then_pull() {
         let bootstrap = crate::beacon::actor::DETERMINISTIC_BOOTSTRAP_EPOCH;
-        let own: OwnKeyFor = Arc::new(|e| (e == 40).then(|| pk(9)));
         let held_asked = Arc::new(std::sync::Mutex::new(Vec::new()));
         let pull_asked = Arc::new(std::sync::Mutex::new(Vec::new()));
 
-        // (a) an own-DKG hit short-circuits both artifact rungs.
-        let store = BeaconKeys::new();
-        assert_eq!(
-            store
-                .get_pk(
-                    40,
-                    KeySources {
-                        own: Some(&own),
-                        held: Some(&rung(BTreeMap::new(), &[], held_asked.clone())),
-                        pull: Some(&rung(BTreeMap::new(), &[], pull_asked.clone())),
-                        store_floor: None,
-                    }
-                )
-                .await,
-            Some(pk(9))
-        );
-        assert!(held_asked.lock().unwrap().is_empty());
-        assert!(pull_asked.lock().unwrap().is_empty());
-
-        // (b) no own material and an empty local store ⇒ the pull answers, and
-        //     its value is filed at the minting epoch under `Agreed`.
         let expected = pk(4);
         let store = BeaconKeys::new();
-        let no_own: OwnKeyFor = Arc::new(|_| None);
         assert_eq!(
             store
                 .get_pk(
                     40,
                     KeySources {
-                        own: Some(&no_own),
                         held: Some(&rung(BTreeMap::new(), &[], held_asked.clone())),
                         pull: Some(&rung(
                             BTreeMap::from([(bootstrap, expected)]),

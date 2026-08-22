@@ -24,7 +24,7 @@ import pytest
 from dpos_harness.cases.smoke import (asserts_follow, cert_cascade, cert_follow, driver,
                                       tx_cascade, verdicts, verdicts_follow as vf)
 from dpos_harness.cases.smoke.driver import SmokeCtx, SmokeFailure
-from dpos_harness.core import rpc, topology
+from dpos_harness.core import nodes, rpc
 from dpos_harness.core.proc import Runner
 from dpos_harness.stack.profiles import StaticProfile
 from dpos_harness.stack.static_stack import StaticStack
@@ -160,10 +160,20 @@ def test_cert_follow_transcript_is_bash_faithful():
     assert _cmds(r) == [
         UP, STOP, _recreate(ov),
         _compose(ov, "up", "-d", "cert-follower"),
+        # Phase 4b's pair comes up HERE, right after phase 1's alignment and ~10 minutes before
+        # it is used, so it is caught up and keyed when phase 4b needs it — started at phase 4 it
+        # ran past its 180 s key budget on a live run. The proxy relays verbatim until armed, so
+        # its follower is indistinguishable from the honest one until then.
+        _compose(ov, "up", "-d", "cert-mitm-seed"),
+        _compose(ov, "up", "-d", "cert-follower-seed"),
         _compose(ov, "stop", "--timeout", "40", "cert-follower"),
         _compose(ov, "start", "cert-follower"),
         _compose(ov, "up", "-d", "cert-mitm"),
         _compose(ov, "up", "-d", "cert-follower-tamper"),
+        # The ARMING write has no bash ancestor — it is the mechanism that makes the pass-through
+        # window end at a known instant instead of at a guessed one.
+        _compose(ov, "exec", "-T", "cert-mitm-seed", "sh", "-c",
+                 f"printf '%s' '1' > {vf.SEED_ARM_FILE}"),
         DOWN,
     ]
 
@@ -355,26 +365,91 @@ def test_the_teardown_stays_bare_and_reaps_the_overlay_containers_as_orphans():
 
 # ══ the wiring: cert-follow ════════════════════════════════════════════════
 
-def _cf_world(**over):
-    """A healthy cert-follow world: the producer advances, the follower aligns, the MITM comes up
-    and the tamper follower finalizes nothing."""
-    fin = iter([100, 140])
+#: The phase-4 follower's finalized height, identical BEFORE and AFTER the arming — the frozen
+#: reading the negative asserts. A real hex and not `"null"`: this follower has been finalizing
+#: honest blocks all along (that pass-through window is what gave it the key), so `overlay_reading`
+#: refuses a sentinel here and the two samples double as liveness witnesses.
+SEED_FROZEN = "0x140|0xcc"
+
+
+def _seed_logs(refusals):
+    """`cert-follower-seed`'s log, which GROWS across the arming — the shape the count reads.
+
+    Keyed on the `tail` the case asks for, because that is what distinguishes the two kinds of
+    read the body does: the key gate reads `SEED_LOG_TAIL`, and the refusal COUNT reads
+    `SEED_COUNT_TAIL` exactly twice — once for the baseline before the arming and once after. A
+    stub that answered the same text both times would make the delta zero and no world could ever
+    pass, which is the one way to get this wrong that looks like a broken verdict."""
+    seen = {"counts": 0}
+
+    def logs(tail):
+        head = [vf.CF_KEY_LINE + " epoch=2"]
+        if tail != vf.SEED_COUNT_TAIL:
+            return "\n".join(head)
+        seen["counts"] += 1
+        n = 0 if seen["counts"] == 1 else refusals
+        return "\n".join(head + [f"WARN {vf.SEED_REJECT_LINE}; skipping h={h}"
+                                 for h in range(n)])
+    return logs
+
+
+def _cf_logs(svc):
+    """What each service says in the healthy world.
+
+    Four different answers, and the two proxies' differ from the two followers': phase 3's
+    follower refuses at DECODE and phase 4's at VERIFY, which are different lines on different
+    code paths, and reading either one from the wrong service is how a negative passes for the
+    wrong reason."""
+    if svc == "cert-mitm":
+        return vf.MITM_READY_LINE
+    if svc == vf.SEED_MITM_SERVICE:
+        return "\n".join((vf.MITM_READY_LINE, vf.SEED_ARMED_LINE, vf.SEED_CLEARED_LINE))
+    if svc == vf.CF_SERVICE:
+        return vf.CF_KEY_LINE + " epoch=2"
+    if svc == vf.SEED_TAMPER_SERVICE:
+        return vf.CF_KEY_LINE + " epoch=2"
+    return vf.TAMPER_REJECT_LINES[0]
+
+
+def _cf_world(seed_refusals=vf.MIN_SEED_REJECTS + 3, **over):
+    """A healthy cert-follow world: the producer advances, the follower aligns, both MITMs come
+    up, the phase-3 tamper follower finalizes nothing, and the phase-4 follower obtains PK_epoch
+    and then freezes once the seed slots are cleared."""
+    # SIX readings, in the order the four phases take them: phase 3's two producer samples,
+    # phase 4b's two, and phase 4's pacing pair. The last gap is inside the band on purpose —
+    # a producer that merely moved would satisfy every `v0 advanced` control and still fail
+    # pacing, which is the whole reason pacing is a separate instrument.
+    fin = iter([100, 140, 140, 180, 180, 180 + verdicts.PACING_MIN_BLOCKS + 5])
+    seed_logs = _seed_logs(seed_refusals)
     world = dict(
         baseline_height=lambda dry_value=0: 100,
-        finalized_dec=lambda dry_value=0: next(fin, 140),
+        finalized_dec=lambda dry_value=0: next(fin, 400),
         overlay_wait_align=lambda *a, **k: "0x8c|0xaa",
         wait_finalized_ge=lambda *a, **k: True,
         # v0 is the only HOST-port read left in this case — the back-fill target, through the
         # fail-loud `ctx.reading`. The followers are keyed by SERVICE and read in-container.
         check_external=lambda port, dry_value="": "0x8c|0xaa",
-        overlay_check_node=lambda svc, dry_value="": {vf.CF_SERVICE: "0x64|0xaa"}.get(
+        overlay_check_node=lambda svc, dry_value="": {
+            vf.CF_SERVICE: "0x64|0xaa", vf.SEED_TAMPER_SERVICE: SEED_FROZEN}.get(
             svc, "null|null"),
         # The tamper follower is UP and finalizing nothing — the shape the phase actually asserts.
         # It used to be unreachable, i.e. a "healthy world" whose negative passed vacuously.
         overlay_head_dec=lambda svc, **k: 12,
         shutdown_flushed=lambda *a, **k: True,
-        overlay_logs=lambda *svcs, **k: (vf.MITM_READY_LINE if svcs[0] == "cert-mitm"
-                                         else vf.TAMPER_REJECT_LINES[0]),
+        overlay_logs=lambda *svcs, **k: (seed_logs(k.get("tail"))
+                                         if svcs[0] == vf.SEED_TAMPER_SERVICE
+                                         else _cf_logs(svcs[0])),
+        # A scrape that ANSWERED and whose vote-only family did not move. Both halves matter:
+        # an empty text is an unread endpoint and must fail, and a family that moved means the
+        # pin never reached the cert inlet.
+        overlay_el_metrics_text=lambda svc, **k: f"{vf.CF_VOTE_ONLY_FAMILY} 4\n",
+        # The OTHER registry on the same container: the commonware one, carrying the adoption
+        # counter. Sample names carry the doubled suffix a `prometheus-client` counter renders
+        # with, so the fixture goes through `counter_sample` rather than hand-writing it — a
+        # fixture that spelled the registered name would pass while the live scrape read nothing.
+        overlay_node_metrics_text=lambda svc, **k: (
+            f"{nodes.counter_sample(vf.CF_ADOPTED_FAMILY)} 1\n"
+            f"{nodes.counter_sample(vf.CF_MISS_FAMILY)} 0\n"),
         sleep=lambda _s: None,
     )
     world.update(over)
@@ -387,7 +462,10 @@ def test_cert_follow_passes_on_a_healthy_world(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "OK (phase 1 subscribe-align)" in out
     assert "OK (phase 2 gap back-fill)" in out
-    assert "tampered-cert rejection all verified" in out
+    assert "OK (phase 3 tampered-reject)" in out
+    assert "OK (phase 4a PK_epoch obtained)" in out
+    assert "OK (phase 4b cleared-seed reject)" in out
+    assert "PK_epoch delivery" in out
 
 
 def test_cert_follow_FAILS_when_the_tamper_follower_finalized_anything(monkeypatch):
@@ -463,6 +541,212 @@ def test_cert_follow_FAILS_LOUD_rather_than_reading_an_unreachable_follower_as_h
     with pytest.raises(SmokeFailure) as e:
         asserts_follow.assert_cert_follow(ctx)
     assert "refusing to read an unreachable node as height 0" in e.value.message
+
+
+# ── cert-follow phase 4 (FLU-1167), driven through the BODY ────────────────
+
+def _no_key(svc):
+    """The world where the follower never obtains `PK_epoch` — i.e. the pre-fix behaviour."""
+    return "" if svc == vf.CF_SERVICE else _cf_logs(svc)
+
+
+def test_cert_follow_FAILS_when_the_follower_never_obtains_PK_epoch(monkeypatch):
+    """FLU-1167 ITSELF, driven. Before the fix a `--cert-follow` node had no route to the epoch
+    artifact at all, so this log line did not exist and every certificate it admitted was checked
+    on the multisig quorum alone. The case has to fail on that, not shrug."""
+    ctx, _ = _live_ctx(monkeypatch, asserts_follow.CERT_FOLLOW_OVERLAY,
+                       **_cf_world(overlay_logs=lambda *svcs, **k: _no_key(svcs[0])))
+    with pytest.raises(SmokeFailure) as e:
+        asserts_follow.assert_cert_follow(ctx)
+    assert "did not obtain PK_epoch" in e.value.message
+
+
+def test_cert_follow_FAILS_when_vote_only_admissions_keep_growing(monkeypatch):
+    """The CONSEQUENCE, separately. A follower can log that it holds the key and still verify
+    seed-blind if the pin never reaches the cert inlet; the counter is the only thing that sees
+    the difference."""
+    counts = iter([f"{vf.CF_VOTE_ONLY_FAMILY} 4\n", f"{vf.CF_VOTE_ONLY_FAMILY} 29\n"])
+    ctx, _ = _live_ctx(
+        monkeypatch, asserts_follow.CERT_FOLLOW_OVERLAY,
+        **_cf_world(overlay_el_metrics_text=lambda svc, **k: next(counts, "x 29\n")))
+    with pytest.raises(SmokeFailure) as e:
+        asserts_follow.assert_cert_follow(ctx)
+    assert "grew 4 -> 29" in e.value.message
+
+
+def test_cert_follow_FAILS_when_the_metrics_endpoint_never_answered(monkeypatch):
+    """THE VACUOUS PASS THIS COUNTER WOULD OTHERWISE HAVE. An empty scrape and a family that was
+    never incremented both read as "", and one of them is a pass while the other is a measurement
+    that never happened. Reading the whole scrape is what tells them apart."""
+    ctx, _ = _live_ctx(monkeypatch, asserts_follow.CERT_FOLLOW_OVERLAY,
+                       **_cf_world(overlay_el_metrics_text=lambda svc, **k: ""))
+    with pytest.raises(SmokeFailure) as e:
+        asserts_follow.assert_cert_follow(ctx)
+    assert "did not answer" in e.value.message
+
+
+def test_cert_follow_FAILS_when_the_beacon_registry_never_answered(monkeypatch):
+    """The SECOND adoption witness must not be satisfiable by silence. The commonware registry
+    exists on a follower only under a devnet build plus `--dpos.metrics-port`; drop either and
+    the scrape is empty. An empty scrape has to fail here rather than read as "adopted nothing"
+    or, worse, be skipped — otherwise a compose regression that removed the flag would quietly
+    take the witness away and leave the phase looking as strong as before."""
+    ctx, _ = _live_ctx(monkeypatch, asserts_follow.CERT_FOLLOW_OVERLAY,
+                       **_cf_world(overlay_node_metrics_text=lambda svc, **k: ""))
+    with pytest.raises(SmokeFailure) as e:
+        asserts_follow.assert_cert_follow(ctx)
+    assert "commonware registry" in e.value.message
+    assert vf.CF_ADOPTED_FAMILY in e.value.message
+
+
+def test_cert_follow_FAILS_when_the_adoption_counter_disagrees_with_the_log(monkeypatch):
+    """…and it must not be satisfiable by an ANSWERING endpoint either. The two witnesses count
+    the same event one line apart in `fetch_and_verify`, so a registry that answers with the
+    family at 0 while the log carries the adoption line is not a stale reading — it is the two
+    disagreeing, and the case has to say so instead of preferring the one it likes."""
+    ctx, _ = _live_ctx(
+        monkeypatch, asserts_follow.CERT_FOLLOW_OVERLAY,
+        **_cf_world(overlay_node_metrics_text=lambda svc, **k: (
+            f"{nodes.counter_sample(vf.CF_ADOPTED_FAMILY)} 0\n"
+            f"{nodes.counter_sample(vf.CF_MISS_FAMILY)} 3\n")))
+    with pytest.raises(SmokeFailure) as e:
+        asserts_follow.assert_cert_follow(ctx)
+    assert "still 0" in e.value.message
+
+
+def test_cert_follow_FAILS_when_the_seed_proxy_cleared_nothing(monkeypatch):
+    """THE TAMPER MUST WITNESS ITS OWN TAMPERING. A proxy that armed and cleared no slot produces
+    exactly the reading a follower that rejected nothing produces — a still node and a quiet log.
+    The `tear_journal_to_torn` readback rule, applied to a proxy."""
+    quiet = lambda svc: (vf.MITM_READY_LINE + "\n" + vf.SEED_ARMED_LINE
+                         if svc == vf.SEED_MITM_SERVICE else _cf_logs(svc))
+    ctx, _ = _live_ctx(monkeypatch, asserts_follow.CERT_FOLLOW_OVERLAY,
+                       **_cf_world(overlay_logs=lambda *svcs, **k: quiet(svcs[0])))
+    with pytest.raises(SmokeFailure) as e:
+        asserts_follow.assert_cert_follow(ctx)
+    assert "cleared NO seed slot" in e.value.message
+
+
+def test_cert_follow_FAILS_when_the_pinned_follower_ACCEPTS_a_cleared_seed(monkeypatch):
+    """THE NEGATIVE THIS PHASE EXISTS FOR. The multisig quorum is untouched, so a follower that is
+    not checking the seed slot admits every one of these certificates — it refuses nothing, and
+    every acceptance ticks the vote-only counter. That is the hole FLU-1167 closed, and it is
+    inexpressible in phase 3: a flipped nibble fails DECODE and never reaches the seed arm."""
+    counts = iter([f"{vf.CF_VOTE_ONLY_FAMILY} 1\n", f"{vf.CF_VOTE_ONLY_FAMILY} 44\n"])
+
+    # Admitted, not refused: the key line stays, the refusals never appear, and every acceptance
+    # ticks the vote-only counter.
+    ctx, _ = _live_ctx(
+        monkeypatch, asserts_follow.CERT_FOLLOW_OVERLAY,
+        **_cf_world(seed_refusals=0,
+                    overlay_el_metrics_text=lambda svc, **k: (
+                        next(counts, f"{vf.CF_VOTE_ONLY_FAMILY} 44\n")
+                        if svc == vf.SEED_TAMPER_SERVICE
+                        else f"{vf.CF_VOTE_ONLY_FAMILY} 4\n")))
+    with pytest.raises(SmokeFailure) as e:
+        asserts_follow.assert_cert_follow(ctx)
+    assert "the seed slot is not being checked" in e.value.message
+
+
+def test_cert_follow_FAILS_when_the_seed_follower_refused_nothing_at_all(monkeypatch):
+    """A follower that refused nothing cannot be distinguished from one that was handed nothing —
+    and either way the phase has proved nothing. The count is what separates "it rejected" from
+    "the stream stopped", which a frozen height never could."""
+    ctx, _ = _live_ctx(monkeypatch, asserts_follow.CERT_FOLLOW_OVERLAY,
+                       **_cf_world(seed_refusals=0))
+    with pytest.raises(SmokeFailure) as e:
+        asserts_follow.assert_cert_follow(ctx)
+    assert "refused only 0 certificates" in e.value.message
+
+
+def test_cert_follow_does_NOT_read_the_seed_followers_HEIGHT_as_the_verdict(monkeypatch):
+    """THE INSTRUMENT THAT WAS WRONG, pinned so it cannot come back. A poisoned stream turns on a
+    SECOND source for a follower's `finalized`: it refuses every certificate, counts the refusals
+    as upstream data faults, rotates, and its EL keeps syncing over devp2p from the validator in
+    `--trusted-peers`, after which the steady-state re-jump fast-forwards the anchor onto that EL
+    tip. Live, with every certificate refused and the vote-only counter flat, `finalized` still
+    went 238 → 271. This world reproduces exactly that — the follower's height RUNS AWAY while it
+    refuses everything — and the phase must pass on it."""
+    heads = iter(["0x140|0xcc", "0x1ff|0xcc", "0x2ff|0xcc"])
+
+    def node(svc, dry_value=""):
+        if svc == vf.SEED_TAMPER_SERVICE:
+            return next(heads, "0x2ff|0xcc")
+        return {vf.CF_SERVICE: "0x64|0xaa"}.get(svc, "null|null")
+
+    ctx, _ = _live_ctx(monkeypatch, asserts_follow.CERT_FOLLOW_OVERLAY,
+                       **_cf_world(overlay_check_node=node))
+    asserts_follow.assert_cert_follow(ctx)
+
+
+def test_cert_follow_arms_the_seed_proxy_only_AFTER_its_follower_holds_the_key(monkeypatch):
+    """THE ORDER IS THE ASSERTION, and it is the one thing a rewrite can quietly break.
+    `observe_cert` — the follower's only trigger for fetching the artifact — runs after a
+    certificate VERIFIES. Arm first and the follower stays vote-only forever: it would accept
+    every cleared certificate, the negative would never fire, and the case would blame the
+    product for the harness's ordering."""
+    ctx, runner = _live_ctx(monkeypatch, asserts_follow.CERT_FOLLOW_OVERLAY, **_cf_world())
+    asserts_follow.assert_cert_follow(ctx)
+    seq = [" ".join(inv.argv) if inv.argv else str(inv) for inv in runner.log]
+    up_seed = next(i for i, x in enumerate(seq) if "up -d cert-follower-seed" in x)
+    arm = next(i for i, x in enumerate(seq) if vf.SEED_ARM_FILE in x)
+    assert up_seed < arm
+
+
+def test_cert_follow_FAILS_when_the_seed_follower_is_still_back_filling(monkeypatch):
+    """THE BUG THIS PHASE SHIPPED WITH. Armed while ~370 blocks behind, the follower advanced on
+    certificates delivered before the proxy was armed and the phase reported that as "the seed
+    slot is not being checked". The gate has to fire on the backlog, not on the freeze."""
+    ctx, _ = _live_ctx(monkeypatch, asserts_follow.CERT_FOLLOW_OVERLAY,
+                       **_cf_world(overlay_wait_align=lambda svc, *a, **k: (
+                           None if svc == vf.SEED_TAMPER_SERVICE else "0x8c|0xaa")))
+    with pytest.raises(SmokeFailure) as e:
+        asserts_follow.assert_cert_follow(ctx)
+    assert "did not catch up with v0" in e.value.message
+
+
+def test_cert_follow_arms_only_AFTER_the_seed_follower_is_caught_up():
+    """ORDER, and the order is the whole of it. The align wait must sit between the key gate and
+    the arming write: before the key and the follower cannot reject; after the arming and the
+    backlog it was there to wait out has already carried it through the window.
+
+    Read off the DRY transcript rather than a stubbed body, because that is where a poll appears
+    as a recorded step at all — the live-branch stubs answer it without recording anything."""
+    seq = _seq(_dry(cert_follow)[1])
+    up_seed = _idx(seq, "up -d cert-follower-seed")
+    key = _idx(seq, f"overlay_logs({vf.SEED_TAMPER_SERVICE}", up_seed)
+    align = _idx(seq, f"overlay_wait_align({vf.SEED_TAMPER_SERVICE},", key)
+    arm = _idx(seq, vf.SEED_ARM_FILE, align)
+    assert up_seed < key < align < arm
+
+
+def test_cert_follow_measures_pacing_with_the_one_existing_instrument(monkeypatch):
+    """The band that produced the historical 26-27 blk/60s reading, and no second instrument.
+    `evaluate_v0_advanced` passes on ONE block; a producer limping at half rate satisfies every
+    control in this case and only pacing sees it."""
+    fin = iter([100, 140, 140, 180, 180, 180 + 27])
+    ctx, _ = _live_ctx(monkeypatch, asserts_follow.CERT_FOLLOW_OVERLAY,
+                       **_cf_world(finalized_dec=lambda dry_value=0: next(fin, 400)))
+    with pytest.raises(SmokeFailure) as e:
+        asserts_follow.assert_cert_follow(ctx)
+    assert "block rate off target: 27 blocks" in e.value.message
+
+
+def test_cert_follow_SKIPS_phase_4b_without_giving_up_phase_4a(monkeypatch, capsys):
+    """The seed proxy needs the same pip install phase 3's does, so it has the same loud-skip
+    path — and the skip must say what it did NOT test. Phase 4a is unaffected: the honest
+    follower talks to v0 directly, so "the follower obtains PK_epoch" still ran for real."""
+    def logs(svc):
+        return "" if svc == vf.SEED_MITM_SERVICE else _cf_logs(svc)
+
+    ctx, runner = _live_ctx(monkeypatch, asserts_follow.CERT_FOLLOW_OVERLAY,
+                            **_cf_world(overlay_logs=lambda *svcs, **k: logs(svcs[0])))
+    asserts_follow.assert_cert_follow(ctx)
+    out = capsys.readouterr().out
+    assert "OK (phase 4a PK_epoch obtained)" in out
+    assert "SKIP (phase 4b cleared-seed reject)" in out
+    started = [" ".join(inv.argv) for inv in runner.log]
+    assert not any("cert-follower-seed" in x for x in started)
 
 
 def test_cert_cascade_FAILS_LOUD_rather_than_pushing_a_null_checkpoint_hash(monkeypatch):

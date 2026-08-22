@@ -5,9 +5,9 @@
 //! σ (`CombinedCertificate::seed()`, k-lagged ⇒ unbiasable) when present, else a
 //! deterministic per-epoch fallback (view-1-of-epoch / nullify-justified views,
 //! where the cert carries no seed). The fallback's base is not derivable from
-//! constants: it is [`witness_fallback_seed`] of the previous epoch's terminal
+//! constants: it is [`crate::beacon::witness_fallback_seed`] of the previous epoch's terminal
 //! block's `parent_seed`, supplied by the epoch manager that reads that block;
-//! [`constant_fallback_seed`] is the last resort where no witness can exist.
+//! [`crate::beacon::constant_fallback_seed`] is the last resort where no witness can exist.
 //! Block share ∝ on-chain stake in expectation
 //! (D1); weights are the epoch's FROZEN snapshot stake (D3), never live balance —
 //! frozen ON-CHAIN since 2026-07-31 (`leaderStakes[epoch]`, stamped at
@@ -19,7 +19,6 @@
 //! This is a consensus-plane decision only: the STF / zk guest is NOT touched and
 //! MUST NOT mirror it — its sole σ consumer is `prev_randao`.
 
-use crate::beacon::seed::Seed;
 use alloy_primitives::U256;
 use commonware_codec::Encode as _;
 use commonware_consensus::{
@@ -74,7 +73,7 @@ pub struct WeightedVrf {
 impl WeightedVrf {
     /// Build from the epoch's frozen committee snapshot and the epoch's
     /// seedless-arm base. The base is the previous epoch's terminal-block
-    /// witness seed when one exists, else [`constant_fallback_seed`].
+    /// witness seed when one exists, else [`crate::beacon::constant_fallback_seed`].
     ///
     /// **Fails rather than degrading when the weights are absent.** The contract
     /// keeps membership forever but only the last N epochs of weights, so a
@@ -144,39 +143,6 @@ impl core::fmt::Display for WeightsUnavailable {
 }
 
 impl core::error::Error for WeightsUnavailable {}
-
-/// Last-resort base for the seedless arm: `sha256(epoch_be ‖ sorted peer
-/// pubkeys)`, derivable from constants and therefore predictable an epoch ahead.
-/// Reached only where no witness seed can exist — epoch 0, a non-computable
-/// terminal height, and pre-bootstrap links whose terminal block legitimately
-/// carries no witness. Sorting the peers makes it invariant under any snapshot
-/// iteration order, so honest nodes that observe the epoch's keys in any order
-/// derive the identical base.
-pub(crate) fn constant_fallback_seed(snap: &ValidatorSetSnapshot) -> [u8; 32] {
-    let mut h = Sha256::new();
-    h.update(&snap.epoch.to_be_bytes());
-    let mut peers: Vec<&[u8]> = snap
-        .validators
-        .iter()
-        .map(|v| v.keys.peer_pubkey.as_ref())
-        .collect();
-    peers.sort_unstable();
-    for p in peers {
-        h.update(p);
-    }
-    <[u8; 32]>::try_from(h.finalize().as_ref()).expect("sha256 is 32 bytes")
-}
-
-/// Compress a terminal-block witness seed into the seedless arm's base.
-/// Deliberately NOT [`prev_randao_from_seed`]: that value is a header field, and
-/// D6 requires the leader draw to stay disjoint from it.
-///
-/// [`prev_randao_from_seed`]: crate::beacon::seed::prev_randao_from_seed
-pub(crate) fn witness_fallback_seed(seed: &Seed) -> [u8; 32] {
-    let mut h = Sha256::new();
-    h.update(seed.signature.encode().as_ref());
-    <[u8; 32]>::try_from(h.finalize().as_ref()).expect("sha256 is 32 bytes")
-}
 
 impl Config<BlsScheme> for WeightedVrf {
     type Elector = WeightedVrfElector;
@@ -316,6 +282,7 @@ impl WeightedVrfElector {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::beacon::{constant_fallback_seed, witness_fallback_seed, Seed};
     use alloy_primitives::{Address, B256};
     use commonware_codec::DecodeExt as _;
     use commonware_consensus::types::{Epoch, View};
@@ -616,6 +583,7 @@ mod xlang_conformance {
     //! DIFFERENT leaders. A first live run of the case was wrong for exactly that
     //! reason; keep the fixture's stake at the compacted devnet value.
     use super::*;
+    use crate::beacon::constant_fallback_seed;
     use alloy_primitives::{Address, B256};
     use commonware_codec::DecodeExt as _;
     use commonware_consensus::types::{Epoch, View};

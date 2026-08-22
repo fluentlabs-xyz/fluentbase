@@ -404,7 +404,10 @@ def assert_cert_catchup(ctx) -> None:
     the walk to `maybe_re_jump` on a re-run, and it forbade the 3000 ms default outright until the
     rounds were repriced on the actual backlog). `vo.CATCHUP_GAP` carries the full argument and
     what would reopen it. Raising the interval to lift the ceiling instead was tried live and the
-    stack does not boot at 128 — see `vo.CATCHUP_EPOCH_INTERVAL`.
+    stack does not boot at 128 — that finding is WITHDRAWN (it was the stand's own sequencer
+    clock drift, fixed 2026-08-20; `vo.CATCHUP_EPOCH_INTERVAL` carries the record), so the
+    interval is an option again — but it has not been re-tuned or re-run, and until it is the
+    gap is still the lever this case actually stands on.
 
     AND WHY THE VICTIM RUNS UNDER ADDED LATENCY. Depth is not what makes the park fire; the ratio
     between the executor's derive and the marshal's repair is. At zero RTT the fetch always wins on
@@ -447,7 +450,8 @@ def assert_cert_catchup(ctx) -> None:
               f"{vo.effective_catchup_gap(gap, delay_ms)} against a re-jump threshold of "
               f"{vo.rejump_threshold(ctx.interval)}, so maybe_re_jump would fast-forward past the "
               "derive-walk and the park could not fire. LOWER the gap — raising "
-              "EPOCH_BLOCK_INTERVAL to lift the ceiling does not boot (see CATCHUP_EPOCH_INTERVAL).")
+              "EPOCH_BLOCK_INTERVAL to lift the ceiling is possible again but re-tunes the whole "
+              "case and has not been run live (see CATCHUP_EPOCH_INTERVAL).")
 
     _wait_bootstrap_dkg(ctx, case, vo.CATCHUP_DKG_WAIT_S, tail=vo.CATCHUP_LOG_TAIL)
 
@@ -606,7 +610,7 @@ def assert_vrf_dkg_restart_midwindow(ctx) -> None:
     """A committee[2] member RESTARTS while its epoch-2 DKG window is STILL OPEN — its ceremony
     journal is on disk (dealt) but not yet finalized or evicted.
 
-    The opposite of `smoke-vrf-dkg-liveness`, which stops its victim BEFORE the window opens so it
+    The opposite of `smoke-vrf-dkg-live-heal`, which stops its victim BEFORE the window opens so it
     never starts a ceremony at all. Here the partial progress is lost from memory and can only be
     recovered from the on-disk ceremony journal plus the DKG-log recovery resolver: with the fix
     the restarted node RESUMES player-only from `beacon-dkgjournal-e2.bin` (never re-dealing),

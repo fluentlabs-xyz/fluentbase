@@ -424,11 +424,10 @@ impl ConfirmPool {
         self.lock().retain(|epoch, _| keep(*epoch));
     }
 
-    /// A poisoned lock recovers rather than propagating, on the same reasoning as
-    /// [`AgreementTargets`]: this map only ever raises a count that a refusal is
-    /// already the safe answer to, so reading it through a panic cannot produce an
-    /// unsafe verdict, while panicking here would take the beacon actor down over a
-    /// bookkeeping map.
+    /// A poisoned lock recovers rather than propagating: this map only ever raises a
+    /// count that a refusal is already the safe answer to, so reading it through a
+    /// panic cannot produce an unsafe verdict, while panicking here would take the
+    /// beacon actor down over a bookkeeping map.
     fn lock(&self) -> std::sync::MutexGuard<'_, BTreeMap<u64, BTreeMap<u8, ShareConfirm>>> {
         self.confirms
             .lock()
@@ -846,10 +845,16 @@ impl<E, R, L> DkgAgree<E, R, L> {
         }
     }
 
-    /// The slot `propose` writes its last refusal into. Shared with every clone,
-    /// so the engine's round safety net reads whatever the automaton last saw.
-    pub fn refusal(&self) -> RefusalReason {
-        self.notes.refusal.clone()
+    /// The `(target epoch, reason)` refusals already warned about — the warn-once
+    /// ledger, so a test can assert WHICH arm a refusal took and not only how many
+    /// arms fired.
+    #[cfg(test)]
+    pub(crate) fn reported(&self) -> BTreeSet<(u64, &'static str)> {
+        self.notes
+            .reported
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 }
 
@@ -926,45 +931,22 @@ fn local_set(recorded: &DkgLogIndex, epoch: u64, n: usize) -> BTreeMap<u8, B256>
         .collect()
 }
 
-/// Why this node last had nothing it could put to the instance.
-///
-/// Written by `propose`, read only by the agreement engine's round safety net
-/// ([`crate::beacon::dkg_engine`]), which prints it beside an implausible round
-/// count. A plane that is spinning is far cheaper to diagnose when it names its
-/// own reason than when the reason has to be reconstructed from debug logs on a
-/// node nobody was tailing.
-#[derive(Clone, Default)]
-pub(crate) struct RefusalReason(Arc<Mutex<Option<&'static str>>>);
-
-impl RefusalReason {
-    fn set(&self, reason: Option<&'static str>) {
-        if let Ok(mut slot) = self.0.lock() {
-            *slot = reason;
-        }
-    }
-
-    pub fn get(&self) -> Option<&'static str> {
-        self.0.lock().ok().and_then(|slot| *slot)
-    }
-}
-
 /// A proposal this node could not put to the instance because too few members have
 /// confirmed they hold a usable share. The two arms mean different things to an
 /// operator and must never be collapsed.
 const BAR_QUORUM_UNMET: &str = "confirm_quorum_not_met";
 const BAR_MARGIN_UNMET: &str = "confirm_margin_not_met";
 
-/// The diagnostics the agreement writes out: the last refusal reason the engine's
-/// round safety net prints, plus the warn-once ledger and counter the entry bar
-/// reports through.
+/// Why this node had nothing it could put to the instance, warned where the
+/// refusal happens.
 ///
-/// Warn-once per `(target epoch, reason)` with a counter beside it, on the pattern
-/// the finalize-deferral path already uses (`beacon::actor`'s `deferred_reported` /
-/// `dkg_finalize_deferred`). Without it the bar would re-warn on every view of a
-/// plane whose whole symptom is that views keep passing.
+/// Warn-once per `(target epoch, reason)`, on the pattern the finalize-deferral
+/// path already uses (`beacon::actor`'s `deferred_reported` /
+/// `dkg_finalize_deferred`). Without the ledger every refusal would re-warn on
+/// every view of a plane whose whole symptom is that views keep passing; with it,
+/// the view carried in the message says how long the plane took to get stuck.
 #[derive(Clone)]
 pub(crate) struct AgreementNotes {
-    refusal: RefusalReason,
     reported: Arc<Mutex<BTreeSet<(u64, &'static str)>>>,
     metrics: BeaconMetrics,
 }
@@ -972,15 +954,29 @@ pub(crate) struct AgreementNotes {
 impl AgreementNotes {
     fn new(metrics: BeaconMetrics) -> Self {
         Self {
-            refusal: RefusalReason::default(),
             reported: Arc::new(Mutex::new(BTreeSet::new())),
             metrics,
         }
     }
 
-    /// Record why this node has nothing to propose. `None` clears the slot.
-    fn refuse(&self, reason: Option<&'static str>) {
-        self.refusal.set(reason);
+    /// Whether this `(epoch, reason)` has not been reported yet — and record it.
+    fn first_report(&self, epoch: u64, reason: &'static str) -> bool {
+        self.reported
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert((epoch, reason))
+    }
+
+    /// Report why this node has nothing to propose at `view`.
+    fn refuse(&self, epoch: u64, view: View, reason: &'static str) {
+        if self.first_report(epoch, reason) {
+            warn!(
+                epoch,
+                view = view.get(),
+                reason,
+                "dkg agree: nothing to propose for this target epoch"
+            );
+        }
     }
 
     /// Report an unmet entry bar, distinguishing the two cases.
@@ -996,13 +992,7 @@ impl AgreementNotes {
         } else {
             BAR_MARGIN_UNMET
         };
-        self.refuse(Some(reason));
-        if !self
-            .reported
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert((epoch, reason))
-        {
+        if !self.first_report(epoch, reason) {
             return;
         }
         self.metrics.dkg_agree_bar_unmet.inc();
@@ -1025,133 +1015,6 @@ impl AgreementNotes {
                 "dkg agree: the quorum confirms the pinned dealer logs but the margin does not \
                  — the epoch will start at the release view"
             );
-        }
-    }
-}
-
-/// The target epochs that currently have a live agreement instance.
-///
-/// The plane's whole purpose is to keep agreeing while the ordering chain has
-/// HALTED, so nothing it needs may be retained on the finalized-height clock. The
-/// beacon actor's `on_height` sweep drops a ceremony and its dealer-log index the
-/// moment the chain enters that epoch; for the target of a running agreement that
-/// turns `derive_pinned` into a permanent `Unavailable`, which parks EVERY `verify`
-/// and leaves `build_proposal` with nothing to pin — a node that entered `E+1`
-/// before its plane converged could then never agree `E+1`, with no self-healing.
-/// A target held here is exempt from that sweep for exactly as long as its instance
-/// runs.
-///
-/// The hold is an RAII guard because the instance's ordinary end is an external
-/// `abort()` — a cancellation, not a return — and dropping a task's future still
-/// runs the `Drop` of everything it owns. A count rather than a set so a
-/// replacement instance for one target cannot un-hold it while the first is still
-/// being torn down.
-///
-/// The retention has to outlive the instance, though, because the artifact reaches
-/// its adopter two channel hops later — see [`AgreementTargets::hand_over`].
-#[derive(Clone, Default)]
-pub struct AgreementTargets(Arc<Mutex<Retention>>);
-
-#[derive(Default)]
-struct Retention {
-    /// Live holds per target epoch.
-    held: BTreeMap<u64, usize>,
-    /// How many of `held`'s holds for that epoch are OWNERLESS — parked by a
-    /// delivering instance for whoever adopts its artifact. Always `<= held`, and
-    /// released only by [`AgreementTargets::take_handover`].
-    parked: BTreeMap<u64, usize>,
-}
-
-impl AgreementTargets {
-    /// Hold `target_epoch` until the returned guard is dropped.
-    pub(crate) fn hold(&self, target_epoch: u64) -> AgreementHold {
-        *self.lock().held.entry(target_epoch).or_insert(0) += 1;
-        AgreementHold {
-            targets: self.clone(),
-            target_epoch,
-        }
-    }
-
-    /// Give up `hold` but leave the target held, for whoever adopts the artifact
-    /// the instance just delivered.
-    ///
-    /// The delivering instance's hold dies with its own future, and the artifact is
-    /// still two channel hops from `DkgActor::on_artifact` — where the adopting
-    /// hold is taken — when that future ends. A height tick in that gap sweeps the
-    /// very ceremony the artifact exists to finalize over, and the node stays
-    /// shareless until something else heals it. So the hold survives the instance
-    /// and the ADOPTER releases it.
-    ///
-    /// Taking the guard by value is the point: a caller cannot park a hold and keep
-    /// running on its own, which would double the retention with nothing to release
-    /// the second one.
-    pub(crate) fn hand_over(&self, hold: AgreementHold) {
-        {
-            let mut state = self.lock();
-            let epoch = hold.target_epoch;
-            *state.held.entry(epoch).or_insert(0) += 1;
-            *state.parked.entry(epoch).or_insert(0) += 1;
-        }
-        // Outside the lock: `AgreementHold::drop` takes it too.
-        drop(hold);
-    }
-
-    /// Take ownership of a hold [`Self::hand_over`] parked for `target_epoch`, if
-    /// one is waiting. `None` ⇒ this artifact came from somewhere that parked
-    /// nothing (a peer pull, a restart replay) and the adopter needs its own.
-    pub(crate) fn take_handover(&self, target_epoch: u64) -> Option<AgreementHold> {
-        let mut state = self.lock();
-        let std::collections::btree_map::Entry::Occupied(mut parked) =
-            state.parked.entry(target_epoch)
-        else {
-            return None;
-        };
-        *parked.get_mut() -= 1;
-        if *parked.get() == 0 {
-            parked.remove();
-        }
-        drop(state);
-        // No increment: this guard inherits the count `hand_over` left behind.
-        Some(AgreementHold {
-            targets: self.clone(),
-            target_epoch,
-        })
-    }
-
-    /// The held targets, as a snapshot the caller can filter against without
-    /// keeping the lock.
-    pub fn live(&self) -> BTreeSet<u64> {
-        self.lock().held.keys().copied().collect()
-    }
-
-    /// A poisoned lock recovers rather than propagating: this map only ever
-    /// EXTENDS a retention window, so reading it through a panic is strictly safer
-    /// than the alternatives — treating poison as "nothing is held" would sweep the
-    /// state a running instance needs, and panicking here would take down the
-    /// beacon actor over a bookkeeping map.
-    fn lock(&self) -> std::sync::MutexGuard<'_, Retention> {
-        self.0
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-}
-
-/// One instance's hold on its target epoch. See [`AgreementTargets`].
-pub(crate) struct AgreementHold {
-    targets: AgreementTargets,
-    target_epoch: u64,
-}
-
-impl Drop for AgreementHold {
-    fn drop(&mut self) {
-        let mut state = self.targets.lock();
-        if let std::collections::btree_map::Entry::Occupied(mut entry) =
-            state.held.entry(self.target_epoch)
-        {
-            *entry.get_mut() -= 1;
-            if *entry.get() == 0 {
-                entry.remove();
-            }
         }
     }
 }
@@ -1197,7 +1060,7 @@ impl<E, R, L: PinnedLogs> DkgAgree<E, R, L> {
                 epoch = self.target_epoch,
                 "dkg agree: no committee to propose against"
             );
-            self.notes.refuse(Some("no_committee"));
+            self.notes.refuse(self.target_epoch, view, "no_committee");
             return None;
         }
         // Subscribed BEFORE the first attempt: a growth landing between the two is
@@ -1237,7 +1100,7 @@ impl<E, R, L: PinnedLogs> DkgAgree<E, R, L> {
                 quorum,
                 "dkg agree: below quorum, not proposing"
             );
-            self.notes.refuse(Some("quorum_not_met"));
+            self.notes.refuse(target_epoch, view, "quorum_not_met");
             return None;
         }
         let logs: Vec<(u8, B256)> = local.iter().map(|(idx, hash)| (*idx, *hash)).collect();
@@ -1249,22 +1112,20 @@ impl<E, R, L: PinnedLogs> DkgAgree<E, R, L> {
             return None;
         }
         match self.pinned.derive(local).await {
-            PinnedDerive::Derived(group_key) => {
-                self.notes.refuse(None);
-                Some(DkgProposal {
-                    target_epoch,
-                    logs,
-                    group_key: *group_key,
-                    confirms,
-                })
-            }
+            PinnedDerive::Derived(group_key) => Some(DkgProposal {
+                target_epoch,
+                logs,
+                group_key: *group_key,
+                confirms,
+            }),
             other => {
                 debug!(
                     epoch = target_epoch,
                     outcome = ?other,
                     "dkg agree: cannot derive the key over our own set, not proposing"
                 );
-                self.notes.refuse(Some("no_key_over_local_set"));
+                self.notes
+                    .refuse(target_epoch, view, "no_key_over_local_set");
                 None
             }
         }
@@ -1494,7 +1355,6 @@ where
         let build = self.clone().build_proposal(context.round.view());
         let certified = certified_value(context.parent);
         let bodies = self.bodies.clone();
-        let refusal = self.notes.refusal.clone();
         let last_built = self.last_built.clone();
         let round = context.round;
         let (tx, rx) = oneshot::channel();
@@ -1516,11 +1376,9 @@ where
                         // and a leader that ignored it here would only get its own
                         // view nullified.
                         Some(digest) => {
-                            refusal.set(Some("awaiting_certified_body"));
                             let Ok(proposal) = bodies.subscribe(digest).await.await else {
                                 return std::future::pending().await;
                             };
-                            refusal.set(None);
                             proposal
                         }
                         None => {
@@ -2710,9 +2568,8 @@ mod tests {
                     let rx = agree.propose(ctx_at(&committee, View::new(view))).await;
                     assert!(settle_digest(&context, rx).await.is_none());
                 }
-                assert_eq!(
-                    agree.refusal().get(),
-                    Some(BAR_QUORUM_UNMET),
+                assert!(
+                    agree.reported().contains(&(TARGET, BAR_QUORUM_UNMET)),
                     "an absent quorum must be named as such"
                 );
                 assert_eq!(
@@ -2726,9 +2583,8 @@ mod tests {
                 seats.seed_pool(&held, quorum);
                 let rx = agree.propose(ctx_at(&committee, VIEW1)).await;
                 assert!(settle_digest(&context, rx).await.is_none());
-                assert_eq!(
-                    agree.refusal().get(),
-                    Some(BAR_MARGIN_UNMET),
+                assert!(
+                    agree.reported().contains(&(TARGET, BAR_MARGIN_UNMET)),
                     "a met quorum with an unmet margin is a different operator signal"
                 );
                 assert_eq!(metrics.dkg_agree_bar_unmet.get(), 2);
@@ -2897,9 +2753,8 @@ mod tests {
 
                 let rx = agree.propose(ctx_for(&committee)).await;
                 context.sleep(Duration::from_millis(500)).await;
-                assert_eq!(
-                    agree.refusal().get(),
-                    Some(BAR_QUORUM_UNMET),
+                assert!(
+                    agree.reported().contains(&(TARGET, BAR_QUORUM_UNMET)),
                     "the first attempt must have run and refused before the inputs land"
                 );
 
@@ -2908,11 +2763,6 @@ mod tests {
                     .await
                     .expect("a leader must re-read its inputs, not wait out its whole view");
                 assert_eq!(digest, seats.proposal(held, key).digest());
-                assert_eq!(
-                    agree.refusal().get(),
-                    None,
-                    "a successful rebuild must clear the reason its refusal left behind"
-                );
             });
         }
 
@@ -2943,9 +2793,8 @@ mod tests {
 
                 let rx = agree.propose(ctx_for(&committee)).await;
                 context.sleep(Duration::from_millis(500)).await;
-                assert_eq!(
-                    agree.refusal().get(),
-                    Some("quorum_not_met"),
+                assert!(
+                    agree.reported().contains(&(TARGET, "quorum_not_met")),
                     "the first attempt must have run and refused before the log lands"
                 );
 

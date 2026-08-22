@@ -15,12 +15,13 @@
 //! there is no cross-actor race on the speculative state.
 
 use crate::{
-    beacon::{certify::SeedStore, seed::Seed},
+    beacon::{seed::Seed, Randomness},
     executor,
     executor::{Command, Notarized},
 };
 use commonware_consensus::{simplex::types::Activity, Reporter};
 use fluentbase_bls::Scheme as BlsScheme;
+use std::sync::Arc;
 use tracing::{error, Span};
 
 type Digest = crate::digest::Digest;
@@ -30,20 +31,16 @@ type Digest = crate::digest::Digest;
 #[derive(Clone)]
 pub struct Mailbox {
     executor: executor::Mailbox,
-    /// Shared `round → recovered seed` map for the Stage-2 beacon certify gate
-    /// ([`crate::beacon::certify`]). This reporter is the WRITER: the
-    /// notarization carries the recovered seed, and it fires (via the voter's
-    /// `notify` → `try_broadcast_notarization`) BEFORE the next loop iteration
-    /// calls `certify` for the same round. `None` ⇒ no certify gate wired
-    /// (tests / pre-beacon configs).
-    seed_store: Option<SeedStore>,
+    /// The randomness provider this reporter HANDS the recovered seed to. The
+    /// notarization carries it; the beacon owns where it is kept.
+    randomness: Arc<dyn Randomness>,
 }
 
 impl Mailbox {
-    pub fn new(executor: executor::Mailbox, seed_store: Option<SeedStore>) -> Self {
+    pub fn new(executor: executor::Mailbox, randomness: Arc<dyn Randomness>) -> Self {
         Self {
             executor,
-            seed_store,
+            randomness,
         }
     }
 }
@@ -59,15 +56,37 @@ impl Reporter for Mailbox {
             target_round: n.proposal.round,
             signature,
         });
-        // Record the recovered seed for the certify gate (round-keyed). Fired
-        // here, before `certify(round, _)` runs next loop iteration.
-        // ORDERING-CRITICAL: this record MUST stay synchronous and BEFORE the executor send below
-        // (and must never move behind an await / into a spawned task). The certify gate
-        // (certify.rs seed_certify_verdict) returns false -> Nullify on a missing seed; that verdict
-        // is only cross-node-deterministic if the record precedes the same round's certify scan on
-        // every node.
-        if let (Some(store), Some(s)) = (self.seed_store.as_ref(), seed.as_ref()) {
-            store.record(s.target_round, s.signature);
+        // ORDERING-CRITICAL: this hand-over MUST stay SYNCHRONOUS — never behind an
+        // await, never in a spawned task. Re-derived from scratch, because the
+        // justification this comment used to carry was stale: it cited
+        // `certify.rs seed_certify_verdict`, a function deleted with the certify
+        // gate.
+        //
+        // WHAT IT PROTECTS NOW is the propose path's liveness, in three steps:
+        //
+        //  1. The voter `await`s `report()` INLINE before it advances the view
+        //     (commonware `voter/actor.rs:529-531`; reporter backpressure is
+        //     consensus-critical by design). So anything done synchronously here
+        //     happens-before the next view exists.
+        //  2. The next view's leader proposes a child of the block just notarized
+        //     and embeds the parent-seed witness, reading exactly the round this
+        //     line records: `Round(Ep, parent.proposal_view)`
+        //     (`application.rs:562`).
+        //  3. A miss there is not an invalid block — it SKIPS THE VIEW
+        //     (`dpos_parent_seed_lookup_miss_total`). Deferring this record would
+        //     lose that race against the very next propose, turning a
+        //     rare-and-counted event into a per-block one.
+        //
+        // WHAT IT DOES NOT PROTECT, checked rather than assumed: the old comment
+        // also demanded this run BEFORE the executor send below. That half is not
+        // load-bearing. The executor consults the store only on a spin-round
+        // mismatch, and then for the CANONICAL round — a round recorded by an
+        // earlier report, not by this one (`executor.rs:2557`); when the rounds
+        // match it uses the seed carried in the command and reads nothing. Both
+        // statements are synchronous anyway, so the order between them is
+        // unobservable. Kept adjacent for readability, not for correctness.
+        if let Some(s) = seed.as_ref() {
+            self.randomness.record_seed(s.target_round, s.signature);
         }
         let msg = executor::Message {
             cause: Span::current(),

@@ -581,6 +581,33 @@ def test_the_torn_victim_must_be_SHARELESS():
     assert not ok and "despite sitting out torn" in msg
 
 
+def test_a_sitting_out_node_must_also_not_have_PROMOTED():
+    """The POSITIVE half both DKG cases were missing, in both directions.
+
+    `evaluate_shareless` above concludes from the ABSENCE of the ceremony-finalize log, whose sole
+    emitter is one arm of one function. Since the live-epoch artifact pull landed, a share-less
+    member has a SECOND road to a share — pull the epoch's artifact, recompute from the retained
+    dealer logs — and that road logs a different line, so the absence can now be true while the
+    property is false. Promotion is the consequence both roads share."""
+    assert VR.evaluate_did_not_promote([], 3, 4)[0]
+    ok, msg = VR.evaluate_did_not_promote(
+        [f"INFO {VR.PROMOTE_LINE} {VR.PROMOTE_EPOCH_FMT.format(4)}"], 3, 4)
+    assert not ok and "PROMOTED to Signer for epoch 4" in msg
+
+
+def test_the_promote_grep_uses_the_Debug_epoch_spelling_and_not_the_bare_number():
+    """`reconcile_roles` takes `epoch: Epoch` and renders it through `?epoch`, so the field is
+    `epoch=Epoch(4)`. A grep anchored on the bare number matches NOTHING — a witness filtered with
+    the wrong spelling is a witness that never fires, which is the same trap `share_gate_lines`
+    records."""
+    debug = f"INFO {VR.PROMOTE_LINE} {VR.PROMOTE_EPOCH_FMT.format(4)}"
+    bare = f"INFO {VR.PROMOTE_LINE} epoch=4"
+    assert VR.promote_lines(debug, 4) == [debug]
+    assert VR.promote_lines(bare, 4) == []
+    # …and it is scoped to the epoch asked for: a later epoch's promotion is not this one's.
+    assert VR.promote_lines(f"INFO {VR.PROMOTE_LINE} {VR.PROMOTE_EPOCH_FMT.format(41)}", 4) == []
+
+
 def test_the_survivors_must_each_hold_a_share_and_reach_quorum():
     assert VR.evaluate_member_finalized(True, 1, 4)[0]
     assert not VR.evaluate_member_finalized(False, 1, 4)[0]

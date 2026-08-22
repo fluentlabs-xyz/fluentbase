@@ -1058,6 +1058,56 @@ class SmokeCtx:
             return dry_value
         return rpc.strip_ansi(proc.read(argv, timeout=nodes.LOGS_ALL_TIMEOUT))
 
+    def overlay_el_metrics_text(self, service: str, dry_value="") -> str:
+        """The WHOLE in-container reth recorder (:9200) of an overlay service, as text.
+
+        The FOLLOWER twin of `node_metrics_text`, and it reads a DIFFERENT registry on purpose.
+        `dpos_cert_vote_only_admissions_total` is a `metrics::counter!`, so it lands on reth's
+        metrics-rs recorder (`--metrics`) and on nothing else. Reading :9100 for it would return
+        nothing forever, and a "vote-only admissions stopped" verdict would then be green on an
+        endpoint that never carried the family.
+
+        A `--cert-follow` node DOES serve :9100 now — `spawn_devnet_metrics` moved into
+        `run_node_stack` ahead of the validator/follower branch, so it runs once per process on
+        both node classes (`crates/node/src/dpos.rs`), and the compose overlay passes
+        `--dpos.metrics-port` to the followers. That registry carries the `dpos_follower_artifact_*`
+        families, not this one; `overlay_node_metrics_text` is the seam for it. The split between
+        the two endpoints is the point, and it did not go away when the follower gained the second.
+
+        The WHOLE scrape and not one family, so that "the counter is absent" and "the endpoint is
+        unreachable" stay distinguishable: a counter that was never incremented is not rendered at
+        all (metrics-rs registers lazily) and that is a legitimate ZERO, while an empty scrape is
+        an unread node, which must never satisfy an "it stopped growing" verdict. Parse it with
+        `nodes.metric_val` — SUBSTRING, not `gauge_val`'s anchored bare-name match, because
+        metrics-rs renders a labelled counter as `name{...}` and the anchored matcher looks at the
+        whole first field."""
+        def live():
+            return rpc.metrics_get_exec(topology.IN_CONTAINER_EL_METRICS_URL,
+                                        self.overlay_exec_prefix(service))
+        return self._delegated("overlay_el_metrics_text", service, live, dry_value)
+
+    def overlay_node_metrics_text(self, service: str, dry_value="") -> str:
+        """The WHOLE in-container COMMONWARE registry (:9100) of an overlay service, as text.
+
+        The overlay twin of `node_metrics_text`, and the SIBLING of `overlay_el_metrics_text`
+        directly above — the two read different endpoints on the same container and neither can
+        answer for the other. This one carries the `dpos_follower_artifact_*` families a
+        `--cert-follow` node registers through `beacon::for_follower`; the reth recorder above
+        carries `dpos_cert_vote_only_admissions_total`. Reading the wrong one returns "" forever.
+
+        A follower serves this at all only because the compose overlay passes
+        `--dpos.metrics-port` (see `docker-compose.cert-follow.yml`'s METRICS RULE) and the binary
+        is built with `dpos-devnet-metrics`; both are devnet-only. So "" here means UNREAD, never
+        zero, and every caller must treat it that way — the counter is a corroborating witness
+        beside a log line, never the thing a verdict rests on alone.
+
+        Whole scrape and not one family, for `node_metrics_text`'s reason: one `docker compose
+        exec` per reading rather than per family, and every family sampled at one instant."""
+        def live():
+            return rpc.metrics_get_exec(topology.IN_CONTAINER_CONSENSUS_METRICS_URL,
+                                        self.overlay_exec_prefix(service))
+        return self._delegated("overlay_node_metrics_text", service, live, dry_value)
+
     def overlay_ps_state(self, service: str, dry_value="running") -> str:
         """`docker compose <files> ps -a --format '{{.State}}' <svc>` — DIAGNOSTIC only.
 
