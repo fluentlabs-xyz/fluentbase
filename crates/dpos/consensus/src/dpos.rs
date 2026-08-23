@@ -815,10 +815,15 @@ pub type PlaneMux = Arc<
 >;
 
 /// One item the vote Muxer's backup channel surfaces: a vote for an epoch with no
-/// registered sub-channel (the network is ahead of us). `(subchannel == epoch, (from,
-/// payload))`; the payload is unused by the catch-up hint. Mirrors the mux's
-/// `BackupResponse<PublicKey>` so the `EpochManager` backup arm is unchanged.
-pub type VoteBackupItem = (u64, (PeerPubkey, commonware_runtime::IoBuf));
+/// registered sub-channel (the network is ahead of us). The payload is unused by
+/// the catch-up hint.
+///
+/// The muxer hands back the RAW wire sub-channel id, which shares its `u64` with
+/// the epoch-key agreement slice (`DKG_SUBCHANNEL_BASE | E`) and is therefore not
+/// an epoch. The [`Epoch`] here is the proof that the plane's forwarder classified
+/// it through `fluentbase_p2p::constants::epoch_from_subchannel` first — the
+/// consumer cannot be handed an agreement id.
+pub type VoteBackupItem = (Epoch, (PeerPubkey, commonware_runtime::IoBuf));
 
 /// A re-settable forwarding target: a single mpsc slot the plane re-points to the
 /// CURRENTLY-active consumer per promotion. The plane's forwarder drains a move-only

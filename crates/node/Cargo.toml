@@ -115,6 +115,9 @@ flate2 = { workspace = true }
 reqwest = { workspace = true }
 
 [dev-dependencies]
+# The sub-channel route-miss tests assert `dpos_subchannel_route_miss_total`
+# values and its {channel,kind} labels via a thread-local DebuggingRecorder.
+metrics-util = { version = "0.20", default-features = false, features = ["debugging"] }
 # Test-only: wraps EVM bytecode into the ownable-account form a genesis
 # account must carry, so the executor tests can stand up stub predeploys
 # (`crates/genesis/build.rs` does the same for the real ones).

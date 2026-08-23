@@ -468,22 +468,20 @@ def assert_vrf_dkg_live_heal(ctx) -> None:
          own certificate admission stops being seed-blind and it can vote;
       6. the chain stays live with it back in the quorum and its epoch-2 prev_randao is
          byte-identical to the survivors';
-      7. it PRODUCED in epoch 2 — `producedAt(2, victim) > 0` read once it has had 32 of its own
-         blocks to be elected in, which a share-less member cannot do and which is the only leg
-         that observes the whole chain of consequences at once.
+      7. it PRODUCED in epoch 2 — `producedAt(2, victim) > 0`, read once epoch 2 has ENDED so the
+         counter is FINAL, which a share-less member cannot do and which is the only leg that
+         observes the whole chain of consequences at once.
 
-    EVERY READING IS TAKEN INSIDE EPOCH 2, and that is deliberate. Pacing therefore rides the
-    shorthanded window (n-f=3, victim down) rather than the post-recovery one — there is no room
-    for a 60 s window after the victim is seated ~16 blocks into a 64-block epoch. The reason the
-    case does not simply run on into epoch 3 is a defect it found and does not own: on 2 of 3 live
-    runs, three of the four nodes reached the epoch-2→3 boundary with
-    `highest_observed_epoch = 4294967298` (= 0x1_0000_0002, a packed `Round { epoch: 1, view: 2 }`
-    read as an `Epoch`), which makes `is_live_epoch` false for every epoch, so the boundary's
-    signers soft-enter verify-only, quorum is lost and the head freezes at the last block of
-    epoch 2. The same corrupted value appears on a clean `smoke-vrf-boundary` run at this geometry
-    WITHOUT halting it, so it is pre-existing; this case is merely the first thing in the suite
-    that stays alive long enough to be halted by it. `smoke-vrf-boundary` owns the boundary
-    crossing; this case owns live-epoch key delivery, and it says so by staying inside the epoch.
+    PACING RIDES THE SHORTHANDED SPAN, not the post-recovery one. The victim is seated ~16 blocks
+    into a 64-block epoch 2, so a 60 s window opened after that would run off the end of the epoch
+    — and the shorthanded span is where this case's fault actually is (n-f=3 carrying the chain
+    with a committee member down), which makes it the more interesting of the two anyway.
+
+    THE PRODUCTION COUNTER IS READ AFTER EPOCH 2 HAS ENDED. `producedAt(2, …)` climbs for as long
+    as the epoch runs, so a sample taken at the moment of recovery reports a partial count on a
+    4-member stake-weighted lottery, and a zero there is indistinguishable from a recovery that did
+    not work. The case waits past `epoch_start(3)` plus the K-block deferred-execution lag — the
+    counter for height h is written when h EXECUTES — and reads the FINAL count.
     """
     case = "smoke-vrf-dkg-live-heal"
     victim = topology.validator(vf.VRF_FAULT_VICTIM_IDX)
@@ -525,10 +523,10 @@ def assert_vrf_dkg_live_heal(ctx) -> None:
     # carrying the chain with a committee member down.
     #
     # WHY NOT AFTER THE RECOVERY, WHICH IS WHERE IT WOULD READ MORE INTERESTINGLY. There is no
-    # room. The victim is seated ~16 blocks into a 64-block epoch 2 and the production leg needs
-    # 32 more of them, so any 60 s window after that runs off the end of epoch 2 — and this case
-    # deliberately does not depend on the epoch-2→3 boundary (see the production leg). The window
-    # costs nothing here: the wait for the boundary probe below is longer than it either way.
+    # room. The victim is seated ~16 blocks into a 64-block epoch 2, so any 60 s window after that
+    # runs into the epoch-2→3 boundary the production leg is waiting for, and would be measuring
+    # the boundary rather than the shorthanded chain. The window costs nothing here: the wait for
+    # the boundary probe below is longer than it either way.
     r0 = ctx.finalized_dec(dry_value=deal_open - 40)
     ctx.sleep(verdicts.PACING_WINDOW_S)
     r1 = ctx.finalized_dec(dry_value=deal_open - 40 + verdicts.PACING_MIN_BLOCKS + 5)
@@ -573,8 +571,10 @@ def assert_vrf_dkg_live_heal(ctx) -> None:
         return all((box["fresh"], box["road"], box["pin"], box["promote"]))
 
     ctx.poll(recovered, vf.DKG_HEAL_S, poll_s=vf.DKG_HEAL_POLL_S)
-    # WHERE the chain was when the victim was seated. Read here and not later: it is the input to
-    # the "did that leave enough epoch for a leader slot" gate, and every read after this moves it.
+    # WHERE the chain was when the victim was seated. Read here and not later, because every read
+    # after this moves it: it is what tells the production leg's report how much of epoch 2 the
+    # member actually had to be elected in, which is the difference between a lottery loss and a
+    # broken recovery when the credit comes back small.
     seated_at = ctx.finalized_dec(dry_value=boundary_probe + 12)
 
     def dump():
@@ -603,8 +603,8 @@ def assert_vrf_dkg_live_heal(ctx) -> None:
 
     # 3) the chain is still live with the recovered member back in the quorum, and its epoch-2
     #    prev_randao is byte-identical to the survivors'. BEFORE the production wait, not after:
-    #    every reading in this case is deliberately taken inside epoch 2 (see the production leg),
-    #    and these two are the cheapest, so they go first.
+    #    these two are the cheapest legs and the production wait is the longest, so a failure in
+    #    either is reported minutes earlier this way.
     before = ctx.finalized_dec(dry_value=boundary_probe + 12)
     rows = [(v, ctx.mixhash_in(victim, v, dry_value=f"0x{v:064x}"),
              ctx.mixhash_at(v, dry_value=f"0x{v:064x}"))
@@ -622,46 +622,57 @@ def assert_vrf_dkg_live_heal(ctx) -> None:
     # 4) THE LOAD-BEARING LEG — it PRODUCED inside the epoch it was elected for. A share-less
     #    member cannot; every leg above is a step on the road to this one.
     #
-    # SAMPLED A FIXED NUMBER OF THE VICTIM'S OWN BLOCKS LATER, and that is the whole of what makes
-    # it a measurement rather than a coin toss. `producedAt(2, idx)` climbs for as long as epoch 2
-    # runs, so a read taken seconds after the victim is seated reports how many slots it has won
-    # SO FAR — which on a 4-member stake-weighted lottery is frequently zero, and a zero there is
-    # indistinguishable in the failure message from a recovery that did not work. That is exactly
-    # how this case first went red: seated at height 257, read at ~260 (`producedAt=0`), 10 of the
-    # epoch's 64 blocks by the time the epoch actually ended.
+    # READ ONCE EPOCH 2 HAS ENDED, and that is the whole of what makes it a measurement rather
+    # than a coin toss. `producedAt(2, idx)` climbs for as long as epoch 2 runs, so a read taken
+    # seconds after the victim is seated reports how many slots it has won SO FAR — which on a
+    # 4-member stake-weighted lottery is frequently zero, and a zero there is indistinguishable in
+    # the failure message from a recovery that did not work. That is exactly how this case first
+    # went red: seated at height 257, read at ~260 (`producedAt=0`), 10 of the epoch's 64 blocks by
+    # the time the epoch actually ended.
     #
-    # The floor is `seated + MIN_POST_HEAL_BLOCKS + K`: enough of the victim's slots to make the
-    # lottery decisive (~1e-4 of a false zero at 1-in-4), plus the deferred-execution lag, because
-    # the counter for height h is written when h EXECUTES and that is K heights later. The room
-    # check is what guarantees that floor still lies inside epoch 2.
+    # The floor is `epoch_start(3) + K` and not the boundary itself, because the counter for
+    # height h is written when h EXECUTES and that is K heights later: epoch 2's last block
+    # (`epoch3_start - 1`) is only credited at `epoch3_start - 1 + K`. One block past that, the
+    # count is FINAL and the sample is the whole epoch rather than a prefix of it.
     #
-    # DELIBERATELY NOT "wait for epoch 3". The counter would be final there, but the case would
-    # then depend on the epoch-2→3 boundary crossing — and that crossing is currently unreliable
-    # in exactly this scenario for a reason that has nothing to do with this ticket: three of the
-    # four nodes end up with `highest_observed_epoch = 4294967298` (= 0x1_0000_0002, a packed
-    # `Round { epoch: 1, view: 2 }` read as an `Epoch`), which makes `is_live_epoch` false for
-    # every epoch, so the boundary's signers soft-enter verify-only and quorum is lost. Observed
-    # on 2 of 3 live runs of this case; the same corrupted value appears on a clean
-    # `smoke-vrf-boundary` run at the same geometry WITHOUT halting it, so it is a pre-existing
-    # defect this case is merely long-lived enough to be caught by. Chasing the boundary here
-    # would have reported it as "the production counters never became final" — a diagnosis about
-    # the reader.
-    ctx.check(case, *vf.evaluate_heal_left_room(seated_at, epoch3_start, victim), on_fail=dump)
-    sample_floor = seated_at + vf.MIN_POST_HEAL_BLOCKS + vf.RESULT_LAG_K
-    _say(ctx, f"smoke-vrf-dkg-live-heal: {victim} seated at finalized={seated_at}; letting it run "
-              f"{vf.MIN_POST_HEAL_BLOCKS} of its own epoch-2 blocks (to {sample_floor}) before "
-              "reading production credit")
+    # This makes the leg ride the epoch-2→3 crossing, which is deliberate: a chain that cannot
+    # cross fails here on the wait, with the height it stopped at, rather than surfacing minutes
+    # later as an unexplained `producedAt=0`.
+    sample_floor = epoch3_start + vf.RESULT_LAG_K
+    _say(ctx, f"smoke-vrf-dkg-live-heal: {victim} seated at finalized={seated_at}; letting epoch 2 "
+              f"run out (to {sample_floor} = epoch_start(3) + K) so production credit is FINAL "
+              "when it is read")
     ctx.check(case, ctx.wait_finalized_ge(sample_floor, vf.DKG_EPOCH_END_S),
-              f"chain did not reach {sample_floor} — {victim} was never given "
-              f"{vf.MIN_POST_HEAL_BLOCKS} blocks of epoch 2 to be elected in, so a zero credit "
-              "would say nothing about its recovery",
+              f"chain did not finalize to {sample_floor} (= epoch_start(3) + K) — it stalled "
+              f"below that floor, either still inside epoch 2 or already across the epoch-2→3 "
+              f"boundary at {epoch3_start} but short of the K deferred-execution heights that "
+              f"credit epoch 2's last block. Either way `producedAt(2, …)` is still climbing, "
+              f"so reading it here would say nothing about {victim}'s recovery",
               on_fail=dump)
     produced, total = _poll_production_for(ctx, 2, victim_addr)
     ctx.check(case, *vo.evaluate_production_readable(produced, total, victim), on_fail=dump)
-    ctx.check(case, *vo.evaluate_produced_something(produced, victim), on_fail=dump)
+    # The retired room gate (`evaluate_heal_left_room`) was the only thing that stopped a
+    # very late heal from being reported as a broken recovery when it was really a lost
+    # lottery draw. Reading the FINAL counter shrinks that window to a few blocks but does
+    # not close it, so the seating context rides the failure message instead of a new gate.
+    # `DKG_HEAL_S` is 240 s against a ~64 s epoch, so the seating can also land AT or PAST the
+    # boundary — that reading gets its own wording rather than a negative block count.
+    room = epoch3_start - seated_at
+    room_note = (f"leaving it {room} blocks of epoch 2 to be elected in" if room > 0 else
+                 f"which is {-room} blocks past the epoch-2→3 boundary at {epoch3_start} — no "
+                 "block of epoch 2 was left for it to be elected in")
+    produced_ok, produced_why = vo.evaluate_produced_something(produced, victim)
+    if not produced_ok:
+        produced_why += (
+            f" — seated at {seated_at}, {room_note}; "
+            + ("a seating within a handful of blocks of the boundary can lose the "
+               "stake-weighted lottery outright, so read that number before calling this a "
+               "recovery failure" if room > 0 else
+               "the heal landed after the epoch it was elected for had already ended, so this "
+               "reads as a LATE heal rather than evidence the recovered share never worked"))
+    ctx.check(case, produced_ok, produced_why, on_fail=dump)
     _say(ctx, f"smoke-vrf-dkg-live-heal: {victim} PRODUCED in epoch 2 (producedAt={produced} of "
-              f"blocksInEpoch={total} so far, over the {vf.MIN_POST_HEAL_BLOCKS}+ blocks it had "
-              "after being seated)")
+              f"blocksInEpoch={total}, FINAL — it was seated at {seated_at}, {room_note})")
 
     _ok(ctx, case, "a member offline through its whole epoch-2 DKG window PULLED the epoch's "
                    "agreed artifact, recomputed its share from the dealers' public reveals (the "

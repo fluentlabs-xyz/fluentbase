@@ -5834,6 +5834,7 @@ dependencies = [
  "hex",
  "jsonrpsee",
  "metrics",
+ "metrics-util",
  "reqwest 0.12.28",
  "reth-basic-payload-builder",
  "reth-chain-state",

@@ -92,6 +92,20 @@ pub const EVIDENCE_CHANNEL: u64 = 8;
 // release coordinated anyway. Do not carry the release argument forward.
 pub const DKG_SUBCHANNEL_BASE: u64 = 1 << 32;
 
+/// The epoch a sub-channel id denotes, or `None` when the id belongs to the
+/// agreement slice instead. The SENDING half of this contract is
+/// `dkg_subchannel` (consensus `beacon/dkg_transport.rs`); this is the receiving
+/// half. A muxer hands an unrouted frame's id back RAW, so every ingress that
+/// turns one into an epoch must come through here — an id is not an epoch until
+/// it has.
+pub const fn epoch_from_subchannel(id: u64) -> Option<u64> {
+    if id >= DKG_SUBCHANNEL_BASE {
+        None
+    } else {
+        Some(id)
+    }
+}
+
 // Per-channel rate quotas
 //
 // Aligned to alto/tempo precedent (tempo `config.rs:37-43`, alto

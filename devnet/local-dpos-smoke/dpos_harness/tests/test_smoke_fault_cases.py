@@ -298,18 +298,20 @@ def test_live_heal_reads_the_recovery_log_after_the_victim_caught_up():
     assert start < catchup < recovered <= log
 
 
-def test_live_heal_reads_production_only_after_the_victims_own_blocks_ran():
+def test_live_heal_reads_production_only_after_epoch_2_has_ended():
     """`producedAt` is a per-epoch counter and the load-bearing leg: it climbs for as long as the
     epoch runs, so a sample taken right after the member is seated reports the slots it has won SO
     FAR. A live run read 0 at that instant and 10 of 64 once the epoch finished, which is how this
-    case first went red. The wait must precede the read."""
+    case first went red. The wait must target the END of epoch 2 — `epoch_start(3)` plus the
+    K-block execution lag, because the counter for height h is written when h EXECUTES — and must
+    precede the read."""
     _, r = _dry(vrf_dkg_live_heal)
     flat = _flat(r)
     recovered = flat.index(f"recovered (<= {vf.DKG_HEAL_S}s)")
     prod = flat.index("producedAt(epoch=2) (<= 5, 4s apart)")
-    waits = [i for i, x in enumerate(flat)
-             if x.startswith("wait_finalized_ge(") and x.endswith(f"{vf.DKG_EPOCH_END_S}s)")]
-    assert waits and recovered < waits[0] < prod
+    epoch3 = vrf_dkg_live_heal.ACTIVATION_BLOCK + 3 * vrf_dkg_live_heal.EPOCH_INTERVAL
+    wait = flat.index(f"wait_finalized_ge({epoch3 + vf.RESULT_LAG_K}, {vf.DKG_EPOCH_END_S}s)")
+    assert recovered < wait < prod
 
 
 def test_fault_runs_all_five_on_exactly_one_bring_up():
@@ -738,8 +740,8 @@ def _dkg_world(monkeypatch, **over):
 #: The case's `finalized_dec` readings, IN ORDER: the deal-window guard, the shorthanded pacing
 #: pair, the height at which the victim was seated, and the two that bracket the post-rejoin
 #: liveness check. Under the tuned 64/128 geometry epoch 2 is [256, 320) and the DEAL window opens
-#: at 189, so a guard reading of 145 is in-window and a seating at 272 leaves 48 blocks —
-#: comfortably above `MIN_POST_HEAL_BLOCKS`. The guard, the seating and the pacing delta are the
+#: at 189, so a guard reading of 145 is in-window and a seating at 272 leaves 48 blocks of the
+#: epoch for the member to be elected in. The guard, the seating and the pacing delta are the
 #: numbers live runs actually produced.
 #:
 #: The ORDER is the case's own and changing it here to make a test pass would hide a reordering in
@@ -843,15 +845,6 @@ def test_assert_vrf_dkg_live_heal_fails_when_the_member_is_never_seated(monkeypa
         asserts_fault.assert_vrf_dkg_live_heal(ctx)
 
 
-def test_assert_vrf_dkg_live_heal_fails_when_seating_left_no_room_to_produce(monkeypatch):
-    """A member seated with four blocks of its epoch left can be perfectly recovered and still
-    produce nothing. Reporting that as `producedAt=0` is a misdiagnosis, so the case says which
-    of the two it is."""
-    ctx, _ = _dkg_world(monkeypatch, finalized_dec=_fin(seated=310))
-    with pytest.raises(SmokeFailure, match="only 10 blocks of epoch 2 left"):
-        asserts_fault.assert_vrf_dkg_live_heal(ctx)
-
-
 def test_assert_vrf_dkg_live_heal_fails_when_the_seated_member_produced_nothing(monkeypatch):
     """THE LOAD-BEARING LEG. Every reading above can be green on a node that recovered its share
     and never won a slot; only production observes the whole chain of consequences."""
@@ -861,38 +854,34 @@ def test_assert_vrf_dkg_live_heal_fails_when_the_seated_member_produced_nothing(
         asserts_fault.assert_vrf_dkg_live_heal(ctx)
 
 
-def test_the_production_credit_is_read_only_after_the_victims_own_blocks_ran(monkeypatch):
+def test_the_production_credit_is_read_only_after_epoch_2_has_ended(monkeypatch):
     """WHY THIS CASE FIRST WENT RED. `producedAt(2, idx)` climbs for as long as epoch 2 runs, so a
     read taken seconds after the member is seated reports the slots it has won SO FAR — on a live
     run that was 0 at height ~260 and 10 of 64 by the time the epoch finished. The wait must
-    therefore cover `MIN_POST_HEAL_BLOCKS` of the victim's own blocks plus the K-block
-    deferred-execution lag (the counter for height h is written when h EXECUTES), and must precede
-    the counter read.
+    therefore reach the END of the epoch, plus the K-block deferred-execution lag (the counter for
+    height h is written when h EXECUTES, so epoch 2's last block is credited K heights later), and
+    must precede the counter read.
 
-    It targets the VICTIM'S blocks and not the epoch-3 boundary on purpose: a chain that stalls at
-    a boundary would otherwise be reported as "the counters never became final", a diagnosis about
-    the reader. The liveness and pacing legs are where a stall belongs."""
+    It targets the epoch-3 boundary and not a count of the victim's own blocks, because that is
+    the only floor at which the counter is FINAL — anything earlier samples a prefix of the epoch
+    and calls the remainder a lottery loss."""
     seen = []
     ctx, _ = _dkg_world(
         monkeypatch, finalized_dec=_fin(),
         wait_finalized_ge=lambda target, timeout: seen.append(target) or True,
         production=lambda epoch, addr, **kw: (seen.append("read") or (10, 64)))
     asserts_fault.assert_vrf_dkg_live_heal(ctx)
-    floor = 272 + vf.MIN_POST_HEAL_BLOCKS + vf.RESULT_LAG_K
     epoch3 = vrf_dkg_live_heal.ACTIVATION_BLOCK + 3 * vrf_dkg_live_heal.EPOCH_INTERVAL
+    floor = epoch3 + vf.RESULT_LAG_K
     assert floor in seen and seen.index(floor) < seen.index("read")
-    # …and the floor the room check guarantees is still inside epoch 2.
-    assert floor <= epoch3 + vf.RESULT_LAG_K
-    assert epoch3 + vf.RESULT_LAG_K not in seen
 
 
 def test_the_pacing_window_rides_the_SHORTHANDED_span_and_not_the_recovery(monkeypatch):
     """WHERE the 60 s window sits is a property of the case, not a detail. The victim is seated
-    ~16 blocks into a 64-block epoch 2 and the production leg claims 32 more, so a window opened
-    after the recovery runs off the end of the epoch — and this case deliberately takes every
-    reading inside epoch 2 (the epoch-2→3 boundary is unreliable in this scenario for an unrelated
-    reason). So the window brackets the n-f=3 span with the victim DOWN, which is where the fault
-    this case injects actually is."""
+    ~16 blocks into a 64-block epoch 2 and the production leg waits out the rest of it, so a window
+    opened after the recovery would be measuring the epoch-2→3 boundary rather than the chain. So
+    the window brackets the n-f=3 span with the victim DOWN, which is where the fault this case
+    injects actually is."""
     _, r = _dry(vrf_dkg_live_heal)
     flat = _flat(r)
     # The SECOND `docker compose stop` is the victim's; the first is the migration's

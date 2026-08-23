@@ -15,6 +15,7 @@ use crate::{
         BeaconEngineLike, DerivedBlockBuilder, ExecutedChain, FluentApp, OrderingAssembler,
     },
     digest::Digest,
+    dpos::VoteBackupItem,
     epoch_manager,
     epocher::OriginEpocher,
     executor,
@@ -200,7 +201,7 @@ pub type SoftEnterCommittees =
 use crate::SCHEME_RETENTION_EPOCHS;
 use commonware_parallel::Sequential;
 use commonware_runtime::{
-    buffer::paged::CacheRef, spawn_cell, BufferPooler, Clock, ContextCell, Handle, IoBuf, Metrics,
+    buffer::paged::CacheRef, spawn_cell, BufferPooler, Clock, ContextCell, Handle, Metrics,
     Network as RNetwork, Pacer, Spawner, Storage,
 };
 use commonware_storage::archive::{immutable, Archive as _, Identifier};
@@ -1349,7 +1350,7 @@ where
         resolver_mux: SharedMux<HS, HR>,
         broadcast_mux: SharedMux<HS, HR>,
         marshal_mux: SharedMux<HS, HR>,
-        vote_backup: mpsc::Receiver<(u64, (PublicKey, IoBuf))>,
+        vote_backup: mpsc::Receiver<VoteBackupItem>,
         upstream: Option<U>,
     ) -> Handle<()>
     where
@@ -1383,7 +1384,7 @@ where
         resolver_mux: SharedMux<HS, HR>,
         broadcast_mux: SharedMux<HS, HR>,
         marshal_mux: SharedMux<HS, HR>,
-        vote_backup: mpsc::Receiver<(u64, (PublicKey, IoBuf))>,
+        vote_backup: mpsc::Receiver<VoteBackupItem>,
         upstream: Option<U>,
     ) where
         E: Clone + Sync,

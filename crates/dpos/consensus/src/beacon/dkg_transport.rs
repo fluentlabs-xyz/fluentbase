@@ -164,6 +164,29 @@ mod tests {
         );
     }
 
+    /// The RECEIVING half of the same contract. `dkg_subchannel` proves an
+    /// agreement id can never be minted inside the epoch space; this proves the
+    /// ingress classifier can never read one back OUT of it — which is the half
+    /// that was missing when a `BASE | E` id reached the frontier as epoch
+    /// `BASE | E`.
+    #[test]
+    fn epoch_from_subchannel_reads_back_the_same_split() {
+        use fluentbase_p2p::constants::epoch_from_subchannel;
+        for epoch in [0u64, 1, 2, 7, 51, 1_000_000, DKG_SUBCHANNEL_BASE - 1] {
+            let sub = dkg_subchannel(epoch).expect("in range");
+            assert_eq!(
+                epoch_from_subchannel(sub),
+                None,
+                "agreement sub-channel {sub} was read back as an epoch"
+            );
+            assert_eq!(
+                epoch_from_subchannel(epoch),
+                Some(epoch),
+                "a per-epoch engine's own registration must stay an epoch"
+            );
+        }
+    }
+
     #[test]
     fn subchannel_refuses_an_epoch_that_would_alias() {
         let err = dkg_subchannel(DKG_SUBCHANNEL_BASE).expect_err("aliasing epoch");

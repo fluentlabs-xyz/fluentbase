@@ -455,8 +455,10 @@ DKG_CATCHUP_POLL_S = 2
 DKG_HEAL_S = 240
 DKG_HEAL_POLL_S = 3
 #: How long the chain gets to finish epoch 2 after the heal, so `producedAt(2, …)` is FINAL when
-#: it is read. Sized off the epoch, not off a guess: at ~1 blk/s a 64-block epoch is ~64 s from
-#: its first block, and the heal lands ~20 blocks in — this is that with room for a slow host.
+#: it is read. Sized off the epoch, not off a guess: the wait runs to `epoch_start(3) + K` = 323
+#: (epoch 2 is blocks 256..319 at `EPOCH_INTERVAL = 64`, and its last block is only credited K
+#: heights later), starting from a seating around 272 — ~51 blocks, so ~51 s at 1 blk/s. This is
+#: ~4.7x that, which is the room a slow host needs.
 DKG_EPOCH_END_S = 240
 
 #: `:450` — the post-rejoin liveness window. Short on purpose: at 1 blk/s six seconds is several
@@ -767,33 +769,6 @@ def evaluate_artifact_pull_ok(raw, victim, family=ARTIFACT_PULL_OK_SAMPLE):
                    "artifact over the beacon resolver, so nothing could have keyed its share "
                    "(FLU-1166: the repair sweep excludes the frontier by design, and this pull is "
                    "the only thing that covers it)")
-
-
-#: How many blocks of epoch 2 must remain AFTER the share lands for the production leg to be a
-#: test rather than a coin toss. Leader election is a stake-weighted lottery over the 4
-#: equal-stake members, so a seated member wins ~1 slot in 4: over 32 blocks the chance of winning
-#: none is ~1e-4, over the 8 a slow run might leave it is ~10%. Below this the case has not
-#: produced the conditions it measures, and says so instead of reporting a lottery loss as a
-#: broken heal.
-#:
-#: Calibrated against a live run: the victim was seated at height 257 — the first block of a
-#: [256, 320) epoch — and finished the epoch with 10 of its 64 blocks.
-MIN_POST_HEAL_BLOCKS = 32
-
-
-def evaluate_heal_left_room(heal_at, epoch_end, victim, want=MIN_POST_HEAL_BLOCKS):
-    """…and the same rule again, for the production leg.
-
-    A member seated with four blocks of its epoch left can be perfectly healed and still produce
-    nothing. That is a fact about the schedule, not about the fix, and reporting it as
-    `producedAt=0` would be the same misdiagnosis the deal-window guard prevents upstream."""
-    left = int(epoch_end) - int(heal_at)
-    if left >= int(want):
-        return True, ""
-    return False, (f"{victim} was seated at finalized={heal_at} with only {left} blocks of epoch 2 "
-                   f"left (want >= {want}) — too few leader slots for `producedAt > 0` to mean "
-                   "anything. The recovery itself is fine; the schedule is not. Re-run, or raise "
-                   "EPOCH_INTERVAL")
 
 
 def evaluate_still_finalizing(before, after, victim):

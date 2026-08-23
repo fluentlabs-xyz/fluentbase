@@ -514,18 +514,6 @@ def test_the_pull_counter_sample_name_carries_the_DOUBLED_total_suffix():
     assert _n.gauge_val(scrape, vf.ARTIFACT_PULL_OK_FAMILY) == ""
 
 
-def test_the_seating_must_leave_room_for_a_leader_slot():
-    """A member seated with four blocks of its epoch left can be perfectly recovered and still
-    produce nothing. That is a fact about the schedule, and the case has to say which of the two
-    it is rather than report a lottery loss as a broken recovery."""
-    assert vf.evaluate_heal_left_room(275, 320, "validator-3")[0]
-    assert vf.evaluate_heal_left_room(320 - vf.MIN_POST_HEAL_BLOCKS, 320, "validator-3")[0]
-    ok, msg = vf.evaluate_heal_left_room(312, 320, "validator-3")
-    assert not ok and "only 8 blocks of epoch 2 left" in msg
-    # Calibrated against a live run: seated at 257 in a [256, 320) epoch, 10 of 64 blocks.
-    assert vf.evaluate_heal_left_room(257, 320, "validator-3")[0]
-
-
 def test_the_chain_must_still_be_finalizing_after_the_rejoin():
     """`:451` — the rejoin of a SHARELESS member must not wedge the seed quorum it is not in."""
     assert vf.evaluate_still_finalizing(100, 106, "validator-3")[0]

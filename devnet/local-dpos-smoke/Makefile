@@ -173,7 +173,7 @@ smoke-vrf-boundary:
 # the epoch ends, and the victim must be stopped before the DEAL phase opens one interval after
 # the migration anchor. Production credit is read only AFTER epoch 2 ends — the counter climbs
 # until then, and sampling it at the moment of recovery reads a coin toss.
-# Heavy (~8-10 min); NOT in run-all.
+# Heavy (~8-10 min); IS in run-all (`cli.py` SUITE).
 smoke-vrf-dkg-live-heal:
 	@python3 -m dpos_harness case smoke-vrf-dkg-live-heal $(ARGS)
 # Durable mid-window DKG restart: a committee[2] member restarts AFTER its epoch-2 seal

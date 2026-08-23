@@ -17,6 +17,7 @@ use crate::{
     beacon::dkg_engine::agreement_partition,
     beacon::{constant_fallback_seed, witness_fallback_seed},
     beacon::{PinEffort, Randomness, ShareProbe, SignerVerdict},
+    dpos::VoteBackupItem,
     engine::{EpochEngine, EpochEngineConfig},
     epocher::OriginEpocher,
     order_block::OrderBlock,
@@ -565,7 +566,7 @@ where
     pub fn start<HS, HR>(
         mut self,
         muxes: Option<Muxes<HS, HR>>,
-        vote_backup: mpsc::Receiver<(u64, (PublicKey, commonware_runtime::IoBuf))>,
+        vote_backup: mpsc::Receiver<VoteBackupItem>,
     ) -> Handle<()>
     where
         HS: Sender<PublicKey = PublicKey>,
@@ -577,7 +578,7 @@ where
     async fn run<HS, HR>(
         mut self,
         muxes: Option<Muxes<HS, HR>>,
-        mut vote_backup: mpsc::Receiver<(u64, (PublicKey, commonware_runtime::IoBuf))>,
+        mut vote_backup: mpsc::Receiver<VoteBackupItem>,
     ) where
         HS: Sender<PublicKey = PublicKey>,
         HR: Receiver<PublicKey = PublicKey>,
@@ -677,7 +678,7 @@ where
                             // deadlock: the FIRST vote that corroborates the new frontier
                             // reconciles, even with the chain stalled.
                             let before = (self.highest_observed_epoch, self.highest_entered_epoch);
-                            self.handle_msg_for_unregistered_epoch(Epoch::new(their_epoch), from).await;
+                            self.handle_msg_for_unregistered_epoch(their_epoch, from).await;
                             if (self.highest_observed_epoch, self.highest_entered_epoch) != before {
                                 self.reconcile_live(muxes.as_ref()).await;
                             }
