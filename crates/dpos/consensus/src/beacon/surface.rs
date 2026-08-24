@@ -118,7 +118,15 @@ pub trait Randomness: Send + Sync {
     /// must answer identically, or the witness-required wire rule splits the
     /// network. This is the one operation [`absent`] answers TRUTHFULLY rather
     /// than negatively.
-    fn mandatory_at(&self, epoch: u64) -> bool;
+    ///
+    /// The default body IS that agreed answer — the single deterministic
+    /// bootstrap edge every node of this network compiles in. Override it only
+    /// if your module owns a DIFFERENT bootstrap edge (today: the test provider,
+    /// which parametrises it); never override it to report a local capability,
+    /// because that is exactly the split this operation exists to prevent.
+    fn mandatory_at(&self, epoch: u64) -> bool {
+        epoch >= super::actor::DETERMINISTIC_BOOTSTRAP_EPOCH
+    }
 
     /// Check a block's parent-seed witness under the key in force at
     /// `parent_epoch`. Sync: it is consumed inside the verify poll loop that
@@ -327,10 +335,6 @@ impl Randomness for StaticRandomness {
         self.idle.clone()
     }
 
-    fn mandatory_at(&self, epoch: u64) -> bool {
-        epoch >= super::actor::DETERMINISTIC_BOOTSTRAP_EPOCH
-    }
-
     fn check_witness(&self, parent_epoch: u64, seed: &Seed) -> WitnessCheck {
         let (sharing, _) = self.deal(parent_epoch);
         if fluentbase_bls::beacon::verify_seed(
@@ -425,17 +429,17 @@ impl Randomness for StaticRandomness {
 /// against it is testing the shipped `seed_for` / `seed_edge`, not a stub that
 /// happens to agree with them today.
 pub fn for_seeds(seeds: super::certify::SeedStore) -> Arc<dyn Randomness> {
-    PlaneRandomness::build(
+    PlaneRandomness::build(PlaneRandomnessConfig {
         seeds,
-        BeaconKeys::new(),
-        None,
-        Arc::new(|_| BeaconResolve::Absent),
-        None,
-        None,
-        Arc::new(Notify::new()),
-        BeaconMetrics::default(),
-        0,
-    )
+        keys: BeaconKeys::new(),
+        verify: None,
+        resolver: Arc::new(|_| BeaconResolve::Absent),
+        held: None,
+        pull: None,
+        participation: Arc::new(Notify::new()),
+        metrics: BeaconMetrics::default(),
+        chain_id: 0,
+    })
 }
 
 /// A provider over a key store alone. **TEST ENTRY POINT.**
@@ -453,18 +457,18 @@ pub fn for_seeds(seeds: super::certify::SeedStore) -> Arc<dyn Randomness> {
 /// Built on the same [`PlaneRandomness`] as everything else, so a test written
 /// against it exercises the shipped ladder rather than a stub.
 pub fn for_keys(keys: BeaconKeys, held: Option<super::keys::AgreedKeys>) -> Arc<dyn Randomness> {
-    PlaneRandomness::build(
-        super::certify::SeedStore::new(),
+    PlaneRandomness::build(PlaneRandomnessConfig {
+        seeds: super::certify::SeedStore::new(),
         keys,
-        None,
-        Arc::new(|_| BeaconResolve::Absent),
+        verify: None,
+        resolver: Arc::new(|_| BeaconResolve::Absent),
         held,
-        None,
-        Arc::new(Notify::new()),
-        BeaconMetrics::default(),
+        pull: None,
+        participation: Arc::new(Notify::new()),
+        metrics: BeaconMetrics::default(),
         // Reaches `build_signer` only, which an ingress path never calls.
-        0,
-    )
+        chain_id: 0,
+    })
 }
 
 /// Holds no store, and that is the honest shape. It carried a `BeaconKeys` whose
@@ -486,10 +490,6 @@ impl Randomness for Absent {
 
     fn seed_edge(&self) -> Arc<Notify> {
         self.idle.clone()
-    }
-
-    fn mandatory_at(&self, epoch: u64) -> bool {
-        epoch >= super::actor::DETERMINISTIC_BOOTSTRAP_EPOCH
     }
 
     fn check_witness(&self, _parent_epoch: u64, _seed: &Seed) -> WitnessCheck {
@@ -803,17 +803,17 @@ mod tests {
     }
 
     fn provider_over(keys: BeaconKeys, material: BeaconKey) -> Arc<dyn Randomness> {
-        PlaneRandomness::build(
-            super::super::certify::SeedStore::new(),
+        PlaneRandomness::build(PlaneRandomnessConfig {
+            seeds: super::super::certify::SeedStore::new(),
             keys,
-            None,
-            Arc::new(move |_| BeaconResolve::Key(material.clone())),
-            None,
-            None,
-            Arc::new(Notify::new()),
-            BeaconMetrics::default(),
-            1,
-        )
+            verify: None,
+            resolver: Arc::new(move |_| BeaconResolve::Key(material.clone())),
+            held: None,
+            pull: None,
+            participation: Arc::new(Notify::new()),
+            metrics: BeaconMetrics::default(),
+            chain_id: 1,
+        })
     }
 
     /// W1's ordering guarantee, in the only form that survives the move: the
@@ -1003,17 +1003,17 @@ mod tests {
         );
         keys.set_pk(epoch.get(), theirs, KeySource::Agreed);
 
-        let r = PlaneRandomness::build(
-            super::super::certify::SeedStore::new(),
-            keys.clone(),
-            None,
-            Arc::new(move |_| BeaconResolve::Key(material.clone())),
-            None,
-            None,
-            Arc::new(Notify::new()),
-            BeaconMetrics::default(),
-            1,
-        );
+        let r = PlaneRandomness::build(PlaneRandomnessConfig {
+            seeds: super::super::certify::SeedStore::new(),
+            keys: keys.clone(),
+            verify: None,
+            resolver: Arc::new(move |_| BeaconResolve::Key(material.clone())),
+            held: None,
+            pull: None,
+            participation: Arc::new(Notify::new()),
+            metrics: BeaconMetrics::default(),
+            chain_id: 1,
+        });
 
         assert!(
             matches!(
@@ -1050,17 +1050,17 @@ mod tests {
         let (_snap, _member, _outsider, material) = signer_fixture(epoch);
         let mine = *material.0.public();
         let keys = BeaconKeys::new();
-        let r = PlaneRandomness::build(
-            super::super::certify::SeedStore::new(),
-            keys.clone(),
-            None,
-            Arc::new(move |_| BeaconResolve::Key(material.clone())),
-            None,
-            None,
-            Arc::new(Notify::new()),
-            BeaconMetrics::default(),
-            1,
-        );
+        let r = PlaneRandomness::build(PlaneRandomnessConfig {
+            seeds: super::super::certify::SeedStore::new(),
+            keys: keys.clone(),
+            verify: None,
+            resolver: Arc::new(move |_| BeaconResolve::Key(material.clone())),
+            held: None,
+            pull: None,
+            participation: Arc::new(Notify::new()),
+            metrics: BeaconMetrics::default(),
+            chain_id: 1,
+        });
 
         // Before the quorum speaks: this node participates.
         assert_eq!(
@@ -1113,17 +1113,17 @@ mod tests {
         let (snap, member, ..) = signer_fixture(epoch);
         // A provider whose resolver answers `Absent` — the state reached when the
         // material vanishes between the two samples.
-        let r = PlaneRandomness::build(
-            super::super::certify::SeedStore::new(),
-            BeaconKeys::new(),
-            None,
-            Arc::new(|_| BeaconResolve::Absent),
-            None,
-            None,
-            Arc::new(Notify::new()),
-            BeaconMetrics::default(),
-            1,
-        );
+        let r = PlaneRandomness::build(PlaneRandomnessConfig {
+            seeds: super::super::certify::SeedStore::new(),
+            keys: BeaconKeys::new(),
+            verify: None,
+            resolver: Arc::new(|_| BeaconResolve::Absent),
+            held: None,
+            pull: None,
+            participation: Arc::new(Notify::new()),
+            metrics: BeaconMetrics::default(),
+            chain_id: 1,
+        });
 
         assert!(
             matches!(
@@ -1561,19 +1561,37 @@ pub(crate) struct PlaneRandomness {
     chain_id: u64,
 }
 
+/// Everything [`PlaneRandomness::build`] needs, in one value.
+///
+/// One field per handle the provider holds, named after it. A parameter object
+/// rather than nine positions: the four `Option`/`Arc` slots in the middle are
+/// type-compatible with each other, so a transposed pair compiles and only shows
+/// up as a provider that silently answers from the wrong rung.
+pub(crate) struct PlaneRandomnessConfig {
+    pub(crate) seeds: super::certify::SeedStore,
+    pub(crate) keys: BeaconKeys,
+    pub(crate) verify: Option<BeaconVerify>,
+    pub(crate) resolver: BeaconResolver,
+    pub(crate) held: Option<super::keys::AgreedKeys>,
+    pub(crate) pull: Option<super::keys::AgreedKeys>,
+    pub(crate) participation: Arc<Notify>,
+    pub(crate) metrics: BeaconMetrics,
+    pub(crate) chain_id: u64,
+}
+
 impl PlaneRandomness {
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn build(
-        seeds: super::certify::SeedStore,
-        keys: BeaconKeys,
-        verify: Option<BeaconVerify>,
-        resolver: BeaconResolver,
-        held: Option<super::keys::AgreedKeys>,
-        pull: Option<super::keys::AgreedKeys>,
-        participation: Arc<Notify>,
-        metrics: BeaconMetrics,
-        chain_id: u64,
-    ) -> Arc<dyn Randomness> {
+    pub(crate) fn build(cfg: PlaneRandomnessConfig) -> Arc<dyn Randomness> {
+        let PlaneRandomnessConfig {
+            seeds,
+            keys,
+            verify,
+            resolver,
+            held,
+            pull,
+            participation,
+            metrics,
+            chain_id,
+        } = cfg;
         Arc::new(Self {
             seeds,
             keys,
@@ -1610,10 +1628,6 @@ impl Randomness for PlaneRandomness {
 
     fn seed_edge(&self) -> Arc<Notify> {
         self.seeds.notifier()
-    }
-
-    fn mandatory_at(&self, epoch: u64) -> bool {
-        epoch >= super::actor::DETERMINISTIC_BOOTSTRAP_EPOCH
     }
 
     fn check_witness(&self, parent_epoch: u64, seed: &Seed) -> WitnessCheck {

@@ -15,13 +15,29 @@
 //!
 //! # The boundary
 //!
-//! This module is CLOSED: every submodule is `pub(crate)` and what leaves it is
-//! exactly what is re-exported here — the [`Seed`] wire type with its
+//! Every submodule is `pub(crate)`, so the compiler enforces only half of this
+//! boundary: nothing OUTSIDE `fluentbase-consensus` can name a submodule, while a
+//! sibling file inside the crate still can. The other half is the rule that
+//! production code reaches the beacon only through the two re-export tiers below
+//! — so this list, not a grep for `beacon::`, is the module's front door.
+//!
+//! `pub use` — what leaves the crate: the [`Seed`] wire type with its
 //! `prev_randao` derivation, the two opaque key handles ([`BeaconKeys`],
 //! [`AgreedKeys`]), the plane facade ([`build`] and its config/result) and the
-//! follower facade ([`for_follower`] and its config/result). How the epoch key is
-//! agreed, where the artifact is stored, how a share is derived and how a peer is
-//! served are all internal, and nothing above the beacon assembles them.
+//! follower facade ([`for_follower`] and its config/result).
+//!
+//! `pub(crate) use` — the front door for the rest of this crate, and no wider:
+//! the four items production code elsewhere in `fluentbase-consensus` genuinely
+//! needs ([`absent_unregistered`], [`frozen_dkg_qual`], [`CommitteeSource`],
+//! [`agreement_partition`]) but that no consumer of the crate should see.
+//!
+//! On neither list, and deliberately: how the epoch key is agreed, where the
+//! artifact is stored, how a share is derived and how a peer is served. Nothing
+//! above the beacon assembles them. The crate's own TESTS are the one standing
+//! exception — they reach submodule paths directly (`beacon::keys::…`,
+//! `beacon::surface::PlaneRandomness`, `beacon::surface::testing::…`) to build
+//! fixtures out of the real rungs, and widening the front door for them would put
+//! those internals in reach of production code too.
 //!
 //! The follower facade exists so that closing FLU-1167 did not have to open the
 //! module: a follower needs `verify_artifact_for_epoch` and the artifact types,
@@ -67,3 +83,10 @@ pub use surface::{
     absent, for_keys, for_seeds, BeaconResolve, BeaconResolver, PinEffort, Randomness, ShareProbe,
     SignerVerdict, WithheldReason, WitnessCheck,
 };
+
+// The crate-internal tier. Same front door, narrower audience — see the boundary
+// note above.
+pub(crate) use artifact::CommitteeSource;
+pub(crate) use carry::frozen_dkg_qual;
+pub(crate) use dkg_engine::agreement_partition;
+pub(crate) use surface::absent_unregistered;

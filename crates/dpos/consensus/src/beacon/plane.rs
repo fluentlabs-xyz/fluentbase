@@ -49,6 +49,7 @@ use crate::{
         metrics::BeaconMetrics,
         outcome::group_public_key,
         share_state::{self, ShareState},
+        surface::{PlaneRandomness, PlaneRandomnessConfig},
         Randomness,
     },
     dpos::{ARTIFACT_JOURNAL_PARTITION, KEY_JOURNAL_PARTITION, SEED_JOURNAL_PARTITION},
@@ -342,6 +343,11 @@ where
     /// on. Ticks buffered here before the actor starts are drained by `on_height`'s
     /// monotone-max clamp.
     pub heights: mpsc::Receiver<u64>,
+    /// The registered clock pair. The `DkgActor` publishes its half off the
+    /// monotone clamp that merges every feeder in `heights`, so the gauge reports
+    /// the clock the ceremony geometry runs on rather than whichever feeder wrote
+    /// last. Arrives from the node crate, where the registry lives.
+    pub plane_clock: crate::sync_metrics::PlaneClock,
     /// Resolves the plane's frozen `(dpos_activation, epoch_interval)` — awaited
     /// once, inside the actor's spawn wrapper, so the actor never re-reads the
     /// chain for geometry the plane already froze. `None` ⇒ the geometry is
@@ -433,6 +439,7 @@ where
         dkg_qual_at,
         dkg_qual_probe,
         heights,
+        plane_clock,
         geometry,
     } = cfg;
     let dkg_qual_for = frozen_dkg_qual(dkg_qual_at, dkg_qual_probe);
@@ -536,34 +543,13 @@ where
     // of `outer_engine_seed_journal_*`. Checked before moving — the devnet
     // harness asserts the durable store from a LOG line, not from any journal
     // metric, so nothing scrapes the old names.
-    let (seed_store, seed_writer) = {
-        use super::{certify::SEED_RETENTION, seed_journal::SeedJournal};
-        let journal = SeedJournal::init(
-            context.with_label("seed_journal"),
-            SEED_JOURNAL_PARTITION.to_string(),
-        )
-        .await
-        .map_err(|e| eyre::eyre!("opening the durable seed store: {e}"))?;
-        let rehydrated = journal
-            .replay_window(SEED_RETENTION)
-            .await
-            .map_err(|e| eyre::eyre!("replaying the durable seed store: {e}"))?;
-        info!(
-            entries = rehydrated.len(),
-            "rehydrated the seed store from disk"
-        );
-        let (seed_tx, seed_rx) = tokio::sync::mpsc::unbounded_channel();
-        let writer = super::seed_journal::spawn_writer(
-            context.with_label("seed_journal_writer"),
-            journal,
-            seed_rx,
-            SEED_RETENTION as u64,
-        );
-        (
-            super::certify::SeedStore::with_persistence(rehydrated, seed_tx),
-            writer,
-        )
-    };
+    let (seed_store, seed_writer) = super::seed_journal::open(
+        context.with_label("seed_journal"),
+        context.with_label("seed_journal_writer"),
+        SEED_JOURNAL_PARTITION,
+        super::certify::SEED_RETENTION,
+    )
+    .await?;
 
     let (agreed_tx, agreed_rx) = mpsc::channel::<AgreedArtifact>(EDGE_MAILBOX);
     let (adopt_tx, artifacts_rx) = mpsc::channel::<AgreedArtifact>(EDGE_MAILBOX);
@@ -706,7 +692,8 @@ where
             .with_share_confirms(confirms)
             .with_pinned_requests(pinned_rx)
             .with_agreement_plane(agreement_request_tx, artifacts_rx)
-            .with_artifact_pull(pull_artifact);
+            .with_artifact_pull(pull_artifact)
+            .with_plane_clock(plane_clock);
             actor.run(heights, c).await
         })
     };
@@ -773,10 +760,10 @@ where
     // `dkgQual` arbiter, the key store, the seed store and the two agreement
     // rungs — and none of them crosses back out.
     let namespace = seed_namespace(&fluent_namespace(chain_id));
-    let randomness = super::surface::PlaneRandomness::build(
-        seed_store,
-        beacon_keys.clone(),
-        Some(super::resolve::BeaconVerify::new(
+    let randomness = PlaneRandomness::build(PlaneRandomnessConfig {
+        seeds: seed_store,
+        keys: beacon_keys.clone(),
+        verify: Some(super::resolve::BeaconVerify::new(
             super::resolve::group_key_resolver(
                 ceremony_store.clone(),
                 dkg_qual_for.clone(),
@@ -784,18 +771,18 @@ where
             ),
             namespace.clone(),
         )),
-        super::resolve::beacon_share_resolver(
+        resolver: super::resolve::beacon_share_resolver(
             ceremony_store.clone(),
             dkg_qual_for.clone(),
             namespace,
             beacon_keys.clone(),
         ),
-        Some(held_keys.clone()),
-        Some(pull_keys),
-        share_notify.clone(),
-        metrics.clone(),
+        held: Some(held_keys.clone()),
+        pull: Some(pull_keys),
+        participation: share_notify.clone(),
+        metrics: metrics.clone(),
         chain_id,
-    );
+    });
 
     Ok(Beacon {
         dkg_handle,

@@ -899,22 +899,72 @@ const fn certified_value(parent: (View, Digest)) -> Option<Digest> {
     }
 }
 
+/// What a decision came to — or that it did not come to one.
+///
+/// The voter's channel carries two answers; this plane needs three. `Park` is the
+/// third: not "yes", not "no", but "nothing this node holds decides it yet". It is
+/// a VALUE rather than a never-resolving future so that the parking discipline
+/// lives in [`drive`] — the one place that owns the wire to the voter — instead of
+/// in every branch that has to remember to spell it.
+enum Decision<T> {
+    Resolve(T),
+    Park,
+}
+
+/// A `verify` answer.
+///
+/// Separate from `Decision<bool>` on purpose: the rule this plane turns on is that
+/// `false` is reserved for a proposal permanently unacceptable to EVERY honest node
+/// (it reaches the voter as `TimeoutReason::InvalidProposal`, an immediate nullify),
+/// so a rejection must be an act of naming, never the value a branch falls into. A
+/// new arm cannot write `false` here; it has to choose between [`Self::Reject`] and
+/// [`Self::Park`], which is the whole point.
+enum Verdict {
+    /// The proposal checks out: its pinned set derives its own group key.
+    Accept,
+    /// Reject ONLY a proposal that is permanently unacceptable to EVERY honest
+    /// node — a replaced certified value, a structural violation, a set that
+    /// derives no key or the wrong one.
+    ///
+    /// This reaches the voter as `TimeoutReason::InvalidProposal`, an immediate
+    /// nullify. **When in doubt, [`Self::Park`].** "I do not hold that yet" is a
+    /// delivery race, not a bad proposal, and answering it here costs the view.
+    Reject,
+    /// Nothing this node holds decides it yet. Costs nothing: the view runs its
+    /// own timeout, and a later round proposing the same set is still accepted.
+    Park,
+}
+
+impl From<Verdict> for Decision<bool> {
+    fn from(v: Verdict) -> Self {
+        match v {
+            Verdict::Accept => Decision::Resolve(true),
+            Verdict::Reject => Decision::Resolve(false),
+            Verdict::Park => Decision::Park,
+        }
+    }
+}
+
 /// Resolve a voter request from a `decision` future, or leave it pending.
 ///
 /// The voter awaits the matching `rx` exactly once per `(context, payload)` and
-/// never retries. So this driver resolves it in exactly one of two ways: it
-/// sends the definitive verdict, or it exits because the voter already dropped
-/// `rx` (the view moved on). `decision` must therefore never resolve on a
-/// non-decidable state — it parks — and the `tx.closed()` arm is the only escape
-/// from such a state. Dropping `tx` unsent instead would reach the voter as
+/// never retries. So this driver ends in exactly one of three ways: it sends the
+/// definitive verdict, it parks (holding `tx` open until the view moves on), or it
+/// exits because the voter already dropped `rx`.
+///
+/// The park arm must keep `tx` ALIVE. Dropping it unsent reaches the voter as
 /// `Err`, which it reads as `TimeoutReason::IgnoredProposal` and turns into an
-/// immediate nullify: the same lost view a `false` would have cost.
-async fn drive<T: Send>(mut tx: oneshot::Sender<T>, decision: impl Future<Output = T>) {
+/// immediate nullify — the same lost view a `false` would have cost. That is the
+/// entire reason this function, and not each caller, owns the parking.
+async fn drive<T: Send>(mut tx: oneshot::Sender<T>, decision: impl Future<Output = Decision<T>>) {
     tokio::select! {
         _ = tx.closed() => {}
-        verdict = decision => {
-            tx.send_lossy(verdict);
-        }
+        decided = decision => match decided {
+            Decision::Resolve(verdict) => {
+                tx.send_lossy(verdict);
+            }
+            Decision::Park => tx.closed().await,
+        },
     }
 }
 
@@ -1242,7 +1292,7 @@ where
     R: Resolver<Key = DkgLogKey, PublicKey = PeerPubkey>,
     L: PinnedLogs,
 {
-    async fn decide(mut self, parent: (View, Digest), view: View, payload: Digest) -> bool {
+    async fn decide(mut self, parent: (View, Digest), view: View, payload: Digest) -> Verdict {
         let target_epoch = self.target_epoch;
         if let Some(certified) = certified_value(parent) {
             if payload != certified {
@@ -1250,19 +1300,19 @@ where
                     epoch = target_epoch,
                     "dkg agree: proposal replaces a value this instance already certified"
                 );
-                return false;
+                return Verdict::Reject;
             }
         }
         let Ok(proposal) = self.bodies.subscribe(payload).await.await else {
             // The body engine is gone (teardown). Not a verdict.
-            return std::future::pending().await;
+            return Verdict::Park;
         };
         if self.committee.is_empty() {
             warn!(
                 epoch = target_epoch,
                 "dkg agree: no committee to verify against"
             );
-            return std::future::pending().await;
+            return Verdict::Park;
         }
         if rejects_structurally(
             &proposal,
@@ -1271,27 +1321,27 @@ where
             self.confirms.namespace(),
             view,
         ) {
-            return false;
+            return Verdict::Reject;
         }
 
         let set: BTreeMap<u8, B256> = proposal.logs.iter().copied().collect();
         match self.pinned.derive(set).await {
             PinnedDerive::Derived(group_key) => {
                 if *group_key == proposal.group_key {
-                    return true;
+                    return Verdict::Accept;
                 }
                 warn!(
                     epoch = target_epoch,
                     "dkg agree: proposal's group key is not the one its own pinned set derives"
                 );
-                false
+                Verdict::Reject
             }
             PinnedDerive::Unusable => {
                 warn!(
                     epoch = target_epoch,
                     "dkg agree: no key follows from the proposal's pinned set"
                 );
-                false
+                Verdict::Reject
             }
             PinnedDerive::Missing(indices) => {
                 debug!(
@@ -1300,14 +1350,14 @@ where
                     "dkg agree: parking verify on missing dealer-log bodies"
                 );
                 fetch_bodies(&mut self.logs, &self.committee, target_epoch, &indices).await;
-                std::future::pending().await
+                Verdict::Park
             }
             PinnedDerive::Unavailable => {
                 debug!(
                     epoch = target_epoch,
                     "dkg agree: parking verify, no ceremony state to decide against"
                 );
-                std::future::pending().await
+                Verdict::Park
             }
         }
     }
@@ -1377,22 +1427,22 @@ where
                         // view nullified.
                         Some(digest) => {
                             let Ok(proposal) = bodies.subscribe(digest).await.await else {
-                                return std::future::pending().await;
+                                return Decision::Park;
                             };
                             proposal
                         }
                         None => {
                             let Some(proposal) = build.await else {
-                                return std::future::pending().await;
+                                return Decision::Park;
                             };
                             proposal
                         }
                     };
                     let digest = proposal.digest();
                     if !last_built.arm(round, proposal) {
-                        return std::future::pending().await;
+                        return Decision::Park;
                     }
-                    digest
+                    Decision::Resolve(digest)
                 };
                 drive(tx, decision).await;
             });
@@ -1400,9 +1450,11 @@ where
     }
 
     async fn verify(&mut self, context: Self::Context, payload: Digest) -> oneshot::Receiver<bool> {
-        let decision = self
+        let verdict = self
             .clone()
             .decide(context.parent, context.round.view(), payload);
+        // The ONE place a `Verdict` becomes the voter's two-valued answer plus a park.
+        let decision = async move { Decision::from(verdict.await) };
         let (tx, rx) = oneshot::channel();
         self.context
             .clone()
@@ -1608,6 +1660,46 @@ mod tests {
     use fluentbase_bls::PeerPubkey;
     use rand_08::rngs::StdRng;
     use rand_core::SeedableRng as _;
+
+    /// A park HOLDS the voter's sender; only a decision sends, and nothing drops it
+    /// early.
+    ///
+    /// This is the fork-critical property of the whole plane and it is invisible to
+    /// the agreement tests, which only ever see decided rounds. `try_recv` is the
+    /// discriminator: a live-but-unsent sender reads `Empty`, a dropped one reads
+    /// `Closed` — and `Closed` reaches the voter as `TimeoutReason::IgnoredProposal`,
+    /// the same lost view a wrong `false` would have cost.
+    ///
+    /// Both arms run through the real `drive`, so the `Empty` assertion cannot be
+    /// vacuous: the `Resolve` half proves the same channel does deliver when asked.
+    #[tokio::test]
+    async fn a_park_holds_the_sender_and_a_decision_sends_it() {
+        // Park: no value, and the channel stays open for as long as the voter wants it.
+        let (tx, mut rx) = oneshot::channel::<bool>();
+        let parked = tokio::spawn(drive(tx, async { Decision::Park }));
+        tokio::task::yield_now().await;
+        assert!(
+            matches!(rx.try_recv(), Err(oneshot::error::TryRecvError::Empty)),
+            "a park must leave the sender live and unsent — dropping it nullifies the \
+             view, and sending anything decides a round this node cannot decide"
+        );
+
+        // ... and it exits cleanly once the view moves on, rather than leaking a task.
+        drop(rx);
+        parked
+            .await
+            .expect("drive must return when the voter drops its receiver");
+
+        // Decision: the same driver delivers. Without this the assertion above would
+        // hold on a `drive` that had simply stopped working.
+        let (tx, mut rx) = oneshot::channel::<bool>();
+        drive(tx, async { Decision::Resolve(false) }).await;
+        assert_eq!(
+            rx.try_recv(),
+            Ok(false),
+            "a decided verdict must reach the voter verbatim"
+        );
+    }
 
     fn fixture() -> DkgProposal {
         let mut rng = StdRng::seed_from_u64(11);
@@ -2810,6 +2902,73 @@ mod tests {
                 let digest = settle_digest(&context, rx)
                     .await
                     .expect("a late dealer log must wake the leader, not the leader timeout");
+                assert_eq!(digest, seats.proposal(held, key).digest());
+            });
+        }
+
+        /// Rider (iv) of the beacon actor's delivery-side mint edge, asserted on the
+        /// leader that depends on it. [`ShareConfirm::covers`] is a STRICT superset
+        /// test, so peer confirmations minted at a narrower width stop covering the
+        /// moment the leader's own set GROWS: growth shrinks the covering count, here
+        /// all the way to zero, and the leader refuses until peers re-mint AT the new
+        /// width. That is why the actor mints on the path every member runs rather
+        /// than only on a leader's — a leader cannot raise its own bar.
+        #[test]
+        fn a_widened_local_set_refuses_until_peers_reconfirm_at_the_new_width() {
+            let runner = deterministic::Runner::timed(Duration::from_secs(600));
+            runner.start(|context| async move {
+                let seats = Committee::new(N, 25);
+                let committee = seats.members.clone();
+                let key = outcome(26);
+                let held: Vec<(u8, B256)> = quorum_logs();
+                let short: Vec<(u8, B256)> = held.iter().copied().take(3).collect();
+                let recorded = index_holding(&short);
+                // Peers confirm the NARROW set — the width they held when they minted.
+                seats.seed_pool(&short, seats.bar());
+                let (mut agree, _bodies) = agree_over(
+                    &context,
+                    committee.clone(),
+                    recorded.clone(),
+                    MockPinned::new(PinnedDerive::Derived(Box::new(key.clone()))),
+                    RecordingResolver::default(),
+                    seats.pool.clone(),
+                )
+                .await;
+
+                let rx = agree.propose(ctx_for(&committee)).await;
+                context.sleep(Duration::from_millis(500)).await;
+                assert!(
+                    agree.reported().contains(&(TARGET, "quorum_not_met")),
+                    "the first attempt must have run and refused below the quorum"
+                );
+
+                // The late log lands. Local is now AT the quorum — and every
+                // confirmation on the wire is one seat too narrow to cover it.
+                let (idx, hash) = held[3];
+                recorded
+                    .write()
+                    .expect("index")
+                    .entry(TARGET)
+                    .or_default()
+                    .insert(idx, hash);
+                seats.pool.note_inputs_grew();
+                context.sleep(Duration::from_millis(500)).await;
+                assert!(
+                    seats.pool.covering(TARGET, &held).is_empty(),
+                    "growth SHRANK the covering count to zero — the narrow confirmations \
+                     the leader had are not a superset of the set it now proposes"
+                );
+                assert!(
+                    agree.reported().contains(&(TARGET, BAR_QUORUM_UNMET)),
+                    "so the leader refuses at the bar, having cleared the quorum check"
+                );
+
+                // Peers re-mint at the new width — on the actor side that is the
+                // delivery-path mint this rider exists to justify.
+                seats.seed_pool(&held, seats.bar());
+                let digest = settle_digest(&context, rx)
+                    .await
+                    .expect("re-confirmation at the new width must release the leader");
                 assert_eq!(digest, seats.proposal(held, key).digest());
             });
         }

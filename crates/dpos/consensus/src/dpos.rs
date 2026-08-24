@@ -903,6 +903,11 @@ pub struct SharedBeaconPlane {
     /// `tombstones` for arriving from the node crate rather than being defaulted
     /// here: a second instance would be a gauge nothing scrapes.
     pub plane_clock: crate::sync_metrics::PlaneClock,
+    /// The beacon plane's height channel, so `FluentApp` can feed marshal's
+    /// ordering tip into it. Travels with the plane rather than being created
+    /// here for the same reason `plane_clock` does: the receiver is the plane's
+    /// `DkgActor`, and a second channel would be a feeder nothing drains.
+    pub dkg_height_tx: mpsc::Sender<u64>,
 }
 
 /// Cold-start kind resolved from durable state. Pure function of the inputs
@@ -1379,6 +1384,7 @@ impl DposLayer {
             vote_backup,
             tombstones,
             plane_clock,
+            dkg_height_tx,
         } = beacon_plane;
         let vote_backup_rx = vote_backup.subscribe().await;
 
@@ -2443,6 +2449,7 @@ impl DposLayer {
             safety_halt: safety_halt.clone(),
             tombstones,
             plane_clock,
+            dkg_height_tx: Some(dkg_height_tx),
             timeouts: ConsensusTimeouts::fluent_1s(),
             mailbox_size: 256,
             deque_size: 64,
@@ -3208,7 +3215,7 @@ impl DposLayer {
                 staking_config.clone(),
             );
             let provider = provider.clone();
-            crate::beacon::carry::frozen_dkg_qual(
+            crate::beacon::frozen_dkg_qual(
                 Arc::new(move || {
                     let fin = provider.finalized_block_number().ok().flatten()?;
                     provider.block_hash(fin).ok().flatten()
@@ -3231,7 +3238,7 @@ impl DposLayer {
         // the finalized anchor. A follower trusts its upstream for DELIVERY and
         // for nothing else: an artifact that does not carry a quorum of this
         // committee is rejected here exactly as a peer's would be on the plane.
-        let follower_committee_source: crate::beacon::artifact::CommitteeSource = {
+        let follower_committee_source: crate::beacon::CommitteeSource = {
             let canonical = canonical_state.clone();
             let reader = RethStakingStateReader::new(
                 provider.clone(),
@@ -3340,6 +3347,8 @@ impl DposLayer {
             // the honest answer rather than a lag gauge reading the ordering tip
             // against a permanent zero.
             plane_clock: crate::sync_metrics::PlaneClock::default(),
+            // Same reason: no beacon plane means no height channel to feed.
+            dkg_height_tx: None,
             timeouts: ConsensusTimeouts::fluent_1s(),
             mailbox_size: 256,
             deque_size: 64,
@@ -3683,6 +3692,11 @@ impl DposLayer {
                     // marshal tip can't freeze the re-jump (the cascade-wedge fix).
                     upstream_frontier: upstream_frontier.clone(),
                     dkg_height_tx: dkg_tx,
+                    // Unregistered, like this path's other clock handles: every
+                    // `try_send` above is a by-design `Closed`, so counting them
+                    // against a registered counter would publish a drop series for
+                    // a clock this node deliberately does not run.
+                    plane_clock: crate::sync_metrics::PlaneClock::default(),
                 });
             if let Some(rotate) = inlet_rotate {
                 inlet = inlet.with_rotate(rotate);

@@ -314,6 +314,51 @@ impl<E: Storage + Metrics + Clock + BufferPooler> SeedJournal<E> {
 /// the shutdown timeout. Both degrade to store MISSES — the pre-4.1 behaviour
 /// after every restart — never to a wrong σ.
 #[must_use = "the returned handle must be awaited on shutdown or the tail is lost"]
+/// Open the durable seed store, replay its window, and join it to a RAM map.
+///
+/// The mirror of [`key_journal::open`](crate::beacon::key_journal::open), and it
+/// exists for the same reason: assembly is knowledge about this store, so it
+/// belongs to this store. The caller previously spelled init → replay → channel →
+/// spawn by hand and had to supply `retention` TWICE, once to the replay and once
+/// to the writer, from two independent reads of the same constant. Nothing made
+/// the two agree. Here it is one argument, used for both.
+///
+/// `writer_context` MUST be a SIBLING of `journal_context`, never a clone: the
+/// deterministic runtime panics on a duplicate metric registered under the same
+/// label, and both halves register store metrics.
+///
+/// Unlike the key store there is no empty-partition arm. That store has one
+/// because a RAM-only key map is the pre-durability behaviour tests run on; this
+/// one is only ever built by [`crate::beacon::plane`], which always has a
+/// partition. Add the arm when a caller needs it, not before.
+pub async fn open<E>(
+    journal_context: E,
+    writer_context: E,
+    partition: &str,
+    retention: usize,
+) -> eyre::Result<(crate::beacon::certify::SeedStore, Handle<()>)>
+where
+    E: Storage + Metrics + Clock + Spawner + BufferPooler + Clone + Send + 'static,
+{
+    let journal = SeedJournal::init(journal_context, partition.to_string())
+        .await
+        .map_err(|e| eyre::eyre!("opening the durable seed store: {e}"))?;
+    let rehydrated = journal
+        .replay_window(retention)
+        .await
+        .map_err(|e| eyre::eyre!("replaying the durable seed store: {e}"))?;
+    tracing::info!(
+        entries = rehydrated.len(),
+        "rehydrated the seed store from disk"
+    );
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let writer = spawn_writer(writer_context, journal, rx, retention as u64);
+    Ok((
+        crate::beacon::certify::SeedStore::with_persistence(rehydrated, tx),
+        writer,
+    ))
+}
+
 pub fn spawn_writer<E>(
     context: E,
     mut journal: SeedJournal<E>,

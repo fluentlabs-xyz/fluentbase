@@ -607,6 +607,10 @@ pub struct OuterBuilder<B, P, BE, D, XC, A, R: slasher::StakingStateRead + Send 
     /// ordering half off marshal's tip — the ONE observer of finalization that
     /// survives a `SafetyHalt` park and every engine abort.
     pub plane_clock: crate::sync_metrics::PlaneClock,
+    /// The beacon plane's height channel. `FluentApp` feeds marshal's ordering tip
+    /// into it — the plane's third clock feeder, and the one that survives an
+    /// execution stall. `None` where no beacon plane runs (a follower, a test).
+    pub dkg_height_tx: Option<tokio::sync::mpsc::Sender<u64>>,
     pub timeouts: ConsensusTimeouts,
     pub mailbox_size: usize,
     pub deque_size: usize,
@@ -1157,8 +1161,12 @@ where
             Some(charges.clone()),
             self.tombstones,
         )
-        .with_plane_clock(self.plane_clock)
-        .with_randomness(randomness.clone());
+        .with_plane_clock(self.plane_clock);
+        let app = match self.dkg_height_tx {
+            Some(tx) => app.with_dkg_heights(tx),
+            None => app,
+        };
+        let app = app.with_randomness(randomness.clone());
         let marshal_reporter_app = app.clone();
 
         let scheme_provider_for_cb = scheme_provider.clone();

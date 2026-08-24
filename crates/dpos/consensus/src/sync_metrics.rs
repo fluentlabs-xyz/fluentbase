@@ -20,7 +20,7 @@ use prometheus_client::{
 use std::{
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU8, Ordering},
         Arc, OnceLock,
     },
 };
@@ -241,28 +241,49 @@ impl SyncMetrics {
 
 /// The two clocks the DPoS node runs on, published side by side.
 ///
-/// The ordering plane and the execution pipeline are separate subsystems, but
-/// the beacon plane's clock is derived from the EXECUTION one: the finalized
-/// poller in `fluentbase-node`'s `dpos.rs` reads `finalized_block_number()` and
-/// feeds `fin + K` to the DkgActor and the `EpochTransition`. So every way the
-/// executor can stop — the `SafetyHalt` park, an unfillable `Corruption`, a
-/// wedge nobody has found yet — also stops DKG ceremonies and epoch boundaries,
-/// and did so with no series to show it.
+/// The DKG half has three feeders — the finalized poller's `fin + K`, the cert
+/// inlet's verified upstream frontier, and marshal's ordering tip off
+/// `FluentApp::report` — and the `DkgActor`'s monotone clamp turns them into one
+/// running max. The gauge is written by that clamp, not by any feeder, so the
+/// published number is the clock the ceremony geometry actually runs on.
 ///
-/// The ordering half comes off marshal's `Update::Tip` in `FluentApp::report`,
-/// which is BFT-attested and INDEPENDENT of execution — and `FluentApp` is built
-/// once per process, so it outlives a halt and every engine abort. That is the
-/// whole point of the pair: the ordering gauge keeps climbing while the
-/// execution one freezes, and `dpos_dkg_clock_lag_blocks` is exactly the gap
-/// between "the committee is still agreeing" and "this node stopped executing".
+/// The ordering half is BFT-attested, but it is NOT independent of execution,
+/// and the pair must not be read as if it were. Measured on a 4-validator stand
+/// with the victim's execution halted for 300 s while the chain ran 300 → 637:
+/// its ordering gauge stepped 303 → 319 → 383 → 447 on epoch ends and then
+/// froze at 447 for the remaining 167 s. The ceiling is
+/// `last(epoch(EL_finalized − K) + 2)` — the committee source is the node's own
+/// EL state, so a halted node can only see two epochs past the committees it
+/// already read. Warning time is that window, not unbounded (FLU-1173).
 ///
 /// Registered by the plane builder (the node crate, where the poller lives),
 /// mirroring [`SyncMetrics`]'s clone-shares-one-gauge topology.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct PlaneClock {
     ordering: Gauge<i64>,
     dkg: Gauge<i64>,
     lag: Gauge<i64>,
+    /// Bit 0 = the ordering half has been written, bit 1 = the DKG half has.
+    /// Until both are set the two gauges are not comparable and the lag is `-1`.
+    seen: Arc<AtomicU8>,
+    drops: Counter,
+}
+
+impl Default for PlaneClock {
+    /// Hand-written for one field: the lag starts at `-1`, not at the `Gauge`
+    /// default of 0. A clock nobody has written yet is exactly the "not
+    /// comparable" state, and 0 is the value that reads as perfect health.
+    fn default() -> Self {
+        let lag = Gauge::<i64>::default();
+        lag.set(-1);
+        Self {
+            ordering: Gauge::default(),
+            dkg: Gauge::default(),
+            lag,
+            seen: Arc::default(),
+            drops: Counter::default(),
+        }
+    }
 }
 
 impl PlaneClock {
@@ -278,30 +299,52 @@ impl PlaneClock {
         );
         ctx.register(
             "dpos_dkg_clock_height",
-            "The ordering height the beacon plane's clock has reached: the EL finalized block \
-             number plus K, as fed to the DkgActor and the EpochTransition. Frozen ⇒ no DKG \
-             ceremony progress and no epoch boundary detection, whatever the ordering plane does.",
+            "The ordering height the beacon plane's clock has reached — the DkgActor's monotone \
+             max over its three feeders (the EL finalized block number plus K, the verified \
+             upstream cert frontier, marshal's ordering tip). Frozen ⇒ no DKG ceremony progress \
+             and no epoch boundary detection, whatever the ordering plane does.",
             self.dkg.clone(),
         );
         ctx.register(
             "dpos_dkg_clock_lag_blocks",
             "dpos_ordering_finalized_height − dpos_dkg_clock_height, floored at 0. Bounded and \
              flat = execution is keeping up; growing at the block rate = execution has stopped \
-             while the committee keeps finalizing without this node.",
+             while the committee keeps finalizing without this node. -1 = one of the two halves \
+             has never reported, so the two are not yet comparable.",
             self.lag.clone(),
+        );
+        ctx.register(
+            "dpos_dkg_height_drops_total",
+            "Height ticks dropped because the beacon plane's height channel was full. Lossy BY \
+             DESIGN: the consumer clamps to a running max, so a dropped tick is harmless as \
+             long as some feeder ticks later. The cert inlet sends one per certificate and \
+             the ordering tip one per block, so bursts during a catch-up are expected. What \
+             is NOT expected is a count that keeps climbing while the actor is alive — that \
+             means the actor has stopped draining.",
+            self.drops.clone(),
         );
     }
 
     /// Marshal reported a new BFT-attested ordering finalization tip.
     pub fn record_ordering_tip(&self, height: u64) {
         self.ordering.set(height as i64);
+        self.seen.fetch_or(0b01, Ordering::Relaxed);
         self.refresh_lag();
     }
 
-    /// The finalized poller fed the beacon plane a new clock height (`fin + K`).
+    /// The `DkgActor` clamped a feeder's tick into its running max. The ONE
+    /// writer: gauging each feeder separately reported whichever one happened to
+    /// write last rather than the clock the actor runs on.
     pub fn record_dkg_clock(&self, height: u64) {
         self.dkg.set(height as i64);
+        self.seen.fetch_or(0b10, Ordering::Relaxed);
         self.refresh_lag();
+    }
+
+    /// A height tick could not be handed to the beacon plane because the channel
+    /// was full.
+    pub fn note_height_drop(&self) {
+        self.drops.inc();
     }
 
     /// Floored at 0 because the two gauges are written by different tasks: the
@@ -309,12 +352,26 @@ impl PlaneClock {
     /// the two writes, and a negative lag would render as a spike rather than as
     /// the "nothing to report" it is.
     fn refresh_lag(&self) {
+        if self.seen.load(Ordering::Relaxed) != 0b11 {
+            // Never written on one side: a fail-soft node with no DkgActor
+            // (`beacon/plane.rs`'s unfrozen-geometry branch) and the post-restart
+            // window before the actor drains its buffer would otherwise report the
+            // whole chain height as lag. -1 is out of the domain of a real lag and
+            // says "not yet comparable" instead of "healthy".
+            self.lag.set(-1);
+            return;
+        }
         self.lag.set((self.ordering.get() - self.dkg.get()).max(0));
     }
 
     /// Current `(ordering, dkg, lag)` — test/assert helper.
     pub fn snapshot(&self) -> (i64, i64, i64) {
         (self.ordering.get(), self.dkg.get(), self.lag.get())
+    }
+
+    /// Current `dpos_dkg_height_drops_total` — test/assert helper.
+    pub fn drops(&self) -> u64 {
+        self.drops.get()
     }
 }
 
@@ -546,8 +603,8 @@ mod tests {
         clock.record_dkg_clock(1_000);
         assert_eq!(
             clock.snapshot(),
-            (0, 1_000, 0),
-            "DKG ahead of a silent ordering half"
+            (0, 1_000, -1),
+            "a silent ordering half is not comparable, not a lag of 0"
         );
 
         clock.record_ordering_tip(1_006);
@@ -562,6 +619,37 @@ mod tests {
         // ordinary interleaving, not a fault.
         clock.record_dkg_clock(1_007);
         assert_eq!(clock.snapshot().2, 0);
+    }
+
+    // Zero is a healthy lag, so a half that has NEVER reported must not be
+    // allowed to render as one. Two shapes reach here: a fail-soft node that
+    // starts no DkgActor at all, and the window after a restart before the actor
+    // drains its buffered heights — in both, `ordering − 0` is the whole chain
+    // height, which reads as a catastrophic lag on one side and as perfect health
+    // on the other, and neither is true.
+    #[test]
+    fn the_lag_reads_minus_one_until_both_halves_have_reported() {
+        let clock = PlaneClock::default();
+        assert_eq!(clock.snapshot(), (0, 0, -1), "neither half has reported");
+
+        clock.record_ordering_tip(900);
+        assert_eq!(
+            clock.snapshot(),
+            (900, 0, -1),
+            "a node with no DkgActor must not publish the chain height as lag"
+        );
+
+        clock.record_dkg_clock(897);
+        assert_eq!(clock.snapshot(), (900, 897, 3), "now comparable");
+    }
+
+    #[test]
+    fn dropped_height_ticks_are_counted() {
+        let clock = PlaneClock::default();
+        assert_eq!(clock.drops(), 0);
+        clock.note_height_drop();
+        clock.note_height_drop();
+        assert_eq!(clock.drops(), 2);
     }
 
     #[test]

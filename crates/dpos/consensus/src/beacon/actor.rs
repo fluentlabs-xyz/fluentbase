@@ -50,7 +50,7 @@ use crate::beacon::{
     share_state::{self, JournalLoad, JournalRecord, ShareState},
     wire::BeaconMessage,
 };
-use crate::{epocher::OriginEpocher, SCHEME_RETENTION_EPOCHS};
+use crate::{epocher::OriginEpocher, sync_metrics::PlaneClock, SCHEME_RETENTION_EPOCHS};
 use alloy_primitives::B256;
 use bytes::Bytes;
 use commonware_codec::{Encode as _, Read as _, ReadExt as _};
@@ -447,6 +447,15 @@ pub struct DkgActor<Se, Re, R> {
     /// Last finalized height seen on the `on_height` stream — the current chain time
     /// the event-driven `on_message` finalize uses for its deterministic-settle gate.
     last_height: u64,
+    /// Dealers whose LOG journal record failed to land, per target epoch. Excluded
+    /// from [`Self::publish_recorded_logs`] — this node holds the bytes in memory but
+    /// cannot back the claim across a restart. Retried from memory (not re-fetched:
+    /// the bytes are already here) on every publish edge, and cleared on success.
+    nondurable_logs: BTreeMap<u64, BTreeSet<PeerPubkey>>,
+    /// The registered clock pair whose DKG half this actor publishes, off the
+    /// monotone clamp in [`Self::on_height`] — the single point every feeder's
+    /// height lands at. `None` in tests and on any node that registers no clock.
+    plane_clock: Option<PlaneClock>,
     /// Target epochs whose committee first-became-readable has been logged
     /// (one-shot diagnostic; see `maybe_start`).
     eval_logged: BTreeSet<u64>,
@@ -633,6 +642,8 @@ where
             reconciled_journals: false,
             pending: BTreeMap::new(),
             last_height: 0,
+            nondurable_logs: BTreeMap::new(),
+            plane_clock: None,
             eval_logged: BTreeSet::new(),
             torn_warned: BTreeSet::new(),
             outcome_at,
@@ -667,6 +678,15 @@ where
     /// branch is inert and the demote-heal behaves exactly as it did before.
     pub fn with_artifact_pull(mut self, pull: PullArtifact) -> Self {
         self.pull_artifact = Some(pull);
+        self
+    }
+
+    /// Publish this actor's clock as `dpos_dkg_clock_height`. The actor is the
+    /// writer because it is the only place all three feeders meet; left unset the
+    /// gauge stays silent, which is the honest state for a node that registers no
+    /// clock at all.
+    pub fn with_plane_clock(mut self, clock: PlaneClock) -> Self {
+        self.plane_clock = Some(clock);
         self
     }
 
@@ -774,14 +794,19 @@ where
     /// Append the ceremony's journal records for `epoch` so a restart can `resume` AND
     /// a post-boundary member can recompute its share (§8.11.1). Each record is
     /// fsync-durable on a successful return (`share_state::append_journal` calls
-    /// `sync_all`). Returns whether EVERY record was written DURABLY — the write-durably-
-    /// before-ack gate (step 1f) uses this: an `Ack` paired with a `ReceivedDealing`
-    /// record is broadcast ONLY when that record is durable, so a QUAL log can never
-    /// record an ack this node cannot back with a durable view (which recompute would
-    /// hit as an un-resurrectable `MissingPlayerDealing`). No `share_dir` (in-process/
-    /// test default) ⇒ `true`: there is no on-disk journal and thus no cross-restart
-    /// recompute for this node, so the in-memory view is authoritative and acking is
-    /// safe. A write failure warns and returns `false` (the caller withholds the ack).
+    /// `sync_all`). Returns whether EVERY record was written DURABLY — the
+    /// write-durably-before-ack gate (step 1f) uses this: an `Ack` paired
+    /// with a `ReceivedDealing` record is broadcast ONLY when that record is durable, so
+    /// a QUAL log can never record an ack this node cannot back with a durable view
+    /// (which recompute would hit as an un-resurrectable `MissingPlayerDealing`). No
+    /// `share_dir` (in-process/test default) ⇒ `true`: there is no on-disk journal and
+    /// thus no cross-restart recompute for this node, so the in-memory view is
+    /// authoritative and acking is safe. A write failure warns and returns `false`.
+    ///
+    /// It does NOT name which record failed, deliberately: the only identity that
+    /// matters here is the dealer a `PeerLog` belongs to, and the ceremony already
+    /// authenticated that key and hands it back as [`Step::recorded_dealer`]. The two
+    /// recording call sites attribute from there.
     #[must_use]
     fn append_journal(&self, epoch: u64, records: Vec<JournalRecord>) -> bool {
         let Some(dir) = &self.share_dir else {
@@ -998,13 +1023,22 @@ where
     }
 
     async fn on_height(&mut self, height: u64, rng: &mut impl CryptoRngCore) {
-        // Two feeders drive this clock: the local finalized-height poller
-        // (`fin + K`) and, during unified-supervisor catch-up, the LIVE upstream
-        // cert frontier (so a still-catching-up newcomer deals its first epoch on
-        // the live deadline). Take the max so an interleaved lagging tick can never
+        // Three feeders drive this clock: the local finalized-height poller
+        // (`fin + K`), the LIVE upstream cert frontier (so a still-catching-up
+        // newcomer deals its first epoch on the live deadline), and marshal's
+        // ordering tip off `FluentApp::report` (the only one still moving once
+        // execution stalls). Take the max so an interleaved lagging tick can never
         // pull the deal/seal clock backward; process at the monotone height.
         self.last_height = self.last_height.max(height);
         let height = self.last_height;
+        // Gauged HERE, at the single point where every feeder's height lands,
+        // rather than by each feeder. The poller gauged itself and the cert inlet
+        // did not, so on a validator with an upstream the gauge reported `fin + K`
+        // while the actor's real clock was `max(fin + K, upstream_frontier)` — the
+        // entire reported lag was spurious.
+        if let Some(clock) = &self.plane_clock {
+            clock.record_dkg_clock(height);
+        }
         let now = self.epoch_of(height);
 
         // First-tick journal reconcile: now that the frozen epoch geometry is finally
@@ -1118,6 +1152,9 @@ where
             pool.retain(retained);
         }
         self.confirmed_len.retain(|e, _| retained(*e));
+        // A non-durable log is retryable only while its ceremony holds the bytes, so
+        // the set cannot outlive the ceremonies it names.
+        self.nondurable_logs.retain(|e, _| retained(*e));
         if let Some(shared) = self.recorded_dkg_logs.as_ref() {
             if let Ok(mut m) = shared.write() {
                 m.retain(|e, _| retained(*e));
@@ -1134,6 +1171,20 @@ where
         // so keeping the mark would only grow the set one entry per such epoch for
         // the life of the process.
         self.terminal_recompute.retain(|e| retained(*e));
+        // The two one-shot `maybe_start` marks ride the same window. Both are keyed by
+        // `target` (= `now + 1`), and neither was swept before — one entry per epoch, for
+        // the life of the process.
+        //
+        // `torn_warned` is NOT a log guard: `maybe_start` reads it as the sit-out memory
+        // (a Torn verdict is PERMANENT for its epoch — re-dealing would self-equivocate,
+        // §8.11.1), so dropping an entry the actor can still reach would re-open a
+        // decision, not just re-print a line. It cannot: an entry for `e` is inserted at
+        // `now = e - 1` and leaves on the `e + JOURNAL_RETENTION_EPOCHS >= now` floor only
+        // once `now >= e + 2`, by which point `target >= e + 3` and `e` is unreachable as
+        // a target forever. Widening the window keeps that true; narrowing it below
+        // `now - 1` does not, so this pair must move with the floor, never ahead of it.
+        self.eval_logged.retain(|e| retained(*e));
+        self.torn_warned.retain(|e| retained(*e));
         // Announced marks ride the ceremony's own lifetime: a target whose
         // ceremony is gone will never be announced again, and keeping the mark
         // would silently bar a re-entered epoch from getting an instance.
@@ -1244,13 +1295,51 @@ where
     /// logs) is the still-deferred consensus-pinned-QUAL residual
     /// (`dpos_beacon_share_reshare`). The actor is single-threaded (`run`'s `select!`),
     /// so there is no concurrent mutation of `ceremonies`.
+    /// Re-attempt the journal write for every log this node holds but could not make
+    /// durable. Event-driven (it rides the publish edge, no timer), bounded by the size
+    /// of the failed set, and a no-op in the overwhelmingly common empty case. A dealer
+    /// whose ceremony has already been swept has nothing left to re-journal; the
+    /// retention sweep drops its epoch's entry.
+    fn retry_nondurable_journals(&mut self) {
+        if self.nondurable_logs.is_empty() {
+            return;
+        }
+        let pending: Vec<(u64, Vec<PeerPubkey>)> = self
+            .nondurable_logs
+            .iter()
+            .map(|(e, set)| (*e, set.iter().cloned().collect()))
+            .collect();
+        for (epoch, dealers) in pending {
+            for dealer in dealers {
+                let Some(reveal) = self
+                    .ceremonies
+                    .get(&epoch)
+                    .and_then(|c| c.signed_log(&dealer))
+                    .cloned()
+                else {
+                    continue;
+                };
+                let record = JournalRecord::PeerLog(Box::new(reveal));
+                if self.append_journal(epoch, vec![record]) {
+                    if let Some(set) = self.nondurable_logs.get_mut(&epoch) {
+                        set.remove(&dealer);
+                    }
+                }
+            }
+        }
+        self.nondurable_logs.retain(|_, set| !set.is_empty());
+    }
+
     /// Publish each live ceremony's recorded dealer-log hashes
     /// (`idx→keccak256(SignedDealerLog)`, `idx` = the dealer's position in the agreed
     /// `committee[epoch]`) into the shared `recorded_dkg_logs` — what the agreement
     /// plane proposes from and what a share-confirmation states. Monotone (recorded
     /// logs only accrue) + idempotent; no-op when unwired. Committee-read per live
     /// ceremony (`n ≤ 51`, cheap).
-    fn publish_recorded_logs(&self) {
+    fn publish_recorded_logs(&mut self) {
+        // Give every previously-failed write another chance BEFORE deciding what may
+        // be claimed; a log that lands here is publishable on this same edge.
+        self.retry_nondurable_journals();
         let Some(shared) = self.recorded_dkg_logs.as_ref() else {
             return;
         };
@@ -1262,7 +1351,14 @@ where
             let Some(committee) = (self.committee_for)(*e) else {
                 continue;
             };
+            let nondurable = self.nondurable_logs.get(e);
             for (idx, pk) in committee.iter().enumerate() {
+                // A log this node holds but cannot back after a restart is NOT
+                // claimed: the index is what the agreement plane proposes from, and
+                // `mint_confirmations` signs a `ShareConfirm` from this same index.
+                if nondurable.is_some_and(|set| set.contains(pk)) {
+                    continue;
+                }
                 if let Some(hash) = c.signed_log_hash(pk) {
                     grew |= map.entry(*e).or_default().insert(idx as u8, hash).is_none();
                 }
@@ -1861,6 +1957,18 @@ where
             // write failure the ack is WITHHELD: the dealer then reveals our point in its
             // own log, which the recompute recovers just as well — safe, no liveness loss.
             let durable = self.append_journal(epoch, step.journal);
+            if !durable {
+                // The dealer comes from the ceremony, which `check`ed the signature to
+                // get it — NOT from `from`. A peer may relay another dealer's valid
+                // `Reveal`, and blaming the sender would leave the real dealer's
+                // unbacked claim published while suppressing an honest log.
+                if let Some(dealer) = step.recorded_dealer {
+                    self.nondurable_logs
+                        .entry(epoch)
+                        .or_default()
+                        .insert(dealer);
+                }
+            }
             if durable {
                 self.broadcast_all(step.outgoing).await;
             }
@@ -1871,32 +1979,13 @@ where
             // finalize in `on_height` still covers the time-based path. See
             // [`Self::drive_finalization`].
             if recorded_log {
-                // KNOWN HOLE (S1), stated here because this is where it is
-                // reachable and NOT fixed by the obvious edit. `durable` gates the
-                // ACK above, on the rule that this node must not claim something
-                // it cannot back after a restart. The same claim is made twice
-                // more from this block and NEITHER is gated: `drive_finalization`
-                // publishes the log's hash into the shared `recorded_dkg_logs`
-                // index (what the agreement plane proposes from), and
-                // `mint_confirmations` signs a `ShareConfirm` — a statement "I
-                // hold these dealer-log bytes" that the entry bar counts. If the
-                // journal append failed, both statements are true for this process
-                // and FALSE after a restart, and the plane may have started an
-                // instance on the strength of them.
-                //
-                // Adding `&& durable` here would be cosmetic, which is why it is
-                // not done: the log stays in ceremony memory by design (the
-                // comment above says so — the ceremony still finalizes via
-                // reveals), `drive_finalization` also runs on every height tick,
-                // and that path has no durability gate at all. So the claim would
-                // go out one tick later, unchanged.
-                //
-                // The real fix is per-DEALER durability: `append_journal` takes a
-                // `Vec<JournalRecord>` and returns one bool, so nothing downstream
-                // can tell WHICH log failed to land, and `publish_recorded_logs`
-                // reads the ceremony rather than a durability-aware set. Threading
-                // that through changes the ceremony's recording invariants and
-                // belongs in its own change with its own live run.
+                // The two claims made from here — the log's hash in the shared
+                // `recorded_dkg_logs` index, and the `ShareConfirm`
+                // `mint_confirmations` signs from that same index — are gated on
+                // per-dealer durability in `publish_recorded_logs`: a dealer named in
+                // `nondurable_logs` is excluded from both. The ACK gate above stays
+                // separate because it answers a different question (is our own
+                // `Player.view` recoverable), and an ack once withheld is not retried.
                 self.drive_finalization(rng);
                 // A newly-recorded log widens what this node can confirm, and the
                 // entry bar is counted over confirmations that COVER the proposed
@@ -2289,6 +2378,19 @@ where
             } => {
                 let valid = self.ingest_log(&key, value, rng).await;
                 let _ = response.send(valid);
+                if valid {
+                    // The recorded set just widened with NO height tick behind it. The
+                    // entry bar counts confirmations that COVER the proposed set, and
+                    // `AnyGrowth` is the trigger that carries every width — including
+                    // the intermediate ones `Decisive` skips and leaves to the next
+                    // tick. On a live chain that tick is the backstop; on a halted
+                    // chain there is no next tick, which is the case this edge exists
+                    // for. It belongs on the path EVERY member runs, not just a
+                    // leader's: `covering` has no self-exclusion and `entry_bar` is a
+                    // bare count, so one node minting moves the bar by at most 1.
+                    let minted = self.mint_confirmations(ConfirmTrigger::AnyGrowth);
+                    self.broadcast_all(minted).await;
+                }
             }
         }
     }
@@ -2394,9 +2496,19 @@ where
         if let Some(c) = self.ceremonies.get_mut(&key.epoch) {
             // Bind the delivered log to the REQUESTED `key.dealer`: a forgery or a valid
             // log for a different dealer both return `false` (block + re-fetch `key`).
-            let (accepted, journal) = c.ingest_signed_log(&key.dealer, signed);
+            let (accepted, step) = c.ingest_signed_log(&key.dealer, signed);
             if accepted {
-                let _ = self.append_journal(key.epoch, journal);
+                // Same attribution as the gossip path: the ceremony's `check`ed key,
+                // not `key.dealer`. They are equal here (`ingest_signed_log` rejects a
+                // log signed by anyone else), so one mechanism covers both sites.
+                if !self.append_journal(key.epoch, step.journal) {
+                    if let Some(dealer) = step.recorded_dealer {
+                        self.nondurable_logs
+                            .entry(key.epoch)
+                            .or_default()
+                            .insert(dealer);
+                    }
+                }
                 self.drive_finalization(rng);
             }
             return accepted;
@@ -2600,19 +2712,30 @@ mod clock_tests {
             interval,
             None,
             7,
+            Arc::new(RwLock::new(BTreeMap::new())),
         )
         .await
     }
 
     /// A stand-in for the epoch-key agreement plane, wired on the actor's real
-    /// seams: it takes the dealing-closed announcement, and once the node has
-    /// published a quorum of dealer-log hashes it hands that exact set back as an
-    /// agreed artifact.
+    /// seams: it takes the dealing-closed announcement, and once a quorum of
+    /// dealer-log hashes has been published into `recorded` it hands that exact set
+    /// back as an agreed artifact.
     ///
     /// What the real plane adds — agreeing ONE set across the committee, under a
     /// quorum certificate — is covered directly in [`crate::beacon::dkg_agree`] and
     /// [`crate::beacon::dkg_engine`]. The finalize path takes only the set, and
     /// these tests are about what the actor does with it.
+    ///
+    /// `recorded` is the caller's choice, and a PER-NODE index is faithful as far as
+    /// it goes: the real plane's leader also proposes from its own index
+    /// ([`crate::beacon::dkg_agree`]'s `attempt_proposal` reads `local_set(&self.recorded, ..)`).
+    /// What the stub does not model is what happens when that leader has nothing to
+    /// put up — the real plane refuses, the view is nullified, and the NEXT leader
+    /// proposes from ITS index. The stub has one leader and no certification, so it
+    /// stalls there forever. A test whose subject is a node that deliberately claims
+    /// less than it holds must therefore hand the whole committee ONE index: it
+    /// stands in for leader rotation, NOT for a property the real plane lacks.
     ///
     /// It waits for the quorum on its OWN clock rather than on the next
     /// announcement, because that is the property the real plane has and one of
@@ -2674,6 +2797,7 @@ mod clock_tests {
         interval: u64,
         share_dir: Option<PathBuf>,
         rng_seed: u64,
+        recorded: DkgLogIndex,
     ) -> tokio::sync::mpsc::Sender<u64> {
         let pk = me.public_key();
         let (sender, receiver) = oracle
@@ -2688,7 +2812,6 @@ mod clock_tests {
             let set = committee.clone();
             Arc::new(move |_epoch: u64| Some(set.clone()))
         };
-        let recorded: DkgLogIndex = Arc::new(RwLock::new(BTreeMap::new()));
         let (announce_tx, artifact_rx) =
             spawn_stub_agreement(ctx, recorded.clone(), committee.len());
         let actor = DkgActor::new(
@@ -3315,6 +3438,7 @@ mod clock_tests {
                         INTERVAL,
                         dir_i,
                         7,
+                        Arc::new(RwLock::new(BTreeMap::new())),
                     )
                     .await,
                 );
@@ -3357,6 +3481,7 @@ mod clock_tests {
                 INTERVAL,
                 Some(dir.clone()),
                 99,
+                Arc::new(RwLock::new(BTreeMap::new())),
             )
             .await;
             sinks.insert(0, new_sink);
@@ -4348,6 +4473,59 @@ mod clock_tests {
         )
     }
 
+    /// `dpos_dkg_clock_height` is the actor's clamp, not any one feeder's write.
+    ///
+    /// The inlet-fed shape is the one that used to lie: the cert inlet pushed the
+    /// verified upstream frontier into the height channel and gauged nothing,
+    /// while the finalized poller gauged its own lagging `fin + K`. The published
+    /// clock then sat below the clock the ceremony geometry actually ran on and
+    /// the whole reported lag was spurious. Feeding the LOW value last is what
+    /// distinguishes "the gauge is the max" from "the gauge is whoever wrote
+    /// last".
+    #[test]
+    fn the_dkg_clock_gauge_is_the_actors_max_over_every_feeder() {
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            let oracle: Oracle<PeerPubkey, SimContext> = {
+                let (network, oracle) = Network::new(
+                    ctx.with_label("sim_net"),
+                    SimConfig {
+                        max_size: 1024 * 1024,
+                        disconnect_on_block: false,
+                        tracked_peer_sets: NZUsize!(4),
+                    },
+                );
+                network.start();
+                oracle
+            };
+            let mut rng = StdRng::seed_from_u64(0x1168);
+            let keys: Vec<Ed25519PrivateKey> = (0..4)
+                .map(|_| Ed25519PrivateKey::random(&mut rng))
+                .collect();
+            let committee = Set::from_iter_dedup(keys.iter().map(|k| k.public_key()));
+            let clock = crate::sync_metrics::PlaneClock::default();
+            let mut actor = standalone_actor(&oracle, keys[0].clone(), committee, None)
+                .await
+                .with_plane_clock(clock.clone());
+            let mut arng = StdRng::seed_from_u64(0x1169);
+
+            assert_eq!(clock.snapshot().2, -1, "no half has reported yet");
+
+            // The upstream cert frontier, well ahead of local execution.
+            actor.on_height(1000, &mut arng).await;
+            assert_eq!(clock.snapshot().1, 1000);
+
+            // The finalized poller's `fin + K`, still catching up. The clock does
+            // not rewind and neither does the gauge.
+            actor.on_height(303, &mut arng).await;
+            assert_eq!(actor.last_height, 1000);
+            assert_eq!(clock.snapshot().1, 1000);
+
+            clock.record_ordering_tip(1002);
+            assert_eq!(clock.snapshot().2, 2, "both halves reported ⇒ a real lag");
+        });
+    }
+
     /// The share-confirmation leg end to end on the actor: this node mints one when
     /// its body-checked set GROWS and only then, a peer's genuine confirmation is
     /// recorded, and everything else is dropped.
@@ -4785,6 +4963,96 @@ mod clock_tests {
         });
     }
 
+    /// The two one-shot `maybe_start` marks are bounded by the retention window.
+    ///
+    /// Both are keyed by `target` (= `now + 1`) and neither was swept before, so each
+    /// grew one entry per epoch for the life of the process. `torn_warned` is the
+    /// load-bearing one: `maybe_start` reads it as the sit-out memory, so this test
+    /// also pins the SAFETY side — the entry for a target the actor can still reach
+    /// must survive, and only entries below the floor may go.
+    ///
+    /// Self-verifying: it asserts the sets actually grew before asserting they were
+    /// pruned, so it cannot pass vacuously if `maybe_start` stops reaching the inserts.
+    #[tokio::test]
+    async fn the_one_shot_start_marks_ride_the_retention_window() {
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            let oracle: Oracle<PeerPubkey, SimContext> = {
+                let (network, oracle) = Network::new(
+                    ctx.with_label("sim_net"),
+                    SimConfig {
+                        max_size: 1024 * 1024,
+                        disconnect_on_block: false,
+                        tracked_peer_sets: NZUsize!(4),
+                    },
+                );
+                network.start();
+                oracle
+            };
+            let mut rng = StdRng::seed_from_u64(0x9D);
+            let keys: Vec<Ed25519PrivateKey> = (0..6)
+                .map(|_| Ed25519PrivateKey::random(&mut rng))
+                .collect();
+            let me = keys[0].clone();
+            let set = Set::from_iter_dedup(keys.iter().map(|k| k.public_key()));
+            oracle.manager().track(0, set.clone()).await;
+
+            let same = set.clone();
+            let committee_for: CommitteeFor = Arc::new(move |_e| Some(same.clone()));
+            let mut actor = standalone_actor_cf(&oracle, me, committee_for, None).await;
+            let mut arng = StdRng::seed_from_u64(0x9E);
+
+            // Walk the chain across several epochs. Each tick runs `maybe_start(now + 1)`,
+            // which stamps `eval_logged` once for that target.
+            const LAST: u64 = 8;
+            for e in 1..=LAST {
+                actor.on_height(INTERVAL * e, &mut arng).await;
+            }
+
+            // Self-check: the marks are actually being written. Without this the pruning
+            // assertions below would hold trivially on an actor that never stamps at all.
+            assert!(
+                actor.eval_logged.len() > 1,
+                "the eval mark was never stamped — this test proves nothing about pruning \
+                 (maybe_start no longer reaches the insert at all)"
+            );
+
+            // Seed the load-bearing mark by hand, on both sides of the floor: `maybe_start`
+            // only ever stamps it on a Torn journal, which this standalone actor has no
+            // way to produce.
+            let now = actor.epoch_of(INTERVAL * LAST);
+            let reachable = now + 1; // the only target `maybe_start` can still ask about
+            let aged_out = now - 4;
+            actor.torn_warned.insert(reachable);
+            actor.torn_warned.insert(aged_out);
+
+            // One more tick: the sweep runs at the same `now` that feeds `maybe_start`.
+            actor.on_height(INTERVAL * LAST, &mut arng).await;
+
+            // SAFETY: an entry the actor can still reach as a target must survive. Dropping
+            // it would re-open a settled sit-out, and re-dealing self-equivocates.
+            assert!(
+                actor.torn_warned.contains(&reachable),
+                "the sweep dropped the sit-out memory for a target maybe_start can still \
+                 reach — re-dealing that epoch would self-equivocate"
+            );
+
+            // BOUND: nothing below the floor survives, in either set.
+            let floor = now.saturating_sub(JOURNAL_RETENTION_EPOCHS);
+            assert!(
+                !actor.torn_warned.contains(&aged_out),
+                "an aged-out sit-out mark was retained — the set grows for the life of the \
+                 process"
+            );
+            for e in actor.eval_logged.iter().chain(actor.torn_warned.iter()) {
+                assert!(
+                    *e >= floor,
+                    "epoch {e} is below the retention floor {floor} but was kept"
+                );
+            }
+        });
+    }
+
     /// Post-restart serve from a COLD cache (R1) + post-restart journal eviction (R2) +
     /// the cold-cache fetch-burst bound (e). All three are standalone (no network): a
     /// fresh actor whose `serve_cache` is empty but whose epoch-2 journal is present on
@@ -5117,6 +5385,7 @@ mod clock_tests {
                 INTERVAL,
                 Some(dir.clone()),
                 99,
+                Arc::new(RwLock::new(BTreeMap::new())),
             )
             .await
         };
@@ -5284,6 +5553,450 @@ mod clock_tests {
                 (pk, signed)
             })
             .collect()
+    }
+
+    /// Node-0's actor over a live epoch-2 ceremony that has ingested EVERY committee
+    /// log through the resolver path, with each `victims` log ingested while the share
+    /// dir was a FILE — so exactly those journal appends failed and the actor holds
+    /// those bytes in memory with no way to back them across a restart. The share dir
+    /// is left broken; a caller that wants the retry leg repairs `actor.share_dir`.
+    struct NondurableLogs {
+        actor: DkgActor<
+            commonware_p2p::simulated::Sender<PeerPubkey, SimContext>,
+            commonware_p2p::simulated::Receiver<PeerPubkey>,
+            NoopResolver,
+        >,
+        committee: Set<PeerPubkey>,
+        victims: BTreeSet<PeerPubkey>,
+        recorded: DkgLogIndex,
+        pool: ConfirmPool,
+        me: PeerPubkey,
+        good_dir: PathBuf,
+    }
+
+    impl NondurableLogs {
+        /// The one dealer whose write failed, for the cases that break exactly one.
+        fn sole_victim(&self) -> PeerPubkey {
+            let mut it = self.victims.iter();
+            let only = it.next().expect("a victim").clone();
+            assert!(
+                it.next().is_none(),
+                "this fixture broke more than one write"
+            );
+            only
+        }
+
+        /// Committee positions (the `idx` the index and every `ShareConfirm` are keyed
+        /// by) whose journal record IS durable.
+        fn durable_seats(&self) -> Vec<u8> {
+            self.committee
+                .iter()
+                .enumerate()
+                .filter(|(_, pk)| !self.victims.contains(*pk))
+                .map(|(i, _)| i as u8)
+                .collect()
+        }
+
+        /// This node's own seat in the committee.
+        fn my_seat(&self) -> u8 {
+            self.committee
+                .iter()
+                .position(|pk| *pk == self.me)
+                .expect("a member") as u8
+        }
+
+        /// `(seat, keccak256(log))` for `seats`, taken from the CEREMONY — which holds
+        /// every log whether or not it is claimable, so these pairs are the real bodies
+        /// a proposal would pin, independent of the index under test.
+        fn seat_hashes(&self, seats: &[u8]) -> Vec<(u8, B256)> {
+            let c = &self.actor.ceremonies[&DETERMINISTIC_BOOTSTRAP_EPOCH];
+            seats
+                .iter()
+                .map(|i| {
+                    let pk = self.committee.iter().nth(*i as usize).expect("seat");
+                    (*i, c.signed_log_hash(pk).expect("recorded log"))
+                })
+                .collect()
+        }
+
+        /// Dealers whose `PeerLog` the on-disk journal actually holds, read the way
+        /// every other consumer of the journal reads it — by `check`ing the record
+        /// against the epoch's `Info`, which is what establishes the dealer's identity.
+        fn journaled_dealers(&self) -> BTreeSet<PeerPubkey> {
+            let max = NonZeroU32::new(fluentbase_p2p::constants::MAX_COMMITTEE_SIZE as u32)
+                .expect("MAX_COMMITTEE_SIZE > 0");
+            let JournalLoad::Present(records) = share_state::load_journal(
+                &self.good_dir,
+                DETERMINISTIC_BOOTSTRAP_EPOCH,
+                &ShareState::Plaintext,
+                max,
+            ) else {
+                return BTreeSet::new();
+            };
+            let info = crate::beacon::ceremony::info_for(
+                b"FLUENT_DPOS_V1_clocktest",
+                DETERMINISTIC_BOOTSTRAP_EPOCH,
+                self.committee.clone(),
+            )
+            .expect("info");
+            records
+                .into_iter()
+                .filter_map(|r| match r {
+                    JournalRecord::PeerLog(signed) => signed.check(&info).map(|(pk, _)| pk),
+                    _ => None,
+                })
+                .collect()
+        }
+    }
+
+    async fn nondurable_logs(ctx: SimContext, victims_at: &[usize]) -> NondurableLogs {
+        let oracle: Oracle<PeerPubkey, SimContext> = {
+            let (network, oracle) = Network::new(
+                ctx.with_label("sim_net"),
+                SimConfig {
+                    max_size: 1024 * 1024,
+                    disconnect_on_block: false,
+                    tracked_peer_sets: NZUsize!(4),
+                },
+            );
+            network.start();
+            oracle
+        };
+        let mut rng = StdRng::seed_from_u64(0xD1);
+        let keys: Vec<Ed25519PrivateKey> = (0..4)
+            .map(|_| Ed25519PrivateKey::random(&mut rng))
+            .collect();
+        let committee = Set::from_iter_dedup(keys.iter().map(|k| k.public_key()));
+        let logs = mint_committee_logs_at(&keys, &committee, DETERMINISTIC_BOOTSTRAP_EPOCH);
+        let victims: BTreeSet<PeerPubkey> = victims_at.iter().map(|i| logs[*i].0.clone()).collect();
+
+        let good_dir = fresh_share_dir("nondurable-good");
+        let bad_dir = fresh_share_dir("nondurable-bad");
+        std::fs::write(&bad_dir, b"not a dir").expect("write file");
+
+        let recorded: DkgLogIndex = Arc::new(RwLock::new(BTreeMap::new()));
+        let pool = ConfirmPool::new(b"FLUENT_TEST_NONDURABLE");
+        let mut actor = standalone_actor(
+            &oracle,
+            keys[0].clone(),
+            committee.clone(),
+            Some(good_dir.clone()),
+        )
+        .await
+        .with_recorded_logs(recorded.clone())
+        .with_share_confirms(pool.clone());
+        let (cer, _step) = DkgCeremony::start(
+            b"FLUENT_DPOS_V1_clocktest",
+            DETERMINISTIC_BOOTSTRAP_EPOCH,
+            committee.clone(),
+            keys[0].clone(),
+        )
+        .expect("start");
+        actor.ceremonies.insert(DETERMINISTIC_BOOTSTRAP_EPOCH, cer);
+
+        // The victims go LAST and against the broken dir: every durable ingest runs the
+        // retry leg, so a victim ingested first would be healed before the assert.
+        let order = (0..logs.len())
+            .filter(|i| !victims_at.contains(i))
+            .chain(victims_at.iter().copied());
+        for i in order {
+            if victims_at.contains(&i) {
+                actor.share_dir = Some(bad_dir.clone());
+            }
+            let (dealer, signed) = &logs[i];
+            let key = DkgLogKey {
+                epoch: DETERMINISTIC_BOOTSTRAP_EPOCH,
+                dealer: dealer.clone(),
+            };
+            assert!(
+                actor.ingest_log(&key, signed.encode(), &mut rng).await,
+                "every minted log is valid for its own dealer"
+            );
+        }
+        NondurableLogs {
+            actor,
+            committee,
+            victims,
+            recorded,
+            pool,
+            me: keys[0].public_key(),
+            good_dir,
+        }
+    }
+
+    /// FLU-1169. A dealer log this node holds in memory but could not journal is not
+    /// CLAIMED: it is absent from the shared `recorded_dkg_logs` index the agreement
+    /// plane proposes from, and absent from the `ShareConfirm` minted off that index —
+    /// while every dealer whose record DID land stays claimed. Both statements would
+    /// be false for this node after a restart, and the plane can start an instance on
+    /// the strength of them.
+    #[test]
+    fn a_nondurable_dealer_log_is_neither_indexed_nor_confirmed() {
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            let mut f = nondurable_logs(ctx, &[1]).await;
+            let victim = f.sole_victim();
+            let victim_seat = f
+                .committee
+                .iter()
+                .position(|pk| *pk == victim)
+                .expect("the victim sits in the committee") as u8;
+
+            assert_eq!(
+                f.actor.nondurable_logs.get(&DETERMINISTIC_BOOTSTRAP_EPOCH),
+                Some(&BTreeSet::from([victim.clone()])),
+                "the fault landed on EXACTLY the victim: one failed append, named"
+            );
+            assert!(
+                !f.journaled_dealers().contains(&victim),
+                "and it really is absent from the journal a restart would replay"
+            );
+            assert_eq!(
+                f.actor.ceremonies[&DETERMINISTIC_BOOTSTRAP_EPOCH].recorded_log_count(),
+                4,
+                "the ceremony still HOLDS all four logs in memory — the gate is about \
+                 what may be claimed, not about what is recorded"
+            );
+
+            let indexed: Vec<u8> = f.recorded.read().unwrap()[&DETERMINISTIC_BOOTSTRAP_EPOCH]
+                .keys()
+                .copied()
+                .collect();
+            assert_eq!(indexed, f.durable_seats());
+            assert!(!indexed.contains(&victim_seat));
+
+            let minted = f.actor.mint_confirmations(ConfirmTrigger::AnyGrowth);
+            assert_eq!(minted.len(), 1, "three durable logs is the quorum at n=4");
+            let DkgBody::Confirm(confirm) = &minted[0].msg.body else {
+                panic!("the minted message is not a confirmation");
+            };
+            let confirmed: Vec<u8> = confirm.recorded.iter().map(|(i, _)| *i).collect();
+            assert_eq!(confirmed, f.durable_seats());
+
+            // Independent of the index: `covers` is a superset test over the SIGNED
+            // body, so asking the pool which confirmations cover the four real log
+            // bodies answers "did this node sign for the log it cannot back" without
+            // re-reading the map the assertions above already checked.
+            let all_four = f.seat_hashes(&[0, 1, 2, 3]);
+            let durable = f.seat_hashes(&f.durable_seats());
+            assert!(
+                f.pool
+                    .covering(DETERMINISTIC_BOOTSTRAP_EPOCH, &all_four)
+                    .is_empty(),
+                "no confirmation on the wire covers a set containing the unbacked log"
+            );
+            assert!(
+                f.pool
+                    .covering(DETERMINISTIC_BOOTSTRAP_EPOCH, &durable)
+                    .iter()
+                    .any(|c| c.idx == f.my_seat()),
+                "while this node's own confirmation does cover the three it can back"
+            );
+        });
+    }
+
+    /// The degenerate end of the same gate: with the share dir unwritable for EVERY
+    /// ingest, this node can back nothing, so it claims nothing — the published index
+    /// for the target stays empty rather than carrying a set the node would lose on
+    /// restart. It keeps every log in ceremony memory, which is what lets it still
+    /// finalize over a set the committee agreed without it; that half is proven end to
+    /// end by `acked_dealing_withheld_on_append_failure_still_recoverable`, which needs
+    /// a real player view and an agreement plane this fixture does not build.
+    #[test]
+    fn a_node_that_can_journal_nothing_claims_nothing() {
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            let mut f = nondurable_logs(ctx, &[0, 1, 2, 3]).await;
+
+            assert_eq!(
+                f.actor.nondurable_logs[&DETERMINISTIC_BOOTSTRAP_EPOCH].len(),
+                4,
+                "every append failed and every one is named"
+            );
+            assert!(f.journaled_dealers().is_empty());
+            assert_eq!(
+                f.actor.ceremonies[&DETERMINISTIC_BOOTSTRAP_EPOCH].recorded_log_count(),
+                4,
+                "the bytes are all still held — only the CLAIM is withheld"
+            );
+            assert!(
+                f.durable_seats().is_empty(),
+                "precondition for the assert below"
+            );
+
+            let published = f
+                .recorded
+                .read()
+                .unwrap()
+                .get(&DETERMINISTIC_BOOTSTRAP_EPOCH)
+                .is_none_or(BTreeMap::is_empty);
+            assert!(published, "an index entry would be a claim nothing backs");
+            assert!(
+                f.actor
+                    .mint_confirmations(ConfirmTrigger::AnyGrowth)
+                    .is_empty(),
+                "and a node claiming nothing signs no confirmation"
+            );
+        });
+    }
+
+    /// The exclusion is not permanent: `publish_recorded_logs` re-attempts every failed
+    /// write before it decides what may be claimed, so the first publish edge after the
+    /// dir is writable again both lands the record and widens the claim — from memory,
+    /// with no re-fetch (the bytes never left).
+    #[test]
+    fn a_retried_journal_write_makes_its_log_claimable_again() {
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            let mut f = nondurable_logs(ctx, &[1]).await;
+            let victim = f.sole_victim();
+            let seats: Vec<u8> = (0..4).collect();
+
+            f.actor.share_dir = Some(f.good_dir.clone());
+            f.actor.publish_recorded_logs();
+
+            assert!(
+                f.actor.nondurable_logs.is_empty(),
+                "the retry cleared the entry rather than leaving an empty set behind"
+            );
+            assert!(
+                f.journaled_dealers().contains(&victim),
+                "the record the first attempt lost is now on disk"
+            );
+            let indexed: Vec<u8> = f.recorded.read().unwrap()[&DETERMINISTIC_BOOTSTRAP_EPOCH]
+                .keys()
+                .copied()
+                .collect();
+            assert_eq!(indexed, seats, "and the claim widened on the same edge");
+
+            let minted = f.actor.mint_confirmations(ConfirmTrigger::AnyGrowth);
+            let DkgBody::Confirm(confirm) = &minted[0].msg.body else {
+                panic!("the minted message is not a confirmation");
+            };
+            let confirmed: Vec<u8> = confirm.recorded.iter().map(|(i, _)| *i).collect();
+            assert_eq!(confirmed, seats);
+        });
+    }
+
+    /// D3, the mint edge. A log that arrives by RECOVERY widens what this node can
+    /// confirm with NO height tick behind it — and the entry bar counts confirmations
+    /// that COVER the proposed set, so until the wider one is on the wire the widening
+    /// is invisible to every leader. On a live chain the next tick carries it; on a
+    /// halted chain there is no next tick, which is the case this edge exists for.
+    /// `Decisive` is exactly the trigger that would skip this width, so the delivery
+    /// path mints on `AnyGrowth`.
+    ///
+    /// No `on_height` is called anywhere in this test: the tick is the mechanism under
+    /// test, by its absence.
+    #[test]
+    fn a_resolver_delivery_mints_the_wider_confirmation_with_no_height_tick() {
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            let oracle: Oracle<PeerPubkey, SimContext> = {
+                let (network, oracle) = Network::new(
+                    ctx.with_label("sim_net"),
+                    SimConfig {
+                        max_size: 1024 * 1024,
+                        disconnect_on_block: false,
+                        tracked_peer_sets: NZUsize!(4),
+                    },
+                );
+                network.start();
+                oracle
+            };
+            let mut rng = StdRng::seed_from_u64(0xD3);
+            let keys: Vec<Ed25519PrivateKey> = (0..4)
+                .map(|_| Ed25519PrivateKey::random(&mut rng))
+                .collect();
+            let committee = Set::from_iter_dedup(keys.iter().map(|k| k.public_key()));
+            const TARGET: u64 = DETERMINISTIC_BOOTSTRAP_EPOCH;
+            let quorum = N3f1::quorum(committee.len()) as usize;
+            assert_eq!(quorum, 3, "n = 4 ⇒ the 4th log is the first width above it");
+            let logs = mint_committee_logs_at(&keys, &committee, TARGET);
+
+            let recorded: DkgLogIndex = Arc::new(RwLock::new(BTreeMap::new()));
+            let pool = ConfirmPool::new(b"FLUENT_TEST_MINT_EDGE");
+            let mut actor = standalone_actor(&oracle, keys[0].clone(), committee.clone(), None)
+                .await
+                .with_recorded_logs(recorded.clone())
+                .with_share_confirms(pool.clone());
+            let (cer, _step) = DkgCeremony::start(
+                b"FLUENT_DPOS_V1_clocktest",
+                TARGET,
+                committee.clone(),
+                keys[0].clone(),
+            )
+            .expect("start");
+            actor.ceremonies.insert(TARGET, cer);
+
+            for (dealer, signed) in logs.iter().take(quorum) {
+                let key = DkgLogKey {
+                    epoch: TARGET,
+                    dealer: dealer.clone(),
+                };
+                assert!(actor.ingest_log(&key, signed.encode(), &mut rng).await);
+            }
+            assert_eq!(recorded.read().unwrap()[&TARGET].len(), quorum);
+
+            // One mint at the quorum: that width, and only that width, is on the wire.
+            assert_eq!(actor.mint_confirmations(ConfirmTrigger::AnyGrowth).len(), 1);
+            assert_eq!(actor.confirmed_len[&TARGET], quorum);
+            let narrow: Vec<(u8, B256)> = {
+                let c = &actor.ceremonies[&TARGET];
+                committee
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, pk)| c.signed_log_hash(pk).map(|h| (i as u8, h)))
+                    .collect()
+            };
+            assert_eq!(narrow.len(), quorum);
+            assert_eq!(pool.covering(TARGET, &narrow).len(), 1);
+
+            // The remaining log arrives by RECOVERY, over the resolver seam the run loop
+            // drives — not by gossip, and with no tick behind it.
+            let (dealer, signed) = &logs[quorum];
+            let (response, verdict) = tokio::sync::oneshot::channel();
+            actor
+                .on_resolver_message(
+                    LogMessage::Deliver {
+                        key: DkgLogKey {
+                            epoch: TARGET,
+                            dealer: dealer.clone(),
+                        },
+                        value: signed.encode(),
+                        response,
+                    },
+                    &mut rng,
+                )
+                .await;
+            assert!(verdict.await.expect("a verdict"), "the log is valid");
+
+            let wide: Vec<(u8, B256)> = {
+                let c = &actor.ceremonies[&TARGET];
+                committee
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, pk)| c.signed_log_hash(pk).map(|h| (i as u8, h)))
+                    .collect()
+            };
+            assert_eq!(
+                recorded.read().unwrap()[&TARGET].len(),
+                quorum + 1,
+                "the delivery widened the index"
+            );
+            assert_eq!(wide.len(), quorum + 1);
+            let me_seat = committee
+                .iter()
+                .position(|pk| *pk == keys[0].public_key())
+                .expect("a member") as u8;
+            assert!(
+                pool.covering(TARGET, &wide)
+                    .iter()
+                    .any(|c| c.idx == me_seat),
+                "and put this node's confirmation AT the new width on the wire — \
+                 without it the widening is a set no leader can count"
+            );
+        });
     }
 
     /// Drive a 4-party committee[2] DKG at the ceremony level and capture node-0's
@@ -6606,6 +7319,12 @@ mod clock_tests {
         }
         let me0 = keys[0].public_key();
         let victim_store: CeremonyStore = Arc::new(RwLock::new(BTreeMap::new()));
+        // ONE index for the whole committee: node-0 claims only what it journaled
+        // durably, and the set it finalizes over is the one the committee agreed —
+        // not the one node-0 was able to claim. Per-node, the stub would wait forever
+        // on node-0's own empty set, because it has no leader rotation to move past a
+        // member with nothing to propose (see `spawn_stub_agreement`).
+        let recorded: DkgLogIndex = Arc::new(RwLock::new(BTreeMap::new()));
         let mut sinks = Vec::new();
         for (i, k) in keys.iter().enumerate() {
             let store = if i == 0 {
@@ -6625,6 +7344,7 @@ mod clock_tests {
                     INTERVAL,
                     dir,
                     7,
+                    recorded.clone(),
                 )
                 .await,
             );

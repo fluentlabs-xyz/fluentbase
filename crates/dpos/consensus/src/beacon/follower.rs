@@ -314,10 +314,6 @@ impl Randomness for FollowerRandomness {
         self.idle.clone()
     }
 
-    fn mandatory_at(&self, epoch: u64) -> bool {
-        epoch >= super::actor::DETERMINISTIC_BOOTSTRAP_EPOCH
-    }
-
     /// Structurally unanswerable rather than "not yet": a follower verifies no
     /// block's parent-seed witness — it imports what the committee already
     /// finalized.

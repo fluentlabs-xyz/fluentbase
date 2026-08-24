@@ -354,6 +354,11 @@ pub struct LiveFrontierTee {
     /// DkgActor deal clock; its `on_height` clamps to its own running max, so a
     /// stale `try_send` never pulls the clock backward.
     pub dkg_height_tx: tokio::sync::mpsc::Sender<u64>,
+    /// Where a dropped `dkg_height_tx` send is counted. The inlet does NOT write
+    /// the height gauge — the `DkgActor` does, at the clamp where all three
+    /// feeders meet — but a full channel is the one way this feeder can silently
+    /// leave the clock behind, so it has to be visible from here.
+    pub plane_clock: crate::sync_metrics::PlaneClock,
 }
 
 /// A cached per-epoch verifier plus the one fact the cache must remember about
@@ -501,7 +506,7 @@ where
             tee: None,
             window_tx: None,
             schemes: BTreeMap::new(),
-            randomness: crate::beacon::surface::absent_unregistered(),
+            randomness: crate::beacon::absent_unregistered(),
             ctx,
             rotate: None,
             consecutive_faults: 0,
@@ -899,7 +904,9 @@ where
         if let Some(tee) = &self.tee {
             tee.live_height
                 .fetch_max(uf.block.height, std::sync::atomic::Ordering::Relaxed);
-            let _ = tee.dkg_height_tx.try_send(uf.block.height);
+            if tee.dkg_height_tx.try_send(uf.block.height).is_err() {
+                tee.plane_clock.note_height_drop();
+            }
         }
         // Make the body local so the marshal resolves it without a peer, THEN
         // report the cert to drive storage + the executor — in that order. Plus
@@ -966,6 +973,7 @@ where
 mod tests {
     use super::*;
     use crate::beacon::keys::{AgreedKeys, BeaconKeys};
+    use crate::beacon::surface::PlaneRandomnessConfig;
     use crate::{
         beacon::{
             carry::DkgQualFor,
@@ -1344,6 +1352,7 @@ mod tests {
                 live_height: live_frontier,
                 upstream_frontier: Arc::new(std::sync::atomic::AtomicU64::new(0)),
                 dkg_height_tx: dkg_tx,
+                plane_clock: crate::sync_metrics::PlaneClock::default(),
             });
         }
         inlet
@@ -1419,6 +1428,7 @@ mod tests {
                     live_height: live_frontier,
                     upstream_frontier: upstream_frontier.clone(),
                     dkg_height_tx: dkg_tx,
+                    plane_clock: crate::sync_metrics::PlaneClock::default(),
                 },
             );
             inlet
@@ -1869,6 +1879,7 @@ mod tests {
                 live_height: live_height.clone(),
                 upstream_frontier: Arc::new(std::sync::atomic::AtomicU64::new(0)),
                 dkg_height_tx: dkg_tx,
+                plane_clock: crate::sync_metrics::PlaneClock::default(),
             });
 
             let block = sample_order(Digest(B256::repeat_byte(0xaa)), 65);
@@ -2123,17 +2134,17 @@ mod tests {
     /// rungs (`canned_held` is an actual `AgreedKeys`), so what they pin is the
     /// ladder's behaviour, not a stubbed answer.
     fn canned_randomness(keys: BeaconKeys, held: Option<AgreedKeys>) -> Arc<dyn Randomness> {
-        crate::beacon::surface::PlaneRandomness::build(
-            crate::beacon::certify::SeedStore::new(),
+        crate::beacon::surface::PlaneRandomness::build(PlaneRandomnessConfig {
+            seeds: crate::beacon::certify::SeedStore::new(),
             keys,
-            None,
-            Arc::new(|_| crate::beacon::BeaconResolve::Absent),
+            verify: None,
+            resolver: Arc::new(|_| crate::beacon::BeaconResolve::Absent),
             held,
-            None,
-            Arc::new(tokio::sync::Notify::new()),
-            crate::beacon::metrics::BeaconMetrics::default(),
-            CHAIN_ID,
-        )
+            pull: None,
+            participation: Arc::new(tokio::sync::Notify::new()),
+            metrics: crate::beacon::metrics::BeaconMetrics::default(),
+            chain_id: CHAIN_ID,
+        })
     }
 
     /// The ladder's held-artifact rung over a canned store. `at` answers for a

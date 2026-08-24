@@ -5,16 +5,16 @@
 //! shutdown supervisor `select!`.
 
 use crate::consensus_rpc::{feed_actor::FeedActor, FeedStateHandle};
-// `Clock` (ctx.current/sleep in the finalized-height poller) + `Metrics`
-// (ctx.with_label, ctx.encode) + `Spawner` (ctx.spawn) — used by the always-on
-// beacon plane, the cert-feed actor, and the feature-gated devnet metrics endpoint.
+// `Metrics` (ctx.with_label, ctx.encode) + `Spawner` (ctx.spawn) — used by the
+// always-on beacon plane, the cert-feed actor, and the feature-gated devnet
+// metrics endpoint.
 use commonware_consensus::types::{Epoch, Height};
 use commonware_cryptography::Signer as _;
 use commonware_p2p::{
     utils::mux::{Builder, Muxer},
     Blocker as _, Ingress, Receiver as _, Recipients, Sender as _,
 };
-use commonware_runtime::{tokio::Context, Clock as _, Handle, IoBuf, Metrics as _, Spawner as _};
+use commonware_runtime::{tokio::Context, Handle, IoBuf, Metrics as _, Spawner as _};
 use eyre::{eyre, OptionExt as _, WrapErr as _};
 use fluentbase_bls::PeerPubkey;
 use fluentbase_consensus::dpos::{
@@ -815,6 +815,7 @@ where
                 // See [`LiveFrontierTee::upstream_frontier`].
                 upstream_frontier: upstream_frontier.clone(),
                 dkg_height_tx: plane.dkg_height_tx.clone(),
+                plane_clock: plane.shared.plane_clock.clone(),
             },
             // The SAME provider the consensus layer holds, not a second one over
             // a private store: `observe_cert` prunes what `pin_for` reads, and a
@@ -1597,11 +1598,11 @@ where
     //     `read_height_for(n) = n − K` contract assumes a finalized input; do NOT
     //     shift it.
     //
-    // Published, not consumed: the poller is the ONLY driver of the beacon
-    // plane's clock, so its height is what "the plane's clock has stopped" means
-    // — and nothing scraped this node could tell that from a healthy quiet chain.
-    // Registered here because this is where the writer lives; the ordering half
-    // is written by `FluentApp` off the same process's marshal tip.
+    // The clock pair is REGISTERED here, where the registry is, but neither gauge
+    // is written here any more: the `DkgActor` publishes the DKG half off the
+    // clamp that merges this feeder with the cert inlet's frontier and marshal's
+    // ordering tip, and `FluentApp` publishes the ordering half off that same tip.
+    // This task keeps only the drop counter for the sends it fails to place.
     let plane_clock = fluentbase_consensus::sync_metrics::PlaneClock::default();
     plane_clock.register(ctx);
     let poller_handle = {
@@ -1619,23 +1620,57 @@ where
         let mut blocker = handles.oracle.clone();
         let me = peer_keypair.public_key();
         ctx.with_label("beacon_plane_poller")
-            .spawn(move |c| async move {
+            .spawn(move |_c| async move {
+                // Event-driven, not a poll: reth publishes a watch on the finalized
+                // marker. `borrow_and_update` MARKS the current value seen, so the
+                // `changed()` at the bottom waits for the NEXT change instead of
+                // returning immediately and re-processing the same height. Taking
+                // the value here rather than awaiting a change first also keeps the
+                // persisted-marker-surfacing race closed (see the `cs_fin_num` seed
+                // below): if reth has already surfaced the marker we act on it now.
+                //
+                // The gauge is NOT written here. The DkgActor writes it off the
+                // clamp where all three feeders meet, so a node whose cert inlet or
+                // ordering tip runs ahead of `fin + K` no longer publishes a clock
+                // lower than the one it runs on.
+                let mut finalized_rx = provider.canonical_state().subscribe_finalized_block();
                 let mut sent = cs_fin_num;
                 let _ = dkg_tx.try_send(cs_fin_num + fluentbase_consensus::K);
-                plane_clock.record_dkg_clock(cs_fin_num + fluentbase_consensus::K);
                 loop {
-                    c.sleep(Duration::from_millis(500)).await;
-                    let Ok(Some(fin)) = provider.finalized_block_number() else {
-                        continue;
+                    // Bound out of the `match` scrutinee so the watch guard is
+                    // dropped before the `changed()` await below — a `watch::Ref`
+                    // held across an await makes the whole task non-`Send`.
+                    let latest = finalized_rx.borrow_and_update().as_ref().map(|h| h.number);
+                    let fin = match latest {
+                        Some(n) => n,
+                        None => {
+                            if finalized_rx.changed().await.is_err() {
+                                // The provider is gone: the node is shutting down.
+                                break;
+                            }
+                            continue;
+                        }
                     };
-                    while sent < fin {
-                        sent += 1;
-                        let _ = dkg_tx.try_send(sent + fluentbase_consensus::K);
+                    // Coalesced: ONE message carrying the newest height, not one per
+                    // missed height. `on_height` clamps to a running max at entry
+                    // (`beacon/actor.rs`), so every intermediate tick is discarded by
+                    // the consumer anyway — sending them made a catch-up run the whole
+                    // `on_height` body hundreds of times, each with uncached committee
+                    // reads, and overflowed this 256-slot channel (measured: an EL jump
+                    // of 338 blocks dropped 85 ticks in one burst).
+                    //
+                    // The cursor advances ONLY on a successful send. Advancing it on a
+                    // drop is what made the old shape lose a height permanently: on a
+                    // restart with a gap wider than the buffer the newest value is the
+                    // one that does not fit, and nothing ever re-sent it — convergence
+                    // rested on the chain continuing to produce.
+                    if sent < fin {
+                        if dkg_tx.try_send(fin + fluentbase_consensus::K).is_ok() {
+                            sent = fin;
+                        } else {
+                            plane_clock.note_height_drop();
+                        }
                     }
-                    // The ORDERING height fed to the DkgActor, not the raw EL
-                    // number — so the lag against the ordering tip reads ~0 on a
-                    // healthy node instead of a constant K.
-                    plane_clock.record_dkg_clock(fin + fluentbase_consensus::K);
                     // Bootstrap drive (event-driven on THIS existing poll, no second
                     // timer): until the geometry is frozen, `cold_start` off the LIVE
                     // finalized cursor — anchoring to the now-readable finalized block
@@ -1650,21 +1685,26 @@ where
                         // Drive the boundary detection; errors here are non-fatal to the
                         // beacon plane (the engine's own ET is the authoritative boundary
                         // path) — log and keep the peer set tracking.
-                        et.lock().await.on_finalized(fin).await
-                    } else {
+                        Some(et.lock().await.on_finalized(fin).await)
+                    } else if let Ok(Some(hash)) = provider.block_hash(fin) {
                         // No `finalized_block_hash`-by-number on the provider here, so
                         // resolve the hash from the height we already have.
-                        let Ok(Some(hash)) = provider.block_hash(fin) else {
-                            continue;
-                        };
                         let out = et.lock().await.cold_start(hash, fin).await;
                         // Freshly frozen on THIS tick ⇒ wake the DkgActor wrapper once.
                         if et.lock().await.frozen_geometry().is_some() {
                             geometry_ready.notify_one();
                         }
-                        out
+                        Some(out)
+                    } else {
+                        // The body behind the freshly-finalized marker is not readable
+                        // yet. This used to `continue` into the next 500 ms poll; with
+                        // no sleep left in the loop that would spin, so fall through
+                        // instead — the tombstone read below is guarded by the same
+                        // `block_hash` and degrades to a no-op, and the next finalized
+                        // change re-attempts the cold start at a fresh height.
+                        None
                     };
-                    if let Err(e) = outcome {
+                    if let Some(Err(e)) = outcome {
                         warn!(finalized = fin, error = ?e, "beacon plane: ET on_finalized/cold_start failed");
                     }
 
@@ -1726,6 +1766,10 @@ where
                                 "beacon plane: tombstone read failed; retrying on the next poll"
                             ),
                         }
+                    }
+
+                    if finalized_rx.changed().await.is_err() {
+                        break;
                     }
                 }
             })
@@ -1910,6 +1954,7 @@ where
             dkg_qual_at,
             dkg_qual_probe,
             heights: dkg_height_rx,
+            plane_clock: plane_clock.clone(),
             geometry: Box::pin(async move {
                 geometry_ready.notified().await;
                 et_arc.lock().await.frozen_geometry()
@@ -1954,6 +1999,7 @@ where
             vote_backup,
             tombstones,
             plane_clock,
+            dkg_height_tx: dkg_height_tx.clone(),
         },
         artifact_bytes: beacon.artifact_bytes,
         live_height,

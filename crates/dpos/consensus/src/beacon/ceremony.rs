@@ -71,6 +71,13 @@ pub(crate) struct Outgoing {
 pub(crate) struct Step {
     pub outgoing: Vec<Outgoing>,
     pub journal: Vec<JournalRecord>,
+    /// The dealer whose log this step newly recorded, as returned by
+    /// [`SignedDealerLog::check`] — the ceremony is what AUTHENTICATED that identity,
+    /// so it travels out from here rather than being re-derived downstream. It is
+    /// NOT the sender: `handle` binds the record to the log's signer, so a peer
+    /// relaying another dealer's valid `Reveal` records it under that dealer. The
+    /// actor needs the key to name which claim a failed journal append left unbacked.
+    pub recorded_dealer: Option<PeerPubkey>,
 }
 
 impl Step {
@@ -78,6 +85,7 @@ impl Step {
         Self {
             outgoing,
             journal: Vec::new(),
+            recorded_dealer: None,
         }
     }
 
@@ -376,13 +384,10 @@ impl DkgCeremony {
                 }
                 step
             }
-            DkgBody::Reveal(signed) => {
-                let mut step = Step::default();
-                if let Some((pk, log)) = (*signed).clone().check(&self.info) {
-                    step.journal = self.record_checked_log(pk, log, *signed);
-                }
-                step
-            }
+            DkgBody::Reveal(signed) => match (*signed).clone().check(&self.info) {
+                Some((pk, log)) => self.record_checked_log(pk, log, *signed),
+                None => Step::default(),
+            },
             // A share-confirmation is not ceremony traffic: it is consumed by the
             // epoch-key agreement plane, and the actor intercepts it before this
             // dispatch. Present so the match stays exhaustive over the envelope.
@@ -391,22 +396,27 @@ impl DkgCeremony {
     }
 
     /// Record a `check`-valid log under `pk` if not already recorded, returning the
-    /// journal records to append — EMPTY on a duplicate (the dedup that bounds journal
-    /// growth + fsync churn). Shared by the gossip-Reveal path ([`handle`](Self::handle))
-    /// and the resolver-ingest path ([`ingest_signed_log`](Self::ingest_signed_log)) so
-    /// both grow the journal symmetrically under one dedup rule.
+    /// journal record to append and the dealer it belongs to — an EMPTY step on a
+    /// duplicate (the dedup that bounds journal growth + fsync churn). Shared by the
+    /// gossip-Reveal path ([`handle`](Self::handle)) and the resolver-ingest path
+    /// ([`ingest_signed_log`](Self::ingest_signed_log)) so both grow the journal
+    /// symmetrically under one dedup rule and surface the dealer identically. Emits
+    /// no outgoing: recording a log answers nobody.
     fn record_checked_log(
         &mut self,
         pk: PeerPubkey,
         log: DealerLog<MinSig, PeerPubkey>,
         signed: DealerReveal,
-    ) -> Vec<JournalRecord> {
-        if self.recorded.insert(pk.clone()) {
-            self.logs.record(pk.clone(), log);
-            self.signed_logs.insert(pk, signed.clone());
-            vec![JournalRecord::PeerLog(Box::new(signed))]
-        } else {
-            Vec::new()
+    ) -> Step {
+        if !self.recorded.insert(pk.clone()) {
+            return Step::default();
+        }
+        self.logs.record(pk.clone(), log);
+        self.signed_logs.insert(pk.clone(), signed.clone());
+        Step {
+            outgoing: Vec::new(),
+            journal: vec![JournalRecord::PeerLog(Box::new(signed))],
+            recorded_dealer: Some(pk),
         }
     }
 
@@ -603,32 +613,33 @@ impl DkgCeremony {
     /// both `check`-verify AND be signed by `expected` — a peer that answers a
     /// targeted fetch for D with a valid log for a DIFFERENT dealer D' must NOT
     /// satisfy the D fetch (and the log is not recorded under this fetch).
-    /// Returns `(accepted, journal)`:
+    /// Returns `(accepted, step)`:
     /// - `accepted == true` — the log `check`-verified as `expected`'s log (now
     ///   recorded, or an honest duplicate already held);
     /// - `accepted == false` — `check` failed (a forgery) OR the log was signed by a
     ///   dealer ≠ `expected` (a mis-targeted answer). The caller returns the resolver
     ///   `deliver→false` (block the peer + re-fetch the key).
     ///
-    /// The journal record (`PeerLog`) to persist is returned alongside (empty when
-    /// the log was a duplicate or rejected), so the caller can append it.
+    /// The `step` carries the journal record (`PeerLog`) to persist and the
+    /// `recorded_dealer` it belongs to — both empty when the log was a duplicate or
+    /// rejected. Its `outgoing` is always empty: recording a log answers nobody.
     pub fn ingest_signed_log(
         &mut self,
         expected: &PeerPubkey,
         signed: DealerReveal,
-    ) -> (bool, Vec<JournalRecord>) {
+    ) -> (bool, Step) {
         match signed.clone().check(&self.info) {
             Some((pk, _)) if pk != *expected => {
                 // A valid log, but for a different dealer than the one fetched — do
                 // NOT record it under this fetch; the resolver re-fetches `expected`.
-                (false, Vec::new())
+                (false, Step::default())
             }
             Some((pk, log)) => {
                 // Valid + correctly-targeted: record (deduped) and accept. An honest
-                // duplicate (already recorded) returns `(true, [])` — valid, no journal.
+                // duplicate (already recorded) returns an EMPTY step — valid, no journal.
                 (true, self.record_checked_log(pk, log, signed))
             }
-            None => (false, Vec::new()),
+            None => (false, Step::default()),
         }
     }
 

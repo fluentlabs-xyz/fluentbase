@@ -354,6 +354,13 @@ pub struct FluentApp<XC, A> {
     /// `dpos_dkg_clock_height` against a climbing `dpos_ordering_finalized_height`
     /// is readable from outside instead of being two silences.
     plane_clock: crate::sync_metrics::PlaneClock,
+    /// Third feeder into the beacon plane's height channel, fed from the same
+    /// `Update::Tip` the ordering gauge rides. The `DkgActor` clamps to its
+    /// running max, so this is what makes its clock `max(fin + K, tip)` — with no
+    /// arithmetic anywhere and without the finalized poller having to be awake.
+    /// On a node whose execution has stalled it is the only feeder still moving.
+    /// `None` on a follower and in tests: neither runs a beacon plane.
+    dkg_height_tx: Option<tokio::sync::mpsc::Sender<u64>>,
 }
 
 impl<XC: Clone, A> Clone for FluentApp<XC, A> {
@@ -374,6 +381,7 @@ impl<XC: Clone, A> Clone for FluentApp<XC, A> {
             charges: self.charges.clone(),
             tombstones: self.tombstones.clone(),
             plane_clock: self.plane_clock.clone(),
+            dkg_height_tx: self.dkg_height_tx.clone(),
         }
     }
 }
@@ -402,7 +410,7 @@ where
         tombstones: TombstoneSet,
     ) -> Self {
         Self {
-            randomness: crate::beacon::surface::absent_unregistered(),
+            randomness: crate::beacon::absent_unregistered(),
             committee_index: None,
             chain_id,
             charges,
@@ -411,6 +419,7 @@ where
             // argument: an instance that never receives one publishes nothing,
             // which is what a follower and every test should publish.
             plane_clock: crate::sync_metrics::PlaneClock::default(),
+            dkg_height_tx: None,
             genesis: Arc::new(genesis),
             executor,
             boundary_hook,
@@ -428,6 +437,14 @@ where
     /// Only the launch site has one; everything else leaves the gauges silent.
     pub fn with_plane_clock(mut self, plane_clock: crate::sync_metrics::PlaneClock) -> Self {
         self.plane_clock = plane_clock;
+        self
+    }
+
+    /// Feed the beacon plane's height channel from marshal's ordering tip. Only a
+    /// node that runs a beacon plane has one; everything else leaves the feeder
+    /// unwired and the plane keeps its other two.
+    pub fn with_dkg_heights(mut self, dkg_height_tx: tokio::sync::mpsc::Sender<u64>) -> Self {
+        self.dkg_height_tx = Some(dkg_height_tx);
         self
     }
 
@@ -1192,10 +1209,17 @@ where
             self.assembler.observe_finalized(block);
             (self.boundary_hook)(block.clone());
         }
-        // Observability only — nothing downstream reads this gauge, and the tip
-        // still travels to the executor untouched below.
+        // The gauge is observability only, but the height channel is not: the tip
+        // is the beacon plane's third feeder, and the only one that keeps moving
+        // once this node's execution stalls. The tip still travels to the executor
+        // untouched below either way.
         if let Update::Tip(_, height, _) = &activity {
             self.plane_clock.record_ordering_tip(height.get());
+            if let Some(tx) = &self.dkg_height_tx {
+                if tx.try_send(height.get()).is_err() {
+                    self.plane_clock.note_height_drop();
+                }
+            }
         }
         // Ack flow: the `Exact` ack inside Update::Block travels INSIDE this
         // command and is fired by the executor after derive + import. Marshal
@@ -1353,7 +1377,8 @@ pub trait DerivedBlockBuilder: Send + Sync + 'static {
 mod tests {
     use super::*;
     use crate::beacon::{
-        certify::SeedStore, keys::BeaconKeys, resolve::GroupKeyFor, BeaconVerify, KeyLookup,
+        certify::SeedStore, keys::BeaconKeys, resolve::GroupKeyFor, surface::PlaneRandomnessConfig,
+        BeaconVerify, KeyLookup,
     };
     use crate::slasher::Message;
     use commonware_consensus::types::{Epoch, View};
@@ -2722,17 +2747,17 @@ mod tests {
         group_keys: BeaconKeys,
         verify: Option<BeaconVerify>,
     ) -> Arc<dyn crate::beacon::Randomness> {
-        crate::beacon::surface::PlaneRandomness::build(
+        crate::beacon::surface::PlaneRandomness::build(PlaneRandomnessConfig {
             seeds,
-            group_keys,
+            keys: group_keys,
             verify,
-            Arc::new(|_| crate::beacon::BeaconResolve::Absent),
-            None,
-            None,
-            Arc::new(tokio::sync::Notify::new()),
-            crate::beacon::metrics::BeaconMetrics::default(),
-            TEST_CHAIN_ID,
-        )
+            resolver: Arc::new(|_| crate::beacon::BeaconResolve::Absent),
+            held: None,
+            pull: None,
+            participation: Arc::new(tokio::sync::Notify::new()),
+            metrics: crate::beacon::metrics::BeaconMetrics::default(),
+            chain_id: TEST_CHAIN_ID,
+        })
     }
 
     fn tiny_parent(proposal_view: u64) -> OrderBlock {
@@ -3473,9 +3498,54 @@ mod tests {
             assert_eq!(ordering, 900);
             assert_eq!(
                 (dkg, lag),
-                (0, 900),
-                "no poller has written the DKG half, so the whole ordering tip reads as lag"
+                (0, -1),
+                "the DKG half has never been written, so the two are not yet comparable"
             );
+        });
+    }
+
+    /// The tip is a FEEDER into the beacon plane's height channel, not just a
+    /// gauge write. This is the property that makes the plane's clock
+    /// `max(fin + K, tip)` without any arithmetic in the node crate: the
+    /// `DkgActor` clamps to its running max, and the tip is the only feeder still
+    /// moving once this node's execution stalls. Computing that max inside the
+    /// finalized poller instead — the design this replaces — would be woken only
+    /// by the finalized watch, which is frozen for exactly the fault the max
+    /// exists for, so nothing here would ever reach the plane.
+    #[test]
+    fn the_tip_feeds_the_beacon_height_channel_with_no_poller_involved() {
+        use commonware_consensus::types::{Epoch, View};
+
+        let runtime = commonware_runtime::deterministic::Runner::default();
+        runtime.start(|_ctx| async move {
+            let (mailbox, _rx) = fresh_mailbox();
+            let clock = crate::sync_metrics::PlaneClock::default();
+            let (dkg_tx, mut dkg_rx) = tokio::sync::mpsc::channel::<u64>(1);
+            let mut app = build_app(mailbox, Arc::new(|_b: OrderBlock| {}))
+                .with_plane_clock(clock.clone())
+                .with_dkg_heights(dkg_tx);
+
+            let tip = |h: u64| {
+                Update::Tip(
+                    Round::new(Epoch::new(0), View::new(7)),
+                    commonware_consensus::types::Height::new(h),
+                    Digest(B256::ZERO),
+                )
+            };
+            <FluentApp<NoChain, NoTxs> as Reporter>::report(&mut app, tip(900)).await;
+            assert_eq!(
+                dkg_rx.try_recv().ok(),
+                Some(900),
+                "the tip must reach the beacon plane's height channel"
+            );
+            assert_eq!(clock.drops(), 0);
+
+            // Capacity 1, nothing drained: the second tick has nowhere to go and
+            // must be counted rather than lost silently — a full channel is the one
+            // way this feeder leaves the clock behind without execution stalling.
+            <FluentApp<NoChain, NoTxs> as Reporter>::report(&mut app, tip(901)).await;
+            <FluentApp<NoChain, NoTxs> as Reporter>::report(&mut app, tip(902)).await;
+            assert_eq!(clock.drops(), 1);
         });
     }
 }

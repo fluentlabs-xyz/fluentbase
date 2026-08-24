@@ -14,7 +14,7 @@
 
 use crate::{
     application::{ExecutedChain, FluentApp, OrderingAssembler},
-    beacon::dkg_engine::agreement_partition,
+    beacon::agreement_partition,
     beacon::{constant_fallback_seed, witness_fallback_seed},
     beacon::{PinEffort, Randomness, ShareProbe, SignerVerdict},
     dpos::VoteBackupItem,
@@ -1747,6 +1747,7 @@ mod tests {
     use crate::{
         beacon::actor::DETERMINISTIC_BOOTSTRAP_EPOCH,
         beacon::keys::{AgreedKeys, BeaconKeys, KeySource, KeySources},
+        beacon::surface::PlaneRandomnessConfig,
         beacon::BeaconResolve,
         outer::EpochSchemeProvider,
         scheme::epoch_committee_from_snapshot,
@@ -2132,17 +2133,17 @@ mod tests {
         held: Option<AgreedKeys>,
         pull: Option<AgreedKeys>,
     ) -> Arc<dyn Randomness> {
-        crate::beacon::surface::PlaneRandomness::build(
-            crate::beacon::certify::SeedStore::new(),
-            store,
-            None,
-            Arc::new(|_| BeaconResolve::Absent),
+        crate::beacon::surface::PlaneRandomness::build(PlaneRandomnessConfig {
+            seeds: crate::beacon::certify::SeedStore::new(),
+            keys: store,
+            verify: None,
+            resolver: Arc::new(|_| BeaconResolve::Absent),
             held,
             pull,
-            Arc::new(tokio::sync::Notify::new()),
-            crate::beacon::metrics::BeaconMetrics::default(),
-            1,
-        )
+            participation: Arc::new(tokio::sync::Notify::new()),
+            metrics: crate::beacon::metrics::BeaconMetrics::default(),
+            chain_id: 1,
+        })
     }
 
     fn repair_fixture(epoch: Epoch) -> (ValidatorSetSnapshot, Vec<ValidatorBlsKeypair>) {
