@@ -26,7 +26,7 @@ use commonware_consensus::simplex::types::Activity;
 use commonware_parallel::Sequential;
 use eyre::{ensure, eyre};
 use fluentbase_bls::{
-    beacon::GroupPublic, fluent_namespace, scheme::build_verifier, Scheme as BlsScheme,
+    fluent_namespace, oracle::SeedOracle, scheme::build_verifier, Scheme as BlsScheme,
 };
 use fluentbase_staking_reader::{ReadError, RethStakingStateReader};
 use futures::future::BoxFuture;
@@ -133,11 +133,11 @@ pub type RotateUpstream = Arc<dyn Fn() -> BoxFuture<'static, ()> + Send + Sync>;
 /// read ([`RethCommitteeSource::scheme_at`]). Kept as a trait so the unit test
 /// can inject a canned committee.
 ///
-/// `cert_seed_pin` (the epoch beacon group key `PK_epoch`) is threaded from the
-/// caller's pin ladder: when present the built verifier's
-/// `verify_certificate` also pins the recovered seed slot (bug 2); `None`
-/// degrades to vote-only (the accepted residual window). The verifier read
-/// itself is committee-only — the pin comes from the caller, never from chain
+/// `oracle` is the beacon's threshold face for the epoch, from
+/// [`crate::beacon::Randomness::oracle_for`]: `Some` makes the built verifier
+/// check the recovered seed slot and refuse a stripped one, `None` marks a
+/// pre-beacon epoch where a seedless certificate is legal. The verifier read
+/// itself is committee-only — the oracle comes from the caller, never from chain
 /// storage (the PK_E layer stays deleted).
 pub trait CommitteeSource: Send + Sync + 'static {
     /// Read `committee[epoch]` at a SPECIFIC executed hash. Used by the
@@ -148,7 +148,7 @@ pub trait CommitteeSource: Send + Sync + 'static {
         &self,
         epoch: u64,
         at_hash: B256,
-        cert_seed_pin: Option<GroupPublic>,
+        oracle: Option<Arc<dyn SeedOracle>>,
     ) -> eyre::Result<BlsScheme>;
 
     /// Read `committee[epoch]` at the node's CURRENT FINALIZED (committed) tip.
@@ -166,7 +166,7 @@ pub trait CommitteeSource: Send + Sync + 'static {
     fn scheme_at_finalized_tip(
         &self,
         epoch: u64,
-        cert_seed_pin: Option<GroupPublic>,
+        oracle: Option<Arc<dyn SeedOracle>>,
     ) -> eyre::Result<Option<BlsScheme>>;
 }
 
@@ -203,13 +203,12 @@ where
     }
 
     /// Build the verifier for `epoch` from the committee snapshot at `at_hash`,
-    /// pinning the recovered-seed check to `cert_seed_pin` (the epoch beacon
-    /// group key from the caller's pin ladder) when present.
+    /// bound to `epoch` and to the caller's oracle.
     fn build_at(
         &self,
         epoch: u64,
         at_hash: B256,
-        cert_seed_pin: Option<GroupPublic>,
+        oracle: Option<Arc<dyn SeedOracle>>,
     ) -> eyre::Result<BlsScheme> {
         let snap = self.reader.epoch_committee_snapshot(epoch, at_hash)?;
         ensure!(
@@ -221,8 +220,8 @@ where
         Ok(build_verifier(
             &self.namespace,
             committee.bimap,
-            None,
-            cert_seed_pin,
+            epoch,
+            oracle,
         ))
     }
 }
@@ -237,15 +236,15 @@ where
         &self,
         epoch: u64,
         at_hash: B256,
-        cert_seed_pin: Option<GroupPublic>,
+        oracle: Option<Arc<dyn SeedOracle>>,
     ) -> eyre::Result<BlsScheme> {
-        self.build_at(epoch, at_hash, cert_seed_pin)
+        self.build_at(epoch, at_hash, oracle)
     }
 
     fn scheme_at_finalized_tip(
         &self,
         epoch: u64,
-        cert_seed_pin: Option<GroupPublic>,
+        oracle: Option<Arc<dyn SeedOracle>>,
     ) -> eyre::Result<Option<BlsScheme>> {
         let Some(hash) = (self.finalized_hash)() else {
             return Ok(None);
@@ -261,8 +260,8 @@ where
         Ok(Some(build_verifier(
             &self.namespace,
             committee.bimap,
-            None,
-            cert_seed_pin,
+            epoch,
+            oracle,
         )))
     }
 }
@@ -361,23 +360,14 @@ pub struct LiveFrontierTee {
     pub plane_clock: crate::sync_metrics::PlaneClock,
 }
 
-/// A cached per-epoch verifier plus the one fact the cache must remember about
-/// it: whether it was built with a resolved `cert_seed_pin`.
+/// A cached per-epoch verifier.
 ///
-/// Without the flag an entry built while `PK_E` was unresolvable is
-/// indistinguishable from a pinned one, and a pin that becomes resolvable a
-/// moment later can never be applied — the only path that rebuilds an entry is
-/// the verify-FAIL eviction in [`CertInlet::ingest`], and an UNPINNED scheme is
-/// the more PERMISSIVE one (`verify_certificate` returns early before the seed
-/// check), so honest certs pass it and the eviction never fires. The degraded
-/// mode would then outlive every chance to repair itself.
+/// It used to carry a `pinned` flag beside the scheme, because a scheme built
+/// while `PK_E` was unresolvable stayed that way and had to be REBUILT once the
+/// key arrived. The scheme reads its key live through the oracle now, so a cached
+/// entry can never be the stale one and the flag has no subject.
 struct CachedScheme {
     scheme: BlsScheme,
-    /// Built with `cert_seed_pin = Some` — the verifier checks the recovered
-    /// seed against `PK_epoch`. Only ever rewritten `false -> true`: a pinned
-    /// entry is authoritative and is never replaced by an unpinned one, so no
-    /// cert can become LESS verified than it was.
-    pinned: bool,
 }
 
 /// One of two producers into the singleton marshal (the other is the local BFT
@@ -402,8 +392,8 @@ pub struct CertInlet<C, E, M> {
     /// AFTER the verify gate), so the served window can never expose an
     /// unverified cert.
     window_tx: Option<tokio::sync::mpsc::UnboundedSender<UpstreamFinalized>>,
-    /// Per-epoch verifier cache, pruned to {prev, cur} on registration. Each
-    /// entry carries its pin provenance — see [`CachedScheme`].
+    /// Per-epoch verifier cache, pruned to {prev, cur} on registration. An entry
+    /// holds no key material and cannot go stale — see [`CachedScheme`].
     schemes: BTreeMap<u64, CachedScheme>,
     /// The node's SHARED beacon-key store (see [`BeaconKeys`]) — the same handle
     /// `FluentApp` and `epoch_manager` hold on a validator. The inlet reads it as
@@ -675,40 +665,30 @@ where
             self.record_data_fault().await;
             return Ok(());
         }
-        // Resolve the epoch beacon key BEFORE the `schemes` borrow so the seed
-        // pin threads into the built verifier. ONE rung: the shared ladder — the
-        // store, then the artifacts this node already holds. There used to be a
-        // rung above it that read the block's own asserted `PK_E`; no block
-        // asserts a key any more, so the ladder is the whole of it.
+        // ACQUISITION, and it is load-bearing rather than bookkeeping. The scheme's
+        // oracle answers `verify_seed` from the SYNC key-store probe alone, and the
+        // only thing that ever fills that store for an artifact-sourced epoch is
+        // this ladder walk — `BeaconKeys::get_pk` writes back what it resolves.
+        // Drop this call and every such epoch stays permanently keyless, admitting
+        // its certificates on the multisig half for the life of the process.
         //
-        // What bounds the ladder read is the cached scheme's OWN pin, not the
-        // mere presence of a cache entry: a PINNED entry already holds the key
-        // and never re-consults, an unpinned one asks again on every cert. It
-        // has to — the epoch's first cert can arrive before the artifact that
-        // answers for it, so a once-per-epoch read may miss and a presence gate
-        // would freeze the miss for the epoch's whole life.
-        let cached_pinned = self.schemes.get(&epoch).is_some_and(|c| c.pinned);
-        let mut cert_seed_pin = None;
-        // Provenance for the verify-fail metric split (meaningful only when the
-        // scheme is BUILT this ingest; see `built_with_carry_forward_pin`).
-        let mut pin_is_carry_forward = false;
-        if !cached_pinned {
-            // `Local` and never `Thorough`: ingress runs against a ~1 s verify
-            // budget, and the network rung's is seconds. A pull here would move
-            // a peer round-trip onto the vote path, where a missing pin costs a
-            // vote-only admission and a stall costs a missed view.
-            cert_seed_pin = self.randomness.pin_for(epoch, PinEffort::Local).await;
-            pin_is_carry_forward = cert_seed_pin.is_some();
-        }
-        let mut built_with_carry_forward_pin = false;
-        // A cached entry is (re)built in exactly one case beyond a cache miss: it
-        // is UNPINNED and a pin has now resolved. `Some` never yields to `None`,
-        // so the upgrade is monotone and no cert ends up less verified than it
-        // would have been before. The rebuild is also OPPORTUNISTIC — see the
-        // defer arms, which keep the cached scheme rather than skipping a cert
-        // that was ingestible a moment ago.
+        // Runs on EVERY certificate, unlike the pin resolve it replaces: there is
+        // no cached-pin state to bound it with any more, and the store hit it
+        // starts with is the same one the old `cached_pinned` short-circuit was
+        // approximating.
+        //
+        // `Local` and never `Thorough`: ingress runs against a ~1 s verify budget
+        // and the network rung's is seconds. A pull here would move a peer
+        // round-trip onto the vote path, where a missing key costs a vote-only
+        // admission and a stall costs a missed view.
+        let key_known = self.randomness.ensure_key(epoch, PinEffort::Local).await;
+        // A cached entry is now rebuilt ONLY on a cache miss or after a verify-fail
+        // eviction. The pin-upgrade rebuild is gone with the pin: a scheme reads
+        // its epoch key live through the oracle, so a key that resolves after the
+        // scheme was built is picked up by the next certificate with no rebuild at
+        // all — which is the staleness class this whole change deletes.
         let cached: &CachedScheme = match self.schemes.entry(epoch) {
-            Entry::Occupied(o) if o.get().pinned || cert_seed_pin.is_none() => o.into_mut(),
+            Entry::Occupied(o) => o.into_mut(),
             slot => {
                 // Read committee[E] at the node's CURRENT FINALIZED tip — a
                 // GUARANTEED-committed block where committee[E] is committed
@@ -739,14 +719,10 @@ where
                 // STAYS fatal.
                 match self
                     .committees
-                    .scheme_at_finalized_tip(epoch, cert_seed_pin)
+                    .scheme_at_finalized_tip(epoch, self.randomness.oracle_for(epoch))
                 {
                     Ok(Some(s)) => {
-                        built_with_carry_forward_pin = pin_is_carry_forward;
-                        let fresh = CachedScheme {
-                            scheme: s,
-                            pinned: cert_seed_pin.is_some(),
-                        };
+                        let fresh = CachedScheme { scheme: s };
                         match slot {
                             Entry::Occupied(mut o) => {
                                 o.insert(fresh);
@@ -782,7 +758,7 @@ where
                         // a churn footgun. Leave `consecutive_faults` untouched
                         // (neither increment nor reset).
                         match slot {
-                            // A failed PIN UPGRADE must not cost the cert: keep
+                            // A failed REBUILD must not cost the cert: keep
                             // verifying under the scheme already cached. Skipping
                             // instead would be a fresh wedge — the read is anchored
                             // on a tip only the executor THIS inlet feeds can
@@ -831,17 +807,12 @@ where
             }
         };
         // The only direct witness that an epoch is being admitted WITHOUT its seed
-        // pin: the multisig quorum is checked, the seed slot is not. Silent until
-        // now — 30 mentions of vote-only across the crate, not one of them a log
-        // line or a metric — which made "certificates of those epochs stop taking
-        // vote-only admission" unassertable.
-        //
-        // Read off `cached`, i.e. the scheme that will ACTUALLY verify this
-        // certificate, and never off the `cert_seed_pin` local: that is assigned
-        // only inside the `!cached_pinned` branch above, so on a healthy PINNED
-        // epoch it stays `None` for every certificate after the first — a counter
-        // keyed on it would climb fastest exactly when nothing is wrong.
-        if !cached.pinned && self.randomness.mandatory_at(epoch) {
+        // checked: the multisig quorum is verified, the seed slot is not because
+        // the oracle answers `NoKey`. Keyed on the acquisition above rather than on
+        // the scheme, which no longer holds the key to be asked about — and the
+        // acquisition runs per certificate, so this counts admissions rather than
+        // first-of-epoch misses.
+        if !key_known && self.randomness.mandatory_at(epoch) {
             metrics::counter!(CERT_VOTE_ONLY_ADMISSIONS).increment(1);
         }
         if !uf
@@ -852,18 +823,16 @@ where
                 height = uf.block.height,
                 epoch, "cert-inlet: BLS verify FAILED; skipping (marshal stalls naturally)"
             );
-            // Evict the just-failed scheme so a possibly-STALE seed pin never
-            // sticks in the cache: the next epoch-E cert re-enters the Vacant
-            // path and re-resolves the pin (this-block key, then the ladder) —
-            // the poison self-heals the moment the key becomes resolvable,
-            // instead of every later epoch-E cert re-failing against the frozen
-            // cached scheme until E+1.
+            // Evict the just-failed scheme so a stale committee read never sticks
+            // in the cache: the next epoch-E cert re-enters the Vacant path and
+            // re-reads `committee[E]`.
             self.schemes.remove(&epoch);
-            // Regime split: a failure under a pin the LADDER derived (rather than
-            // one this block asserted) on a scheme built THIS ingest points at a
-            // key carried forward from the wrong mint, not necessarily a forged
+            // Regime split: a failure while the epoch's key WAS resolvable points
+            // at a key carried forward from the wrong mint rather than at a forged
             // upstream — count it separately so dashboards can tell the two apart.
-            if built_with_carry_forward_pin {
+            // A failure with no key resolvable cannot be this class at all: the
+            // seed half was never checked.
+            if key_known {
                 self.carry_forward_verify_failed.inc();
             }
             // DATA FAULT: the cert FAILS BLS against a committee that IS readable
@@ -991,7 +960,11 @@ mod tests {
     use commonware_cryptography::{
         bls12381::{
             dkg::deal,
-            primitives::{sharing::Mode, variant::MinSig},
+            primitives::{
+                group::Share,
+                sharing::{Mode, Sharing},
+                variant::MinSig,
+            },
         },
         ed25519::PrivateKey as Ed25519PrivateKey,
         Signer as _,
@@ -1002,6 +975,7 @@ mod tests {
         ordered::{BiMap, Set},
         N3f1, TryCollect as _,
     };
+    use fluentbase_bls::beacon::GroupPublic;
     use fluentbase_bls::{
         beacon::seed_namespace, fluent_namespace, keys::ValidatorBlsKeypair, scheme::build_signer,
         BlsPubkey, PeerPubkey,
@@ -1013,9 +987,29 @@ mod tests {
     const CHAIN_ID: u64 = 20_994;
     const COMMITTEE_N: usize = 4;
 
+    /// A plain (seedless) committee. Holds the keypairs rather than the schemes,
+    /// because a scheme is bound to the epoch it was issued for and these tests
+    /// certify at several.
     struct Committee {
-        signers: Vec<BlsScheme>,
-        verifier: BlsScheme,
+        bls_kps: Vec<ValidatorBlsKeypair>,
+        bimap: BiMap<PeerPubkey, BlsPubkey>,
+        namespace: Vec<u8>,
+    }
+
+    impl Committee {
+        fn signers(&self, epoch: u64) -> Vec<BlsScheme> {
+            self.bls_kps
+                .iter()
+                .map(|kp| {
+                    build_signer(&self.namespace, self.bimap.clone(), kp, epoch, None)
+                        .expect("member")
+                })
+                .collect()
+        }
+
+        fn verifier(&self, epoch: u64) -> BlsScheme {
+            build_verifier(&self.namespace, self.bimap.clone(), epoch, None)
+        }
     }
 
     fn committee(seed: u64) -> Committee {
@@ -1037,13 +1031,11 @@ mod tests {
             })
             .try_collect()
             .unwrap();
-        let ns = fluent_namespace(CHAIN_ID);
-        let signers = bls_kps
-            .iter()
-            .map(|kp| build_signer(&ns, bimap.clone(), kp, None).expect("member"))
-            .collect();
-        let verifier = fluentbase_bls::scheme::build_verifier(&ns, bimap, None, None);
-        Committee { signers, verifier }
+        Committee {
+            bls_kps,
+            bimap,
+            namespace: fluent_namespace(CHAIN_ID),
+        }
     }
 
     fn sample_order(parent: Digest, height: u64) -> OrderBlock {
@@ -1067,13 +1059,14 @@ mod tests {
         let round = Round::new(Epoch::new(epoch), View::new(block.height));
         let prop = Proposal::new(round, View::new(block.height - 1), block.digest());
         let finalizes: Vec<_> = c
-            .signers
+            .signers(epoch)
             .iter()
             .take(3)
             .map(|s| Finalize::sign(s, prop.clone()).expect("sign"))
             .collect();
-        let finalization = Finalization::from_finalizes(&c.verifier, finalizes.iter(), &Sequential)
-            .expect("quorum");
+        let finalization =
+            Finalization::from_finalizes(&c.verifier(epoch), finalizes.iter(), &Sequential)
+                .expect("quorum");
         UpstreamFinalized {
             finalization,
             block: block.clone(),
@@ -1099,27 +1092,35 @@ mod tests {
 
     /// Canned committee verifier with a read-counter so a test can assert the
     /// finalized-tip read was (or was not) consulted.
+    /// One committee, readable at every epoch — the verifier is built for the
+    /// epoch actually asked about, because a scheme refuses a foreign one.
     struct CannedCommittees {
-        verifier: BlsScheme,
+        bimap: BiMap<PeerPubkey, BlsPubkey>,
         reads: Arc<Mutex<Vec<u64>>>,
+    }
+
+    impl CannedCommittees {
+        fn at(&self, epoch: u64) -> BlsScheme {
+            build_verifier(&fluent_namespace(CHAIN_ID), self.bimap.clone(), epoch, None)
+        }
     }
 
     impl CommitteeSource for CannedCommittees {
         fn scheme_at(
             &self,
-            _epoch: u64,
+            epoch: u64,
             _at_hash: B256,
-            _cert_seed_pin: Option<GroupPublic>,
+            _oracle: Option<Arc<dyn SeedOracle>>,
         ) -> eyre::Result<BlsScheme> {
-            Ok(self.verifier.clone())
+            Ok(self.at(epoch))
         }
         fn scheme_at_finalized_tip(
             &self,
             epoch: u64,
-            _cert_seed_pin: Option<GroupPublic>,
+            _oracle: Option<Arc<dyn SeedOracle>>,
         ) -> eyre::Result<Option<BlsScheme>> {
             self.reads.lock().unwrap().push(epoch);
-            Ok(Some(self.verifier.clone()))
+            Ok(Some(self.at(epoch)))
         }
     }
 
@@ -1133,7 +1134,7 @@ mod tests {
         let inlet = CertInlet::new(
             marshal.clone(),
             CannedCommittees {
-                verifier: c.verifier.clone(),
+                bimap: c.bimap.clone(),
                 reads: reads.clone(),
             },
             ctx,
@@ -1287,26 +1288,32 @@ mod tests {
     /// finalized, live-frontier)` instead of the lagging finalized tip alone). The
     /// inlet's tee advances `live_frontier`, so a verified cert moves the cursor.
     struct FrontierCommittees {
-        verifier: BlsScheme,
+        bimap: BiMap<PeerPubkey, BlsPubkey>,
         finalized: Arc<std::sync::atomic::AtomicU64>,
         live_frontier: Arc<std::sync::atomic::AtomicU64>,
         /// `committee[E]` for `E >= 1` is committed only at a tip `>=` this height.
         committed_from: u64,
     }
 
+    impl FrontierCommittees {
+        fn at(&self, epoch: u64) -> BlsScheme {
+            build_verifier(&fluent_namespace(CHAIN_ID), self.bimap.clone(), epoch, None)
+        }
+    }
+
     impl CommitteeSource for FrontierCommittees {
         fn scheme_at(
             &self,
-            _epoch: u64,
+            epoch: u64,
             _at_hash: B256,
-            _cert_seed_pin: Option<GroupPublic>,
+            _oracle: Option<Arc<dyn SeedOracle>>,
         ) -> eyre::Result<BlsScheme> {
-            Ok(self.verifier.clone())
+            Ok(self.at(epoch))
         }
         fn scheme_at_finalized_tip(
             &self,
             epoch: u64,
-            _cert_seed_pin: Option<GroupPublic>,
+            _oracle: Option<Arc<dyn SeedOracle>>,
         ) -> eyre::Result<Option<BlsScheme>> {
             let tip = self
                 .finalized
@@ -1316,7 +1323,7 @@ mod tests {
                         .load(std::sync::atomic::Ordering::Relaxed),
                 );
             if epoch == 0 || tip >= self.committed_from {
-                Ok(Some(self.verifier.clone()))
+                Ok(Some(self.at(epoch)))
             } else {
                 Ok(None)
             }
@@ -1338,7 +1345,7 @@ mod tests {
         let finalized = Arc::new(std::sync::atomic::AtomicU64::new(69));
         let live_frontier = Arc::new(std::sync::atomic::AtomicU64::new(0));
         let committees = FrontierCommittees {
-            verifier: c.verifier.clone(),
+            bimap: c.bimap.clone(),
             finalized,
             live_frontier: live_frontier.clone(),
             committed_from: 70,
@@ -1416,7 +1423,7 @@ mod tests {
             let marshal = FakeMarshal::default();
             let live_frontier = Arc::new(std::sync::atomic::AtomicU64::new(95));
             let committees = FrontierCommittees {
-                verifier: c.verifier.clone(),
+                bimap: c.bimap.clone(),
                 finalized: Arc::new(std::sync::atomic::AtomicU64::new(69)),
                 live_frontier: live_frontier.clone(),
                 committed_from: 200,
@@ -1501,14 +1508,14 @@ mod tests {
             &self,
             _epoch: u64,
             _at_hash: B256,
-            _cert_seed_pin: Option<GroupPublic>,
+            _oracle: Option<Arc<dyn SeedOracle>>,
         ) -> eyre::Result<BlsScheme> {
             unreachable!("hot path uses scheme_at_finalized_tip")
         }
         fn scheme_at_finalized_tip(
             &self,
             _epoch: u64,
-            _cert_seed_pin: Option<GroupPublic>,
+            _oracle: Option<Arc<dyn SeedOracle>>,
         ) -> eyre::Result<Option<BlsScheme>> {
             Ok(None)
         }
@@ -1564,14 +1571,14 @@ mod tests {
             &self,
             _epoch: u64,
             _at_hash: B256,
-            _cert_seed_pin: Option<GroupPublic>,
+            _oracle: Option<Arc<dyn SeedOracle>>,
         ) -> eyre::Result<BlsScheme> {
             unreachable!("hot path uses scheme_at_finalized_tip")
         }
         fn scheme_at_finalized_tip(
             &self,
             _epoch: u64,
-            _cert_seed_pin: Option<GroupPublic>,
+            _oracle: Option<Arc<dyn SeedOracle>>,
         ) -> eyre::Result<Option<BlsScheme>> {
             // Mirrors `epoch_committee_snapshot(..)?`: a typed ReadError read
             // result, `?`-converted into eyre::Report by the SAME From impl.
@@ -1590,14 +1597,14 @@ mod tests {
             &self,
             _epoch: u64,
             _at_hash: B256,
-            _cert_seed_pin: Option<GroupPublic>,
+            _oracle: Option<Arc<dyn SeedOracle>>,
         ) -> eyre::Result<BlsScheme> {
             unreachable!("hot path uses scheme_at_finalized_tip")
         }
         fn scheme_at_finalized_tip(
             &self,
             _epoch: u64,
-            _cert_seed_pin: Option<GroupPublic>,
+            _oracle: Option<Arc<dyn SeedOracle>>,
         ) -> eyre::Result<Option<BlsScheme>> {
             Err(eyre::Report::new(ReadError::Backend(
                 "corrupt committee read".into(),
@@ -1971,11 +1978,55 @@ mod tests {
     /// to — so the inlet's resolved pin checks seeds against the same key the
     /// signers produce them under.
     struct BeaconFixture {
-        signers: Vec<BlsScheme>,
-        assembler: BlsScheme,
+        /// One entry per member: its BLS keypair and its threshold share. The
+        /// SCHEMES are built per epoch by [`BeaconFixture::signers`], because a
+        /// scheme is bound to the epoch it was issued for and these fixtures
+        /// certify at several.
+        members: Vec<(ValidatorBlsKeypair, Share)>,
+        sharing: Sharing<MinSig>,
+        seed_ns: Vec<u8>,
         outcome_bytes: Vec<u8>,
         bimap: BiMap<PeerPubkey, BlsPubkey>,
         namespace: Vec<u8>,
+    }
+
+    impl BeaconFixture {
+        fn oracle(&self, share: Option<Share>) -> Arc<dyn SeedOracle> {
+            Arc::new(crate::beacon::surface::DealtOracle {
+                sharing: self.sharing.clone(),
+                share,
+                namespace: self.seed_ns.clone(),
+            })
+        }
+
+        /// Beacon-active signers bound to `epoch`.
+        fn signers(&self, epoch: u64) -> Vec<BlsScheme> {
+            self.members
+                .iter()
+                .map(|(kp, share)| {
+                    build_signer(
+                        &self.namespace,
+                        self.bimap.clone(),
+                        kp,
+                        epoch,
+                        Some(self.oracle(Some(share.clone()))),
+                    )
+                    .expect("member")
+                })
+                .collect()
+        }
+
+        /// The verifier-flavoured assembler (polynomial, no share) that recovers
+        /// the round seed into the finalization cert, mirroring how a real
+        /// notarization/finalization cert carries one.
+        fn assembler(&self, epoch: u64) -> BlsScheme {
+            build_verifier(
+                &self.namespace,
+                self.bimap.clone(),
+                epoch,
+                Some(self.oracle(None)),
+            )
+        }
     }
 
     fn beacon_committee(seed: u64) -> BeaconFixture {
@@ -2009,27 +2060,18 @@ mod tests {
             deal::<MinSig, PeerPubkey, N3f1>(&mut rng, Mode::NonZeroCounter, players)
                 .expect("deal");
         let sharing = outcome.public().clone();
-        let signers = peer_sks
+        let members: Vec<(ValidatorBlsKeypair, Share)> = peer_sks
             .iter()
-            .zip(bls_kps.iter())
+            .zip(bls_kps)
             .map(|(p, kp)| {
                 let share = share_map.get_value(&p.public_key()).expect("share").clone();
-                build_signer(
-                    &ns,
-                    bimap.clone(),
-                    kp,
-                    Some((sharing.clone(), Some(share), seed_ns.clone())),
-                )
-                .expect("member")
+                (kp, share)
             })
             .collect();
-        // Verifier-flavoured assembler (polynomial, no share) — recovers the seed
-        // from the signers' partials into the finalization cert, mirroring how a
-        // real notarization/finalization cert carries a seed.
-        let assembler = build_verifier(&ns, bimap.clone(), Some((sharing, None, seed_ns)), None);
         BeaconFixture {
-            signers,
-            assembler,
+            members,
+            sharing,
+            seed_ns,
             outcome_bytes: encode_outcome(&outcome),
             bimap,
             namespace: ns,
@@ -2047,12 +2089,12 @@ mod tests {
         let round = Round::new(Epoch::new(epoch), View::new(block.height));
         let prop = Proposal::new(round, View::new(block.height - 1), block.digest());
         let finalizes: Vec<_> = bc
-            .signers
+            .signers(epoch)
             .iter()
             .map(|s| Finalize::sign(s, prop.clone()).expect("sign"))
             .collect();
         let finalization =
-            Finalization::from_finalizes(&bc.assembler, finalizes.iter(), &Sequential)
+            Finalization::from_finalizes(&bc.assembler(epoch), finalizes.iter(), &Sequential)
                 .expect("quorum + recovered seed");
         UpstreamFinalized {
             finalization,
@@ -2062,7 +2104,7 @@ mod tests {
 
     /// A committee source that REBUILDS the verifier with the pin the inlet
     /// resolved — exactly what production `RethCommitteeSource::build_at` does
-    /// (`build_verifier(ns, bimap, None, cert_seed_pin)`). Records
+    /// (`build_verifier(ns, bimap, epoch, oracle)`). Records
     /// `(epoch, pin.is_some())` per finalized-tip read, so a test can observe the
     /// pin resolution directly (not only the downstream verify outcome). Unlike
     /// `CannedCommittees` — which discards the pin and is thus blind to it — this
@@ -2081,31 +2123,28 @@ mod tests {
     impl CommitteeSource for BeaconAwareCommittees {
         fn scheme_at(
             &self,
-            _epoch: u64,
+            epoch: u64,
             _at_hash: B256,
-            cert_seed_pin: Option<GroupPublic>,
+            oracle: Option<Arc<dyn SeedOracle>>,
         ) -> eyre::Result<BlsScheme> {
             Ok(build_verifier(
                 &self.namespace,
                 self.bimap.clone(),
-                None,
-                cert_seed_pin,
+                epoch,
+                oracle,
             ))
         }
         fn scheme_at_finalized_tip(
             &self,
             epoch: u64,
-            cert_seed_pin: Option<GroupPublic>,
+            oracle: Option<Arc<dyn SeedOracle>>,
         ) -> eyre::Result<Option<BlsScheme>> {
-            self.reads
-                .lock()
-                .unwrap()
-                .push((epoch, cert_seed_pin.is_some()));
+            self.reads.lock().unwrap().push((epoch, oracle.is_some()));
             Ok(Some(build_verifier(
                 &self.namespace,
                 self.bimap.clone(),
-                None,
-                cert_seed_pin,
+                epoch,
+                oracle,
             )))
         }
     }
@@ -2139,6 +2178,8 @@ mod tests {
             keys,
             verify: None,
             resolver: Arc::new(|_| crate::beacon::BeaconResolve::Absent),
+            ceremony: Arc::new(std::sync::RwLock::new(std::collections::BTreeMap::new())),
+            dkg_qual: Arc::new(|_| Some(false)),
             held,
             pull: None,
             participation: Arc::new(tokio::sync::Notify::new()),
@@ -2429,29 +2470,18 @@ mod tests {
                 deal::<MinSig, PeerPubkey, N3f1>(rng, Mode::NonZeroCounter, players.clone())
                     .expect("deal");
             let sharing = outcome.public().clone();
-            let signers = peer_sks
+            let members: Vec<(ValidatorBlsKeypair, Share)> = peer_sks
                 .iter()
                 .zip(bls_kps.iter())
                 .map(|(p, kp)| {
                     let share = share_map.get_value(&p.public_key()).expect("share").clone();
-                    build_signer(
-                        &ns,
-                        bimap.clone(),
-                        kp,
-                        Some((sharing.clone(), Some(share), seed_ns.clone())),
-                    )
-                    .expect("member")
+                    (kp.clone(), share)
                 })
                 .collect();
-            let assembler = build_verifier(
-                &ns,
-                bimap.clone(),
-                Some((sharing, None, seed_ns.clone())),
-                None,
-            );
             BeaconFixture {
-                signers,
-                assembler,
+                members,
+                sharing,
+                seed_ns: seed_ns.clone(),
                 outcome_bytes: encode_outcome(&outcome),
                 bimap: bimap.clone(),
                 namespace: ns.clone(),
@@ -2529,17 +2559,19 @@ mod tests {
         });
     }
 
+    /// THE SELF-HEAL, which is what this whole change buys: a cached scheme
+    /// starts checking the seed the moment its epoch's key resolves, with no
+    /// rebuild, no eviction and no BLS failure in between.
+    ///
+    /// The state it starts from is the keyless window — epoch 2 is first seen
+    /// while `PK_2` is unresolvable everywhere (its artifact has not arrived and
+    /// the store is empty), so its certificates are admitted on the multisig half
+    /// alone. Before the oracle the exit from that state was a REBUILD, and the
+    /// only path that rebuilt an entry was the verify-FAIL eviction — which never
+    /// fires for honest traffic, because a keyless scheme is the more permissive
+    /// one. The degraded mode therefore outlived the epoch.
     #[test]
-    fn an_epoch_cached_unpinned_starts_pinning_once_the_key_resolves() {
-        // The cached negative, and the only exit from it that does not cost a
-        // cert: epoch 2 is first seen while PK_2 is unresolvable everywhere (its
-        // artifact has not arrived and the store is empty), so it caches an
-        // UNPINNED scheme and admits the cert vote-only. When the artifact later
-        // lands, the epoch must start pinning off its own next cert — with NO BLS
-        // failure in between, which is the point: an unpinned scheme is the more
-        // permissive one, so the verify-fail eviction (the only other rebuild
-        // path) never fires for honest traffic and the degraded mode would
-        // otherwise outlive the epoch.
+    fn a_cached_scheme_starts_checking_the_seed_once_the_key_resolves() {
         let runtime = deterministic::Runner::default();
         runtime.start(|ctx| async move {
             let (f1, f2) = beacon_committee_pair(5);
@@ -2566,29 +2598,30 @@ mod tests {
                 .expect("still unpinned, still admitted");
             assert_eq!(
                 *reads.lock().unwrap(),
-                vec![(2, false)],
-                "while the key is unresolvable the epoch stays unpinned on ONE committee read"
+                vec![(2, true)],
+                "ONE committee read, and the scheme is built WITH an oracle from the \
+                 start — being keyless is a property of the key store, not of the scheme"
             );
 
             arrived.store(true, std::sync::atomic::Ordering::Relaxed);
             inlet
                 .ingest(certify_seeded(&f2, 2, &beacon_order(131)))
                 .await
-                .expect("the newly-resolvable key rebuilds the entry");
+                .expect("the newly-resolvable key needs no rebuild");
             assert_eq!(
                 *reads.lock().unwrap(),
-                vec![(2, false), (2, true)],
-                "the cached UNPINNED entry is rebuilt with the resolved pin"
+                vec![(2, true)],
+                "and STILL one read: the key arriving rebuilds nothing"
             );
             assert_eq!(
                 marshal.calls.lock().unwrap().len(),
                 6,
-                "all three certs verified — the pin arrived without a BLS failure"
+                "all three certs verified — the key arrived without a BLS failure"
             );
 
-            // The rebuilt scheme genuinely pins: a seed-tampered epoch-2 cert (a
-            // valid seed for a foreign round) is now rejected, where the unpinned
-            // scheme above would have admitted it.
+            // The seed half is genuinely checked NOW: a seed-tampered epoch-2 cert
+            // (a valid seed for a foreign round) is rejected, where the same cached
+            // scheme admitted the keyless certs above.
             let wrong = certify_seeded(&f2, 9, &beacon_order(999))
                 .finalization
                 .certificate
@@ -2602,16 +2635,21 @@ mod tests {
             assert_eq!(
                 marshal.calls.lock().unwrap().len(),
                 6,
-                "the rebuilt entry is pinned: the seed-tampered cert drives the marshal zero times"
+                "the epoch key is resolvable, so the seed-tampered cert drives the marshal zero times"
             );
         });
     }
 
+    /// The acquisition is MEMOISED, so the certificate path stays cheap: the
+    /// artifact rung answers once, `get_pk` writes the key into the shared store,
+    /// and every later certificate of the epoch resolves off that store. The
+    /// scheme is built once too — it reads the key live, so a key arriving after
+    /// it was built needs no rebuild.
+    ///
+    /// A rung that answers exactly once is what makes a regression visible: if
+    /// anything re-consulted it, the second answer would be empty.
     #[test]
-    fn a_pinned_entry_is_never_replaced_by_an_unpinned_one() {
-        // Monotonicity of the rebuild, in the inlet's OWN cache: once epoch 2 is
-        // pinned, an ingest that resolves NO pin must leave the entry alone. A
-        // source that answers exactly once makes the downgrade reachable.
+    fn the_artifact_rung_is_consulted_once_and_the_committee_read_once() {
         let runtime = deterministic::Runner::default();
         runtime.start(|ctx| async move {
             let (f1, f2) = beacon_committee_pair(6);
@@ -2636,28 +2674,20 @@ mod tests {
                 .ingest(certify_seeded(&f2, 2, &beacon_order(129)))
                 .await
                 .expect("epoch-2 cert pins off the artifact rung");
-            assert!(
-                inlet.schemes.get(&2).is_some_and(|c| c.pinned),
-                "the source hit must record the entry as pinned"
-            );
-
             inlet
                 .ingest(certify_seeded(&f2, 2, &beacon_order(130)))
                 .await
-                .expect("pin-less ingest of an already-pinned epoch");
+                .expect("a second ingest of an epoch whose key is already held");
             assert_eq!(
                 consults.load(std::sync::atomic::Ordering::Relaxed),
                 1,
-                "a pinned entry never re-consults the artifact rung"
+                "once the key is in the store the artifact rung is never re-consulted"
             );
             assert_eq!(
                 *reads.lock().unwrap(),
                 vec![(2, true)],
-                "a pinned entry is not rebuilt, so the committee is read once"
-            );
-            assert!(
-                inlet.schemes.get(&2).is_some_and(|c| c.pinned),
-                "the entry stays pinned across a pin-less ingest"
+                "the entry is not rebuilt, so the committee is read once — and it was \
+                 built WITH an oracle, which is what makes the seed half checked at all"
             );
 
             let wrong = certify_seeded(&f2, 9, &beacon_order(999))

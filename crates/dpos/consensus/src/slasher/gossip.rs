@@ -231,7 +231,7 @@ mod tests {
     const TEST_CHAIN_ID: u64 = 20_994;
     const TEST_EPOCH: u64 = 7;
 
-    fn signer_and_committee(seed: u64, n: usize) -> (BlsScheme, EpochCommittee) {
+    fn signer_and_committee_at(seed: u64, n: usize, epoch: u64) -> (BlsScheme, EpochCommittee) {
         let mut rng = StdRng::seed_from_u64(seed);
         let peer_sks: Vec<_> = (0..n)
             .map(|_| Ed25519PrivateKey::random(&mut rng))
@@ -255,10 +255,17 @@ mod tests {
             &fluent_namespace(TEST_CHAIN_ID),
             committee.bimap.clone(),
             &bls_kps[0],
+            epoch,
             None,
         )
         .expect("signer is a committee member");
         (signer, committee)
+    }
+
+    /// A signer BOUND to `TEST_EPOCH`. A scheme refuses a subject from any other
+    /// epoch, so a batch aimed at a different one needs its own signer.
+    fn signer_and_committee(seed: u64, n: usize) -> (BlsScheme, EpochCommittee) {
+        signer_and_committee_at(seed, n, TEST_EPOCH)
     }
 
     fn notarize_at(signer: &BlsScheme, epoch: u64, tag: u8) -> Vote<BlsScheme, Digest> {
@@ -329,7 +336,10 @@ mod tests {
             })
         };
 
-        let ahead = encode_batch(&vec![notarize_at(&signer, TEST_EPOCH + 2, 0xaa)]);
+        let ahead = {
+            let (ahead_signer, _) = signer_and_committee_at(1, 4, TEST_EPOCH + 2);
+            encode_batch(&vec![notarize_at(&ahead_signer, TEST_EPOCH + 2, 0xaa)])
+        };
         ingest_batch(&ahead, TEST_CHAIN_ID, &committee_for, &bridge);
         assert_eq!(
             resolves.load(AtomicOrdering::Relaxed),

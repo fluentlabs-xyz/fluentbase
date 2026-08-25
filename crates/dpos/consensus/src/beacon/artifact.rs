@@ -262,10 +262,10 @@ pub(crate) fn verify_artifact<R: CryptoRngCore>(
         return Err(ArtifactError::PayloadMismatch);
     }
     let namespace = dkg_namespace(&fluent_namespace(chain_id));
-    // `beacon: None` and `cert_seed_pin: None`: the agreement instance signs with
-    // no beacon part at all (it exists to AGREE the key), so its certificate is a
-    // plain multisig quorum and `verify_certificate` returns on the vote arm.
-    let verifier = build_verifier(&namespace, committee.bimap.clone(), None, None);
+    // `oracle: None`: the agreement instance carries no beacon half at all (it
+    // exists to AGREE the key), so its certificate is a plain multisig quorum and
+    // `verify_certificate` returns on the vote arm.
+    let verifier = build_verifier(&namespace, committee.bimap.clone(), committee.epoch, None);
     if !certificate.verify(rng, &verifier, &Sequential) {
         return Err(ArtifactError::Certificate(committee.epoch));
     }
@@ -1109,12 +1109,12 @@ mod tests {
                 .iter()
                 .take(3)
                 .map(|kp| {
-                    let signer = build_signer(&ns, bimap.clone(), kp, None).expect("member");
+                    let signer = build_signer(&ns, bimap.clone(), kp, epoch, None).expect("member");
                     Finalize::sign(&signer, proposal.clone()).expect("sign")
                 })
                 .collect();
             Finalization::from_finalizes(
-                &build_verifier(&ns, bimap, None, None),
+                &build_verifier(&ns, bimap, epoch, None),
                 finalizes.iter(),
                 &Sequential,
             )
@@ -1172,7 +1172,7 @@ mod tests {
         // signs under its own, prefix-free tag.
         let mut chain_ns_verifier_failed = false;
         let bimap = c.bimap();
-        let verifier = build_verifier(&fluent_namespace(CHAIN_ID), bimap, None, None);
+        let verifier = build_verifier(&fluent_namespace(CHAIN_ID), bimap, TARGET, None);
         if !artifact.1.verify(&mut rng, &verifier, &Sequential) {
             chain_ns_verifier_failed = true;
         }

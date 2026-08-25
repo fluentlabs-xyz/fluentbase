@@ -19,7 +19,7 @@ use commonware_cryptography::bls12381::primitives::{
     Error,
 };
 use commonware_parallel::Sequential;
-use commonware_utils::Faults;
+use commonware_utils::{Faults, N3f1};
 
 use crate::BlsSignature;
 
@@ -112,6 +112,49 @@ pub fn recover_seed<M: Faults>(
     threshold::recover::<MinSig, _, M>(sharing, partials, &Sequential)
 }
 
+/// [`recover_seed`] for a caller that cannot carry `M`: the object-safe
+/// [`crate::oracle::SeedOracle`] path, where the threshold has to arrive as a
+/// value rather than as a type.
+///
+/// The CALLER owes the lockstep the generic parameter enforces above —
+/// `threshold` must be `M::quorum(n)` for the same `M` the vote quorum was
+/// counted under, computed at the `assemble` call site. It is CHECKED against
+/// the sharing's own quorum rather than trusted: commonware derives its
+/// evaluation count from `M` and offers no entry point that takes a number, so
+/// the `N3f1` below is what actually selects the point count.
+///
+/// **THE EQUALITY IS TWO ASSERTIONS, NOT ONE**, and the second is unstated in
+/// its own operands. `threshold` is `M::quorum(vote_committee.len())` while
+/// `sharing.required::<N3f1>()` is `N3f1::quorum(sharing.total())`, so the
+/// comparison holds only when BOTH `M == N3f1` (the fault model) AND
+/// `vote_committee.len() == sharing.total()` (the DKG dealt to exactly the
+/// epoch's consensus committee). The latter is a contract-side invariant —
+/// `committee[E]` is what the ceremony deals over — enforced outside this repo,
+/// so this line is where a violation of it would first become visible. Do not
+/// weaken the check to compare fault models alone.
+///
+/// **THE CALLER OWES THIS FAILURE A LOG, AND THIS FUNCTION CANNOT PROVIDE ONE.**
+/// A mismatch is otherwise indistinguishable from a healthy
+/// quorum-not-yet-reached: `assemble` returns `None`, the batcher declines and
+/// retries as each further attestation arrives, and the node simply stops
+/// producing certificates with nothing in its logs — the class of failure where
+/// silence costs the most. But the retry is why the log cannot live here. The
+/// condition is FROZEN for the epoch while the call sits on the per-certificate
+/// path, so it needs a per-epoch latch, and a free function's only option is a
+/// process-wide `static` — which would mute the next epoch's genuinely new
+/// occurrence. `BeaconOracle::recover` owns the latch (it is already per-epoch)
+/// and logs both operands there.
+pub fn recover_seed_with_threshold(
+    sharing: &Sharing<MinSig>,
+    partials: &[PartialSignature<MinSig>],
+    threshold: u32,
+) -> Result<BlsSignature, Error> {
+    if threshold != sharing.required::<N3f1>() {
+        return Err(Error::InvalidRecovery);
+    }
+    threshold::recover::<MinSig, _, N3f1>(sharing, partials, &Sequential)
+}
+
 /// Verify a recovered seed signature against the group public key `PK_epoch` —
 /// the only check a verifier-only node (no share / no polynomial) can run.
 pub fn verify_seed(
@@ -126,7 +169,59 @@ pub fn verify_seed(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fluent_namespace;
+    use crate::{fluent_namespace, PeerPubkey};
+    use commonware_consensus::types::{Epoch, View};
+    use commonware_cryptography::{
+        bls12381::{dkg::deal, primitives::sharing::Mode},
+        ed25519::PrivateKey as Ed25519PrivateKey,
+        Signer as _,
+    };
+    use commonware_math::algebra::Random as _;
+    use commonware_utils::ordered::Set;
+    use rand_08::rngs::StdRng;
+    use rand_core::SeedableRng as _;
+
+    /// A four-member committee dealing to itself, as the beacon's ceremony does.
+    fn dealt(n: usize) -> (Sharing<MinSig>, Vec<Share>) {
+        let mut rng = StdRng::seed_from_u64(0xB1A5);
+        let players: Set<PeerPubkey> =
+            Set::from_iter_dedup((0..n).map(|_| Ed25519PrivateKey::random(&mut rng).public_key()));
+        let (outcome, shares) =
+            deal::<MinSig, PeerPubkey, N3f1>(&mut rng, Mode::NonZeroCounter, players.clone())
+                .expect("deal");
+        let held = players
+            .iter()
+            .map(|p| shares.get_value(p).expect("share").clone())
+            .collect();
+        (outcome.public().clone(), held)
+    }
+
+    /// The lockstep the generic parameter of [`recover_seed`] carries by type and
+    /// this sibling can only carry by value: a threshold that is not the
+    /// sharing's own quorum must fail the recovery, never interpolate over a
+    /// different point count.
+    #[test]
+    fn recover_with_threshold_agrees_with_the_generic_and_refuses_a_foreign_quorum() {
+        let (sharing, shares) = dealt(4);
+        let ns = seed_namespace(&fluent_namespace(20994));
+        let round = Round::new(Epoch::new(7), View::new(3));
+        let partials: Vec<_> = shares
+            .iter()
+            .map(|s| sign_seed_partial(s, &ns, round))
+            .collect();
+        let quorum = N3f1::quorum(shares.len() as u32);
+
+        let by_value =
+            recover_seed_with_threshold(&sharing, &partials, quorum).expect("recover by value");
+        assert_eq!(
+            by_value,
+            recover_seed::<N3f1>(&sharing, &partials).expect("recover by type")
+        );
+        assert!(verify_seed(sharing.public(), &ns, round, &by_value));
+
+        assert!(recover_seed_with_threshold(&sharing, &partials, quorum - 1).is_err());
+        assert!(recover_seed_with_threshold(&sharing, &partials, quorum + 1).is_err());
+    }
 
     /// What actually separates the derived namespaces, stated as the code has it
     /// rather than as prefix-freedom against the base — which the construction does

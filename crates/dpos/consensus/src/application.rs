@@ -2752,6 +2752,8 @@ mod tests {
             keys: group_keys,
             verify,
             resolver: Arc::new(|_| crate::beacon::BeaconResolve::Absent),
+            ceremony: Arc::new(std::sync::RwLock::new(std::collections::BTreeMap::new())),
+            dkg_qual: Arc::new(|_| Some(false)),
             held: None,
             pull: None,
             participation: Arc::new(tokio::sync::Notify::new()),
@@ -2837,6 +2839,7 @@ mod tests {
             &fluent_namespace(TEST_CHAIN_ID),
             (*committee).clone(),
             &committee_bls_keys(3, 7)[1],
+            epoch,
             None,
         )
         .expect("the offender is a committee member");

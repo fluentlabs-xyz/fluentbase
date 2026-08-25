@@ -7335,12 +7335,13 @@ mod clock_tests {
             .iter()
             .take(3)
             .map(|kp| {
-                let signer = build_signer(&ns, bimap.clone(), kp, None).expect("member");
+                let signer =
+                    build_signer(&ns, bimap.clone(), kp, target_epoch, None).expect("member");
                 Finalize::sign(&signer, payload.clone()).expect("sign")
             })
             .collect();
         let certificate = Finalization::from_finalizes(
-            &build_verifier(&ns, bimap.clone(), None, None),
+            &build_verifier(&ns, bimap.clone(), target_epoch, None),
             finalizes.iter(),
             &Sequential,
         )

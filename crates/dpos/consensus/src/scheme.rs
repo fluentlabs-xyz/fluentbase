@@ -10,10 +10,11 @@
 
 use commonware_utils::ordered::Error as OrderedError;
 use fluentbase_bls::{
-    beacon::GroupPublic, fluent_namespace, scheme::build_verifier, EpochCommittee,
+    fluent_namespace, oracle::SeedOracle, scheme::build_verifier, EpochCommittee,
     Scheme as BlsScheme,
 };
 use fluentbase_staking_reader::reader::ValidatorSetSnapshot;
+use std::sync::Arc;
 use tracing::warn;
 
 /// Build the typed [`EpochCommittee`] for one epoch's committee snapshot.
@@ -39,8 +40,8 @@ pub fn epoch_committee_from_snapshot(
     )
 }
 
-/// Build the verify-only (MULTISIG-ONLY, `beacon = None`) [`BlsScheme`] for a
-/// soft-entered committee `snap`. Shared by the catch-up paths that register a
+/// Build the verify-only (no signer half) [`BlsScheme`] for a soft-entered
+/// committee `snap`. Shared by the catch-up paths that register a
 /// scheme so the marshal can verify a past epoch's finalization certs without
 /// standing up a participating engine: the per-message hint path
 /// ([`crate::epoch_manager::Actor::enter`] soft-enter) and the bulk catch-up
@@ -48,22 +49,22 @@ pub fn epoch_committee_from_snapshot(
 /// on an invalid (non-unique-participant) committee, logging a warn — the caller
 /// skips that epoch rather than panicking.
 ///
-/// `cert_seed_pin` is the epoch beacon group key `PK_epoch` the caller resolved
-/// (the marshal-blocks backward walk); when present the built verifier's
-/// `verify_certificate` also pins the recovered seed slot (bug 2). `None`
-/// degrades to vote-only — the accepted residual for a catch-up epoch whose
-/// boundary block is below the local floor.
+/// `oracle` is the beacon's threshold face for `snap.epoch`, from
+/// [`crate::beacon::Randomness::oracle_for`]. `None` ⇒ a pre-beacon epoch, where
+/// a seedless certificate is LEGAL; `Some` ⇒ a beacon-active epoch, where the
+/// verifier checks the recovered seed and refuses a stripped one even while the
+/// key itself is still unresolved.
 pub fn soft_enter_verifier(
     snap: &ValidatorSetSnapshot,
     chain_id: u64,
-    cert_seed_pin: Option<GroupPublic>,
+    oracle: Option<Arc<dyn SeedOracle>>,
 ) -> Option<BlsScheme> {
     match epoch_committee_from_snapshot(snap) {
         Ok(committee) => Some(build_verifier(
             &fluent_namespace(chain_id),
             committee.bimap,
-            None,
-            cert_seed_pin,
+            snap.epoch,
+            oracle,
         )),
         Err(e) => {
             warn!(

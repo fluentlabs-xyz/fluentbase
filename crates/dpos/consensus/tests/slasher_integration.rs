@@ -98,6 +98,7 @@ fn build_conflicting_notarize() -> (
         &fluent_namespace(C_MAIN),
         bimap.clone(),
         &kps[OFFENDER],
+        EPOCH,
         None,
     )
     .expect("offender must be in committee");
@@ -119,6 +120,7 @@ fn build_consensus_digest_conflicting_notarize() -> (
         &fluent_namespace(C_MAIN),
         bimap.clone(),
         &kps[OFFENDER],
+        EPOCH,
         None,
     )
     .expect("offender must be in committee");
@@ -141,8 +143,16 @@ fn offender_notarize(
     tag: u8,
 ) -> Activity<BlsScheme, fluentbase_consensus::Digest> {
     let (kps, bimap) = committee(1);
-    let s = build_signer(&fluent_namespace(C_MAIN), bimap, &kps[OFFENDER], None)
-        .expect("offender in committee");
+    // Bound to the epoch it is about to sign at, which is not always `EPOCH` —
+    // one caller reports at `EPOCH + 1`, and the scheme refuses a foreign epoch.
+    let s = build_signer(
+        &fluent_namespace(C_MAIN),
+        bimap,
+        &kps[OFFENDER],
+        epoch,
+        None,
+    )
+    .expect("offender in committee");
     let round = Round::new(Epoch::new(epoch), View::new(view));
     let proposal = Proposal::new(
         round,
@@ -857,8 +867,14 @@ fn slash_abi_selectors_are_pinned() {
 /// proposals) over consensus digests.
 fn build_conflicting_finalize() -> ConflictingFinalize<BlsScheme, fluentbase_consensus::Digest> {
     let (kps, bimap) = committee(1);
-    let s = build_signer(&fluent_namespace(C_MAIN), bimap, &kps[OFFENDER], None)
-        .expect("offender in committee");
+    let s = build_signer(
+        &fluent_namespace(C_MAIN),
+        bimap,
+        &kps[OFFENDER],
+        EPOCH,
+        None,
+    )
+    .expect("offender in committee");
     let round = Round::new(Epoch::new(EPOCH), View::new(VIEW));
     let p1 = Proposal::new(
         round,
@@ -878,8 +894,14 @@ fn build_conflicting_finalize() -> ConflictingFinalize<BlsScheme, fluentbase_con
 /// A `NullifyFinalize` by OFFENDER (nullify + finalize for the same round).
 fn build_nullify_finalize() -> NullifyFinalize<BlsScheme, fluentbase_consensus::Digest> {
     let (kps, bimap) = committee(1);
-    let s = build_signer(&fluent_namespace(C_MAIN), bimap, &kps[OFFENDER], None)
-        .expect("offender in committee");
+    let s = build_signer(
+        &fluent_namespace(C_MAIN),
+        bimap,
+        &kps[OFFENDER],
+        EPOCH,
+        None,
+    )
+    .expect("offender in committee");
     let round = Round::new(Epoch::new(EPOCH), View::new(VIEW));
     let nullify = Nullify::sign::<fluentbase_consensus::Digest>(&s, round).expect("sign nullify");
     let p = Proposal::new(

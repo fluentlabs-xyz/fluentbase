@@ -29,11 +29,6 @@ use bytes::{Buf, BufMut};
 use commonware_codec::{EncodeSize, Error as CodecError, FixedSize, Read, ReadExt as _, Write};
 use commonware_consensus::{simplex::types::Subject, types::Round};
 use commonware_cryptography::{
-    bls12381::primitives::{
-        group::Share,
-        sharing::Sharing,
-        variant::{MinSig, PartialSignature},
-    },
     certificate::{Attestation, Scheme as CertScheme},
     Digest,
 };
@@ -41,9 +36,10 @@ use commonware_parallel::Strategy;
 use commonware_utils::{ordered::Set, Faults, Participant};
 use core::mem::size_of;
 use rand_core::CryptoRngCore;
+use std::sync::Arc;
 
 use crate::{
-    beacon::{self, GroupPublic},
+    oracle::{SeedCheck, SeedOracle},
     BlsSignature, PeerPubkey, VoteScheme,
 };
 
@@ -175,132 +171,75 @@ impl Read for CombinedCertificate {
     }
 }
 
-/// The per-epoch threshold material a beacon-active scheme holds.
-#[derive(Clone)]
-struct BeaconPart {
-    /// Full public polynomial. REQUIRED to verify individual seed partials
-    /// (`verify_attestation`) and to recover the seed (`assemble`). A no-share
-    /// node (verify-only / fallback) has no `BeaconPart` at all (`beacon: None`),
-    /// so once a `BeaconPart` exists the polynomial is always present.
-    sharing: Sharing<MinSig>,
-    share: Option<Share>,
-    seed_namespace: Vec<u8>,
-}
-
-/// The cert-time pin tuple: the epoch group key plus the seed namespace derived
-/// from the consensus namespace.
-///
-/// One function because two paths build a pin — `build_verifier` at
-/// construction and [`CombinedScheme::with_cert_seed_pin`] on the repair path —
-/// and a namespace disagreement between them is not a compile error. It would
-/// surface as a repaired scheme rejecting exactly the certs a constructed one
-/// accepts, at one epoch, on one node.
-pub(crate) fn cert_seed_pin_of(pk: GroupPublic, namespace: &[u8]) -> (GroupPublic, Vec<u8>) {
-    (pk, beacon::seed_namespace(namespace))
-}
-
 /// Combined attributable + threshold consensus scheme.
+///
+/// Holds NO key material. Everything threshold is delegated to the beacon's
+/// [`SeedOracle`], which reads live state under a lock, so a scheme built before
+/// its epoch's ceremony finished starts working the moment the material lands
+/// instead of carrying a stale copy for the life of the epoch.
 #[derive(Clone)]
 pub struct CombinedScheme {
     vote: VoteScheme,
-    beacon: Option<BeaconPart>,
-    /// Cert-time seed pin: the epoch's beacon group key `PK_epoch` + seed
-    /// namespace. `verify_certificate` uses it to reject a wire-received cert
-    /// whose recovered seed slot fails `verify_seed` against `PK_epoch` (a
-    /// tampered/cleared seed on an otherwise-valid multisig quorum). A
-    /// beacon-active scheme derives it from its own `BeaconPart`; a
-    /// verifier-flavored scheme (`beacon = None`) may receive it externally
-    /// from the epoch-key agreement plane's quorum-signed artifact, resolved
-    /// through `beacon::keys::BeaconKeys::get_pk`.
-    /// `None` ⇒ vote-only cert verify (pre-beacon fallback epoch, or the key
-    /// cursor is unresolved — e.g. right after a deep cold-start jump landing).
-    cert_seed_pin: Option<(GroupPublic, Vec<u8>)>,
+    /// The epoch this scheme was issued for. Purely a BINDING: a subject from
+    /// another epoch is rejected before the oracle is consulted. This used to be
+    /// an accidental side effect of copying the epoch's key in; it is explicit
+    /// now, and it rejects rather than silently answering under the wrong epoch.
+    epoch: u64,
+    /// `None` ⇒ a fallback (pre-beacon) epoch: no partial is produced, and a
+    /// vote carrying one is invalid.
+    ///
+    /// Distinct from an oracle that answers "no material", which is a
+    /// beacon-active epoch this node cannot judge in. Both refuse a vote that
+    /// carries a partial, but only the first makes a SEEDLESS vote correct — do
+    /// not collapse them.
+    oracle: Option<Arc<dyn SeedOracle>>,
 }
 
 impl core::fmt::Debug for CombinedScheme {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("CombinedScheme")
             .field("vote", &self.vote)
-            .field("beacon_active", &self.beacon.is_some())
+            .field("epoch", &self.epoch)
+            .field("beacon_active", &self.oracle.is_some())
             .finish()
     }
 }
 
 impl CombinedScheme {
-    /// Build from an already-constructed vote scheme + optional beacon part.
-    /// `beacon = None` ⇒ fallback (pure multisig, sentinel seed everywhere).
-    /// For a signer, asserts the threshold `share.index` matches the consensus
-    /// participant index (both Commonware-sorted) — a mismatch would
-    /// mis-attribute a partial.
+    /// Build from an already-constructed vote scheme, the epoch it is issued
+    /// for, and the beacon's oracle.
     ///
-    /// `external_pin` supplies the cert-time seed pin for a verifier-flavored
-    /// scheme (`beacon = None`) whose key comes from the agreement artifact;
-    /// when `beacon` is present the pin is derived from it and
-    /// `external_pin` is ignored (a beacon-active scheme already holds `PK_epoch`).
-    pub(crate) fn new(
-        vote: VoteScheme,
-        beacon: Option<(Sharing<MinSig>, Option<Share>, Vec<u8>)>,
-        external_pin: Option<(GroupPublic, Vec<u8>)>,
-    ) -> Self {
-        let beacon = beacon.map(|(sharing, share, seed_namespace)| {
-            if let (Some(s), Some(me)) = (&share, vote.me()) {
-                assert_eq!(
-                    s.index, me,
-                    "beacon share index != consensus participant index"
-                );
-            }
-            BeaconPart {
-                sharing,
-                share,
-                seed_namespace,
-            }
-        });
-        // INVARIANT: a pin must never be attached for an epoch below
-        // `DETERMINISTIC_BOOTSTRAP_EPOCH`. `verify_certificate` reads the pin's
-        // presence as "this epoch is beacon-active" and rejects any seedless cert
-        // under it — so a pin on a pre-beacon epoch would reject every legal cert
-        // there. Holds today because both sources are unreachable that early: a
-        // `BeaconPart` needs a dealt key, and `external_pin` comes from an
-        // agreement artifact, and `chain_key_epoch` returns none below the
-        // bootstrap epoch.
-        let cert_seed_pin = match &beacon {
-            Some(b) => Some((*b.sharing.public(), b.seed_namespace.clone())),
-            None => external_pin,
-        };
+    /// `oracle = None` ⇒ fallback (pure multisig, sentinel seed everywhere).
+    /// The share-index binding the old material-carrying constructor asserted
+    /// lives in the oracle now, where the share still exists.
+    pub(crate) fn new(vote: VoteScheme, epoch: u64, oracle: Option<Arc<dyn SeedOracle>>) -> Self {
         Self {
             vote,
-            beacon,
-            cert_seed_pin,
+            epoch,
+            oracle,
         }
     }
 
-    /// Whether this scheme carries a cert-time seed pin, i.e. whether
-    /// `verify_certificate` checks the recovered seed against `PK_epoch` rather
-    /// than early-returning after the multisig quorum. Public because a pin is
-    /// the STRICTER state and a registry that replaces schemes has to be able to
-    /// refuse a replacement that drops one — the pin is invisible through
-    /// `participants()`/`me()`, the only other things such a registry can compare.
-    pub fn is_seed_pinned(&self) -> bool {
-        self.cert_seed_pin.is_some()
+    /// Whether `subject`'s round belongs to the epoch this scheme was issued
+    /// for. A scheme is registered per epoch and its oracle answers for that
+    /// epoch alone, so a subject from another one has no meaning here — it is
+    /// refused before the oracle is consulted rather than judged under the wrong
+    /// epoch's material.
+    fn binds<D: Digest>(&self, subject: &Subject<'_, D>) -> bool {
+        subject_round(subject).epoch().get() == self.epoch
     }
 
-    /// A copy of this scheme carrying `pk` as its cert-time seed pin.
+    /// Whether this scheme judges the seed slot at all.
     ///
-    /// For upgrading an ALREADY-REGISTERED verifier whose key arrived after it
-    /// was built: rebuilding from a committee snapshot is not possible on that
-    /// path, because the epoch's snapshot is no longer held anywhere.
-    ///
-    /// Overwrites unconditionally. The pin must only ever be added, never
-    /// changed or dropped, but this type cannot enforce that — the epoch number
-    /// the pin belongs to is not part of the scheme, so the two rules that
-    /// matter (add-only, and never below the bootstrap epoch — see the INVARIANT
-    /// in [`Self::new`]) can only be checked where epochs are known. The caller
-    /// enforces both; today that is `EpochSchemeProvider::apply_pin`.
-    pub fn with_cert_seed_pin(&self, pk: GroupPublic, namespace: &[u8]) -> Self {
-        Self {
-            cert_seed_pin: Some(cert_seed_pin_of(pk, namespace)),
-            ..self.clone()
-        }
+    /// `true` ⇔ an oracle is attached ⇔ the epoch is beacon-active, which is
+    /// what makes `verify_certificate` refuse a cleared seed slot and
+    /// `verify_attestation` refuse a partial-less vote. It is the ONLY
+    /// verification strength a scheme carries that neither
+    /// [`CertScheme::participants`] nor [`CertScheme::me`] can see, so a registry
+    /// that wants to keep re-registration monotone in strength has to ask for it
+    /// explicitly — see `EpochSchemeProvider::register`.
+    pub fn is_beacon_active(&self) -> bool {
+        self.oracle.is_some()
     }
 
     fn vote_attestation(att: &Attestation<Self>) -> Option<Attestation<VoteScheme>> {
@@ -327,6 +266,9 @@ impl CertScheme for CombinedScheme {
     }
 
     fn sign<D: Digest>(&self, subject: Self::Subject<'_, D>) -> Option<Attestation<Self>> {
+        if !self.binds(&subject) {
+            return None;
+        }
         let round = subject_round(&subject);
         let vote_att = self.vote.sign::<D>(subject)?;
         let vote = *vote_att.signature.get()?;
@@ -335,11 +277,13 @@ impl CertScheme for CombinedScheme {
         // of the same view recover the byte-identical σ. That is what makes the
         // leader of view v+1 independent of whether view v produced a block, and
         // it is the whole point of the seed slot being fixed-width.
-        let seed = match &self.beacon {
-            Some(b) => {
-                let share = b.share.as_ref()?;
-                Some(beacon::sign_seed_partial(share, &b.seed_namespace, round).value)
-            }
+        //
+        // A beacon-active epoch whose oracle has no usable material casts NO vote
+        // at all rather than a seedless one: peers reject a seedless vote in such
+        // an epoch, so emitting it would subtract this node from the quorum while
+        // it believed it was signing.
+        let seed = match &self.oracle {
+            Some(o) => Some(o.sign_partial(round)?),
             None => None,
         };
         Some(Attestation {
@@ -362,6 +306,9 @@ impl CertScheme for CombinedScheme {
         let Some(vote_att) = Self::vote_attestation(attestation) else {
             return false;
         };
+        if !self.binds(&subject) {
+            return false;
+        }
         let round = subject_round(&subject);
         if !self
             .vote
@@ -372,7 +319,7 @@ impl CertScheme for CombinedScheme {
         let Some(combined) = attestation.signature.get() else {
             return false;
         };
-        match &self.beacon {
+        match &self.oracle {
             // Beacon-active, ANY subject: a missing or invalid seed partial makes
             // the whole vote invalid (→ not counted toward quorum). A
             // group-key-only verifier (no polynomial) cannot check an
@@ -398,16 +345,8 @@ impl CertScheme for CombinedScheme {
             // batch-verify the partials (random-linear-combination, but loses
             // per-vote attribution on failure) or aggregate-verify with t < quorum
             // slack. Measure before changing — don't trade away attribution blind.
-            Some(b) => match combined.seed {
-                Some(value) => beacon::verify_seed_partial(
-                    &b.sharing,
-                    &b.seed_namespace,
-                    round,
-                    &PartialSignature::<MinSig> {
-                        index: attestation.signer,
-                        value,
-                    },
-                ),
+            Some(o) => match combined.seed {
+                Some(value) => o.verify_partial(round, attestation.signer, &value),
                 None => false,
             },
             // A fallback (pre-bootstrap) epoch has no key material at all: the seed
@@ -427,24 +366,26 @@ impl CertScheme for CombinedScheme {
         let vote_atts: Vec<Attestation<VoteScheme>> =
             atts.iter().filter_map(Self::vote_attestation).collect();
         let vote = self.vote.assemble::<_, M>(vote_atts, strategy)?;
-        let seed = match &self.beacon {
-            Some(BeaconPart { sharing, .. })
+        let seed = match &self.oracle {
+            Some(o)
                 if atts
                     .iter()
                     .all(|a| a.signature.get().is_some_and(|c| c.seed.is_some())) =>
             {
-                let partials: Vec<PartialSignature<MinSig>> = atts
+                let partials: Vec<(Participant, BlsSignature)> = atts
                     .iter()
                     .filter_map(|a| {
-                        a.signature.get().and_then(|c| {
-                            c.seed.map(|value| PartialSignature::<MinSig> {
-                                index: a.signer,
-                                value,
-                            })
-                        })
+                        a.signature
+                            .get()
+                            .and_then(|c| c.seed.map(|value| (a.signer, value)))
                     })
                     .collect();
-                Some(beacon::recover_seed::<M>(sharing, &partials).ok()?)
+                // The seed threshold is computed HERE, from the same `M` the vote
+                // half just quorum'd under — that is what keeps the two halves of
+                // one certificate in lockstep now that the oracle cannot carry the
+                // fault model as a type parameter.
+                let threshold = M::quorum(self.vote.participants().len() as u32);
+                Some(o.recover(&partials, threshold)?)
             }
             _ => None,
         };
@@ -470,28 +411,35 @@ impl CertScheme for CombinedScheme {
         {
             return false;
         }
-        // Then the recovered seed slot, whenever the epoch's beacon key is
-        // resolvable locally. Self-assembled certs pass by construction (the seed
-        // recovered from partials `verify_attestation` already checked verifies
-        // against the same `PK_epoch`); a wire-received cert with a tampered or
-        // cleared seed slot on an otherwise-valid multisig quorum is rejected here
-        // — the ingress check bug 2 was missing. `None` ⇒ no key material (a
-        // fallback no-beacon epoch, or the cursor is unresolved right after a deep
-        // jump landing) ⇒ vote-only, exactly the prior behaviour.
-        let Some((group_public, seed_namespace)) = &self.cert_seed_pin else {
+        // Then the epoch binding — ABOVE the oracle branch, not inside it. Every
+        // other entry point applies it unconditionally, and a pre-beacon scheme
+        // that skipped it would answer for a subject naming a different epoch
+        // whenever the two committees happened to coincide.
+        if !self.binds(&subject) {
+            return false;
+        }
+        // Then the recovered seed slot. Self-assembled certs pass by construction
+        // (the seed recovered from partials `verify_attestation` already checked
+        // verifies against the same `PK_epoch`); a wire-received cert with a
+        // tampered or cleared seed slot on an otherwise-valid multisig quorum is
+        // rejected here.
+        //
+        // No oracle ⇒ a fallback no-beacon epoch ⇒ vote-only.
+        let Some(o) = &self.oracle else {
             return true;
         };
         match certificate.seed {
-            Some(sig) => {
-                beacon::verify_seed(group_public, seed_namespace, subject_round(&subject), &sig)
-            }
-            // ANY cert in a beacon-active epoch MUST carry a seed — Nullify included.
-            // The pin's presence is what "beacon-active" means here, so this arm is
-            // unreachable below `DETERMINISTIC_BOOTSTRAP_EPOCH`: a sub-bootstrap
-            // epoch has no `BeaconPart` and no agreement artifact, hence no
-            // pin, hence the early return above. Keep that invariant intact — if a
-            // pin ever became attachable to a pre-beacon epoch, this arm would
-            // reject every legal seedless cert on it.
+            // `NoKey` — the epoch's key is not resolvable here yet — ADMITS on the
+            // multisig quorum alone and nobody consumes the σ. Rejecting instead
+            // would punish the sender for this node's own missing key.
+            Some(sig) => !matches!(
+                o.verify_seed(subject_round(&subject), &sig),
+                SeedCheck::Invalid
+            ),
+            // ANY cert in a beacon-active epoch MUST carry a seed — Nullify
+            // included. The oracle's presence is what "beacon-active" means here,
+            // so this arm is unreachable below `DETERMINISTIC_BOOTSTRAP_EPOCH`,
+            // where no oracle is ever attached.
             None => false,
         }
     }
@@ -522,6 +470,11 @@ mod tests {
         simplex::types::Proposal,
         types::{Epoch, Round, View},
     };
+    use commonware_cryptography::bls12381::primitives::{
+        group::Share,
+        sharing::Sharing,
+        variant::{MinSig, PartialSignature},
+    };
     use commonware_cryptography::{
         bls12381::dkg::deal_anonymous, ed25519::PrivateKey as Ed25519PrivateKey,
         sha256::Digest as Sha256Digest, Signer as _,
@@ -533,6 +486,80 @@ mod tests {
     use rand_core::SeedableRng as _;
 
     const NS_CHAIN: u64 = 20994;
+    /// The epoch every fixture below is issued for — `proposal()`'s round sits in
+    /// it, so the scheme's epoch binding passes.
+    const EPOCH: u64 = 1;
+
+    /// A [`SeedOracle`] over one fixed sharing: exactly the material this scheme
+    /// used to hold itself. Production supplies
+    /// `fluentbase_consensus::beacon::oracle::BeaconOracle` instead, which reads
+    /// the live ceremony store.
+    #[derive(Debug)]
+    struct TestOracle {
+        sharing: Sharing<MinSig>,
+        share: Option<Share>,
+        seed_ns: Vec<u8>,
+        /// `false` ⇒ [`SeedCheck::NoKey`]: a beacon-active epoch whose group key
+        /// this node cannot resolve yet.
+        key_known: bool,
+    }
+
+    impl TestOracle {
+        fn arc(
+            sharing: &Sharing<MinSig>,
+            share: Option<Share>,
+            seed_ns: &[u8],
+        ) -> Arc<dyn SeedOracle> {
+            Arc::new(Self {
+                sharing: sharing.clone(),
+                share,
+                seed_ns: seed_ns.to_vec(),
+                key_known: true,
+            })
+        }
+    }
+
+    impl SeedOracle for TestOracle {
+        fn sign_partial(&self, round: Round) -> Option<BlsSignature> {
+            let share = self.share.as_ref()?;
+            Some(crate::beacon::sign_seed_partial(share, &self.seed_ns, round).value)
+        }
+
+        fn verify_partial(&self, round: Round, index: Participant, value: &BlsSignature) -> bool {
+            crate::beacon::verify_seed_partial(
+                &self.sharing,
+                &self.seed_ns,
+                round,
+                &PartialSignature::<MinSig> {
+                    index,
+                    value: *value,
+                },
+            )
+        }
+
+        fn recover(
+            &self,
+            partials: &[(Participant, BlsSignature)],
+            threshold: u32,
+        ) -> Option<BlsSignature> {
+            let partials: Vec<PartialSignature<MinSig>> = partials
+                .iter()
+                .map(|&(index, value)| PartialSignature::<MinSig> { index, value })
+                .collect();
+            crate::beacon::recover_seed_with_threshold(&self.sharing, &partials, threshold).ok()
+        }
+
+        fn verify_seed(&self, round: Round, seed: &BlsSignature) -> SeedCheck {
+            if !self.key_known {
+                return SeedCheck::NoKey;
+            }
+            if crate::beacon::verify_seed(self.sharing.public(), &self.seed_ns, round, seed) {
+                SeedCheck::Valid
+            } else {
+                SeedCheck::Invalid
+            }
+        }
+    }
 
     /// `n` combined-scheme signers over one committee sharing the same public
     /// polynomial — each holds its own multisig key and the matching threshold
@@ -581,8 +608,8 @@ mod tests {
                 let share = shares.iter().find(|s| s.index == me).unwrap().clone();
                 CombinedScheme::new(
                     vote,
-                    Some((sharing.clone(), Some(share), seed_ns.clone())),
-                    None,
+                    EPOCH,
+                    Some(TestOracle::arc(&sharing, Some(share), &seed_ns)),
                 )
             })
             .collect();
@@ -652,7 +679,7 @@ mod tests {
         let cert = assemble_over(&schemes, Subject::Notarize { proposal: &p });
 
         let ns = fluent_namespace(NS_CHAIN);
-        let verifier = CombinedScheme::new(VoteScheme::verifier(&ns, bimap), None, None);
+        let verifier = CombinedScheme::new(VoteScheme::verifier(&ns, bimap), EPOCH, None);
         let mut rng = StdRng::seed_from_u64(5);
 
         assert!(
@@ -747,7 +774,7 @@ mod tests {
             signer: honest.signer,
             signature: CombinedSignature {
                 vote: honest.signature.get().expect("decodes").vote,
-                seed: Some(beacon::sign_seed_partial(foreign, &seed_ns, round).value),
+                seed: Some(crate::beacon::sign_seed_partial(foreign, &seed_ns, round).value),
             }
             .into(),
         };
@@ -770,7 +797,7 @@ mod tests {
         .unwrap();
         let ns = fluent_namespace(NS_CHAIN);
         let vote = VoteScheme::signer(&ns, bimap, bls_kp.secret().clone()).expect("member");
-        let scheme = CombinedScheme::new(vote, None, None);
+        let scheme = CombinedScheme::new(vote, EPOCH, None);
 
         let p = proposal();
         let round = p.round;
@@ -825,7 +852,7 @@ mod tests {
             .iter()
             .map(|kp| {
                 let vote = VoteScheme::signer(&ns, bimap.clone(), kp.secret().clone()).unwrap();
-                CombinedScheme::new(vote, None, None)
+                CombinedScheme::new(vote, EPOCH, None)
             })
             .collect();
         let p = proposal();
@@ -849,35 +876,33 @@ mod tests {
     }
 
     #[test]
-    fn pinned_verify_certificate_rejects_tampered_and_cleared_seed() {
+    fn oracle_backed_verify_certificate_rejects_tampered_and_cleared_seed() {
         let (schemes, seed_ns, sharing, bimap) = committee(4);
         let p = proposal();
         let cert = assemble_over(&schemes, Subject::Finalize { proposal: &p });
 
-        // A verifier holding the epoch group key (the boundary-block cursor
-        // source): its `verify_certificate` pins the recovered seed to `PK_epoch`.
         let ns = fluent_namespace(NS_CHAIN);
-        let pinned = CombinedScheme::new(
+        let verifier = CombinedScheme::new(
             VoteScheme::verifier(&ns, bimap.clone()),
-            None,
-            Some((*sharing.public(), seed_ns.clone())),
+            EPOCH,
+            Some(TestOracle::arc(&sharing, None, &seed_ns)),
         );
         let mut rng = StdRng::seed_from_u64(11);
 
         assert!(
-            pinned.verify_certificate::<_, Sha256Digest, N3f1>(
+            verifier.verify_certificate::<_, Sha256Digest, N3f1>(
                 &mut rng,
                 Subject::Finalize { proposal: &p },
                 &cert,
                 &Sequential
             ),
-            "a genuine seeded cert verifies under a pin"
+            "a genuine seeded cert verifies against the epoch key"
         );
 
         // A seed recovered for a DIFFERENT round is a valid G1 point that does
         // NOT verify against THIS round — a stand-in for a tampered seed slot.
         let other = Proposal::new(
-            Round::new(Epoch::new(1), View::new(42)),
+            Round::new(Epoch::new(EPOCH), View::new(42)),
             View::new(41),
             Sha256Digest::decode([5u8; 32].as_slice()).unwrap(),
         );
@@ -887,13 +912,13 @@ mod tests {
             seed: other_cert.seed,
         };
         assert!(
-            !pinned.verify_certificate::<_, Sha256Digest, N3f1>(
+            !verifier.verify_certificate::<_, Sha256Digest, N3f1>(
                 &mut rng,
                 Subject::Finalize { proposal: &p },
                 &tampered,
                 &Sequential
             ),
-            "a foreign-round seed on a valid multisig quorum must be rejected under a pin"
+            "a foreign-round seed on a valid multisig quorum must be rejected"
         );
 
         let cleared = CombinedCertificate {
@@ -901,26 +926,168 @@ mod tests {
             seed: None,
         };
         assert!(
-            !pinned.verify_certificate::<_, Sha256Digest, N3f1>(
+            !verifier.verify_certificate::<_, Sha256Digest, N3f1>(
                 &mut rng,
                 Subject::Finalize { proposal: &p },
                 &cleared,
                 &Sequential
             ),
-            "a seeded-subject cert with a cleared seed flag must be rejected under a pin"
+            "a seeded-subject cert with a cleared seed flag must be rejected"
         );
+    }
 
-        // Without a pin the same cleared cert still verifies (the accepted
-        // residual window — a node that cannot resolve the key stays vote-only).
-        let pinless = CombinedScheme::new(VoteScheme::verifier(&ns, bimap), None, None);
+    /// The keyless window, and the line through it: a beacon-active epoch whose
+    /// group key this node cannot resolve ADMITS a seeded cert on its multisig
+    /// quorum alone — rejecting would punish the sender for a local miss — but
+    /// still refuses a STRIPPED one, because a cert of such an epoch always
+    /// carries a seed. Only `oracle: None`, a pre-beacon epoch, makes seedless
+    /// legal.
+    #[test]
+    fn a_keyless_oracle_admits_a_seeded_cert_but_still_refuses_a_stripped_one() {
+        let (schemes, seed_ns, sharing, bimap) = committee(4);
+        let p = proposal();
+        let cert = assemble_over(&schemes, Subject::Finalize { proposal: &p });
+
+        let ns = fluent_namespace(NS_CHAIN);
+        let keyless = CombinedScheme::new(
+            VoteScheme::verifier(&ns, bimap),
+            EPOCH,
+            Some(Arc::new(TestOracle {
+                sharing,
+                share: None,
+                seed_ns,
+                key_known: false,
+            })),
+        );
+        let mut rng = StdRng::seed_from_u64(12);
+
+        assert!(keyless.verify_certificate::<_, Sha256Digest, N3f1>(
+            &mut rng,
+            Subject::Finalize { proposal: &p },
+            &cert,
+            &Sequential
+        ));
+
+        let stripped = CombinedCertificate {
+            vote: cert.vote.clone(),
+            seed: None,
+        };
+        assert!(!keyless.verify_certificate::<_, Sha256Digest, N3f1>(
+            &mut rng,
+            Subject::Finalize { proposal: &p },
+            &stripped,
+            &Sequential
+        ));
+    }
+
+    /// The epoch binding, which used to be an accident of copying the key in. A
+    /// scheme is registered per epoch and its oracle answers for that epoch
+    /// alone, so every entry point that RECEIVES A SUBJECT refuses one from
+    /// another epoch rather than judging it under the wrong material.
+    ///
+    /// Three entry points, not four: `assemble` is handed attestations alone —
+    /// no subject, no round — so it has nothing to bind against. The name said
+    /// "every entry point" while covering three, which is a claim the test could
+    /// not keep.
+    ///
+    /// The `oracle: None` arm is here because that is where the binding was
+    /// actually MISSING: `verify_certificate` used to return `true` for a
+    /// pre-beacon scheme before it ever reached `binds`.
+    #[test]
+    fn a_subject_from_another_epoch_is_refused_by_every_subject_bearing_entry_point() {
+        let (schemes, _, _, bimap) = committee(4);
+        let p = proposal();
+        let cert = assemble_over(&schemes, Subject::Notarize { proposal: &p });
+        let att = schemes[0]
+            .sign::<Sha256Digest>(Subject::Notarize { proposal: &p })
+            .expect("the fixture signs inside its own epoch");
+
+        let foreign = Proposal::new(
+            Round::new(Epoch::new(EPOCH + 1), View::new(9)),
+            View::new(8),
+            p.payload,
+        );
+        let subject = Subject::Notarize { proposal: &foreign };
+        let mut rng = StdRng::seed_from_u64(13);
+
+        assert!(schemes[0].sign::<Sha256Digest>(subject).is_none());
+        assert!(!schemes[0].verify_attestation(&mut rng, subject, &att, &Sequential));
+        assert!(!schemes[0].verify_certificate::<_, Sha256Digest, N3f1>(
+            &mut rng,
+            subject,
+            &cert,
+            &Sequential
+        ));
+
+        // Same committee, no oracle — a pre-beacon epoch. The multisig quorum
+        // verifies (it is the same committee over the same subject bytes), so
+        // only the binding can refuse this one.
+        let pre_beacon = CombinedScheme::new(
+            VoteScheme::verifier(&fluent_namespace(NS_CHAIN), bimap),
+            EPOCH,
+            None,
+        );
+        let seedless = CombinedCertificate {
+            vote: cert.vote.clone(),
+            seed: None,
+        };
         assert!(
-            pinless.verify_certificate::<_, Sha256Digest, N3f1>(
+            !pre_beacon.verify_certificate::<_, Sha256Digest, N3f1>(
                 &mut rng,
-                Subject::Finalize { proposal: &p },
-                &cleared,
+                subject,
+                &seedless,
                 &Sequential
             ),
-            "a pin-less verifier stays vote-only (documents the accepted residual window)"
+            "a pre-beacon scheme must bind its epoch too — the oracle-less \
+             early return used to skip the check entirely"
+        );
+    }
+
+    /// The strength a registry cannot see through
+    /// [`CertScheme::participants`] / [`CertScheme::me`], and therefore has to
+    /// ask for by name. Reds if `is_beacon_active` stops tracking the oracle,
+    /// which would make `EpochSchemeProvider::register`'s monotonicity guard
+    /// pass a downgrade through.
+    #[test]
+    fn beacon_activeness_is_visible_and_is_the_difference_a_downgrade_would_lose() {
+        let (schemes, seed_ns, sharing, bimap) = committee(4);
+        let p = proposal();
+        let cert = assemble_over(&schemes, Subject::Finalize { proposal: &p });
+        let ns = fluent_namespace(NS_CHAIN);
+        let mut rng = StdRng::seed_from_u64(14);
+
+        let strong = CombinedScheme::new(
+            VoteScheme::verifier(&ns, bimap.clone()),
+            EPOCH,
+            Some(TestOracle::arc(&sharing, None, &seed_ns)),
+        );
+        let weak = CombinedScheme::new(VoteScheme::verifier(&ns, bimap), EPOCH, None);
+        assert!(strong.is_beacon_active());
+        assert!(!weak.is_beacon_active());
+
+        let stripped = CombinedCertificate {
+            vote: cert.vote.clone(),
+            seed: None,
+        };
+        let subject = Subject::Finalize { proposal: &p };
+        assert!(
+            !strong.verify_certificate::<_, Sha256Digest, N3f1>(
+                &mut rng,
+                subject,
+                &stripped,
+                &Sequential
+            ),
+            "beacon-active: a cleared seed slot is refused"
+        );
+        assert!(
+            weak.verify_certificate::<_, Sha256Digest, N3f1>(
+                &mut rng,
+                subject,
+                &stripped,
+                &Sequential
+            ),
+            "no oracle: the same certificate is admitted — the two verify \
+             DIFFERENTLY, so a Some → None replacement is a real downgrade"
         );
     }
 }

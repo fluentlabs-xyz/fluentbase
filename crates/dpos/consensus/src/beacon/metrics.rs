@@ -124,6 +124,46 @@ pub struct BeaconMetrics {
     /// artifact of a live epoch legitimately does not exist yet, and the trigger
     /// re-asks on the next certificate.
     pub follower_artifact_miss: Counter,
+    /// Assembled seeds this node CHECKED against `PK_epoch` and accepted —
+    /// [`fluentbase_bls::oracle::SeedCheck::Valid`] out of a `SeedOracle::verify_seed`.
+    ///
+    /// THE POSITIVE EDGE FOR "THIS EPOCH LEFT VOTE-ONLY ADMISSION", and it exists
+    /// because FLU-1202 deleted the one that used to serve. That was the
+    /// `EpochSchemeProvider::register` log line `epoch scheme upgraded to PINNED`,
+    /// emitted where the OLD and NEW pin state were both in hand; a scheme holds
+    /// no key material now and reads the store live, so there is no pin
+    /// transition left to log. This counter is what replaced it, and it is
+    /// deliberately a POSITIVE reading rather than the absence of a vote-only
+    /// admission: an absence is green whenever certificates merely stopped
+    /// arriving, and this only moves when a seed slot was actually verified.
+    ///
+    /// GLOBAL, NOT PER-EPOCH. The old line carried `epoch=Epoch(N)`; a label here
+    /// would multiply cardinality for a precision no reader needs today — the one
+    /// consumer asserts a `0 -> non-zero` edge over a window in which the node is
+    /// verifying a single epoch. Add the label when a case needs it, with a
+    /// reason.
+    pub seed_verify_ok: Counter,
+    /// Assembled seeds this node could NOT check because it holds no key for the
+    /// epoch — [`fluentbase_bls::oracle::SeedCheck::NoKey`]. The certificate is admitted
+    /// on its multisig quorum alone and nobody consumes its σ.
+    ///
+    /// The consensus-plane twin of `dpos_cert_vote_only_admissions_total`, which
+    /// counts the same condition on the cert-inlet path only. A node with no
+    /// `--cert-upstream` runs no inlet at all, so on a plain validator this is the
+    /// ONLY place the keyless window is visible.
+    pub seed_verify_no_key: Counter,
+    /// Certificate/vote seed checks the oracle refused because the local mint's
+    /// polynomial disagrees with the key attested at that mint
+    /// (`mint_diverges_from_attested`).
+    ///
+    /// The worse half of the two, and it was invisible until now. `share_probe`
+    /// withholds a node whose polynomial diverges but does NOT correct the
+    /// ceremony store, so the divergent entry stays; an oracle reading that store
+    /// directly would judge honest partials under the wrong polynomial, which is
+    /// why the gate exists. Non-zero means the gate is load-bearing on this node
+    /// right now — a diverged local reconstruction (soak 2026-07-14 class) that
+    /// would otherwise be voting.
+    pub seed_material_refused_divergent: Counter,
 }
 
 impl BeaconMetrics {
@@ -240,6 +280,27 @@ impl BeaconMetrics {
             "Epochs a cert-follow follower asked its upstream for and got no artifact for \
              (including an upstream too old to know the method). Not a fault.",
             self.follower_artifact_miss.clone(),
+        );
+        ctx.register(
+            "dpos_seed_verify_ok_total",
+            "Assembled seeds checked against PK_epoch and accepted. The positive edge for \
+             'this epoch's certificates left vote-only admission' — it moves only when a seed \
+             slot was actually verified, never merely because certificates stopped arriving.",
+            self.seed_verify_ok.clone(),
+        );
+        ctx.register(
+            "dpos_seed_verify_no_key_total",
+            "Assembled seeds this node could not check because it holds no key for the epoch. \
+             The certificate is admitted on its multisig quorum alone and nobody consumes its \
+             seed.",
+            self.seed_verify_no_key.clone(),
+        );
+        ctx.register(
+            "dpos_seed_material_refused_divergent_total",
+            "Seed checks refused because the local mint's polynomial disagrees with the key \
+             attested at that mint. Non-zero means a diverged local reconstruction is being \
+             kept out of the vote path on this node.",
+            self.seed_material_refused_divergent.clone(),
         );
     }
 }

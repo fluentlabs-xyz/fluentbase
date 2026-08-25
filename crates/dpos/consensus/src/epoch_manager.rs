@@ -38,7 +38,7 @@ use commonware_runtime::{
     Spawner, Storage,
 };
 use commonware_utils::vec::NonEmptyVec;
-use fluentbase_bls::{fluent_namespace, keys::ValidatorBlsKeypair, Scheme as BlsScheme};
+use fluentbase_bls::{keys::ValidatorBlsKeypair, Scheme as BlsScheme};
 use fluentbase_staking_reader::reader::ValidatorSetSnapshot;
 use futures::future::BoxFuture;
 use prometheus_client::metrics::counter::Counter;
@@ -718,14 +718,15 @@ where
                 // returns before touching it.
                 //
                 // AT the frontier: the live epoch's own entry, which the sweep
-                // refuses by design. It repairs through `reconcile_live` —
-                // `soft_enter` does not short-circuit on a recorded `Role::Verifier`,
-                // so it re-runs the ladder, and `register` accepts an unpinned →
-                // pinned replacement (it refuses only a pin DROP) — but only if
-                // something re-runs it. A member that will PROMOTE gets that edge for
-                // free from `participation_edge`; a node that will NOT promote (not a
-                // member of `committee[E]`, or a share heal that never completes) had
-                // no edge at all and stayed vote-only for the whole life of the epoch.
+                // refuses by design. The registered scheme needs no repair — it reads
+                // the key live through its oracle — so what this arm still owes the
+                // frontier is the ACQUISITION: `reconcile_live` re-runs the ladder,
+                // and `soft_enter` does not short-circuit on a recorded
+                // `Role::Verifier`, so it will. A member that will PROMOTE gets that
+                // edge for free from `participation_edge`; a node that will NOT promote
+                // (not a member of `committee[E]`, or a share heal that never
+                // completes) had no edge at all and stayed vote-only for the whole life
+                // of the epoch.
                 //
                 // This arm CANNOT be the only trigger for the sweep, and that is the
                 // whole reason the boundary arm also sweeps. It fires on a
@@ -937,10 +938,11 @@ where
 
         // Below the live frontier → soft-enter (verify-only scheme, NO engine): a
         // Simplex engine for a stale epoch has no live peers and would drive a dead
-        // fork. Verify-only lets the marshal verify this epoch's certs (with a
-        // `PK_epoch` seed pin when the store or the agreement rung resolves one —
-        // see `soft_enter` → `register_soft_entered` → `BeaconKeys::get_pk` with
-        // the `held` (`AgreedKeys`) rung; else vote-only).
+        // fork. Verify-only lets the marshal verify this epoch's certs — with the
+        // seed slot checked against `PK_epoch` whenever the oracle can resolve it
+        // at the moment the certificate arrives, and vote-only while it cannot.
+        // Nothing about the registered scheme decides that; `repair_keyless_schemes`
+        // is what drives the acquisition for below-frontier epochs.
         if !self.is_live_epoch(epoch) {
             self.soft_enter(epoch, &snap).await;
             self.deferred_spawns.remove(&epoch);
@@ -1218,7 +1220,7 @@ where
                         info!(
                             ?epoch,
                             boundary = boundary.get(),
-                            "below-frontier epoch pinned by a late beacon key — re-driving its \
+                            "below-frontier epoch obtained a late beacon key — re-driving its \
                              finalization fetch"
                         );
                         mailbox.hint_finalized(boundary, targets).await;
@@ -1229,8 +1231,7 @@ where
         let handle = self.context.with_label("repair_sweep").spawn({
             let provider = self.cfg.scheme_pins.clone();
             let randomness = self.cfg.randomness.clone();
-            let namespace = fluent_namespace(self.cfg.chain_id);
-            move |_| run_repair_sweep(wake_rx, provider, randomness, namespace, hint)
+            move |_| run_repair_sweep(wake_rx, provider, randomness, hint)
         });
         (wake_tx, handle)
     }
@@ -1431,46 +1432,41 @@ where
     }
 }
 
-/// Resolve `PK_epoch` through the ONE ladder ([`resolve`]) and register the
-/// verify-only scheme for `epoch`. Returns whether the registered scheme carries
-/// a pin — which is how the beacon-key repair edge tells "this fill upgraded a
-/// pin-less epoch" from "already pinned, nothing to re-drive".
+/// Register the verify-only scheme for `epoch`, bound to that epoch's beacon
+/// oracle.
 ///
-/// The ladder's ORDER is documented on [`BeaconKeys::get_pk`] — do NOT re-derive
-/// it here. Note what it does NOT spend: there is no rung for this node's own
-/// DKG material, because the pin this call sets is write-once and terminal when
-/// wrong while a missing one is a soft degradation — the asymmetry is argued in
-/// full on [`BeaconKeys::get_pk`], and this is the path its docs mean when they
-/// say a locally reconstructed key must not reach a pin unfloored and
-/// value-ungated. The cost is real and accepted: an epoch whose key this node
-/// knows only from its own ceremony registers UNPINNED, so that epoch's certs
-/// take vote-only admission here — for the LIVE epoch, until the process exits,
-/// since [`repair_unpinned_schemes`] excludes everything at or above a frontier
-/// that is raised before any soft-enter.
+/// Returns nothing, and that is the honest signature: it used to report whether
+/// the epoch's key had been pinned, which was a fact the caller acted on. Nothing
+/// is decided here any more — the scheme reads `PK_epoch` live through the oracle
+/// — so the sole caller had nothing left to do with the answer and discarded it.
 ///
-/// A free fn over the pieces so the pin-less-then-pinned upgrade is testable
-/// without standing up the full generic `Actor` (which needs a live marshal, a
-/// slasher and a spec-exec mailbox). The caller keeps the role bookkeeping and
-/// the already-a-Signer guard, which are `Actor` state.
+/// This call resolves NO key. It asks [`Randomness::oracle_for`] for the epoch's
+/// threshold face and hands it to the scheme, which reads `PK_epoch` live through
+/// it on every certificate. A key that is unresolvable at registration time
+/// therefore costs vote-only admission only until it lands — the scheme picks it
+/// up with no re-registration, and there is nothing to repair in the registry.
+/// Acquisition is the separate, off-path job of [`Randomness::ensure_key`], driven
+/// for below-frontier epochs by [`repair_keyless_schemes`].
+///
+/// A free fn over the pieces so registration is testable without standing up the
+/// full generic `Actor` (which needs a live marshal, a slasher and a spec-exec
+/// mailbox). The caller keeps the role bookkeeping and the already-a-Signer
+/// guard, which are `Actor` state.
 async fn register_soft_entered(
     randomness: &dyn Randomness,
     epoch: Epoch,
     snap: &ValidatorSetSnapshot,
     chain_id: u64,
     register: &(dyn Fn(Epoch, BlsScheme) + Send + Sync),
-) -> bool {
-    let cert_seed_pin = randomness.pin_for(epoch.get(), PinEffort::Local).await;
+) {
+    let oracle = randomness.oracle_for(epoch.get());
     debug!(
         ?epoch,
-        pinned = cert_seed_pin.is_some(),
+        beacon_active = oracle.is_some(),
         "soft-enter: registering verify-only scheme"
     );
-    match soft_enter_verifier(snap, chain_id, cert_seed_pin) {
-        Some(scheme) => {
-            register(epoch, scheme);
-            cert_seed_pin.is_some()
-        }
-        None => false,
+    if let Some(scheme) = soft_enter_verifier(snap, chain_id, oracle) {
+        register(epoch, scheme);
     }
 }
 
@@ -1497,15 +1493,15 @@ async fn run_repair_sweep(
     mut wake: watch::Receiver<(Epoch, Epoch)>,
     provider: EpochSchemeProvider,
     randomness: Arc<dyn Randomness>,
-    namespace: Vec<u8>,
     hint: RepairHint,
 ) {
+    let mut hinted = BTreeSet::new();
     loop {
         let (observed, entered) = *wake.borrow_and_update();
-        let upgraded = repair_unpinned_schemes(
+        let upgraded = repair_keyless_schemes(
             &provider,
             randomness.as_ref(),
-            &namespace,
+            &mut hinted,
             observed,
             entered,
         )
@@ -1555,48 +1551,63 @@ async fn run_repair_sweep(
 /// advances `entered` to `E` first, so a live epoch is at or above the frontier
 /// under either input.
 ///
-/// **A pin is write-once and a wrong one is terminal for that epoch on this
-/// node**, so this path asks for the THOROUGH resolution rather than the cheap
-/// one. `apply_pin` refuses an already-pinned entry and nothing re-registers
-/// a below-frontier epoch's scheme, so a locally reconstructed key that diverged
-/// from the network's (soak 2026-07-14) makes the marshal reject every valid
-/// certificate of the epoch for the life of the process — a later `Agreed` write
-/// corrects the STORE and leaves the pin wrong. The promote path can afford to
+/// **A wrong key is terminal for that epoch on this node** — everything reading
+/// the key store treats it as the network's `PK_epoch` — so this path asks for
+/// the THOROUGH resolution rather than the cheap one. A locally reconstructed
+/// key that diverged from the network's (soak 2026-07-14) would make the marshal
+/// reject every valid certificate of the epoch. The promote path can afford to
 /// act on this node's own DKG material because it has a value-gate that demotes
 /// on a mismatch; this path has none and should not grow one.
 ///
 /// That is what [`PinEffort::Thorough`] means here, and it is the whole reason
 /// this call site does not simply reuse the cheap effort the vote paths use.
 /// WHICH provenance it admits and which it refuses is stated once, inside
-/// [`Randomness::pin_for`] — deliberately not restated here, because a rule
+/// [`Randomness::ensure_key`] — deliberately not restated here, because a rule
 /// written in two places is a rule that will be changed in one.
-async fn repair_unpinned_schemes(
+/// `hinted` is the sweep's OWN memo of epochs it has already re-driven, and it
+/// has to exist now: the pin it used to apply was write-once, so `apply_pin`
+/// returning `true` exactly once WAS the dedup. A key store is idempotent — it
+/// cannot tell the caller that this write was the first — so the "hint once per
+/// epoch" rule needs somewhere of its own to live, or every wake re-hints every
+/// resolvable epoch for as long as one stays keyless.
+///
+/// The memo is bounded by the registry, not by time: it is intersected with the
+/// candidate list on every pass, so an epoch that ages out of
+/// [`crate::SCHEME_RETENTION_EPOCHS`] leaves it too.
+async fn repair_keyless_schemes(
     provider: &EpochSchemeProvider,
     randomness: &dyn Randomness,
-    namespace: &[u8],
+    hinted: &mut BTreeSet<Epoch>,
     observed: Epoch,
     entered: Epoch,
 ) -> Vec<Epoch> {
     let frontier = observed.max(entered);
+    let candidates = provider.verifier_epochs();
     let mut upgraded = Vec::new();
-    for epoch in provider.unpinned_epochs() {
-        if epoch >= frontier {
+    for &epoch in candidates.iter().filter(|e| **e < frontier) {
+        if hinted.contains(&epoch) {
             continue;
         }
+        // The work list is keyed on the KEY STORE rather than on the scheme: a
+        // scheme reads its epoch key live through its oracle, so there is nothing
+        // to repair in the registry and an epoch already resolvable locally costs
+        // no network. `Local` is not merely a probe — it RESOLVES, and what it
+        // resolves is written into the store the oracle reads.
+        //
         // `Thorough` carries the provenance floor and the network rung; both are
-        // the provider's business now — see this function's docs for why the
-        // floor is mandatory on a path whose write is terminal.
-        let Some(pk) = randomness.pin_for(epoch.get(), PinEffort::Thorough).await else {
+        // the provider's business — see this function's docs for why the floor is
+        // mandatory on a path whose write is terminal.
+        if !randomness.ensure_key(epoch.get(), PinEffort::Local).await
+            && !randomness
+                .ensure_key(epoch.get(), PinEffort::Thorough)
+                .await
+        {
             continue;
-        };
-        // `upgraded` is "epochs this call PINNED", not "epochs that need a
-        // re-drive": an epoch registered pin-less whose key never arrives is
-        // dropped by the `continue` above and produces no hint at all — the
-        // follower case, which is a separate ticket.
-        if provider.apply_pin(epoch, pk, namespace) {
-            upgraded.push(epoch);
         }
+        hinted.insert(epoch);
+        upgraded.push(epoch);
     }
+    hinted.retain(|e| candidates.contains(e));
     upgraded
 }
 
@@ -1751,27 +1762,22 @@ mod tests {
         beacon::BeaconResolve,
         outer::EpochSchemeProvider,
         scheme::epoch_committee_from_snapshot,
-        Digest,
     };
     use alloy_primitives::{Address, B256};
     use commonware_codec::DecodeExt;
+    use commonware_consensus::simplex::types::{Proposal, Subject};
+    use commonware_consensus::types::{Round as SimplexRound, View};
+    use commonware_cryptography::sha256::Digest as Sha256Digest;
     use commonware_cryptography::{
         bls12381::{dkg::deal_anonymous, primitives::variant::MinSig},
-        certificate::Provider as _,
         ed25519::PrivateKey as Ed25519PrivateKey,
         Signer,
     };
     use commonware_math::algebra::Random as _;
-    use commonware_runtime::{deterministic, Runner as _};
+    use commonware_parallel::Sequential;
     use commonware_utils::{test_rng, N3f1, NZU32};
     use fluentbase_bls::beacon::GroupPublic;
 
-    /// A provider under the production rule — the same predicate `apply_pin`
-    /// refuses on, so these tests exercise the shipped refusal rather than a
-    /// convenient one.
-    fn test_provider() -> EpochSchemeProvider {
-        EpochSchemeProvider::new(Arc::new(|e: u64| e >= DETERMINISTIC_BOOTSTRAP_EPOCH))
-    }
     use fluentbase_bls::scheme::build_signer;
     use fluentbase_bls::BlsPubkey;
     use fluentbase_staking_reader::reader::{ConsensusKeys, ValidatorWithKeys};
@@ -1823,305 +1829,6 @@ mod tests {
         }
     }
 
-    /// The repair this phase exists for: an epoch soft-entered while `PK_E` was
-    /// unresolvable registers a PIN-LESS verifier, and a key landing afterwards
-    /// must upgrade it. Both halves have to hold — `soft_enter` has to re-resolve
-    /// off the shared store rather than remember its earlier miss, AND
-    /// `EpochSchemeProvider::register` has to accept the replacement (it does: same
-    /// committee, verifier→verifier, and the monotonicity guard blocks only the
-    /// opposite direction).
-    #[tokio::test]
-    async fn a_pin_less_soft_enter_is_upgraded_by_a_key_that_arrives_later() {
-        let epoch = Epoch::new(9);
-        let snap = ValidatorSetSnapshot {
-            block_hash: B256::repeat_byte(0x11),
-            block_number: 42,
-            epoch: epoch.get(),
-            validators: (0..4u8)
-                .map(|i| {
-                    let mut rng = StdRng::seed_from_u64(i as u64);
-                    ValidatorWithKeys {
-                        address: Address::repeat_byte(i),
-                        keys: ConsensusKeys {
-                            bls_pubkey: BlsPubkey::decode(
-                                ValidatorBlsKeypair::generate(&mut rng)
-                                    .public_bytes()
-                                    .as_slice(),
-                            )
-                            .unwrap(),
-                            peer_pubkey: Ed25519PrivateKey::random(&mut rng).public_key(),
-                            activation_epoch: 1,
-                        },
-                        tombstoned: false,
-                    }
-                })
-                .collect(),
-            weights: None,
-        };
-        let store = BeaconKeys::new();
-        let provider = test_provider();
-        let register = {
-            let provider = provider.clone();
-            move |e: Epoch, scheme: BlsScheme| provider.register(e, scheme)
-        };
-        let pinned_now = || provider.scoped(epoch).expect("registered").is_seed_pinned();
-
-        // Nothing resolvable anywhere: registered, vote-only.
-        assert!(
-            !register_soft_entered(
-                randomness_over(store.clone(), None, None).as_ref(),
-                epoch,
-                &snap,
-                1,
-                &register
-            )
-            .await,
-            "an unresolvable key must register pin-less, not skip the epoch"
-        );
-        assert!(!pinned_now());
-
-        // The key lands — via the agreement write-back or a DKG share — and the
-        // SAME call path now pins. Nothing re-ran an artifact read; the store rung
-        // answered.
-        let (sharing, _) =
-            deal_anonymous::<MinSig, N3f1>(&mut test_rng(), Default::default(), NZU32!(4));
-        store.set_pk(epoch.get(), *sharing.public(), KeySource::Agreed);
-        assert!(
-            register_soft_entered(
-                randomness_over(store.clone(), None, None).as_ref(),
-                epoch,
-                &snap,
-                1,
-                &register
-            )
-            .await,
-            "the late key must be picked up by the next soft-enter"
-        );
-        assert!(
-            pinned_now(),
-            "and the provider must accept the pin-less → pinned replacement"
-        );
-    }
-
-    /// The TRIGGER half of the same repair, and the half nothing else covers.
-    /// The test above proves the ladder upgrades a pin-less entry once something
-    /// re-runs it; this proves the key edge is what re-runs it on a node that has
-    /// no other edge. The repair sweep refuses the live epoch by design
-    /// ([`repair_unpinned_schemes`] skips `epoch >= frontier`), and the
-    /// participation / `spawn_unblocked` edges only ever fire on a node headed for
-    /// a promotion — so a NON-MEMBER holds a vote-only scheme for the whole life
-    /// of the epoch unless the key edge itself reconciles.
-    ///
-    /// The stand-up is the real [`Actor`] because the trigger IS the `select!`
-    /// arm: no free function sits between `key_edge()` and `soft_enter`, so a
-    /// test that did not drive the loop could only re-assert the tail the test
-    /// above already owns.
-    ///
-    /// Reds if the `key_edge` arm goes back to waking the sweep alone.
-    #[test]
-    fn a_key_landing_pins_the_live_epoch_on_a_node_that_never_promotes() {
-        let epoch = Epoch::new(9);
-        deterministic::Runner::default().start(|context| async move {
-            // `repair_fixture`'s committee is 4 keypairs seeded 0x5EED..; `me` is
-            // seeded 0xF100, so this node is not in it and `reconcile_roles`
-            // takes the `Role::Verifier` arm on every edge.
-            let (snap, _) = repair_fixture(epoch);
-            let store = BeaconKeys::new();
-            let randomness = randomness_over(store.clone(), None, None);
-            let provider = test_provider();
-
-            let (actor, boundary_tx) = Actor::new(
-                context.clone(),
-                non_member_config(&context, &randomness, &provider).await,
-            );
-            // The plane's forwarder, held open: the manager exits when it closes.
-            let (_vote_backup_tx, vote_backup_rx) = mpsc::channel(1);
-            let manager = actor.start::<StubSender, StubReceiver>(None, vote_backup_rx);
-
-            // The boundary delivery is the only edge that carries a snapshot, so
-            // it is what puts this epoch in `latest_live` for every later edge to
-            // reconcile against.
-            boundary_tx
-                .send((epoch, snap))
-                .await
-                .expect("the manager is up");
-            settle(&context).await;
-            // `is_pinned` resolves through `scoped().expect("registered")`, so this
-            // also pins that the boundary delivery registered the epoch at all —
-            // the state the repair has to move off.
-            assert!(
-                !is_pinned(&provider, epoch),
-                "with no key resolvable anywhere the live epoch must register \
-                 vote-only"
-            );
-
-            store.set_pk(epoch.get(), some_group_key(), KeySource::Agreed);
-            settle(&context).await;
-            assert!(
-                is_pinned(&provider, epoch),
-                "the key edge must re-run the live epoch's ladder; the sweep it also \
-                 wakes cannot, because the live epoch is at the frontier"
-            );
-            manager.abort();
-        });
-    }
-
-    /// `Blocker` for the stand-up: the manager only hands one to a per-epoch
-    /// engine, and a node that never promotes spawns none.
-    #[derive(Clone)]
-    struct NoBlocker;
-    impl Blocker for NoBlocker {
-        type PublicKey = PublicKey;
-        async fn block(&mut self, _peer: PublicKey) {}
-    }
-
-    #[derive(Clone)]
-    struct NoChain;
-    impl ExecutedChain for NoChain {
-        fn executed_tip(&self) -> u64 {
-            0
-        }
-        fn spec_executed_hash(&self, _height: u64) -> Option<B256> {
-            None
-        }
-        fn finalized_executed_hash(&self, _height: u64) -> Option<B256> {
-            None
-        }
-    }
-
-    struct NoTxs;
-    impl OrderingAssembler for NoTxs {
-        fn assemble(
-            &self,
-            _height: u64,
-            _gas_limit: u64,
-            _byte_budget: usize,
-        ) -> Vec<reth_ethereum_primitives::TransactionSigned> {
-            Vec::new()
-        }
-        fn observe_finalized(&self, _block: &OrderBlock) {}
-    }
-
-    type StubSender = commonware_p2p::simulated::Sender<PublicKey, deterministic::Context>;
-    type StubReceiver = commonware_p2p::simulated::Receiver<PublicKey>;
-
-    /// Give the manager's task the CPU. The deterministic runtime only advances
-    /// another task while this one is parked, and a virtual millisecond is the
-    /// smallest park that always yields.
-    async fn settle(context: &deterministic::Context) {
-        for _ in 0..64 {
-            context.sleep(std::time::Duration::from_millis(1)).await;
-        }
-    }
-
-    /// Config for a node that will never promote: no signer keypair, so
-    /// `reconcile_roles` cannot reach `Role::Signer` whatever the committee says.
-    ///
-    /// Everything below the manager is a stub EXCEPT the marshal mailbox, which
-    /// has no constructor outside `marshal::core::Actor::init` — so the two
-    /// archives are real. The marshal actor itself is dropped rather than
-    /// started: the non-member path never reaches `boundary_lookup`, the only
-    /// site that sends on that mailbox.
-    async fn non_member_config(
-        context: &deterministic::Context,
-        randomness: &Arc<dyn Randomness>,
-        provider: &EpochSchemeProvider,
-    ) -> Config<NoBlocker, NoChain, NoTxs> {
-        let prefix = "epoch-manager-key-edge";
-        let page_cache = CacheRef::from_pooler(
-            context,
-            crate::outer::PAGE_CACHE_PAGE_SIZE,
-            crate::outer::PAGE_CACHE_CAPACITY,
-        );
-        let (_marshal, marshal_mailbox, _) = commonware_consensus::marshal::core::Actor::<
-            _,
-            Standard<OrderBlock>,
-            _,
-            _,
-            _,
-            _,
-            _,
-            commonware_utils::acknowledgement::Exact,
-        >::init(
-            context.with_label("marshal"),
-            crate::outer::init_finalizations_archive(context, prefix, page_cache.clone()).await,
-            crate::outer::init_finalized_blocks_archive(context, prefix).await,
-            commonware_consensus::marshal::Config {
-                provider: provider.clone(),
-                epocher: OriginEpocher::new(0, commonware_utils::NZU64!(100)),
-                partition_prefix: prefix.to_string(),
-                mailbox_size: 16,
-                view_retention_timeout: commonware_consensus::types::ViewDelta::new(100),
-                prunable_items_per_section: commonware_utils::NZU64!(4_096),
-                page_cache: page_cache.clone(),
-                replay_buffer: crate::REPLAY_BUFFER,
-                key_write_buffer: crate::WRITE_BUFFER,
-                value_write_buffer: crate::WRITE_BUFFER,
-                block_codec_config: (),
-                max_repair: crate::outer::MAX_REPAIR,
-                max_pending_acks: crate::outer::MAX_PENDING_ACKS,
-                strategy: commonware_parallel::Sequential,
-            },
-        )
-        .await;
-
-        let (executor_tx, _executor_rx) = tokio::sync::mpsc::unbounded_channel();
-        let executor = crate::executor::Mailbox::new_for_test(executor_tx);
-        let (slash_tx, _slash_rx) = tokio::sync::mpsc::unbounded_channel();
-
-        Config {
-            me: distinct_keys(1).remove(0),
-            blocker: NoBlocker,
-            chain_id: 1,
-            epocher: OriginEpocher::new(0, commonware_utils::NZU64!(100)),
-            signer_keypair: None,
-            app: FluentApp::new(
-                OrderBlock {
-                    parent: Digest(B256::ZERO),
-                    height: 0,
-                    proposal_view: 0,
-                    timestamp: 0,
-                    fee_recipient: Address::ZERO,
-                    gas_limit: 30_000_000,
-                    extra_data: alloy_primitives::Bytes::new(),
-                    result: B256::ZERO,
-                    txs: Vec::new(),
-                    parent_seed: None,
-                    equivocation: None,
-                },
-                executor.clone(),
-                Arc::new(|_| {}),
-                NoChain,
-                Arc::new(NoTxs),
-                Address::ZERO,
-                30_000_000,
-                0,
-                1,
-                None,
-                crate::slasher::TombstoneSet::default(),
-            ),
-            timeouts: ConsensusTimeouts::fluent_1s(),
-            mailbox_size: 16,
-            randomness: randomness.clone(),
-            spawn_unblocked: Arc::new(Notify::new()),
-            safety_halt: crate::sync_metrics::SafetyHalt::default(),
-            marshal_mailbox,
-            peers_for_finalization: Arc::new(|| None),
-            slasher_mailbox: crate::slasher::ingress::test_only_mailbox(slash_tx),
-            spec_exec_mailbox: crate::spec_exec::Mailbox::new(executor, randomness.clone()),
-            epoch_metrics: EpochEngineMetrics::default(),
-            page_cache,
-            register_scheme: {
-                let provider = provider.clone();
-                Arc::new(move |epoch, scheme| provider.register(epoch, scheme))
-            },
-            scheme_pins: provider.clone(),
-            soft_enter_span: Arc::new(|_, to| Box::pin(async move { to })),
-            #[cfg(feature = "dpos-devnet-byzantine")]
-            byzantine: None,
-        }
-    }
-
     /// Committee fixture for the repair-sweep tests. Returns the snapshot and the
     /// BLS keypairs behind it, because one test has to build a SIGNER scheme and
     /// that needs a keypair the committee actually contains.
@@ -2138,6 +1845,8 @@ mod tests {
             keys: store,
             verify: None,
             resolver: Arc::new(|_| BeaconResolve::Absent),
+            ceremony: Arc::new(std::sync::RwLock::new(std::collections::BTreeMap::new())),
+            dkg_qual: Arc::new(|_| Some(false)),
             held,
             pull,
             participation: Arc::new(tokio::sync::Notify::new()),
@@ -2195,51 +1904,197 @@ mod tests {
         *sharing.public()
     }
 
-    fn register_pin_less(provider: &EpochSchemeProvider, epoch: Epoch) {
+    /// Register `epoch` the way the bulk catch-up span does — straight into the
+    /// provider, touching neither `roles` nor any epoch-manager state.
+    ///
+    /// It takes the randomness handle for the same reason the span itself does:
+    /// the scheme's verification strength comes from the oracle
+    /// [`Randomness::oracle_for`] attaches, and a fixture that hardcoded `None`
+    /// would build a scheme permanently pinned to vote-only admission — which is
+    /// exactly the regression the sweep tests were green on.
+    fn register_verifier(provider: &EpochSchemeProvider, epoch: Epoch, r: &dyn Randomness) {
         let (snap, _) = repair_fixture(epoch);
-        let scheme = soft_enter_verifier(&snap, 1, None).expect("valid committee");
+        let scheme =
+            soft_enter_verifier(&snap, 1, r.oracle_for(epoch.get())).expect("valid committee");
         provider.register(epoch, scheme);
     }
 
-    fn is_pinned(provider: &EpochSchemeProvider, epoch: Epoch) -> bool {
-        provider.scoped(epoch).expect("registered").is_seed_pinned()
+    /// A finalization certificate over `epoch`'s committee whose multisig half is
+    /// GENUINE and whose seed slot carries a signature from an unrelated dealing.
+    ///
+    /// Both halves matter. The multisig quorum has to verify, or the seed arm is
+    /// never reached and the test would pass for the wrong reason; the seed has
+    /// to be a well-formed G1 point, or it would be refused as garbage rather
+    /// than as the wrong seed.
+    fn cert_with_a_foreign_seed(
+        epoch: Epoch,
+    ) -> (
+        Proposal<Sha256Digest>,
+        fluentbase_bls::combined_scheme::CombinedCertificate,
+    ) {
+        use commonware_cryptography::certificate::Scheme as _;
+        let (snap, keypairs) = repair_fixture(epoch);
+        let committee = epoch_committee_from_snapshot(&snap).expect("valid committee");
+        let ns = fluentbase_bls::fluent_namespace(1);
+        let signers: Vec<_> = keypairs
+            .iter()
+            .map(|kp| {
+                build_signer(&ns, committee.bimap.clone(), kp, epoch.get(), None)
+                    .expect("committee member")
+            })
+            .collect();
+
+        let proposal = Proposal::new(
+            SimplexRound::new(epoch, View::new(9)),
+            View::new(8),
+            Sha256Digest::decode([7u8; 32].as_slice()).unwrap(),
+        );
+        let subject = Subject::Finalize {
+            proposal: &proposal,
+        };
+        let atts: Vec<_> = signers
+            .iter()
+            .map(|s| s.sign::<Sha256Digest>(subject).expect("sign"))
+            .collect();
+        let mut cert = signers[0]
+            .assemble::<_, N3f1>(atts, &Sequential)
+            .expect("assemble");
+
+        // One member's partial from a DIFFERENT dealing: a real G1 signature over
+        // the right round under the wrong group.
+        let (_, shares) =
+            deal_anonymous::<MinSig, N3f1>(&mut test_rng(), Default::default(), NZU32!(4));
+        cert.seed = Some(
+            fluentbase_bls::beacon::sign_seed_partial(
+                &shares[0],
+                &fluentbase_bls::beacon::seed_namespace(&ns),
+                SimplexRound::new(epoch, View::new(9)),
+            )
+            .value,
+        );
+        (proposal, cert)
     }
 
-    /// The sweep runs on EVERY boundary delivery, so the steady state — nothing
-    /// unpinned — has to cost nothing. If it did not, the boundary edge would be
-    /// the wrong place to drive it and the key wake would be the only affordable
-    /// trigger, which is the arrangement this phase exists to replace (that wake
-    /// never fires at all for a node with no DKG material on a stable chain).
+    /// THE PROPERTY THE SWEEP EXISTS FOR, asserted on the SCHEME instead of on
+    /// the sweep's return value.
     ///
-    /// Reds if the sweep ever resolves for an epoch it cannot pin: the walk here
-    /// panics if consulted, and an all-pinned provider must never consult it.
+    /// `upgraded == vec![epoch]` is what every other sweep test checks, and it is
+    /// satisfied by a sweep that resolved a key no registered scheme can read —
+    /// which is precisely what a span-registered `oracle: None` verifier was.
+    /// Here the same `Arc<BlsScheme>` handle is interrogated before and after the
+    /// key lands: it must ADMIT the foreign seed while the epoch is keyless (the
+    /// certificate is still carried by a genuine multisig quorum, and refusing
+    /// would punish the sender for a local miss) and REFUSE it once `PK_epoch` is
+    /// in the store — with NO re-registration in between, which is the whole
+    /// point of the oracle reading live state.
     #[tokio::test]
-    async fn a_sweep_with_nothing_to_repair_is_a_no_op() {
-        let epoch = Epoch::new(5);
-        let (snap, _) = repair_fixture(epoch);
-        let provider = test_provider();
-        provider.register(
-            epoch,
-            soft_enter_verifier(&snap, 1, Some(some_group_key())).expect("valid committee"),
+    async fn the_registered_scheme_starts_refusing_a_foreign_seed_when_the_key_lands() {
+        use commonware_cryptography::certificate::{Provider as _, Scheme as _};
+        let epoch = Epoch::new(DETERMINISTIC_BOOTSTRAP_EPOCH + 3);
+        let store = BeaconKeys::new();
+        let r = randomness_over(store.clone(), None, None);
+        let provider = EpochSchemeProvider::new();
+        register_verifier(&provider, epoch, r.as_ref());
+
+        let scheme = provider.scoped(epoch).expect("registered");
+        assert!(
+            scheme.is_beacon_active(),
+            "the span-shaped registration must attach the epoch's oracle — without \
+             one the epoch is vote-only for the life of the process and nothing \
+             below can ever change"
         );
+
+        let (proposal, cert) = cert_with_a_foreign_seed(epoch);
+        let subject = Subject::Finalize {
+            proposal: &proposal,
+        };
+        let mut rng = StdRng::seed_from_u64(0x5EA1);
+        assert!(
+            scheme.verify_certificate::<_, Sha256Digest, N3f1>(
+                &mut rng,
+                subject,
+                &cert,
+                &Sequential
+            ),
+            "keyless: NoKey admits on the multisig quorum alone"
+        );
+
+        store.set_pk(epoch.get(), some_group_key(), KeySource::Agreed);
+        assert_eq!(
+            repair_keyless_schemes(
+                &provider,
+                r.as_ref(),
+                &mut BTreeSet::new(),
+                Epoch::new(epoch.get() + 2),
+                Epoch::new(0),
+            )
+            .await,
+            vec![epoch],
+        );
+
+        assert!(
+            !scheme.verify_certificate::<_, Sha256Digest, N3f1>(
+                &mut rng,
+                subject,
+                &cert,
+                &Sequential
+            ),
+            "keyed: the same registry entry now judges the seed slot and refuses \
+             a seed that is not this epoch's"
+        );
+    }
+
+    /// The sweep runs on EVERY boundary delivery, so the steady state — every
+    /// epoch's key already held and already hinted — has to cost nothing.
+    ///
+    /// Reds if the sweep ever spends the network rung on an epoch whose key the
+    /// store already holds: the pull here panics if consulted. Reds too if the
+    /// hint memo stops holding, which would re-drive a finalization fetch per
+    /// epoch on every boundary for as long as anything stays keyless.
+    #[tokio::test]
+    async fn a_sweep_over_held_keys_spends_no_network_and_hints_once() {
+        let epoch = Epoch::new(5);
+        let provider = EpochSchemeProvider::new();
+        // "Nothing to repair" now means the KEY STORE holds the epoch's key, not
+        // that the scheme carries a pin.
+        let store = BeaconKeys::new();
+        store.set_pk(epoch.get(), some_group_key(), KeySource::Agreed);
 
         let exploding = AgreedKeys::new(
             Arc::new(|_| {
-                Box::pin(async { panic!("an already-pinned epoch must not be resolved for") })
+                Box::pin(async { panic!("an epoch whose key is held must not be resolved for") })
             }),
             Arc::new(|_| Some(true)),
         );
+        let r = randomness_over(store, Some(exploding), None);
+        register_verifier(&provider, epoch, r.as_ref());
+        let mut hinted = BTreeSet::new();
 
-        let upgraded = repair_unpinned_schemes(
-            &provider,
-            randomness_over(BeaconKeys::new(), Some(exploding), None).as_ref(),
-            &fluent_namespace(1),
-            Epoch::new(7),
-            Epoch::new(0),
-        )
-        .await;
-
-        assert!(upgraded.is_empty());
+        assert_eq!(
+            repair_keyless_schemes(
+                &provider,
+                r.as_ref(),
+                &mut hinted,
+                Epoch::new(7),
+                Epoch::new(0),
+            )
+            .await,
+            vec![epoch],
+            "the first pass still re-drives the epoch once — it may have been \
+             admitting certificates vote-only before the key landed"
+        );
+        assert!(
+            repair_keyless_schemes(
+                &provider,
+                r.as_ref(),
+                &mut hinted,
+                Epoch::new(7),
+                Epoch::new(0),
+            )
+            .await
+            .is_empty(),
+            "and every pass after it is inert"
+        );
     }
 
     /// The scope half of the gap this phase closes. The edge this replaces looked
@@ -2248,94 +2103,104 @@ mod tests {
     /// for the OLDER of two unpinned epochs is the one that resolves; a sweep
     /// scoped to the newest would report nothing.
     ///
-    /// Reds if `unpinned_epochs()` is narrowed back to a single entry.
+    /// Reds if `verifier_epochs()` is narrowed back to a single entry.
     #[tokio::test]
     async fn the_sweep_repairs_every_unpinned_epoch_not_just_the_newest() {
         let (older, newer) = (Epoch::new(5), Epoch::new(6));
-        let provider = test_provider();
-        register_pin_less(&provider, older);
-        register_pin_less(&provider, newer);
-
+        let provider = EpochSchemeProvider::new();
         let store = BeaconKeys::new();
         store.set_pk(older.get(), some_group_key(), KeySource::Agreed);
+        let r = randomness_over(store.clone(), None, None);
+        register_verifier(&provider, older, r.as_ref());
+        register_verifier(&provider, newer, r.as_ref());
 
-        let upgraded = repair_unpinned_schemes(
+        let upgraded = repair_keyless_schemes(
             &provider,
-            randomness_over(store.clone(), None, None).as_ref(),
-            &fluent_namespace(1),
+            r.as_ref(),
+            &mut BTreeSet::new(),
             Epoch::new(7),
             Epoch::new(0),
         )
         .await;
 
         assert_eq!(upgraded, vec![older]);
-        assert!(is_pinned(&provider, older));
-        assert!(
-            !is_pinned(&provider, newer),
-            "an epoch whose key is still unresolvable must stay unpinned, not \
-             inherit its neighbour's"
-        );
     }
 
-    /// `verify_certificate` reads pin presence as "this epoch is beacon-active"
-    /// and rejects every SEEDLESS certificate under it. Pre-bootstrap epochs are
-    /// legitimately seedless, so a pin there rejects the whole epoch. Before the
-    /// sweep existed this held only because no pin source reached that far back.
+    /// `verify_certificate` reads ORACLE presence as "this epoch is
+    /// beacon-active" and rejects every SEEDLESS certificate under it.
+    /// Pre-bootstrap epochs are legitimately seedless, so both halves have to
+    /// stay away from them: `ensure_key` must not resolve a key there, and
+    /// `oracle_for` must not attach an oracle there.
     ///
-    /// Reds if the `DETERMINISTIC_BOOTSTRAP_EPOCH` guard leaves `apply_pin`.
+    /// Reds if the `DETERMINISTIC_BOOTSTRAP_EPOCH` guard leaves either.
     #[tokio::test]
     async fn the_sweep_never_pins_below_the_bootstrap_epoch() {
+        use commonware_cryptography::certificate::Provider as _;
         let pre_beacon = Epoch::new(DETERMINISTIC_BOOTSTRAP_EPOCH - 1);
-        let provider = test_provider();
-        register_pin_less(&provider, pre_beacon);
-
+        let provider = EpochSchemeProvider::new();
         let store = BeaconKeys::new();
         store.set_pk(pre_beacon.get(), some_group_key(), KeySource::Agreed);
+        let r = randomness_over(store.clone(), None, None);
+        register_verifier(&provider, pre_beacon, r.as_ref());
+        assert!(
+            !provider
+                .scoped(pre_beacon)
+                .expect("registered")
+                .is_beacon_active(),
+            "and no oracle is attached below the bootstrap epoch either — an \
+             oracle IS the beacon-active claim, and it would reject every legal \
+             seedless certificate of a pre-beacon epoch"
+        );
 
-        let upgraded = repair_unpinned_schemes(
+        let upgraded = repair_keyless_schemes(
             &provider,
-            randomness_over(store.clone(), None, None).as_ref(),
-            &fluent_namespace(1),
+            r.as_ref(),
+            &mut BTreeSet::new(),
             Epoch::new(7),
             Epoch::new(0),
         )
         .await;
 
         assert!(upgraded.is_empty());
-        assert!(!is_pinned(&provider, pre_beacon));
     }
 
-    /// A signer's scheme is built by its own engine from its own beacon material.
-    /// Pinning underneath it makes this sweep a second writer of that field, and
-    /// — because `register` refuses a replacement that drops a pin — it would
-    /// then block the engine's own registration whenever the signer is
-    /// share-less and therefore builds an unpinned scheme.
+    /// A signer's engine resolves its own epoch key through the promote gates,
+    /// which have a value-gate this sweep does not: the sweep's `Thorough` rung
+    /// writes what it resolves into the shared store as the network's
+    /// `PK_epoch`, and a wrong one there rejects every legal certificate of the
+    /// epoch. Under an engine that already judged its own material, spending
+    /// that rung is redundant work with a terminal failure mode.
     ///
-    /// Reds if the `me().is_none()` filter leaves `unpinned_epochs()`.
+    /// Reds if the `me().is_none()` filter leaves `verifier_epochs()`.
     #[tokio::test]
     async fn the_sweep_never_touches_a_signer_scheme() {
         let epoch = Epoch::new(5);
         let (snap, keypairs) = repair_fixture(epoch);
         let committee = epoch_committee_from_snapshot(&snap).expect("valid committee");
-        let signer = build_signer(&fluent_namespace(1), committee.bimap, &keypairs[0], None)
-            .expect("keypair is a committee member");
-        let provider = test_provider();
+        let signer = build_signer(
+            &fluentbase_bls::fluent_namespace(1),
+            committee.bimap,
+            &keypairs[0],
+            epoch.get(),
+            None,
+        )
+        .expect("keypair is a committee member");
+        let provider = EpochSchemeProvider::new();
         provider.register(epoch, signer);
 
         let store = BeaconKeys::new();
         store.set_pk(epoch.get(), some_group_key(), KeySource::Agreed);
 
-        let upgraded = repair_unpinned_schemes(
+        let upgraded = repair_keyless_schemes(
             &provider,
             randomness_over(store.clone(), None, None).as_ref(),
-            &fluent_namespace(1),
+            &mut BTreeSet::new(),
             Epoch::new(7),
             Epoch::new(0),
         )
         .await;
 
         assert!(upgraded.is_empty());
-        assert!(!is_pinned(&provider, epoch));
     }
 
     /// The coverage the provider-sourced work list buys over an epoch-manager
@@ -2348,16 +2213,16 @@ mod tests {
     #[tokio::test]
     async fn a_span_registered_epoch_is_repairable() {
         let epoch = Epoch::new(5);
-        let provider = test_provider();
-        register_pin_less(&provider, epoch);
-
+        let provider = EpochSchemeProvider::new();
         let store = BeaconKeys::new();
         store.set_pk(epoch.get(), some_group_key(), KeySource::Agreed);
+        let r = randomness_over(store.clone(), None, None);
+        register_verifier(&provider, epoch, r.as_ref());
 
-        let upgraded = repair_unpinned_schemes(
+        let upgraded = repair_keyless_schemes(
             &provider,
-            randomness_over(store.clone(), None, None).as_ref(),
-            &fluent_namespace(1),
+            r.as_ref(),
+            &mut BTreeSet::new(),
             Epoch::new(7),
             Epoch::new(0),
         )
@@ -2376,20 +2241,18 @@ mod tests {
     #[tokio::test]
     async fn the_sweep_reaches_below_an_entered_epoch_with_no_corroborated_frontier() {
         let epoch = Epoch::new(5);
-        let provider = test_provider();
-        register_pin_less(&provider, epoch);
-
+        let provider = EpochSchemeProvider::new();
         let store = BeaconKeys::new();
         store.set_pk(epoch.get(), some_group_key(), KeySource::Agreed);
 
-        let namespace = fluent_namespace(1);
         let r = randomness_over(store.clone(), None, None);
+        register_verifier(&provider, epoch, r.as_ref());
         let never_corroborated = Epoch::new(0);
         assert!(
-            repair_unpinned_schemes(
+            repair_keyless_schemes(
                 &provider,
                 r.as_ref(),
-                &namespace,
+                &mut BTreeSet::new(),
                 never_corroborated,
                 Epoch::new(0),
             )
@@ -2402,58 +2265,49 @@ mod tests {
 
         // The boundary for epoch 6 lands and `reconcile_roles` enters it.
         assert_eq!(
-            repair_unpinned_schemes(
+            repair_keyless_schemes(
                 &provider,
                 r.as_ref(),
-                &namespace,
+                &mut BTreeSet::new(),
                 never_corroborated,
                 Epoch::new(6),
             )
             .await,
             vec![epoch]
         );
-        assert!(is_pinned(&provider, epoch));
     }
 
     /// The caller re-drives a marshal fetch per returned epoch, so the return
-    /// value has to be the unpinned→pinned TRANSITION and not "every epoch I
-    /// looked at". Otherwise every trigger re-hints for as long as anything is
-    /// unpinned, and on a catch-up node that is every boundary.
+    /// value has to be the keyless→keyed TRANSITION and not "every epoch I looked
+    /// at". Otherwise every trigger re-hints for as long as anything is keyless,
+    /// and on a catch-up node that is every boundary.
     ///
-    /// Reds if `apply_pin` stops refusing an already-pinned entry.
+    /// The write-once pin used to give this for free. It is the `hinted` memo
+    /// now, and this is the test that says so.
     #[tokio::test]
     async fn a_repaired_epoch_re_drives_its_finalization_hint_exactly_once() {
         let epoch = Epoch::new(5);
-        let provider = test_provider();
-        register_pin_less(&provider, epoch);
-
+        let provider = EpochSchemeProvider::new();
         let store = BeaconKeys::new();
         store.set_pk(epoch.get(), some_group_key(), KeySource::Agreed);
 
-        let namespace = fluent_namespace(1);
         let r = randomness_over(store.clone(), None, None);
-        let sweep = || {
-            repair_unpinned_schemes(
-                &provider,
-                r.as_ref(),
-                &namespace,
-                Epoch::new(7),
-                Epoch::new(0),
-            )
+        register_verifier(&provider, epoch, r.as_ref());
+        let mut hinted = BTreeSet::new();
+        let sweep = async |hinted: &mut BTreeSet<Epoch>| {
+            repair_keyless_schemes(&provider, r.as_ref(), hinted, Epoch::new(7), Epoch::new(0))
+                .await
         };
-        assert_eq!(sweep().await, vec![epoch]);
-        assert_eq!(sweep().await, Vec::<Epoch>::new());
-        assert!(is_pinned(&provider, epoch));
+        assert_eq!(sweep(&mut hinted).await, vec![epoch]);
+        assert_eq!(sweep(&mut hinted).await, Vec::<Epoch>::new());
     }
 
-    /// The sweep's pin is WRITE-ONCE (`apply_pin` refuses an already-pinned
-    /// entry) and nothing re-registers a below-frontier scheme, so a pin taken
-    /// from a key this node reconstructed itself is terminal for that epoch on
-    /// this node if the reconstruction diverged (soak 2026-07-14) — every valid
-    /// certificate of the epoch rejects, and the later `Agreed` write that
-    /// corrects the STORE leaves the pin wrong. Dropping the own-DKG rung does
-    /// NOT prevent that: W1/W3 write the same locally derived key into the shared
-    /// store, and the store rung answers before `held`/`pull` are consulted.
+    /// Everything that verifies a certificate of an epoch reads its key from the
+    /// shared store, so a key this node reconstructed ITSELF and got wrong (soak
+    /// 2026-07-14) makes every valid certificate of that epoch reject. Dropping
+    /// the own-DKG rung does NOT prevent it: W1/W3 write the same locally derived
+    /// key into that store, and the store rung answers before `held`/`pull` are
+    /// consulted.
     ///
     /// The floor is a floor and not an `Agreed`-only gate, because that would
     /// hollow out rung 1: `Carried` is derived from chain facts alone (an
@@ -2464,29 +2318,24 @@ mod tests {
     #[tokio::test]
     async fn the_sweep_refuses_a_locally_derived_store_key() {
         let (local, carried) = (Epoch::new(5), Epoch::new(6));
-        let provider = test_provider();
-        register_pin_less(&provider, local);
-        register_pin_less(&provider, carried);
-
+        let provider = EpochSchemeProvider::new();
         let store = BeaconKeys::new();
         store.set_pk(local.get(), some_group_key(), KeySource::LocalDkg);
         store.set_pk(carried.get(), some_other_group_key(), KeySource::Carried);
+        let r = randomness_over(store.clone(), None, None);
+        register_verifier(&provider, local, r.as_ref());
+        register_verifier(&provider, carried, r.as_ref());
 
-        let upgraded = repair_unpinned_schemes(
+        let upgraded = repair_keyless_schemes(
             &provider,
-            randomness_over(store.clone(), None, None).as_ref(),
-            &fluent_namespace(1),
+            r.as_ref(),
+            &mut BTreeSet::new(),
             Epoch::new(9),
             Epoch::new(0),
         )
         .await;
 
         assert_eq!(upgraded, vec![carried]);
-        assert!(
-            !is_pinned(&provider, local),
-            "a key this node reconstructed itself must not become a write-once pin"
-        );
-        assert!(is_pinned(&provider, carried));
     }
 
     /// The sweep spends one bounded peer pull per unpinned epoch, and that pull
@@ -2509,8 +2358,12 @@ mod tests {
     async fn a_parked_sweep_does_not_hold_its_driver() {
         const OTHER_ARM_EVENTS: usize = 8;
         let epoch = Epoch::new(5);
-        let provider = test_provider();
-        register_pin_less(&provider, epoch);
+        let provider = EpochSchemeProvider::new();
+        register_verifier(
+            &provider,
+            epoch,
+            randomness_over(BeaconKeys::new(), None, None).as_ref(),
+        );
 
         // Both directions are permit-storing, so neither side can miss the
         // other's signal by being late to await it.
@@ -2548,7 +2401,6 @@ mod tests {
             wake_rx,
             provider.clone(),
             randomness_over(BeaconKeys::new(), None, Some(pull)),
-            fluent_namespace(1),
             hint,
         ));
 
@@ -2587,7 +2439,6 @@ mod tests {
         .expect("a sweep awaited on its driver never lets the driver reach these assertions");
 
         assert_eq!(served, OTHER_ARM_EVENTS);
-        assert!(is_pinned(&provider, epoch));
         sweep.abort();
     }
 

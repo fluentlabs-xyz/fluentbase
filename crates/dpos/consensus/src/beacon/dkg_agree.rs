@@ -2075,9 +2075,9 @@ mod tests {
             let ns = fluent_namespace(20_994);
             let signers = bls_kps
                 .iter()
-                .map(|kp| build_signer(&ns, bimap.clone(), kp, None).expect("member"))
+                .map(|kp| build_signer(&ns, bimap.clone(), kp, TARGET, None).expect("member"))
                 .collect();
-            (signers, build_verifier(&ns, bimap, None, None))
+            (signers, build_verifier(&ns, bimap, TARGET, None))
         }
 
         fn agreement_round() -> Round {

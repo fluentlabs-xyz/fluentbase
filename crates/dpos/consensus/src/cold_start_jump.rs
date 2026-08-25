@@ -668,7 +668,7 @@ pub(crate) fn verify_jump_authenticated<C: CommitteeSource>(
 ) -> eyre::Result<()> {
     let epoch = latest.finalization.proposal.round.epoch().get();
     // Cold-start jump landing verify: no local beacon key resolvable here (the
-    // marshal is empty right after a deep jump), so `cert_seed_pin = None` ⇒
+    // marshal is empty right after a deep jump), so `oracle = None` ⇒
     // vote-only cert verify — the accepted residual window (bug 2 sign-off item 1).
     match committees.scheme_at(epoch, landing_hash, None) {
         Ok(scheme) => {
@@ -1143,7 +1143,7 @@ mod tests {
     use commonware_math::algebra::Random as _;
     use commonware_runtime::{deterministic, Runner as _};
     use commonware_utils::{ordered::BiMap, TryCollect as _};
-    use fluentbase_bls::beacon::GroupPublic;
+    use fluentbase_bls::oracle::SeedOracle;
     use fluentbase_bls::{
         fluent_namespace, keys::ValidatorBlsKeypair, scheme::build_signer, BlsPubkey, PeerPubkey,
         Scheme as BlsScheme,
@@ -1162,6 +1162,8 @@ mod tests {
         verifier: BlsScheme,
     }
 
+    /// Every fixture certifies at epoch 0 (see `certify`), so the schemes are bound
+    /// to it.
     fn committee(seed: u64) -> Committee {
         let mut rng = StdRng::seed_from_u64(seed);
         let peer_sks: Vec<_> = (0..COMMITTEE_N)
@@ -1184,9 +1186,9 @@ mod tests {
         let ns = fluent_namespace(CHAIN_ID);
         let signers = bls_kps
             .iter()
-            .map(|kp| build_signer(&ns, bimap.clone(), kp, None).expect("member"))
+            .map(|kp| build_signer(&ns, bimap.clone(), kp, 0, None).expect("member"))
             .collect();
-        let verifier = fluentbase_bls::scheme::build_verifier(&ns, bimap, None, None);
+        let verifier = fluentbase_bls::scheme::build_verifier(&ns, bimap, 0, None);
         Committee { signers, verifier }
     }
 
@@ -1238,7 +1240,7 @@ mod tests {
             &self,
             epoch: u64,
             at_hash: B256,
-            _cert_seed_pin: Option<GroupPublic>,
+            _oracle: Option<Arc<dyn SeedOracle>>,
         ) -> eyre::Result<BlsScheme> {
             self.reads.lock().unwrap().push((epoch, at_hash));
             if !self.readable {
@@ -1253,7 +1255,7 @@ mod tests {
         fn scheme_at_finalized_tip(
             &self,
             _epoch: u64,
-            _cert_seed_pin: Option<GroupPublic>,
+            _oracle: Option<Arc<dyn SeedOracle>>,
         ) -> eyre::Result<Option<BlsScheme>> {
             Ok(Some(self.verifier.clone()))
         }

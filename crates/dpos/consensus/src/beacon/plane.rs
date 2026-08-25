@@ -246,7 +246,7 @@ where
 ///
 /// It does two things and neither belongs to the actor. It publishes the agreed
 /// key at [`KeySource::Agreed`], which is what lets W1 stand down for the epoch
-/// and still leaves ladder rung 1 answered for `repair_unpinned_schemes`. Then it
+/// and still leaves ladder rung 1 answered for `repair_keyless_schemes`. Then it
 /// hands the artifact to the `DkgActor`, where its dealer-log set becomes the
 /// pinned set the existing finalize rails run over — the write-back proper.
 ///
@@ -777,6 +777,8 @@ where
             namespace,
             beacon_keys.clone(),
         ),
+        ceremony: ceremony_store.clone(),
+        dkg_qual: dkg_qual_for.clone(),
         held: Some(held_keys.clone()),
         pull: Some(pull_keys),
         participation: share_notify.clone(),

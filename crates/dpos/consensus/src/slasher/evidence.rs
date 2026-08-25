@@ -697,8 +697,12 @@ mod tests {
     }
 
     fn round() -> Round {
-        Round::new(Epoch::new(7), View::new(42))
+        Round::new(Epoch::new(EV_EPOCH), View::new(42))
     }
+
+    /// The epoch every fixture here signs at — and, since a scheme is bound to
+    /// one epoch, the epoch every fixture scheme is built for.
+    const EV_EPOCH: u64 = 7;
 
     fn build_ev_conflicting_notarize(
         seed: u64,
@@ -711,6 +715,7 @@ mod tests {
             &fluent_namespace(TEST_CHAIN_ID),
             bimap.clone(),
             &kps[0],
+            EV_EPOCH,
             None,
         )
         .expect("offender must be member");
@@ -733,7 +738,14 @@ mod tests {
 
         // Non-conflicting Notarize — must produce None
         let (kps, bimap) = small_committee(2, 4);
-        let s = build_signer(&fluent_namespace(TEST_CHAIN_ID), bimap, &kps[0], None).unwrap();
+        let s = build_signer(
+            &fluent_namespace(TEST_CHAIN_ID),
+            bimap,
+            &kps[0],
+            EV_EPOCH,
+            None,
+        )
+        .unwrap();
         let n = Notarize::sign(&s, Proposal::new(round(), View::new(41), digest(0xcc))).unwrap();
         let plain = Activity::<Scheme, Sha256Digest>::Notarize(n);
         assert_eq!(SlashKind::from_activity(&plain), None);
@@ -790,7 +802,7 @@ mod tests {
         let scheme = fluentbase_bls::scheme::build_verifier(
             &fluent_namespace(TEST_CHAIN_ID),
             bimap,
-            None,
+            EV_EPOCH,
             None,
         );
         let mut rng = StdRng::seed_from_u64(0xdeadbeef);
@@ -837,16 +849,18 @@ mod tests {
         // Offender = committee member 0. Its threshold share index must equal its
         // Simplex Participant index (BiMap slot) — resolve via the signer's
         // `me()` (CombinedScheme delegates to the VoteScheme).
-        let probe = build_signer(&ns, bimap.clone(), &kps[0], None).expect("offender is a member");
+        let probe = build_signer(&ns, bimap.clone(), &kps[0], EV_EPOCH, None)
+            .expect("offender is a member");
         let me = SchemeTrait::me(&probe).expect("signer carries a Participant index");
         let share = shares.iter().find(|sh| sh.index == me).unwrap().clone();
-        let seeded = build_signer(
-            &ns,
-            bimap.clone(),
-            &kps[0],
-            Some((sharing, Some(share), seed_ns)),
-        )
-        .expect("offender must be member");
+        let oracle: std::sync::Arc<dyn fluentbase_bls::oracle::SeedOracle> =
+            std::sync::Arc::new(crate::beacon::surface::DealtOracle {
+                sharing,
+                share: Some(share),
+                namespace: seed_ns,
+            });
+        let seeded = build_signer(&ns, bimap.clone(), &kps[0], EV_EPOCH, Some(oracle))
+            .expect("offender must be member");
         let p1 = Proposal::new(round(), View::new(41), digest(0xaa));
         let p2 = Proposal::new(round(), View::new(41), digest(0xbb));
         let n1 = Notarize::sign(&seeded, p1).expect("sign n1");
@@ -871,7 +885,7 @@ mod tests {
         let combined_none = fluentbase_bls::scheme::build_verifier(
             &fluent_namespace(TEST_CHAIN_ID),
             bimap.clone(),
-            None,
+            EV_EPOCH,
             None,
         );
         assert!(
@@ -961,6 +975,7 @@ mod tests {
             &fluent_namespace(TEST_CHAIN_ID),
             bimap.clone(),
             &kps[0],
+            EV_EPOCH,
             None,
         )
         .expect("offender must be a committee member");
@@ -1047,8 +1062,14 @@ mod tests {
         // A lone vote is well-formed and correctly signed, but it is not evidence
         // of anything — nobody may be convicted on it.
         let (kps, plain_bimap) = small_committee(13, 4);
-        let signer =
-            build_signer(&fluent_namespace(TEST_CHAIN_ID), plain_bimap, &kps[0], None).unwrap();
+        let signer = build_signer(
+            &fluent_namespace(TEST_CHAIN_ID),
+            plain_bimap,
+            &kps[0],
+            EV_EPOCH,
+            None,
+        )
+        .unwrap();
         let lone = Activity::<Scheme, crate::digest::Digest>::Notarize(
             Notarize::sign(
                 &signer,

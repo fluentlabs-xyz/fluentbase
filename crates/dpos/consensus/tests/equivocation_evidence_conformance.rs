@@ -206,6 +206,7 @@ fn conflicting_notarize() -> (
         &fluent_namespace(C_MAIN),
         bimap.clone(),
         &kps[OFFENDER],
+        EPOCH,
         None,
     )
     .expect("member");
@@ -273,6 +274,7 @@ fn conflicting_finalize() -> (
         &fluent_namespace(C_MAIN),
         bimap.clone(),
         &kps[OFFENDER],
+        EPOCH,
         None,
     )
     .expect("member");
@@ -340,6 +342,7 @@ fn nullify_finalize() -> (
         &fluent_namespace(C_MAIN),
         bimap.clone(),
         &kps[OFFENDER],
+        EPOCH,
         None,
     )
     .expect("member");

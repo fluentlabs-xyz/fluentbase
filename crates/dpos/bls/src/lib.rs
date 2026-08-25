@@ -37,6 +37,7 @@ pub mod encoding;
 pub mod error;
 pub mod keys;
 pub mod keystore;
+pub mod oracle;
 pub mod pop;
 pub mod scheme;
 pub mod secret_store;

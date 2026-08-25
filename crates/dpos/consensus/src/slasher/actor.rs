@@ -1339,14 +1339,25 @@ mod tests {
         (bls_kps, EpochCommittee::from_unverified(TEST_EPOCH, bimap))
     }
 
-    fn offender_signer(kps: &[ValidatorBlsKeypair], committee: &EpochCommittee) -> BlsScheme {
+    /// A signer BOUND to `epoch`: a scheme refuses a subject from any other, so
+    /// a test that spans epochs needs one per epoch.
+    fn offender_signer_at(
+        kps: &[ValidatorBlsKeypair],
+        committee: &EpochCommittee,
+        epoch: u64,
+    ) -> BlsScheme {
         build_signer(
             &fluent_namespace(TEST_CHAIN_ID),
             committee.bimap.clone(),
             &kps[0],
+            epoch,
             None,
         )
         .expect("offender must be a committee member")
+    }
+
+    fn offender_signer(kps: &[ValidatorBlsKeypair], committee: &EpochCommittee) -> BlsScheme {
+        offender_signer_at(kps, committee, TEST_EPOCH)
     }
 
     fn test_round(epoch: u64, view: u64) -> Round {
@@ -1438,7 +1449,6 @@ mod tests {
     #[test]
     fn retain_floor_composes_the_epoch_bound_with_the_view_window() {
         let (kps, committee) = test_committee(4, 4);
-        let signer = offender_signer(&kps, &committee);
 
         let mut store = VoteStore::default();
         for round in [
@@ -1447,6 +1457,7 @@ mod tests {
             test_round(5, 199),
             test_round(5, 200),
         ] {
+            let signer = offender_signer_at(&kps, &committee, round.epoch().get());
             store.remember_notarize(notarize(&signer, round, 0xaa));
         }
         store.retain_floor(5);

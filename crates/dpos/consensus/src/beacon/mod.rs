@@ -66,6 +66,7 @@ pub(crate) mod keys;
 pub(crate) mod log_resolver;
 pub(crate) mod log_store;
 pub(crate) mod metrics;
+pub(crate) mod oracle;
 pub(crate) mod outcome;
 pub(crate) mod plane;
 pub(crate) mod resolve;

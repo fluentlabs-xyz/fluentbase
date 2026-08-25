@@ -107,7 +107,7 @@ pub fn pk_prefix(pk: &GroupPublic) -> String {
 /// passing a [`KeySources`]. The rungs differ by orders of latency — memory,
 /// disk, network — and only the caller knows its own budget. Callers on the vote
 /// path pass no [`pull`](KeySources::pull) — the cert-inlet, and a follower's
-/// `pin_for` at BOTH efforts; callers off it do — the repair sweep, and the
+/// `ensure_key` at BOTH efforts; callers off it do — the repair sweep, and the
 /// follower's background fetch task.
 ///
 /// Two other reads exist and NEITHER is a cheaper tier of `get_pk`:
@@ -496,7 +496,7 @@ pub struct KeySources<'a> {
 ///
 /// **Which rungs each of its two callers may spend is the whole design there,
 /// and it is the rule stated above, not an exception to it.** The follower's
-/// `pin_for` runs per certificate and passes `pull: None` at BOTH efforts, so
+/// `ensure_key` runs per certificate and passes `pull: None` at BOTH efforts, so
 /// the vote path stays network-free by construction; its background fetch task
 /// passes `held` AND `pull`, off that path, on the same
 /// [`crate::beacon::artifact::PULL_MIN_INTERVAL`] per-epoch budget the plane's

@@ -290,8 +290,16 @@ where
     // submission is permissionless.
     let namespace = dkg_namespace(&fluent_namespace(cfg.chain_id));
     // No `register_scheme`: see the module doc, point 2.
-    let scheme = build_signer(&namespace, cfg.committee.clone(), &cfg.keypair, None)
-        .ok_or(AgreementError::NotAMember(target_epoch))?;
+    // Seedless by construction: the instance that AGREES the epoch key cannot
+    // depend on it, so it never carries an oracle.
+    let scheme = build_signer(
+        &namespace,
+        cfg.committee.clone(),
+        &cfg.keypair,
+        target_epoch,
+        None,
+    )
+    .ok_or(AgreementError::NotAMember(target_epoch))?;
     let committee: Vec<PeerPubkey> = cfg.committee.keys().iter().cloned().collect();
     let handle = context
         .with_label("dkg_agreement")
@@ -854,14 +862,14 @@ mod tests {
         let round = Round::new(Epoch::new(TARGET), View::new(1));
         let signers: Vec<BlsScheme> = bls
             .iter()
-            .map(|kp| build_signer(&ns, bimap.clone(), kp, None).expect("member"))
+            .map(|kp| build_signer(&ns, bimap.clone(), kp, TARGET, None).expect("member"))
             .collect();
         let nullifies: Vec<Nullify<BlsScheme>> = signers
             .iter()
             .map(|s| Nullify::sign::<Digest>(s, round).expect("sign"))
             .collect();
         let nullification = Nullification::from_nullifies(
-            &build_verifier(&ns, bimap, None, None),
+            &build_verifier(&ns, bimap, TARGET, None),
             nullifies.iter().take(certifiers),
             &Sequential,
         )
@@ -1113,7 +1121,7 @@ mod tests {
         let round = Round::new(Epoch::new(TARGET), View::new(1));
         let signers: Vec<BlsScheme> = bls
             .iter()
-            .map(|kp| build_signer(&ns, bimap.clone(), kp, None).expect("member"))
+            .map(|kp| build_signer(&ns, bimap.clone(), kp, TARGET, None).expect("member"))
             .collect();
         let proposal = Proposal::new(round, View::new(0), payload);
         let finalizes: Vec<_> = signers
@@ -1122,7 +1130,7 @@ mod tests {
             .map(|s| Finalize::sign(s, proposal.clone()).expect("sign"))
             .collect();
         commonware_consensus::simplex::types::Finalization::from_finalizes(
-            &build_verifier(&ns, bimap, None, None),
+            &build_verifier(&ns, bimap, TARGET, None),
             finalizes.iter(),
             &Sequential,
         )

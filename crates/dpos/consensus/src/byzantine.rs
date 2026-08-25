@@ -274,7 +274,7 @@ mod tests {
             })
             .try_collect()
             .unwrap();
-        let scheme = build_signer(&fluent_namespace(20_994), bimap, &bls_kps[0], None)
+        let scheme = build_signer(&fluent_namespace(20_994), bimap, &bls_kps[0], 7, None)
             .expect("node 0 is in committee");
 
         let round = Round::new(Epoch::new(7), View::new(42));
@@ -328,7 +328,7 @@ mod tests {
             })
             .try_collect()
             .unwrap();
-        let verifier = build_verifier(&fluent_namespace(20_994), bimap, None, None);
+        let verifier = build_verifier(&fluent_namespace(20_994), bimap, 7, None);
         let round = Round::new(Epoch::new(7), View::new(42));
         let proposal = Proposal::new(round, View::new(41), Digest(B256::repeat_byte(0xbb)));
         assert!(

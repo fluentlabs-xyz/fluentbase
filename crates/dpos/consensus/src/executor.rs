@@ -10873,9 +10873,9 @@ mod tests {
             let ns = fluent_namespace(20_994);
             let signers = bls_kps
                 .iter()
-                .map(|kp| build_signer(&ns, bimap.clone(), kp, None).expect("member"))
+                .map(|kp| build_signer(&ns, bimap.clone(), kp, 0, None).expect("member"))
                 .collect();
-            let verifier = build_verifier(&ns, bimap, None, None);
+            let verifier = build_verifier(&ns, bimap, 0, None);
             Committee { signers, verifier }
         }
 
@@ -10927,10 +10927,7 @@ mod tests {
                 .await;
                 let blocks =
                     crate::outer::init_finalized_blocks_archive(&ctx, "halt-liveness").await;
-                let provider =
-                    crate::outer::EpochSchemeProvider::new(std::sync::Arc::new(|e: u64| {
-                        e >= crate::beacon::actor::DETERMINISTIC_BOOTSTRAP_EPOCH
-                    }));
+                let provider = crate::outer::EpochSchemeProvider::new();
                 provider.register(Epoch::new(0), c.verifier.clone());
                 let (marshal_actor, marshal_mailbox, last_processed) = MarshalActor::init(
                     ctx.with_label("marshal"),
@@ -11092,10 +11089,7 @@ mod tests {
                 .await;
                 let blocks =
                     crate::outer::init_finalized_blocks_archive(&ctx, "seed-below-floor").await;
-                let provider =
-                    crate::outer::EpochSchemeProvider::new(std::sync::Arc::new(|e: u64| {
-                        e >= crate::beacon::actor::DETERMINISTIC_BOOTSTRAP_EPOCH
-                    }));
+                let provider = crate::outer::EpochSchemeProvider::new();
                 provider.register(Epoch::new(0), c.verifier.clone());
                 let (marshal_actor, mut marshal, _last) = MarshalActor::init(
                     ctx.with_label("marshal"),

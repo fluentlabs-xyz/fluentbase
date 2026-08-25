@@ -206,9 +206,7 @@ use commonware_runtime::{
 };
 use commonware_storage::archive::{immutable, Archive as _, Identifier};
 use commonware_utils::{NZUsize, NZU16, NZU64};
-use fluentbase_bls::{
-    beacon::GroupPublic, keys::ValidatorBlsKeypair, PeerPubkey, Scheme as BlsScheme,
-};
+use fluentbase_bls::{keys::ValidatorBlsKeypair, PeerPubkey, Scheme as BlsScheme};
 use fluentbase_staking_reader::reader::ValidatorSetSnapshot;
 use futures::future::BoxFuture;
 use rand_core::CryptoRngCore;
@@ -240,33 +238,28 @@ const FREEZER_VALUE_COMPRESSION: Option<u8> = Some(3);
 // trailing [`crate::SCHEME_RETENTION_EPOCHS`] (a validator keeps one process
 // alive across months — unbounded growth is no longer hypothetical).
 
-/// Ticks once per re-registration refused for dropping an existing entry's
-/// cert-seed pin (see [`EpochSchemeProvider::register`]). Its normal value is
-/// zero: a non-zero rate means some path is re-registering a secured epoch
-/// pin-less, and the epoch would have gone vote-only without the guard.
-pub(crate) const PIN_DROP_REFUSED: &str = "dpos_epoch_scheme_pin_drop_refused_total";
+/// Ticks once per re-registration refused for replacing a beacon-active scheme
+/// with an oracle-less one (see [`EpochSchemeProvider::register`]). Successor to
+/// `dpos_epoch_scheme_pin_drop_refused_total`, under a new name because what is
+/// refused is now the loss of the ORACLE rather than the loss of a copied pin;
+/// the reading is the same. Its normal value is zero: a non-zero rate means some
+/// path is re-registering a beacon-active epoch without an oracle, and the epoch
+/// would have returned to vote-only certificate admission without the guard.
+pub(crate) const ORACLE_DROP_REFUSED: &str = "dpos_epoch_scheme_oracle_drop_refused_total";
 
-#[derive(Clone)]
+/// A plain per-epoch registry. It used to also carry a `mandatory_at` predicate,
+/// for the one method that could attach a seed pin to an epoch and therefore had
+/// to refuse doing so on a pre-beacon one. Nothing attaches anything to a
+/// registered scheme any more — the beacon-active decision is made once, at
+/// `Randomness::oracle_for`, before the scheme is ever built.
+#[derive(Clone, Default)]
 pub struct EpochSchemeProvider {
     map: Arc<Mutex<BTreeMap<Epoch, Arc<BlsScheme>>>>,
-    /// Is randomness mandatory at this epoch? Threaded in rather than read off a
-    /// beacon constant, so this registry and the application's witness gate
-    /// answer the question from ONE source — see [`Self::apply_pin`], where
-    /// getting it wrong rejects every legal certificate of a pre-beacon epoch.
-    mandatory_at: MandatoryAt,
 }
 
-/// See [`EpochSchemeProvider::mandatory_at`]. Matches
-/// [`crate::beacon::Randomness::mandatory_at`] by construction: the production
-/// wiring passes that method.
-pub type MandatoryAt = Arc<dyn Fn(u64) -> bool + Send + Sync>;
-
 impl EpochSchemeProvider {
-    pub fn new(mandatory_at: MandatoryAt) -> Self {
-        Self {
-            map: Arc::new(Mutex::new(BTreeMap::new())),
-            mandatory_at,
-        }
+    pub fn new() -> Self {
+        Self::default()
     }
 
     /// Register a [`BlsScheme`] for `epoch`.
@@ -281,9 +274,9 @@ impl EpochSchemeProvider {
     /// 1. **Vacant slot** → insert. Normal path for every new epoch.
     /// 2. **Same committee, verifier → signer** → overwrite.
     /// 3. **Different committee, OR signer → verifier downgrade, OR a
-    ///    replacement that DROPS the existing entry's cert-seed pin** →
-    ///    refuse + log error. Either a bug, a malicious caller, or an
-    ///    accidental late `cold_start_register` after the engine started.
+    ///    beacon-active entry replaced by an oracle-less scheme** → refuse + log
+    ///    error. Either a bug, a malicious caller, or an accidental late
+    ///    `cold_start_register` after the engine started.
     ///
     /// Committee equality goes through the upstream
     /// [`commonware_cryptography::certificate::Scheme::participants`]
@@ -291,17 +284,50 @@ impl EpochSchemeProvider {
     /// [`commonware_cryptography::certificate::Scheme::me`] (`Some(idx)` when
     /// signer, `None` when verifier).
     ///
-    /// The pin guard exists because neither of those two accessors sees the pin:
-    /// a same-committee verifier→verifier replacement that turns `Some` into
-    /// `None` passes both and lands, leaving the epoch vote-only after it had
-    /// already been secured. Two production paths register pin-less
-    /// unconditionally — the bulk catch-up span (no marshal handle to resolve the
-    /// key with) and a rotated-out engine's `verify_only` — so without this guard
-    /// a correctly-pinned epoch loses its pin to a later catch-up sweep or a
-    /// rotation, silently. `Some` → `Some'` stays allowed: a legitimate
-    /// correction (a key resolved from a better rung) must not be blocked, and
-    /// the value itself is agreed chain data whose divergence is caught where it
-    /// is minted, not here.
+    /// **Registration is MONOTONE in verification strength.** That invariant
+    /// predates the oracle — it was written for the cert-seed pin, whose loss
+    /// neither accessor above could see — and it survives the pin because the
+    /// oracle is invisible in exactly the same way. `oracle: Some` and
+    /// `oracle: None` over one committee verify DIFFERENTLY: the beacon-active
+    /// scheme refuses a certificate whose seed slot was cleared, the oracle-less
+    /// one admits it, and the attestation arm flips with it. So a same-committee
+    /// verifier→verifier re-register can still silently return a secured epoch to
+    /// vote-only admission, and [`fluentbase_bls::Scheme::is_beacon_active`] is
+    /// the accessor that makes it visible.
+    ///
+    /// **NO PRODUCER REACHES THIS REFUSAL TODAY, AND THAT IS THE POINT — DO NOT
+    /// READ IT AS LOAD-BEARING.** The path that motivated it was a validator
+    /// rotated out of `committee[E]` without a restart, where
+    /// `SignerVerdict::RotatedKey` returned an oracle-less verifier over the
+    /// epoch soft-enter had already registered a beacon-active one for. That path
+    /// was CLOSED at the producer: `signer_scheme`'s seat-probe-miss arm now
+    /// builds with `oracle_for(epoch)`, so at a beacon-active epoch both sides are
+    /// beacon-active and this branch cannot fire on it.
+    ///
+    /// Of the four producers that reach `register`, three take their oracle from
+    /// `Randomness::oracle_for`; the fourth, `cold_start_register`, hardcodes
+    /// `None` but only ever meets a VACANT slot (the provider is constructed fresh
+    /// inside `OuterBuilder::build`, so even a demote→re-promote starts empty).
+    /// The one remaining `None`-producing arm — `SignerVerdict::Signs` for a
+    /// member holding no material — is intercepted upstream by the share-gate,
+    /// which routes a share-less member to `soft_enter` without ever spawning an
+    /// engine.
+    ///
+    /// So this is DEFENCE IN DEPTH against a producer that does not yet exist,
+    /// kept because the property it protects is invisible to `participants()` and
+    /// `me()` and because the loss it prevents is silent (no forgery follows — a
+    /// stripped-seed certificate still needs a genuine multisig quorum — which is
+    /// exactly why nothing else would notice). What would make it live again: a
+    /// new registration path that hardcodes `None` the way `cold_start_register`
+    /// does and can meet an occupied slot, or a beacon-active `Signs`-without-
+    /// material path the share-gate stops intercepting. Note that it CANNOT save
+    /// a producer that is wrong on FIRST insert — all three refusals here sit
+    /// under `Entry::Occupied`.
+    ///
+    /// The refusal covering a verifier→SIGNER replacement that drops the oracle is
+    /// deliberate rather than incidental: the entry here is what the MARSHAL
+    /// verifies certificates with, and an engine keeps its own scheme instance
+    /// regardless, so keeping the stronger verifier costs the engine nothing.
     pub fn register(&self, epoch: Epoch, scheme: BlsScheme) {
         use commonware_cryptography::certificate::Scheme as _;
         let mut map = self.map.lock().unwrap();
@@ -330,27 +356,15 @@ impl EpochSchemeProvider {
                     );
                     return;
                 }
-                if existing.is_seed_pinned() && !scheme.is_seed_pinned() {
-                    metrics::counter!(PIN_DROP_REFUSED).increment(1);
+                if existing.is_beacon_active() && !scheme.is_beacon_active() {
+                    metrics::counter!(ORACLE_DROP_REFUSED).increment(1);
                     tracing::error!(
                         ?epoch,
                         "EpochSchemeProvider::register refused a replacement that \
-                         DROPS the cert-seed pin — preserving existing entry \
+                         DROPS the beacon oracle — preserving existing entry \
                          (registration is monotone in verification strength)"
                     );
                     return;
-                }
-                // The positive edge for "this epoch left vote-only admission". It is
-                // logged HERE because this is the only place where the old and the
-                // new pin state are both in hand; everywhere else it can only be
-                // inferred from the ABSENCE of a vote-only admission, which is green
-                // for the wrong reasons whenever certificates simply stopped arriving.
-                if !existing.is_seed_pinned() && scheme.is_seed_pinned() {
-                    tracing::info!(
-                        ?epoch,
-                        "epoch scheme upgraded to PINNED — certificates for this epoch \
-                         leave vote-only admission"
-                    );
                 }
                 o.insert(Arc::new(scheme));
             }
@@ -360,68 +374,29 @@ impl EpochSchemeProvider {
         }
     }
 
-    /// Registered epochs whose scheme is verify-only and carries no cert-seed
-    /// pin — the repair sweep's work list.
+    /// Registered epochs whose scheme is VERIFY-ONLY — the repair sweep's
+    /// candidate list.
     ///
     /// This registry, not a shadow set in the epoch manager, is the authority on
-    /// what is pinned. Two properties follow from that and neither is available
-    /// to a shadow: the list is bounded by [`SCHEME_RETENTION_EPOCHS`] as a
-    /// structural fact (the prune above is by COUNT), and it covers every
+    /// what is registered. Two properties follow from that and neither is
+    /// available to a shadow: the list is bounded by [`SCHEME_RETENTION_EPOCHS`]
+    /// as a structural fact (the prune above is by COUNT), and it covers every
     /// registration path — `soft_enter`, the bulk catch-up span, and
     /// `cold_start_register` — rather than only the one that happened to also
     /// write the shadow.
     ///
-    /// Signer registrations are excluded: a signer's scheme is built by its own
-    /// engine from its own beacon material, and a pin applied underneath it
-    /// would be a second writer of the same field.
-    pub fn unpinned_epochs(&self) -> Vec<Epoch> {
+    /// Signer registrations are excluded: a signer's engine resolves its own
+    /// epoch key through the promote gates, which have a value-gate this sweep
+    /// does not.
+    pub fn verifier_epochs(&self) -> Vec<Epoch> {
         use commonware_cryptography::certificate::Scheme as _;
         self.map
             .lock()
             .unwrap()
             .iter()
-            .filter(|(_, s)| s.me().is_none() && !s.is_seed_pinned())
+            .filter(|(_, s)| s.me().is_none())
             .map(|(epoch, _)| *epoch)
             .collect()
-    }
-
-    /// Attach `pk` as `epoch`'s cert-seed pin, in place. Returns whether this
-    /// call was the unpinned→pinned transition.
-    ///
-    /// The return value is not a convenience: the caller re-drives a marshal
-    /// fetch on a transition, and doing that per sweep instead of per upgrade
-    /// would re-hint every boundary for as long as any epoch stays unpinned.
-    ///
-    /// Every refusal below is re-checked here rather than trusted from
-    /// [`Self::unpinned_epochs`], because the lock is dropped between the two
-    /// calls and the sweep awaits in between.
-    ///
-    /// Refuses an epoch where randomness is not mandatory — MANDATORY, not
-    /// defensive. `verify_certificate` reads pin presence as "this epoch is
-    /// beacon-active" and rejects any seedless cert under it, so a pin on a
-    /// pre-beacon epoch rejects every legal cert there. Until this method
-    /// existed, the invariant held only because both pin sources were
-    /// unreachable that early (see the INVARIANT note in `CombinedScheme::new`);
-    /// a repair path that can pin any registered epoch removes that accident.
-    ///
-    /// Refuses an already-pinned entry, keeping the pin add-only. That is what
-    /// stops this method from being a way around [`Self::register`]'s
-    /// monotonicity guard.
-    pub fn apply_pin(&self, epoch: Epoch, pk: GroupPublic, namespace: &[u8]) -> bool {
-        use commonware_cryptography::certificate::Scheme as _;
-        if !(self.mandatory_at)(epoch.get()) {
-            return false;
-        }
-        let mut map = self.map.lock().unwrap();
-        let Some(existing) = map.get(&epoch) else {
-            return false;
-        };
-        if existing.me().is_some() || existing.is_seed_pinned() {
-            return false;
-        }
-        let pinned = existing.with_cert_seed_pin(pk, namespace);
-        map.insert(epoch, Arc::new(pinned));
-        true
     }
 }
 
@@ -870,10 +845,7 @@ where
         // key store, the seed store, both resolvers and the two agreement rungs
         // are created inside `beacon::build` and never cross back out.
         let randomness = self.randomness;
-        let scheme_provider = EpochSchemeProvider::new({
-            let r = randomness.clone();
-            Arc::new(move |epoch| r.mandatory_at(epoch))
-        });
+        let scheme_provider = EpochSchemeProvider::new();
         let epocher = OriginEpocher::new(self.dpos_activation_block, self.epoch_length_blocks);
 
         // Which epoch-boundary heights the floor about to be applied would bury, and
@@ -1177,27 +1149,39 @@ where
         // the verify-only scheme construction + registration (kept here so
         // `register_scheme` + `chain_id` stay on the consensus side). For each
         // `(epoch, snap)` in the contiguous on-chain prefix the reader returns,
-        // build + register the MULTISIG-ONLY verifier and return the highest
+        // build + register the verify-only scheme and return the highest
         // registered epoch (= the marshal hint target). The reader already
         // truncates at the first missed/unreadable committee, so the result is a
         // contiguous prefix; if it returns nothing, hold at `from − 1`.
         let chain_id = self.chain_id;
         let register_for_span = register_scheme.clone();
         let read_committees = self.soft_enter_committees;
+        let randomness_for_span = randomness.clone();
         let soft_enter_span: Arc<dyn Fn(Epoch, Epoch) -> BoxFuture<'static, Epoch> + Send + Sync> =
             Arc::new(move |from: Epoch, to: Epoch| {
                 let read = read_committees.clone();
                 let register = register_for_span.clone();
+                let randomness = randomness_for_span.clone();
                 Box::pin(async move {
                     let committees = read(from, to).await;
                     let mut registered = Epoch::new(from.get().saturating_sub(1));
                     for (epoch, snap) in committees {
-                        // Bulk catch-up span: no marshal handle here to resolve the
-                        // per-epoch beacon key, so the span registers vote-only
-                        // verifiers (`cert_seed_pin = None`) — the accepted residual
-                        // for the deep-catch-up window (bug 2 sign-off item 1); the
-                        // per-epoch `soft_enter` path (which HAS marshal access) pins.
-                        if let Some(scheme) = soft_enter_verifier(&snap, chain_id, None) {
+                        // The span registers the SAME verifier the per-epoch
+                        // `soft_enter` path registers: multisig plus the epoch's
+                        // beacon oracle, from the one door that decides
+                        // beacon-activeness (`Randomness::oracle_for` — `None`
+                        // below the bootstrap epoch, where a seedless certificate
+                        // is legal). The span resolves no key and does not need
+                        // to: the oracle reads `PK_epoch` live, so an epoch whose
+                        // key has not landed yet is admitted on its multisig half
+                        // alone and starts checking seeds the moment the key
+                        // arrives — with no re-registration and nothing for the
+                        // repair sweep to fix in the registry. Handing `None` here
+                        // instead would pin the epoch to vote-only admission for
+                        // the life of the process, because there is no longer any
+                        // step that attaches strength to an already-built scheme.
+                        let oracle = randomness.oracle_for(epoch);
+                        if let Some(scheme) = soft_enter_verifier(&snap, chain_id, oracle) {
                             register(Epoch::new(epoch), scheme);
                             registered = Epoch::new(epoch);
                         }
@@ -1819,33 +1803,49 @@ mod scheme_provider_tests {
     use super::EpochSchemeProvider;
     use crate::beacon::actor::DETERMINISTIC_BOOTSTRAP_EPOCH;
 
-    /// A provider under the production rule. The predicate is what `apply_pin`
-    /// refuses on, so a test that fakes it is not testing the shipped refusal.
-    fn test_provider() -> EpochSchemeProvider {
-        EpochSchemeProvider::new(std::sync::Arc::new(|e: u64| {
-            e >= DETERMINISTIC_BOOTSTRAP_EPOCH
-        }))
-    }
     use commonware_codec::DecodeExt as _;
     use commonware_consensus::types::Epoch;
-    use commonware_cryptography::{
-        bls12381::{dkg::deal_anonymous, primitives::variant::MinSig},
-        ed25519::PrivateKey as Ed25519PrivateKey,
-        Signer as _,
-    };
+    use commonware_consensus::types::Round;
+    use commonware_cryptography::{ed25519::PrivateKey as Ed25519PrivateKey, Signer as _};
     use commonware_math::algebra::Random as _;
-    use commonware_utils::{ordered::BiMap, N3f1, TryCollect as _, NZU32};
+    use commonware_utils::Participant;
+    use commonware_utils::{ordered::BiMap, TryCollect as _};
     use fluentbase_bls::{
-        beacon::GroupPublic,
         fluent_namespace,
         keys::ValidatorBlsKeypair,
+        oracle::{SeedCheck, SeedOracle},
         scheme::{build_signer, build_verifier},
-        BlsPubkey, PeerPubkey, Scheme as BlsScheme,
+        BlsPubkey, BlsSignature, PeerPubkey, Scheme as BlsScheme,
     };
     use rand_08::rngs::StdRng;
     use rand_core::SeedableRng as _;
+    use std::sync::Arc;
 
-    fn committee(seed: u64) -> (BiMap<PeerPubkey, BlsPubkey>, GroupPublic) {
+    /// The narrowest thing that satisfies [`SeedOracle`]. The registry only ever
+    /// asks whether an oracle is THERE, so nothing here needs to answer.
+    #[derive(Debug)]
+    struct StubOracle;
+
+    impl SeedOracle for StubOracle {
+        fn sign_partial(&self, _round: Round) -> Option<BlsSignature> {
+            None
+        }
+        fn verify_partial(&self, _round: Round, _index: Participant, _v: &BlsSignature) -> bool {
+            false
+        }
+        fn recover(
+            &self,
+            _partials: &[(Participant, BlsSignature)],
+            _threshold: u32,
+        ) -> Option<BlsSignature> {
+            None
+        }
+        fn verify_seed(&self, _round: Round, _seed: &BlsSignature) -> SeedCheck {
+            SeedCheck::NoKey
+        }
+    }
+
+    fn committee(seed: u64) -> BiMap<PeerPubkey, BlsPubkey> {
         let mut rng = StdRng::seed_from_u64(seed);
         let bimap = (0..4)
             .map(|_| {
@@ -1858,14 +1858,13 @@ mod scheme_provider_tests {
             })
             .try_collect()
             .unwrap();
-        let (sharing, _) = deal_anonymous::<MinSig, N3f1>(&mut rng, Default::default(), NZU32!(4));
-        (bimap, *sharing.public())
+        bimap
     }
 
     /// A committee plus a SIGNER scheme over it. Separate from [`committee`]
     /// because a signer needs a keypair the committee actually contains, and
     /// that fixture discards them.
-    fn committee_with_signer(seed: u64) -> (BiMap<PeerPubkey, BlsPubkey>, GroupPublic, BlsScheme) {
+    fn committee_with_signer(seed: u64, epoch: u64) -> (BiMap<PeerPubkey, BlsPubkey>, BlsScheme) {
         let mut rng = StdRng::seed_from_u64(seed);
         let mut keypairs = Vec::new();
         let bimap: BiMap<PeerPubkey, BlsPubkey> = (0..4)
@@ -1878,182 +1877,102 @@ mod scheme_provider_tests {
             })
             .try_collect()
             .unwrap();
-        let (sharing, _) = deal_anonymous::<MinSig, N3f1>(&mut rng, Default::default(), NZU32!(4));
-        let signer = build_signer(&fluent_namespace(1), bimap.clone(), &keypairs[0], None)
-            .expect("keypair is a committee member");
-        (bimap, *sharing.public(), signer)
+        let signer = build_signer(
+            &fluent_namespace(1),
+            bimap.clone(),
+            &keypairs[0],
+            epoch,
+            None,
+        )
+        .expect("keypair is a committee member");
+        (bimap, signer)
     }
 
-    fn verifier(bimap: &BiMap<PeerPubkey, BlsPubkey>, pin: Option<GroupPublic>) -> BlsScheme {
-        build_verifier(&fluent_namespace(1), bimap.clone(), None, pin)
+    fn verifier(bimap: &BiMap<PeerPubkey, BlsPubkey>, epoch: u64) -> BlsScheme {
+        build_verifier(&fluent_namespace(1), bimap.clone(), epoch, None)
     }
 
-    /// `apply_pin`'s refusals, exercised DIRECTLY rather than through the sweep.
-    ///
-    /// They have to be, because each refusal is doubled: `unpinned_epochs`
-    /// filters the same three cases out of the work list, so a sweep-level test
-    /// stays green when the refusal here is deleted, and green when the filter
-    /// there is deleted. Only these hit `apply_pin` on inputs the work list
-    /// would never hand it — which is also the real case, since the lock drops
-    /// between the two calls and the sweep awaits in between.
-    ///
-    /// The filter is kept as well: it keeps the sweep from spending a marshal
-    /// walk per epoch that could never be pinned.
+    /// The two guards `register` still carries after the seed pin left the
+    /// scheme. Nothing else covers them: they used to be asserted only as a side
+    /// effect of the pin-monotonicity tests, whose subject is gone.
     #[test]
-    fn apply_pin_refuses_a_signer_an_existing_pin_and_a_pre_beacon_epoch() {
-        let (bimap, key, signer) = committee_with_signer(0x9001);
-        let ns = fluent_namespace(1);
-        let live = Epoch::new(DETERMINISTIC_BOOTSTRAP_EPOCH + 3);
-
-        let provider = test_provider();
-        provider.register(live, signer);
-        assert!(
-            !provider.apply_pin(live, key, &ns),
-            "a signer's scheme belongs to its engine — pinning under it makes \
-             `register` refuse that engine's own unpinned (share-less) scheme"
-        );
-
-        let provider = test_provider();
-        provider.register(live, verifier(&bimap, None));
-        assert!(provider.apply_pin(live, key, &ns), "the transition itself");
-        assert!(
-            !provider.apply_pin(live, key, &ns),
-            "the pin is add-only — otherwise this method is a way around \
-             `register`'s monotonicity guard"
-        );
-
-        let pre_beacon = Epoch::new(DETERMINISTIC_BOOTSTRAP_EPOCH - 1);
-        let provider = test_provider();
-        provider.register(pre_beacon, verifier(&bimap, None));
-        assert!(
-            !provider.apply_pin(pre_beacon, key, &ns),
-            "a pin makes `verify_certificate` reject every SEEDLESS cert, and \
-             pre-beacon epochs are legitimately seedless"
-        );
-
-        let provider = test_provider();
-        assert!(
-            !provider.apply_pin(live, key, &ns),
-            "an unregistered epoch has no scheme to pin"
-        );
-    }
-
-    /// §4a: registration is MONOTONE in verification strength. Two production
-    /// paths re-register the same committee pin-less — the bulk catch-up span
-    /// (which has no marshal handle to resolve a key with) and a rotated-out
-    /// engine's `verify_only` — and both pass the committee and signer-direction
-    /// guards, so without this the epoch silently reverts to vote-only after it
-    /// had been secured. `Some` → `Some'` must still land: a legitimate
-    /// correction is not a downgrade.
-    #[test]
-    fn a_pinned_epoch_survives_a_pin_less_re_registration() {
-        let (bimap, pin) = committee(1);
-        let (_, other_pin) = committee(2);
-        assert_ne!(pin, other_pin);
-        let epoch = Epoch::new(3);
-        let provider = test_provider();
-
-        provider.register(epoch, verifier(&bimap, Some(pin)));
-        assert!(pinned(&provider, epoch));
-
-        // The bulk catch-up span, and a rotated-out engine's `verify_only`: same
-        // committee, verifier→verifier, no pin. Both are refused.
-        provider.register(epoch, verifier(&bimap, None));
-        assert!(
-            pinned(&provider, epoch),
-            "a pin-less re-registration must not drop an existing pin"
-        );
-
-        // A correction — a DIFFERENT key from a better rung — still lands.
-        provider.register(epoch, verifier(&bimap, Some(other_pin)));
-        assert!(pinned(&provider, epoch));
-
-        // And the un-pinned → pinned upgrade this phase depends on is unaffected.
-        let fresh = Epoch::new(4);
-        provider.register(fresh, verifier(&bimap, None));
-        assert!(!pinned(&provider, fresh));
-        provider.register(fresh, verifier(&bimap, Some(pin)));
-        assert!(pinned(&provider, fresh));
-    }
-
-    /// The property the live-epoch pin repair rests on: pinning the LIVE epoch's
-    /// verifier entry must not lock its own engine out.
-    ///
-    /// Until the `key_edge` arm re-ran `reconcile_live`, the frontier's entry
-    /// could not become pinned while it was still the frontier, so a signer
-    /// registration for it never met a pinned predecessor. Now it can — and
-    /// `register` refuses a replacement that DROPS a pin, so a signer that built
-    /// an unpinned scheme would be refused and the node would silently fail to
-    /// enter as a signer.
-    ///
-    /// It does not happen, and the reason is structural rather than lucky: on a
-    /// beacon-active epoch `signer_scheme` returns `Signs` only when it holds
-    /// beacon material, and `CombinedScheme::new` derives the pin from that
-    /// material. Reds if either of those two stops being true.
-    #[test]
-    fn a_beacon_active_signer_registers_over_a_pinned_verifier() {
-        use commonware_cryptography::bls12381::primitives::group::Share;
-        use commonware_cryptography::certificate::Scheme as _;
-        use fluentbase_bls::scheme::BeaconKey;
-
-        let mut rng = StdRng::seed_from_u64(0x5164);
-        let mut keypairs = Vec::new();
-        let bimap: BiMap<PeerPubkey, BlsPubkey> = (0..4)
-            .map(|_| {
-                let peer = Ed25519PrivateKey::random(&mut rng).public_key();
-                let bls = ValidatorBlsKeypair::generate(&mut rng);
-                let pk = BlsPubkey::decode(bls.public_bytes().as_slice()).unwrap();
-                keypairs.push(bls);
-                (peer, pk)
-            })
-            .try_collect()
-            .unwrap();
-        let (sharing, shares) =
-            deal_anonymous::<MinSig, N3f1>(&mut rng, Default::default(), NZU32!(4));
-        let ns = fluent_namespace(1);
-        // The share index must equal this member's CONSENSUS participant index —
-        // `CombinedScheme::new` asserts it, and that index comes from the
-        // committee's sorted order, not from the order the keypairs were made in.
-        let seat: usize = build_signer(&ns, bimap.clone(), &keypairs[0], None)
-            .and_then(|s| s.me())
-            .expect("the fixture's member is in its own committee")
-            .into();
-        let material: BeaconKey = (sharing, Some(shares[seat].clone()), ns.clone());
-        let _: &Share = material.1.as_ref().expect("dealt share");
-
-        // The live epoch enters vote-only, then its artifact lands and
-        // `reconcile_live` re-registers the SAME verifier carrying the pin.
+    fn register_refuses_a_signer_to_verifier_downgrade_but_accepts_the_upgrade() {
+        use commonware_cryptography::certificate::{Provider as _, Scheme as _};
         let epoch = Epoch::new(DETERMINISTIC_BOOTSTRAP_EPOCH + 4);
-        let provider = test_provider();
-        provider.register(epoch, verifier(&bimap, None));
-        assert!(!pinned(&provider, epoch));
-        provider.register(epoch, verifier(&bimap, Some(*material.0.public())));
-        assert!(
-            pinned(&provider, epoch),
-            "the live epoch's entry upgrades in place — this is what leaves it              vote-only admission"
-        );
+        let (bimap, signer) = committee_with_signer(0x5164, epoch.get());
+        let is_signer =
+            |p: &EpochSchemeProvider| p.scoped(epoch).expect("registered").me().is_some();
 
-        // The share heal then completes and the engine registers its signer.
-        let signer = build_signer(&ns, bimap.clone(), &keypairs[0], Some(material))
-            .expect("keypair is a committee member");
-        assert!(
-            signer.is_seed_pinned(),
-            "a beacon-active signer carries its own pin, derived from its material"
-        );
+        // verifier → signer lands: the cold-start transition this ordering exists
+        // for.
+        let provider = EpochSchemeProvider::new();
+        provider.register(epoch, verifier(&bimap, epoch.get()));
+        assert!(!is_signer(&provider));
         provider.register(epoch, signer);
-        assert!(
-            {
-                use commonware_cryptography::certificate::Provider as _;
-                provider.scoped(epoch).expect("registered").me().is_some()
-            },
-            "the signer registration LANDED — the pin the repair applied did not              lock the engine out of its own epoch"
-        );
-        assert!(pinned(&provider, epoch));
+        assert!(is_signer(&provider));
+
+        // signer → verifier is refused: an engine's own scheme is never replaced
+        // by a weaker one underneath it.
+        provider.register(epoch, verifier(&bimap, epoch.get()));
+        assert!(is_signer(&provider));
+
+        // A different committee is refused outright, in either direction.
+        let other = committee(0x5165);
+        provider.register(epoch, verifier(&other, epoch.get()));
+        assert!(is_signer(&provider));
     }
 
-    fn pinned(provider: &EpochSchemeProvider, epoch: Epoch) -> bool {
+    /// Registration is MONOTONE in verification strength, and the oracle is the
+    /// only strength neither `participants()` nor `me()` can see.
+    ///
+    /// THIS TESTS A GUARD NO PRODUCER REACHES TODAY, deliberately. The path that
+    /// motivated it — a validator rotated out of `committee[E]` without a
+    /// restart, whose `SignerVerdict::RotatedKey` replaced soft-enter's
+    /// beacon-active verifier with an oracle-less one over the same committee —
+    /// was closed at the producer (`signer_scheme` now passes `oracle_for`), and
+    /// `register`'s own docs say why nothing else gets here either. The guard is
+    /// defence in depth, so its test is written against the REGISTRY CONTRACT
+    /// rather than against any caller: a `Some → None` replacement is refused, a
+    /// `None → Some` upgrade lands.
+    ///
+    /// Reds if the oracle-drop refusal is removed, or if it is widened into a
+    /// blanket freeze that also blocks the upgrade.
+    #[test]
+    fn register_refuses_a_replacement_that_drops_the_beacon_oracle() {
         use commonware_cryptography::certificate::Provider as _;
-        provider.scoped(epoch).expect("registered").is_seed_pinned()
+        let epoch = Epoch::new(DETERMINISTIC_BOOTSTRAP_EPOCH + 4);
+        let bimap = committee(0x0A0C);
+        let beacon_active = || {
+            build_verifier(
+                &fluent_namespace(1),
+                bimap.clone(),
+                epoch.get(),
+                Some(Arc::new(StubOracle)),
+            )
+        };
+        let is_beacon_active =
+            |p: &EpochSchemeProvider| p.scoped(epoch).expect("registered").is_beacon_active();
+
+        let provider = EpochSchemeProvider::new();
+        provider.register(epoch, beacon_active());
+        assert!(is_beacon_active(&provider));
+
+        // The RotatedKey shape: same committee, same direction, no oracle.
+        provider.register(epoch, verifier(&bimap, epoch.get()));
+        assert!(
+            is_beacon_active(&provider),
+            "the oracle-less replacement must be refused — it admits a cleared \
+             seed slot where the entry it would replace refuses one"
+        );
+
+        // And the UPGRADE still lands: a cold-start entry registered before any
+        // oracle existed is replaced by the beacon-active one at the first
+        // soft-enter. Monotone means one-way, not frozen.
+        let cold_start = EpochSchemeProvider::new();
+        cold_start.register(epoch, verifier(&bimap, epoch.get()));
+        assert!(!is_beacon_active(&cold_start));
+        cold_start.register(epoch, beacon_active());
+        assert!(is_beacon_active(&cold_start));
     }
 }
 

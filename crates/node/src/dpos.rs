@@ -818,7 +818,7 @@ where
                 plane_clock: plane.shared.plane_clock.clone(),
             },
             // The SAME provider the consensus layer holds, not a second one over
-            // a private store: `observe_cert` prunes what `pin_for` reads, and a
+            // a private store: `observe_cert` prunes what the key ladder reads, and a
             // split store would make the pruning a silent no-op.
             plane.shared.randomness.clone(),
         )

@@ -3,7 +3,7 @@
 //!
 //! # What this closes
 //!
-//! A follower used to run [`super::surface::absent`], whose `pin_for` answers
+//! A follower used to run [`super::surface::absent`], whose key rungs answer
 //! `None` at both efforts for the life of the process. Every certificate it
 //! ingested therefore took VOTE-ONLY admission: the attributable `2f+1` multisig
 //! quorum was checked, the seed slot was not, so a tampered or cleared seed
@@ -39,6 +39,7 @@ use super::{
     carry::DkgQualFor,
     keys::{pk_prefix, AgreedKeyAt, AgreedKeys, BeaconKeys, KeySource, KeySources},
     metrics::BeaconMetrics,
+    oracle::KeyOnlyOracle,
     outcome::group_public_key,
     plane::ArtifactSource,
     seed::Seed,
@@ -46,7 +47,10 @@ use super::{
 };
 use commonware_consensus::types::{Epoch, Round};
 use commonware_runtime::{Clock, Handle, Metrics, Spawner};
-use fluentbase_bls::{beacon::GroupPublic, keys::ValidatorBlsKeypair, BlsSignature};
+use fluentbase_bls::{
+    beacon::seed_namespace, fluent_namespace, keys::ValidatorBlsKeypair, oracle::SeedOracle,
+    BlsSignature,
+};
 use fluentbase_staking_reader::reader::ValidatorSetSnapshot;
 use futures::future::BoxFuture;
 use rand_core::OsRng;
@@ -87,7 +91,7 @@ pub struct FollowerRandomnessConfig {
 /// What the follower's launch site receives back.
 pub struct FollowerBeacon {
     /// The consensus-facing surface, for the outer engine and the cert inlet.
-    /// ONE instance shared by both: `observe_cert` prunes the store `pin_for`
+    /// ONE instance shared by both: `observe_cert` prunes the store `ensure_key`
     /// reads, and a second provider would make the prune a no-op on a map
     /// nothing else sees.
     pub randomness: Arc<dyn Randomness>,
@@ -121,7 +125,7 @@ where
 
     // The two rungs of the SHIPPED ladder, in the shipped order — a local read of
     // the artifact store, then one delivery over the upstream. Only the second is
-    // new; `pin_for` is handed the first alone, so the certificate path stays
+    // new; `ensure_key` is handed the first alone, so the certificate path stays
     // network-free by construction rather than by discipline.
     let held = AgreedKeys::new(
         {
@@ -139,7 +143,7 @@ where
             cfg.committees,
             cfg.fetch,
             store.clone(),
-            metrics,
+            metrics.clone(),
         ),
         cfg.dkg_qual,
     );
@@ -156,9 +160,11 @@ where
     FollowerBeacon {
         randomness: Arc::new(FollowerRandomness {
             keys,
+            seed_namespace: seed_namespace(&fluent_namespace(cfg.chain_id)),
             held,
             want_tx,
             idle: Arc::new(Notify::new()),
+            metrics,
         }),
         artifact_bytes: Arc::new(move |epoch: u64| store.get(epoch).map(|a| encode_artifact(&a))),
         fetch_handle,
@@ -268,7 +274,7 @@ async fn run_fetcher<E: Clock>(
         // The full ladder, off-path: the store, then the held artifacts, then the
         // upstream. A hit writes `PK_epoch` into the shared store at
         // `KeySource::Agreed` and memoises the carry for `epoch`, which is what
-        // makes the next `pin_for(Local)` answer without a fetch and stops
+        // makes the next `ensure_key(Local)` answer without a fetch and stops
         // `observe_cert` re-asking for it.
         let _ = keys
             .get_pk(
@@ -293,12 +299,18 @@ async fn run_fetcher<E: Clock>(
 /// epoch must be checked against.
 struct FollowerRandomness {
     keys: BeaconKeys,
+    /// The seed-signing domain an assembled σ is verified under. Held because
+    /// the oracle needs it and a follower has no plane to ask.
+    seed_namespace: Vec<u8>,
     /// The LOCAL rung only. The upstream rung is deliberately unreachable from
-    /// [`Randomness::pin_for`]: ingress calls it per certificate at
+    /// [`Randomness::ensure_key`]: ingress resolves per certificate at
     /// [`PinEffort::Local`], which is contractually network-free.
     held: AgreedKeys,
     want_tx: mpsc::Sender<u64>,
     idle: Arc<Notify>,
+    /// Handed to every [`KeyOnlyOracle`] this provider builds, so the keyless
+    /// window is counted on the node class where it is most ordinary.
+    metrics: BeaconMetrics,
 }
 
 impl Randomness for FollowerRandomness {
@@ -341,14 +353,28 @@ impl Randomness for FollowerRandomness {
         self.idle.clone()
     }
 
-    fn pin_for(&self, epoch: u64, _effort: PinEffort) -> BoxFuture<'_, Option<GroupPublic>> {
+    /// A KEY-ONLY oracle, and by type rather than by state: a follower runs no
+    /// ceremony, so it can check an assembled σ against `PK_epoch` and can never
+    /// sign, verify or recover a partial.
+    fn oracle_for(&self, epoch: u64) -> Option<Arc<dyn SeedOracle>> {
+        // The beacon-active rule, enforced at the source exactly as the plane
+        // enforces it: an oracle tells `verify_certificate` the epoch is
+        // beacon-active, so one on a pre-beacon epoch rejects every LEGAL seedless
+        // certificate there.
+        self.mandatory_at(epoch).then(|| {
+            Arc::new(KeyOnlyOracle {
+                epoch,
+                keys: self.keys.clone(),
+                namespace: self.seed_namespace.clone(),
+                metrics: self.metrics.clone(),
+            }) as Arc<dyn SeedOracle>
+        })
+    }
+
+    fn ensure_key(&self, epoch: u64, _effort: PinEffort) -> BoxFuture<'_, bool> {
         Box::pin(async move {
-            // The pin rule, enforced at the source exactly as the plane enforces
-            // it: a pin tells `verify_certificate` the epoch is beacon-active, so
-            // one on a pre-beacon epoch rejects every LEGAL seedless certificate
-            // there — permanently, because a pin is write-once.
             if !self.mandatory_at(epoch) {
-                return None;
+                return false;
             }
             // BOTH efforts answer identically, and the asymmetry is the point:
             // `Thorough` has nothing extra to spend here because the upstream rung
@@ -366,6 +392,7 @@ impl Randomness for FollowerRandomness {
                     },
                 )
                 .await
+                .is_some()
         })
     }
 
@@ -511,12 +538,12 @@ mod tests {
                 .iter()
                 .take(3)
                 .map(|kp| {
-                    let signer = build_signer(&ns, bimap.clone(), kp, None).expect("member");
+                    let signer = build_signer(&ns, bimap.clone(), kp, epoch, None).expect("member");
                     Finalize::sign(&signer, proposal.clone()).expect("sign")
                 })
                 .collect();
             Finalization::from_finalizes(
-                &build_verifier(&ns, bimap, None, None),
+                &build_verifier(&ns, bimap, epoch, None),
                 finalizes.iter(),
                 &Sequential,
             )
@@ -634,11 +661,8 @@ mod tests {
                 "the fetch must have run"
             );
             assert!(
-                fb.randomness
-                    .pin_for(TARGET, PinEffort::Local)
-                    .await
-                    .is_none(),
-                "a refused artifact must leave the epoch UNPINNED"
+                !fb.randomness.ensure_key(TARGET, PinEffort::Local).await,
+                "a refused artifact must leave the epoch KEYLESS"
             );
             assert!(
                 (fb.artifact_bytes)(TARGET).is_none(),
@@ -647,11 +671,11 @@ mod tests {
         });
     }
 
-    /// The positive half: a genuine artifact is adopted, `pin_for(Local)` then
-    /// answers, and it answers WITHOUT a fetch — the certificate path stays
+    /// The positive half: a genuine artifact is adopted, the epoch's key then
+    /// resolves, and it resolves WITHOUT a fetch — the certificate path stays
     /// network-free after the one off-path delivery.
     #[test]
-    fn a_genuine_artifact_is_adopted_and_then_pins_without_a_fetch() {
+    fn a_genuine_artifact_is_adopted_and_then_resolves_without_a_fetch() {
         let runner = deterministic::Runner::default();
         runner.start(|ctx| async move {
             let c = committee(1);
@@ -664,10 +688,7 @@ mod tests {
             let fb = for_follower(&ctx, config(&c, &up));
 
             assert!(
-                fb.randomness
-                    .pin_for(TARGET, PinEffort::Local)
-                    .await
-                    .is_none(),
+                !fb.randomness.ensure_key(TARGET, PinEffort::Local).await,
                 "nothing is held before the first delivery"
             );
             fb.randomness.observe_cert(TARGET);
@@ -675,16 +696,24 @@ mod tests {
 
             let after_adoption = up.calls.load(Ordering::SeqCst);
             assert_eq!(after_adoption, 1, "exactly one delivery");
+            assert!(fb.randomness.ensure_key(TARGET, PinEffort::Local).await);
+            // The VALUE, read off the adopted artifact itself: `ensure_key` reports
+            // only that a key resolved, so without this the test would pass on a
+            // wrong one.
             assert_eq!(
-                fb.randomness.pin_for(TARGET, PinEffort::Local).await,
-                Some(expected),
-                "the adopted PK_epoch is what the certificate path pins"
+                *crate::beacon::outcome::group_public_key(
+                    &decode_artifact(&(fb.artifact_bytes)(TARGET).expect("adopted"))
+                        .expect("decodes")
+                        .0
+                        .group_key
+                ),
+                expected,
+                "the adopted PK_epoch is the genuine one"
             );
             // A carried (stable) epoch above the mint resolves off the SAME
             // artifact through the dkgQual walk — no second delivery.
-            assert_eq!(
-                fb.randomness.pin_for(TARGET + 3, PinEffort::Local).await,
-                Some(expected),
+            assert!(
+                fb.randomness.ensure_key(TARGET + 3, PinEffort::Local).await,
                 "a stable epoch carries the minting epoch's key"
             );
             // And the trigger stands down: the epoch is cached, so no further
@@ -694,7 +723,7 @@ mod tests {
             assert_eq!(
                 up.calls.load(Ordering::SeqCst),
                 after_adoption,
-                "pin_for and observe_cert must not spend the network once the key is held"
+                "ensure_key and observe_cert must not spend the network once the key is held"
             );
             assert!(
                 (fb.artifact_bytes)(TARGET).is_some(),
@@ -755,11 +784,8 @@ mod tests {
 
             assert_eq!(up.calls.load(Ordering::SeqCst), 1);
             assert!(
-                fb.randomness
-                    .pin_for(TARGET, PinEffort::Local)
-                    .await
-                    .is_none(),
-                "no artifact means no pin — never a wrong one"
+                !fb.randomness.ensure_key(TARGET, PinEffort::Local).await,
+                "no artifact means no key — never a wrong one"
             );
             assert!((fb.artifact_bytes)(TARGET).is_none());
 
@@ -773,21 +799,17 @@ mod tests {
             fb.randomness.observe_cert(TARGET);
             settle(&ctx, || (fb.artifact_bytes)(TARGET).is_some()).await;
             assert!(
-                fb.randomness
-                    .pin_for(TARGET, PinEffort::Local)
-                    .await
-                    .is_some(),
+                fb.randomness.ensure_key(TARGET, PinEffort::Local).await,
                 "a miss must not be terminal"
             );
         });
     }
 
-    /// The pin rule, which binds every implementation: a pin tells
+    /// The beacon-active rule, which binds every implementation: an ORACLE tells
     /// `verify_certificate` that the epoch is beacon-active, so one on a
-    /// pre-beacon epoch rejects every LEGAL seedless certificate there — and a pin
-    /// is write-once, so the damage lasts the process.
+    /// pre-beacon epoch rejects every LEGAL seedless certificate there.
     #[test]
-    fn a_pre_beacon_epoch_is_never_pinned() {
+    fn a_pre_beacon_epoch_gets_no_oracle_and_no_key() {
         let runner = deterministic::Runner::default();
         runner.start(|ctx| async move {
             let c = committee(1);
@@ -795,12 +817,11 @@ mod tests {
             let fb = for_follower(&ctx, config(&c, &up));
             for epoch in 0..super::super::actor::DETERMINISTIC_BOOTSTRAP_EPOCH {
                 assert!(
-                    fb.randomness
-                        .pin_for(epoch, PinEffort::Local)
-                        .await
-                        .is_none(),
-                    "epoch {epoch} predates the beacon"
+                    fb.randomness.oracle_for(epoch).is_none(),
+                    "epoch {epoch} predates the beacon: an oracle there would reject \
+                     every legal seedless certificate"
                 );
+                assert!(!fb.randomness.ensure_key(epoch, PinEffort::Local).await);
                 assert!(!fb.randomness.mandatory_at(epoch));
             }
         });

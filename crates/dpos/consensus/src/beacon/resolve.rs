@@ -171,6 +171,38 @@ pub(crate) fn resolve_witness(
     }
 }
 
+/// Whether the mint this node stored at `minted_at` disagrees with the key a
+/// `committee[minted_at]` quorum ATTESTED for that mint.
+///
+/// The on-chain `dkgQual` arbitration proves only that the chain minted AT
+/// `minted_at`, NOT that this node's local outcome at that mint matches the
+/// chain's. A member that finalized a divergent outcome (a torn/superset log set
+/// → a different `Logs::select` → a different `PK_E`; see `recompute_scoped`)
+/// holds a self-derived key nobody else signs with, and serving it drives a lone
+/// `reject{bad_signature}` that splits honest voters (soak v39).
+///
+/// **Keyed on `minted_at`, never on the target epoch**, and that is the whole
+/// reason this is one function instead of three inline compares.
+/// [`BeaconKeys::attested`] answers only for the `Agreed` tier, and a CARRY epoch
+/// runs no agreement of its own — so comparing at the target epoch is vacuously
+/// `None` on exactly the epochs the carry serves, and the guard silently does
+/// nothing. Comparing at the mint makes ONE observed outcome demote the mint and
+/// every stable epoch that carries it. Absent attestation ⇒ no divergence (the
+/// restarted-signer carry).
+///
+/// Pure: the callers own what a `true` costs (a metric, a log, their own verdict),
+/// because the same divergence means "demote" on a reconcile path and only
+/// "answer nothing" on the per-vote path.
+pub(crate) fn mint_diverges_from_attested(
+    group_keys: &BeaconKeys,
+    minted_at: u64,
+    local: &GroupPublic,
+) -> bool {
+    group_keys
+        .attested(minted_at)
+        .is_some_and(|net| net != *local)
+}
+
 /// Build the lazy 3-state group-key resolver (§5 b, ladder step 1): resolve
 /// `PK_epoch` from the node's OWN live-DKG material under ON-CHAIN
 /// `dkgQual`-BIT ARBITRATION (`beacon::carry::select_carry_scheme`): the chain's
@@ -208,31 +240,16 @@ pub(crate) fn group_key_resolver(
                 let (out, _share) = m.get(&minted_at).expect("select returned a stored mint");
                 let pk = *super::outcome::group_public_key(out);
                 // CARRY-DIVERGENCE guard (mirror of the epoch_manager promote
-                // VALUE-gate, on the VOTE path): the on-chain arbitration proves
-                // only that the chain minted AT `minted_at`, NOT that this
-                // node's LOCAL outcome at that mint matches the chain's. A
-                // member that finalized a divergent outcome (a torn/superset log
-                // set → a different `Logs::select` → a different `PK_E`; see
-                // `recompute_scoped`) holds a self-derived key nobody signs with.
-                // Serving it here drives a lone `reject{bad_signature}` that
-                // splits honest voters (soak v39). The
-                // network-attested mint key (W4 ObservedOutcome — agreed chain
-                // data) is the reference: on a DIFFERING value the carried
-                // material is untrusted for verification ⇒ `Unknown`
-                // (accept-biased), NEVER `Resolved`. Keyed on `minted_at` (the
-                // mint), so ONE observed outcome demotes the mint AND every
-                // stable epoch that carries it. Absent attestation ⇒ unchanged
-                // (the restarted-signer carry).
-                if let Some(net) = group_keys.attested(minted_at) {
-                    if net != pk {
-                        metrics::counter!(
-                            "dpos_carry_forward_refused_total",
-                            "reason" => "key_divergence",
-                            "path" => "verify"
-                        )
-                        .increment(1);
-                        return KeyLookup::Unknown;
-                    }
+                // VALUE-gate) on the VOTE path: untrusted carried material must
+                // answer `Unknown` (accept-biased), NEVER `Resolved`.
+                if mint_diverges_from_attested(&group_keys, minted_at, &pk) {
+                    metrics::counter!(
+                        "dpos_carry_forward_refused_total",
+                        "reason" => "key_divergence",
+                        "path" => "verify"
+                    )
+                    .increment(1);
+                    return KeyLookup::Unknown;
                 }
                 KeyLookup::Resolved(pk)
             }
@@ -280,38 +297,33 @@ pub(crate) fn beacon_share_resolver(
         }
         match select_carry_scheme(epoch, |e| m.contains_key(&e), &dkg_qual) {
             CarryVerdict::Serve { minted_at } => {
-                // SHARE-GATE carry-divergence guard (same primitive as the
-                // vote-path `group_key_resolver`): on-chain arbitration proves
-                // only that the chain minted AT `minted_at`, NOT that
-                // our LOCAL outcome matches the chain's. When the network-attested
-                // mint key (W4 ObservedOutcome) DIFFERS from our self-derived
-                // one, the carried `(PK_E, share)` is a divergent local
-                // reconstruction — hand it to NEITHER the signer engine NOR W1
+                let (out, share) = m.get(&minted_at).expect("select returned a stored mint");
+                // SHARE-GATE carry-divergence guard: a divergent local
+                // reconstruction must reach NEITHER the signer engine NOR W1
                 // (which would publish the wrong key into the shared map, the
                 // root of the cross-epoch poisoning at soak v39). `Absent` ⇒ the
                 // share-gate demotes to verify-only; the recompute-heal later
                 // stores the correct exact-epoch key and re-promotes.
-                let (out, share) = m.get(&minted_at).expect("select returned a stored mint");
-                let pk = out.public().clone();
-                let pk_g2 = *super::outcome::group_public_key(out);
-                if let Some(net) = group_keys.attested(minted_at) {
-                    if net != pk_g2 {
-                        tracing::debug!(
-                            epoch,
-                            minted_at,
-                            "carry-forward refused: local mint key diverges from the \
-                             network-attested key (share-gate will demote to verify-only)"
-                        );
-                        metrics::counter!(
-                            "dpos_carry_forward_refused_total",
-                            "reason" => "key_divergence",
-                            "path" => "share"
-                        )
-                        .increment(1);
-                        return BeaconResolve::Absent;
-                    }
+                if mint_diverges_from_attested(
+                    &group_keys,
+                    minted_at,
+                    super::outcome::group_public_key(out),
+                ) {
+                    tracing::debug!(
+                        epoch,
+                        minted_at,
+                        "carry-forward refused: local mint key diverges from the \
+                         network-attested key (share-gate will demote to verify-only)"
+                    );
+                    metrics::counter!(
+                        "dpos_carry_forward_refused_total",
+                        "reason" => "key_divergence",
+                        "path" => "share"
+                    )
+                    .increment(1);
+                    return BeaconResolve::Absent;
                 }
-                BeaconResolve::Key((pk, Some(share.clone()), namespace.clone()))
+                BeaconResolve::Key((out.public().clone(), Some(share.clone()), namespace.clone()))
             }
             CarryVerdict::NoUsableMint => {
                 // The chain's key epoch names a mint this node never attended,

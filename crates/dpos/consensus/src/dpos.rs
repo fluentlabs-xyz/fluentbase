@@ -2512,11 +2512,12 @@ impl DposLayer {
         let namespace = fluent_namespace(chain_id);
         let initial_committee = epoch_committee_from_snapshot(&initial_snapshot)
             .map_err(|e| eyre!("initial snapshot has non-unique participants: {e:?}"))?;
-        // Cold-start register: the marshal is empty at launch, so no beacon key
-        // is resolvable → `cert_seed_pin = None` ⇒ vote-only cert verify (the
-        // accepted residual window, upgraded once boundary blocks flow through the
-        // inlet cursor / soft-enter walk — bug 2 sign-off item 1).
-        let initial_scheme = build_verifier(&namespace, initial_committee.bimap, None, None);
+        // Cold-start register: `oracle = None` ⇒ vote-only cert verify, the
+        // accepted residual window at launch. It is replaced by an oracle-bearing
+        // verifier as soon as a boundary block flows through the inlet cursor or
+        // the soft-enter walk, both of which take their oracle from the plane.
+        let initial_scheme =
+            build_verifier(&namespace, initial_committee.bimap, initial_epoch_u64, None);
         outer.cold_start_register(Epoch::new(initial_epoch_u64), initial_scheme);
 
         // Bridge forwarder: drains (u64, snap) queued by EpochTransition
@@ -3421,8 +3422,8 @@ impl DposLayer {
                 })
             },
         );
-        // Follower cold-start register: marshal empty at launch → `cert_seed_pin =
-        // None` (vote-only; the accepted residual, upgraded via the inlet cursor).
+        // Follower cold-start register: `oracle = None` at launch (vote-only; the
+        // accepted residual, upgraded via the inlet cursor).
         if let Ok(scheme) = crate::cert_inlet::CommitteeSource::scheme_at(
             &committees_src,
             initial_epoch_u64,
@@ -3634,7 +3635,7 @@ impl DposLayer {
         let shutdown_for_inlet = shutdown.clone();
         // The SAME provider the epoch manager holds, not a second one over a
         // private store — and on this path that is now load-bearing twice over.
-        // `observe_cert` prunes what `pin_for` reads, so splitting them would make
+        // `observe_cert` prunes what `ensure_key` reads, so splitting them would make
         // the pruning a no-op on a map nothing else can see; and `observe_cert` is
         // also the key-delivery TRIGGER, so a second instance would fetch into a
         // store the epoch manager's repair sweep never reads.
@@ -4412,7 +4413,7 @@ mod refetch_hole_tests {
     use commonware_runtime::{deterministic, Runner as _};
     use commonware_utils::{ordered::BiMap, TryCollect as _};
     use fluentbase_bls::{
-        beacon::GroupPublic, fluent_namespace, keys::ValidatorBlsKeypair, scheme::build_signer,
+        fluent_namespace, keys::ValidatorBlsKeypair, oracle::SeedOracle, scheme::build_signer,
         scheme::build_verifier, BlsPubkey, PeerPubkey, Scheme as BlsScheme,
     };
     use rand_08::rngs::StdRng;
@@ -4449,9 +4450,9 @@ mod refetch_hole_tests {
         let ns = fluent_namespace(CHAIN_ID);
         let signers = bls_kps
             .iter()
-            .map(|kp| build_signer(&ns, bimap.clone(), kp, None).expect("member"))
+            .map(|kp| build_signer(&ns, bimap.clone(), kp, 0, None).expect("member"))
             .collect();
-        let verifier = build_verifier(&ns, bimap, None, None);
+        let verifier = build_verifier(&ns, bimap, 0, None);
         Committee { signers, verifier }
     }
 
@@ -4509,14 +4510,14 @@ mod refetch_hole_tests {
             &self,
             _epoch: u64,
             _at_hash: B256,
-            _pin: Option<GroupPublic>,
+            _oracle: Option<std::sync::Arc<dyn SeedOracle>>,
         ) -> eyre::Result<BlsScheme> {
             Ok(self.0.clone())
         }
         fn scheme_at_finalized_tip(
             &self,
             _epoch: u64,
-            _pin: Option<GroupPublic>,
+            _oracle: Option<std::sync::Arc<dyn SeedOracle>>,
         ) -> eyre::Result<Option<BlsScheme>> {
             Ok(Some(self.0.clone()))
         }
