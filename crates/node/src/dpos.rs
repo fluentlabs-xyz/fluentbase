@@ -836,6 +836,7 @@ where
         ("evidence", plane.evidence_handle),
         ("agreement_launcher", plane.agreement_launcher_handle),
         ("agreement_write_back", plane.write_back_handle),
+        ("seed_promoter", plane.seed_promoter_handle),
     ];
     for h in plane.mux_handles {
         supervised.push(("mux", h));
@@ -989,6 +990,12 @@ pub(crate) struct BeaconPlane {
     /// BEACON_RESOLVER_CHANNEL — aborted ONLY at process shutdown (it serves peers'
     /// log fetches and drives our own recovery fetches for the whole process).
     pub beacon_resolver_handle: Handle<()>,
+    /// The quarantine promoter. It MUST be supervised rather than detached: it
+    /// holds a `SeedStore` clone and an `Arc<dyn Randomness>`, i.e. a sender for
+    /// each of the three journals, so a task nothing aborts keeps every
+    /// shutdown drain waiting out its timeout — the exact failure the explicit
+    /// `drop(plane.shared)` below exists to prevent.
+    pub seed_promoter_handle: Handle<()>,
     /// The plane-native `CertUpstream` frontier resolver engine
     /// (`commonware_resolver::p2p`) on FRONTIER_CHANNEL — aborted ONLY at process
     /// shutdown (it serves peers' tip/by-height fetches and drives this node's own
@@ -1977,6 +1984,7 @@ where
         dkg_handle: beacon.dkg_handle,
         poller_handle,
         beacon_resolver_handle: beacon.resolver_handle,
+        seed_promoter_handle: beacon.seed_promoter_handle,
         frontier_resolver_handle,
         evidence_handle,
         evidence: evidence_bridge,

@@ -289,31 +289,6 @@ impl<E: Storage + Metrics + Clock + BufferPooler> SeedJournal<E> {
     }
 }
 
-/// Drive a [`SeedJournal`] from the store's record channel.
-///
-/// Each wakeup drains everything already queued, writes the batch, and issues
-/// ONE sync for it. In steady state (1 round/s) that is one fsync per second of a
-/// 52-byte write; under a catch-up burst the batching makes the fsync rate
-/// self-limiting. The unsynced window is therefore bounded by one drain.
-///
-/// ## What the returned handle guarantees, and what it does not
-///
-/// `UnboundedReceiver::recv` yields every buffered item before it returns `None`,
-/// so once the LAST [`SeedStore`](crate::beacon::certify::SeedStore) clone drops
-/// (dropping the sender) this loop makes one final pass — write the remainder,
-/// sync it — and only then exits. Awaiting the returned [`Handle`] therefore
-/// waits for the tail to be ON DISK, and the node's graceful-shutdown path does
-/// exactly that (`crates/node/src/dpos.rs`, `drain_shutdown_tasks`) after the
-/// engine that owns the store is down.
-///
-/// The handle is NOT a supervision handle: its resolution means "the writer
-/// finished its work", the opposite of the `supervised` vec's "something died,
-/// bring the node down". Do not conflate the two.
-///
-/// What is still lost: a hard kill (SIGKILL, power cut) and a drain that exceeds
-/// the shutdown timeout. Both degrade to store MISSES — the pre-4.1 behaviour
-/// after every restart — never to a wrong σ.
-#[must_use = "the returned handle must be awaited on shutdown or the tail is lost"]
 /// Open the durable seed store, replay its window, and join it to a RAM map.
 ///
 /// The mirror of [`key_journal::open`](crate::beacon::key_journal::open), and it
@@ -351,14 +326,36 @@ where
         entries = rehydrated.len(),
         "rehydrated the seed store from disk"
     );
-    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let (store, rx) = crate::beacon::certify::SeedStore::with_persistence(rehydrated);
     let writer = spawn_writer(writer_context, journal, rx, retention as u64);
-    Ok((
-        crate::beacon::certify::SeedStore::with_persistence(rehydrated, tx),
-        writer,
-    ))
+    Ok((store, writer))
 }
 
+/// Drive a [`SeedJournal`] from the store's record channel.
+///
+/// Each wakeup drains everything already queued, writes the batch, and issues
+/// ONE sync for it. In steady state (1 round/s) that is one fsync per second of a
+/// 52-byte write; under a catch-up burst the batching makes the fsync rate
+/// self-limiting. The unsynced window is therefore bounded by one drain.
+///
+/// ## What the returned handle guarantees, and what it does not
+///
+/// `UnboundedReceiver::recv` yields every buffered item before it returns `None`,
+/// so once the LAST [`SeedStore`](crate::beacon::certify::SeedStore) clone drops
+/// (dropping the sender) this loop makes one final pass — write the remainder,
+/// sync it — and only then exits. Awaiting the returned [`Handle`] therefore
+/// waits for the tail to be ON DISK, and the node's graceful-shutdown path does
+/// exactly that (`crates/node/src/dpos.rs`, `drain_shutdown_tasks`) after the
+/// engine that owns the store is down.
+///
+/// The handle is NOT a supervision handle: its resolution means "the writer
+/// finished its work", the opposite of the `supervised` vec's "something died,
+/// bring the node down". Do not conflate the two.
+///
+/// What is still lost: a hard kill (SIGKILL, power cut) and a drain that exceeds
+/// the shutdown timeout. Both degrade to store MISSES — the pre-4.1 behaviour
+/// after every restart — never to a wrong σ.
+#[must_use = "the returned handle must be awaited on shutdown or the tail is lost"]
 pub fn spawn_writer<E>(
     context: E,
     mut journal: SeedJournal<E>,
@@ -411,6 +408,7 @@ where
 mod tests {
     use super::*;
     use crate::beacon::certify::{SeedStore, SEED_RETENTION};
+    use crate::beacon::verified_seed::VerifiedSeed;
     use commonware_codec::FixedSize;
     use commonware_cryptography::bls12381::primitives::{group::Private, ops, variant::MinSig};
     use commonware_math::algebra::Random as _;
@@ -445,12 +443,10 @@ mod tests {
             let journal = SeedJournal::init(ctx.with_label("boot1"), "seeds".into())
                 .await
                 .expect("open");
-            let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+            let (store, rx) = SeedStore::with_persistence(Vec::new());
             let writer = spawn_writer(ctx.with_label("writer"), journal, rx, SEED_RETENTION as u64);
-
-            let store = SeedStore::with_persistence(Vec::new(), tx);
             for r in &rounds {
-                store.record(*r, sig_for(*r));
+                store.record(VerifiedSeed::from_journal(*r, sig_for(*r)));
             }
             // Drop the store so the channel closes; the writer drains what is
             // queued and exits, which is also the shutdown path in production —
@@ -471,8 +467,7 @@ mod tests {
                 "every recorded round reached disk through the writer task"
             );
 
-            let (tx2, _rx2) = tokio::sync::mpsc::unbounded_channel();
-            let restarted = SeedStore::with_persistence(rehydrated, tx2);
+            let (restarted, _rx2) = SeedStore::with_persistence(rehydrated);
             for r in &rounds {
                 assert_eq!(
                     restarted.lookup(*r),
@@ -506,12 +501,10 @@ mod tests {
             let journal = SeedJournal::init(ctx.with_label("boot1"), "seeds".into())
                 .await
                 .expect("open");
-            let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+            let (store, rx) = SeedStore::with_persistence(Vec::new());
             let writer = spawn_writer(ctx.with_label("writer"), journal, rx, SEED_RETENTION as u64);
-
-            let store = SeedStore::with_persistence(Vec::new(), tx);
             for r in &rounds {
-                store.record(*r, sig_for(*r));
+                store.record(VerifiedSeed::from_journal(*r, sig_for(*r)));
             }
             drop(store);
             writer
@@ -563,8 +556,7 @@ mod tests {
                 .expect("replay");
             assert_eq!(rehydrated.len(), rounds.len());
 
-            let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-            let store = SeedStore::with_persistence(rehydrated, tx);
+            let (store, _rx) = SeedStore::with_persistence(rehydrated);
             for r in &rounds {
                 assert_eq!(
                     store.lookup(*r),
@@ -588,8 +580,7 @@ mod tests {
             journal.sync().await.expect("sync");
             let rehydrated = journal.replay_window(SEED_RETENTION).await.expect("replay");
 
-            let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-            let store = SeedStore::with_persistence(rehydrated, tx);
+            let (store, _rx) = SeedStore::with_persistence(rehydrated);
             assert_eq!(
                 store.lookup(round_at(99)),
                 None,

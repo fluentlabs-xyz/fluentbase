@@ -571,13 +571,39 @@ where
         // boundary-DKG gates) — never an invalid block, never a fallback for
         // the round. Hoisted above the pace sleep so a doomed view nullifies
         // ~1 s sooner.
+        // Captured BEFORE the witness fetch below, and used as the pace cap's
+        // origin. The fetch is bounded by `SEED_PULL_TIMEOUT`, but a cap read
+        // after it would ADD that budget to the pace sleep instead of spending it
+        // — and `leader_timeout` is derived as one block interval plus a 750 ms
+        // margin (`timeouts.rs`), so a leader that slept a full interval after a
+        // full fetch would broadcast at or past every peer's deadline and
+        // nullify its own view. Anchoring the cap here makes the fetch consume
+        // the leader's own budget, which is whose budget it is.
+        let view_entered = clock.current();
         let (parent_epoch, seed_required) = witness_link(self.randomness.as_ref(), context);
         let parent_seed = if !seed_required {
             None
         } else {
             let ep = parent_epoch.expect("required implies Some(ep)");
             let round = Round::new(Epoch::new(ep), View::new(parent.proposal_view));
-            match self.randomness.seed_for(round) {
+            // A miss is no longer the end of the road. The witness round is a
+            // pure function of agreed data, so it can be ASKED FOR: one bounded
+            // request, awaited here rather than deferred, because the value is a
+            // precondition of the block this call is building. `Inline::propose`
+            // runs in its own task and does not block the voter, so the wait
+            // costs this view's leader time and nothing else.
+            //
+            // At a boundary this is what turns "the store happens to hold it"
+            // into "the node obtained it", which is the difference between a
+            // committee that overlaps its predecessor and one that does not.
+            let held = match self.randomness.seed_for(round) {
+                Some(seed) => Some(seed),
+                None if self.randomness.fetch_seed(round).await => {
+                    self.randomness.seed_for(round)
+                }
+                None => None,
+            };
+            match held {
                 Some(seed) => Some(seed),
                 None => {
                     metrics::counter!("dpos_parent_seed_lookup_miss_total").increment(1);
@@ -612,7 +638,7 @@ where
         // time), so chain-time monotonicity is unaffected.
         let pace_target =
             std::time::UNIX_EPOCH + Duration::from_secs(parent.timestamp) + BLOCK_INTERVAL;
-        let pace_cap = clock.current() + BLOCK_INTERVAL;
+        let pace_cap = view_entered + BLOCK_INTERVAL;
         clock.sleep_until(pace_target.min(pace_cap)).await;
 
         // Execution gate (proposer-≤K-behind): the result commitment needs the
@@ -1378,6 +1404,7 @@ mod tests {
     use super::*;
     use crate::beacon::{
         certify::SeedStore, keys::BeaconKeys, resolve::GroupKeyFor, surface::PlaneRandomnessConfig,
+        verified_seed::{PkOracle, VerifiedSeed},
         BeaconVerify, KeyLookup,
     };
     use crate::slasher::Message;
@@ -1729,6 +1756,13 @@ mod tests {
                 target_round: round,
                 signature: recover_seed::<N3f1>(&self.sharing, &partials).expect("recover"),
             }
+        }
+
+        /// The same σ, wrapped in the witness the seed store now takes. The
+        /// fixture holds the group key it was dealt under, so this is a real
+        /// check, not a bypass.
+        fn witness(&self, round: Round) -> VerifiedSeed {
+            PkOracle::new(self.pk, self.ns.clone()).witness(round, self.seed_at(round).signature)
         }
     }
 
@@ -2720,6 +2754,43 @@ mod tests {
 
     // propose side (§3)
 
+    fn propose_app_with_pull(
+        store: SeedStore,
+        pull: Option<crate::beacon::seed_resolver::PullSeed>,
+    ) -> FluentApp<NoChain, NoTxs> {
+        let (mailbox, _rx) = fresh_mailbox();
+        FluentApp::new(
+            sample_order(Digest(B256::ZERO), 0),
+            mailbox,
+            Arc::new(|_b: OrderBlock| {}),
+            NoChain,
+            Arc::new(NoTxs),
+            Address::ZERO,
+            30_000_000,
+            0,
+            TEST_CHAIN_ID,
+            None,
+            TombstoneSet::default(),
+        )
+        .with_committee_index(propose_committee())
+        .with_randomness(crate::beacon::surface::PlaneRandomness::build(
+            PlaneRandomnessConfig {
+                seeds: store,
+                keys: test_group_keys(),
+                verify: None,
+                resolver: Arc::new(|_| crate::beacon::BeaconResolve::Absent),
+                ceremony: Arc::new(std::sync::RwLock::new(std::collections::BTreeMap::new())),
+                dkg_qual: Arc::new(|_| Some(false)),
+                held: None,
+                pull: None,
+                pull_seed: pull,
+                participation: Arc::new(tokio::sync::Notify::new()),
+                metrics: crate::beacon::metrics::BeaconMetrics::default(),
+                chain_id: TEST_CHAIN_ID,
+            },
+        ))
+    }
+
     fn propose_app(store: SeedStore, charges: Option<ChargeStore>) -> FluentApp<NoChain, NoTxs> {
         let (mailbox, _rx) = fresh_mailbox();
         FluentApp::new(
@@ -2756,6 +2827,7 @@ mod tests {
             dkg_qual: Arc::new(|_| Some(false)),
             held: None,
             pull: None,
+            pull_seed: None,
             participation: Arc::new(tokio::sync::Notify::new()),
             metrics: crate::beacon::metrics::BeaconMetrics::default(),
             chain_id: TEST_CHAIN_ID,
@@ -2800,11 +2872,10 @@ mod tests {
     fn proposal_stamps_the_production_record_naming_its_proposer() {
         let fx = witness_crypto(1);
         let pinned = Round::new(Epoch::new(5), View::new(4));
-        let seed = fx.seed_at(pinned);
         let runtime = commonware_runtime::deterministic::Runner::default();
         runtime.start(|rt| async move {
             let store = SeedStore::new();
-            store.record(pinned, seed.signature);
+            store.record(fx.witness(pinned));
             let app = propose_app(store, None);
             let parent = tiny_parent(4);
             let ctx = propose_ctx(5, 9, (4, false), &parent);
@@ -2867,12 +2938,11 @@ mod tests {
     fn a_proposer_holding_a_charge_stamps_the_verdict_and_its_evidence() {
         let fx = witness_crypto(1);
         let pinned = Round::new(Epoch::new(5), View::new(4));
-        let seed = fx.seed_at(pinned);
         let (accused, charge) = sample_charge(5, 9);
         let runtime = commonware_runtime::deterministic::Runner::default();
         runtime.start(|rt| async move {
             let store = SeedStore::new();
-            store.record(pinned, seed.signature);
+            store.record(fx.witness(pinned));
             let charges = ChargeStore::default();
             assert!(charges.hold(5, accused, charge));
 
@@ -2915,7 +2985,6 @@ mod tests {
     fn a_charge_whose_verdict_already_landed_is_dropped_rather_than_re_offered() {
         let fx = witness_crypto(1);
         let pinned = Round::new(Epoch::new(5), View::new(4));
-        let seed = fx.seed_at(pinned);
         let (accused, charge) = sample_charge(5, 9);
         let committee = propose_committee();
         let settled = committee
@@ -2932,7 +3001,7 @@ mod tests {
         let runtime = commonware_runtime::deterministic::Runner::default();
         runtime.start(|rt| async move {
             let store = SeedStore::new();
-            store.record(pinned, seed.signature);
+            store.record(fx.witness(pinned));
             let charges = ChargeStore::default();
             assert!(charges.hold(5, accused, charge.clone()));
             assert!(charges.hold(5, later, charge));
@@ -3048,11 +3117,10 @@ mod tests {
     fn a_leader_outside_its_own_committee_declines_to_propose() {
         let fx = witness_crypto(1);
         let pinned = Round::new(Epoch::new(5), View::new(4));
-        let seed = fx.seed_at(pinned);
         let runtime = commonware_runtime::deterministic::Runner::default();
         runtime.start(|rt| async move {
             let store = SeedStore::new();
-            store.record(pinned, seed.signature);
+            store.record(fx.witness(pinned));
             // A committee that does NOT contain the fixture leader (`from_seed(7)`).
             let (_outsiders, disjoint) = test_committee(3, 99);
             let app = propose_app(store, None).with_committee_index(Arc::new(disjoint));
@@ -3073,7 +3141,7 @@ mod tests {
         let runtime = commonware_runtime::deterministic::Runner::default();
         runtime.start(|rt| async move {
             let store = SeedStore::new();
-            store.record(pinned, seed.signature);
+            store.record(fx.witness(pinned));
             let app = propose_app(store, None);
             let parent = tiny_parent(4);
             let ctx = propose_ctx(5, 9, (4, false), &parent);
@@ -3119,13 +3187,11 @@ mod tests {
         let v0 = 7u64;
         let pinned = Round::new(Epoch::new(4), View::new(v0));
         let spin = Round::new(Epoch::new(4), View::new(v0 + 30));
-        let genuine = fx.seed_at(pinned);
-        let decoy = fx.seed_at(spin);
         let runtime = commonware_runtime::deterministic::Runner::default();
         runtime.start(|rt| async move {
             let store = SeedStore::new();
-            store.record(pinned, genuine.signature);
-            store.record(spin, decoy.signature); // the local first-wins spin round
+            store.record(fx.witness(pinned));
+            store.record(fx.witness(spin)); // the local first-wins spin round
             let app = propose_app(store, None);
             let parent = tiny_parent(v0);
             let ctx = propose_ctx(5, 3, (0, true), &parent);
@@ -3147,14 +3213,13 @@ mod tests {
     fn boundary_seed_store_miss_for_the_pinned_round_skips_the_view() {
         let fx = witness_crypto(1);
         let spin = Round::new(Epoch::new(4), View::new(37));
-        let decoy = fx.seed_at(spin);
         let recorder = DebuggingRecorder::new();
         let snap = recorder.snapshotter();
         metrics::with_local_recorder(&recorder, || {
             let runtime = commonware_runtime::deterministic::Runner::default();
             runtime.start(|rt| async move {
                 let store = SeedStore::new();
-                store.record(spin, decoy.signature); // only the spin round
+                store.record(fx.witness(spin)); // only the spin round
                 let app = propose_app(store, None);
                 let parent = tiny_parent(7); // pin = (4, 7) — absent
                 let ctx = propose_ctx(5, 3, (0, true), &parent);
@@ -3165,6 +3230,47 @@ mod tests {
             counter_at(&snap, "dpos_parent_seed_boundary_skip_total", None),
             1
         );
+    }
+
+    // THE POINT OF THE PULL: a witness the store does not hold is no longer the
+    // end of the view. The fetch is what a zero-overlap boundary lives on — the
+    // incoming committee never ran an engine in E, so its store CANNOT hold σ(E)
+    // and every leader would skip until someone hands it over.
+    #[test]
+    fn a_boundary_witness_the_store_lacks_is_fetched_and_the_view_proceeds() {
+        let fx = witness_crypto(1);
+        let pinned = Round::new(Epoch::new(4), View::new(7));
+        let landed = fx.witness(pinned);
+        let store = SeedStore::new();
+        // The pull stands in for the network: it files the round the way
+        // `SeedBridge::deliver` does, then answers that it arrived.
+        let pull: crate::beacon::seed_resolver::PullSeed = {
+            let store = store.clone();
+            Arc::new(move |round: Round| {
+                let store = store.clone();
+                Box::pin(async move {
+                    if round == pinned {
+                        store.record(landed);
+                    }
+                    store.lookup(round).is_some()
+                }) as futures::future::BoxFuture<'static, bool>
+            })
+        };
+        let runtime = commonware_runtime::deterministic::Runner::default();
+        runtime.start(|rt| async move {
+            let app = propose_app_with_pull(store, Some(pull));
+            let parent = tiny_parent(7);
+            let ctx = propose_ctx(5, 3, (0, true), &parent);
+            let block = app
+                .build_proposal(&rt, &ctx, parent)
+                .await
+                .expect("the fetched witness lets the view proceed");
+            assert_eq!(
+                block.parent_seed.map(|s| s.target_round),
+                Some(pinned),
+                "and the block carries the round the parent named"
+            );
+        });
     }
 
     // §9 propose: a pre-bootstrap link (Ep < 2) embeds NO witness and still

@@ -1849,6 +1849,7 @@ mod tests {
             dkg_qual: Arc::new(|_| Some(false)),
             held,
             pull,
+            pull_seed: None,
             participation: Arc::new(tokio::sync::Notify::new()),
             metrics: crate::beacon::metrics::BeaconMetrics::default(),
             chain_id: 1,
@@ -1973,6 +1974,54 @@ mod tests {
             .value,
         );
         (proposal, cert)
+    }
+
+    /// The premise the boundary rests on, pinned so a later change to
+    /// `soft_enter`'s registration cannot quietly remove it.
+    ///
+    /// A node that followed epoch E as a VERIFIER — which is what a fresh member
+    /// of `committee[E+1]` with zero overlap was during E — must have E in
+    /// `verifier_epochs()`, because that list is the sweep's work list. Once the
+    /// frontier passes E the sweep is the thing that fetches `PK_E`, and without
+    /// it the σ this node captured at ingress could never leave quarantine and
+    /// the first block of E+1 would have nothing to witness with.
+    #[tokio::test]
+    async fn a_soft_entered_epoch_is_swept_for_its_key_once_the_frontier_passes_it() {
+        let epoch = Epoch::new(DETERMINISTIC_BOOTSTRAP_EPOCH + 3);
+        let store = BeaconKeys::new();
+        let r = randomness_over(store.clone(), None, None);
+        let provider = EpochSchemeProvider::new();
+        register_verifier(&provider, epoch, r.as_ref());
+        assert!(
+            provider.verifier_epochs().contains(&epoch),
+            "a soft-entered epoch is on the sweep's work list"
+        );
+
+        // While the frontier is still AT the epoch, it is the live one and the
+        // sweep leaves it alone.
+        assert!(repair_keyless_schemes(
+            &provider,
+            r.as_ref(),
+            &mut BTreeSet::new(),
+            epoch,
+            Epoch::new(0),
+        )
+        .await
+        .is_empty());
+
+        store.set_pk(epoch.get(), some_group_key(), KeySource::Agreed);
+        assert_eq!(
+            repair_keyless_schemes(
+                &provider,
+                r.as_ref(),
+                &mut BTreeSet::new(),
+                Epoch::new(epoch.get() + 1),
+                Epoch::new(0),
+            )
+            .await,
+            vec![epoch],
+            "the boundary that needs PK_E is the tick that fetches it"
+        );
     }
 
     /// THE PROPERTY THE SWEEP EXISTS FOR, asserted on the SCHEME instead of on

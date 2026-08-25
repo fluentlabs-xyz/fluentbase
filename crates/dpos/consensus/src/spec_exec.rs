@@ -15,12 +15,12 @@
 //! there is no cross-actor race on the speculative state.
 
 use crate::{
-    beacon::{seed::Seed, Randomness},
+    beacon::{seed::Seed, verified_seed::VerifiedSeed, Randomness},
     executor,
     executor::{Command, Notarized},
 };
 use commonware_consensus::{simplex::types::Activity, Reporter};
-use fluentbase_bls::Scheme as BlsScheme;
+use fluentbase_bls::{oracle::SeedCheck, Scheme as BlsScheme};
 use std::sync::Arc;
 use tracing::{error, Span};
 
@@ -85,8 +85,35 @@ impl Reporter for Mailbox {
         // match it uses the seed carried in the command and reads nothing. Both
         // statements are synchronous anyway, so the order between them is
         // unobservable. Kept adjacent for readability, not for correctness.
+        //
+        // The witness is minted here through the same oracle every other writer
+        // uses, even though this σ was recovered from partials this node already
+        // verified. A constructor that skipped the check for the local path
+        // would be the one door a later writer reaches for; one pairing per
+        // round is the cheaper half of that trade.
         if let Some(s) = seed.as_ref() {
-            self.randomness.record_seed(s.target_round, s.signature);
+            // Below `DETERMINISTIC_BOOTSTRAP_EPOCH` there is no oracle, and no
+            // threshold seed to record either.
+            if let Some(oracle) = self.randomness.oracle_for(s.target_round.epoch().get()) {
+                match VerifiedSeed::check(oracle.as_ref(), s.target_round, s.signature) {
+                    Ok(verified) => self.randomness.record_seed(verified),
+                    // `NoKey` is a statement about US: a share-holding member
+                    // normally holds its own epoch key, but there is a window
+                    // before `set_pk` where it does not. Hold the value rather
+                    // than drop it — this node produced it, and the promoter
+                    // will file it the moment the key lands.
+                    Err(SeedCheck::NoKey) => self
+                        .randomness
+                        .quarantine_seed(s.target_round, s.signature),
+                    Err(check) => {
+                        error!(
+                            round = ?s.target_round,
+                            ?check,
+                            "locally recovered seed did not verify under its own epoch key"
+                        );
+                    }
+                }
+            }
         }
         let msg = executor::Message {
             cause: Span::current(),

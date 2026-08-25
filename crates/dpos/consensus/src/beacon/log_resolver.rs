@@ -25,6 +25,7 @@
 //! (so the actor stays the sole owner of ceremony state, no shared locks).
 
 use bytes::{Buf, BufMut, Bytes};
+use commonware_consensus::types::{Epoch, Round, View};
 use commonware_codec::{EncodeSize, Error as CodecError, Read, ReadExt as _, Write};
 use commonware_resolver::{p2p::Producer, Consumer, Resolver};
 use commonware_utils::{
@@ -37,7 +38,7 @@ use fluentbase_bls::PeerPubkey;
 use std::fmt::{Debug, Display, Formatter};
 use tracing::error;
 
-use crate::beacon::artifact::ArtifactBridge;
+use crate::beacon::{artifact::ArtifactBridge, seed_resolver::SeedBridge};
 
 /// Resolver key for one dealer's public log in one ceremony: `{epoch, dealer}`.
 ///
@@ -114,11 +115,23 @@ pub enum BeaconFetchKey {
     /// The quorum-signed agreement artifact for one target epoch — the ONLY
     /// source of `PK_epoch` for a node that never ran the ceremony.
     Artifact { epoch: u64 },
+    /// The recovered threshold seed for a RANGE of rounds, inclusive.
+    ///
+    /// The shape is ranged and the service is not, deliberately. What this
+    /// ticket needs is one σ per epoch boundary, and building windowing for it
+    /// would be machinery without a consumer. What the NEXT ticket needs
+    /// (FLU-1204, `parent_seed` leaving the block body) is a walk over
+    /// consecutive rounds — and widening a request a peer already understands is
+    /// a normal change, while re-tagging a wire key is a coordinated release.
+    /// So the enumeration is decided now and the machinery is not: a responder
+    /// answers with `from` alone and a requester asks for a range of one.
+    Seed { from: Round, to: Round },
 }
 
 impl BeaconFetchKey {
     const TAG_LOG: u8 = 0;
     const TAG_ARTIFACT: u8 = 1;
+    const TAG_SEED: u8 = 2;
 }
 
 impl Debug for BeaconFetchKey {
@@ -126,6 +139,9 @@ impl Debug for BeaconFetchKey {
         match self {
             Self::Log(key) => write!(f, "BeaconFetchKey::{key:?}"),
             Self::Artifact { epoch } => write!(f, "BeaconFetchKey::Artifact{{epoch={epoch}}}"),
+            Self::Seed { from, to } => {
+                write!(f, "BeaconFetchKey::Seed{{from={from:?},to={to:?}}}")
+            }
         }
     }
 }
@@ -135,6 +151,14 @@ impl Display for BeaconFetchKey {
         match self {
             Self::Log(key) => write!(f, "{key}"),
             Self::Artifact { epoch } => write!(f, "dkg-artifact[e{epoch}]"),
+            Self::Seed { from, to } => write!(
+                f,
+                "seed[e{}v{}..e{}v{}]",
+                from.epoch().get(),
+                from.view().get(),
+                to.epoch().get(),
+                to.view().get()
+            ),
         }
     }
 }
@@ -150,6 +174,13 @@ impl Write for BeaconFetchKey {
                 Self::TAG_ARTIFACT.write(buf);
                 epoch.write(buf);
             }
+            Self::Seed { from, to } => {
+                Self::TAG_SEED.write(buf);
+                from.epoch().get().write(buf);
+                from.view().get().write(buf);
+                to.epoch().get().write(buf);
+                to.view().get().write(buf);
+            }
         }
     }
 }
@@ -160,6 +191,12 @@ impl EncodeSize for BeaconFetchKey {
             + match self {
                 Self::Log(key) => key.encode_size(),
                 Self::Artifact { epoch } => epoch.encode_size(),
+                Self::Seed { from, to } => {
+                    from.epoch().get().encode_size()
+                        + from.view().get().encode_size()
+                        + to.epoch().get().encode_size()
+                        + to.view().get().encode_size()
+                }
             }
     }
 }
@@ -173,6 +210,25 @@ impl Read for BeaconFetchKey {
             Self::TAG_ARTIFACT => Ok(Self::Artifact {
                 epoch: u64::read(buf)?,
             }),
+            Self::TAG_SEED => {
+                let from = Round::new(Epoch::new(u64::read(buf)?), View::new(u64::read(buf)?));
+                let to = Round::new(Epoch::new(u64::read(buf)?), View::new(u64::read(buf)?));
+                // The KEY SHAPE is ranged from the first release so FLU-1204 can
+                // widen what it asks for without a second coordinated release —
+                // but the SERVICE is single-round, and a responder answers `from`
+                // alone. Accepting `to != from` would under-serve it silently:
+                // the requester's fetch completes on the one σ it got back and it
+                // never learns the rest was dropped. Refuse until the ranged
+                // service exists, so the day it does, no peer is already relying
+                // on the wrong answer.
+                if to != from {
+                    return Err(CodecError::Invalid(
+                        "BeaconFetchKey",
+                        "seed range wider than one round is not served yet",
+                    ));
+                }
+                Ok(Self::Seed { from, to })
+            }
             tag => Err(CodecError::InvalidEnum(tag)),
         }
     }
@@ -248,7 +304,7 @@ impl<R: Resolver<Key = BeaconFetchKey>> Resolver for LogFetcher<R> {
             .retain(move |key| match key {
                 BeaconFetchKey::Log(log) => predicate(log),
                 // Same reason as `clear`: not this side's fetch to drop.
-                BeaconFetchKey::Artifact { .. } => true,
+                BeaconFetchKey::Artifact { .. } | BeaconFetchKey::Seed { .. } => true,
             })
             .await;
     }
@@ -266,11 +322,16 @@ impl<R: Resolver<Key = BeaconFetchKey>> Resolver for LogFetcher<R> {
 pub struct BeaconFetchHandler {
     logs: LogHandler,
     artifacts: ArtifactBridge,
+    seeds: SeedBridge,
 }
 
 impl BeaconFetchHandler {
-    pub const fn new(logs: LogHandler, artifacts: ArtifactBridge) -> Self {
-        Self { logs, artifacts }
+    pub const fn new(logs: LogHandler, artifacts: ArtifactBridge, seeds: SeedBridge) -> Self {
+        Self {
+            logs,
+            artifacts,
+            seeds,
+        }
     }
 }
 
@@ -283,6 +344,7 @@ impl Consumer for BeaconFetchHandler {
         match key {
             BeaconFetchKey::Log(key) => self.logs.deliver(key, value).await,
             BeaconFetchKey::Artifact { epoch } => self.artifacts.deliver(epoch, value.as_ref()),
+            BeaconFetchKey::Seed { from, .. } => self.seeds.deliver(from, value.as_ref()),
         }
     }
 
@@ -310,6 +372,19 @@ impl Producer for BeaconFetchHandler {
                 // distinguish "not converged yet" from "nobody answered".
                 let (response, receiver) = oneshot::channel();
                 drop(response.send(self.artifacts.produce(epoch)));
+                receiver
+            }
+            BeaconFetchKey::Seed { from, .. } => {
+                // A DROPPED responder on a miss, not an empty response: the
+                // resolver treats any sent value as a completed fetch, so an
+                // empty answer would end the requester's search at the first
+                // peer that does not hold the round — and credit that peer's
+                // instant reply in the latency ranking. Same shape as the
+                // dealer-log arm.
+                let (response, receiver) = oneshot::channel();
+                if let Some(bytes) = self.seeds.produce(from) {
+                    drop(response.send(bytes));
+                }
                 receiver
             }
         }
@@ -440,6 +515,33 @@ mod tests {
             BeaconFetchKey::decode([2u8, 0, 0, 0, 0, 0, 0, 0, 0].as_slice()).is_err(),
             "an unknown subject tag was accepted"
         );
+    }
+
+    // The ranged shape is a WIRE fact from the first release, so FLU-1204 widens
+    // what it ASKS for without a second coordinated release. Until its service
+    // exists, a range wider than one round is refused: answering `from` alone
+    // would complete the requester's fetch and it would never learn the rest was
+    // dropped.
+    #[test]
+    fn a_seed_key_round_trips_and_a_range_wider_than_the_service_is_refused() {
+        let one = BeaconFetchKey::Seed {
+            from: Round::new(Epoch::new(4), View::new(9)),
+            to: Round::new(Epoch::new(4), View::new(9)),
+        };
+        assert_eq!(BeaconFetchKey::decode(one.encode()).expect("decode"), one);
+
+        // Wider than the service: refused rather than silently under-served, so
+        // no peer can come to rely on getting one σ back for a window.
+        for wider in [
+            (View::new(9), View::new(11)),
+            (View::new(11), View::new(9)),
+        ] {
+            let key = BeaconFetchKey::Seed {
+                from: Round::new(Epoch::new(4), wider.0),
+                to: Round::new(Epoch::new(4), wider.1),
+            };
+            assert!(BeaconFetchKey::decode(key.encode()).is_err());
+        }
     }
 
     /// The ceremony's handle speaks only for dealer logs. Its `retain`/`clear`

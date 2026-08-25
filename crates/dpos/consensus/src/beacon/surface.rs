@@ -9,11 +9,12 @@
 use super::{
     actor::CeremonyStore,
     carry::DkgQualFor,
-    keys::{pk_prefix, BeaconKeys, KeySource},
+    keys::{pk_prefix, BeaconKeys, InvalidSeed, KeySource},
     metrics::BeaconMetrics,
     oracle::BeaconOracle,
     resolve::BeaconVerify,
     seed::Seed,
+    verified_seed::VerifiedSeed,
 };
 use commonware_consensus::types::{Epoch, Round, View};
 use commonware_cryptography::bls12381::primitives::{
@@ -108,7 +109,10 @@ pub enum PinEffort {
 
 /// Everything the consensus core is allowed to know about randomness.
 pub trait Randomness: Send + Sync {
-    /// Hand over the seed recovered from a round's certificate.
+    /// Hand over a seed that verified against its epoch key.
+    ///
+    /// The witness carries its own round, so there is no second argument to get
+    /// wrong, and no implementation can be handed a σ nobody checked.
     ///
     /// ORDERING-CRITICAL: the caller invokes this SYNCHRONOUSLY, from inside the
     /// simplex reporter. Sync by signature so no implementation can move the
@@ -116,7 +120,27 @@ pub trait Randomness: Send + Sync {
     /// the view, and the next view's leader reads this memo to embed the
     /// parent-seed witness. `spec_exec.rs` carries the derivation, including
     /// which half of the older constraint turned out not to be load-bearing.
-    fn record_seed(&self, round: Round, seed: BlsSignature);
+    fn record_seed(&self, verified: VerifiedSeed);
+
+    /// Hold a σ that arrived from the network for an epoch whose key is not
+    /// resolvable here yet.
+    ///
+    /// Separate from [`record_seed`](Self::record_seed) by design: the two take
+    /// different types because they mean different things, and no caller can
+    /// reach the served map with a value it did not check.
+    fn quarantine_seed(&self, round: Round, seed: BlsSignature);
+
+    /// What a σ that failed `verify_seed` for `epoch` means, and how loudly.
+    /// Delegates to [`BeaconKeys::on_invalid_seed`], which owns the rule because
+    /// it owns provenance.
+    fn on_invalid_seed(&self, epoch: u64) -> InvalidSeed;
+
+    /// Ask peers for σ of `round` and wait a bounded time for it.
+    ///
+    /// `true` iff the served map holds it when the future resolves. The one
+    /// ASYNC member of the seed half, and deliberately so: acquisition is
+    /// allowed to await, while every read stays synchronous.
+    fn fetch_seed(&self, round: Round) -> BoxFuture<'_, bool>;
 
     /// The seed in force at `round`, if this node has it. Sync: both callers —
     /// the propose-side witness embed and the executor's re-canonicalisation —
@@ -410,7 +434,18 @@ impl SeedOracle for DealtOracle {
 impl Randomness for StaticRandomness {
     /// Nothing to record: σ is recomputable for any round, so there is no memo
     /// that could go stale and none that has to be fed.
-    fn record_seed(&self, _round: Round, _seed: BlsSignature) {}
+    fn record_seed(&self, _verified: VerifiedSeed) {}
+
+    fn quarantine_seed(&self, _round: Round, _seed: BlsSignature) {}
+
+    fn fetch_seed(&self, _round: Round) -> BoxFuture<'_, bool> {
+        Box::pin(std::future::ready(false))
+    }
+
+    /// No key store to judge provenance with, so a failure proves nothing.
+    fn on_invalid_seed(&self, _epoch: u64) -> InvalidSeed {
+        InvalidSeed::Quarantine
+    }
 
     fn seed_for(&self, round: Round) -> Option<Seed> {
         Some(Seed {
@@ -563,6 +598,7 @@ pub fn for_seeds(seeds: super::certify::SeedStore) -> Arc<dyn Randomness> {
         dkg_qual: no_mint(),
         held: None,
         pull: None,
+        pull_seed: None,
         participation: Arc::new(Notify::new()),
         metrics: BeaconMetrics::default(),
         chain_id: 0,
@@ -593,6 +629,7 @@ pub fn for_keys(keys: BeaconKeys, held: Option<super::keys::AgreedKeys>) -> Arc<
         dkg_qual: no_mint(),
         held,
         pull: None,
+        pull_seed: None,
         participation: Arc::new(Notify::new()),
         metrics: BeaconMetrics::default(),
         // Reaches `build_signer` only, which an ingress path never calls.
@@ -611,7 +648,18 @@ struct Absent {
 }
 
 impl Randomness for Absent {
-    fn record_seed(&self, _round: Round, _seed: BlsSignature) {}
+    fn record_seed(&self, _verified: VerifiedSeed) {}
+
+    fn quarantine_seed(&self, _round: Round, _seed: BlsSignature) {}
+
+    fn fetch_seed(&self, _round: Round) -> BoxFuture<'_, bool> {
+        Box::pin(std::future::ready(false))
+    }
+
+    /// No key store to judge provenance with, so a failure proves nothing.
+    fn on_invalid_seed(&self, _epoch: u64) -> InvalidSeed {
+        InvalidSeed::Quarantine
+    }
 
     fn seed_for(&self, _round: Round) -> Option<Seed> {
         None
@@ -684,6 +732,12 @@ pub(crate) mod testing {
         bootstrap: u64,
         efforts: Mutex<Vec<(u64, PinEffort)>>,
         idle: Arc<Notify>,
+        /// A real store, so a test can assert WHERE a captured σ landed —
+        /// served or held — instead of only that the call happened.
+        store: crate::beacon::certify::SeedStore,
+        /// Must match the namespace the fixture signed under, or every σ this
+        /// provider is asked about is `Invalid` rather than `Valid`.
+        seed_namespace: Vec<u8>,
     }
 
     impl Canned {
@@ -700,6 +754,15 @@ pub(crate) mod testing {
             self
         }
 
+        pub(crate) fn with_seed_namespace(mut self, namespace: Vec<u8>) -> Self {
+            self.seed_namespace = namespace;
+            self
+        }
+
+        pub(crate) fn store(&self) -> &crate::beacon::certify::SeedStore {
+            &self.store
+        }
+
         /// Every `ensure_key` this provider answered, in call order.
         pub(crate) fn efforts(&self) -> Vec<(u64, PinEffort)> {
             self.efforts.lock().expect("efforts lock").clone()
@@ -707,7 +770,21 @@ pub(crate) mod testing {
     }
 
     impl Randomness for Canned {
-        fn record_seed(&self, _round: Round, _seed: BlsSignature) {}
+        fn record_seed(&self, verified: VerifiedSeed) {
+            self.store.record(verified);
+        }
+
+        fn quarantine_seed(&self, round: Round, seed: BlsSignature) {
+            self.store.quarantine(round, seed);
+        }
+
+        fn fetch_seed(&self, _round: Round) -> BoxFuture<'_, bool> {
+            Box::pin(std::future::ready(false))
+        }
+
+        fn on_invalid_seed(&self, epoch: u64) -> InvalidSeed {
+            self.keys.on_invalid_seed(epoch)
+        }
 
         fn seed_for(&self, round: Round) -> Option<Seed> {
             self.seeds.get(&round).cloned()
@@ -752,7 +829,7 @@ pub(crate) mod testing {
                 Arc::new(KeyOnlyOracle {
                     epoch,
                     keys: self.keys.clone(),
-                    namespace: Vec::new(),
+                    namespace: self.seed_namespace.clone(),
                     metrics: BeaconMetrics::default(),
                 }) as Arc<dyn SeedOracle>
             })
@@ -961,6 +1038,7 @@ mod tests {
             dkg_qual: no_mint(),
             held: None,
             pull: None,
+            pull_seed: None,
             participation: Arc::new(Notify::new()),
             metrics: BeaconMetrics::default(),
             chain_id: 1,
@@ -1224,6 +1302,7 @@ mod tests {
             dkg_qual: no_mint(),
             held: None,
             pull: None,
+            pull_seed: None,
             participation: Arc::new(Notify::new()),
             metrics: BeaconMetrics::default(),
             chain_id: 1,
@@ -1273,6 +1352,7 @@ mod tests {
             dkg_qual: no_mint(),
             held: None,
             pull: None,
+            pull_seed: None,
             participation: Arc::new(Notify::new()),
             metrics: BeaconMetrics::default(),
             chain_id: 1,
@@ -1338,6 +1418,7 @@ mod tests {
             dkg_qual: no_mint(),
             held: None,
             pull: None,
+            pull_seed: None,
             participation: Arc::new(Notify::new()),
             metrics: BeaconMetrics::default(),
             chain_id: 1,
@@ -1776,6 +1857,9 @@ pub(crate) struct PlaneRandomness {
     dkg_qual: DkgQualFor,
     held: Option<super::keys::AgreedKeys>,
     pull: Option<super::keys::AgreedKeys>,
+    /// The by-round σ pull. `None` on a node with no resolver seam, where a
+    /// witness miss stays what it is today: a skipped view.
+    pull_seed: Option<super::seed_resolver::PullSeed>,
     participation: Arc<Notify>,
     metrics: BeaconMetrics,
     chain_id: u64,
@@ -1796,6 +1880,7 @@ pub(crate) struct PlaneRandomnessConfig {
     pub(crate) dkg_qual: DkgQualFor,
     pub(crate) held: Option<super::keys::AgreedKeys>,
     pub(crate) pull: Option<super::keys::AgreedKeys>,
+    pub(crate) pull_seed: Option<super::seed_resolver::PullSeed>,
     pub(crate) participation: Arc<Notify>,
     pub(crate) metrics: BeaconMetrics,
     pub(crate) chain_id: u64,
@@ -1812,6 +1897,7 @@ impl PlaneRandomness {
             dkg_qual,
             held,
             pull,
+            pull_seed,
             participation,
             metrics,
             chain_id,
@@ -1825,6 +1911,7 @@ impl PlaneRandomness {
             dkg_qual,
             held,
             pull,
+            pull_seed,
             participation,
             metrics,
             chain_id,
@@ -1863,8 +1950,23 @@ impl PlaneRandomness {
 }
 
 impl Randomness for PlaneRandomness {
-    fn record_seed(&self, round: Round, seed: BlsSignature) {
-        self.seeds.record(round, seed);
+    fn record_seed(&self, verified: VerifiedSeed) {
+        self.seeds.record(verified);
+    }
+
+    fn quarantine_seed(&self, round: Round, seed: BlsSignature) {
+        self.seeds.quarantine(round, seed);
+    }
+
+    fn on_invalid_seed(&self, epoch: u64) -> InvalidSeed {
+        self.keys.on_invalid_seed(epoch)
+    }
+
+    fn fetch_seed(&self, round: Round) -> BoxFuture<'_, bool> {
+        match self.pull_seed.as_ref() {
+            Some(pull) => pull(round),
+            None => Box::pin(std::future::ready(false)),
+        }
     }
 
     fn seed_for(&self, round: Round) -> Option<Seed> {
@@ -2110,15 +2212,20 @@ impl Randomness for PlaneRandomness {
 
     fn observe_epoch(&self, reconciled: Epoch, entered_frontier: Epoch) {
         w3_backfill(&self.keys, &self.resolver, reconciled);
-        self.keys.retain_from(
-            entered_frontier
-                .get()
-                .saturating_sub(crate::SCHEME_RETENTION_EPOCHS as u64),
-        );
+        let oldest = entered_frontier
+            .get()
+            .saturating_sub(crate::SCHEME_RETENTION_EPOCHS as u64);
+        self.keys.retain_from(oldest);
+        // The quarantine rides the SAME window as the key store, because it is
+        // waiting on exactly what that store retains: past the retention edge no
+        // key can arrive any more, so a held σ can never be promoted and is only
+        // memory a peer could grow.
+        self.seeds.retain_quarantine_from(oldest);
     }
 
     fn observe_cert(&self, epoch: u64) {
-        self.keys
-            .retain_from(epoch.saturating_sub(crate::SCHEME_RETENTION_EPOCHS as u64));
+        let oldest = epoch.saturating_sub(crate::SCHEME_RETENTION_EPOCHS as u64);
+        self.keys.retain_from(oldest);
+        self.seeds.retain_quarantine_from(oldest);
     }
 }

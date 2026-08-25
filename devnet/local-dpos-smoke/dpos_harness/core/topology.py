@@ -21,9 +21,11 @@ Nodes are NOT interchangeable, and flattening them is the way to break this quie
     latency, and in what fails when it is down. `cases/quorum.py` and
     `core/setops.py::committee_victim_idxs` refuse to disrupt it for exactly that
     reason.
-  * `validator-1` is the pinned CERT-UPSTREAM anchor (v0's `--dpos.follower-upstream`
-    and the full-node's second `--cert-upstream`), so it is likewise never a churn
-    victim (FLK-8).
+  * `validator-1` is the pinned CERT-UPSTREAM anchor (the full-node's second
+    `--cert-upstream`), so it is likewise never a churn victim (FLK-8). It stopped
+    being v0's `--dpos.follower-upstream` when the generated stack put its genesis
+    committee on the plane-native arm (FLU-1203) — a committee validator is Active
+    from the first block and needs no WS escape.
   * `full-node` (L2 cert-follower, host 18545) and `downstream` (L3 cascade, host
     28545) publish a host RPC but no metrics, and are never committee members.
   * `genesis-init` is a one-shot: it runs to completion and stays exited. Lifecycle
@@ -244,7 +246,8 @@ def validator_ip(idx) -> str:
 
 #: validator-0's IP, i.e. the phase-A sequencer / the WS cert-upstream every follower dials.
 SEQUENCER_IP = validator_ip(0)
-#: validator-1's IP — v0's `--dpos.follower-upstream` and the full-node's 2nd cert-upstream.
+#: validator-1's IP — the full-node's 2nd cert-upstream. No longer v0's
+#: `--dpos.follower-upstream`: genesis committee validators are plane-native.
 CERT_UPSTREAM_ANCHOR_IP = validator_ip(1)
 
 

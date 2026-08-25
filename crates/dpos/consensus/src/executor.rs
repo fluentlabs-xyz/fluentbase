@@ -4444,6 +4444,21 @@ mod tests {
         }
     }
 
+    /// The same seed behind the witness [`SeedStore::record`] now takes. The
+    /// deal is deterministic, so the key this checks against is the key
+    /// [`real_seed`] signed under.
+    fn real_witness(
+        round: commonware_consensus::types::Round,
+    ) -> crate::beacon::verified_seed::VerifiedSeed {
+        use commonware_cryptography::bls12381::{dkg::deal_anonymous, primitives::variant::MinSig};
+        use commonware_utils::{test_rng, N3f1, NZU32};
+        use fluentbase_bls::beacon::seed_namespace;
+        let mut rng = test_rng();
+        let (sharing, _) = deal_anonymous::<MinSig, N3f1>(&mut rng, Default::default(), NZU32!(5));
+        crate::beacon::verified_seed::PkOracle::new(*sharing.public(), seed_namespace(b"fluent-test"))
+            .witness(round, real_seed(round).signature)
+    }
+
     fn finalize_msg(
         order: OrderBlock,
     ) -> (Message, commonware_utils::acknowledgement::ExactWaiter) {
@@ -7276,7 +7291,7 @@ mod tests {
             let canonical = Round::new(Epoch::new(0), View::new(V0));
             let seed_v0 = real_seed(canonical);
             let seed_spin = real_seed(Round::new(Epoch::new(0), View::new(V0 + 30)));
-            store.record(canonical, seed_v0.signature);
+            store.record(real_witness(canonical));
 
             // Spin-round notarization → re-canonicalised to (0, V0) via the store.
             mailbox
@@ -8038,7 +8053,7 @@ mod tests {
             let h = ANCHOR + 1;
             let store = crate::beacon::certify::SeedStore::new();
             let seed = real_seed(Round::new(Epoch::new(0), View::new(h)));
-            store.record(seed.target_round, seed.signature);
+            store.record(real_witness(seed.target_round));
             let fx = Fixture::new(ANCHOR).with_seed_store(store);
             let (mut actor, _mailbox) = fx.build(ctx, ANCHOR, ANCHOR);
             let cause = Span::current();
@@ -8117,7 +8132,7 @@ mod tests {
             let h = ANCHOR + 1;
             let store = crate::beacon::certify::SeedStore::new();
             let seed = real_seed(Round::new(Epoch::new(0), View::new(h)));
-            store.record(seed.target_round, seed.signature);
+            store.record(real_witness(seed.target_round));
             let fx = Fixture::new(ANCHOR).with_seed_store(store);
             let (mut actor, _mailbox) = fx.build(ctx, ANCHOR, ANCHOR);
             let cause = Span::current();
@@ -8180,7 +8195,7 @@ mod tests {
             let h = ANCHOR + 1;
             let store = crate::beacon::certify::SeedStore::new();
             let seed_h = real_seed(Round::new(Epoch::new(0), View::new(h)));
-            store.record(seed_h.target_round, seed_h.signature);
+            store.record(real_witness(seed_h.target_round));
             let fx = Fixture::new(ANCHOR).with_seed_store(store);
             let (mut actor, _mailbox) = fx.build(ctx, ANCHOR, ANCHOR);
             let cause = Span::current();
@@ -8272,7 +8287,7 @@ mod tests {
 
             let store = crate::beacon::certify::SeedStore::new();
             let seed = real_seed(Round::new(e, View::new(H)));
-            store.record(seed.target_round, seed.signature);
+            store.record(real_witness(seed.target_round));
             let fx = Fixture::new(ANCHOR)
                 .with_seed_store(store)
                 .with_epocher(epocher);
@@ -8324,7 +8339,7 @@ mod tests {
             let store = crate::beacon::certify::SeedStore::new();
             // SAME view, WRONG epoch (e+1 = 2): the only entry in the store.
             let wrong = real_seed(Round::new(Epoch::new(2), View::new(H)));
-            store.record(wrong.target_round, wrong.signature);
+            store.record(real_witness(wrong.target_round));
             let fx = Fixture::new(ANCHOR)
                 .with_seed_store(store)
                 .with_epocher(epocher);
@@ -8398,7 +8413,7 @@ mod tests {
             // the seed (which fires the notify permit). The seed-notify arm then
             // re-runs the eager derive — model that by driving the arm's body.
             let seed = real_seed(Round::new(Epoch::new(0), View::new(h)));
-            store.record(seed.target_round, seed.signature);
+            store.record(real_witness(seed.target_round));
             actor
                 .try_eager_finalized_derive(EagerTrigger::Notified)
                 .await

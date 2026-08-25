@@ -72,6 +72,15 @@ smoke-byzantine:
 # validators, epoch=32, cascade off) and tears it down (SIM_KEEP_UP=1 to keep it).
 case-growth:
 	@python3 -m dpos_harness case growth
+# ZERO-OVERLAP boundary (FLU-1203): brings up 8 validators with a committee of 4,
+# activates v4..v7 WITHOUT raising the cap, then out-stakes all four incumbents inside
+# ONE selection epoch so the committee flips wholesale. Asserts the PREMISE first (all
+# four seats flipped at one commit — a three-of-four flip fails HERE, not on liveness),
+# then that the chain crossed the boundary and no leader skipped a view. Cannot run on
+# the production-path stack: MIN_COMMITTEE_LENGTH=4 means zero overlap needs 8 keyed
+# validators. Self-contained; tears down (SIM_KEEP_UP=1 to keep it).
+case-turnover:
+	@python3 -m dpos_harness case turnover
 # Standalone BFT quorum-loss safety case: brings up a clean 7-member committee, stops f+1 to
 # confirm finalization HALTS (quorum lost), restarts them + confirms EACH is back up, then asserts
 # finalization RESUMES. Proves the f+1 stall-then-recover property the removed in-sim probe used to

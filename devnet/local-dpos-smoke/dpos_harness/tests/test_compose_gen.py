@@ -144,3 +144,26 @@ def test_assert_generated_catches_truncation(tmp_path):
     p.write_text("services:\n  x: {}\n")
     with pytest.raises(ComposeGenError):
         compose_gen.assert_generated(str(p), "MISSING-MARKER")
+
+
+def test_committee_validators_are_plane_native_and_joiners_keep_the_ws_escape(tmp_path):
+    """The transport arm the stack exercises is a property of the compose file.
+
+    A validator inside the genesis committee is Active from the first block and
+    syncs over the authenticated plane; leaving `--dpos.follower-upstream` on it
+    would put every node on the WS cert-inlet arm, so a defect in the plane arm —
+    the one a production zero-overlap boundary uses — could not show up here.
+
+    A validator OUTSIDE the genesis committee is unregistered at cold start, and
+    the plane serves `active_registry ∪ committee` only, so it must keep the WS
+    escape or it freezes at the anchor with no sync path at all (Gap C).
+    """
+    _clear_env()
+    _, dpos = compose_gen.generate(8, initial_committee=4, out_dir=str(tmp_path))
+    blocks = open(dpos).read().split("  validator-")
+    for i in range(8):
+        block = next(b for b in blocks if b.startswith(f"{i}:"))
+        has_ws = "--dpos.follower-upstream" in block
+        assert has_ws == (i >= 4), (
+            f"validator-{i}: follower-upstream present={has_ws}, expected={i >= 4}"
+        )

@@ -371,8 +371,6 @@ volumes:
     v0d_args = (f"          --chain=/runtime/genesis-local.json \\\n"
                 f"{prune_line}          --datadir=/runtime/reth-data/v0 \\\n"
                 f"          --dpos \\\n"
-                f"          --dpos.follower-upstream="
-                f"ws://{topology.CERT_UPSTREAM_ANCHOR_IP}:{topology.WS_PORT} \\\n"
                 f"          --dpos.bls-key-path=/runtime/keys/{topology.validator(0)}/bls.hex \\\n"
                 f"          --dpos.peer-key-path=/runtime/keys/{topology.validator(0)}/peer.hex \\\n"
                 f"          --dpos.staking-config=/runtime/staking-reader.json \\\n"
@@ -401,10 +399,27 @@ volumes:
         # `$${IDENTITY_IDX:-i}` (double-$ = compose literal-$ escape) so the container's /bin/sh
         # expands it at RUNTIME (a rebirth overlay sets IDENTITY_IDX; unset → defaults to i).
         keydir = f"{topology.VALIDATOR_PREFIX}$${{IDENTITY_IDX:-{i}}}"
+        # WS ESCAPE, and ONLY for a node that is not yet plane-tracked.
+        #
+        # The authenticated consensus plane serves `active_registry ∪ committee`
+        # alone, and post-merge devp2p does not gossip DPoS blocks, so a node that
+        # is UNREGISTERED at cold start has no sync path at all and freezes at the
+        # anchor (Gap C, pre-Active onboarding — the same reason production-path's
+        # v5 keeps this flag and its committee validators dropped it).
+        #
+        # A validator inside the genesis committee is Active from the first block
+        # and syncs plane-natively. Leaving the flag on it would put the whole
+        # stack on the WS cert-inlet arm and hide any defect in the plane arm —
+        # which is the arm a production zero-overlap boundary actually uses.
+        ws_escape = (
+            f"          --dpos.follower-upstream=ws://{seq_ip}:{topology.WS_PORT} \\\n"
+            if i >= initial_committee
+            else ""
+        )
         args = (f"          --chain=/runtime/genesis-local.json \\\n"
                 f"{prune_line}          --datadir=/runtime/reth-data/v{i} \\\n"
                 f"          --dpos \\\n"
-                f"          --dpos.follower-upstream=ws://{seq_ip}:{topology.WS_PORT} \\\n"
+                f"{ws_escape}"
                 f"          --dpos.bls-key-path=/runtime/keys/{keydir}/bls.hex \\\n"
                 f"          --dpos.peer-key-path=/runtime/keys/{keydir}/peer.hex \\\n"
                 f"          --dpos.staking-config=/runtime/staking-reader.json \\\n"

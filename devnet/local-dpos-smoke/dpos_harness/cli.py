@@ -2,7 +2,7 @@
 
   python -m dpos_harness sim   run [--dry-run-bringup|--dry-run-tick]
   python -m dpos_harness sim   status [LOG …] | shadow … | bundle REASON [ID]
-  python -m dpos_harness case  growth | quorum | seed-continuity | list
+  python -m dpos_harness case  growth | quorum | seed-continuity | turnover | list
   python -m dpos_harness stack compose-gen N [TARGET] [POOL] | golden [--check]
   python -m dpos_harness stack dry-run-static [--overlay FILE …]
   python -m dpos_harness load  start | stop [PIDFILE]
@@ -40,6 +40,7 @@ from .core.termio import enable_line_buffering
 CASES = {
     "growth": "growth",
     "quorum": "quorum",
+    "turnover": "turnover",
     "seed-continuity": "seed_continuity",
     "smoke-rejump-signer": "smoke.rejump_signer",
     "smoke-base": "smoke.base",
@@ -90,7 +91,7 @@ SUITE = [
     "smoke-liveness", "smoke-fault", "smoke-vrf-dkg-live-heal",
     "smoke-cert-follow", "smoke-cert-keyless", "smoke-cert-cascade", "smoke-tx-cascade",
     "smoke-byzantine", "smoke-cert-catchup", "smoke-vrf-dkg-restart-midwindow",
-    "growth", "quorum", "seed-continuity",
+    "growth", "quorum", "seed-continuity", "turnover",
     "smoke-production-path", "smoke-vrf-rotation", "smoke-vrf-dkg-halt",
     "smoke-vrf-dkg-durability",
 ]

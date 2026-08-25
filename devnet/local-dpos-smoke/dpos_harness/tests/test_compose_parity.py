@@ -19,6 +19,14 @@ to the bash for those blocks:
   * `genesis-init`. The bundle ran `genesis-bootstrap bare` and predicted the staking cluster's
     CREATE addresses; the staking module is an rWasm contract installed at a fixed genesis
     address by the `full` arm, so both the arm and the prediction changed.
+  * EVERY phase-B validator, which lost `--dpos.follower-upstream` (this bundle's
+    `initial_committee` is the full 14, so every container is a genesis committee seat). That flag raises the WS
+    cert-inlet arm, and a committee validator is Active from the first block and syncs over
+    the authenticated plane — leaving it on put the whole stack on the WS arm and hid the
+    plane arm, which is the one a production zero-overlap boundary uses (FLU-1203). The
+    validators OUTSIDE the genesis committee keep it: they are unregistered at cold start,
+    the plane serves `active_registry ∪ committee` only, and post-merge devp2p does not
+    gossip DPoS blocks, so a plane-native one would freeze at the anchor (Gap C).
   * `full-node` and `downstream` in the phase-B overlay, which gained `--dpos.metrics-port=9100`.
     Both are `--cert-follow` nodes, and a follower did not serve the commonware registry when the
     bundle was captured — `spawn_devnet_metrics` ran from the validator overlay only. It now runs

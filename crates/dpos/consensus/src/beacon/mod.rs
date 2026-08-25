@@ -72,8 +72,10 @@ pub(crate) mod plane;
 pub(crate) mod resolve;
 pub(crate) mod seed;
 pub(crate) mod seed_journal;
+pub(crate) mod seed_resolver;
 pub(crate) mod share_state;
 pub(crate) mod surface;
+pub(crate) mod verified_seed;
 pub(crate) mod wire;
 
 // The one retention window every per-epoch map in this module ages out on. It

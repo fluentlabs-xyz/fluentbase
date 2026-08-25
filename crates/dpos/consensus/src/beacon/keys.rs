@@ -37,19 +37,36 @@
 //!
 //! `notify_one` (not `notify_waiters`) for the same reason
 //! [`crate::beacon::certify::SeedStore`] uses it: `notify_waiters` stores no
-//! permit and re-opens the lost-wakeup window. The waiter population is one; if a
-//! genuine second consumer ever appears, hand out a per-consumer notifier then —
+//! permit and re-opens the lost-wakeup window. The waiter population on
+//! [`BeaconKeys::notifier`] is one — the epoch manager's reconcile arm — because
 //! a single `notify_one` shared by two waiters silently swallows wakes.
+//!
+//! The second consumer DID appear (the seed quarantine's promoter), and it took
+//! the remedy this paragraph prescribed rather than the shared handle:
+//! [`BeaconKeys::subscribe`] hands out a per-consumer notifier, and `set_pk`
+//! fires every one of them.
 
 use crate::beacon::carry::{chain_key_epoch_memoised, DkgQualFor};
 use fluentbase_bls::beacon::GroupPublic;
 use futures::future::BoxFuture;
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     sync::{Arc, Mutex, RwLock},
 };
 use tokio::sync::Notify;
 use tracing::{debug, warn};
+
+/// The verdict [`BeaconKeys::on_invalid_seed`] returns.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InvalidSeed {
+    /// The key this failed against is not attested, so the failure is about US.
+    /// Hold the value; the attested key may still promote it.
+    Quarantine,
+    /// Attested key ⇒ a real witness, and the first one for this epoch.
+    RefuseLoud,
+    /// Attested key, already reported for this epoch.
+    RefuseQuiet,
+}
 
 /// Provenance tier of a [`BeaconKeys`] entry. Ordered: attested outranks
 /// local — on a CONFLICTING insert an observed value DISPLACES a local one,
@@ -136,6 +153,12 @@ pub fn pk_prefix(pk: &GroupPublic) -> String {
 pub struct BeaconKeys {
     map: Arc<RwLock<BTreeMap<u64, (GroupPublic, KeySource)>>>,
     notify: Arc<Notify>,
+    /// One per [`Self::subscribe`] caller. See that method for why a second
+    /// consumer may not share `notify`.
+    extra_notifiers: Arc<Mutex<Vec<Arc<Notify>>>>,
+    /// Epochs whose seed-verification failure has already been reported. See
+    /// [`Self::on_invalid_seed`].
+    reported_invalid_seed: Arc<Mutex<BTreeSet<u64>>>,
     /// Durable sink. `None` ⇒ RAM-only, the pre-durability behaviour, which is
     /// what every test and any config without a journal partition gets.
     ///
@@ -154,6 +177,8 @@ pub struct BeaconKeys {
 impl BeaconKeys {
     pub fn new() -> Self {
         Self {
+            extra_notifiers: Arc::new(Mutex::new(Vec::new())),
+            reported_invalid_seed: Arc::new(Mutex::new(BTreeSet::new())),
             map: Arc::new(RwLock::new(BTreeMap::new())),
             notify: Arc::new(Notify::new()),
             persist: None,
@@ -177,6 +202,8 @@ impl BeaconKeys {
             .map(|(epoch, pk, source)| (epoch, (pk, source)))
             .collect();
         Self {
+            extra_notifiers: Arc::new(Mutex::new(Vec::new())),
+            reported_invalid_seed: Arc::new(Mutex::new(BTreeSet::new())),
             map: Arc::new(RwLock::new(map)),
             notify: Arc::new(Notify::new()),
             persist: Some(persist),
@@ -253,6 +280,11 @@ impl BeaconKeys {
     pub fn set_pk(&self, epoch: u64, pk: GroupPublic, source: KeySource) {
         self.insert(epoch, pk, source);
         self.notify.notify_one();
+        if let Ok(extra) = self.extra_notifiers.lock() {
+            for handle in extra.iter() {
+                handle.notify_one();
+            }
+        }
         // Durable half, strictly AFTER the notify so wakeup latency is unchanged,
         // and strictly non-blocking so no writer ever parks here.
         if let Some(tx) = self.persist.as_ref() {
@@ -359,6 +391,58 @@ impl BeaconKeys {
     /// seen by the next waiter.
     pub fn notifier(&self) -> Arc<Notify> {
         self.notify.clone()
+    }
+
+    /// A notifier of this consumer's OWN, fired by every [`Self::set_pk`]
+    /// alongside the one [`Self::notifier`] hands out.
+    ///
+    /// The module header's rule, honoured rather than broken: `notify_one` wakes
+    /// exactly one waiter, so two consumers sharing one `Arc` silently swallow
+    /// each other's wakes — and the two here would be the epoch manager's
+    /// reconcile arm and the seed promoter, either of which losing an edge is a
+    /// silent degrade (vote-only for a whole epoch; a σ that never leaves
+    /// quarantine). Each subscriber gets its own permit instead.
+    /// What a σ that FAILED `verify_seed` for `epoch` means, and how loudly.
+    ///
+    /// The verdict belongs here because the question it turns on is provenance,
+    /// and provenance is this store's subject. Both writers of σ ask it, so the
+    /// rule is written once instead of once per writer.
+    ///
+    /// The failure only says something about the SENDER when the key it failed
+    /// against is one a `committee[epoch]` quorum attested. Judged against a
+    /// locally reconstructed key — a tier that can diverge from the chain (soak
+    /// 2026-07-14) — an honest σ fails, and treating that as a fault would both
+    /// punish honest peers and DISCARD the value: the node would then still be
+    /// broken once the attested key displaced the divergent one, because nothing
+    /// would be left to re-check. So an unattested failure quarantines.
+    ///
+    /// The loud arm latches per epoch, for the reason
+    /// [`crate::beacon::oracle`]'s seat-mismatch warning latches: this runs per
+    /// CERTIFICATE, so one bad epoch would otherwise emit a line a second for the
+    /// epoch's life.
+    pub fn on_invalid_seed(&self, epoch: u64) -> InvalidSeed {
+        if self.cached_at_least(epoch, KeySource::Agreed).is_none() {
+            return InvalidSeed::Quarantine;
+        }
+        match self.reported_invalid_seed.lock() {
+            Ok(mut seen) => {
+                if seen.insert(epoch) {
+                    InvalidSeed::RefuseLoud
+                } else {
+                    InvalidSeed::RefuseQuiet
+                }
+            }
+            // A poisoned latch must not silence a real witness.
+            Err(_) => InvalidSeed::RefuseLoud,
+        }
+    }
+
+    pub fn subscribe(&self) -> Arc<Notify> {
+        let handle = Arc::new(Notify::new());
+        if let Ok(mut extra) = self.extra_notifiers.lock() {
+            extra.push(handle.clone());
+        }
+        handle
     }
 }
 

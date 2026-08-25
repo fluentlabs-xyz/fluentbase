@@ -37,13 +37,14 @@ use super::{
         CommitteeSource, PULL_MIN_INTERVAL,
     },
     carry::DkgQualFor,
-    keys::{pk_prefix, AgreedKeyAt, AgreedKeys, BeaconKeys, KeySource, KeySources},
+    keys::{pk_prefix, AgreedKeyAt, AgreedKeys, BeaconKeys, InvalidSeed, KeySource, KeySources},
     metrics::BeaconMetrics,
     oracle::KeyOnlyOracle,
     outcome::group_public_key,
     plane::ArtifactSource,
     seed::Seed,
     surface::{PinEffort, Randomness, ShareProbe, SignerVerdict, WithheldReason, WitnessCheck},
+    verified_seed::VerifiedSeed,
 };
 use commonware_consensus::types::{Epoch, Round};
 use commonware_runtime::{Clock, Handle, Metrics, Spawner};
@@ -316,7 +317,20 @@ struct FollowerRandomness {
 impl Randomness for FollowerRandomness {
     /// A follower forms no round of its own and recovers no seed: everything it
     /// sees arrives already certified.
-    fn record_seed(&self, _round: Round, _seed: BlsSignature) {}
+    fn record_seed(&self, _verified: VerifiedSeed) {}
+
+    /// Nor does it hold anything back: with no key store of its own to fill, a
+    /// quarantined σ would never be re-checked.
+    fn quarantine_seed(&self, _round: Round, _seed: BlsSignature) {}
+
+    /// And asks for none: a follower's certificates arrive whole.
+    fn fetch_seed(&self, _round: Round) -> BoxFuture<'_, bool> {
+        Box::pin(std::future::ready(false))
+    }
+
+    fn on_invalid_seed(&self, epoch: u64) -> InvalidSeed {
+        self.keys.on_invalid_seed(epoch)
+    }
 
     fn seed_for(&self, _round: Round) -> Option<Seed> {
         None

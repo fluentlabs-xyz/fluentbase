@@ -30,7 +30,6 @@ services:
           --full \
           --datadir=/runtime/reth-data/v0 \
           --dpos \
-          --dpos.follower-upstream=ws://172.20.0.11:8546 \
           --dpos.bls-key-path=/runtime/keys/validator-0/bls.hex \
           --dpos.peer-key-path=/runtime/keys/validator-0/peer.hex \
           --dpos.staking-config=/runtime/staking-reader.json \
@@ -79,7 +78,6 @@ services:
           --full \
           --datadir=/runtime/reth-data/v1 \
           --dpos \
-          --dpos.follower-upstream=ws://172.20.0.10:8546 \
           --dpos.bls-key-path=/runtime/keys/validator-$${IDENTITY_IDX:-1}/bls.hex \
           --dpos.peer-key-path=/runtime/keys/validator-$${IDENTITY_IDX:-1}/peer.hex \
           --dpos.staking-config=/runtime/staking-reader.json \
@@ -126,7 +124,6 @@ services:
           --full \
           --datadir=/runtime/reth-data/v2 \
           --dpos \
-          --dpos.follower-upstream=ws://172.20.0.10:8546 \
           --dpos.bls-key-path=/runtime/keys/validator-$${IDENTITY_IDX:-2}/bls.hex \
           --dpos.peer-key-path=/runtime/keys/validator-$${IDENTITY_IDX:-2}/peer.hex \
           --dpos.staking-config=/runtime/staking-reader.json \
@@ -173,7 +170,6 @@ services:
           --full \
           --datadir=/runtime/reth-data/v3 \
           --dpos \
-          --dpos.follower-upstream=ws://172.20.0.10:8546 \
           --dpos.bls-key-path=/runtime/keys/validator-$${IDENTITY_IDX:-3}/bls.hex \
           --dpos.peer-key-path=/runtime/keys/validator-$${IDENTITY_IDX:-3}/peer.hex \
           --dpos.staking-config=/runtime/staking-reader.json \
@@ -220,7 +216,6 @@ services:
           --full \
           --datadir=/runtime/reth-data/v4 \
           --dpos \
-          --dpos.follower-upstream=ws://172.20.0.10:8546 \
           --dpos.bls-key-path=/runtime/keys/validator-$${IDENTITY_IDX:-4}/bls.hex \
           --dpos.peer-key-path=/runtime/keys/validator-$${IDENTITY_IDX:-4}/peer.hex \
           --dpos.staking-config=/runtime/staking-reader.json \
@@ -267,7 +262,6 @@ services:
           --full \
           --datadir=/runtime/reth-data/v5 \
           --dpos \
-          --dpos.follower-upstream=ws://172.20.0.10:8546 \
           --dpos.bls-key-path=/runtime/keys/validator-$${IDENTITY_IDX:-5}/bls.hex \
           --dpos.peer-key-path=/runtime/keys/validator-$${IDENTITY_IDX:-5}/peer.hex \
           --dpos.staking-config=/runtime/staking-reader.json \
@@ -314,7 +308,6 @@ services:
           --full \
           --datadir=/runtime/reth-data/v6 \
           --dpos \
-          --dpos.follower-upstream=ws://172.20.0.10:8546 \
           --dpos.bls-key-path=/runtime/keys/validator-$${IDENTITY_IDX:-6}/bls.hex \
           --dpos.peer-key-path=/runtime/keys/validator-$${IDENTITY_IDX:-6}/peer.hex \
           --dpos.staking-config=/runtime/staking-reader.json \
@@ -361,7 +354,6 @@ services:
           --full \
           --datadir=/runtime/reth-data/v7 \
           --dpos \
-          --dpos.follower-upstream=ws://172.20.0.10:8546 \
           --dpos.bls-key-path=/runtime/keys/validator-$${IDENTITY_IDX:-7}/bls.hex \
           --dpos.peer-key-path=/runtime/keys/validator-$${IDENTITY_IDX:-7}/peer.hex \
           --dpos.staking-config=/runtime/staking-reader.json \
@@ -408,7 +400,6 @@ services:
           --full \
           --datadir=/runtime/reth-data/v8 \
           --dpos \
-          --dpos.follower-upstream=ws://172.20.0.10:8546 \
           --dpos.bls-key-path=/runtime/keys/validator-$${IDENTITY_IDX:-8}/bls.hex \
           --dpos.peer-key-path=/runtime/keys/validator-$${IDENTITY_IDX:-8}/peer.hex \
           --dpos.staking-config=/runtime/staking-reader.json \
@@ -455,7 +446,6 @@ services:
           --full \
           --datadir=/runtime/reth-data/v9 \
           --dpos \
-          --dpos.follower-upstream=ws://172.20.0.10:8546 \
           --dpos.bls-key-path=/runtime/keys/validator-$${IDENTITY_IDX:-9}/bls.hex \
           --dpos.peer-key-path=/runtime/keys/validator-$${IDENTITY_IDX:-9}/peer.hex \
           --dpos.staking-config=/runtime/staking-reader.json \
@@ -502,7 +492,6 @@ services:
           --full \
           --datadir=/runtime/reth-data/v10 \
           --dpos \
-          --dpos.follower-upstream=ws://172.20.0.10:8546 \
           --dpos.bls-key-path=/runtime/keys/validator-$${IDENTITY_IDX:-10}/bls.hex \
           --dpos.peer-key-path=/runtime/keys/validator-$${IDENTITY_IDX:-10}/peer.hex \
           --dpos.staking-config=/runtime/staking-reader.json \
@@ -549,7 +538,6 @@ services:
           --full \
           --datadir=/runtime/reth-data/v11 \
           --dpos \
-          --dpos.follower-upstream=ws://172.20.0.10:8546 \
           --dpos.bls-key-path=/runtime/keys/validator-$${IDENTITY_IDX:-11}/bls.hex \
           --dpos.peer-key-path=/runtime/keys/validator-$${IDENTITY_IDX:-11}/peer.hex \
           --dpos.staking-config=/runtime/staking-reader.json \
@@ -596,7 +584,6 @@ services:
           --full \
           --datadir=/runtime/reth-data/v12 \
           --dpos \
-          --dpos.follower-upstream=ws://172.20.0.10:8546 \
           --dpos.bls-key-path=/runtime/keys/validator-$${IDENTITY_IDX:-12}/bls.hex \
           --dpos.peer-key-path=/runtime/keys/validator-$${IDENTITY_IDX:-12}/peer.hex \
           --dpos.staking-config=/runtime/staking-reader.json \
@@ -643,7 +630,6 @@ services:
           --full \
           --datadir=/runtime/reth-data/v13 \
           --dpos \
-          --dpos.follower-upstream=ws://172.20.0.10:8546 \
           --dpos.bls-key-path=/runtime/keys/validator-$${IDENTITY_IDX:-13}/bls.hex \
           --dpos.peer-key-path=/runtime/keys/validator-$${IDENTITY_IDX:-13}/peer.hex \
           --dpos.staking-config=/runtime/staking-reader.json \

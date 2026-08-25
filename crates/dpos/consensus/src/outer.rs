@@ -735,6 +735,10 @@ where
     /// a Phase-3 SafetyHalt (park, keep marshal/RPC alive); not engaged ⇒ a real
     /// crash (abort-all).
     safety_halt: crate::sync_metrics::SafetyHalt,
+    /// Held for one reason: the by-height resolver captures the σ of every
+    /// certificate it pulls, and that resolver is built here rather than in
+    /// `build`.
+    randomness: std::sync::Arc<dyn crate::beacon::Randomness>,
 }
 
 /// What the OuterEngine supervisor does when the FIRST subsystem handle resolves.
@@ -1260,6 +1264,7 @@ where
         };
 
         Ok(OuterEngine {
+            randomness: randomness.clone(),
             context: ContextCell::new(context),
             buffered,
             buffer_mailbox,
@@ -1431,6 +1436,7 @@ where
                     ctx_for_resolver.clone(),
                     up,
                     up_handler,
+                    self.randomness.clone(),
                 );
                 let marshal_sub = match marshal_mux.lock().await.register(0).await {
                     Ok(sub) => sub,
@@ -1657,7 +1663,12 @@ where
         let handler = marshal_handler::Handler::<Digest>::new(marshal_deliver_tx);
         let marshal_resolver = match upstream {
             Some(up) => crate::cert_inlet::FollowerResolver::Upstream(
-                crate::cert_inlet::UpstreamResolver::new(resolver_ctx, up, handler),
+                crate::cert_inlet::UpstreamResolver::new(
+                    resolver_ctx,
+                    up,
+                    handler,
+                    self.randomness.clone(),
+                ),
             ),
             None => {
                 crate::cert_inlet::FollowerResolver::Noop(crate::cert_inlet::NoopResolver::default())

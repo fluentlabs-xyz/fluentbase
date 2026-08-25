@@ -526,6 +526,68 @@ class Chain:
         return False
 
     # ── governance: propose → vote → execute (pp_gov_action + sim_gov_action) ─
+    def gov_action_batch(self, targets, calldatas, desc: str, voter_idx=None) -> None:
+        """One governance round that executes SEVERAL calls, via the arrays the
+        Governor already takes.
+
+        Why this exists and `gov_action` in a loop does not do: each governance
+        activation adds the joiner's own 3e18 to the delegated supply, so a series
+        of separate rounds is measured against a supply that grows underneath it —
+        the fourth `activateValidator` was refused on a chain where nothing was
+        wrong (`state=` empty: the proposal never existed, i.e. `propose` itself
+        reverted). A batch is proposed once, against the supply as it stood before
+        any of the activations.
+
+        Same shape as `gov_action` otherwise: v0 proposes, `voter_idx` votes For,
+        the Succeeded poll is the sync point, execute is receipt-confirmed.
+        """
+        targets, calldatas = list(targets), list(calldatas)
+        assert len(targets) == len(calldatas), "one calldata per target"
+        t_arr = "[" + ",".join(targets) + "]"
+        v_arr = "[" + ",".join("0" for _ in targets) + "]"
+        c_arr = "[" + ",".join(calldatas) + "]"
+        desc_hash = self.p.run(["cast", "keccak", desc], note="gov-keccak")
+        pid = _first_token(self.p.run(
+            ["cast", "call", self.gov_addr,
+             "hashProposal(address[],uint256[],bytes[],bytes32)(uint256)",
+             t_arr, v_arr, c_arr, desc_hash, "--rpc-url", self.rpc],
+            note="gov-hash"))
+        self.p.run(["cast", "send", self.gov_addr,
+                    "propose(address[],uint256[],bytes[],string)(uint256)",
+                    t_arr, v_arr, c_arr, desc,
+                    "--rpc-url", self.rpc, "--private-key", self.owner_key(0)],
+                   note="gov-propose")
+        seen_state = [""]
+
+        def _active():
+            seen_state[0] = self._gov_state(pid)
+            return seen_state[0] == "1"
+
+        if not self.cp.wait(f"gov_active_{pid}", _active, "blocks", 3):
+            raise ChainError("gov-not-active",
+                             f"proposal not Active (state={seen_state[0]}) for: {desc}")
+        for j in self._voter_list(voter_idx):
+            self.p.run(["cast", "send", self.gov_addr, "castVote(uint256,uint8)(uint256)",
+                        pid, "1", "--rpc-url", self.rpc,
+                        "--private-key", self.owner_key(j), "--async"], note="gov-vote")
+        self._gov_wait_succeeded(pid, desc)
+        ex = ["cast", "send", "--json", self.gov_addr,
+              "execute(address[],uint256[],bytes[],bytes32)(uint256)",
+              t_arr, v_arr, c_arr, desc_hash,
+              "--rpc-url", self.rpc, "--private-key", self.owner_key(0)]
+        if self.p.dry:
+            self.p.run(ex, note="gov-execute")
+            return
+        r = self.p.run_capture(ex, note="gov-execute")
+        if r.ok and _receipt_ok(r.merged):
+            return
+        if _receipt_present_but_reverted(r.merged):
+            reason = self.p.run_capture(["cast", "call", *ex[3:]], note="gov-execute-reason").merged
+            reason = (reason or "").splitlines()[-1] if reason else ""
+            raise ChainError("gov-execute-reverted",
+                             f"batch execute REVERTED for: {desc}: {reason}")
+        raise ChainError("gov-execute-no-receipt", f"batch execute got no receipt for: {desc}")
+
     def gov_action(self, target: str, calldata: str, desc: str, voter_idx=None) -> None:
         """pp_gov_action: drive one onlyFromGovernance action through
         propose → castVote(For) → execute. v0 proposes; the voter set is `voter_idx` (the sim
