@@ -668,7 +668,7 @@ pub(crate) fn evict_share(dir: &Path, epoch: u64) {
 pub(crate) fn reconcile_journals(dir: &Path, now: u64) {
     let (journals, shares) = scan_beacon_dir(dir);
     for epoch in journals {
-        if epoch + crate::beacon::actor::JOURNAL_RETENTION_EPOCHS < now {
+        if epoch + crate::beacon::JOURNAL_RETENTION_EPOCHS < now {
             evict_journal(dir, epoch);
         }
     }

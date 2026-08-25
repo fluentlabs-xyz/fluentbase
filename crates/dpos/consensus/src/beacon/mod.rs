@@ -50,6 +50,7 @@ pub(crate) mod artifact;
 pub(crate) mod carry;
 pub(crate) mod ceremony;
 pub(crate) mod certify;
+pub(crate) mod confirmations;
 pub(crate) mod dkg_agree;
 pub(crate) mod dkg_engine;
 pub(crate) mod dkg_msg;
@@ -63,6 +64,7 @@ pub(crate) mod follower;
 pub(crate) mod key_journal;
 pub(crate) mod keys;
 pub(crate) mod log_resolver;
+pub(crate) mod log_store;
 pub(crate) mod metrics;
 pub(crate) mod outcome;
 pub(crate) mod plane;
@@ -72,6 +74,34 @@ pub(crate) mod seed_journal;
 pub(crate) mod share_state;
 pub(crate) mod surface;
 pub(crate) mod wire;
+
+// The one retention window every per-epoch map in this module ages out on. It
+// lives HERE, not in the module that happens to sweep on it: `share_state` needs
+// the same number for its on-disk reconcile, and reaching sideways into `actor`
+// for it made a policy constant look like an actor detail.
+/// Trailing epochs past its own boundary for which a finalized/stalled epoch's DKG
+/// journal (own `ReceivedDealing` views AND the shared QUAL logs) + the dealer-log
+/// serve cache ([`log_store::DealerLogStore`])
+/// are RETAINED — the recompute-heal window (§8.11.1). A demoted `committee[E]`
+/// member (or a peer it serves) recomputes E's share from these while E is still
+/// committee-relevant, instead of being swept the instant `now == E` and lingering a
+/// verify-only observer until the next committee change.
+///
+/// Default `1` = "current epoch + 1 trailing". This is the BELTED default, NOT
+/// "already sufficient": for the warm-member trigger (already caught up, mesh flapped)
+/// the heal completes within 1 window; for the cold-sync refill/promote triggers the
+/// heal DEPENDS on catch-up (EL sync + mesh reconnect + log refetch) finishing before
+/// the target epoch's journal ages out of this window — those are ALSO fronted by the
+/// harness warm-gate. Derivation for a wider window:
+/// `JOURNAL_RETENTION_EPOCHS ≥ ceil(worst_case_catchup_seconds / epoch_seconds) + 1`,
+/// `epoch_seconds ≈ EPOCH_INTERVAL × 1 s` (1 blk/s). Operational monitor:
+/// `epoch_engine_demoted_no_polynomial` persisting > `JOURNAL_RETENTION_EPOCHS` epochs
+/// for one identity = a demote whose logs aged out before catch-up → widen the window.
+/// Size cost ≈ window × (~430 KiB QUAL set at n=51 + the per-dealer secret view bodies)
+/// per retained epoch. Under-retention is SAFE: a member that finds the logs evicted
+/// simply keeps fetching / stays a verify-only observer — it never adopts a wrong share
+/// (the recompute self-check gates that), so widening only trades disk for heal reach.
+pub(crate) const JOURNAL_RETENTION_EPOCHS: u64 = 1;
 
 pub use actor::CommitteePairFor;
 pub use follower::{for_follower, ArtifactFetch, FollowerBeacon, FollowerRandomnessConfig};

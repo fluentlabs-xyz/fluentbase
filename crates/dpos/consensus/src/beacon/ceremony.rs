@@ -191,8 +191,9 @@ pub(crate) fn info_for(
 }
 
 /// Re-`check` a finalized epoch's journaled logs into a `dealer → SignedDealerLog`
-/// serve map — the cold-load path the actor's `serve_cache` takes on a miss after a
-/// restart (the journal is the durable source; this rebuilds the in-memory copy). Each
+/// serve map — the cold-load path [`DealerLogStore`](crate::beacon::log_store) takes
+/// on a miss after a restart (the journal is the durable source; this rebuilds the
+/// in-memory copy). Each
 /// `OwnSeal`/`PeerLog` record is `check`-verified against the epoch's `Info` (cheap
 /// once-per-epoch, bounding a tampered on-disk journal a node would otherwise serve to
 /// peers); records that fail `check` are dropped. A bad committee/namespace surfaces as
@@ -600,7 +601,8 @@ impl DkgCeremony {
 
     /// Take this ceremony's recorded signed logs, leaving it with an empty map. The
     /// actor calls this immediately BEFORE the finalize (which
-    /// consumes `self`) to eagerly seed the finalized epoch's `serve_cache` (a bounded
+    /// consumes `self`) to eagerly seed the finalized epoch's entry in the dealer-log
+    /// serve store ([`DealerLogStore`](crate::beacon::log_store), a bounded
     /// subset-copy of the journal), so the DKG-log recovery `Producer` can keep serving
     /// them to a late-restarting peer until the past-boundary sweep — an O(1) lookup
     /// with no disk read / no per-request `check` on the actor's hot path.
