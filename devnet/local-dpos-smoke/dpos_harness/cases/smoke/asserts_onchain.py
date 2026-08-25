@@ -159,12 +159,21 @@ def assert_liveness(ctx) -> None:
         _liveness_cycle(ctx, case, addrs, hub_addr, idx, vo.cycle_gap(ctx.interval, epochs, extra))
 
     _ok(ctx, case, "[v3 deep, v2 single-boundary, v1 within-epoch, v3 double-rejoin] all held "
-                   "liveness while down, recorded on-chain miss-count, and rejoined the live tip")
+                   "liveness while down and rejoined the live tip as signers; the three cycles "
+                   f"whose outage clears {vo.production_min_gap(len(addrs))} blocks also took "
+                   "ZERO on-chain production credit while the chain kept recording it (the "
+                   "5-block cycle SKIPS that leg — see its SKIP line)")
 
 
 def _liveness_cycle(ctx, case: str, addrs, hub_addr: str, idx: int, gap: int) -> None:
-    """One stop → advance → production-credit → restart → rejoin → SIGNING cycle
-    (`case-liveness.sh`)."""
+    """One stop → baseline → advance → production-credit → restart → rejoin → SIGNING cycle
+    (`case-liveness.sh`).
+
+    The production-credit leg is a DELTA ACROSS THE OUTAGE, bracketed by the stop and the gap
+    wait, and it is what makes the on-chain half of this case say anything. It used to be a
+    90-second poll for `producedAt(victim) < producedAt(hub)` at whatever instant that first held,
+    which equal stakes make true on jitter and an epoch rollover makes true outright — a reading
+    with no dependency on the outage it was named for. See `vo.evaluate_production_over_outage`."""
     svc = topology.validator(idx)
     vic = addrs[idx]
     pre = ctx.baseline_height()
@@ -180,25 +189,72 @@ def _liveness_cycle(ctx, case: str, addrs, hub_addr: str, idx: int, gap: int) ->
                           dry_value=_DRY_PROMOTE_LOG))
     ctx.compose_stop(svc, timeout=vo.LIVENESS_STOP_TIMEOUT_S, note=f"liveness-stop {svc}")
 
-    # 1) BFT f=1 holds: the chain keeps finalizing with one of four down, and advances the gap.
+    # 1) BASELINE the production credit, K+1 blocks past the stop. The verdict this feeds (step 3)
+    #    is the one thing in this case that is known in advance: a stopped process produces
+    #    nothing, so its credit over the outage is exactly zero.
+    #
+    # …BUT ONLY WHERE THE OUTAGE IS LONG ENOUGH TO MEASURE, and that is not every cycle. Both
+    # snapshots read a counter that lags the chain by K, and the baseline is deliberately taken
+    # K+1 past the stop, so an outage of `gap` blocks measures only about `gap - K - 1 - slack` of
+    # them. `LIVENESS_CYCLES`'s third cycle has `gap = 5`: the window is ZERO blocks wide, the
+    # control (`blocksInEpoch` grew) cannot be satisfied by any chain, and the leg failed a run
+    # that had just been observed finalizing past its own target. `vo.production_min_gap` derives
+    # the floor from K itself; below it the leg is SKIPPED and SAID, never quietly passed — a
+    # skipped leg that reads like a passed one is the defect class this whole reading exists to
+    # remove. Cycle 3's subject is the within-epoch walk / re-jump path, which steps 4 and 5 still
+    # cover in full.
+    applies, why = vo.evaluate_production_applicable(gap, len(addrs))
+    if not applies:
+        print(f"  SKIP (production credit): {why}", flush=True)
+
+    # Nothing punitive happens to the victim here — the production tier ships flag-off and is
+    # inert at the smoke epoch length anyway — so it stays in committee for the rejoin leg below.
+    #
+    # THE BASELINE IS TAKEN K+1 BLOCKS PAST THE STOP, not at it. `recordProduction` is a system
+    # call of the block that EXECUTES height h, i.e. of height h+K, so the victim's last blocks
+    # before the stop are still being credited after it. A baseline at the stop instant would
+    # attribute them to the outage and fail a correct run.
+    #
+    # The old reading polled `producedAt(currentEpoch(), victim) < producedAt(currentEpoch(), hub)`
+    # for 90 s and passed on the first instant it held. With equal stakes the two counters trade
+    # the lead on ordinary lottery jitter, and the re-read of `currentEpoch()` handed the poll a
+    # fresh epoch's `0 < 1` — so it was satisfied whether or not the victim had ever been stopped.
+    # See `vo.evaluate_production_over_outage`.
+    epoch_a = credit_before = hub_before = None
+    if applies:
+        stopped_at = ctx.finalized_dec(dry_value=pre)
+        settle_to = stopped_at + vo.PRODUCTION_SETTLE_BLOCKS
+        ctx.check(case, ctx.wait_finalized_ge(settle_to, vo.PRODUCTION_SETTLE_S),
+                  lambda: (f"chain did not finalize to {settle_to} (= stop height {stopped_at} + "
+                           f"K+1) with {svc} down, so its pre-stop blocks are still being "
+                           "credited and the production baseline cannot be taken"))
+        epoch_a, credit_before, hub_before = _credit_snapshot(ctx, case, vic, hub_addr)
+        _say(ctx, f"  production baseline at finalized>={settle_to}, epoch {epoch_a}: "
+                  f"{svc}={credit_before[epoch_a][0]} hub={hub_before[epoch_a][0]} "
+                  f"(blocksInEpoch={credit_before[epoch_a][1]}); {why}")
+
+    # 2) BFT f=1 holds: the chain keeps finalizing with one of four down, and advances the gap.
     ctx.check(case, ctx.wait_finalized_ge(pre + gap, vo.LIVENESS_ADVANCE_S),
               lambda: (f"chain did not advance {gap} blocks with {svc} down "
                        f"(finalized={ctx.finalized_dec()}, pre={pre})"))
     _say(ctx, f"  chain finalized past {pre + gap} with {svc} down (BFT f=1 holds)")
 
-    # 2) The PRODUCTION RECORD reached the chain and is credited to the right member.
-    #
-    # Nothing punitive happens to the victim here — the production tier ships flag-off and is
-    # inert at the smoke epoch length anyway — so it stays in committee for the rejoin leg below.
-    # The poll retries on the -2 read-failed sentinel rather than letting it satisfy the
-    # comparison: a failed read collapsing to 0 would make `victim < hub` trivially true and hide
-    # a getter regression.
-    epoch, vprod, vtotal, rprod, rtotal = _poll_production(ctx, vic, hub_addr)
-    ctx.check(case, *vo.evaluate_production(epoch, vprod, vtotal, rprod, rtotal))
-    _say(ctx, f"  on-chain production credit correct: producedAt(epoch={epoch}, {svc})={vprod} < "
-              f"hub={rprod} (blocksInEpoch={rtotal})")
+    # 3) …and the PRODUCTION RECORD reached the chain over that window, crediting the right
+    #    member: the victim gained nothing while the counter that answers for everyone moved.
+    if applies:
+        epoch_b, credit_after, hub_after = _credit_snapshot(ctx, case, vic, hub_addr,
+                                                            since=epoch_a, dry_victim=(0, 24),
+                                                            dry_hub=(9, 24))
+        spanned = sorted(credit_after)
+        delta = vo.credit_delta(credit_before, credit_after)
+        hub_delta = vo.credit_delta(hub_before, hub_after)
+        ctx.check(case, *vo.evaluate_production_over_outage(
+            delta, svc, spanned, hub_delta=None if hub_delta is None else hub_delta[0]))
+        _say(ctx, f"  on-chain production credit correct over the outage (epochs {spanned}, "
+                  f"{epoch_a}->{epoch_b}): {svc} gained {delta[0]} while it was STOPPED, hub "
+                  f"gained {hub_delta[0] if hub_delta else '?'}, blocksInEpoch gained {delta[1]}")
 
-    # 3) Rejoin: the victim realigns with the hub AND has a live reth devp2p peer.
+    # 4) Rejoin: the victim realigns with the hub AND has a live reth devp2p peer.
     ctx.compose_start(svc, note=f"liveness-start {svc}")
 
     def rejoined():
@@ -219,7 +275,7 @@ def _liveness_cycle(ctx, case: str, addrs, hub_addr: str, idx: int, gap: int) ->
         _say(ctx, f"  OK: {svc} rejoined at {reading[0]} with reth peers={reading[1]} "
                   f"(v0={reading[2]}, floor=pre+gap={pre + gap})")
 
-    # 4) …AND IT IS SIGNING AGAIN. Height is not participation.
+    # 5) …AND IT IS SIGNING AGAIN. Height is not participation.
     #
     # THE DEFECT THIS CLOSES. Three of the four cycles gap PAST the steady-state re-jump gate
     # (`min(1024, interval)`, dpos.rs:2556 — and `re_jump` is `Some` for these validators: the
@@ -252,24 +308,38 @@ def _liveness_cycle(ctx, case: str, addrs, hub_addr: str, idx: int, gap: int) ->
               f"(floor epoch={min_epoch}, from pre+gap={pre + gap})")
 
 
-def _poll_production(ctx, vic: str, hub_addr: str):
-    """`case-liveness.sh` — poll the two production reads until the victim lags the hub.
+def _credit_snapshot(ctx, case: str, vic: str, hub_addr: str, since=None,
+                     dry_victim=(0, 10), dry_hub=(4, 10)):
+    """`(current_epoch, {epoch: (produced, blocksInEpoch)} for the victim, the same for the hub)`.
 
-    Returns the LAST readings whether or not they hit, because the failure message names them:
-    bash keeps `$vseen/$vcerts/$rseen/$rcerts` across the loop for exactly that. `currentEpoch()`
-    is re-read every iteration, deliberately — the window can roll over mid-poll and reading the
-    counters of an epoch that has just been superseded is how a correct victim reads as absent.
+    `since` widens the reading back to the epoch the outage STARTED in, so an outage that rolled
+    the epoch is measured across EVERY epoch it spanned. Without it the two snapshots would be of
+    different epochs and their difference would not be a delta at all — which is the defect that
+    made the poll this replaced pass on a fresh epoch's `0 < 1`.
+
+    The poll is a RETRY on the `-2` getter-failed sentinel and nothing else: it waits for the
+    readings to be READABLE, never for them to satisfy a comparison, so it cannot widen the
+    measurement window. A sentinel that outlives the budget fails loud here rather than entering
+    the arithmetic downstream, where `-2 - -2 == 0` would satisfy a verdict whose PASS is a zero.
     """
-    box = {"epoch": "?", "v": (vo.CREDIT_READ_FAILED,) * 2, "r": (vo.CREDIT_READ_FAILED,) * 2}
+    box = {"epoch": 0, "v": {}, "r": {}}
 
-    def victim_lags_hub():
-        box["epoch"] = _first_token(ctx.staking_call("currentEpoch()(uint64)", dry_value="2"))
-        box["v"] = ctx.production(box["epoch"], vic, dry_value=(3, 10))
-        box["r"] = ctx.production(box["epoch"], hub_addr, dry_value=(10, 10))
-        return vo.production_hit(box["v"][0], box["r"][0])
+    def readable():
+        cur = int(_first_token(ctx.staking_call("currentEpoch()(uint64)", dry_value="2")) or 0)
+        lo = cur if since is None else min(int(since), cur)
+        box["epoch"] = cur
+        box["v"] = {e: ctx.production(e, vic, dry_value=dry_victim) for e in range(lo, cur + 1)}
+        box["r"] = {e: ctx.production(e, hub_addr, dry_value=dry_hub)
+                    for e in range(lo, cur + 1)}
+        return vo.credit_readable(box["v"]) and vo.credit_readable(box["r"])
 
-    ctx.poll(victim_lags_hub, vo.PRODUCTION_POLL_BUDGET_S, poll_s=vo.PRODUCTION_POLL_S)
-    return box["epoch"], box["v"][0], box["v"][1], box["r"][0], box["r"][1]
+    ctx.poll(readable, vo.PRODUCTION_READ_BUDGET_S, poll_s=vo.PRODUCTION_READ_POLL_S)
+    ctx.check(case, vo.credit_readable(box["v"]) and vo.credit_readable(box["r"]),
+              lambda: (f"production credit unreadable at epoch {box['epoch']}: victim={box['v']} "
+                       f"hub={box['r']}"
+                       + vo.credit_diagnosis(next(iter(box["v"].values()), (0, 0))[0], "victim")
+                       + vo.credit_diagnosis(next(iter(box["r"].values()), (0, 0))[0], "hub")))
+    return box["epoch"], box["v"], box["r"]
 
 
 def _liveness_rejoin_probe(ctx, svc: str, floor_dec: int):
@@ -300,15 +370,28 @@ def assert_byzantine(ctx) -> None:
     `VoteEquivocator`, behind the `dpos-devnet-byzantine` build feature and the
     `FLUENT_DPOS_BYZANTINE=equivocate` env the overlay sets).
 
-    TWO assertions, and they are independent:
+    THREE assertions, and they are independent:
 
       1. the offending validator is slashed on-chain and JAILED (`ValidatorStatus.Jail == 3`);
-      2. the honest 3-of-4 quorum KEEPS finalizing once the equivocator is dropped.
+      2. an honest node ACTS on the tombstone — it severs the offender's transport (§7's
+         load-bearing reaction);
+      3. the honest 3-of-4 quorum KEEPS finalizing over the blocks immediately after.
 
     There is no public `tombstoned()` getter, so (1) is asserted through `getValidatorStatus`
-    (Addendum D). (2) guards a post-jail / committee-drop epoch-boundary wedge — a real DPoS
-    failure class the pre-jail converge cannot cover, because the committee only changes AT the
-    jail.
+    (Addendum D).
+
+    (2) EXISTS BECAUSE NEITHER OF THE OTHERS WITNESSES IT. A contract status says the slash
+    landed and nothing about whether any node reacted; and the quorum was already 3-of-4 before
+    the jail, so (3) advances identically on a cluster that ignores the tombstone outright. The
+    OK line named the severance while the case read no part of it.
+
+    WHAT THIS CASE DOES NOT COVER, said plainly because the docstring used to imply otherwise:
+    the committee-SHRINK epoch-boundary wedge. Committees commit two epochs ahead
+    (`drive_ahead_commit`, node/src/evm.rs), so the first committee that can omit the offender is
+    `E+3` — 64..96 blocks away — and on this stand (`--peers=4`, `MIN_COMMITTEE_LENGTH = 4`) it
+    can never be committed at all: three surviving members would revert `commitEpochCommittee`
+    with `ERR_COMMITTEE_TOO_SMALL`. Exercising that wedge needs a stand with a spare seat.
+    See `vo.evaluate_post_jail_liveness` for the arithmetic.
     """
     case = "smoke-byzantine"
     addrs = _addresses(ctx, case)
@@ -328,14 +411,37 @@ def assert_byzantine(ctx) -> None:
               on_fail=lambda: _dump_byzantine(ctx))
     _say(ctx, "smoke-byzantine: validator-3 jailed (status=Jail) by equivocation slashing")
 
-    # ── 2: liveness AFTER the jail ────────────────────────────────────────────────────
+    # ── 2: an honest node ACTED on the tombstone ──────────────────────────────────────
+    #
+    # The consensus half of the jail, and the only half of it this stand can witness. The watch
+    # rides reth's finalized-block watch and reads the `tombstoned` leg of the committee snapshot,
+    # so it fires on the first finalized change after the slash lands — no committee change is
+    # involved and none is available here (see the docstring).
+    hub = topology.validator(0)
+    sever = {"lines": []}
+
+    def severed():
+        sever["lines"] = vo.tombstone_sever_lines(
+            ctx.logs_required(hub, case, "tombstone severance",
+                              dry_value=f"INFO {vo.TOMBSTONE_SEVER_LINE} peer=(dry) epoch=2"))
+        return bool(sever["lines"])
+
+    ctx.poll(severed, vo.TOMBSTONE_SEVER_S, poll_s=vo.TOMBSTONE_SEVER_POLL_S)
+    ctx.check(case, *vo.evaluate_tombstone_severed(sever["lines"], hub),
+              on_fail=lambda: _dump_byzantine(ctx))
+    _say(ctx, f"smoke-byzantine: {hub} severed the tombstoned peer's transport: "
+              f"{sever['lines'][0] if sever['lines'] else ''}")
+
+    # ── 3: liveness AFTER the jail ────────────────────────────────────────────────────
     post_jail = ctx.baseline_height()
     advanced = ctx.wait_finalized_ge(post_jail + vo.POST_JAIL_BLOCKS, vo.POST_JAIL_S)
     ctx.check(case, *vo.evaluate_post_jail_liveness(advanced, post_jail),
               on_fail=lambda: ctx.dump_logs(vo.BYZ_STALL_TAIL, topology.validator(0),
                                             topology.validator(1), topology.validator(3)))
-    _ok(ctx, case, f"honest chain advanced past {post_jail} after the jail "
-                   f"(now {ctx.finalized_dec()})")
+    _ok(ctx, case, f"equivocator jailed on chain, its transport severed by {hub}, and the honest "
+                   f"chain advanced past {post_jail} in the blocks straight after "
+                   f"(now {ctx.finalized_dec()}) — the committee-shrink boundary at E+3 is NOT "
+                   "covered here, see the docstring")
 
 
 def _dump_byzantine(ctx) -> None:
@@ -620,7 +726,9 @@ def assert_vrf_dkg_restart_midwindow(ctx) -> None:
 
     FOUR assertions, in the order the evidence becomes available:
 
-      (a) the victim logged a POST-RESTART resume AND converged to a share;
+      (a) the victim logged a POST-RESTART resume AND converged to a share — after the case has
+          PROVEN the restart left the ceremony live, because there is a second, legitimate road
+          to the same share (the demote-heal) that writes no resume line at all;
       (b) the chain crossed the boundary and every node has the window;
       (c) the victim's epoch-2 `prev_randao` is byte-identical to the survivors' — it participated
           as a real share-holder, not as a verify-only re-deriver;
@@ -639,6 +747,7 @@ def assert_vrf_dkg_restart_midwindow(ctx) -> None:
     epoch = vo.MIDWINDOW_EPOCH
     epoch2_start = ctx.activation_block + epoch * ctx.interval
     boundary_probe = epoch2_start + vo.BOUNDARY_PROBE_OFFSET
+    restart_deadline = epoch2_start - vo.MIDWINDOW_RESTART_MARGIN
 
     # ── 1: restart in the GENUINE mid-window state ────────────────────────────────────
     #
@@ -650,11 +759,23 @@ def assert_vrf_dkg_restart_midwindow(ctx) -> None:
     _say(ctx, f"{case}: waiting for {down}'s epoch-{epoch} DKG journal (present) AND share "
               "(absent) — the genuine pre-finalize mid-window so resume provably runs")
 
-    # THE SAFETY RAIL RIDES INSIDE THE PROBE, as bash's does (`:130-136`), and the ORDER within
-    # one iteration is bash's: the gate is evaluated first and the rail only when the gate is not
-    # yet satisfied. Hoisting the rail out to after the poll would report "the journal never
-    # appeared" for a run whose window merely closed — a wrong diagnosis, and 400 s late.
+    # THE SAFETY RAIL RIDES INSIDE THE PROBE, as bash's does (`:130-136`) — hoisting it out to
+    # after the poll would report "the journal never appeared" for a run whose window merely
+    # closed, a wrong diagnosis and 400 s late.
+    #
+    # IT IS NOW READ FIRST, AND IT SITS AT `boundary - MIDWINDOW_RESTART_MARGIN` RATHER THAN AT
+    # THE BOUNDARY. Both changes are the same fix. The rail used to be the second half of the
+    # iteration — consulted only when the on-disk gate was NOT yet satisfied — which is right for
+    # a rail that only asks "has the window closed", and wrong for one that has to leave room for
+    # the restart itself: a journal observed 10 blocks from the boundary is a genuine mid-window
+    # state and still has nowhere to restart into. A `docker compose restart` is a graceful
+    # SIGTERM plus a full node boot, so the boundary lands while the victim is down, its ceremony
+    # is swept, it reaches the same share by the DEMOTE-HEAL and writes no resume line — correct
+    # behaviour that `evaluate_resumed` reported as the bug the case is named for. See
+    # `vo.MIDWINDOW_RESTART_MARGIN`.
     def mid_window():
+        if ctx.finalized_dec() >= restart_deadline:
+            return vo.WINDOW_MISSED
         journal = ctx.exec_test(down, vo.journal_probe(vo.MIDWINDOW_VICTIM_IDX, epoch),
                                 dry_value=True)
         # The SHARE probe is INVERTED: the gate wants it ABSENT (pre-finalize), which is what
@@ -662,15 +783,15 @@ def assert_vrf_dkg_restart_midwindow(ctx) -> None:
         if journal and not ctx.exec_test(down, vo.share_probe(vo.MIDWINDOW_VICTIM_IDX, epoch),
                                          dry_value=False):
             return vo.WINDOW_OPEN
-        if ctx.finalized_dec() >= epoch2_start:
-            return vo.WINDOW_MISSED
         return False
 
     hit = ctx.poll(mid_window, vo.JOURNAL_DEADLINE_S, poll_s=vo.JOURNAL_POLL_S,
                    dry_value=vo.WINDOW_OPEN)
     ctx.check(case, hit != vo.WINDOW_MISSED,
-              f"chain reached the epoch-{epoch} boundary ({epoch2_start}) before {down}'s "
-              "journal was observed — the open window was missed (re-run)")
+              f"chain reached {restart_deadline} (= the epoch-{epoch} boundary {epoch2_start} "
+              f"minus the {vo.MIDWINDOW_RESTART_MARGIN}-block restart margin) before {down}'s "
+              "journal was observed — there is no longer room to restart it INSIDE the open "
+              "window, so the resume path could not be the one that runs (re-run)")
     ctx.check(case, bool(hit),
               f"{down}'s epoch-{epoch} DKG journal never appeared on disk (the ceremony never "
               "started — the journal now lives deal-start→boundary, so a present journal cannot "
@@ -680,6 +801,17 @@ def assert_vrf_dkg_restart_midwindow(ctx) -> None:
     _say(ctx, f"{case}: restarting {down} mid-window at finalized={now} (epoch-{epoch} ceremony "
               "journal on disk, not yet finalized)")
     ctx.compose_restart(down, note=f"midwindow-restart {down}")
+
+    # …AND THE SETUP SURVIVED THE RESTART. The rail above bounds when the restart may START; this
+    # reads where the chain actually IS once the victim is back, which is the only place the
+    # question "was the ceremony still live when `maybe_start` ran" can be answered. A boundary
+    # crossed during the restart sweeps the ceremony, the victim heals instead of resuming, and
+    # the resume assertion below would report that correct behaviour as the bug.
+    back_at = ctx.finalized_dec(dry_value=now + 1)
+    ctx.check(case, *vo.evaluate_restart_in_window(back_at, epoch2_start, down))
+    _say(ctx, f"{case}: {down} back at finalized={back_at}, still {epoch2_start - back_at} blocks "
+              f"short of the epoch-{epoch} boundary — its ceremony is still live, so the journal "
+              "resume is the road it must take")
 
     # ── 2: the chain crosses the boundary; the victim resumes and converges ───────────
     ctx.check(case, ctx.wait_finalized_ge(boundary_probe, vo.MIDWINDOW_BOUNDARY_S),

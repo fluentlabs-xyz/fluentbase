@@ -411,15 +411,25 @@ def _cf_logs(svc):
     return vf.TAMPER_REJECT_LINES[0]
 
 
-def _cf_world(seed_refusals=vf.MIN_SEED_REJECTS + 3, **over):
+def _cf_world(seed_refusals=vf.MIN_SEED_REJECTS + 3, cf_ingesting=True, **over):
     """A healthy cert-follow world: the producer advances, the follower aligns, both MITMs come
     up, the phase-3 tamper follower finalizes nothing, and the phase-4 follower obtains PK_epoch
     and then freezes once the seed slots are cleared."""
-    # SIX readings, in the order the four phases take them: phase 3's two producer samples,
-    # phase 4b's two, and phase 4's pacing pair. The last gap is inside the band on purpose —
-    # a producer that merely moved would satisfy every `v0 advanced` control and still fail
-    # pacing, which is the whole reason pacing is a separate instrument.
-    fin = iter([100, 140, 140, 180, 180, 180 + verdicts.PACING_MIN_BLOCKS + 5])
+    # EIGHT readings, in the order the four phases take them: phase 3's two producer samples,
+    # phase 4a's two, phase 4b's two, and the pacing pair. The last gap is inside the band on
+    # purpose — a producer that merely moved would satisfy every `v0 advanced` control and still
+    # fail pacing, which is the whole reason pacing is a separate instrument.
+    fin = iter([100, 140, 140, 180, 180, 220, 220, 220 + verdicts.PACING_MIN_BLOCKS + 5])
+    # The phase-4a follower's OWN finalized head. It CLIMBS on every read, and that is the control
+    # the phase was missing: a flat admission counter on a follower that finalized nothing is the
+    # reading of a dead cert inlet, not of a pinned one. `cf_ingesting=False` freezes it, which is
+    # what drives the negative.
+    cf_head = [0x64]
+
+    def _cf_head():
+        if cf_ingesting:
+            cf_head[0] += 0x1e
+        return f"{cf_head[0]:#x}|0xaa"
     seed_logs = _seed_logs(seed_refusals)
     world = dict(
         baseline_height=lambda dry_value=0: 100,
@@ -429,9 +439,10 @@ def _cf_world(seed_refusals=vf.MIN_SEED_REJECTS + 3, **over):
         # v0 is the only HOST-port read left in this case — the back-fill target, through the
         # fail-loud `ctx.reading`. The followers are keyed by SERVICE and read in-container.
         check_external=lambda port, dry_value="": "0x8c|0xaa",
-        overlay_check_node=lambda svc, dry_value="": {
-            vf.CF_SERVICE: "0x64|0xaa", vf.SEED_TAMPER_SERVICE: SEED_FROZEN}.get(
-            svc, "null|null"),
+        overlay_check_node=lambda svc, dry_value="": (
+            _cf_head() if svc == vf.CF_SERVICE
+            else SEED_FROZEN if svc == vf.SEED_TAMPER_SERVICE
+            else "null|null"),
         # The tamper follower is UP and finalizing nothing — the shape the phase actually asserts.
         # It used to be unreachable, i.e. a "healthy world" whose negative passed vacuously.
         overlay_head_dec=lambda svc, **k: 12,
@@ -574,6 +585,35 @@ def test_cert_follow_FAILS_when_vote_only_admissions_keep_growing(monkeypatch):
     assert "grew 4 -> 29" in e.value.message
 
 
+def test_cert_follow_phase4a_FAILS_when_the_FOLLOWER_stopped_INGESTING(monkeypatch):
+    """THE F8 CONTROL, driven. The follower obtained PK_epoch, its adoption counters are right,
+    the vote-only counter is perfectly flat over the window — and it finalized NOTHING, because
+    its cert inlet stopped delivering. A flat counter is exactly what that produces.
+
+    Phase 3 and phase 4b both take a control before concluding from an absence
+    (`evaluate_v0_advanced`, and 4b additionally counts refusals); 4a took neither, against the
+    module's own stated rule. The chain-side control alone would not catch this either — v0
+    advances happily throughout, which is why this phase gets the follower's OWN height."""
+    ctx, _ = _live_ctx(monkeypatch, asserts_follow.CERT_FOLLOW_OVERLAY,
+                       **_cf_world(cf_ingesting=False))
+    with pytest.raises(SmokeFailure) as e:
+        asserts_follow.assert_cert_follow(ctx)
+    assert "finalized nothing over the vote-only window" in e.value.message
+    assert vf.CF_VOTE_ONLY_FAMILY in e.value.message
+
+
+def test_cert_follow_phase4a_FAILS_when_the_PRODUCER_stalled(monkeypatch):
+    """The other half of the same gap: a chain-wide stall. Nothing was produced, so nothing was
+    delivered, so nothing could have been admitted vote-only — and the phase used to report that
+    as "the follower stopped admitting certificates vote-only"."""
+    fin = iter([100, 140, 180, 180])
+    ctx, _ = _live_ctx(monkeypatch, asserts_follow.CERT_FOLLOW_OVERLAY,
+                       **_cf_world(finalized_dec=lambda dry_value=0: next(fin, 180)))
+    with pytest.raises(SmokeFailure) as e:
+        asserts_follow.assert_cert_follow(ctx)
+    assert "v0 stalled during tamper phase (180\u2192180)" in e.value.message
+
+
 def test_cert_follow_FAILS_when_the_metrics_endpoint_never_answered(monkeypatch):
     """THE VACUOUS PASS THIS COUNTER WOULD OTHERWISE HAVE. An empty scrape and a family that was
     never incremented both read as "", and one of them is a pass while the other is a measurement
@@ -668,11 +708,17 @@ def test_cert_follow_does_NOT_read_the_seed_followers_HEIGHT_as_the_verdict(monk
     went 238 → 271. This world reproduces exactly that — the follower's height RUNS AWAY while it
     refuses everything — and the phase must pass on it."""
     heads = iter(["0x140|0xcc", "0x1ff|0xcc", "0x2ff|0xcc"])
+    # Phase 4a's own follower still climbs — that is its ingest control, and it is a DIFFERENT
+    # follower from the poisoned one this test is about.
+    cf = [0x64]
 
     def node(svc, dry_value=""):
         if svc == vf.SEED_TAMPER_SERVICE:
             return next(heads, "0x2ff|0xcc")
-        return {vf.CF_SERVICE: "0x64|0xaa"}.get(svc, "null|null")
+        if svc == vf.CF_SERVICE:
+            cf[0] += 0x1e
+            return f"{cf[0]:#x}|0xaa"
+        return "null|null"
 
     ctx, _ = _live_ctx(monkeypatch, asserts_follow.CERT_FOLLOW_OVERLAY,
                        **_cf_world(overlay_check_node=node))
@@ -724,7 +770,7 @@ def test_cert_follow_measures_pacing_with_the_one_existing_instrument(monkeypatc
     """The band that produced the historical 26-27 blk/60s reading, and no second instrument.
     `evaluate_v0_advanced` passes on ONE block; a producer limping at half rate satisfies every
     control in this case and only pacing sees it."""
-    fin = iter([100, 140, 140, 180, 180, 180 + 27])
+    fin = iter([100, 140, 140, 180, 180, 220, 220, 220 + 27])
     ctx, _ = _live_ctx(monkeypatch, asserts_follow.CERT_FOLLOW_OVERLAY,
                        **_cf_world(finalized_dec=lambda dry_value=0: next(fin, 400)))
     with pytest.raises(SmokeFailure) as e:

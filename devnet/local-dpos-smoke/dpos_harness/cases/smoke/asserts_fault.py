@@ -258,6 +258,12 @@ def assert_peers(ctx) -> None:
 
     The restart is graceful (`docker compose restart`), so this is the LEAST invasive of the five
     mutations and runs second in the chain.
+
+    The consensus-plane reading is the LIVE tracker directory keyed by connect TIMESTAMP, and
+    the reconnect gate demands a timestamp newer than every one the baseline scrape saw. That is
+    the whole point of the case: a count over a cumulative broadcast family (what this read until
+    2026-08-24) is satisfied by history, so it reported "reconnected" from the instant the case
+    started and a consensus-plane discovery regression would have passed here silently.
     """
     case = "smoke-peers"
     victim = topology.validator(vf.PEERS_VICTIM_IDX)
@@ -270,17 +276,17 @@ def assert_peers(ctx) -> None:
     _say(ctx, f"smoke-peers: committee_size={size} → expect connected={expect} on "
               f"{topology.PINNED_RPC_HOST}")
 
-    canned = "\n".join(f'outer_engine_buffered_peer_total{{sequencer="{i:02x}"}} 1'
+    canned = "\n".join(f'p2p_network_tracker_directory_connected{{peer="{i:02x}"}} {1700 + i}'
                        for i in range(max(expect, 0)))
 
     def connected():
-        return vf.connected_count(ctx.peers_metrics(dry_value=canned))
+        return vf.connected_peers(ctx.peers_metrics(dry_value=canned))
 
-    ctx.poll(lambda: connected() == expect, vf.PEERS_SETTLE_S, poll_s=vf.PEERS_POLL_S)
-    count = connected()
-    ctx.check(case, *vf.evaluate_connected(count, expect),
+    ctx.poll(lambda: len(connected()) == expect, vf.PEERS_SETTLE_S, poll_s=vf.PEERS_POLL_S)
+    pre_conn = connected()
+    ctx.check(case, *vf.evaluate_connected(len(pre_conn), expect),
               on_fail=lambda: _dump_peer_series(ctx))
-    _say(ctx, f"  initial: connected={count} (== committee_size-1)")
+    _say(ctx, f"  initial: connected={len(pre_conn)} (== committee_size-1)")
 
     # devp2p handshakes can lag commonware discovery, so this gets its own poll rather than
     # sharing the one above — a combined wait would report whichever plane is slow as the failure.
@@ -295,25 +301,38 @@ def assert_peers(ctx) -> None:
     ctx.compose_restart(victim, note="peers-restart-victim")
 
     def back():
-        return vf.peers_reconnected(connected(), expect, ctx.peer_count(victim),
+        return vf.peers_reconnected(connected(), pre_conn, expect, ctx.peer_count(victim),
                                     ctx.finalized_dec(dry_value=pre + 1), pre)
 
     got = ctx.poll(back, vf.RECONNECT_S, poll_s=vf.RECONNECT_POLL_S)
-    ctx.check(case, bool(got),
-              lambda: (f"after {victim} restart connected={connected()} (want {expect}), reth "
-                       f"peers={ctx.peer_count(victim)} (want >0), "
-                       f"finalized={ctx.finalized_dec()} (want > {pre})"))
-    _ok(ctx, case, f"commonware connected={expect} + {victim} reth peers>0 + chain advanced past "
-                   f"{pre} after restart")
+
+    def why():
+        now = connected()
+        floor = max(pre_conn.values()) if pre_conn else None
+        return (f"after {victim} restart connected={len(now)} (want {expect}), fresh consensus "
+                f"connection={vf.connection_is_fresh(now, pre_conn)} (want True — some peer's "
+                f"p2p_network_tracker_directory_connected timestamp above the pre-restart "
+                f"max {floor}), reth peers={ctx.peer_count(victim)} (want >0), "
+                f"finalized={ctx.finalized_dec()} (want > {pre})")
+
+    ctx.check(case, bool(got), why)
+    _ok(ctx, case, f"commonware connected={expect} with a consensus-plane connection newer than "
+                   f"every pre-restart one + {victim} reth peers>0 + chain advanced past {pre} "
+                   "after restart")
 
 
 def _dump_peer_series(ctx) -> None:
     """`asserts-fault.sh:247` — on a connected-count failure, print the peer series that ARE
-    exported, so a metric RENAME surfaces as a rename rather than as "discovery is broken"."""
+    exported, so a metric RENAME surfaces as a rename rather than as "discovery is broken".
+
+    Widened past the tracker family the verdict reads: if commonware renames
+    `p2p_network_tracker_directory_connected`, the count goes to 0 and the ONLY way to tell that
+    apart from a dead p2p plane is to see which peer families the registry does export."""
     text = ctx.peers_metrics()
-    print("  buffered_peer_total / peer_performance series present:", flush=True)
+    print("  tracker_directory / buffered_peer / peer_performance series present:", flush=True)
     hits = [ln for ln in (text or "").splitlines()
-            if "buffered_peer_total" in ln or "peer_performance" in ln]
+            if not ln.startswith("#")
+            and ("tracker_directory" in ln or "buffered_peer" in ln or "peer_performance" in ln)]
     for ln in hits[:20]:
         print(f"  {ln}", flush=True)
     if not hits:
@@ -333,6 +352,12 @@ def assert_vrf_fault(ctx) -> None:
            `order.digest()` fallback. Byte-identical to a node that never went down — a fork or a
            fallback would diverge. This folds item I (keyless restart) and the executor catch-up
            seed-availability invariant.
+
+           The two halves need SEPARATE witnesses and until the 2026-08-24 audit only B4 had one.
+           `prev_randao` rides in the certificate, so the gap-mixhash compare is satisfied
+           identically by a victim that came back holding its share and by one that came back
+           shareless — B3 was asserted in the OK line and read nowhere. `vf.evaluate_share_reloaded`
+           is B3's reading: the reconciler's own `Role::Signer` decision on the restarted process.
 
     The victim is stopped GRACEFULLY and restarted, so the stack is whole again on return.
     """
@@ -389,8 +414,39 @@ def assert_vrf_fault(ctx) -> None:
               f"[{a_lo}..{a_hi}] with the byte-identical threshold prev_randao (assurance, not "
               "fallback)")
 
+    # B3 — THE SHARE, which nothing above can see. The gap-mixhash compare is a real property and
+    # it stays, but it is not evidence about the share: prev_randao rides in the CERTIFICATE, so a
+    # victim that came back shareless reproduces the whole window byte-identically and satisfies
+    # every leg written so far. The OK line has claimed "reloaded its share" since this case was
+    # ported; this is the reading that makes the claim true or red.
+    #
+    # The floor is the epoch the fault window ran in — the one epoch whose share the victim
+    # demonstrably held on disk when it was stopped. A gate on a LATER epoch is an honest race
+    # against a ceremony it was down through, so `evaluate_share_reloaded` scopes the negative to
+    # this epoch and lets the positive be satisfied at or above it.
+    share_epoch = vo.epoch_of(a_hi, ctx.interval, ctx.activation_block)
+    box = {"promoted": [], "gated": []}
+
+    def reseated():
+        logs = ctx.logs_required(victim, case, f"epoch-{share_epoch} share reload",
+                                 dry_value=_DRY_RECOVERED_LOG)
+        box["promoted"] = vf.promoted_epochs_after_restart(logs, floor=share_epoch)
+        box["gated"] = vf.share_gated_epochs_after_restart(logs, floor=share_epoch)
+        # EITHER outcome ends the poll: a gate line is the verdict already, and spinning the full
+        # budget on a node that has told the log it cannot participate buys nothing.
+        return bool(box["promoted"] or box["gated"])
+
+    ctx.poll(reseated, vf.VRF_FAULT_RESEAT_S, poll_s=vf.VRF_FAULT_RESEAT_POLL_S)
+    ctx.check(case, *vf.evaluate_share_reloaded(box["promoted"], box["gated"], victim,
+                                                share_epoch),
+              on_fail=lambda: ctx.dump_logs(vf.VRF_FAULT_LOG_TAIL, victim))
+    _say(ctx, f"smoke-vrf-fault: B3 — {victim} reloaded its epoch-{share_epoch} DKG share: seated "
+              f"as a signer for epoch(s) {box['promoted']} after the restart, with no share-gate "
+              f"demotion at epoch {share_epoch}")
+
     _ok(ctx, case, "beacon survived the f=1 fault; the downed validator restarted, reloaded its "
-                   "share, and caught up the gap with verified threshold prev_randao")
+                   f"epoch-{share_epoch} share (re-seated as a signer, never share-gated), and "
+                   "caught up the gap with verified threshold prev_randao")
 
 
 def _await_catchup(ctx, case: str, service: str, block, timeout, poll_s, message) -> None:
@@ -559,16 +615,20 @@ def assert_vrf_dkg_live_heal(ctx) -> None:
     # The reconstruction is off the beacon's own height tick, so it lands a few seconds after the
     # catch-up rather than with it. ONE log read per iteration answers every grep below — they are
     # all questions about the same text (the `asserts_onchain.resumed` trade).
-    box = {"fresh": "", "road": None, "pin": [], "promote": [], "logs": ""}
+    box = {"fresh": "", "heal": "", "road": None, "pin": [], "promote": [], "logs": ""}
 
     def recovered():
         box["logs"] = ctx.logs_required(victim, case, "epoch-2 key recovery",
                                         dry_value=_DRY_RECOVERED_LOG)
         box["fresh"] = vf.started_fresh_after_restart(box["logs"], epoch=2)
+        box["heal"] = vf.heal_start_after_restart(box["logs"], epoch=2)
         box["road"] = vf.share_road(box["logs"], epoch=2)
         box["pin"] = vf.pin_upgrade_lines(box["logs"], epoch=2)
         box["promote"] = vf.promote_lines(box["logs"], epoch=2)
-        return all((box["fresh"], box["road"], box["pin"], box["promote"]))
+        # EITHER setup witness ends the poll. Waiting on `fresh` alone spun the full
+        # `DKG_HEAL_S` budget on every run that took the demote-heal road, where that line is
+        # never written at all — see `vf.evaluate_victim_held_nothing`.
+        return all((box["fresh"] or box["heal"], box["road"], box["pin"], box["promote"]))
 
     ctx.poll(recovered, vf.DKG_HEAL_S, poll_s=vf.DKG_HEAL_POLL_S)
     # WHERE the chain was when the victim was seated. Read here and not later, because every read
@@ -581,13 +641,15 @@ def assert_vrf_dkg_live_heal(ctx) -> None:
         ctx.dump_logs(vf.VRF_FAULT_LOG_TAIL, victim)
 
     # THE CASE VERIFIES IT SET UP WHAT IT CLAIMS TO TEST, the same way the seed-slot MITM reads
-    # back its own corruption before anything concludes from a rejection. `start_fresh` is the
-    # only emitter of `ceremony started` and `JournalLoad::NoFile` is the only arm that reaches
-    # it, so this line on the RESTARTED process is proof the victim came back holding no epoch-2
-    # journal — no dealing received, no ack sent, and therefore nothing any dealer could do with
-    # its point except reveal it publicly. That is the reveal fallback's precondition, read off
-    # the log instead of inferred from the stop instant.
-    ctx.check(case, *vf.evaluate_started_fresh(box["fresh"], victim, epoch=2), on_fail=dump)
+    # back its own corruption before anything concludes from a rejection. What it has to
+    # establish is that the victim came back holding NO epoch-2 journal, and that is readable on
+    # BOTH roads (`vf.SHARE_ROADS`): a `ceremony started` on the restarted process, which only
+    # `start_fresh` under `JournalLoad::NoFile` can write, or the heal-detect line with
+    # `want == dealers`, which says the journal held not one pinned dealer's log. Reading only
+    # the first and inferring its converse failed three live runs whose behaviour was correct —
+    # the demote-heal reaches the share without any ceremony, so the line is simply never there.
+    ctx.check(case, *vf.evaluate_victim_held_nothing(box["fresh"], box["heal"], victim, epoch=2),
+              on_fail=dump)
     # …the mechanism the ticket is about…
     ctx.check(case, *vf.evaluate_artifact_pull_ok(
         ctx.node_metric(victim, vf.ARTIFACT_PULL_OK_SAMPLE, dry_value="1"), victim), on_fail=dump)
@@ -598,7 +660,7 @@ def assert_vrf_dkg_live_heal(ctx) -> None:
     _say(ctx, f"smoke-vrf-dkg-live-heal: {victim} came back with NO epoch-2 journal, pulled the "
               "epoch's agreed artifact, rebuilt its share from the other members' sealed dealer "
               f"logs via {box['road'][1]}, left vote-only admission and was seated as a signer:")
-    for line in [box["fresh"], box["road"][0], *box["pin"], *box["promote"]]:
+    for line in [box["fresh"] or box["heal"], box["road"][0], *box["pin"], *box["promote"]]:
         _say(ctx, f"    {line}")
 
     # 3) the chain is still live with the recovered member back in the quorum, and its epoch-2

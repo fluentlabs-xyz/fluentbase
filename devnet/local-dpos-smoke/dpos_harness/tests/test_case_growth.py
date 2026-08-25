@@ -14,6 +14,10 @@ file's fixture must not encode. The fixture below is the surviving ERROR, from
 
 from __future__ import annotations
 
+import pathlib
+
+from dpos_harness.cases import growth as growth_mod
+
 from dpos_harness.cases.growth import (
     BUGB_IDX_METRIC,
     BUGB_IDX_SIGNATURE,
@@ -130,6 +134,38 @@ def test_evaluate_growth_case_fails_on_finalize_stall():
     assert ok is False
     assert "finalize-stall" in reason
     assert "advanced 8" in reason and "fin0=100" in reason
+
+
+def test_the_liveness_BASELINE_is_taken_AFTER_the_growth_loop():
+    """THE F14 PIN. `evaluate_growth_case`'s liveness leg is pure and cannot see WHICH baseline it
+    was handed, so the defect lives entirely in the call site and only the call site can pin it.
+
+    What was wrong: the baseline was `fin0`, captured at step 2 before a seating loop that spans
+    the 2-epoch committee warm-up by construction. `fin_now - fin0` was therefore already hundreds
+    of blocks past `min_advance` when the measurement began — the step-4 `while` never iterated
+    (and had no failure branch after it at all), and step 6's liveness clause could not go red on
+    any chain, stalled or not. It is also wrong on the merits: bug B fires AT the boundary where
+    the grown committee first votes, so a window spanning the growth is dominated by the
+    pre-growth committee's blocks.
+
+    This reads the source rather than the behaviour because driving `run_case` needs a live
+    bring-up; the anchors are narrow enough that a refactor which moves them trips the
+    "not found" guard instead of passing vacuously."""
+    src = pathlib.Path(growth_mod.__file__).read_text(encoding="utf-8")
+    loop = src.index("for j, idx in enumerate(growth_joiners):")
+    seat = src.index("_await_live_seat(chain, addr", loop)
+    base = src.index("fin_base = ", seat)
+    call = src.index("evaluate_growth_case(", base)
+    assert loop < seat < base < call, (
+        "the post-growth liveness baseline must be captured AFTER the seating loop; "
+        "`fin_base` no longer sits between `_await_live_seat` and the verdict call")
+    # …and it is `fin_base` that reaches the verdict, not the step-2 readiness baseline.
+    args = src[call + len("evaluate_growth_case("):src.index(")", call)]
+    assert args.split(",")[0].strip() == "fin_base", (
+        f"evaluate_growth_case's baseline argument is {args.split(',')[0].strip()!r}, not "
+        "'fin_base' — the liveness clause is measuring across the growth again, which it cannot "
+        "fail")
+    assert "fin0" not in args, "fin0 is the READINESS baseline and must not reach the verdict"
 
 
 def test_the_stall_reason_carries_the_verify_false_height_bursts():

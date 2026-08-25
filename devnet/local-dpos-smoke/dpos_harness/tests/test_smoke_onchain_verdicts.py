@@ -20,11 +20,12 @@ could not read, and it makes `smoke-vrf-dkg-restart-midwindow` fail a node that 
 
 from __future__ import annotations
 
+import pathlib
 import re
 
 import pytest
 
-from dpos_harness.cases.smoke import verdicts_onchain as vo
+from dpos_harness.cases.smoke import verdicts_fault as vf, verdicts_onchain as vo
 
 
 def _chain(h):
@@ -56,39 +57,145 @@ def test_credit_state_keeps_the_three_answers_apart(seen, want):
     assert vo.credit_state(seen) == want
 
 
-def test_a_failed_read_never_satisfies_the_liveness_comparison():
-    """THE FALSE PASS `smoke-liveness` exists to avoid. `-2 < 10` is true as arithmetic, so a
-    getter that stopped answering would make "the victim signed fewer certs than the hub" pass
-    trivially — on a chain the harness could not read at all."""
-    assert vo.production_hit(-2, 10) is False
-    ok, msg = vo.evaluate_production(4, -2, -2, 10, 10)
-    assert ok is False and "victim getter read FAILED" in msg
+def test_a_sentinel_never_enters_the_production_delta():
+    """THE FALSE PASS `smoke-liveness` exists to avoid, in its new shape. The verdict's PASS is a
+    ZERO, so a sentinel is more dangerous here than it was under the old comparison: `-2 - -2 == 0`
+    and `-1 - -1 == 0` both look exactly like "the stopped victim produced nothing"."""
+    assert vo.credit_readable({4: (3, 10)}) is True
+    assert vo.credit_readable({4: (-2, -2)}) is False
+    assert vo.credit_readable({4: (-1, -1)}) is False
+    assert vo.credit_delta({4: (-2, -2)}, {4: (-2, -2)}) is None
+    assert vo.credit_delta({4: (3, 10)}, {4: (-1, -1)}) is None
+    ok, msg = vo.evaluate_production_over_outage(None, "validator-3", [4])
+    assert ok is False and "sentinel" in msg and "never a real 0" in msg
 
 
-def test_a_not_in_committee_victim_never_satisfies_the_liveness_comparison():
-    assert vo.production_hit(-1, 10) is False
-    ok, msg = vo.evaluate_production(4, -1, -1, 10, 10)
-    assert ok is False and "victim address is NOT in this epoch's committee" in msg
+def test_the_production_delta_spans_every_epoch_the_outage_crossed():
+    """The defect that made the old poll meaningless was not only the jitter: it re-read
+    `currentEpoch()` on every iteration, so an outage that rolled the epoch was compared against a
+    fresh epoch where the victim's 0 and the hub's 1 satisfied it outright. An epoch missing from
+    the BASELINE began inside the window, so its whole count is delta."""
+    before = {4: (7, 40)}
+    after = {4: (7, 64), 5: (0, 30), 6: (0, 12)}
+    assert vo.credit_delta(before, after) == (0, 24 + 30 + 12)
+    # …and a victim credited in an epoch that started mid-outage is caught, not skipped.
+    assert vo.credit_delta(before, {4: (7, 64), 5: (2, 30)}) == (2, 24 + 30)
 
 
-def test_a_failed_HUB_read_is_named_as_the_hub():
-    """Two addresses are read per poll and they call for different next steps: a broken hub read
-    is an RPC problem, a broken victim read may be a committee problem."""
-    ok, msg = vo.evaluate_production(4, 3, 10, -2, -2)
-    assert ok is False and "hub getter read FAILED" in msg
+def test_the_production_verdict_is_zero_credit_over_a_window_that_moved():
+    """Both halves. `dv == 0` is physically necessary for a stopped process — there is nothing
+    between 0 and 1 to widen. `dt > 0` is the control that keeps the zero from being vacuous: a
+    frozen counter yields the same zero on a chain that recorded nothing at all."""
+    assert vo.evaluate_production_over_outage((0, 97), "validator-3", [4, 5])[0]
+    ok, msg = vo.evaluate_production_over_outage((0, 0), "validator-3", [4])
+    assert ok is False and "no production record reached the chain" in msg
+    ok, msg = vo.evaluate_production_over_outage((3, 97), "validator-3", [4, 5])
+    assert ok is False and "credited 3 block(s)" in msg and "WHILE IT WAS STOPPED" in msg
 
 
-def test_production_hit_needs_the_hub_to_have_seen_anything():
-    """Early in a window both counters are 0 and `0 < 0` is false. The `rseen > 0` clause makes
-    that an explicit "wait for the hub to accumulate evidence" rather than a comparison that
-    happens not to be true yet."""
-    assert vo.production_hit(0, 0) is False
-    assert vo.production_hit(3, 10) is True
-    assert vo.production_hit(10, 10) is False, "equal is not lagging"
+def test_the_production_verdict_cannot_be_satisfied_by_equal_stake_jitter():
+    """THE F3 REGRESSION GUARD. The old reading was `victim_produced < hub_produced` at some
+    sampled instant. On four equal stakes that inequality holds roughly half the time with every
+    validator up, so the case reported an outage-specific property from a reading that had no
+    dependency on the outage.
+
+    The delta form is not satisfiable that way: over any window in which the chain produced
+    blocks, a validator that was UP is credited some of them, and any non-zero is red."""
+    up_victim = vo.credit_delta({4: (7, 40)}, {4: (9, 64)})     # produced 2 of the window's 24
+    assert up_victim == (2, 24)
+    assert vo.evaluate_production_over_outage(up_victim, "validator-3", [4])[0] is False
+    # the exact reading the old poll passed on — victim behind the hub, but still producing.
+    assert vo.evaluate_production_over_outage(up_victim, "validator-3", [4],
+                                              hub_delta=8)[0] is False
 
 
-def test_evaluate_production_passes_when_the_victim_lags():
-    assert vo.evaluate_production(4, 3, 10, 10, 10) == (True, "")
+def test_the_credit_window_is_derived_from_the_deferred_lag():
+    """The arithmetic the applicability gate rests on. Both snapshots read a counter that lags the
+    chain by K, and the baseline is taken K+1 past the stop, so an outage of `gap` blocks measures
+    `gap - K - 1 - slack` of them."""
+    assert vo.production_window_blocks(97) == 97 - 3 - 1 - 1      # cycle 1 — 92, the live reading
+    assert vo.production_window_blocks(33) == 33 - 3 - 1 - 1      # cycles 2/4 — 28, live read 27
+    assert vo.production_window_blocks(5) == 0                    # cycle 3 — nothing to measure
+    # …and it is derived from K, not from a literal: move the lag and the window moves with it.
+    assert vo.production_window_blocks(5, k=0) == 3
+
+
+def test_the_production_leg_is_SKIPPED_on_an_outage_too_short_to_measure():
+    """THE LIVE FAILURE, at the verdict layer. `smoke-liveness` cycle 3 stops a validator for FIVE
+    blocks. `production_window_blocks(5) == 0`, so `blocksInEpoch` cannot move and the control
+    `dt > 0` is unsatisfiable by any chain — the leg failed a run whose own previous line reported
+    the chain finalizing past its target.
+
+    The floor is DERIVED (`K + 1 settle + stop-slack + committee_size`), not chosen: the first
+    three terms are the measurement's own overhead, and the committee term is what makes the
+    surviving `dv == 0` mean something — on `n` equal stakes the rotation credits a member once
+    per `n` blocks in expectation, so a window shorter than one rotation reads 0 for an UP member
+    too often to discriminate."""
+    assert vo.production_min_gap(4) == 3 + 1 + 1 + 4
+    assert vo.production_min_gap(4, k=10) == 10 + 1 + 1 + 4, "the floor must track K"
+
+    applies, why = vo.evaluate_production_applicable(5, 4)
+    assert applies is False
+    assert "outage gap=5 < 9" in why and "too short to carry information" in why
+    # it says what still covers the cycle, so the skip is not read as an uncovered hole
+    assert "within-epoch walk / re-jump path" in why
+
+    # …and the cycles it DOES apply to keep the leg, with their window named.
+    for gap, window in ((97, 92), (33, 28)):
+        applies, why = vo.evaluate_production_applicable(gap, 4)
+        assert applies is True, gap
+        assert f"gap={gap} >= 9" in why and f"spans ~{window} blocks" in why
+
+
+def test_the_skip_would_have_been_the_LIVE_RED_had_the_leg_run():
+    """Why the skip is the right answer and a looser control is not. Fed the reading cycle 3
+    actually produced — victim delta 0, `blocksInEpoch` delta 0, hub delta 0 — the verdict fails,
+    correctly, on the control. There is nothing to relax: the counter could not have moved."""
+    ok, msg = vo.evaluate_production_over_outage((0, 0), "validator-1", [6], hub_delta=0)
+    assert ok is False and "no production record reached the chain" in msg
+    # so the cycle must not reach it at all
+    assert vo.evaluate_production_applicable(5, 4)[0] is False
+
+
+def test_the_deferred_lag_K_matches_the_product():
+    """CROSS-LANGUAGE PIN, the shape `test_byzantine_modes.py` owns. `RESULT_LAG_K` is restated in
+    THREE places in the harness — here, `verdicts_fault.py`, and `checks/battery.py`'s env default
+    — and every one of them is a silent copy of `fluentbase_consensus::K`. That constant is
+    consensus-critical ("Changing it is a chain-spec release, not a config knob",
+    `order_block.rs:21-23`), and the production-credit floor and window above are now DERIVED from
+    the harness copy: a lag bump landing in the product and not here would silently re-point the
+    settle wait and the applicability floor at the wrong number.
+
+    The file's ABSENCE is a hard failure, not a skip — the harness lives inside the repo."""
+    src = (pathlib.Path(__file__).resolve().parents[4]
+           / "crates/dpos/consensus/src/order_block.rs")
+    assert src.is_file(), f"{src} is gone — the K anchor moved"
+    hits = re.findall(r"^pub const K: u64 = (\d+);", src.read_text(encoding="utf-8"),
+                      flags=re.M)
+    assert len(hits) == 1, f"expected exactly one `pub const K` in order_block.rs, found {hits}"
+    assert int(hits[0]) == vo.RESULT_LAG_K, (
+        f"fluentbase_consensus::K is {hits[0]} and the harness carries {vo.RESULT_LAG_K}")
+    assert vf.RESULT_LAG_K == vo.RESULT_LAG_K, "the two harness copies of K disagree"
+    assert vo.PRODUCTION_SETTLE_BLOCKS == vo.RESULT_LAG_K + 1
+    # the THIRD copy: the sim battery's env default, which is a literal in its source.
+    battery = pathlib.Path(__file__).resolve().parents[1] / "checks" / "battery.py"
+    default = re.search(r'_envi\("RESULT_LAG_K",\s*(\d+)\)',
+                        battery.read_text(encoding="utf-8"))
+    assert default, "battery.py no longer carries a RESULT_LAG_K env default — re-point this pin"
+    assert int(default.group(1)) == vo.RESULT_LAG_K, (
+        f"checks/battery.py defaults RESULT_LAG_K to {default.group(1)}, the product says "
+        f"{vo.RESULT_LAG_K}")
+
+
+def test_the_hub_delta_is_reported_and_never_gated():
+    """`LIVENESS_CYCLES`'s third cycle is a FIVE-block outage. On a 4-member equal-stake lottery
+    the hub draws none of five slots about a quarter of the time, so gating on "the hub rose"
+    would fail a quarter of correct runs — trading a witness that cannot see the property for one
+    that fires on the wrong thing."""
+    ok, _ = vo.evaluate_production_over_outage((0, 5), "validator-1", [4], hub_delta=0)
+    assert ok is True
+    _, msg = vo.evaluate_production_over_outage((2, 5), "validator-1", [4], hub_delta=0)
+    assert "hub gained 0" in msg
 
 
 # ══ smoke-liveness ═════════════════════════════════════════════════════════

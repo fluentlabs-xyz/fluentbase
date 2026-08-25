@@ -32,7 +32,9 @@ WHAT THIS CASE DOES (deterministic, SCRIPTED — not the random churn sim)
        validator seats in the live committee.
     4. ASSERT LIVENESS: finalized_dec() must advance by >= a full epoch's worth of
        blocks within a deadline spanning several boundaries. A flat finalized =
-       finalize-stall = bug B present = FAIL.
+       finalize-stall = bug B present = FAIL. The baseline is taken AFTER the seating
+       loop, not at step 2: the loop already spans the 2-epoch warm-up, so a step-2
+       baseline is met before the measurement starts and the clause cannot fail.
     5. ASSERT NO PINNED-IDX STALL: on EVERY running validator, read
        `dpos_dkg_pinned_idx_out_of_range_total` (non-zero = FAIL, unreadable on all of
        them = FAIL) and scan its log for the pinned-idx ERROR (presence = FAIL).
@@ -144,9 +146,18 @@ def evaluate_growth_case(fin0: int, fin_now: int, min_advance: int, per_node_log
     """Pure verdict for the growth case (every live input pre-gathered). Returns
     (ok, reason). Deterministic; no I/O.
 
+    `fin0` IS THE POST-GROWTH BASELINE, not the step-2 readiness one, and the caller is what
+    makes that true. Fed the readiness baseline this clause was unreachable: the seating loop
+    between the two spans the 2-epoch warm-up by construction, so `fin_now - fin0` was already
+    hundreds of blocks past `min_advance` before the measurement began, and no chain — stalled or
+    not — could drive it red. It also has to be post-growth on the merits: bug B fires AT the
+    boundary where the grown committee first votes, so a window spanning the growth is dominated
+    by the pre-growth committee's blocks and stays green over a chain that stalled the instant the
+    new member seated.
+
     THREE ways to go red:
 
-      * finalized did not advance by `min_advance` across the growth window — the
+      * finalized did not advance by `min_advance` across the POST-GROWTH window — the
         finalize-stall bug B produced. The verify-false HEIGHT CLUSTERS ride the reason,
         because a burst of rejections at ONE height is what separates "the whole committee
         rejected the same proposal" from "the chain is merely slow";
@@ -460,15 +471,32 @@ def run_case(argv=None) -> int:
             boundaries += 1
             cap = new_cap
 
-        # 4. LIVENESS across several boundaries: require finalized to advance by a full
-        #    epoch's worth of blocks (a flat finalized = finalize-stall = bug B).
+        # 4. LIVENESS AFTER THE GROWTH: finalized must advance by a full epoch's worth of blocks
+        #    measured from a baseline taken HERE, and SCORED in step 6 by
+        #    `evaluate_growth_case`, whose failure message carries the verify-false height
+        #    bursts this loop has no access to. A flat finalized = finalize-stall = bug B.
+        #
+        # THE BASELINE USED TO BE `fin0`, CAPTURED IN STEP 2, and that made this clause dead code
+        # in the strictest sense: the seating loop above spans two to three epoch boundaries by
+        # construction (`_await_live_seat` waits for the 2-epoch warm-up), so `fin0 + interval` is
+        # already hundreds of blocks behind by the time control reaches here. The `while` never
+        # iterated, and there was no failure branch after it either — the stated red could not
+        # fire on any chain, stalled or not.
+        #
+        # THE WINDOW HAS TO BE POST-GROWTH, not spanning it. Bug B fires AT the boundary where the
+        # grown committee first votes; a window that starts before the growth is dominated by the
+        # blocks the pre-growth committee produced and stays green over a chain that stalled the
+        # moment the new member seated.
+        fin_base = measured("finalized_dec()", nodes.finalized_dec, 0)
         min_advance = interval
-        target = fin0 + min_advance
+        target = fin_base + min_advance
         live_deadline = time.time() + interval * 8
         fin_now = measured("finalized_dec()", nodes.finalized_dec, target)
         while fin_now < target and time.time() < live_deadline:
             time.sleep(5)
             fin_now = nodes.finalized_dec()
+        print(f"CASE-GROWTH: post-growth liveness window {fin_base}→{fin_now} "
+              f"(need >= {min_advance}); scored in step 6", flush=True)
 
         # 5. NO PINNED-IDX STALL: over every running validator, the counter AND the log.
         #
@@ -496,12 +524,16 @@ def run_case(argv=None) -> int:
             teardown()
             print(f"# {len(runner.log)} commands")
             return RC_PASS
-        ok, reason = evaluate_growth_case(fin0, fin_now, min_advance, per_node_logs, per_node_idx)
+        # `fin_base`, NOT `fin0` — see step 4. The liveness leg of this verdict is the ONLY
+        # consumer of the baseline, and against `fin0` it could not fail on any chain.
+        ok, reason = evaluate_growth_case(fin_base, fin_now, min_advance, per_node_logs,
+                                          per_node_idx)
         if not ok:
             return fail(reason)
         span = (fin_now - fin0) // max(interval, 1)
         print(f"CASE-GROWTH PASS: committee grew across {boundaries} boundaries, finalized "
-              f"advanced fin0={fin0}→finN={fin_now} (~{span} epoch-span); {reason}",
+              f"advanced fin0={fin0}→finN={fin_now} (~{span} epoch-span, of which "
+              f"{fin_now - fin_base} came AFTER the last joiner seated); {reason}",
               flush=True)
         teardown()
         return RC_PASS

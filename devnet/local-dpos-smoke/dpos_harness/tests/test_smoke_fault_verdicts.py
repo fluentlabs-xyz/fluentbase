@@ -17,7 +17,8 @@ import re
 
 import pytest
 
-from dpos_harness.cases.smoke import verdicts, verdicts_fault as vf
+from dpos_harness.cases.smoke import verdicts, verdicts_fault as vf, verdicts_rotation as VR
+from dpos_harness.core import rpc
 
 K = vf.RESULT_LAG_K
 
@@ -288,11 +289,21 @@ def test_an_unreachable_victim_does_not_read_as_rejoined():
 
 # ══ smoke-peers ════════════════════════════════════════════════════════════
 
+#: VERBATIM shape from a real registry (soak-out/bundle-20260720T170507Z/rpc/metrics-19100.txt
+#: :14131-14139) — the LIVE tracker directory, value = epoch-millis of the connect. The trailing
+#: cumulative broadcast family is the one this case used to count: it is present here on purpose,
+#: with a THIRD peer that the live directory does not carry, so a regression back to counting it
+#: shows up as an inflated count rather than as a silent pass.
 METRICS = "\n".join([
+    '# HELP p2p_network_tracker_directory_connected Unix timestamp in milliseconds when each '
+    'connected peer became active.',
+    '# TYPE p2p_network_tracker_directory_connected gauge',
+    'p2p_network_tracker_directory_connected{peer="aa"} 1784563127340',
+    'p2p_network_tracker_directory_connected{peer="bb"} 1784564366916',
+    'p2p_network_tracker_directory_tracked 3',
     'outer_engine_buffered_peer_total{sequencer="aa"} 3',
     'outer_engine_buffered_peer_total{sequencer="bb"} 1',
-    'outer_engine_buffered_peer_total{sequencer="aa"} 4',
-    'some_other_total{sequencer="cc"} 9',
+    'outer_engine_buffered_peer_total{sequencer="cc"} 4',
 ])
 
 
@@ -304,12 +315,33 @@ def test_the_committee_size_counts_the_addresses_cast_printed():
     assert vf.committee_size("[]") == 0
 
 
-def test_connected_peers_are_deduplicated_by_sequencer_label():
-    """`:230-234` — the family renders once per peer per metric; the question is how many PEERS.
-    Counting lines instead of distinct labels would inflate the answer above the committee size
-    and fail a healthy node."""
+def test_the_connected_reading_is_the_live_directory_not_the_cumulative_broadcast_family():
+    """The F1 witness fix. `outer_engine_buffered_peer_total` is a CUMULATIVE counter family
+    whose series are never pruned, so it answers "peers ever heard from"; the tracker directory
+    answers "peers connected now" and carries the connect instant. METRICS carries a `cc` peer in
+    the cumulative family ONLY — a reader that fell back to it would count 3."""
+    assert vf.connected_peers(METRICS) == {"aa": 1784563127340, "bb": 1784564366916}
     assert vf.connected_count(METRICS) == 2
     assert vf.connected_count("") == 0
+    assert vf.connected_peers("") == {}
+    # the HELP/TYPE comment lines carry the family name too and must not be parsed as series
+    assert "p2p_network_tracker_directory_connected gauge" in METRICS
+
+
+def test_a_reconnect_is_witnessed_by_a_connect_timestamp_newer_than_the_baseline():
+    """The leg the cumulative count could not carry. `connection_is_fresh` must be FALSE for the
+    baseline reading against itself — otherwise the reconnect gate is true before the restart is
+    even issued, which is exactly the false GREEN this replaced."""
+    pre = {"aa": 100, "bb": 200}
+    assert not vf.connection_is_fresh(pre, pre)                      # nothing has restarted yet
+    assert not vf.connection_is_fresh({"aa": 100, "bb": 150}, pre)   # older connection, not newer
+    assert vf.connection_is_fresh({"aa": 100, "bb": 201}, pre)       # bb reconnected
+    # a directory that still carries the victim's PRE-restart entry (validator-0 never released
+    # the dead socket) reaches the right COUNT with no fresh timestamp.
+    assert not vf.connection_is_fresh({"aa": 100, "bb": 200}, pre)
+    # an empty baseline is a failure, not a free pass: there is nothing to be fresh against.
+    assert not vf.connection_is_fresh({"aa": 999}, {})
+    assert not vf.connection_is_fresh({}, pre)
 
 
 def test_the_connected_count_is_exact_in_both_directions():
@@ -330,13 +362,20 @@ def test_a_spoke_with_no_reth_peer_fails():
     assert not ok and "net_peerCount=0" in msg and "peering not wired" in msg
 
 
-def test_the_reconnect_needs_all_three_including_chain_progress():
+def test_the_reconnect_needs_all_four_including_a_fresh_consensus_connection():
     """`:265` — the chain-advance leg is what makes this a REJOIN test: both peer planes can
-    reconnect perfectly around a node that contributes nothing."""
-    assert vf.peers_reconnected(3, 3, 1, 101, 100)
-    assert not vf.peers_reconnected(2, 3, 1, 101, 100)      # commonware plane short
-    assert not vf.peers_reconnected(3, 3, 0, 101, 100)      # devp2p plane down
-    assert not vf.peers_reconnected(3, 3, 1, 100, 100)      # chain did not advance
+    reconnect perfectly around a node that contributes nothing. The freshness leg is what makes
+    the CONSENSUS plane observable at all: without it the gate is satisfied by the baseline
+    reading and passes before the restart happens."""
+    pre = {"aa": 100, "bb": 200, "cc": 300}
+    back = {"aa": 100, "bb": 200, "cc": 400}                # cc reconnected after the restart
+    assert vf.peers_reconnected(back, pre, 3, 1, 101, 100)
+    assert not vf.peers_reconnected({"aa": 100, "bb": 200}, pre, 3, 1, 101, 100)  # plane short
+    assert not vf.peers_reconnected(back, pre, 3, 0, 101, 100)                    # devp2p down
+    assert not vf.peers_reconnected(back, pre, 3, 1, 100, 100)                    # chain flat
+    # THE F1 REGRESSION GUARD: the unchanged baseline reading — the exact thing the old
+    # cumulative-series count could not distinguish from a completed reconnect.
+    assert not vf.peers_reconnected(pre, pre, 3, 1, 101, 100)
 
 
 # ══ smoke-vrf-fault / smoke-vrf-dkg-liveness: the gap compare ══════════════
@@ -424,10 +463,89 @@ def test_the_fresh_ceremony_grep_is_epoch_anchored():
         f"{BOOT}\nINFO {vf.CEREMONY_STARTED_LINE} epoch=20") == ""
 
 
-def test_the_setup_gate_says_what_a_missing_fresh_start_means():
-    assert vf.evaluate_started_fresh(FRESH, "validator-3")[0]
-    ok, msg = vf.evaluate_started_fresh("", "validator-3")
-    assert not ok and "came back holding a journal" in msg and "ACKED" in msg
+def _heal(want, dealers, epoch=2):
+    """A heal-DETECT line as `beacon/actor.rs` writes it: the message, then `epoch`, `want` and
+    `dealers` rendered by tracing's field formatter."""
+    return (f"INFO live DKG: demoted committee member detected \u2014 {vf.HEAL_START_LINE} "
+            f"epoch={epoch} want={want} dealers={dealers}")
+
+
+#: The same line as `docker logs` hands it over BEFORE `logs_all`'s strip: the node writes SGR
+#: escapes INSIDE its `key=value` pairs, so the digits are not adjacent to their field names in
+#: the bytes (§2.4 item 2). Held here to keep `heal_start_counts`'s own strip under test — a
+#: reader that skipped it would find no counters, and "no counters" must never read as "no
+#: journal".
+ANSI_HEAL = ("validator-3-1  | \x1b[2m2026-08-24T10:12:03.114512Z\x1b[0m \x1b[32m INFO\x1b[0m "
+             "\x1b[2mfluentbase_dpos_consensus::beacon::actor\x1b[0m\x1b[2m:\x1b[0m "
+             "live DKG: demoted committee member detected \u2014 starting share recompute-heal "
+             "\x1b[3mepoch\x1b[0m\x1b[2m=\x1b[0m2 \x1b[3mwant\x1b[0m\x1b[2m=\x1b[0m4 "
+             "\x1b[3mdealers\x1b[0m\x1b[2m=\x1b[0m4")
+
+
+def test_the_setup_gate_reads_the_no_journal_precondition_on_BOTH_roads():
+    """THE DEFECT THIS REPLACES, and it failed three live runs whose behaviour was correct.
+
+    The old gate read witness A alone — `ceremony started` on the restarted process — and then
+    inferred its converse: no line, therefore a journal. False. A victim that came back with
+    NOTHING reaches its share without any ceremony down the demote-heal road: `parse_journal` on
+    an absent journal gives an empty `held`, `want` is every pinned dealer, the resolver fetches
+    those logs (the other members' public reveals — the path this case exists for) and the
+    recompute runs. `start_fresh` never executes, so line A never appears, and the gate failed on
+    its own precondition while the tested behaviour succeeded."""
+    assert vf.evaluate_victim_held_nothing(FRESH, "", "validator-3")[0]
+    assert vf.evaluate_victim_held_nothing("", _heal(4, 4), "validator-3")[0]
+
+
+def test_a_heal_that_wanted_FEWER_logs_than_dealers_is_the_real_journal_case():
+    """`want = dealers() −` the dealer logs already in the retained journal, so `want < dealers`
+    says the victim DID hold some — it was stopped after the deal phase opened, acked those
+    dealings, and their dealers therefore reveal nothing publicly. This is the one branch on
+    which the old message was true, and it is where it now lives."""
+    ok, msg = vf.evaluate_victim_held_nothing("", _heal(1, 4), "validator-3")
+    assert not ok
+    assert "came back holding a journal" in msg and "ACKED" in msg
+    assert "want=1" in msg and "dealers=4" in msg
+
+
+def test_neither_witness_claims_no_knowledge_of_why():
+    """Neither road was taken, so the gate knows only that: it must not name a cause it cannot
+    see — least of all the journal, which is exactly what it failed to read."""
+    ok, msg = vf.evaluate_victim_held_nothing("", "", "validator-3")
+    assert not ok
+    assert "neither" in msg and "NEITHER road" in msg
+    assert "holding a journal" not in msg
+
+
+def test_an_unparseable_heal_line_is_not_a_witness():
+    """A present line whose counters cannot be read says NOTHING about the journal. Passing on it
+    would make a log-format change silently green — the failure mode the whole case is built to
+    avoid — so it fails, and with its own message rather than the journal one."""
+    ok, msg = vf.evaluate_victim_held_nothing(
+        "", f"INFO {vf.HEAL_START_LINE} epoch=2 want=? dealers=?", "validator-3")
+    assert not ok
+    assert "no usable want=/dealers= pair" in msg and "holding a journal" not in msg
+    # dealers=0 parses but proves nothing either: 0 == 0 would pass vacuously.
+    assert not vf.evaluate_victim_held_nothing("", _heal(0, 0), "validator-3")[0]
+
+
+def test_the_counters_survive_the_ANSI_docker_logs_carries():
+    """The realistic reading, and the field order is not assumed: tracing renders fields in an
+    order the case does not control, the same reason `epoch_debug_lines` is a two-grep."""
+    assert vf.heal_start_counts(ANSI_HEAL) == (4, 4)
+    assert vf.evaluate_victim_held_nothing("", ANSI_HEAL, "validator-3")[0]
+    assert vf.heal_start_counts("INFO x dealers=4 want=4") == (4, 4)
+    assert vf.heal_start_counts("INFO x want=4") is None
+    # …and the collector finds it in a whole `logs_all` read (which strips before it lands here).
+    stripped = rpc.strip_ansi(f"{BOOT}\n{ANSI_HEAL}")
+    assert vf.HEAL_START_LINE in vf.heal_start_after_restart(stripped)
+
+
+def test_the_heal_witness_is_sliced_at_the_restart_like_the_fresh_one():
+    """Same process boundary, same reason: a heal from before the stop is not a reading about the
+    victim the case restarted."""
+    assert vf.heal_start_after_restart(f"{BOOT}\n{_heal(4, 4)}") == _heal(4, 4)
+    assert vf.heal_start_after_restart(f"{_heal(4, 4)}\n{BOOT}") == ""
+    assert vf.heal_start_after_restart(f"{BOOT}\n{_heal(4, 4, epoch=20)}") == ""
 
 
 def test_either_road_to_the_share_satisfies_the_recovery_gate():
@@ -512,6 +630,72 @@ def test_the_pull_counter_sample_name_carries_the_DOUBLED_total_suffix():
     scrape = "dpos_dkg_artifact_pull_ok_total_total 1\n"
     assert _n.gauge_val(scrape, vf.ARTIFACT_PULL_OK_SAMPLE) == "1"
     assert _n.gauge_val(scrape, vf.ARTIFACT_PULL_OK_FAMILY) == ""
+
+
+def test_the_share_reload_witness_reads_only_the_restarted_process():
+    """The F2 witness. The victim's log carries everything the STOPPED process wrote, and that
+    process was a healthy signer — reading it would witness the very share whose reload is the
+    question."""
+    pre_only = "\n".join([
+        f"INFO {vf.PROMOTE_LINE} " + vf.PIN_EPOCH_FMT.format(2),
+        f"INFO {vf.ACTOR_STARTED_LINE} epocher=(test)",
+    ])
+    assert vf.promoted_epochs_after_restart(pre_only, floor=2) == []
+    after = pre_only + f"\nINFO {vf.PROMOTE_LINE} " + vf.PIN_EPOCH_FMT.format(3)
+    assert vf.promoted_epochs_after_restart(after, floor=2) == [3]
+    # …and the floor drops epochs below the one the fault window ran in.
+    below = (f"INFO {vf.ACTOR_STARTED_LINE} epocher=(test)\n"
+             f"INFO {vf.PROMOTE_LINE} " + vf.PIN_EPOCH_FMT.format(1))
+    assert vf.promoted_epochs_after_restart(below, floor=2) == []
+    # a log with no boot marker at all is a log about no process — never a witness.
+    assert vf.promoted_epochs_after_restart(
+        f"INFO {vf.PROMOTE_LINE} " + vf.PIN_EPOCH_FMT.format(2), floor=2) == []
+
+
+def test_the_share_reload_witness_survives_the_ansi_escapes_the_node_writes():
+    """The node writes SGR escapes INSIDE its `key=value` pairs (§2.4 item 2). Unstripped, the
+    epoch would not parse and the witness would silently read as "it never happened"."""
+    line = ("INFO " + vf.PROMOTE_LINE + " \x1b[3mepoch\x1b[0m=\x1b[1mEpoch(2)\x1b[0m")
+    logs = f"INFO {vf.ACTOR_STARTED_LINE} epocher=(test)\n{line}"
+    assert vf.promoted_epochs_after_restart(logs, floor=2) == [2]
+
+
+def test_the_share_reload_verdict_needs_a_promotion_and_no_share_gate():
+    """Both halves, because neither alone settles it. `gated` non-empty is the direct observation
+    of a shareless comeback; `promoted` empty is also what a node that never reconciled produces,
+    so an absence-only witness is green on a node that logged nothing."""
+    assert vf.evaluate_share_reloaded([2], [], "validator-3", 2)[0]
+    assert vf.evaluate_share_reloaded([4], [], "validator-3", 2)[0]     # re-seated a bit later
+    ok, msg = vf.evaluate_share_reloaded([], [2], "validator-3", 2)
+    assert not ok and "WITHOUT a usable epoch-2 DKG share" in msg
+    # the gate OUTRANKS a promotion: a victim that came back shareless and then healed did not
+    # RELOAD anything, which is the sentence this witness is here to make true or red.
+    ok, msg = vf.evaluate_share_reloaded([2], [2], "validator-3", 2)
+    assert not ok and "WITHOUT a usable epoch-2 DKG share" in msg
+    ok, msg = vf.evaluate_share_reloaded([], [], "validator-3", 2)
+    assert not ok and "never logged" in msg and "an epoch >= 2" in msg
+
+
+def test_the_role_witness_strings_are_the_ones_the_reconciler_writes():
+    """CROSS-LANGUAGE PIN, in the shape `test_byzantine_modes.py` owns and for the same reason: a
+    witness spelled differently from its emitter is a witness that never fires, and both of these
+    are read as NEGATIVES somewhere — `SHARE_GATE_LINE` here, and as the "which nodes demoted"
+    diagnostic in `asserts_prod_dkg`. A restatement drifts silently; this reads the emitter.
+
+    It caught one on the day it was written: `verdicts_rotation.SHARE_GATE_LINE` read "committee
+    member without a usable DKG share — verify-only (share-gate)", which had ZERO hits in
+    `crates/`. Both spellings are asserted so the two copies cannot drift apart either.
+
+    The file's ABSENCE is a hard failure, not a skip: the harness lives inside the repo, so a
+    missing `epoch_manager.rs` means the anchor moved."""
+    src = (pathlib.Path(__file__).resolve().parents[4]
+           / "crates/dpos/consensus/src/epoch_manager.rs")
+    assert src.is_file(), f"{src} is gone — the role-witness anchor moved"
+    text = src.read_text(encoding="utf-8")
+    assert vf.SHARE_GATE_LINE in text, "no emitter for the share-gate witness"
+    assert vf.PROMOTE_LINE in text, "no emitter for the promotion witness"
+    assert vf.SHARE_GATE_LINE == VR.SHARE_GATE_LINE
+    assert vf.PIN_EPOCH_FMT == VR.SHARE_GATE_EPOCH_FMT
 
 
 def test_the_chain_must_still_be_finalizing_after_the_rejoin():

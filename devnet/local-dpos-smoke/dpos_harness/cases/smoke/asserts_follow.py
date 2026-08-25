@@ -11,8 +11,11 @@ decides what the readings mean.
 ═══ WHAT IS DIFFERENT ABOUT THIS TRIO, AND WHAT A PORT CAN QUIETLY LOSE ══════════════════
 
 1. **Four of the assertions are NEGATIVE** — the tampered-cert rejection, the bogus-checkpoint
-   refusal, the bogus follower's lack of progress, and the tx-route monitor's silence. Two of
-   them conclude from a fixed OBSERVATION WINDOW, i.e. they pass on a timeout:
+   refusal, the bogus follower's lack of progress, and the tx-route monitor's silence. The last of
+   those is not an assertion at all today and is labelled as such in the case output: the monitor
+   that would emit its string does not exist (audit B9), so it is a TRIPWIRE for the day it comes
+   back, never evidence. Two of the other three conclude from a fixed OBSERVATION WINDOW, i.e.
+   they pass on a timeout:
 
        cert-follow phase 3   45 s of watching the tamper follower not move
        cert-cascade phase 3  240 s of waiting for a refusal that must arrive
@@ -326,18 +329,34 @@ def _cert_follow_phase4(ctx, case: str, seed_pair) -> None:
     text0 = ctx.overlay_el_metrics_text(vf.CF_SERVICE,
                                         dry_value=f"{vf.CF_VOTE_ONLY_FAMILY} 4\n")
     before = nodes.metric_val(text0, vf.CF_VOTE_ONLY_FAMILY, "")
+    v0_before = ctx.finalized_dec()
+    cf_before = nodes.hex_to_dec(
+        ctx.overlay_check_node(vf.CF_SERVICE, dry_value="0x80|0xaa").split("|", 1)[0])
     # THE WINDOW IS THE ASSERTION — see the module header. Not a settle time.
     ctx.sleep(vf.CF_VOTE_ONLY_WINDOW_S)
     text1 = ctx.overlay_el_metrics_text(vf.CF_SERVICE,
                                         dry_value=f"{vf.CF_VOTE_ONLY_FAMILY} 4\n")
     after = nodes.metric_val(text1, vf.CF_VOTE_ONLY_FAMILY, "")
+    v0_after = ctx.finalized_dec()
+    cf_after = nodes.hex_to_dec(
+        ctx.overlay_check_node(vf.CF_SERVICE, dry_value="0x9e|0xbb").split("|", 1)[0])
+
+    # THE CONTROLS FIRST, exactly as phases 3 and 4b take them — this phase had NEITHER, and the
+    # reading it defends is the one most exposed to their absence. A flat admission counter is
+    # produced just as well by a stalled producer or by a follower that stopped ingesting
+    # certificates altogether as by one that admits them with PK_epoch pinned.
+    ctx.check(case, *vf.evaluate_v0_advanced(v0_before, v0_after))
+    ctx.check(case, *vf.evaluate_follower_ingested(cf_before, cf_after, vf.CF_SERVICE),
+              on_fail=lambda: ctx.overlay_dump_logs(vf.CF_LOG_TAIL, vf.CF_SERVICE))
     ctx.check(case, *vf.evaluate_vote_only_flat(before, after,
                                                 bool(text0.strip()) and bool(text1.strip())),
               on_fail=lambda: ctx.overlay_dump_logs(vf.CF_LOG_TAIL, vf.CF_SERVICE))
     _ok(ctx, "phase 4a PK_epoch obtained",
         f"cert-follower verified the epoch artifact against committee[epoch] ({counters}) and "
         f"took NO further vote-only admission over {vf.CF_VOTE_ONLY_WINDOW_S}s "
-        f"({vf.CF_VOTE_ONLY_FAMILY}={before or '0'} → {after or '0'})")
+        f"({vf.CF_VOTE_ONLY_FAMILY}={before or '0'} → {after or '0'}) while v0 advanced "
+        f"{v0_before}→{v0_after} and the follower itself finalized {cf_before}→{cf_after} "
+        "(so the certificates were arriving and being ADMITTED, not merely absent)")
 
     # ── 4b. the NEGATIVE half, on its own follower behind the seed-slot proxy ────────
     if not seed_pair["ready"]:
@@ -709,12 +728,21 @@ def assert_tx_cascade(ctx) -> None:
                       rpc_url=l3_rpc, dry_value=str(vf.TXC_ALLOW)))
     ctx.check(case, *vf.evaluate_l3_state(bal_after - bal_before, allowance))
 
-    # The fail-loud monitor must not have cried wolf while the uplink was demonstrably healthy.
+    # A TRIPWIRE, not a witness. `vf.evaluate_no_isolated_warning` cannot fail today: the monitor
+    # that would emit `tx-route ISOLATED` is absent from the tree and from every git ref (audit
+    # B9). It stays because it is the right false-positive guard to already have in place the day
+    # the monitor comes back — and the unit suite pins the absence so that day is not silent.
     ctx.check(case, *vf.evaluate_no_isolated_warning(ctx.overlay_logs("sentry", "downstream")))
+    _say(ctx, "smoke-tx-cascade: NOT COVERED — tx-route ISOLATION detection. "
+              "`crates/node/src/tx_route.rs` does not exist (DPOS_AUDIT B9, doc §8.5.1), so a "
+              "node with zero devp2p tx peers still accepts transactions into a pool nothing "
+              "drains, silently. This case proves the route WORKS when the peers are there; "
+              "nothing here proves anything about what happens when they are not")
 
     _ok(ctx, case, "tx submitted to L3 (reaches ONLY the sentry) relayed via devp2p tx-gossip to "
                    "a hidden validator, mined by the proposer, finalized, and synced back to L3 "
-                   "with state applied.")
+                   "with state applied. (Isolation DETECTION is out of scope — see the NOT "
+                   "COVERED note above.)")
 
 
 def _nonce(ctx, case: str, addr: str, rpc_url: str) -> int:

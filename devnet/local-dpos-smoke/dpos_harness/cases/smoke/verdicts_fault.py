@@ -20,7 +20,7 @@ from __future__ import annotations
 import os
 import re
 
-from ...core import converge, nodes
+from ...core import converge, nodes, rpc
 
 # ══ smoke-deferred ════════════════════════════════════════════════════════════════════
 
@@ -328,10 +328,20 @@ PEERS_VICTIM_IDX = 1
 
 _ADDR_RE = re.compile(r"0x[0-9a-fA-F]{40}")
 
-#: `asserts-fault.sh:232` — the commonware p2p `tracker_*` gauges are NOT in `Metrics::encode()`
-#: output. The observable per-peer series is keyed by the peer's consensus pubkey, so the
-#: connected count is the number of DISTINCT peers validator-0 exchanges broadcasts with.
-_PEER_SERIES_RE = re.compile(r'outer_engine_buffered_peer_total\{sequencer="[0-9a-f]+"\}')
+#: The LIVE consensus-plane peer directory of the single `FluentP2P` network the process owns.
+#: commonware registers `connected` as a `Family<Peer, Gauge>` whose VALUE is the epoch-millis
+#: instant that peer's connection became active, and REMOVES the series on release
+#: (p2p `authenticated/discovery/actors/tracker/directory.rs:179` connect / `:149` release), so
+#: the family is a live SET with a per-peer connection timestamp.
+#:
+#: NOT `outer_engine_buffered_peer_total{sequencer="…"}`, which this case read until the
+#: 2026-08-24 witness audit. That family is `Family<SequencerLabel, Counter>` — "Number of
+#: broadcasts received by peer" — CUMULATIVE and never pruned, so its series survive a peer's
+#: departure and its count answers "how many peers has validator-0 EVER heard from", not "how
+#: many are connected now". Counting it made the reconnect gate below true BEFORE the restart
+#: had even happened, i.e. the case's whole subject was unwitnessed.
+_CONNECTED_RE = re.compile(
+    r'p2p_network_tracker_directory_connected\{peer="([0-9a-f]+)"\}\s+(\d+)')
 
 
 def committee_size(committee_out) -> int:
@@ -339,11 +349,17 @@ def committee_size(committee_out) -> int:
     return len(_ADDR_RE.findall(committee_out or ""))
 
 
+def connected_peers(metrics_text) -> dict:
+    """peer pubkey → epoch-millis instant that peer's consensus-plane connection became active.
+
+    The whole reading, not just its size: the timestamps are what make a reconnect observable
+    at all (see `connection_is_fresh`)."""
+    return {pk: int(ts) for pk, ts in _CONNECTED_RE.findall(metrics_text or "")}
+
+
 def connected_count(metrics_text) -> int:
-    """`asserts-fault.sh:230-234` — distinct `sequencer="…"` label values on the buffered-peer
-    family. Deduplicated, because the family renders once per peer per metric and the question is
-    how many PEERS there are."""
-    return len(set(_PEER_SERIES_RE.findall(metrics_text or "")))
+    """How many peers validator-0 is connected to on the commonware CONSENSUS plane RIGHT NOW."""
+    return len(connected_peers(metrics_text))
 
 
 def evaluate_connected(count, expect):
@@ -369,13 +385,39 @@ def evaluate_reth_peers(peers, service):
     return True, ""
 
 
-def peers_reconnected(count, expect, peers, fin, pre) -> bool:
-    """`asserts-fault.sh:265` — all three at once after the restart.
+def connection_is_fresh(conn, pre_conn) -> bool:
+    """Some peer's consensus-plane connection was established AFTER every connection that was
+    live before the restart.
 
-    The third condition is the one that makes this a rejoin test rather than a socket test: two
-    peer planes can reconnect around a node that contributes nothing, so the chain must also have
-    finalized PAST the restart point."""
-    return (int(count) == int(expect) and int(peers) > 0 and int(fin) > int(pre))
+    This is the leg that the case's name rests on, and the one the buffered-broadcast count could
+    not carry. A cumulative series count is satisfied by history; a connect TIMESTAMP strictly
+    above the pre-restart maximum can only be produced by a socket that came up after the
+    baseline scrape — so this predicate is UNSATISFIABLE until the restart actually reconnects
+    someone, whereas the old one was already true when the restart was issued.
+
+    Paired with the `== expect` leg it also rules out the stale-record case: a directory that
+    still carries validator-1's PRE-restart entry (a connection validator-0 never released)
+    reaches the right count with no fresh timestamp, and fails here.
+
+    An empty baseline is a FAILURE, not a free pass — it means the pre-restart scrape saw no
+    connected peers at all, so there is nothing to be fresh against."""
+    if not pre_conn:
+        return False
+    floor = max(pre_conn.values())
+    return any(int(ts) > floor for ts in (conn or {}).values())
+
+
+def peers_reconnected(conn, pre_conn, expect, peers, fin, pre) -> bool:
+    """`asserts-fault.sh:265` — all four at once after the restart.
+
+    The last two are what make this a rejoin test rather than a socket test: two peer planes can
+    reconnect around a node that contributes nothing, so the chain must also have finalized PAST
+    the restart point — and the connection itself must be a NEW one, not the same directory
+    reading the baseline already saw."""
+    return (len(conn or {}) == int(expect)
+            and connection_is_fresh(conn, pre_conn)
+            and int(peers) > 0
+            and int(fin) > int(pre))
 
 
 # ══ smoke-vrf-fault ═══════════════════════════════════════════════════════════════════
@@ -395,6 +437,13 @@ VRF_FAULT_CATCHUP_S = 150
 VRF_FAULT_CATCHUP_POLL_S = 2
 #: `:295` — log-tail depth on every fail path in the two VRF fault cases.
 VRF_FAULT_LOG_TAIL = 120
+#: The share-reload witness's budget, and its poll cadence. The reconcile that re-seats the victim
+#: rides the EpochTransition poller rather than the catch-up itself, so it lands seconds AFTER the
+#: block the catch-up wait returns on — the same lag `DKG_HEAL_S` exists for on the heal case. One
+#: full epoch (interval seconds at 1 blk/s) plus slack, so a re-seat deferred to the next boundary
+#: (the honest fallback when the reconcile edge misses the height) is still inside the budget.
+VRF_FAULT_RESEAT_S = 120
+VRF_FAULT_RESEAT_POLL_S = 3
 
 #: `asserts-fault.sh:285-286` — the victim, and the four nodes that must stay byte-identical.
 #: validator-3 is chosen because it is neither the pinned host RPC (validator-0) nor the pinned
@@ -571,8 +620,10 @@ CEREMONY_STARTED_LINE = "live DKG: ceremony started"
 #: `beacon/actor.rs` — the recompute-heal's ADOPT log, one of the TWO roads a restarted absentee
 #: can reach its share by. See `SHARE_ROADS`.
 HEAL_LINE = "live DKG: demoted committee member recomputed its share"
-#: The same path's ENTRY log, one rung earlier. Printed as a diagnostic on the failure path: its
-#: presence with no share line says the artifact arrived and the recompute did not.
+#: The same path's ENTRY log, one rung earlier, and it carries `want=` / `dealers=`. Read twice:
+#: as a diagnostic on the failure path (its presence with no share line says the artifact arrived
+#: and the recompute did not), and as WITNESS B of `evaluate_victim_held_nothing` — `want ==
+#: dealers` is the demote-heal road's proof that the victim came back holding no journal at all.
 HEAL_START_LINE = "starting share recompute-heal"
 
 #: THE TWO ROADS, and why the case must accept EITHER.
@@ -622,43 +673,111 @@ ARTIFACT_PULL_OK_FAMILY = "dpos_dkg_artifact_pull_ok_total"
 ARTIFACT_PULL_OK_SAMPLE = nodes.counter_sample(ARTIFACT_PULL_OK_FAMILY)
 
 
+def _after_last_boot(log_text):
+    """The slice of `log_text` written by the LAST process in it.
+
+    `docker compose logs` returns the whole container log, pre-stop lines included, and every
+    witness this case reads has to be about the RESTARTED victim: the same line from the process
+    that was stopped would mean the opposite of what it is being read for."""
+    lines = (log_text or "").splitlines()
+    boot = max((i for i, ln in enumerate(lines) if ACTOR_STARTED_LINE in ln), default=-1)
+    return "\n".join(lines[boot + 1:]) if boot >= 0 else ""
+
+
 def started_fresh_after_restart(log_text, epoch=2):
     """The `ceremony started` line for `epoch` written by the RESTARTED process, if any.
 
-    Sliced at the LAST `ACTOR_STARTED_LINE`: `docker compose logs` returns the whole container
-    log, pre-stop lines included, and a `ceremony started` from before the stop would mean the
-    exact opposite of what this witnesses (a victim that WAS present for the deal phase). The
-    slice is what makes the reading about the process the case restarted."""
-    lines = (log_text or "").splitlines()
-    boot = max((i for i, ln in enumerate(lines) if ACTOR_STARTED_LINE in ln), default=-1)
-    tail = "\n".join(lines[boot + 1:]) if boot >= 0 else ""
-    hits = epoch_share_lines(tail, epoch=epoch, marker=CEREMONY_STARTED_LINE)
+    A `ceremony started` from before the stop would witness a victim that WAS present for the
+    deal phase, so the slice at the last boot marker is what makes the reading about the process
+    the case restarted."""
+    hits = epoch_share_lines(_after_last_boot(log_text), epoch=epoch,
+                             marker=CEREMONY_STARTED_LINE)
     return hits[0] if hits else ""
 
 
-def evaluate_started_fresh(line, victim, epoch=2):
+def heal_start_after_restart(log_text, epoch=2):
+    """The heal-DETECT line for `epoch` written by the RESTARTED process, if any.
+
+    FIRST hit, not last: the actor guards re-entry on `recompute_pending.contains_key(&e)`
+    (`beacon/actor.rs`), so the first detection is the one whose counters describe the journal
+    the victim actually came back with; anything logged after an age-out would describe a journal
+    the heal itself has since filled."""
+    hits = epoch_share_lines(_after_last_boot(log_text), epoch=epoch, marker=HEAL_START_LINE)
+    return hits[0] if hits else ""
+
+
+def heal_start_counts(line):
+    """`(want, dealers)` off a heal-detect line, or `None` if the pair is not readable.
+
+    `beacon/actor.rs` logs `want = want.len(), dealers = outcome.dealers().len()` where `want` is
+    `dealers() −` the dealer logs already in the retained journal. The two fields are matched
+    INDEPENDENTLY and not as one ordered pattern — tracing renders fields in an order the case
+    does not control, the same reason `epoch_debug_lines` is a two-grep.
+
+    ANSI-stripped first even though `logs_all` already strips: the node writes SGR escapes INSIDE
+    its `key=value` pairs (§2.4 item 2), so a reader that skipped the strip would parse nothing
+    and — if the caller treated that as "no counters, no journal" — would turn an unreadable
+    witness into a passing one."""
+    clean = rpc.strip_ansi(line or "")
+    want = re.search(r"\bwant=(\d+)", clean)
+    dealers = re.search(r"\bdealers=(\d+)", clean)
+    if not (want and dealers):
+        return None
+    return int(want.group(1)), int(dealers.group(1))
+
+
+def evaluate_victim_held_nothing(fresh, heal, victim, epoch=2):
     """THE CASE MUST VERIFY IT SET UP WHAT IT CLAIMS TO TEST — the same rule the seed-slot MITM
     follows when it reads back its own corruption before anything concludes from a rejection.
+    The precondition is that the victim came back holding NO epoch-`E` journal: it received no
+    dealing, acked none, and so no dealer can carry its point except as a public REVEAL.
 
-    `start_fresh` is the ONLY emitter of this line and `NoFile` is the only arm that reaches it,
-    so its presence on the restarted process is proof that the victim came back with no epoch-2
-    journal: no dealing received, no ack sent, and therefore no dealer able to do anything with
-    its point except REVEAL it publicly. Everything the case says about the reveal fallback rests
-    on this one reading.
+    TWO WITNESSES, because there are two roads (`SHARE_ROADS`) and the precondition has to be
+    readable on BOTH. An earlier version took witness A alone and inferred its converse — absence
+    means the victim held a journal — which is false, and failed three live runs whose behaviour
+    was correct:
 
-    Its absence is the failure this case shipped with and did not catch: a victim stopped after
-    the deal phase opened has journaled and ACKED every dealing, resumes from that journal instead
-    of starting fresh, reconstructs from its own records, and passes every other assertion here
-    while testing a path the case is not for."""
-    if line:
+      * A — `CEREMONY_STARTED_LINE` on the restarted process. `start_fresh` is the ONLY emitter
+        and `JournalLoad::NoFile` is the only arm that reaches it, so its presence IS the
+        no-journal proof. Sound as it always was; only the inference from its absence was not.
+      * B — the heal-detect line with `want == dealers`. The demote-heal reaches the same share
+        without any ceremony: `parse_journal` on an absent journal yields an empty `held`, so
+        `want` is every pinned dealer, the resolver fetches those logs (the other members' public
+        reveals — the very thing this case covers) and the recompute runs. `start_fresh` never
+        runs and line A never appears. `want == dealers` says the journal held not ONE pinned
+        dealer's log, which is the same reading A gives.
+
+    `want < dealers` is the real "came back holding a journal" condition — some dealings were
+    received and acked before the stop — and it is only on THAT branch that the old wording is
+    true, which is where it now lives."""
+    if fresh:
         return True, ""
-    return False, (f"{victim} did not log {CEREMONY_STARTED_LINE!r} for epoch {epoch} after its "
-                   "restart — it came back holding a journal, which means it was stopped AFTER "
-                   f"the epoch-{epoch} DEAL phase opened and had already received and ACKED the "
-                   "dealings. It then reconstructs from its own records and no dealer reveals its "
-                   "point, so the reveal-fallback path this case exists to cover did NOT run. "
-                   "Re-run; if it recurs the bring-up is landing inside epoch 1 and EPOCH_INTERVAL "
-                   "needs raising")
+    if heal:
+        counts = heal_start_counts(heal)
+        if counts is None or counts[1] <= 0:
+            return False, (f"{victim} logged {HEAL_START_LINE!r} for epoch {epoch} but the line "
+                           "carries no usable want=/dealers= pair, so it cannot say whether the "
+                           "victim came back with an empty journal — and an unreadable witness is "
+                           f"not a witness. The line was: {heal.strip()!r}. Either the log format "
+                           "changed (the fields are logged in `beacon/actor.rs`'s heal-detect "
+                           "`tracing::info!`) and this reader needs updating, or the read is "
+                           "corrupt")
+        want, dealers = counts
+        if want == dealers:
+            return True, ""
+        return False, (f"{victim} entered the recompute-heal for epoch {epoch} with want={want} "
+                       f"of dealers={dealers} — it came back holding a journal, which means it "
+                       f"was stopped AFTER the epoch-{epoch} DEAL phase opened and had already "
+                       "received and ACKED some of the dealings. Those dealers then have nothing "
+                       "to reveal publicly, so the reveal-fallback path this case exists to cover "
+                       "did NOT run. Re-run; if it recurs the bring-up is landing inside epoch 1 "
+                       "and EPOCH_INTERVAL needs raising")
+    return False, (f"{victim} logged neither {CEREMONY_STARTED_LINE!r} nor {HEAL_START_LINE!r} "
+                   f"for epoch {epoch} after its restart — it took NEITHER road to the share, so "
+                   "nothing here says what state it came back in and the case has no precondition "
+                   "to stand on. Its epoch-2 recovery did not start at all: check that the agreed "
+                   "artifact reached it (the pull counter is the next gate) and that it is in "
+                   f"committee[{epoch}] at all")
 
 
 def share_road(log_text, epoch=2):
@@ -769,6 +888,89 @@ def evaluate_artifact_pull_ok(raw, victim, family=ARTIFACT_PULL_OK_SAMPLE):
                    "artifact over the beacon resolver, so nothing could have keyed its share "
                    "(FLU-1166: the repair sweep excludes the frontier by design, and this pull is "
                    "the only thing that covers it)")
+
+
+#: `epoch_manager.rs:1058` — the reconciler's own statement that this node is a committee member
+#: for `epoch` and CANNOT participate, because `share_probe` came back `Withheld`. The exact
+#: complement of `PROMOTE_LINE`: both are written by `reconcile_roles` at the same `Role::Signer`
+#: decision, one on each arm, so a post-restart log that has neither is a node that never
+#: reconciled and a log that has both told the truth twice about two different epochs.
+#:
+#: Spelled here rather than imported from `verdicts_rotation` on the same "no cross-case
+#: retargeting" rule `verdicts_onchain.epoch_of` records — the field spelling is the shared trap,
+#: not the constant.
+SHARE_GATE_LINE = "committee member cannot participate — verify-only (share-gate)"
+
+_EPOCH_DEBUG_FIELD_RE = re.compile(r"epoch=Epoch\((\d+)\)")
+
+
+def _role_epochs_after_restart(log_text, marker, floor):
+    """Epochs at or above `floor` for which the RESTARTED process logged `marker`.
+
+    ANSI-stripped per line for the reason `heal_start_counts` records: the node writes SGR escapes
+    INSIDE its `key=value` pairs, and a reader that skipped the strip would parse no epoch at all
+    — turning an unreadable witness into an empty list, which every caller here reads as "it
+    never happened"."""
+    out = set()
+    for ln in _after_last_boot(log_text).splitlines():
+        if marker not in ln:
+            continue
+        hit = _EPOCH_DEBUG_FIELD_RE.search(rpc.strip_ansi(ln))
+        if hit and int(hit.group(1)) >= int(floor):
+            out.add(int(hit.group(1)))
+    return sorted(out)
+
+
+def promoted_epochs_after_restart(log_text, floor):
+    """Epochs at/above `floor` the RESTARTED process seated itself as a SIGNER for."""
+    return _role_epochs_after_restart(log_text, PROMOTE_LINE, floor)
+
+
+def share_gated_epochs_after_restart(log_text, floor):
+    """Epochs at/above `floor` the RESTARTED process demoted itself to verify-only in, for want
+    of a usable DKG share."""
+    return _role_epochs_after_restart(log_text, SHARE_GATE_LINE, floor)
+
+
+def evaluate_share_reloaded(promoted, gated, victim, epoch):
+    """THE POSITIVE WITNESS that the restarted victim came back holding its DKG share.
+
+    WHY THE CASE NEEDED ONE. `smoke-vrf-fault` claimed this in its OK line while reading nothing
+    that could see it: its only post-restart legs are the catch-up wait and the gap-mixhash
+    compare, and `prev_randao` rides in the CERTIFICATE (`crates/node/src/derive.rs`), not in the
+    share. A victim that came back SHARELESS derives every gap block's seed from the same cert
+    bytes as everyone else and reproduces the whole window byte-identically — so the mixhash leg
+    is green on exactly the failure the sentence named. It is a real property of its own (the
+    node did not fork and did not fall to `order.digest()`), and it stays; it is simply not
+    evidence about the share.
+
+    The two halves are the two arms of ONE decision in `reconcile_roles`:
+
+      * `gated` non-empty is the DIRECT observation of the failure — the victim told the log it
+        is a member of `epoch` and cannot participate for want of a share. Scoped to the epoch
+        the fault window ran in, which is the one epoch whose share the victim demonstrably held
+        on disk when it was stopped; a gate on a LATER epoch can be an honest race against a
+        ceremony it was down through, and failing on that would be a false RED.
+      * `promoted` is the positive: a spawn on the `Role::Signer` arm, which is reachable only
+        past `share_probe` and a `SignerVerdict::Signs`. A shareless node cannot write it.
+
+    Both, because neither alone is enough: an absence of gate lines is also what a node that
+    never reconciled produces, and a promotion at some later epoch does not by itself say the
+    victim still had the epoch it was stopped in."""
+    if gated:
+        return False, (f"{victim} came back from the restart WITHOUT a usable epoch-{epoch} DKG "
+                       f"share — it logged {SHARE_GATE_LINE!r} for epoch(s) {gated} after its "
+                       "last boot, i.e. it demoted itself to verify-only for an epoch whose "
+                       "share it held on disk when it was stopped. Nothing else in this case can "
+                       "see that: prev_randao rides in the certificate, so a shareless victim "
+                       "reproduces every gap block's seed byte-identically")
+    if not promoted:
+        return False, (f"{victim} never logged {PROMOTE_LINE!r} for an epoch >= {epoch} after its "
+                       "last boot — it caught up but was never seated as a signer again, so "
+                       "nothing witnesses that it reloaded its share. Grep it for "
+                       f"{SHARE_GATE_LINE!r} (a share it could not use) and for "
+                       f"{ACTOR_STARTED_LINE!r} (the beacon actor never came up at all)")
+    return True, ""
 
 
 def evaluate_still_finalizing(before, after, victim):

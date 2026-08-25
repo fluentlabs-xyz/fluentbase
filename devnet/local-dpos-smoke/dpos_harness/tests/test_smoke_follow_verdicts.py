@@ -18,6 +18,8 @@ tests are the only place those branches ever execute.
 
 from __future__ import annotations
 
+import pathlib
+
 import pytest
 
 from dpos_harness.cases.smoke import verdicts_follow as vf
@@ -488,9 +490,63 @@ def test_l3_state_transfer_is_the_0_05_ether_bash_sends():
     assert vf.TXC_ALLOW == 4242
 
 
+def test_the_follower_ingest_control_needs_the_FOLLOWERS_own_height():
+    """The F8 verdict. `evaluate_v0_advanced` answers "was anything produced"; this answers "did
+    THIS follower take any of it", which is the question a counter on that follower is defended by.
+    A follower whose cert inlet died reads flat on both the counter and its own height while the
+    producer runs on."""
+    assert vf.evaluate_follower_ingested(100, 130, "cert-follower")[0]
+    ok, msg = vf.evaluate_follower_ingested(130, 130, "cert-follower")
+    assert not ok and "finalized nothing over the vote-only window (130\u2192130)" in msg
+    assert vf.CF_VOTE_ONLY_FAMILY in msg
+    # a follower going BACKWARDS is not ingesting either.
+    assert not vf.evaluate_follower_ingested(130, 129, "cert-follower")[0]
+
+
 def test_no_isolated_warning_passes_on_a_quiet_log():
     assert vf.evaluate_no_isolated_warning("tx-route ok peers=1\n") == (True, "")
     assert vf.evaluate_no_isolated_warning("") == (True, "")
+
+
+def test_the_tx_route_monitor_is_still_ABSENT_from_the_product():
+    """THE F6 PIN, and it asserts an ABSENCE on purpose.
+
+    `evaluate_no_isolated_warning` greps for `tx-route ISOLATED`. Nothing under `crates/` emits
+    it: `crates/node/src/tx_route.rs` — `spawn_tx_route_monitor`, `ISOLATION_GRACE`, the
+    `fluent_tx_route_isolated` / `fluent_tx_relay_peers` gauges — was written, unit-tested and
+    docker-validated on 2026-06-30 and is absent from the working tree and from every git ref
+    (`DPOS_AUDIT.md` B9; doc §8.5.1 keeps the design as the spec to re-implement against). So the
+    check cannot fail, and `smoke-tx-cascade`'s OK line used to read as though the tx-route path
+    were being watched.
+
+    Deleting the check was the wrong answer: this repo has a recorded incident of exactly this
+    shape — an implementation lost in a squash while its test half survived — and the surviving
+    half is the only thing in the tree that still names the missing subsystem. So it stays as a
+    tripwire, and THIS test is what stops the tripwire from being silent for another two months:
+    the day any of those symbols reappears under `crates/`, this goes red and the message says
+    what to do with it.
+
+    It is not a check on the product's correctness and it must never be read as one. It is a
+    check that the HARNESS's claim and the product's reality still agree."""
+    crates = pathlib.Path(__file__).resolve().parents[4] / "crates"
+    if not crates.is_dir():
+        pytest.skip(f"crates not in this tree ({crates})")
+    found = {}
+    for src in sorted(crates.rglob("*.rs")):
+        try:
+            text = src.read_text(encoding="utf-8", errors="replace")
+        except OSError:                                     # pragma: no cover — unreadable file
+            continue
+        for sym in vf.TX_ROUTE_SYMBOLS:
+            if sym in text:
+                found.setdefault(sym, []).append(str(src))
+    assert not found, (
+        f"the tx-route monitor is BACK ({found}) — `evaluate_no_isolated_warning` is a tripwire "
+        "written against its absence and must now be upgraded to a real assertion: read the "
+        "`fluent_tx_relay_peers` gauge to prove the monitor is PRESENT, and only then assert the "
+        "ISOLATED string is absent. A bare negative over a subsystem that exists is still "
+        "satisfied by a monitor that never ran. Then close DPOS_AUDIT B9 and drop the doc §8.5.1 "
+        "warning and the case's NOT-COVERED note.")
 
 
 def test_no_isolated_warning_FAILS_when_the_monitor_cried_wolf():

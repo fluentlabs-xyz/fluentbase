@@ -131,6 +131,29 @@ def evaluate_v0_advanced(before, after):
                    "stall to rejection")
 
 
+def evaluate_follower_ingested(before, after, service):
+    """THE CONTROL PHASE 4a WAS MISSING: the FOLLOWER itself finalized new blocks over the window
+    in which its vote-only admissions stayed flat.
+
+    `evaluate_v0_advanced` is the chain-side control and phases 3 and 4b both take it, but on its
+    own it is not enough here. The reading being defended is a counter on the FOLLOWER, and the
+    counter only moves when the follower ADMITS a certificate — so a follower whose WS upstream
+    died, or whose `CertInlet` stopped ingesting, produces exactly the flat counter the phase
+    reports as "it stopped taking vote-only admissions", while v0 advances happily throughout.
+    That is the same false-negative shape the module header names for phases 3 and 4b: an absence
+    is also what a subsystem that never ran produces.
+
+    The follower's own finalized height moving is the tightest available proof that certificates
+    were delivered AND accepted during the window, which is what makes the flat counter mean
+    "accepted with the pin" rather than "accepted nothing"."""
+    if int(after) > int(before):
+        return True, ""
+    return False, (f"{service} finalized nothing over the vote-only window ({before}→{after}) — "
+                   f"the flat {CF_VOTE_ONLY_FAMILY} below would be the reading of a follower that "
+                   "stopped ingesting certificates altogether, not of one that admits them with "
+                   "PK_epoch pinned")
+
+
 def evaluate_tamper_no_progress(tamper_head):
     """`:91-108` — the negative. A follower fed only byte-flipped certificates must finalize
     NOTHING.
@@ -640,7 +663,23 @@ TXC_LOG_TAIL = 120
 TXC_MINE_LOG_TAIL = 80
 
 #: `:141` — the fail-loud monitor line that must NOT appear while the uplink is healthy.
+#:
+#: ⚠ THE MONITOR THIS NAMES DOES NOT EXIST. `crates/node/src/tx_route.rs` —
+#: `spawn_tx_route_monitor`, `ISOLATION_GRACE`, the `fluent_tx_route_isolated` /
+#: `fluent_tx_relay_peers` gauges — was written, unit-tested and docker-validated on 2026-06-30
+#: and is absent from the working tree and from every git ref (audit `DPOS_AUDIT.md` **B9**;
+#: doc §8.5.1 carries the same warning and keeps the design as the spec to re-implement against).
+#: So this string has ZERO emitters and the check below CANNOT FAIL. It is kept, not deleted, and
+#: NOT as a witness: it is a TRIPWIRE on the day the monitor comes back, paired with the unit-suite
+#: pin in `test_smoke_follow_verdicts.py` that fails the moment any of the symbols reappear. The
+#: hole it was written for is open — a node with zero devp2p tx peers accepts transactions into a
+#: local pool nothing drains, silently — so what must not happen is that the case's OK line goes
+#: on implying somebody is watching for it.
 ISOLATED_LINE = "tx-route ISOLATED"
+#: The symbols whose reappearance means the monitor landed and this gate must be upgraded from a
+#: tripwire to a real presence-AND-silence assertion. Pinned in the unit suite against `crates/`.
+TX_ROUTE_SYMBOLS = ("tx_route", "spawn_tx_route_monitor", "fluent_tx_route_isolated",
+                    "fluent_tx_relay_peers")
 
 
 def sentry_enode(pubkey: str) -> str:
@@ -735,13 +774,29 @@ def evaluate_l3_state(delta, allowance):
 
 
 def evaluate_no_isolated_warning(logs: str):
-    """`:141-143` — the negative. The node's own tx-route monitor must not have warned ISOLATED
-    while both tiers were demonstrably connected.
+    """`:141-143` — A TRIPWIRE, NOT A WITNESS, and the difference is the whole of this fix.
 
-    This is a check on the MONITOR, not on the cascade: everything above already proved the route
-    works, so a warning here is a false positive in the fail-loud path — which is worse than
-    useless, because an operator who learns to ignore it will ignore the true one too."""
+    It reads: "if the tx-route monitor ever warns ISOLATED on a demonstrably healthy uplink, that
+    is a false positive in a fail-loud path, and an operator who learns to ignore it will ignore
+    the true one too."
+
+    That sentence is still worth having. What it is NOT is evidence that the monitor is healthy,
+    because THERE IS NO MONITOR: `crates/node/src/tx_route.rs` and every symbol doc §8.5.1
+    describes are absent from the tree and from every git ref, though the changelog records them
+    as landed and docker-validated on 2026-06-30 (audit **B9**). With no emitter the string can
+    never appear, so this returns `True` unconditionally, on every run, for ever.
+
+    The false GREEN was never this function — it was the case's OK line, which read as though the
+    tx-route path was being watched. So the fix is not to delete the check (the day the monitor
+    lands, this is exactly the right false-positive guard to already have in place) and not to
+    dress it up as a witness. It is to keep it, say plainly in the case that it settles nothing
+    today, and pin the ABSENCE in the unit suite so that the moment `tx_route` reappears under
+    `crates/`, the harness goes red and forces this gate to be rewritten as a presence-AND-silence
+    assertion — which is the form it should have had all along, and which cannot be written
+    against a subsystem that does not exist."""
     if ISOLATED_LINE in (logs or ""):
         return False, ("tx-route monitor warned ISOLATED while peers were connected "
-                       "(false positive)")
+                       "(false positive) — note that the monitor was ABSENT from the tree as of "
+                       "audit B9, so this firing means it has landed since and this gate needs "
+                       "upgrading from a tripwire to a real presence-and-silence assertion")
     return True, ""

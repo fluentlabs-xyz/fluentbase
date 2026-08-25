@@ -122,10 +122,101 @@ EXPECTED_VALIDATORS = 4
 #: Cycle 1 waits `3*interval + 1` = 97 blocks; at 1 blk/s with the victim's leader views timing
 #: out (1750 ms) until `skip_timeout` mutes them that is ~100-115 s of chain time.
 LIVENESS_ADVANCE_S = 240
-#: `:68`, `:79` — the bitmap poll: how long the on-chain counters get to show the victim lagging,
-#: and the gap between reads.
-PRODUCTION_POLL_BUDGET_S = 90
-PRODUCTION_POLL_S = 2
+#: The retry budget on the two production-credit SNAPSHOTS, and the gap between attempts. This is
+#: a retry, not a wait for a condition to become true: the readings themselves can come back on the
+#: -2 getter-failed sentinel, and a sentinel must be retried rather than folded into the delta.
+#: The measurement it feeds is bounded by the outage, so nothing here can widen the window.
+PRODUCTION_READ_BUDGET_S = 60
+PRODUCTION_READ_POLL_S = 2
+#: `fluentbase_consensus::K`, the deferred-execution lag. Duplicated from `verdicts_fault` on the
+#: same "no cross-case retargeting" rule the rest of this file's copies carry — a fault-side edit
+#: must not silently move a liveness-side sampling floor.
+RESULT_LAG_K = 3
+#: How far past the stop the chain must finalize before the BASELINE snapshot is taken.
+#: `recordProduction` is a system call of the block that EXECUTES height h, which under deferred
+#: execution is height h+K — so the victim's last blocks before the stop are still being credited
+#: for K heights afterwards. Sampling the baseline any earlier attributes those to the outage and
+#: turns a correct run red. `+1` because the credit lands when h+K executes, so the state that
+#: carries it is visible one height later.
+PRODUCTION_SETTLE_BLOCKS = RESULT_LAG_K + 1
+#: The settle wait's budget. K+1 blocks at 1 blk/s with one validator down; generous because a
+#: timeout here is an infrastructure signal, not the property.
+PRODUCTION_SETTLE_S = 90
+#: The slack between the height the CYCLE baselined at (`pre`) and the height the stop was
+#: observed at. One block: `compose_stop` returns and `finalized_dec` is read immediately, and at
+#: 1 blk/s the chain moves at most about a block in between. It is charged against the window
+#: below because it shortens it — the measurement starts at `stopped_at + K + 1`, not at
+#: `pre + K + 1`.
+PRODUCTION_STOP_SLACK_BLOCKS = 1
+
+
+def production_window_blocks(gap, committee_size=None, k=RESULT_LAG_K,
+                             slack=PRODUCTION_STOP_SLACK_BLOCKS):
+    """How many blocks of production credit the outage of `gap` blocks can actually MEASURE.
+
+    Derived, not chosen. Both snapshots read a counter that lags the chain by `k`, so what the
+    delta spans is heights `[stopped_at + 1 .. (pre + gap) - k]`:
+
+        window = gap - k - 1 - slack
+
+    `- k` because `blocksInEpoch` at the closing snapshot reflects heights up to `finalized - k`;
+    `- 1 - slack` because the baseline is deliberately taken `k + 1` past the stop (see
+    `PRODUCTION_SETTLE_BLOCKS`) and the stop itself is observed up to `slack` blocks after `pre`.
+
+    `committee_size` is unused here and accepted so callers can pass it uniformly; it is what
+    `production_min_gap` needs."""
+    return int(gap) - int(k) - 1 - int(slack)
+
+
+def production_min_gap(committee_size, k=RESULT_LAG_K, slack=PRODUCTION_STOP_SLACK_BLOCKS):
+    """The shortest outage over which the production-credit leg CARRIES INFORMATION.
+
+    THE LIVE FAILURE THIS EXISTS FOR. `LIVENESS_CYCLES`'s third cycle has `gap = 5`. Against
+    `k = 3` that leaves `production_window_blocks(5) = 0` — the counter cannot move, so the
+    control (`blocksInEpoch` grew) is UNSATISFIABLE and the leg failed a healthy chain that had
+    just been observed finalizing past its target. The original audit finding said exactly this
+    about that cycle: five blocks make the production gate carry no information. The answer is
+    not a looser control on that cycle — it is that the leg does not apply to it.
+
+    THE FLOOR IS THE MEASUREMENT'S OWN ARITHMETIC PLUS ONE ROTATION.
+
+      * `k + 1 + slack` is pure overhead: the deferred lag the closing snapshot cannot see, the
+        `k + 1` settle the baseline is taken after, and the block the stop read costs. Below this
+        the window is empty or negative and BOTH conjuncts are vacuous.
+      * `+ committee_size` is what makes the surviving assertion mean something. `dv == 0` is
+        exact for a stopped node, but its VALUE as a witness is that an equally-staked member
+        which was UP would have been credited — and on `n` equal stakes the leader rotation
+        credits a given member once per `n` blocks in expectation. A window shorter than one
+        rotation reads 0 for an up member often enough that the assertion stops discriminating.
+        Expectation, not a guarantee: this buys "an up victim is expected to be caught", which is
+        the honest claim, and the long cycles (window 92 and 27 live) are far past it anyway.
+
+    On this stand: `3 + 1 + 1 + 4 = 9`. Cycles 1, 2 and 4 (gaps 97, 33, 33) assert; cycle 3
+    (gap 5) is SKIPPED — loudly, by name, with this arithmetic printed. Its subject is the
+    within-epoch walk / re-jump path, which the rejoin and SIGNING legs still cover in full."""
+    return int(k) + 1 + int(slack) + int(committee_size)
+
+
+def evaluate_production_applicable(gap, committee_size, k=RESULT_LAG_K,
+                                   slack=PRODUCTION_STOP_SLACK_BLOCKS):
+    """`(applies, why)` — may the production-credit leg be asserted over an outage of `gap`?
+
+    `why` is printed EITHER WAY. A skipped leg that looks like a passed leg is the defect class
+    this whole reading was rewritten to remove, so the skip is named on stdout with the numbers
+    that produced it, never inferred from a missing OK line."""
+    floor = production_min_gap(committee_size, k=k, slack=slack)
+    window = production_window_blocks(gap, k=k, slack=slack)
+    if int(gap) >= floor:
+        return True, (f"outage gap={gap} >= {floor} (= K{k} + 1 settle + {slack} stop-slack + "
+                      f"{committee_size} committee) — the credit delta spans ~{window} blocks")
+    return False, (f"outage gap={gap} < {floor} (= K{k} + 1 settle + {slack} stop-slack + "
+                   f"{committee_size} committee): the credit delta would span ~{window} blocks, "
+                   "which is too short to carry information. `blocksInEpoch` reads a counter that "
+                   f"lags the chain by K={k} and the baseline is taken K+1 past the stop, so a "
+                   "short outage leaves NO credited heights inside the window — the control is "
+                   "unsatisfiable and the victim's zero would be vacuous. This cycle's subject is "
+                   "the within-epoch walk / re-jump path, which the rejoin and SIGNING legs below "
+                   "cover in full")
 #: `:89`, `:98` — the rejoin poll. This is the HEIGHT half only; the SIGNING half below has its
 #: own budget, because it measures an event that can only happen after this one has passed.
 LIVENESS_REJOIN_S = 120
@@ -302,31 +393,83 @@ def evaluate_validator_addresses(addrs):
                    f"{' '.join(addrs or [])}")
 
 
-def production_hit(vseen, rseen) -> bool:
-    """`:78` — the poll's BREAK condition: both reads are real, the hub has been seen at least
-    once, and the victim is strictly behind it.
+def credit_readable(snapshot) -> bool:
+    """Is every `(produced, blocksInEpoch)` reading in a `{epoch: pair}` snapshot a REAL counter?
 
-    `rseen > 0` is not a formality. Early in a window both counters are 0 and `0 < 0` is false,
-    so without it the loop would be waiting on a comparison that cannot yet be true; WITH it the
-    loop is explicitly waiting for the hub to accumulate evidence first."""
-    if credit_state(vseen) != STATE_OK or credit_state(rseen) != STATE_OK:
-        return False
-    return int(rseen) > 0 and int(vseen) < int(rseen)
+    A -1 and a -2 must never enter arithmetic: subtracting sentinels produces a number that looks
+    like a delta and means nothing, and `-2 - -2 == 0` would satisfy the zero-growth verdict below
+    on a chain nobody could read."""
+    return all(credit_state(p) == STATE_OK and credit_state(t) == STATE_OK
+               for p, t in (snapshot or {}).values())
 
 
-def evaluate_production(epoch, vseen, vcerts, rseen, rcerts):
-    """`:81-83` — the offline victim signed strictly FEWER certs than the always-up hub.
+def credit_delta(before: dict, after: dict):
+    """`(Δproduced, ΔblocksInEpoch)` summed over every epoch the outage spanned, or `None` if any
+    reading in either snapshot is a sentinel.
 
-    This is the exact dual of the removed consecutive-miss counter: "misses rise" became "seen
-    lags the hub". `<` rather than `== certs` on purpose — it tolerates a transient view-change
-    miss on the hub, the same slack the old `vmc > refmc` carried, without which the case would
-    be flaky on a hub that missed one cert for reasons that have nothing to do with the victim."""
-    if production_hit(vseen, rseen):
-        return True, ""
-    return False, (f"production credit wrong (epoch={epoch} victim produced={vseen}/"
-                   f"blocksInEpoch={vcerts} hub produced={rseen}/blocksInEpoch={rcerts})"
-                   f"{credit_diagnosis(vseen, 'victim')}"
-                   f"{credit_diagnosis(rseen, 'hub')}")
+    Both snapshots are `{epoch: (produced, blocksInEpoch)}`. `after` covers `[E_a .. E_b]` — the
+    epoch the outage started in through the one it ended in — and `before` covers only `E_a`, so
+    an epoch missing from `before` is one that BEGAN inside the window and whose whole count is
+    delta. That is what lets the measurement survive an epoch rollover mid-outage, which the poll
+    this replaced could not: it re-read `currentEpoch()` every iteration and compared two counters
+    of whatever epoch was current at that instant, so a rollover handed it a fresh epoch where the
+    victim's 0 and the hub's 1 satisfied it outright."""
+    if not credit_readable(before) or not credit_readable(after):
+        return None
+    dv = dt = 0
+    for epoch, (produced, total) in sorted((after or {}).items()):
+        p0, t0 = (before or {}).get(epoch, (0, 0))
+        dv += int(produced) - int(p0)
+        dt += int(total) - int(t0)
+    return dv, dt
+
+
+def evaluate_production_over_outage(delta, svc, epochs, hub_delta=None):
+    """THE PRODUCTION-CREDIT VERDICT, bounded by the OUTAGE: while `svc` was stopped it received
+    ZERO production credit, over a window in which credit was demonstrably still being written.
+
+    WHAT THIS REPLACED, AND WHY IT CARRIED NO INFORMATION. The old reading polled
+    `producedAt(currentEpoch(), victim) < producedAt(currentEpoch(), hub)` every 2 s for up to 90 s
+    and passed on the first instant the inequality held. Stakes are equal by default, so the two
+    counters trade the lead continuously on ordinary lottery jitter; over 45 samples the hub leads
+    at SOME instant whether or not the victim was ever stopped. And the poll re-read the epoch, so
+    a rollover produced a `0 < 1` that is true of a perfectly healthy validator. Nothing in it was
+    tied to the outage, which is the one thing the case exists to measure.
+
+    The replacement is a DELTA over the down window and it is exact rather than statistical:
+
+      * `dv == 0` is physically necessary — a stopped process produces no blocks, so any credit
+        at all is the failure this leg is named for (a `recordProduction` crediting the wrong
+        member, or a stale leader index). It is NOT a threshold that can be widened; there is
+        nothing between 0 and 1 to tune.
+      * `dt > 0` is the CONTROL that makes the zero mean something. `blocksInEpoch` counts every
+        recorded block of the epoch whoever produced it, so a flat `dt` says no production record
+        reached the chain during the window — a stalled chain, a dead system call, or a getter
+        frozen at a stale value. A zero read against a frozen counter is exactly the vacuous pass
+        an absence assertion must refuse.
+
+    The hub's own delta rides the MESSAGE and is deliberately not a gate: `LIVENESS_CYCLES`'s
+    third cycle is a 5-block outage, and on a 4-member equal-stake lottery the hub draws none of 5
+    slots about a quarter of the time. Gating on it would trade a witness that cannot see the
+    property for one that fails a quarter of the runs on correct behaviour."""
+    hub_note = "" if hub_delta is None else f", hub gained {hub_delta}"
+    if delta is None:
+        return False, (f"production credit for {svc} over epochs {epochs} could not be read — a "
+                       "sentinel (-1 not-in-committee / -2 getter failed) reached the delta. A "
+                       "sentinel is never a real 0, and this leg's PASS is a zero")
+    dv, dt = delta
+    if int(dt) <= 0:
+        return False, (f"no production record reached the chain while {svc} was down: "
+                       f"blocksInEpoch over epochs {epochs} grew by {dt}{hub_note}. The victim's "
+                       f"produced-delta of {dv} says nothing against a counter that did not move "
+                       "— the chain stalled, the `recordProduction` system call is not landing, "
+                       "or the getter is frozen")
+    if int(dv) != 0:
+        return False, (f"{svc} was credited {dv} block(s) over epochs {epochs} WHILE IT WAS "
+                       f"STOPPED (blocksInEpoch grew by {dt}{hub_note}) — a stopped process "
+                       "produces nothing, so `recordProduction` credited the wrong member or the "
+                       "leader index in `extra_data` is stale")
+    return True, ""
 
 
 def liveness_rejoined(v0: str, vn: str, peers, floor_dec, producer_hash_at=None) -> bool:
@@ -481,14 +624,79 @@ def evaluate_jailed(status):
 
 
 def evaluate_post_jail_liveness(advanced, post_jail):
-    """`:54-58` — the honest 3-of-4 quorum KEPT finalizing after the equivocator was dropped.
+    """`:54-58` — the honest 3-of-4 quorum KEPT finalizing over the blocks IMMEDIATELY after the
+    equivocator was tombstoned.
 
-    The SECOND assertion of this case and not a victory lap: a post-jail committee-drop
-    epoch-boundary wedge is a real DPoS failure class, and the pre-jail converge cannot see it —
-    the committee only changes at the jail."""
+    WHAT THIS DOES AND DOES NOT COVER. It covers the immediate window: the tombstone arms the
+    proposal refusal and the transport severance while the committee is unchanged, and a quorum
+    that could not carry the chain through that would stall here within a few blocks.
+
+    It does NOT cover the committee-SHRINK boundary, and the docstring used to say it did. Two
+    reasons, and the second is the harder one:
+
+      * committees are committed two epochs ahead (`drive_ahead_commit`, node/src/evm.rs — the
+        loop exits at `next > current_epoch + 2`), so `committee[E]`, `[E+1]` and `[E+2]` are all
+        already on chain when the jail lands in E. The first committee that could omit the
+        tombstoned member is `E+3`, which begins up to three epoch intervals later — 64..96 blocks
+        on this stand. `POST_JAIL_BLOCKS` of 3 cannot reach it, and no honest tuning of this
+        constant would: the number is an epoch geometry, not a budget.
+      * and on THIS stand it can never land at all. `genesis-init` seats `--peers=4`; the slash
+        removes the offender from the active set, leaving 3 registered members against
+        `MIN_COMMITTEE_LENGTH = 4` (`staking-reader/reader.rs:161`, mirroring the contract), so
+        `commitEpochCommittee` for `E+3` reverts `ERR_COMMITTEE_TOO_SMALL` into the node's
+        fail-loud arm. Waiting for the boundary would therefore turn this case red on a
+        TOPOLOGY limit rather than on a product defect.
+
+    So the boundary wedge is out of scope here BY CONSTRUCTION, and saying so is the honest
+    position — exercising it needs a stand with a spare seat (the sim's byzantine-tombstone
+    lottery with its spare-pool refill is where that lives)."""
     if advanced:
         return True, ""
     return False, f"chain stalled after jail (finalized stuck at ~{post_jail})"
+
+
+#: `node/src/dpos.rs:1758` — the tombstone watch's severance, logged once per newly-tombstoned
+#: peer by every honest node that reads the flag. THE MECHANISM (§7): the batcher's inactivity
+#: rule refreshes `latest_seen` on any accepted message regardless of role, so a slashed member
+#: that keeps voting stays "active" forever and its leader slots keep costing a full certification
+#: deadline. Only cutting the transport lets `is_active` go false after `skip` views.
+TOMBSTONE_SEVER_LINE = "validator tombstoned for equivocation — severing its transport"
+#: `:1751` — the same watch's SELF arm. A node never blocks itself, so this is what the offender
+#: writes instead. Read only as a diagnostic: it lives in the equivocator's log, not the hub's.
+TOMBSTONE_SELF_LINE = "this validator is tombstoned for equivocation on chain"
+#: The severance budget. It rides reth's finalized-block watch (no timer since 2026-08-24), so it
+#: fires on the first finalized change after the tombstone is on chain — seconds, not epochs.
+TOMBSTONE_SEVER_S = 60
+TOMBSTONE_SEVER_POLL_S = 3
+
+
+def tombstone_sever_lines(log_text, marker=TOMBSTONE_SEVER_LINE):
+    """Lines where this node severed a tombstoned peer's transport."""
+    return [ln for ln in (log_text or "").splitlines() if marker in ln]
+
+
+def evaluate_tombstone_severed(lines, observer):
+    """The POSITIVE witness that the jail had a CONSENSUS consequence, not just a contract one.
+
+    `getValidatorStatus == Jail` is a contract reading; it says the slash landed, and nothing
+    about whether any node acted on it. The three blocks of post-jail liveness do not say it
+    either — the honest quorum was already 3-of-4 before the jail and would advance identically
+    if every node ignored the tombstone completely. Between them the case named the severance in
+    its OK line and read neither half of it.
+
+    This is the half that is observable IMMEDIATELY and on this topology: the watch is driven from
+    CHAIN STATE off the finalized-block watch, so it fires on the first finalized change after the
+    tombstone is committed, with no committee change involved."""
+    if lines:
+        return True, ""
+    return False, (f"{observer} never logged {TOMBSTONE_SEVER_LINE!r} — the equivocator is JAILED "
+                   "on chain and no honest node acted on it. The tombstone watch reads the "
+                   "`tombstoned` leg of the committee snapshot off the finalized-block watch "
+                   "(node/dpos.rs:1739); if that read is failing it logs "
+                   "'beacon plane: tombstone read failed' at debug instead. Without the "
+                   "severance the offender's `latest_seen` keeps being refreshed by its own "
+                   "votes, `is_active` never goes false, and every one of its leader slots "
+                   "costs the full certification deadline")
 
 
 def grep_markers(logs: str, markers) -> str:
@@ -926,6 +1134,31 @@ JOURNAL_DEADLINE_S = 400
 #: precisely so the caller has to name the one it means.
 WINDOW_OPEN = "in-window"
 WINDOW_MISSED = "boundary-crossed"
+
+#: THE RESTART'S HEADROOM before the epoch-E boundary, in finalized blocks (= seconds at 1 blk/s).
+#:
+#: WHY IT EXISTS. `compose_restart` is a graceful SIGTERM (reth's 40 s ceiling) followed by a full
+#: node boot, and the chain keeps producing throughout. If the boundary lands inside that interval,
+#: the restarted node reaches its epoch-E share by the DEMOTE-HEAL — `recompute_scoped` over the
+#: retained dealer logs — instead of by `resume_from_journal`, and `RESUME_LINE` is never written.
+#: That is correct product behaviour, and `evaluate_resumed` used to report it as "the
+#: journal+resume path never ran", i.e. as the bug the case exists to catch. Exactly the shape
+#: `verdicts_fault.SHARE_ROADS` records on the live-heal case.
+#:
+#: It is a RAIL and not a second accepted road, and that distinction is the whole point of this
+#: case: the module docstring's subsumption argument is that `smoke-vrf-dkg-durability` phase 1
+#: already covers "a restarted member ends up with a consistent share" WITHOUT emitting a resume
+#: line, and that the journal→resume path is what is otherwise untested. Accepting the heal road
+#: here would make this case green on runs where its own subject did not execute — which is the
+#: durability case with more steps.
+#:
+#: SIZED, not chosen. The gate's share-ABSENT half already stops holding at
+#: `epoch_start(E) − DKG_MARGIN_BLOCKS − K` (= 23 blocks out) because that is where the ceremony
+#: finalizes and writes the share, so anything at or below 23 would be a no-op. 30 buys a restart
+#: budget past that edge while leaving the detection band wide: the journal is written when the
+#: actor's clock first enters epoch E−1, i.e. around `epoch_start(E) − interval − K` = 67 blocks
+#: out on this stand's tuned 64-block interval, so the band is [67 .. 30].
+MIDWINDOW_RESTART_MARGIN = 30
 #: `:146`, `:149` — the post-restart boundary crossing, then the all-nodes-have gate.
 MIDWINDOW_BOUNDARY_S = 400
 MIDWINDOW_NODES_HAVE_S = 180
@@ -995,18 +1228,49 @@ def epoch_field_lines(logs: str, message: str, epoch):
             if message in line and pat.search(line)]
 
 
+def evaluate_restart_in_window(fin_after_restart, epoch_start, victim):
+    """THE CASE MUST VERIFY IT SET UP WHAT IT CLAIMS TO TEST — read AFTER the restart, because
+    that is the only place the question can be answered.
+
+    The pre-restart rail (`MIDWINDOW_RESTART_MARGIN`) makes this unlikely; this makes the
+    diagnosis right when it happens anyway. If the epoch boundary passed WHILE the victim was
+    down, its ceremony is swept and it reaches the same share by the demote-heal — no
+    `RESUME_LINE` at all. Without this reading, `evaluate_resumed` fires next and calls that
+    correct behaviour "the journal+resume path never ran", which is the bug this case is named
+    for: a FALSE RED on the product, from a setup that did not hold.
+
+    A missed window is a RE-RUN, not a product verdict, and the message says so."""
+    if int(fin_after_restart) < int(epoch_start):
+        return True, ""
+    return False, (f"the epoch-{MIDWINDOW_EPOCH} boundary ({epoch_start}) passed WHILE {victim} "
+                   f"was restarting (finalized={fin_after_restart}) — its ceremony is swept, so "
+                   "it will reach its share by the demote-heal and never write "
+                   f"{RESUME_LINE!r}. The journal→resume path this case exists for did not run: "
+                   "this is a MISSED SETUP, not a product failure. Re-run; if it recurs the host "
+                   f"is restarting slower than {MIDWINDOW_RESTART_MARGIN} blocks and the margin "
+                   "(or EPOCH_BLOCK_INTERVAL) needs raising")
+
+
 def evaluate_resumed(lines, victim):
     """`:177-180` — the victim logged a POST-RESTART resume for epoch 2.
 
     Anchored on the RESUME line and not on "share computed": a fast host can finalize and emit
     "share computed" DURING the open window BEFORE the restart, so a whole-log grep for that line
     is green even against a broken resume. The resume line can only be emitted by the restarted
-    process, which is what makes its presence proof that the recovery path ran."""
+    process, which is what makes its presence proof that the recovery path ran.
+
+    IT IS ONLY A PRODUCT VERDICT ONCE THE SETUP IS PROVEN. There is a second, legitimate road to
+    the same share — the demote-heal — and a victim whose boundary passed during the restart takes
+    it and writes no resume line at all. `evaluate_restart_in_window` runs FIRST and rules that
+    road out; reaching here with the setup proven means the resume genuinely did not happen."""
     if lines:
         return True, ""
     return False, (f"{victim} did NOT log a post-restart 'ceremony resumed from journal' for "
                    f"epoch {MIDWINDOW_EPOCH} — the journal+resume path never ran (this is the "
-                   "bug the fix closes)")
+                   "bug the fix closes). The other road to the same share, the demote-heal, is "
+                   "already ruled out: the boundary had not been crossed when the victim came "
+                   "back, so its ceremony was still live and `maybe_start` had a journal to "
+                   "resume from")
 
 
 def evaluate_share_computed(lines, victim):

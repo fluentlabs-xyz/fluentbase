@@ -211,17 +211,21 @@ def test_liveness_polls_the_signing_gate_for_a_WHOLE_EPOCH_plus_slack():
     assert len([s for s in seq if "signing_again (<= 92s)" in s]) == 4
 
 
-def test_liveness_reads_the_hub_counters_too_and_re_reads_the_epoch_each_poll():
-    """Both addresses per poll: the assertion is RELATIVE (`victim < hub`), so a case that read
-    only the victim would be asserting an absolute count nobody chose. And `currentEpoch()` is
-    re-read every iteration — the window can roll over mid-poll, and reading counters of an epoch
-    that has just been superseded is how a correct victim reads as absent."""
+def test_liveness_reads_the_hub_counters_too_and_re_reads_the_epoch_each_snapshot():
+    """Both addresses per snapshot: the hub's delta rides the report line, so a case that read
+    only the victim could not say whether the window it measured had any production in it at all.
+    And `currentEpoch()` is re-read at each snapshot — the outage can roll the epoch, and the
+    second snapshot then reads back to the epoch the first one was taken in (`since=`)."""
     seq = _seq(_dry(liveness)[1])
     epoch = _idx(seq, "staking_call(currentEpoch()(uint64))")
     vic = _idx(seq, "production(2, " + DRY_ADDRS[3], epoch)
     hub = _idx(seq, "production(2, " + DRY_ADDRS[0], vic)
     assert epoch < vic < hub
-    assert len([s for s in seq if s.startswith("staking_call(currentEpoch")]) == 4
+    # TWO snapshots per cycle now — the baseline K+1 blocks past the stop and the sample after the
+    # gap. One per cycle was the old single-instant poll, which is exactly what could not measure
+    # an outage. SIX and not eight: the 5-block cycle is below `production_min_gap` and takes
+    # neither snapshot, so it issues no epoch read at all.
+    assert len([s for s in seq if s.startswith("staking_call(currentEpoch")]) == 6
 
 
 def test_byzantine_transcript_is_bash_faithful():
@@ -577,7 +581,14 @@ LV_LOG_BEFORE = _promote(1)
 LV_LOG_AFTER = LV_LOG_BEFORE + _promote(99)
 
 
-def _lv_world(after_log=LV_LOG_AFTER, **over):
+#: `blocksInEpoch(E)` at the two snapshots — the epoch total, which counts every recorded block
+#: whoever produced it. It MOVES across the outage on a healthy chain; that movement is the
+#: control that keeps the victim's zero from being a reading of a frozen counter.
+LV_TOTALS = (10, 40)
+
+
+def _lv_world(after_log=LV_LOG_AFTER, victim_credit=(3, 3), hub_credit=(4, 9),
+              totals=LV_TOTALS, **over):
     # One baseline per cycle. The four cycles' gaps are 97/33/5/33 (interval 32), so the rejoin
     # floors are `pre + gap` = 197, 233, 305, 433 — which is why the readings sit at 500 rather
     # than at the old 100: a victim BELOW the floor is no longer a rejoin, and that is the point.
@@ -587,11 +598,26 @@ def _lv_world(after_log=LV_LOG_AFTER, **over):
     # Which side of the restart the log reader is on. Flipped by `peer_count`, which only the
     # rejoin probe calls (i.e. only after `compose_start`), and reset by `baseline_height`, which
     # opens each cycle — so the before/after split holds however many times the poll iterates.
-    phase = {"restarted": False}
+    # `waits` splits the two production SNAPSHOTS: each cycle waits twice with the victim down —
+    # first for the K+1 settle that the baseline is taken after, then for the gap — so reads
+    # before the second wait belong to the baseline and reads after it to the post-outage
+    # sample. A world whose counters did not move between the two would make the delta verdict
+    # unfalsifiable in exactly the way the constant `victim < hub` reading was on a live chain.
+    phase = {"restarted": False, "waits": 0}
 
     def _baseline(dry_value=0):
         phase["restarted"] = False
+        phase["waits"] = 0
         return next(heights, 800)
+
+    def _wait(*_a, **_k):
+        phase["waits"] += 1
+        return True
+
+    def _production(epoch, addr, dry_value=None):
+        i = 0 if phase["waits"] < 2 else 1
+        pair = hub_credit if addr == DRY_ADDRS[0] else victim_credit
+        return pair[i], totals[i]
 
     def _peers(svc, dry_value=1):
         phase["restarted"] = True
@@ -602,13 +628,12 @@ def _lv_world(after_log=LV_LOG_AFTER, **over):
 
     world = dict(
         runtime_addresses=lambda dry_value=None: list(DRY_ADDRS),
-        wait_finalized_ge=lambda *a, **k: True,
+        wait_finalized_ge=_wait,
         baseline_height=_baseline,
         logs_all=_logs,
         finalized_dec=lambda dry_value=0: 900,
         staking_call=lambda sig, *a, **k: "4",
-        production=lambda epoch, addr, dry_value=None: (
-            (10, 10) if addr == DRY_ADDRS[0] else (3, 10)),
+        production=_production,
         check_external=lambda port, dry_value="": "0x1f4|0xaa",
         check_node=lambda svc, dry_value="": "0x1f4|0xaa",
         # The hub's chain, for the same-height fork half of the rejoin gate: block 500 is 0xaa
@@ -627,7 +652,13 @@ def test_liveness_passes_on_a_healthy_world(monkeypatch, capsys):
     asserts_onchain.assert_liveness(ctx)
     out = capsys.readouterr().out
     assert "OK (smoke-liveness)" in out
-    assert out.count("on-chain production credit correct") == 4
+    # THREE, not four. `LIVENESS_CYCLES`'s gaps are 97/33/5/33 and the 5-block cycle is below
+    # `production_min_gap` — its credit window is zero blocks wide, so the leg is SKIPPED. The
+    # skip is PRINTED: a skipped leg that leaves no trace reads exactly like a passed one.
+    assert out.count("on-chain production credit correct") == 3
+    assert out.count("SKIP (production credit)") == 1
+    assert "too short to carry information" in out
+    # …and the legs that DO cover the short cycle still run on all four.
     assert out.count("rejoined at") == 4
     assert out.count("is SIGNING again") == 4
 
@@ -689,15 +720,69 @@ def test_the_two_liveness_rejoin_failures_do_not_read_alike(monkeypatch):
     assert "engine-spawn gate" in signing_half
 
 
-def test_liveness_FAILS_when_the_victim_produced_AS_MUCH_as_the_hub(monkeypatch):
-    """THE CORE NEGATIVE, driven through the body. A victim that is DOWN and still reads as
-    fully producing means the production record never reached the chain — which is exactly what
-    `recordProduction` is supposed to credit and what this case exists to prove it does."""
-    ctx, _ = _live_ctx(monkeypatch,
-                       **_lv_world(production=lambda e, a, dry_value=None: (10, 10)))
+def test_liveness_SKIPS_the_credit_leg_ONLY_on_the_cycle_that_cannot_measure_it(monkeypatch,
+                                                                                 capsys):
+    """THE LIVE FAILURE THIS CLOSES. `LIVENESS_CYCLES` gaps are 97/33/5/33. On the 5-block cycle
+    the live run read `blocksInEpoch over epochs [6] grew by 0` — on a chain the line above had
+    just reported finalizing past its target. Both snapshots read a counter that lags the chain by
+    K=3 and the baseline is taken K+1 past the stop, so a 5-block outage measures ZERO blocks: the
+    control is unsatisfiable by any chain, which makes the leg INAPPLICABLE, not failed.
+
+    THE SCOPING IS THE ASSERTION IN BOTH DIRECTIONS, which is why the counts are exact. Invert the
+    gate and the three long cycles skip while the short one asserts — the live red, upside down.
+    Widen it to every cycle and the zero-delta assertion, whose windows were 92 and 27 blocks
+    live, stops running at all: that is the whole fix given away.
+
+    And the skip is PRINTED, with the arithmetic that produced it. A skipped leg that leaves no
+    trace in the output reads exactly like a passed one, which is the defect class this entire
+    reading was rewritten to remove."""
+    ctx, _ = _live_ctx(monkeypatch, **_lv_world())
+    asserts_onchain.assert_liveness(ctx)
+    out = capsys.readouterr().out
+    assert out.count("SKIP (production credit)") == 1, "exactly one cycle may skip"
+    assert out.count("on-chain production credit correct") == 3, (
+        "the three long cycles must still ASSERT the zero-delta over their outage")
+    # the SKIP names the gap, the derived floor and where the floor comes from
+    assert "outage gap=5 < 9" in out
+    assert "K3 + 1 settle + 1 stop-slack + 4 committee" in out
+    assert "too short to carry information" in out
+    # …and it says what still covers that cycle, so the skip is not read as a hole
+    assert "within-epoch walk / re-jump path" in out
+
+
+def test_liveness_FAILS_when_the_STOPPED_victim_is_credited_with_production(monkeypatch):
+    """THE CORE NEGATIVE, driven through the body. The victim is stopped and its `producedAt`
+    still climbs — `recordProduction` credited a member that produced nothing, or the leader index
+    riding `extra_data` is stale. A stopped process produces zero blocks, so there is no threshold
+    here to widen: any growth at all is the failure."""
+    ctx, _ = _live_ctx(monkeypatch, **_lv_world(victim_credit=(3, 9)))
     with pytest.raises(SmokeFailure) as e:
         asserts_onchain.assert_liveness(ctx)
-    assert "production credit wrong" in e.value.message
+    assert "credited 6 block(s)" in e.value.message
+    assert "WHILE IT WAS STOPPED" in e.value.message
+
+
+def test_liveness_FAILS_when_the_credit_counter_did_not_MOVE_over_the_outage(monkeypatch):
+    """The control half, driven. The victim's delta is a perfect zero — and so is the epoch total,
+    so no production record reached the chain at all during the window. A zero read against a
+    frozen counter is the vacuous pass this leg's PASS-is-a-zero shape is most exposed to."""
+    ctx, _ = _live_ctx(monkeypatch, **_lv_world(hub_credit=(4, 4), totals=(10, 10)))
+    with pytest.raises(SmokeFailure) as e:
+        asserts_onchain.assert_liveness(ctx)
+    assert "no production record reached the chain" in e.value.message
+
+
+def test_liveness_production_credit_is_read_ACROSS_the_outage_not_at_one_instant(monkeypatch):
+    """THE F3 REGRESSION GUARD. This world is a chain on which the victim is fully producing —
+    equal stakes, and at the sampled instant it happens to sit just behind the hub. That single
+    inequality (`3 < 4`) is what the old 90-second poll broke out on, and it holds here at BOTH
+    snapshots: the reading had no dependency on the outage it was named for.
+
+    The delta form sees straight through it: the victim gained 5 blocks while it was stopped."""
+    ctx, _ = _live_ctx(monkeypatch, **_lv_world(victim_credit=(3, 8), hub_credit=(4, 12)))
+    with pytest.raises(SmokeFailure) as e:
+        asserts_onchain.assert_liveness(ctx)
+    assert "credited 5 block(s)" in e.value.message
 
 
 def test_liveness_FAILS_on_a_PERSISTENT_getter_failure_rather_than_crediting_it(monkeypatch):
@@ -774,6 +859,13 @@ def test_liveness_FAILS_when_the_chain_stops_advancing_with_one_node_down(monkey
 
 # ══ the wiring: byzantine ══════════════════════════════════════════════════
 
+#: The hub's log once the tombstone watch has read the flag and cut the offender's transport.
+BYZ_SEVER_LOG = (f"validator-0  | WARN {vo.TOMBSTONE_SEVER_LINE} "
+                 "peer=Ed25519(0f89339953580de4) epoch=5\n")
+#: …and the same log BEFORE it acted: the slash is on chain, nothing has reacted.
+BYZ_QUIET_LOG = "validator-0  | INFO finalized height=520\n"
+
+
 def _byz_world(**over):
     world = dict(
         runtime_addresses=lambda dry_value=None: list(DRY_ADDRS),
@@ -781,6 +873,7 @@ def _byz_world(**over):
         baseline_height=lambda dry_value=0: 500,
         wait_finalized_ge=lambda *a, **k: True,
         finalized_dec=lambda dry_value=0: 520,
+        logs_all=lambda svc, dry_value="": BYZ_SEVER_LOG,
         logs_tail=lambda *s, **k: "",
         dump_logs=lambda *a, **k: None,
     )
@@ -793,7 +886,28 @@ def test_byzantine_passes_on_a_healthy_world(monkeypatch, capsys):
     asserts_onchain.assert_byzantine(ctx)
     out = capsys.readouterr().out
     assert "jailed (status=Jail) by equivocation slashing" in out
-    assert "OK (smoke-byzantine)" in out and "advanced past 500 after the jail" in out
+    assert "severed the tombstoned peer's transport" in out
+    assert "OK (smoke-byzantine)" in out and "advanced past 500 in the blocks straight after" in out
+    # The OK line must NOT claim the boundary the case cannot reach.
+    assert "committee-shrink boundary at E+3 is NOT covered here" in out
+
+
+def test_byzantine_FAILS_when_no_honest_node_ACTS_on_the_tombstone(monkeypatch):
+    """THE F5 WITNESS. The slash landed — `getValidatorStatus` reads Jail — and the chain keeps
+    finalizing, because the honest quorum was already 3-of-4 before the jail and would advance
+    identically on a cluster that ignored the tombstone outright. Both of the case's other
+    assertions are perfectly green here.
+
+    What is missing is the consensus consequence: nothing severed the offender's transport, so
+    `record_activity` keeps refreshing its `latest_seen` from its own votes, `is_active` never
+    goes false, and every one of its leader slots keeps costing the full certification deadline
+    (§7). The case named that severance in its OK line and read no part of it."""
+    ctx, _ = _live_ctx(monkeypatch, overlay=vo.BYZANTINE_OVERLAY,
+                       **_byz_world(logs_all=lambda svc, dry_value="": BYZ_QUIET_LOG))
+    with pytest.raises(SmokeFailure) as e:
+        asserts_onchain.assert_byzantine(ctx)
+    assert "never logged" in e.value.message
+    assert "severing its transport" in e.value.message
 
 
 def test_byzantine_FAILS_when_the_equivocator_is_never_jailed(monkeypatch):
@@ -1022,6 +1136,39 @@ def test_the_SIGNER_PROMOTED_LINE_is_a_string_the_product_ACTUALLY_EMITS_ONCE():
     assert any(vo.SIGNER_DEFER_LINE in w for w in body)
 
 
+#: `crates/node/src/dpos.rs` — where the tombstone WATCH lives (the beacon plane's finalized
+#: poller), which is what `smoke-byzantine`'s severance witness greps.
+NODE_DPOS_RS = pathlib.Path(__file__).resolve().parents[4] / "crates" / "node" / "src" / "dpos.rs"
+
+
+def test_the_TOMBSTONE_SEVER_LINE_is_a_string_the_product_ACTUALLY_EMITS_ONCE():
+    """The same cross-tree guard `PARK_LOG` and `SIGNER_PROMOTED_LINE` carry, for the string
+    `smoke-byzantine`'s new consensus-consequence witness depends on.
+
+    A POSITIVE witness that names a string nothing emits is a witness that can only ever fail; a
+    NEGATIVE one that does is a witness that can only ever pass. This one is positive, so the
+    failure mode is a permanently red case — but the same pin also catches the far worse
+    direction, which is what happened to `verdicts_rotation.SHARE_GATE_LINE`: a rename left a
+    diagnostic grepping a string with zero emitters and nothing said so."""
+    if not NODE_DPOS_RS.exists():
+        pytest.skip(f"node crate not in this tree ({NODE_DPOS_RS})")
+    body = NODE_DPOS_RS.read_text(encoding="utf-8", errors="replace").splitlines()
+    hits = [(n, line) for n, line in enumerate(body, 1) if vo.TOMBSTONE_SEVER_LINE in line]
+    assert len(hits) == 1, f"{vo.TOMBSTONE_SEVER_LINE!r} is emitted {len(hits)} times: {hits}"
+    lineno, line = hits[0]
+    assert not line.strip().startswith("//"), (
+        f"node/dpos.rs:{lineno} is a COMMENT — grepping a comment makes the witness a fiction")
+    window = body[max(0, lineno - 6):lineno]
+    assert any("warn!(" in w for w in window), "the severance must stay operator-visible"
+    # …and it is the OTHER node's arm, not the self arm: a node never blocks itself, so the self
+    # line lives in the equivocator's log and would witness nothing on the hub.
+    assert any("blocker.block(peer)" in w for w in body[lineno:lineno + 4]), (
+        f"node/dpos.rs:{lineno} is no longer followed by the transport block — the witness would "
+        "name a log line that no longer causes the severance it is read as evidence of")
+    assert any(vo.TOMBSTONE_SELF_LINE in w for w in body), (
+        "the self arm is gone — the failure diagnostic points at a string that does not exist")
+
+
 def test_cert_catchup_FAILS_when_the_graceful_stop_did_not_FLUSH(monkeypatch):
     """The fix targets a GRACEFUL restart. An unflushed victim cold re-syncs instead of catching
     up, so the park window never opens and the case would then fail at the park gate with a
@@ -1115,11 +1262,27 @@ MW_LOGS = (f"INFO {vo.RESUME_LINE} epoch=2 me=3\n"
            f"INFO {vo.SHARE_LINE} epoch=2 me=3\n")
 
 
+#: The FIVE finalized readings a healthy midwindow run takes, in order: the poll's restart-margin
+#: rail, the pre-restart height, the POST-restart height (the F13 setup proof — still short of the
+#: epoch-2 boundary at 256), then the post-boundary liveness pair. The last value repeats.
+MW_FINS = (200, 200, 200, 400, 406)
+
+
+def _mw_fins(values=MW_FINS):
+    it = iter(values)
+    last = [values[-1]]
+
+    def read(dry_value=0):
+        last[0] = next(it, last[0])
+        return last[0]
+    return read
+
+
 def _mw_world(**over):
     world = dict(
         runtime_addresses=lambda dry_value=None: list(DRY_ADDRS),
         exec_test=lambda svc, snippet, dry_value=False: "dkgjournal" in snippet,
-        finalized_dec=lambda dry_value=0: 200,
+        finalized_dec=_mw_fins(),
         wait_finalized_ge=lambda *a, **k: True,
         mixhash_of=lambda svc, blk, dry_value="": "0xaa",
         mixhash_in=lambda svc, blk, dry_value="": "0xaa",
@@ -1142,8 +1305,7 @@ def _mw_ctx(monkeypatch, **over):
 
 
 def test_midwindow_passes_on_a_healthy_world(monkeypatch, capsys):
-    fins = iter([200, 200, 400, 406])
-    ctx, _ = _mw_ctx(monkeypatch, finalized_dec=lambda dry_value=0: next(fins, 406))
+    ctx, _ = _mw_ctx(monkeypatch)
     asserts_onchain.assert_vrf_dkg_restart_midwindow(ctx)
     out = capsys.readouterr().out
     assert "RESUMED from journal and recovered its epoch-2 share" in out
@@ -1155,8 +1317,7 @@ def test_midwindow_FAILS_when_the_resume_line_NEVER_APPEARS(monkeypatch):
     """THE CORE NEGATIVE. Without the fix the restarted node never resumes; the whole-log grep for
     "share computed" would still be green (a fast host emits it before the restart), which is why
     the assertion is anchored on the resume line instead."""
-    fins = iter([200, 200, 400, 406])
-    ctx, _ = _mw_ctx(monkeypatch, finalized_dec=lambda dry_value=0: next(fins, 406),
+    ctx, _ = _mw_ctx(monkeypatch,
                      logs_all=lambda svc, dry_value="": f"INFO {vo.SHARE_LINE} epoch=2\n")
     with pytest.raises(SmokeFailure) as e:
         asserts_onchain.assert_vrf_dkg_restart_midwindow(ctx)
@@ -1164,8 +1325,7 @@ def test_midwindow_FAILS_when_the_resume_line_NEVER_APPEARS(monkeypatch):
 
 
 def test_midwindow_FAILS_when_the_resume_STARTED_but_never_converged(monkeypatch):
-    fins = iter([200, 200, 400, 406])
-    ctx, _ = _mw_ctx(monkeypatch, finalized_dec=lambda dry_value=0: next(fins, 406),
+    ctx, _ = _mw_ctx(monkeypatch,
                      logs_all=lambda svc, dry_value="": f"INFO {vo.RESUME_LINE} epoch=2\n")
     with pytest.raises(SmokeFailure) as e:
         asserts_onchain.assert_vrf_dkg_restart_midwindow(ctx)
@@ -1176,10 +1336,8 @@ def test_midwindow_is_NOT_fooled_by_an_ANSI_SPLIT_resume_line(monkeypatch):
     """§2.4 item 2 at the one place in this case where a missed match is a FALSE RED. `logs_all`
     strips before the body ever greps; this drives the un-stripped shape through the grep to show
     what would happen if a reader stopped stripping — a genuine resume reported as absent."""
-    fins = iter([200, 200, 400, 406])
     raw = f"INFO {vo.RESUME_LINE} epoch\x1b[0m=\x1b[2m2\nINFO {vo.SHARE_LINE} epoch=2\n"
-    ctx, _ = _mw_ctx(monkeypatch, finalized_dec=lambda dry_value=0: next(fins, 406),
-                     logs_all=lambda svc, dry_value="": raw)
+    ctx, _ = _mw_ctx(monkeypatch, logs_all=lambda svc, dry_value="": raw)
     with pytest.raises(SmokeFailure) as e:
         asserts_onchain.assert_vrf_dkg_restart_midwindow(ctx)
     assert "did NOT log a post-restart" in e.value.message
@@ -1188,8 +1346,7 @@ def test_midwindow_is_NOT_fooled_by_an_ANSI_SPLIT_resume_line(monkeypatch):
 def test_midwindow_FAILS_when_the_victim_prev_randao_DIVERGES(monkeypatch):
     """The share-holder assertion. A verify-only re-deriver also produces a mixHash; only a node
     holding the share produces the SAME one over every block of the window."""
-    fins = iter([200, 200, 400, 406])
-    ctx, _ = _mw_ctx(monkeypatch, finalized_dec=lambda dry_value=0: next(fins, 406),
+    ctx, _ = _mw_ctx(monkeypatch,
                      mixhash_in=lambda svc, blk, dry_value="": "0xbb")
     with pytest.raises(SmokeFailure) as e:
         asserts_onchain.assert_vrf_dkg_restart_midwindow(ctx)
@@ -1202,8 +1359,7 @@ def test_midwindow_FAILS_when_the_victim_is_BELOW_the_floor(monkeypatch):
 
     The participation FLOOR this used to assert went with the liveness jail; what survives is the
     property that actually mattered, and `> 0` is the one a shareless node cannot fake."""
-    fins = iter([200, 200, 400, 406])
-    ctx, _ = _mw_ctx(monkeypatch, finalized_dec=lambda dry_value=0: next(fins, 406),
+    ctx, _ = _mw_ctx(monkeypatch,
                      production=lambda e, a, dry_value=None: (0, 100))
     with pytest.raises(SmokeFailure) as e:
         asserts_onchain.assert_vrf_dkg_restart_midwindow(ctx)
@@ -1213,8 +1369,7 @@ def test_midwindow_FAILS_when_the_victim_is_BELOW_the_floor(monkeypatch):
 def test_midwindow_FAILS_on_a_PERSISTENT_getter_failure_rather_than_reading_it_as_zero(monkeypatch):
     """A -2 read as 0 would be below every positive floor, i.e. it would FAIL a node that
     recovered perfectly — the sentinel discipline in its other direction."""
-    fins = iter([200, 200, 400, 406])
-    ctx, _ = _mw_ctx(monkeypatch, finalized_dec=lambda dry_value=0: next(fins, 406),
+    ctx, _ = _mw_ctx(monkeypatch,
                      production=lambda e, a, dry_value=None: (-2, -2))
     with pytest.raises(SmokeFailure) as e:
         asserts_onchain.assert_vrf_dkg_restart_midwindow(ctx)
@@ -1222,9 +1377,8 @@ def test_midwindow_FAILS_on_a_PERSISTENT_getter_failure_rather_than_reading_it_a
 
 
 def test_midwindow_FAILS_when_a_slash_event_names_the_victim(monkeypatch):
-    fins = iter([200, 200, 400, 406])
     bare = DRY_ADDRS[3][2:]
-    ctx, _ = _mw_ctx(monkeypatch, finalized_dec=lambda dry_value=0: next(fins, 406),
+    ctx, _ = _mw_ctx(monkeypatch,
                      logs_all_project=lambda dry_value="": f"WARN ValidatorSlashed who={bare}")
     with pytest.raises(SmokeFailure) as e:
         asserts_onchain.assert_vrf_dkg_restart_midwindow(ctx)
@@ -1232,8 +1386,7 @@ def test_midwindow_FAILS_when_a_slash_event_names_the_victim(monkeypatch):
 
 
 def test_midwindow_FAILS_when_the_victim_is_JAILED(monkeypatch):
-    fins = iter([200, 200, 400, 406])
-    ctx, _ = _mw_ctx(monkeypatch, finalized_dec=lambda dry_value=0: next(fins, 406),
+    ctx, _ = _mw_ctx(monkeypatch,
                      validator_status=lambda a, dry_value="": "3")
     with pytest.raises(SmokeFailure) as e:
         asserts_onchain.assert_vrf_dkg_restart_midwindow(ctx)
@@ -1243,8 +1396,7 @@ def test_midwindow_FAILS_when_the_victim_is_JAILED(monkeypatch):
 def test_midwindow_FAILS_LOUD_on_an_EMPTY_status_read(monkeypatch):
     """review [225]: an empty-vs-"3" false-green would hide the very liveness slash the case
     exists to catch."""
-    fins = iter([200, 200, 400, 406])
-    ctx, _ = _mw_ctx(monkeypatch, finalized_dec=lambda dry_value=0: next(fins, 406),
+    ctx, _ = _mw_ctx(monkeypatch,
                      validator_status=lambda a, dry_value="": "")
     with pytest.raises(SmokeFailure) as e:
         asserts_onchain.assert_vrf_dkg_restart_midwindow(ctx)
@@ -1257,10 +1409,42 @@ def test_midwindow_FAILS_with_the_WINDOW_MISSED_message_when_the_boundary_passed
     operator looking for a ceremony that ran perfectly."""
     ctx, _ = _mw_ctx(monkeypatch,
                      exec_test=lambda svc, snippet, dry_value=False: False,
-                     finalized_dec=lambda dry_value=0: 999)
+                     finalized_dec=_mw_fins((999,)))
     with pytest.raises(SmokeFailure) as e:
         asserts_onchain.assert_vrf_dkg_restart_midwindow(ctx)
-    assert "the open window was missed" in e.value.message
+    assert "no longer room to restart it INSIDE the open window" in e.value.message
+    # The rail is the boundary MINUS the restart margin, not the boundary.
+    assert f"minus the {vo.MIDWINDOW_RESTART_MARGIN}-block restart margin" in e.value.message
+
+
+def test_midwindow_the_rail_leaves_room_for_the_RESTART_not_just_for_the_journal(monkeypatch):
+    """THE F13 RAIL. The journal is on disk and the share is not — a genuine mid-window state —
+    but the chain is 10 blocks from the epoch-2 boundary at 226, and a `docker compose restart` is
+    a graceful SIGTERM plus a full node boot. The boundary would land while the victim is down,
+    after which it reaches its share by the DEMOTE-HEAL and writes no resume line at all.
+
+    That is correct product behaviour, and `evaluate_resumed` used to report it as "the
+    journal+resume path never ran" — the bug the case is named for, asserted against a run that
+    behaved perfectly."""
+    ctx, _ = _mw_ctx(monkeypatch, finalized_dec=_mw_fins((246,)))
+    with pytest.raises(SmokeFailure) as e:
+        asserts_onchain.assert_vrf_dkg_restart_midwindow(ctx)
+    assert "no longer room to restart it INSIDE the open window" in e.value.message
+
+
+def test_midwindow_FAILS_when_the_BOUNDARY_PASSED_DURING_the_restart(monkeypatch):
+    """The rail above bounds when the restart may START; this is the reading taken once the victim
+    is BACK, which is the only place the question can actually be answered — a slow host can cross
+    the boundary inside a restart that began with plenty of room.
+
+    The message must name a MISSED SETUP and a re-run, never a product failure: the victim will
+    heal, and healing is not the road this case exists to exercise."""
+    ctx, _ = _mw_ctx(monkeypatch, finalized_dec=_mw_fins((200, 200, 300)))
+    with pytest.raises(SmokeFailure) as e:
+        asserts_onchain.assert_vrf_dkg_restart_midwindow(ctx)
+    assert "passed WHILE validator-3 was restarting" in e.value.message
+    assert "MISSED SETUP, not a product failure" in e.value.message
+    assert "demote-heal" in e.value.message
 
 
 def test_midwindow_FAILS_with_the_JOURNAL_message_when_the_ceremony_never_started(monkeypatch):
@@ -1285,7 +1469,7 @@ def test_midwindow_does_NOT_restart_while_the_share_is_already_on_disk(monkeypat
 
 
 def test_midwindow_FAILS_when_the_chain_stops_finalizing_after_the_boundary(monkeypatch):
-    ctx, _ = _mw_ctx(monkeypatch, finalized_dec=lambda dry_value=0: 400)
+    ctx, _ = _mw_ctx(monkeypatch, finalized_dec=_mw_fins((200, 200, 200, 400, 400)))
     with pytest.raises(SmokeFailure) as e:
         asserts_onchain.assert_vrf_dkg_restart_midwindow(ctx)
     assert "chain not finalizing after the boundary" in e.value.message

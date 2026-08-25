@@ -24,7 +24,7 @@ from dpos_harness.cases.smoke import (asserts_fault, crash_survivor, deferred, d
                                       full_restart, peers, verdicts, verdicts_fault as vf,
                                       vrf_dkg_live_heal, vrf_fault)
 from dpos_harness.cases.smoke.driver import SmokeCtx, SmokeFailure
-from dpos_harness.core import proc
+from dpos_harness.core import proc, topology
 from dpos_harness.core.proc import Runner
 from dpos_harness.stack.profiles import StaticProfile
 from dpos_harness.stack.static_stack import StaticStack
@@ -569,22 +569,45 @@ def test_assert_deferred_fails_when_the_victim_container_is_gone(monkeypatch):
 # ── peers ──────────────────────────────────────────────────────────────────
 
 FOUR_ADDRS = ", ".join("0x" + str(i) * 40 for i in range(1, 5))
-THREE_PEERS = "\n".join(f'outer_engine_buffered_peer_total{{sequencer="{i:02x}"}} 1'
-                        for i in range(3))
+
+
+def _directory(peers) -> str:
+    """The commonware `p2p_network_tracker_directory_connected` family — peer pubkey → the
+    epoch-millis instant that connection became active."""
+    return "\n".join(f'p2p_network_tracker_directory_connected{{peer="{pk}"}} {ts}'
+                     for pk, ts in peers.items())
+
+
+#: validator-0's three committee peers, all connected long before the case started.
+BASE_DIRECTORY = {f"{i:02x}": 1000 + i for i in range(3)}
+#: after the restart: one socket came back, stamped ABOVE every baseline connect instant.
+REJOINED_DIRECTORY = dict(BASE_DIRECTORY, **{"01": 2000})
+
+
+def _restarted(runner) -> bool:
+    return ["docker", "compose", "restart", topology.validator(vf.PEERS_VICTIM_IDX)] \
+        in runner.argvs()
 
 
 def _peers_world(monkeypatch, **over):
+    """The peers world MODELS THE RESTART: the metrics reader answers the baseline directory
+    until the victim's `docker compose restart` has actually been issued, and a rejoined one
+    afterwards. A constant reading would make the reconnect leg unfalsifiable in the test the
+    same way the cumulative broadcast family made it unfalsifiable on a live chain."""
     world = dict(
         staking_call=lambda sig, *a, **kw: ("2" if "currentEpoch" in sig
                                             else f"[{FOUR_ADDRS}]"),
-        peers_metrics=lambda **kw: THREE_PEERS,
         peer_count=lambda service, **kw: 2,
         baseline_height=lambda **kw: 100,
         finalized_dec=lambda **kw: 105,
         dump_logs=lambda *a, **kw: None,
     )
     world.update(over)
-    return _live_ctx(monkeypatch, **world)
+    ctx, runner = _live_ctx(monkeypatch, **world)
+    if "peers_metrics" not in over:
+        monkeypatch.setattr(ctx, "peers_metrics", lambda **kw: _directory(
+            REJOINED_DIRECTORY if _restarted(runner) else BASE_DIRECTORY))
+    return ctx, runner
 
 
 def test_assert_peers_passes_when_both_planes_are_up(monkeypatch):
@@ -605,8 +628,34 @@ def test_assert_peers_derives_the_expectation_from_the_on_chain_committee(monkey
 
 def test_assert_peers_fails_when_a_committee_peer_is_missing(monkeypatch):
     ctx, _ = _peers_world(monkeypatch, peers_metrics=_seq(
-        "\n".join(f'outer_engine_buffered_peer_total{{sequencer="{i:02x}"}} 1' for i in range(2))))
+        _directory({f"{i:02x}": 1000 + i for i in range(2)})))
     with pytest.raises(SmokeFailure, match="connected=2 != 3"):
+        asserts_fault.assert_peers(ctx)
+
+
+def test_assert_peers_fails_when_the_victim_never_rejoins_the_consensus_plane(monkeypatch):
+    """THE F1 REGRESSION GUARD, at case level. The restarted validator's reth devp2p peering
+    comes back and the chain keeps finalizing without it (f=1), but its commonware socket never
+    returns: the directory stays exactly as the baseline scrape saw it.
+
+    Under the old reading — a distinct-series count over the CUMULATIVE
+    `outer_engine_buffered_peer_total` family, whose series are never pruned — this case passed,
+    because the victim's series was still there from before the restart. Consensus-plane
+    discovery is the property `smoke-peers` exists to pin, so that was a false GREEN over the
+    whole subject of the case."""
+    ctx, _ = _peers_world(monkeypatch,
+                          peers_metrics=lambda **kw: _directory(BASE_DIRECTORY))
+    with pytest.raises(SmokeFailure, match="fresh consensus connection=False"):
+        asserts_fault.assert_peers(ctx)
+
+
+def test_assert_peers_fails_on_a_stale_directory_entry_for_the_dead_socket(monkeypatch):
+    """The count leg alone cannot see this: validator-0 still carries an entry for a peer whose
+    process is gone, so `connected == committee_size-1` holds over a socket that died. Only the
+    connect TIMESTAMP separates "the peer is back" from "the record is stale"."""
+    stale = dict(BASE_DIRECTORY, **{"01": BASE_DIRECTORY["01"]})
+    ctx, _ = _peers_world(monkeypatch, peers_metrics=lambda **kw: _directory(stale))
+    with pytest.raises(SmokeFailure, match="fresh consensus connection=False"):
         asserts_fault.assert_peers(ctx)
 
 
@@ -640,6 +689,30 @@ def _mix(n) -> str:
     return "0x%064x" % int(n)
 
 
+#: The epoch the fault window runs in on this world's geometry — `epoch_of(a_hi)`, which is what
+#: `assert_vrf_fault` scopes its share witness to.
+VRF_FAULT_SHARE_EPOCH = 2
+
+
+def _reload_log(promote=VRF_FAULT_SHARE_EPOCH, gate=None, boot=True, pre_stop_promote=False):
+    """The restarted victim's log, assembled leg by leg.
+
+    `pre_stop_promote` writes a promotion BEFORE the boot marker — the shape the process that was
+    STOPPED left behind. It must not satisfy the witness: the claim is about the process that came
+    back, and its own promotion is the only thing that says the share survived the restart."""
+    out = []
+    if pre_stop_promote:
+        out.append(f"INFO {vf.PROMOTE_LINE} " + vf.PIN_EPOCH_FMT.format(VRF_FAULT_SHARE_EPOCH))
+    if boot:
+        out.append(f"INFO {vf.ACTOR_STARTED_LINE} epocher=(test)")
+    if gate is not None:
+        out.append(f"INFO {vf.SHARE_GATE_LINE} reason=NoUsableShare "
+                   + vf.PIN_EPOCH_FMT.format(gate))
+    if promote is not None:
+        out.append(f"INFO {vf.PROMOTE_LINE} " + vf.PIN_EPOCH_FMT.format(promote))
+    return "\n".join(out)
+
+
 def _vrf_fault_world(monkeypatch, **over):
     world = dict(
         wait_finalized_ge=lambda target, timeout: True,
@@ -647,6 +720,7 @@ def _vrf_fault_world(monkeypatch, **over):
         mixhash_of=lambda svc, block, **kw: _mix(block),
         mixhash_in=lambda svc, block, **kw: _mix(block),
         mixhash_at=lambda block, **kw: _mix(block),
+        logs_all=lambda service, **kw: _reload_log(),
         dump_logs=lambda *a, **kw: None,
     )
     world.update(over)
@@ -690,19 +764,73 @@ def test_assert_vrf_fault_fails_when_the_victim_fell_back_to_the_digest(monkeypa
         asserts_fault.assert_vrf_fault(ctx)
 
 
+def test_assert_vrf_fault_fails_when_the_victim_came_back_shareless(monkeypatch):
+    """THE F2 REGRESSION GUARD. Every other post-restart leg is IDENTICAL to the passing world:
+    the victim answers RPC, catches up, and serves every gap block with the same prev_randao as
+    the four survivors. It just came back without its DKG share and said so.
+
+    That combination is not a contrived fixture — `prev_randao` rides in the CERTIFICATE
+    (`crates/node/src/derive.rs`), so a shareless node re-derives the whole gap byte-identically.
+    Before the share witness this case's OK line claimed "reloaded its share" over exactly this
+    run and passed."""
+    ctx, _ = _vrf_fault_world(monkeypatch,
+                              logs_all=lambda service, **kw: _reload_log(
+                                  promote=None, gate=VRF_FAULT_SHARE_EPOCH))
+    with pytest.raises(SmokeFailure, match="WITHOUT a usable epoch-2 DKG share"):
+        asserts_fault.assert_vrf_fault(ctx)
+
+
+def test_assert_vrf_fault_fails_when_the_victim_is_never_re_seated_as_a_signer(monkeypatch):
+    """The other arm: no share-gate line either, because the reconciler never got as far as the
+    `Role::Signer` decision. An absence-only witness would be green here — a node that logged
+    nothing at all satisfies "no share-gate lines"."""
+    ctx, _ = _vrf_fault_world(monkeypatch,
+                              logs_all=lambda service, **kw: _reload_log(promote=None))
+    with pytest.raises(SmokeFailure, match="never logged .* for an epoch >= 2"):
+        asserts_fault.assert_vrf_fault(ctx)
+
+
+def test_assert_vrf_fault_ignores_the_promotion_the_stopped_process_wrote(monkeypatch):
+    """The victim's log still carries everything the PRE-STOP process wrote, and that process was
+    a perfectly healthy signer. Reading it would witness the share the restart was supposed to
+    test the reload of."""
+    ctx, _ = _vrf_fault_world(monkeypatch,
+                              logs_all=lambda service, **kw: _reload_log(
+                                  promote=None, pre_stop_promote=True))
+    with pytest.raises(SmokeFailure, match="never logged .* for an epoch >= 2"):
+        asserts_fault.assert_vrf_fault(ctx)
+
+
+def test_assert_vrf_fault_accepts_a_re_seat_at_a_later_epoch(monkeypatch):
+    """The catch-up can run past the epoch the fault window was in, and the reconcile that
+    re-seats the victim then names the epoch it landed in. A witness pinned to epoch 2 exactly
+    would be a false RED on correct behaviour."""
+    ctx, _ = _vrf_fault_world(monkeypatch,
+                              logs_all=lambda service, **kw: _reload_log(promote=4))
+    asserts_fault.assert_vrf_fault(ctx)
+
+
 # ── vrf-dkg-live-heal ──────────────────────────────────────────────────────
 
-def _heal_log(fresh=True, road=vf.SHARE_LINE, pin=True, promote=True, pre_stop_ceremony=False):
+def _heal_log(fresh=True, heal=None, road=vf.SHARE_LINE, pin=True, promote=True,
+              pre_stop_ceremony=False):
     """The victim's log, assembled leg by leg so each test can remove exactly one.
 
     `pre_stop_ceremony` writes a `ceremony started` BEFORE the boot marker — the shape a victim
-    stopped mid-deal-phase leaves behind, and the one the setup gate has to reject."""
+    stopped mid-deal-phase leaves behind, and the one the setup gate has to reject.
+
+    `heal` is the `(want, dealers)` of the heal-DETECT line, the setup gate's SECOND witness: the
+    demote-heal road reaches the share with no ceremony at all, so `fresh=False, heal=(n, n)` is a
+    correct run and not a failure — see `vf.evaluate_victim_held_nothing`."""
     out = []
     if pre_stop_ceremony:
         out.append(f"INFO {vf.CEREMONY_STARTED_LINE} epoch=2")
     out.append(f"INFO {vf.ACTOR_STARTED_LINE} epocher=(test)")
     if fresh:
         out.append(f"INFO {vf.CEREMONY_STARTED_LINE} epoch=2")
+    if heal is not None:
+        out.append(f"INFO live DKG: demoted committee member detected \u2014 "
+                   f"{vf.HEAL_START_LINE} epoch=2 want={heal[0]} dealers={heal[1]}")
     if road:
         out.append(f"INFO {road} epoch=2 height=257")
     if pin:
@@ -777,13 +905,24 @@ def test_assert_vrf_dkg_live_heal_refuses_to_run_past_the_DEAL_window(monkeypatc
         asserts_fault.assert_vrf_dkg_live_heal(ctx)
 
 
-def test_assert_vrf_dkg_live_heal_fails_when_the_victim_came_back_with_a_journal(monkeypatch):
-    """THE SETUP GATE. No `ceremony started` on the restarted process means `load_journal` was
-    `Present` — the victim had received and ACKED the dealings before it went down, so it rebuilds
-    from its own records and no dealer reveals its point. Every other leg here stays green on that
-    run, which is why the gate exists and why it reads the RESTARTED process's slice."""
+def test_assert_vrf_dkg_live_heal_passes_on_the_demote_heal_road_with_no_ceremony(monkeypatch):
+    """THE RUN THE OLD GATE FAILED THREE TIMES, end to end through the case body. The victim came
+    back holding nothing, the demote-heal fetched every pinned dealer's log (`want == dealers`)
+    and recomputed — `start_fresh` never ran, so there is no `ceremony started` to read, and the
+    old single-witness gate called that a journal."""
     ctx, _ = _dkg_world(monkeypatch, finalized_dec=_fin(),
-                        logs_all=lambda svc, **kw: _heal_log(fresh=False))
+                        logs_all=lambda svc, **kw: _heal_log(fresh=False, heal=(4, 4),
+                                                             road=vf.HEAL_LINE))
+    asserts_fault.assert_vrf_dkg_live_heal(ctx)
+
+
+def test_assert_vrf_dkg_live_heal_fails_when_the_victim_came_back_with_a_journal(monkeypatch):
+    """THE SETUP GATE. `want < dealers` at the heal means the journal already held some dealer
+    logs — the victim had received and ACKED those dealings before it went down, so it rebuilds
+    from its own records and their dealers reveal nothing. Every other leg here stays green on
+    that run, which is why the gate exists."""
+    ctx, _ = _dkg_world(monkeypatch, finalized_dec=_fin(),
+                        logs_all=lambda svc, **kw: _heal_log(fresh=False, heal=(1, 4)))
     with pytest.raises(SmokeFailure, match="came back holding a journal"):
         asserts_fault.assert_vrf_dkg_live_heal(ctx)
 
@@ -791,11 +930,12 @@ def test_assert_vrf_dkg_live_heal_fails_when_the_victim_came_back_with_a_journal
 def test_the_setup_gate_ignores_a_ceremony_start_from_BEFORE_the_restart(monkeypatch):
     """`docker compose logs` returns the whole container log, pre-stop lines included. A
     `ceremony started` from the process that was stopped means the OPPOSITE of what this gate
-    witnesses, so the slice at the last boot marker is load-bearing, not tidiness."""
+    witnesses, so the slice at the last boot marker is load-bearing, not tidiness: counted, this
+    log passes; sliced, it has no witness at all and says so."""
     ctx, _ = _dkg_world(monkeypatch, finalized_dec=_fin(),
                         logs_all=lambda svc, **kw: _heal_log(fresh=False,
                                                              pre_stop_ceremony=True))
-    with pytest.raises(SmokeFailure, match="came back holding a journal"):
+    with pytest.raises(SmokeFailure, match="took NEITHER road"):
         asserts_fault.assert_vrf_dkg_live_heal(ctx)
 
 

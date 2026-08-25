@@ -594,7 +594,13 @@ TORN_POLL_GAP_S = 3
 #: `epoch_engine_demoted_no_polynomial_total`). With every member demoted the epoch has no signer,
 #: the boundary block is never proposed, and the head freezes at the boundary edge — the same
 #: observable the case has always asserted, reached by a different road.
-SHARE_GATE_LINE = "committee member without a usable DKG share — verify-only (share-gate)"
+#: [REVISED 2026-08-24] The spelling was `"committee member without a usable DKG share — verify-only
+#: (share-gate)"`, which has ZERO emitters anywhere in `crates/` — the same dead-string shape the
+#: `asserts_prod_dkg` comment records this witness as having already been re-pointed away from
+#: once. `epoch_manager.rs:1058` writes THIS. `tests/test_smoke_fault_verdicts.py` now pins both this
+#: and `PROMOTE_LINE` against that file, so the next rename goes red in the unit suite instead of
+#: turning a diagnostic into one that can only ever print its negative branch.
+SHARE_GATE_LINE = "committee member cannot participate — verify-only (share-gate)"
 #: The share-gate line renders its epoch with `?epoch` over a `#[derive(Debug)]` newtype, so the
 #: field reads `epoch=Epoch(7)` and NOT `epoch=7`. `epoch_field_lines` (which anchors on the bare
 #: number) therefore cannot match it — a witness filtered with the wrong spelling is a witness that
