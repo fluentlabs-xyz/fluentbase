@@ -646,16 +646,44 @@ HEAL_START_LINE = "starting share recompute-heal"
 SHARE_ROADS = ((SHARE_LINE, "the live ceremony's finalize-over-pinned"),
                (HEAL_LINE, "the demote-heal's scoped recompute"))
 
-#: `outer.rs` — the positive edge for "this epoch left vote-only admission", logged inside
-#: `EpochSchemeProvider::register`, the only place the OLD and the NEW pin state are both in hand.
-#: Waiting on this rather than on the ABSENCE of a vote-only admission is deliberate: an absence
-#: is green whenever certificates merely stopped arriving.
-PIN_LINE = "epoch scheme upgraded to PINNED"
+#: `beacon/metrics.rs` — the positive edge for "this epoch's certificates left vote-only
+#: admission": seeds this node CHECKED against `PK_epoch` and accepted.
+#:
+#: THIS WITNESS MOVED FROM A LOG LINE TO A COUNTER, and the reason is the whole of FLU-1202.
+#: It used to be `"epoch scheme upgraded to PINNED"`, logged inside `EpochSchemeProvider::register`
+#: — the only place the OLD and the NEW pin state were both in hand. A scheme holds no key
+#: material any more: it delegates to an oracle that reads the key store live, so a key landing
+#: after the scheme was built is picked up by the next certificate with nothing re-registered.
+#: There is no pin transition left to log, the string has no emitter anywhere under `crates/`, and
+#: the leg that grepped for it could only ever fail.
+#:
+#: WHAT DID *NOT* CHANGE IS WHY IT IS A POSITIVE EDGE. The old comment here chose the log line
+#: over the ABSENCE of a vote-only admission deliberately — "an absence is green whenever
+#: certificates merely stopped arriving" — and that reasoning survives the ticket intact. This
+#: counter moves only when a seed slot was actually verified against `PK_epoch`, so a chain that
+#: went quiet produces no increment; the leg asserts a `0 -> non-zero` transition across the
+#: restart, which is a statement about work done and not about work absent.
+#:
+#: GLOBAL, NOT PER-EPOCH. `PIN_LINE` carried `epoch=Epoch(2)` and this carries no label. The
+#: precision is not needed here — the victim is verifying epoch-2 certificates and nothing else
+#: across the window the leg measures — and a label would multiply cardinality on the vote path
+#: for a distinction no reader makes. A later case that needs it can add it with a reason.
+SEED_VERIFY_OK_FAMILY = "dpos_seed_verify_ok_total"
+#: The sample name that family's scrape line carries — the commonware registry doubles the
+#: `_total` suffix (`nodes.counter_sample`), and the anchored matcher `node_metric` uses means a
+#: hand-written registered name reads "" forever, i.e. indistinguishable from a counter that never
+#: moved. Same trap `ARTIFACT_PULL_OK_SAMPLE` records.
+SEED_VERIFY_OK_SAMPLE = nodes.counter_sample(SEED_VERIFY_OK_FAMILY)
+#: Its keyless twin — the same check answering "I hold no key for this epoch". PRINTED beside the
+#: gate, never asserted: it is the size of the keyless window, which is diagnostic, and bounding
+#: it would be bounding how fast the victim's artifact pull happened to complete.
+SEED_VERIFY_NO_KEY_FAMILY = "dpos_seed_verify_no_key_total"
+SEED_VERIFY_NO_KEY_SAMPLE = nodes.counter_sample(SEED_VERIFY_NO_KEY_FAMILY)
 #: `epoch_manager.rs` — the in-process Verifier→Signer promotion, the consequence that makes the
 #: production leg reachable at all.
 PROMOTE_LINE = "promoted to Signer in-process"
-#: …and the epoch field spelling those two share. `register` takes `epoch: Epoch` and
-#: `reconcile_roles` takes `epoch: Epoch`, both rendered through `?epoch`, so the field reads
+#: …and the epoch field spelling it carries. `reconcile_roles` takes `epoch: Epoch`, rendered
+#: through `?epoch`, so the field reads
 #: `epoch=Epoch(2)` and NOT `epoch=2` — `epoch_share_lines`, which anchors on the bare number,
 #: cannot match it. Same trap `verdicts_rotation.SHARE_GATE_EPOCH_FMT` records; a witness filtered
 #: with the wrong spelling is a witness that never fires.
@@ -813,8 +841,12 @@ def evaluate_share_acquired(road, victim, epoch=2):
                    "did not finish")
 
 
-def epoch_debug_lines(log_text, epoch=2, marker=PIN_LINE):
+def epoch_debug_lines(log_text, marker, epoch=2):
     """Lines carrying `marker` and the DEBUG-spelled epoch field for `epoch`.
+
+    `marker` is REQUIRED. It used to default to `PIN_LINE`, and that constant is gone with the pin
+    it named; a default here would only ever be one caller's marker silently standing in for
+    another's.
 
     MESSAGE first, then the epoch FIELD, in the two-grep shape `verdicts_rotation.share_gate_lines`
     owns and for the same reason: tracing renders fields in an order the case does not control, so
@@ -824,28 +856,87 @@ def epoch_debug_lines(log_text, epoch=2, marker=PIN_LINE):
             if marker in ln and field in ln]
 
 
-def pin_upgrade_lines(log_text, epoch=2, marker=PIN_LINE):
-    """The victim's unpinned → PINNED transitions for `epoch`, if any."""
-    return epoch_debug_lines(log_text, epoch=epoch, marker=marker)
-
-
 def promote_lines(log_text, epoch=2, marker=PROMOTE_LINE):
     """The victim's in-process Verifier→Signer promotions for `epoch`, if any."""
-    return epoch_debug_lines(log_text, epoch=epoch, marker=marker)
+    return epoch_debug_lines(log_text, marker, epoch=epoch)
 
 
-def evaluate_pin_upgraded(lines, victim, epoch=2):
+def evaluate_seed_verify_started(raw_ok, raw_no_key, victim, epoch=2):
     """…and the consequence on the VALIDATOR side: its own certificates for the live epoch leave
     vote-only admission.
 
-    Distinct from the share and not implied by it. A node can hold the share and still verify
-    certificates seed-blind if nothing re-registers its epoch scheme with the pin attached; before
-    this ticket that state lasted `for the LIVE epoch, until the process exits`."""
-    if lines:
-        return True, ""
-    return False, (f"{victim} never logged {PIN_LINE!r} for {PIN_EPOCH_FMT.format(int(epoch))} — "
-                   f"its epoch-{epoch} scheme is still UNPINNED, so it is admitting that epoch's "
-                   "certificates with the multisig quorum checked and the seed slot not")
+    Distinct from the share and NOT implied by it. The share lets the node SIGN a partial; this
+    says it can CHECK an assembled seed, which is a different key (the group public, not the
+    share) reaching a different path (certificate verification, not the vote). A node can hold the
+    share and still verify seed-blind, and the two are resolved by different rungs.
+
+    WHY THIS IS A COUNTER AND NOT A LOG LINE — see `SEED_VERIFY_OK_FAMILY`. FLU-1202 deleted the
+    `epoch scheme upgraded to PINNED` edge this leg used to grep, because there is no pin left to
+    transition; the string has no emitter under `crates/` and the leg could only fail. What the
+    ticket did NOT change is the reason a positive edge was chosen over the absence of a vote-only
+    admission, so the replacement is a positive edge too.
+
+    `""` is UNREAD, not zero, and it FAILS — `node_metric` answers "" for both an absent family
+    and a failed scrape, and this counter lives on a devnet-only endpoint
+    (`--dpos.metrics-port`) that a mis-flagged container simply does not serve. Coercing that to 0
+    would fail the leg for a config reason wearing a product reason's message; coercing it the
+    other way would pass the leg on a node nobody measured. Same rule as
+    `evaluate_artifact_pull_ok`, and the same reason.
+
+    The keyless count is read only to be PRINTED, and ZERO IS A NORMAL READING — measured, not
+    assumed: the first live run of this leg reported `ok=5, no_key=0`. The victim really was
+    keyless in wall-clock terms (down through its whole DKG window, restarted holding nothing),
+    but no epoch-2 certificate reached its oracle before the heal put `PK_2` in the store, so the
+    counter never saw the window. Asserting `no_key > 0` would therefore have made this leg red on
+    a correct run — the same shape of mistake the `smoke-cert-keyless` repair-sweep assertion made
+    — and asserting it at all would be asserting how fast the artifact pull happened to finish.
+
+    SO THIS LEG WITNESSES THE KEYED STATE, NOT THE TRANSITION. It says "this node verifies epoch-2
+    seeds against PK_2", which is exactly what the deleted `PIN_LINE` said and all this leg ever
+    claimed. The keyless→keyed TRANSITION is `smoke-cert-keyless`'s subject, on a follower, where
+    the window is structural rather than a race: a follower can obtain `PK_epoch` only by fetching
+    the epoch's artifact, and that fetch is triggered by a certificate that already went through
+    the inlet. Do not read a non-zero `no_key` here as the transition being covered.
+
+    WHERE A VALIDATOR ACTUALLY REACHES THIS COUNTER, because it is the first question anyone will
+    ask of it and the answer is not obvious:
+
+      * YES on the marshal's resolver BACKFILL path. `Deliver(Finalized{h})` BLS-verifies through
+        `simplex::types::verify_certificates` → `verify_certificates_bisect`. `CombinedScheme` is
+        `is_batchable() == true`, so that takes the bisection route — but the bisection's "batch"
+        step is the DEFAULT `Scheme::verify_certificates`, which is a plain per-item loop over
+        `verify_certificate`, and `CombinedScheme` overrides only the singular method. So every
+        back-filled certificate reaches the oracle. This is the path the victim runs on for the
+        whole of its catch-up.
+      * NO on the node's own engine. `certify(round, digest)` waits only for block availability
+        and does no re-verification, so certificates for views this node itself voted in never
+        reach the oracle.
+
+    WHAT THAT MEANS FOR THE LEG: it needs at least one certificate back-filled AFTER the key
+    landed, which this case has in quantity — the victim is restarted hundreds of blocks behind a
+    chain that kept moving, `_await_catchup` only gates on `boundary_probe`, and the heal lands
+    while the walk to the live tip is still running. Live: `ok=5`. An `ok=0` on a run that passed
+    every other leg would mean that overlap vanished, which is a statement about the case's
+    geometry and not about the product — and `ok=0, no_key=0` together would mean the oracle was
+    never reached at all, which is a different bug in a different place."""
+    text = str(raw_ok or "").strip()
+    window = str(raw_no_key or "").strip() or "<unread>"
+    if not text:
+        return False, (f"{SEED_VERIFY_OK_SAMPLE} could not be read off {victim} (absent family or "
+                       "unreachable commonware registry) — whether its epoch-"
+                       f"{epoch} certificates are being checked against PK_{epoch} is unwitnessed, "
+                       "and an unread counter is not a passing one")
+    try:
+        ok = int(float(text))
+    except ValueError:
+        return False, (f"{SEED_VERIFY_OK_SAMPLE} on {victim} read {text!r}, which is not a number")
+    if ok < 1:
+        return False, (f"{victim} has verified ZERO seeds ({SEED_VERIFY_OK_FAMILY}=0, "
+                       f"{SEED_VERIFY_NO_KEY_FAMILY}={window}) — it recovered the share but its "
+                       f"epoch-{epoch} certificates are still being admitted with the multisig "
+                       "quorum checked and the seed slot not, so the key never reached the "
+                       "verification path")
+    return True, ""
 
 
 def evaluate_promoted(lines, victim, epoch=2):

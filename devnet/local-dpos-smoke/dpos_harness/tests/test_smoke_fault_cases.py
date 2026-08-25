@@ -812,7 +812,7 @@ def test_assert_vrf_fault_accepts_a_re_seat_at_a_later_epoch(monkeypatch):
 
 # ── vrf-dkg-live-heal ──────────────────────────────────────────────────────
 
-def _heal_log(fresh=True, heal=None, road=vf.SHARE_LINE, pin=True, promote=True,
+def _heal_log(fresh=True, heal=None, road=vf.SHARE_LINE, promote=True,
               pre_stop_ceremony=False):
     """The victim's log, assembled leg by leg so each test can remove exactly one.
 
@@ -833,8 +833,6 @@ def _heal_log(fresh=True, heal=None, road=vf.SHARE_LINE, pin=True, promote=True,
                    f"{vf.HEAL_START_LINE} epoch=2 want={heal[0]} dealers={heal[1]}")
     if road:
         out.append(f"INFO {road} epoch=2 height=257")
-    if pin:
-        out.append(f"INFO {vf.PIN_LINE} " + vf.PIN_EPOCH_FMT.format(2))
     if promote:
         out.append(f"INFO {vf.PROMOTE_LINE} " + vf.PIN_EPOCH_FMT.format(2))
     return "\n".join(out) or "INFO nothing of interest"
@@ -857,6 +855,13 @@ def _dkg_world(monkeypatch, **over):
         mixhash_at=lambda block, **kw: _mix(block),
         logs_all=lambda svc, **kw: _heal_log(),
         node_metric=lambda svc, name, **kw: "3",
+        # LEG 5's WITNESS IS A COUNTER NOW (FLU-1202 deleted the pin transition it used to grep).
+        # Two families off ONE scrape: the seeds this node verified against PK_2, and the ones it
+        # could not because it held no key. The keyless count is non-zero in the healthy world on
+        # purpose — the victim WAS seed-blind for part of epoch 2, that is the whole scenario, and
+        # a fixture that zeroed it would be describing a node that never needed to heal.
+        node_metrics_text=lambda svc, **kw: (
+            f"{vf.SEED_VERIFY_OK_SAMPLE} 12\n{vf.SEED_VERIFY_NO_KEY_SAMPLE} 4\n"),
         production=lambda epoch, addr, **kw: (10, 64),
         sleep=lambda s: None,
         dump_logs=lambda *a, **kw: None,
@@ -967,12 +972,28 @@ def test_assert_vrf_dkg_live_heal_fails_when_the_pull_counter_is_unread(monkeypa
         asserts_fault.assert_vrf_dkg_live_heal(ctx)
 
 
-def test_assert_vrf_dkg_live_heal_fails_when_the_epoch_scheme_stays_unpinned(monkeypatch):
-    """A member can hold the share and still verify certificates seed-blind. The pin is a separate
-    consequence and gets a separate reading."""
+def test_assert_vrf_dkg_live_heal_fails_when_the_key_never_reached_VERIFICATION(monkeypatch):
+    """A member can hold the share and still verify certificates seed-blind — the share signs a
+    partial, the group key checks an assembled seed, and they are resolved by different rungs. So
+    it gets its own reading, and after FLU-1202 that reading is a counter rather than the deleted
+    `epoch scheme upgraded to PINNED` line.
+
+    The world here is the sharp one: every OTHER leg passes — fresh journal, artifact pulled,
+    share recovered, member seated — and only the verification counter is flat. That is the state
+    the leg exists to catch, and nothing else in the case would notice it."""
     ctx, _ = _dkg_world(monkeypatch, finalized_dec=_fin(),
-                        logs_all=lambda svc, **kw: _heal_log(pin=False))
-    with pytest.raises(SmokeFailure, match="still UNPINNED"):
+                        node_metrics_text=lambda svc, **kw: (
+                            f"{vf.SEED_VERIFY_OK_SAMPLE} 0\n{vf.SEED_VERIFY_NO_KEY_SAMPLE} 40\n"))
+    with pytest.raises(SmokeFailure, match="verified ZERO seeds"):
+        asserts_fault.assert_vrf_dkg_live_heal(ctx)
+
+
+def test_assert_vrf_dkg_live_heal_fails_when_the_seed_verify_counter_is_UNREAD(monkeypatch):
+    """An unscraped registry is not a zero and not a pass — the leg's positive edge is only worth
+    anything if the endpoint answered."""
+    ctx, _ = _dkg_world(monkeypatch, finalized_dec=_fin(),
+                        node_metrics_text=lambda svc, **kw: "")
+    with pytest.raises(SmokeFailure, match="could not be read off"):
         asserts_fault.assert_vrf_dkg_live_heal(ctx)
 
 

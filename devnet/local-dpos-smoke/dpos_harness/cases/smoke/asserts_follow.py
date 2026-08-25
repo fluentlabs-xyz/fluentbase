@@ -1,5 +1,6 @@
-"""asserts_follow.py — the three FOLLOWER case bodies (`case-cert-follow.sh`,
-`case-cert-cascade.sh`, `case-tx-cascade.sh`).
+"""asserts_follow.py — the FOLLOWER case bodies (`case-cert-follow.sh`,
+`case-cert-cascade.sh`, `case-tx-cascade.sh`, plus `smoke-cert-keyless`, which has no bash
+ancestor — it is FLU-1202's live gate and is documented in its own body).
 
 These are the first cases in the suite that need SERVICES THE BASE COMPOSE FILE DOES NOT DEFINE.
 Each one brings its own compose overlay up through `SmokeCtx`'s overlay seam (see `driver.py`),
@@ -135,9 +136,33 @@ def assert_cert_follow(ctx) -> None:
     Phases 1 and 2 prove a follower CAN follow. Phase 3 proves it verifies SOMETHING — but only
     at decode: a nibble flipped inside the trailing G1 point makes `into_parts()` fail, so the
     certificate never reaches the cert inlet and the seed check is never exercised. Phase 4 is the
-    one that reaches it (FLU-1167). Its negative is impossible to pass without the key: the
-    cleared slot decodes cleanly and the quorum still verifies, so a vote-only follower ACCEPTS
-    it, and only a scheme carrying `cert_seed_pin` refuses.
+    one that reaches it (FLU-1167). The cleared slot decodes cleanly and the quorum still
+    verifies, so the refusal can only come from the seed arm.
+
+    WHICH HALF OF PHASE 4b CARRIES THE KEYED/KEYLESS CLAIM — IT MOVED, AND FLU-1202 MOVED IT.
+    Before that ticket the `None => false` arm of `verify_certificate` was reachable only on a
+    scheme carrying `cert_seed_pin`, so the REFUSAL itself separated a keyed follower from a
+    keyless one. The scheme now carries an ORACLE rather than key material, and
+    `Randomness::oracle_for` attaches one for every beacon-active epoch whether or not the key
+    resolves (`beacon/follower.rs:355-367` — `mandatory_at(epoch).then(..)`), so a KEYLESS
+    follower refuses a cleared slot too. The refusal count today proves the seed arm is reachable
+    and enforced on a beacon-active epoch — a real property, and not this one.
+
+    THE DISCRIMINATION SURVIVES, in `evaluate_seed_vote_only_flat`. The vote-only counter is
+    incremented under `!key_known` and BEFORE `finalization.verify` runs (`cert_inlet.rs:815`
+    then `:818`), so a keyless follower ticks it once per cleared certificate on its way to
+    refusing that certificate. Flat across the window is therefore "this follower held the epoch
+    key throughout", which is what makes the refusals attributable to `PK_epoch`. Both readings
+    are kept; what changed is which of them may be quoted for which claim.
+
+    HOW TO MAKE THE REFUSAL DISCRIMINATE AGAIN, recorded because the idea is cheap and would
+    otherwise be lost. A cleared slot decodes to `None`, which the beacon-active arm refuses
+    without ever consulting the key. A slot that is present but WRONG does consult it: keyed gives
+    `SeedCheck::Invalid` and refuses, keyless gives `NoKey` and ADMITS. It has to be a well-formed
+    compressed G1 point or the certificate dies at decode like phase 3's — so the proxy would
+    splice in the PREVIOUS certificate's 48 bytes, which is a real σ for a different round and
+    fails `verify_seed` on the round binding. That is a third proxy mode and a phase of its own,
+    entirely inside `scripts/cert-mitm-proxy.py`; it is NOT built, and this phase is not it.
     """
     case = "smoke-cert-follow"
     anchor = ctx.baseline_height()
@@ -454,8 +479,9 @@ def _cert_follow_phase4(ctx, case: str, seed_pair) -> None:
     # It refused every certificate it was handed…
     ctx.check(case, *vf.evaluate_seed_tamper_refused_every_cert(
         seed_rejects_before, seed_rejects_after), on_fail=dump_seed)
-    # …and the refusals came from a PINNED scheme, not from a silent downgrade to vote-only, which
-    # is the one other way a cleared slot could produce this reading.
+    # …and the follower held `PK_epoch` throughout. The refusals alone no longer say that — any
+    # scheme carrying an ORACLE refuses a cleared slot, keyed or not — so this counter is the only
+    # member of the pair that separates a keyed follower from a keyless one (see the verdict).
     ctx.check(case, *vf.evaluate_seed_vote_only_flat(
         vo_before, vo_after, bool(vo_text0.strip()) and bool(vo_text1.strip())),
         on_fail=dump_seed)
@@ -464,7 +490,8 @@ def _cert_follow_phase4(ctx, case: str, seed_pair) -> None:
         f"certificates over {vf.SEED_OBSERVE_S}s ({vf.SEED_REJECT_LINE!r}) while v0 advanced "
         f"{v0_before}→{v0_after}, and admitted NONE of them vote-only "
         f"({vf.CF_VOTE_ONLY_FAMILY}={vo_before or '0'} → {vo_after or '0'}) — the seed slot is "
-        "checked, and only PK_epoch makes that possible")
+        "checked, and the flat vote-only counter says it was checked against a PK_epoch this "
+        "follower actually holds")
 
     # PACING. The same instrument `smoke-base` uses and the same band (45..66 per 60 s) — the one
     # that produced the historical 26-27 blk/60s regression reading. Measured on v0 and AFTER the
@@ -475,6 +502,174 @@ def _cert_follow_phase4(ctx, case: str, seed_pair) -> None:
     r1 = ctx.finalized_dec()
     ctx.check(case, *verdicts.evaluate_pacing(r1 - r0))
     _say(ctx, f"  pacing {r1 - r0} blk/{verdicts.PACING_WINDOW_S}s")
+
+
+# ══ smoke-cert-keyless ════════════════════════════════════════════════════════════════
+
+def assert_cert_keyless(ctx) -> None:
+    """A node enters a beacon-active epoch WITHOUT its key, its certificates are admitted on the
+    multisig half alone through that window, and then the key arrives and certificate verification
+    starts working — with NO repair path in the trace (FLU-1202).
+
+    WHAT CHANGED, AND WHY IT NEEDED A CASE OF ITS OWN. `CombinedScheme` used to COPY the epoch's
+    key material in at construction, so a scheme built before its epoch's key resolved was wrong
+    for the life of that epoch and had to be PATCHED afterwards — `apply_pin`, `with_cert_seed_pin`
+    and the `unpinned_epochs` sweep that drove them. The scheme now holds no material at all: it
+    delegates to a beacon-provided oracle that reads the live key store on every call, so a key
+    that lands after the scheme was built is picked up by the next certificate and there is
+    nothing to repair. That whole subsystem is deleted, and with it the only reason a late key
+    used to be a state-machine problem rather than a lookup.
+
+    Deleting a repair path is not a change a green run can witness — a chain whose keys always
+    arrive early looks identical either way. So the case is built around the ONE window in which
+    the two designs differ, and it refuses to conclude anything until it has proved it was in it.
+
+    THE PRECONDITION IS THE CASE. `evaluate_entered_keyless` gates every reading below on
+    `dpos_cert_vote_only_admissions_total >= 1`, which `cert_inlet.rs:815` increments only under
+    `!key_known` for the certificate's own epoch. Without that gate the case passes on a node that
+    held the key from its first certificate — which is the majority of nodes on a healthy chain,
+    and which proves nothing at all. The unit suite drives exactly that world
+    (`test_smoke_follow_cases.py`) and requires the case to fail on the PRECONDITION rather than
+    to sail through to a green flatness reading.
+
+    WHY A `--cert-follow` FOLLOWER IS THE NODE. It is the one node class that enters a
+    beacon-active epoch keyless BY CONSTRUCTION rather than by fault injection: it holds no share,
+    mints nothing, and can only obtain `PK_epoch` by fetching the epoch's agreed artifact over its
+    cert upstream — and the fetch is triggered by `observe_cert`, which fires on a certificate
+    that has ALREADY been through the inlet. So the first certificate of a beacon-active epoch is
+    necessarily admitted keyless, the window necessarily exists, and no node has to be stopped,
+    starved or slowed to create it. Every other reproduction in this tree costs a tuned genesis
+    and an eight-minute DKG choreography to manufacture the same state.
+
+    ORDER, AND WHAT EACH STEP RULES OUT:
+
+      1. the follower comes up and takes at least one KEYLESS admission — the precondition;
+      2. it obtains `PK_epoch` over its cert upstream, witnessed by the log line AND by the
+         adoption counter on the other registry;
+      3. over a fixed window its vote-only admissions are FLAT while v0 advances and the follower
+         itself finalizes — so certificates were arriving, being admitted, and every one of them
+         had its seed slot checked;
+      4. …and the below-frontier repair sweep, if it ran at all, ran AFTER the adoption — so the
+         key came from this node's own artifact fetch and the sweep followed it rather than
+         delivering it.
+
+    THE TWO CONTROLS IN STEP 3 ARE NOT DECORATION, and they are the same pair `_cert_follow_phase4`
+    takes. A flat admission counter is produced just as well by a stalled producer, or by a
+    follower whose upstream died, as by one that is verifying seeds — and the second of those
+    reads as a PASS on the counter alone.
+
+    NO PART OF THIS CASE POISONS THE STACK. It starts one honest follower on the `cert-follow`
+    overlay and leaves the MITM services the overlay also defines untouched, so it is the one
+    member of this family that could in principle be chained. It is kept standalone anyway: it is
+    the only case whose subject is the FIRST seconds of a node's life on a chain, and a chained
+    run would hand it a stack whose beacon-active epochs are minutes old.
+    """
+    case = "smoke-cert-keyless"
+    anchor = ctx.baseline_height()
+    _say(ctx, f"smoke-cert-keyless: DPoS converged; anchor finalized={anchor}")
+
+    def dump():
+        ctx.overlay_dump_logs(vf.CF_LOG_TAIL, vf.CF_SERVICE)
+
+    # ── 1. THE PRECONDITION: it entered a beacon-active epoch with NO key ─────────────
+    _say(ctx, "smoke-cert-keyless: starting cert-follower (ws://172.20.0.10:8546) — it holds no "
+              "epoch key and must admit its first certificates on the multisig half alone")
+    ctx.overlay_up("cert-follower", note="ck-up-follower")
+
+    pre = {"text": ""}
+
+    def took_a_keyless_admission():
+        # The WHOLE scrape, not one family: an absent family and an unreachable endpoint both
+        # answer "" through a single-family read, and one of those is a real zero while the other
+        # is a measurement that never happened (`evaluate_entered_keyless` separates them).
+        pre["text"] = ctx.overlay_el_metrics_text(
+            vf.CF_SERVICE, dry_value=f"{vf.CF_VOTE_ONLY_FAMILY} 3\n")
+        return vf.vote_only_admissions(pre["text"]) >= 1
+
+    ctx.poll(took_a_keyless_admission, vf.KEYLESS_ADMISSION_S,
+             poll_s=vf.KEYLESS_ADMISSION_POLL_S)
+    entered, msg, keyless_n = vf.evaluate_entered_keyless(pre["text"], vf.CF_SERVICE)
+    ctx.check(case, entered, msg, on_fail=dump)
+    _ok(ctx, "phase 1 keyless entry",
+        f"cert-follower took {keyless_n} admission(s) on the multisig quorum ALONE "
+        f"({vf.CF_VOTE_ONLY_FAMILY}={keyless_n}) — it is inside a beacon-active epoch it has no "
+        "key for, which is the window this case exists to observe")
+
+    # ── 2. …and then the key ARRIVES ──────────────────────────────────────────────────
+    #
+    # The WHOLE log (`SEED_LOG_TAIL is None`): the line is written once, in the follower's first
+    # seconds, and a bounded tail scrolls it away — that turned a healthy keyed follower into "it
+    # never obtained PK_epoch" on a live run of the sibling case.
+    box = {"logs": ""}
+
+    def has_key():
+        box["logs"] = ctx.overlay_logs(vf.CF_SERVICE, tail=vf.SEED_LOG_TAIL,
+                                       dry_value=vf.CF_KEY_LINE + " epoch=2")
+        return vf.CF_KEY_LINE in box["logs"]
+
+    ctx.poll(has_key, vf.CF_KEY_S, poll_s=vf.CF_KEY_POLL_S)
+    got, msg, key_line = vf.evaluate_key_obtained(box["logs"], vf.CF_SERVICE)
+    ctx.check(case, got, msg, on_fail=dump)
+    # The SAME adoption off the other registry — corroboration, never a replacement: the counter
+    # lives on an endpoint a `--cert-follow` node serves only under a devnet build plus a
+    # `--dpos.metrics-port` the compose overlay has to pass, and a witness with two devnet
+    # preconditions does not get to be the one a verdict rests on.
+    adopted_ok, adopted_msg, counters = vf.evaluate_artifact_adopted_counter(
+        ctx.overlay_node_metrics_text(
+            vf.CF_SERVICE,
+            dry_value=f"{nodes.counter_sample(vf.CF_ADOPTED_FAMILY)} 1\n"
+                      f"{nodes.counter_sample(vf.CF_MISS_FAMILY)} 0\n"),
+        vf.CF_SERVICE)
+    ctx.check(case, adopted_ok, adopted_msg, on_fail=dump)
+    _ok(ctx, "phase 2 late key",
+        f"cert-follower obtained PK_epoch over its cert upstream ({counters}) — {key_line}")
+
+    # ── 3. VERIFICATION STARTS WORKING, with the scheme it already had ────────────────
+    #
+    # Nothing rebuilt that scheme and nothing patched it. The reading that says so is the counter
+    # going flat while certificates keep arriving: every one of them now resolves a key through
+    # the oracle's live store read and has its seed slot checked.
+    text0 = ctx.overlay_el_metrics_text(vf.CF_SERVICE,
+                                        dry_value=f"{vf.CF_VOTE_ONLY_FAMILY} {keyless_n}\n")
+    before = nodes.metric_val(text0, vf.CF_VOTE_ONLY_FAMILY, "")
+    v0_before = ctx.finalized_dec()
+    cf_before = nodes.hex_to_dec(
+        ctx.overlay_check_node(vf.CF_SERVICE, dry_value="0x80|0xaa").split("|", 1)[0])
+    # THE WINDOW IS THE ASSERTION — see the module header. Not a settle time.
+    ctx.sleep(vf.CF_VOTE_ONLY_WINDOW_S)
+    text1 = ctx.overlay_el_metrics_text(vf.CF_SERVICE,
+                                        dry_value=f"{vf.CF_VOTE_ONLY_FAMILY} {keyless_n}\n")
+    after = nodes.metric_val(text1, vf.CF_VOTE_ONLY_FAMILY, "")
+    v0_after = ctx.finalized_dec()
+    cf_after = nodes.hex_to_dec(
+        ctx.overlay_check_node(vf.CF_SERVICE, dry_value="0x9e|0xbb").split("|", 1)[0])
+
+    # THE CONTROLS FIRST. A flat counter is also what a dead upstream produces.
+    ctx.check(case, *vf.evaluate_v0_advanced(v0_before, v0_after))
+    ctx.check(case, *vf.evaluate_follower_ingested(cf_before, cf_after, vf.CF_SERVICE),
+              on_fail=dump)
+    ctx.check(case, *vf.evaluate_vote_only_flat(before, after,
+                                                bool(text0.strip()) and bool(text1.strip())),
+              on_fail=dump)
+
+    # ── 4. …and the repair sweep FOLLOWED the key rather than delivering it ───────────
+    #
+    # Read AFTER the window and not before it: the sweep reaches an epoch when that epoch drops
+    # below the frontier, which on this geometry happens during the window, and a grep taken at
+    # key-arrival time would be silent about the whole interval the flatness verdict covers. The
+    # first live run of this case is the evidence — the sweep spoke 32 s after the adoption.
+    repaired_ok, repaired_msg, repair_note = vf.evaluate_repair_did_not_deliver_the_key(
+        ctx.overlay_logs(vf.CF_SERVICE, tail=vf.SEED_LOG_TAIL,
+                         dry_value=vf.CF_KEY_LINE + " epoch=2"), vf.CF_SERVICE)
+    ctx.check(case, repaired_ok, repaired_msg, on_fail=dump)
+
+    _ok(ctx, case,
+        f"cert-follower entered a beacon-active epoch keyless ({keyless_n} admission(s) on the "
+        f"multisig quorum alone), obtained PK_epoch, and then took NO further vote-only admission "
+        f"over {vf.CF_VOTE_ONLY_WINDOW_S}s ({vf.CF_VOTE_ONLY_FAMILY}={before or '0'} -> "
+        f"{after or '0'}) while v0 advanced {v0_before}->{v0_after} and the follower itself "
+        f"finalized {cf_before}->{cf_after} — the late key took effect through the scheme it "
+        f"already had ({repair_note})")
 
 
 # ══ smoke-cert-cascade ════════════════════════════════════════════════════════════════

@@ -1,6 +1,7 @@
-"""verdicts_follow.py — the PURE decision layer of the three FOLLOWER cases.
+"""verdicts_follow.py — the PURE decision layer of the FOLLOWER cases.
 
-`case-cert-follow.sh`, `case-cert-cascade.sh`, `case-tx-cascade.sh`. Same split as
+`case-cert-follow.sh`, `case-cert-cascade.sh`, `case-tx-cascade.sh`, plus `smoke-cert-keyless`,
+which has no bash ancestor (FLU-1202). Same split as
 `verdicts.py` / `verdicts_fault.py`: `asserts_follow.py` decides what to read and when, this
 module decides what the readings MEAN, and `tests/test_smoke_follow_verdicts.py` drives every
 one of them through BOTH outcomes.
@@ -15,6 +16,8 @@ FOUR of these decisions are NEGATIVE — they pass when something does NOT happe
   * `evaluate_bogus_no_progress` — …and must not have finalized anything while refusing.
   * `evaluate_no_isolated_warning` — the tx-route monitor must NOT have cried ISOLATED while the
     uplink was healthy.
+  * `evaluate_repair_did_not_deliver_the_key` — the below-frontier repair sweep must not have
+    reached the epoch BEFORE the node adopted its own key.
 
 A negative assertion is the one shape that cannot be validated by a green live run: a healthy
 chain satisfies it by doing nothing, which is indistinguishable from the check being broken,
@@ -145,13 +148,13 @@ def evaluate_follower_ingested(before, after, service):
 
     The follower's own finalized height moving is the tightest available proof that certificates
     were delivered AND accepted during the window, which is what makes the flat counter mean
-    "accepted with the pin" rather than "accepted nothing"."""
+    "accepted with `PK_epoch` resolved" rather than "accepted nothing"."""
     if int(after) > int(before):
         return True, ""
     return False, (f"{service} finalized nothing over the vote-only window ({before}→{after}) — "
                    f"the flat {CF_VOTE_ONLY_FAMILY} below would be the reading of a follower that "
                    "stopped ingesting certificates altogether, not of one that admits them with "
-                   "PK_epoch pinned")
+                   "PK_epoch in its key store")
 
 
 def evaluate_tamper_no_progress(tamper_head):
@@ -249,9 +252,21 @@ CF_ADOPTED_FAMILY = "dpos_follower_artifact_adopted_total"
 #: correctness.
 CF_MISS_FAMILY = "dpos_follower_artifact_miss_total"
 
-#: `cert_inlet.rs` — incremented for every certificate of a beacon-active epoch admitted while
-#: the epoch's scheme is UNPINNED, i.e. with the multisig quorum checked and the seed slot not.
-#: The acceptance criterion for FLU-1167 is that this STOPS moving once the key lands.
+#: `cert_inlet.rs:815` — incremented for every certificate of a beacon-active epoch this node
+#: processes while it holds NO key for that epoch, i.e. with the multisig quorum checked and the
+#: seed slot not. The acceptance criterion for FLU-1167 is that this STOPS moving once the key
+#: lands; `smoke-cert-keyless` below additionally requires that it MOVED first.
+#:
+#: RE-KEYED BY FLU-1202 and the new key is the one that makes the precondition below sound. It
+#: used to fire on "the scheme carries no `cert_seed_pin`"; a scheme holds no key material any
+#: more, so it now fires on `!key_known` — the answer of the acquisition ladder for THIS
+#: certificate's epoch. Nothing but a genuinely keyless epoch can move it.
+#:
+#: IT IS INCREMENTED BEFORE `finalization.verify`, not after, so a tick is "a certificate of a
+#: keyless beacon-active epoch reached the inlet", which is a superset of "…and was accepted".
+#: That direction is the harmless one for both readings here: as a PRECONDITION it is what is
+#: wanted, and as the post-key FLATNESS reading it is paired with the follower's own finalized
+#: progress, which no unaccepted certificate can produce.
 CF_VOTE_ONLY_FAMILY = "dpos_cert_vote_only_admissions_total"
 
 #: How long the follower gets to obtain `PK_epoch` after it has aligned. Generous: the fetch is
@@ -264,7 +279,7 @@ CF_KEY_S = 180
 #: `SEED_LOG_TAIL`), which is megabytes by phase 4.
 CF_KEY_POLL_S = 5
 #: The window over which the vote-only counter must not move. Same shape as `TAMPER_OBSERVE_S`
-#: and the same warning applies: THE WINDOW IS THE ASSERTION. At ~1 blk/s an unpinned follower
+#: and the same warning applies: THE WINDOW IS THE ASSERTION. At ~1 blk/s a KEYLESS follower
 #: takes one vote-only admission per second, so 30 s of flatness is 30 admissions that did not
 #: happen.
 CF_VOTE_ONLY_WINDOW_S = 30
@@ -286,9 +301,12 @@ SEED_OBSERVE_S = 45
 #: see `evaluate_seed_tamper_refused_every_cert`.
 MIN_SEED_REJECTS = 5
 
-#: `cert_inlet.rs` — the refusal a PINNED scheme writes when a certificate's seed slot does not
-#: verify (here: is absent on a beacon-active epoch, the `None => false` arm of
-#: `combined_scheme.rs`'s `verify_certificate`).
+#: `cert_inlet.rs` — the refusal a BEACON-ACTIVE scheme writes when a certificate's seed slot
+#: does not verify (here: is absent on a beacon-active epoch, the `None => false` arm of
+#: `combined_scheme.rs`'s `verify_certificate`). "Beacon-active" and not "keyed": the arm is
+#: reached on any scheme carrying an ORACLE, which `Randomness::oracle_for` attaches whether or
+#: not `PK_epoch` resolves — see `evaluate_seed_vote_only_flat` for the half that does
+#: discriminate.
 #:
 #: NOTE how this differs from `TAMPER_REJECT_LINES`, and why the two phases cannot share a
 #: constant: phase 3's nibble flip breaks the G1 point so the certificate fails DECODE and never
@@ -375,7 +393,7 @@ def evaluate_vote_only_flat(before, after, scrape_ok: bool, window=CF_VOTE_ONLY_
     `scrape_ok`; an unread endpoint fails.
 
     The bound is `after == before`, not `after <= before + slack`: the counter is monotone and the
-    claim is that the epoch left vote-only admission, which is exact. At ~1 blk/s an unpinned
+    claim is that the epoch left vote-only admission, which is exact. At ~1 blk/s a KEYLESS
     follower takes one admission per second, so a single increment across the window is a follower
     still verifying blind."""
     if not scrape_ok:
@@ -387,15 +405,19 @@ def evaluate_vote_only_flat(before, after, scrape_ok: bool, window=CF_VOTE_ONLY_
         return True, ""
     return False, (f"{CF_VOTE_ONLY_FAMILY} grew {b} -> {a} over {window}s AFTER the follower "
                    "obtained PK_epoch — certificates are still being admitted with the seed slot "
-                   "unchecked (the pin did not reach the cert-inlet)")
+                   "unchecked, so the key never reached the store the inlet reads "
+                   "(cert_inlet.rs `ensure_key` -> `BeaconKeys`, which is where the epoch's "
+                   "oracle looks it up)")
 
 
 def _counter(raw) -> int:
     """A metrics-rs counter sample as an int; an absent family (`""`) is a real ZERO.
 
-    Absent-means-zero is safe HERE and only here, because `evaluate_vote_only_flat` has already
-    established that the scrape itself answered. The same coercion applied to an unread endpoint
-    is what makes a flat-counter verdict pass forever."""
+    Absent-means-zero is safe only where the caller has ALREADY established that the scrape itself
+    answered — `evaluate_vote_only_flat`, `evaluate_seed_vote_only_flat` and
+    `evaluate_entered_keyless` each ask that question first, and `vote_only_admissions` says so in
+    its own docstring. The same coercion applied to an unread endpoint is what makes a
+    flat-counter verdict pass forever."""
     text = str(raw or "").strip()
     if not text:
         return 0
@@ -482,8 +504,8 @@ def evaluate_seed_tamper_refused_every_cert(before, after, want=MIN_SEED_REJECTS
     So the refusals are the measurement. A GROWING count over the window proves two things at
     once that the height proved neither of: certificates were still being delivered, and every one
     of them was refused. Paired with `evaluate_seed_vote_only_flat` below — which proves the
-    refusals came from a PINNED scheme rather than from a silent downgrade — it is the whole
-    property."""
+    follower HELD `PK_epoch` while it refused them, the half the refusal count itself no longer
+    carries — it is the whole property."""
     b, a = int(before), int(after)
     if a - b >= int(want):
         return True, ""
@@ -495,14 +517,26 @@ def evaluate_seed_tamper_refused_every_cert(before, after, want=MIN_SEED_REJECTS
 
 
 def evaluate_seed_vote_only_flat(before, after, scrape_ok: bool, window=SEED_OBSERVE_S):
-    """…and the refusals came from a PINNED scheme.
+    """…and the follower held `PK_epoch` while it refused them.
 
-    THIS IS THE HALF THAT MAKES THE REFUSAL COUNT MEAN THE RIGHT THING. `verify_certificate`
-    early-returns `true` after the quorum arm when the scheme carries no `cert_seed_pin`, so an
-    UNPINNED follower ACCEPTS a cleared slot — it would refuse nothing, and every acceptance would
-    tick `dpos_cert_vote_only_admissions_total`. A flat counter across the window is therefore the
-    statement "nothing was admitted with the seed slot unchecked", which is precisely what the
-    refusals have to be paired with.
+    THIS IS THE HALF THAT MAKES THE REFUSAL COUNT MEAN THE RIGHT THING, AND AFTER FLU-1202 IT IS
+    THE *ONLY* HALF THAT DOES. Read the two halves separately:
+
+      * the REFUSALS say the seed arm is reachable and enforced. They no longer say the follower
+        holds `PK_epoch`. `verify_certificate` reaches `match certificate.seed { .. None => false }`
+        on any scheme carrying an ORACLE, and `Randomness::oracle_for` attaches one for every
+        beacon-active epoch whether or not the key resolves (`beacon/follower.rs:355-367` —
+        `mandatory_at(epoch).then(..)`). A KEYLESS follower refuses a cleared slot too.
+      * this COUNTER is what separates the two states. `cert_inlet.rs:815` increments it under
+        `!key_known` and does so BEFORE `finalization.verify` runs (`:818`), so a keyless follower
+        ticks it once per cleared certificate ON ITS WAY to refusing that certificate. Flat across
+        the window therefore means "this follower resolved the epoch key for every certificate it
+        was handed" — which is exactly what makes the refusals attributable to `PK_epoch` rather
+        than to the mere presence of an oracle.
+
+    So the pair still discriminates keyed from keyless; the member that carries the discrimination
+    moved from the refusals to this counter. Before FLU-1202 the refusals carried it, because the
+    `None => false` arm was reachable only on a scheme holding `cert_seed_pin`.
 
     Three-valued for the same reason `evaluate_vote_only_flat` is: an empty scrape is an unread
     endpoint, not a zero, and must never satisfy this."""
@@ -514,8 +548,169 @@ def evaluate_seed_vote_only_flat(before, after, scrape_ok: bool, window=SEED_OBS
     if a == b:
         return True, ""
     return False, (f"{CF_VOTE_ONLY_FAMILY} grew {b} -> {a} over {window}s — cert-follower-seed "
-                   "admitted certificates with the seed slot UNCHECKED, so its scheme lost the "
-                   "pin and the cleared slots rode a valid quorum")
+                   "processed cleared-seed certificates while holding NO key for their epoch, so "
+                   "its refusals are the beacon-active-epoch arm firing and not a PK_epoch check; "
+                   "the keyed/keyless distinction this phase claims is unwitnessed")
+
+
+# ══ smoke-cert-keyless (FLU-1202) ═════════════════════════════════════════════════════
+
+#: `epoch_manager.rs:1221` — the ONE line the below-frontier repair sweep writes when it is what
+#: made a late key take effect. It is the whole observable surface of `repair_keyless_schemes`:
+#: the sweep's only remaining effect is this `hint_finalized` re-drive, and this `info!` is
+#: emitted immediately before it, once per epoch it re-drives (`hinted` is the sweep's own memo).
+#:
+#: THE CASE ASSERTS ITS ORDER, NOT ITS ABSENCE, and the first live run is why. An earlier version
+#: of `smoke-cert-keyless` required this line never to appear; it went red on a run whose product
+#: behaviour was entirely correct, and the failure was the assertion's:
+#:
+#:   11:52:56  cert-follow: PK_epoch obtained and verified against committee[epoch] epoch=2
+#:   11:53:28  below-frontier epoch obtained a late beacon key … epoch=Epoch(2) boundary=159
+#:
+#: The sweep walks the registered epochs BELOW the frontier whose key store no longer misses, so
+#: an epoch whose key landed and which then crossed below the frontier is exactly what it is built
+#: to find. It fires here as a CONSEQUENCE of the event under test, thirty-two seconds after the
+#: node had already adopted the key by its own artifact fetch. Requiring its absence was requiring
+#: that a routine downstream effect of the tested event not happen.
+#:
+#: What still has to be ruled out is the sweep DELIVERING the key — that is the reading which
+#: would mean the case measured the repair path instead of the oracle — and the ordering is what
+#: rules it out. See `evaluate_repair_did_not_deliver_the_key`.
+#:
+#: THE FOLLOWER DOES RUN THE SWEEP. A `--cert-follow` node has an `EpochManager` (`dpos.rs`'s
+#: `launch_follower` registers `EpochEngineMetrics` and derives its own boundary delivery so
+#: `soft_enter` registers the current epoch), so this reading is a live discriminator on this node
+#: and not a structural tautology. `crates/node/src/cert_follow/mod.rs` says "NO DkgActor, NO
+#: beacon oracle, NO signer" and says nothing about the epoch manager; reading that list as
+#: exhaustive is what produced the wrong assertion above.
+#:
+#: Read as a whole-log grep with a `\`-continuation in the Rust source, so the constant stops at
+#: the em-dash: the rendered message continues "— re-driving its finalization fetch", but matching
+#: only the stable prefix keeps a re-wrap of that string from silencing the reading.
+KEYLESS_REPAIR_LINE = "below-frontier epoch obtained a late beacon key"
+
+#: How long the follower gets to take its FIRST keyless admission, and the poll cadence.
+#:
+#: Generous rather than tight, and it is NOT the assertion: this poll is waiting for the
+#: precondition to become OBSERVABLE, not measuring how fast it does. The event itself is
+#: structural — a follower obtains `PK_epoch` only through `observe_cert`, which fires on a
+#: certificate that already went through the inlet, so the first certificate of a beacon-active
+#: epoch is admitted keyless by construction and the counter is at >= 1 before the key can land.
+#: The budget covers the bring-up tail: the follower has to boot, connect its upstream, and reach
+#: a beacon-active epoch's certificate.
+KEYLESS_ADMISSION_S = 120
+KEYLESS_ADMISSION_POLL_S = 3
+
+
+def vote_only_admissions(text: str) -> int:
+    """`CF_VOTE_ONLY_FAMILY` off a WHOLE reth scrape, as an int. Absent family ⇒ 0.
+
+    SUBSTRING (`nodes.metric_val`) and not `gauge_val`'s anchored bare-name match, for the reason
+    `SmokeCtx.overlay_el_metrics_text` records: metrics-rs renders a labelled counter as
+    `name{...}` and the anchored matcher looks at the whole first field.
+
+    Absent-means-zero is safe only because every caller establishes separately that the SCRAPE
+    answered — `evaluate_entered_keyless` and `evaluate_vote_only_flat` both take the emptiness of
+    the whole text as their first question. Used on its own, this coerces an unread endpoint to a
+    reading, which is the exact shape §B of the smoke audit is about."""
+    return _counter(nodes.metric_val(text or "", CF_VOTE_ONLY_FAMILY, ""))
+
+
+def evaluate_entered_keyless(text: str, service: str):
+    """THE PRECONDITION OF `smoke-cert-keyless`, and the reason the case is not vacuous.
+
+    Everything the case concludes afterwards — the key landed, admissions went flat, no repair
+    path ran — is satisfied just as well by a node that held the epoch key from its first
+    certificate and never spent a moment keyless. Such a node proves nothing about FLU-1202: the
+    behaviour under test is what happens to an ALREADY-BUILT scheme when its epoch's key shows up
+    later, and a node that was never keyless never had one.
+
+    `dpos_cert_vote_only_admissions_total >= 1` is the witness, and it is exact rather than
+    circumstantial. `cert_inlet.rs:815` increments it under `!key_known && mandatory_at(epoch)`,
+    where `key_known` is the answer of `ensure_key(epoch, Local)` for THIS certificate's epoch —
+    so a non-zero count is the node's own statement that it processed a certificate of a
+    beacon-active epoch for which it could not resolve a key. The counter is monotone, so WHEN it
+    is read does not matter; what it says about the past is fixed at the moment of the increment.
+
+    An UNREAD scrape FAILS rather than reading as zero. Here the two are opposite verdicts of the
+    same shape as `evaluate_artifact_adopted_counter`'s: a real zero means "this node was never
+    keyless — the case tested nothing", an empty scrape means "nothing was measured", and only the
+    first is a statement about the product.
+
+    Returns the count third, printed by the case: it is the SIZE of the keyless window, which is
+    the one number a reader wants when the flatness assertion below goes red."""
+    if not (text or "").strip():
+        return False, (f"{service}'s reth metrics endpoint did not answer — "
+                       f"{CF_VOTE_ONLY_FAMILY} was never read, so nothing establishes that this "
+                       "node ever entered a beacon-active epoch without its key (is `--metrics` "
+                       "set on the follower?)"), 0
+    n = vote_only_admissions(text)
+    if n < 1:
+        return False, (f"{service} answered on the reth recorder but {CF_VOTE_ONLY_FAMILY} is 0 — "
+                       "it never took a single admission without the epoch key, so the KEYLESS "
+                       "WINDOW this case exists to observe never happened and everything below "
+                       "would pass on a node that held the key all along"), 0
+    return True, "", n
+
+
+def evaluate_repair_did_not_deliver_the_key(logs: str, service: str,
+                                            marker=KEYLESS_REPAIR_LINE, control=CF_KEY_LINE):
+    """…and the late key came from this node's OWN artifact fetch, not from the repair sweep.
+
+    `repair_keyless_schemes` is what survives of the machinery FLU-1202 deleted. It patches
+    nothing any more — a scheme reads its epoch key live through its oracle — but it still walks
+    the registered below-frontier epochs whose key store misses, calls `ensure_key` on them, and
+    re-drives their finalization fetch. Two of those steps could in principle be what made this
+    case's certificates start verifying, so the sweep has to be ruled out.
+
+    IT IS RULED OUT BY ORDER, NOT BY ABSENCE. See `KEYLESS_REPAIR_LINE` for the live run that
+    settled this: the sweep fires for an epoch whose key has ALREADY landed and which has since
+    dropped below the frontier, which is precisely the epoch this case creates. Demanding silence
+    demanded that a downstream consequence of the tested event not occur, and reds a correct node.
+
+    So the question this asks is the answerable one: did this node say it had adopted `PK_epoch`
+    BEFORE the sweep said a word? If it did, the sweep cannot have been the delivery mechanism —
+    the key was in the store, from the follower's own `fetch_and_verify`, before the sweep looked.
+    If the sweep spoke first, the two roads are indistinguishable from the log and the case must
+    not claim the oracle's.
+
+    NO SWEEP LINE AT ALL IS A PASS and is reported as such. It is the cleanest outcome, it is what
+    happens whenever the epoch stays at or above the frontier for the whole case, and requiring
+    the line to be present would make the verdict depend on where the chain's boundary fell.
+
+    CONSERVATIVE ON EPOCH. The first sweep line of ANY epoch is compared against the adoption, not
+    just one for the adopted epoch — a sweep for an unrelated epoch that preceded the adoption
+    still reds. That direction is deliberate: matching epochs across the two lines means matching
+    the sweep's registered epoch against the adoption's MINTING epoch, which coincide here and
+    need not in general, and a red that says "look at this" is the safe half of that trade.
+
+    A NEGATIVE, so it carries its positive control INSIDE the same text. An absence assertion over
+    an unreadable log is a grep that matches its own absence (`SmokeCtx.logs_required`), and here
+    the log is read through `overlay_logs`, which answers "" on a timeout or a daemon error. The
+    control is `CF_KEY_LINE`, already established present by `evaluate_key_obtained` — so the same
+    read that reports the ordering has to show the key line in it.
+
+    Returns a printable note third: the case tears its stack down and the container log goes with
+    it, so whether the sweep ran at all has to survive in the transcript."""
+    text = logs or ""
+    lines = text.splitlines()
+    key_at = next((i for i, line in enumerate(lines) if control in line), None)
+    if key_at is None:
+        return False, (f"{service}'s log does not carry {control!r} — the text this ordering is "
+                       "being read over is not the log that was just proved to contain the key "
+                       "adoption, so what it says about the repair sweep is not evidence (empty "
+                       "read? wrong service? truncated tail?)"), ""
+    sweep_at = next((i for i, line in enumerate(lines) if marker in line), None)
+    if sweep_at is None:
+        return True, "", "the repair sweep never touched this epoch"
+    if sweep_at < key_at:
+        return False, (f"{service} logged {marker!r} BEFORE it logged the key adoption — the "
+                       "below-frontier repair sweep reached this epoch first, so its `ensure_key` "
+                       "and its finalization re-drive cannot be told apart from the follower's "
+                       "own artifact fetch, and this run does not show a late key taking effect "
+                       f"through the oracle alone: {lines[sweep_at].strip()!r}"), ""
+    return True, "", (f"the repair sweep ran {sweep_at - key_at} log line(s) AFTER the adoption, "
+                      "so it followed the key rather than delivering it")
 
 
 # ══ smoke-cert-cascade ════════════════════════════════════════════════════════════════

@@ -22,11 +22,18 @@ notifications + getFinalization responses), which it rewrites according to
       untouched and still verifies. It is refused only by the arm that says a
       beacon-active epoch's certificate MUST carry a seed
       (`combined_scheme.rs`'s `verify_certificate`, the `None => false` arm),
-      and that arm is reachable ONLY on a scheme carrying `cert_seed_pin` —
-      i.e. only on a follower that has obtained `PK_epoch`. A vote-only
-      follower ACCEPTS this certificate. That is exactly what makes it the
-      test for FLU-1167 and what makes `whole-cert` useless for it: a decode
-      failure proves nothing about the seed check.
+      and that arm is reachable on any scheme that carries an ORACLE, i.e. on
+      any beacon-active epoch. A follower on a PRE-BEACON epoch accepts this
+      certificate. That is what makes it the test for the seed check and what
+      makes `whole-cert` useless for it: a decode failure proves nothing about
+      the seed check.
+
+      NARROWED BY FLU-1202. The arm used to be reachable only on a scheme
+      carrying `cert_seed_pin`, so a cleared slot separated a follower that had
+      obtained `PK_epoch` from one that had not. A scheme holds no key material
+      now, and `Randomness::oracle_for` attaches an oracle for every
+      beacon-active epoch regardless of whether the key resolves, so the
+      keyed/keyless distinction is observed by `smoke-cert-keyless` instead.
 
 ═══ THE WIRE ═══════════════════════════════════════════════════════════════════
 

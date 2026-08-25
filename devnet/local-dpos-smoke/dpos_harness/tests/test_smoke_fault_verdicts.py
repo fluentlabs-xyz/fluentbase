@@ -572,26 +572,62 @@ def test_the_two_roads_are_distinct_lines_and_the_share_line_is_no_longer_forbid
     assert len(set(markers)) == 2
 
 
-def test_the_pin_and_promote_greps_use_the_Debug_epoch_spelling():
-    """`EpochSchemeProvider::register` and `reconcile_roles` both take `epoch: Epoch` and render
-    it through `?epoch`, so the field is `epoch=Epoch(2)`. A grep anchored on the bare number
-    matches NOTHING — the same trap `verdicts_rotation.SHARE_GATE_EPOCH_FMT` records."""
-    pin = f"INFO {vf.PIN_LINE} " + vf.PIN_EPOCH_FMT.format(2)
+def test_the_promote_grep_uses_the_Debug_epoch_spelling():
+    """`reconcile_roles` takes `epoch: Epoch` and renders it through `?epoch`, so the field is
+    `epoch=Epoch(2)`. A grep anchored on the bare number matches NOTHING — the same trap
+    `verdicts_rotation.SHARE_GATE_EPOCH_FMT` records.
+
+    Its pin twin is gone with `PIN_LINE`; `epoch_debug_lines` lost the default marker that used to
+    name it, so a caller can no longer inherit another caller's grep by omission."""
     promote = f"INFO {vf.PROMOTE_LINE} " + vf.PIN_EPOCH_FMT.format(2)
-    assert vf.pin_upgrade_lines(pin, 2) == [pin]
     assert vf.promote_lines(promote, 2) == [promote]
-    assert vf.pin_upgrade_lines(f"INFO {vf.PIN_LINE} epoch=2", 2) == []
     assert vf.promote_lines(f"INFO {vf.PROMOTE_LINE} epoch=2", 2) == []
-    assert vf.pin_upgrade_lines(f"INFO {vf.PIN_LINE} " + vf.PIN_EPOCH_FMT.format(21), 2) == []
+    assert vf.promote_lines(f"INFO {vf.PROMOTE_LINE} " + vf.PIN_EPOCH_FMT.format(21), 2) == []
     assert vf.promote_lines("INFO something else " + vf.PIN_EPOCH_FMT.format(2), 2) == []
+    with pytest.raises(TypeError):
+        vf.epoch_debug_lines(promote)
 
 
-def test_the_epoch_scheme_must_leave_vote_only_admission():
-    """A separate consequence from the share, and not implied by it: a member can hold the share
-    and still verify certificates seed-blind if nothing re-registers the scheme with the pin."""
-    assert vf.evaluate_pin_upgraded(["x"], "validator-3")[0]
-    ok, msg = vf.evaluate_pin_upgraded([], "validator-3")
-    assert not ok and "still UNPINNED" in msg
+def test_the_epoch_must_leave_vote_only_admission_and_the_witness_is_now_a_COUNTER():
+    """A separate consequence from the share, and not implied by it: the share lets the member
+    SIGN a partial, this says it can CHECK an assembled seed — a different key on a different
+    path.
+
+    THE WITNESS MOVED, AND WHY MATTERS MORE THAN WHERE. FLU-1202 deleted the
+    `epoch scheme upgraded to PINNED` edge this leg grepped: a scheme holds no key material and
+    reads the store live, so nothing re-registers and there is no transition to log. What did NOT
+    change is the reason a POSITIVE edge was chosen over the absence of a vote-only admission —
+    "an absence is green whenever certificates merely stopped arriving" — so the replacement is a
+    counter that moves only when a seed was actually verified.
+
+    The keyless count is carried for the MESSAGE only. It is the size of the window the victim
+    spent seed-blind, which is what a reader wants when this goes red."""
+    assert vf.evaluate_seed_verify_started("12", "4", "validator-3")[0]
+    ok, msg = vf.evaluate_seed_verify_started("0", "40", "validator-3")
+    assert not ok and "verified ZERO seeds" in msg
+    # …and the window's size rides the failure message, because that is the number that separates
+    # "the key never arrived" from "it arrived and never reached the verification path".
+    assert "dpos_seed_verify_no_key_total=40" in msg
+
+
+def test_an_UNREAD_seed_verify_counter_is_not_a_zero_and_not_a_pass():
+    """`node_metric` answers "" for an absent family AND for a failed scrape, and this counter
+    lives on a devnet-only endpoint (`--dpos.metrics-port`) a mis-flagged container does not serve.
+    Reading "" as 0 fails the leg for a config reason wearing a product reason's message; reading
+    it as a pass passes the leg on a node nobody measured."""
+    ok, msg = vf.evaluate_seed_verify_started("", "", "validator-3")
+    assert not ok and "could not be read off" in msg and "unwitnessed" in msg
+    ok, msg = vf.evaluate_seed_verify_started("not-a-number", "4", "validator-3")
+    assert not ok and "not a number" in msg
+
+
+def test_the_seed_verify_families_read_the_DOUBLED_sample_name():
+    """A `prometheus-client` counter registered `X_total` renders its SAMPLE as `X_total_total`,
+    and `node_metric`'s matcher is ANCHORED — the registered name finds nothing, which is
+    indistinguishable from a counter that never moved. Same trap `ARTIFACT_PULL_OK_SAMPLE` pins."""
+    assert vf.SEED_VERIFY_OK_FAMILY == "dpos_seed_verify_ok_total"
+    assert vf.SEED_VERIFY_OK_SAMPLE == "dpos_seed_verify_ok_total_total"
+    assert vf.SEED_VERIFY_NO_KEY_SAMPLE == "dpos_seed_verify_no_key_total_total"
 
 
 def test_the_recovered_member_must_actually_be_SEATED():

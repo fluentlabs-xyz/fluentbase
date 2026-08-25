@@ -296,15 +296,25 @@ def test_the_refusal_count_replaced_a_HEIGHT_reading_that_measured_the_EL_transp
     assert vf.seed_reject_count("") == 0
 
 
-def test_the_refusals_must_come_from_a_PINNED_scheme_and_not_a_downgrade():
-    """`verify_certificate` early-returns `true` after the quorum arm when the scheme carries no
-    `cert_seed_pin`, so an UNPINNED follower ACCEPTS a cleared slot and ticks the vote-only
-    counter. Flat is the statement "nothing was admitted with the seed unchecked", which is what
-    the refusal count has to be paired with."""
+def test_the_refusals_must_come_from_a_KEYED_follower_and_the_COUNTER_is_what_says_so():
+    """AFTER FLU-1202 THIS COUNTER IS THE ONLY HALF OF PHASE 4b THAT SEPARATES KEYED FROM KEYLESS.
+
+    The refusal itself stopped discriminating: an oracle is attached for every beacon-active
+    epoch whether or not its key resolves, so a keyless follower refuses a cleared slot too. But
+    the counter is incremented under `!key_known` and BEFORE `verify` runs, so that keyless
+    follower ticks it on its way to each refusal. Flat therefore means "keyed throughout the
+    window", which is what makes the refusals attributable to `PK_epoch`.
+
+    Pinned here because the case's prose is the only other place it is written down, and a
+    reviewer who re-anchors phase 4b on the refusals alone would delete the claim without
+    deleting the sentence."""
     assert vf.evaluate_seed_vote_only_flat("1", "1", True)[0]
     assert vf.evaluate_seed_vote_only_flat("", "", True)[0]
     ok, msg = vf.evaluate_seed_vote_only_flat("1", "9", True)
-    assert not ok and "grew 1 -> 9" in msg and "lost the pin" in msg
+    assert not ok and "grew 1 -> 9" in msg
+    # The message must name the STATE, not the outcome: those certificates WERE refused, and a
+    # message that said "admitted" would send the reader hunting a nonexistent acceptance.
+    assert "holding NO key for their epoch" in msg and "unwitnessed" in msg
     ok, msg = vf.evaluate_seed_vote_only_flat("", "", False)
     assert not ok and "did not answer" in msg
 
@@ -336,6 +346,112 @@ def test_the_post_arm_observation_window_is_a_budget_and_not_a_settle_time():
     nothing goes red. Pinned at the value the case was written against."""
     assert vf.SEED_OBSERVE_S == 45
     assert vf.CF_VOTE_ONLY_WINDOW_S == 30
+
+
+# ══ smoke-cert-keyless (FLU-1202) ══════════════════════════════════════════
+
+#: A reth scrape that ANSWERED and carries the family. The counter is a `metrics::counter!`, so
+#: metrics-rs renders it under its registered name with no `_total` doubling — the doubling in
+#: `nodes.counter_sample` belongs to the prometheus-client registry on :9100 and reading it here
+#: would find nothing forever.
+KEYLESS_SCRAPE = ("reth_network_peers 3\n"
+                  "dpos_cert_vote_only_admissions_total 7\n")
+
+
+def test_the_keyless_precondition_reads_the_RETH_family_name_undoubled():
+    """The two registries render the same kind of counter differently and the case reads one
+    family off each. A doubled name here matches nothing, `vote_only_admissions` answers 0, and
+    the precondition reports a genuinely keyless node as one that held the key all along."""
+    assert vf.vote_only_admissions(KEYLESS_SCRAPE) == 7
+    assert vf.vote_only_admissions("dpos_cert_vote_only_admissions_total_total 7\n") == 7, \
+        "substring, so the doubled form still parses — but the UNDOUBLED one must too"
+    assert vf.vote_only_admissions("reth_network_peers 3\n") == 0
+    assert vf.vote_only_admissions("") == 0
+    assert vf.vote_only_admissions(None) == 0
+
+
+def test_the_keyless_window_must_have_HAPPENED_before_anything_is_concluded():
+    """THE POINT OF THE CASE, driven both ways.
+
+    A node that held the epoch key from its first certificate satisfies every other reading in
+    `assert_cert_keyless` — the key line is there, the counter is flat, no repair line — and
+    proves nothing about FLU-1202, whose whole subject is what happens to an ALREADY-BUILT scheme
+    when its key shows up later. Zero admissions is that node, and it must be a FAILURE."""
+    ok, msg, n = vf.evaluate_entered_keyless(KEYLESS_SCRAPE, vf.CF_SERVICE)
+    assert ok and msg == "" and n == 7
+    ok, msg, n = vf.evaluate_entered_keyless("reth_network_peers 3\n", vf.CF_SERVICE)
+    assert not ok and n == 0
+    assert "KEYLESS WINDOW" in msg and "held the key all along" in msg
+
+
+def test_an_UNREAD_scrape_is_not_a_zero_and_not_a_pass():
+    """The §B trap, in the direction that matters here. `""` is an absent family OR a dead
+    endpoint; one says "this node was never keyless" (a real, reportable failure of the setup)
+    and the other says nothing was measured. They get different messages because they send the
+    reader to different places — a missing `--metrics` is not a chain that keyed too early."""
+    ok, msg, n = vf.evaluate_entered_keyless("", vf.CF_SERVICE)
+    assert not ok and n == 0 and "did not answer" in msg
+    assert "`--metrics`" in msg
+    unread = vf.evaluate_entered_keyless("", vf.CF_SERVICE)[1]
+    early = vf.evaluate_entered_keyless("reth_network_peers 3\n", vf.CF_SERVICE)[1]
+    assert unread != early
+
+
+def test_the_repair_sweep_must_not_have_DELIVERED_the_key():
+    """ORDER, NOT ABSENCE — and the first live run of `smoke-cert-keyless` is why.
+
+    The sweep walks below-frontier epochs whose key store no longer misses, so an epoch whose key
+    landed and which then dropped below the frontier is exactly what it is built to find. Live it
+    spoke 32 s AFTER the adoption, on a node behaving correctly, and the absence assertion this
+    replaced went red on it. What still has to be ruled out is the sweep DELIVERING the key, and
+    only the ordering can rule that out."""
+    key = f"INFO {vf.CF_KEY_LINE} epoch=2"
+    sweep = f"INFO {vf.KEYLESS_REPAIR_LINE} — re-driving its finalization fetch epoch=Epoch(2)"
+    ok, msg, note = vf.evaluate_repair_did_not_deliver_the_key(
+        "\n".join([key, "INFO cert-inlet: ingested h=41", sweep]), vf.CF_SERVICE)
+    assert ok and msg == "" and "AFTER the adoption" in note
+    # The sweep first: the two roads to the key are indistinguishable and the case may not pick.
+    ok, msg, note = vf.evaluate_repair_did_not_deliver_the_key(
+        "\n".join([sweep, key]), vf.CF_SERVICE)
+    assert not ok and note == ""
+    assert "BEFORE it logged the key adoption" in msg and "cannot be told apart" in msg
+
+
+def test_no_sweep_line_at_all_is_the_CLEANEST_pass_and_says_so():
+    """Requiring the line to be PRESENT would make the verdict depend on where the chain's epoch
+    boundary happened to fall relative to the case's window — a timing fact, not a product one."""
+    ok, msg, note = vf.evaluate_repair_did_not_deliver_the_key(
+        f"INFO {vf.CF_KEY_LINE} epoch=2\n", vf.CF_SERVICE)
+    assert ok and msg == "" and "never touched this epoch" in note
+
+
+def test_the_repair_ordering_carries_its_positive_control_in_the_same_text():
+    """An ordering read over an unreadable log orders nothing, and `overlay_logs` answers "" on a
+    timeout or a daemon error. The control is the key line the previous phase already proved
+    present: the SAME read has to show it."""
+    ok, msg, note = vf.evaluate_repair_did_not_deliver_the_key("", vf.CF_SERVICE)
+    assert not ok and note == "" and "not evidence" in msg
+    ok, msg, _ = vf.evaluate_repair_did_not_deliver_the_key(
+        "INFO cert-inlet: ingested h=41\n", vf.CF_SERVICE)
+    assert not ok and vf.CF_KEY_LINE in msg
+
+
+def test_the_repair_marker_stops_at_the_em_dash_the_rust_source_wraps_on():
+    """`epoch_manager.rs` writes the message across a `\\`-continuation, so the rendered text is
+    one line but the literal in the source is two. Matching the stable prefix keeps a re-wrap from
+    turning the tripwire into a permanent pass; matching the whole sentence would not survive one.
+    """
+    assert vf.KEYLESS_REPAIR_LINE == "below-frontier epoch obtained a late beacon key"
+    assert "re-driving" not in vf.KEYLESS_REPAIR_LINE
+
+
+def test_the_keyless_precondition_budget_is_a_wait_and_not_the_assertion():
+    """Unlike `TAMPER_OBSERVE_S` and `CF_VOTE_ONLY_WINDOW_S`, this budget bounds how long the
+    harness waits for an event that is structural — shortening it can only make the case flaky,
+    never quietly weaker. Pinned so the distinction stays visible next to two constants where the
+    opposite is true."""
+    assert vf.KEYLESS_ADMISSION_S >= vf.CF_VOTE_ONLY_WINDOW_S
+    assert 0 < vf.KEYLESS_ADMISSION_POLL_S < vf.KEYLESS_ADMISSION_S
 
 
 # ══ smoke-cert-cascade ═════════════════════════════════════════════════════

@@ -45,7 +45,6 @@ _DRY_RECOVERED_LOG = "\n".join((
     f"INFO {vf.ACTOR_STARTED_LINE} epocher=(dry)",
     f"INFO {vf.CEREMONY_STARTED_LINE} epoch=2",
     f"INFO {vf.SHARE_LINE} epoch=2 height=257",
-    f"INFO {vf.PIN_LINE} " + vf.PIN_EPOCH_FMT.format(2),
     f"INFO {vf.PROMOTE_LINE} " + vf.PIN_EPOCH_FMT.format(2),
 ))
 
@@ -615,7 +614,7 @@ def assert_vrf_dkg_live_heal(ctx) -> None:
     # The reconstruction is off the beacon's own height tick, so it lands a few seconds after the
     # catch-up rather than with it. ONE log read per iteration answers every grep below — they are
     # all questions about the same text (the `asserts_onchain.resumed` trade).
-    box = {"fresh": "", "heal": "", "road": None, "pin": [], "promote": [], "logs": ""}
+    box = {"fresh": "", "heal": "", "road": None, "promote": [], "logs": ""}
 
     def recovered():
         box["logs"] = ctx.logs_required(victim, case, "epoch-2 key recovery",
@@ -623,12 +622,11 @@ def assert_vrf_dkg_live_heal(ctx) -> None:
         box["fresh"] = vf.started_fresh_after_restart(box["logs"], epoch=2)
         box["heal"] = vf.heal_start_after_restart(box["logs"], epoch=2)
         box["road"] = vf.share_road(box["logs"], epoch=2)
-        box["pin"] = vf.pin_upgrade_lines(box["logs"], epoch=2)
         box["promote"] = vf.promote_lines(box["logs"], epoch=2)
         # EITHER setup witness ends the poll. Waiting on `fresh` alone spun the full
         # `DKG_HEAL_S` budget on every run that took the demote-heal road, where that line is
         # never written at all — see `vf.evaluate_victim_held_nothing`.
-        return all((box["fresh"] or box["heal"], box["road"], box["pin"], box["promote"]))
+        return all((box["fresh"] or box["heal"], box["road"], box["promote"]))
 
     ctx.poll(recovered, vf.DKG_HEAL_S, poll_s=vf.DKG_HEAL_POLL_S)
     # WHERE the chain was when the victim was seated. Read here and not later, because every read
@@ -655,12 +653,43 @@ def assert_vrf_dkg_live_heal(ctx) -> None:
         ctx.node_metric(victim, vf.ARTIFACT_PULL_OK_SAMPLE, dry_value="1"), victim), on_fail=dump)
     # …and the outcome, by EITHER road (see `vf.SHARE_ROADS`).
     ctx.check(case, *vf.evaluate_share_acquired(box["road"], victim, epoch=2), on_fail=dump)
-    ctx.check(case, *vf.evaluate_pin_upgraded(box["pin"], victim, epoch=2), on_fail=dump)
+    # LEG 5, RE-ANCHORED BY FLU-1202 — a COUNTER now, where it was a log line.
+    #
+    # It used to grep `epoch scheme upgraded to PINNED` out of `EpochSchemeProvider::register`.
+    # That edge does not exist any more and the string has no emitter anywhere under `crates/`: a
+    # scheme holds no key material, it delegates to an oracle that reads the key store live, so a
+    # key landing after the scheme was built is picked up by the next certificate with nothing
+    # re-registered and nothing to patch. Left as it was, this leg could only ever fail.
+    #
+    # WHAT IS DELIBERATELY PRESERVED is the SHAPE of the witness, because the reason for it
+    # outlived the mechanism: a POSITIVE edge, not the absence of a vote-only admission. The old
+    # comment on `PIN_LINE` said why — "an absence is green whenever certificates merely stopped
+    # arriving" — and `dpos_seed_verify_ok_total` moves only when a seed slot was actually checked
+    # against `PK_epoch` and passed, so a quiet chain cannot produce it.
+    #
+    # TWO FAMILIES, ONE SCRAPE: the whole registry is read once, so the verified count and the
+    # keyless count are sampled at the same instant and cost one `docker compose exec` between
+    # them. The keyless one is printed, NEVER asserted, and ZERO IS A NORMAL READING — the first
+    # live run of this leg measured `ok=5, no_key=0`. It counts certificates that reached the
+    # victim's oracle WHILE it was keyless, not the wall-clock length of the keyless window, and
+    # on that run none did: the heal put `PK_2` in the store before any epoch-2 certificate
+    # arrived. Tightening this to `no_key > 0` would red a correct node. See
+    # `verdicts_fault.evaluate_seed_verify_started` for the full reading — this leg witnesses the
+    # KEYED STATE, not the keyless->keyed transition, which is `smoke-cert-keyless`'s subject.
+    seed_metrics = ctx.node_metrics_text(
+        victim, dry_value=f"{vf.SEED_VERIFY_OK_SAMPLE} 12\n{vf.SEED_VERIFY_NO_KEY_SAMPLE} 4\n")
+    verify_ok = nodes.gauge_val(seed_metrics, vf.SEED_VERIFY_OK_SAMPLE)
+    verify_no_key = nodes.gauge_val(seed_metrics, vf.SEED_VERIFY_NO_KEY_SAMPLE)
+    ctx.check(case, *vf.evaluate_seed_verify_started(verify_ok, verify_no_key, victim, epoch=2),
+              on_fail=dump)
     ctx.check(case, *vf.evaluate_promoted(box["promote"], victim, epoch=2), on_fail=dump)
     _say(ctx, f"smoke-vrf-dkg-live-heal: {victim} came back with NO epoch-2 journal, pulled the "
               "epoch's agreed artifact, rebuilt its share from the other members' sealed dealer "
-              f"logs via {box['road'][1]}, left vote-only admission and was seated as a signer:")
-    for line in [box["fresh"] or box["heal"], box["road"][0], *box["pin"], *box["promote"]]:
+              f"logs via {box['road'][1]}, and now VERIFIES epoch-2 seeds against PK_2 "
+              f"({vf.SEED_VERIFY_OK_FAMILY}={verify_ok} after "
+              f"{vf.SEED_VERIFY_NO_KEY_FAMILY}={verify_no_key} keyless checks) — and was seated "
+              "as a signer:")
+    for line in [box["fresh"] or box["heal"], box["road"][0], *box["promote"]]:
         _say(ctx, f"    {line}")
 
     # 3) the chain is still live with the recovered member back in the quorum, and its epoch-2

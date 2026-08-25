@@ -2,7 +2,8 @@ SOLIDITY_CONTRACTS_DIR ?= ../../../solidity-contracts
 
 .PHONY: case-growth case-quorum case-seed-continuity clean down golden logs regen-contracts \
         smoke-all smoke-base smoke-base-dry-run smoke-byzantine \
-        smoke-cert-cascade smoke-cert-catchup smoke-cert-follow smoke-crash-survivor \
+        smoke-cert-cascade smoke-cert-catchup smoke-cert-follow smoke-cert-keyless \
+        smoke-crash-survivor \
         smoke-deferred smoke-epoch smoke-fault smoke-fault-dry-run smoke-follow-dry-run \
         smoke-full-restart smoke-liveness smoke-onchain-dry-run smoke-peers smoke-prod-dry-run \
         smoke-production-path smoke-rejump-signer smoke-sim smoke-sim-quick smoke-sim-ram \
@@ -103,6 +104,19 @@ smoke-full-restart:
 # are ~10-12, phase 4 adds two key waits, an arming round-trip and two observation windows).
 smoke-cert-follow:
 	@python3 -m dpos_harness case smoke-cert-follow $(ARGS)
+# FLU-1202's live gate, and the only case whose PRECONDITION is the point. A `--cert-follow`
+# node enters a beacon-active epoch with NO key (it can obtain PK_epoch only by fetching the
+# epoch's agreed artifact, and that fetch is triggered by a certificate that already went through
+# the inlet), so its first certificates are admitted on the multisig quorum ALONE. The case
+# refuses to conclude anything until it has read `dpos_cert_vote_only_admissions_total >= 1` off
+# the follower's reth recorder; then the key arrives and the counter must go FLAT over a window
+# in which v0 advances and the follower itself finalizes — the late key taking effect through the
+# scheme the node already had, with no `apply_pin`. The surviving below-frontier repair sweep is
+# ruled out by ORDER, not by absence: it fires for exactly this epoch (~30 s after the adoption,
+# live), so the case requires only that the node's own artifact fetch spoke first.
+# One honest follower, nothing poisoned. Moderate (~6-9 min); IS in run-all (`cli.py` SUITE).
+smoke-cert-keyless:
+	@python3 -m dpos_harness case smoke-cert-keyless $(ARGS)
 # Lean-follower serving + L1 trust root: MockRollup checkpoint align +
 # follower→follower cascade + bogus-checkpoint fail-closed reject.
 smoke-cert-cascade:
@@ -165,7 +179,10 @@ smoke-vrf-boundary:
 # ceremony and now obtains the epoch key ANYWAY — it pulls epoch 2's agreed artifact,
 # recomputes its share from the dealers' public reveals (the reveal-fallback path, whose
 # only coverage anywhere in the repo this is), leaves vote-only certificate admission, and
-# PRODUCES inside epoch 2. The chain-liveness half (finalizing on the n−f=3 survivors,
+# PRODUCES inside epoch 2. The vote-only-exit leg is a COUNTER since FLU-1202
+# (`dpos_seed_verify_ok_total` going 0 -> non-zero): the `epoch scheme upgraded to PINNED` log
+# edge it used to grep has no emitter any more, because a scheme holds no key material and reads
+# the key store live, so there is no pin transition left to log. The chain-liveness half (finalizing on the n−f=3 survivors,
 # byte-identical prev_randao) is still asserted; it is no longer the point. ONE victim and
 # never two: absentees must stay ≤ f, or every honest dealer withholds its whole log on
 # TooManyReveals and the ceremony fails outright — a different test. Tuned genesis

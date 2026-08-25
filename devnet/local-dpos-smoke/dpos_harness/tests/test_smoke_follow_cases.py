@@ -21,8 +21,8 @@ from __future__ import annotations
 
 import pytest
 
-from dpos_harness.cases.smoke import (asserts_follow, cert_cascade, cert_follow, driver,
-                                      tx_cascade, verdicts, verdicts_follow as vf)
+from dpos_harness.cases.smoke import (asserts_follow, cert_cascade, cert_follow, cert_keyless,
+                                      driver, tx_cascade, verdicts, verdicts_follow as vf)
 from dpos_harness.cases.smoke.driver import SmokeCtx, SmokeFailure
 from dpos_harness.core import nodes, rpc
 from dpos_harness.core.proc import Runner
@@ -822,6 +822,227 @@ def test_cert_follow_only_warns_when_the_follower_did_not_flush(monkeypatch, cap
                        **_cf_world(shutdown_flushed=lambda *a, **k: False))
     asserts_follow.assert_cert_follow(ctx)
     assert "(warning) cert-follower did not exit cleanly" in capsys.readouterr().out
+
+
+# ══ smoke-cert-keyless (FLU-1202) ══════════════════════════════════════════
+
+def _keyless_world(keyless=7, flat=True, key_line=True, repaired=None, ingesting=True, **over):
+    """The world `smoke-cert-keyless` is built to observe: a follower that came up inside a
+    beacon-active epoch with NO key, took `keyless` admissions on the multisig quorum alone, then
+    obtained `PK_epoch` and stopped taking them.
+
+    Every knob turns off exactly one of the case's claims, so each negative below is driven by a
+    single-field change rather than by a hand-built fixture that could differ in two ways."""
+    fin = iter([200, 240])
+    cf_head = [0x64]
+
+    def _cf_head():
+        if ingesting:
+            cf_head[0] += 0x1e
+        return f"{cf_head[0]:#x}|0xaa"
+
+    scrapes = {"n": 0}
+
+    def _el(svc, **k):
+        # The counter is MONOTONE and the case reads it three times: once for the precondition,
+        # then twice to bracket the window. `flat=False` makes the last read move, which is a
+        # follower still admitting certificates with the seed slot unchecked.
+        scrapes["n"] += 1
+        n = keyless if (flat or scrapes["n"] < 3) else keyless + 9
+        return f"reth_network_peers 3\n{vf.CF_VOTE_ONLY_FAMILY} {n}\n"
+
+    def _logs(*svcs, **k):
+        # `repaired` is THREE-valued because the sweep's mere presence is not the question — its
+        # position relative to the adoption is. "after" is the world the first live run was in.
+        sweep = f"INFO {vf.KEYLESS_REPAIR_LINE} — re-driving its finalization fetch epoch=Epoch(2)"
+        lines = []
+        if repaired == "before":
+            lines.append(sweep)
+        if key_line:
+            lines.append(f"INFO {vf.CF_KEY_LINE} epoch=2")
+        lines.append("INFO cert-inlet: ingested h=41")
+        if repaired == "after":
+            lines.append(sweep)
+        return "\n".join(lines)
+
+    world = dict(
+        baseline_height=lambda dry_value=0: 200,
+        finalized_dec=lambda dry_value=0: next(fin, 400),
+        overlay_check_node=lambda svc, dry_value="": _cf_head(),
+        overlay_el_metrics_text=_el,
+        overlay_node_metrics_text=lambda svc, **k: (
+            f"{nodes.counter_sample(vf.CF_ADOPTED_FAMILY)} 1\n"
+            f"{nodes.counter_sample(vf.CF_MISS_FAMILY)} 0\n"),
+        overlay_logs=_logs,
+        sleep=lambda _s: None,
+    )
+    world.update(over)
+    return world
+
+
+def test_cert_keyless_transcript_starts_ONE_follower_and_poisons_nothing():
+    """The whole case is one `up` on the shared overlay plus reads. It deliberately does NOT touch
+    `cert-mitm`, `cert-follower-tamper`, `cert-mitm-seed` or `cert-follower-seed`, which the same
+    overlay file defines — starting any of them would put a poisoned certificate stream on the
+    stack this case measures its own follower against."""
+    ov = asserts_follow.CERT_FOLLOW_OVERLAY
+    rc, r = _dry(cert_keyless)
+    assert rc == 0
+    assert _cmds(r) == [UP, STOP, _recreate(ov), _compose(ov, "up", "-d", "cert-follower"), DOWN]
+
+
+def test_cert_keyless_is_registered_and_reaches_its_own_assertion(monkeypatch):
+    """`case <name>` and `case list` read one registry, and the module has to be the one that runs
+    the body — a case wired to the wrong assertion passes every transcript test."""
+    from dpos_harness import cli
+    assert cli.CASES["smoke-cert-keyless"] == "smoke.cert_keyless"
+    assert "smoke-cert-keyless" in cli.SUITE, "a case outside the SUITE never runs"
+    seen = {}
+    monkeypatch.setattr(cert_keyless.driver, "run",
+                        lambda case, a, argv=None, **kw: seen.update(case=case, fns=list(a)) or 0)
+    cert_keyless.run_case([])
+    assert seen["case"] == "smoke-cert-keyless"
+    assert seen["fns"] == [asserts_follow.assert_cert_keyless]
+
+
+def test_cert_keyless_passes_on_the_world_it_exists_to_observe(monkeypatch, capsys):
+    ctx, _ = _live_ctx(monkeypatch, asserts_follow.CERT_FOLLOW_OVERLAY, **_keyless_world())
+    asserts_follow.assert_cert_keyless(ctx)
+    out = capsys.readouterr().out
+    assert "OK (phase 1 keyless entry)" in out and "7 admission(s)" in out
+    assert "OK (phase 2 late key)" in out
+    assert "OK (smoke-cert-keyless)" in out
+    # The final line has to carry the two numbers a reader needs when this case is the one that
+    # went red on a rerun: how big the keyless window was, and where the counter froze.
+    assert "entered a beacon-active epoch keyless" in out
+    assert f"{vf.CF_VOTE_ONLY_FAMILY}=7 -> 7" in out
+
+
+def test_cert_keyless_FAILS_ON_THE_PRECONDITION_when_the_key_was_there_all_along(monkeypatch):
+    """THE DELIBERATE BREAK, and the one negative this case exists for.
+
+    Give the follower its key before it ever admits a certificate — the counter never leaves 0 —
+    and every other reading still says yes: the key line is in the log, the counter is trivially
+    flat across the window, v0 advances, the follower finalizes, no repair line anywhere. A case
+    that only checked its CONCLUSION would go green here while having observed nothing at all,
+    because this is what the majority of nodes on a healthy chain look like.
+
+    So the failure must be the PRECONDITION and must name it. If this test ever starts failing on
+    a different message, the gate moved and the case became a tautology."""
+    ctx, _ = _live_ctx(monkeypatch, asserts_follow.CERT_FOLLOW_OVERLAY,
+                       **_keyless_world(keyless=0))
+    with pytest.raises(SmokeFailure) as e:
+        asserts_follow.assert_cert_keyless(ctx)
+    assert "KEYLESS WINDOW" in e.value.message
+    assert "held the key all along" in e.value.message
+
+
+def test_cert_keyless_FAILS_when_the_metrics_endpoint_never_ANSWERED(monkeypatch):
+    """The other way the precondition can not-say-yes, and it is a different failure with a
+    different fix: nothing was measured, rather than a node that keyed too early."""
+    ctx, _ = _live_ctx(monkeypatch, asserts_follow.CERT_FOLLOW_OVERLAY,
+                       **_keyless_world(overlay_el_metrics_text=lambda svc, **k: ""))
+    with pytest.raises(SmokeFailure) as e:
+        asserts_follow.assert_cert_keyless(ctx)
+    assert "did not answer" in e.value.message
+
+
+def test_cert_keyless_FAILS_when_the_key_never_ARRIVED(monkeypatch):
+    """The keyless window happened and never closed — which is FLU-1167's symptom, not FLU-1202's
+    property. The case must not report a permanently seed-blind follower as a pass."""
+    ctx, _ = _live_ctx(monkeypatch, asserts_follow.CERT_FOLLOW_OVERLAY,
+                       **_keyless_world(key_line=False))
+    with pytest.raises(SmokeFailure) as e:
+        asserts_follow.assert_cert_keyless(ctx)
+    assert "did not obtain PK_epoch" in e.value.message
+
+
+def test_cert_keyless_FAILS_when_admissions_KEEP_COMING_after_the_key(monkeypatch):
+    """The conclusion, driven false. A counter that still moves once the key is held means the
+    live key store read is not reaching the certificate path — exactly the staleness FLU-1202
+    deleted, come back."""
+    ctx, _ = _live_ctx(monkeypatch, asserts_follow.CERT_FOLLOW_OVERLAY,
+                       **_keyless_world(flat=False))
+    with pytest.raises(SmokeFailure) as e:
+        asserts_follow.assert_cert_keyless(ctx)
+    assert "still being admitted with the seed slot" in e.value.message
+
+
+def test_cert_keyless_FAILS_when_the_REPAIR_SWEEP_reached_the_epoch_FIRST(monkeypatch):
+    """`repair_keyless_schemes` survives FLU-1202 as a below-frontier `ensure_key` + finalization
+    re-drive, and if it reached the epoch before this node adopted its own key then the two roads
+    to that key are indistinguishable from the log.
+
+    A follower DOES run this sweep — `launch_follower` builds an `EpochManager` — so this is a
+    live discriminator and not a structural tautology. The first live run of the case proved it by
+    firing the line; what that run also proved is that the sweep FOLLOWS the adoption, which is
+    why the case asserts order and `repaired="before"` is the only failing world."""
+    ctx, _ = _live_ctx(monkeypatch, asserts_follow.CERT_FOLLOW_OVERLAY,
+                       **_keyless_world(repaired="before"))
+    with pytest.raises(SmokeFailure) as e:
+        asserts_follow.assert_cert_keyless(ctx)
+    assert "BEFORE it logged the key adoption" in e.value.message
+
+
+def test_cert_keyless_PASSES_when_the_sweep_merely_FOLLOWED_the_key(monkeypatch, capsys):
+    """THE WORLD THE FIRST LIVE RUN WAS IN, and the one an absence assertion called a failure.
+
+    The sweep reaches an epoch when that epoch drops below the frontier, which on this geometry
+    happens inside the case's own window — 32 s after the adoption, live. That is a consequence of
+    the tested event, not a competing explanation for it, and the case must say so in its output
+    rather than go red."""
+    ctx, _ = _live_ctx(monkeypatch, asserts_follow.CERT_FOLLOW_OVERLAY,
+                       **_keyless_world(repaired="after"))
+    asserts_follow.assert_cert_keyless(ctx)
+    out = capsys.readouterr().out
+    assert "OK (smoke-cert-keyless)" in out
+    assert "AFTER the adoption" in out and "rather than delivering it" in out
+
+
+def test_cert_keyless_FAILS_when_the_follower_stopped_INGESTING(monkeypatch):
+    """The control the flat counter cannot do without: a follower whose upstream died admits
+    nothing, so its counter is flat for a reason that has nothing to do with the seed check."""
+    ctx, _ = _live_ctx(monkeypatch, asserts_follow.CERT_FOLLOW_OVERLAY,
+                       **_keyless_world(ingesting=False))
+    with pytest.raises(SmokeFailure) as e:
+        asserts_follow.assert_cert_keyless(ctx)
+    assert "finalized nothing over the vote-only window" in e.value.message
+
+
+def test_cert_keyless_FAILS_when_v0_STALLED_during_the_window(monkeypatch):
+    """…and the chain-side half of the same control."""
+    ctx, _ = _live_ctx(monkeypatch, asserts_follow.CERT_FOLLOW_OVERLAY,
+                       **_keyless_world(finalized_dec=lambda dry_value=0: 200))
+    with pytest.raises(SmokeFailure) as e:
+        asserts_follow.assert_cert_keyless(ctx)
+    assert "v0 stalled" in e.value.message
+
+
+def test_cert_keyless_reads_the_repair_grep_AFTER_the_observation_window(monkeypatch):
+    """ORDER, and it is load-bearing. The sweep's re-drive can land at any point up to the last
+    reading the case takes, so a grep issued at key-arrival time would be silent about the whole
+    interval the flatness verdict covers. The body therefore reads the log a SECOND time, after
+    the sleep."""
+    seq = _seq(_dry(cert_keyless)[1])
+    sleep = _idx(seq, f"{vf.CF_VOTE_ONLY_WINDOW_S}s")
+    logs = [i for i, s in enumerate(seq) if s.startswith("overlay_logs(cert-follower")]
+    assert len(logs) == 2, "one read for the key gate, one for the repair absence"
+    assert logs[0] < sleep < logs[1]
+
+
+def test_cert_keyless_brackets_the_window_with_two_scrapes_and_two_producer_reads():
+    """The flatness verdict is a DELTA and both controls are deltas too, so the sleep has to sit
+    strictly between each pair. A window whose ends were both sampled on the same side of the
+    sleep measures nothing and passes."""
+    seq = _seq(_dry(cert_keyless)[1])
+    sleep = _idx(seq, f"{vf.CF_VOTE_ONLY_WINDOW_S}s")
+    scrapes = [i for i, s in enumerate(seq) if s.startswith("overlay_el_metrics_text(")]
+    fins = [i for i, s in enumerate(seq) if s == "finalized_dec()"]
+    heads = [i for i, s in enumerate(seq) if s.startswith("overlay_check_node(cert-follower")]
+    # Three scrapes: the precondition poll, then the window's two ends.
+    assert len(scrapes) == 3 and scrapes[0] < scrapes[1] < sleep < scrapes[2]
+    assert len(fins) == 2 and fins[0] < sleep < fins[1]
+    assert len(heads) == 2 and heads[0] < sleep < heads[1]
 
 
 # ══ the wiring: cert-cascade ═══════════════════════════════════════════════
