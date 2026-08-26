@@ -2,7 +2,7 @@
 set -euo pipefail
 
 FLUENTSCAN_API_BASE_URL="${FLUENTSCAN_API_BASE_URL:-https://api.fluentscan.xyz}"
-GENESIS_VERSION="${GENESIS_VERSION:-v1.2.0}"
+GENESIS_VERSION="${GENESIS_VERSION:-v1.4.0}"
 RUST_TOOLCHAIN="${RUST_TOOLCHAIN:-1.93.1}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DRY_RUN="${DRY_RUN:-false}"
@@ -84,6 +84,7 @@ PY
   fi
 
   require_command curl
+  curl -fsS "${FLUENTSCAN_API_BASE_URL}/api/v2/smart-contracts/${address}" >/dev/null
   curl -fsS "${FLUENTSCAN_API_BASE_URL}/api/v2/smart-contracts/${address}/verification/via/fluent" \
     -H 'content-type: application/json' \
     --data-raw "$payload"
