@@ -132,10 +132,13 @@ where
     }
 
     pub fn grow_checked<S: StorageAPI>(&self, sdk: &mut S) -> Result<T::Accessor, ExitCode> {
-        let current_len = self.len(sdk);
+        let current_len = self.len_checked(sdk)?;
 
-        // Update length
-        let new_len = current_len + 1;
+        // Update length. Contracts build with `overflow-checks = false`, so the increment is
+        // checked explicitly rather than relying on a debug-only panic.
+        let new_len = current_len
+            .checked_add(1)
+            .ok_or(ExitCode::IntegerOverflow)?;
         let mut len_bytes = [0u8; 32];
         len_bytes[24..32].copy_from_slice(&new_len.to_be_bytes());
         sdk.sstore(self.base_slot, B256::from(len_bytes))?;
@@ -154,7 +157,7 @@ where
         &self,
         sdk: &mut S,
     ) -> Result<Option<T::Accessor>, ExitCode> {
-        let current_len = self.len(sdk);
+        let current_len = self.len_checked(sdk)?;
         if current_len == 0 {
             return Ok(None);
         }
@@ -380,6 +383,67 @@ mod tests {
         assert_addresses_monotonic(&StorageVec::<StorageArray<StorageU256, 7>>::new(
             U256::from(405),
         ));
+    }
+
+    /// A storage backend whose reads always fail, mirroring the `MissingStorageSlot` a system
+    /// runtime returns for a slot the executor did not preload.
+    #[derive(Default)]
+    struct UnreadableStorage;
+
+    impl StorageAPI for UnreadableStorage {
+        fn write_storage(&mut self, _slot: U256, _value: U256) -> crate::SyscallResult<()> {
+            crate::SyscallResult::new((), 0, 0, ExitCode::Ok)
+        }
+
+        fn storage(&self, _slot: &U256) -> crate::SyscallResult<U256> {
+            crate::SyscallResult::new(U256::ZERO, 0, 0, ExitCode::MissingStorageSlot)
+        }
+    }
+
+    /// The `_checked` family must surface a failing read to the caller. It used to route through
+    /// the panicking `len`, so an unreadable length slot aborted the frame instead of returning.
+    #[test]
+    fn test_checked_growth_propagates_storage_read_failure() {
+        let vec = StorageVec::<StorageU256>::new(U256::from(600));
+        let mut sdk = UnreadableStorage;
+
+        assert_eq!(
+            vec.grow_checked(&mut sdk).err(),
+            Some(ExitCode::MissingStorageSlot)
+        );
+        assert_eq!(
+            vec.push_checked(&mut sdk, U256::from(1)),
+            Err(ExitCode::MissingStorageSlot)
+        );
+    }
+
+    #[test]
+    fn test_checked_shrink_propagates_storage_read_failure() {
+        let vec = StorageVec::<StorageU256>::new(U256::from(601));
+        let mut sdk = UnreadableStorage;
+
+        assert_eq!(
+            vec.shrink_checked(&mut sdk).err(),
+            Some(ExitCode::MissingStorageSlot)
+        );
+        assert_eq!(
+            vec.pop_checked(&mut sdk).err(),
+            Some(ExitCode::MissingStorageSlot)
+        );
+    }
+
+    /// A vector already at `u64::MAX` must not wrap its length back to zero and alias element
+    /// zero, which is what the unchecked increment did with `overflow-checks = false`.
+    #[test]
+    fn test_grow_checked_rejects_length_overflow() {
+        let mut sdk = MockStorage::new();
+        let vec = StorageVec::<StorageU256>::new(U256::from(602));
+        sdk.write_storage(U256::from(602), U256::from(u64::MAX));
+
+        assert_eq!(
+            vec.grow_checked(&mut sdk).err(),
+            Some(ExitCode::IntegerOverflow)
+        );
     }
 
     #[test]
