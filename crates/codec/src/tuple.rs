@@ -228,9 +228,9 @@ macro_rules! impl_encoder_for_tuple {
                             msg: "buf too small to take dynamic offset".to_string(),
                         }));
                     }
-                    &buf.chunk()[dynamic_offset..]
+                    checked_decode_slice_from(buf, dynamic_offset, "tuple body exceeds the readable chunk")?
                 } else {
-                    &buf.chunk()[offset..]
+                    checked_decode_slice_from(buf, offset, "tuple head exceeds the readable chunk")?
                 };
 
                 let mut _current_offset = 0;

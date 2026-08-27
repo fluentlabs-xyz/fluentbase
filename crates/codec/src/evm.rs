@@ -1,7 +1,10 @@
 use crate::{
     alloc::string::ToString,
     bytes_codec::{read_bytes, read_bytes_header, write_bytes},
-    encoder::{align_up, get_aligned_slice, is_big_endian, write_u32_aligned, Encoder},
+    encoder::{
+        align_up, checked_decode_slice, get_aligned_slice, is_big_endian, write_u32_aligned,
+        Encoder,
+    },
     error::{CodecError, DecodingError},
 };
 use alloc::string::String;
@@ -168,7 +171,13 @@ impl<const N: usize, B: ByteOrder, const ALIGN: usize, const IS_STATIC: bool>
                 msg: "Buffer too small to decode FixedBytes".to_string(),
             }));
         }
-        let data = buf.chunk()[offset..offset + N].to_vec();
+        let data = checked_decode_slice(
+            buf,
+            offset,
+            N,
+            "fixed-size value exceeds the readable chunk",
+        )?
+        .to_vec();
         Ok(FixedBytes::from_slice(&data))
     }
 
@@ -208,7 +217,13 @@ impl<const N: usize, B: ByteOrder, const ALIGN: usize, const IS_STATIC: bool>
                 msg: "Buffer too small to decode FixedBytes".to_string(),
             }));
         }
-        let data = buf.chunk()[offset..offset + N].to_vec();
+        let data = checked_decode_slice(
+            buf,
+            offset,
+            N,
+            "fixed-size value exceeds the readable chunk",
+        )?
+        .to_vec();
         Ok(FixedBytes::from_slice(&data))
     }
 
@@ -246,7 +261,13 @@ macro_rules! impl_evm_fixed {
                         msg: "Buffer too small to decode fixed bytes".to_string(),
                     }));
                 }
-                let data = buf.chunk()[offset..offset + size].to_vec();
+                let data = checked_decode_slice(
+                    buf,
+                    offset,
+                    size,
+                    "fixed-size value exceeds the readable chunk",
+                )?
+                .to_vec();
                 Ok(<$type>::from_slice(&data))
             }
 
@@ -291,7 +312,13 @@ macro_rules! impl_evm_fixed {
                         msg: "Buffer too small to decode fixed bytes".to_string(),
                     }));
                 }
-                let data = buf.chunk()[offset + 32 - size..offset + 32].to_vec();
+                let data = checked_decode_slice(
+                    buf,
+                    offset + 32 - size,
+                    size,
+                    "fixed-size value exceeds the readable chunk",
+                )?
+                .to_vec();
                 Ok(<$type>::from_slice(&data))
             }
 
@@ -347,7 +374,12 @@ impl<
             }));
         }
 
-        let chunk = &buf.chunk()[offset..offset + word_size];
+        let chunk = checked_decode_slice(
+            buf,
+            offset,
+            word_size,
+            "fixed-size value exceeds the readable chunk",
+        )?;
         let value_slice = &chunk[..Self::BYTES];
 
         let value = if is_big_endian::<B>() {
@@ -401,7 +433,12 @@ impl<
             }));
         }
 
-        let chunk = &buf.chunk()[offset..offset + 32];
+        let chunk = checked_decode_slice(
+            buf,
+            offset,
+            32,
+            "fixed-size value exceeds the readable chunk",
+        )?;
         let value_slice = &chunk[32 - Self::BYTES..];
 
         let value = if is_big_endian::<B>() {
@@ -456,7 +493,12 @@ impl<
             }));
         }
 
-        let chunk = &buf.chunk()[offset..offset + word_size];
+        let chunk = checked_decode_slice(
+            buf,
+            offset,
+            word_size,
+            "fixed-size value exceeds the readable chunk",
+        )?;
         let value_slice = &chunk[..Self::BYTES];
 
         let value = if is_big_endian::<B>() {
@@ -518,7 +560,12 @@ impl<
             }));
         }
 
-        let chunk = &buf.chunk()[offset..offset + 32];
+        let chunk = checked_decode_slice(
+            buf,
+            offset,
+            32,
+            "fixed-size value exceeds the readable chunk",
+        )?;
         let value_slice = &chunk[32 - Self::BYTES..];
 
         let value = if is_big_endian::<B>() {

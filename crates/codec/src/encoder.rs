@@ -252,11 +252,28 @@ pub fn read_u32_aligned<B: ByteOrder, const ALIGN: usize>(
         ));
     }
 
-    if is_big_endian::<B>() {
-        Ok(B::read_u32(&buf.chunk()[end_offset - 4..end_offset]))
+    // The check above bounds the read against `remaining()`, but the word is read out of
+    // `chunk()`, which is only the *current* contiguous segment. For a segmented `Buf` such as
+    // `Chain` or a partially consumed reader, `chunk().len() < remaining()`, so the check can
+    // pass on a range the chunk does not hold. Slice through the checked helper so that case
+    // returns `BufferTooSmall` rather than panicking on an out-of-range index.
+    let word = if is_big_endian::<B>() {
+        checked_decode_slice(
+            buf,
+            end_offset - 4,
+            4,
+            "aligned u32 spans beyond the readable chunk",
+        )?
     } else {
-        Ok(B::read_u32(&buf.chunk()[offset..offset + 4]))
-    }
+        checked_decode_slice(
+            buf,
+            offset,
+            4,
+            "aligned u32 spans beyond the readable chunk",
+        )?
+    };
+
+    Ok(B::read_u32(word))
 }
 
 /// Returns a contiguous range from a decoder buffer without allowing attacker-controlled offsets

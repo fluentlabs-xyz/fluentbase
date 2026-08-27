@@ -618,3 +618,54 @@ fn test_map_wasm_nested() {
     let decoded = CompactABI::<HashMap<u32, HashMap<u32, u32>>>::decode(&encoded, 0).unwrap();
     assert_eq!(decoded, test_value, "Round-trip encoding/decoding failed");
 }
+
+/// Decoding must stay bounded when the input is a valid but *segmented* `Buf`.
+///
+/// The decoders check the requested range against `Buf::remaining()` and then read out of
+/// `Buf::chunk()`, which only exposes the current contiguous segment. For a `Chain` (or any
+/// partially consumed reader) `chunk().len() < remaining()`, so the check can pass on a range
+/// the chunk does not hold. That used to index out of range and panic; it must return a
+/// decoding error instead.
+#[cfg(test)]
+mod segmented_buf {
+    use crate::{
+        encoder::{read_u32_aligned, Encoder},
+        error::{CodecError, DecodingError},
+    };
+    use alloy_primitives::U256;
+    use byteorder::{BigEndian, LittleEndian};
+    use bytes::{Buf, Bytes};
+
+    /// Two 8-byte segments: `remaining() == 16` while `chunk().len() == 8`.
+    fn segmented() -> impl Buf {
+        Bytes::from_static(&[0u8; 8]).chain(Bytes::from_static(&[1, 0, 0, 0, 0, 0, 0, 0]))
+    }
+
+    #[test]
+    fn read_u32_aligned_reports_a_short_chunk_instead_of_panicking() {
+        let buf = segmented();
+        assert!(buf.chunk().len() < buf.remaining(), "buf must be segmented");
+
+        let error = read_u32_aligned::<LittleEndian, 4>(&buf, 8)
+            .expect_err("a word beyond the current chunk must not be read");
+        assert!(matches!(
+            error,
+            CodecError::Decoding(DecodingError::BufferTooSmall { .. })
+        ));
+
+        // A word fully inside the first chunk still decodes.
+        assert_eq!(read_u32_aligned::<LittleEndian, 4>(&buf, 0).unwrap(), 0);
+    }
+
+    #[test]
+    fn fixed_size_decode_reports_a_short_chunk_instead_of_panicking() {
+        let buf = segmented();
+
+        let error = <U256 as Encoder<BigEndian, 32, true, false>>::decode(&buf, 0)
+            .expect_err("a 32-byte word cannot come from an 8-byte chunk");
+        assert!(matches!(
+            error,
+            CodecError::Decoding(DecodingError::BufferTooSmall { .. })
+        ));
+    }
+}

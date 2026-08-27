@@ -1,8 +1,8 @@
 use crate::{
     alloc::string::ToString,
     encoder::{
-        align_up, checked_decode_slice, get_aligned_indices, get_aligned_slice, is_big_endian,
-        Encoder,
+        align_up, checked_decode_slice, checked_decode_slice_from, get_aligned_indices,
+        get_aligned_slice, is_big_endian, Encoder,
     },
     error::{CodecError, DecodingError},
 };
@@ -233,14 +233,26 @@ where
             }));
         }
 
-        let chunk = &buf.chunk()[offset..];
-        let option_flag = if is_big_endian::<B>() {
-            chunk[aligned_header - 1]
+        let flag_index = if is_big_endian::<B>() {
+            aligned_header - 1
         } else {
-            chunk[0]
+            0
         };
+        let option_flag = checked_decode_slice(
+            buf,
+            offset,
+            aligned_header,
+            "option flag exceeds the readable chunk",
+        )?[flag_index];
 
-        let chunk = &buf.chunk()[offset + ALIGN..];
+        let payload_offset = offset
+            .checked_add(ALIGN)
+            .ok_or(CodecError::Decoding(DecodingError::Overflow))?;
+        let chunk = checked_decode_slice_from(
+            buf,
+            payload_offset,
+            "option body exceeds the readable chunk",
+        )?;
 
         if option_flag != 0 {
             let inner_value = T::decode(&chunk, 0)?;
@@ -262,14 +274,22 @@ where
             }));
         }
 
-        let chunk = &buf.chunk()[offset..];
-        let option_flag = if is_big_endian::<B>() {
-            chunk[ALIGN - 1]
-        } else {
-            chunk[0]
-        };
+        let flag_index = if is_big_endian::<B>() { ALIGN - 1 } else { 0 };
+        let option_flag = checked_decode_slice(
+            buf,
+            offset,
+            aligned_header,
+            "option flag exceeds the readable chunk",
+        )?[flag_index];
 
-        let chunk = &buf.chunk()[offset + ALIGN..];
+        let payload_offset = offset
+            .checked_add(ALIGN)
+            .ok_or(CodecError::Decoding(DecodingError::Overflow))?;
+        let chunk = checked_decode_slice_from(
+            buf,
+            payload_offset,
+            "option body exceeds the readable chunk",
+        )?;
 
         if option_flag != 0 {
             let (_, inner_size) = T::partial_decode(&chunk, 0)?;
