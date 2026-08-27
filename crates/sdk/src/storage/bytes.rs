@@ -64,9 +64,20 @@ impl StorageBytes {
         }
     }
 
-    /// Get byte array length.
+    /// Get byte array length, reporting an unreadable or malformed slot as empty.
+    ///
+    /// A failed read is indistinguishable from genuinely empty storage here. Prefer
+    /// [`Self::len_checked`] wherever the caller can act on the difference: a system runtime
+    /// returns `MissingStorageSlot` for a slot the executor did not preload, and collapsing
+    /// that into `0` lets a contract take its "no data stored" branch and commit state on
+    /// the strength of a slot it never actually read.
     pub fn len<S: StorageAPI>(&self, sdk: &S) -> usize {
-        self.read_metadata(sdk).map(|v| v.0).unwrap_or(0)
+        self.len_checked(sdk).unwrap_or(0)
+    }
+
+    /// Get byte array length, preserving the failure of an unreadable or malformed slot.
+    pub fn len_checked<S: StorageAPI>(&self, sdk: &S) -> Result<usize, ExitCode> {
+        self.read_metadata(sdk).map(|(len, _)| len)
     }
 
     /// Load entire byte array.
@@ -246,9 +257,16 @@ impl StorageString {
         self.as_bytes().store(sdk, value.as_bytes())
     }
 
-    /// Get string length in bytes.
+    /// Get string length in bytes, reporting an unreadable slot as empty.
+    ///
+    /// See [`StorageBytes::len`] for why [`Self::len_checked`] is usually the one you want.
     pub fn len<S: StorageAPI>(&self, sdk: &S) -> usize {
         self.as_bytes().len(sdk)
+    }
+
+    /// Get string length in bytes, preserving the failure of an unreadable slot.
+    pub fn len_checked<S: StorageAPI>(&self, sdk: &S) -> Result<usize, ExitCode> {
+        self.as_bytes().len_checked(sdk)
     }
 
     /// Clear string.
@@ -293,6 +311,74 @@ impl StorageLayout for StorageString {
 mod tests {
     use super::*;
     use crate::storage::mock::MockStorage;
+
+    /// A storage backend whose reads always fail, mirroring the `MissingStorageSlot` a system
+    /// runtime returns for a slot the executor did not preload.
+    #[derive(Default)]
+    struct UnreadableStorage;
+
+    impl StorageAPI for UnreadableStorage {
+        fn write_storage(&mut self, _slot: U256, _value: U256) -> crate::SyscallResult<()> {
+            crate::SyscallResult::new((), 0, 0, ExitCode::Ok)
+        }
+
+        fn storage(&self, _slot: &U256) -> crate::SyscallResult<U256> {
+            crate::SyscallResult::new(U256::ZERO, 0, 0, ExitCode::MissingStorageSlot)
+        }
+    }
+
+    /// An unreadable slot must be distinguishable from empty storage. `len` cannot express the
+    /// difference, which is why `len_checked` exists: a contract branching on `len(..) == 0`
+    /// would otherwise take its "no data stored" path on a slot it never actually read.
+    #[test]
+    fn unreadable_slot_is_distinguishable_from_empty() {
+        let bytes = StorageBytes::new(U256::from(700));
+        let sdk = UnreadableStorage;
+
+        assert_eq!(bytes.len_checked(&sdk), Err(ExitCode::MissingStorageSlot));
+        assert_eq!(bytes.len(&sdk), 0, "lossy accessor still reports empty");
+
+        // Genuinely empty storage reports zero through the checked accessor too, so callers can
+        // rely on `Ok(0)` meaning empty rather than unavailable.
+        let empty_sdk = MockStorage::new();
+        assert_eq!(bytes.len_checked(&empty_sdk), Ok(0));
+    }
+
+    /// Malformed metadata is a decode failure, not a length of zero.
+    #[test]
+    fn malformed_metadata_is_reported_by_len_checked() {
+        let slot = U256::from(701);
+        let bytes = StorageBytes::new(slot);
+        let mut sdk = MockStorage::new();
+
+        // Even metadata is short form and can encode at most 31 bytes.
+        sdk.storage.insert(slot, U256::from(64));
+        assert_eq!(
+            bytes.len_checked(&sdk),
+            Err(ExitCode::InputOutputOutOfBounds)
+        );
+        assert_eq!(bytes.len(&sdk), 0);
+
+        // A valid U256 length that does not fit in host usize must not wrap or become zero.
+        sdk.storage.insert(slot, U256::MAX);
+        assert_eq!(
+            bytes.len_checked(&sdk),
+            Err(ExitCode::InputOutputOutOfBounds)
+        );
+    }
+
+    #[test]
+    fn string_len_checked_propagates_read_failure() {
+        let string = StorageString::new(U256::from(702));
+        let sdk = UnreadableStorage;
+
+        assert_eq!(string.len_checked(&sdk), Err(ExitCode::MissingStorageSlot));
+        assert_eq!(string.len(&sdk), 0);
+
+        let mut ok_sdk = MockStorage::new();
+        string.set_checked(&mut ok_sdk, "hello").unwrap();
+        assert_eq!(string.len_checked(&ok_sdk), Ok(5));
+    }
 
     #[test]
     fn test_bytes_basic_operations() {
