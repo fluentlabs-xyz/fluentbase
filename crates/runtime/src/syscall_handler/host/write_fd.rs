@@ -24,6 +24,21 @@ use sp1_curves::{
     BigUint, Integer, One,
 };
 
+type WriteFdHook = fn(&[u8]) -> Result<Vec<u8>, ExitCode>;
+
+fn write_fd_hook(fd: u32) -> Option<WriteFdHook> {
+    match fd {
+        FD_ECRECOVER_HOOK => Some(hook_ecrecover),
+        FD_ED_DECOMPRESS => Some(hook_ed_decompress),
+        FD_RSA_MUL_MOD => Some(hook_rsa_mul_mod),
+        FD_BLS12_381_SQRT => Some(bls::hook_bls12_381_sqrt),
+        FD_BLS12_381_INVERSE => Some(bls::hook_bls12_381_inverse),
+        FD_FP_SQRT => Some(fp_ops::hook_fp_sqrt),
+        FD_FP_INV => Some(fp_ops::hook_fp_inverse),
+        _ => None,
+    }
+}
+
 pub fn syscall_write_fd_handler(
     caller: &mut impl StoreTr<RuntimeContext>,
     params: &[Value],
@@ -34,10 +49,13 @@ pub fn syscall_write_fd_handler(
         params[1].i32().unwrap() as u32,
         params[2].i32().unwrap() as u32,
     );
+    let Some(hook) = write_fd_hook(fd) else {
+        return Ok(());
+    };
     let mut input = vec![0u8; slice_len as usize];
     caller.memory_read(slice_ptr as usize, &mut input)?;
-    syscall_write_fd_impl(caller.data_mut(), fd, &input)
-        .map_err(|err| syscall_process_exit_code(caller, err))?;
+    let output = hook(&input).map_err(|err| syscall_process_exit_code(caller, err))?;
+    caller.data_mut().execution_result.return_data = output;
     Ok(())
 }
 
@@ -46,16 +64,10 @@ pub fn syscall_write_fd_impl(
     fd: u32,
     input: &[u8],
 ) -> Result<(), ExitCode> {
-    let output = match fd {
-        FD_ECRECOVER_HOOK => hook_ecrecover(input),
-        FD_ED_DECOMPRESS => hook_ed_decompress(input),
-        FD_RSA_MUL_MOD => hook_rsa_mul_mod(input),
-        FD_BLS12_381_SQRT => bls::hook_bls12_381_sqrt(input),
-        FD_BLS12_381_INVERSE => bls::hook_bls12_381_inverse(input),
-        FD_FP_SQRT => fp_ops::hook_fp_sqrt(input),
-        FD_FP_INV => fp_ops::hook_fp_inverse(input),
-        _ => return Ok(()),
-    }?;
+    let Some(hook) = write_fd_hook(fd) else {
+        return Ok(());
+    };
+    let output = hook(input)?;
     ctx.execution_result.return_data = output;
     Ok(())
 }
@@ -624,5 +636,22 @@ mod fp_ops {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rwasm::RwasmStore;
+
+    #[test]
+    fn unsupported_fd_does_not_read_guest_memory() {
+        let mut store = RwasmStore::<RuntimeContext>::default();
+        let params = [Value::I32(-1), Value::I32(0), Value::I32(1)];
+
+        assert_eq!(
+            syscall_write_fd_handler(&mut store, &params, &mut []),
+            Ok(())
+        );
     }
 }
