@@ -111,7 +111,12 @@ const _: () = assert_unique_u32([
     ERR_PAUSABLE_EXPECTED_PAUSE,
 ]);
 
-const _: () = assert_unique_u32([
+/// Every selector the universal token dispatches.
+///
+/// Adding a selector here without also giving it a storage-prefetch expectation fails
+/// `prefetch_matches_handler_reads`, which is what keeps the executor's preloaded slot set in
+/// step with what the handlers actually read.
+pub const ERC20_SELECTORS: [u32; 20] = [
     SIG_ERC20_SYMBOL,
     SIG_ERC20_NAME,
     SIG_ERC20_DECIMALS,
@@ -132,4 +137,6 @@ const _: () = assert_unique_u32([
     SIG_ERC20_NONCES,
     SIG_ERC20_DOMAIN_SEPARATOR,
     SIG_TOKEN2022,
-]);
+];
+
+const _: () = assert_unique_u32(ERC20_SELECTORS);

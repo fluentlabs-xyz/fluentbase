@@ -678,3 +678,267 @@ mod tests {
         }
     }
 }
+
+/// Guards the executor's storage-prefetch set against the slots the handlers actually read.
+///
+/// The system-runtime preloader charges a cold-SLOAD price per prefetched slot and refunds it
+/// for any slot the runtime did not touch (`crates/revm/src/executor.rs`). `Gas::erase_cost`
+/// gives the gas back but does not restore the journal's warm/cold marking, so a prefetched but
+/// unread slot ends up warm for the rest of the transaction without anyone having paid the cold
+/// price for it. Today no selector prefetches a slot its handler leaves unread, so there is no
+/// gap; this module exists so that stays true.
+///
+/// Each expectation is written out from the reads in
+/// `contracts/universal-token/src/lib.rs` rather than derived from the function under test, and
+/// `every_selector_has_a_prefetch_expectation` makes the table exhaustive over
+/// [`ERC20_SELECTORS`], so a new selector cannot be added without stating its prefetch set.
+#[cfg(test)]
+mod prefetch_guard {
+    use crate::{
+        storage::MapKey,
+        universal_token::{
+            command::{
+                AllowanceCommand, ApproveCommand, BalanceOfCommand, BurnCommand, MintCommand,
+                NoncesCommand, PermitCommand, TransferCommand, TransferFromCommand,
+                UniversalTokenCommand, WithdrawCommand,
+            },
+            consts::*,
+            storage::erc20_compute_main_storage_keys,
+        },
+    };
+    use alloc::{vec, vec::Vec};
+    use fluentbase_types::{address, Address, U256};
+
+    const CALLER: Address = address!("0000000000000000000000000000000000000001");
+    const OTHER: Address = address!("0000000000000000000000000000000000000002");
+
+    fn bare(selector: u32) -> Vec<u8> {
+        selector.to_be_bytes().to_vec()
+    }
+
+    fn encoded<C: UniversalTokenCommand>(command: &C) -> Vec<u8> {
+        let mut buffer = Vec::new();
+        command.encode_for_send(&mut buffer);
+        buffer
+    }
+
+    fn allowance_slot(owner: Address, spender: Address) -> U256 {
+        spender.compute_slot(owner.compute_slot(ALLOWANCE_STORAGE_SLOT))
+    }
+
+    fn balance_slot(owner: Address) -> U256 {
+        owner.compute_slot(BALANCE_STORAGE_SLOT)
+    }
+
+    /// `(selector, calldata, slots the handler reads)`.
+    ///
+    /// The comment on each row names the reads in the handler that justify the set.
+    fn expectations() -> Vec<(u32, Vec<u8>, Vec<U256>)> {
+        vec![
+            // Metadata getters read exactly their own slot.
+            (
+                SIG_ERC20_SYMBOL,
+                bare(SIG_ERC20_SYMBOL),
+                vec![SYMBOL_STORAGE_SLOT],
+            ),
+            (
+                SIG_ERC20_NAME,
+                bare(SIG_ERC20_NAME),
+                vec![NAME_STORAGE_SLOT],
+            ),
+            (
+                SIG_ERC20_DECIMALS,
+                bare(SIG_ERC20_DECIMALS),
+                vec![DECIMALS_STORAGE_SLOT],
+            ),
+            (
+                SIG_ERC20_TOTAL_SUPPLY,
+                bare(SIG_ERC20_TOTAL_SUPPLY),
+                vec![TOTAL_SUPPLY_STORAGE_SLOT],
+            ),
+            // `balance()` reads the caller's balance, `balanceOf` the argument's.
+            (
+                SIG_ERC20_BALANCE,
+                bare(SIG_ERC20_BALANCE),
+                vec![balance_slot(CALLER)],
+            ),
+            (
+                SIG_ERC20_BALANCE_OF,
+                encoded(&BalanceOfCommand { owner: OTHER }),
+                vec![balance_slot(OTHER)],
+            ),
+            // `transfer` is frozen-gated and moves between two balances.
+            (
+                SIG_ERC20_TRANSFER,
+                encoded(&TransferCommand {
+                    to: OTHER,
+                    amount: U256::from(1),
+                }),
+                vec![
+                    CONTRACT_FROZEN_STORAGE_SLOT,
+                    balance_slot(CALLER),
+                    balance_slot(OTHER),
+                ],
+            ),
+            // `transferFrom` additionally spends the (from, caller) allowance.
+            (
+                SIG_ERC20_TRANSFER_FROM,
+                encoded(&TransferFromCommand {
+                    from: OTHER,
+                    to: CALLER,
+                    amount: U256::from(1),
+                }),
+                vec![
+                    CONTRACT_FROZEN_STORAGE_SLOT,
+                    balance_slot(OTHER),
+                    balance_slot(CALLER),
+                    allowance_slot(OTHER, CALLER),
+                ],
+            ),
+            (
+                SIG_ERC20_ALLOWANCE,
+                encoded(&AllowanceCommand {
+                    owner: OTHER,
+                    spender: CALLER,
+                }),
+                vec![allowance_slot(OTHER, CALLER)],
+            ),
+            // `approve` is deliberately not frozen-gated, mirroring ERC20Pausable.
+            (
+                SIG_ERC20_APPROVE,
+                encoded(&ApproveCommand {
+                    spender: OTHER,
+                    amount: U256::from(1),
+                }),
+                vec![allowance_slot(CALLER, OTHER)],
+            ),
+            // `mint` / `burn` check the minter role, the freeze flag and total supply.
+            (
+                SIG_ERC20_MINT,
+                encoded(&MintCommand {
+                    to: OTHER,
+                    amount: U256::from(1),
+                }),
+                vec![
+                    CONTRACT_FROZEN_STORAGE_SLOT,
+                    balance_slot(OTHER),
+                    MINTER_STORAGE_SLOT,
+                    TOTAL_SUPPLY_STORAGE_SLOT,
+                ],
+            ),
+            (
+                SIG_ERC20_BURN,
+                encoded(&BurnCommand {
+                    from: OTHER,
+                    amount: U256::from(1),
+                }),
+                vec![
+                    CONTRACT_FROZEN_STORAGE_SLOT,
+                    balance_slot(OTHER),
+                    MINTER_STORAGE_SLOT,
+                    TOTAL_SUPPLY_STORAGE_SLOT,
+                ],
+            ),
+            (
+                SIG_ERC20_PAUSE,
+                bare(SIG_ERC20_PAUSE),
+                vec![CONTRACT_FROZEN_STORAGE_SLOT, PAUSER_STORAGE_SLOT],
+            ),
+            (
+                SIG_ERC20_UNPAUSE,
+                bare(SIG_ERC20_UNPAUSE),
+                vec![CONTRACT_FROZEN_STORAGE_SLOT, PAUSER_STORAGE_SLOT],
+            ),
+            // The wrapped extension gates on the wrapped flag before touching balances.
+            (
+                SIG_ERC20_DEPOSIT,
+                bare(SIG_ERC20_DEPOSIT),
+                vec![
+                    WRAPPED_STORAGE_SLOT,
+                    CONTRACT_FROZEN_STORAGE_SLOT,
+                    balance_slot(CALLER),
+                    TOTAL_SUPPLY_STORAGE_SLOT,
+                ],
+            ),
+            (
+                SIG_ERC20_WITHDRAW,
+                encoded(&WithdrawCommand {
+                    amount: U256::from(1),
+                }),
+                vec![
+                    WRAPPED_STORAGE_SLOT,
+                    CONTRACT_FROZEN_STORAGE_SLOT,
+                    balance_slot(CALLER),
+                    TOTAL_SUPPLY_STORAGE_SLOT,
+                ],
+            ),
+            // `permit` reads the nonce and the name (for the EIP-712 domain separator).
+            (
+                SIG_ERC20_PERMIT,
+                encoded(&PermitCommand {
+                    owner: OTHER,
+                    spender: CALLER,
+                    value: U256::from(1),
+                    deadline: U256::from(1),
+                    v: 27,
+                    r: U256::ZERO,
+                    s: U256::ZERO,
+                }),
+                vec![
+                    allowance_slot(OTHER, CALLER),
+                    OTHER.compute_slot(NONCES_STORAGE_SLOT),
+                    NAME_STORAGE_SLOT,
+                ],
+            ),
+            (
+                SIG_ERC20_NONCES,
+                encoded(&NoncesCommand { owner: OTHER }),
+                vec![OTHER.compute_slot(NONCES_STORAGE_SLOT)],
+            ),
+            (
+                SIG_ERC20_DOMAIN_SEPARATOR,
+                bare(SIG_ERC20_DOMAIN_SEPARATOR),
+                vec![NAME_STORAGE_SLOT],
+            ),
+            // `token2022()` reads no storage.
+            (SIG_TOKEN2022, bare(SIG_TOKEN2022), vec![]),
+        ]
+    }
+
+    /// A prefetched slot the handler never reads is refunded but stays warm, so the prefetch set
+    /// must not be wider than the handler's reads. A narrower set fails the call outright with
+    /// `MissingStorageSlot`, so it must not be narrower either: the two must match exactly.
+    #[test]
+    fn prefetch_matches_handler_reads() {
+        for (selector, calldata, expected) in expectations() {
+            let actual = erc20_compute_main_storage_keys(&calldata, &CALLER)
+                .unwrap_or_else(|| panic!("selector {selector:#010x} failed to compute keys"));
+
+            let mut actual_sorted = actual.clone();
+            actual_sorted.sort_unstable();
+            let mut expected_sorted = expected.clone();
+            expected_sorted.sort_unstable();
+
+            assert_eq!(
+                actual_sorted, expected_sorted,
+                "prefetch set for selector {selector:#010x} diverged from the handler's reads"
+            );
+        }
+    }
+
+    /// Adding a selector without stating its prefetch set must fail here rather than silently
+    /// prefetching nothing (or too much) in production.
+    #[test]
+    fn every_selector_has_a_prefetch_expectation() {
+        let mut covered: Vec<u32> = expectations().iter().map(|(sig, ..)| *sig).collect();
+        covered.sort_unstable();
+
+        let mut known = ERC20_SELECTORS.to_vec();
+        known.sort_unstable();
+
+        assert_eq!(
+            covered, known,
+            "every selector in ERC20_SELECTORS needs a prefetch expectation"
+        );
+    }
+}
