@@ -1,0 +1,83 @@
+name: Coverage
+
+on:
+  schedule:
+    # GitHub Actions schedules use UTC. Run every Monday at 03:00 UTC.
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  SCCACHE_GHA_ENABLED: "true"
+  RUSTC_WRAPPER: "sccache"
+  CARGO_INCREMENTAL: "0"
+  CC: clang
+  CXX: clang++
+
+jobs:
+  coverage:
+    name: Coverage
+    runs-on: self-hosted
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Install clang and build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang libclang-dev pkg-config
+
+      - name: Speed up git fetches
+        run: git config --global net.git-fetch-with-cli true
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
+        with:
+          toolchain: stable
+          components: llvm-tools-preview
+
+      - name: Install wasm32 target
+        run: rustup target list --installed | grep -q '^wasm32-unknown-unknown$' || rustup target add wasm32-unknown-unknown
+
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+
+      - name: Rust cache (registries + git)
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          cache-targets: false
+          cache-all-crates: true
+          cache-workspace-crates: true
+          cache-on-failure: true
+
+      - name: Prefetch deps (root)
+        run: cargo fetch --locked
+
+      - name: Install coverage tools
+        run: |
+          cargo install cargo-nextest@0.9.130 --locked
+          cargo install cargo-llvm-cov@0.8.4 --locked
+
+      - name: Generate code coverage
+        run: make coverage
+
+      - name: Upload to codecov.io
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage-root.lcov,./coverage-contracts.lcov,./coverage-examples-deps.lcov,./coverage-evm-e2e-deps.lcov
+          disable_search: true
+          fail_ci_if_error: true
+
+      - name: Archive code coverage results
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: code-coverage-report
+          path: coverage-*.lcov
