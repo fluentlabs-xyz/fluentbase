@@ -13,6 +13,9 @@
 extern crate alloc;
 extern crate core;
 
+#[cfg(test)]
+mod tests;
+
 use core::convert::AsRef;
 use fluentbase_evm::{
     bytecode::AnalyzedBytecode,
@@ -22,13 +25,13 @@ use fluentbase_evm::{
     types::{exit_code_from_instruction_result, InterruptionOutcome},
     EthVM, EthereumMetadata, ExecutionResult, InterpreterAction,
 };
-#[cfg(not(feature = "permissive-contract-size"))]
-use fluentbase_sdk::EVM_MAX_CODE_SIZE;
 use fluentbase_sdk::{
     crypto::crypto_keccak256, rwasm_core::N_MAX_RECURSION_DEPTH,
     system::RuntimeInterruptionOutcomeV1, Bytes, ExitCode, HashMap, SystemAPI, B256,
-    EVM_MAX_INITCODE_SIZE, FUEL_DENOM_RATE,
+    FUEL_DENOM_RATE,
 };
+#[cfg(not(feature = "permissive-contract-size"))]
+use fluentbase_sdk::{EVM_MAX_CODE_SIZE, EVM_MAX_INITCODE_SIZE};
 use spin::{Mutex, MutexGuard, Once};
 
 /// A saved EthVM context we store between calls
@@ -96,8 +99,18 @@ fn try_restore_interrupted_evm_context<'a, SDK: SystemAPI>(
     Some(eth_vm)
 }
 
+#[cfg(not(feature = "permissive-contract-size"))]
+const fn initcode_size_limit_exceeded(initcode_size: usize) -> bool {
+    initcode_size > EVM_MAX_INITCODE_SIZE
+}
+
+#[cfg(feature = "permissive-contract-size")]
+const fn initcode_size_limit_exceeded(_initcode_size: usize) -> bool {
+    false
+}
+
 /// Deploy entry for EVM contracts.
-/// Runs init bytecode, enforces EIP-3541 and EIP-170, charges CODEDEPOSIT gas,
+/// Runs init bytecode, enforces EIP-3860, EIP-3541, and EIP-170, charges CODEDEPOSIT gas,
 /// then commits the resulting runtime bytecode to metadata.
 pub fn deploy_entry<SDK: SystemAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     let mut cached_state = lock_evm_context();
@@ -105,7 +118,7 @@ pub fn deploy_entry<SDK: SystemAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
         None => {
             let evm_bytecode_init = sdk.bytes_input();
             // Don't let anyone bypass this check by wrapping EVM bytecode into WASM bytecode
-            if evm_bytecode_init.len() > EVM_MAX_INITCODE_SIZE {
+            if initcode_size_limit_exceeded(evm_bytecode_init.len()) {
                 return Err(ExitCode::CreateContractSizeLimit);
             }
             // Create new analyzed EVM bytecode

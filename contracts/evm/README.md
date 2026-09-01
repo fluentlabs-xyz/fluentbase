@@ -18,8 +18,8 @@ basic network rules relevant to deployment.
 
 ## Entrypoints
 
-- `deploy_entry`: executes init bytecode, enforces EIP-3541 (no 0xEF prefix) and EIP-170 (code size), charges
-  CODEDEPOSIT,
+- `deploy_entry`: executes init bytecode, enforces EIP-3860 (initcode size), EIP-3541 (no 0xEF prefix), and EIP-170
+  (code size), charges CODEDEPOSIT,
   then stores code hash (offset 0) and raw bytecode (offset 32) in metadata.
 - `main_entry`: loads analyzed bytecode from metadata, runs the interpreter with call data, settles fuel delta, and
   writes
@@ -35,6 +35,7 @@ Relevant functions in lib.rs:
 
 1) Deployment (deploy_entry)
     - Input: init bytecode (Bytes) from sdk.input().
+    - Validate: limit initcode to EVM_MAX_INITCODE_SIZE (EIP-3860).
     - Run EthVM once; the output is the runtime bytecode.
     - Validate: reject 0xEF prefix (EIP-3541) and limit size to EVM_MAX_CODE_SIZE (EIP-170).
     - Charge CODEDEPOSIT = len(runtime) * gas::CODEDEPOSIT.
@@ -64,3 +65,5 @@ Relevant functions in lib.rs:
 
 - The EVM specification and gas semantics are provided by fluentbase-evm (Prague by default). This crate only manages
   the bytecode lifecycle and host boundary.
+- The `permissive-contract-size` feature builds a testing runtime that skips the EIP-3860 initcode-size and EIP-170
+  deployed-code-size limits. The standard runtime keeps both checks enabled.
