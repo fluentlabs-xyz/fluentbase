@@ -99,14 +99,15 @@ fn try_restore_interrupted_evm_context<'a, SDK: SystemAPI>(
     Some(eth_vm)
 }
 
-#[cfg(not(feature = "permissive-contract-size"))]
-const fn initcode_size_limit_exceeded(initcode_size: usize) -> bool {
-    initcode_size > EVM_MAX_INITCODE_SIZE
-}
-
-#[cfg(feature = "permissive-contract-size")]
 const fn initcode_size_limit_exceeded(_initcode_size: usize) -> bool {
-    false
+    #[cfg(not(feature = "permissive-contract-size"))]
+    {
+        _initcode_size > EVM_MAX_INITCODE_SIZE
+    }
+    #[cfg(feature = "permissive-contract-size")]
+    {
+        false
+    }
 }
 
 /// Deploy entry for EVM contracts.
