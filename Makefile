@@ -75,7 +75,7 @@ coverage-root:
 	cargo llvm-cov nextest --manifest-path=./Cargo.toml --workspace --release \
 		--no-default-features --features std,wasmtime --no-fail-fast --locked --no-report \
 		--target "$(COVERAGE_TARGET)" --coverage-target-only
-	cargo llvm-cov report --manifest-path=./Cargo.toml --workspace --release \
+	cargo llvm-cov report --manifest-path=./Cargo.toml --release \
 		--target "$(COVERAGE_TARGET)" --coverage-target-only --lcov \
 		--output-path coverage-root.lcov \
 		--ignore-filename-regex "$(COVERAGE_IGNORE_FILENAME_REGEX)"
@@ -86,7 +86,7 @@ coverage-contracts:
 	cargo llvm-cov nextest --manifest-path=./contracts/Cargo.toml --workspace --release \
 		--no-default-features --features std --no-fail-fast --locked --no-report \
 		--target "$(COVERAGE_TARGET)" --coverage-target-only
-	cargo llvm-cov report --manifest-path=./contracts/Cargo.toml --workspace --release \
+	cargo llvm-cov report --manifest-path=./contracts/Cargo.toml --release \
 		--target "$(COVERAGE_TARGET)" --coverage-target-only --lcov \
 		--output-path coverage-contracts.lcov \
 		--ignore-filename-regex "$(COVERAGE_IGNORE_FILENAME_REGEX)"
@@ -98,7 +98,7 @@ coverage-examples-deps:
 		--no-default-features --features std --no-fail-fast --locked --no-report \
 		--dep-coverage "$(EXAMPLES_COVERAGE_DEPENDENCIES)" \
 		--target "$(COVERAGE_TARGET)" --coverage-target-only
-	cargo llvm-cov report --manifest-path=./examples/Cargo.toml --workspace --release \
+	cargo llvm-cov report --manifest-path=./examples/Cargo.toml --release \
 		--dep-coverage "$(EXAMPLES_COVERAGE_DEPENDENCIES)" \
 		--target "$(COVERAGE_TARGET)" --coverage-target-only --lcov \
 		--output-path coverage-examples-deps.lcov \
