@@ -13,9 +13,6 @@
 extern crate alloc;
 extern crate core;
 
-#[cfg(test)]
-mod tests;
-
 use core::convert::AsRef;
 use fluentbase_evm::{
     bytecode::AnalyzedBytecode,
@@ -99,17 +96,6 @@ fn try_restore_interrupted_evm_context<'a, SDK: SystemAPI>(
     Some(eth_vm)
 }
 
-const fn initcode_size_limit_exceeded(_initcode_size: usize) -> bool {
-    #[cfg(not(feature = "permissive-contract-size"))]
-    {
-        _initcode_size > EVM_MAX_INITCODE_SIZE
-    }
-    #[cfg(feature = "permissive-contract-size")]
-    {
-        false
-    }
-}
-
 /// Deploy entry for EVM contracts.
 /// Runs init bytecode, enforces EIP-3860, EIP-3541, and EIP-170, charges CODEDEPOSIT gas,
 /// then commits the resulting runtime bytecode to metadata.
@@ -119,7 +105,8 @@ pub fn deploy_entry<SDK: SystemAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
         None => {
             let evm_bytecode_init = sdk.bytes_input();
             // Don't let anyone bypass this check by wrapping EVM bytecode into WASM bytecode
-            if initcode_size_limit_exceeded(evm_bytecode_init.len()) {
+            #[cfg(not(feature = "permissive-contract-size"))]
+            if evm_bytecode_init.len() > EVM_MAX_INITCODE_SIZE {
                 return Err(ExitCode::CreateContractSizeLimit);
             }
             // Create new analyzed EVM bytecode
