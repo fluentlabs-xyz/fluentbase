@@ -22,13 +22,13 @@ use fluentbase_evm::{
     types::{exit_code_from_instruction_result, InterruptionOutcome},
     EthVM, EthereumMetadata, ExecutionResult, InterpreterAction,
 };
-#[cfg(not(feature = "permissive-contract-size"))]
-use fluentbase_sdk::EVM_MAX_CODE_SIZE;
 use fluentbase_sdk::{
     crypto::crypto_keccak256, rwasm_core::N_MAX_RECURSION_DEPTH,
     system::RuntimeInterruptionOutcomeV1, Bytes, ExitCode, HashMap, SystemAPI, B256,
-    EVM_MAX_INITCODE_SIZE, FUEL_DENOM_RATE,
+    FUEL_DENOM_RATE,
 };
+#[cfg(not(feature = "permissive-contract-size"))]
+use fluentbase_sdk::{EVM_MAX_CODE_SIZE, EVM_MAX_INITCODE_SIZE};
 use spin::{Mutex, MutexGuard, Once};
 
 /// A saved EthVM context we store between calls
@@ -97,7 +97,7 @@ fn try_restore_interrupted_evm_context<'a, SDK: SystemAPI>(
 }
 
 /// Deploy entry for EVM contracts.
-/// Runs init bytecode, enforces EIP-3541 and EIP-170, charges CODEDEPOSIT gas,
+/// Runs init bytecode, enforces EIP-3860, EIP-3541, and EIP-170, charges CODEDEPOSIT gas,
 /// then commits the resulting runtime bytecode to metadata.
 pub fn deploy_entry<SDK: SystemAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     let mut cached_state = lock_evm_context();
@@ -105,6 +105,7 @@ pub fn deploy_entry<SDK: SystemAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
         None => {
             let evm_bytecode_init = sdk.bytes_input();
             // Don't let anyone bypass this check by wrapping EVM bytecode into WASM bytecode
+            #[cfg(not(feature = "permissive-contract-size"))]
             if evm_bytecode_init.len() > EVM_MAX_INITCODE_SIZE {
                 return Err(ExitCode::CreateContractSizeLimit);
             }
