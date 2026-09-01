@@ -1,6 +1,11 @@
 ignore:
-  - "crates/build"  # build crate
-  - "crates/rwasm/e2e"  # rwasm e2e testing suite
-  - "e2e" # e2e tests for runtime
-  - "examples" # examples
-  - "revm/e2e" # revm e2e testing suite
+  # Test and benchmark code should collect hits without becoming part of the
+  # production coverage denominator.
+  - "**/tests/**"
+  - "**/benches/**"
+  - "**/src/tests.rs"
+  - "**/src/**/*_tests.rs"
+  - "crates/testing/**"
+  - "e2e/**"
+  - "evm-e2e/**"
+  - "examples/**"
