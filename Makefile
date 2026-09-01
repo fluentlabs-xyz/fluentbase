@@ -1,6 +1,10 @@
 all: check build
 
 CARGO_LOCKED_FLAGS ?= --locked
+COVERAGE_TARGET ?= $(shell rustc -vV | sed -n 's/^host: //p')
+COVERAGE_IGNORE_FILENAME_REGEX ?= (^|/)(tests?|benches?|examples?|e2e|evm-e2e)(/|$$)|(^|/)crates/testing(/|$$)|/(tests|.*_tests)\.rs$$
+EXAMPLES_COVERAGE_DEPENDENCIES ?= fluentbase-build,fluentbase-evm,fluentbase-sdk
+EVM_E2E_COVERAGE_DEPENDENCIES ?= fluentbase-genesis,fluentbase-revm,fluentbase-runtime,fluentbase-sdk
 
 .PHONY: check
 check:
@@ -58,6 +62,77 @@ test:
 	$(MAKE) run-e2e-tests TEST_FEATURES=std,wasmtime TEST_PROFILE=--release
 	# devnet/mainnet: rwasm case
 	$(MAKE) run-e2e-tests TEST_FEATURES=std TEST_PROFILE=--release
+
+.PHONY: coverage coverage-root coverage-contracts coverage-examples-deps coverage-evm-e2e-deps
+coverage: coverage-root coverage-contracts coverage-examples-deps coverage-evm-e2e-deps
+
+coverage-root:
+	@test -n "$(COVERAGE_TARGET)"
+	cargo llvm-cov clean --manifest-path=./Cargo.toml --workspace
+	cargo llvm-cov nextest --manifest-path=./Cargo.toml --workspace --release \
+		--no-default-features --features std --no-fail-fast --locked --no-report \
+		--target "$(COVERAGE_TARGET)" --coverage-target-only
+	cargo llvm-cov nextest --manifest-path=./Cargo.toml --workspace --release \
+		--no-default-features --features std,wasmtime --no-fail-fast --locked --no-report \
+		--target "$(COVERAGE_TARGET)" --coverage-target-only
+	cargo llvm-cov report --manifest-path=./Cargo.toml --workspace --release \
+		--target "$(COVERAGE_TARGET)" --coverage-target-only --lcov \
+		--output-path coverage-root.lcov \
+		--ignore-filename-regex "$(COVERAGE_IGNORE_FILENAME_REGEX)"
+
+coverage-contracts:
+	@test -n "$(COVERAGE_TARGET)"
+	cargo llvm-cov clean --manifest-path=./contracts/Cargo.toml --workspace
+	cargo llvm-cov nextest --manifest-path=./contracts/Cargo.toml --workspace --release \
+		--no-default-features --features std --no-fail-fast --locked --no-report \
+		--target "$(COVERAGE_TARGET)" --coverage-target-only
+	cargo llvm-cov report --manifest-path=./contracts/Cargo.toml --workspace --release \
+		--target "$(COVERAGE_TARGET)" --coverage-target-only --lcov \
+		--output-path coverage-contracts.lcov \
+		--ignore-filename-regex "$(COVERAGE_IGNORE_FILENAME_REGEX)"
+
+coverage-examples-deps:
+	@test -n "$(COVERAGE_TARGET)"
+	cargo llvm-cov clean --manifest-path=./examples/Cargo.toml --workspace
+	cargo llvm-cov nextest --manifest-path=./examples/Cargo.toml --workspace --release \
+		--no-default-features --features std --no-fail-fast --locked --no-report \
+		--dep-coverage "$(EXAMPLES_COVERAGE_DEPENDENCIES)" \
+		--target "$(COVERAGE_TARGET)" --coverage-target-only
+	cargo llvm-cov report --manifest-path=./examples/Cargo.toml --workspace --release \
+		--dep-coverage "$(EXAMPLES_COVERAGE_DEPENDENCIES)" \
+		--target "$(COVERAGE_TARGET)" --coverage-target-only --lcov \
+		--output-path coverage-examples-deps.lcov \
+		--ignore-filename-regex "$(COVERAGE_IGNORE_FILENAME_REGEX)"
+
+coverage-evm-e2e-deps:
+	@test -n "$(COVERAGE_TARGET)"
+	$(MAKE) -C evm-e2e sync_tests
+	cargo llvm-cov clean --manifest-path=./evm-e2e/Cargo.toml --workspace
+	cargo llvm-cov nextest --manifest-path=./evm-e2e/Cargo.toml --release \
+		--no-default-features --features std --package evm-e2e --bin evm-e2e \
+		--no-fail-fast --locked --no-report \
+		--dep-coverage "$(EVM_E2E_COVERAGE_DEPENDENCIES)" \
+		--target "$(COVERAGE_TARGET)" --coverage-target-only tests::good_coverage_tests
+	cargo llvm-cov nextest --manifest-path=./evm-e2e/Cargo.toml --release \
+		--no-default-features --features std,wasmtime --package evm-e2e --bin evm-e2e \
+		--no-fail-fast --locked --no-report \
+		--dep-coverage "$(EVM_E2E_COVERAGE_DEPENDENCIES)" \
+		--target "$(COVERAGE_TARGET)" --coverage-target-only tests::good_coverage_tests
+	cargo llvm-cov nextest --manifest-path=./evm-e2e/Cargo.toml --release \
+		--no-default-features --features std --package evm-e2e --bin evm-e2e \
+		--no-fail-fast --locked --no-report \
+		--dep-coverage "$(EVM_E2E_COVERAGE_DEPENDENCIES)" \
+		--target "$(COVERAGE_TARGET)" --coverage-target-only fixture
+	cargo llvm-cov nextest --manifest-path=./evm-e2e/Cargo.toml --release \
+		--no-default-features --features std,wasmtime --package evm-e2e --bin evm-e2e \
+		--no-fail-fast --locked --no-report \
+		--dep-coverage "$(EVM_E2E_COVERAGE_DEPENDENCIES)" \
+		--target "$(COVERAGE_TARGET)" --coverage-target-only fixture
+	cargo llvm-cov report --manifest-path=./evm-e2e/Cargo.toml --release \
+		--dep-coverage "$(EVM_E2E_COVERAGE_DEPENDENCIES)" \
+		--target "$(COVERAGE_TARGET)" --coverage-target-only --lcov \
+		--output-path coverage-evm-e2e-deps.lcov \
+		--ignore-filename-regex "$(COVERAGE_IGNORE_FILENAME_REGEX)"
 .PHONY: test-debug
 test-debug:
 	# devnet/mainnet: contracts unit tests

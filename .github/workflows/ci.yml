@@ -194,7 +194,10 @@ jobs:
   coverage:
     name: Coverage
     runs-on: self-hosted
-    if: github.event_name == 'workflow_dispatch'
+    timeout-minutes: 180
+    # Full coverage is expensive, so refresh the base branches automatically and keep
+    # pull requests on the existing parallel test matrix.
+    if: github.event_name != 'pull_request'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -213,6 +216,7 @@ jobs:
         uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
         with:
           toolchain: stable
+          components: llvm-tools-preview
 
       - name: Install wasm32 target
         run: rustup target list --installed | grep -q '^wasm32-unknown-unknown$' || rustup target add wasm32-unknown-unknown
@@ -231,25 +235,27 @@ jobs:
       - name: Prefetch deps (root)
         run: cargo fetch --locked
 
-      - name: Run cargo check (offline)
-        run: cargo check --locked
+      - name: Install coverage tools
+        run: |
+          cargo install cargo-nextest@0.9.130 --locked
+          cargo install cargo-llvm-cov@0.8.4 --locked
 
       - name: Generate code coverage
-        run: |
-          cargo install cargo-tarpaulin
-          cargo tarpaulin --verbose --timeout 120 --out xml
+        run: make coverage
 
       - name: Upload to codecov.io
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage-root.lcov,./coverage-contracts.lcov,./coverage-examples-deps.lcov,./coverage-evm-e2e-deps.lcov
+          disable_search: true
           fail_ci_if_error: true
 
       - name: Archive code coverage results
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: code-coverage-report
-          path: cobertura.xml
+          path: coverage-*.lcov
 
   rust-fmt-lint:
     name: Lint
