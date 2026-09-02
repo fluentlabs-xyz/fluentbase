@@ -6,6 +6,16 @@ COVERAGE_IGNORE_FILENAME_REGEX ?= (^|/)(tests?|benches?|examples?|e2e|evm-e2e)(/
 COVERAGE_IGNORE_DEPENDENCY_REGEX ?= (^|/)(\.?cargo/)?(registry|git)(/|$$)|(^|/)(\.?rustup/)?toolchains(/|$$)|(^|/)rustc(/|$$)|(^|/)target(/|$$)
 EXAMPLES_COVERAGE_DEPENDENCIES ?= fluentbase-crypto,fluentbase-evm,fluentbase-revm,fluentbase-runtime,fluentbase-sdk
 EVM_E2E_COVERAGE_DEPENDENCIES ?= fluentbase-crypto,fluentbase-evm,fluentbase-genesis,fluentbase-revm,fluentbase-runtime,fluentbase-sdk
+GUEST_COVERAGE_TARGET_DIR ?= $(abspath target/rwasm-guest-coverage)
+GUEST_COVERAGE_PROFILE_DIR ?= $(GUEST_COVERAGE_TARGET_DIR)/profiles
+GUEST_COVERAGE_OBJECT_DIR ?= $(GUEST_COVERAGE_TARGET_DIR)/objects
+GUEST_COVERAGE_WASM ?= $(GUEST_COVERAGE_TARGET_DIR)/wasm32-unknown-unknown/guest-coverage/fluentbase_contracts_evm.wasm
+GUEST_COVERAGE_CLANG ?= clang
+GUEST_COVERAGE_CLANG_TARGET ?=
+GUEST_COVERAGE_IGNORE_FILENAME_REGEX ?= (^|/)\.cargo/(registry|git)/
+RUST_LLVM_TOOLS_DIR ?= $(abspath $(shell rustc --print target-libdir)/../bin)
+LLVM_COV ?= $(RUST_LLVM_TOOLS_DIR)/llvm-cov
+LLVM_PROFDATA ?= $(RUST_LLVM_TOOLS_DIR)/llvm-profdata
 
 .PHONY: check
 check:
@@ -64,8 +74,8 @@ test:
 	# devnet/mainnet: rwasm case
 	$(MAKE) run-e2e-tests TEST_FEATURES=std TEST_PROFILE=--release
 
-.PHONY: coverage coverage-root coverage-contracts coverage-examples-deps coverage-evm-e2e-deps
-coverage: coverage-root coverage-contracts coverage-examples-deps coverage-evm-e2e-deps
+.PHONY: coverage coverage-root coverage-contracts coverage-examples-deps coverage-evm-e2e-deps coverage-rwasm-guest
+coverage: coverage-root coverage-contracts coverage-examples-deps coverage-evm-e2e-deps coverage-rwasm-guest
 
 coverage-root:
 	@test -n "$(COVERAGE_TARGET)"
@@ -138,6 +148,49 @@ coverage-evm-e2e-deps:
 		--no-default-ignore-filename-regex \
 		--ignore-filename-regex "$(COVERAGE_IGNORE_FILENAME_REGEX)|$(COVERAGE_IGNORE_DEPENDENCY_REGEX)"
 	@test -s coverage-evm-e2e-deps.lcov
+
+coverage-rwasm-guest:
+	@test -x "$(LLVM_COV)"
+	@test -x "$(LLVM_PROFDATA)"
+	@command -v "$(GUEST_COVERAGE_CLANG)" >/dev/null
+	@rust_llvm_major=$$(rustc -vV | sed -n 's/^LLVM version: \([0-9]*\).*/\1/p'); \
+		clang_llvm_major=$$("$(GUEST_COVERAGE_CLANG)" --version | sed -n '1s/[^0-9]*\([0-9][0-9]*\).*/\1/p'); \
+		test -n "$$rust_llvm_major"; \
+		test "$$rust_llvm_major" = "$$clang_llvm_major" || { \
+			echo "guest coverage requires clang $$rust_llvm_major.x; found $$clang_llvm_major.x" >&2; \
+			exit 1; \
+		}
+	RUSTC_WRAPPER= cargo clean --manifest-path=./contracts/Cargo.toml \
+		--target-dir "$(GUEST_COVERAGE_TARGET_DIR)"
+	RUSTC_WRAPPER= RUSTC_BOOTSTRAP=1 \
+		RUSTFLAGS='-C instrument-coverage -Zno-profiler-runtime --emit=llvm-ir -C link-arg=-zstack-size=1048576 -C target-feature=+bulk-memory,+tail-call --remap-path-prefix=$(CURDIR)=.' \
+		cargo build --manifest-path=./contracts/Cargo.toml \
+		--package fluentbase-contracts-evm \
+		--target wasm32-unknown-unknown \
+		--target-dir "$(GUEST_COVERAGE_TARGET_DIR)" \
+		--profile guest-coverage --no-default-features --features guest-coverage --locked
+	@mkdir -p "$(GUEST_COVERAGE_PROFILE_DIR)" "$(GUEST_COVERAGE_OBJECT_DIR)"
+	@contract_ir=$$(find "$(GUEST_COVERAGE_TARGET_DIR)/wasm32-unknown-unknown/guest-coverage/deps" -name 'fluentbase_contracts_evm.ll' -print -quit); \
+		test -n "$$contract_ir"; \
+		"$(GUEST_COVERAGE_CLANG)" $(GUEST_COVERAGE_CLANG_TARGET) "$$contract_ir" -Wno-override-module -c \
+			-o "$(GUEST_COVERAGE_OBJECT_DIR)/fluentbase_contracts_evm.o"
+	RUSTC_WRAPPER= \
+		FLUENTBASE_EVM_WASM_PATH="$(GUEST_COVERAGE_WASM)" \
+		FLUENTBASE_GUEST_PROFILE_DIR="$(GUEST_COVERAGE_PROFILE_DIR)" \
+		cargo nextest run --manifest-path=./Cargo.toml --release \
+		--no-default-features --features std,wasmtime,guest-coverage \
+		--package fluentbase-e2e --no-fail-fast --locked evm::
+	@find "$(GUEST_COVERAGE_PROFILE_DIR)" -maxdepth 1 -name '*.profraw' -print -quit | grep -q .
+	"$(LLVM_PROFDATA)" merge -sparse "$(GUEST_COVERAGE_PROFILE_DIR)"/*.profraw \
+		-o "$(GUEST_COVERAGE_TARGET_DIR)/guest.profdata"
+	"$(LLVM_COV)" export --format=lcov \
+		"$(GUEST_COVERAGE_OBJECT_DIR)/fluentbase_contracts_evm.o" \
+		--instr-profile="$(GUEST_COVERAGE_TARGET_DIR)/guest.profdata" \
+		--ignore-filename-regex="$(GUEST_COVERAGE_IGNORE_FILENAME_REGEX)" \
+		| sed 's#^SF:contracts/crates/#SF:crates/#' > coverage-rwasm-guest.lcov
+	@test -s coverage-rwasm-guest.lcov
+	@awk 'BEGIN { in_file = 0; covered = 0 } /^SF:.*contracts\/evm\/src\/lib.rs$$/ { in_file = 1; next } /^SF:/ { in_file = 0 } in_file && /^DA:/ { split($$0, fields, ","); if (fields[2] > 0) covered = 1 } END { exit !covered }' coverage-rwasm-guest.lcov
+	@awk 'BEGIN { in_file = 0; covered = 0 } /^SF:.*crates\/evm\/src\/opcodes.rs$$/ { in_file = 1; next } /^SF:/ { in_file = 0 } in_file && /^DA:/ { split($$0, fields, ","); if (fields[2] > 0) covered = 1 } END { exit !covered }' coverage-rwasm-guest.lcov
 .PHONY: test-debug
 test-debug:
 	# devnet/mainnet: contracts unit tests

@@ -86,6 +86,7 @@ wasmtime = [
     "fluentbase-runtime/wasmtime",
     "fluentbase-revm/wasmtime",
 ]
+guest-coverage = ["wasmtime", "fluentbase-runtime/guest-coverage"]
 
 [[bench]]
 name = "erc20"

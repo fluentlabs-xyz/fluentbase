@@ -40,6 +40,8 @@ use rwasm::{
     CompilationConfig, ImportLinker, Opcode, RwasmModule, StateRouterConfig, StoreTr,
     StrategyDefinition, StrategyExecutor, TrapCode, Value, N_MAX_ALLOWED_MEMORY_PAGES,
 };
+#[cfg(feature = "guest-coverage")]
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// A system runtime instance.
 ///
@@ -93,6 +95,81 @@ thread_local! {
     /// threads without careful synchronization, and because per-thread reuse is often enough.
     pub static COMPILED_RUNTIMES: RefCell<HashMap<CompiledModuleCacheKey, Arc<RefCell<CompiledRuntime>>>> =
         RefCell::new(HashMap::new());
+}
+
+#[cfg(feature = "guest-coverage")]
+static GUEST_PROFILE_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(feature = "guest-coverage")]
+fn capture_guest_coverage_profile(
+    compiled_runtime: &mut CompiledRuntime,
+) -> Result<Option<Vec<u8>>, TrapCode> {
+    let mut previous_context = RuntimeContext::default();
+    core::mem::swap(compiled_runtime.data_mut(), &mut previous_context);
+
+    let capture_result = compiled_runtime.execute("__fluentbase_coverage_dump", &[], &mut []);
+    let profile = take(&mut compiled_runtime.data_mut().execution_result.output);
+
+    // Leave the cached runtime's inactive context exactly as it was before the diagnostic call.
+    core::mem::swap(compiled_runtime.data_mut(), &mut previous_context);
+
+    match capture_result {
+        Ok(()) if !profile.is_empty() => Ok(Some(profile)),
+        Ok(()) | Err(TrapCode::UnknownExternalFunction) => Ok(None),
+        Err(trap) => Err(trap),
+    }
+}
+
+#[cfg(feature = "guest-coverage")]
+fn write_guest_coverage_profile(compiled_runtime: &mut CompiledRuntime) {
+    let Some(output_dir) = std::env::var_os("FLUENTBASE_GUEST_PROFILE_DIR") else {
+        return;
+    };
+
+    let profile = match capture_guest_coverage_profile(compiled_runtime) {
+        Ok(Some(profile)) => profile,
+        Ok(None) => return,
+        Err(error) => {
+            eprintln!("failed to capture guest coverage: {error}");
+            return;
+        }
+    };
+
+    let output_dir = std::path::PathBuf::from(output_dir);
+    if let Err(error) = std::fs::create_dir_all(&output_dir) {
+        eprintln!("failed to create guest coverage directory: {error}");
+        return;
+    }
+
+    let process_id = std::process::id();
+    let sequence = GUEST_PROFILE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let output_path = output_dir.join(format!("guest-{process_id}-{sequence}.profraw"));
+    if let Err(error) = std::fs::write(&output_path, profile) {
+        eprintln!(
+            "failed to write guest coverage profile {}: {error}",
+            output_path.display()
+        );
+    }
+}
+
+/// Captures LLVM profiles from coverage-instrumented cached system runtimes.
+///
+/// The diagnostic export is available only in CI coverage artifacts. Cached runtimes without the
+/// export are ignored, which lets the EVM coverage artifact coexist with ordinary precompiles.
+#[cfg(feature = "guest-coverage")]
+pub fn capture_guest_coverage() -> Result<Vec<Vec<u8>>, TrapCode> {
+    COMPILED_RUNTIMES.with_borrow_mut(|compiled_runtimes| {
+        let mut profiles = Vec::new();
+
+        for compiled_runtime in compiled_runtimes.values() {
+            let mut compiled_runtime = compiled_runtime.borrow_mut();
+            if let Some(profile) = capture_guest_coverage_profile(&mut compiled_runtime)? {
+                profiles.push(profile);
+            }
+        }
+
+        Ok(profiles)
+    })
 }
 
 impl SystemRuntime {
@@ -239,6 +316,14 @@ impl SystemRuntime {
 
         // Always swap back immediately after the call, so we keep `self.ctx` authoritative.
         core::mem::swap(compiled_runtime.data_mut(), &mut self.ctx);
+
+        // Instrumented CI artifacts expose a diagnostic export that serializes and resets their
+        // LLVM counters. Ordinary artifacts do not export it, making this a no-op outside the
+        // guest-coverage build even if the feature is accidentally enabled.
+        #[cfg(feature = "guest-coverage")]
+        if result.is_ok() && exit_code != ExitCode::InterruptionCalled.into_i32() {
+            write_guest_coverage_profile(&mut compiled_runtime);
+        }
 
         // The application can return trap code though exit code, we should handle such cases as well
         if self.ctx.execution_result.exit_code != ExitCode::Ok.into_i32() {
@@ -418,6 +503,43 @@ mod tests {
 
         assert!(config.consume_fuel);
         assert!(!config.consume_fuel_for_bulk_ops);
+    }
+
+    #[cfg(feature = "guest-coverage")]
+    #[test]
+    fn captures_profile_from_diagnostic_export() {
+        SystemRuntime::reset_cached_runtimes();
+
+        let module = system_module(
+            r#"
+            (module
+              (import "fluentbase_v1preview" "_write" (func $write (param i32 i32)))
+              (memory (export "memory") 1)
+              (data (i32.const 16) "profile")
+              (func (export "main") (param i32 i32) (result i32)
+                i32.const 0)
+              (func (export "__fluentbase_coverage_dump")
+                i32.const 16
+                i32.const 7
+                call $write))
+            "#,
+        );
+
+        let mut runtime = SystemRuntime::new(
+            module,
+            import_linker_v1_preview(),
+            test_code_hash(),
+            Address::ZERO,
+            RuntimeContext::default().with_fuel_limit(10_000),
+            false,
+        );
+        runtime.execute().expect("main export should execute");
+
+        let profiles = capture_guest_coverage().expect("coverage export should execute");
+        assert_eq!(profiles, vec![b"profile".to_vec()]);
+        assert!(runtime.context().execution_result.output.is_empty());
+
+        SystemRuntime::reset_cached_runtimes();
     }
 
     #[test]

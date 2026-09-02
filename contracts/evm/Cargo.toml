@@ -7,6 +7,7 @@ edition = "2021"
 fluentbase-sdk = { workspace = true, default-features = false }
 fluentbase-evm = { workspace = true, default-features = false }
 spin = { workspace = true }
+minicov = { workspace = true, optional = true }
 
 [dev-dependencies]
 fluentbase-testing = { workspace = true }
@@ -20,3 +21,4 @@ default = ["std"]
 std = ["fluentbase-sdk/std", "fluentbase-evm/std", "fluentbase-testing/std"]
 debug-print = ["fluentbase-sdk/debug-print", "fluentbase-testing/debug-print", "fluentbase-evm/debug-print"]
 permissive-contract-size = []
+guest-coverage = ["dep:minicov"]
