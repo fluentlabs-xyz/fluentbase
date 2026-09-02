@@ -236,30 +236,7 @@ mod _fluentbase_entrypoint {
         exit_code.into_i32()
     }
 
-    /// Serializes this Wasm instance's LLVM counters into the normal host output buffer.
-    ///
-    /// This export exists only in the CI coverage artifact. Production and genesis builds do not
-    /// enable `guest-coverage`, so they cannot expose this diagnostic entrypoint.
-    #[cfg(feature = "guest-coverage")]
-    #[no_mangle]
-    extern "C" fn __fluentbase_coverage_dump() {
-        use ::alloc::vec::Vec;
-        use ::fluentbase_sdk::{NativeAPI, RwasmContext};
-
-        let mut profile = Vec::new();
-        // SAFETY: e2e execution and capture are sequential on a thread-local Wasm instance. The
-        // host invokes this export only after the contract entrypoint has returned, so no code can
-        // update LLVM's counters concurrently.
-        unsafe {
-            minicov::capture_coverage(&mut profile)
-                .expect("guest LLVM coverage serialization must succeed");
-        }
-        RwasmContext.write(&profile);
-        minicov::reset_coverage();
-
-        drop(profile);
-        ::fluentbase_sdk::BlockListAllocator::gc();
-    }
+    ::fluentbase_sdk::guest_coverage_entrypoint!();
 }
 #[cfg(target_arch = "wasm32")]
 #[panic_handler]

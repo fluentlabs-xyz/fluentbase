@@ -35,7 +35,6 @@ ecdsa = { git = "https://github.com/rwasm-patches/signatures.git", default-featu
 k256 = { version = "0.13.4", default-features = false }
 hashbrown = { version = "0.16.0", default-features = false, features = ["default-hasher", "inline-more"] }
 spin = { version = "0.10.0", default-features = false, features = ["mutex", "once", "spin_mutex"] }
-minicov = { version = "=0.3.8", default-features = false, features = ["alloc"] }
 
 [profile.release]
 panic = "abort"
@@ -59,8 +58,8 @@ debug = false
 [profile.guest-coverage]
 inherits = "release"
 lto = false
-strip = "none"
-debug = true
+strip = true
+debug = false
 
 [patch.crates-io]
 # patch tiny-keccak

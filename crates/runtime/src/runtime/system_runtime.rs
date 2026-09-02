@@ -155,7 +155,7 @@ fn write_guest_coverage_profile(compiled_runtime: &mut CompiledRuntime) {
 /// Captures LLVM profiles from coverage-instrumented cached system runtimes.
 ///
 /// The diagnostic export is available only in CI coverage artifacts. Cached runtimes without the
-/// export are ignored, which lets the EVM coverage artifact coexist with ordinary precompiles.
+/// export are ignored, which lets instrumented system contracts coexist with ordinary artifacts.
 #[cfg(feature = "guest-coverage")]
 pub fn capture_guest_coverage() -> Result<Vec<Vec<u8>>, TrapCode> {
     COMPILED_RUNTIMES.with_borrow_mut(|compiled_runtimes| {

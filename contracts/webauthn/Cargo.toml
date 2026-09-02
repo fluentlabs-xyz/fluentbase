@@ -33,3 +33,4 @@ std = [
     "fluentbase-testing/std",
 ]
 debug-print = ["fluentbase-sdk/debug-print", "fluentbase-testing/debug-print"]
+guest-coverage = ["fluentbase-sdk/guest-coverage"]

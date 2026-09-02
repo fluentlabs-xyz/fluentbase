@@ -47,6 +47,8 @@ mod evm;
 mod fuel;
 #[cfg(test)]
 mod gas;
+#[cfg(all(test, feature = "guest-coverage"))]
+mod guest_coverage;
 #[cfg(test)]
 mod helpers;
 // #[cfg(test)]

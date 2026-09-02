@@ -2019,7 +2019,6 @@ dependencies = [
  "fluentbase-evm",
  "fluentbase-sdk",
  "fluentbase-testing",
- "minicov",
  "spin 0.10.0",
 ]
 
@@ -2213,6 +2212,7 @@ dependencies = [
  "fluentbase-sdk-derive",
  "fluentbase-types",
  "hashbrown 0.16.1",
+ "minicov",
  "rwasm",
  "spin 0.10.0",
 ]
