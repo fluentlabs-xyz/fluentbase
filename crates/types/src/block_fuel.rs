@@ -43,6 +43,13 @@ macro_rules! quadratic_fuel {
 pub const STATE_FUEL_COST: u32 = 20 * FUEL_DENOM_RATE as u32;
 pub const COPY_BASE_FUEL_COST: u32 = 20 * FUEL_DENOM_RATE as u32;
 pub const COPY_WORD_FUEL_COST: u32 = 3 * FUEL_DENOM_RATE as u32;
+/// Additional fuel charged for every 32-byte word appended to runtime output.
+///
+/// Output remains resident in a host `Vec` until the invocation completes, so the generic copy
+/// price alone is not sufficient to bound validator memory. At the current 100M block gas limit,
+/// this surcharge alone limits aggregate output to 32,000,000 bytes (about 30.5 MiB). The normal
+/// copy charge lowers the effective limit further.
+pub const OUTPUT_WORD_FUEL_SURCHARGE: u32 = 100 * FUEL_DENOM_RATE as u32;
 pub const DEBUG_LOG_BASE_FUEL_COST: u32 = 50 * FUEL_DENOM_RATE as u32;
 pub const DEBUG_LOG_WORD_FUEL_COST: u32 = 16 * FUEL_DENOM_RATE as u32;
 pub const CHARGE_FUEL_BASE_COST: u32 = 20 * FUEL_DENOM_RATE as u32;

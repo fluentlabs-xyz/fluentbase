@@ -1,8 +1,11 @@
 use crate::EvmTestingContextWithGenesis;
+use fluentbase_revm::RwasmHaltReason;
 use fluentbase_sdk::{
     calc_create_address, Address, Bytes, COPY_BASE_FUEL_COST, COPY_WORD_FUEL_COST, FUEL_DENOM_RATE,
+    OUTPUT_WORD_FUEL_SURCHARGE,
 };
 use fluentbase_testing::{EvmTestingContext, TxBuilder};
+use revm::context::result::ExecutionResult;
 use wat::parse_str;
 
 const EXEC_BALANCE_DOS_WAT: &str = r#"
@@ -52,11 +55,19 @@ const EXEC_BALANCE_DOS_WAT: &str = r#"
 
 const REPEATED_WRITE_OUTPUT_WAT: &str = r#"
     (module
+        (import "fluentbase_v1preview" "_read" (func $_read (param i32 i32 i32)))
         (import "fluentbase_v1preview" "_write" (func $_write (param i32 i32)))
         (memory (export "memory") 16) ;; 1 MiB
         (func (export "deploy"))
         (func (export "main") (local $remaining i32)
-            i32.const 64
+            ;; Read the write count from the first four calldata bytes. Runtime context occupies
+            ;; the first 1024 input bytes exposed through `_read`.
+            i32.const 0
+            i32.const 1024
+            i32.const 4
+            call $_read
+            i32.const 0
+            i32.load
             local.set $remaining
 
             loop $write
@@ -124,9 +135,10 @@ fn ddos_balance_rejects_huge_input_without_memory_copy() {
 }
 
 #[test]
-fn ddos_repeated_write_accumulates_output_under_block_gas_limit() {
+fn ddos_repeated_write_exhausts_fuel_before_aggregate_output_growth() {
     const CHUNK_BYTES: usize = 1024 * 1024;
-    const WRITE_COUNT: usize = 64;
+    const AFFORDABLE_WRITE_COUNT: u32 = 29;
+    const EXHAUSTING_WRITE_COUNT: u32 = 30;
     const MAX_BLOCK_GAS: u64 = 100_000_000;
 
     let wasm = parse_str(REPEATED_WRITE_OUTPUT_WAT).expect("invalid repeated-write wat");
@@ -142,43 +154,56 @@ fn ddos_repeated_write_accumulates_output_under_block_gas_limit() {
     );
 
     let contract = calc_create_address(&deployer, 0);
-    let result = TxBuilder::call(&mut ctx, contract)
+    let affordable = TxBuilder::call(&mut ctx, contract)
         .caller(deployer)
         .gas_price(0)
         .gas_limit(MAX_BLOCK_GAS)
+        .input(Bytes::copy_from_slice(
+            &AFFORDABLE_WRITE_COUNT.to_le_bytes(),
+        ))
         .exec();
     assert!(
-        result.is_success(),
-        "repeated output writes unexpectedly failed after consuming {} gas",
-        result.tx_gas_used()
+        affordable.is_success(),
+        "fuel should permit {AFFORDABLE_WRITE_COUNT} MiB of output: {affordable:?}"
     );
 
-    let output_len = result
+    let output_len = affordable
         .output()
         .expect("successful call must return output")
         .len();
-    assert_eq!(output_len, CHUNK_BYTES * WRITE_COUNT);
+    assert_eq!(output_len, CHUNK_BYTES * AFFORDABLE_WRITE_COUNT as usize);
 
-    // Fuel is charged per `_write`, but it does not bound the aggregate output buffer. This
-    // execution reuses 1 MiB of guest memory to append 64 MiB to the host output Vec.
-    let gas_used = result.tx_gas_used();
+    // Every append pays both the generic copy cost and the output-retention surcharge. The next
+    // 1 MiB write exceeds the block fuel budget even though it reuses the same guest-memory range.
     let words_per_write = (CHUNK_BYTES as u64).div_ceil(32);
-    let gas_per_write = (COPY_BASE_FUEL_COST as u64 + COPY_WORD_FUEL_COST as u64 * words_per_write)
-        .div_ceil(FUEL_DENOM_RATE);
+    let fuel_per_write = COPY_BASE_FUEL_COST as u64
+        + (COPY_WORD_FUEL_COST as u64 + OUTPUT_WORD_FUEL_SURCHARGE as u64) * words_per_write;
+    let gas_per_write = fuel_per_write.div_ceil(FUEL_DENOM_RATE);
     assert!(
-        gas_used > gas_per_write * WRITE_COUNT as u64,
-        "transaction gas must include the measured repeated-write cost"
+        gas_per_write * AFFORDABLE_WRITE_COUNT as u64 <= MAX_BLOCK_GAS,
+        "the affordable case must fit within the block gas budget"
     );
     assert!(
-        gas_used < 7_000_000,
-        "64 MiB output used too much gas: {gas_used}"
+        gas_per_write * EXHAUSTING_WRITE_COUNT as u64 > MAX_BLOCK_GAS,
+        "the exhausting case must exceed the block gas budget"
     );
 
-    // Scaling the observed full-transaction cost (including fixed overhead) leaves enough block
-    // gas for over 900 MiB of output, so the per-call fuel bound is not an aggregate memory bound.
-    let projected_output = output_len as u128 * MAX_BLOCK_GAS as u128 / gas_used as u128;
+    let exhausting = TxBuilder::call(&mut ctx, contract)
+        .caller(deployer)
+        .gas_price(0)
+        .gas_limit(MAX_BLOCK_GAS)
+        .input(Bytes::copy_from_slice(
+            &EXHAUSTING_WRITE_COUNT.to_le_bytes(),
+        ))
+        .exec();
     assert!(
-        projected_output >= 900 * CHUNK_BYTES as u128,
-        "{MAX_BLOCK_GAS} gas permits only {projected_output} output bytes"
+        matches!(
+            exhausting,
+            ExecutionResult::Halt {
+                reason: RwasmHaltReason::OutOfFuel,
+                ..
+            }
+        ),
+        "the output surcharge must halt aggregate growth: {exhausting:?}"
     );
 }

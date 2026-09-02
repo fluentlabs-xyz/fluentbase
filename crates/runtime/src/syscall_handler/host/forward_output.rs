@@ -1,5 +1,5 @@
 //! Builtin to append a slice of return_data to the output buffer.
-use crate::RuntimeContext;
+use crate::{syscall_handler::charge_output_fuel, RuntimeContext};
 use fluentbase_types::ExitCode;
 use rwasm::{StoreTr, TrapCode, Value};
 
@@ -13,6 +13,7 @@ pub fn syscall_forward_output_handler(
         params[0].i32().unwrap() as u32,
         params[1].i32().unwrap() as u32,
     );
+    charge_output_fuel(caller, length)?;
     syscall_forward_output_impl(caller.data_mut(), offset, length).map_err(|err| {
         caller.data_mut().execution_result.exit_code = err.into_i32();
         TrapCode::ExecutionHalted
@@ -28,10 +29,10 @@ pub fn syscall_forward_output_impl(
         .checked_add(length)
         .ok_or(ExitCode::InputOutputOutOfBounds)?;
     if offset_length <= ctx.execution_result.return_data.len() as u32 {
-        let ret_data = &ctx.execution_result.return_data
-            [(offset as usize)..(offset as usize + length as usize)]
-            .to_vec();
-        ctx.execution_result.output.extend_from_slice(ret_data);
+        let range = offset as usize..offset_length as usize;
+        let return_data = &ctx.execution_result.return_data;
+        let output = &mut ctx.execution_result.output;
+        output.extend_from_slice(&return_data[range]);
         Ok(())
     } else {
         Err(ExitCode::InputOutputOutOfBounds)
