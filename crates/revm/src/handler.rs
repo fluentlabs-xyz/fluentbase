@@ -4,7 +4,10 @@ use crate::{RwasmFrame, RwasmHaltReason};
 use alloy_primitives::U256;
 use fluentbase_sdk::calldata_quadratic_surcharge;
 use revm::{
-    context::{journaled_state::account::JournaledAccountTr, Block, ContextTr, JournalTr},
+    context::{
+        journaled_state::account::JournaledAccountTr, result::InvalidTransaction, Block, ContextTr,
+        JournalTr,
+    },
     context_interface::{Cfg, Transaction},
     handler::{validation, EvmTr, EvmTrError, FrameTr, Handler},
     inspector::{InspectorEvmTr, InspectorHandler},
@@ -44,9 +47,24 @@ where
             ctx.cfg().is_legacy_bytecode_enabled(),
         )?;
 
-        // Quadratic calldata surcharge for large inputs (>128 KB)
-        let input_len = ctx.tx().input().len() as u64;
-        gas.initial_total_gas += calldata_quadratic_surcharge(input_len);
+        // Quadratic calldata surcharge for large inputs (>128 KB).
+        //
+        // REVM has already verified the pre-surcharge intrinsic gas. Re-check the total so the
+        // execution-gas calculation cannot subtract a larger intrinsic cost from the tx limit.
+        let surcharge = calldata_quadratic_surcharge(ctx.tx().input().len() as u64);
+        gas.initial_total_gas = gas.initial_total_gas.checked_add(surcharge).ok_or(
+            InvalidTransaction::CallGasCostMoreThanGasLimit {
+                gas_limit: ctx.tx().gas_limit(),
+                initial_gas: u64::MAX,
+            },
+        )?;
+        if gas.initial_total_gas > ctx.tx().gas_limit() {
+            return Err(InvalidTransaction::CallGasCostMoreThanGasLimit {
+                gas_limit: ctx.tx().gas_limit(),
+                initial_gas: gas.initial_total_gas,
+            }
+            .into());
+        }
 
         Ok(gas)
     }
@@ -101,4 +119,69 @@ where
     ERROR: EvmTrError<EVM>,
 {
     type IT = EthInterpreter;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{RwasmBuilder, RwasmContext, RwasmSpecId};
+    use fluentbase_sdk::CALLDATA_QUADRATIC_THRESHOLD;
+    use revm::{
+        context::{result::InvalidTransaction, BlockEnv, CfgEnv, ContextTr, TxEnv},
+        context_interface::{cfg::gas::calculate_initial_tx_gas, result::EVMError},
+        database::InMemoryDB,
+        primitives::{Address, Bytes},
+        state::AccountInfo,
+        Database, ExecuteCommitEvm,
+    };
+
+    #[test]
+    fn rejects_calldata_surcharge_that_exceeds_gas_limit() {
+        let caller = Address::repeat_byte(0x11);
+        let target = Address::repeat_byte(0x22);
+        let input = Bytes::from(vec![0; CALLDATA_QUADRATIC_THRESHOLD as usize + 32]);
+        let intrinsic_gas =
+            calculate_initial_tx_gas(RwasmSpecId::CANCUN, &input, false, 0, 0, 0).initial_total_gas;
+        let surcharge = calldata_quadratic_surcharge(input.len() as u64);
+        assert!(surcharge > 0);
+
+        let tx = TxEnv::builder()
+            .caller(caller)
+            .to(target)
+            .data(input)
+            .gas_limit(intrinsic_gas)
+            .gas_price(1)
+            .build()
+            .unwrap();
+
+        let initial_balance = U256::from(intrinsic_gas);
+        let mut db = InMemoryDB::default();
+        db.insert_account_info(
+            caller,
+            AccountInfo {
+                balance: initial_balance,
+                ..Default::default()
+            },
+        );
+
+        let mut ctx = RwasmContext::new(db, RwasmSpecId::CANCUN);
+        ctx.cfg = CfgEnv::new_with_spec(RwasmSpecId::CANCUN);
+        ctx.cfg.legacy_bytecode_enabled = false;
+        ctx.block = BlockEnv::default();
+        let mut evm = ctx.build_rwasm();
+
+        assert!(matches!(
+            evm.transact_commit(tx),
+            Err(EVMError::Transaction(
+                InvalidTransaction::CallGasCostMoreThanGasLimit {
+                    gas_limit,
+                    initial_gas,
+                }
+            )) if gas_limit == intrinsic_gas && initial_gas == intrinsic_gas + surcharge
+        ));
+        assert_eq!(
+            evm.0.ctx.db_mut().basic(caller).unwrap().unwrap().balance,
+            initial_balance
+        );
+    }
 }
