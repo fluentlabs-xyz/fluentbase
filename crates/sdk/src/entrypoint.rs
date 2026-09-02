@@ -131,7 +131,7 @@ macro_rules! entrypoint {
 
 #[macro_export]
 #[doc(hidden)]
-macro_rules! guest_coverage_entrypoint {
+macro_rules! define_coverage_entrypoint {
     () => {
         #[cfg(feature = "guest-coverage")]
         #[no_mangle]
@@ -163,7 +163,7 @@ macro_rules! system_entrypoint {
                 $crate::BlockListAllocator::gc();
                 exit_code.into_i32()
             }
-            $crate::guest_coverage_entrypoint!();
+            $crate::define_coverage_entrypoint!();
         }
         #[cfg(target_arch = "wasm32")]
         #[panic_handler]
@@ -190,7 +190,7 @@ macro_rules! system_entrypoint {
             }
             #[no_mangle]
             extern "C" fn deploy() {}
-            $crate::guest_coverage_entrypoint!();
+            $crate::define_coverage_entrypoint!();
         }
         $crate::define_panic_handler!();
         $crate::define_block_list_allocator!();

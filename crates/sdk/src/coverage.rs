@@ -3,7 +3,7 @@ use alloc::vec::Vec;
 
 /// Serializes this Wasm instance's LLVM counters into the normal host output buffer.
 ///
-/// This function is public only so [`crate::guest_coverage_entrypoint!`] can call it from a
+/// This function is public only so [`crate::define_coverage_entrypoint!`] can call it from a
 /// contract crate. The feature is CI-only; production and genesis artifacts do not include it.
 #[doc(hidden)]
 pub fn dump_guest_coverage() {

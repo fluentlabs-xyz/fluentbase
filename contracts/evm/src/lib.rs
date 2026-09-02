@@ -236,7 +236,7 @@ mod _fluentbase_entrypoint {
         exit_code.into_i32()
     }
 
-    ::fluentbase_sdk::guest_coverage_entrypoint!();
+    ::fluentbase_sdk::define_coverage_entrypoint!();
 }
 #[cfg(target_arch = "wasm32")]
 #[panic_handler]
