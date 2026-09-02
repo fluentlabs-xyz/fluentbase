@@ -55,6 +55,8 @@ pub const SYSTEM_ADDRESS: Address = address!("0xffffffffffffffffffffffffffffffff
 
 pub const STATE_MAIN: u32 = 0;
 pub const STATE_DEPLOY: u32 = 1;
+#[doc(hidden)]
+pub const STATE_GUEST_COVERAGE: u32 = 2;
 
 pub const CALL_DEPTH_ROOT: u32 = 0;
 

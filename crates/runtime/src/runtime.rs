@@ -16,6 +16,9 @@ mod contract_runtime;
 pub(crate) use contract_runtime::test_contract_module_with_memory;
 pub use contract_runtime::ContractRuntime;
 
+#[cfg(feature = "guest-coverage")]
+mod guest_coverage;
+
 mod system_runtime;
 #[cfg(feature = "guest-coverage")]
 pub use system_runtime::capture_guest_coverage;

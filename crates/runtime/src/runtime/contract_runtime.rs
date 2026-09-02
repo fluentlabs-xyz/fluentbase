@@ -10,7 +10,11 @@
 //! `ContractRuntime` is intentionally thin: most execution semantics
 //! are delegated to `StrategyDefinition` and `StrategyExecutor`.
 
+#[cfg(feature = "guest-coverage")]
+use super::guest_coverage::write_guest_coverage_profile;
 use crate::{syscall_handler::runtime_syscall_handler, RuntimeContext};
+#[cfg(feature = "guest-coverage")]
+use fluentbase_types::STATE_GUEST_COVERAGE;
 use fluentbase_types::{STATE_DEPLOY, STATE_MAIN};
 use rwasm::{
     ImportLinker, StoreTr, StrategyDefinition, StrategyExecutor, TrapCode, Value,
@@ -99,7 +103,12 @@ impl ContractRuntime {
     ///
     /// Any trap produced by execution is surfaced as a `TrapCode`.
     pub fn execute(&mut self) -> Result<(), TrapCode> {
-        self.executor.execute(self.entrypoint, &[], &mut [])
+        let result = self.executor.execute(self.entrypoint, &[], &mut []);
+        #[cfg(feature = "guest-coverage")]
+        if result.is_ok() {
+            write_guest_coverage_profile(&mut self.executor, Some(STATE_GUEST_COVERAGE));
+        }
+        result
     }
 
     /// Resumes contract execution after an external interruption.
@@ -109,7 +118,12 @@ impl ContractRuntime {
     /// and `fuel_consumed` is charged before resuming execution.
     pub fn resume(&mut self, exit_code: i32, fuel_consumed: u64) -> Result<(), TrapCode> {
         self.executor.try_consume_fuel(fuel_consumed)?;
-        self.executor.resume(&[Value::I32(exit_code)], &mut [])
+        let result = self.executor.resume(&[Value::I32(exit_code)], &mut []);
+        #[cfg(feature = "guest-coverage")]
+        if result.is_ok() {
+            write_guest_coverage_profile(&mut self.executor, Some(STATE_GUEST_COVERAGE));
+        }
+        result
     }
 
     /// Writes data into the contract linear memory.

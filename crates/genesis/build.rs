@@ -10,9 +10,12 @@ use alloy_genesis::{ChainConfig, Genesis, GenesisAccount};
 use fluentbase_evm::EthereumMetadata;
 use fluentbase_revm::revm::bytecode::{rwasm::RWASM_MAGIC_BYTES, Bytecode};
 use fluentbase_sdk::{
-    address, compilation_config_fingerprint_for_contract_address, compile_rwasm_maybe_system,
-    keccak256, Address, Bytes, B256, PRECOMPILE_CREATE2_FACTORY, PRECOMPILE_EVM_RUNTIME,
-    PRECOMPILE_ROLLUP_BRIDGE_DEPLOYER, U256,
+    address, compilation_config_for_contract_address, compile_rwasm_maybe_system,
+    is_execute_using_system_runtime, keccak256,
+    rwasm_core::{CompilationConfig, CompilationError, Opcode, RwasmModule, StateRouterConfig},
+    Address, Bytes, CompilationBackend, CompilationConfigFingerprint, RwasmCompilationResult,
+    SysFuncIdx, B256, PRECOMPILE_CREATE2_FACTORY, PRECOMPILE_EVM_RUNTIME,
+    PRECOMPILE_ROLLUP_BRIDGE_DEPLOYER, STATE_DEPLOY, STATE_GUEST_COVERAGE, STATE_MAIN, U256,
 };
 use std::{
     collections::{BTreeMap, HashMap},
@@ -98,6 +101,36 @@ fn default_chain_config(chain_id: u64) -> ChainConfig {
     }
 }
 
+fn genesis_compilation_config(address: &Address) -> CompilationConfig {
+    let mut config = compilation_config_for_contract_address(address);
+    if cfg!(feature = "guest-coverage") && !is_execute_using_system_runtime(address) {
+        config = config.with_state_router(StateRouterConfig {
+            states: Box::new([
+                ("deploy".into(), STATE_DEPLOY),
+                ("main".into(), STATE_MAIN),
+                ("__fluentbase_coverage_dump".into(), STATE_GUEST_COVERAGE),
+            ]),
+            opcode: Some(Opcode::Call(SysFuncIdx::STATE as u32)),
+        });
+    }
+    config
+}
+
+fn compile_genesis_contract(
+    address: &Address,
+    wasm_bytecode: &[u8],
+) -> Result<RwasmCompilationResult, CompilationError> {
+    let config = genesis_compilation_config(address);
+    let config_fingerprint =
+        CompilationConfigFingerprint::from_config(&config, CompilationBackend::Rwasm, *address);
+    let (rwasm_module, constructor_params) = RwasmModule::compile(config, wasm_bytecode)?;
+    Ok(RwasmCompilationResult {
+        rwasm_module,
+        constructor_params: constructor_params.into(),
+        config_fingerprint,
+    })
+}
+
 /// Ensures each compatible WASM artifact is compiled to RWASM exactly once, caching the results.
 /// This optimization is particularly valuable for large, unoptimized contracts.
 fn compile_all_contracts() -> HashMap<Address, (B256, Bytes)> {
@@ -106,8 +139,10 @@ fn compile_all_contracts() -> HashMap<Address, (B256, Bytes)> {
 
     for (address, contract) in GENESIS_CONTRACTS {
         let wasm_hash = keccak256(contract.wasm_bytecode);
+        let config = genesis_compilation_config(address);
         let config_fingerprint =
-            compilation_config_fingerprint_for_contract_address(address).identity_hash();
+            CompilationConfigFingerprint::from_config(&config, CompilationBackend::Rwasm, *address)
+                .identity_hash();
         let cache_key = (wasm_hash, config_fingerprint);
 
         if let Some(result) = compilation_cache.get(&cache_key).cloned() {
@@ -116,7 +151,7 @@ fn compile_all_contracts() -> HashMap<Address, (B256, Bytes)> {
         }
 
         let start = Instant::now();
-        let rwasm_bytecode = compile_rwasm_maybe_system(address, contract.wasm_bytecode)
+        let rwasm_bytecode = compile_genesis_contract(address, contract.wasm_bytecode)
             .expect(format!("failed to compile ({}), because of: ", contract.name).as_str());
         assert_eq!(
             rwasm_bytecode.config_fingerprint.identity_hash(),
@@ -201,6 +236,7 @@ fn main() {
     // Make sure we rerun the build if the feature has changed
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_STD");
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_DEBUG_PRINT");
+    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_GUEST_COVERAGE");
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_WASMTIME");
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_FLUENT_TESTNET");
     println!("cargo:rerun-if-env-changed=PROFILE");

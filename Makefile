@@ -11,8 +11,8 @@ GUEST_COVERAGE_PROFILE_DIR ?= $(GUEST_COVERAGE_TARGET_DIR)/profiles
 GUEST_COVERAGE_OBJECT_DIR ?= $(GUEST_COVERAGE_TARGET_DIR)/objects
 GUEST_COVERAGE_WASM_DIR ?= $(GUEST_COVERAGE_TARGET_DIR)/wasm32-unknown-unknown/guest-coverage
 GUEST_COVERAGE_CONTRACTS ?= \
-	blake2f bls12381 bn256 ecrecover eip7951 evm identity kzg modexp nitro oauth2 \
-	ripemd160 sha256 universal-token wasm webauthn
+	blake2f bls12381 bn256 ecrecover eip2935 eip7951 evm fee-manager identity kzg modexp nitro \
+	oauth2 ripemd160 runtime-upgrade sha256 universal-token wasm webauthn
 GUEST_COVERAGE_PACKAGES = $(addprefix fluentbase-contracts-,$(GUEST_COVERAGE_CONTRACTS))
 GUEST_COVERAGE_ARTIFACTS = $(subst -,_,$(GUEST_COVERAGE_PACKAGES))
 GUEST_COVERAGE_CLANG ?= clang
@@ -189,7 +189,7 @@ coverage-rwasm-guest:
 		cargo nextest run --manifest-path=./Cargo.toml --release \
 		--no-default-features --features std,wasmtime,guest-coverage \
 		--package fluentbase-e2e --no-fail-fast --locked \
-		-E 'test(evm::) | test(eip7951::) | test(oauth2::) | test(universal_token::mixed_test) | test(wasm::test_wasm_greeting) | test(guest_coverage::)'
+		-E 'test(eip2935::) | test(eip7951::) | test(evm::) | test(fee_manager::) | test(oauth2::) | test(universal_token::mixed_test) | test(update_account::) | test(wasm::test_wasm_greeting) | test(guest_coverage::)'
 	@find "$(GUEST_COVERAGE_PROFILE_DIR)" -maxdepth 1 -name '*.profraw' -print -quit | grep -q .
 	"$(LLVM_PROFDATA)" merge -sparse "$(GUEST_COVERAGE_PROFILE_DIR)"/*.profraw \
 		-o "$(GUEST_COVERAGE_TARGET_DIR)/guest.profdata"
@@ -211,6 +211,7 @@ coverage-rwasm-guest:
 		}; \
 	done
 	@awk 'BEGIN { in_file = 0; covered = 0 } /^SF:.*crates\/evm\/src\/opcodes.rs$$/ { in_file = 1; next } /^SF:/ { in_file = 0 } in_file && /^DA:/ { split($$0, fields, ","); if (fields[2] > 0) covered = 1 } END { exit !covered }' coverage-rwasm-guest.lcov
+	@awk 'BEGIN { in_file = 0; covered = 0 } /^SF:.*crates\/sdk\/src\/shared.rs$$/ { in_file = 1; next } /^SF:/ { in_file = 0 } in_file && /^DA:/ { split($$0, fields, ","); if (fields[2] > 0) covered = 1 } END { exit !covered }' coverage-rwasm-guest.lcov
 .PHONY: test-debug
 test-debug:
 	# devnet/mainnet: contracts unit tests
