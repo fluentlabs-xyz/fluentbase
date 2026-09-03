@@ -71,8 +71,9 @@ A dependency bump can silently change any of these.
    (`crates/revm/src/executor.rs`: `execute_rwasm_resume`, `process_exec_result`,
    `process_runtime_execution_outcome`; `crates/runtime/src/executor.rs`: `resume`,
    `memory_read`) — an upgrade that changes trap/interruption behavior may make these
-   deterministic `UnknownError` halts reachable, and they must stay halts, not panics
-   (release profile is `panic = "abort"`),
+   deterministic `UnknownError` halts reachable, and they must stay typed deterministic halts or
+   block-execution errors, not panics. The default release profile unwinds while the reproducible
+   profile aborts, so consensus behavior cannot rely on either panic strategy,
 6. update docs in same PR.
 
 If one of these steps is skipped, regressions can escape into consensus path.
