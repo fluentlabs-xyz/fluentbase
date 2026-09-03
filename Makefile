@@ -3,8 +3,9 @@ all: check build
 CARGO_LOCKED_FLAGS ?= --locked
 COVERAGE_TARGET ?= $(shell rustc -vV | sed -n 's/^host: //p')
 COVERAGE_IGNORE_FILENAME_REGEX ?= (^|/)(tests?|benches?|examples?|e2e|evm-e2e)(/|$$)|(^|/)crates/testing(/|$$)|/(tests|.*_tests)\.rs$$
-EXAMPLES_COVERAGE_DEPENDENCIES ?= fluentbase-build,fluentbase-evm,fluentbase-sdk
-EVM_E2E_COVERAGE_DEPENDENCIES ?= fluentbase-genesis,fluentbase-revm,fluentbase-runtime,fluentbase-sdk
+COVERAGE_IGNORE_DEPENDENCY_REGEX ?= (^|/)(\.?cargo/)?(registry|git)(/|$$)|(^|/)(\.?rustup/)?toolchains(/|$$)|(^|/)rustc(/|$$)|(^|/)target(/|$$)
+EXAMPLES_COVERAGE_DEPENDENCIES ?= fluentbase-crypto,fluentbase-evm,fluentbase-revm,fluentbase-runtime,fluentbase-sdk
+EVM_E2E_COVERAGE_DEPENDENCIES ?= fluentbase-crypto,fluentbase-evm,fluentbase-genesis,fluentbase-revm,fluentbase-runtime,fluentbase-sdk
 
 .PHONY: check
 check:
@@ -102,7 +103,9 @@ coverage-examples-deps:
 		--dep-coverage "$(EXAMPLES_COVERAGE_DEPENDENCIES)" \
 		--target "$(COVERAGE_TARGET)" --coverage-target-only --lcov \
 		--output-path coverage-examples-deps.lcov \
-		--ignore-filename-regex "$(COVERAGE_IGNORE_FILENAME_REGEX)"
+		--no-default-ignore-filename-regex \
+		--ignore-filename-regex "$(COVERAGE_IGNORE_FILENAME_REGEX)|$(COVERAGE_IGNORE_DEPENDENCY_REGEX)"
+	@test -s coverage-examples-deps.lcov
 
 coverage-evm-e2e-deps:
 	@test -n "$(COVERAGE_TARGET)"
@@ -132,7 +135,9 @@ coverage-evm-e2e-deps:
 		--dep-coverage "$(EVM_E2E_COVERAGE_DEPENDENCIES)" \
 		--target "$(COVERAGE_TARGET)" --coverage-target-only --lcov \
 		--output-path coverage-evm-e2e-deps.lcov \
-		--ignore-filename-regex "$(COVERAGE_IGNORE_FILENAME_REGEX)"
+		--no-default-ignore-filename-regex \
+		--ignore-filename-regex "$(COVERAGE_IGNORE_FILENAME_REGEX)|$(COVERAGE_IGNORE_DEPENDENCY_REGEX)"
+	@test -s coverage-evm-e2e-deps.lcov
 .PHONY: test-debug
 test-debug:
 	# devnet/mainnet: contracts unit tests
