@@ -9,14 +9,6 @@ pub fn syscall_charge_fuel_handler(
     _result: &mut [Value],
 ) -> Result<(), TrapCode> {
     let fuel_consumed = params[0].i64().unwrap() as u64;
-    charge_fuel(caller, fuel_consumed)
-}
-
-/// Consumes fuel from both accounting paths used by contract and system runtimes.
-pub(crate) fn charge_fuel(
-    caller: &mut impl StoreTr<RuntimeContext>,
-    fuel_consumed: u64,
-) -> Result<(), TrapCode> {
     // Charge the engine fuel counter (instructions + builtins).
     caller.try_consume_fuel(fuel_consumed)?;
     // Mirror the charge in the runtime context (builtins-managed accounting).

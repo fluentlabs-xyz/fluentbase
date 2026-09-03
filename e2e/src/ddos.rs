@@ -1,8 +1,8 @@
 use crate::EvmTestingContextWithGenesis;
 use fluentbase_revm::RwasmHaltReason;
 use fluentbase_sdk::{
-    calc_create_address, Address, Bytes, COPY_BASE_FUEL_COST, COPY_WORD_FUEL_COST, FUEL_DENOM_RATE,
-    OUTPUT_WORD_FUEL_SURCHARGE,
+    calc_create_address, Address, Bytes, COPY_BASE_FUEL_COST, FUEL_DENOM_RATE,
+    OUTPUT_WORD_FUEL_COST,
 };
 use fluentbase_testing::{EvmTestingContext, TxBuilder};
 use revm::context::result::ExecutionResult;
@@ -60,8 +60,7 @@ const REPEATED_WRITE_OUTPUT_WAT: &str = r#"
         (memory (export "memory") 16) ;; 1 MiB
         (func (export "deploy"))
         (func (export "main") (local $remaining i32)
-            ;; Read the write count from the first four calldata bytes. Runtime context occupies
-            ;; the first 1024 input bytes exposed through `_read`.
+            ;; Runtime context occupies the first 1024 input bytes exposed through `_read`.
             i32.const 0
             i32.const 1024
             i32.const 4
@@ -135,11 +134,11 @@ fn ddos_balance_rejects_huge_input_without_memory_copy() {
 }
 
 #[test]
-fn ddos_repeated_write_exhausts_fuel_before_aggregate_output_growth() {
+fn ddos_recompiled_write_exhausts_fuel_before_aggregate_output_growth() {
     const CHUNK_BYTES: usize = 1024 * 1024;
-    const AFFORDABLE_WRITE_COUNT: u32 = 29;
-    const EXHAUSTING_WRITE_COUNT: u32 = 30;
-    const MAX_BLOCK_GAS: u64 = 100_000_000;
+    const AFFORDABLE_WRITE_COUNT: u32 = 12;
+    const EXHAUSTING_WRITE_COUNT: u32 = 13;
+    const CALL_GAS_LIMIT: u64 = 10_000_000;
 
     let wasm = parse_str(REPEATED_WRITE_OUTPUT_WAT).expect("invalid repeated-write wat");
     let deployer = Address::ZERO;
@@ -157,14 +156,14 @@ fn ddos_repeated_write_exhausts_fuel_before_aggregate_output_growth() {
     let affordable = TxBuilder::call(&mut ctx, contract)
         .caller(deployer)
         .gas_price(0)
-        .gas_limit(MAX_BLOCK_GAS)
+        .gas_limit(CALL_GAS_LIMIT)
         .input(Bytes::copy_from_slice(
             &AFFORDABLE_WRITE_COUNT.to_le_bytes(),
         ))
         .exec();
     assert!(
         affordable.is_success(),
-        "fuel should permit {AFFORDABLE_WRITE_COUNT} MiB of output: {affordable:?}"
+        "compiler-injected fuel should permit {AFFORDABLE_WRITE_COUNT} MiB: {affordable:?}"
     );
 
     let output_len = affordable
@@ -173,25 +172,25 @@ fn ddos_repeated_write_exhausts_fuel_before_aggregate_output_growth() {
         .len();
     assert_eq!(output_len, CHUNK_BYTES * AFFORDABLE_WRITE_COUNT as usize);
 
-    // Every append pays both the generic copy cost and the output-retention surcharge. The next
-    // 1 MiB write exceeds the block fuel budget even though it reuses the same guest-memory range.
+    // The compiler injects the output price ahead of every `_write`. Reusing the same guest-memory
+    // range therefore cannot bypass aggregate fuel accounting.
     let words_per_write = (CHUNK_BYTES as u64).div_ceil(32);
-    let fuel_per_write = COPY_BASE_FUEL_COST as u64
-        + (COPY_WORD_FUEL_COST as u64 + OUTPUT_WORD_FUEL_SURCHARGE as u64) * words_per_write;
-    let gas_per_write = fuel_per_write.div_ceil(FUEL_DENOM_RATE);
+    let gas_per_write = (COPY_BASE_FUEL_COST as u64
+        + OUTPUT_WORD_FUEL_COST as u64 * words_per_write)
+        .div_ceil(FUEL_DENOM_RATE);
     assert!(
-        gas_per_write * AFFORDABLE_WRITE_COUNT as u64 <= MAX_BLOCK_GAS,
-        "the affordable case must fit within the block gas budget"
+        gas_per_write * AFFORDABLE_WRITE_COUNT as u64 <= CALL_GAS_LIMIT,
+        "the affordable case must fit within the call gas budget"
     );
     assert!(
-        gas_per_write * EXHAUSTING_WRITE_COUNT as u64 > MAX_BLOCK_GAS,
-        "the exhausting case must exceed the block gas budget"
+        gas_per_write * EXHAUSTING_WRITE_COUNT as u64 > CALL_GAS_LIMIT,
+        "the exhausting case must exceed the call gas budget"
     );
 
     let exhausting = TxBuilder::call(&mut ctx, contract)
         .caller(deployer)
         .gas_price(0)
-        .gas_limit(MAX_BLOCK_GAS)
+        .gas_limit(CALL_GAS_LIMIT)
         .input(Bytes::copy_from_slice(
             &EXHAUSTING_WRITE_COUNT.to_le_bytes(),
         ))
@@ -204,6 +203,6 @@ fn ddos_repeated_write_exhausts_fuel_before_aggregate_output_growth() {
                 ..
             }
         ),
-        "the output surcharge must halt aggregate growth: {exhausting:?}"
+        "compiler-injected output fuel must halt aggregate growth: {exhausting:?}"
     );
 }

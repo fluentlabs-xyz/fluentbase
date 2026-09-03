@@ -43,13 +43,14 @@ macro_rules! quadratic_fuel {
 pub const STATE_FUEL_COST: u32 = 20 * FUEL_DENOM_RATE as u32;
 pub const COPY_BASE_FUEL_COST: u32 = 20 * FUEL_DENOM_RATE as u32;
 pub const COPY_WORD_FUEL_COST: u32 = 3 * FUEL_DENOM_RATE as u32;
-/// Additional fuel charged for every 32-byte word appended to runtime output.
+/// Fuel charged for every 32-byte word appended to contract output.
 ///
-/// Output remains resident in a host `Vec` until the invocation completes, so the generic copy
-/// price alone is not sufficient to bound validator memory. At the current 100M block gas limit,
-/// this surcharge alone limits aggregate output to 32,000,000 bytes (about 30.5 MiB). The normal
-/// copy charge lowers the effective limit further.
-pub const OUTPUT_WORD_FUEL_SURCHARGE: u32 = 100 * FUEL_DENOM_RATE as u32;
+/// Unlike ordinary copies, output stays resident until the invocation completes. Charging every
+/// append at 25 gas per word bounds aggregate output to at most 128,000,000 bytes under the current
+/// 100M block gas limit, without introducing a byte cap or changing runtime syscall semantics.
+/// This is also the highest whole-gas price that keeps the injected linear-fuel calculation within
+/// `i32::MAX` for [`crate::FUEL_MAX_LINEAR_X`].
+pub const OUTPUT_WORD_FUEL_COST: u32 = 25 * FUEL_DENOM_RATE as u32;
 pub const DEBUG_LOG_BASE_FUEL_COST: u32 = 50 * FUEL_DENOM_RATE as u32;
 pub const DEBUG_LOG_WORD_FUEL_COST: u32 = 16 * FUEL_DENOM_RATE as u32;
 pub const CHARGE_FUEL_BASE_COST: u32 = 20 * FUEL_DENOM_RATE as u32;
@@ -137,12 +138,12 @@ pub(crate) fn calculate_syscall_fuel(sys_func_idx: SysFuncIdx) -> SyscallFuelPar
         STATE => const_fuel!(STATE_FUEL_COST),
         READ_INPUT => linear_fuel!(1, COPY_BASE_FUEL_COST, COPY_WORD_FUEL_COST),
         INPUT_SIZE => const_fuel!(STATE_FUEL_COST),
-        WRITE_OUTPUT => linear_fuel!(1, COPY_BASE_FUEL_COST, COPY_WORD_FUEL_COST),
+        WRITE_OUTPUT => linear_fuel!(1, COPY_BASE_FUEL_COST, OUTPUT_WORD_FUEL_COST),
         OUTPUT_SIZE => const_fuel!(STATE_FUEL_COST),
         READ_OUTPUT => linear_fuel!(1, COPY_BASE_FUEL_COST, COPY_WORD_FUEL_COST),
         EXEC => quadratic_fuel!(3, QUADRATIC_WORD_FUEL_COST, QUADRATIC_DIVISOR),
         RESUME => no_fuel!(),
-        FORWARD_OUTPUT => linear_fuel!(1, COPY_BASE_FUEL_COST, COPY_WORD_FUEL_COST),
+        FORWARD_OUTPUT => linear_fuel!(1, COPY_BASE_FUEL_COST, OUTPUT_WORD_FUEL_COST),
         FUEL => const_fuel!(STATE_FUEL_COST),
         DEBUG_LOG => linear_fuel!(1, DEBUG_LOG_BASE_FUEL_COST, DEBUG_LOG_WORD_FUEL_COST),
         CHARGE_FUEL => const_fuel!(CHARGE_FUEL_BASE_COST),
@@ -195,5 +196,35 @@ pub(crate) fn calculate_syscall_fuel(sys_func_idx: SysFuncIdx) -> SyscallFuelPar
         // uint256 (0x08)
         UINT256_MUL_MOD => const_fuel!(UINT256_MUL_MOD_COST),
         UINT256_X2048_MUL => const_fuel!(UINT256_X2048_MUL_COST),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::FUEL_MAX_LINEAR_X;
+
+    #[test]
+    fn output_fuel_price_is_safe_and_bounds_the_current_block_budget() {
+        let max_linear_words = u64::from(FUEL_MAX_LINEAR_X).div_ceil(32);
+        let max_linear_fuel =
+            u64::from(COPY_BASE_FUEL_COST) + max_linear_words * u64::from(OUTPUT_WORD_FUEL_COST);
+        assert!(max_linear_fuel <= i32::MAX as u64);
+
+        const MAX_BLOCK_GAS: u64 = 100_000_000;
+        let output_bytes = MAX_BLOCK_GAS * FUEL_DENOM_RATE / u64::from(OUTPUT_WORD_FUEL_COST) * 32;
+        assert_eq!(output_bytes, 128_000_000);
+    }
+
+    #[test]
+    fn output_syscalls_use_the_output_fuel_price() {
+        let expected = SyscallFuelParams::LinearFuel(LinearFuelParams {
+            base_fuel: COPY_BASE_FUEL_COST,
+            param_index: 1,
+            word_cost: OUTPUT_WORD_FUEL_COST,
+        });
+
+        assert_eq!(calculate_syscall_fuel(SysFuncIdx::WRITE_OUTPUT), expected);
+        assert_eq!(calculate_syscall_fuel(SysFuncIdx::FORWARD_OUTPUT), expected);
     }
 }

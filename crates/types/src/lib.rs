@@ -82,10 +82,10 @@ pub const FUEL_DENOM_RATE: u64 = 20;
 /// (x / 32) × word_cost ≤ 2^31
 /// x ≤ (2^31 × 32) / word_cost_max
 ///
-/// Worst case (DEBUG_LOG with FUEL_DENOM_RATE = 20):
-/// - word_cost_max = 16 × 20 = 320
+/// Worst case (WRITE_OUTPUT/FORWARD_OUTPUT with FUEL_DENOM_RATE = 20):
+/// - word_cost_max = 25 × 20 = 500
 ///
-/// x ≤ (2^31 × 32) / 320 = 214,748,364 bytes (~204 MB)
+/// x ≤ (2^31 × 32) / 500 = 137,438,953 bytes (~131 MB)
 ///
 /// We use 128 MB as a safe limit within the theoretical maximum:
 pub const FUEL_MAX_LINEAR_X: u32 = 134_217_728; // 128 MB (2^27)
