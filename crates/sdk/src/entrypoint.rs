@@ -135,16 +135,24 @@ macro_rules! entrypoint {
     };
 }
 
+#[cfg(feature = "guest-coverage")]
 #[macro_export]
 #[doc(hidden)]
 macro_rules! define_coverage_entrypoint {
     () => {
-        #[cfg(all(feature = "guest-coverage", target_arch = "wasm32"))]
+        #[cfg(target_arch = "wasm32")]
         #[no_mangle]
         extern "C" fn __fluentbase_coverage_dump() {
             $crate::dump_guest_coverage();
         }
     };
+}
+
+#[cfg(not(feature = "guest-coverage"))]
+#[macro_export]
+#[doc(hidden)]
+macro_rules! define_coverage_entrypoint {
+    () => {};
 }
 
 #[macro_export]
