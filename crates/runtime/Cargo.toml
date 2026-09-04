@@ -52,3 +52,4 @@ wasmtime = [
     "rwasm/wasmtime",
     # "rwasm/cache-compiled-artifacts",
 ]
+guest-coverage = ["std", "wasmtime"]

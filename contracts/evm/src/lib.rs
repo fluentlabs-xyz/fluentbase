@@ -235,6 +235,8 @@ mod _fluentbase_entrypoint {
         ::fluentbase_sdk::BlockListAllocator::gc();
         exit_code.into_i32()
     }
+
+    ::fluentbase_sdk::define_coverage_entrypoint!();
 }
 #[cfg(target_arch = "wasm32")]
 #[panic_handler]

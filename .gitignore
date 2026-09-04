@@ -38,6 +38,7 @@ node_modules
 evm-e2e/tests/
 datadir
 graphify-out/
+/coverage-*.lcov
 
 genesis-*.txt*
 genesis-*.gz*

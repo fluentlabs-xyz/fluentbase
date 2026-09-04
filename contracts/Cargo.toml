@@ -53,6 +53,14 @@ opt-level = "z"
 debug = false
 #strip = "symbols"
 
+# CI-only profile used to retain LLVM coverage mapping in Wasm artifacts. Release/genesis
+# builds continue to use the `release` profile above.
+[profile.guest-coverage]
+inherits = "release"
+lto = false
+strip = true
+debug = false
+
 [patch.crates-io]
 # patch tiny-keccak
 tiny-keccak = { git = "https://github.com/fluentlabs-xyz/tiny-keccak.git", branch = "rwasm" }

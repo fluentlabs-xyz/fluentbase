@@ -29,6 +29,8 @@
 //!
 //! The store is reused, so the `RuntimeContext` is swapped in/out on every call.
 
+#[cfg(feature = "guest-coverage")]
+use super::guest_coverage::{capture_guest_coverage_profile, write_guest_coverage_profile};
 use crate::{syscall_handler::runtime_syscall_handler, RuntimeContext};
 use alloc::sync::Arc;
 use core::{cell::RefCell, mem::take};
@@ -93,6 +95,26 @@ thread_local! {
     /// threads without careful synchronization, and because per-thread reuse is often enough.
     pub static COMPILED_RUNTIMES: RefCell<HashMap<CompiledModuleCacheKey, Arc<RefCell<CompiledRuntime>>>> =
         RefCell::new(HashMap::new());
+}
+
+/// Captures LLVM profiles from coverage-instrumented cached system runtimes.
+///
+/// The diagnostic export is available only in CI coverage artifacts. Cached runtimes without the
+/// export are ignored, which lets instrumented system contracts coexist with ordinary artifacts.
+#[cfg(feature = "guest-coverage")]
+pub fn capture_guest_coverage() -> Result<Vec<Vec<u8>>, TrapCode> {
+    COMPILED_RUNTIMES.with_borrow_mut(|compiled_runtimes| {
+        let mut profiles = Vec::new();
+
+        for compiled_runtime in compiled_runtimes.values() {
+            let mut compiled_runtime = compiled_runtime.borrow_mut();
+            if let Some(profile) = capture_guest_coverage_profile(&mut compiled_runtime, None)? {
+                profiles.push(profile);
+            }
+        }
+
+        Ok(profiles)
+    })
 }
 
 impl SystemRuntime {
@@ -239,6 +261,14 @@ impl SystemRuntime {
 
         // Always swap back immediately after the call, so we keep `self.ctx` authoritative.
         core::mem::swap(compiled_runtime.data_mut(), &mut self.ctx);
+
+        // Instrumented CI artifacts expose a diagnostic export that serializes and resets their
+        // LLVM counters. Ordinary artifacts do not export it, making this a no-op outside the
+        // guest-coverage build even if the feature is accidentally enabled.
+        #[cfg(feature = "guest-coverage")]
+        if result.is_ok() && exit_code != ExitCode::InterruptionCalled.into_i32() {
+            write_guest_coverage_profile(&mut compiled_runtime, None);
+        }
 
         // The application can return trap code though exit code, we should handle such cases as well
         if self.ctx.execution_result.exit_code != ExitCode::Ok.into_i32() {
@@ -418,6 +448,43 @@ mod tests {
 
         assert!(config.consume_fuel);
         assert!(!config.consume_fuel_for_bulk_ops);
+    }
+
+    #[cfg(feature = "guest-coverage")]
+    #[test]
+    fn captures_profile_from_diagnostic_export() {
+        SystemRuntime::reset_cached_runtimes();
+
+        let module = system_module(
+            r#"
+            (module
+              (import "fluentbase_v1preview" "_write" (func $write (param i32 i32)))
+              (memory (export "memory") 1)
+              (data (i32.const 16) "profile")
+              (func (export "main") (param i32 i32) (result i32)
+                i32.const 0)
+              (func (export "__fluentbase_coverage_dump")
+                i32.const 16
+                i32.const 7
+                call $write))
+            "#,
+        );
+
+        let mut runtime = SystemRuntime::new(
+            module,
+            import_linker_v1_preview(),
+            test_code_hash(),
+            Address::ZERO,
+            RuntimeContext::default().with_fuel_limit(10_000),
+            false,
+        );
+        runtime.execute().expect("main export should execute");
+
+        let profiles = capture_guest_coverage().expect("coverage export should execute");
+        assert_eq!(profiles, vec![b"profile".to_vec()]);
+        assert!(runtime.context().execution_result.output.is_empty());
+
+        SystemRuntime::reset_cached_runtimes();
     }
 
     #[test]
