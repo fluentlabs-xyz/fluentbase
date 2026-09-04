@@ -217,8 +217,12 @@ def assert_vrf_dkg_halt(ctx) -> None:
     WHERE THE FREEZE COMES FROM, AS OF THE EPOCH KEY LEAVING `OrderBlock`. It used to come from a
     propose-time BOUNDARY GATE: `beacon_for_epoch(E_new) == None` made every proposer take a
     `skipping propose` arm at the change-epoch first block. That gate is GONE — a block asserts
-    nothing about the beacon any more (`application.rs`, `BeaconVerify`) — and its log line has
-    zero occurrences in the tree.
+    nothing about the beacon any more — and its log line has zero occurrences in the tree.
+    (This used to cite `application.rs`'s `BeaconVerify` for the claim. FLU-1204 deleted that
+    type along with the whole vote-path key ladder, so the citation is dropped rather than
+    moved: there is no longer any beacon surface on the verify path to point at, which is a
+    stronger form of the same fact. `dpos_seed_material_refused_divergent_total` is where a
+    key/seed disagreement is observable now.)
 
     The freeze survives one layer down, at ENGINE SPAWN. `EpochManager::reconcile_roles` resolves
     each member's beacon share for the epoch; `Absent` soft-enters a VERIFY-ONLY scheme instead of

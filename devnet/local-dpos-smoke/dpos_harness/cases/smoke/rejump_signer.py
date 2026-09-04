@@ -6,6 +6,13 @@ gate needs the previous epoch's terminal block, a jump puts that height below th
 floor, and nothing re-fetches below the floor — so the member sat verify-only (no proposals,
 no votes) until the next epoch boundary healed it by accident.
 
+THE GATE HAS TWO INPUTS SINCE FLU-1204, and this case still asserts over their SUM. Besides
+the terminal block it now needs σ at that block's terminal round, read from the node's own
+seed store (rehydrated from the seed journal on restart, pinned per epoch against eviction).
+`epoch_engine_spawn_deferred_total` does not distinguish them — the two `signer spawn
+deferred` INFO lines do — so a red here means "one of the two was missing", and the log is
+what says which. That is deliberate on the product side and is why the belt stays a budget.
+
 WHY THIS CASE HAD TO EXIST SEPARATELY. `smoke-cert-catchup` runs the same stop/advance/restart
 choreography, but it deliberately tunes its gap BELOW the re-jump threshold so the re-jump does
 not steal the derive-walk it measures, and even its optional deep cycle asserts only rejoin,

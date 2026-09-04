@@ -7,17 +7,16 @@
 //! other way — they read the reth state this crate has no access to.
 
 use alloy_primitives::B256;
-use commonware_consensus::types::{Epoch, Round};
+use commonware_consensus::types::Epoch;
 use commonware_cryptography::{ed25519::PrivateKey as Ed25519PrivateKey, Signer};
 use commonware_p2p::{Provider, Receiver, Sender};
-use commonware_resolver::Resolver as _;
 use commonware_resolver::p2p::{Config as ResolverConfig, Engine as ResolverEngine};
 use commonware_runtime::{BufferPooler, Clock, Handle, Metrics, Spawner, Storage};
 use fluentbase_bls::{
     beacon::seed_namespace, fluent_namespace, keys::ValidatorBlsKeypair, PeerPubkey, ShareSealKey,
 };
 use fluentbase_p2p::NoopBlocker;
-use futures::{future::BoxFuture, select, FutureExt as _};
+use futures::future::BoxFuture;
 use rand_core::CryptoRngCore;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -49,7 +48,6 @@ use crate::{
         log_resolver::{BeaconFetchHandler, BeaconFetchKey, LogFetcher, LogHandler, LogMessage},
         metrics::BeaconMetrics,
         outcome::group_public_key,
-        seed_resolver::{PullSeed, SeedBridge},
         share_state::{self, ShareState},
         surface::{PlaneRandomness, PlaneRandomnessConfig},
         Randomness,
@@ -57,61 +55,6 @@ use crate::{
     dpos::{ARTIFACT_JOURNAL_PARTITION, KEY_JOURNAL_PARTITION, SEED_JOURNAL_PARTITION},
     outer::SharedMux,
 };
-
-/// Cancels an outstanding beacon fetch unless it is disarmed first.
-///
-/// A `cancel` written into the timeout arm alone would be a half-measure: the
-/// propose future this pull runs inside is DROPPED on a view change, and a
-/// dropped future runs no arm at all. The resolver has no cap on outstanding
-/// fetches and re-queues on a timeout or a no-data answer, so an un-cancelled one
-/// retries for the life of the process — a boundary nobody can witness would
-/// leave one behind per view. A guard covers both exits with one mechanism
-/// instead of two that can drift apart.
-///
-/// `Drop` cannot await, so the cancel goes out as a detached task. That is sound
-/// here for the reason it usually is not: `cancel` is idempotent and its only
-/// effect is to remove a fetch the requester has stopped wanting.
-struct FetchGuard<E: Spawner + Metrics + Clone> {
-    ctx: E,
-    resolver: BeaconResolver,
-    /// `None` once the value arrived — nothing left to cancel.
-    key: Option<BeaconFetchKey>,
-}
-
-impl<E: Spawner + Metrics + Clone> FetchGuard<E> {
-    fn disarm(&mut self) {
-        self.key = None;
-    }
-}
-
-impl<E: Spawner + Metrics + Clone> Drop for FetchGuard<E> {
-    fn drop(&mut self) {
-        let Some(key) = self.key.take() else {
-            return;
-        };
-        let mut resolver = self.resolver.clone();
-        drop(
-            self.ctx
-                .with_label("seed_fetch_cancel")
-                .spawn(move |_| async move {
-                    resolver.cancel(key).await;
-                }),
-        );
-    }
-}
-
-/// How long the propose path waits for a σ it asked peers for.
-///
-/// Bounded on purpose: a boundary nobody can witness must still fall through to
-/// the view skip it falls through to today, rather than hold the leader.
-///
-/// Deliberately SHORTER than one resolver attempt ([`RESOLVER_TIMEOUT`], 5 s),
-/// and the consequence is stated rather than hidden: this covers a fast answer
-/// from a peer that holds the round, and on a slow link the boundary's first
-/// view still skips. What it buys there is that the σ lands during that view, so
-/// the RETRY finds it in the store — the leader budget (`timeouts.rs`) has no
-/// room for a full multi-peer walk, and taking it would nullify the view anyway.
-const SEED_PULL_TIMEOUT: Duration = Duration::from_millis(750);
 
 /// The resolver mailbox both beacon subjects — the `{epoch, dealer}` dealer log
 /// and the epoch-key artifact — ride.
@@ -164,8 +107,6 @@ struct ArtifactSeam {
     /// fire-and-forget shape. Built here because this is the only place the pull
     /// and the resolver mailbox exist together.
     pull_artifact: PullArtifact,
-    /// The by-round σ pull, for the boundary the ingress capture could not reach.
-    pull_seed: PullSeed,
 }
 
 /// Open the beacon recovery seam: the `commonware_resolver::p2p` engine carrying
@@ -192,8 +133,6 @@ fn open_artifact_seam<E, P, S, R>(
     adopt_tx: mpsc::Sender<AgreedArtifact>,
     metrics: BeaconMetrics,
     log_handler: LogHandler,
-    seed_bridge: SeedBridge,
-    seed_store_for_pull: super::certify::SeedStore,
 ) -> ArtifactSeam
 where
     E: BufferPooler + Clock + CryptoRngCore + Metrics + Spawner + Clone,
@@ -208,7 +147,7 @@ where
         adopt_tx,
         metrics.clone(),
     );
-    let handler = BeaconFetchHandler::new(log_handler, bridge.clone(), seed_bridge);
+    let handler = BeaconFetchHandler::new(log_handler, bridge.clone());
     let (engine, mailbox) = ResolverEngine::new(
         context.with_label("beacon_log_resolver"),
         ResolverConfig {
@@ -294,59 +233,12 @@ where
         })
     };
 
-    // Unlike the artifact pull this one HANDS BACK a future: its caller is the
-    // propose path, which must not build a block until it knows whether the
-    // witness it needs has arrived. `Inline::propose` runs in its own task, so
-    // awaiting here does not hold the voter.
-    let pull_seed: PullSeed = {
-        let mailbox = mailbox.clone();
-        let seeds = seed_store_for_pull;
-        let ctx = context.with_label("seed_pull");
-        Arc::new(move |round: Round| {
-            let mut resolver = mailbox.clone();
-            let seeds = seeds.clone();
-            let ctx = ctx.clone();
-            Box::pin(async move {
-                if seeds.lookup(round).is_some() {
-                    return true;
-                }
-                // This round's OWN wakeup, not the store's single-consumer
-                // `notify`: sharing that one would both end this wait on an
-                // unrelated round's record and steal the executor's wake.
-                let landed = seeds.wait_for(round);
-                // A range of one: the shape is ranged, the ask is not (D1).
-                let key = BeaconFetchKey::Seed {
-                    from: round,
-                    to: round,
-                };
-                resolver.fetch(key.clone()).await;
-                let mut guard = FetchGuard {
-                    ctx: ctx.clone(),
-                    resolver,
-                    key: Some(key),
-                };
-                // Bounded: a boundary that cannot be witnessed must still fall
-                // through to the view skip rather than hold the leader for ever.
-                select! {
-                    _ = landed.fuse() => {},
-                    _ = ctx.sleep(SEED_PULL_TIMEOUT).fuse() => {},
-                }
-                let held = seeds.lookup(round).is_some();
-                if held {
-                    guard.disarm();
-                }
-                held
-            }) as BoxFuture<'static, bool>
-        })
-    };
-
     ArtifactSeam {
         resolver_handle,
         logs: LogFetcher::new(mailbox),
         held_keys,
         pull_keys,
         pull_artifact,
-        pull_seed,
     }
 }
 
@@ -721,7 +613,6 @@ where
         held_keys,
         pull_keys,
         pull_artifact,
-        pull_seed,
     } = open_artifact_seam(
         context,
         chain_id,
@@ -734,14 +625,6 @@ where
         agreed_tx.clone(),
         metrics.clone(),
         log_handler,
-        SeedBridge::new(
-            seed_store.clone(),
-            beacon_keys.clone(),
-            seed_namespace(&fluent_namespace(chain_id)),
-            metrics.clone(),
-            super::actor::DETERMINISTIC_BOOTSTRAP_EPOCH,
-        ),
-        seed_store.clone(),
     );
 
     // The demote-heal reads the agreed `Output` for an EPOCH out of the artifact
@@ -887,14 +770,6 @@ where
     let randomness = PlaneRandomness::build(PlaneRandomnessConfig {
         seeds: seed_store,
         keys: beacon_keys.clone(),
-        verify: Some(super::resolve::BeaconVerify::new(
-            super::resolve::group_key_resolver(
-                ceremony_store.clone(),
-                dkg_qual_for.clone(),
-                beacon_keys.clone(),
-            ),
-            namespace.clone(),
-        )),
         resolver: super::resolve::beacon_share_resolver(
             ceremony_store.clone(),
             dkg_qual_for.clone(),
@@ -905,7 +780,6 @@ where
         dkg_qual: dkg_qual_for.clone(),
         held: Some(held_keys.clone()),
         pull: Some(pull_keys),
-        pull_seed: Some(pull_seed),
         participation: share_notify.clone(),
         metrics: metrics.clone(),
         chain_id,

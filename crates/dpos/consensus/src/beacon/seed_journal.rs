@@ -51,7 +51,10 @@
 //! accumulation first reaches the target. Right after an epoch rolls the new
 //! epoch holds one round, so the previous epoch stays until the window refills.
 
-use std::num::{NonZeroU64, NonZeroUsize};
+use std::{
+    collections::BTreeMap,
+    num::{NonZeroU64, NonZeroUsize},
+};
 
 use commonware_consensus::types::{Epoch, Round, View};
 use commonware_runtime::{BufferPooler, Clock, Handle, Metrics, Spawner, Storage};
@@ -278,6 +281,45 @@ impl<E: Storage + Metrics + Clock + BufferPooler> SeedJournal<E> {
         oldest_epoch.map(|epoch| epoch << VIEW_BITS)
     }
 
+    /// The HIGHEST record of every epoch the store still holds, oldest epoch
+    /// first.
+    ///
+    /// The rehydration counterpart of `SeedStore`'s terminal pin, and the reason
+    /// it is a separate read: [`replay_window`](Self::replay_window) walks
+    /// newest-first and stops at `retention` RECORDS, so once the current epoch
+    /// is past that count the PREVIOUS epoch's terminal round is not in the
+    /// replayed set — and that is precisely the round a Signer restarting
+    /// mid-epoch needs. The datum is on disk regardless: `prune_to_window` is
+    /// epoch-granular and keeps E-1 for all of E.
+    ///
+    /// Bounded by construction: one `get` per retained epoch, and `ranges` is a
+    /// handful of entries even for a full epoch. Callable only while `open`
+    /// still owns the journal — this is NOT a per-request read path.
+    pub async fn terminal_per_epoch(&self) -> Vec<(Round, BlsSignature)> {
+        // `ranges` is ascending and a range never spans two epochs (blob section
+        // == epoch), so the last range of each epoch ends on that epoch's highest
+        // held index.
+        let mut highest: BTreeMap<u64, u64> = BTreeMap::new();
+        for (start, end) in self.store.ranges() {
+            let epoch = start >> VIEW_BITS;
+            let slot = highest.entry(epoch).or_insert(end);
+            if end > *slot {
+                *slot = end;
+            }
+        }
+        let mut out = Vec::with_capacity(highest.len());
+        for (_, index) in highest {
+            match self.store.get(index).await {
+                Ok(Some(signature)) => out.push((round_of(index), signature)),
+                // Same rule as the window replay: a record that went bad is a
+                // miss, never a wrong σ.
+                Ok(None) => {}
+                Err(e) => warn!(index, ?e, "seed store: unreadable terminal record"),
+            }
+        }
+        out
+    }
+
     /// Epochs the store still holds records for, oldest-first. Used by the
     /// pruning tests; also the natural shape for any future "what can I serve"
     /// query.
@@ -326,7 +368,16 @@ where
         entries = rehydrated.len(),
         "rehydrated the seed store from disk"
     );
-    let (store, rx) = crate::beacon::certify::SeedStore::with_persistence(rehydrated);
+    // Read BEFORE the journal is moved into the writer task — this is the one
+    // point in the process where it is still reachable for reading.
+    // Infallible by construction: an unreadable record is skipped the same way
+    // the window replay skips one — a missing σ is a store miss, never a wrong σ.
+    let terminals = journal.terminal_per_epoch().await;
+    tracing::info!(
+        epochs = terminals.len(),
+        "pinned the per-epoch terminal seeds"
+    );
+    let (store, rx) = crate::beacon::certify::SeedStore::with_persistence(rehydrated, terminals);
     let writer = spawn_writer(writer_context, journal, rx, retention as u64);
     Ok((store, writer))
 }
@@ -430,6 +481,59 @@ mod tests {
         Round::new(Epoch::new(0), View::new(view))
     }
 
+    // WHY THE PIN NEEDS ITS OWN READ. `replay_window` walks newest-first and stops
+    // at `retention` RECORDS, so once the newer epoch is past that count the older
+    // epoch's terminal round is not in the replayed set — and that is exactly the
+    // round a Signer restarting mid-epoch asks for. The datum is on disk either
+    // way (`prune_to_window` is epoch-granular), so this is a rehydration gap and
+    // `terminal_per_epoch` is what closes it. Asserted with a TINY retention so
+    // the count bound bites without writing 4096 records.
+    #[test]
+    fn the_per_epoch_terminal_is_readable_after_the_window_has_moved_past_it() {
+        deterministic::Runner::default().start(|ctx| async move {
+            let mut journal = SeedJournal::init(ctx.with_label("boot1"), "seeds".into())
+                .await
+                .expect("open");
+            let old_terminal = Round::new(Epoch::new(0), View::new(7));
+            for v in 1..=7 {
+                let r = Round::new(Epoch::new(0), View::new(v));
+                journal.append(r, sig_for(r)).await.expect("append");
+            }
+            for v in 0..=5 {
+                let r = Round::new(Epoch::new(1), View::new(v));
+                journal.append(r, sig_for(r)).await.expect("append");
+            }
+            journal.sync().await.expect("sync");
+            // The restart is the claim: both reads must answer from a `ranges()`
+            // map rebuilt by a disk scan, not from the handle that wrote the
+            // records. `open` reads the journal at exactly this point.
+            drop(journal);
+
+            let reopened = SeedJournal::init(ctx.with_label("boot2"), "seeds".into())
+                .await
+                .expect("reopen");
+            let window = reopened.replay_window(3).await.expect("replay");
+            assert!(
+                !window.iter().any(|(r, _)| *r == old_terminal),
+                "a count-bounded window does NOT carry the older epoch's terminal — \
+                 this is the gap the pin exists to close"
+            );
+
+            let terminals = reopened.terminal_per_epoch().await;
+            assert_eq!(
+                terminals.iter().map(|(r, _)| *r).collect::<Vec<_>>(),
+                vec![old_terminal, Round::new(Epoch::new(1), View::new(5))],
+                "one entry per epoch, each its highest round, oldest epoch first"
+            );
+
+            let (store, _rx) = SeedStore::with_persistence(window, terminals);
+            assert!(
+                store.terminal_at(old_terminal).is_some(),
+                "and the restarted store can answer for the epoch its window lost"
+            );
+        });
+    }
+
     // The whole loop, end to end and through the real writer task:
     //   SeedStore::record  →  channel  →  spawn_writer  →  store + fsync
     //   →  restart  →  replay_window  →  SeedStore::with_persistence  →  lookup
@@ -443,7 +547,7 @@ mod tests {
             let journal = SeedJournal::init(ctx.with_label("boot1"), "seeds".into())
                 .await
                 .expect("open");
-            let (store, rx) = SeedStore::with_persistence(Vec::new());
+            let (store, rx) = SeedStore::with_persistence(Vec::new(), Vec::new());
             let writer = spawn_writer(ctx.with_label("writer"), journal, rx, SEED_RETENTION as u64);
             for r in &rounds {
                 store.record(VerifiedSeed::from_journal(*r, sig_for(*r)));
@@ -467,7 +571,7 @@ mod tests {
                 "every recorded round reached disk through the writer task"
             );
 
-            let (restarted, _rx2) = SeedStore::with_persistence(rehydrated);
+            let (restarted, _rx2) = SeedStore::with_persistence(rehydrated, Vec::new());
             for r in &rounds {
                 assert_eq!(
                     restarted.lookup(*r),
@@ -501,7 +605,7 @@ mod tests {
             let journal = SeedJournal::init(ctx.with_label("boot1"), "seeds".into())
                 .await
                 .expect("open");
-            let (store, rx) = SeedStore::with_persistence(Vec::new());
+            let (store, rx) = SeedStore::with_persistence(Vec::new(), Vec::new());
             let writer = spawn_writer(ctx.with_label("writer"), journal, rx, SEED_RETENTION as u64);
             for r in &rounds {
                 store.record(VerifiedSeed::from_journal(*r, sig_for(*r)));
@@ -556,7 +660,7 @@ mod tests {
                 .expect("replay");
             assert_eq!(rehydrated.len(), rounds.len());
 
-            let (store, _rx) = SeedStore::with_persistence(rehydrated);
+            let (store, _rx) = SeedStore::with_persistence(rehydrated, Vec::new());
             for r in &rounds {
                 assert_eq!(
                     store.lookup(*r),
@@ -580,7 +684,7 @@ mod tests {
             journal.sync().await.expect("sync");
             let rehydrated = journal.replay_window(SEED_RETENTION).await.expect("replay");
 
-            let (store, _rx) = SeedStore::with_persistence(rehydrated);
+            let (store, _rx) = SeedStore::with_persistence(rehydrated, Vec::new());
             assert_eq!(
                 store.lookup(round_at(99)),
                 None,

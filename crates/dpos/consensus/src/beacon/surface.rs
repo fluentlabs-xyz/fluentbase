@@ -12,7 +12,6 @@ use super::{
     keys::{pk_prefix, BeaconKeys, InvalidSeed, KeySource},
     metrics::BeaconMetrics,
     oracle::BeaconOracle,
-    resolve::BeaconVerify,
     seed::Seed,
     verified_seed::VerifiedSeed,
 };
@@ -42,18 +41,6 @@ use tracing::{debug, info, warn};
 /// oracle now, so what is left of this is the promote gates' input and it never
 /// crosses the crate edge.
 pub(crate) type BeaconKey = (Sharing<MinSig>, Option<Share>, Vec<u8>);
-
-/// The witness arm's verdict. Each variant maps to a DIFFERENT vote decision, so
-/// collapsing any two changes how the node votes. `NoKey` is STRUCTURAL ("this
-/// node cannot know; re-polling cannot help"), `Undecided` is TRANSIENT ("ask
-/// again next tick, never cache").
-#[derive(Debug, PartialEq, Eq)]
-pub enum WitnessCheck {
-    Valid,
-    Invalid,
-    NoKey,
-    Undecided,
-}
 
 /// Why participation was withheld. Named rather than a bool because each arm
 /// owns its own metric family, and those names are scraped by the devnet smoke.
@@ -117,9 +104,12 @@ pub trait Randomness: Send + Sync {
     /// ORDERING-CRITICAL: the caller invokes this SYNCHRONOUSLY, from inside the
     /// simplex reporter. Sync by signature so no implementation can move the
     /// record behind an await — the voter awaits that reporter before advancing
-    /// the view, and the next view's leader reads this memo to embed the
-    /// parent-seed witness. `spec_exec.rs` carries the derivation, including
-    /// which half of the older constraint turned out not to be load-bearing.
+    /// the view, and the executor derives each height from this memo at the
+    /// height's OWN round. (Until FLU-1204 the next view's leader read it to
+    /// embed a `parent_seed` witness; nothing embeds anything now, but the
+    /// synchronous constraint is unchanged — the derive reads what this wrote.)
+    /// `spec_exec.rs` carries the derivation, including which half of the older
+    /// constraint turned out not to be load-bearing.
     fn record_seed(&self, verified: VerifiedSeed);
 
     /// Hold a σ that arrived from the network for an epoch whose key is not
@@ -135,17 +125,26 @@ pub trait Randomness: Send + Sync {
     /// it owns provenance.
     fn on_invalid_seed(&self, epoch: u64) -> InvalidSeed;
 
-    /// Ask peers for σ of `round` and wait a bounded time for it.
-    ///
-    /// `true` iff the served map holds it when the future resolves. The one
-    /// ASYNC member of the seed half, and deliberately so: acquisition is
-    /// allowed to await, while every read stays synchronous.
-    fn fetch_seed(&self, round: Round) -> BoxFuture<'_, bool>;
-
-    /// The seed in force at `round`, if this node has it. Sync: both callers —
-    /// the propose-side witness embed and the executor's re-canonicalisation —
-    /// read it without an await.
+    /// The seed in force at `round`, if this node has it. Sync: every caller —
+    /// the executor's derive and the crash-replay walk — reads it without an
+    /// await.
     fn seed_for(&self, round: Round) -> Option<Seed>;
+
+    /// σ of `round`, answered ONLY when `round` is the round this node pinned as
+    /// its epoch's terminal one.
+    ///
+    /// Separate from [`seed_for`](Self::seed_for) because the ask has a different
+    /// lifetime: `seed_for` reads the trailing `SEED_RETENTION` window, and the
+    /// one legitimate ask that outlives that window is the boundary base for the
+    /// NEXT epoch — σ of E-1's terminal round, up to a full epoch old against a
+    /// window measured in rounds. The pin is what survives eviction for it.
+    ///
+    /// The CALLER names the round, from agreed data; a neighbouring round is a
+    /// MISS, never a substitute. The pin may not be trusted to name the terminal
+    /// round itself — a hard kill between a record and the journal's sync can
+    /// leave it one round low, and a valid σ for the wrong round is
+    /// indistinguishable from the right one to whoever trusts it to name.
+    fn terminal_seed_at(&self, round: Round) -> Option<Seed>;
 
     /// Fires on every [`Self::record_seed`]. SINGLE CONSUMER: `notify_one` wakes
     /// exactly one waiter, so a second consumer of this `Arc` silently swallows
@@ -156,9 +155,11 @@ pub trait Randomness: Send + Sync {
     /// Is randomness mandatory at `epoch`?
     ///
     /// CONSENSUS-AGREED DATA, not a local capability: every node of one network
-    /// must answer identically, or the witness-required wire rule splits the
-    /// network. This is the one operation [`absent`] answers TRUTHFULLY rather
-    /// than negatively.
+    /// must answer identically, or the derive splits the network: this predicate
+    /// decides, BEFORE the store is consulted, whether a height derives from σ or
+    /// from `None`. (It used to gate the witness-required WIRE rule as well; the
+    /// field left the wire in FLU-1204 and the predicate outlived it.) This is the
+    /// one operation [`absent`] answers TRUTHFULLY rather than negatively.
     ///
     /// The default body IS that agreed answer — the single deterministic
     /// bootstrap edge every node of this network compiles in. Override it only
@@ -168,12 +169,6 @@ pub trait Randomness: Send + Sync {
     fn mandatory_at(&self, epoch: u64) -> bool {
         epoch >= super::actor::DETERMINISTIC_BOOTSTRAP_EPOCH
     }
-
-    /// Check a block's parent-seed witness under the key in force at
-    /// `parent_epoch`. Sync: it is consumed inside the verify poll loop that
-    /// shares one tick budget with the result gate, and an await there would
-    /// corrupt the tick accounting.
-    fn check_witness(&self, parent_epoch: u64, seed: &Seed) -> WitnessCheck;
 
     /// Can this node participate at `epoch` at all? See [`ShareProbe`].
     fn share_probe(&self, epoch: Epoch) -> ShareProbe;
@@ -239,10 +234,17 @@ pub trait Randomness: Send + Sync {
 
 /// The total, permanently-negative provider.
 ///
-/// A light node and `--cert-follow` run with no beacon material at all, and "not
-/// yet" is the wrong answer for them: the rungs are absent for the LIFE OF THE
-/// PROCESS, not until something resolves. This turns that contract from prose
-/// into a type.
+/// "Not yet" is the wrong answer for a node class whose rungs are absent for the
+/// LIFE OF THE PROCESS rather than until something resolves. This turns that
+/// contract from prose into a type.
+///
+/// It no longer describes `--cert-follow`: that class carries keys since FLU-1167
+/// and its own `SeedStore` since the follower seed store landed, so it runs
+/// `FollowerRandomness` (`crates/dpos/consensus/src/beacon/follower.rs:162`), not this.
+/// What is left here is a struct-literal DEFAULT that no consumer observes —
+/// `FluentApp::new` and `CertInlet::new` both have `with_randomness` called on
+/// them before first use on every production path — plus the executor's test
+/// module. Do not read it as naming a live node class.
 ///
 /// Takes a metrics context because registration is context-scoped and commonware
 /// prefixes each family with the context's label path — a context-free
@@ -438,10 +440,6 @@ impl Randomness for StaticRandomness {
 
     fn quarantine_seed(&self, _round: Round, _seed: BlsSignature) {}
 
-    fn fetch_seed(&self, _round: Round) -> BoxFuture<'_, bool> {
-        Box::pin(std::future::ready(false))
-    }
-
     /// No key store to judge provenance with, so a failure proves nothing.
     fn on_invalid_seed(&self, _epoch: u64) -> InvalidSeed {
         InvalidSeed::Quarantine
@@ -454,24 +452,16 @@ impl Randomness for StaticRandomness {
         })
     }
 
+    /// No pin to keep: σ is recomputable for any round, so nothing here can age
+    /// out of a window and the terminal round answers like every other one.
+    fn terminal_seed_at(&self, round: Round) -> Option<Seed> {
+        self.seed_for(round)
+    }
+
     fn seed_edge(&self) -> Arc<Notify> {
         // Never fires, and correctly so: a consumer waiting for "a seed landed"
         // is waiting for something that was already true.
         self.idle.clone()
-    }
-
-    fn check_witness(&self, parent_epoch: u64, seed: &Seed) -> WitnessCheck {
-        let (sharing, _) = self.deal(parent_epoch);
-        if fluentbase_bls::beacon::verify_seed(
-            sharing.public(),
-            &self.namespace,
-            seed.target_round,
-            &seed.signature,
-        ) {
-            WitnessCheck::Valid
-        } else {
-            WitnessCheck::Invalid
-        }
     }
 
     /// Never withheld: this implementation cannot fail to hold a share.
@@ -592,13 +582,11 @@ pub fn for_seeds(seeds: super::certify::SeedStore) -> Arc<dyn Randomness> {
     PlaneRandomness::build(PlaneRandomnessConfig {
         seeds,
         keys: BeaconKeys::new(),
-        verify: None,
         resolver: Arc::new(|_| BeaconResolve::Absent),
         ceremony: keyless_ceremony(),
         dkg_qual: no_mint(),
         held: None,
         pull: None,
-        pull_seed: None,
         participation: Arc::new(Notify::new()),
         metrics: BeaconMetrics::default(),
         chain_id: 0,
@@ -623,13 +611,11 @@ pub fn for_keys(keys: BeaconKeys, held: Option<super::keys::AgreedKeys>) -> Arc<
     PlaneRandomness::build(PlaneRandomnessConfig {
         seeds: super::certify::SeedStore::new(),
         keys,
-        verify: None,
         resolver: Arc::new(|_| BeaconResolve::Absent),
         ceremony: keyless_ceremony(),
         dkg_qual: no_mint(),
         held,
         pull: None,
-        pull_seed: None,
         participation: Arc::new(Notify::new()),
         metrics: BeaconMetrics::default(),
         // Reaches `build_signer` only, which an ingress path never calls.
@@ -652,10 +638,6 @@ impl Randomness for Absent {
 
     fn quarantine_seed(&self, _round: Round, _seed: BlsSignature) {}
 
-    fn fetch_seed(&self, _round: Round) -> BoxFuture<'_, bool> {
-        Box::pin(std::future::ready(false))
-    }
-
     /// No key store to judge provenance with, so a failure proves nothing.
     fn on_invalid_seed(&self, _epoch: u64) -> InvalidSeed {
         InvalidSeed::Quarantine
@@ -665,12 +647,12 @@ impl Randomness for Absent {
         None
     }
 
-    fn seed_edge(&self) -> Arc<Notify> {
-        self.idle.clone()
+    fn terminal_seed_at(&self, _round: Round) -> Option<Seed> {
+        None
     }
 
-    fn check_witness(&self, _parent_epoch: u64, _seed: &Seed) -> WitnessCheck {
-        WitnessCheck::NoKey
+    fn seed_edge(&self) -> Arc<Notify> {
+        self.idle.clone()
     }
 
     fn share_probe(&self, _epoch: Epoch) -> ShareProbe {
@@ -727,7 +709,6 @@ pub(crate) mod testing {
         /// Canned `PK_epoch` values, reachable through [`Randomness::oracle_for`]
         /// exactly as a real one is: a plain store the oracle reads.
         keys: BeaconKeys,
-        witness: Option<WitnessCheck>,
         seeds: BTreeMap<Round, Seed>,
         bootstrap: u64,
         efforts: Mutex<Vec<(u64, PinEffort)>>,
@@ -778,10 +759,6 @@ pub(crate) mod testing {
             self.store.quarantine(round, seed);
         }
 
-        fn fetch_seed(&self, _round: Round) -> BoxFuture<'_, bool> {
-            Box::pin(std::future::ready(false))
-        }
-
         fn on_invalid_seed(&self, epoch: u64) -> InvalidSeed {
             self.keys.on_invalid_seed(epoch)
         }
@@ -790,21 +767,21 @@ pub(crate) mod testing {
             self.seeds.get(&round).cloned()
         }
 
+        /// Reads the real `store` — the map [`Randomness::record_seed`] writes —
+        /// so a test that records a σ and asks for the pin gets it back.
+        fn terminal_seed_at(&self, round: Round) -> Option<Seed> {
+            self.store.terminal_at(round).map(|signature| Seed {
+                target_round: round,
+                signature,
+            })
+        }
+
         fn seed_edge(&self) -> Arc<Notify> {
             self.idle.clone()
         }
 
         fn mandatory_at(&self, epoch: u64) -> bool {
             epoch >= self.bootstrap
-        }
-
-        fn check_witness(&self, _parent_epoch: u64, _seed: &Seed) -> WitnessCheck {
-            match self.witness {
-                Some(WitnessCheck::Valid) => WitnessCheck::Valid,
-                Some(WitnessCheck::Invalid) => WitnessCheck::Invalid,
-                Some(WitnessCheck::Undecided) => WitnessCheck::Undecided,
-                Some(WitnessCheck::NoKey) | None => WitnessCheck::NoKey,
-            }
         }
 
         fn share_probe(&self, _epoch: Epoch) -> ShareProbe {
@@ -869,19 +846,6 @@ mod tests {
             let r = absent(&ctx);
 
             assert_eq!(
-                r.check_witness(
-                    9,
-                    &crate::beacon::seed::Seed {
-                        target_round: Round::new(
-                            Epoch::new(9),
-                            commonware_consensus::types::View::new(1)
-                        ),
-                        signature: BlsSignature::zero(),
-                    }
-                ),
-                WitnessCheck::NoKey
-            );
-            assert_eq!(
                 r.share_probe(Epoch::new(9)),
                 ShareProbe::Withheld(WithheldReason::NoUsableShare)
             );
@@ -895,9 +859,10 @@ mod tests {
             assert!(!r.ensure_key(9, PinEffort::Local).await);
             assert!(!r.ensure_key(9, PinEffort::Thorough).await);
 
-            // The one truthful answer: the witness-required rule is network-wide
-            // agreed data, so answering it negatively would split the network
-            // rather than degrade this node.
+            // The one truthful answer: beacon-activity is network-wide agreed
+            // data — it decides whether a height derives from σ or from `None` —
+            // so answering it negatively would split the network rather than
+            // degrade this node.
             assert!(!r.mandatory_at(super::super::actor::DETERMINISTIC_BOOTSTRAP_EPOCH - 1));
             assert!(r.mandatory_at(super::super::actor::DETERMINISTIC_BOOTSTRAP_EPOCH));
         });
@@ -1032,13 +997,11 @@ mod tests {
         PlaneRandomness::build(PlaneRandomnessConfig {
             seeds: super::super::certify::SeedStore::new(),
             keys,
-            verify: None,
             resolver: Arc::new(move |_| BeaconResolve::Key(material.clone())),
             ceremony: keyless_ceremony(),
             dkg_qual: no_mint(),
             held: None,
             pull: None,
-            pull_seed: None,
             participation: Arc::new(Notify::new()),
             metrics: BeaconMetrics::default(),
             chain_id: 1,
@@ -1179,8 +1142,8 @@ mod tests {
 
     /// THE ACCEPTANCE TEST for this ticket.
     ///
-    /// Drives the whole randomness contract — propose (the seed a leader embeds),
-    /// verify (the witness check a voter runs), the signing scheme, and the
+    /// Drives the whole randomness contract — the σ a certificate carries in,
+    /// the store lookup a derive reads out, the signing scheme, and the
     /// certificate pin — against an implementation that has no DKG, no agreement
     /// plane, no network and no store. If any of those operations still required
     /// a beacon concept, this type could not exist and this test could not
@@ -1206,18 +1169,31 @@ mod tests {
 
         // Verify: another node checks that seed under the key in force, and
         // agrees — the two halves derived the same PK from the same committee
-        // without exchanging anything.
-        assert_eq!(r.check_witness(epoch.get(), &seed), WitnessCheck::Valid);
+        // without exchanging anything. Asked through `oracle_for`, which is the
+        // seam that survived the witness gate: it is what the certificate door
+        // checks a carried σ with.
+        let oracle = r
+            .oracle_for(epoch.get())
+            .expect("a beacon-active epoch carries an oracle");
+        assert!(crate::beacon::verified_seed::VerifiedSeed::check(
+            oracle.as_ref(),
+            round,
+            seed.signature
+        )
+        .is_ok());
 
         // A DIFFERENT round's σ must not verify as this one's. Without this the
-        // Valid above would also pass for an implementation that ignored the
-        // round entirely.
+        // Ok above would also pass for an implementation that ignored the round
+        // entirely.
         let other = Round::new(epoch, commonware_consensus::types::View::new(5));
-        let wrong = Seed {
-            target_round: round,
-            signature: r.seed_for(other).expect("σ").signature,
-        };
-        assert_eq!(r.check_witness(epoch.get(), &wrong), WitnessCheck::Invalid);
+        assert!(matches!(
+            crate::beacon::verified_seed::VerifiedSeed::check(
+                oracle.as_ref(),
+                round,
+                r.seed_for(other).expect("σ").signature
+            ),
+            Err(fluentbase_bls::oracle::SeedCheck::Invalid)
+        ));
 
         // Participation and scheme construction.
         assert_eq!(r.share_probe(epoch), ShareProbe::Ready);
@@ -1296,13 +1272,11 @@ mod tests {
         let r = PlaneRandomness::build(PlaneRandomnessConfig {
             seeds: super::super::certify::SeedStore::new(),
             keys: keys.clone(),
-            verify: None,
             resolver: Arc::new(move |_| BeaconResolve::Key(material.clone())),
             ceremony: keyless_ceremony(),
             dkg_qual: no_mint(),
             held: None,
             pull: None,
-            pull_seed: None,
             participation: Arc::new(Notify::new()),
             metrics: BeaconMetrics::default(),
             chain_id: 1,
@@ -1346,13 +1320,11 @@ mod tests {
         let r = PlaneRandomness::build(PlaneRandomnessConfig {
             seeds: super::super::certify::SeedStore::new(),
             keys: keys.clone(),
-            verify: None,
             resolver: Arc::new(move |_| BeaconResolve::Key(material.clone())),
             ceremony: keyless_ceremony(),
             dkg_qual: no_mint(),
             held: None,
             pull: None,
-            pull_seed: None,
             participation: Arc::new(Notify::new()),
             metrics: BeaconMetrics::default(),
             chain_id: 1,
@@ -1412,13 +1384,11 @@ mod tests {
         let r = PlaneRandomness::build(PlaneRandomnessConfig {
             seeds: super::super::certify::SeedStore::new(),
             keys: BeaconKeys::new(),
-            verify: None,
             resolver: Arc::new(|_| BeaconResolve::Absent),
             ceremony: keyless_ceremony(),
             dkg_qual: no_mint(),
             held: None,
             pull: None,
-            pull_seed: None,
             participation: Arc::new(Notify::new()),
             metrics: BeaconMetrics::default(),
             chain_id: 1,
@@ -1847,7 +1817,6 @@ fn own_key_publication(agreed: Option<GroupPublic>, resolved: GroupPublic) -> Ow
 pub(crate) struct PlaneRandomness {
     seeds: super::certify::SeedStore,
     keys: BeaconKeys,
-    verify: Option<BeaconVerify>,
     resolver: BeaconResolver,
     /// The oracle's two inputs, held HERE and nowhere above: a scheme reads the
     /// live ceremony store through the oracle rather than being handed a copy of
@@ -1857,9 +1826,6 @@ pub(crate) struct PlaneRandomness {
     dkg_qual: DkgQualFor,
     held: Option<super::keys::AgreedKeys>,
     pull: Option<super::keys::AgreedKeys>,
-    /// The by-round σ pull. `None` on a node with no resolver seam, where a
-    /// witness miss stays what it is today: a skipped view.
-    pull_seed: Option<super::seed_resolver::PullSeed>,
     participation: Arc<Notify>,
     metrics: BeaconMetrics,
     chain_id: u64,
@@ -1874,13 +1840,11 @@ pub(crate) struct PlaneRandomness {
 pub(crate) struct PlaneRandomnessConfig {
     pub(crate) seeds: super::certify::SeedStore,
     pub(crate) keys: BeaconKeys,
-    pub(crate) verify: Option<BeaconVerify>,
     pub(crate) resolver: BeaconResolver,
     pub(crate) ceremony: CeremonyStore,
     pub(crate) dkg_qual: DkgQualFor,
     pub(crate) held: Option<super::keys::AgreedKeys>,
     pub(crate) pull: Option<super::keys::AgreedKeys>,
-    pub(crate) pull_seed: Option<super::seed_resolver::PullSeed>,
     pub(crate) participation: Arc<Notify>,
     pub(crate) metrics: BeaconMetrics,
     pub(crate) chain_id: u64,
@@ -1891,13 +1855,11 @@ impl PlaneRandomness {
         let PlaneRandomnessConfig {
             seeds,
             keys,
-            verify,
             resolver,
             ceremony,
             dkg_qual,
             held,
             pull,
-            pull_seed,
             participation,
             metrics,
             chain_id,
@@ -1905,13 +1867,11 @@ impl PlaneRandomness {
         Arc::new(Self {
             seeds,
             keys,
-            verify,
             resolver,
             ceremony,
             dkg_qual,
             held,
             pull,
-            pull_seed,
             participation,
             metrics,
             chain_id,
@@ -1962,13 +1922,6 @@ impl Randomness for PlaneRandomness {
         self.keys.on_invalid_seed(epoch)
     }
 
-    fn fetch_seed(&self, round: Round) -> BoxFuture<'_, bool> {
-        match self.pull_seed.as_ref() {
-            Some(pull) => pull(round),
-            None => Box::pin(std::future::ready(false)),
-        }
-    }
-
     fn seed_for(&self, round: Round) -> Option<Seed> {
         self.seeds.lookup(round).map(|signature| Seed {
             target_round: round,
@@ -1976,12 +1929,19 @@ impl Randomness for PlaneRandomness {
         })
     }
 
-    fn seed_edge(&self) -> Arc<Notify> {
-        self.seeds.notifier()
+    /// The pin alone, with no fall-through to the served window: the pin is
+    /// written from the same `insert` that fills the window, highest round per
+    /// epoch wins, and no round of a CLOSED epoch can exceed its terminal one —
+    /// so a σ the window holds for the asked round is already the pinned one.
+    fn terminal_seed_at(&self, round: Round) -> Option<Seed> {
+        self.seeds.terminal_at(round).map(|signature| Seed {
+            target_round: round,
+            signature,
+        })
     }
 
-    fn check_witness(&self, parent_epoch: u64, seed: &Seed) -> WitnessCheck {
-        super::resolve::resolve_witness(&self.keys, self.verify.as_ref(), parent_epoch, seed)
+    fn seed_edge(&self) -> Arc<Notify> {
+        self.seeds.notifier()
     }
 
     fn share_probe(&self, epoch: Epoch) -> ShareProbe {
@@ -2221,11 +2181,15 @@ impl Randomness for PlaneRandomness {
         // key can arrive any more, so a held σ can never be promoted and is only
         // memory a peer could grow.
         self.seeds.retain_quarantine_from(oldest);
+        // And so does the terminal pin: it is asked for by the NEXT epoch, so an
+        // epoch past the retention edge has no asker left.
+        self.seeds.retain_terminal_from(oldest);
     }
 
     fn observe_cert(&self, epoch: u64) {
         let oldest = epoch.saturating_sub(crate::SCHEME_RETENTION_EPOCHS as u64);
         self.keys.retain_from(oldest);
         self.seeds.retain_quarantine_from(oldest);
+        self.seeds.retain_terminal_from(oldest);
     }
 }

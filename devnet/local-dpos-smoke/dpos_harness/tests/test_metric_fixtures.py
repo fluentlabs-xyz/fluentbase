@@ -32,11 +32,17 @@ epoch_engine_demoted_rotated_out_total_total 0
 """
 
 # ── VERBATIM production bytes (bundle-20260720T170507Z/rpc/metrics-19200.txt, reth :9200) ──
+#
+# The capture also carried `reth_dpos_parent_seed_embedded_total 1972`. It was DROPPED, not
+# kept for historical flavour: that family stopped existing with FLU-1204 (`parent_seed` left
+# the block body, and the propose-side embed gate went with it), and a fixture line for a
+# family nothing emits is how a reader gets written against a dead name — it parses, it sums,
+# it reports zero forever. Nothing in this file ever asserted over it. The remaining lines are
+# still verbatim; dropping one is not inventing one.
 RETH_METRICS = """\
 reth_dpos_executor_eager_finalized_derive_total{outcome="hit"} 5963
 reth_dpos_executor_eager_finalized_derive_total{outcome="miss"} 238
 reth_dpos_executor_stale_finalization_pruned_total 1
-reth_dpos_parent_seed_embedded_total 1972
 reth_sync_block_validation_deferred_trie_compute_duration_sum 0
 reth_sync_block_validation_deferred_trie_compute_duration_count 0
 """

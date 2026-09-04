@@ -9,11 +9,18 @@
 //! OrderBlock K heights above it. Invariant `finalized ⊆ safe ⊆ head` holds at
 //! every FCU (result-final ⊆ ordering-final ⊆ speculative tip, one chain).
 //!
-//! Derive pipeline (Design B′, the seed witness): the beacon seed for height
-//! `h` rides in block `h+1`'s `parent_seed` (the witness), so `h` is derived at
-//! the DISPATCH of `h+1`, from the child body already in hand. The executor
-//! holds at most ONE delivered-but-underived finalized block — the tip, in
-//! [`Actor::awaiting_child`] — and derives it the moment its successor arrives.
+//! Derive pipeline: the beacon seed for height `h` is σ of `h`'s OWN agreed
+//! round — `Round(epoch(h), h.proposal_view)` — read from the local seed store,
+//! so `h` derives at ITS OWN delivery and no block carries another block's
+//! randomness. The resolution is PREDICATE FIRST: `mandatory_at(epoch(h))`
+//! decides before the store is consulted, so a σ filed at a round the agreed
+//! epoch map calls beacon-INACTIVE is ignored (and counted), never obeyed —
+//! ignoring derives exactly what the rest of the network derives, where halting
+//! would turn one bad journal record into an outage. A MISS on a beacon-active
+//! round HOLDS the block in [`Actor::awaiting_seed`]; the only exit is "σ
+//! arrived" (the seed-record notify), never a timer and never the
+//! `order.digest()` fallback — deriving with the fallback on a beacon-active
+//! link re-rolls `prev_randao` and forks.
 //! No park, no re-poke, no by-height re-fetch, no timer; the executor never
 //! reads a certificate on the derive path.
 //!
@@ -25,7 +32,7 @@
 //! `Exact` cancels, and the marshal treats a Canceled ack as fatal (its `run`
 //! returns), killing the component that serves blocks + certs to peers. Every
 //! ack is therefore (a) acknowledged after derive+import, (b) held in
-//! [`Actor::awaiting_child`] until the child arrives, (c) parked with a
+//! [`Actor::awaiting_seed`] until σ arrives, (c) parked with a
 //! deferred block (guard #2's absent `h+K` body — the only park), or (d)
 //! RETAINED un-resolved forever by [`Actor::park_halted`] when a Phase-3
 //! `SafetyHalt` engages — the halt posture is "stop participating, stay
@@ -71,7 +78,12 @@ use futures::{
     FutureExt as _, StreamExt as _,
 };
 use prometheus_client::metrics::gauge::Gauge;
-use std::{collections::BTreeMap, ops::RangeInclusive, pin::Pin, time::Duration};
+use std::{
+    collections::BTreeMap,
+    ops::RangeInclusive,
+    pin::Pin,
+    time::{Duration, SystemTime},
+};
 use tokio::{select, sync::mpsc};
 use tracing::{debug, error, error_span, info, info_span, instrument, warn, Level, Span};
 
@@ -114,7 +126,7 @@ pub struct Notarized {
 /// sides are `Round::new(Ep, block.proposal_view)` — a pure function of the same
 /// agreed block — so a digest match with a DIFFERENT round is an ANOMALY, not
 /// routine churn: it is counted (`dpos_spec_round_mismatch_total`, expected 0)
-/// and the block re-derives from the witness (the agreed value). The digest half
+/// and the block re-derives from σ of its own round (the agreed value). The digest half
 /// stays a real branch (a speculated sibling that lost to a nullify/re-propose).
 /// The `parent_hash` half guards the deep-speculation reorg: a head rollback at
 /// `height − 1` re-derives the parent to a DIFFERENT hash, so a speculated block
@@ -518,7 +530,7 @@ pub struct ReJump {
 /// A finalized block PARKED by guard #2 (the node is ≥ K behind — `last_tip
 /// >= h + K` — but the committee-attested body at `h + K` is not backfilled
 /// yet, so the convergence check cannot run). The ONLY park in the executor.
-/// The witness seed was already in hand when the park was taken, so the
+/// The seed was already resolved when the park was taken, so the
 /// re-poke re-derives with ZERO lookups. The `pending_finalizations` drain is
 /// paused while this is `Some`, which preserves strict derive order and lets
 /// the marshal's `MAX_PENDING_ACKS` backpressure bound the queue. Event-driven:
@@ -528,9 +540,55 @@ struct Deferred {
     cause: Span,
     order: OrderBlock,
     ack: Exact,
-    /// The witness (block `h+1`'s `parent_seed`), retained with the park so
+    /// The resolved σ for this block's own round, retained with the park so
     /// `repoke_deferred` is a plain "is `h + K`'s body here yet" retry.
     seed: Option<crate::beacon::seed::Seed>,
+}
+
+/// A finalized block HELD for σ of its own round — the executor's only hold, and
+/// NOT a park: no gauge, no hint, no re-poke, no deadline. The sole exit is σ
+/// arriving on the seed-record notify.
+struct HeldForSeed {
+    cause: Span,
+    order: OrderBlock,
+    ack: Exact,
+    /// When the block FIRST entered the hold. PRESERVED across every miss
+    /// re-hold, so [`Actor::detect_stalled_seed_hold`] measures the age of the
+    /// HOLD rather than the age of the last failed lookup — a notify storm that
+    /// reset this would silence the detector exactly when it matters most.
+    since: SystemTime,
+    /// This hold has already been reported. The warn + counter fire ONCE per
+    /// hold, not once per heartbeat: a stall outliving its threshold is one
+    /// event, and repeating it every tick would bury the log it exists to make
+    /// readable.
+    reported: bool,
+}
+
+/// How long a block may sit in [`Actor::awaiting_seed`] before the DETECTOR
+/// reports it. **Not a deadline** — nothing derives, skips or aborts when it
+/// elapses (see [`Actor::detect_stalled_seed_hold`]); it only decides when a
+/// stall becomes visible.
+///
+/// 60 s is 60 blocks of ordering at the 1 blk/s target rate — progress the
+/// executor has not followed. Every honest source of a hold is far shorter: σ is
+/// filed from the SAME finalization certificate that makes the marshal dispatch
+/// the body, so the record-vs-delivery race is one certificate wide, and the
+/// slowest legitimate case — a follower whose σ quarantines until `PK_epoch`
+/// lands — is bounded by one artifact fetch. It is also far below the horizon
+/// where the re-jump takes over (`JUMP_THRESHOLD` = 1024 blocks ≈ 17 min at
+/// 1 blk/s), so a stall is named as a SEED hold before a deep-gap jump can paper
+/// over it.
+const SEED_HOLD_STALL_THRESHOLD: Duration = Duration::from_secs(60);
+
+/// What [`Actor::seed_at_own_round`] found for a height's own agreed round.
+enum OwnRoundSeed {
+    /// The beacon is active in this height's epoch and σ is in the store.
+    Present(crate::beacon::seed::Seed),
+    /// The beacon is NOT mandatory in this height's epoch (or the epocher cannot
+    /// name it): the agreed derivation is `None` and no σ can change that.
+    Inactive,
+    /// Beacon-active, σ not recorded yet — the block must WAIT, never fall back.
+    Missing,
 }
 
 /// Result of attempting to derive a finalized block.
@@ -539,7 +597,7 @@ enum DeriveOutcome {
     Done,
     /// Guard #2 could not run: the node is ≥ K behind but the committee-attested
     /// body at `height + K` is not backfilled yet. The park payload (block, ack
-    /// AND the already-resolved witness) is handed back to be PARKED + re-poked
+    /// AND the already-resolved σ) is handed back to be PARKED + re-poked
     /// event-driven; boxed to keep the hot `Done` arm small.
     NeedAttestation(Box<Deferred>),
     /// The gap-walk's canonicalization FCU could not land — reth answers SYNCING
@@ -550,6 +608,14 @@ enum DeriveOutcome {
     /// distinct variant because the fresh-park side effects differ (no `h + K`
     /// hint — nothing is missing from the archive here).
     NeedParentVisible(Box<Deferred>),
+    /// A gap-walk PREFIX element sits on a beacon-active round whose σ is not in
+    /// the store yet. The walk reports the typed leaf; THIS is where it parks.
+    /// The payload carries the DELIVERED height's σ, never the prefix element's —
+    /// the prefix lookup re-runs inside the walk on every re-poke, so the value
+    /// that was missing is re-resolved rather than carried forward. That is why
+    /// the main path's "a park would carry `None`" objection does not reach this
+    /// arm: there is no `None` to carry.
+    NeedPrefixSeed(Box<Deferred>),
 }
 
 /// What the run loop must do after [`Actor::dispatch_fault`] disposed of a
@@ -569,6 +635,14 @@ fn is_parent_not_visible(error: &eyre::Report) -> bool {
     error
         .chain()
         .any(|e| e.is::<crate::application::ParentHeaderMissing>())
+}
+
+/// `true` for the typed prefix-σ failure, wherever it sits in the `wrap_err`
+/// chain the walk builds around it.
+fn is_prefix_seed_missing(error: &eyre::Report) -> bool {
+    error
+        .chain()
+        .any(|e| e.is::<crate::application::PrefixSeedMissing>())
 }
 
 pub struct Config<BE, D, XC, MarshalMailbox> {
@@ -605,20 +679,21 @@ pub struct Config<BE, D, XC, MarshalMailbox> {
     pub fcu_pace: Duration,
     pub peers_for_finalization: PeersForFinalization,
     /// The randomness handle (cross-epoch singleton from `outer.rs`). The
-    /// executor reads exactly two operations off it: [`Randomness::seed_for`],
-    /// to re-canonicalise the SPECULATIVE seed round to the block's own
-    /// `proposal_view` (the witness rollout) and to resolve the eager
-    /// finalized-derive's own round, and [`Randomness::seed_edge`], to wake when
-    /// a seed lands. A provider with no seeds degrades both to "skip speculation
-    /// on a spin-round notarization" and "hold the tip for the child witness" —
-    /// never to speculating with a known-wrong seed.
+    /// executor reads exactly three operations off it:
+    /// [`Randomness::mandatory_at`], the network-agreed "is the beacon active in
+    /// this epoch" that gates every seed lookup; [`Randomness::seed_for`], to
+    /// re-canonicalise the SPECULATIVE seed round to the block's own
+    /// `proposal_view` and to resolve the finalized derive's own round; and
+    /// [`Randomness::seed_edge`], to wake when a seed lands. A provider with no
+    /// seeds degrades both to "skip speculation on a spin-round notarization"
+    /// and "hold the tip until σ arrives" — never to speculating with a
+    /// known-wrong seed.
     pub randomness: std::sync::Arc<dyn crate::beacon::Randomness>,
     /// Cross-epoch block→epoch map (the same singleton threaded into marshal +
-    /// `epoch_manager`, `outer.rs`). Used ONLY by the eager finalized-derive
-    /// path to form `h`'s own seed round `Round(epocher.containing(h).epoch(),
-    /// h.proposal_view)` — the EXACT round the child witness carries (matches
-    /// `application::witness_link`'s `parent_epoch`), so a `SeedStore` hit is
-    /// byte-identical to the child witness and a wrong epoch can only MISS.
+    /// `epoch_manager`, `outer.rs`). Used to form `h`'s own seed round
+    /// `Round(epocher.containing(h).epoch(), h.proposal_view)` — a pure function
+    /// of AGREED data, so every honest node resolves the identical σ and a wrong
+    /// epoch can only MISS, never yield a wrong seed.
     pub epocher: crate::epocher::OriginEpocher,
     /// The executor's own counters (cross-launch singleton from
     /// `dpos.rs::launch`, already registered there): `seed_active` /
@@ -744,7 +819,7 @@ pub struct Actor<E, BE, D, XC, MarshalMailbox> {
     /// `≤ floor` deliveries are acked-without-derive here (the marshal already
     /// pruned them; deriving against `db_tip = landing` is the deep-overlay walk the
     /// jump exists to avoid) rather than parked on a pruned `h + K` (permanent
-    /// deferred park) or re-fetched to a jump-pruned child (witness-gap fatal).
+    /// deferred park).
     /// Keyed STRICTLY on the marshal floor, never on `anchor`/`safe_height`: legit
     /// below-safe deliveries in the `anchor − K + 1 ..= anchor` deep-catch-up window
     /// must still derive.
@@ -843,7 +918,7 @@ pub struct Actor<E, BE, D, XC, MarshalMailbox> {
 
     peers_for_finalization: PeersForFinalization,
     /// A finalized block PARKED by guard #2 (see [`Deferred`]); held with its
-    /// `Exact` ack AND its already-resolved witness. The `pending_finalizations`
+    /// `Exact` ack AND its already-resolved σ. The `pending_finalizations`
     /// drain is paused while this is `Some` (preserves strict order). Re-poked
     /// event-driven off the marshal's live delivery stream
     /// (`Update::Tip`/`Update::Block`) PLUS the existing FCU heartbeat (the
@@ -854,25 +929,29 @@ pub struct Actor<E, BE, D, XC, MarshalMailbox> {
     /// the executor down (§8.11).
     deferred: Option<Deferred>,
 
-    /// The highest delivered, not-yet-derived finalized block — the tip of the
-    /// one-block-lookahead pipeline. Its witness is a function of block `h+1`,
-    /// so it is HELD (not parked: no gauge, no hint, no re-poke) and derived the
-    /// moment its child arrives via [`Actor::on_finalized_block`]. Two
-    /// dispositions for the held ack, and they are NOT the same: on a re-jump
+    /// The delivered, not-yet-derived finalized block whose σ has not landed
+    /// yet. Beacon-ACTIVE rounds only: an inactive round derives `None`
+    /// immediately and never reaches this slot. It is HELD (not parked: no
+    /// gauge, no hint, no re-poke, no deadline) and derived by the seed-record
+    /// notify arm the moment σ lands — the ONLY exit, since nothing else can
+    /// supply the value. Both block feeders (the `pending_finalizations` drain
+    /// and the startup-backfill walk) are gated on this slot being empty, which
+    /// is what keeps a second delivery from overwriting a live `Exact`.
+    /// Two dispositions for the held ack, and they are NOT the same: on a re-jump
     /// (`reseed_forward`) it is acked `Ok` — the floor MOVES, so the height is
     /// pruned, not skipped; on shutdown / task exit it is DROPPED, deliberately,
     /// never acked — the withheld ack IS the restart self-heal (module docs).
     /// Needs no persistence. On a `SafetyHalt` it joins `park_halted`'s retained
     /// set, exactly like `deferred.ack`.
-    awaiting_child: Option<(Span, OrderBlock, Exact)>,
+    awaiting_seed: Option<HeldForSeed>,
 
     /// See [`Config::randomness`]. Read by `spec_execute`'s §4.1 round
-    /// re-canonicalisation AND the eager finalized-derive path
-    /// ([`Self::try_eager_finalized_derive`]).
+    /// re-canonicalisation AND by [`Self::seed_at_own_round`], the sole seed
+    /// source of the finalized derive.
     randomness: std::sync::Arc<dyn crate::beacon::Randomness>,
 
-    /// See [`Config::epocher`]. Read ONLY by [`Self::try_eager_finalized_derive`]
-    /// to form `h`'s own agreed seed round.
+    /// See [`Config::epocher`]. Read ONLY by [`Self::seed_at_own_round`] to form
+    /// `h`'s own agreed seed round.
     epocher: crate::epocher::OriginEpocher,
 
     /// The `Exact` ack of the block currently inside [`Self::try_derive`], moved
@@ -1028,7 +1107,7 @@ where
             parked_spec: BTreeMap::new(),
             peers_for_finalization: cfg.peers_for_finalization,
             deferred: None,
-            awaiting_child: None,
+            awaiting_seed: None,
             inflight_ack: None,
         };
         (actor, mailbox)
@@ -1085,10 +1164,13 @@ where
 
             // Do not pull more work while a block is deferred awaiting its h+K
             // attested body (guard #2) — the deferred block must derive first
-            // (strict order) — nor while a
+            // (strict order) — nor while a block is HELD awaiting its σ (same
+            // strict-order reason, and `on_finalized_block` would otherwise
+            // overwrite a live `Exact`) — nor while a
             // jump is in flight (bugs 6/7: the jump is the SINGLE EL writer during
             // backfill; a competing startup-drain FCU retargets reth's backfill).
             if self.deferred.is_none()
+                && self.awaiting_seed.is_none()
                 && self.pending_backfill.is_none()
                 && self.jump_done.is_none()
             {
@@ -1113,8 +1195,8 @@ where
                     match maybe_block {
                         Some(block) => {
                             // Synthetic ack (the marshal already acked these
-                            // heights on a previous run); routes through the
-                            // SAME one-block-lookahead pipeline as live dispatch.
+                            // heights on a previous run); routes through the SAME
+                            // resolve-and-derive path as live dispatch.
                             let (ack, _waiter) = Exact::handle();
                             let span = info_span!("backfill_on_start", %height);
                             if let Err(fault) = self.on_finalized_block(span, block, ack).await {
@@ -1305,6 +1387,15 @@ where
 
                 Some((cause, block, ack)) = self.pending_finalizations.next(),
                 if self.deferred.is_none()
+                    // A block HELD for its σ must derive before the next one is
+                    // pulled: strict order, and `on_finalized_block`'s slot
+                    // assignment would otherwise drop a live `Exact` (Canceled →
+                    // fatal to the marshal). Queued entries stay ALIVE meanwhile,
+                    // bounded by the marshal's MAX_PENDING_ACKS, exactly as under
+                    // the `deferred` gate. `maybe_re_jump` is deliberately NOT
+                    // gated on this — that gate is what bounds a σ-less node's
+                    // stall.
+                    && self.awaiting_seed.is_none()
                     && self.pending_backfill.is_none()
                     && self.finalized_heights_to_backfill.is_empty()
                     // bugs 6/7: the jump is the SINGLE EL writer while in flight — a
@@ -1370,7 +1461,7 @@ where
                 // lost; a spurious wake (a permit from an unrelated round) is a
                 // harmless idempotent re-check (a miss re-holds). Fires the
                 // FINALIZED-tier derive, so a SafetyHalt-class error PROPAGATES.
-                _ = seed_notify.notified(), if self.awaiting_child.is_some()
+                _ = seed_notify.notified(), if self.awaiting_seed.is_some()
                     && self.deferred.is_none()
                     && self.jump_done.is_none() => {
                     if let Err(fault) =
@@ -1413,6 +1504,10 @@ where
                             break;
                         }
                     }
+                    // Observation only (see `detect_stalled_seed_hold`): reads the
+                    // clock on this existing tick and cannot complete, abort or
+                    // re-key the hold.
+                    self.detect_stalled_seed_hold();
                     self.reset_fcu_heartbeat_timer();
                 }
 
@@ -1575,11 +1670,11 @@ where
         if let Some(d) = self.deferred.take() {
             retained.push(d.ack);
         }
-        // The one-block-lookahead HELD tip (same treatment as `deferred.ack`):
-        // never acked (would durably skip an underived height), never dropped
-        // (a Canceled ack kills the marshal).
-        if let Some((_cause, _block, ack)) = self.awaiting_child.take() {
-            retained.push(ack);
+        // The seed-held block (same treatment as `deferred.ack`): never acked
+        // (would durably skip an underived height), never dropped (a Canceled
+        // ack kills the marshal).
+        if let Some(held) = self.awaiting_seed.take() {
+            retained.push(held.ack);
         }
         while let Some(Some((_cause, _block, ack))) =
             self.pending_finalizations.next().now_or_never()
@@ -1605,156 +1700,109 @@ where
         }
     }
 
-    /// The one-block-lookahead pipeline entry (§4): a finalized block `C`
-    /// arriving from EITHER source (the `Update::Block` drain or the startup
-    /// backfill walk) first supplies the WITNESS for the held tip — `h` is
-    /// derived at the dispatch of `h+1`, from the child body already in hand —
-    /// then becomes the held tip itself. The child is stored BEFORE the held
-    /// block derives so a fatal derive under an engaged SafetyHalt reaches
-    /// `park_halted` with the child's ack retainable ("park the parent, hold
-    /// the child" — if the parent parks in `deferred`, the child stays here and
-    /// the paused drain preserves strict order).
+    /// The finalized-delivery entry: a block arriving from EITHER source (the
+    /// `Update::Block` drain or the startup backfill walk) is stashed in the
+    /// seed-hold slot and immediately resolved. The stash happens BEFORE the
+    /// derive so a fatal derive under an engaged SafetyHalt reaches
+    /// `park_halted` with this ack retainable rather than dropped in this frame
+    /// (a dropped `Exact` is Canceled, which the marshal treats as fatal).
+    ///
+    /// Both feeders are gated on the slot being empty (`awaiting_seed.is_none()`
+    /// in the drain guard and in the startup-drain feed), so the `Some(..)`
+    /// assignment below can never overwrite a live ack.
     async fn on_finalized_block(
         &mut self,
         cause: Span,
         block: OrderBlock,
         ack: Exact,
     ) -> Result<(), Fault> {
-        let held = self.awaiting_child.take();
-        let child_height = block.height;
-        let child_seed = block.parent_seed.clone();
-        self.awaiting_child = Some((cause, block, ack));
-        let Some((held_cause, held_block, held_ack)) = held else {
-            // No held tip (first delivery, or the previous tip was already
-            // eager-derived): still try to derive the just-arrived block NOW
-            // from the SeedStore — the record-lag closer (see below).
-            return self
-                .try_eager_finalized_derive(EagerTrigger::Delivery)
-                .await;
-        };
-        // Steady-state fast path: the arriving block IS the held tip's child
-        // (the marshal dispatches strictly contiguously), so the witness is in
-        // hand with ZERO I/O. A non-contiguous arrival is a tripwire, not an
-        // assumption — fall through to an async by-height re-fetch (correct,
-        // just slower) rather than silently witnessing `h` with a non-child.
-        let witness = if child_height == held_block.height + 1 {
-            child_seed
-        } else {
-            metrics::counter!("dpos_witness_child_refetch_total").increment(1);
-            warn!(
-                held = held_block.height,
-                arrived = child_height,
-                "witness fast path missed (non-contiguous delivery); re-fetching the child \
-                 by height"
-            );
-            match self
-                .marshal
-                .fetch_block_by_height(Height::new(held_block.height + 1))
-                .await
-            {
-                Some(child) => child.parent_seed,
-                None => {
-                    // A GENUINE gap: `h < tip` yet `h+1` is absent from the
-                    // marshal's own archive — the pre-existing
-                    // hole-below-the-floor class, which cannot self-heal
-                    // (`get_block` is local-only). Family-5 taxonomy:
-                    // `FaultClass::Corruption` — `Err` with the latch NOT
-                    // engaged → supervisor abort-all (an idiosyncratic
-                    // local-archive inconsistency, NOT a correlated cause —
-                    // loud actor death is correct). Fail loud at the true
-                    // site; park the ack in the inflight slot so a latched
-                    // SafetyHalt retains it instead of dropping it in this frame.
-                    self.inflight_ack = Some(held_ack);
-                    return Err(Fault::corruption(eyre::eyre!(
-                        "witness gap: marshal has no block at height {} (child of held {}) \
-                         inside its own dispatched range — the finalized archives are \
-                         inconsistent",
-                        held_block.height + 1,
-                        held_block.height
-                    )));
-                }
-            }
-        };
-        let outcome = self
-            .try_derive(held_cause, held_block, held_ack, witness)
-            .await?;
-        self.defer_if_needed(outcome, true).await;
-        // The just-arrived block is now the HELD tip. Its own witness normally
-        // only arrives inside ITS child (`h+1`), so a plain lookahead records
-        // `h` one child late — recorded_tip = delivered_tip − 1. The
-        // finalized-tier result gate reads `finalized_executed_hash(h−K)`, so
-        // that −1 leaves ZERO margin at `propose(h)` and any nullify pushes the
-        // recorded tip below `h−K` → propose-skip → nullify storm → stall.
-        // Close the lag: derive the held
-        // tip NOW from the SeedStore (its own agreed round's seed is present the
-        // moment its notarization was processed) instead of waiting for `h+1`.
+        debug_assert!(
+            self.awaiting_seed.is_none(),
+            "both block feeders gate on an empty seed hold; overwriting it would cancel an ack"
+        );
+        self.awaiting_seed = Some(HeldForSeed {
+            cause,
+            order: block,
+            ack,
+            since: self.context.current(),
+            reported: false,
+        });
         self.try_eager_finalized_derive(EagerTrigger::Delivery)
             .await
     }
 
-    /// EAGER finalized derive (record-lag closer): derive the block currently HELD
-    /// in [`Self::awaiting_child`] NOW — from its OWN agreed seed round in the
-    /// local [`SeedStore`] — instead of holding it until its child delivers the
-    /// witness.
+    /// Resolve the held block's σ and derive it, or keep holding.
     ///
-    /// The round is `Round(epocher.containing(h).epoch(), h.proposal_view)` — a
-    /// pure function of AGREED data (rule SA: `proposal_view` rides in the
-    /// committee-signed digest; the epoch is the exact block→epoch map that
-    /// `application::witness_link` uses for the child's `parent_seed`). A
-    /// threshold seed is UNIQUE per round, so a store HIT is byte-identical to
-    /// the witness the child would later deliver, and a wrong round can only
-    /// MISS — never yield a wrong seed. On HIT the hold is CONSUMED entirely (`h`
-    /// is derived+acked here; the child's later delivery finds `awaiting_child`
-    /// empty and simply holds `h+1` — no double-derive). On MISS (no store,
-    /// non-voted round, restart before the round was processed, or `h` below the
-    /// epocher origin) the block stays HELD — the EXACT prior lookahead behavior.
+    /// σ comes from [`Self::seed_at_own_round`] — the block's OWN agreed round,
+    /// predicate first — and nothing else. Three dispositions:
+    ///
+    /// - `Present`: derive now, hold consumed.
+    /// - `Inactive`: the agreed derivation at a beacon-inactive epoch IS `None`,
+    ///   so derive now with `None`. This is not a miss and must never hold: a
+    ///   pre-bootstrap link has no σ to wait for.
+    /// - `Missing`: beacon-active with no σ yet — RESTORE the hold. The only
+    ///   exit is the seed-record notify; there is no timer, and the
+    ///   `order.digest()` fallback is not an option (it would derive a different
+    ///   `prev_randao` than the network — a silent fork).
     ///
     /// Suppressed while a predecessor is PARKED (`deferred`) or a re-jump is in
     /// flight (`jump_done`): those own the strict-order / single-EL-writer
-    /// invariant, so the tip is HELD there (mirrors `spec_execute`'s guard).
+    /// invariant, so the block stays in the slot (mirrors `spec_execute`'s
+    /// guard). Both feeders are gated on the same two, so the suppression cannot
+    /// strand a block behind a delivery it will never see.
     ///
-    /// `trigger` distinguishes the on-delivery attempt from an event-driven
-    /// re-attempt fired by the executor's seed-notify `select!` arm when a seed
-    /// was just recorded (the record-vs-delivery race self-heal — see
-    /// [`Self::run`]'s seed-notify arm, driven by [`SeedStore::notifier`]). A
-    /// `Notified` HIT is counted `outcome="recovered"` (the race fired and was
-    /// closed without a further finalized delivery); a `Notified` MISS is a
-    /// silent no-op (the seed is still not recorded — a later notify or the
-    /// child witness will derive it), so the miss counter is NOT inflated on
-    /// every notify while held.
+    /// `trigger` distinguishes the on-delivery attempt from the event-driven
+    /// re-attempt fired by [`Self::run`]'s seed-notify arm when σ was just
+    /// recorded (the record-vs-delivery race self-heal). A `Notified` HIT is
+    /// counted `outcome="recovered"` (the race fired and was closed without a
+    /// further finalized delivery); a `Notified` MISS is a silent no-op, so the
+    /// miss counter is NOT inflated on every notify while held.
     async fn try_eager_finalized_derive(&mut self, trigger: EagerTrigger) -> Result<(), Fault> {
-        use commonware_consensus::types::{Epocher as _, Round, View};
         if self.deferred.is_some() || self.jump_done.is_some() {
             return Ok(());
         }
-        let Some((cause, block, ack)) = self.awaiting_child.take() else {
+        let Some(held) = self.awaiting_seed.take() else {
             return Ok(());
         };
-        let round = self
-            .epocher
-            .containing(Height::new(block.height))
-            .map(|info| Round::new(info.epoch(), View::new(block.proposal_view)));
-        let seed = round.and_then(|round| self.randomness.seed_for(round));
-        let Some(seed) = seed else {
-            // MISS — restore the hold; the child witness derives it as before.
-            self.awaiting_child = Some((cause, block, ack));
-            if matches!(trigger, EagerTrigger::Delivery) {
-                metrics::counter!(
-                    "dpos_executor_eager_finalized_derive_total", "outcome" => "miss"
-                )
-                .increment(1);
+        let HeldForSeed {
+            cause,
+            order: block,
+            ack,
+            since,
+            reported,
+        } = held;
+        let seed = match self.seed_at_own_round(block.height, block.proposal_view) {
+            OwnRoundSeed::Present(seed) => Some(seed),
+            OwnRoundSeed::Inactive => None,
+            OwnRoundSeed::Missing => {
+                // `since`/`reported` ride back UNCHANGED: this is the same hold
+                // re-entering the slot, not a new one.
+                self.awaiting_seed = Some(HeldForSeed {
+                    cause,
+                    order: block,
+                    ack,
+                    since,
+                    reported,
+                });
+                if matches!(trigger, EagerTrigger::Delivery) {
+                    metrics::counter!(
+                        "dpos_executor_eager_finalized_derive_total", "outcome" => "miss"
+                    )
+                    .increment(1);
+                }
+                return Ok(());
             }
-            return Ok(());
         };
-        let outcome_label = match trigger {
-            EagerTrigger::Delivery => "hit",
-            EagerTrigger::Notified => "recovered",
+        let outcome_label = match (&seed, trigger) {
+            (None, _) => "inactive",
+            (Some(_), EagerTrigger::Delivery) => "hit",
+            (Some(_), EagerTrigger::Notified) => "recovered",
         };
         metrics::counter!(
             "dpos_executor_eager_finalized_derive_total", "outcome" => outcome_label
         )
         .increment(1);
-        let outcome = self.try_derive(cause, block, ack, Some(seed)).await?;
+        let outcome = self.try_derive(cause, block, ack, seed).await?;
         self.defer_if_needed(outcome, true).await;
         Ok(())
     }
@@ -1795,12 +1843,22 @@ where
                 // height this is waiting on.
                 self.deferred = Some(*d);
             }
+            DeriveOutcome::NeedPrefixSeed(d) => {
+                if fresh {
+                    self.deferred_height.set(d.order.height as i64);
+                }
+                // No `h + K` hint either: the body is in the archive, its σ is
+                // not, and σ is not askable by round any more (the by-round pull
+                // retired with `TAG_SEED_RETIRED`). It arrives on its own from the
+                // cert inlet, and the re-poke re-runs the walk's own lookup.
+                self.deferred = Some(*d);
+            }
         }
     }
 
     /// Re-attempt the parked derive on a marshal delivery event or the FCU
-    /// heartbeat — a plain "is `h + K`'s body here yet" retry (the witness is
-    /// retained in [`Deferred::seed`]; ZERO lookups). Event-driven, NEVER a
+    /// heartbeat — a plain "is `h + K`'s body here yet" retry (σ is retained in
+    /// [`Deferred::seed`]; ZERO lookups). Event-driven, NEVER a
     /// shutdown: a still-missing body re-stays parked. Gated on
     /// `jump_done.is_none()` so a parked block is not re-derived mid-jump (a
     /// landed re-jump disposes it via `reseed_forward`). A genuine derive `Err`
@@ -1814,7 +1872,9 @@ where
             return Ok(());
         };
         match self.try_derive(d.cause, d.order, d.ack, d.seed).await? {
-            outcome @ (DeriveOutcome::NeedAttestation(_) | DeriveOutcome::NeedParentVisible(_)) => {
+            outcome @ (DeriveOutcome::NeedAttestation(_)
+            | DeriveOutcome::NeedParentVisible(_)
+            | DeriveOutcome::NeedPrefixSeed(_)) => {
                 self.defer_if_needed(outcome, false).await;
             }
             DeriveOutcome::Done => {
@@ -1840,7 +1900,7 @@ where
     /// `max(tip, this)`) and, when it is ahead of the known tip,
     /// `hint_finalization(frontier)` so the marshal fetches + verifies it and the
     /// ordinary `Update::Tip` pipeline (marshal gap-repair → contiguous block
-    /// dispatch → one-block-lookahead derive) takes over the follow.
+    /// dispatch → derive) takes over the follow.
     async fn probe_frontier(&mut self) -> bool {
         let Some(probe) = self.re_jump.as_ref().and_then(|rj| rj.probe.clone()) else {
             return false;
@@ -2029,8 +2089,7 @@ where
                     // before the marshal processed `SetFloor` (see `marshal_floor`).
                     // The marshal already pruned it; deriving it against the jumped
                     // `db_tip` is the deep-overlay walk the jump avoids, and parking
-                    // it awaits a pruned `h + K` (permanent deferred) or re-fetches a
-                    // jump-pruned child (witness-gap fatal). Ack it Ok — the
+                    // it awaits a pruned `h + K` (permanent deferred). Ack it Ok — the
                     // sanctioned acknowledge-without-derive (NEVER drop an `Exact`: a
                     // dropped ack is Canceled, fatal to the marshal) — count it, and
                     // re-poke the deferred block exactly as the normal arm does.
@@ -2364,23 +2423,22 @@ where
             self.deferred_height.set(0);
             d.ack.acknowledge();
         }
-        // Same disposition for the one-block-lookahead HELD tip: the landing is
+        // Same disposition for the seed-held block: the landing is
         // far above it, so the held height is pruned by the floor move —
         // `acknowledge()` (Ok), never a drop (a dropped `Exact` is a Canceled
         // ack, fatal to the marshal). The one new object the jump path knows
         // about.
-        if let Some((_cause, _block, ack)) = self.awaiting_child.take() {
-            ack.acknowledge();
+        if let Some(held) = self.awaiting_seed.take() {
+            held.ack.acknowledge();
         }
         // STALE FINALIZATION BACKLOG PRUNE:
         // `Update::Block` deliveries queue UNCONDITIONALLY while the drain arm
         // is gated off during a park + in-flight jump — up to MAX_PENDING_ACKS
         // stale below-landing entries. Un-pruned, the stale backlog drains
-        // post-jump, re-populates `awaiting_child` with a jumped-over height,
-        // and the first genuine post-floor dispatch's non-contiguous witness
-        // re-fetch of the (jump-pruned) child returns None → the witness-gap
-        // fatal misclassifies a jump-MANUFACTURED skip-gap as archive
-        // corruption. The fatal itself stays valid for the genuine
+        // post-jump, re-populates `awaiting_seed` with a jumped-over height whose
+        // parent the jump pruned, so the gap-walk's marshal fetch returns None →
+        // the missing-artifact fatal misclassifies a jump-MANUFACTURED skip-gap
+        // as archive corruption. The fatal itself stays valid for the genuine
         // hole-below-the-floor class (#8); this removes its false trigger at
         // the source. Entries ≤ landing are canonical post-backfill — the SAME
         // sanctioned acknowledge-without-derive as the deferred/held disposals
@@ -2535,15 +2593,15 @@ where
         };
 
         // §4.1 (P2): re-canonicalise the speculative round to the block's OWN
-        // `proposal_view` — the same pure-agreed-data round the finalized
-        // witness pins (rule PIN). A first-seen notarization at a SPIN round
+        // `proposal_view` — the same pure-agreed-data round the finalized derive
+        // resolves at (rule PIN). A first-seen notarization at a SPIN round
         // (mid-spin rejoin; body not buffered at V0) must not seal the block
         // with `seed(V0+k)` — that guarantees a re-derive + head reorg at the
         // boundary. On a round mismatch take the canonical round's bytes from
         // `SeedStore` (a threshold seed is unique per round, so the store is a
         // byte source for an already-pinned round); on a miss SKIP speculating —
-        // never speculate with a known-wrong seed (the finalized path derives
-        // this height from the witness in the child regardless).
+        // never speculate with a known-wrong seed (the finalized path resolves
+        // this height's own round regardless).
         let seed = match seed {
             None => None,
             Some(s) => {
@@ -2583,7 +2641,7 @@ where
         let el_apply_started = std::time::Instant::now();
         // Speculation is BEST-EFFORT and stays so: a derive failure here is
         // `Defer`, never `Corruption`, because the finalized path derives this
-        // height from the child witness regardless. Classified explicitly —
+        // height from its own round regardless. Classified explicitly —
         // `Fault`'s blanket `From<eyre::Report>` is `Corruption`, so leaning on
         // `?` here would turn a transient derive failure into actor death.
         let derived = self
@@ -2764,43 +2822,106 @@ where
         metrics::gauge!("dpos_executor_el_lag_blocks").set(lag as f64);
     }
 
-    /// The §4 witness-downgrade refusal (agreed-data monotonicity): a block that
-    /// itself carries a `parent_seed` witness sits on a beacon-active link, so
-    /// epochs being non-decreasing, its OWN witness (in the child) MUST be
-    /// present too. The vote gate makes a missing witness unreachable on-chain;
-    /// a corrupted/legacy on-disk archive can still present one, and letting it
-    /// fall through to the `order.digest()` fallback would derive a different
-    /// `prev_randao` than the network — a SILENT FORK. SafetyHalt-class: refuse
-    /// loudly (halt), never derive.
+    /// DETECTOR, never a deadline: report a block that has sat in the seed hold
+    /// longer than [`SEED_HOLD_STALL_THRESHOLD`] and change NOTHING about it.
     ///
-    /// Residual (reviewer-assessed): the FIRST beacon-active height — whose own
-    /// `parent_seed` is `None` because its parent is pre-bootstrap — is not
-    /// detectable by this monotonicity check; a corrupted `None` witness there
-    /// falls through to the fallback derive and is instead caught by the
-    /// `result_matches` cross-check K blocks later (a DELAYED halt, not a fork).
-    fn refuse_witness_downgrade(
-        &self,
-        order: &OrderBlock,
-        witness: &Option<crate::beacon::seed::Seed>,
-    ) -> Result<(), Fault> {
-        if witness.is_none() && order.parent_seed.is_some() {
-            return Err(Fault::fork_safety(
-                SyncReason::ResultDivergence,
-                eyre::eyre!(
-                "block {} is on a beacon-active link (it carries a parent_seed witness itself) \
-                 but its child presents NO witness — corrupted/legacy archive; deriving with the \
-                 digest fallback would silently fork; SafetyHalt",
-                    order.height
-                ),
-            ));
+    /// The hold is bounded only if every `impl Randomness` a production node
+    /// class can be given actually supplies σ — a claim about `PlaneRandomness`
+    /// and `FollowerRandomness` that this crate asserts and that the executor
+    /// cannot verify from the inside. `FollowerRandomness::record_seed` was an
+    /// empty no-op that satisfied its signature, compiled, and was invisible to
+    /// every name-based search; this counter is what makes the NEXT such
+    /// counter-example surface in the smoke harness instead of in a review
+    /// months later.
+    ///
+    /// Sibling of the `dpos_executor_stray_seed_at_inactive_round_total` counter
+    /// below — both are detectors for beliefs this design asserts, both are
+    /// expected to read 0, and neither changes a derive.
+    ///
+    /// No timer is added: this rides the EXISTING FCU heartbeat tick, reads the
+    /// clock and returns. A timeout could neither derive (the `order.digest()`
+    /// fallback forks) nor skip (a permanent hole), so it would convert a silent
+    /// stall into a loud one without restoring liveness.
+    fn detect_stalled_seed_hold(&mut self) {
+        let now = self.context.current();
+        let Some(held) = self.awaiting_seed.as_mut() else {
+            return;
+        };
+        if held.reported {
+            return;
         }
-        Ok(())
+        // A backwards clock is not evidence of a stall — say nothing.
+        let Ok(age) = now.duration_since(held.since) else {
+            return;
+        };
+        if age < SEED_HOLD_STALL_THRESHOLD {
+            return;
+        }
+        held.reported = true;
+        metrics::counter!("dpos_executor_seed_hold_stalled_total").increment(1);
+        warn!(
+            height = held.order.height,
+            proposal_view = held.order.proposal_view,
+            held_for_secs = age.as_secs(),
+            "block held for its own round's σ past the detector threshold — it is NOT \
+             abandoned and no fallback runs (the only correct exit is σ arriving). A \
+             non-zero count means a randomness provider that this node class was assumed \
+             to have is not supplying σ"
+        );
     }
 
-    /// Derive + import + FCU + ack a finalized block from its WITNESS (`seed` =
-    /// the child block's `parent_seed`; `None` = a pre-bootstrap,
-    /// seed-independent link). Guard #2 (the `h + K` look-ahead convergence
-    /// check) runs whenever the node is ≥ K behind; if the attested body at
+    /// σ for `height`'s OWN agreed round — the ONLY seed source of the finalized
+    /// derive.
+    ///
+    /// The round is `Round(epocher.containing(h).epoch(), h.proposal_view)`, a
+    /// pure function of AGREED data (rule SA: `proposal_view` rides in the
+    /// committee-signed digest, and the epoch comes from the same block→epoch
+    /// map every node holds). A threshold σ is UNIQUE per round, so every honest
+    /// node resolves the identical value and a wrong round can only MISS.
+    ///
+    /// PREDICATE FIRST, store second. `mandatory_at(epoch(h))` — the
+    /// network-agreed "is the beacon active here", independent of anything local
+    /// — decides BEFORE the store is read. Store-first ordering would let a σ
+    /// filed at a round the agreed map calls beacon-INACTIVE be USED, which is
+    /// how the journal (replayed without re-verification by design) or a crafted
+    /// record could steer one node's `prev_randao` away from the network's.
+    /// Inverting the order closes that: a stray σ at an inactive round is
+    /// IGNORED and counted, never obeyed and never fatal — ignoring derives
+    /// exactly what the rest of the network derives, so it is fork-safe and
+    /// self-healing, where halting would turn one bad record into an outage.
+    ///
+    /// A height whose epoch the map cannot name (below the epocher origin) is
+    /// INACTIVE, never unwrapped: the beacon cannot have been mandatory in an
+    /// epoch that does not exist.
+    fn seed_at_own_round(&self, height: u64, proposal_view: u64) -> OwnRoundSeed {
+        use commonware_consensus::types::{Epocher as _, Round, View};
+        let Some(info) = self.epocher.containing(Height::new(height)) else {
+            return OwnRoundSeed::Inactive;
+        };
+        let round = Round::new(info.epoch(), View::new(proposal_view));
+        if !self.randomness.mandatory_at(round.epoch().get()) {
+            // Looked up ONLY to count it: the value is never handed on.
+            if self.randomness.seed_for(round).is_some() {
+                metrics::counter!("dpos_executor_stray_seed_at_inactive_round_total").increment(1);
+                warn!(
+                    height,
+                    %round,
+                    "σ present at a round the agreed epoch map calls beacon-INACTIVE — IGNORED \
+                     (the network derives `None` here); a corrupted or crafted local seed record"
+                );
+            }
+            return OwnRoundSeed::Inactive;
+        }
+        match self.randomness.seed_for(round) {
+            Some(seed) => OwnRoundSeed::Present(seed),
+            None => OwnRoundSeed::Missing,
+        }
+    }
+
+    /// Derive + import + FCU + ack a finalized block from `seed` — σ of the
+    /// block's OWN round, already resolved by [`Self::seed_at_own_round`]
+    /// (`None` = a beacon-inactive, seed-independent link). Guard #2 (the
+    /// `h + K` look-ahead convergence check) runs whenever the node is ≥ K behind; if the attested body at
     /// `h + K` is not backfilled yet this returns `NeedAttestation` — WITHOUT
     /// mutating any finalized state or acking — so the caller PARKS it and
     /// re-pokes event-driven (the delivery stream + the FCU heartbeat).
@@ -2836,26 +2957,21 @@ where
             .checked_sub(1)
             .ok_or_else(|| eyre::eyre!("ordering height 0 cannot be finalized"))?;
 
-        // §4: a beacon-active link presenting no witness is a corrupted archive —
-        // refuse loudly (halt) rather than fork on the digest fallback.
-        self.refuse_witness_downgrade(&order, &seed)?;
-
-        // The WITNESS seed for this height (block `height+1`'s `parent_seed`,
-        // already validated at the child's vote time under the committee
-        // multisig). Its ROUND completes the speculation-reuse invariant just
-        // below, and its VALUE is reused verbatim by the re-derive branch and
-        // the re-apply loop. `None` = pre-bootstrap link (seed-independent).
+        // Its ROUND completes the speculation-reuse invariant just below, and
+        // its VALUE is reused verbatim by the re-derive branch and the re-apply
+        // loop.
         let finalization_seed = seed;
         let finalization_round = finalization_seed.as_ref().map(|s| s.target_round);
 
         // Reconcile against speculation: keep the speculatively-executed block
         // ONLY when it is the SAME ordering block AND was speculated with the
-        // SAME seed round as the witness — then reth is already canonical here,
+        // SAME seed round the finalized derive resolved — then reth is already
+        // canonical here,
         // so skip the re-derive and, crucially, do NOT roll the head back (the
         // speculative lead at `height+1..` must survive). After §4.1 both rounds
         // are `Round::new(Ep, block.proposal_view)`, so a digest match with a
         // DIFFERENT round is an ANOMALY (two paths disagreeing about the
-        // canonical round) — counted, then re-derived from the witness (the
+        // canonical round) — counted, then re-derived from the store's σ (the
         // agreed value), the SAME path a first execution or a sibling-nullified
         // digest mismatch takes. `None == None` (no-beacon) keeps the fast path.
         let (spec_round, spec_parent) = {
@@ -2871,9 +2987,9 @@ where
                 warn!(
                     height,
                     spec_round = ?round,
-                    witness_round = ?finalization_round,
-                    "speculation round disagrees with the witness round (both should be \
-                     Round(Ep, proposal_view)) — re-deriving from the witness"
+                    finalized_round = ?finalization_round,
+                    "speculation round disagrees with the finalized round (both should be \
+                     Round(Ep, proposal_view)) — re-deriving from the agreed round"
                 );
             }
         }
@@ -2901,8 +3017,8 @@ where
         let behind_by_k = self.last_tip_height.get() >= height + crate::order_block::K;
         let order_for_park = behind_by_k.then(|| order.clone());
         let derived_hash = if correctly_speculated {
-            // Already derived via spec_execute with a seed of the SAME round as
-            // the witness — reth is canonical here, no re-derive needed.
+            // Already derived via spec_execute with a seed of the SAME round the
+            // finalized derive resolved — reth is canonical here, no re-derive.
             self.executed
                 .spec_executed_hash(height)
                 .expect("checked is_some above")
@@ -2951,6 +3067,31 @@ where
                         seed,
                     })));
                 }
+                Err(error) if is_prefix_seed_missing(error.cause()) => {
+                    // A prefix element on a beacon-active round has no σ yet. The
+                    // walk cannot hold (it owns neither `cause` nor the ack), so it
+                    // reports the typed leaf and the park happens HERE. `parked` is
+                    // `Some` in every reachable case — a prefix exists only when the
+                    // walk's backward probe fails at `target - 1`, which IS the
+                    // `gap` predicate that guarded the clone — but the fall-through
+                    // stays rather than an `expect`, matching the arm above.
+                    let Some((order, seed)) = parked else {
+                        return Err(error);
+                    };
+                    warn!(
+                        height,
+                        error = %format_args!("{:#}", error.cause()),
+                        "gap-walk prefix element has no σ for its own round yet; PARKING \
+                         (event-driven re-poke, no give-up timer)"
+                    );
+                    metrics::counter!("dpos_executor_prefix_seed_park_total").increment(1);
+                    return Ok(DeriveOutcome::NeedPrefixSeed(Box::new(Deferred {
+                        cause,
+                        order,
+                        ack: self.take_inflight_ack(),
+                        seed,
+                    })));
+                }
                 Err(error) => return Err(error),
             }
         };
@@ -2964,8 +3105,8 @@ where
         // cross-node at a diverged height this is the (a)-vs-(b) discriminator:
         // (a) SAME `fin_proposal_round` on both sides but a different resulting
         // hash / prev_randao (derive.rs line) ⇒ seed decoupled from the agreed
-        // round; (b) DIFFERENT `fin_proposal_round` ⇒ the diverged node holds a
-        // genuinely different witness for this height.
+        // round; (b) DIFFERENT `fin_proposal_round` ⇒ the diverged node resolved
+        // a genuinely different round for this height.
         // Read `spec_executed` BEFORE the split_off below prunes it.
         tracing::info!(
             target: "dpos::derive_seed",
@@ -3014,8 +3155,8 @@ where
                 // hasn't landed). PARK — a fall-through would reach the unconditional
                 // `ack.acknowledge()` and finalize `h` with NO convergence check.
                 // Returning here (BEFORE the `split_off` prune) keeps
-                // `spec_executed[height]` intact, and the park CARRIES the witness,
-                // so the re-poke re-derives with zero lookups.
+                // `spec_executed[height]` intact, and the park CARRIES σ, so the
+                // re-poke re-derives with zero lookups.
                 None => {
                     return Ok(DeriveOutcome::NeedAttestation(Box::new(Deferred {
                         cause,
@@ -3221,6 +3362,11 @@ where
             });
         }
         let mut parent_retries: u32 = 0;
+        // Same budget, different transient: a prefix element's σ can land at any
+        // moment from the cert inlet (the store is shared), so a re-walk is worth
+        // trying here — unlike at the fresh-derive site, this loop already holds
+        // the ack and has no park route.
+        let mut seed_retries: u32 = 0;
         while self.executed.spec_executed_hash(height) != Some(derived_hash) {
             self.sync_metrics.degrade(SyncReason::FinalizeApply);
             warn!(
@@ -3274,6 +3420,25 @@ where
                         "re-apply at height {height}: the parent never became visible after \
                          {REAPPLY_PARENT_VISIBILITY_RETRIES} re-walks; the EL is not \
                          canonicalizing what this node imports"
+                    )))
+                }
+                Err(error)
+                    if is_prefix_seed_missing(error.cause())
+                        && seed_retries < REAPPLY_PARENT_VISIBILITY_RETRIES =>
+                {
+                    seed_retries += 1;
+                    warn!(
+                        error = %format_args!("{:#}", error.cause()),
+                        height,
+                        seed_retries,
+                        "re-apply: a prefix element's σ is not in the store yet; re-walking"
+                    );
+                    continue;
+                }
+                Err(error) if is_prefix_seed_missing(error.cause()) => {
+                    return Err(Fault::corruption(eyre::eyre!(
+                        "re-apply at height {height}: a prefix element's σ never arrived \
+                         across {REAPPLY_PARENT_VISIBILITY_RETRIES} re-walks"
                     )))
                 }
                 Err(error) => return Err(error),
@@ -3350,9 +3515,23 @@ where
     /// One range with ONE `Ok`/`Err` exit is the point: the delivered height is
     /// structurally identical to a prefix element (it derives against a parent the
     /// walk just imported), so a caller catching an invisible parent must not have
-    /// to remember a second site. BLOCKS-ONLY (§4): the witness for height `h` is
-    /// block `h+1`'s `parent_seed` — the next element of the walk, and for the
-    /// last element `delivered_seed`. No certs, no extra fetches, no hints.
+    /// to remember a second site. Each element is acquired at the TOP of its own
+    /// iteration — `delivered.take()` at the target, a marshal fetch below it —
+    /// and σ comes from the same place the main path reads it: the store, at that
+    /// element's own round, PREDICATE FIRST ([`Self::seed_at_own_round`]). The
+    /// target's σ is the caller's `delivered_seed` and is NOT re-looked-up: the
+    /// caller may have PARKED with it, a park has no deadline, and a re-lookup
+    /// could miss where the parked value derives. No certs, no lookahead, no
+    /// hints.
+    ///
+    /// A prefix miss on a beacon-ACTIVE round reports the typed
+    /// [`PrefixSeedMissing`](crate::application::PrefixSeedMissing) leaf. This
+    /// call holds neither `cause` nor `ack`, so it cannot hold the block itself —
+    /// but its CALLER owns the park, matches on the leaf and returns
+    /// [`DeriveOutcome::NeedPrefixSeed`], so a σ-less prefix element waits instead
+    /// of killing the actor. The `Fault` class stays `Corruption` because that is
+    /// what the fault-class invariant permits while `inflight_ack` is held; the
+    /// class is never reached, the cause is.
     ///
     /// A missing BLOCK stays fatal (the pre-existing "hole below the floor cannot
     /// self-heal" class); a re-walk on a retry is idempotent — already-derived
@@ -3381,59 +3560,64 @@ where
             }
             first_missing -= 1;
         };
-        // Held until the walk reaches it: `delivered` is both the range's last
-        // element and the witness source for `target - 1`, and moving rather than
-        // cloning keeps its tx list off the steady-state hot path.
+        // Held until the walk reaches its top: moving rather than cloning keeps
+        // the delivered block's tx list off the steady-state hot path, and the
+        // target is NEVER re-fetched from the marshal (the steady-state walk —
+        // `first_missing == target` — must stay zero-marshal).
         let mut delivered = Some(delivered);
-        let mut order = match first_missing == target {
-            true => delivered.take().expect("just constructed as Some"),
-            false => {
-                info!(
-                    first_missing,
-                    target, "deriving missing prefix from marshal before the delivered block"
-                );
-                self.marshal
-                    .fetch_block_by_height(Height::new(first_missing))
-                    .await
-                    .ok_or_else(|| {
-                        eyre::eyre!(
-                            "derive gap: marshal has no ordering artifact at height {first_missing}"
-                        )
-                    })?
-            }
-        };
+        if first_missing != target {
+            info!(
+                first_missing,
+                target, "deriving missing prefix from marshal before the delivered block"
+            );
+        }
         for h in first_missing..=target {
-            // The WITNESS for `h` = block `h+1`'s `parent_seed`: the next walk
-            // element (fetched once — it becomes the next iteration's `order`),
-            // the caller-held `delivered` block just below the top, or
-            // `delivered_seed` at the top itself.
-            let (seed, next_order) = if h == target {
-                (delivered_seed.take(), None)
-            } else if h + 1 == target {
-                let child = delivered.take().expect("taken only at h + 1 == target");
-                (child.parent_seed.clone(), Some(child))
+            let (order, seed) = if h == target {
+                (
+                    delivered
+                        .take()
+                        .expect("taken exactly once, at h == target"),
+                    delivered_seed.take(),
+                )
             } else {
-                let child = self
+                let order = self
                     .marshal
-                    .fetch_block_by_height(Height::new(h + 1))
+                    .fetch_block_by_height(Height::new(h))
                     .await
                     .ok_or_else(|| {
-                        eyre::eyre!(
-                            "derive gap: marshal has no ordering artifact at height {}",
-                            h + 1
-                        )
+                        eyre::eyre!("derive gap: marshal has no ordering artifact at height {h}")
                     })?;
-                (child.parent_seed.clone(), Some(child))
+                let seed = match self.seed_at_own_round(h, order.proposal_view) {
+                    OwnRoundSeed::Present(seed) => Some(seed),
+                    OwnRoundSeed::Inactive => None,
+                    OwnRoundSeed::Missing => {
+                        // The CLASS stays `Corruption` while `inflight_ack` holds the
+                        // block's `Exact` (the fault-class invariant at `try_derive`);
+                        // the caller matches on the CAUSE and parks before the router
+                        // ever sees the class, exactly as it does for
+                        // `ParentHeaderMissing`.
+                        return Err(Fault::corruption(
+                            eyre::eyre!(crate::application::PrefixSeedMissing {
+                                height: h,
+                                proposal_view: order.proposal_view,
+                            })
+                            .wrap_err(
+                                "derive gap: the walk cannot hold, and deriving with the \
+                                 digest fallback would silently fork",
+                            ),
+                        ));
+                    }
+                };
+                (order, seed)
             };
-            self.refuse_witness_downgrade(&order, &seed)?;
             // Captured before `order` is consumed: each gap block carries its OWN
             // committee-attested `result` commitment, which must be cross-checked
             // exactly like the top-level delivered block — otherwise a wrong
             // `result` on a gap-range block (the byzantine-vrf defense) would be
             // imported unchecked.
             let attested_result = order.result;
-            // Derive-seed telemetry: gap-walk witness round, captured before
-            // `seed` moves into the deriver.
+            // Derive-seed telemetry: the walked element's own seed round, captured
+            // before `seed` moves into the deriver.
             let gap_seed_round = seed.as_ref().map(|s| s.target_round);
             // EXEC-SATURATION observability (see spec_execute for scope rationale);
             // recorded for the DELIVERED element only, the scope it had before that
@@ -3448,16 +3632,22 @@ where
                     false => format!("gap derivation failed at height {h}"),
                 })?;
             parent_hash = derived.evm_hash();
-            let Some(next) = next_order else {
+            if h == target {
+                // The DELIVERED element deliberately DISCARDS the transport flag
+                // the prefix arm below checks: `try_derive` re-checks this block's
+                // landing in its postcondition loop, so an `Ok(false)` here is
+                // retried by the caller instead of killing the actor. The two
+                // call sites are NOT symmetry-debt — see
+                // `submit_finalized_payload`'s contract.
                 self.submit_finalized_payload(derived).await?;
                 metrics::histogram!("dpos_derive_el_apply_duration_seconds", "path" => "finalized")
                     .record(el_apply_started.elapsed().as_secs_f64());
                 break;
-            };
+            }
             // DERIVE-SEED TELEMETRY (fork-root byte-confirm): label the finalized
             // GAP-WALK derive so a height derived via prefix catch-up (vs top-level
             // `try_derive`) is attributable; `fin_proposal_round == gap_seed_round`
-            // (the witness round of block h+1).
+            // (the walked block's OWN round).
             tracing::info!(
                 target: "dpos::derive_seed",
                 height = h,
@@ -3555,9 +3745,6 @@ where
                     ),
                 ));
             }
-            // Hand the already-fetched child to the next iteration (each walk
-            // element is fetched exactly once).
-            order = next;
         }
         Ok(parent_hash)
     }
@@ -3661,6 +3848,33 @@ mod tests {
 
     type RethExecBlock = RethSealed<reth_ethereum_primitives::Block>;
 
+    thread_local! {
+        /// The σ store the default [`Fixture`] serves from and the block helpers
+        /// record into. Thread-local rather than a `static` because the helpers
+        /// are free functions with no fixture in hand: one `#[test]` runs per
+        /// thread, so a round one test recorded can never answer another's
+        /// lookup.
+        static FIXTURE_SEEDS: crate::beacon::certify::SeedStore =
+            crate::beacon::certify::SeedStore::new();
+    }
+
+    /// Record the canonical σ for a block proposed at `view` of epoch 0 — the
+    /// epoch the fixture's default single huge epocher puts every test height in.
+    ///
+    /// σ is a pure function of the round, so every writer of one round writes the
+    /// same bytes; the store therefore doubles as the memo that keeps the
+    /// threshold recovery to once per round per thread. A test that overrides the
+    /// epocher builds its own store (`Fixture::with_seed_store`) — this one
+    /// cannot name its epochs.
+    fn record_fixture_seed(view: u64) {
+        let round = active_round(view);
+        FIXTURE_SEEDS.with(|seeds| {
+            if seeds.lookup(round).is_none() {
+                seeds.record(real_witness(round));
+            }
+        });
+    }
+
     fn sample_order(parent: Digest, height: u64, result: B256) -> OrderBlock {
         OrderBlock {
             parent,
@@ -3672,21 +3886,43 @@ mod tests {
             extra_data: Bytes::new(),
             result,
             txs: Vec::new(),
-            parent_seed: None,
             equivocation: None,
         }
     }
 
-    /// The FLUSH CHILD for `parent`: under the one-block-lookahead pipeline a
-    /// height only derives when its child is delivered, so tests append one
-    /// extra linked block (whose own ack stays HELD — the pipeline's steady
-    /// state). `witness` becomes the child's `parent_seed`, i.e. the seed the
-    /// executor derives `parent` with.
-    fn child_of(parent: &OrderBlock, witness: Option<crate::beacon::seed::Seed>) -> OrderBlock {
-        OrderBlock {
-            parent_seed: witness,
-            ..sample_order(parent.digest(), parent.height + 1, B256::ZERO)
-        }
+    /// The next linked block after `parent` — a plain link now that nothing
+    /// rides on the child. A test that needs σ for a specific round files it
+    /// with [`record_fixture_seed`] instead; the child no longer carries one.
+    fn child_of(parent: &OrderBlock) -> OrderBlock {
+        sample_order(parent.digest(), parent.height + 1, B256::ZERO)
+    }
+
+    /// The first beacon-ACTIVE epoch, and the one every σ-recording helper in
+    /// this module keys on.
+    fn active_epoch() -> commonware_consensus::types::Epoch {
+        commonware_consensus::types::Epoch::new(crate::beacon::actor::DETERMINISTIC_BOOTSTRAP_EPOCH)
+    }
+
+    /// `Round(DETERMINISTIC_BOOTSTRAP_EPOCH, view)` — the round a height whose
+    /// epocher is [`beacon_active_epocher`] resolves its σ at.
+    fn active_round(view: u64) -> commonware_consensus::types::Round {
+        commonware_consensus::types::Round::new(
+            active_epoch(),
+            commonware_consensus::types::View::new(view),
+        )
+    }
+
+    /// An epocher that puts heights 96..=143 — the band every fixture in this
+    /// module anchors in — inside `DETERMINISTIC_BOOTSTRAP_EPOCH`, so
+    /// `mandatory_at` answers TRUE and σ is actually consulted.
+    ///
+    /// The DEFAULT fixture epocher puts every height in epoch 0, which is
+    /// beacon-INACTIVE: there the agreed derivation is `None` and a σ in the
+    /// store is ignored. A test whose subject is σ — a value reaching the
+    /// deriver, or a block HELD waiting for one — must use this, and must then
+    /// supply σ for EVERY height it expects to derive.
+    fn beacon_active_epocher() -> crate::epocher::OriginEpocher {
+        crate::epocher::OriginEpocher::new(0, std::num::NonZeroU64::new(48).expect("nonzero"))
     }
 
     /// Build a self-consistent OrderBlock chain `(anchor+1 ..= anchor+count)`
@@ -4096,8 +4332,8 @@ mod tests {
     struct FakeMarshal {
         canned: Arc<Mutex<BTreeMap<u64, OrderBlock>>>,
         /// Heights passed to `fetch_block_by_height`, in call order — the
-        /// zero-I/O-fast-path witness (`awaiting_child` must derive from the
-        /// child body in hand, never round-trip the marshal).
+        /// steady-state derive resolves σ locally and must never round-trip the
+        /// marshal.
         fetched: Arc<Mutex<Vec<u64>>>,
         /// Heights passed to `hint_finalization`, in call order.
         hints: Arc<Mutex<Vec<u64>>>,
@@ -4221,16 +4457,18 @@ mod tests {
         /// (the deterministic clock steps ~1 ms/iteration in real time, so a large
         /// virtual interval is real seconds) via `with_fcu_heartbeat`.
         fcu_heartbeat: Duration,
-        /// `SeedStore` handed to the built actor (`None` by default — the §4.1
-        /// re-canonicalise arm then degrades to skip-speculation on a
-        /// spin-round notarization). Set via `with_seed_store`, which wraps the
-        /// store in a real provider so the fixture exercises the same surface the
-        /// executor uses in production.
+        /// Randomness handed to the built actor. Default: the real provider over
+        /// the thread's `FIXTURE_SEEDS` store, which the block helpers file into,
+        /// so σ resolves by round exactly as production does. Replace it via
+        /// `with_seed_store` — with a store of the test's own, or with an EMPTY
+        /// one to pin a MISS. Note the DEFAULT epocher is beacon-INACTIVE, so
+        /// the store is only consulted under [`beacon_active_epocher`].
         randomness: std::sync::Arc<dyn crate::beacon::Randomness>,
         /// Block→epoch map handed to the built actor. Default: a single huge
-        /// epoch so every test height maps to epoch 0 (matching the
-        /// `Epoch::new(0)` seed rounds the tests build). The epoch-boundary
-        /// eager-derive tests override via `with_epocher`.
+        /// epoch so every test height maps to epoch 0 — below
+        /// `DETERMINISTIC_BOOTSTRAP_EPOCH`, i.e. beacon-INACTIVE, where the
+        /// agreed derivation is `None` and no block can be held for its σ. A
+        /// test whose subject IS σ overrides with [`beacon_active_epocher`].
         epocher: crate::epocher::OriginEpocher,
         /// Restart-seed override for `last_execution_finalized_height` (the reth
         /// head = `provider.last_block_number()`). `None` ⇒ the historical
@@ -4275,7 +4513,7 @@ mod tests {
                 sync_metrics,
                 safety_halt,
                 fcu_heartbeat: Duration::from_secs(60),
-                randomness: crate::beacon::surface::absent_unregistered(),
+                randomness: crate::beacon::for_seeds(FIXTURE_SEEDS.with(|seeds| seeds.clone())),
                 epocher: crate::epocher::OriginEpocher::new(
                     0,
                     std::num::NonZeroU64::new(1 << 40).expect("nonzero"),
@@ -4298,8 +4536,9 @@ mod tests {
             self
         }
 
-        /// Give the built actor a `SeedStore` (the §4.1 re-canonicalise byte
-        /// source). Set BEFORE `build`.
+        /// Replace the default store with `store` — the test's own σ source, and
+        /// (empty) the way to opt out of the default and pin a store MISS. Set
+        /// BEFORE `build`.
         fn with_seed_store(mut self, store: crate::beacon::certify::SeedStore) -> Self {
             self.randomness = crate::beacon::for_seeds(store);
             self
@@ -4653,10 +4892,9 @@ mod tests {
             let (actor, mailbox) = fx.build(ctx, ANCHOR, ANCHOR);
             let handle = actor.start();
 
-            // Pipeline shift: a height only derives when its child arrives, so
-            // send the whole chain (+1 flush child) and await the ack of the
-            // last DERIVED height (ANCHOR+K+1; the flush child stays held).
-            let chain = result_consistent_chain(ANCHOR, fx.anchor_hash, K + 2);
+            // Every delivered height derives at its own delivery, so the ack of
+            // the last one (ANCHOR+K+1) is the whole chain landing.
+            let chain = result_consistent_chain(ANCHOR, fx.anchor_hash, K + 1);
             let mut waiters = Vec::new();
             for order in &chain {
                 let (msg, waiter) = finalize_msg(order.clone());
@@ -4666,7 +4904,7 @@ mod tests {
             waiters
                 .swap_remove(K as usize)
                 .await
-                .expect("ack of ANCHOR+K+1 (derived on the flush child's arrival)");
+                .expect("ack of ANCHOR+K+1");
 
             {
                 let fcus = fx.beacon.fcu_calls.lock().unwrap();
@@ -4729,8 +4967,6 @@ mod tests {
             let order = sample_order(Digest(B256::ZERO), ANCHOR + 1, B256::ZERO);
             let (msg, waiter) = finalize_msg(order.clone());
             mailbox.send(msg).expect("send");
-            let (flush, _w_flush) = finalize_msg(child_of(&order, None));
-            mailbox.send(flush).expect("send flush child");
             waiter
                 .await
                 .expect("block acks after the finalize FCU retries past the transport blips");
@@ -4774,8 +5010,6 @@ mod tests {
             let order = sample_order(Digest(B256::ZERO), ANCHOR + 1, B256::ZERO);
             let (msg, waiter) = finalize_msg(order.clone());
             mailbox.send(msg).expect("send");
-            let (flush, _w_flush) = finalize_msg(child_of(&order, None));
-            mailbox.send(flush).expect("send flush child");
             waiter
                 .await
                 .expect("block still acks — an import transport error is NOT actor-death");
@@ -4821,8 +5055,6 @@ mod tests {
 
             let (msg, waiter) = finalize_msg(order.clone());
             mailbox.send(msg).expect("send");
-            let (flush, _w_flush) = finalize_msg(child_of(&order, None));
-            mailbox.send(flush).expect("send flush child");
 
             // Mid-convergence: degraded-visible, block un-landed, ack pending.
             let mut waiter = waiter;
@@ -4927,13 +5159,13 @@ mod tests {
             let handle = actor.start();
 
             let refused = sample_order(Digest(B256::ZERO), ANCHOR + 1, B256::ZERO);
-            let flush = child_of(&refused, None);
+            let flush = child_of(&refused);
             let post_halt = sample_order(flush.digest(), ANCHOR + 3, B256::ZERO);
             let (msg, waiter) = finalize_msg(refused);
             mailbox.send(msg).expect("send");
             // The flush child triggers the derive (and the Invalid FCU). Its own
-            // ack sits in `awaiting_child` when the halt engages — it must be
-            // retained too (the park_halted awaiting_child clause).
+            // ack sits in `awaiting_seed` when the halt engages — it must be
+            // retained too (the park_halted awaiting_seed clause).
             let (flush_msg, mut flush_waiter) = finalize_msg(flush);
             mailbox.send(flush_msg).expect("send flush child");
 
@@ -4950,7 +5182,7 @@ mod tests {
             .await;
             assert!(
                 (&mut flush_waiter).now_or_never().is_none(),
-                "the HELD child's ack (awaiting_child) must be retained by park_halted too"
+                "the HELD child's ack (awaiting_seed) must be retained by park_halted too"
             );
             assert_eq!(
                 fx.sync_metrics.degraded_value(SyncReason::ElInvalid),
@@ -5010,8 +5242,6 @@ mod tests {
             // The finalized path is the authority and still lands the height.
             let (msg, waiter) = finalize_msg(order.clone());
             mailbox.send(msg).expect("send finalize");
-            let (flush, _w) = finalize_msg(child_of(&order, None));
-            mailbox.send(flush).expect("send flush child");
             waiter
                 .await
                 .expect("the finalized path derives the height regardless");
@@ -5081,8 +5311,6 @@ mod tests {
             // Same verdict, now on a committed head.
             let (msg, waiter) = finalize_msg(order.clone());
             mailbox.send(msg).expect("send finalize");
-            let (flush, _w) = finalize_msg(child_of(&order, None));
-            mailbox.send(flush).expect("send flush child");
             let post_halt = sample_order(Digest(B256::ZERO), ANCHOR + 4, B256::ZERO);
             assert_parked_retaining_acks(
                 &ctx,
@@ -5175,8 +5403,6 @@ mod tests {
             let order = sample_order(Digest(B256::ZERO), ANCHOR + 1, B256::ZERO);
             let (msg, _waiter) = finalize_msg(order.clone());
             mailbox.send(msg).expect("send finalize");
-            let (flush, _w) = finalize_msg(child_of(&order, None));
-            mailbox.send(flush).expect("send flush child");
 
             // The whole point: this TERMINATES. Pre-fix the FCU loop had no exit.
             let exited = futures::future::select(
@@ -5240,7 +5466,7 @@ mod tests {
             let forged = B256::repeat_byte(0xEE);
             assert_ne!(forged, fx.chain.spec_executed_hash(ANCHOR).unwrap());
             let divergent = sample_order(parent, ANCHOR + K, forged);
-            let halt_trigger = child_of(&divergent, None);
+            let halt_trigger = child_of(&divergent);
             let post_halt = sample_order(halt_trigger.digest(), ANCHOR + K + 2, B256::ZERO);
             let (msg, waiter) = finalize_msg(divergent);
             mailbox.send(msg).expect("send divergent");
@@ -5267,29 +5493,34 @@ mod tests {
     }
 
     // FIXED behavior of the formerly seed-blind fork-safety bug (bundle block
-    // 5252), restated under the WITNESS: a block speculatively executed with a
-    // seed of round A but whose child carries a witness of a DIFFERENT round B.
-    // `spec_executed` records the speculation's seed ROUND, and
-    // `correctly_speculated` requires the stored round to equal the witness
-    // round. On the A≠B mismatch (after §4.1 an ANOMALY — both sides should be
-    // Round(Ep, proposal_view)) the executor RE-DERIVES SPEC_H with the witness
-    // seed_B (the agreed value) and reorgs the head onto it — so K blocks later
-    // the committee-attested result (seed_B → hash_B) MATCHES the locally
-    // executed hash and NO `ResultDivergence` SafetyHalt fires.
+    // 5252): a block speculatively executed with a seed of round A while the
+    // AGREED round for that height is B. `spec_executed` records the
+    // speculation's seed ROUND, and `correctly_speculated` requires it to equal
+    // the round the finalized derive resolved. On the A≠B mismatch (after §4.1
+    // an ANOMALY — both sides should be Round(Ep, proposal_view)) the executor
+    // RE-DERIVES SPEC_H with seed_B (the agreed value) and reorgs the head onto
+    // it — so K blocks later the committee-attested result (seed_B → hash_B)
+    // MATCHES the locally executed hash and NO `ResultDivergence` SafetyHalt
+    // fires.
     #[test]
-    fn spec_seed_mismatch_rederives_with_witness_seed_no_halt() {
+    fn spec_seed_mismatch_rederives_with_the_agreed_seed_no_halt() {
         use commonware_consensus::types::{Epoch, Round, View};
         let runtime = deterministic::Runner::default();
         runtime.start(|ctx| async move {
             const ANCHOR: u64 = 100;
             const SPEC_H: u64 = ANCHOR + 1; // the notarized-then-finalized height
-            let fx = Fixture::new(ANCHOR);
+            let fx = Fixture::new(ANCHOR).with_epocher(beacon_active_epocher());
             let anchor_hash = fx.anchor_hash;
 
-            // Two seeds for the SAME ordering block: spec round A ≠ witness
-            // round B ⇒ (via the prev_randao→mix_hash fold) DISTINCT hashes.
+            // Two seeds for the SAME ordering block: the speculation's round A ≠
+            // the AGREED round B ⇒ (via the prev_randao→mix_hash fold) DISTINCT
+            // hashes. A names the block's own VIEW, so §4.1 keeps it verbatim
+            // rather than re-canonicalising — a divergent local cert state, not a
+            // spin round. B is the round the finalized derive resolves.
             let seed_a = real_seed(Round::new(Epoch::new(0), View::new(SPEC_H)));
-            let seed_b = real_seed(Round::new(Epoch::new(0), View::new(SPEC_H + 1)));
+            let seed_b = real_seed(active_round(SPEC_H));
+            record_fixture_seed(SPEC_H);
+            record_fixture_seed(0); // the view every `sample_order` block names
 
             // The ordering block finalized at SPEC_H (result ZERO — pre-K
             // window). `proposal_view == seed_a`'s view so the §4.1
@@ -5309,29 +5540,13 @@ mod tests {
                 "seed_A and seed_B must derive DISTINCT executed hashes (else the mismatch can't surface)"
             );
 
-            // Ordering chain SPEC_H..=SPEC_H+K+1. Every child carries a witness
-            // for its parent (a beacon-active chain stays beacon-active — the
-            // downgrade refusal is monotone): SPEC_H's witness is seed_B (the
-            // mismatch under test); later witnesses are per-height seeds.
-            let seed_1 = real_seed(Round::new(Epoch::new(0), View::new(SPEC_H + 1)));
-            let seed_2 = real_seed(Round::new(Epoch::new(0), View::new(SPEC_H + 2)));
-            let seed_3 = real_seed(Round::new(Epoch::new(0), View::new(SPEC_H + K)));
-            let order_h1 = OrderBlock {
-                parent_seed: Some(seed_b.clone()),
-                ..sample_order(order_h.digest(), SPEC_H + 1, B256::ZERO) // pre-K → ZERO
-            };
-            let order_h2 = OrderBlock {
-                parent_seed: Some(seed_1.clone()),
-                ..sample_order(order_h1.digest(), SPEC_H + 2, anchor_hash) // Height(ANCHOR)
-            };
-            let order_hk = OrderBlock {
-                parent_seed: Some(seed_2.clone()),
-                ..sample_order(order_h2.digest(), SPEC_H + K, hash_b) // attests hash_B
-            };
-            let flush = OrderBlock {
-                parent_seed: Some(seed_3.clone()),
-                ..sample_order(order_hk.digest(), SPEC_H + K + 1, B256::ZERO)
-            };
+            // Ordering chain SPEC_H..=SPEC_H+K. Each element derives from σ of
+            // its OWN round: SPEC_H from seed_B, the rest from `Round(e, 0)` —
+            // `sample_order`'s view — both filed above.
+            // SPEC_H+1 pre-K ⇒ ZERO; +2 commits Height(ANCHOR); +K attests hash_B.
+            let order_h1 = sample_order(order_h.digest(), SPEC_H + 1, B256::ZERO);
+            let order_h2 = sample_order(order_h1.digest(), SPEC_H + 2, anchor_hash);
+            let order_hk = sample_order(order_h2.digest(), SPEC_H + K, hash_b);
 
             // Only the speculated block is fetched-by-digest (spec_execute).
             fx.marshal.canned.lock().unwrap().insert(SPEC_H, order_h.clone());
@@ -5365,21 +5580,21 @@ mod tests {
                 "finalized tier empty while only speculated — the gate reads None, not hash_A"
             );
 
-            // (2) FINALIZE SPEC_H; its child (order_h1) carries the seed_B
-            // witness. `correctly_speculated` sees stored round A ≠ witness
-            // round B ⇒ re-derive → hash_B becomes canonical at SPEC_H.
+            // (2) FINALIZE SPEC_H. `correctly_speculated` sees the stored
+            // speculation round A ≠ the agreed round B ⇒ re-derive → hash_B
+            // becomes canonical at SPEC_H.
             let (m, w) = finalize_msg(order_h.clone());
             mailbox.send(m).expect("send finalize SPEC_H");
             let (m1, w1) = finalize_msg(order_h1);
             mailbox.send(m1).expect("send finalize SPEC_H+1");
             w.await.expect("SPEC_H acks after re-derive with seed_B");
 
-            // The seed-blind reuse is GONE: hash_B (the agreed witness value) is
+            // The seed-blind reuse is GONE: hash_B (the agreed value) is
             // canonical at SPEC_H, NOT the seed_A speculation.
             assert_eq!(
                 fx.chain.spec_executed_hash(SPEC_H),
                 Some(hash_b),
-                "round mismatch re-derived SPEC_H with the witness seed (hash_B)"
+                "round mismatch re-derived SPEC_H with the agreed seed (hash_B)"
             );
             // The FINALIZED tier now reflects the finalized sibling (hash_B),
             // NEVER the speculated hash_A: the result gate at SPEC_H+K commits
@@ -5407,10 +5622,9 @@ mod tests {
                 "SPEC_H derived at spec (seed_A) then RE-DERIVED at finalize (seed_B)"
             );
 
-            // (3) Advance ordering past SPEC_H+K so the seed_B attestation
-            // reaches the result cross-check (each height derives on its
-            // child's arrival).
-            for order in [order_h2, order_hk, flush] {
+            // (3) Advance ordering to SPEC_H+K so the hash_B attestation reaches
+            // the result cross-check.
+            for order in [order_h2, order_hk] {
                 let (m, _w) = finalize_msg(order);
                 mailbox.send(m).expect("send chain");
             }
@@ -5425,7 +5639,7 @@ mod tests {
 
             assert!(
                 !fx.safety_halt.is_engaged(),
-                "FIXED: re-derive with the witness seed keeps local == attested → NO halt"
+                "FIXED: re-derive with the agreed seed keeps local == attested → NO halt"
             );
             assert_eq!(
                 fx.sync_metrics.degraded_value(SyncReason::ResultDivergence),
@@ -5445,16 +5659,16 @@ mod tests {
     // re-derive" (property (c)).
     #[test]
     fn spec_same_round_keeps_speculation_no_rederive() {
-        use commonware_consensus::types::{Epoch, Round, View};
         let runtime = deterministic::Runner::default();
         runtime.start(|ctx| async move {
             const ANCHOR: u64 = 100;
             const SPEC_H: u64 = ANCHOR + 1;
-            let fx = Fixture::new(ANCHOR);
+            let fx = Fixture::new(ANCHOR).with_epocher(beacon_active_epocher());
             let anchor_hash = fx.anchor_hash;
-            // Notarization AND the child's witness carry the SAME-round seed
-            // (the honest steady state: both are Round(Ep, proposal_view)).
-            let seed = real_seed(Round::new(Epoch::new(0), View::new(SPEC_H)));
+            // The notarization and the store carry the SAME round (the honest
+            // steady state: both are `Round(epoch(h), proposal_view)`).
+            let seed = real_seed(active_round(SPEC_H));
+            record_fixture_seed(SPEC_H);
 
             let order_h = OrderBlock {
                 proposal_view: SPEC_H,
@@ -5486,10 +5700,6 @@ mod tests {
                 .expect("send spec");
             let (m, w) = finalize_msg(order_h.clone());
             mailbox.send(m).expect("send finalize SPEC_H");
-            // The child carries the SAME-round witness — its arrival triggers
-            // SPEC_H's finalized reconcile.
-            let (m_child, _w_child) = finalize_msg(child_of(&order_h, Some(seed.clone())));
-            mailbox.send(m_child).expect("send flush child");
             w.await.expect("SPEC_H acks via the kept speculation");
 
             assert_eq!(
@@ -5570,7 +5780,7 @@ mod tests {
 
                 let order = sample_order(Digest(B256::ZERO), H, B256::ZERO);
                 fx.marshal.canned.lock().unwrap().insert(H, order.clone());
-                let child = child_of(&order, None);
+                let child = child_of(&order);
 
                 let (actor, mailbox) = fx.build(ctx.clone(), ANCHOR, ANCHOR);
                 let mut handle = actor.start();
@@ -5671,7 +5881,7 @@ mod tests {
                 .lock()
                 .unwrap()
                 .insert(L - 1, order.clone());
-            let child = child_of(&order, None);
+            let child = child_of(&order);
             let post_halt = sample_order(child.digest(), L + 1, B256::ZERO);
 
             let (actor, mailbox) = fx.build(ctx.clone(), L, L);
@@ -5729,7 +5939,7 @@ mod tests {
                 .lock()
                 .unwrap()
                 .insert(L - 1, order.clone());
-            let child = child_of(&order, None);
+            let child = child_of(&order);
 
             let (actor, mailbox) = fx.build(ctx.clone(), L, L);
             let mut handle = actor.start();
@@ -5793,7 +6003,7 @@ mod tests {
                     .lock()
                     .unwrap()
                     .insert(L - 1, order.clone());
-                let child = child_of(&order, None);
+                let child = child_of(&order);
 
                 let (actor, mailbox) = fx.build(ctx.clone(), L, L);
                 let mut handle = actor.start();
@@ -5866,12 +6076,15 @@ mod tests {
         runtime.start(|ctx| async move {
             const ANCHOR: u64 = 100;
             const SPEC_H: u64 = ANCHOR + 1;
-            let fx = Fixture::new(ANCHOR);
+            let fx = Fixture::new(ANCHOR).with_epocher(beacon_active_epocher());
             let anchor_hash = fx.anchor_hash;
 
-            // Spec round A ≠ witness round B (the agreed witness value).
+            // Speculation round A ≠ the AGREED round B the finalized derive
+            // resolves from the store.
             let seed_a = real_seed(Round::new(Epoch::new(0), View::new(SPEC_H)));
-            let seed_b = real_seed(Round::new(Epoch::new(0), View::new(SPEC_H + 1)));
+            let seed_b = real_seed(active_round(SPEC_H));
+            record_fixture_seed(SPEC_H);
+            record_fixture_seed(0); // the view every `sample_order` block names
 
             // `proposal_view == seed_a`'s view keeps the §4.1 re-canonicalisation
             // a no-op for the speculation.
@@ -5893,27 +6106,10 @@ mod tests {
             .hash();
             assert_ne!(hash_a, hash_b, "distinct sibling hashes required");
 
-            // A beacon-active chain stays beacon-active: every child carries a
-            // witness for its parent (the downgrade refusal is monotone).
-            let seed_1 = real_seed(Round::new(Epoch::new(0), View::new(SPEC_H + 2)));
-            let seed_2 = real_seed(Round::new(Epoch::new(0), View::new(SPEC_H + 3)));
-            let seed_3 = real_seed(Round::new(Epoch::new(0), View::new(SPEC_H + 4)));
-            let order_h1 = OrderBlock {
-                parent_seed: Some(seed_b.clone()),
-                ..sample_order(order_h.digest(), SPEC_H + 1, B256::ZERO) // pre-K → ZERO
-            };
-            let order_h2 = OrderBlock {
-                parent_seed: Some(seed_1.clone()),
-                ..sample_order(order_h1.digest(), SPEC_H + 2, anchor_hash) // commits ANCHOR
-            };
-            let order_hk = OrderBlock {
-                parent_seed: Some(seed_2.clone()),
-                ..sample_order(order_h2.digest(), SPEC_H + K, hash_b) // attests hash_B
-            };
-            let flush = OrderBlock {
-                parent_seed: Some(seed_3.clone()),
-                ..sample_order(order_hk.digest(), SPEC_H + K + 1, B256::ZERO)
-            };
+            // SPEC_H+1 pre-K ⇒ ZERO; +2 commits Height(ANCHOR); +K attests hash_B.
+            let order_h1 = sample_order(order_h.digest(), SPEC_H + 1, B256::ZERO);
+            let order_h2 = sample_order(order_h1.digest(), SPEC_H + 2, anchor_hash);
+            let order_hk = sample_order(order_h2.digest(), SPEC_H + K, hash_b);
 
             // The marshal serves SPEC_H by digest (spec_execute) AND by height
             // (the postcondition re-apply loop's re-fetch).
@@ -5942,9 +6138,9 @@ mod tests {
                 })
                 .expect("send spec@A");
 
-            // (2) Finalize SPEC_H; its child carries the round-B witness: the
-            // guard routes to the re-derive, whose sibling import the EL DROPS
-            // twice; the ack must not fire until the re-apply loop lands hash_B.
+            // (2) Finalize SPEC_H: the round guard routes to the re-derive, whose
+            // sibling import the EL DROPS twice; the ack must not fire until the
+            // re-apply loop lands hash_B.
             let (m, w) = finalize_msg(order_h.clone());
             mailbox.send(m).expect("send finalize SPEC_H");
             let (m1, w1) = finalize_msg(order_h1);
@@ -5990,10 +6186,10 @@ mod tests {
                 "the finalize_apply gauge clears once the EL serves the finalized hash"
             );
 
-            // (3) Advance past SPEC_H+K: the attested hash_B matches the local
+            // (3) Advance to SPEC_H+K: the attested hash_B matches the local
             // chain → derives cleanly, NO SafetyHalt (pre-fix: ResultDivergence
-            // here). Each height derives on its child's arrival.
-            for order in [order_h2, order_hk, flush] {
+            // here).
+            for order in [order_h2, order_hk] {
                 let (m, _w) = finalize_msg(order);
                 mailbox.send(m).expect("send chain");
             }
@@ -6056,8 +6252,6 @@ mod tests {
             mailbox
                 .send(msg)
                 .expect("send below-anchor post-activation block");
-            let (flush, _w_flush) = finalize_msg(child_of(&order, None));
-            mailbox.send(flush).expect("send flush child");
             waiter
                 .await
                 .expect("below-anchor post-activation block must ack (not shut down)");
@@ -6073,7 +6267,7 @@ mod tests {
         runtime.start(|ctx| async move {
             const ANCHOR: u64 = 0;
             let fx = Fixture::new(ANCHOR);
-            let chain = result_consistent_chain(ANCHOR, fx.anchor_hash, 5);
+            let chain = result_consistent_chain(ANCHOR, fx.anchor_hash, 4);
             // Heights 1..=3 canned in the marshal (crash-recovery backfill).
             {
                 let mut canned = fx.marshal.canned.lock().unwrap();
@@ -6084,12 +6278,10 @@ mod tests {
             let (actor, mailbox) = fx.build(ctx, ANCHOR, 3);
             let handle = actor.start();
 
-            // Live finalizes for heights 4+5 land BEFORE backfill drains (5 is
-            // the flush child that triggers 4's derive).
+            // A live finalize for height 4 lands BEFORE the backfill drains; it
+            // must still derive after 1..=3.
             let (msg, waiter) = finalize_msg(chain[3].clone());
             mailbox.send(msg).expect("send");
-            let (flush, _w_flush) = finalize_msg(chain[4].clone());
-            mailbox.send(flush).expect("send flush child");
             waiter.await.expect("ack for height 4");
 
             {
@@ -6125,7 +6317,7 @@ mod tests {
 
             // Deliver height 104 directly with an UNRESOLVABLE parent digest — its
             // real parent 103 is underived, so the gap-walk fills 101..103 first
-            // (103's witness = the delivered block itself; the walk needs no
+            // (each element resolves σ at its own round; the walk needs no
             // certs). The result still commits the derived hash at 101.
             let delivered = OrderBlock {
                 parent: Digest(B256::ZERO),
@@ -6133,8 +6325,6 @@ mod tests {
             };
             let (msg, waiter) = finalize_msg(delivered.clone());
             mailbox.send(msg).expect("send");
-            let (flush, _w_flush) = finalize_msg(child_of(&delivered, None));
-            mailbox.send(flush).expect("send flush child");
             waiter.await.expect("ack after gap walk");
 
             {
@@ -6149,6 +6339,224 @@ mod tests {
 
             drop(mailbox);
             let _ = handle.await;
+        });
+    }
+
+    // The gap-walk PREFIX resolves σ the same way the main path does — at each
+    // element's OWN round, predicate first — and never from the delivered block.
+    #[test]
+    fn the_gap_walk_prefix_resolves_each_element_at_its_own_round() {
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            const ANCHOR: u64 = 100;
+            let store = crate::beacon::certify::SeedStore::new();
+            let seeds: Vec<_> = (101..=104).map(|v| real_seed(active_round(v))).collect();
+            for seed in &seeds {
+                store.record(real_witness(seed.target_round));
+            }
+            let fx = Fixture::new(ANCHOR)
+                .with_seed_store(store)
+                .with_epocher(beacon_active_epocher());
+            let (mut actor, _mailbox) = fx.build(ctx, ANCHOR, ANCHOR);
+
+            let at = |view: u64, parent: Digest, result: B256| OrderBlock {
+                proposal_view: view,
+                ..sample_order(parent, view, result)
+            };
+            // 101/102 are inside the pre-activation window (result MUST be ZERO);
+            // 103 commits executed_hash(100) = the anchor; 104 commits
+            // executed_hash(101), which the walk itself produces.
+            let o1 = at(101, Digest(B256::ZERO), B256::ZERO);
+            let o2 = at(102, o1.digest(), B256::ZERO);
+            let o3 = at(103, o2.digest(), fx.anchor_hash);
+            let hash_101 = sealed_at(
+                fx.anchor_hash,
+                101,
+                seed_folded_discriminator(o1.digest(), &Some(seeds[0].clone())),
+            )
+            .hash();
+            let o4 = at(104, o3.digest(), hash_101);
+            {
+                let mut canned = fx.marshal.canned.lock().unwrap();
+                for order in [&o1, &o2, &o3] {
+                    canned.insert(order.height, (*order).clone());
+                }
+            }
+
+            let (ack, _waiter) = Exact::handle();
+            actor
+                .try_derive(Span::current(), o4, ack, Some(seeds[3].clone()))
+                .await
+                .expect("the walk derives the prefix then the delivered block");
+
+            assert_eq!(
+                fx.deriver.seeds_seen.lock().unwrap().as_slice(),
+                &[
+                    (101, Some(seeds[0].clone())),
+                    (102, Some(seeds[1].clone())),
+                    (103, Some(seeds[2].clone())),
+                    (104, Some(seeds[3].clone())),
+                ],
+                "each walk element derived from σ of its OWN round, in order"
+            );
+            assert!(!fx.safety_halt.is_engaged());
+        });
+    }
+
+    // A gap-walk PREFIX element on a beacon-ACTIVE round with no σ PARKS. The walk
+    // owns neither `cause` nor the ack, so it cannot hold the block itself — it
+    // reports the typed leaf and `try_derive`, which owns the park, converts it.
+    // Deriving with the digest fallback would silently fork, so waiting is the only
+    // correct answer.
+    #[test]
+    fn a_gap_walk_prefix_miss_on_a_beacon_active_round_parks() {
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            const ANCHOR: u64 = 100;
+            let store = crate::beacon::certify::SeedStore::new();
+            // σ for the DELIVERED height only — the prefix element at 101 has none.
+            let delivered_seed = real_seed(active_round(102));
+            store.record(real_witness(delivered_seed.target_round));
+            let fx = Fixture::new(ANCHOR)
+                .with_seed_store(store)
+                .with_epocher(beacon_active_epocher());
+            let (mut actor, _mailbox) = fx.build(ctx, ANCHOR, ANCHOR);
+
+            let o1 = OrderBlock {
+                proposal_view: 101,
+                ..sample_order(Digest(B256::ZERO), 101, B256::ZERO)
+            };
+            fx.marshal.canned.lock().unwrap().insert(101, o1.clone());
+            let o2 = OrderBlock {
+                proposal_view: 102,
+                ..sample_order(o1.digest(), 102, B256::ZERO)
+            };
+
+            let (ack, _waiter) = Exact::handle();
+            let outcome = actor
+                .try_derive(Span::current(), o2, ack, Some(delivered_seed))
+                .await
+                .expect("a σ-less prefix element parks — it must never fail");
+
+            match outcome {
+                DeriveOutcome::NeedPrefixSeed(d) => assert_eq!(
+                    d.order.height, 102,
+                    "the DELIVERED height is parked; the prefix is re-walked on the re-poke"
+                ),
+                other => panic!(
+                    "parked on the wrong cause: {}",
+                    match other {
+                        DeriveOutcome::Done => "Done",
+                        DeriveOutcome::NeedAttestation(_) => "NeedAttestation",
+                        DeriveOutcome::NeedParentVisible(_) => "NeedParentVisible",
+                        DeriveOutcome::NeedPrefixSeed(_) => unreachable!(),
+                    }
+                ),
+            }
+            assert!(
+                fx.deriver
+                    .seeds_seen
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .all(|(h, _)| *h != 101),
+                "101 must not have been derived with the digest fallback"
+            );
+            assert!(
+                !fx.safety_halt.is_engaged(),
+                "a missing σ is a liveness stall, never a fork-safety halt"
+            );
+        });
+    }
+
+    // The park's only exit: σ lands in the SAME store the walk reads (in production
+    // the cert inlet writes it), the parked block is re-poked, and the walk re-runs
+    // its own per-element lookup — which is why the park can carry the DELIVERED
+    // height's σ without ever carrying `None` for the prefix.
+    #[test]
+    fn a_parked_prefix_seed_derives_when_sigma_lands() {
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            const ANCHOR: u64 = 100;
+            let store = crate::beacon::certify::SeedStore::new();
+            let prefix_seed = real_seed(active_round(101));
+            let delivered_seed = real_seed(active_round(102));
+            store.record(real_witness(delivered_seed.target_round));
+            let fx = Fixture::new(ANCHOR)
+                .with_seed_store(store.clone())
+                .with_epocher(beacon_active_epocher());
+            let (mut actor, _mailbox) = fx.build(ctx, ANCHOR, ANCHOR);
+
+            let o1 = OrderBlock {
+                proposal_view: 101,
+                ..sample_order(Digest(B256::ZERO), 101, B256::ZERO)
+            };
+            fx.marshal.canned.lock().unwrap().insert(101, o1.clone());
+            let o2 = OrderBlock {
+                proposal_view: 102,
+                ..sample_order(o1.digest(), 102, B256::ZERO)
+            };
+
+            let (ack, waiter) = Exact::handle();
+            let outcome = actor
+                .try_derive(Span::current(), o2, ack, Some(delivered_seed.clone()))
+                .await
+                .expect("a σ-less prefix element parks");
+            actor.defer_if_needed(outcome, true).await;
+            assert!(actor.deferred.is_some(), "the block is parked, not dropped");
+
+            // The arrival the park waits for. Nothing is asked of any peer.
+            store.record(real_witness(prefix_seed.target_round));
+            actor
+                .repoke_deferred()
+                .await
+                .expect("the re-poke re-walks and completes");
+
+            assert!(actor.deferred.is_none(), "the park is released on success");
+            assert_eq!(
+                fx.deriver.seeds_seen.lock().unwrap().as_slice(),
+                &[(101, Some(prefix_seed)), (102, Some(delivered_seed))],
+                "each element derived from σ of its OWN round — the prefix σ was \
+                 re-resolved by the walk, never carried through the park"
+            );
+            waiter
+                .await
+                .expect("the ack survived the park and was acknowledged");
+            assert!(!fx.safety_halt.is_engaged());
+        });
+    }
+
+    // The beacon-INACTIVE arm is not a miss and must NEVER hold: `None` is the
+    // agreed derivation there, so the block derives at its own delivery even with
+    // an EMPTY store. Holding would wedge every pre-beacon height forever.
+    #[test]
+    fn a_beacon_inactive_height_derives_immediately_and_never_holds() {
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            const ANCHOR: u64 = 100;
+            // Default epocher ⇒ epoch 0 ⇒ beacon-INACTIVE; store deliberately empty.
+            let fx = Fixture::new(ANCHOR).with_seed_store(crate::beacon::certify::SeedStore::new());
+            let (mut actor, _mailbox) = fx.build(ctx, ANCHOR, ANCHOR);
+
+            let (ack, _w) = Exact::handle();
+            actor
+                .on_finalized_block(
+                    Span::current(),
+                    sample_order(Digest(B256::ZERO), ANCHOR + 1, B256::ZERO),
+                    ack,
+                )
+                .await
+                .expect("inactive epoch derives with `None`");
+
+            assert!(
+                actor.awaiting_seed.is_none(),
+                "an empty store at a beacon-INACTIVE epoch is not a miss — nothing may hold"
+            );
+            assert_eq!(
+                fx.deriver.seeds_seen.lock().unwrap().as_slice(),
+                &[(ANCHOR + 1, None)],
+                "derived with the agreed `None`"
+            );
         });
     }
 
@@ -6352,6 +6760,7 @@ mod tests {
                 "the DELIVERED height is parked — the prefix already landed"
             ),
             DeriveOutcome::NeedAttestation(_) => panic!("parked on the wrong cause"),
+            DeriveOutcome::NeedPrefixSeed(_) => panic!("parked on the wrong cause"),
             DeriveOutcome::Done => panic!("the derive cannot be Done: 97 is still invisible"),
         }
     }
@@ -6432,7 +6841,7 @@ mod tests {
                 parent: Digest(B256::ZERO),
                 ..forged_chain[(K + 1) as usize].clone()
             };
-            let halt_trigger = child_of(&delivered, None);
+            let halt_trigger = child_of(&delivered);
             let post_halt = sample_order(halt_trigger.digest(), ANCHOR + K + 3, B256::ZERO);
             let (msg, waiter) = finalize_msg(delivered);
             mailbox.send(msg).expect("send");
@@ -6487,8 +6896,6 @@ mod tests {
             let order = sample_order(Digest(B256::ZERO), ANCHOR + 1, B256::ZERO);
             let (msg, waiter) = finalize_msg(order.clone());
             mailbox.send(msg).expect("send");
-            let (flush, _w_flush) = finalize_msg(child_of(&order, None));
-            mailbox.send(flush).expect("send flush child");
             waiter.await.expect("ack");
 
             {
@@ -6529,8 +6936,6 @@ mod tests {
             // Finalize the SAME order — reconciliation must skip the re-derive.
             let (msg, waiter) = finalize_msg(order.clone());
             mailbox.send(msg).expect("send finalize");
-            let (flush, _w_flush) = finalize_msg(child_of(&order, None));
-            mailbox.send(flush).expect("send flush child");
             waiter.await.expect("ack");
 
             {
@@ -6587,8 +6992,6 @@ mod tests {
             };
             let (msg, waiter) = finalize_msg(order_b.clone());
             mailbox.send(msg).expect("send finalize B");
-            let (flush, _w_flush) = finalize_msg(child_of(&order_b, None));
-            mailbox.send(flush).expect("send flush child");
             waiter.await.expect("ack");
 
             {
@@ -6614,32 +7017,39 @@ mod tests {
         });
     }
 
-    // (b, Fix 1) The tip is HELD, not parked: delivering `h` alone produces NO
-    // derive, NO ack, NO park (deferred stays empty), NO hint, and NOT EVEN a
-    // `fetch_block_by_height(h+1)` probe (the executor knows the child does not
-    // exist yet). Delivering `h+1` derives `h` IN THAT SAME handler, from the
-    // child body in hand, with zero marshal fetches — and `h+1` becomes the new
-    // held tip.
+    // A block on a beacon-ACTIVE round whose σ has not landed is HELD, not
+    // parked: no derive, no ack, no park (`deferred` stays empty), no hint, and
+    // no marshal fetch. Recording σ into the store the actor holds fires the
+    // seed-record Notify, and the executor's REAL `seed_notify` select! arm —
+    // not a hand-driven call — derives and acks it. That arm is the hold's only
+    // exit: no further delivery, no timer.
     #[test]
-    fn tip_is_held_not_parked_until_child_arrives() {
+    fn a_held_block_derives_when_its_seed_lands_through_the_real_notify_arm() {
         let runtime = deterministic::Runner::default();
         runtime.start(|ctx| async move {
             const ANCHOR: u64 = 100;
-            let fx = Fixture::new(ANCHOR);
+            let h = ANCHOR + 1;
+            let store = crate::beacon::certify::SeedStore::new();
+            let fx = Fixture::new(ANCHOR)
+                .with_seed_store(store.clone())
+                .with_epocher(beacon_active_epocher());
             let (actor, mailbox) = fx.build(ctx.clone(), ANCHOR, ANCHOR);
             let handle = actor.start();
 
-            let o1 = sample_order(Digest(B256::ZERO), ANCHOR + 1, B256::ZERO);
+            let o1 = OrderBlock {
+                proposal_view: h,
+                ..sample_order(Digest(B256::ZERO), h, B256::ZERO)
+            };
             let (m1, mut w1) = finalize_msg(o1.clone());
             mailbox.send(m1).expect("send h");
             ctx.sleep(Duration::from_millis(20)).await;
             assert!(
                 fx.beacon.new_payload_calls.lock().unwrap().is_empty(),
-                "the tip must be HELD underived until its child arrives"
+                "the block must be HELD underived until its σ lands"
             );
             assert!(
                 (&mut w1).now_or_never().is_none(),
-                "the held tip's ack must stay pending (never acked before derive)"
+                "the held ack must stay pending (never acked before derive)"
             );
             assert!(
                 fx.marshal.hints.lock().unwrap().is_empty(),
@@ -6647,28 +7057,22 @@ mod tests {
             );
             assert!(
                 fx.marshal.fetched.lock().unwrap().is_empty(),
-                "the executor must not even ASK the marshal for the nonexistent child"
+                "a hold asks the marshal for nothing"
             );
 
-            // The child arrives → `h` derives + acks in that same handler, from
-            // the child body in hand (still zero marshal fetches).
-            let (m2, _w2) = finalize_msg(child_of(&o1, None));
-            mailbox.send(m2).expect("send h+1");
-            w1.await.expect("h acks the moment its child arrives");
+            let seed = real_seed(active_round(h));
+            store.record(real_witness(seed.target_round));
+            // `wait_until` panics after 2000 virtual ms, so a regression FAILS
+            // here instead of hanging on the ack below.
+            wait_until(&ctx, "the notify arm derived the held block", || {
+                fx.chain.finalized_executed_hash(h).is_some()
+            })
+            .await;
+            w1.await.expect("h acks once its σ lands");
             assert_eq!(
-                fx.beacon
-                    .new_payload_calls
-                    .lock()
-                    .unwrap()
-                    .iter()
-                    .map(|p| p.number)
-                    .collect::<Vec<_>>(),
-                vec![ANCHOR + 1],
-                "exactly the held tip derived; the child became the new held tip"
-            );
-            assert!(
-                fx.marshal.fetched.lock().unwrap().is_empty(),
-                "the witness came from the child body in hand — zero marshal fetches"
+                fx.deriver.seeds_seen.lock().unwrap().as_slice(),
+                &[(h, Some(seed))],
+                "the late σ is what the derive used"
             );
 
             drop(mailbox);
@@ -6677,50 +7081,52 @@ mod tests {
     }
 
     // (a) THE soak7 BUG, reproduced at the executor contract — the headline
-    // test. No per-height finalization cert exists ANYWHERE (the executor no
-    // longer even has a cert lookup), `spec_executed` is EMPTY (a restarted /
-    // lagging / following node), and the child block carries the witness ⇒ the
-    // height derives with the REAL threshold seed and acks. Pre-B′: permanent
-    // park (CertMissing → PARK on every re-poke, forever, network-wide).
+    // test. No per-height finalization cert exists ANYWHERE (the executor has no
+    // cert lookup), `spec_executed` is EMPTY (a restarted / lagging / following
+    // node), and no successor has been delivered ⇒ the height derives with the
+    // REAL threshold seed of its OWN round and acks. Pre-B′: permanent park
+    // (CertMissing → PARK on every re-poke, forever, network-wide).
     #[test]
-    fn witness_derives_without_any_cert_or_speculation() {
-        use commonware_consensus::types::{Epoch, Round, View};
+    fn a_height_derives_from_its_own_round_without_any_cert_or_speculation() {
         let runtime = deterministic::Runner::default();
         runtime.start(|ctx| async move {
             const ANCHOR: u64 = 100;
-            let seed = real_seed(Round::new(Epoch::new(0), View::new(ANCHOR + 1)));
-            let fx = Fixture::new(ANCHOR);
+            let seed = real_seed(active_round(ANCHOR + 1));
+            let store = crate::beacon::certify::SeedStore::new();
+            store.record(real_witness(seed.target_round));
+            let fx = Fixture::new(ANCHOR)
+                .with_seed_store(store)
+                .with_epocher(beacon_active_epocher());
             let (actor, mailbox) = fx.build(ctx, ANCHOR, ANCHOR);
             let handle = actor.start();
 
-            let order = sample_order(Digest(B256::ZERO), ANCHOR + 1, B256::ZERO);
-            let (msg, waiter) = finalize_msg(order.clone());
+            let order = OrderBlock {
+                proposal_view: ANCHOR + 1,
+                ..sample_order(Digest(B256::ZERO), ANCHOR + 1, B256::ZERO)
+            };
+            let (msg, waiter) = finalize_msg(order);
             mailbox.send(msg).expect("send h");
-            // The child carries the parent's seed — the witness.
-            let (child_msg, _w_child) = finalize_msg(child_of(&order, Some(seed.clone())));
-            mailbox.send(child_msg).expect("send h+1 (the witness)");
-            waiter
-                .await
-                .expect("h derives + acks from the witness alone");
+            waiter.await.expect("h derives + acks from the store alone");
 
-            {
-                let seen = fx.deriver.seeds_seen.lock().unwrap();
-                assert_eq!(
-                    seen.as_slice(),
-                    &[(ANCHOR + 1, Some(seed))],
-                    "the witness seed reached the deriver verbatim"
-                );
-            }
+            assert_eq!(
+                fx.deriver.seeds_seen.lock().unwrap().as_slice(),
+                &[(ANCHOR + 1, Some(seed))],
+                "σ of h's own round reached the deriver verbatim"
+            );
+            assert!(
+                fx.marshal.fetched.lock().unwrap().is_empty(),
+                "no successor was needed — zero marshal fetches"
+            );
 
             drop(mailbox);
             let _ = handle.await;
         });
     }
 
-    // A pre-bootstrap link (both the block's own `parent_seed` and its child's
-    // witness are `None`) derives immediately with the agreed `order.digest()`
-    // fallback — no refusal, no hint. The existing pre-beacon invariant must
-    // not regress.
+    // A pre-bootstrap link — a height whose epoch the agreed map calls
+    // beacon-INACTIVE — derives IMMEDIATELY with the `order.digest()` fallback:
+    // no hold, no hint. `None` is the agreed derivation there, not a miss, and
+    // holding would wedge every pre-beacon height forever.
     #[test]
     fn pre_bootstrap_link_derives_with_fallback_without_hinting() {
         let runtime = deterministic::Runner::default();
@@ -6733,8 +7139,6 @@ mod tests {
             let order = sample_order(Digest(B256::ZERO), ANCHOR + 1, B256::ZERO);
             let (msg, waiter) = finalize_msg(order.clone());
             mailbox.send(msg).expect("send");
-            let (flush, _w_flush) = finalize_msg(child_of(&order, None));
-            mailbox.send(flush).expect("send flush child");
             waiter.await.expect("ack");
 
             assert_eq!(
@@ -6757,54 +7161,137 @@ mod tests {
         });
     }
 
-    // (c″, §4) `parent_seed == None` at a BEACON-ACTIVE height (the block being
-    // derived carries a witness itself, so its child MUST carry one too) is a
-    // corrupted/legacy archive ⇒ LOUD REFUSAL (SafetyHalt-class), never a
-    // silent `order.digest()` fallback derive — that would fork.
+    // PREDICATE FIRST, and this is the case that distinguishes it: σ IS in the
+    // store for the block's own round, but the agreed epoch map calls that epoch
+    // beacon-INACTIVE, so the derive must IGNORE it and use `None` — what the
+    // rest of the network derives. Store-first ordering passes every other test
+    // in this file and fails exactly here.
     #[test]
-    fn seedless_child_on_beacon_active_link_refuses_derive() {
-        use commonware_consensus::types::{Epoch, Round, View};
+    fn a_seed_at_a_beacon_inactive_round_is_ignored_not_obeyed() {
+        use commonware_consensus::types::{Epoch, Epocher as _, Round, View};
         let runtime = deterministic::Runner::default();
         runtime.start(|ctx| async move {
             const ANCHOR: u64 = 100;
-            let seed = real_seed(Round::new(Epoch::new(0), View::new(ANCHOR)));
+            const VIEW: u64 = 77;
+            // The default fixture's single huge epocher puts every height in
+            // epoch 0, below `DETERMINISTIC_BOOTSTRAP_EPOCH` — beacon-inactive.
+            // Filed directly rather than through `record_fixture_seed`, which
+            // keys on the beacon-ACTIVE epoch: the round wanted here is the one
+            // this fixture's epocher names, and it is the inactive one.
+            let round = Round::new(Epoch::new(0), View::new(VIEW));
+            FIXTURE_SEEDS.with(|seeds| seeds.record(real_witness(round)));
+            assert!(
+                FIXTURE_SEEDS.with(|seeds| seeds.lookup(round).is_some()),
+                "premise: σ IS recorded for the round this block names"
+            );
+
             let fx = Fixture::new(ANCHOR);
-            let (actor, mailbox) = fx.build(ctx.clone(), ANCHOR, ANCHOR);
+            assert!(
+                fx.epocher
+                    .containing(Height::new(ANCHOR + 1))
+                    .expect("nameable")
+                    .epoch()
+                    .get()
+                    < crate::beacon::actor::DETERMINISTIC_BOOTSTRAP_EPOCH,
+                "premise: the block's own epoch is beacon-INACTIVE"
+            );
+            let (actor, mailbox) = fx.build(ctx, ANCHOR, ANCHOR);
             let handle = actor.start();
 
-            // The block being derived is itself on a beacon-active link (it
-            // carries a witness for ITS parent)…
             let order = OrderBlock {
-                parent_seed: Some(seed),
+                proposal_view: VIEW,
                 ..sample_order(Digest(B256::ZERO), ANCHOR + 1, B256::ZERO)
             };
-            // …but its child presents NO witness (corrupted archive).
-            let corrupt_child = child_of(&order, None);
-            let post_halt = sample_order(corrupt_child.digest(), ANCHOR + 3, B256::ZERO);
             let (msg, waiter) = finalize_msg(order);
             mailbox.send(msg).expect("send h");
-            let (child_msg, _w_child) = finalize_msg(corrupt_child);
-            mailbox.send(child_msg).expect("send corrupt child");
+            waiter.await.expect("ack");
 
-            assert_parked_retaining_acks(
-                &ctx,
-                handle,
-                waiter,
-                &mailbox,
-                &fx.safety_halt,
-                post_halt,
-            )
-            .await;
-            assert!(
-                fx.beacon.new_payload_calls.lock().unwrap().is_empty(),
-                "must NOT derive with the digest fallback on a beacon-active link (silent fork)"
+            assert_eq!(
+                fx.deriver.seeds_seen.lock().unwrap().as_slice(),
+                &[(ANCHOR + 1, None)],
+                "the stray σ must not reach the deriver — the network derives `None` here"
             );
+            assert!(
+                !fx.safety_halt.is_engaged(),
+                "ignoring is fork-safe; halting is not"
+            );
+
+            drop(mailbox);
+            let _ = handle.await;
+        });
+    }
+
+    // The bootstrap edge, which the old field-keyed derive could not serve: at
+    // the FIRST block of the first beacon-active epoch `witness_link` keys the
+    // wire field on the PARENT's epoch (`mandatory_at(1)` — false), so an honest
+    // block there carries no seed at all, while the beacon IS active at its own
+    // epoch and σ for `Round(2, 16)` exists. Keyed at the block's OWN round the
+    // derive finds it; keyed off the wire it fell through to the digest fallback.
+    //
+    // h = 17 is the second half of the claim: the successor derives with
+    // σ(2, 17), its own round, not with the edge's.
+    #[test]
+    fn the_bootstrap_edge_derives_from_its_own_round_though_the_wire_carries_none() {
+        use commonware_consensus::types::{Epoch, Epocher as _, Round, View};
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            let epocher =
+                crate::epocher::OriginEpocher::new(0, std::num::NonZeroU64::new(8).expect("nz"));
+            const ANCHOR: u64 = 15;
+            const EDGE: u64 = 16;
+            assert_eq!(
+                epocher.containing(Height::new(EDGE)).unwrap().first(),
+                Height::new(EDGE),
+                "test premise: EDGE is the FIRST block of its epoch"
+            );
+            assert_eq!(
+                epocher.containing(Height::new(EDGE)).unwrap().epoch(),
+                Epoch::new(crate::beacon::actor::DETERMINISTIC_BOOTSTRAP_EPOCH),
+                "test premise: that epoch is the bootstrap epoch — the first beacon-ACTIVE one"
+            );
+
+            let store = crate::beacon::certify::SeedStore::new();
+            let e = Epoch::new(crate::beacon::actor::DETERMINISTIC_BOOTSTRAP_EPOCH);
+            let seed_edge = real_seed(Round::new(e, View::new(EDGE)));
+            let seed_next = real_seed(Round::new(e, View::new(EDGE + 1)));
+            store.record(real_witness(seed_edge.target_round));
+            store.record(real_witness(seed_next.target_round));
+
+            let fx = Fixture::new(ANCHOR)
+                .with_seed_store(store)
+                .with_epocher(epocher);
+            let (mut actor, _mailbox) = fx.build(ctx, ANCHOR, ANCHOR);
+
+            let o_edge = OrderBlock {
+                proposal_view: EDGE,
+                ..sample_order(Digest(B256::ZERO), EDGE, B256::ZERO)
+            };
+            let o_next = OrderBlock {
+                proposal_view: EDGE + 1,
+                ..sample_order(o_edge.digest(), EDGE + 1, B256::ZERO)
+            };
+
+            for order in [o_edge, o_next] {
+                let (ack, _w) = Exact::handle();
+                actor
+                    .on_finalized_block(Span::current(), order, ack)
+                    .await
+                    .unwrap();
+            }
+
+            assert_eq!(
+                fx.deriver.seeds_seen.lock().unwrap().as_slice(),
+                &[(EDGE, Some(seed_edge)), (EDGE + 1, Some(seed_next))],
+                "each height derives from σ of ITS OWN round — the edge from the first \
+                 beacon-active round, its successor from the next"
+            );
+            assert!(!fx.safety_halt.is_engaged());
         });
     }
 
     /// A `SpecNotarized` command carrying a real recovered seed (populates
-    /// `spec_executed[h].seed_round` — reconciled against the witness round at
-    /// the finalized derive).
+    /// `spec_executed[h].seed_round` — reconciled against the round the
+    /// finalized derive resolves).
     fn spec_msg_seeded(order: &OrderBlock, seed: crate::beacon::seed::Seed) -> Message {
         Message {
             cause: Span::current(),
@@ -6831,12 +7318,10 @@ mod tests {
             let (actor, mailbox) = fx.build(ctx.clone(), ANCHOR, ANCHOR);
             let handle = actor.start();
 
-            // A linked seedless chain ANCHOR+1..=ANCHOR+N.
-            let mut chain = vec![sample_order(Digest(B256::ZERO), ANCHOR + 1, B256::ZERO)];
-            for i in 2..=N {
-                let parent = chain.last().unwrap();
-                chain.push(sample_order(parent.digest(), ANCHOR + i, B256::ZERO));
-            }
+            // A linked seedless chain ANCHOR+1..=ANCHOR+N whose `result` fields
+            // commit the hashes the deriver WILL produce: every height now
+            // derives at its own delivery, so every cross-check actually runs.
+            let chain = result_consistent_chain(ANCHOR, fx.anchor_hash, N);
             {
                 let mut canned = fx.marshal.canned.lock().unwrap();
                 for order in &chain {
@@ -6906,7 +7391,7 @@ mod tests {
 
     // (f) STEADY STATE IS ZERO-COST: at the tip (`last_tip < h + K`) guard #2
     // never fires and the derive path issues NO `fetch_block_by_height` at all
-    // (the witness is the child body in hand).
+    // (σ is resolved locally and every delivered block is its own walk element).
     #[test]
     fn steady_state_derive_issues_no_marshal_fetches() {
         let runtime = deterministic::Runner::default();
@@ -6916,21 +7401,20 @@ mod tests {
             let (actor, mailbox) = fx.build(ctx, ANCHOR, ANCHOR);
             let handle = actor.start();
 
-            let o1 = sample_order(Digest(B256::ZERO), ANCHOR + 1, B256::ZERO);
-            let o2 = child_of(&o1, None);
-            let o3 = child_of(&o2, None);
-            let (m1, w1) = finalize_msg(o1);
-            let (m2, w2) = finalize_msg(o2);
-            let (m3, _w3) = finalize_msg(o3);
-            mailbox.send(m1).expect("send 1");
-            mailbox.send(m2).expect("send 2");
-            mailbox.send(m3).expect("send 3");
-            w1.await.expect("ack 1");
-            w2.await.expect("ack 2");
+            let chain = result_consistent_chain(ANCHOR, fx.anchor_hash, 3);
+            let mut waiters = Vec::new();
+            for order in chain {
+                let (m, w) = finalize_msg(order);
+                mailbox.send(m).expect("send");
+                waiters.push(w);
+            }
+            for w in waiters {
+                w.await.expect("ack");
+            }
 
             assert!(
                 fx.marshal.fetched.lock().unwrap().is_empty(),
-                "steady state: no h+K fetch (guard #2 cold) and no witness re-fetch"
+                "steady state: no h+K fetch (guard #2 cold) and no by-height re-fetch"
             );
 
             drop(mailbox);
@@ -6940,8 +7424,8 @@ mod tests {
 
     // (d) GUARD #2, re-gated to `last_tip >= h + K`: a catching-up node whose
     // committee-attested block at `h + K` disagrees with the hash it derived
-    // from the witness engages SafetyHalt(ResultDivergence) BEFORE the ack —
-    // immediately, not K blocks downstream.
+    // engages SafetyHalt(ResultDivergence) BEFORE the ack — immediately, not K
+    // blocks downstream.
     #[test]
     fn guard2_convergence_mismatch_engages_safety_halt() {
         let runtime = deterministic::Runner::default();
@@ -6953,8 +7437,8 @@ mod tests {
             let handle = actor.start();
 
             let order_h = sample_order(Digest(B256::ZERO), H, B256::ZERO);
-            // The attested root at H+K commits a DIFFERENT hash than the witness
-            // derive produces ⇒ a fork the guard must catch.
+            // The attested root at H+K commits a DIFFERENT hash than the derive
+            // produces ⇒ a fork the guard must catch.
             let forged = B256::repeat_byte(0xEE);
             let order_hk = sample_order(Digest(B256::ZERO), H + K, forged);
             fx.marshal.canned.lock().unwrap().insert(H + K, order_hk);
@@ -6963,8 +7447,6 @@ mod tests {
             mailbox.send(tip_msg(H + K)).expect("send tip");
             let (m, w) = finalize_msg(order_h.clone());
             mailbox.send(m).expect("send finalize");
-            let (mc, _wc) = finalize_msg(child_of(&order_h, None));
-            mailbox.send(mc).expect("send child (triggers the derive)");
 
             let post_halt = sample_order(Digest(B256::ZERO), H + 2, B256::ZERO);
             assert_parked_retaining_acks(&ctx, handle, w, &mailbox, &fx.safety_halt, post_halt)
@@ -6980,11 +7462,11 @@ mod tests {
     // (e) GUARD #2's absent-body arm — the executor's ONLY park: the node is
     // behind (`tip >= h + K`) but the attested body at `h + K` is not
     // backfilled yet ⇒ PARK before the ack and before the `split_off` prune,
-    // hint exactly `h + K`, keep the CHILD held in `awaiting_child` (park the
-    // parent, hold the child), and keep speculation suppressed while parked
-    // (the `spec_execute` guard is kept, not narrowed). When the body lands,
-    // the re-poke re-derives with the RETAINED witness (zero lookups) and the
-    // held child derives right after — nothing is lost.
+    // hint exactly `h + K`, hold the next delivery QUEUED behind the park (the
+    // drain is gated on it), and keep speculation suppressed while parked (the
+    // `spec_execute` guard is kept, not narrowed). When the body lands, the
+    // re-poke re-derives with the RETAINED seed (zero lookups) and the queued
+    // child derives right after — nothing is lost.
     #[test]
     fn guard2_body_absent_parks_then_derives_when_body_lands() {
         let runtime = deterministic::Runner::default();
@@ -6996,7 +7478,7 @@ mod tests {
             let handle = actor.start();
 
             let order_h = sample_order(Digest(B256::ZERO), H, B256::ZERO);
-            let child = child_of(&order_h, None);
+            let child = child_of(&order_h);
 
             mailbox
                 .send(tip_msg(H + K))
@@ -7009,11 +7491,21 @@ mod tests {
             // The derive ran (import happened) but the ack is withheld — parked
             // on the absent H+K body, with exactly H+K hinted.
             ctx.sleep(Duration::from_millis(50)).await;
-            assert_eq!(
-                fx.beacon.new_payload_calls.lock().unwrap().len(),
-                1,
-                "derived + imported, then parked on the absent h+K body"
-            );
+            {
+                let payloads = fx.beacon.new_payload_calls.lock().unwrap();
+                let heights: Vec<u64> = payloads.iter().map(|p| p.number).collect();
+                assert!(
+                    !heights.is_empty(),
+                    "H derived + imported before parking on the absent h+K body"
+                );
+                // H may import more than once — every later delivery re-pokes the
+                // park, and the re-poke re-derives. What must NOT appear is H+1:
+                // the drain is gated while a block is parked.
+                assert!(
+                    heights.iter().all(|n| *n == H),
+                    "only H derived; H+1 stays queued behind the park"
+                );
+            }
             assert_eq!(
                 *fx.marshal.hints.lock().unwrap(),
                 vec![H + K],
@@ -7025,7 +7517,7 @@ mod tests {
             );
 
             // Speculation stays suppressed while parked — the guard is KEPT.
-            let spec_order = child_of(&child, None);
+            let spec_order = child_of(&child);
             fx.marshal
                 .canned
                 .lock()
@@ -7045,9 +7537,8 @@ mod tests {
                 "speculation must stay suppressed while a block is parked (guard kept)"
             );
 
-            // The H+K body lands (attesting the hash the witness derive
-            // produced) → the tip re-poke re-derives with the RETAINED witness
-            // and acks; the held child derives on the next delivery.
+            // The H+K body lands (attesting the hash the derive produced) → the
+            // tip re-poke re-derives with the RETAINED σ and acks.
             let attested = fx.chain.spec_executed_hash(H).unwrap();
             let order_hk = sample_order(Digest(B256::ZERO), H + K, attested);
             fx.marshal.canned.lock().unwrap().insert(H + K, order_hk);
@@ -7057,11 +7548,10 @@ mod tests {
             mailbox.send(tip_msg(H + K)).expect("send tip re-poke");
             w.await.expect("parked block acks once the h+K body lands");
 
-            // The child was retained across the park: the next delivery derives it.
-            let (m3, _w3) = finalize_msg(spec_order);
-            mailbox.send(m3).expect("send grandchild");
+            // The child was queued behind the park, never dropped: the drain
+            // resumes the moment the park clears and derives it.
             wc.await
-                .expect("the held child derives after the park clears");
+                .expect("the queued child derives after the park clears");
 
             assert!(!fx.safety_halt.is_engaged(), "clean convergence → no halt");
             drop(mailbox);
@@ -7072,7 +7562,7 @@ mod tests {
     // (e′) The guard-#2 park's DELIVERY-INDEPENDENT backstop: a body landing at
     // `height <= tip` fires no `Update::Tip`, so the FCU-heartbeat re-poke is
     // what clears the park ([[dpos-deferred-catchup-invariants]] #3 — reused
-    // tick, no new timer). The re-poke re-derives from the RETAINED witness
+    // tick, no new timer). The re-poke re-derives from the RETAINED σ
     // (`Deferred::seed`) with zero lookups.
     #[test]
     fn guard2_park_clears_on_heartbeat_repoke_without_delivery() {
@@ -7090,10 +7580,6 @@ mod tests {
                 .expect("send tip (node behind)");
             let (m, w) = finalize_msg(order_h.clone());
             mailbox.send(m).expect("send finalize");
-            let (mc, _wc) = finalize_msg(child_of(&order_h, None));
-            mailbox
-                .send(mc)
-                .expect("send child (triggers derive → park)");
             ctx.sleep(Duration::from_millis(50)).await;
             assert_eq!(
                 *fx.marshal.hints.lock().unwrap(),
@@ -7127,7 +7613,10 @@ mod tests {
         let runtime = deterministic::Runner::default();
         runtime.start(|ctx| async move {
             const ANCHOR: u64 = 100;
-            let fx = Fixture::new(ANCHOR);
+            // Beacon-ACTIVE epoch + an EMPTY store: the only way to hold a block.
+            let fx = Fixture::new(ANCHOR)
+                .with_seed_store(crate::beacon::certify::SeedStore::new())
+                .with_epocher(beacon_active_epocher());
             let (actor, mailbox) = fx.build(ctx.clone(), ANCHOR, ANCHOR);
             let handle = actor.start();
 
@@ -7159,20 +7648,31 @@ mod tests {
     }
 
     // (Fix A-2 🟠) The restart SELF-HEAL: a node that stopped while holding `h`
-    // re-dispatches `h` (the marshal's `last_processed_height` never advanced),
-    // derives it from `h+1`'s witness, and the derived chain has NO hole — the
-    // hash equals the one a never-stopped node derives. `awaiting_child` needs
-    // no persistence; the withheld ack is the durable record.
+    // for its σ re-dispatches `h` (the marshal's `last_processed_height` never
+    // advanced) and derives it once σ is there, with NO hole — the hash equals
+    // the one a never-stopped node derives. `awaiting_seed` needs no
+    // persistence; the withheld ack is the durable record.
     #[test]
     fn restart_after_stop_while_holding_rederives_without_hole() {
         let runtime = deterministic::Runner::default();
         runtime.start(|ctx| async move {
             const ANCHOR: u64 = 100;
-            let fx = Fixture::new(ANCHOR);
-            let order = sample_order(Digest(B256::ZERO), ANCHOR + 1, B256::ZERO);
-            let child = child_of(&order, None);
+            let store = crate::beacon::certify::SeedStore::new();
+            let fx = Fixture::new(ANCHOR)
+                .with_seed_store(store.clone())
+                .with_epocher(beacon_active_epocher());
+            let order = OrderBlock {
+                proposal_view: ANCHOR + 1,
+                ..sample_order(Digest(B256::ZERO), ANCHOR + 1, B256::ZERO)
+            };
+            let seed = real_seed(active_round(ANCHOR + 1));
             // The golden value a never-stopped node derives for `h`.
-            let golden = sealed_at(fx.anchor_hash, ANCHOR + 1, order.digest().0).hash();
+            let golden = sealed_at(
+                fx.anchor_hash,
+                ANCHOR + 1,
+                seed_folded_discriminator(order.digest(), &Some(seed.clone())),
+            )
+            .hash();
 
             // Run 1: deliver `h`, stop while holding it.
             {
@@ -7191,16 +7691,15 @@ mod tests {
             }
 
             // Run 2 ("restart"): the marshal re-dispatches from
-            // `last_processed + 1` = the held height — model it by re-delivering
-            // `h`, then `h+1`. `h` derives from the witness and acks. (A fresh
-            // metrics label: a real restart is a fresh process.)
+            // `last_processed + 1` = the held height. σ lands while `h` is held
+            // and the notify arm derives it. (A fresh metrics label: a real
+            // restart is a fresh process.)
             {
                 let (actor, mailbox) = fx.build(ctx.with_label("restart"), ANCHOR, ANCHOR);
                 let handle = actor.start();
                 let (m, w) = finalize_msg(order.clone());
                 mailbox.send(m).expect("re-dispatch h");
-                let (mc, _wc) = finalize_msg(child);
-                mailbox.send(mc).expect("dispatch h+1");
+                store.record(real_witness(seed.target_round));
                 w.await.expect("h acks on the restarted run — no hole");
                 assert_eq!(
                     fx.chain.spec_executed_hash(ANCHOR + 1),
@@ -7216,17 +7715,19 @@ mod tests {
     // (P2 🟡) A FIRST-SEEN SPIN NOTARIZATION must not speculate with the spin
     // round's seed: §4.1 re-canonicalises the round to the block's own
     // `proposal_view`. Without a `SeedStore` entry for the canonical round the
-    // speculation is SKIPPED (never speculate with a known-wrong seed); the
-    // finalized path then derives from the witness and NO sibling reorg occurs.
+    // speculation is SKIPPED (never speculate with a known-wrong seed); once σ
+    // for that round lands the finalized path derives it exactly once, no reorg.
     #[test]
     fn spin_notarization_without_canonical_seed_skips_speculation() {
-        use commonware_consensus::types::{Epoch, Round, View};
         let runtime = deterministic::Runner::default();
         runtime.start(|ctx| async move {
             const ANCHOR: u64 = 100;
             const H: u64 = ANCHOR + 1;
             const V0: u64 = 40;
-            let fx = Fixture::new(ANCHOR); // no SeedStore wired
+            let store = crate::beacon::certify::SeedStore::new();
+            let fx = Fixture::new(ANCHOR)
+                .with_seed_store(store.clone())
+                .with_epocher(beacon_active_epocher());
             let (actor, mailbox) = fx.build(ctx.clone(), ANCHOR, ANCHOR);
             let handle = actor.start();
 
@@ -7235,10 +7736,12 @@ mod tests {
                 ..sample_order(Digest(B256::ZERO), H, B256::ZERO)
             };
             fx.marshal.canned.lock().unwrap().insert(H, order.clone());
-            let seed_v0 = real_seed(Round::new(Epoch::new(0), View::new(V0)));
-            let seed_spin = real_seed(Round::new(Epoch::new(0), View::new(V0 + 30)));
+            let canonical = active_round(V0);
+            let seed_v0 = real_seed(canonical);
+            let seed_spin = real_seed(active_round(V0 + 30));
 
-            // First-seen notarization at a SPIN round → skip (no import).
+            // First-seen notarization at a SPIN round, store EMPTY → skip (no
+            // import).
             mailbox
                 .send(spec_msg_seeded(&order, seed_spin))
                 .expect("send spin spec");
@@ -7248,17 +7751,16 @@ mod tests {
                 "must NOT speculate with a known-wrong (spin-round) seed"
             );
 
-            // The finalized path derives from the witness (round V0) — exactly
-            // once, no reorg.
+            // σ for the canonical round lands; the finalized path derives from it
+            // — exactly once, no reorg.
+            store.record(real_witness(canonical));
             let (m, w) = finalize_msg(order.clone());
             mailbox.send(m).expect("send finalize");
-            let (mc, _wc) = finalize_msg(child_of(&order, Some(seed_v0.clone())));
-            mailbox.send(mc).expect("send child");
             w.await.expect("ack");
             assert_eq!(
                 fx.deriver.seeds_seen.lock().unwrap().as_slice(),
                 &[(H, Some(seed_v0))],
-                "derived once, from the canonical (witness) seed"
+                "derived once, from σ of the block's own round"
             );
 
             drop(mailbox);
@@ -7272,14 +7774,15 @@ mod tests {
     // speculation (rounds match; no re-derive, no reorg).
     #[test]
     fn spin_notarization_recanonicalises_from_seed_store() {
-        use commonware_consensus::types::{Epoch, Round, View};
         let runtime = deterministic::Runner::default();
         runtime.start(|ctx| async move {
             const ANCHOR: u64 = 100;
             const H: u64 = ANCHOR + 1;
             const V0: u64 = 40;
             let store = crate::beacon::certify::SeedStore::new();
-            let fx = Fixture::new(ANCHOR).with_seed_store(store.clone());
+            let fx = Fixture::new(ANCHOR)
+                .with_seed_store(store.clone())
+                .with_epocher(beacon_active_epocher());
             let (actor, mailbox) = fx.build(ctx, ANCHOR, ANCHOR);
             let handle = actor.start();
 
@@ -7288,20 +7791,18 @@ mod tests {
                 ..sample_order(Digest(B256::ZERO), H, B256::ZERO)
             };
             fx.marshal.canned.lock().unwrap().insert(H, order.clone());
-            let canonical = Round::new(Epoch::new(0), View::new(V0));
+            let canonical = active_round(V0);
             let seed_v0 = real_seed(canonical);
-            let seed_spin = real_seed(Round::new(Epoch::new(0), View::new(V0 + 30)));
+            let seed_spin = real_seed(active_round(V0 + 30));
             store.record(real_witness(canonical));
 
-            // Spin-round notarization → re-canonicalised to (0, V0) via the store.
+            // Spin-round notarization → re-canonicalised to (e, V0) via the store.
             mailbox
                 .send(spec_msg_seeded(&order, seed_spin))
                 .expect("send spin spec");
-            // Finalize with the canonical witness → reconcile REUSES the spec.
+            // Finalize resolves the SAME round → reconcile REUSES the spec.
             let (m, w) = finalize_msg(order.clone());
             mailbox.send(m).expect("send finalize");
-            let (mc, _wc) = finalize_msg(child_of(&order, Some(seed_v0.clone())));
-            mailbox.send(mc).expect("send child");
             w.await.expect("ack");
 
             assert_eq!(
@@ -7315,38 +7816,44 @@ mod tests {
         });
     }
 
-    // (c′) F4 CROSS-NODE CONVERGENCE — the fork hazard B′ kills: two nodes whose
-    // local cert state named DIFFERENT spin rounds for the same height derive it
-    // from the SAME child witness ⇒ identical hash. (Under the pre-B′
-    // `lookup_seed` path each derived from its own local cert's round.)
+    // (c′) F4 CROSS-NODE CONVERGENCE — the fork hazard this design kills: two
+    // nodes whose local cert state named DIFFERENT spin rounds for the same
+    // height both derive it from σ of the block's OWN agreed round ⇒ identical
+    // hash. (Under the pre-B′ `lookup_seed` path each derived from its own local
+    // cert's round.)
     #[test]
-    fn nodes_with_divergent_local_cert_state_derive_identically_from_witness() {
-        use commonware_consensus::types::{Epoch, Round, View};
+    fn nodes_with_divergent_local_cert_state_derive_identically_from_the_agreed_round() {
         let runtime = deterministic::Runner::default();
         runtime.start(|ctx| async move {
             const ANCHOR: u64 = 100;
-            let seed = real_seed(Round::new(Epoch::new(0), View::new(40)));
-            let order = sample_order(Digest(B256::ZERO), ANCHOR + 1, B256::ZERO);
-            let child = child_of(&order, Some(seed));
+            let order = OrderBlock {
+                proposal_view: 40,
+                ..sample_order(Digest(B256::ZERO), ANCHOR + 1, B256::ZERO)
+            };
+            record_fixture_seed(40);
+            let agreed = real_seed(active_round(40));
 
             let mut hashes = Vec::new();
             for node in 0..2 {
-                let fx = Fixture::new(ANCHOR);
+                let fx = Fixture::new(ANCHOR).with_epocher(beacon_active_epocher());
                 let (actor, mailbox) =
                     fx.build(ctx.with_label(&format!("node{node}")), ANCHOR, ANCHOR);
                 let handle = actor.start();
                 let (m, w) = finalize_msg(order.clone());
                 mailbox.send(m).expect("send h");
-                let (mc, _wc) = finalize_msg(child.clone());
-                mailbox.send(mc).expect("send child");
                 w.await.expect("ack");
+                assert_eq!(
+                    fx.deriver.seeds_seen.lock().unwrap().as_slice(),
+                    &[(ANCHOR + 1, Some(agreed.clone()))],
+                    "both nodes resolved σ at the block's own agreed round"
+                );
                 hashes.push(fx.chain.spec_executed_hash(ANCHOR + 1).unwrap());
                 drop(mailbox);
                 let _ = handle.await;
             }
             assert_eq!(
                 hashes[0], hashes[1],
-                "the witness is agreed data — every node derives the identical hash"
+                "the round is agreed data — every node derives the identical hash"
             );
         });
     }
@@ -7386,9 +7893,7 @@ mod tests {
 
             // Finalize ANCHOR+1 as speculated (no re-derive), then a SIBLING B at
             // ANCHOR+2 finalizes — o2a was nullified. Rollback derives B at +2;
-            // the +3 speculation (built on the orphaned o2a) is discarded. Each
-            // finalized height derives when its child arrives (pipeline shift),
-            // so 2b needs a flush child at +3.
+            // the +3 speculation (built on the orphaned o2a) is discarded.
             let (m1, w1) = finalize_msg(o1.clone());
             mailbox.send(m1).expect("send finalize 1");
 
@@ -7399,8 +7904,6 @@ mod tests {
             let (m2b, w2b) = finalize_msg(o2b.clone());
             mailbox.send(m2b).expect("send finalize 2b");
             w1.await.expect("ack 1");
-            let (m3b, _w3b) = finalize_msg(child_of(&o2b, None));
-            mailbox.send(m3b).expect("send flush child 3b");
             w2b.await.expect("ack 2b");
 
             {
@@ -7467,14 +7970,15 @@ mod tests {
         runtime.start(|ctx| async move {
             const ANCHOR: u64 = 100;
             let fx = Fixture::new(ANCHOR);
-            let o1 = sample_order(Digest(B256::ZERO), ANCHOR + 1, B256::ZERO);
-            let o2 = sample_order(o1.digest(), ANCHOR + 2, B256::ZERO);
-            let o3 = sample_order(o2.digest(), ANCHOR + 3, B256::ZERO);
+            // `result`-consistent: 103 now derives on the finalized path too, so
+            // its committed result must match what the deriver produces at 100.
+            let chain = result_consistent_chain(ANCHOR, fx.anchor_hash, 3);
+            let (o1, o2, o3) = (chain[0].clone(), chain[1].clone(), chain[2].clone());
             {
                 let mut canned = fx.marshal.canned.lock().unwrap();
-                canned.insert(ANCHOR + 1, o1.clone());
-                canned.insert(ANCHOR + 2, o2.clone());
-                canned.insert(ANCHOR + 3, o3.clone());
+                for order in &chain {
+                    canned.insert(order.height, order.clone());
+                }
             }
 
             let (actor, mailbox) = fx.build(ctx.clone(), ANCHOR, ANCHOR);
@@ -7486,10 +7990,8 @@ mod tests {
                 .send(spec_msg(&o3))
                 .expect("spec 103 (gap → parked)");
 
-            // Finalize 101, 102, 103. Each derives when its child is delivered, so
-            // delivering 102 derives 101 (spec_head→101) and delivering 103 derives
-            // 102 (spec_head→102 ⇒ the drain fires for the parked 103). 103 itself
-            // stays `awaiting_child` — its finalized derive would need 104.
+            // Finalize 101, 102, 103. 102's derive advances `spec_head` to 102,
+            // which is what fires the drain for the parked 103 notarization.
             for order in [o1.clone(), o2.clone(), o3.clone()] {
                 let (m, _w) = finalize_msg(order);
                 mailbox.send(m).expect("finalize");
@@ -7680,9 +8182,10 @@ mod tests {
         runtime.start(|ctx| async move {
             const ANCHOR: u64 = 100;
             let fx = Fixture::new(ANCHOR);
-            let o1 = sample_order(Digest(B256::ZERO), ANCHOR + 1, B256::ZERO);
-            let o2 = sample_order(o1.digest(), ANCHOR + 2, B256::ZERO);
-            let o3 = sample_order(o2.digest(), ANCHOR + 3, B256::ZERO);
+            // `result`-consistent: 103 derives on the finalized path too, so its
+            // committed result must match what the deriver produces at 100.
+            let chain = result_consistent_chain(ANCHOR, fx.anchor_hash, 3);
+            let (o1, o2, o3) = (chain[0].clone(), chain[1].clone(), chain[2].clone());
             // 101's body is deliberately NOT buffered (its live notarization is
             // the residual drop); 103's is (it parks).
             {
@@ -7703,9 +8206,9 @@ mod tests {
                 .send(spec_msg(&o3))
                 .expect("spec 103 (gap → parked)");
 
-            // The finalized path crosses the lost height: 101 derives on 102's
-            // delivery, 102 derives on 103's delivery (spec_head→102) — the drain
-            // then resumes speculation at the parked 103.
+            // The finalized path crosses the lost height: 101 and 102 derive at
+            // their own deliveries (spec_head→102) — the drain then resumes
+            // speculation at the parked 103.
             for order in [o1.clone(), o2.clone(), o3.clone()] {
                 let (m, _w) = finalize_msg(order);
                 mailbox.send(m).expect("finalize");
@@ -7816,17 +8319,22 @@ mod tests {
         use commonware_consensus::types::{Epoch, Round, View};
         let runtime = deterministic::Runner::default();
         runtime.start(|ctx| async move {
-            const ANCHOR: u64 = 100; // 101..103 ≤ anchor+K ⇒ pre-activation (result ZERO)
-            let fx = Fixture::new(ANCHOR);
+            const ANCHOR: u64 = 100;
+            let fx = Fixture::new(ANCHOR).with_epocher(beacon_active_epocher());
             let anchor = fx.anchor_hash;
 
-            // 101 is speculated with seed round 101 but its child's witness is
-            // round 102 (the mismatch → rollback). 102/103 speculate with rounds
-            // equal to their `proposal_view` so ONLY 101 rolls back.
+            // 101 is speculated with a round the AGREED map does not name (a
+            // divergent local cert state at the block's own view, which §4.1
+            // keeps verbatim) ⇒ the finalized derive re-keys it and rolls back.
+            // 102/103 speculate with their own agreed rounds, so ONLY 101 rolls
+            // back.
             let spec_seed_101 = real_seed(Round::new(Epoch::new(0), View::new(101)));
-            let witness_101 = real_seed(Round::new(Epoch::new(0), View::new(102)));
-            let seed_102 = real_seed(Round::new(Epoch::new(0), View::new(102)));
-            let seed_103 = real_seed(Round::new(Epoch::new(0), View::new(103)));
+            let agreed_101 = real_seed(active_round(101));
+            let seed_102 = real_seed(active_round(102));
+            let seed_103 = real_seed(active_round(103));
+            for view in [101, 102, 103] {
+                record_fixture_seed(view);
+            }
 
             let o1 = OrderBlock {
                 proposal_view: 101,
@@ -7834,13 +8342,12 @@ mod tests {
             };
             let o2 = OrderBlock {
                 proposal_view: 102,
-                parent_seed: Some(witness_101.clone()), // 101's witness
                 ..sample_order(o1.digest(), 102, B256::ZERO)
             };
             let o3 = OrderBlock {
                 proposal_view: 103,
-                parent_seed: Some(seed_102.clone()), // 102's witness (round 102)
-                ..sample_order(o2.digest(), 103, B256::ZERO)
+                // 103 − K = the anchor, whose derived hash is `anchor`.
+                ..sample_order(o2.digest(), 103, anchor)
             };
             {
                 let mut c = fx.marshal.canned.lock().unwrap();
@@ -7858,7 +8365,7 @@ mod tests {
             let hash_fin_101 = sealed_at(
                 anchor,
                 101,
-                seed_folded_discriminator(o1.digest(), &Some(witness_101.clone())),
+                seed_folded_discriminator(o1.digest(), &Some(agreed_101.clone())),
             )
             .hash();
             // Fork-A 102 was speculated on the ORPHANED 101 (hash_spec_101); the
@@ -7907,9 +8414,9 @@ mod tests {
             })
             .await;
 
-            // Each height derives when its child arrives: deliver 101,102,103.
-            // 102's delivery derives 101 (round mismatch → rollback+rederive);
-            // 103's delivery derives 102 (must RE-DERIVE, not reuse fork-A).
+            // Each height derives at its own delivery: 101 (round mismatch →
+            // rollback + re-derive), then 102 (must RE-DERIVE, not reuse fork-A),
+            // then 103.
             for order in [o1.clone(), o2.clone(), o3.clone()] {
                 let (m, _w) = finalize_msg(order);
                 mailbox.send(m).unwrap();
@@ -7922,23 +8429,36 @@ mod tests {
             assert_eq!(
                 fx.chain.spec_executed_hash(101),
                 Some(hash_fin_101),
-                "101 re-derived with the witness seed"
+                "101 re-derived with the agreed seed"
             );
             assert_eq!(
                 fx.chain.spec_executed_hash(102),
                 Some(hash_fin_102),
                 "102 re-derived on the finalized 101 (fork-A speculation NOT reused)"
             );
-            assert_eq!(
+            // 103 derives on top of the re-derived 102, so the FINAL head is
+            // 103's hash — but it must DESCEND from hash_fin_102, and the head
+            // must have visited hash_fin_102 on the way (pre-fix it stayed stuck
+            // at 101 and never reached either).
+            assert!(
                 fx.beacon
                     .fcu_calls
                     .lock()
                     .unwrap()
-                    .last()
-                    .unwrap()
-                    .head_block_hash,
-                hash_fin_102,
+                    .iter()
+                    .any(|f| f.head_block_hash == hash_fin_102),
                 "head ADVANCED onto the re-derived 102 (pre-fix it stayed stuck at 101)"
+            );
+            let hash_fin_103 = sealed_at(
+                hash_fin_102,
+                103,
+                seed_folded_discriminator(o3.digest(), &Some(seed_103.clone())),
+            )
+            .hash();
+            assert_eq!(
+                fx.chain.spec_executed_hash(103),
+                Some(hash_fin_103),
+                "103 landed on the RE-DERIVED 102, not on the orphaned fork-A"
             );
             let derives_102 = fx
                 .beacon
@@ -7965,23 +8485,23 @@ mod tests {
     // (b) PARENT-LINKAGE, isolated: a speculated block whose recorded parent no
     // longer matches the block canonical at `height − 1` is REJECTED by
     // `correctly_speculated` and re-derived — even though the seed ROUND and the
-    // ordering DIGEST both match the witness. Here the seed VALUE is identical on
+    // ordering DIGEST both match. Here the seed VALUE is identical on
     // both paths, so the only difference between the reuse hash and the re-derive
     // hash is the PARENT — proof the parent-linkage clause (not the round clause)
     // forced the re-derive.
     #[test]
     fn stale_parent_speculation_is_rejected_despite_matching_round() {
-        use commonware_consensus::types::{Epoch, Round, View};
         let runtime = deterministic::Runner::default();
         runtime.start(|ctx| async move {
             const ANCHOR: u64 = 100;
-            let fx = Fixture::new(ANCHOR);
+            let fx = Fixture::new(ANCHOR).with_epocher(beacon_active_epocher());
             let (mut actor, _mailbox) = fx.build(ctx, ANCHOR, ANCHOR);
             let cause = Span::current();
 
-            // 101 speculated (and, at finalize, witnessed) with the SAME seed of
-            // round 101 == proposal_view ⇒ the round clause passes on both paths.
-            let seed = real_seed(Round::new(Epoch::new(0), View::new(101)));
+            // 101 speculated with the SAME σ the finalized derive resolves for
+            // its own round ⇒ the round clause passes on both paths.
+            let seed = real_seed(active_round(101));
+            record_fixture_seed(101);
             let o1 = OrderBlock {
                 proposal_view: 101,
                 ..sample_order(Digest(B256::ZERO), 101, B256::ZERO)
@@ -8003,20 +8523,11 @@ mod tests {
                 .unwrap()
                 .insert(ANCHOR, stale_parent);
 
-            // Finalize 101 from its witness (the child supplies it). Same digest,
-            // same round → only parent-linkage can reject the reuse.
-            let child = OrderBlock {
-                parent_seed: Some(seed.clone()),
-                ..sample_order(o1.digest(), 102, B256::ZERO)
-            };
+            // Finalize 101. Same digest, same round → only parent-linkage can
+            // reject the reuse.
             let (held_ack, _hw) = Exact::handle();
             actor
                 .on_finalized_block(cause.clone(), o1.clone(), held_ack)
-                .await
-                .unwrap();
-            let (child_ack, _cw) = Exact::handle();
-            actor
-                .on_finalized_block(cause.clone(), child, child_ack)
                 .await
                 .unwrap();
 
@@ -8046,15 +8557,16 @@ mod tests {
     // livelocked the finalized-tier result gate (nullify storm / stall).
     #[test]
     fn eager_finalized_derive_records_before_child_arrives() {
-        use commonware_consensus::types::{Epoch, Round, View};
         let runtime = deterministic::Runner::default();
         runtime.start(|ctx| async move {
             const ANCHOR: u64 = 100;
             let h = ANCHOR + 1;
             let store = crate::beacon::certify::SeedStore::new();
-            let seed = real_seed(Round::new(Epoch::new(0), View::new(h)));
+            let seed = real_seed(active_round(h));
             store.record(real_witness(seed.target_round));
-            let fx = Fixture::new(ANCHOR).with_seed_store(store);
+            let fx = Fixture::new(ANCHOR)
+                .with_seed_store(store)
+                .with_epocher(beacon_active_epocher());
             let (mut actor, _mailbox) = fx.build(ctx, ANCHOR, ANCHOR);
             let cause = Span::current();
 
@@ -8075,24 +8587,70 @@ mod tests {
                 Some(derived),
                 "finalized-tier hash recorded at h BEFORE h+1 is delivered (propose(h+K) would pass)"
             );
-            assert!(actor.awaiting_child.is_none(), "the eager derive CONSUMED the hold");
+            assert!(actor.awaiting_seed.is_none(), "the eager derive CONSUMED the hold");
             assert!(!fx.safety_halt.is_engaged());
         });
     }
 
-    // MISS FALLBACK: with the round ABSENT from the store the delivered tip stays
-    // HELD (the exact prior one-block-lookahead behavior) — eager did NOT run, so
-    // `h` is recorded only once its child supplies the witness.
+    // The fixture's DEFAULT σ source is a LIVE store, not a negative provider:
+    // a witnessed link files σ under the parent's own round, so `h` derives from
+    // the store at its OWN delivery with no `with_seed_store` and no child. This
+    // is the source the derive re-keys onto, and a default that silently went
+    // back to answering `None` would leave every such link deriving from the
+    // child body instead — invisible here, a hang once the child stops carrying it.
     #[test]
-    fn eager_miss_holds_the_tip_for_the_child_witness() {
+    fn the_default_fixture_serves_a_recorded_round_from_its_own_store() {
         let runtime = deterministic::Runner::default();
         runtime.start(|ctx| async move {
             const ANCHOR: u64 = 100;
             let h = ANCHOR + 1;
-            // Store present but EMPTY — the only difference from the hit test is
-            // the missing round entry (isolates the miss branch).
+            let fx = Fixture::new(ANCHOR).with_epocher(beacon_active_epocher());
+            let (mut actor, _mailbox) = fx.build(ctx, ANCHOR, ANCHOR);
+
+            let o1 = OrderBlock {
+                proposal_view: h,
+                ..sample_order(Digest(B256::ZERO), h, B256::ZERO)
+            };
+            fx.marshal.canned.lock().unwrap().insert(h, o1.clone());
+            let seed = real_seed(active_round(h));
+            // Files σ for h's round with no block involved at all: the only
+            // source `on_finalized_block` can be reading below is the store.
+            record_fixture_seed(o1.proposal_view);
+
+            let (ack, _w) = Exact::handle();
+            actor
+                .on_finalized_block(Span::current(), o1, ack)
+                .await
+                .unwrap();
+
+            assert!(
+                actor.awaiting_seed.is_none(),
+                "the eager derive CONSUMED the hold"
+            );
+            assert_eq!(
+                fx.deriver.seeds_seen.lock().unwrap().as_slice(),
+                &[(h, Some(seed))],
+                "σ resolved from the fixture's own store, keyed by h's round"
+            );
+        });
+    }
+
+    // MISS: with the round ABSENT from the store — and the epoch beacon-ACTIVE,
+    // so `None` is not the agreed answer — the delivered block stays HELD. The
+    // only exit is σ arriving; there is no fallback and no deadline.
+    #[test]
+    fn a_store_miss_on_a_beacon_active_round_holds_the_block() {
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            const ANCHOR: u64 = 100;
+            let h = ANCHOR + 1;
+            // Store present but EMPTY — the opt-out from the fixture default, and
+            // the only difference from the hit test is the missing round entry
+            // (isolates the miss branch).
             let store = crate::beacon::certify::SeedStore::new();
-            let fx = Fixture::new(ANCHOR).with_seed_store(store);
+            let fx = Fixture::new(ANCHOR)
+                .with_seed_store(store)
+                .with_epocher(beacon_active_epocher());
             let (mut actor, _mailbox) = fx.build(ctx, ANCHOR, ANCHOR);
             let cause = Span::current();
 
@@ -8110,10 +8668,10 @@ mod tests {
 
             assert!(
                 fx.chain.spec_executed_hash(h).is_none(),
-                "MISS: h NOT derived at delivery — held for the child witness"
+                "MISS: h NOT derived at delivery — held for its σ"
             );
             assert!(
-                actor.awaiting_child.is_some(),
+                actor.awaiting_seed.is_some(),
                 "the tip stays HELD on a store miss"
             );
         });
@@ -8125,15 +8683,16 @@ mod tests {
     // and NEVER leaves the speculated A behind.
     #[test]
     fn eager_derive_reorgs_a_speculated_sibling() {
-        use commonware_consensus::types::{Epoch, Round, View};
         let runtime = deterministic::Runner::default();
         runtime.start(|ctx| async move {
             const ANCHOR: u64 = 100;
             let h = ANCHOR + 1;
             let store = crate::beacon::certify::SeedStore::new();
-            let seed = real_seed(Round::new(Epoch::new(0), View::new(h)));
+            let seed = real_seed(active_round(h));
             store.record(real_witness(seed.target_round));
-            let fx = Fixture::new(ANCHOR).with_seed_store(store);
+            let fx = Fixture::new(ANCHOR)
+                .with_seed_store(store)
+                .with_epocher(beacon_active_epocher());
             let (mut actor, _mailbox) = fx.build(ctx, ANCHOR, ANCHOR);
             let cause = Span::current();
 
@@ -8188,15 +8747,16 @@ mod tests {
     // new held tip (its own round is not in the store ⇒ a miss ⇒ hold).
     #[test]
     fn child_delivery_after_eager_does_not_double_derive() {
-        use commonware_consensus::types::{Epoch, Round, View};
         let runtime = deterministic::Runner::default();
         runtime.start(|ctx| async move {
             const ANCHOR: u64 = 100;
             let h = ANCHOR + 1;
             let store = crate::beacon::certify::SeedStore::new();
-            let seed_h = real_seed(Round::new(Epoch::new(0), View::new(h)));
+            let seed_h = real_seed(active_round(h));
             store.record(real_witness(seed_h.target_round));
-            let fx = Fixture::new(ANCHOR).with_seed_store(store);
+            let fx = Fixture::new(ANCHOR)
+                .with_seed_store(store)
+                .with_epocher(beacon_active_epocher());
             let (mut actor, _mailbox) = fx.build(ctx, ANCHOR, ANCHOR);
             let cause = Span::current();
 
@@ -8205,7 +8765,6 @@ mod tests {
                 ..sample_order(Digest(B256::ZERO), h, B256::ZERO)
             };
             let child = OrderBlock {
-                parent_seed: Some(seed_h.clone()),
                 proposal_view: h + 1,
                 ..sample_order(o_h.digest(), h + 1, B256::ZERO)
             };
@@ -8220,7 +8779,7 @@ mod tests {
                 .on_finalized_block(cause.clone(), o_h.clone(), ack_h)
                 .await
                 .unwrap();
-            assert!(actor.awaiting_child.is_none(), "h eager-consumed");
+            assert!(actor.awaiting_seed.is_none(), "h eager-consumed");
             let hash_h = fx.chain.spec_executed_hash(h).unwrap();
 
             // Child h+1 delivered: held is empty (h consumed) ⇒ h+1 held; its own
@@ -8240,7 +8799,7 @@ mod tests {
                 fx.chain.spec_executed_hash(h + 1).is_none(),
                 "h+1 is HELD (its round not in store)"
             );
-            assert!(actor.awaiting_child.is_some(), "h+1 is now the held tip");
+            assert!(actor.awaiting_seed.is_some(), "h+1 is now the held tip");
             let payloads_h: Vec<u64> = fx
                 .beacon
                 .new_payload_calls
@@ -8260,30 +8819,32 @@ mod tests {
 
     // EPOCH-BOUNDARY eager derive (the divergence-critical epoch identity): `h` is
     // the LAST block of epoch e, so its child crosses into e+1 and `witness_link`'s
-    // boundary adjustment (`ec − 1`) pins the witness round's epoch to e — which is
+    // boundary adjustment (`ec − 1`) pins the wire field's round epoch to e — which is
     // exactly `epocher.containing(h).epoch()`. With the store populated under
     // `Round(e, view)` the eager derive HITS with the correctly computed epoch-e
     // round and records `h` before the child exists.
     #[test]
     fn eager_derive_hits_at_the_epoch_boundary_with_the_parent_epoch_round() {
-        use commonware_consensus::types::{Epoch, Epocher as _, Round, View};
+        use commonware_consensus::types::{Epocher as _, Round, View};
         let runtime = deterministic::Runner::default();
         runtime.start(|ctx| async move {
-            // origin 0, length 8: epoch 1 = heights 8..=15; h = 15 is its LAST
-            // block (the child at 16 is the first block of epoch 2).
+            // origin 0, length 8: epoch 2 = heights 16..=23; h = 23 is its LAST
+            // block (the child at 24 is the first block of epoch 3). Epoch 2 is
+            // `DETERMINISTIC_BOOTSTRAP_EPOCH`, the first beacon-ACTIVE one — a
+            // boundary below it would derive `None` and never consult the store.
             let epocher = crate::epocher::OriginEpocher::new(
                 0,
                 std::num::NonZeroU64::new(8).expect("nonzero"),
             );
-            const ANCHOR: u64 = 14;
-            const H: u64 = 15;
+            const ANCHOR: u64 = 22;
+            const H: u64 = 23;
             assert_eq!(
                 epocher.containing(Height::new(H)).unwrap().last(),
                 Height::new(H),
                 "test premise: h is the last block of its epoch"
             );
             let e = epocher.containing(Height::new(H)).unwrap().epoch();
-            assert_eq!(e, Epoch::new(1));
+            assert_eq!(e, active_epoch());
 
             let store = crate::beacon::certify::SeedStore::new();
             let seed = real_seed(Round::new(e, View::new(H)));
@@ -8314,7 +8875,7 @@ mod tests {
                 "epoch-e round HIT: recorded before the epoch-(e+1) child exists"
             );
             assert!(
-                actor.awaiting_child.is_none(),
+                actor.awaiting_seed.is_none(),
                 "hold consumed on the boundary hit"
             );
             assert!(!fx.safety_halt.is_engaged());
@@ -8334,11 +8895,11 @@ mod tests {
                 0,
                 std::num::NonZeroU64::new(8).expect("nonzero"),
             );
-            const ANCHOR: u64 = 14;
-            const H: u64 = 15; // last block of epoch 1
+            const ANCHOR: u64 = 22;
+            const H: u64 = 23; // last block of epoch 2, the bootstrap epoch
             let store = crate::beacon::certify::SeedStore::new();
-            // SAME view, WRONG epoch (e+1 = 2): the only entry in the store.
-            let wrong = real_seed(Round::new(Epoch::new(2), View::new(H)));
+            // SAME view, WRONG epoch (e+1 = 3): the only entry in the store.
+            let wrong = real_seed(Round::new(Epoch::new(3), View::new(H)));
             store.record(real_witness(wrong.target_round));
             let fx = Fixture::new(ANCHOR)
                 .with_seed_store(store)
@@ -8360,10 +8921,7 @@ mod tests {
                 fx.chain.spec_executed_hash(H).is_none(),
                 "epoch-(e+1) entry did NOT false-hit: h stays underived"
             );
-            assert!(
-                actor.awaiting_child.is_some(),
-                "MISS: held for the child witness"
-            );
+            assert!(actor.awaiting_seed.is_some(), "MISS: held for its σ");
         });
     }
 
@@ -8380,14 +8938,15 @@ mod tests {
     // `seed_store_record_notifies_without_a_lost_wakeup`.
     #[test]
     fn seed_notify_recovers_a_held_tip_after_a_late_seed_record() {
-        use commonware_consensus::types::{Epoch, Round, View};
         let runtime = deterministic::Runner::default();
         runtime.start(|ctx| async move {
             const ANCHOR: u64 = 100;
             let h = ANCHOR + 1;
             // Store starts EMPTY: the delivery-time eager derive must miss.
             let store = crate::beacon::certify::SeedStore::new();
-            let fx = Fixture::new(ANCHOR).with_seed_store(store.clone());
+            let fx = Fixture::new(ANCHOR)
+                .with_seed_store(store.clone())
+                .with_epocher(beacon_active_epocher());
             let (mut actor, _mailbox) = fx.build(ctx, ANCHOR, ANCHOR);
             let cause = Span::current();
 
@@ -8407,12 +8966,12 @@ mod tests {
                 fx.chain.spec_executed_hash(h).is_none(),
                 "delivery missed: h held, not derived"
             );
-            assert!(actor.awaiting_child.is_some(), "h is HELD after the miss");
+            assert!(actor.awaiting_seed.is_some(), "h is HELD after the miss");
 
             // The notarization for h's round arrives at the Reporter: it records
             // the seed (which fires the notify permit). The seed-notify arm then
             // re-runs the eager derive — model that by driving the arm's body.
-            let seed = real_seed(Round::new(Epoch::new(0), View::new(h)));
+            let seed = real_seed(active_round(h));
             store.record(real_witness(seed.target_round));
             actor
                 .try_eager_finalized_derive(EagerTrigger::Notified)
@@ -8429,7 +8988,7 @@ mod tests {
                 "the notify arm ran the FINALIZED-tier derive: recorded_tip advanced to h"
             );
             assert!(
-                actor.awaiting_child.is_none(),
+                actor.awaiting_seed.is_none(),
                 "the notified eager derive CONSUMED the hold"
             );
             assert!(!fx.safety_halt.is_engaged());
@@ -8437,9 +8996,9 @@ mod tests {
     }
 
     // SEED-NOTIFY NO-OP (b): a notify re-attempt must NOT spuriously derive when
-    // either (i) nothing is held (the arm's `awaiting_child.is_some()` guard is
+    // either (i) nothing is held (the arm's `awaiting_seed.is_some()` guard is
     // false), or (ii) a tip is held but the store STILL misses its round (the
-    // seed has not landed yet — a later notify or the child witness will derive
+    // seed has not landed yet — a later notify will derive
     // it). Neither path may advance the EL or touch the hold.
     #[test]
     fn seed_notify_is_a_noop_without_hold_or_seed() {
@@ -8447,15 +9006,19 @@ mod tests {
         runtime.start(|ctx| async move {
             const ANCHOR: u64 = 100;
             let h = ANCHOR + 1;
+            // EMPTY store: the opt-out from the fixture default, so both arms
+            // below are reached with nothing recorded for h's round.
             let store = crate::beacon::certify::SeedStore::new();
-            let fx = Fixture::new(ANCHOR).with_seed_store(store);
+            let fx = Fixture::new(ANCHOR)
+                .with_seed_store(store)
+                .with_epocher(beacon_active_epocher());
             let (mut actor, _mailbox) = fx.build(ctx, ANCHOR, ANCHOR);
             let cause = Span::current();
 
-            // (i) No hold: the arm's guard (`awaiting_child.is_some()`) is false,
+            // (i) No hold: the arm's guard (`awaiting_seed.is_some()`) is false,
             // so the body is a no-op even if driven directly (the take() early
             // returns).
-            assert!(actor.awaiting_child.is_none(), "premise: nothing held");
+            assert!(actor.awaiting_seed.is_none(), "premise: nothing held");
             actor
                 .try_eager_finalized_derive(EagerTrigger::Notified)
                 .await
@@ -8465,7 +9028,7 @@ mod tests {
                 "no-hold notify derived nothing"
             );
             assert!(
-                actor.awaiting_child.is_none(),
+                actor.awaiting_seed.is_none(),
                 "no-hold notify created no hold"
             );
 
@@ -8480,7 +9043,7 @@ mod tests {
                 .on_finalized_block(cause.clone(), o1.clone(), ack)
                 .await
                 .unwrap();
-            assert!(actor.awaiting_child.is_some(), "h held (store still empty)");
+            assert!(actor.awaiting_seed.is_some(), "h held (store still empty)");
 
             actor
                 .try_eager_finalized_derive(EagerTrigger::Notified)
@@ -8491,7 +9054,7 @@ mod tests {
                 "store-still-missing notify did NOT derive h (silent no-op)"
             );
             assert!(
-                actor.awaiting_child.is_some(),
+                actor.awaiting_seed.is_some(),
                 "the hold is retained on a notify miss"
             );
         });
@@ -8603,15 +9166,13 @@ mod tests {
             let (actor, mailbox) = fx.build(ctx, ANCHOR, ANCHOR);
             let handle = actor.start();
 
-            // Finalize anchor+1 first (sets safe = head = h(anchor+1); finalized
-            // clamped at the anchor in the pre-K window). Its child (anchor+2,
-            // also finalized) triggers the derive and becomes the held tip.
+            // Finalize anchor+1 (sets safe = head = h(anchor+1); finalized
+            // clamped at the anchor in the pre-K window). +2 is NOT finalized —
+            // it is the speculative lead this test is about.
             let o1 = sample_order(Digest(B256::ZERO), ANCHOR + 1, B256::ZERO);
             let o2 = sample_order(o1.digest(), ANCHOR + 2, B256::ZERO);
             let (m1, w1) = finalize_msg(o1.clone());
             mailbox.send(m1).expect("send finalize 1");
-            let (m2f, _w2f) = finalize_msg(o2.clone());
-            mailbox.send(m2f).expect("send finalize 2 (flush child)");
             w1.await.expect("ack 1");
 
             let safe_after_finalize = fx.chain.spec_executed_hash(ANCHOR + 1).unwrap();
@@ -8622,9 +9183,8 @@ mod tests {
                 assert_eq!(last.finalized_block_hash, fx.anchor_hash);
             }
 
-            // Speculate +2 (the held finalized tip — spec runs ahead of its
-            // finalized derive) and +3 (notarized only) — each parent is
-            // canonical from the prior FCU.
+            // Speculate +2 and +3 (notarized only) — each parent is canonical
+            // from the prior FCU.
             let o3 = sample_order(o2.digest(), ANCHOR + 3, B256::ZERO);
             {
                 let mut canned = fx.marshal.canned.lock().unwrap();
@@ -8680,8 +9240,6 @@ mod tests {
             let order = sample_order(Digest(B256::ZERO), ANCHOR + 1, B256::ZERO);
             let (msg, waiter) = finalize_msg(order.clone());
             mailbox.send(msg).expect("send");
-            let (flush, _w_flush) = finalize_msg(child_of(&order, None));
-            mailbox.send(flush).expect("send flush child");
             waiter.await.expect("SYNCING is tolerated → block acks");
 
             assert_eq!(
@@ -8697,17 +9255,16 @@ mod tests {
 
     // Speculative path: the seed recovered from the NOTARIZATION cert (the
     // `SpecNotarized` command) reaches the deriver during speculative
-    // execution, and the same-round witness reconcile keeps the speculation
+    // execution, and the same-round reconcile keeps the speculation
     // (the deriver runs exactly once).
     #[test]
     fn notarization_seed_reaches_deriver_on_speculation() {
-        use commonware_consensus::types::{Epoch, Round, View};
         let runtime = deterministic::Runner::default();
         runtime.start(|ctx| async move {
             const ANCHOR: u64 = 100;
-            let round = Round::new(Epoch::new(0), View::new(ANCHOR + 1));
-            let seed = real_seed(round);
-            let fx = Fixture::new(ANCHOR);
+            let seed = real_seed(active_round(ANCHOR + 1));
+            record_fixture_seed(ANCHOR + 1);
+            let fx = Fixture::new(ANCHOR).with_epocher(beacon_active_epocher());
             let (actor, mailbox) = fx.build(ctx, ANCHOR, ANCHOR);
             let handle = actor.start();
 
@@ -8727,12 +9284,10 @@ mod tests {
             mailbox
                 .send(spec_msg_seeded(&order, seed.clone()))
                 .expect("send spec");
-            // Finalize the same order; its child carries the SAME-round witness
-            // (skips the re-derive — the spec import already recorded the seed).
+            // Finalize the same order: the store answers the SAME round, so the
+            // reconcile keeps the speculation (no re-derive).
             let (m, w) = finalize_msg(order.clone());
             mailbox.send(m).expect("send finalize");
-            let (mc, _wc) = finalize_msg(child_of(&order, Some(seed.clone())));
-            mailbox.send(mc).expect("send child");
             w.await.expect("ack");
 
             {
@@ -8767,8 +9322,8 @@ mod tests {
         }
     }
 
-    /// The catch-up ACK BARRIER: deliver `order` (witness-less) + its flush
-    /// child and await `order`'s ack. The re-jump tests park the frontier far
+    /// The catch-up ACK BARRIER: deliver `order` and await its ack. The re-jump
+    /// tests park the frontier far
     /// ahead, so guard #2 is armed (`tip >= h + K`) — can a result-consistent
     /// attested block at `h + K` so the guard converges instead of parking.
     async fn finalize_and_ack_behind(fx: &Fixture, mailbox: &Mailbox, order: OrderBlock) {
@@ -8783,8 +9338,6 @@ mod tests {
         );
         let (msg, waiter) = finalize_msg(order.clone());
         mailbox.send(msg).expect("send barrier finalize");
-        let (flush, _w_flush) = finalize_msg(child_of(&order, None));
-        mailbox.send(flush).expect("send barrier flush child");
         waiter.await.expect("barrier finalize acks");
     }
 
@@ -8983,13 +9536,13 @@ mod tests {
     // queued while the drain arm is gated off by an IN-FLIGHT jump are stale
     // below-landing blocks; reseed_forward must prune them (ack Ok — canonical
     // post-backfill, never Canceled) so the reopened drain does not re-populate
-    // `awaiting_child` with a jumped-over height — pre-fix, the first genuine
-    // post-floor dispatch's non-contiguous witness re-fetch of the jump-pruned
-    // child hit the "witness gap" fatal (a jump-MANUFACTURED skip-gap
-    // misclassified as archive corruption). Post-fix: backlog pruned+acked, the
-    // next post-floor dispatch derives and acks cleanly, executor stays up.
+    // `awaiting_seed` with a jumped-over height — pre-fix, the first genuine
+    // post-floor dispatch walked back into the jump-pruned range and hit the
+    // missing-artifact fatal (a jump-MANUFACTURED skip-gap misclassified as
+    // archive corruption). Post-fix: backlog pruned+acked, the next post-floor
+    // dispatch derives and acks cleanly, executor stays up.
     #[test]
-    fn reseed_prunes_stale_queued_finalizations_no_witness_gap_fatal() {
+    fn reseed_prunes_stale_queued_finalizations_no_missing_artifact_fatal() {
         let runtime = deterministic::Runner::default();
         runtime.start(|ctx| async move {
             const ANCHOR: u64 = 100;
@@ -9049,9 +9602,9 @@ mod tests {
             );
 
             // The drain reopened CLEAN: the next post-floor dispatch derives +
-            // acks. Pre-fix the stale 101/102 drained first, 102 became the held
-            // tip, and THIS arrival's non-contiguous witness re-fetch of 103
-            // (jump-pruned, marshal None) was the witness-gap fatal.
+            // acks. Pre-fix the stale 101/102 drained first and THIS arrival's
+            // gap-walk fetch of the (jump-pruned) prefix returned None — the
+            // missing-artifact fatal.
             fx.chain
                 .canonical
                 .lock()
@@ -9201,7 +9754,7 @@ mod tests {
                 );
                 assert!(
                     (&mut handle).now_or_never().is_none(),
-                    "the executor stays up (no witness-gap fatal)"
+                    "the executor stays up (no missing-artifact fatal)"
                 );
 
                 // The escape model holds a Mailbox CLONE — release it so the
@@ -9559,7 +10112,7 @@ mod tests {
             let fx = Fixture::new(ACKED).with_last_execution(reth_head);
             let anchor_hash = fx.anchor_hash;
             // Persisted speculative tail above the acked cursor: acked+1 carries a
-            // SIBLING (≠ the witnessed re-derive), acked+N−K a distinct spec hash.
+            // SIBLING (≠ the re-derive), acked+N−K a distinct spec hash.
             let sibling = B256::repeat_byte(0x51);
             let spec_final_hash = B256::repeat_byte(0x57);
             fx.chain
@@ -10276,7 +10829,7 @@ mod tests {
         });
     }
 
-    // Case (A) no-regression: while the tip is HELD (`awaiting_child`), a
+    // Case (A) no-regression: while the tip is HELD (`awaiting_seed`), a
     // SHALLOW gap (≤ JUMP_THRESHOLD) must NOT start a re-jump — the hold
     // proceeds untouched. Only a deep gap (> JUMP_THRESHOLD) engages the
     // re-jump.
@@ -10286,11 +10839,14 @@ mod tests {
         runtime.start(|ctx| async move {
             const ANCHOR: u64 = 100;
             let (cb, calls) = recording_re_jump(Scripted::Lagging);
-            let fx = Fixture::new(ANCHOR).with_re_jump(cb);
+            let fx = Fixture::new(ANCHOR)
+                .with_re_jump(cb)
+                .with_seed_store(crate::beacon::certify::SeedStore::new())
+                .with_epocher(beacon_active_epocher());
             let (actor, mailbox) = fx.build(ctx.clone(), ANCHOR, ANCHOR);
             let handle = actor.start();
 
-            // Finalize a block with no child yet ⇒ it is HELD.
+            // Beacon-active round with no σ in the store ⇒ the block is HELD.
             let (msg, _waiter) =
                 finalize_msg(sample_order(Digest(B256::ZERO), ANCHOR + 1, B256::ZERO));
             mailbox.send(msg).expect("send held block");
@@ -10316,12 +10872,17 @@ mod tests {
         });
     }
 
-    // (f′, Fix A) `reseed_forward` disposes the HELD block with `acknowledge()`
-    // (Ok, NEVER a drop — a dropped `Exact` is a Canceled ack, fatal to the
-    // marshal): the floor moves past the held height, so it is pruned, not
-    // skipped. The one new object the jump path must know about.
+    // THE SEED HOLD MUST NOT GATE `maybe_re_jump` (research B3): that gate is
+    // what bounds a σ-less node's stall, so a block held for its σ must not
+    // suppress the spawn. Pinned here as a test rather than a comment — adding
+    // `awaiting_seed.is_none()` to `maybe_re_jump`'s five gates makes this fail.
+    //
+    // And (f′, Fix A) `reseed_forward` disposes the held block with
+    // `acknowledge()` (Ok, NEVER a drop — a dropped `Exact` is a Canceled ack,
+    // fatal to the marshal): the floor moves past the held height, so it is
+    // pruned, not skipped.
     #[test]
-    fn deep_gap_while_holding_spawns_rejump_and_acks_held_block() {
+    fn a_deep_gap_spawns_a_rejump_even_while_a_block_is_held_for_its_seed() {
         let runtime = deterministic::Runner::default();
         runtime.start(|ctx| async move {
             const ANCHOR: u64 = 100;
@@ -10333,29 +10894,43 @@ mod tests {
                 hash: landing_hash,
                 floor,
             });
-            let fx = Fixture::new(ANCHOR).with_re_jump(cb);
+            let fx = Fixture::new(ANCHOR)
+                .with_re_jump(cb)
+                .with_seed_store(crate::beacon::certify::SeedStore::new())
+                .with_epocher(beacon_active_epocher());
             let (actor, mailbox) = fx.build(ctx.clone(), ANCHOR, ANCHOR);
             let handle = actor.start();
 
-            // The tip is HELD (its child never arrives — the node is about to
-            // jump far past it).
-            let (m1, w1) = finalize_msg(sample_order(Digest(B256::ZERO), ANCHOR + 1, B256::ZERO));
+            // The block is HELD (its σ never lands — the node is about to jump
+            // far past it).
+            let (m1, mut w1) =
+                finalize_msg(sample_order(Digest(B256::ZERO), ANCHOR + 1, B256::ZERO));
             mailbox.send(m1).expect("send held block");
+            ctx.sleep(Duration::from_millis(20)).await;
+            assert!(
+                (&mut w1).now_or_never().is_none(),
+                "premise: the block is HELD (unacked) when the deep tip arrives"
+            );
 
             // A DEEP frontier tip (gap > JUMP_THRESHOLD) while holding → re-jump spawns.
             mailbox
                 .send(tip_msg(ANCHOR + JUMP_THRESHOLD + 5_010))
                 .expect("send deep tip");
 
-            // The Landed reseed disposes the held block via `acknowledge()` → Ok.
-            w1.await.expect(
-                "held block disposed via acknowledge (Ok, never Canceled) on the landed re-jump",
-            );
-
+            // `wait_until` panics after 2000 virtual ms, so gating `maybe_re_jump`
+            // on the hold FAILS here instead of hanging on the ack below.
+            wait_until(&ctx, "the re-jump spawned despite the held block", || {
+                !calls.lock().unwrap().is_empty()
+            })
+            .await;
             assert_eq!(
                 *calls.lock().unwrap(),
                 vec![ANCHOR],
                 "re-jump SPAWNED once despite the held block (durably-stuck recovery)"
+            );
+            // The Landed reseed disposes the held block via `acknowledge()` → Ok.
+            w1.await.expect(
+                "held block disposed via acknowledge (Ok, never Canceled) on the landed re-jump",
             );
             assert_eq!(
                 *fx.marshal.floors.lock().unwrap(),
@@ -10411,6 +10986,15 @@ mod tests {
             .collect()
     }
 
+    /// Total of an UNLABELLED counter — the shape both detector counters use.
+    fn counter_total(drained: &[(CompositeKey, u64)], name: &str) -> u64 {
+        drained
+            .iter()
+            .filter(|(composite, _)| composite.key().name() == name)
+            .map(|(_, count)| count)
+            .sum()
+    }
+
     fn counter_at(drained: &[(CompositeKey, u64)], name: &str, label: (&str, &str)) -> u64 {
         drained
             .iter()
@@ -10423,6 +11007,175 @@ mod tests {
             })
             .map(|(_, count)| count)
             .sum()
+    }
+
+    // THE DETECTOR, and the four things it must be. It (1) stays SILENT below the
+    // threshold, (2) reports once the hold outlives it, (3) reports ONCE rather
+    // than once per call, and (4) CHANGES NOTHING — the block is still held
+    // afterwards and still derives the moment σ lands, which is the only correct
+    // exit.
+    //
+    // Clause (2) is asserted twice, the second time AFTER a miss re-hold, which
+    // is what pins that `HeldForSeed::since` rides through
+    // `try_eager_finalized_derive`'s restore. Resetting it there would keep the
+    // detector permanently silent under a stream of unrelated seed records — the
+    // exact condition it exists to report.
+    //
+    // The hold is BACK-DATED rather than waited out: the deterministic runtime
+    // advances virtual time in 1 ms cycles, so sleeping past a 60 s threshold
+    // costs ~60 s of real time and would dominate the suite.
+    #[test]
+    fn a_fresh_seed_hold_is_silent_and_a_stalled_one_reports_once() {
+        let recorder = DebuggingRecorder::new();
+        let snap = recorder.snapshotter();
+        const NAME: &str = "dpos_executor_seed_hold_stalled_total";
+        metrics::with_local_recorder(&recorder, || {
+            let runtime = deterministic::Runner::default();
+            runtime.start(|ctx| async move {
+                const ANCHOR: u64 = 100;
+                let h = ANCHOR + 1;
+                let store = crate::beacon::certify::SeedStore::new();
+                let fx = Fixture::new(ANCHOR)
+                    .with_seed_store(store.clone())
+                    .with_epocher(beacon_active_epocher());
+                let (mut actor, _mailbox) = fx.build(ctx, ANCHOR, ANCHOR);
+
+                let order = OrderBlock {
+                    proposal_view: h,
+                    ..sample_order(Digest(B256::ZERO), h, B256::ZERO)
+                };
+                let (ack, mut waiter) = Exact::handle();
+                actor
+                    .on_finalized_block(Span::current(), order, ack)
+                    .await
+                    .expect("beacon-active round, empty store");
+                assert!(actor.awaiting_seed.is_some(), "premise: the block is HELD");
+
+                // `drain_counters` DRAINS, as its name says: each read reports the
+                // increments since the previous one, not a running total. Every
+                // count below is therefore "reports since the last assertion".
+                let reports = || counter_total(&drain_counters(&snap), NAME);
+
+                // (1) A fresh hold is the ordinary record-vs-delivery race.
+                actor.detect_stalled_seed_hold();
+                assert_eq!(
+                    reports(),
+                    0,
+                    "a hold younger than the threshold must not be reported"
+                );
+
+                let backdate = |actor: &mut Actor<_, _, _, _, _>| {
+                    let held = actor.awaiting_seed.as_mut().expect("still held");
+                    held.since = held
+                        .since
+                        .checked_sub(SEED_HOLD_STALL_THRESHOLD)
+                        .expect("representable");
+                };
+
+                // (2)+(3) Past the threshold: one report, however often it is asked.
+                backdate(&mut actor);
+                actor.detect_stalled_seed_hold();
+                actor.detect_stalled_seed_hold();
+                actor.detect_stalled_seed_hold();
+                assert_eq!(reports(), 1, "one stall is one event — not one per call");
+
+                // (2, again) A σ for an UNRELATED round fires the same re-attempt
+                // the notify arm makes; it MISSES and puts the block straight back.
+                // Clearing `reported` isolates the question to `since`: if the
+                // restore reset it, the detector below would find a fresh hold.
+                store.record(real_witness(active_round(h + 500)));
+                actor
+                    .try_eager_finalized_derive(EagerTrigger::Notified)
+                    .await
+                    .expect("unrelated σ is a miss");
+                assert!(actor.awaiting_seed.is_some(), "the miss re-held the block");
+                actor.awaiting_seed.as_mut().expect("held").reported = false;
+                actor.detect_stalled_seed_hold();
+                assert_eq!(
+                    reports(),
+                    1,
+                    "`since` must survive the miss re-hold — a reset would make this \
+                     hold look fresh, silencing the detector under any stream of \
+                     unrelated seed records"
+                );
+
+                // (4) Nothing about the hold moved.
+                assert!(
+                    fx.beacon.new_payload_calls.lock().unwrap().is_empty(),
+                    "the detector must not derive the held block"
+                );
+                assert!(
+                    (&mut waiter).now_or_never().is_none(),
+                    "the detector must not resolve the held ack"
+                );
+                assert!(!fx.safety_halt.is_engaged(), "a detector never halts");
+
+                // ...and the only correct exit still works.
+                store.record(real_witness(active_round(h)));
+                actor
+                    .try_eager_finalized_derive(EagerTrigger::Notified)
+                    .await
+                    .expect("σ landed");
+                assert!(
+                    actor.awaiting_seed.is_none() && fx.chain.finalized_executed_hash(h).is_some(),
+                    "the hold survived the detector intact and derived when σ arrived"
+                );
+                waiter.await.expect("acked after the stall");
+            });
+        });
+    }
+
+    // The wiring: the detector runs off the EXISTING FCU heartbeat tick and
+    // nothing else. Deleting the call from that arm leaves every assertion above
+    // green — this is the only test that fails.
+    #[test]
+    fn the_fcu_heartbeat_is_what_reports_a_stalled_seed_hold() {
+        let recorder = DebuggingRecorder::new();
+        let snap = recorder.snapshotter();
+        metrics::with_local_recorder(&recorder, || {
+            let runtime = deterministic::Runner::default();
+            runtime.start(|ctx| async move {
+                const ANCHOR: u64 = 100;
+                let h = ANCHOR + 1;
+                let fx = Fixture::new(ANCHOR)
+                    .with_seed_store(crate::beacon::certify::SeedStore::new())
+                    .with_epocher(beacon_active_epocher())
+                    .with_fcu_heartbeat(Duration::from_millis(20));
+                let (mut actor, mailbox) = fx.build(ctx.clone(), ANCHOR, ANCHOR);
+
+                // Hold + back-date BEFORE the actor is spawned, so a couple of
+                // ordinary heartbeat ticks are all the timeline this needs.
+                let order = OrderBlock {
+                    proposal_view: h,
+                    ..sample_order(Digest(B256::ZERO), h, B256::ZERO)
+                };
+                let (ack, _waiter) = Exact::handle();
+                actor
+                    .on_finalized_block(Span::current(), order, ack)
+                    .await
+                    .expect("held");
+                let held = actor.awaiting_seed.as_mut().expect("held");
+                held.since = held
+                    .since
+                    .checked_sub(SEED_HOLD_STALL_THRESHOLD)
+                    .expect("representable");
+
+                let handle = actor.start();
+                ctx.sleep(Duration::from_millis(100)).await;
+
+                let reports = counter_total(
+                    &drain_counters(&snap),
+                    "dpos_executor_seed_hold_stalled_total",
+                );
+                assert_eq!(
+                    reports, 1,
+                    "five heartbeat ticks over a stalled hold: reported, and reported once"
+                );
+
+                drop(mailbox);
+                let _ = handle.await;
+            });
+        });
     }
 
     // The same backfill hole as `backfill_hole_is_fatal_at_the_backfill_site`, seen
@@ -10521,7 +11274,7 @@ mod tests {
             // A block plus the flush child its height needs to derive at all — so a
             // missing gate shows up as real EL traffic, not merely as a held tip.
             let order = sample_order(Digest(B256::ZERO), ANCHOR + 1, B256::ZERO);
-            let child = child_of(&order, None);
+            let child = child_of(&order);
             let post_halt = sample_order(child.digest(), ANCHOR + 3, B256::ZERO);
             let (msg, waiter) = finalize_msg(order);
             mailbox.send(msg).expect("send finalize");
@@ -10567,12 +11320,15 @@ mod tests {
         let runtime = deterministic::Runner::default();
         runtime.start(|ctx| async move {
             const ANCHOR: u64 = 100;
-            let fx = Fixture::new(ANCHOR);
+            // Beacon-ACTIVE epoch + an EMPTY store, so the block below is HELD
+            // and its ack is un-resolved and in the actor's hands when the latch
+            // trips.
+            let fx = Fixture::new(ANCHOR)
+                .with_seed_store(crate::beacon::certify::SeedStore::new())
+                .with_epocher(beacon_active_epocher());
             let (actor, mailbox) = fx.build(ctx.clone(), ANCHOR, ANCHOR);
             let mut handle = actor.start();
 
-            // A block with no child yet: the one-block-lookahead pipeline HOLDS it,
-            // so its ack is un-resolved and in the actor's hands when the latch trips.
             let (msg, mut waiter) =
                 finalize_msg(sample_order(Digest(B256::ZERO), ANCHOR + 1, B256::ZERO));
             mailbox.send(msg).expect("send finalize");
@@ -10663,7 +11419,7 @@ mod tests {
             // finalize drains (ANCHOR+1 becomes the held tip) and its child's
             // arrival derives it.
             release.notify_one();
-            let (fin_child, _wc) = finalize_msg(child_of(&order, None));
+            let (fin_child, _wc) = finalize_msg(child_of(&order));
             mailbox.send(fin_child).expect("send child");
             ctx.sleep(Duration::from_millis(20)).await;
             assert!(
@@ -10734,8 +11490,6 @@ mod tests {
             // speculation landed first.
             let (msg, waiter) = finalize_msg(order.clone());
             mailbox.send(msg).expect("send finalize");
-            let (mc, _wc) = finalize_msg(child_of(&order, None));
-            mailbox.send(mc).expect("send child");
             waiter.await.expect("ack");
 
             {
@@ -10998,6 +11752,12 @@ mod tests {
                         safety_halt: fx.safety_halt.clone(),
                         spawn_unblocked: std::sync::Arc::new(tokio::sync::Notify::new()),
                         re_jump: None,
+                        // Deliberately the negative provider: every height here
+                        // sits in epoch 0 under the epocher below, which is
+                        // beacon-INACTIVE, so the derive resolves `None` and can
+                        // never hold. This is the only site driving a REAL
+                        // marshal, and a σ at epoch 0 would model a state
+                        // production cannot reach.
                         randomness: crate::beacon::surface::absent_unregistered(),
                         epocher: crate::epocher::OriginEpocher::new(
                             0,
@@ -11021,10 +11781,12 @@ mod tests {
 
                 // Contiguous finalized chain: heights 1..K-1 in the pre-activation
                 // window (result MUST be ZERO), height K commits executed_hash(0) —
-                // forged, so the executor's cross-check halts at K. Under the
-                // one-block-lookahead pipeline each height derives when its
-                // child is dispatched, so K's forged cross-check fires when the
-                // NEXT block (K+1) is dispatched.
+                // forged, so the executor's cross-check halts at K. Each height
+                // derives at its OWN dispatch (this actor's epocher puts every
+                // height in epoch 0, which is beacon-INACTIVE, so σ is `None` and
+                // nothing is ever held), which is when K's forged cross-check
+                // fires. K+1 is dispatched below to prove its ack is RETAINED by
+                // the park rather than dropped.
                 let mut parent = Digest(B256::ZERO);
                 for h in 1..K {
                     let block = sample_order(parent, h, B256::ZERO);
@@ -11041,9 +11803,8 @@ mod tests {
                 })
                 .await;
 
-                // Dispatching K+1 triggers K's derive → the forged cross-check
-                // engages the halt; the executor parks retaining K's ack AND
-                // the held K+1 ack.
+                // K's own dispatch engages the halt; K+1 is dispatched into the
+                // halted executor, which parks retaining both acks.
                 let post_halt = sample_order(div_digest, K + 1, B256::ZERO);
                 finalize_via_marshal(&mut marshal, &c, &post_halt).await;
                 wait_until(&ctx, "SafetyHalt engaged", || fx.safety_halt.is_engaged()).await;

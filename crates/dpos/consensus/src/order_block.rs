@@ -4,17 +4,13 @@
 //! agreeing OrderBlock N+K is the committee's attestation of block N's
 //! execution result.
 
-use crate::beacon::seed::Seed;
 use crate::digest::Digest;
 use crate::slasher::evidence::MAX_EQUIVOCATION_SIZE;
 use alloy_primitives::{keccak256, Address, Bytes, B256};
 use bytes::{Buf, BufMut};
-use commonware_codec::{
-    varint::MAX_U64_VARINT_SIZE, Encode as _, EncodeSize, FixedSize, Read, Write,
-};
+use commonware_codec::{Encode as _, EncodeSize, FixedSize, Read, Write};
 use commonware_consensus::{types::Height, Heightable};
 use commonware_cryptography::{Committable, Digestible};
-use fluentbase_bls::BlsSignature;
 use reth_ethereum_primitives::TransactionSigned;
 use reth_primitives_traits::SealedBlock;
 
@@ -36,12 +32,19 @@ pub const MAX_ORDER_BLOCK_SIZE: usize = 4 * 1024 * 1024;
 
 /// Tx-list byte budget for ordering assembly: [`MAX_ORDER_BLOCK_SIZE`] minus the
 /// [`MAX_EXTRA_DATA_SIZE`] allowance for the non-tx fields (parent/height/result,
-/// extra_data, codec framing) and one allowance per optional field ANY block may
-/// carry — [`PARENT_SEED_FRAMING`] for `proposal_view` + `parent_seed` and
-/// [`EQUIVOCATION_FRAMING`] for `equivocation` — so an assembled artifact always
-/// fits its own decode cap.
+/// extra_data, codec framing), [`PROPOSAL_VIEW_FRAMING`] for the always-present
+/// `proposal_view`, and [`EQUIVOCATION_FRAMING`] for the one optional field a
+/// block may still carry — so an assembled artifact always fits its own decode
+/// cap.
+///
+/// This grew by 68 bytes (`2 * MAX_U64_VARINT_SIZE + BlsSignature::SIZE`) when
+/// `parent_seed` left the wire: the allowance existed only to keep a full-budget
+/// block carrying that field under the cap, and there is no such field to carry.
+/// The composition argument is unchanged — the sole consumer is the proposer's
+/// `assemble` call, and `MAX_ORDER_BLOCK_SIZE` (the decode cap every verifier
+/// enforces) did not move.
 pub const TX_BYTE_BUDGET: usize =
-    MAX_ORDER_BLOCK_SIZE - MAX_EXTRA_DATA_SIZE - PARENT_SEED_FRAMING - EQUIVOCATION_FRAMING;
+    MAX_ORDER_BLOCK_SIZE - MAX_EXTRA_DATA_SIZE - PROPOSAL_VIEW_FRAMING - EQUIVOCATION_FRAMING;
 
 /// Worst-case wire cost of the `equivocation` field: its decode cap plus the
 /// `u32` length prefix. Reserved out of [`TX_BYTE_BUDGET`] for EVERY block — a
@@ -50,15 +53,13 @@ pub const TX_BYTE_BUDGET: usize =
 /// cap (the composed-oversize class, bug 1).
 pub const EQUIVOCATION_FRAMING: usize = MAX_EQUIVOCATION_SIZE + u32::SIZE;
 
-/// Worst-case wire cost of the fields the parent-seed witness added:
-/// `proposal_view` (fixed `u64`, always present) plus a present `parent_seed`
-/// ([`Seed`] = `Round ‖ BlsSignature`, no length prefix; `Round`'s epoch and
-/// view are varint-encoded, so the ceiling is [`MAX_U64_VARINT_SIZE`] each —
-/// the flag bit rides the pre-existing `beacon_flags` byte). Reserved out of
-/// [`TX_BYTE_BUDGET`] so a full-budget block carrying the witness still fits
-/// `MAX_ORDER_BLOCK_SIZE` / the byte-identical p2p frame cap — the same
-/// composed-oversize class (bug 1) [`EQUIVOCATION_FRAMING`] documents.
-pub const PARENT_SEED_FRAMING: usize = u64::SIZE + 2 * MAX_U64_VARINT_SIZE + BlsSignature::SIZE;
+/// Wire cost of `proposal_view` — a fixed `u64` on every block. Reserved out of
+/// [`TX_BYTE_BUDGET`] so a full-budget block still fits `MAX_ORDER_BLOCK_SIZE` /
+/// the byte-identical p2p frame cap — the same composed-oversize class (bug 1)
+/// [`EQUIVOCATION_FRAMING`] documents. Not folded into the
+/// [`MAX_EXTRA_DATA_SIZE`] lump because it was carved out separately when the
+/// witness arrived and the field it shared that carve-out with has since left.
+pub const PROPOSAL_VIEW_FRAMING: usize = u64::SIZE;
 
 /// Decode cap for `extra_data`. Deliberately far above the 3-byte production
 /// record it actually carries: this cap only has to compose with the
@@ -129,21 +130,6 @@ pub struct OrderBlock {
     pub result: B256,
     /// Ordered raw transactions.
     pub txs: Vec<TransactionSigned>,
-    /// Threshold randomness seed of the round in which the PARENT block was
-    /// certified, carried by the child (Design B′): `prev_randao(parent) =
-    /// H(seed.signature)`. Delivers the parent's seed via the one object that
-    /// always exists when the parent has a finalized descendant — the child —
-    /// instead of a per-height finalization cert that commonware builds only
-    /// best-effort (an ancestry-finalized height may have NO standalone cert
-    /// anywhere, ever). `seed.target_round` must equal
-    /// `Round::new(parent_epoch, parent.proposal_view)` (rule PIN — agreed
-    /// data, no local cert state). Mandatory on every beacon-active link,
-    /// boundary included; `None` only on pre-bootstrap links — enforced by
-    /// `FluentApp::verify`'s witness gate at vote time. Embedded by
-    /// `build_proposal` from `SeedStore`; consumed by the executor's
-    /// one-block-lookahead pipeline (the child's `parent_seed` IS the seed the
-    /// parent derives with) and by the blocks-only crash-recovery replay.
-    pub parent_seed: Option<Seed>,
     /// Equivocation evidence backing this block's charge — the encoded
     /// commonware `Activity` for one of the three attributable Byzantine
     /// variants. Present IFF `extra_data` names an accused committee index, and
@@ -239,9 +225,7 @@ pub fn anchor_order_block(
         parent: Digest(B256::ZERO),
         height: anchor.number(),
         // The anchor is never PROPOSED (it has no simplex round), so `0` here
-        // is a plain value, not a sentinel — nothing may branch on it. Its
-        // child sits below the beacon-bootstrap epoch, so the witness pin
-        // never reads it either.
+        // is a plain value, not a sentinel — nothing may branch on it.
         proposal_view: 0,
         timestamp: anchor.timestamp(),
         fee_recipient: Address::ZERO,
@@ -250,7 +234,6 @@ pub fn anchor_order_block(
         extra_data: Bytes::new(),
         result: anchor.hash(),
         txs: Vec::new(),
-        parent_seed: None,
         equivocation: None,
     })
 }
@@ -259,36 +242,34 @@ pub fn anchor_order_block(
 //   parent(32) ‖ height(8) ‖ proposal_view(8) ‖ timestamp(8) ‖ fee_recipient(20)
 //   ‖ gas_limit(8) ‖ result(32) ‖ extra_data_len(4)+bytes ‖ txs as one RLP list
 //   ‖ beacon_flags(1)
-//   ‖ [parent_seed: Round(varint epoch ‖ varint view) ‖ signature(48)]
 //   ‖ [equivocation_len(4)+bytes].
-// `beacon_flags` bit1 = parent_seed present; bit2 = equivocation present (each
-// optional body written iff its bit is set — the fixed-layout Seed needs no
-// length prefix). Body write order follows the STRUCT field order, independent
-// of the flag-bit numbering.
+// `beacon_flags` bit2 = equivocation present, its body written iff the bit is
+// set. It is the only live bit.
 //
-// BIT 0 and BIT 3 ARE RESERVED AND MUST STAY CLEAR. They carried the retired
-// `beacon_outcome` and `dkg_logs` bodies; the epoch key is now agreed on the
-// p2p agreement plane and delivered as a quorum-signed artifact, so no block
-// carries beacon material at all. They were NOT renumbered — bit1/bit2 and
-// their bodies stay byte-identical to the pre-shrink encoding — and decode
-// REJECTS either bit being set, because a set-but-unread bit would be a second
-// spelling of the same block and the flags byte is inside `digest()`.
+// BITS 0, 1 AND 3 ARE RESERVED AND MUST STAY CLEAR. They carried the retired
+// `beacon_outcome`, `parent_seed` and `dkg_logs` bodies; the epoch key is now
+// agreed on the p2p agreement plane and delivered as a quorum-signed artifact,
+// and the round seed is resolved from the local `SeedStore` at the block's own
+// round, so no block carries beacon material at all. None of them were
+// renumbered — bit2 and its body stay byte-identical to the pre-shrink encoding
+// — and decode REJECTS any of the three being set, because a set-but-unread bit
+// would be a second spelling of the same block and the flags byte is inside
+// `digest()`.
 //
-// RELEASE DISCIPLINE FOR THAT REMOVAL: COORDINATED, NOT ROLLING. The flags byte
-// and every optional body sit inside `digest()`, so an old binary and a new one
-// disagree on the digest of any block that carried an outcome or dealer logs —
-// they cannot be run against each other on one chain, at any overlap. There is
-// no migration to perform and none is provided: this is acceptable ONLY because
-// Fluent networks are relaunched from block 0, so no live chain has to cross the
-// change. A future deployment that must survive a rolling upgrade cannot reuse
-// this pattern.
+// RELEASE DISCIPLINE FOR THOSE REMOVALS: COORDINATED, NOT ROLLING. The flags
+// byte and every optional body sit inside `digest()`, so an old binary and a new
+// one disagree on the digest of any block that carried an outcome, a witness or
+// dealer logs — they cannot be run against each other on one chain, at any
+// overlap. There is no migration to perform and none is provided: this is
+// acceptable ONLY because Fluent networks are relaunched from block 0, so no
+// live chain has to cross the change. A future deployment that must survive a
+// rolling upgrade cannot reuse this pattern.
 //
 // `equivocation` is CANONICAL: its flag-set-but-empty encoding is rejected
 // because it is a second spelling of an absent charge. The RLP tx list reuses
 // alloy's canonical encoding so tx bytes are identical to their EVM-block
-// representation. `proposal_view`, `parent_seed` and `equivocation` are all part
-// of the encoding (hence the digest): an unagreed randomness input under one
-// digest would diverge derive/STF, a `proposal_view` outside the digest would be
+// representation. `proposal_view` and `equivocation` are both part of the
+// encoding (hence the digest): a `proposal_view` outside the digest would be
 // forgeable, and evidence outside it could be swapped after the committee
 // attested it.
 
@@ -305,15 +286,11 @@ impl Write for OrderBlock {
         (self.extra_data.len() as u32).write(buf);
         buf.put_slice(&self.extra_data);
         self.txs.encode(buf);
-        // bit1 = parent_seed present; bit2 = equivocation present. Bits 0 and 3
-        // are RESERVED (retired `beacon_outcome` / `dkg_logs`) and stay clear —
-        // no renumbering, so bit1/bit2 keep their pre-shrink positions.
-        let flags =
-            (self.parent_seed.is_some() as u8) << 1 | (self.equivocation.is_some() as u8) << 2;
+        // bit2 = equivocation present. Bits 0, 1 and 3 are RESERVED (retired
+        // `beacon_outcome` / `parent_seed` / `dkg_logs`) and stay clear — no
+        // renumbering, so bit2 keeps its pre-shrink position.
+        let flags = (self.equivocation.is_some() as u8) << 2;
         flags.write(buf);
-        if let Some(seed) = &self.parent_seed {
-            seed.write(buf);
-        }
         if let Some(evidence) = &self.equivocation {
             (evidence.len() as u32).write(buf);
             buf.put_slice(evidence);
@@ -344,7 +321,6 @@ impl EncodeSize for OrderBlock {
             + self.extra_data.len()
             + self.txs.length()
             + FLAGS
-            + self.parent_seed.as_ref().map_or(0, |s| s.encode_size())
             + self
                 .equivocation
                 .as_ref()
@@ -394,21 +370,16 @@ impl Read for OrderBlock {
         let txs: Vec<TransactionSigned> = alloy_rlp::Decodable::decode(&mut bytes.as_ref())
             .map_err(|e| commonware_codec::Error::Wrapped("reading tx list", e.into()))?;
         let flags = u8::read_cfg(buf, &())?;
-        // Bits 0 and 3 carried the retired `beacon_outcome` / `dkg_logs` bodies.
-        // They were not renumbered, and a set-but-unread bit would be a second
-        // spelling of the same block under a different digest (the flags byte is
-        // inside `digest()`), so reject rather than ignore.
-        if flags & 0b0000_1001 != 0 {
+        // Bits 0, 1 and 3 carried the retired `beacon_outcome` / `parent_seed` /
+        // `dkg_logs` bodies. They were not renumbered, and a set-but-unread bit
+        // would be a second spelling of the same block under a different digest
+        // (the flags byte is inside `digest()`), so reject rather than ignore.
+        if flags & 0b0000_1011 != 0 {
             return Err(commonware_codec::Error::Invalid(
                 "order_block",
                 "beacon_flags: a reserved bit is set",
             ));
         }
-        let parent_seed = if flags & 2 != 0 {
-            Some(Seed::read_cfg(buf, &())?)
-        } else {
-            None
-        };
         let equivocation = if flags & 4 != 0 {
             let len = u32::read_cfg(buf, &())? as usize;
             if len > MAX_EQUIVOCATION_SIZE {
@@ -443,7 +414,6 @@ impl Read for OrderBlock {
             extra_data,
             result,
             txs,
-            parent_seed,
             equivocation,
         };
         // Combined-size gate (bug 1): each variable-length field is bounded
@@ -511,35 +481,8 @@ mod tests {
             extra_data: Bytes::from(vec![1u8, 2, 3]),
             result: B256::repeat_byte(0x33),
             txs: Vec::new(),
-            parent_seed: None,
             equivocation: None,
         }
-    }
-
-    /// A real recovered threshold seed for `round` — the codec must carry a
-    /// genuinely valid `Seed` (a `BlsSignature` decode enforces a valid curve
-    /// point, so arbitrary bytes cannot stand in for one).
-    fn real_seed(round: commonware_consensus::types::Round) -> Seed {
-        use commonware_cryptography::bls12381::{dkg::deal_anonymous, primitives::variant::MinSig};
-        use commonware_utils::{test_rng, N3f1, NZU32};
-        use fluentbase_bls::beacon::{recover_seed, seed_namespace, sign_seed_partial};
-        let mut rng = test_rng();
-        let (sharing, shares) =
-            deal_anonymous::<MinSig, N3f1>(&mut rng, Default::default(), NZU32!(5));
-        let ns = seed_namespace(b"fluent-test");
-        let partials: Vec<_> = shares
-            .iter()
-            .map(|s| sign_seed_partial(s, &ns, round))
-            .collect();
-        Seed {
-            target_round: round,
-            signature: recover_seed::<N3f1>(&sharing, &partials).expect("recover seed"),
-        }
-    }
-
-    fn sample_seed() -> Seed {
-        use commonware_consensus::types::{Epoch, Round, View};
-        real_seed(Round::new(Epoch::new(3), View::new(41)))
     }
 
     #[test]
@@ -552,22 +495,8 @@ mod tests {
     }
 
     #[test]
-    fn codec_round_trip_with_parent_seed() {
+    fn codec_round_trip_with_the_equivocation_trailer() {
         let mut original = sample_order_block();
-        original.parent_seed = Some(sample_seed());
-        let encoded = original.encode();
-        assert_eq!(original.encode_size(), encoded.len());
-        let decoded = OrderBlock::read(&mut encoded.as_ref()).expect("decode");
-        assert_eq!(original, decoded);
-    }
-
-    #[test]
-    fn codec_round_trip_with_every_optional_trailer() {
-        // bit1 + bit2 — the decoder must consume parent_seed then equivocation
-        // off the one flags byte, in the struct's field order rather than the
-        // flag-bit order.
-        let mut original = sample_order_block();
-        original.parent_seed = Some(sample_seed());
         original.equivocation = Some(Bytes::from(vec![0x5Au8; 291]));
         let encoded = original.encode();
         assert_eq!(original.encode_size(), encoded.len());
@@ -638,25 +567,29 @@ mod tests {
     }
 
     /// The wire-shrink's byte-identity claim, pinned against a golden capture
-    /// taken from the pre-shrink codec: bits 0 and 3 lost their bodies WITHOUT
-    /// renumbering, so a block carrying `parent_seed` + `equivocation` encodes to
-    /// the exact same bytes — flags `0b0000_0110`, seed body first, charge second
-    /// — as it did while `beacon_outcome`/`dkg_logs` still existed. Renumbering
-    /// bit1→bit0 and bit2→bit1 would flip the flags byte to `0b0000_0011` and
-    /// silently move the digest of every block that carries either field.
+    /// taken from the pre-shrink codec: bits 0, 1 and 3 lost their bodies WITHOUT
+    /// renumbering, so a block carrying `equivocation` encodes to the exact same
+    /// bytes — flags `0b0000_0100`, charge trailing — as it did while
+    /// `beacon_outcome` / `parent_seed` / `dkg_logs` still existed. Renumbering
+    /// bit2→bit0 would flip the flags byte to `0b0000_0001` and silently move the
+    /// digest of every block that carries a charge.
+    ///
+    /// The constant is NOT a capture of the current encoder. It is the same
+    /// pre-shrink capture the previous revision pinned, edited by hand in exactly
+    /// two places — flags `06` → `04`, and the 50-byte seed body deleted — so it
+    /// still testifies against an independently-produced encoding rather than
+    /// against the code under test.
     #[test]
-    fn the_shrink_leaves_bits_1_and_2_byte_identical() {
+    fn the_shrink_leaves_bit_2_byte_identical() {
         const PRE_SHRINK_GOLDEN: &str = "\
 1111111111111111111111111111111111111111111111111111111111111111\
 000000000000002a0000000000000007000000006553f100\
 22222222222222222222222222222222222222220000000002faf080\
 3333333333333333333333333333333333333333333333333333333333333333\
-00000003010203c006\
-0329a93e3650784460b9fbb7ecee979071be6e66b2323d1ab3f3db62f0d6cf09edecd42caf78223d2c7b675b3fee79c2cd25\
+00000003010203c004\
 000000085a5a5a5a5a5a5a5a";
 
         let mut block = sample_order_block();
-        block.parent_seed = Some(sample_seed());
         block.equivocation = Some(Bytes::from(vec![0x5Au8; 8]));
         let encoded = block.encode();
         assert_eq!(
@@ -666,17 +599,19 @@ mod tests {
         );
 
         // Spelt out separately from the golden so a future reader sees WHICH
-        // byte carries the claim: 0b0000_0110, not the renumbered 0b0000_0011.
-        let flags_at = encoded.len() - sample_seed().encode_size() - u32::SIZE - 8 - 1;
-        assert_eq!(encoded[flags_at], 0b0000_0110);
+        // byte carries the claim: 0b0000_0100, not the renumbered 0b0000_0001.
+        let flags_at = encoded.len() - u32::SIZE - 8 - 1;
+        assert_eq!(encoded[flags_at], 0b0000_0100);
     }
 
     #[test]
     fn read_rejects_a_set_reserved_flag_bit() {
-        // Bits 0 and 3 are retired, not renumbered. Ignoring a set one would give
-        // a block two spellings under two digests (the flags byte is inside
-        // `digest()`), so decode must refuse it.
-        for bit in [0b0000_0001u8, 0b0000_1000] {
+        // Bits 0, 1 and 3 are retired, not renumbered. Ignoring a set one would
+        // give a block two spellings under two digests (the flags byte is inside
+        // `digest()`), so decode must refuse it. Bit1 is the newest arrival
+        // (`parent_seed`): the frames the seed-trailer tests used to hand-encode
+        // are now exactly this rejection, not a decode.
+        for bit in [0b0000_0001u8, 0b0000_0010, 0b0000_1000] {
             let mut buf = Vec::new();
             let b = sample_order_block();
             write_header_prefix(&mut buf, &b);
@@ -735,10 +670,6 @@ mod tests {
                 ..base.clone()
             },
             OrderBlock {
-                parent_seed: Some(sample_seed()),
-                ..base.clone()
-            },
-            OrderBlock {
                 equivocation: Some(Bytes::from(vec![0x5Au8; 291])),
                 ..base.clone()
             },
@@ -791,58 +722,29 @@ mod tests {
         assert!(matches!(err, commonware_codec::Error::Invalid(_, _)));
     }
 
-    /// Hand-encode everything up to and including the beacon_flags byte, with
-    /// ONLY bit1 (parent_seed present) set — the seed bytes themselves are the
-    /// test's variable.
-    fn write_bit1_frame_prefix(buf: &mut Vec<u8>, b: &OrderBlock) {
-        write_header_prefix(buf, b);
-        (b.extra_data.len() as u32).write(buf);
-        buf.extend_from_slice(&b.extra_data);
-        {
-            use alloy_rlp::Encodable as _;
-            b.txs.encode(buf);
-        }
-        2u8.write(buf); // beacon_flags: parent_seed present, no outcome
-    }
-
     #[test]
-    fn read_bit1_set_but_truncated_seed_is_end_of_buffer() {
-        // The seed flag promises a trailing Seed; a frame that ends before the
-        // seed completes must fail as a short buffer, not decode a garbage seed.
+    fn read_consumes_exactly_the_charge_bytes_of_a_bit2_frame() {
+        // Hand-encoded (NOT via `Write`) so this pins the wire layout itself: a
+        // bit2 frame's trailer is a `u32` length and exactly that many bytes —
+        // no padding — and the decoder must stop precisely at its end. Inherited
+        // from the bit1 frame this replaces: with the seed gone, the charge is
+        // the only trailer whose exact consumption can still be pinned.
         let b = sample_order_block();
-        let seed_bytes = sample_seed().encode();
-        for keep in [0, 1, seed_bytes.len() - 1] {
-            let mut buf = Vec::new();
-            write_bit1_frame_prefix(&mut buf, &b);
-            buf.extend_from_slice(&seed_bytes[..keep]);
-            let err = OrderBlock::read(&mut buf.as_slice()).expect_err("truncated seed");
-            assert!(
-                matches!(err, commonware_codec::Error::EndOfBuffer),
-                "expected EndOfBuffer with {keep} seed bytes, got {err:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn read_consumes_exactly_the_seed_bytes_of_a_bit1_frame() {
-        // Hand-encoded (NOT via `Write`) so this pins the wire layout itself:
-        // a bit1 frame's trailer is exactly the Seed encoding — no length
-        // prefix, no padding — and the decoder must stop precisely at its end.
-        let b = sample_order_block();
-        let seed = sample_seed();
+        let charge = vec![0x5Au8; 291];
         let mut buf = Vec::new();
-        write_bit1_frame_prefix(&mut buf, &b);
-        let before_seed = buf.len();
-        seed.write(&mut buf);
-        assert_eq!(buf.len() - before_seed, seed.encode_size());
+        write_bit2_frame_prefix(&mut buf, &b);
+        let before_charge = buf.len();
+        (charge.len() as u32).write(&mut buf);
+        buf.extend_from_slice(&charge);
+        assert_eq!(buf.len() - before_charge, u32::SIZE + charge.len());
 
         let mut slice = buf.as_slice();
-        let decoded = OrderBlock::read(&mut slice).expect("decode bit1 frame");
+        let decoded = OrderBlock::read(&mut slice).expect("decode bit2 frame");
         assert!(
             slice.is_empty(),
-            "decoder must consume the exact seed bytes"
+            "decoder must consume the exact charge bytes"
         );
-        assert_eq!(decoded.parent_seed, Some(seed));
+        assert_eq!(decoded.equivocation, Some(Bytes::from(charge)));
     }
 
     /// The composed-size gate (bug 1), and that it counts the equivocation field.

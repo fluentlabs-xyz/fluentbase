@@ -68,14 +68,14 @@ impl Reporter for Mailbox {
         //     (commonware `voter/actor.rs:529-531`; reporter backpressure is
         //     consensus-critical by design). So anything done synchronously here
         //     happens-before the next view exists.
-        //  2. The next view's leader proposes a child of the block just notarized
-        //     and embeds the parent-seed witness, reading exactly the round this
-        //     line records: `Round(Ep, parent.proposal_view)`
-        //     (`application.rs:562`).
-        //  3. A miss there is not an invalid block — it SKIPS THE VIEW
-        //     (`dpos_parent_seed_lookup_miss_total`). Deferring this record would
-        //     lose that race against the very next propose, turning a
-        //     rare-and-counted event into a per-block one.
+        //  2. The block just notarized is finalized moments later, and the
+        //     executor derives it from σ at ITS OWN round — exactly the round this
+        //     line records, `Round(epoch(h), block.proposal_view)`.
+        //  3. A miss there is not a wrong derive — the height is HELD
+        //     (`awaiting_seed`) until `record_seed` fires the seed edge. Deferring
+        //     this record would lose that race against the very next finalization,
+        //     turning a rare hold into a per-block one and putting the whole
+        //     execution pipeline one wake behind consensus.
         //
         // WHAT IT DOES NOT PROTECT, checked rather than assumed: the old comment
         // also demanded this run BEFORE the executor send below. That half is not

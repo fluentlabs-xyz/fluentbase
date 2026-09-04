@@ -1069,7 +1069,6 @@ mod tests {
             extra_data: Bytes::new(),
             result: B256::ZERO,
             txs: Vec::new(),
-            parent_seed: None,
             equivocation: None,
         }
     }
@@ -2335,13 +2334,11 @@ mod tests {
         crate::beacon::surface::PlaneRandomness::build(PlaneRandomnessConfig {
             seeds: crate::beacon::certify::SeedStore::new(),
             keys,
-            verify: None,
             resolver: Arc::new(|_| crate::beacon::BeaconResolve::Absent),
             ceremony: Arc::new(std::sync::RwLock::new(std::collections::BTreeMap::new())),
             dkg_qual: Arc::new(|_| Some(false)),
             held,
             pull: None,
-            pull_seed: None,
             participation: Arc::new(tokio::sync::Notify::new()),
             metrics: crate::beacon::metrics::BeaconMetrics::default(),
             chain_id: CHAIN_ID,
@@ -3000,14 +2997,16 @@ impl Drop for InflightGuard<'_> {
 /// a bool before returning. So the capture point asks the oracle itself, which
 /// is the same gate the by-round transport needs regardless.
 ///
-/// A pure FOLLOWER runs this too and files nothing (`FollowerRandomness`'s
-/// record and quarantine are no-ops), so it spends one pairing per finalized
-/// certificate on a value it discards. Left as it is on purpose: the cheap
-/// alternative is a `stores_seeds()` predicate on the surface, which buys one
-/// pairing per second on one node class at the price of a second way to ask
-/// what a `Randomness` is — and `oracle_for` returning `None` is NOT available
-/// as the guard, since a follower's oracle is what tells `verify_certificate`
-/// the epoch is beacon-active at all.
+/// A pure FOLLOWER runs this too and KEEPS what it files: `FollowerRandomness`
+/// holds its own seed store, and the σ landing here is the only route by which a
+/// follower's executor can derive a beacon-active block's `prev_randao` — it
+/// forms no round and has no by-round transport to ask on.
+///
+/// Only ONE of the two doors prunes what it files: `observe_cert`, which carries
+/// the retention window, has its single production call site in `CertInlet::ingest`
+/// and none in `UpstreamResolver::spawn_finalized`. So a σ repaired through the
+/// gap door stays unpruned until the live stream next delivers a certificate —
+/// about a second later on a following node. A delay, not a leak.
 pub(crate) fn capture_certificate_seed(
     randomness: &dyn Randomness,
     round: Round,

@@ -1,11 +1,20 @@
 """turnover.py — the ZERO-OVERLAP committee boundary (FLU-1203), deterministic.
 
 The property under test is a halt that nothing in the tree enforces or detects.
-At an epoch boundary the first block of E+1 must carry σ of epoch E, and until
-FLU-1203 the only source of that σ was this node's own engine during E. A
-committee with ZERO overlap with its predecessor therefore had nothing to
-witness with: every leader of the new committee skipped its view and the chain
-stopped.
+Entering epoch E+1 a member needs σ of epoch E — as the leader-election base for
+the seedless arm — and until FLU-1203 the only source of that σ was this node's
+own engine during E. A committee with ZERO overlap with its predecessor
+therefore had nothing to start from: every leader of the new committee skipped
+its view and the chain stopped.
+
+WHERE THAT σ COMES FROM NOW (revised for FLU-1204, `parent_seed` left the block
+body). It is no longer read off the previous epoch's terminal BLOCK. The member
+names the round from agreed data — `Round(E, terminal_block.proposal_view)` —
+and asks its own seed store, which every verified certificate fills
+(`capture_certificate_seed`, on both cert doors) and which pins one σ per epoch
+against retention eviction. So the transport this case exercises is the
+CERTIFICATE, not a block field, and the failure it must still catch is the same
+one: an incoming member that cannot obtain σ of the outgoing epoch.
 
 WHY THIS CASE CANNOT RUN ON THE PRODUCTION-PATH STACK. `MIN_COMMITTEE_LENGTH`
 is 4, mirrored in the contract, in the node's staking reader, and independently
@@ -40,13 +49,58 @@ from ..core import topology
 from ..core.exit_codes import RC_FAIL, RC_PASS, RC_USAGE
 from ..core.policy import gov_live_voter_idx
 
-#: The propose-side witness miss. It is incremented once per skipped view at a
-#: boundary, so on a healthy zero-overlap boundary it must not move at all.
+#: The two counters that say whether the INCOMING committee obtained σ of the
+#: outgoing epoch. They replace `dpos_parent_seed_boundary_skip_total`, which
+#: counted the propose-side witness miss and no longer exists: FLU-1204 deleted
+#: the witness, the field it rode in and the propose gate that skipped a view
+#: when the store could not answer. The old constant was left reading a family
+#: nothing emits, which sums to zero on every node and passes the conclusion
+#: assert unconditionally — a green run measuring nothing.
 #:
-#: A metrics-rs counter, so it renders on RETH's :9200 exporter, NOT on the
-#: commonware registry at :9100 — `nodes.beacon_metric` reads :9100 only and
-#: would answer -1 forever. Read from the EL exporter directly, see `skip_count`.
-BOUNDARY_SKIP_METRIC = "dpos_parent_seed_boundary_skip_total"
+#: They are NOT interchangeable and they fail differently:
+#:
+#:   epoch_engine_spawn_deferred_total — the member could not get one of the two
+#:     `Inline::genesis(E)` inputs (σ at E-1's terminal round, or the E-1
+#:     boundary BLOCK), so its per-epoch engine did not spawn and it sits
+#:     verify-only: no proposals, no votes. This is the direct heir of the
+#:     boundary skip — same cause ("I could not obtain the predecessor's σ"),
+#:     same self-healing-on-retry character. It is asserted FLAT for the same
+#:     reason the skip was: at a four-seat committee, one deferring member still
+#:     leaves a quorum of three, so the chain crosses the boundary anyway and the
+#:     liveness assert alone would call a partly-broken transport green.
+#:   dpos_fallback_seed_constant_total — the member elected on
+#:     `sha256(epoch ‖ sorted peers)`, the PREDICTABLE base, instead of
+#:     inheriting σ. A σ MISS cannot reach this branch by construction (a miss
+#:     defers the spawn; it never answers "no σ here"), so a rise across this
+#:     boundary means the epoch predicate called E-1 beacon-INACTIVE. That is the
+#:     silent downgrade, and a zero-overlap boundary is where it would first show.
+#:
+#: BOTH LIVE ON THE COMMONWARE REGISTRY (:9100), not on reth's metrics-rs
+#: exporter at :9200, and both are registered EAGERLY at startup on both node
+#: classes (`EpochEngineMetrics::register`). That INVERTS the absence rule the old
+#: metrics-rs family needed: an absent family is not a healthy never-incremented
+#: zero here, it is a dead scrape or a renamed family, and it is scored UNREAD.
+SPAWN_DEFER_METRIC = "epoch_engine_spawn_deferred_total"
+CONSTANT_BASE_METRIC = "dpos_fallback_seed_constant_total"
+BOUNDARY_METRICS = (SPAWN_DEFER_METRIC, CONSTANT_BASE_METRIC)
+
+#: What a rise in each means, in the failure message. Written per family because
+#: "a counter moved" is not a verdict a reader can act on: the two send an
+#: operator to different halves of the system.
+_MOVED_MEANS = {
+    SPAWN_DEFER_METRIC: (
+        "an incoming member could not obtain σ of the outgoing epoch (or its "
+        "terminal block) and sat verify-only. The boundary was carried by the "
+        "REMAINING quorum or by a retry, not by the transport — grep the node "
+        "for 'signer spawn deferred', whose two INFO lines say which input was "
+        "missing"),
+    CONSTANT_BASE_METRIC: (
+        "an incoming member elected leaders off the CONSTANT base "
+        "(sha256(epoch ‖ sorted peers)) instead of inheriting σ. A σ miss cannot "
+        "reach that branch — it defers the spawn — so this says the epoch "
+        "predicate called the outgoing epoch beacon-INACTIVE, i.e. the schedule "
+        "for this epoch is predictable an epoch ahead"),
+}
 
 
 
@@ -81,12 +135,18 @@ def evaluate_turnover_premise(before: str, after: str, wanted_in: set, wanted_ou
 
 
 def evaluate_turnover_case(premise, fin_before: int, fin_after: int, min_advance: int,
-                           skips_before: dict, skips_after: dict):
+                           counters_before: dict, counters_after: dict):
     """Score the premise FIRST, then the conclusion.
 
-    `skips_*` are per-node readings of [`BOUNDARY_SKIP_METRIC`]; -1 means the
-    node was unreadable and is carried as UNREAD rather than as zero — a metric
-    nobody could read is not evidence that nothing happened.
+    `counters_*` are `{service: {family: value}}` over [`BOUNDARY_METRICS`]; -1 means the
+    node was unreadable OR did not render the family, and is carried as UNREAD rather
+    than as zero. Both families are registered eagerly, so "not rendered" is a broken
+    scrape, not a healthy never-incremented counter — and a metric nobody could read is
+    not evidence that nothing happened.
+
+    Every family is scored, and each has its OWN failure line: a defer and a
+    constant-base election are different defects with different repairs, and folding
+    them into "a counter moved" would hand the operator a number and no direction.
     """
     ok, why = premise
     if not ok:
@@ -95,17 +155,26 @@ def evaluate_turnover_case(premise, fin_before: int, fin_after: int, min_advance
         return False, (f"the chain did not advance across the zero-overlap boundary: "
                        f"finalized {fin_before}→{fin_after} (need >= {min_advance}) — this is "
                        "the halt the ticket exists to remove")
-    moved = {svc: after - skips_before.get(svc, 0)
-             for svc, after in skips_after.items()
-             if after >= 0 and skips_before.get(svc, -1) >= 0 and after > skips_before.get(svc, 0)}
-    if moved:
-        return False, (f"{BOUNDARY_SKIP_METRIC} moved on {sorted(moved)} — a leader still could "
-                       "not witness its parent, so the boundary was carried by luck or by a "
-                       "retry, not by the transport")
-    read = [svc for svc, v in skips_after.items() if v >= 0]
+    for fam in BOUNDARY_METRICS:
+        moved = {}
+        for svc, after in counters_after.items():
+            av = after.get(fam, -1)
+            bv = counters_before.get(svc, {}).get(fam, -1)
+            if av >= 0 and bv >= 0 and av > bv:
+                moved[svc] = av - bv
+        if moved:
+            return False, (f"{fam} rose on {sorted(moved)} (by "
+                           f"{sorted(moved.values())}) across the zero-overlap boundary — "
+                           f"{_MOVED_MEANS[fam]}")
+    read = [svc for svc, vals in counters_after.items()
+            if all(vals.get(fam, -1) >= 0 for fam in BOUNDARY_METRICS)]
     if not read:
-        return False, f"{BOUNDARY_SKIP_METRIC} unreadable on every node — nothing was verified"
-    return True, (f"{why}; finalized {fin_before}→{fin_after} and no boundary skip on "
+        return False, (f"{' and '.join(BOUNDARY_METRICS)} unreadable on every node — nothing "
+                       "was verified. Both are registered at startup on every node class, so "
+                       "an absent family is a dead :9100 scrape or a renamed metric, never a "
+                       "healthy zero")
+    return True, (f"{why}; finalized {fin_before}→{fin_after}, and neither "
+                  f"{SPAWN_DEFER_METRIC} nor {CONSTANT_BASE_METRIC} moved on "
                   f"{len(read)} node(s)")
 
 
@@ -233,37 +302,41 @@ def run_case(argv=None) -> int:
         teardown()
         return RC_FAIL
 
-    def skip_count(svc: str) -> int:
-        """-1 only when the node could not be SCRAPED.
+    def boundary_counters(svc: str) -> dict:
+        """Both [`BOUNDARY_METRICS`] off ONE read of <svc>'s :9100 scrape. -1 per family
+        when the node could not be scraped OR did not render that family.
 
-        An absent family is 0, not unread: this is a metrics-rs counter and
-        metrics-rs registers lazily, so a node that never skipped a view never
-        renders the line at all — which is the healthy case, and the one the
-        conclusion assert is about. Distinguishing the two needs the raw text
-        (empty ⇒ nothing answered), exactly as `nodes.refill_spare_attempts`
-        does for its own lazily-registered family.
+        ABSENT IS UNREAD HERE, and that inverts what this function used to do. The old
+        family was a metrics-rs counter on reth's :9200, registered LAZILY — a node that
+        never skipped a view never rendered the line, so absence was the healthy case and
+        was scored 0. These two are commonware `ctx.register` counters, registered at
+        startup whatever happens afterwards, so a healthy scrape ALWAYS renders them at 0.
+        Absence therefore means the endpoint answered something that is not this node's
+        metrics, or the family was renamed under us — and scoring that as a zero is the
+        precise failure this whole rewrite exists to remove.
+
+        ONE read, both families: two reads would let a counter move between them and be
+        attributed to the wrong window. `beacon_metric_value` is the substring/$NF parse
+        that already handles prometheus-client's doubled `_total` suffix
+        (`epoch_engine_spawn_deferred_total_total`), which is why the constants stay the
+        REGISTERED spelling.
         """
-        # THE EL EXPORTER, read on its own rather than out of the concatenated
-        # text. This family is a metrics-rs counter and lives on reth's :9200; a
-        # merged scrape that only :9100 answered would look "present and zero"
-        # for a node whose :9200 is down, and sniffing the merged text for a
-        # marker would be a guess about what the other registry renders. Reading
-        # the one exporter that owns the family answers the question directly.
+        # THE CONSENSUS EXPORTER, read on its own rather than out of the concatenated
+        # text: a merged scrape that only :9200 answered would look "present and zero" for
+        # a node whose :9100 is down. Reading the one exporter that owns both families
+        # answers the question directly.
         host = topology.host_metrics_urls(svc)
-        text = (nodes.metrics_get_url(host[1]) if host is not None
-                else nodes.metrics_get_exec(topology.IN_CONTAINER_EL_METRICS_URL,
+        text = (nodes.metrics_get_url(host[0]) if host is not None
+                else nodes.metrics_get_exec(topology.IN_CONTAINER_CONSENSUS_METRICS_URL,
                                             nodes.compose_exec(svc)))
         if not text.strip():
-            return -1
-        # Absent ⇒ 0, not unread: metrics-rs registers lazily, so a node that
-        # never skipped a view never renders the line at all — which is the
-        # healthy case and the one this assert is about.
-        value = nodes.beacon_metric_value(text, BOUNDARY_SKIP_METRIC)
-        return 0 if value < 0 else value
+            return {fam: -1 for fam in BOUNDARY_METRICS}
+        return {fam: nodes.beacon_metric_value(text, fam) for fam in BOUNDARY_METRICS}
 
-    def skips(validators):
-        return {svc: measured(f"node_metrics({svc})/{BOUNDARY_SKIP_METRIC}",
-                              lambda s=svc: skip_count(s), 0)
+    def counters(validators):
+        return {svc: measured(f"node_metrics({svc})/{'+'.join(BOUNDARY_METRICS)}",
+                              lambda s=svc: boundary_counters(s),
+                              {fam: 0 for fam in BOUNDARY_METRICS})
                 for svc in validators}
 
     try:
@@ -353,7 +426,7 @@ def run_case(argv=None) -> int:
         if not validators:
             return fail("`docker compose ps` returned no validators — refusing to score a "
                         "boundary over an empty node set")
-        skips_before = skips(validators)
+        counters_before = counters(validators)
 
         deadline = time.time() + interval * (TURNOVER_LOOKAHEAD + 4) + 240
         now = measured("current_epoch()", chain.current_epoch, target)
@@ -370,14 +443,16 @@ def run_case(argv=None) -> int:
         premise = evaluate_turnover_premise(before, after, addr_in, addr_out)
 
         fin_after = measured("finalized_dec()", nodes.finalized_dec, fin0 + interval * 2)
-        skips_after = skips(validators)
+        counters_after = counters(validators)
 
         if dry:
             teardown()
             print(f"# {len(runner.log)} commands")
             return RC_PASS
+        print(f"CASE-TURNOVER: {'+'.join(BOUNDARY_METRICS)} before={counters_before} "
+              f"after={counters_after}", flush=True)
         ok, reason = evaluate_turnover_case(premise, fin0, fin_after, interval,
-                                            skips_before, skips_after)
+                                            counters_before, counters_after)
         if not ok:
             return fail(reason)
         print(f"CASE-TURNOVER PASS: {reason}", flush=True)

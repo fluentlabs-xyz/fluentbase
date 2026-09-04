@@ -1,8 +1,8 @@
 //! The shared `round -> recovered seed` map.
 //!
 //! [`SeedStore`] is written by the notarization [`Reporter`](commonware_consensus::Reporter)
-//! ([`crate::spec_exec::Mailbox`]) and read synchronously by `build_proposal`'s
-//! parent-seed witness and by the executor's finalized derive.
+//! ([`crate::spec_exec::Mailbox`]) and read synchronously by the executor's
+//! finalized derive and by the epoch manager's boundary base.
 //!
 //! ## Why there is no beacon gate at `certify` any more
 //!
@@ -35,14 +35,14 @@ use tracing::{error, warn};
 /// within a tiny trailing window of its notarization. Generous slack: a seed is
 /// 48 B, so a few thousand entries is negligible memory, but a round that
 /// notarizes while this node lags a long single block at a boundary may stay
-/// wanted for many notarizations — evicting it would cost the witness that block
-/// needs. Size the window well past any realistic in-flight backlog.
+/// wanted for many notarizations — evicting it would cost the derive of that
+/// block. Size the window well past any realistic in-flight backlog.
 pub(crate) const SEED_RETENTION: usize = 4096;
 
 /// Shared, bounded `round → recovered seed` map. Written by the notarization
 /// [`Reporter`](commonware_consensus::Reporter) ([`crate::spec_exec::Mailbox`])
-/// via [`SeedStore::record`], read by `build_proposal`'s witness embed and the
-/// executor's finalized derive. A newtype rather
+/// via [`SeedStore::record`], read by the executor's finalized derive and by the
+/// epoch manager's boundary base. A newtype rather
 /// than a bare alias so the [`SEED_RETENTION`] eviction is the ONLY insertion path:
 /// holders cannot lock the inner map and grow it unbounded.
 ///
@@ -63,6 +63,10 @@ pub(crate) const SEED_RETENTION: usize = 4096;
 /// lives in the separate [`quarantine`](SeedStore::quarantine) map, which
 /// [`lookup`](SeedStore::lookup) never reads — a flag on a shared map would let
 /// an unchecked value overwrite a checked one, since insertion is last-wins.
+///
+/// A THIRD map holds one round per epoch exempt from [`SEED_RETENTION`] — see
+/// [`terminal_at`](SeedStore::terminal_at). So "the eviction is the only
+/// insertion path" describes the served map alone.
 #[derive(Clone)]
 pub struct SeedStore {
     seeds: Arc<Mutex<BTreeMap<Round, BlsSignature>>>,
@@ -90,6 +94,21 @@ pub struct SeedStore {
     /// record and swallow the executor's wake. A oneshot per waiter ends only on
     /// the round it asked about.
     waiters: Arc<Mutex<HashMap<Round, Vec<oneshot::Sender<()>>>>>,
+    /// The highest round seen per epoch, EXEMPT from [`SEED_RETENTION`].
+    ///
+    /// [`SEED_RETENTION`] is a global round COUNT, not a per-epoch window, so a
+    /// few thousand rounds into epoch E every node has evicted the terminal round
+    /// of E-1 — and that is the one round a Signer starting mid-epoch still needs,
+    /// to choose its leader-election base. Evicted everywhere at once, it would be
+    /// unobtainable network-wide until the next boundary, so the epoch's spawn
+    /// would defer for up to a full epoch.
+    ///
+    /// One entry per epoch, bounded by the same trailing epoch window the key
+    /// store uses. Same shape as [`BeaconKeys::retain_from`] keeping `Agreed`
+    /// entries at any age while the derived tiers take the window.
+    ///
+    /// [`BeaconKeys::retain_from`]: crate::beacon::keys::BeaconKeys::retain_from
+    terminal: Arc<Mutex<BTreeMap<u64, (Round, BlsSignature)>>>,
 }
 
 impl SeedStore {
@@ -101,6 +120,7 @@ impl SeedStore {
             persist: None,
             quarantined: Arc::new(Mutex::new(BTreeMap::new())),
             waiters: Arc::new(Mutex::new(HashMap::new())),
+            terminal: Arc::new(Mutex::new(BTreeMap::new())),
         }
     }
 
@@ -114,13 +134,21 @@ impl SeedStore {
     /// [`VerifiedSeed::from_journal`] for the other two feeders of the same
     /// partition, which the same argument has to name.
     ///
+    ///
     /// `rehydrated` entries bypass the durable send — they came OUT of the
     /// journal and must not be written back — but they go through the same
     /// insert as [`record`](Self::record), so the served map still holds nothing
     /// but witnessed values. Truncating here keeps [`SEED_RETENTION`] the bound
     /// on this route too.
+    /// `terminals` is the per-epoch pin read straight off the journal. It is a
+    /// SEPARATE argument because `rehydrated` cannot carry it: `replay_window`
+    /// walks newest-first and stops at `retention` RECORDS, so once the current
+    /// epoch is past [`SEED_RETENTION`] rounds the previous epoch's terminal is
+    /// not in that set — and the pin would be empty for the one epoch a
+    /// restarting node needs it for.
     pub fn with_persistence(
         rehydrated: Vec<(Round, BlsSignature)>,
+        terminals: Vec<(Round, BlsSignature)>,
     ) -> (Self, mpsc::UnboundedReceiver<(Round, BlsSignature)>) {
         let (tx, rx) = mpsc::unbounded_channel();
         let store = Self {
@@ -129,9 +157,15 @@ impl SeedStore {
             persist: Some(tx),
             quarantined: Arc::new(Mutex::new(BTreeMap::new())),
             waiters: Arc::new(Mutex::new(HashMap::new())),
+            terminal: Arc::new(Mutex::new(BTreeMap::new())),
         };
         for (round, seed) in rehydrated {
             store.insert(VerifiedSeed::from_journal(round, seed), false);
+        }
+        // AFTER the window, so a terminal that is also inside the window is
+        // written by the same rule either way (highest round per epoch wins).
+        for (round, seed) in terminals {
+            store.pin_terminal(round, seed);
         }
         (store, rx)
     }
@@ -156,6 +190,7 @@ impl SeedStore {
     /// served map hold a value the assembler and the witness disagree about.
     fn insert(&self, verified: VerifiedSeed, persist: bool) {
         let (round, seed) = (verified.round(), verified.seed());
+        self.pin_terminal(round, seed);
         let Ok(mut map) = self.seeds.lock() else {
             // A poisoned lock means a prior panic while holding it — the seed gate
             // can no longer function; log once rather than propagate a panic into
@@ -206,9 +241,8 @@ impl SeedStore {
         }
     }
 
-    /// The recovered seed for `round`, if present. `pub`: read by the certify
-    /// gate here and by the parent-seed witness consumers (the propose-side
-    /// embed and the executor's speculative re-canonicalisation).
+    /// The recovered seed for `round`, if present. `pub`: read by the executor's
+    /// finalized derive and its speculative re-canonicalisation.
     pub fn lookup(&self, round: Round) -> Option<BlsSignature> {
         self.seeds.lock().ok()?.get(&round).copied()
     }
@@ -276,7 +310,10 @@ impl SeedStore {
                 Err(SeedCheck::Invalid) => {
                     settled.push(round);
                     refused += 1;
-                    error!(?round, "quarantined seed does not verify under its epoch key");
+                    error!(
+                        ?round,
+                        "quarantined seed does not verify under its epoch key"
+                    );
                 }
                 Err(_) => {}
             }
@@ -309,6 +346,60 @@ impl SeedStore {
             return;
         };
         held.retain(|round, _| round.epoch().get() >= oldest);
+    }
+
+    /// Exempt the highest round seen for `round`'s epoch from [`SEED_RETENTION`].
+    ///
+    /// "Highest SEEN", and deliberately not "terminal": the two are usually the
+    /// same and cannot be shown to be. A hard kill between `record` and the
+    /// writer's sync loses the tail, so a restarted node's pin can sit one round
+    /// below the epoch's real last round — a valid σ for the wrong round, which
+    /// is indistinguishable from the right one if anybody trusts this map to
+    /// NAME the terminal round.
+    ///
+    /// Nobody may. The canonical round is `Round(E, terminal_block.proposal_view)`
+    /// — agreed data, carried by the block — and the ONLY reader here is
+    /// [`terminal_at`](Self::terminal_at), which answers a round the CALLER
+    /// named. This map decides what survives eviction, never which round is
+    /// wanted. A future consumer that needs "the terminal round of E" must take
+    /// it from the block, and then ask here for exactly that round.
+    fn pin_terminal(&self, round: Round, seed: BlsSignature) {
+        let Ok(mut pinned) = self.terminal.lock() else {
+            warn!("beacon terminal-seed pin poisoned; an aged-out round may miss");
+            return;
+        };
+        let epoch = round.epoch().get();
+        match pinned.get(&epoch) {
+            Some((held, _)) if *held >= round => {}
+            _ => {
+                pinned.insert(epoch, (round, seed));
+            }
+        }
+    }
+
+    /// The pin for `round`'s epoch, but ONLY when `round` IS the pinned one.
+    ///
+    /// The reader is local and singular: the epoch manager's `boundary_base`,
+    /// through `Randomness::terminal_seed_at`, asking for the E-1 terminal round
+    /// it took off the agreed terminal block — answered iff this node kept
+    /// exactly that round. Answering a neighbouring round from here would hand
+    /// that reader a σ for a round nobody named, and the next epoch's leader
+    /// schedule would split, which is the failure `boundary_base`'s own doc
+    /// rules out. Nothing serves this over the wire: σ-by-round left the
+    /// protocol with `TAG_SEED_RETIRED`.
+    pub fn terminal_at(&self, round: Round) -> Option<BlsSignature> {
+        let pinned = self.terminal.lock().ok()?;
+        match pinned.get(&round.epoch().get()) {
+            Some(&(held, seed)) if held == round => Some(seed),
+            _ => None,
+        }
+    }
+
+    /// Drop pins for epochs below `oldest`.
+    pub fn retain_terminal_from(&self, oldest: u64) {
+        if let Ok(mut pinned) = self.terminal.lock() {
+            pinned.retain(|epoch, _| *epoch >= oldest);
+        }
     }
 
     /// Drop waiters whose receiver is gone.
@@ -361,6 +452,8 @@ impl Default for SeedStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::beacon::verified_seed::PkOracle;
+    use crate::beacon::verified_seed::VerifiedSeed;
     use commonware_consensus::types::{Epoch as TEpoch, View};
     use commonware_cryptography::{
         bls12381::{
@@ -372,8 +465,6 @@ mod tests {
     };
     use commonware_math::algebra::Random as _;
     use commonware_utils::{ordered::Set, N3f1};
-    use crate::beacon::verified_seed::PkOracle;
-    use crate::beacon::verified_seed::VerifiedSeed;
     use fluentbase_bls::{
         beacon::{recover_seed, seed_namespace, sign_seed_partial},
         fluent_namespace, PeerPubkey,
@@ -503,7 +594,7 @@ mod tests {
 
         let ns = seed_namespace(&fluent_namespace(20994));
         let (outcome, shares) = deal_committee(1, 5);
-        let (store, mut rx) = SeedStore::with_persistence(Vec::new());
+        let (store, mut rx) = SeedStore::with_persistence(Vec::new(), Vec::new());
         let notifier = store.notifier();
         let waker = futures::task::noop_waker();
         let mut cx = Context::from_waker(&waker);
@@ -568,7 +659,10 @@ mod tests {
         let wanted = round_at(7);
         // A genuine σ of a DIFFERENT round: a decodable curve point that verifies
         // under no key for `wanted`.
-        store.quarantine(wanted, recover_seed_for(&outcome, &shares, &ns, round_at(8)));
+        store.quarantine(
+            wanted,
+            recover_seed_for(&outcome, &shares, &ns, round_at(8)),
+        );
 
         let oracle = PkOracle::new(*outcome.public().public(), ns.clone());
         assert_eq!(store.promote_epoch(1, &oracle), (0, 1));
@@ -619,7 +713,10 @@ mod tests {
     // would answer "not arrived" after a wait that never happened.
     #[test]
     fn a_round_waiter_is_woken_by_its_own_round_and_not_by_another() {
-        use std::{future::Future, task::{Context, Poll}};
+        use std::{
+            future::Future,
+            task::{Context, Poll},
+        };
         let ns = seed_namespace(&fluent_namespace(20994));
         let (outcome, shares) = deal_committee(1, 5);
         let store = SeedStore::new();
@@ -682,7 +779,67 @@ mod tests {
         let held = store.quarantined.lock().unwrap();
         assert_eq!(held.len(), SEED_RETENTION, "bounded");
         assert!(held.contains_key(&newest), "the newest round survives");
-        assert!(!held.contains_key(&stale), "the stale epoch's round is what goes");
+        assert!(
+            !held.contains_key(&stale),
+            "the stale epoch's round is what goes"
+        );
+    }
+
+    // THE PIN'S WHOLE REASON: `SEED_RETENTION` is a global round COUNT, so a few
+    // thousand rounds into epoch E every node has evicted E-1's terminal round —
+    // and that is the round a Signer starting mid-epoch asks for. Evicted from the
+    // served map, it must still be readable, and still SERVABLE.
+    #[test]
+    fn the_epochs_terminal_round_outlives_the_retention_window() {
+        let ns = seed_namespace(&fluent_namespace(20994));
+        let (outcome, shares) = deal_committee(1, 5);
+        let store = SeedStore::new();
+        let terminal = Round::new(TEpoch::new(1), View::new(9));
+        store.record(witness_for(&outcome, &shares, &ns, terminal));
+        // Enough of the NEXT epoch to evict everything of epoch 1 by count. The
+        // filler's VALUE is irrelevant — the claim is about the count bound — so
+        // it skips the per-round threshold recovery that would dominate the test.
+        let filler = recover_seed_for(&outcome, &shares, &ns, terminal);
+        for v in 0..(SEED_RETENTION as u64 + 50) {
+            let r = Round::new(TEpoch::new(2), View::new(v));
+            store.record(VerifiedSeed::from_journal(r, filler));
+        }
+        assert_eq!(store.lookup(terminal), None, "evicted from the served map");
+        assert!(
+            store.terminal_at(terminal).is_some(),
+            "but still answerable to the boundary base that asks for exactly it"
+        );
+        assert_eq!(
+            store.terminal_at(Round::new(TEpoch::new(1), View::new(8))),
+            None,
+            "the pin answers ONLY its own round, never a neighbour"
+        );
+    }
+
+    // The pin tracks the highest round SEEN, because nobody knows which round is
+    // terminal until the epoch ends — and by the time anyone asks (from the next
+    // epoch) the highest seen is the terminal one.
+    #[test]
+    fn the_pin_keeps_the_highest_round_of_its_epoch() {
+        let ns = seed_namespace(&fluent_namespace(20994));
+        let (outcome, shares) = deal_committee(1, 5);
+        let store = SeedStore::new();
+        for v in [3u64, 9, 5] {
+            let r = Round::new(TEpoch::new(4), View::new(v));
+            store.record(witness_for(&outcome, &shares, &ns, r));
+        }
+        assert!(
+            store
+                .terminal_at(Round::new(TEpoch::new(4), View::new(9)))
+                .is_some(),
+            "out-of-order arrival does not move the pin backwards"
+        );
+        assert!(
+            store
+                .terminal_at(Round::new(TEpoch::new(4), View::new(5)))
+                .is_none(),
+            "and the pin is exactly one round, not a range"
+        );
     }
 
     // Rehydrated entries came OUT of the journal; writing them back would double
@@ -696,7 +853,7 @@ mod tests {
         let r0 = round_at(0);
         let seed0 = recover_seed_for(&outcome, &shares, &ns, r0);
 
-        let (store, mut rx) = SeedStore::with_persistence(vec![(r0, seed0)]);
+        let (store, mut rx) = SeedStore::with_persistence(vec![(r0, seed0)], Vec::new());
         assert_eq!(
             store.lookup(r0),
             Some(seed0),
@@ -736,7 +893,7 @@ mod tests {
             })
             .collect();
 
-        let (store, _rx) = SeedStore::with_persistence(rehydrated);
+        let (store, _rx) = SeedStore::with_persistence(rehydrated, Vec::new());
         assert_eq!(store.seeds.lock().unwrap().len(), SEED_RETENTION);
         assert_eq!(store.lookup(round_at(0)), None, "oldest dropped");
         assert!(store.lookup(round_at(over - 1)).is_some(), "newest kept");

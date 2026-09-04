@@ -1,5 +1,6 @@
-//! The `--cert-follow` follower's randomness: no ceremony, no share, no seeds —
-//! and a real, fillable `PK_epoch` cache.
+//! The `--cert-follow` follower's randomness: no ceremony, no share, no σ it
+//! formed itself — and a real, fillable `PK_epoch` cache, plus a store for the σ
+//! its certificates carry.
 //!
 //! # What this closes
 //!
@@ -37,13 +38,14 @@ use super::{
         CommitteeSource, PULL_MIN_INTERVAL,
     },
     carry::DkgQualFor,
+    certify::SeedStore,
     keys::{pk_prefix, AgreedKeyAt, AgreedKeys, BeaconKeys, InvalidSeed, KeySource, KeySources},
     metrics::BeaconMetrics,
     oracle::KeyOnlyOracle,
     outcome::group_public_key,
     plane::ArtifactSource,
     seed::Seed,
-    surface::{PinEffort, Randomness, ShareProbe, SignerVerdict, WithheldReason, WitnessCheck},
+    surface::{PinEffort, Randomness, ShareProbe, SignerVerdict, WithheldReason},
     verified_seed::VerifiedSeed,
 };
 use commonware_consensus::types::{Epoch, Round};
@@ -55,7 +57,11 @@ use fluentbase_bls::{
 use fluentbase_staking_reader::reader::ValidatorSetSnapshot;
 use futures::future::BoxFuture;
 use rand_core::OsRng;
-use std::{collections::BTreeMap, sync::Arc, time::SystemTime};
+use std::{
+    collections::BTreeMap,
+    sync::{Arc, Weak},
+    time::SystemTime,
+};
 use tokio::sync::{mpsc, Notify};
 use tracing::{info, warn};
 
@@ -150,23 +156,35 @@ where
     );
 
     let (want_tx, want_rx) = mpsc::channel(WANT_MAILBOX);
+    // Captured before the task exists, as `BeaconKeys::subscribe` requires: a
+    // fill landing between the spawn and the task's first poll would be lost to a
+    // handle taken inside the loop, and a key arrives ONCE per epoch — unlike a
+    // want, nothing re-issues it a second later.
+    let key_edge = keys.subscribe();
+    let randomness = Arc::new(FollowerRandomness {
+        keys: keys.clone(),
+        seed_namespace: seed_namespace(&fluent_namespace(cfg.chain_id)),
+        held: held.clone(),
+        want_tx,
+        // RAM-only, like the artifact store above and for the same reason: this
+        // path opens no journal partition. What a restart loses is σ the next
+        // certificate carries anyway.
+        seeds: SeedStore::new(),
+        idle: Arc::new(Notify::new()),
+        metrics,
+    });
     let fetch_handle = {
-        let keys = keys.clone();
-        let held = held.clone();
+        // WEAK on purpose: the task holds the receiving end of `want_tx`, so an
+        // `Arc` here would keep the sender alive through its own owner and the
+        // loop could never tell shutdown from idleness.
+        let promoter = Arc::downgrade(&randomness);
         context
             .with_label("follower_artifact_fetch")
-            .spawn(move |c| run_fetcher(c, keys, held, pull, want_rx))
+            .spawn(move |c| run_fetcher(c, keys, held, pull, want_rx, key_edge, promoter))
     };
 
     FollowerBeacon {
-        randomness: Arc::new(FollowerRandomness {
-            keys,
-            seed_namespace: seed_namespace(&fluent_namespace(cfg.chain_id)),
-            held,
-            want_tx,
-            idle: Arc::new(Notify::new()),
-            metrics,
-        }),
+        randomness,
         artifact_bytes: Arc::new(move |epoch: u64| store.get(epoch).map(|a| encode_artifact(&a))),
         fetch_handle,
     }
@@ -254,15 +272,38 @@ fn fetch_and_verify(
 /// arrives on every certificate (~1/s) for as long as the epoch stays unresolved,
 /// and without the throttle that would be one upstream round-trip per second per
 /// unresolved epoch.
+///
+/// It carries the QUARANTINE PROMOTE on a second arm. What decides whether a
+/// held σ can be served is a key landing, and the key store's own edge is the
+/// trigger rather than this task's fetch result: an epoch also resolves through
+/// `ensure_key` off an artifact adopted for a DIFFERENT epoch, and a σ waiting on
+/// that one would otherwise never be re-checked. The promote rides this task
+/// instead of one of its own because the two share a single failure story — a
+/// follower that has stopped using `PK_epoch` — and a second task would have to
+/// be supervised separately to tell the same thing.
 async fn run_fetcher<E: Clock>(
     ctx: E,
     keys: BeaconKeys,
     held: AgreedKeys,
     pull: AgreedKeys,
     mut want_rx: mpsc::Receiver<u64>,
+    key_edge: Arc<Notify>,
+    promoter: Weak<FollowerRandomness>,
 ) {
     let mut next_allowed: BTreeMap<u64, SystemTime> = BTreeMap::new();
-    while let Some(epoch) = want_rx.recv().await {
+    loop {
+        let epoch = tokio::select! {
+            want = want_rx.recv() => match want {
+                Some(epoch) => epoch,
+                None => break,
+            },
+            _ = key_edge.notified() => {
+                // Gone means the last `Randomness` handle dropped, i.e. shutdown.
+                let Some(randomness) = promoter.upgrade() else { break };
+                randomness.promote_quarantined();
+                continue;
+            }
+        };
         let now = ctx.current();
         // Keep only the epochs still being held back; otherwise this grows one
         // entry per epoch ever asked for, forever (the same reason
@@ -296,8 +337,8 @@ async fn run_fetcher<E: Clock>(
 }
 
 /// A follower's [`Randomness`]: negative everywhere a follower genuinely cannot
-/// answer, and REAL on the one question it can — which key a certificate of an
-/// epoch must be checked against.
+/// answer, and REAL on the two it can — which key a certificate of an epoch must
+/// be checked against, and what σ the certificates it admitted carried.
 struct FollowerRandomness {
     keys: BeaconKeys,
     /// The seed-signing domain an assembled σ is verified under. Held because
@@ -308,43 +349,85 @@ struct FollowerRandomness {
     /// [`PinEffort::Local`], which is contractually network-free.
     held: AgreedKeys,
     want_tx: mpsc::Sender<u64>,
+    /// σ this node received on a certificate, split the same way the plane splits
+    /// it: checked values in the served map, unchecked ones in the quarantine.
+    /// RAM-only — see where it is built.
+    seeds: SeedStore,
     idle: Arc<Notify>,
     /// Handed to every [`KeyOnlyOracle`] this provider builds, so the keyless
     /// window is counted on the node class where it is most ordinary.
     metrics: BeaconMetrics,
 }
 
+impl FollowerRandomness {
+    /// Drop everything below `oldest`. The three maps take ONE window because
+    /// they wait on one thing: past the retention edge no key can arrive any
+    /// more, so a quarantined σ can never be promoted, and a terminal pin is
+    /// asked for by the NEXT epoch alone.
+    fn retain_from(&self, oldest: u64) {
+        self.keys.retain_from(oldest);
+        self.seeds.retain_quarantine_from(oldest);
+        self.seeds.retain_terminal_from(oldest);
+    }
+
+    /// Re-check every held σ, now that a key has landed.
+    ///
+    /// Load-bearing rather than a completeness item, because on this node class
+    /// the keyless window is the ORDINARY state: a follower obtains `PK_epoch`
+    /// only by fetching the epoch's artifact, so σ arriving before the key is the
+    /// common case and the quarantine is where most of it first lands.
+    fn promote_quarantined(&self) {
+        for epoch in self.seeds.quarantined_epochs() {
+            let Some(oracle) = self.oracle_for(epoch) else {
+                continue;
+            };
+            let (promoted, refused) = self.seeds.promote_epoch(epoch, oracle.as_ref());
+            if promoted > 0 || refused > 0 {
+                info!(
+                    epoch,
+                    promoted, refused, "cert-follow: re-checked quarantined seeds"
+                );
+            }
+        }
+    }
+}
+
 impl Randomness for FollowerRandomness {
-    /// A follower forms no round of its own and recovers no seed: everything it
-    /// sees arrives already certified.
-    fn record_seed(&self, _verified: VerifiedSeed) {}
+    /// A follower forms no round of its own, but it RECEIVES σ: every certificate
+    /// it admits carries the round's seed, and its executor needs that seed to
+    /// derive a beacon-active block's `prev_randao`.
+    fn record_seed(&self, verified: VerifiedSeed) {
+        self.seeds.record(verified);
+    }
 
-    /// Nor does it hold anything back: with no key store of its own to fill, a
-    /// quarantined σ would never be re-checked.
-    fn quarantine_seed(&self, _round: Round, _seed: BlsSignature) {}
-
-    /// And asks for none: a follower's certificates arrive whole.
-    fn fetch_seed(&self, _round: Round) -> BoxFuture<'_, bool> {
-        Box::pin(std::future::ready(false))
+    fn quarantine_seed(&self, round: Round, seed: BlsSignature) {
+        self.seeds.quarantine(round, seed);
     }
 
     fn on_invalid_seed(&self, epoch: u64) -> InvalidSeed {
         self.keys.on_invalid_seed(epoch)
     }
 
-    fn seed_for(&self, _round: Round) -> Option<Seed> {
-        None
+    fn seed_for(&self, round: Round) -> Option<Seed> {
+        self.seeds.lookup(round).map(|signature| Seed {
+            target_round: round,
+            signature,
+        })
+    }
+
+    /// The same pin the plane keeps, filed by the same `record`. A follower never
+    /// asks for it — it spawns no engine, so it chooses no leader-election base —
+    /// but the store beneath it is the real one, and answering from anywhere else
+    /// (or answering `None`) would be a claim about the store that is not true.
+    fn terminal_seed_at(&self, round: Round) -> Option<Seed> {
+        self.seeds.terminal_at(round).map(|signature| Seed {
+            target_round: round,
+            signature,
+        })
     }
 
     fn seed_edge(&self) -> Arc<Notify> {
-        self.idle.clone()
-    }
-
-    /// Structurally unanswerable rather than "not yet": a follower verifies no
-    /// block's parent-seed witness — it imports what the committee already
-    /// finalized.
-    fn check_witness(&self, _parent_epoch: u64, _seed: &Seed) -> WitnessCheck {
-        WitnessCheck::NoKey
+        self.seeds.notifier()
     }
 
     /// Permanently withheld, and by TYPE rather than by state: a follower holds no
@@ -415,7 +498,7 @@ impl Randomness for FollowerRandomness {
     }
 
     fn observe_epoch(&self, _reconciled: Epoch, entered_frontier: Epoch) {
-        self.keys.retain_from(
+        self.retain_from(
             entered_frontier
                 .get()
                 .saturating_sub(crate::SCHEME_RETENTION_EPOCHS as u64),
@@ -431,8 +514,7 @@ impl Randomness for FollowerRandomness {
         if self.keys.cached_only(epoch).is_none() {
             let _ = self.want_tx.try_send(epoch);
         }
-        self.keys
-            .retain_from(epoch.saturating_sub(crate::SCHEME_RETENTION_EPOCHS as u64));
+        self.retain_from(epoch.saturating_sub(crate::SCHEME_RETENTION_EPOCHS as u64));
     }
 }
 
@@ -444,7 +526,9 @@ mod tests {
             artifact::decode_artifact,
             dkg_agree::{AgreedArtifact, DkgProposal},
             outcome::DkgOutcome,
+            surface::DealtOracle,
         },
+        cert_inlet::capture_certificate_seed,
         digest::Digest,
     };
     use alloy_primitives::{Address, B256};
@@ -456,7 +540,7 @@ mod tests {
     use commonware_cryptography::{
         bls12381::{
             dkg::deal,
-            primitives::{sharing::Mode, variant::MinSig},
+            primitives::{group::Share, sharing::Mode, variant::MinSig},
         },
         ed25519::PrivateKey as Ed25519PrivateKey,
         Signer as _,
@@ -542,6 +626,73 @@ mod tests {
             crate::scheme::epoch_committee_from_snapshot(&snap).expect("committee")
         }
 
+        /// A real DKG over THIS committee's peers, so the artifact the follower
+        /// adopts and the σ its certificates carry stand under one key. `deal`
+        /// indexes shares by the player's position in the commonware-sorted
+        /// `Set`, which is the order `build_signer` asserts a member's share
+        /// index against — hence the per-peer lookup rather than a bare `values`.
+        fn deal(&self) -> (DkgOutcome, Vec<Share>) {
+            let mut rng = StdRng::seed_from_u64(77);
+            let players: Set<PeerPubkey> =
+                Set::from_iter_dedup(self.peers.iter().map(|k| k.public_key()));
+            let (outcome, share_map) =
+                deal::<MinSig, PeerPubkey, N3f1>(&mut rng, Mode::NonZeroCounter, players)
+                    .expect("deal");
+            let shares = self
+                .peers
+                .iter()
+                .map(|p| share_map.get_value(&p.public_key()).expect("share").clone())
+                .collect();
+            (outcome, shares)
+        }
+
+        /// A finalization whose certificate CARRIES the round's σ: every signer
+        /// holds a threshold share and the assembler recovers the seed into the
+        /// cert. It is the only shape in which σ ever reaches a follower.
+        fn certify_seeded(
+            &self,
+            epoch: u64,
+            outcome: &DkgOutcome,
+            shares: &[Share],
+            payload: Digest,
+        ) -> Finalization<BlsScheme, Digest> {
+            let bimap = self.bimap();
+            let ns = dkg_namespace(&fluent_namespace(CHAIN_ID));
+            let seed_ns = seed_namespace(&fluent_namespace(CHAIN_ID));
+            let oracle = |share: Option<Share>| {
+                Arc::new(DealtOracle {
+                    sharing: outcome.public().clone(),
+                    share,
+                    namespace: seed_ns.clone(),
+                }) as Arc<dyn SeedOracle>
+            };
+            let round = Round::new(Epoch::new(epoch), View::new(1));
+            let proposal = Proposal::new(round, View::new(0), payload);
+            let finalizes: Vec<_> = self
+                .bls
+                .iter()
+                .zip(shares)
+                .take(3)
+                .map(|(kp, share)| {
+                    let signer = build_signer(
+                        &ns,
+                        bimap.clone(),
+                        kp,
+                        epoch,
+                        Some(oracle(Some(share.clone()))),
+                    )
+                    .expect("member");
+                    Finalize::sign(&signer, proposal.clone()).expect("sign")
+                })
+                .collect();
+            Finalization::from_finalizes(
+                &build_verifier(&ns, bimap, epoch, Some(oracle(None))),
+                finalizes.iter(),
+                &Sequential,
+            )
+            .expect("quorum + recovered seed")
+        }
+
         fn certify(&self, epoch: u64, payload: Digest) -> Finalization<BlsScheme, Digest> {
             let bimap = self.bimap();
             let ns = dkg_namespace(&fluent_namespace(CHAIN_ID));
@@ -575,12 +726,18 @@ mod tests {
     }
 
     fn proposal(epoch: u64) -> DkgProposal {
+        proposal_keyed(epoch, group_key(7))
+    }
+
+    /// The same proposal carrying a group key the caller chose, so the artifact
+    /// the follower adopts is the key its certificates' σ was formed under.
+    fn proposal_keyed(epoch: u64, group_key: DkgOutcome) -> DkgProposal {
         DkgProposal {
             target_epoch: epoch,
             logs: (0..N as u8)
                 .map(|i| (i, B256::repeat_byte(0x40 + i)))
                 .collect(),
-            group_key: group_key(7),
+            group_key,
             confirms: Vec::new(),
         }
     }
@@ -815,6 +972,98 @@ mod tests {
             assert!(
                 fb.randomness.ensure_key(TARGET, PinEffort::Local).await,
                 "a miss must not be terminal"
+            );
+        });
+    }
+
+    /// σ reaches this node class on the certificate and nowhere else — a follower
+    /// forms no round and has no by-round transport — and its executor derives a
+    /// beacon-active block's `prev_randao` from that σ alone. So a checked σ has
+    /// to be filed and served back, and the seed edge has to be the store's
+    /// rather than the `idle` handle nothing ever fires.
+    #[test]
+    fn a_verified_certificates_seed_is_filed_and_served() {
+        let runner = deterministic::Runner::default();
+        runner.start(|ctx| async move {
+            let c = committee(1);
+            let (outcome, shares) = c.deal();
+            let body = proposal_keyed(TARGET, outcome.clone());
+            let genuine: AgreedArtifact = (body.clone(), c.certify(TARGET, body.digest()));
+
+            let up = Upstream::default();
+            *up.served.lock().expect("served") = Some(genuine.encode().to_vec());
+            let fb = for_follower(&ctx, config(&c, &up));
+
+            fb.randomness.observe_cert(TARGET);
+            settle(&ctx, || (fb.artifact_bytes)(TARGET).is_some()).await;
+            assert!(fb.randomness.ensure_key(TARGET, PinEffort::Local).await);
+
+            let cert = c.certify_seeded(TARGET, &outcome, &shares, Digest(B256::repeat_byte(0xcc)));
+            let round = cert.proposal.round;
+            let sigma = cert
+                .certificate
+                .seed()
+                .expect("a beacon-active certificate carries the round seed");
+
+            let edge = fb.randomness.seed_edge();
+            capture_certificate_seed(fb.randomness.as_ref(), round, &cert);
+
+            assert_eq!(
+                fb.randomness.seed_for(round).map(|s| s.signature),
+                Some(sigma),
+                "the σ the certificate carried is what a later derive reads back"
+            );
+            let woken = tokio::select! {
+                _ = edge.notified() => true,
+                _ = ctx.sleep(Duration::from_millis(10)) => false,
+            };
+            assert!(
+                woken,
+                "a held tip waits on the seed edge; an unfired one parks it forever"
+            );
+        });
+    }
+
+    /// The keyless window is the ORDINARY state here: a follower obtains
+    /// `PK_epoch` only by fetching the epoch's artifact, so σ routinely lands
+    /// first. Held rather than dropped, and re-checked when the key turns up —
+    /// an unwired quarantine would discard most of what the cert doors file, in
+    /// silence.
+    #[test]
+    fn a_seed_that_arrives_before_the_key_is_held_and_then_promoted() {
+        let runner = deterministic::Runner::default();
+        runner.start(|ctx| async move {
+            let c = committee(1);
+            let (outcome, shares) = c.deal();
+            let body = proposal_keyed(TARGET, outcome.clone());
+            let genuine: AgreedArtifact = (body.clone(), c.certify(TARGET, body.digest()));
+
+            // Nothing served yet: the follower is keyless, which is where it
+            // spends the opening of every epoch.
+            let up = Upstream::default();
+            let fb = for_follower(&ctx, config(&c, &up));
+
+            let cert = c.certify_seeded(TARGET, &outcome, &shares, Digest(B256::repeat_byte(0xcc)));
+            let round = cert.proposal.round;
+            let sigma = cert
+                .certificate
+                .seed()
+                .expect("a beacon-active certificate carries the round seed");
+            capture_certificate_seed(fb.randomness.as_ref(), round, &cert);
+            assert!(
+                fb.randomness.seed_for(round).is_none(),
+                "an unchecked σ must never reach the served map"
+            );
+
+            *up.served.lock().expect("served") = Some(genuine.encode().to_vec());
+            fb.randomness.observe_cert(TARGET);
+            settle(&ctx, || fb.randomness.seed_for(round).is_some()).await;
+            // Only a σ that was HELD can be served now: the capture above ran
+            // once, and nothing re-delivers it.
+            assert_eq!(
+                fb.randomness.seed_for(round).map(|s| s.signature),
+                Some(sigma),
+                "the key landing must release what the keyless window held"
             );
         });
     }

@@ -356,9 +356,9 @@ impl BeaconKeys {
     /// reason [`crate::beacon::key_journal`] already states for the durable half
     /// of this same map: it is written once per COMMITTEE CHANGE and filed under
     /// the epoch that MINTED the key, so on a long-stable committee the entry
-    /// worth having is the OLDEST one. Both carry-divergence tripwires
-    /// ([`crate::dpos::group_key_resolver`] on the vote path,
-    /// [`crate::dpos::beacon_share_resolver`] on the share gate) ask
+    /// worth having is the OLDEST one. Both surviving carry-divergence tripwires
+    /// ([`crate::beacon::oracle`]'s per-vote check, and
+    /// [`crate::beacon::resolve::beacon_share_resolver`] on the share gate) ask
     /// [`Self::attested`] for the MINTING epoch, which on a committee that never
     /// changes is the bootstrap mint forever — an epoch-measured window disarms
     /// them once the frontier passes it, and nothing re-inserts the entry on a
@@ -375,13 +375,6 @@ impl BeaconKeys {
         if let Ok(mut m) = self.map.write() {
             m.retain(|e, (_, src)| *e >= oldest || *src == KeySource::Agreed);
         }
-    }
-
-    /// Nothing recorded yet — the "this path memoized no key at all" assertion,
-    /// which no per-epoch [`cached_only`](Self::cached_only) can express.
-    #[cfg(test)]
-    pub(crate) fn is_empty(&self) -> bool {
-        self.map.read().map(|m| m.is_empty()).unwrap_or(false)
     }
 
     /// A clone of the record-notifier, for a consumer's `select!` arm. Capture it
@@ -893,8 +886,8 @@ mod tests {
 
     /// The soak-2026-07-14 inversion, fixed: a stale LOCAL write landed first,
     /// then the network's attested key arrived and was DROPPED by
-    /// first-write-wins — the poisoned entry then failed the next epoch's
-    /// parent-seed witness. Attested-source-wins: the quorum-agreed write must
+    /// first-write-wins — the poisoned entry then failed the next epoch's σ
+    /// verification. Attested-source-wins: the quorum-agreed write must
     /// DISPLACE the differing local one.
     #[test]
     fn an_agreed_key_displaces_a_differing_local_write() {

@@ -129,6 +129,14 @@ pub struct SyncMetrics {
     /// re-fetch through the cert upstream (the live marshal resolver cannot repair
     /// below its finalized floor, so the crash-survivor recovery re-fetches inline).
     pub crash_recover_refetched: Counter,
+    /// σ found in the local seed store at a round the agreed epoch map calls
+    /// beacon-INACTIVE, during the crash-survivor replay. IGNORED (the network
+    /// derives `None` there), never obeyed and never fatal: the seed journal is
+    /// replayed without re-verification by design, so one corrupted or crafted
+    /// record must not steer this node's `prev_randao` away from its peers'.
+    /// Sibling of the executor's `dpos_executor_stray_seed_at_inactive_round_total`
+    /// on the live path; both are expected to read 0.
+    pub crash_recover_stray_seed: Counter,
     /// Epoch-boundary blocks seeded below the marshal floor so a jumped member can
     /// spawn its engine in the LANDING epoch instead of parking verify-only until the
     /// next boundary. Bumped at the INJECTION sites, once per height actually stored — a
@@ -189,6 +197,13 @@ impl SyncMetrics {
             "Below-floor marshal-archive holes healed by a BLS-verified by-height re-fetch \
              through the cert upstream during crash-survivor recovery.",
             self.crash_recover_refetched.clone(),
+        );
+        ctx.register(
+            "crash_recover_stray_seed_total",
+            "σ present in the local store at a round the agreed epoch map calls beacon-inactive, \
+             seen during crash-survivor replay and IGNORED. Non-zero means a corrupted or \
+             crafted local seed record.",
+            self.crash_recover_stray_seed.clone(),
         );
         ctx.register(
             "dpos_jump_boundary_refetched_total",

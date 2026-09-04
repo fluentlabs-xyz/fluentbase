@@ -1203,7 +1203,6 @@ mod tests {
             extra_data: Bytes::new(),
             result,
             txs: Vec::new(),
-            parent_seed: None,
             equivocation: None,
         }
     }

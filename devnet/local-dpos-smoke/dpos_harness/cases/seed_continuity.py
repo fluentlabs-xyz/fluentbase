@@ -12,16 +12,25 @@ WHY THIS EXISTS
 
     OFFLINE-DERIVABILITY OF `base` NO LONGER HOLDS (task
     `.claude/tasks/2026_08_12__12_40__fallback_seed_from_prev_round/`). The seedless arm's
-    base is now `sha256(sigma_encoded)` of the `parent_seed` witness carried in the PREVIOUS
-    epoch's terminal block (`weighted_vrf.rs::witness_fallback_seed`), and only where no
-    such witness can exist does it fall back to the constant derivation
-    (`weighted_vrf.rs::constant_fallback_seed`). Those witness bytes appear in NO log line
-    and on NO RPC — `derive-seed` prints `prev_randao = keccak256(sigma)`, a different hash
-    of the same object, and the OrderBlock body is a consensus-plane object with no JSON-RPC
-    surface. So the LIVE arm of this case (assertion A, the positive control) can only be
-    predicted for an epoch that takes the CONSTANT arm, and its live scoring is BLOCKED
-    until the witness base has a source. The PURE layer below is kept byte-exact against
-    `weighted_vrf.rs` regardless, and is pinned to the Rust conformance vector.
+    base is `sha256(sigma_encoded)` of σ at the previous epoch's TERMINAL ROUND
+    (`beacon/seed.rs::witness_fallback_seed`), and only where no such σ can exist does it
+    fall back to the constant derivation (`beacon/seed.rs::constant_fallback_seed`).
+
+    WHERE THAT σ LIVES (revised for FLU-1204 — `parent_seed` left the block body). It used
+    to be a field in the previous epoch's terminal block, and the base was read out of that
+    body. It is not carried by any block now: the epoch manager NAMES the round from agreed
+    data — `Round(E-1, terminal_block.proposal_view)` — and asks the node's own seed store,
+    which every verified certificate fills and which pins one σ per epoch against retention
+    eviction (`epoch_manager.rs::boundary_base` → `Randomness::terminal_seed_at`).
+
+    THE LIVE BLOCKAGE IS UNCHANGED BY THAT MOVE, and it is worth being exact about why: the
+    obstacle was never that the bytes sat in a block body, it is that they appear in NO log
+    line and on NO RPC. `derive-seed` prints `prev_randao = keccak256(sigma)`, a different
+    hash of the same object, and the seed store is process-internal. So the LIVE arm of this
+    case (assertion A, the positive control) can only be predicted for an epoch that takes
+    the CONSTANT arm, and its live scoring stays BLOCKED until σ has a source. The PURE layer
+    below is kept byte-exact against `weighted_vrf.rs` regardless, and is pinned to the Rust
+    conformance vector.
 
     That fallback table is exactly what makes this case TWO-SIDED rather than a smoke
     test. Under the OLD binary the leader after a nullified view was the offline
@@ -86,16 +95,17 @@ from ..core.exit_codes import RC_FAIL, RC_INCONCLUSIVE, RC_PASS, RC_USAGE
 LEADER_FALLBACK_DOMAIN = b"fluent/seedless-leader"
 BALANCE_COMPACT_PRECISION = 10_000_000_000
 
-# `derive-seed`'s `seed_round` is the block's OWN round, not its parent's: the executor
-# resolves the seed at `Round::new(epoch, View::new(block.proposal_view))`
-# (`crates/dpos/consensus/src/executor.rs:1429-1440`, re-canonicalised at `:2090-2095`).
+# `derive-seed`'s `seed_round` is the block's OWN round: the executor resolves the seed at
+# `Round::new(epoch, View::new(block.proposal_view))` — the ONLY keying there is, since
+# FLU-1204 (`try_eager_finalized_derive` and the main derive path in `executor.rs`).
 #
-# This was got wrong once and it is worth the paragraph. Rule PIN's WITNESS (`parent_seed`,
-# carried in the block body) is the PARENT's round — but this log line reports the seed the
-# block CONSUMES for its own derive, which is its own. The two are different objects that
-# both say "seed_round". The offset-by-one predicted a leader for the wrong view and every
-# positive control failed; nothing in the unit suite caught it, because the fixture encoded
-# the same wrong belief. The LIVE control did — that is what it is for.
+# This was got wrong once and the paragraph is kept because the trap it describes was a
+# reading error, not a code shape. There used to be a SECOND object that also said
+# "seed_round": the block's `parent_seed` witness, which named the PARENT's round. The two
+# were confused, the offset-by-one predicted a leader for the wrong view, and every positive
+# control failed; nothing in the unit suite caught it, because the fixture encoded the same
+# wrong belief. The LIVE control did — that is what it is for. The witness is gone now, so
+# the ambiguity cannot recur; what survives is the lesson about which control caught it.
 
 # `?seed_round` renders through the derived Debug of `Round { epoch: Epoch(u64), view:
 # View(u64) }` (commonware consensus/src/types.rs — both newtypes derive Debug and impl
@@ -109,9 +119,14 @@ _RE_PROPOSING = re.compile(r"dpos: proposing order block")
 
 
 def constant_fallback_seed(epoch: int, sorted_pubkeys: list) -> bytes:
-    """Mirror of `weighted_vrf.rs::constant_fallback_seed` — the LAST-RESORT base, taken
-    only where no witness seed can exist (epoch 0, a non-computable terminal height, and
-    pre-bootstrap links whose terminal block legitimately carries no witness).
+    """Mirror of `beacon/seed.rs::constant_fallback_seed` — the LAST-RESORT base, taken only
+    where no σ can exist for the previous epoch's terminal round (epoch 0, a non-computable
+    terminal height, and pre-bootstrap links where the beacon was not active).
+
+    NOT taken when σ merely cannot be FOUND: since FLU-1204 a store miss defers the engine
+    spawn rather than answering "no σ here", precisely so a local lookup failure cannot put
+    one node on the predictable base while its peers inherit. `dpos_fallback_seed_constant_total`
+    counts this branch, and `case turnover` asserts it flat across a boundary for that reason.
 
       sorted_pubkeys — raw peer-pubkey bytes, sorted bytewise (commonware `ordered::Set`
                        is a Vec built by `items.sort()`, so the order is Ord on the raw
@@ -127,12 +142,13 @@ def constant_fallback_seed(epoch: int, sorted_pubkeys: list) -> bytes:
 
 
 def witness_fallback_seed(signature_bytes: bytes) -> bytes:
-    """Mirror of `weighted_vrf.rs::witness_fallback_seed` — the base an epoch INHERITS from
-    the previous epoch's terminal block.
+    """Mirror of `beacon/seed.rs::witness_fallback_seed` — the base an epoch INHERITS from σ
+    at the previous epoch's TERMINAL ROUND (not from any block body; see the module
+    docstring for where that σ is now read from).
 
-      signature_bytes — the ENCODED BLS threshold signature of that block's `parent_seed`
-                        (commonware `Encode`, i.e. the raw compressed point), not the
-                        `Seed` struct: the Rust side hashes `seed.signature.encode()`.
+      signature_bytes — the ENCODED BLS threshold signature of that σ (commonware `Encode`,
+                        i.e. the raw compressed point), not the `Seed` struct: the Rust side
+                        hashes `seed.signature.encode()`.
 
     Deliberately NOT keccak256: that is `prev_randao`, and invariant D6 keeps the leader
     draw disjoint from the header field."""
@@ -142,9 +158,9 @@ def witness_fallback_seed(signature_bytes: bytes) -> bytes:
 def fallback_leader_index(fallback_seed: bytes, view: int, cum: list, total: int):
     """The offline mirror of `weighted_vrf.rs`'s seedless arm. Returns the participant INDEX.
 
-      fallback_seed — 32 bytes: `witness_fallback_seed(parent_seed.signature)` of the
-                      previous epoch's terminal block, or `constant_fallback_seed` where no
-                      witness exists. Supplied by the caller, because it is no longer
+      fallback_seed — 32 bytes: `witness_fallback_seed(sigma.signature)` for σ at the
+                      previous epoch's terminal round, or `constant_fallback_seed` where no
+                      such σ exists. Supplied by the caller, because it is no longer
                       derivable from the epoch and the committee alone.
       cum           — inclusive prefix sums of COMPACTED stake, sorted-pubkey order.
       total         — cum[-1].
@@ -535,12 +551,14 @@ def run_case(argv=None) -> int:
 
         # LIVE SCORING IS BLOCKED — see the module docstring. `base_of` can only offer the
         # CONSTANT derivation, which is the base a running binary uses for epoch 0 and for
-        # the degenerate links alone; every epoch that inherits a witness from the previous
-        # epoch's terminal block elects off bytes this process cannot see, so assertion A
-        # (the positive control) will read INCONCLUSIVE for those epochs. Do not "fix" that
-        # by relaxing the control: the missing input is the witness seed, and it needs a
-        # source (a log line carrying `parent_seed.signature`, or an RPC over the OrderBlock
-        # body) before this case can be a live gate again.
+        # the degenerate links alone; every epoch that inherits σ from the previous epoch's
+        # terminal ROUND elects off bytes this process cannot see, so assertion A (the
+        # positive control) will read INCONCLUSIVE for those epochs. Do not "fix" that by
+        # relaxing the control: the missing input is that σ, and it needs a source before
+        # this case can be a live gate again. FLU-1204 did NOT provide one and did not make
+        # it harder — the σ moved from the block body into the node's seed store, and
+        # neither has an observer; a log line carrying `sigma.signature` at the boundary is
+        # still the cheapest one.
         base_of = {e: constant_fallback_seed(e, sorted_pks) for e in set(epoch_of.values())}
 
         controls, samples = [], []

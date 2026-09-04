@@ -724,7 +724,6 @@ mod tests {
             )),
             result: B256::ZERO,
             txs: vec![signed_transfer(&signer, 0), signed_transfer(&signer, 7)],
-            parent_seed: None,
             // Consensus-only: the evidence stays off the EVM path, and this test
             // asserts below that the header still carries the verdict without it.
             equivocation: None,

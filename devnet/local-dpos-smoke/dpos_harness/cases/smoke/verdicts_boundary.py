@@ -83,6 +83,12 @@ SEED_PARTIAL_LOG = "epoch-boundary seeding incomplete"
 #: The gate itself (`epoch_manager.rs`). One or two of these during ordinary backfill is
 #: NORMAL and self-heals on the next derived block; the defect is a defer that persists across
 #: the epoch, which is what the promote-epoch assertion actually measures.
+#:
+#: A PREFIX of TWO product lines since FLU-1204, and `test_every_grepped_token…` pins the count
+#: at 2 for that reason. The gate has two inputs — the E-1 boundary BLOCK, and σ at that
+#: block's terminal round — and the INFO was split so the `boundary=` field is not read as a
+#: stuck block fetch when it is σ that is absent. This constant is a HINT string in failure
+#: messages, never a counted grep, so the shared prefix is what a reader wants: it finds both.
 DEFER_LOG = "signer spawn deferred"
 
 #: `epoch_manager.rs:853` — the stable in-process Verifier→Signer token. Shared with the
@@ -646,6 +652,9 @@ def evaluate_spawn_defer_bounded(before, after, victim, epoch, budget=SPAWN_DEFE
     if n <= int(budget):
         return True, "", n
     return False, (f"{victim}'s {M_SPAWN_DEFERRED} rose by {n} (> budget {budget}) across landing "
-                   f"epoch {epoch}: the engine-spawn gate kept deferring for a missing E-1 "
-                   f"boundary block, i.e. seeding did not cover the height it needed. Grep "
-                   f"{DEFER_LOG!r} and read its `boundary=` field."), n
+                   f"epoch {epoch}: the engine-spawn gate kept deferring. The counter does NOT "
+                   f"say which of its two inputs was missing — the E-1 boundary BLOCK (seeding "
+                   f"did not cover the height it needed) or σ at that block's terminal round "
+                   f"(no certificate for that round reached either cert door). Grep "
+                   f"{DEFER_LOG!r}: the two INFO lines it prefixes name the cause, and the "
+                   f"block one carries the `boundary=` field."), n

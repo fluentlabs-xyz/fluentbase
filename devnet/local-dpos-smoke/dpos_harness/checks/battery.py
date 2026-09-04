@@ -4,7 +4,7 @@ check_invariants() runs the whole battery against ONE captured snapshot per tick
 and RETURNS a status: ok=True, or a violation with inv_fail_id / inv_fail_msg set
 (so the orchestrator can write a structured bundle instead of a bare exit). Each
 detector is one method returning True (holds) or False (via _inv_fail, which sets
-inv_fail_id/msg). SOFT reporters (witness-watch, dkg-finalize-deferred,
+inv_fail_id/msg). SOFT reporters (seed-watch, dkg-finalize-deferred,
 exec-saturation, block-rate) always return True and only emit events.
 
 Ported as of the working-tree HEAD 8d090fc2 (soak-invariants.sh, which a Phase-5
@@ -28,14 +28,14 @@ the ordered dispatch. The sim's `sim/state_ctx.py` is the adapter that builds bo
 SimState. Classification (derived and enforced by tests/test_checks_context.py — a detector
 that starts reading sim state must MOVE to Battery, and one that stops must move up):
 
-  CHAIN-ONLY — 27 of 31, reusable by a non-simulation consumer (on ChainBattery)
+  CHAIN-ONLY — 26 of 30, reusable by a non-simulation consumer (on ChainBattery)
     data-root-fill, host-mem, rpc-alive, node-panic, safety-halt, finalize-apply,
-    witness-counters, dkg-pinned-idx, beacon-active, finalize-stall, klag, deferred-park,
-    witness-embedded, witness-watch, dkg-finalize-deferred, exec-saturation, block-rate,
+    seed-counters, dkg-pinned-idx, beacon-active, finalize-stall, klag, deferred-park,
+    seed-watch, dkg-finalize-deferred, exec-saturation, block-rate,
     spec-head, seed-round, beacon-window, result-agreement, finalized-chain, member-liveness,
     battery-coverage, peer-plane, cascade-liveness, write-path
 
-  SIM-COUPLED — 4 of 31, by nature: they judge the harness's own churn (on Battery)
+  SIM-COUPLED — 4 of 30, by nature: they judge the harness's own churn (on Battery)
     node-down             — needs the spare-band / idle-rotation-slot predicate
     dkg-commit-binding    — needs the seat + refill state machine
     wrongful-slash        — needs EVER_FAULTED to tell a wrongful jail from an expected one
@@ -403,9 +403,8 @@ class ChainBattery:
         self.SIM_PARK_VAL = {}; self.SIM_PARK_ACC = {}
         # dkg finalize-deferred watch (SOFT, per-node last value)
         self.SIM_DKG_DEFERRED_LAST = {}
-        # witness watch
-        self.SIM_WIT_WATCH = {}
-        self.SIM_WIT_EMB_BASE = -1; self.SIM_WIT_EMB_FIN = -1; self.SIM_WIT_EMB_SET = ""
+        # seed watch (SOFT)
+        self.SIM_SEED_WATCH = {}
         # exec-saturation
         self.SIM_EXEC_SUM = {}; self.SIM_EXEC_CNT = {}
         self.SIM_EXEC_SAT_ACC = 0; self.SIM_EXEC_EARLY_FIRED = 0; self.SIM_EXEC_LAST_OCC = ""
@@ -894,40 +893,72 @@ class ChainBattery:
                     "re-apply retry")
         return True
 
-    # ── witness counters (§9 hard zeros) ────────────────────────────────────
-    def _inv_witness_counters(self):
+    # ── seed counters (§9 hard zeros) ───────────────────────────────────────
+    def _inv_seed_counters(self):
+        """The ordering plane's hard zeros, plus the belt that proves this detector could
+        read anything at all.
+
+        TWO OF THE FOUR FAMILIES THIS USED TO READ NO LONGER EXIST (FLU-1204 — `parent_seed`
+        left the block body). `dpos_parent_seed_reject_total{reason=...}` counted a voter
+        refusing a block's EMBEDDED witness; there is no field, no verify arm and no such
+        vote. `dpos_group_key_invariant_violation_total` was written by the vote-path key
+        ladder (`resolve_group_public`), deleted with it. Both were REMOVED rather than
+        re-pointed: `metric_val` answers "" for an absent family, `_isint("")` is False, so a
+        reader of a dead family skips every node and reports GREEN forever — a check that
+        cannot fail is worse than no check, and these two had become exactly that.
+
+        `dpos_seed_material_refused_divergent_total` carries the surviving property. The
+        per-vote oracle (`beacon/oracle.rs`, run on every call and deliberately NOT memoised)
+        refuses seed material whose local mint disagrees with the key attested at that mint;
+        non-zero means a DIVERGED local reconstruction is being kept out of this node's vote
+        path right now. That is the same class of local key-material defect the group-key
+        counter named — a member voting under the wrong polynomial — observed at the seam
+        where seeds are judged now.
+
+        THE PRESENCE BELT IS THE POINT OF THE REWRITE, not a bonus. That family is registered
+        EAGERLY (`BeaconMetrics::register`, commonware :9100), so a healthy scrape renders it
+        at 0 whether or not it ever moved; ABSENCE means the metrics channel is dead or the
+        family was renamed, and every hard zero below is then vacuous. Counted per node and
+        routed through `_detector_sampled` — the floor smoke-audit §E recorded this detector
+        as the one cross-node detector lacking.
+
+        The two survivors (`dpos_parent_view_mismatch_total`, `dpos_spec_round_mismatch_total`)
+        are metrics-rs counters on reth :9200 and register LAZILY, so their absence is the
+        healthy case and cannot carry the belt."""
+        readable = 0
         for wn in self.SIM_SCRAPE_NODES:
             wt = self.SIM_SCRAPE_TEXT.get(wn, "")
             if not wt:
                 continue
-            for wr in ("pre_bootstrap", "missing", "pin", "bad_signature"):
-                wv = self._metric_val(wt, "dpos_parent_seed_reject_total", f'reason="{wr}"')
-                if _isint(wv) and int(wv) >= 1:
+            wv = self._metric_val(wt, "dpos_seed_material_refused_divergent_total", "")
+            if _isint(wv):
+                readable += 1
+                if int(wv) >= 1:
                     return self._inv_fail(
-                        "witness-reject",
-                        f"{wn} voted false on a parent-seed witness: "
-                        f"dpos_parent_seed_reject_total{{reason={wr}}}={wv} — MUST be 0 on an "
-                        "honest run (a non-zero value splits honest voters / signals a "
-                        "downgrade attempt; plan §3)")
+                        "seed-material-divergent",
+                        f"{wn} saw dpos_seed_material_refused_divergent_total={wv} — the oracle "
+                        "refused seed material because this node's local mint polynomial "
+                        "disagrees with the key attested at that mint. MUST be 0 on an honest "
+                        "run: it means a diverged local reconstruction (soak 2026-07-14 class) "
+                        "is live on this node and only the gate is keeping it out of the vote "
+                        "path. Grep the node for target dpos::beacon and the mint/attested "
+                        "divergence")
             wv = self._metric_val(wt, "dpos_parent_view_mismatch_total", "")
             if _isint(wv) and int(wv) >= 1:
                 return self._inv_fail(
-                    "witness-view-mismatch",
+                    "parent-view-mismatch",
                     f"{wn} saw dpos_parent_view_mismatch_total={wv} — a block was certified "
                     "at a view it did not self-attest (P4 tripwire; rule SA/PIN un-backed)")
-            wv = self._metric_val(wt, "dpos_group_key_invariant_violation_total", "")
-            if _isint(wv) and int(wv) >= 1:
-                return self._inv_fail(
-                    "group-key-invariant",
-                    f"{wn} saw dpos_group_key_invariant_violation_total={wv} — a SAME-epoch "
-                    "PK_E miss on a voting member (W1 violated)")
             wv = self._metric_val(wt, "dpos_spec_round_mismatch_total", "")
             if _isint(wv) and int(wv) >= 1:
                 return self._inv_fail(
                     "spec-round-mismatch",
-                    f"{wn} saw dpos_spec_round_mismatch_total={wv} — speculative seed round "
-                    "!= finalized witness round (P2 regression: boundary sibling-reorg class)")
-        return True
+                    f"{wn} saw dpos_spec_round_mismatch_total={wv} — the round a height was "
+                    "SPECULATED with is not the round it finalized at (P2 regression: boundary "
+                    "sibling-reorg class)")
+        return self._detector_sampled(
+            "seed-counters", "commonware :9100 dpos_seed_material_refused_divergent_total",
+            readable, 1)
 
     # ── dkg pinned-idx out of range (2026-07-21 idx-stall class, HARD) ──────
     def _inv_dkg_pinned_idx(self):
@@ -1114,54 +1145,54 @@ class ChainBattery:
                     return self._inv_fail(
                         "deferred-park",
                         f"{pn} executor PARKED: deferred_height flat at {pv_i} for >= "
-                        f"{self.SIM_PARK_TICKS} ticks — the soak7 signature (under B′ the tip "
-                        "block is HELD, never parked; a durable park means the witness pipeline "
-                        "shift regressed or the node is truly isolated)")
+                        f"{self.SIM_PARK_TICKS} ticks — the soak7 signature. A seed miss is a "
+                        "HOLD, never a park (`awaiting_seed`, which re-resolves σ from the "
+                        "store on its wake), so a DURABLE park means the deferred/hold split "
+                        "regressed or the node is truly isolated)")
             else:
                 self.SIM_PARK_VAL[pn] = str(pv_i); self.SIM_PARK_ACC[pn] = 0
         return True
 
-    # ── witness embedded (§9 item 1) ────────────────────────────────────────
-    def _inv_witness_embedded(self, fin):
-        c = self.ctx
-        if not len(self.SIM_SCRAPE_NODES) > 1:
-            return True
-        settle_ok = settle_gate_open(c.SIM_CUR_EPOCH, c.SETTLE_UNTIL_EPOCH, self.SIM_SETTLE_GATE_CAP)
-        if c.EXPECTED_STALL == 0 and fin > 0 and c.SIM_CUR_EPOCH >= 3 and settle_ok:
-            total = 0
-            sig = " ".join(self.SIM_SCRAPE_NODES)
-            for en in self.SIM_SCRAPE_NODES:
-                ev = self._metric_val(self.SIM_SCRAPE_TEXT.get(en, ""),
-                                      "dpos_parent_seed_embedded_total", "")
-                if _isint(ev):
-                    total += int(ev)
-            if (self.SIM_WIT_EMB_BASE < 0 or sig != self.SIM_WIT_EMB_SET
-                    or total < self.SIM_WIT_EMB_BASE):
-                self.SIM_WIT_EMB_BASE = total; self.SIM_WIT_EMB_FIN = fin; self.SIM_WIT_EMB_SET = sig
-            elif fin > self.SIM_WIT_EMB_FIN + self.SIM_BEACON_WINDOW:
-                if total <= self.SIM_WIT_EMB_BASE:
-                    return self._inv_fail(
-                        "witness-not-embedded",
-                        f"dpos_parent_seed_embedded_total FLAT chain-wide "
-                        f"({self.SIM_WIT_EMB_BASE}) while finalized advanced "
-                        f"{self.SIM_WIT_EMB_FIN} -> {fin} — blocks are finalizing WITHOUT "
-                        "parent-seed witnesses (propose-side embed dead; plan §3)")
-                self.SIM_WIT_EMB_BASE = total; self.SIM_WIT_EMB_FIN = fin; self.SIM_WIT_EMB_SET = sig
-        else:
-            self.SIM_WIT_EMB_BASE = -1; self.SIM_WIT_EMB_FIN = -1; self.SIM_WIT_EMB_SET = ""
-        return True
+    # ── seed watch (SOFT) ───────────────────────────────────────────────────
+    def _inv_seed_watch(self):
+        """REPORT ONLY — a rise is a signal to read the logs, never a verdict.
 
-    # ── witness watch (SOFT) ────────────────────────────────────────────────
-    def _inv_witness_watch(self):
+        FOUR OF THE SEVEN FAMILIES THIS WATCHED ARE GONE (FLU-1204): the three propose- and
+        verify-side `dpos_parent_seed_*` counters died with the witness gate, and
+        `dpos_witness_child_refetch_total` died with the one-block child LOOKAHEAD — nothing
+        reads the child of a height any more, so nothing can re-fetch it. Deleted, not
+        re-pointed: a soft reporter over an absent family sums to 0 every tick and reports
+        nothing, forever, while looking exactly like a quiet chain.
+
+        The four replacements are where a σ that is missing, stray or late now shows up.
+        They are deliberately soft for different reasons, and the reasons matter:
+
+          * `dpos_executor_seed_hold_stalled_total` — the executor HELD a beacon-active block
+            because the store had no σ at its own round. Self-healing by construction (the
+            hold re-resolves on the seed edge), so one or two during backfill are normal; a
+            SUSTAINED rise means σ is not arriving and the node is about to look wedged.
+          * `dpos_executor_stray_seed_at_inactive_round_total` and
+            `crash_recover_stray_seed_total` — a σ sits in the store at a round the AGREED
+            epoch map calls beacon-inactive, and the derive ignored it. Fork-safe by
+            construction (ignoring is what the rest of the network does), which is exactly
+            why it must not fail the run — but a rise means one node's seed journal disagrees
+            with the agreed map, and that is worth reading before it becomes something else.
+          * `epoch_engine_spawn_deferred_total` — a per-epoch engine spawn deferred for a
+            missing E-1 boundary BLOCK or a missing σ at its terminal round. Transient at a
+            mid-epoch promotion by design; persistent means a member is verify-only for a
+            whole epoch. `smoke-rejump-signer` asserts a budget on it per node; here it is
+            chain-wide and unasserted, because the sim promotes members constantly.
+
+        `dpos_spec_seed_recanonicalized_total` and
+        `dpos_cert_inlet_carry_forward_pin_verify_failed_total` are unchanged and still live."""
         if not len(self.SIM_SCRAPE_NODES) > 1:
             return True
         specs = [
-            ("dpos_parent_seed_boundary_skip_total", ""),
-            ("dpos_parent_seed_boundary_unverified_total", 'reason="unknown"'),
-            ("dpos_parent_seed_boundary_unverified_total", 'reason="read_failed"'),
-            ("dpos_parent_seed_lookup_miss_total", ""),
+            ("dpos_executor_seed_hold_stalled_total", ""),
+            ("dpos_executor_stray_seed_at_inactive_round_total", ""),
+            ("crash_recover_stray_seed_total", ""),
+            ("epoch_engine_spawn_deferred_total", ""),
             ("dpos_spec_seed_recanonicalized_total", ""),
-            ("dpos_witness_child_refetch_total", ""),
             ("dpos_cert_inlet_carry_forward_pin_verify_failed_total", ""),
         ]
         for fam, lbl in specs:
@@ -1171,14 +1202,14 @@ class ChainBattery:
                 if _isint(v):
                     total += int(v)
             key = f"{fam}|{lbl}"
-            prev = self.SIM_WIT_WATCH.get(key, 0)
+            prev = self.SIM_SEED_WATCH.get(key, 0)
             if total > prev:
                 disp = fam if not lbl else f"{fam}{{{lbl}}}"
                 self.sim_event(
                     "warn",
-                    f"witness-watch: {disp} rose {prev} -> {total} chain-wide (reported, not "
-                    "asserted — see _inv_witness_watch for what a sustained rise means)")
-            self.SIM_WIT_WATCH[key] = total
+                    f"seed-watch: {disp} rose {prev} -> {total} chain-wide (reported, not "
+                    "asserted — see _inv_seed_watch for what a sustained rise means)")
+            self.SIM_SEED_WATCH[key] = total
         return True
 
     # ── dkg finalize deferred (SOFT) ────────────────────────────────────────
@@ -2264,7 +2295,7 @@ class Battery(ChainBattery):
             return False
         if not self._inv_finalize_apply():
             return False
-        if not self._inv_witness_counters():
+        if not self._inv_seed_counters():
             return False
         if not self._inv_dkg_pinned_idx():
             return False
@@ -2279,8 +2310,6 @@ class Battery(ChainBattery):
         if not self._inv_member_liveness(fin):
             return False
         if not self._inv_deferred_park():
-            return False
-        if not self._inv_witness_embedded(fin):
             return False
         if not self._inv_beacon_window(fin):
             return False
@@ -2301,7 +2330,7 @@ class Battery(ChainBattery):
         if not self._inv_write_path():
             return False
         # SOFT reporters (always True) — last so a hard fail above wins the bundle.
-        self._inv_witness_watch()
+        self._inv_seed_watch()
         self._inv_dkg_finalize_deferred()
         self._inv_exec_saturation()
         self._inv_block_rate(fin)

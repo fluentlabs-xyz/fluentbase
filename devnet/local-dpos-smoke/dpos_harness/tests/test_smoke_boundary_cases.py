@@ -439,13 +439,22 @@ CRATES_DIR = pathlib.Path(__file__).resolve().parents[4] / "crates"
 #: asserted as tightly as the presence: two emitters would make a delta a count of two different
 #: events. `SEED_PARTIAL_LOG` is deliberately 2 — the both-or-neither abort exists at BOTH
 #: floor-raise sites, and a case counting it wants both.
+#:
+#: `DEFER_LOG` became 2 with FLU-1204: the spawn gate now has TWO inputs (the E-1 boundary
+#: BLOCK, and σ at that block's terminal round), and the deferring INFO was split so an
+#: operator chasing a stuck block fetch is not sent to the wrong place when it is σ that is
+#: absent. Both lines share the prefix and both come from the same gate, so the "two different
+#: events" objection does not apply here: nothing COUNTS this token — it is a hint string in
+#: failure messages only (`verdicts_boundary.evaluate_promoted_in_landing_epoch` /
+#: `evaluate_spawn_defer_bounded`), and the counted signal is `M_SPAWN_DEFERRED`, which the
+#: product deliberately does not split.
 EMITTERS = {
     vb.ENTER_LOG: (1, "executor.rs"),
     vb.SEED_LOG_COLD: (1, "outer.rs"),
     vb.SEED_LOG_REJUMP: (1, "executor.rs"),
     vb.SEED_FAIL_LOG: (1, "cert_follow.rs"),
     vb.SEED_PARTIAL_LOG: (2, None),
-    vb.DEFER_LOG: (1, "epoch_manager.rs"),
+    vb.DEFER_LOG: (2, "epoch_manager.rs"),
     vb.PROMOTED_LINE: (1, "epoch_manager.rs"),
     vb.PROPOSE_LINE: (1, "application.rs"),
     vo.REJUMP_LOG: (1, "cold_start_jump.rs"),

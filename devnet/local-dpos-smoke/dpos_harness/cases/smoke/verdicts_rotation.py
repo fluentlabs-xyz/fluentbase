@@ -583,9 +583,11 @@ TORN_POLL_GAP_S = 3
 #: `smoke-vrf-dkg-halt` used to name the mechanism with a propose-time line — "beacon: change-epoch
 #: boundary but DKG outcome not ready; skipping propose" — emitted by the boundary gate in
 #: `application.rs`. THAT GATE IS GONE: since the epoch key left `OrderBlock` a block asserts
-#: nothing about the beacon and there is no boundary gate at all
-#: (`application.rs`, `BeaconVerify`'s docstring says so outright). The string had zero hits in the
+#: nothing about the beacon and there is no boundary gate at all. The string had zero hits in the
 #: tree, so the case's positive log could only ever print its "not yet flushed" branch.
+#: [REVISED 2026-08-26] The citation used to be `BeaconVerify`'s docstring in `application.rs`.
+#: FLU-1204 deleted that type with the rest of the vote-path key ladder, so there is no beacon
+#: surface left on the verify path to cite — which makes the claim above stronger, not weaker.
 #:
 #: What still happens on a shareless committee is one layer down: `EpochManager::reconcile_roles`
 #: resolves the member's beacon share for the epoch, gets `Absent`, and soft-enters a VERIFY-ONLY

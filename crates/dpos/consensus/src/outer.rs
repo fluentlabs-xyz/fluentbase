@@ -225,9 +225,10 @@ const PRUNABLE_ITEMS_PER_SECTION: NonZeroU64 = NZU64!(4_096);
 pub(crate) const MAX_REPAIR: NonZeroUsize = NZUsize!(20);
 /// Marshal dispatch-ahead window (`PendingAcks::has_capacity`): at most this many
 /// finalized bodies are dispatched to the executor ahead of the acks flowing back.
-/// The one-block-lookahead pipeline holds exactly ONE of these slots un-acked
-/// (the `awaiting_child` tip), leaving 15 of slack; `has_capacity` reserves only
-/// the OLDEST un-acked block, so dispatch never stalls on the held tip.
+/// In steady state the executor derives and acks each body at its own delivery,
+/// so no slot is held; a block whose σ has not landed yet holds exactly ONE
+/// (the executor's `awaiting_seed` slot), leaving 15 of slack. `has_capacity`
+/// reserves only the OLDEST un-acked block, so dispatch never stalls on it.
 pub(crate) const MAX_PENDING_ACKS: NonZeroUsize = NZUsize!(16);
 const FREEZER_TABLE_RESIZE_FREQUENCY: u8 = 4;
 const FREEZER_TABLE_RESIZE_CHUNK_SIZE: u32 = 1 << 16;

@@ -47,8 +47,8 @@ def test_predictor_matches_an_independent_recomputation():
 
 def test_predictor_is_base_and_view_separated():
     """The epoch no longer enters the draw directly — it reaches it only through the base
-    (and, on the live path, not at all: the base is INHERITED from the previous epoch's
-    terminal block). So the property to hold is base-separation, of which epoch-separation
+    (and, on the live path, not at all: the base is INHERITED from σ at the previous epoch's
+    terminal ROUND). So the property to hold is base-separation, of which epoch-separation
     via `constant_fallback_seed` is one instance."""
     pks = sorted(_pks(7))
     cum, total = build_cum([1] * 7)

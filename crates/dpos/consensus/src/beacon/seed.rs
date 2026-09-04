@@ -105,10 +105,13 @@ pub fn constant_fallback_seed(snap: &ValidatorSetSnapshot) -> [u8; 32] {
     <[u8; 32]>::try_from(h.finalize().as_ref()).expect("sha256 is 32 bytes")
 }
 
-/// Compress a terminal-block witness seed into the seedless arm's base.
+/// Compress the previous epoch's terminal-round seed into the seedless arm's base.
 /// Deliberately NOT [`prev_randao_from_seed`]: that value is a header field, and
 /// D6 requires the leader draw to stay disjoint from it.
 ///
+/// The name still says "witness" for the σ it once read off the terminal block's
+/// `parent_seed`; since FLU-1204 the same σ comes from the store pin at that
+/// block's own round. Same value, same round — a different way of holding it.
 pub fn witness_fallback_seed(seed: &Seed) -> [u8; 32] {
     let mut h = Sha256::new();
     h.update(seed.signature.encode().as_ref());

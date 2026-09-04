@@ -72,7 +72,6 @@ pub(crate) mod plane;
 pub(crate) mod resolve;
 pub(crate) mod seed;
 pub(crate) mod seed_journal;
-pub(crate) mod seed_resolver;
 pub(crate) mod share_state;
 pub(crate) mod surface;
 pub(crate) mod verified_seed;
@@ -110,11 +109,10 @@ pub use actor::CommitteePairFor;
 pub use follower::{for_follower, ArtifactFetch, FollowerBeacon, FollowerRandomnessConfig};
 pub use keys::{AgreedKeys, BeaconKeys};
 pub use plane::{build, ArtifactSource, Beacon, BeaconConfig};
-pub use resolve::{BeaconVerify, KeyLookup};
 pub use seed::{constant_fallback_seed, prev_randao_from_seed, witness_fallback_seed, Seed};
 pub use surface::{
     absent, for_keys, for_seeds, BeaconResolve, BeaconResolver, PinEffort, Randomness, ShareProbe,
-    SignerVerdict, WithheldReason, WitnessCheck,
+    SignerVerdict, WithheldReason,
 };
 
 // The crate-internal tier. Same front door, narrower audience — see the boundary

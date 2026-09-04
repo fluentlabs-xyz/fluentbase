@@ -547,6 +547,97 @@ def test_dkg_finalize_deferred_rebaselines_on_a_node_restart():
     assert bat.events == [] and bat.SIM_DKG_DEFERRED_LAST["validator-0"] == 0
 
 
+# ── seed counters (the FLU-1204 successor set, HARD) ─────────────────────────
+#
+# The rewrite these pin was forced by a near-miss, and the near-miss is the point. This
+# detector used to read `dpos_parent_seed_reject_total` and
+# `dpos_group_key_invariant_violation_total`; FLU-1204 deleted both families and NOTHING went
+# red — `metric_val` answers "" for an absent family, `_isint("")` is False, so every node was
+# skipped and the detector reported GREEN on every tick, forever. These tests exist so the
+# replacement cannot decay the same way: one proves the hard zero still fails, one proves an
+# ABSENT family is scored as unread rather than as health.
+_SEED_METRICS = ("dpos_seed_material_refused_divergent_total_total {divergent}\n"
+                 "reth_dpos_parent_view_mismatch_total {viewmm}\n"
+                 "reth_dpos_spec_round_mismatch_total {specmm}\n")
+
+
+def _seed_bat(**per_node):
+    """per_node maps service -> (divergent, view_mismatch, spec_round_mismatch)."""
+    bat = Battery(Ctx())
+    bat.SIM_SCRAPE_NODES = list(per_node)
+    bat.SIM_SCRAPE_TEXT = {n: _SEED_METRICS.format(divergent=d, viewmm=v, specmm=s)
+                           for n, (d, v, s) in per_node.items()}
+    return bat
+
+
+def test_seed_counters_hold_at_zero():
+    bat = _seed_bat(**{"validator-0": (0, 0, 0), "validator-3": (0, 0, 0)})
+    assert bat._inv_seed_counters() is True
+    assert bat.inv_fail_id == ""
+    assert bat.SIM_DET_SAMPLES["seed-counters"] == 2
+
+
+def test_a_divergent_seed_refusal_fails_the_run():
+    """The successor to the group-key-invariant hard zero: this node's own mint polynomial
+    disagrees with the key attested at that mint, so only the gate is keeping a diverged
+    reconstruction out of the vote path."""
+    bat = _seed_bat(**{"validator-0": (0, 0, 0), "validator-3": (2, 0, 0)})
+    assert bat._inv_seed_counters() is False
+    assert bat.inv_fail_id == "seed-material-divergent"
+    assert "validator-3" in bat.inv_fail_msg
+
+
+def test_the_two_surviving_reth_counters_still_fail_the_run():
+    for idx, want in ((1, "parent-view-mismatch"), (2, "spec-round-mismatch")):
+        vals = [0, 0, 0]
+        vals[idx] = 1
+        bat = _seed_bat(**{"validator-0": tuple(vals)})
+        assert bat._inv_seed_counters() is False
+        assert bat.inv_fail_id == want
+
+
+def test_an_absent_divergence_family_is_unread_not_zero():
+    """THE BELT, and the reason the detector was rewritten rather than re-pointed.
+
+    `dpos_seed_material_refused_divergent_total` is registered EAGERLY by
+    `BeaconMetrics::register`, so a healthy scrape renders it at 0 whether or not it ever
+    moved. A scrape without it is a dead channel or a renamed family — and the old detector
+    would have called that a clean run. It now reports on the first tick and hard-fails on
+    sustained starvation, exactly as `dkg-pinned-idx` does."""
+    bat = Battery(Ctx())
+    bat.SIM_SCRAPE_NODES = ["validator-0"]
+    bat.SIM_SCRAPE_TEXT = {"validator-0": "beacon_seed_active_total_total 5963\n"}
+    assert bat._inv_seed_counters() is True                     # first tick: report, don't fail
+    assert bat.SIM_DET_SAMPLES["seed-counters"] == 0
+    assert any(k == "detector_undersampled" and "seed-counters" in n for k, n in bat.events)
+    verdict = True
+    for _ in range(bat.SIM_DET_STARVE_TICKS):
+        verdict = bat._inv_seed_counters()
+    assert verdict is False and bat.inv_fail_id == "detector-starved"
+
+
+def test_no_seed_detector_fail_id_is_demoted():
+    from dpos_harness.core.policy import DEMOTED_INVARIANTS
+    for fid in ("seed-material-divergent", "parent-view-mismatch", "spec-round-mismatch"):
+        assert fid not in DEMOTED_INVARIANTS
+
+
+def test_the_seed_watch_reports_a_rise_and_never_fails():
+    """SOFT by design: a held block and a stray σ at a beacon-inactive round are both
+    self-healing, so a rise is a signal to read the logs, not a verdict."""
+    bat = Battery(Ctx())
+    bat.SIM_SCRAPE_NODES = ["validator-0", "validator-3"]
+    quiet = "reth_dpos_executor_seed_hold_stalled_total 0\n"
+    bat.SIM_SCRAPE_TEXT = {n: quiet for n in bat.SIM_SCRAPE_NODES}
+    assert bat._inv_seed_watch() is True and bat.events == []
+    bat.SIM_SCRAPE_TEXT["validator-3"] = "reth_dpos_executor_seed_hold_stalled_total 4\n"
+    assert bat._inv_seed_watch() is True
+    assert bat.inv_fail_id == ""
+    kind, note = bat.events[-1]
+    assert kind == "warn" and "dpos_executor_seed_hold_stalled_total" in note
+    assert "rose 0 -> 4" in note
+
+
 # ── finalize_apply degraded (the executor re-apply wedge, HARD) ──────────────
 _DEGRADED = 'dpos_sync_degraded{{reason="finalize_apply"}} {v}\n'
 

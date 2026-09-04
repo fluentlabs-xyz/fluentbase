@@ -14,10 +14,8 @@
 //! NOT implemented: `Relay`. The `marshal::standard::Inline` wrapper
 //! provides `Relay` (inline.rs:471); `FluentApp` does not.
 
-#[cfg(test)]
-use crate::beacon::ceremony::CeremonyOutput;
 use crate::{
-    beacon::{seed::Seed, WitnessCheck},
+    beacon::seed::Seed,
     digest::Digest,
     executor, extra_data,
     fault::EngineError,
@@ -36,16 +34,12 @@ use commonware_consensus::{
         Update,
     },
     simplex::types::Context as SimplexContext,
-    types::{Epoch, Round, View},
+    types::{Round, View},
     Application, Reporter, VerifyingApplication,
 };
-#[cfg(test)]
-use commonware_cryptography::bls12381::primitives::group::Share;
 use commonware_cryptography::ed25519::PublicKey;
 use commonware_runtime::{Clock, Metrics, Spawner};
 use commonware_utils::ordered::BiMap;
-#[cfg(test)]
-use commonware_utils::ordered::Set;
 /// The signing scheme bound for this Application.
 pub use fluentbase_bls::Scheme as BlsScheme;
 use fluentbase_bls::{BlsPubkey, PeerPubkey};
@@ -53,8 +47,6 @@ use futures::StreamExt as _;
 use rand_08::Rng;
 use reth_ethereum_primitives::{Block as RethBlock, TransactionSigned};
 use reth_primitives_traits::SealedBlock;
-#[cfg(test)]
-use std::{collections::BTreeMap, sync::RwLock};
 use std::{
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -254,31 +246,6 @@ pub fn step_gas_limit(parent: u64, target: u64) -> u64 {
     stepped.max(MIN_GAS_LIMIT)
 }
 
-/// The parent-link classification shared by propose and the verify gate: the
-/// PARENT's epoch `Ep` and whether the parent-seed witness is REQUIRED — a
-/// pure function of the simplex context (agreed data, no local state).
-/// `ctx.parent.0 == View::zero()` is commonware's GENESIS_VIEW sentinel: the
-/// parent is the previous epoch's boundary block (F3), so `Ep = Ec − 1`; on
-/// every other link `Ep = Ec` (F2). `Ec == 0` at the boundary form means the
-/// parent is the chain ANCHOR (never proposed, no round) ⇒ `None` ⇒ never
-/// beacon-active — this is what keeps the first post-activation block
-/// producible. The witness is required iff
-/// `randomness.mandatory_at(Ep)` — network-agreed data, never "do I hold a
-/// key" (F8; a two-branch key-dependent gate would re-open the downgrade arm).
-fn witness_link(
-    randomness: &dyn crate::beacon::Randomness,
-    ctx: &SimplexContext<Digest, PublicKey>,
-) -> (Option<u64>, bool) {
-    let ec = ctx.round.epoch().get();
-    let ep = if ctx.parent.0 == View::zero() {
-        ec.checked_sub(1)
-    } else {
-        Some(ec)
-    };
-    let required = ep.is_some_and(|e| randomness.mandatory_at(e));
-    (ep, required)
-}
-
 /// The Fluent consensus application.
 ///
 /// Generic over `XC` (local derived-chain view) and `A` (tx assembler).
@@ -448,9 +415,6 @@ where
         self
     }
 
-    /// Attach the beacon context the parent-seed witness arm reads (the
-    /// `PK_epoch` resolver + the seed-signing domain). Validators supply this;
-    /// cold-start / followers / tests leave it `None`.
     /// Attach the randomness provider. Builder-style for the same reason
     /// `with_beacon` is: the provider is assembled at the launch site, after
     /// this app exists.
@@ -547,8 +511,7 @@ where
     /// Paced proposal body, factored out of `Application::propose` so the
     /// pacing/timestamp behavior is unit-testable (`AncestorStream` has no
     /// public constructor). `context` is the proposer's simplex context: it
-    /// supplies `proposal_view = ctx.round.view()` (rule SA) and the
-    /// parent-link classification for the `parent_seed` witness.
+    /// supplies `proposal_view = ctx.round.view()` (rule SA).
     async fn build_proposal<E: Clock>(
         &self,
         clock: &E,
@@ -557,73 +520,11 @@ where
     ) -> Option<OrderBlock> {
         let height = parent.height + 1;
 
-        // Parent-seed witness (§3 propose side) — never propose a block your
-        // own verifier would reject. The ROUND is a pure function of AGREED
-        // data: `Round::new(Ep, parent.proposal_view)` — the same value every
-        // voter pins (rule PIN). It must NEVER come from a certificate: the
-        // local first-wins finalization archive can name a different (spin)
-        // round per node at the boundary (F4), and an honest proposer reading
-        // it would split honest voters (R4). The signature bytes come from the
-        // in-process SeedStore (written at the notarization hook for every
-        // round this node's voter processed); a threshold seed is unique per
-        // (group key, round), so bytes cannot split voters. A store miss ⇒
-        // SKIP THE VIEW (fast view-change, same pattern as the exec-lag and
-        // boundary-DKG gates) — never an invalid block, never a fallback for
-        // the round. Hoisted above the pace sleep so a doomed view nullifies
-        // ~1 s sooner.
-        // Captured BEFORE the witness fetch below, and used as the pace cap's
-        // origin. The fetch is bounded by `SEED_PULL_TIMEOUT`, but a cap read
-        // after it would ADD that budget to the pace sleep instead of spending it
-        // — and `leader_timeout` is derived as one block interval plus a 750 ms
-        // margin (`timeouts.rs`), so a leader that slept a full interval after a
-        // full fetch would broadcast at or past every peer's deadline and
-        // nullify its own view. Anchoring the cap here makes the fetch consume
-        // the leader's own budget, which is whose budget it is.
+        // The pace cap's origin, read at view entry rather than after the
+        // sleep: `leader_timeout` is one block interval plus a 750 ms margin
+        // (`timeouts.rs`), so anything this call spends before pacing must come
+        // out of the leader's OWN interval, not be added to it.
         let view_entered = clock.current();
-        let (parent_epoch, seed_required) = witness_link(self.randomness.as_ref(), context);
-        let parent_seed = if !seed_required {
-            None
-        } else {
-            let ep = parent_epoch.expect("required implies Some(ep)");
-            let round = Round::new(Epoch::new(ep), View::new(parent.proposal_view));
-            // A miss is no longer the end of the road. The witness round is a
-            // pure function of agreed data, so it can be ASKED FOR: one bounded
-            // request, awaited here rather than deferred, because the value is a
-            // precondition of the block this call is building. `Inline::propose`
-            // runs in its own task and does not block the voter, so the wait
-            // costs this view's leader time and nothing else.
-            //
-            // At a boundary this is what turns "the store happens to hold it"
-            // into "the node obtained it", which is the difference between a
-            // committee that overlaps its predecessor and one that does not.
-            let held = match self.randomness.seed_for(round) {
-                Some(seed) => Some(seed),
-                None if self.randomness.fetch_seed(round).await => {
-                    self.randomness.seed_for(round)
-                }
-                None => None,
-            };
-            match held {
-                Some(seed) => Some(seed),
-                None => {
-                    metrics::counter!("dpos_parent_seed_lookup_miss_total").increment(1);
-                    let boundary = context.parent.0 == View::zero();
-                    if boundary {
-                        // The R4 liveness cost: only a mid-spin joiner or a
-                        // node restarted between V0 and the boundary lands
-                        // here (the store is in-memory). Must stay small.
-                        metrics::counter!("dpos_parent_seed_boundary_skip_total").increment(1);
-                    }
-                    tracing::info!(
-                        height,
-                        ?round,
-                        boundary,
-                        "parent-seed witness not in SeedStore; skipping propose (view skip)"
-                    );
-                    return None;
-                }
-            }
-        };
 
         // Pace to 1 blk/s: hold until wall clock reaches parent + 1s.
         // Cancellation-safe: Inline selects this future against
@@ -750,14 +651,13 @@ where
         }
         let extra_data = Bytes::from(extra_data::encode_production_record(leader_index, accused));
 
-        if parent_seed.is_some() {
-            metrics::counter!("dpos_parent_seed_embedded_total").increment(1);
-        }
         Some(OrderBlock {
             parent: parent.digest(),
             height,
-            // Rule SA: self-attest the view this block is proposed in — what
-            // makes the witness round agreed data for the CHILD (§2/§3).
+            // Rule SA: self-attest the view this block is proposed in. It is
+            // what makes `Round(epoch(h), proposal_view)` — the round every node
+            // resolves this block's σ at — agreed data rather than a per-node
+            // guess, and it is checked at THIS block's own vote below.
             proposal_view: context.round.view().get(),
             timestamp,
             fee_recipient: self.fee_recipient,
@@ -765,7 +665,6 @@ where
             extra_data,
             result,
             txs,
-            parent_seed,
             equivocation,
         })
     }
@@ -1005,61 +904,24 @@ where
             return false;
         }
 
-        // Parent-seed witness gate, SYNCHRONOUS PRELUDE (§3) — no budget,
-        // no await. Everything here is a pure function of agreed data (the two
-        // block bodies + ctx); a `false` returns immediately.
-        let (parent_epoch, seed_required) = witness_link(self.randomness.as_ref(), ctx);
-        let witness = if !seed_required {
-            // Pre-bootstrap / anchor link: a witness MUST be absent (a present
-            // one would be unagreeable data smuggled under the digest).
-            if block.parent_seed.is_some() {
-                metrics::counter!("dpos_parent_seed_reject_total", "reason" => "pre_bootstrap")
-                    .increment(1);
-                return false;
-            }
-            None
-        } else {
-            // Beacon-active link: the witness is required UNCONDITIONALLY —
-            // there is no live no-beacon fallback (F8), so absence is the
-            // downgrade attack, not a degraded mode.
-            let Some(s) = block.parent_seed.as_ref() else {
-                metrics::counter!("dpos_parent_seed_reject_total", "reason" => "missing")
-                    .increment(1);
-                return false;
-            };
-            // RULE PIN — the witness round is a pure function of agreed data
-            // on EVERY link, boundary included: `parent.proposal_view` is
-            // truthful by rule SA + the parent-epoch committee multisig over
-            // digest(parent). Key-free: the pin holds even when PK_Ep is
-            // unresolvable below.
-            let ep = parent_epoch.expect("required implies Some(ep)");
-            let pinned = Round::new(Epoch::new(ep), View::new(parent.proposal_view));
-            if s.target_round != pinned {
-                metrics::counter!("dpos_parent_seed_reject_total", "reason" => "pin").increment(1);
-                return false;
-            }
-            Some((ep, s))
-        };
-        // P4 tripwire (kept alongside PIN, not subsumed by it): on a
-        // same-epoch link `parent.proposal_view` and `ctx.parent.0` are
-        // provably equal, but they come from DIFFERENT SOURCES (block body vs
-        // simplex context) — a mismatch is a block certified at a view it did
-        // not claim, exactly the class that would silently un-back PIN.
+        // P4 tripwire: on a same-epoch link `parent.proposal_view` and
+        // `ctx.parent.0` are provably equal, but they come from DIFFERENT
+        // SOURCES (block body vs simplex context) — a mismatch is a block
+        // certified at a view it did not claim. It outlived the witness pin it
+        // was a second source for: `proposal_view` is still the key the
+        // executor resolves σ at, so a block lying about it still misroutes a
+        // derive.
         if ctx.parent.0 != View::zero() && parent.proposal_view != ctx.parent.0.get() {
             metrics::counter!("dpos_parent_view_mismatch_total").increment(1);
             return false;
         }
 
-        // THE ONE INTERLEAVED POLL LOOP: the witness-signature arm
-        // and the result gate share the SAME 40-tick budget and are evaluated
-        // together on every tick — neither can starve the other (the two reads
-        // correlate: `committee_for` and `executed_hash` hit the same EL
-        // state). Common path: both resolve on tick 0, no sleep. A definitive
-        // `false` from either condition returns at once. Deadline verdicts are
-        // independent: an unresolved key ⇒ ACCEPT-biased (+metric, residual
-        // R-P1 — rejecting on crypto you cannot run is a correlated
-        // local-state-dependent false vote ⇒ chain halt); an unresolved result
-        // ⇒ vote false (EL backpressure, unchanged).
+        // The result-gate poll loop. It used to INTERLEAVE two conditions, the
+        // witness-signature arm and this one, over one shared 40-tick budget;
+        // with the witness gone the budget has a single claimant and the
+        // starvation question it answered no longer exists. Common path:
+        // resolves on tick 0, no sleep. A definitive `false` returns at once;
+        // an unresolved result at the deadline votes false (EL backpressure).
         // The result gate samples the FINALIZED tier (see
         // `ExecutedChain::finalized_executed_hash`): the honest semantics are
         // "wait for h−K to be finalized-reconciled locally", not "match the
@@ -1073,8 +935,6 @@ where
                 |h| this.executed.finalized_executed_hash(h),
             )
         };
-        let ec = ctx.round.epoch().get();
-        let mut key_done = witness.is_none();
         let mut result_done = false;
         // Result-gate observability: total wall time this verify spends waiting on
         // `executed_hash(h-K)` — 0 on the common tick-0 resolve. A wait past one
@@ -1088,59 +948,6 @@ where
         for tick in 0..=polls {
             if tick > 0 {
                 clock.sleep(VERIFY_EXEC_POLL).await;
-            }
-            if !key_done {
-                let (ep, s) = witness.expect("key arm exists only with a witness");
-                match self.randomness.check_witness(ep, s) {
-                    WitnessCheck::Valid => {
-                        key_done = true;
-                    }
-                    WitnessCheck::Invalid => {
-                        // The resolved-key fingerprint rides the warn inside
-                        // `resolve_witness` (only it holds the key); this one
-                        // carries the height and the vote.
-                        tracing::warn!(
-                            height = block.height,
-                            parent_epoch = ep,
-                            "parent-seed witness verify failed; voting false \
-                             (reject reason=bad_signature)"
-                        );
-                        metrics::counter!(
-                            "dpos_parent_seed_reject_total",
-                            "reason" => "bad_signature"
-                        )
-                        .increment(1);
-                        return false;
-                    }
-                    WitnessCheck::NoKey => {
-                        // Structurally cannot know PK_Ep — re-polling cannot
-                        // help; resolve NOW, burn zero further budget. Accept:
-                        // safety is carried by key availability + quorum
-                        // (b ⊆ churn-in), not by reject-bias.
-                        tracing::debug!(
-                            height = block.height,
-                            parent_epoch = ep,
-                            "witness key structurally unknown (no PK_Ep on this \
-                             node); accepting unverified (reason=unknown)"
-                        );
-                        metrics::counter!(
-                            "dpos_parent_seed_boundary_unverified_total",
-                            "reason" => "unknown"
-                        )
-                        .increment(1);
-                        if ep == ec {
-                            // W1 makes a same-epoch miss unreachable for any
-                            // node that votes at all.
-                            debug_assert!(false, "same-epoch PK_E miss (W1 violated)");
-                            metrics::counter!("dpos_group_key_invariant_violation_total")
-                                .increment(1);
-                        }
-                        key_done = true;
-                    }
-                    // Transient — stays pending, retried NEXT tick. Never
-                    // cached (§5 b).
-                    WitnessCheck::Undecided => {}
-                }
             }
             if !result_done {
                 match check(self) {
@@ -1182,26 +989,9 @@ where
                     }
                 }
             }
-            if key_done && result_done {
+            if result_done {
                 return true;
             }
-        }
-        // Budget exhausted: each condition keeps its own, independent verdict.
-        if !key_done {
-            // The committee read outlasted the shared budget ⇒ accept-biased
-            // (residual R-P1). A SUSTAINED rise after the read recovers means
-            // a failure got cached — the sticky-`None` bug.
-            tracing::debug!(
-                height = block.height,
-                parent_epoch = witness.map(|(e, _)| e),
-                "witness key read outlasted the verify budget; accepting \
-                 unverified (reason=read_failed)"
-            );
-            metrics::counter!(
-                "dpos_parent_seed_boundary_unverified_total",
-                "reason" => "read_failed"
-            )
-            .increment(1);
         }
         if !result_done {
             // Budget exhausted with no finalized h−K locally: finalization is
@@ -1337,6 +1127,21 @@ impl DerivedBlock for SealedBlock<RethBlock> {
 #[error("derive: parent header {0} not found")]
 pub struct ParentHeaderMissing(pub B256);
 
+/// Typed "a gap-walk prefix element on a beacon-active round has no σ yet"
+/// derivation failure. The walk owns neither `cause` nor the ack, so it cannot
+/// park; its CALLER can, and does — `try_derive` classifies this leaf exactly
+/// as it classifies [`ParentHeaderMissing`]. Deriving with the `order.digest()`
+/// fallback instead would re-roll `prev_randao` against the round the rest of
+/// the network used, so the block waits rather than forks.
+#[derive(Debug, thiserror::Error)]
+#[error(
+    "derive gap: no seed recorded for beacon-active height {height} (round view {proposal_view})"
+)]
+pub struct PrefixSeedMissing {
+    pub height: u64,
+    pub proposal_view: u64,
+}
+
 /// Derivation with a bounded retry on the parent-visibility race above.
 ///
 /// Any path that derives against a parent imported WITHOUT an awaited
@@ -1402,16 +1207,11 @@ pub trait DerivedBlockBuilder: Send + Sync + 'static {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::beacon::{
-        certify::SeedStore, keys::BeaconKeys, resolve::GroupKeyFor, surface::PlaneRandomnessConfig,
-        verified_seed::{PkOracle, VerifiedSeed},
-        BeaconVerify, KeyLookup,
-    };
+    use crate::beacon::{certify::SeedStore, keys::BeaconKeys, surface::PlaneRandomnessConfig};
     use crate::slasher::Message;
     use commonware_consensus::types::{Epoch, View};
     use commonware_cryptography::{ed25519::PrivateKey as Ed25519PrivateKey, Signer as _};
     use commonware_runtime::Runner as _;
-    use fluentbase_bls::beacon::GroupPublic;
     use fluentbase_bls::keys::ValidatorBlsKeypair;
     use fluentbase_staking_reader::reader::{
         ConsensusKeys, ValidatorSetSnapshot, ValidatorWithKeys,
@@ -1467,11 +1267,6 @@ mod tests {
         );
     }
 
-    /// A resolver for tests that exercise no key ladder: structurally-no-key.
-    fn no_key_lookup() -> GroupKeyFor {
-        Arc::new(|_| KeyLookup::Unknown)
-    }
-
     fn sample_context(view: u64) -> SimplexContext<Digest, PublicKey> {
         SimplexContext {
             round: Round::new(Epoch::new(0), View::new(view)),
@@ -1514,7 +1309,6 @@ mod tests {
             extra_data: Bytes::new(),
             result: B256::ZERO,
             txs: Vec::new(),
-            parent_seed: None,
             equivocation: None,
         }
     }
@@ -1693,11 +1487,6 @@ mod tests {
         )
     }
 
-    // parent-seed witness (§3)
-
-    use commonware_cryptography::bls12381::primitives::sharing::Sharing;
-    use commonware_cryptography::bls12381::primitives::variant::MinSig;
-    use fluentbase_bls::beacon::{recover_seed, seed_namespace, sign_seed_partial};
     use metrics_util::debugging::{DebugValue, DebuggingRecorder, Snapshotter};
 
     /// Sum of a counter's values across matching keys (name + optional label).
@@ -1719,60 +1508,10 @@ mod tests {
             .sum()
     }
 
-    /// A real threshold-beacon key: group key + shares to mint genuine seeds.
-    struct WitnessCrypto {
-        sharing: Sharing<MinSig>,
-        shares: Vec<Share>,
-        pk: GroupPublic,
-        ns: Vec<u8>,
-    }
-
-    fn witness_crypto(seed: u64) -> WitnessCrypto {
-        use commonware_cryptography::bls12381::dkg::deal_anonymous;
-        use commonware_utils::{N3f1, NZU32};
-        use rand_08::rngs::StdRng;
-        use rand_core::SeedableRng as _;
-        let mut rng = StdRng::seed_from_u64(seed);
-        let (sharing, shares) =
-            deal_anonymous::<MinSig, N3f1>(&mut rng, Default::default(), NZU32!(4));
-        WitnessCrypto {
-            pk: *sharing.public(),
-            ns: seed_namespace(b"fluent-test"),
-            sharing,
-            shares,
-        }
-    }
-
-    impl WitnessCrypto {
-        /// A GENUINE recovered threshold seed of `round` under THIS group key.
-        fn seed_at(&self, round: Round) -> Seed {
-            use commonware_utils::N3f1;
-            let partials: Vec<_> = self
-                .shares
-                .iter()
-                .map(|s| sign_seed_partial(s, &self.ns, round))
-                .collect();
-            Seed {
-                target_round: round,
-                signature: recover_seed::<N3f1>(&self.sharing, &partials).expect("recover"),
-            }
-        }
-
-        /// The same σ, wrapped in the witness the seed store now takes. The
-        /// fixture holds the group key it was dealt under, so this is a real
-        /// check, not a bypass.
-        fn witness(&self, round: Round) -> VerifiedSeed {
-            PkOracle::new(self.pk, self.ns.clone()).witness(round, self.seed_at(round).signature)
-        }
-    }
-
-    /// A verify-side app over the given executed chain + key plumbing, with
-    /// the REAL seed namespace so `verify_seed` runs for real.
+    /// A verify-side app over the given executed chain + key store.
     fn witness_app<XC: ExecutedChain>(
         executed: XC,
         group_keys: BeaconKeys,
-        group_key_for: GroupKeyFor,
-        ns: Vec<u8>,
     ) -> FluentApp<XC, NoTxs> {
         let (mailbox, _rx) = fresh_mailbox();
         FluentApp::new(
@@ -1788,22 +1527,14 @@ mod tests {
             None,
             TombstoneSet::default(),
         )
-        .with_randomness(test_randomness(
-            SeedStore::new(),
-            group_keys,
-            Some(BeaconVerify::new(group_key_for, ns)),
-        ))
+        .with_randomness(test_randomness(SeedStore::new(), group_keys))
     }
 
-    /// Tiny-timestamp `(parent, block)` pair for the gate tests (the
+    /// Tiny-timestamp `(parent, block)` pair for the verify-gate tests (the
     /// deterministic clock starts at 0; unix-scale sleeps hang it). Heights
     /// 1→2 sit in the pre-activation result window, so the result gate
     /// resolves on tick 0 unless a test injects its own chain.
-    fn witness_pair(
-        parent_view: u64,
-        block_view: u64,
-        seed: Option<Seed>,
-    ) -> (OrderBlock, OrderBlock) {
+    fn witness_pair(parent_view: u64, block_view: u64) -> (OrderBlock, OrderBlock) {
         let parent = OrderBlock {
             proposal_view: parent_view,
             height: 1,
@@ -1814,7 +1545,6 @@ mod tests {
             proposal_view: block_view,
             height: 2,
             timestamp: 2,
-            parent_seed: seed,
             ..sample_order(parent.digest(), 2)
         };
         (parent, block)
@@ -1860,19 +1590,13 @@ mod tests {
         })
     }
 
-    fn resolved(pk: GroupPublic) -> GroupKeyFor {
-        Arc::new(move |_| KeyLookup::Resolved(pk))
-    }
-
-    // §9 gate test 1: the honest common path — and it must burn ZERO budget
-    // (both loop conditions resolve on tick 0, no sleep).
+    // The honest common path — and it must burn ZERO budget (the result gate
+    // resolves on tick 0, no sleep).
     #[test]
-    fn same_epoch_valid_witness_verifies_true_with_zero_budget() {
-        let fx = witness_crypto(1);
-        let seed = fx.seed_at(Round::new(Epoch::new(5), View::new(4)));
-        let (parent, block) = witness_pair(4, 9, Some(seed));
+    fn the_honest_common_path_verifies_true_with_zero_budget() {
+        let (parent, block) = witness_pair(4, 9);
         let ctx = ctx_same_epoch(5, 9, &parent);
-        let app = witness_app(NoChain, test_group_keys(), resolved(fx.pk), fx.ns.clone());
+        let app = witness_app(NoChain, test_group_keys());
         let (verdict, elapsed) = run_gate(app, ctx, block, parent);
         assert!(verdict);
         assert_eq!(elapsed, Duration::ZERO, "common path must not sleep");
@@ -1899,14 +1623,11 @@ mod tests {
     // wiring that carries `ctx.leader` into the rule is what these three pin.
     #[test]
     fn armed_voter_accepts_a_record_naming_the_round_leader() {
-        let fx = witness_crypto(1);
-        let seed = fx.seed_at(Round::new(Epoch::new(5), View::new(4)));
-        let (parent, mut block) = witness_pair(4, 9, Some(seed));
+        let (parent, mut block) = witness_pair(4, 9);
         let (bimap, idx) = armed_committee();
         block.extra_data = extra_data::encode_production_record(idx, None).into();
         let ctx = ctx_same_epoch(5, 9, &parent);
-        let app = witness_app(NoChain, test_group_keys(), resolved(fx.pk), fx.ns.clone())
-            .with_committee_index(bimap);
+        let app = witness_app(NoChain, test_group_keys()).with_committee_index(bimap);
         assert!(run_gate(app, ctx, block, parent).0);
     }
 
@@ -1955,9 +1676,7 @@ mod tests {
             ("some other member", Some(&bystander), true),
             ("the round leader", Some(&leader), false),
         ] {
-            let fx = witness_crypto(1);
-            let seed = fx.seed_at(Round::new(Epoch::new(5), View::new(4)));
-            let (parent, mut block) = witness_pair(4, 9, Some(seed));
+            let (parent, mut block) = witness_pair(4, 9);
             let (bimap, idx) = armed_committee();
             block.extra_data = extra_data::encode_production_record(idx, None).into();
             let ctx = ctx_same_epoch(5, 9, &parent);
@@ -1965,7 +1684,7 @@ mod tests {
             if let Some(peer) = tombstoned {
                 tombstones.observe(&snapshot_tombstoning(peer, &bimap));
             }
-            let app = witness_app(NoChain, test_group_keys(), resolved(fx.pk), fx.ns.clone())
+            let app = witness_app(NoChain, test_group_keys())
                 .with_committee_index(bimap)
                 .with_tombstones(tombstones);
             assert_eq!(
@@ -1991,14 +1710,12 @@ mod tests {
         let fresh = TombstoneSet::default();
         assert!(!fresh.contains(&leader));
 
-        let fx = witness_crypto(1);
-        let seed = fx.seed_at(Round::new(Epoch::new(5), View::new(4)));
-        let (parent, mut block) = witness_pair(4, 9, Some(seed));
+        let (parent, mut block) = witness_pair(4, 9);
         block.extra_data = extra_data::encode_production_record(idx, None).into();
         let ctx = ctx_same_epoch(5, 9, &parent);
         assert!(
             run_gate(
-                witness_app(NoChain, test_group_keys(), resolved(fx.pk), fx.ns.clone())
+                witness_app(NoChain, test_group_keys())
                     .with_committee_index(bimap.clone())
                     .with_tombstones(fresh.clone()),
                 ctx,
@@ -2012,14 +1729,12 @@ mod tests {
         // The first committee read after the restart is the whole input.
         fresh.observe(&snapshot);
 
-        let fx = witness_crypto(1);
-        let seed = fx.seed_at(Round::new(Epoch::new(5), View::new(4)));
-        let (parent, mut block) = witness_pair(4, 9, Some(seed));
+        let (parent, mut block) = witness_pair(4, 9);
         block.extra_data = extra_data::encode_production_record(idx, None).into();
         let ctx = ctx_same_epoch(5, 9, &parent);
         assert!(
             !run_gate(
-                witness_app(NoChain, test_group_keys(), resolved(fx.pk), fx.ns.clone())
+                witness_app(NoChain, test_group_keys())
                     .with_committee_index(bimap)
                     .with_tombstones(fresh),
                 ctx,
@@ -2044,13 +1759,10 @@ mod tests {
             ),
             ("empty", Vec::new()),
         ] {
-            let fx = witness_crypto(1);
-            let seed = fx.seed_at(Round::new(Epoch::new(5), View::new(4)));
-            let (parent, mut block) = witness_pair(4, 9, Some(seed));
+            let (parent, mut block) = witness_pair(4, 9);
             block.extra_data = field.into();
             let ctx = ctx_same_epoch(5, 9, &parent);
-            let app = witness_app(NoChain, test_group_keys(), resolved(fx.pk), fx.ns.clone())
-                .with_committee_index(bimap.clone());
+            let app = witness_app(NoChain, test_group_keys()).with_committee_index(bimap.clone());
             assert!(
                 !run_gate(app, ctx, block, parent).0,
                 "an armed voter must reject a production record that is {label}"
@@ -2066,15 +1778,13 @@ mod tests {
         let recorder = DebuggingRecorder::new();
         let snap = recorder.snapshotter();
         let verdict = metrics::with_local_recorder(&recorder, || {
-            let fx = witness_crypto(1);
-            let seed = fx.seed_at(Round::new(Epoch::new(5), View::new(4)));
-            let (parent, mut block) = witness_pair(4, 9, Some(seed));
+            let (parent, mut block) = witness_pair(4, 9);
             // Seeds 9000.. — disjoint from the seed-7 leader `ctx_same_epoch` names.
             let (_, disjoint) = test_committee(4, 9);
             block.extra_data = extra_data::encode_production_record(0, None).into();
             let ctx = ctx_same_epoch(5, 9, &parent);
-            let app = witness_app(NoChain, test_group_keys(), resolved(fx.pk), fx.ns.clone())
-                .with_committee_index(Arc::new(disjoint));
+            let app =
+                witness_app(NoChain, test_group_keys()).with_committee_index(Arc::new(disjoint));
             run_gate(app, ctx, block, parent).0
         });
         assert!(!verdict);
@@ -2088,490 +1798,22 @@ mod tests {
         );
     }
 
-    // §9 gate test 2: the downgrade attack — a beacon-active link with NO
-    // witness must be voted false unconditionally (there is no live no-beacon
-    // fallback; F8).
-    #[test]
-    fn missing_witness_on_beacon_active_link_is_rejected() {
-        let fx = witness_crypto(1);
-        let recorder = DebuggingRecorder::new();
-        let snap = recorder.snapshotter();
-        let verdict = metrics::with_local_recorder(&recorder, || {
-            let (parent, block) = witness_pair(4, 9, None);
-            let ctx = ctx_same_epoch(5, 9, &parent);
-            let app = witness_app(NoChain, test_group_keys(), resolved(fx.pk), fx.ns.clone());
-            run_gate(app, ctx, block, parent).0
-        });
-        assert!(!verdict);
-        assert_eq!(
-            counter_at(
-                &snap,
-                "dpos_parent_seed_reject_total",
-                Some(("reason", "missing"))
-            ),
-            1
-        );
-    }
-
-    // §9 gate test 3 + (N1-b): rule PIN — a witness naming ANY round but
-    // `Round::new(Ep, parent.proposal_view)` is rejected, even when the seed
-    // is a GENUINE threshold seed of that other round (crypto alone cannot
-    // gate this: `verify_seed`'s message domain is the round alone). Exactly
-    // one row of the table — the pinned round — is accepted. This is the
-    // grinding surface: every pre-V0 round of the epoch has a genuine,
-    // publicly-fetchable seed.
-    #[test]
-    fn witness_naming_any_round_but_the_pinned_one_is_rejected() {
-        let fx = witness_crypto(1);
-        let v0 = 50u64;
-        for (k_epoch, k_view) in [
-            (4u64, 45u64), // wrong epoch + wrong view
-            (5, 45),       // v0 − 5
-            (5, 49),       // v0 − 1
-            (5, 50),       // v0 — THE pinned round
-            (5, 51),       // v0 + 1
-            (5, 57),       // v0 + 7
-            (4, 50),       // right view, wrong epoch
-        ] {
-            let seed = fx.seed_at(Round::new(Epoch::new(k_epoch), View::new(k_view)));
-            let (parent, block) = witness_pair(v0, 60, Some(seed));
-            let ctx = ctx_same_epoch(5, 60, &parent);
-            let app = witness_app(NoChain, test_group_keys(), resolved(fx.pk), fx.ns.clone());
-            let (verdict, _) = run_gate(app, ctx, block, parent);
-            assert_eq!(
-                verdict,
-                (k_epoch, k_view) == (5, v0),
-                "only the pinned round (5, {v0}) may pass; got true for ({k_epoch}, {k_view})"
-            );
-        }
-    }
-
-    // §9 gate tests 5 + 6: the boundary link — the pin is
-    // `Round::new(Ec − 1, L.proposal_view)`; a genuine witness passes, a
-    // FORGED seed (valid signature under a DIFFERENT group key, correct
-    // pinned round) fails the signature arm.
-    #[test]
-    fn boundary_witness_genuine_passes_forged_fails() {
-        let fx = witness_crypto(1);
-        let forger = witness_crypto(0xBAD);
-        let pinned = Round::new(Epoch::new(4), View::new(7));
-
-        let (parent, block) = witness_pair(7, 3, Some(fx.seed_at(pinned)));
-        let ctx = ctx_boundary(5, 3, &parent);
-        let app = witness_app(NoChain, test_group_keys(), resolved(fx.pk), fx.ns.clone());
-        assert!(run_gate(app, ctx, block, parent).0);
-
-        let recorder = DebuggingRecorder::new();
-        let snap = recorder.snapshotter();
-        let verdict = metrics::with_local_recorder(&recorder, || {
-            let (parent, block) = witness_pair(7, 3, Some(forger.seed_at(pinned)));
-            let ctx = ctx_boundary(5, 3, &parent);
-            let app = witness_app(NoChain, test_group_keys(), resolved(fx.pk), fx.ns.clone());
-            run_gate(app, ctx, block, parent).0
-        });
-        assert!(!verdict, "a forged boundary seed must be voted false");
-        assert_eq!(
-            counter_at(
-                &snap,
-                "dpos_parent_seed_reject_total",
-                Some(("reason", "bad_signature"))
-            ),
-            1
-        );
-    }
-
-    // §9 gate test 7: an unresolvable PK_Ep is ACCEPT-biased (+metric) — but
-    // the PIN is key-free and still rejects a wrong round even then.
-    #[test]
-    fn boundary_pk_unresolvable_accepts_but_the_pin_still_rejects() {
-        let fx = witness_crypto(1);
-        let recorder = DebuggingRecorder::new();
-        let snap = recorder.snapshotter();
-        let (ok, wrong_round) = metrics::with_local_recorder(&recorder, || {
-            let pinned = Round::new(Epoch::new(4), View::new(7));
-            let (parent, block) = witness_pair(7, 3, Some(fx.seed_at(pinned)));
-            let ctx = ctx_boundary(5, 3, &parent);
-            let app = witness_app(NoChain, test_group_keys(), no_key_lookup(), fx.ns.clone());
-            let ok = run_gate(app, ctx, block, parent).0;
-
-            let spin = Round::new(Epoch::new(4), View::new(37));
-            let (parent, block) = witness_pair(7, 3, Some(fx.seed_at(spin)));
-            let ctx = ctx_boundary(5, 3, &parent);
-            let app = witness_app(NoChain, test_group_keys(), no_key_lookup(), fx.ns.clone());
-            let wrong_round = run_gate(app, ctx, block, parent).0;
-            (ok, wrong_round)
-        });
-        assert!(ok, "accept-biased on a structurally-unknown key");
-        assert!(
-            !wrong_round,
-            "the PIN is key-free — wrong round rejects anyway"
-        );
-        assert_eq!(
-            counter_at(
-                &snap,
-                "dpos_parent_seed_boundary_unverified_total",
-                Some(("reason", "unknown"))
-            ),
-            1,
-            "only the honest-round accept counts as unverified; the pin reject never reaches the key arm"
-        );
-    }
-
     // §9 gate test 8 / (N1-c): rule SA — a block lying about its own proposal
     // view is rejected (with everything else valid). Without SA, PIN pins
     // nothing.
     #[test]
     fn a_block_lying_about_its_own_proposal_view_is_rejected() {
-        let fx = witness_crypto(1);
-        let seed = fx.seed_at(Round::new(Epoch::new(5), View::new(4)));
-        let (parent, block) = witness_pair(4, 8 /* lies: certified view is 9 */, Some(seed));
+        let (parent, block) = witness_pair(4, 8 /* lies: certified view is 9 */);
         let ctx = ctx_same_epoch(5, 9, &parent);
-        let app = witness_app(NoChain, test_group_keys(), resolved(fx.pk), fx.ns.clone());
+        let app = witness_app(NoChain, test_group_keys());
         assert!(!run_gate(app, ctx, block, parent).0);
     }
 
-    // §9 gate test 9: pre-bootstrap links (Ep < DETERMINISTIC_BOOTSTRAP_EPOCH)
-    // MUST carry None — a present witness is unagreeable smuggled data.
-    #[test]
-    fn pre_bootstrap_link_requires_absent_witness() {
-        let fx = witness_crypto(1);
-        let seed = fx.seed_at(Round::new(Epoch::new(1), View::new(4)));
-        let (parent, block) = witness_pair(4, 9, Some(seed));
-        let ctx = ctx_same_epoch(1, 9, &parent);
-        let app = witness_app(NoChain, test_group_keys(), resolved(fx.pk), fx.ns.clone());
-        assert!(!run_gate(app, ctx, block, parent).0, "Some ⇒ false");
-
-        let (parent, block) = witness_pair(4, 9, None);
-        let ctx = ctx_same_epoch(1, 9, &parent);
-        let app = witness_app(NoChain, test_group_keys(), resolved(fx.pk), fx.ns.clone());
-        assert!(run_gate(app, ctx, block, parent).0, "None ⇒ true");
-    }
-
-    // §9 gate test 10: the anchor link — Ec == 0 with the GENESIS_VIEW parent
-    // sentinel is the chain anchor (never proposed, proposal_view == 0): the
-    // witness is not required and the first post-activation block verifies.
-    #[test]
-    fn anchor_link_verifies_without_a_witness() {
-        let fx = witness_crypto(1);
-        let (parent, block) = witness_pair(0, 1, None);
-        let ctx = ctx_boundary(0, 1, &parent);
-        let app = witness_app(NoChain, test_group_keys(), resolved(fx.pk), fx.ns.clone());
-        assert!(run_gate(app, ctx, block, parent).0);
-    }
-
-    // (P4) the free second-source tripwire: on a same-epoch link the parent's
-    // self-attested view must agree with the simplex context's parent view —
-    // a mismatch is a block certified at a view it did not claim. The witness
-    // itself is CORRECTLY pinned to parent.proposal_view, so PIN alone would
-    // pass this fixture; the test exists to prove the tripwire is wired.
-    #[test]
-    fn parent_proposal_view_disagreeing_with_ctx_parent_view_is_rejected() {
-        let fx = witness_crypto(1);
-        let recorder = DebuggingRecorder::new();
-        let snap = recorder.snapshotter();
-        let verdict = metrics::with_local_recorder(&recorder, || {
-            let seed = fx.seed_at(Round::new(Epoch::new(5), View::new(4)));
-            let (parent, block) = witness_pair(4, 9, Some(seed));
-            let mut ctx = ctx_same_epoch(5, 9, &parent);
-            ctx.parent.0 = View::new(5); // simplex says the parent certified at 5
-            let app = witness_app(NoChain, test_group_keys(), resolved(fx.pk), fx.ns.clone());
-            run_gate(app, ctx, block, parent).0
-        });
-        assert!(!verdict);
-        assert_eq!(
-            counter_at(&snap, "dpos_parent_view_mismatch_total", None),
-            1
-        );
-    }
-
-    /// A real committee DKG (players → (outcome, shares)) for the ladder-step-1
-    /// fixtures: the group key is what `group_key_resolver` resolves and what
-    /// the minted seeds verify under.
-    struct CommitteeCrypto {
-        outcome: CeremonyOutput,
-        shares: Vec<Share>,
-        ns: Vec<u8>,
-    }
-
-    fn committee_crypto() -> CommitteeCrypto {
-        use commonware_cryptography::bls12381::{dkg::deal, primitives::sharing::Mode};
-        use commonware_cryptography::ed25519::PrivateKey as Ed25519PrivateKey;
-        use commonware_math::algebra::Random as _;
-        use commonware_utils::N3f1;
-        use rand_08::rngs::StdRng;
-        use rand_core::SeedableRng as _;
-        let mut rng = StdRng::seed_from_u64(0xC0117);
-        let players: Set<PeerPubkey> =
-            Set::from_iter_dedup((0..4).map(|_| Ed25519PrivateKey::random(&mut rng).public_key()));
-        let (outcome, share_map) =
-            deal::<MinSig, PeerPubkey, N3f1>(&mut rng, Mode::NonZeroCounter, players.clone())
-                .expect("deal");
-        let shares: Vec<Share> = players
-            .iter()
-            .map(|p| share_map.get_value(p).expect("share").clone())
-            .collect();
-        CommitteeCrypto {
-            ns: seed_namespace(b"fluent-test"),
-            outcome,
-            shares,
-        }
-    }
-
-    impl CommitteeCrypto {
-        fn seed_at(&self, round: Round) -> Seed {
-            use commonware_utils::N3f1;
-            let partials: Vec<_> = self
-                .shares
-                .iter()
-                .map(|s| sign_seed_partial(s, &self.ns, round))
-                .collect();
-            Seed {
-                target_round: round,
-                signature: recover_seed::<N3f1>(self.outcome.public(), &partials).expect("recover"),
-            }
-        }
-
-        /// The node's `CeremonyStore` as a restart reload leaves it: material
-        /// keyed at the LAST CHANGE EPOCH, not the current one.
-        fn store_keyed_at(&self, change_epoch: u64) -> crate::beacon::actor::CeremonyStore {
-            Arc::new(RwLock::new(BTreeMap::from([(
-                change_epoch,
-                (self.outcome.clone(), self.shares[0].clone()),
-            )])))
-        }
-    }
-
-    /// (R1) — the rolling-restart chain-halt regression, END TO END: a
-    /// restarted signer of a STABLE committee (material keyed at `Ec − 9`,
-    /// observed-outcome cursor EMPTY, marshal walk exhausted — neither is
-    /// modelled because neither is consulted) must vote **true** on an honest
-    /// same-epoch block, resolving `PK_Ec` via ladder step 1 (its own DKG
-    /// material). Under the pre-R1 spec (cursor + walk only) `group_public_for`
-    /// is not `Resolved`, and while the accept-biased arm still votes true, the
-    /// signature is never actually verified — the assertion with teeth is the
-    /// `ladder="dkg"` source counter plus the forged-seed reject below. A
-    /// `false` here is a permanent, self-sustaining halt after a rolling
-    /// restart: the only event that repopulates the cursor is an outcome block
-    /// the halted chain can never produce.
-    #[test]
-    fn restarted_signer_on_stable_committee_resolves_pk_and_votes_true() {
-        let cc = committee_crypto();
-        let ec = 12u64;
-        let store = cc.store_keyed_at(ec - 9);
-        // The chain minted at the change epoch (bit set) and never re-minted.
-        let mint = ec - 9;
-        let dkg_qual: crate::beacon::carry::DkgQualFor = Arc::new(move |e| Some(e == mint));
-        let resolver =
-            crate::beacon::resolve::group_key_resolver(store, dkg_qual, BeaconKeys::new());
-
-        let recorder = DebuggingRecorder::new();
-        let snap = recorder.snapshotter();
-        let (honest, forged) = metrics::with_local_recorder(&recorder, || {
-            let pinned = Round::new(Epoch::new(ec), View::new(4));
-            let (parent, block) = witness_pair(4, 9, Some(cc.seed_at(pinned)));
-            let ctx = ctx_same_epoch(ec, 9, &parent);
-            let group_keys = test_group_keys(); // the empty post-restart map
-            let app = witness_app(NoChain, group_keys, resolver.clone(), cc.ns.clone());
-            let honest = run_gate(app, ctx, block, parent).0;
-
-            // The same restarted node must still REJECT a forged seed — i.e.
-            // the key truly resolved and the crypto ran (not fall-through).
-            let forger = witness_crypto(0xBAD);
-            let (parent, block) = witness_pair(4, 9, Some(forger.seed_at(pinned)));
-            let ctx = ctx_same_epoch(ec, 9, &parent);
-            let app = witness_app(NoChain, test_group_keys(), resolver.clone(), cc.ns.clone());
-            let forged = run_gate(app, ctx, block, parent).0;
-            (honest, forged)
-        });
-        assert!(
-            honest,
-            "R1: a restarted stable-committee signer must vote true"
-        );
-        assert!(!forged, "the resolved key must actually verify signatures");
-        assert!(
-            counter_at(
-                &snap,
-                "dpos_group_public_source_total",
-                Some(("ladder", "dkg"))
-            ) >= 1,
-            "the resolution must come from ladder step 1 (own DKG material)"
-        );
-        assert_eq!(
-            counter_at(&snap, "dpos_parent_seed_boundary_unverified_total", None),
-            0,
-            "verified for real — not accepted by the unverified fall-through"
-        );
-    }
-
-    /// (P1-a, closing the Phase-2-deferred clauses) — the transient
-    /// committee-read outage at a BOUNDARY, end to end on the vote path:
-    /// accept-biased while the outage lasts (`reason="read_failed"`, never
-    /// `"unknown"`), nothing cached, and once the outage clears the SAME
-    /// fixture verifies for real (no unverified increment; a forged seed now
-    /// votes false).
-    #[test]
-    fn a_committee_read_outage_is_accept_biased_then_verifies_after_recovery() {
-        use std::sync::atomic::AtomicBool;
-
-        let cc = committee_crypto();
-        let ec = 12u64;
-        let store = cc.store_keyed_at(3);
-        let outage = Arc::new(AtomicBool::new(true));
-        let o = outage.clone();
-        // During the outage every dkgQual read fails; after it clears, the
-        // frozen history reads: minted at 3, never re-minted.
-        let dkg_qual: crate::beacon::carry::DkgQualFor = Arc::new(move |e| {
-            if o.load(Ordering::SeqCst) {
-                None
-            } else {
-                Some(e == 3)
-            }
-        });
-        let resolver =
-            crate::beacon::resolve::group_key_resolver(store, dkg_qual, BeaconKeys::new());
-        let pinned = Round::new(Epoch::new(ec - 1), View::new(7));
-        let group_keys = test_group_keys();
-
-        let recorder = DebuggingRecorder::new();
-        let snap = recorder.snapshotter();
-        metrics::with_local_recorder(&recorder, || {
-            // 1. During the outage: the vote is TRUE (accept-biased), counted
-            //    as read_failed — NOT unknown — and nothing is cached.
-            let (parent, block) = witness_pair(7, 3, Some(cc.seed_at(pinned)));
-            let ctx = ctx_boundary(ec, 3, &parent);
-            let app = witness_app(NoChain, group_keys.clone(), resolver.clone(), cc.ns.clone());
-            let (verdict, elapsed) = run_gate(app, ctx, block, parent);
-            assert!(verdict, "accept-biased during the outage");
-            assert_eq!(
-                elapsed, VERIFY_EXEC_BUDGET,
-                "a ReadFailed re-polls the whole shared budget"
-            );
-            assert_eq!(
-                counter_at(
-                    &snap,
-                    "dpos_parent_seed_boundary_unverified_total",
-                    Some(("reason", "read_failed"))
-                ),
-                1
-            );
-            assert_eq!(
-                counter_at(
-                    &snap,
-                    "dpos_parent_seed_boundary_unverified_total",
-                    Some(("reason", "unknown"))
-                ),
-                0,
-                "the two non-Resolved states must be distinguishable"
-            );
-            assert!(group_keys.is_empty(), "no negative-cache entry of any kind");
-
-            // 2. Outage clears ⇒ the key RESOLVES (nothing negative was
-            //    memoized), the vote is true BY VERIFICATION, the map fills.
-            outage.store(false, Ordering::SeqCst);
-            let before = counter_at(&snap, "dpos_parent_seed_boundary_unverified_total", None);
-            let (parent, block) = witness_pair(7, 3, Some(cc.seed_at(pinned)));
-            let ctx = ctx_boundary(ec, 3, &parent);
-            let app = witness_app(NoChain, group_keys.clone(), resolver.clone(), cc.ns.clone());
-            assert!(run_gate(app, ctx, block, parent).0);
-            assert_eq!(
-                counter_at(&snap, "dpos_parent_seed_boundary_unverified_total", None),
-                before,
-                "verified for real — the unverified counter must not move"
-            );
-            assert!(group_keys.cached_only(ec - 1).is_some());
-
-            // 3. …and a FORGED seed on the recovered fixture votes FALSE —
-            //    under a one-shot/sticky resolution it would still be accepted
-            //    for the whole epoch.
-            let forger = witness_crypto(0xBAD);
-            let (parent, block) = witness_pair(7, 3, Some(forger.seed_at(pinned)));
-            let ctx = ctx_boundary(ec, 3, &parent);
-            let app = witness_app(NoChain, group_keys.clone(), resolver, cc.ns.clone());
-            assert!(!run_gate(app, ctx, block, parent).0);
-        });
-    }
-
-    // (Fix 2) a PK_E read failure that clears WITHIN the verify budget
-    // resolves and VERIFIES (no unverified fall-through, map populated,
-    // bounded by the shared budget) — and `Unknown` does NOT re-poll (zero
-    // budget burned).
-    #[test]
-    fn a_read_failure_that_clears_within_the_budget_resolves_and_verifies() {
-        use std::sync::atomic::AtomicU32;
-
-        let cc = committee_crypto();
-        let ec = 12u64;
-        let store = cc.store_keyed_at(3);
-        let calls = Arc::new(AtomicU32::new(0));
-        let c = calls.clone();
-        // Fails the first 8 polls (200 ms of the 25 ms-tick budget), then
-        // recovers — well inside VERIFY_EXEC_BUDGET.
-        let dkg_qual: crate::beacon::carry::DkgQualFor = Arc::new(move |e| {
-            if c.fetch_add(1, Ordering::SeqCst) < 8 {
-                None
-            } else {
-                Some(e == 3)
-            }
-        });
-        let resolver =
-            crate::beacon::resolve::group_key_resolver(store, dkg_qual, BeaconKeys::new());
-        let pinned = Round::new(Epoch::new(ec - 1), View::new(7));
-        let group_keys = test_group_keys();
-
-        let recorder = DebuggingRecorder::new();
-        let snap = recorder.snapshotter();
-        metrics::with_local_recorder(&recorder, || {
-            let (parent, block) = witness_pair(7, 3, Some(cc.seed_at(pinned)));
-            let ctx = ctx_boundary(ec, 3, &parent);
-            let app = witness_app(NoChain, group_keys.clone(), resolver.clone(), cc.ns.clone());
-            let (verdict, elapsed) = run_gate(app, ctx, block, parent);
-            assert!(verdict);
-            assert_eq!(
-                elapsed,
-                VERIFY_EXEC_POLL * 8,
-                "the re-poll stops the instant the read recovers"
-            );
-            assert_eq!(
-                counter_at(&snap, "dpos_parent_seed_boundary_unverified_total", None),
-                0,
-                "resolved WITHIN the budget ⇒ verified, not accepted-by-fall-through"
-            );
-            assert!(group_keys.cached_only(ec - 1).is_some());
-        });
-
-        // `Unknown` (a churn-in member with no material at all) resolves on
-        // tick 0: zero budget, no sleep — this is why the 3-state lookup
-        // exists; collapsing Unknown into ReadFailed would spend the whole
-        // verify budget on every boundary block for every churned-in member.
-        let recorder = DebuggingRecorder::new();
-        let snap = recorder.snapshotter();
-        metrics::with_local_recorder(&recorder, || {
-            let empty_store: crate::beacon::actor::CeremonyStore =
-                Arc::new(RwLock::new(BTreeMap::new()));
-            let resolver = crate::beacon::resolve::group_key_resolver(
-                empty_store,
-                Arc::new(move |e| Some(e == 3)),
-                BeaconKeys::new(),
-            );
-            let (parent, block) = witness_pair(7, 3, Some(cc.seed_at(pinned)));
-            let ctx = ctx_boundary(ec, 3, &parent);
-            let app = witness_app(NoChain, test_group_keys(), resolver, cc.ns.clone());
-            let (verdict, elapsed) = run_gate(app, ctx, block, parent);
-            assert!(verdict);
-            assert_eq!(elapsed, Duration::ZERO, "Unknown must burn zero budget");
-        });
-        assert_eq!(
-            counter_at(
-                &snap,
-                "dpos_parent_seed_boundary_unverified_total",
-                Some(("reason", "unknown"))
-            ),
-            1
-        );
-    }
-
-    /// An executed chain whose hash becomes available after N `executed_hash`
-    /// polls — models "execution reaches h − K mid-verify".
+    /// An executed chain whose hash becomes available only after N
+    /// `finalized_executed_hash` polls — models "execution reaches h − K
+    /// mid-verify". Kept when the witness arm was deleted: the result gate is
+    /// still a POLL loop, and nothing else in this module makes it take more
+    /// than tick 0.
     #[derive(Clone)]
     struct TickChain {
         calls: Arc<std::sync::atomic::AtomicU32>,
@@ -2586,210 +1828,112 @@ mod tests {
             let served = self.calls.fetch_add(1, Ordering::SeqCst);
             (served >= self.ready_after).then_some(self.hash)
         }
-        // Test double for the result-gate poll loop: tier-F resolves on the
-        // same N-tick schedule as the spec read (the gate only ever samples
-        // this tier; the split is exercised structurally elsewhere).
         fn finalized_executed_hash(&self, height: u64) -> Option<B256> {
             self.spec_executed_hash(height)
         }
     }
 
-    /// A post-activation-window `(parent, block)` pair whose result gate needs
-    /// `executed_hash(height − K)` — the fixture for the interleaved loop.
-    fn result_gated_pair(seed: Option<Seed>, result: B256) -> (OrderBlock, OrderBlock) {
+    /// A post-activation `(parent, block)` pair whose result gate must read
+    /// `executed_hash(height − K)` — height 3 with `dpos_activation_block = 0`.
+    fn result_gated_pair(result: B256) -> (OrderBlock, OrderBlock) {
         let parent = OrderBlock {
-            proposal_view: 7, // matches the (ec − 1, 7) pinned round the tests mint
+            proposal_view: 7,
             height: 2,
             timestamp: 1,
             ..sample_order(Digest(B256::ZERO), 2)
         };
         let block = OrderBlock {
-            proposal_view: 3, // == the ctx_boundary(_, 3, _) view the tests use (rule SA)
-            height: 3,        // == activation(0) + K ⇒ result target = executed_hash(0)
+            proposal_view: 3,
+            height: 3,
             timestamp: 2,
-            parent_seed: seed,
             result,
             ..sample_order(parent.digest(), 3)
         };
         (parent, block)
     }
 
-    /// (Fix B) — the INTERLEAVED-loop regression suite: the key arm and the
-    /// result gate share ONE budget and are evaluated together every tick, so
-    /// neither can starve the other. Fails under sequential polling (key arm
-    /// first, result gate with whatever remains).
+    /// The result gate RE-READS across ticks: a chain that only answers on the
+    /// 5th poll still verifies true, and the verify spends real budget doing it.
+    /// Reds if the loop resolves the gate once instead of polling.
     #[test]
-    fn a_pk_repoll_that_burns_most_of_the_budget_still_lets_the_result_gate_resolve() {
-        use std::sync::atomic::AtomicU32;
-
-        let cc = committee_crypto();
-        let ec = 12u64;
-        let pinned = Round::new(Epoch::new(ec - 1), View::new(7));
+    fn the_result_gate_polls_until_the_el_catches_up() {
         let exec_hash = B256::repeat_byte(0x5E);
-
-        // Both conditions slow AND correlated (the real-world shape): the
-        // committee read fails for 36 of the 40 ticks; execution reaches
-        // h − K at tick 28.
-        let make_resolver = |fail_polls: u32| {
-            let store = cc.store_keyed_at(3);
-            let calls = Arc::new(AtomicU32::new(0));
-            let dkg_qual: crate::beacon::carry::DkgQualFor = Arc::new(move |e| {
-                if calls.fetch_add(1, Ordering::SeqCst) < fail_polls {
-                    None
-                } else {
-                    Some(e == 3)
-                }
-            });
-            crate::beacon::resolve::group_key_resolver(store, dkg_qual, BeaconKeys::new())
+        let (parent, block) = result_gated_pair(exec_hash);
+        let chain = TickChain {
+            calls: Arc::new(std::sync::atomic::AtomicU32::new(0)),
+            ready_after: 5,
+            hash: exec_hash,
         };
-
-        // Variant 1: both recover inside the budget ⇒ true, VERIFIED (no
-        // unverified), one shared budget, and the result gate was polled every
-        // tick (call count ≈ 29, not the ≤ 2 a sequential key loop leaves it).
-        let recorder = DebuggingRecorder::new();
-        let snap = recorder.snapshotter();
-        metrics::with_local_recorder(&recorder, || {
-            let chain = TickChain {
-                calls: Arc::new(AtomicU32::new(0)),
-                ready_after: 28,
-                hash: exec_hash,
-            };
-            let group_keys = test_group_keys();
-            let (parent, block) = result_gated_pair(Some(cc.seed_at(pinned)), exec_hash);
-            let ctx = ctx_boundary(ec, 3, &parent);
-            let app = witness_app(
-                chain.clone(),
-                group_keys.clone(),
-                make_resolver(36),
-                cc.ns.clone(),
-            );
-            let (verdict, elapsed) = run_gate(app, ctx, block, parent);
-            assert!(verdict, "both gates must resolve inside ONE budget");
-            assert!(
-                elapsed <= VERIFY_EXEC_BUDGET,
-                "the budget is shared, not additive: {elapsed:?}"
-            );
-            assert!(
-                chain.calls.load(Ordering::SeqCst) >= 25,
-                "the result gate must be polled ~every tick, not once: {}",
-                chain.calls.load(Ordering::SeqCst)
-            );
-            assert!(group_keys.cached_only(ec - 1).is_some());
-        });
+        let ctx = ctx_boundary(12, 3, &parent);
+        let app = witness_app(chain, test_group_keys());
+        let (verdict, elapsed) = run_gate(app, ctx, block, parent);
+        assert!(verdict, "a gate that resolves inside the budget votes true");
         assert_eq!(
-            counter_at(&snap, "dpos_parent_seed_boundary_unverified_total", None),
-            0,
-            "the key was VERIFIED, not accepted by fall-through"
+            elapsed,
+            VERIFY_EXEC_POLL * 5,
+            "and it got there by polling, one tick per unavailable read"
         );
+    }
 
-        // Variant 2 (starvation — the clause that flips the vote): the key
-        // read NEVER recovers; execution arrives at tick 28. The vote must
-        // still be TRUE (read_failed once, result satisfied). Under
-        // sequential polling the key loop consumes all 40 ticks and the
-        // result gate's single shot votes false on an honest block.
+    /// The other end of the same loop: an EL that never reaches h − K spends the
+    /// whole budget and votes FALSE (backpressure), rather than accepting an
+    /// unchecked result.
+    #[test]
+    fn the_result_gate_votes_false_when_the_budget_runs_out() {
         let recorder = DebuggingRecorder::new();
         let snap = recorder.snapshotter();
-        metrics::with_local_recorder(&recorder, || {
+        let (verdict, elapsed) = metrics::with_local_recorder(&recorder, || {
+            let (parent, block) = result_gated_pair(B256::repeat_byte(0x5E));
             let chain = TickChain {
-                calls: Arc::new(AtomicU32::new(0)),
-                ready_after: 28,
-                hash: exec_hash,
+                calls: Arc::new(std::sync::atomic::AtomicU32::new(0)),
+                ready_after: u32::MAX,
+                hash: B256::ZERO,
             };
-            let (parent, block) = result_gated_pair(Some(cc.seed_at(pinned)), exec_hash);
-            let ctx = ctx_boundary(ec, 3, &parent);
-            let app = witness_app(
-                chain,
-                test_group_keys(),
-                make_resolver(u32::MAX),
-                cc.ns.clone(),
-            );
-            let (verdict, _) = run_gate(app, ctx, block, parent);
-            assert!(
-                verdict,
-                "an honest block must not be voted false by starvation"
-            );
+            let ctx = ctx_boundary(12, 3, &parent);
+            run_gate(witness_app(chain, test_group_keys()), ctx, block, parent)
         });
+        assert!(!verdict);
+        assert_eq!(elapsed, VERIFY_EXEC_BUDGET, "the whole budget is spent");
         assert_eq!(
-            counter_at(
-                &snap,
-                "dpos_parent_seed_boundary_unverified_total",
-                Some(("reason", "read_failed"))
-            ),
+            counter_at(&snap, "dpos_result_gate_finalized_miss_total", None),
             1
         );
+    }
 
-        // Variant 3 (the mirror): result-gate exhaustion still votes FALSE —
-        // the EL-backpressure rule is unchanged; the interleave must not
-        // weaken it. Key resolves on tick 0.
-        {
-            let chain = TickChain {
-                calls: Arc::new(AtomicU32::new(0)),
-                ready_after: u32::MAX,
-                hash: exec_hash,
-            };
-            let (parent, block) = result_gated_pair(Some(cc.seed_at(pinned)), exec_hash);
-            let ctx = ctx_boundary(ec, 3, &parent);
-            let app = witness_app(chain, test_group_keys(), make_resolver(0), cc.ns.clone());
-            let (verdict, elapsed) = run_gate(app, ctx, block, parent);
-            assert!(!verdict, "execution never reached h − K ⇒ vote false");
-            assert_eq!(elapsed, VERIFY_EXEC_BUDGET);
-        }
+    // The anchor link — Ec == 0 with the GENESIS_VIEW parent sentinel is the
+    // chain anchor (never proposed, proposal_view == 0), and the first
+    // post-activation block verifies over it.
+    #[test]
+    fn anchor_link_verifies_over_it() {
+        let (parent, block) = witness_pair(0, 1);
+        let ctx = ctx_boundary(0, 1, &parent);
+        let app = witness_app(NoChain, test_group_keys());
+        assert!(run_gate(app, ctx, block, parent).0);
+    }
 
-        // Variant 4 (zero-cost common path): both available at tick 0 ⇒ true
-        // without the virtual clock advancing at all.
-        {
-            let chain = TickChain {
-                calls: Arc::new(AtomicU32::new(0)),
-                ready_after: 0,
-                hash: exec_hash,
-            };
-            let (parent, block) = result_gated_pair(Some(cc.seed_at(pinned)), exec_hash);
-            let ctx = ctx_boundary(ec, 3, &parent);
-            let app = witness_app(chain, test_group_keys(), make_resolver(0), cc.ns.clone());
-            let (verdict, elapsed) = run_gate(app, ctx, block, parent);
-            assert!(verdict);
-            assert_eq!(elapsed, Duration::ZERO, "no sleep on the common path");
-        }
+    // (P4) the second-source tripwire: on a same-epoch link the parent's
+    // self-attested view must agree with the simplex context's parent view —
+    // a mismatch is a block certified at a view it did not claim, which would
+    // misroute the round every node resolves that block's σ at.
+    #[test]
+    fn parent_proposal_view_disagreeing_with_ctx_parent_view_is_rejected() {
+        let recorder = DebuggingRecorder::new();
+        let snap = recorder.snapshotter();
+        let verdict = metrics::with_local_recorder(&recorder, || {
+            let (parent, block) = witness_pair(4, 9);
+            let mut ctx = ctx_same_epoch(5, 9, &parent);
+            ctx.parent.0 = View::new(5); // simplex says the parent certified at 5
+            let app = witness_app(NoChain, test_group_keys());
+            run_gate(app, ctx, block, parent).0
+        });
+        assert!(!verdict);
+        assert_eq!(
+            counter_at(&snap, "dpos_parent_view_mismatch_total", None),
+            1
+        );
     }
 
     // propose side (§3)
-
-    fn propose_app_with_pull(
-        store: SeedStore,
-        pull: Option<crate::beacon::seed_resolver::PullSeed>,
-    ) -> FluentApp<NoChain, NoTxs> {
-        let (mailbox, _rx) = fresh_mailbox();
-        FluentApp::new(
-            sample_order(Digest(B256::ZERO), 0),
-            mailbox,
-            Arc::new(|_b: OrderBlock| {}),
-            NoChain,
-            Arc::new(NoTxs),
-            Address::ZERO,
-            30_000_000,
-            0,
-            TEST_CHAIN_ID,
-            None,
-            TombstoneSet::default(),
-        )
-        .with_committee_index(propose_committee())
-        .with_randomness(crate::beacon::surface::PlaneRandomness::build(
-            PlaneRandomnessConfig {
-                seeds: store,
-                keys: test_group_keys(),
-                verify: None,
-                resolver: Arc::new(|_| crate::beacon::BeaconResolve::Absent),
-                ceremony: Arc::new(std::sync::RwLock::new(std::collections::BTreeMap::new())),
-                dkg_qual: Arc::new(|_| Some(false)),
-                held: None,
-                pull: None,
-                pull_seed: pull,
-                participation: Arc::new(tokio::sync::Notify::new()),
-                metrics: crate::beacon::metrics::BeaconMetrics::default(),
-                chain_id: TEST_CHAIN_ID,
-            },
-        ))
-    }
 
     fn propose_app(store: SeedStore, charges: Option<ChargeStore>) -> FluentApp<NoChain, NoTxs> {
         let (mailbox, _rx) = fresh_mailbox();
@@ -2807,7 +1951,7 @@ mod tests {
             TombstoneSet::default(),
         )
         .with_committee_index(propose_committee())
-        .with_randomness(test_randomness(store, test_group_keys(), None))
+        .with_randomness(test_randomness(store, test_group_keys()))
     }
 
     /// A provider over the SAME handles the app under test was given, so the
@@ -2816,18 +1960,15 @@ mod tests {
     fn test_randomness(
         seeds: SeedStore,
         group_keys: BeaconKeys,
-        verify: Option<BeaconVerify>,
     ) -> Arc<dyn crate::beacon::Randomness> {
         crate::beacon::surface::PlaneRandomness::build(PlaneRandomnessConfig {
             seeds,
             keys: group_keys,
-            verify,
             resolver: Arc::new(|_| crate::beacon::BeaconResolve::Absent),
             ceremony: Arc::new(std::sync::RwLock::new(std::collections::BTreeMap::new())),
             dkg_qual: Arc::new(|_| Some(false)),
             held: None,
             pull: None,
-            pull_seed: None,
             participation: Arc::new(tokio::sync::Notify::new()),
             metrics: crate::beacon::metrics::BeaconMetrics::default(),
             chain_id: TEST_CHAIN_ID,
@@ -2870,12 +2011,9 @@ mod tests {
     /// silently wrong index mis-credits production with no other symptom.
     #[test]
     fn proposal_stamps_the_production_record_naming_its_proposer() {
-        let fx = witness_crypto(1);
-        let pinned = Round::new(Epoch::new(5), View::new(4));
         let runtime = commonware_runtime::deterministic::Runner::default();
         runtime.start(|rt| async move {
             let store = SeedStore::new();
-            store.record(fx.witness(pinned));
             let app = propose_app(store, None);
             let parent = tiny_parent(4);
             let ctx = propose_ctx(5, 9, (4, false), &parent);
@@ -2936,13 +2074,10 @@ mod tests {
     /// is the test — either alone would pass on a block no voter would take.
     #[test]
     fn a_proposer_holding_a_charge_stamps_the_verdict_and_its_evidence() {
-        let fx = witness_crypto(1);
-        let pinned = Round::new(Epoch::new(5), View::new(4));
         let (accused, charge) = sample_charge(5, 9);
         let runtime = commonware_runtime::deterministic::Runner::default();
         runtime.start(|rt| async move {
             let store = SeedStore::new();
-            store.record(fx.witness(pinned));
             let charges = ChargeStore::default();
             assert!(charges.hold(5, accused, charge));
 
@@ -2983,8 +2118,6 @@ mod tests {
     /// offers the next one instead.
     #[test]
     fn a_charge_whose_verdict_already_landed_is_dropped_rather_than_re_offered() {
-        let fx = witness_crypto(1);
-        let pinned = Round::new(Epoch::new(5), View::new(4));
         let (accused, charge) = sample_charge(5, 9);
         let committee = propose_committee();
         let settled = committee
@@ -3001,7 +2134,6 @@ mod tests {
         let runtime = commonware_runtime::deterministic::Runner::default();
         runtime.start(|rt| async move {
             let store = SeedStore::new();
-            store.record(fx.witness(pinned));
             let charges = ChargeStore::default();
             assert!(charges.hold(5, accused, charge.clone()));
             assert!(charges.hold(5, later, charge));
@@ -3115,12 +2247,9 @@ mod tests {
     /// true by construction rather than by convention.
     #[test]
     fn a_leader_outside_its_own_committee_declines_to_propose() {
-        let fx = witness_crypto(1);
-        let pinned = Round::new(Epoch::new(5), View::new(4));
         let runtime = commonware_runtime::deterministic::Runner::default();
         runtime.start(|rt| async move {
             let store = SeedStore::new();
-            store.record(fx.witness(pinned));
             // A committee that does NOT contain the fixture leader (`from_seed(7)`).
             let (_outsiders, disjoint) = test_committee(3, 99);
             let app = propose_app(store, None).with_committee_index(Arc::new(disjoint));
@@ -3130,18 +2259,15 @@ mod tests {
         });
     }
 
-    // §9 propose: every proposal self-attests its view (rule SA) and, on a
-    // beacon-active same-epoch link, carries EXACTLY the stored seed of
-    // `Round::new(Ec, parent.proposal_view)`.
+    // §9 propose: every proposal self-attests its view (rule SA), and on a
+    // beacon-active same-epoch link it proposes only once
+    // `Round::new(Ec, parent.proposal_view)` is held — the seed no longer rides
+    // the block, so the store hit is observable as the view PROCEEDING.
     #[test]
-    fn proposal_self_attests_its_view_and_embeds_the_stored_parent_seed() {
-        let fx = witness_crypto(1);
-        let pinned = Round::new(Epoch::new(5), View::new(4));
-        let seed = fx.seed_at(pinned);
+    fn proposal_self_attests_its_view_over_a_held_witness_round() {
         let runtime = commonware_runtime::deterministic::Runner::default();
         runtime.start(|rt| async move {
             let store = SeedStore::new();
-            store.record(fx.witness(pinned));
             let app = propose_app(store, None);
             let parent = tiny_parent(4);
             let ctx = propose_ctx(5, 9, (4, false), &parent);
@@ -3150,144 +2276,6 @@ mod tests {
                 .await
                 .expect("proposed");
             assert_eq!(block.proposal_view, 9, "rule SA: proposal_view == ctx view");
-            assert_eq!(block.parent_seed, Some(seed), "the exact stored seed");
-        });
-    }
-
-    // §9 propose: a SeedStore miss ⇒ the view is SKIPPED (None) — never an
-    // invalid block, never a round fallback.
-    #[test]
-    fn seed_store_miss_skips_the_view_not_an_invalid_block() {
-        let recorder = DebuggingRecorder::new();
-        let snap = recorder.snapshotter();
-        metrics::with_local_recorder(&recorder, || {
-            let runtime = commonware_runtime::deterministic::Runner::default();
-            runtime.start(|rt| async move {
-                let app = propose_app(SeedStore::new(), None);
-                let parent = tiny_parent(4);
-                let ctx = propose_ctx(5, 9, (4, false), &parent);
-                assert!(app.build_proposal(&rt, &ctx, parent).await.is_none());
-            });
-        });
-        assert_eq!(
-            counter_at(&snap, "dpos_parent_seed_lookup_miss_total", None),
-            1
-        );
-    }
-
-    // §9 propose (the R4 regression): at the boundary the named round comes
-    // from the PARENT BLOCK — never from local cert state. The fixture's store
-    // also holds a seed for a DIFFERENT (spin) round, as the local first-wins
-    // finalization would name it; the marshal is None, so consulting a cert
-    // for the round is structurally impossible (it would skip, failing the
-    // assertion). Exactly `Round::new(Ec − 1, L.proposal_view)` is embedded.
-    #[test]
-    fn boundary_round_comes_from_the_parent_block_never_a_cert() {
-        let fx = witness_crypto(1);
-        let v0 = 7u64;
-        let pinned = Round::new(Epoch::new(4), View::new(v0));
-        let spin = Round::new(Epoch::new(4), View::new(v0 + 30));
-        let runtime = commonware_runtime::deterministic::Runner::default();
-        runtime.start(|rt| async move {
-            let store = SeedStore::new();
-            store.record(fx.witness(pinned));
-            store.record(fx.witness(spin)); // the local first-wins spin round
-            let app = propose_app(store, None);
-            let parent = tiny_parent(v0);
-            let ctx = propose_ctx(5, 3, (0, true), &parent);
-            let block = app
-                .build_proposal(&rt, &ctx, parent)
-                .await
-                .expect("proposed");
-            assert_eq!(
-                block.parent_seed.as_ref().map(|s| s.target_round),
-                Some(pinned),
-                "the round must be pinned to the parent block, not the spin cert"
-            );
-        });
-    }
-
-    // §9 propose: boundary + a store that does NOT hold the pinned round ⇒
-    // skip the view (+ the boundary-skip liveness metric).
-    #[test]
-    fn boundary_seed_store_miss_for_the_pinned_round_skips_the_view() {
-        let fx = witness_crypto(1);
-        let spin = Round::new(Epoch::new(4), View::new(37));
-        let recorder = DebuggingRecorder::new();
-        let snap = recorder.snapshotter();
-        metrics::with_local_recorder(&recorder, || {
-            let runtime = commonware_runtime::deterministic::Runner::default();
-            runtime.start(|rt| async move {
-                let store = SeedStore::new();
-                store.record(fx.witness(spin)); // only the spin round
-                let app = propose_app(store, None);
-                let parent = tiny_parent(7); // pin = (4, 7) — absent
-                let ctx = propose_ctx(5, 3, (0, true), &parent);
-                assert!(app.build_proposal(&rt, &ctx, parent).await.is_none());
-            });
-        });
-        assert_eq!(
-            counter_at(&snap, "dpos_parent_seed_boundary_skip_total", None),
-            1
-        );
-    }
-
-    // THE POINT OF THE PULL: a witness the store does not hold is no longer the
-    // end of the view. The fetch is what a zero-overlap boundary lives on — the
-    // incoming committee never ran an engine in E, so its store CANNOT hold σ(E)
-    // and every leader would skip until someone hands it over.
-    #[test]
-    fn a_boundary_witness_the_store_lacks_is_fetched_and_the_view_proceeds() {
-        let fx = witness_crypto(1);
-        let pinned = Round::new(Epoch::new(4), View::new(7));
-        let landed = fx.witness(pinned);
-        let store = SeedStore::new();
-        // The pull stands in for the network: it files the round the way
-        // `SeedBridge::deliver` does, then answers that it arrived.
-        let pull: crate::beacon::seed_resolver::PullSeed = {
-            let store = store.clone();
-            Arc::new(move |round: Round| {
-                let store = store.clone();
-                Box::pin(async move {
-                    if round == pinned {
-                        store.record(landed);
-                    }
-                    store.lookup(round).is_some()
-                }) as futures::future::BoxFuture<'static, bool>
-            })
-        };
-        let runtime = commonware_runtime::deterministic::Runner::default();
-        runtime.start(|rt| async move {
-            let app = propose_app_with_pull(store, Some(pull));
-            let parent = tiny_parent(7);
-            let ctx = propose_ctx(5, 3, (0, true), &parent);
-            let block = app
-                .build_proposal(&rt, &ctx, parent)
-                .await
-                .expect("the fetched witness lets the view proceed");
-            assert_eq!(
-                block.parent_seed.map(|s| s.target_round),
-                Some(pinned),
-                "and the block carries the round the parent named"
-            );
-        });
-    }
-
-    // §9 propose: a pre-bootstrap link (Ep < 2) embeds NO witness and still
-    // proposes — mirrors verify's `!required ⇒ None` arm.
-    #[test]
-    fn pre_bootstrap_propose_carries_no_witness() {
-        let runtime = commonware_runtime::deterministic::Runner::default();
-        runtime.start(|rt| async move {
-            let app = propose_app(SeedStore::new(), None);
-            let parent = tiny_parent(4);
-            let ctx = propose_ctx(1, 9, (4, false), &parent);
-            let block = app
-                .build_proposal(&rt, &ctx, parent)
-                .await
-                .expect("proposed");
-            assert_eq!(block.parent_seed, None);
-            assert_eq!(block.proposal_view, 9);
         });
     }
 

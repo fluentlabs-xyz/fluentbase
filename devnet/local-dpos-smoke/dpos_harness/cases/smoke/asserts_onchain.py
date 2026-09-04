@@ -287,9 +287,14 @@ def _liveness_cycle(ctx, case: str, addrs, hub_addr: str, idx: int, gap: int) ->
     # 2 live signers of 4 against a quorum of 3 stalled the chain at `finalized=241, pre=241` —
     # a correct BFT stall reported as a product bug.
     #
-    # The signal is the promote line and NOT a proposal. A member that IS signing can still skip
-    # its first proposals (`application.rs:911`, `parent-seed witness not in SeedStore; skipping
-    # propose`), so "produced a block" would trade this false PASS for a false FAIL.
+    # The signal is the promote line and NOT a proposal. A promoted member can still produce no
+    # block for a while: it only proposes when it is the elected leader of a view, and the
+    # zero-proposal window widens whenever the executor HOLDS a beacon-active height whose σ the
+    # store cannot yet answer for (`awaiting_seed`, counted by
+    # `dpos_executor_seed_hold_stalled_total`). So "produced a block" would trade this false PASS
+    # for a false FAIL. Until FLU-1204 the same argument ran through a propose-side skip
+    # (`parent-seed witness not in SeedStore; skipping propose`); that line and its gate are
+    # gone, the conclusion is not.
     min_epoch = vo.epoch_of(pre + gap, ctx.interval, ctx.activation_block)
     box = {"logs": ""}
 

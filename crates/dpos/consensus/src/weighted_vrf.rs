@@ -5,8 +5,9 @@
 //! σ (`CombinedCertificate::seed()`, k-lagged ⇒ unbiasable) when present, else a
 //! deterministic per-epoch fallback (view-1-of-epoch / nullify-justified views,
 //! where the cert carries no seed). The fallback's base is not derivable from
-//! constants: it is [`crate::beacon::witness_fallback_seed`] of the previous epoch's terminal
-//! block's `parent_seed`, supplied by the epoch manager that reads that block;
+//! constants: it is [`crate::beacon::witness_fallback_seed`] of σ at the previous
+//! epoch's TERMINAL ROUND, which the epoch manager names from the terminal block's
+//! `proposal_view` and reads out of the seed store's per-epoch pin;
 //! [`crate::beacon::constant_fallback_seed`] is the last resort where no witness can exist.
 //! Block share ∝ on-chain stake in expectation
 //! (D1); weights are the epoch's FROZEN snapshot stake (D3), never live balance —

@@ -29,7 +29,7 @@ use crate::{
 };
 use commonware_consensus::{
     marshal::{core::Mailbox as MarshalMailbox, standard::Standard},
-    types::{Epoch, Epocher as _, Height},
+    types::{Epoch, Epocher as _, Height, Round, View},
 };
 use commonware_cryptography::ed25519::PublicKey;
 use commonware_p2p::{Blocker, Receiver, Sender};
@@ -89,18 +89,37 @@ pub enum Role {
 /// Outcome of the `Inline::genesis(E)` precondition lookup on the E-1 terminal
 /// block (see [`Actor::boundary_lookup`]), which also supplies the seedless arm's
 /// base for epoch E.
+#[derive(Debug, PartialEq, Eq)]
 enum BoundaryLookup {
     /// No predecessor epoch (epoch 0) or no computable terminal height. Nothing to
     /// wait for and no seed to inherit — every node reaches this identically, so
     /// the constant base stays agreed.
     NotApplicable,
-    /// The E-1 terminal block is not in marshal storage yet — defer the spawn.
-    Missing,
-    /// The block is present. `seed` is [`witness_fallback_seed`] of its
-    /// `parent_seed` — a one-way compression of the threshold signature, neither
-    /// the signature itself nor the round that witness pins. `None` only on
-    /// pre-bootstrap links where the witness is forbidden.
+    /// The spawn must be deferred, and WHICH input is missing — the two have
+    /// different repair paths and different operator responses, so they are not
+    /// one state with one log line.
+    Missing(MissingInput),
+    /// The block is present AND its epoch's base is decided. `seed` is
+    /// [`witness_fallback_seed`] of σ at the terminal ROUND — a one-way
+    /// compression of the threshold signature, neither the signature itself nor
+    /// the round it signs. `None` is the EPOCH predicate's answer and nothing
+    /// else: a beacon-inactive predecessor, where no σ can exist. A local σ MISS
+    /// is [`BoundaryLookup::Missing`], not this.
     Present { seed: Option<[u8; 32]> },
+}
+
+/// Which of the two `Inline::genesis(E)` inputs the node does not hold.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum MissingInput {
+    /// The E-1 terminal block is not in marshal storage. Normally transient
+    /// (backfill in flight); persistent means the height sits below the marshal
+    /// floor, where no repair path fetches it.
+    BoundaryBlock,
+    /// The block is in hand but this node holds no σ for E-1's terminal ROUND, so
+    /// it cannot compute the leader-election base. Repaired by a certificate for
+    /// that round arriving on either cert door — never by fetching the block
+    /// again, which is why it must not read as a stuck block fetch.
+    TerminalSeed,
 }
 
 /// Which base the leader elector's seedless arm gets for an epoch, and why —
@@ -108,12 +127,45 @@ enum BoundaryLookup {
 /// without re-deriving the choice.
 #[derive(Debug, PartialEq, Eq)]
 enum SeedlessBase {
-    /// Inherited from the E-1 terminal block's witness seed: not derivable from
-    /// constants, so the epoch's first leader is not known an epoch ahead.
+    /// Inherited from σ of E-1's terminal round: not derivable from constants,
+    /// so the epoch's first leader is not known an epoch ahead.
     Witness([u8; 32]),
     /// The constant derivation, reached only where no witness can exist. Agreed
     /// across nodes but predictable.
     Constant([u8; 32]),
+}
+
+/// The base for epoch E, read from σ of E-1's TERMINAL ROUND rather than from
+/// the terminal block's body.
+///
+/// The round is named by the CALLER from agreed data — `Round(E-1,
+/// terminal.proposal_view)`, both halves of which every node reads off the same
+/// committee-signed block — and only then asked of the store, which may not name
+/// it (its pin decides what survives eviction, never which round is wanted).
+///
+/// PREDICATE FIRST, store second. `mandatory_at(E-1)` is the network-agreed "was
+/// the beacon active there", independent of anything local, and it decides
+/// BEFORE the store is read; a σ sitting at a round the agreed map calls
+/// beacon-INACTIVE can therefore never become one node's base while its peers
+/// take the constant one.
+///
+/// A store MISS is [`BoundaryLookup::Missing`] — "I do not know yet", which
+/// DEFERS the spawn — and never `Present { seed: None }`, which asserts "there is
+/// no σ here" and elects on the constant base. Conflating the two splits the
+/// leader schedule: the deferring node re-poked would elect one leader while a
+/// node that answered `None` elects another, for the same epoch, from the same
+/// agreed block.
+fn boundary_base(randomness: &dyn Randomness, prev: Epoch, terminal_view: u64) -> BoundaryLookup {
+    if !randomness.mandatory_at(prev.get()) {
+        return BoundaryLookup::Present { seed: None };
+    }
+    let round = Round::new(prev, View::new(terminal_view));
+    match randomness.terminal_seed_at(round) {
+        Some(seed) => BoundaryLookup::Present {
+            seed: Some(witness_fallback_seed(&seed)),
+        },
+        None => BoundaryLookup::Missing(MissingInput::TerminalSeed),
+    }
 }
 
 /// Choose the seedless arm's base from the E-1 terminal-block lookup. `None` for
@@ -122,13 +174,13 @@ enum SeedlessBase {
 /// case is emitted by the caller.
 fn seedless_base(lookup: &BoundaryLookup, snap: &ValidatorSetSnapshot) -> Option<SeedlessBase> {
     match lookup {
-        BoundaryLookup::Missing => None,
+        BoundaryLookup::Missing(_) => None,
         BoundaryLookup::Present {
             seed: Some(witness),
         } => Some(SeedlessBase::Witness(*witness)),
-        // Witness-less terminal block or no predecessor: the constant base is
-        // predictable, but no seed exists to do better, and every node takes this
-        // branch on the same block.
+        // A beacon-inactive predecessor epoch or no predecessor at all: the
+        // constant base is predictable, but no σ exists to do better, and every
+        // node takes this branch on the same block.
         BoundaryLookup::NotApplicable | BoundaryLookup::Present { seed: None } => {
             Some(SeedlessBase::Constant(constant_fallback_seed(snap)))
         }
@@ -154,13 +206,18 @@ pub struct EpochEngineMetrics {
     /// A per-epoch engine self-demoted because the operator's validator was rotated
     /// out of the epoch's committee (`RotatedOut`).
     pub engine_demoted_rotated_out: Counter,
-    /// A per-epoch engine spawn was deferred because the marshal does not hold the
-    /// previous epoch's terminal block — the `Inline::genesis(E)` precondition. The
-    /// member registers verify-only meanwhile: no proposals, no votes. Normally
-    /// transient (the block is still being backfilled and the next derived block
-    /// re-pokes the reconciler); persistently non-zero across an epoch means the
-    /// height sits below the marshal floor, where no repair path fetches it, and the
-    /// boundary seeding at the floor-raise sites either did not run or failed.
+    /// A per-epoch engine spawn was deferred because one of the two
+    /// `Inline::genesis(E)` inputs is missing: the previous epoch's terminal
+    /// BLOCK, or σ for that block's ROUND (the leader-election base). The member
+    /// registers verify-only meanwhile: no proposals, no votes. This counter does
+    /// not distinguish the two — the deferring INFO line does, and it must be read
+    /// to tell them apart, because they have different repair paths. Normally
+    /// transient either way. Persistently non-zero across an epoch means, for the
+    /// block, that the height sits below the marshal floor where no repair path
+    /// fetches it and the boundary seeding at the floor-raise sites did not run;
+    /// for the seed, that no certificate for E-1's terminal round is reaching
+    /// either cert door — the recorded backfill seed-pin and seed-journal-loss
+    /// residuals both land here.
     pub engine_spawn_deferred: Counter,
     /// An epoch resolved the CONSTANT seedless-arm base
     /// (`sha256(epoch ‖ sorted peers)`) instead of the previous epoch's terminal-block
@@ -194,9 +251,12 @@ impl EpochEngineMetrics {
         );
         ctx.register(
             "epoch_engine_spawn_deferred_total",
-            "Per-epoch engine spawns deferred for a missing E-1 boundary block (member is \
-             verify-only meanwhile). Persistently non-zero = the height is below the marshal \
-             floor and boundary seeding did not cover it.",
+            "Per-epoch engine spawns deferred because E-1's boundary input is missing — \
+             EITHER the boundary block itself, OR the terminal-round seed the base needs \
+             (member is verify-only meanwhile). Persistently non-zero = the height is below \
+             the marshal floor and boundary seeding did not cover it, or the seed never \
+             arrived. The counter does not distinguish the two; the two INFO lines at the \
+             defer site do.",
             self.engine_spawn_deferred.clone(),
         );
         ctx.register(
@@ -1074,16 +1134,29 @@ where
                         self.deferred_spawns.insert(epoch);
                         self.soft_enter(epoch, &snap).await;
                         self.cfg.epoch_metrics.engine_spawn_deferred.inc();
-                        info!(
-                            ?epoch,
-                            boundary = ?epoch
-                                .get()
-                                .checked_sub(1)
-                                .and_then(|prev| self.cfg.epocher.last(Epoch::new(prev)))
-                                .map(|h| h.get()),
-                            "signer spawn deferred — E-1 boundary block not yet in marshal; \
-                             verify-only until it lands"
-                        );
+                        let boundary = epoch
+                            .get()
+                            .checked_sub(1)
+                            .and_then(|prev| self.cfg.epocher.last(Epoch::new(prev)))
+                            .map(|h| h.get());
+                        // Two causes, two lines: an operator chasing a stuck block
+                        // fetch when the block is already in hand and it is σ that
+                        // is absent looks in the wrong place entirely.
+                        match lookup {
+                            BoundaryLookup::Missing(MissingInput::TerminalSeed) => info!(
+                                ?epoch,
+                                boundary,
+                                "signer spawn deferred — E-1 boundary block is in marshal but \
+                                 no σ for its terminal round; verify-only until a certificate \
+                                 for that round arrives"
+                            ),
+                            _ => info!(
+                                ?epoch,
+                                boundary,
+                                "signer spawn deferred — E-1 boundary block not yet in marshal; \
+                                 verify-only until it lands"
+                            ),
+                        }
                         return;
                     }
                     Some(SeedlessBase::Witness(base)) => base,
@@ -1275,11 +1348,9 @@ where
             return BoundaryLookup::NotApplicable;
         };
         let Some(block) = self.cfg.marshal_mailbox.get_block(last).await else {
-            return BoundaryLookup::Missing;
+            return BoundaryLookup::Missing(MissingInput::BoundaryBlock);
         };
-        BoundaryLookup::Present {
-            seed: block.parent_seed.as_ref().map(witness_fallback_seed),
-        }
+        boundary_base(self.cfg.randomness.as_ref(), prev, block.proposal_view)
     }
 
     /// Abort engines of all epochs strictly below `current` (exit-at-transition;
@@ -1840,16 +1911,23 @@ mod tests {
         held: Option<AgreedKeys>,
         pull: Option<AgreedKeys>,
     ) -> Arc<dyn Randomness> {
+        randomness_over_seeds(crate::beacon::certify::SeedStore::new(), store, held, pull)
+    }
+
+    fn randomness_over_seeds(
+        seeds: crate::beacon::certify::SeedStore,
+        store: BeaconKeys,
+        held: Option<AgreedKeys>,
+        pull: Option<AgreedKeys>,
+    ) -> Arc<dyn Randomness> {
         crate::beacon::surface::PlaneRandomness::build(PlaneRandomnessConfig {
-            seeds: crate::beacon::certify::SeedStore::new(),
+            seeds,
             keys: store,
-            verify: None,
             resolver: Arc::new(|_| BeaconResolve::Absent),
             ceremony: Arc::new(std::sync::RwLock::new(std::collections::BTreeMap::new())),
             dkg_qual: Arc::new(|_| Some(false)),
             held,
             pull,
-            pull_seed: None,
             participation: Arc::new(tokio::sync::Notify::new()),
             metrics: crate::beacon::metrics::BeaconMetrics::default(),
             chain_id: 1,
@@ -2529,7 +2607,104 @@ mod tests {
             seedless_base(&BoundaryLookup::NotApplicable, &snap),
             Some(SeedlessBase::Constant(constant))
         );
-        assert_eq!(seedless_base(&BoundaryLookup::Missing, &snap), None);
+        for cause in [MissingInput::BoundaryBlock, MissingInput::TerminalSeed] {
+            assert_eq!(seedless_base(&BoundaryLookup::Missing(cause), &snap), None);
+        }
+    }
+
+    /// A store holding a real threshold σ for exactly `round`, so the boundary
+    /// lookup reads the production `SeedStore` pin rather than a canned answer.
+    fn seeds_holding(round: SimplexRound) -> crate::beacon::certify::SeedStore {
+        use crate::beacon::verified_seed::PkOracle;
+        use fluentbase_bls::beacon::{recover_seed, seed_namespace, sign_seed_partial};
+        let mut rng = test_rng();
+        let (sharing, shares) =
+            deal_anonymous::<MinSig, N3f1>(&mut rng, Default::default(), NZU32!(5));
+        let ns = seed_namespace(b"fluent-test");
+        let partials: Vec<_> = shares
+            .iter()
+            .map(|share| sign_seed_partial(share, &ns, round))
+            .collect();
+        let sigma = recover_seed::<N3f1>(&sharing, &partials).expect("the fixture recovers σ");
+        let store = crate::beacon::certify::SeedStore::new();
+        store.record(PkOracle::new(*sharing.public(), ns).witness(round, sigma));
+        store
+    }
+
+    /// The base for epoch E is σ of E-1's TERMINAL ROUND, read from the store at
+    /// the round the boundary block names — and a local MISS is `Missing`, which
+    /// DEFERS the spawn, never `Present { seed: None }`, which would elect on the
+    /// constant base while a peer that holds σ elects on the witness one.
+    #[test]
+    fn a_boundary_seed_miss_defers_the_spawn_instead_of_electing_on_the_constant_base() {
+        const TERMINAL_VIEW: u64 = 31;
+        let prev = Epoch::new(DETERMINISTIC_BOOTSTRAP_EPOCH + 5);
+        let terminal = SimplexRound::new(prev, View::new(TERMINAL_VIEW));
+        let snap = ValidatorSetSnapshot {
+            block_hash: B256::repeat_byte(0x11),
+            block_number: 42,
+            epoch: prev.get() + 1,
+            validators: Vec::new(),
+            weights: None,
+        };
+
+        let seeds = seeds_holding(terminal);
+        let held = randomness_over_seeds(seeds.clone(), BeaconKeys::new(), None, None);
+        let expected = witness_fallback_seed(
+            &held
+                .terminal_seed_at(terminal)
+                .expect("the fixture pinned this round"),
+        );
+        assert_eq!(
+            boundary_base(held.as_ref(), prev, TERMINAL_VIEW),
+            BoundaryLookup::Present {
+                seed: Some(expected)
+            }
+        );
+        assert_eq!(
+            seedless_base(&boundary_base(held.as_ref(), prev, TERMINAL_VIEW), &snap),
+            Some(SeedlessBase::Witness(expected)),
+        );
+
+        // The SAME block, on a node whose store holds σ for a NEIGHBOURING round
+        // of the same epoch: the pin answers only its own round, so this is the
+        // ordinary "σ has not landed here yet" miss.
+        let stale = randomness_over_seeds(
+            seeds_holding(SimplexRound::new(prev, View::new(TERMINAL_VIEW - 1))),
+            BeaconKeys::new(),
+            None,
+            None,
+        );
+        assert_eq!(
+            boundary_base(stale.as_ref(), prev, TERMINAL_VIEW),
+            BoundaryLookup::Missing(MissingInput::TerminalSeed),
+            "a σ miss is `I do not know yet`, not `there is no σ` — and it names \
+             the SEED as the missing input, not the block"
+        );
+        assert_eq!(
+            seedless_base(&boundary_base(stale.as_ref(), prev, TERMINAL_VIEW), &snap),
+            None,
+            "and no base at all means the spawn defers"
+        );
+
+        // Predicate first: below the bootstrap edge no σ can exist, so `None` is
+        // the agreed answer and the store is never consulted for it.
+        let inactive = Epoch::new(DETERMINISTIC_BOOTSTRAP_EPOCH - 1);
+        assert_eq!(
+            boundary_base(
+                randomness_over_seeds(
+                    seeds_holding(SimplexRound::new(inactive, View::new(TERMINAL_VIEW))),
+                    BeaconKeys::new(),
+                    None,
+                    None,
+                )
+                .as_ref(),
+                inactive,
+                TERMINAL_VIEW,
+            ),
+            BoundaryLookup::Present { seed: None },
+            "a beacon-inactive predecessor takes the constant base even with a σ in the store"
+        );
     }
 
     // A single peer (even naming u64::MAX) must NOT advance the live frontier —

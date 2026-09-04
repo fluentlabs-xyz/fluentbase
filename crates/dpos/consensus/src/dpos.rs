@@ -7,7 +7,10 @@ use crate::{
         derive_with_visibility_retry, BeaconEngineLike, DerivedBlock as _, DerivedBlockBuilder,
         ExecutedChain, OrderingAssembler,
     },
+    beacon::{Randomness, Seed},
     cold_start_jump::ElSync as _,
+    digest::Digest,
+    epocher::OriginEpocher,
     executed::executed_state_hash,
     order_block::{anchor_order_block, OrderBlock, K},
     scheme::epoch_committee_from_snapshot,
@@ -19,17 +22,21 @@ use crate::{
 use alloy_consensus::Header;
 use alloy_primitives::{Address, B256};
 use alloy_rpc_types_engine::ForkchoiceState;
-use commonware_consensus::types::{Epoch, Height};
+use commonware_consensus::{
+    simplex::types::Finalization,
+    types::{Epoch, Epocher as _, Height, Round, View},
+};
 use commonware_cryptography::Signer;
 use commonware_runtime::{tokio::Context, Clock as _, Handle, Metrics as _, Spawner as _};
 use commonware_storage::{
-    archive::{Archive as _, Identifier},
+    archive::{Archive, Identifier},
     metadata::{self, Metadata},
 };
 use commonware_utils::sequence::U64;
 use eyre::{ensure, eyre, OptionExt as _, WrapErr as _};
 use fluentbase_bls::{
     fluent_namespace, keys::ValidatorBlsKeypair, scheme::build_verifier, PeerPubkey,
+    Scheme as BlsScheme,
 };
 use fluentbase_p2p::NoopBlocker;
 use fluentbase_staking_reader::{
@@ -99,10 +106,13 @@ const MARSHAL_PARTITION_PREFIX: &str = "consensus_marshal";
 /// Renamed from `beacon-seed-journal` when the backing primitive moved from
 /// `journal::segmented::fixed` to `ordinal::Ordinal`: the two on-disk formats are
 /// incompatible, and pointing at a fresh name lets the retention window simply
-/// refill. That is free ONLY while the data is miss-if-lost — `parent_seed` still
-/// couriers σ in the child block, so a cold seed store costs nothing but a
-/// re-derive. **The next format change after `parent_seed` is removed is NOT
-/// free** and will need a real migration.
+/// refill.
+///
+/// That refill is no longer free. No block body couriers σ any more — the live
+/// derive and the crash-survivor replay both key on the block's own round — so a
+/// cold store costs the replay its first source and pushes it onto the local
+/// certificate, then the upstream, then a defer. **A further format change needs
+/// a real migration, not a rename.**
 pub(crate) const SEED_JOURNAL_PARTITION: &str = "beacon-seed-ordinal";
 
 /// Partition of the durable `epoch → PK_epoch` store. Empty would mean RAM-only.
@@ -262,11 +272,11 @@ pub(crate) async fn read_consensus_archive_last_finalized(
 enum RecoverOutcome {
     /// reth now holds `target`; carries its local-canonical hash. The pre-engine
     /// marshal→reth replay bridged the gap — either straight from the local
-    /// `finalized_blocks` archive (BLOCKS-ONLY: the seed for each height is the
-    /// child block's `parent_seed` witness, never a per-height cert), or, on a
-    /// below-floor BLOCK hole (#8), by a BLS-verified by-height re-fetch through
-    /// the cert upstream ([`refetch_verified_archive_hole`]) spliced into the
-    /// same replay.
+    /// `finalized_blocks` archive (σ for each height comes from the seed store at
+    /// the height's OWN round, with the local certificate and the upstream as
+    /// fallbacks — no cert is REQUIRED to exist), or, on a below-floor BLOCK hole
+    /// (#8), by a BLS-verified by-height re-fetch through the cert upstream
+    /// ([`refetch_verified_archive_hole`]) spliced into the same replay.
     Recovered(B256),
     /// reth is `> MAX_COLD_RECOVER` behind its OWN (INTACT) consensus archive (#12):
     /// the pre-engine replay is capped, so the caller anchors the cold-start at
@@ -511,6 +521,190 @@ where
     Ok(uf.block)
 }
 
+/// Where σ for a replayed height comes from, decided before any I/O runs.
+enum ReplaySeedSource {
+    /// The agreed derivation here is `None`: the beacon is not mandatory in this
+    /// height's epoch, or the epoch map cannot name an epoch for it at all.
+    Inactive,
+    /// σ this node already holds for the height's OWN round.
+    Held(Seed),
+    /// Beacon-active and the store missed — σ for this round has to be found.
+    Wanted(Round),
+}
+
+/// What the crash-survivor replay may derive a height with.
+enum ReplaySeed {
+    /// `None` iff [`ReplaySeedSource::Inactive`] — a beacon-inactive link, where
+    /// `None` is what every node derives. It is NOT reachable from a σ miss: the
+    /// digest fallback on a beacon-active link re-rolls `prev_randao` and forks
+    /// the restart, which is the one outcome this whole path exists to prevent.
+    Derive(Option<Seed>),
+    /// σ is mandatory here and no source has it. The walk stops and defers.
+    Unavailable,
+}
+
+/// σ for `height`'s own round out of this node's own store, or the round to go
+/// looking for. The same rule the live executor derives with
+/// (`Actor::seed_at_own_round`), applied at replay so a restarted node cannot
+/// re-execute a height with a different `prev_randao` than the network.
+///
+/// PREDICATE FIRST, store second: `mandatory_at(epoch(h))` — network-agreed,
+/// independent of anything local — decides BEFORE the store is read. Store-first
+/// would let a σ filed at a round the agreed map calls beacon-INACTIVE be USED,
+/// and the seed journal this store rehydrates from is replayed WITHOUT
+/// re-verification by design (`VerifiedSeed::from_journal`: epoch keys are pruned
+/// on an epoch window while σ is kept on a round window, so a re-check is
+/// impossible). A stray there is ignored and counted — never obeyed, never fatal:
+/// ignoring derives exactly what the rest of the network derives, where halting
+/// would turn one bad record into a node that cannot start.
+///
+/// A height whose epoch the map cannot name (below the epocher origin) is
+/// INACTIVE and is never unwrapped: the beacon cannot have been mandatory in an
+/// epoch that does not exist.
+fn replay_seed_source(
+    randomness: &dyn Randomness,
+    epocher: &OriginEpocher,
+    height: u64,
+    proposal_view: u64,
+    sync_metrics: &SyncMetrics,
+) -> ReplaySeedSource {
+    let Some(info) = epocher.containing(Height::new(height)) else {
+        return ReplaySeedSource::Inactive;
+    };
+    let round = Round::new(info.epoch(), View::new(proposal_view));
+    if !randomness.mandatory_at(round.epoch().get()) {
+        // Read ONLY to count it: the value is never handed on.
+        if randomness.seed_for(round).is_some() {
+            sync_metrics.crash_recover_stray_seed.inc();
+            warn!(
+                height,
+                %round,
+                "crash-survivor recovery: σ present at a round the agreed epoch map calls \
+                 beacon-INACTIVE — IGNORED (the network derives `None` here)"
+            );
+        }
+        return ReplaySeedSource::Inactive;
+    }
+    match randomness.seed_for(round) {
+        Some(seed) => ReplaySeedSource::Held(seed),
+        None => ReplaySeedSource::Wanted(round),
+    }
+}
+
+/// σ out of a finalization, PINNED to the round the caller named.
+///
+/// σ signs `seed_message(round)`, so a certificate for another round carries a
+/// perfectly valid signature over something else; taking it would be the fork the
+/// caller is avoiding. One implementation for both cert sources — the local
+/// archive and the upstream — because the rule is the same for both.
+fn seed_from_cert(round: Round, finalization: &Finalization<BlsScheme, Digest>) -> Option<Seed> {
+    if finalization.proposal.round != round {
+        return None;
+    }
+    Some(Seed {
+        target_round: round,
+        signature: finalization.certificate.seed()?,
+    })
+}
+
+/// Resolve σ for one replayed height: this node's store, then the local
+/// certificate at that height, then the cert upstream, then defer.
+///
+/// TRUST CLASSES, and they differ on purpose. The store and the local
+/// `finalizations` archive are read WITHOUT re-verification, the same trust the
+/// seed journal takes and the same trust this walk already extends to the block
+/// bodies it derives from — both were written by this node's own marshal after it
+/// verified them, and re-checking one while trusting the other from the same disk
+/// would be incoherent (the epoch key needed for the check is also the one thing a
+/// restart may legitimately not have). The UPSTREAM read is the only VERIFIED
+/// one: `refetch_verified_archive_hole` authenticates it exactly like the
+/// cold-start jump landing. Every source is round-pinned by [`seed_from_cert`],
+/// so no source can substitute a neighbouring round's σ.
+///
+/// A local certificate is often absent and that is normal, not a fault: an
+/// ancestry-finalized height may have no standalone cert anywhere, ever. Its σ is
+/// then the store's to supply, and a store that lost its journal tail falls
+/// through to the upstream — or, failing that, to the caller's defer.
+#[allow(clippy::too_many_arguments)]
+async fn recover_replay_seed<A, U, C>(
+    randomness: &dyn Randomness,
+    epocher: &OriginEpocher,
+    certs: &A,
+    upstream: Option<&U>,
+    committees: &C,
+    verify_ctx: &mut Context,
+    parent_hash: B256,
+    l1_checkpoint: Option<B256>,
+    sync_metrics: &SyncMetrics,
+    order: &OrderBlock,
+) -> eyre::Result<ReplaySeed>
+where
+    A: Archive<Value = Finalization<BlsScheme, Digest>>,
+    U: crate::cert_follow::CertUpstream,
+    C: crate::cert_inlet::CommitteeSource,
+{
+    let round = match replay_seed_source(
+        randomness,
+        epocher,
+        order.height,
+        order.proposal_view,
+        sync_metrics,
+    ) {
+        ReplaySeedSource::Inactive => return Ok(ReplaySeed::Derive(None)),
+        ReplaySeedSource::Held(seed) => return Ok(ReplaySeed::Derive(Some(seed))),
+        ReplaySeedSource::Wanted(round) => round,
+    };
+    let local = certs
+        .get(Identifier::Index(order.height))
+        .await
+        .map_err(|e| {
+            eyre!(
+                "reading marshal finalizations at height {}: {e}",
+                order.height
+            )
+        })?;
+    if let Some(seed) = local.as_ref().and_then(|cert| seed_from_cert(round, cert)) {
+        return Ok(ReplaySeed::Derive(Some(seed)));
+    }
+    if upstream.is_some() {
+        match refetch_verified_archive_hole(
+            upstream,
+            committees,
+            verify_ctx,
+            parent_hash,
+            l1_checkpoint,
+            order.height,
+            "finalizations (own-round seed)",
+        )
+        .await
+        {
+            Ok(uf) => {
+                if let Some(seed) = seed_from_cert(round, &uf.finalization) {
+                    sync_metrics.crash_recover_refetched.inc();
+                    return Ok(ReplaySeed::Derive(Some(seed)));
+                }
+                warn!(
+                    height = order.height,
+                    %round,
+                    "crash-survivor recovery: the upstream's verified finalization carries no σ \
+                     for this round"
+                );
+            }
+            // NOT fatal here, where it is fatal for a missing BLOCK: the block is
+            // already in hand, so a σ that cannot be fetched is a reason to let
+            // devp2p carry the EL forward, not evidence of local data loss. The
+            // caller's defer is the self-heal; a forged answer is refused by the
+            // same authentication and lands here too, having derived nothing.
+            Err(e) => warn!(
+                height = order.height,
+                %round,
+                "crash-survivor recovery: re-fetching the finalization for its σ failed: {e:#}"
+            ),
+        }
+    }
+    Ok(ReplaySeed::Unavailable)
+}
+
 /// Crash-survivor cold-start recovery: reth is missing the
 /// consensus-finalized block at `target` (an ungraceful crash lost reth's
 /// unflushed tail while the marshal persisted the finalization). Read the missing
@@ -526,9 +720,16 @@ where
 /// through `upstream` ([`refetch_verified_archive_hole`]) — the live marshal resolver
 /// cannot repair below its floor and the deferred jump can't fire at a `<= 64` gap, so
 /// deferring would strand reth. Both no-upstream cases stay fatal.
+///
+/// A height whose σ cannot be resolved ([`recover_replay_seed`]) takes the SAME
+/// defer, mid-walk: the blocks already imported stay, and devp2p carries the EL
+/// from reth's new tip. Deriving that height locally is the one thing this
+/// function may never do, because a `prev_randao` derived from the digest
+/// fallback forks the restart away from the network.
 // A single-call pre-engine assembly step: each arg is a distinct reth/consensus
-// dependency (engine, provider, deriver, upstream, committee source, checkpoint),
-// not a bundleable cluster — an args struct would only add indirection.
+// dependency (engine, provider, deriver, upstream, committee source, checkpoint,
+// randomness, epoch map), not a bundleable cluster — an args struct would only add
+// indirection.
 #[allow(clippy::too_many_arguments)]
 async fn recover_finalized_tail_into_reth<Provider, BeaconEngine, D, U, C>(
     ctx: &Context,
@@ -540,6 +741,8 @@ async fn recover_finalized_tail_into_reth<Provider, BeaconEngine, D, U, C>(
     committees: &C,
     l1_checkpoint: Option<B256>,
     sync_metrics: &SyncMetrics,
+    randomness: &dyn Randomness,
+    epocher: &OriginEpocher,
 ) -> eyre::Result<RecoverOutcome>
 where
     Provider: BlockHashReader + BlockNumReader,
@@ -571,16 +774,27 @@ where
     };
 
     // Phase 2: replay [lowest..=target] from the marshal's OWN finalized_blocks
-    // archive — BLOCKS-ONLY (Design B′, R3). The seed for height `h` is block
-    // `h+1`'s `parent_seed` (the witness), read via a one-element lookahead —
-    // the SAME rule the live executor derives with, so a restarted node can
-    // never re-execute a height with a different `prev_randao` than the network
-    // (F4). Per-height finalization certs are NOT read: a present block with an
-    // absent cert is a NORMAL state (an ancestry-finalized height may have no
-    // standalone cert anywhere, ever — pre-B′ this was classified as a
-    // re-fetchable hole, the upstream could not serve it, and the node could
-    // NEVER restart). Certs authenticate a re-fetched MISSING BLOCK only.
+    // archive. σ for height `h` is resolved at `h`'s OWN round — the SAME key the
+    // live executor derives with, so a restarted node can never re-execute a
+    // height with a different `prev_randao` than the network (F4).
+    //
+    // The finalizations archive is opened as a σ FALLBACK only
+    // ([`recover_replay_seed`]), never as a gate: a present block with an absent
+    // cert is a NORMAL state (an ancestry-finalized height may have no standalone
+    // cert anywhere, ever — pre-B′ this was classified as a re-fetchable hole, the
+    // upstream could not serve it, and the node could NEVER restart). Nothing here
+    // requires a cert to exist.
     let archive = crate::outer::init_finalized_blocks_archive(ctx, MARSHAL_PARTITION_PREFIX).await;
+    let certs = crate::outer::init_finalizations_archive(
+        ctx,
+        MARSHAL_PARTITION_PREFIX,
+        commonware_runtime::buffer::paged::CacheRef::from_pooler(
+            ctx,
+            crate::outer::PAGE_CACHE_PAGE_SIZE,
+            crate::outer::PAGE_CACHE_CAPACITY,
+        ),
+    )
+    .await;
 
     let mut parent_hash = provider
         .block_hash(lowest.saturating_sub(1))
@@ -591,74 +805,58 @@ where
                  re-sync the EL disk from a snapshot"
             )
         })?;
-    let mut order = recover_walk_block(
-        &archive,
-        upstream,
-        committees,
-        &mut verify_ctx,
-        parent_hash,
-        l1_checkpoint,
-        sync_metrics,
-        lowest,
-    )
-    .await?;
     for h in lowest..=target {
-        // The WITNESS for `h` = block `h+1`'s `parent_seed`. For `h < target` the
-        // child is the next walk element (fetched once — it becomes the next
-        // iteration's `order`). For `h == target` (= the marshal's
-        // `last_processed_height`, i.e. a height the executor DERIVED and acked
-        // before the crash) the child was necessarily dispatched — and therefore
-        // stored — so the archive read succeeds wherever the derive itself once
-        // did; a corruption hole falls back to the same #8 re-fetch. The one
-        // exception: a PRE-BEACON `target` (its own `parent_seed` is `None`)
-        // derives with the agreed digest fallback and needs no child at all.
-        let (seed, next_order) = if h == target {
-            let child = archive
-                .get(Identifier::Index(h + 1))
-                .await
-                .map_err(|e| eyre!("reading marshal finalized_blocks at height {}: {e}", h + 1))?;
-            match child {
-                Some(child) => (child.parent_seed, None),
-                None if order.parent_seed.is_none() => (None, None),
-                None => {
-                    let uf = refetch_verified_archive_hole(
-                        upstream,
-                        committees,
-                        &mut verify_ctx,
-                        parent_hash,
-                        l1_checkpoint,
-                        h + 1,
-                        "finalized_blocks (witness child)",
-                    )
-                    .await?;
-                    sync_metrics.crash_recover_refetched.inc();
-                    (uf.block.parent_seed, None)
-                }
+        // Each walk element is acquired at the top of its OWN iteration. The
+        // one-height offset that used to sit here existed only to have `h+1` in
+        // hand for its `parent_seed`; nothing reads a child now.
+        let order = recover_walk_block(
+            &archive,
+            upstream,
+            committees,
+            &mut verify_ctx,
+            parent_hash,
+            l1_checkpoint,
+            sync_metrics,
+            h,
+        )
+        .await?;
+        // The witness-downgrade refusal that stood here is GONE with the datum it
+        // read: it compared `h`'s own field against `h+1`'s, an archive-internal
+        // monotonicity check over two bodies. Its replacement is stronger, not
+        // absent — beacon-activity is now decided by the AGREED epoch map instead
+        // of by a block's own bytes, so a corrupted archive cannot assert its way
+        // onto either side, and a σ miss on a beacon-active link stops the walk
+        // instead of deriving with the digest fallback: the fork the old refusal
+        // was really guarding against.
+        let seed = match recover_replay_seed(
+            randomness,
+            epocher,
+            &certs,
+            upstream,
+            committees,
+            &mut verify_ctx,
+            parent_hash,
+            l1_checkpoint,
+            sync_metrics,
+            &order,
+        )
+        .await?
+        {
+            ReplaySeed::Derive(seed) => seed,
+            ReplaySeed::Unavailable => {
+                return crash_recover_defer_or_fatal(
+                    provider,
+                    target,
+                    upstream.is_some(),
+                    sync_metrics,
+                    &format!(
+                        "block {h} sits on a beacon-active link and σ for its own round is in \
+                         neither the seed store, the local finalization, nor the upstream — \
+                         refusing a digest-fallback derive (it would fork the restart)"
+                    ),
+                );
             }
-        } else {
-            let child = recover_walk_block(
-                &archive,
-                upstream,
-                committees,
-                &mut verify_ctx,
-                parent_hash,
-                l1_checkpoint,
-                sync_metrics,
-                h + 1,
-            )
-            .await?;
-            (child.parent_seed.clone(), Some(child))
         };
-        // Witness-downgrade refusal (same agreed-data monotonicity rule as the
-        // executor): a block that itself carries a witness sits on a
-        // beacon-active link, so its child MUST present one. Deriving with the
-        // digest fallback here would re-roll `prev_randao` and FORK the restart.
-        ensure!(
-            seed.is_some() || order.parent_seed.is_none(),
-            "crash-survivor recovery: block {h} is on a beacon-active link but its child \
-             presents no parent_seed witness — corrupted archive; refusing a digest-fallback \
-             derive (it would fork); re-sync the EL disk from a snapshot"
-        );
         let derived = derive_with_visibility_retry(ctx, deriver, &order, parent_hash, seed)
             .await
             .wrap_err("crash-survivor recovery derivation failed")?;
@@ -700,15 +898,10 @@ where
                  whether the parent became visible"
             );
         }
-        // Hand the already-fetched child to the next iteration (each walk
-        // element is fetched exactly once). `None` only at `h == target`,
-        // where the range is exhausted anyway.
-        match next_order {
-            Some(next) => order = next,
-            None => break,
-        }
     }
-    drop(archive); // release so MarshalActor::init can re-open the same partition.
+    // Released so `MarshalActor::init` can re-open the same partitions.
+    drop(certs);
+    drop(archive);
 
     let hash = provider
         .block_hash(target)
@@ -1547,6 +1740,8 @@ impl DposLayer {
                         &recover_committees,
                         None,
                         &sync_metrics,
+                        randomness.as_ref(),
+                        &OriginEpocher::new(dpos_activation_block, epoch_length_blocks),
                     )
                     .await?
                     {
@@ -4032,7 +4227,6 @@ mod visibility_retry_tests {
             extra_data: Bytes::new(),
             result: B256::ZERO,
             txs: Vec::new(),
-            parent_seed: None,
             equivocation: None,
         }
     }
@@ -4388,6 +4582,147 @@ mod crash_recover_tests {
     }
 }
 
+// The σ half of the crash-survivor replay, pinned where the DECISION is made.
+// The I/O tail it guards (local certificate → upstream → defer) is exercised by
+// the smoke suite, as the disk-archive replay itself is; what a unit can pin —
+// and what the fork hinges on — is that a MISS never reads as "no σ here".
+#[cfg(test)]
+mod replay_seed_tests {
+    use super::{replay_seed_source, ReplaySeedSource, SyncMetrics};
+    use crate::{
+        beacon::{
+            actor::DETERMINISTIC_BOOTSTRAP_EPOCH, certify::SeedStore, surface::PlaneRandomness,
+            surface::PlaneRandomnessConfig, verified_seed::PkOracle, BeaconKeys, BeaconResolve,
+            Randomness,
+        },
+        epocher::OriginEpocher,
+    };
+    use commonware_consensus::types::{Epoch, Round, View};
+    use commonware_cryptography::bls12381::{dkg::deal_anonymous, primitives::variant::MinSig};
+    use commonware_utils::{test_rng, N3f1, NZU32};
+    use fluentbase_bls::beacon::{recover_seed, seed_namespace, sign_seed_partial};
+    use std::{num::NonZeroU64, sync::Arc};
+
+    const EPOCH_LEN: u64 = 8;
+    const VIEW: u64 = 5;
+
+    fn epocher(origin: u64) -> OriginEpocher {
+        OriginEpocher::new(origin, NonZeroU64::new(EPOCH_LEN).expect("8 != 0"))
+    }
+
+    /// A production provider over a store holding a real threshold σ for each of
+    /// `rounds` — the same shape a rehydrated seed journal leaves behind.
+    fn holding(rounds: &[Round]) -> Arc<dyn Randomness> {
+        let mut rng = test_rng();
+        let (sharing, shares) =
+            deal_anonymous::<MinSig, N3f1>(&mut rng, Default::default(), NZU32!(5));
+        let ns = seed_namespace(b"fluent-test");
+        let seeds = SeedStore::new();
+        for &round in rounds {
+            let partials: Vec<_> = shares
+                .iter()
+                .map(|share| sign_seed_partial(share, &ns, round))
+                .collect();
+            let sigma = recover_seed::<N3f1>(&sharing, &partials).expect("the fixture recovers σ");
+            seeds.record(PkOracle::new(*sharing.public(), ns.clone()).witness(round, sigma));
+        }
+        PlaneRandomness::build(PlaneRandomnessConfig {
+            seeds,
+            keys: BeaconKeys::new(),
+            resolver: Arc::new(|_| BeaconResolve::Absent),
+            ceremony: Arc::new(std::sync::RwLock::new(std::collections::BTreeMap::new())),
+            dkg_qual: Arc::new(|_| Some(false)),
+            held: None,
+            pull: None,
+            participation: Arc::new(tokio::sync::Notify::new()),
+            metrics: crate::beacon::metrics::BeaconMetrics::default(),
+            chain_id: 1,
+        })
+    }
+
+    // THE property: on a beacon-active link a σ miss is "go find it", never "there
+    // is no σ here". The second reading is the digest fallback under another name —
+    // it re-rolls `prev_randao` and forks the restart away from the network.
+    #[test]
+    fn a_seed_miss_on_a_beacon_active_link_is_wanted_never_inactive() {
+        let m = SyncMetrics::default();
+        let height = EPOCH_LEN * DETERMINISTIC_BOOTSTRAP_EPOCH;
+        match replay_seed_source(holding(&[]).as_ref(), &epocher(0), height, VIEW, &m) {
+            ReplaySeedSource::Wanted(round) => assert_eq!(
+                round,
+                Round::new(Epoch::new(DETERMINISTIC_BOOTSTRAP_EPOCH), View::new(VIEW)),
+                "and it names the block's OWN round, from agreed data"
+            ),
+            ReplaySeedSource::Inactive => {
+                panic!("a σ miss must not read as `no σ here` — that IS the digest fallback")
+            }
+            ReplaySeedSource::Held(_) => panic!("the store is empty"),
+        }
+        assert_eq!(
+            m.crash_recover_stray_seed.get(),
+            0,
+            "nothing stray was seen — the counter is for the inactive arm only"
+        );
+    }
+
+    // The ordinary case, and the one the whole re-key exists for: σ is found under
+    // the block's own round, with no child block read.
+    #[test]
+    fn a_held_seed_resolves_at_the_blocks_own_round() {
+        let round = Round::new(Epoch::new(DETERMINISTIC_BOOTSTRAP_EPOCH), View::new(VIEW));
+        match replay_seed_source(
+            holding(&[round]).as_ref(),
+            &epocher(0),
+            EPOCH_LEN * DETERMINISTIC_BOOTSTRAP_EPOCH,
+            VIEW,
+            &SyncMetrics::default(),
+        ) {
+            ReplaySeedSource::Held(seed) => assert_eq!(seed.target_round, round),
+            ReplaySeedSource::Wanted(_) | ReplaySeedSource::Inactive => {
+                panic!("the store holds σ for exactly this round")
+            }
+        }
+    }
+
+    // PREDICATE FIRST: a provider that HAS σ for the round is still refused, because
+    // the agreed epoch map says the beacon is not active there and the rest of the
+    // network derives `None`. Counted, not obeyed and not fatal.
+    #[test]
+    fn a_stray_seed_at_a_beacon_inactive_round_is_ignored_and_counted() {
+        let m = SyncMetrics::default();
+        let inactive = Epoch::new(DETERMINISTIC_BOOTSTRAP_EPOCH - 1);
+        let round = Round::new(inactive, View::new(VIEW));
+        assert!(matches!(
+            replay_seed_source(
+                holding(&[round]).as_ref(),
+                &epocher(0),
+                EPOCH_LEN * inactive.get(),
+                VIEW,
+                &m,
+            ),
+            ReplaySeedSource::Inactive
+        ));
+        assert_eq!(m.crash_recover_stray_seed.get(), 1);
+    }
+
+    // An epoch the map cannot name at all (below the epocher origin) is INACTIVE and
+    // is never unwrapped — the beacon cannot have been mandatory in an epoch that
+    // does not exist.
+    #[test]
+    fn a_height_below_the_epocher_origin_is_inactive_not_a_panic() {
+        assert!(matches!(
+            replay_seed_source(
+                holding(&[]).as_ref(),
+                &epocher(1_000),
+                10,
+                VIEW,
+                &SyncMetrics::default(),
+            ),
+            ReplaySeedSource::Inactive
+        ));
+    }
+}
+
 // #8: the below-floor archive-hole heal is NOT a defer — with an upstream it
 // RE-POPULATES the hole by a BLS-verified by-height re-fetch. These pin
 // `refetch_verified_archive_hole` in isolation (the disk-archive replay it splices
@@ -4467,7 +4802,6 @@ mod refetch_hole_tests {
             extra_data: Bytes::new(),
             result: B256::ZERO,
             txs: Vec::new(),
-            parent_seed: None,
             equivocation: None,
         }
     }
