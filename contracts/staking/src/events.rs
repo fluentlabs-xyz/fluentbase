@@ -263,6 +263,35 @@ pub struct EpochCommitteeCommitted {
     pub committee: Vec<Address>,
 }
 
+/// The selection for `epoch` produced fewer than `MIN_COMMITTEE_LENGTH`
+/// eligible validators, so `epoch` re-seats the committee of `epoch - 1`
+/// verbatim instead of reverting.
+///
+/// Emitted INSTEAD OF `EpochCommitteeCommitted`, never beside it: no committee
+/// was derived, and a reader that treated the two as interchangeable would
+/// record a fresh commit that did not happen.
+///
+/// This is the state the chain must be steered out of, not an error: `eligible`
+/// says how far the visible population has fallen below the floor, and the seats
+/// stay filled by validators the selection would no longer choose — some of them
+/// possibly retired, tombstoned or unstaked. It clears by itself the moment
+/// enough validators are registered, keyed and activated again, because the next
+/// commit then derives a full set. Until then the seated set is frozen, so this
+/// event firing epoch after epoch is the operator's cue to add validators.
+///
+/// `dkgQual[epoch]` is written `false` alongside it — the committee genuinely
+/// did not change, which is what lets the beacon carry its key forward instead
+/// of trying to re-mint one over a set it cannot assemble.
+#[derive(Event)]
+pub struct CommitteeCarriedOver {
+    #[indexed]
+    pub epoch: u64,
+    /// How many validators the selection actually produced (`< MIN_COMMITTEE_LENGTH`).
+    pub eligible: u32,
+    /// How many seats the carried committee has.
+    pub members: u32,
+}
+
 #[derive(Event)]
 pub struct ValidatorJailed {
     #[indexed]

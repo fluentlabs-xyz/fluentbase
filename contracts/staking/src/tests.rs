@@ -5898,6 +5898,214 @@ fn the_commit_orders_by_peer_key_and_membership_changes_mint_the_dkg_bit() {
     assert!(decode_output::<bool>(&output));
 }
 
+// The floor is no longer an assertion that stops the chain. When the selection
+// for an epoch comes back short, the commit re-seats the previous committee and
+// keeps going, because the alternative — a revert inside a pre-execution system
+// call — is a chain that no transaction can ever repair.
+//
+// The test walks the whole road rather than reading back a write: it (1) proves
+// the PREMISE, that the selection really is short and the old code would have
+// reverted here; (2) proves the commit SUCCEEDS and the cursor moves; (3) proves
+// the seated set is the PREDECESSOR's, including the two validators the selection
+// just rejected, with the predecessor's weights; (4) proves the carry REPEATS
+// while the shortage lasts; and (5) proves it STOPS by itself once enough
+// validators are active again, minting a fresh committee and a fresh DKG bit.
+// Point (5) is what makes the carry a recovery path rather than a new terminal
+// state: the chain stays alive precisely so this transaction can land.
+#[test]
+fn a_short_selection_carries_the_previous_committee_instead_of_stopping_the_chain() {
+    let owner = Address::with_last_byte(0xa0);
+    let leaving = [Address::with_last_byte(0x04), Address::with_last_byte(0x05)];
+    // Five keyed validators under the default cap of 21, so the cap never
+    // truncates and the visible population alone decides the committee size.
+    let validators: Vec<Address> = (1..=5).map(Address::with_last_byte).collect();
+    let stakes: Vec<U256> = (1..=5)
+        .map(|i| DEFAULT_MIN_VALIDATOR_STAKE * U256::from(i as u64))
+        .collect();
+    let mut harness = Harness::new(1_000);
+    assert_eq!(
+        harness.initialize(owner, validators.clone(), stakes, 500),
+        ExitCode::Ok
+    );
+
+    // Epochs 0..2 all select from epoch 0 (`target - 2` saturates), so three
+    // commits seat the full five before anything is taken away.
+    harness.set_caller(SYSTEM_CALLER);
+    for _ in 0..3 {
+        assert_eq!(
+            harness
+                .call(encode_empty_call(SIG_COMMIT_EPOCH_COMMITTEE))
+                .0,
+            ExitCode::Ok
+        );
+    }
+    let (_, output) = harness.call(encode_call(
+        SIG_GET_EPOCH_COMMITTEE,
+        &U64Command { value: 2 },
+    ));
+    assert_eq!(decode_output::<Vec<Address>>(&output).len(), 5);
+
+    // Two validators leave at epoch 0, so they are invisible from epoch 1 — the
+    // selection epoch of target 3.
+    harness.set_caller(GENESIS_GOVERNANCE);
+    for validator in leaving {
+        assert_eq!(
+            harness
+                .call(encode_call(
+                    SIG_DISABLE_VALIDATOR,
+                    &AddressCommand { value: validator },
+                ))
+                .0,
+            ExitCode::Ok
+        );
+    }
+
+    // THE PREMISE, asserted before anything is concluded from the commit: the
+    // selection for epoch 1 is genuinely below the floor. Without this the test
+    // would pass just as well against a contract that never took the carry branch.
+    let short = staking::selected_validators_at(&harness.sdk, 1).unwrap();
+    assert_eq!(short.len(), 3);
+    assert!(short.len() < MIN_COMMITTEE_LENGTH);
+
+    let (_, output) = harness.call(encode_call(
+        SIG_GET_EPOCH_COMMITTEE_WITH_STAKES,
+        &U64Command { value: 2 },
+    ));
+    let (incumbents, _, incumbent_stakes, _): (Vec<Address>, Vec<ConsensusKeys>, Vec<U256>, Vec<bool>) =
+        decode_returns(&output);
+
+    // Target 3 selects from epoch 1. The old code reverted CommitteeTooSmall here
+    // and every node died on this system call.
+    harness.set_block_number(1_200);
+    harness.set_caller(SYSTEM_CALLER);
+    assert_eq!(
+        harness
+            .call(encode_empty_call(SIG_COMMIT_EPOCH_COMMITTEE))
+            .0,
+        ExitCode::Ok,
+        "a short selection must not revert: this call is a pre-execution system \
+         call and a revert stops the chain with no way back"
+    );
+    let (_, output) = harness.call(encode_empty_call(SIG_NEXT_EPOCH_TO_COMMIT));
+    assert_eq!(
+        decode_output::<u64>(&output),
+        4,
+        "the cursor must advance, or the driver re-commits the same epoch forever"
+    );
+
+    let (_, output) = harness.call(encode_call(
+        SIG_GET_EPOCH_COMMITTEE_WITH_STAKES,
+        &U64Command { value: 3 },
+    ));
+    let (carried, _, carried_stakes, _): (Vec<Address>, Vec<ConsensusKeys>, Vec<U256>, Vec<bool>) =
+        decode_returns(&output);
+    assert_eq!(
+        carried, incumbents,
+        "the carried epoch seats the PREVIOUS committee, not the short selection"
+    );
+    assert_eq!(
+        carried_stakes, incumbent_stakes,
+        "the weights are the predecessor's frozen frame, re-stamped — an empty \
+         stakes leg would stop every node from spawning its engine"
+    );
+    assert!(carried.len() >= MIN_COMMITTEE_LENGTH);
+    for validator in leaving {
+        assert!(
+            carried.contains(&validator),
+            "the carried committee keeps the seats the selection just rejected — \
+             that is what it means to carry, and what the node must tolerate"
+        );
+    }
+    let (_, output) = harness.call(encode_call(SIG_GET_DKG_QUAL, &U64Command { value: 3 }));
+    assert!(
+        !decode_output::<bool>(&output),
+        "the committee did not change, so no DKG is minted and the beacon carries \
+         its key forward"
+    );
+
+    // (4) It repeats while the shortage lasts.
+    harness.set_block_number(1_400);
+    assert_eq!(
+        harness
+            .call(encode_empty_call(SIG_COMMIT_EPOCH_COMMITTEE))
+            .0,
+        ExitCode::Ok
+    );
+    let (_, output) = harness.call(encode_call(
+        SIG_GET_EPOCH_COMMITTEE,
+        &U64Command { value: 4 },
+    ));
+    assert_eq!(decode_output::<Vec<Address>>(&output), incumbents);
+
+    // (5) And it stops by itself. Governance re-activates the two — the repair
+    // transaction that only exists because the chain kept producing blocks — and
+    // at the same time retires a THIRD validator. The recovered population is
+    // four, which clears the floor, and it is a DIFFERENT set from the carried
+    // one. That difference is what makes this half conclusive: re-activating
+    // only the two would restore the carried set exactly, the commit would read
+    // as unchanged, and a contract that had simply carried again would be
+    // indistinguishable from one that derived.
+    let retiring = Address::with_last_byte(0x03);
+    harness.set_caller(GENESIS_GOVERNANCE);
+    for validator in leaving {
+        assert_eq!(
+            harness
+                .call(encode_call(
+                    SIG_ACTIVATE_VALIDATOR,
+                    &AddressCommand { value: validator },
+                ))
+                .0,
+            ExitCode::Ok
+        );
+    }
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_DISABLE_VALIDATOR,
+                &AddressCommand { value: retiring },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+    // Both stamps land at epoch 2 and bite at epoch 3, the selection epoch of
+    // target 5; that commit needs `current >= 3`.
+    let recovered = staking::selected_validators_at(&harness.sdk, 3).unwrap();
+    assert_eq!(recovered.len(), MIN_COMMITTEE_LENGTH);
+
+    harness.set_caller(SYSTEM_CALLER);
+    harness.set_block_number(1_600);
+    assert_eq!(
+        harness
+            .call(encode_empty_call(SIG_COMMIT_EPOCH_COMMITTEE))
+            .0,
+        ExitCode::Ok
+    );
+    let (_, output) = harness.call(encode_call(
+        SIG_GET_EPOCH_COMMITTEE,
+        &U64Command { value: 5 },
+    ));
+    let fresh = decode_output::<Vec<Address>>(&output);
+    assert_eq!(
+        fresh.len(),
+        MIN_COMMITTEE_LENGTH,
+        "once the population clears the floor the commit derives again, so the \
+         carry is a state the chain leaves rather than one it is stuck in"
+    );
+    assert!(
+        !fresh.contains(&retiring),
+        "a derived committee reflects the current selection; a carried one would \
+         still be seating the retired validator"
+    );
+    for validator in leaving {
+        assert!(fresh.contains(&validator));
+    }
+    let (_, output) = harness.call(encode_call(SIG_GET_DKG_QUAL, &U64Command { value: 5 }));
+    assert!(
+        decode_output::<bool>(&output),
+        "the set changed on the way out of the carry, so this epoch must mint"
+    );
+}
+
 #[test]
 fn external_dependency_flows_fail_closed_before_calls() {
     let owner = Address::with_last_byte(0xa0);

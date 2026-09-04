@@ -434,38 +434,49 @@ fn write_ring<SDK: SharedAPI>(
     epoch: u64,
     members: &[CommitteeMember],
 ) -> Result<(), ExitCode> {
+    let mut compacted = Vec::with_capacity(members.len());
+    for member in members {
+        compacted.push(math::compact_balance(member.weight).ok_or(ExitCode::IntegerOverflow)?);
+    }
+    write_ring_compact(sdk, epoch, &compacted)
+}
+
+/// The store half of [`write_ring`], over weights that are already compacted.
+///
+/// Split out for the carry-over in [`commit_epoch_committee`], which has no
+/// `CommitteeMember` slice to compact: its weights come back out of the previous
+/// epoch's ring frame, already `uint112`, and are re-stamped into this epoch's.
+/// Compacting is the only thing the two paths do differently, so it is the only
+/// thing above this line.
+fn write_ring_compact<SDK: SharedAPI>(
+    sdk: &mut SDK,
+    epoch: u64,
+    weights: &[Uint<112, 2>],
+) -> Result<(), ExitCode> {
     // See `ERR_COMMITTEE_EXCEEDS_WEIGHT_RING`: an assertion of the cap held two
     // layers up, kept local because overrunning the frame corrupts the NEXT
     // epoch's weights silently.
-    if members.len() > PAIRS_MAX * 2 {
+    if weights.len() > PAIRS_MAX * 2 {
         return revert_with(
             sdk,
             ERR_COMMITTEE_EXCEEDS_WEIGHT_RING,
-            &(U256::from(members.len()), U256::from(PAIRS_MAX * 2)),
+            &(U256::from(weights.len()), U256::from(PAIRS_MAX * 2)),
         );
     }
     let ring = consensus_storage().weight_ring_accessor();
     let base = ring_base(epoch);
     let stamp = epoch as u32;
     let mut index = 0;
-    while index < members.len() {
+    while index < weights.len() {
         let pair = ring.at(base + index / 2);
-        pair.a_accessor().set_checked(
-            sdk,
-            math::compact_balance(members[index].weight).ok_or(ExitCode::IntegerOverflow)?,
-        )?;
+        pair.a_accessor().set_checked(sdk, weights[index])?;
         // On an odd count the second half is written to zero rather than left
         // holding the previous occupant's weight under this epoch's fresh stamp.
         // Nothing reads it — the count bound stops one short — but writing it
         // makes that state stop existing, so the bound becomes a belt rather than
         // the only guard. One warm store into a slot this frame has already
         // dirtied.
-        let b = match members.get(index + 1) {
-            Some(member) => {
-                math::compact_balance(member.weight).ok_or(ExitCode::IntegerOverflow)?
-            }
-            None => Uint::ZERO,
-        };
+        let b = weights.get(index + 1).copied().unwrap_or(Uint::ZERO);
         pair.b_accessor().set_checked(sdk, b)?;
         pair.stamp_accessor().set_checked(sdk, stamp)?;
         index += 2;
@@ -572,6 +583,98 @@ fn selected_committee_at<SDK: SharedAPI>(
     Ok(eligible)
 }
 
+/// Re-seat `epoch - 1`'s committee at `epoch`, because the selection for `epoch`
+/// came back below [`MIN_COMMITTEE_LENGTH`].
+///
+/// **This exists because the alternative is an unrecoverable chain.** The commit
+/// is a pre-execution system call: a revert here is a block-execution error on
+/// every node, before any transaction in the block runs, so the state that
+/// caused it can never be repaired — not by governance, not by the validators
+/// themselves, not by a restart. And reaching the floor takes no attack and no
+/// bug: one owner withdrawing their own self-stake is an ordinary, individually
+/// valid, permissionless transaction that returns success, and the network dies
+/// two epochs later. Carrying the incumbents forward keeps blocks coming, and
+/// blocks are the only thing that can carry the repair.
+///
+/// What is carried is the record POINTER and the LENGTH, so the seated set is
+/// byte-identical to `epoch - 1`'s — not the short set that was just derived,
+/// which is why nothing downstream ever sees a committee under the floor. With
+/// the set unchanged, `dkgQual[epoch]` is `false` by the same rule every other
+/// unchanged commit follows, and the beacon carries its key forward rather than
+/// attempting a ceremony over a set it cannot assemble.
+///
+/// The weights are `epoch - 1`'s frozen frame, re-stamped into `epoch`'s. They
+/// are one epoch staler than usual, which shifts leader election by one epoch of
+/// stake drift and nothing else: every node reads the same frozen frame, so no
+/// two nodes can disagree.
+///
+/// **The one surviving revert is `epoch == 0`.** Genesis has nothing to carry,
+/// and a genesis that cannot seat a committee never leaves block zero — loud,
+/// immediate, and fixed by relaunching rather than unrecoverable mid-chain.
+/// `epoch >= 1` always has a predecessor with a non-empty record: the cursor is
+/// monotone and every commit that advances it writes a length of at least
+/// [`MIN_COMMITTEE_LENGTH`] (a fresh set) or of the predecessor it carried, so a
+/// zero length above genesis is not a reachable state. It is still checked, and
+/// still reverts, because the alternative would be seating an empty committee.
+///
+/// **What this does NOT fix.** The seats stay filled by validators the selection
+/// would no longer choose, including any tombstoned one that was already seated:
+/// the node severs its transport and refuses its proposals but does not vacate
+/// its seat, so it counts toward the quorum denominator. A carried committee of
+/// `n` therefore keeps finalizing while at most `f = (n-1)/3` of its seats are
+/// dead, and halts beyond that — the ordinary BFT bound, reached here without
+/// re-selection to relieve it. That halt is recoverable (the members can come
+/// back); the revert this replaces was not.
+fn carry_committee_forward<SDK: SharedAPI>(
+    sdk: &mut SDK,
+    target: u64,
+    eligible: usize,
+) -> Result<(), ExitCode> {
+    let storage = consensus_storage();
+    let (record, length) = if target == 0 {
+        (0, 0)
+    } else {
+        committee_at(sdk, target - 1)?
+    };
+    if length == 0 {
+        return revert_with(
+            sdk,
+            ERR_COMMITTEE_TOO_SMALL,
+            &(U256::from(eligible), U256::from(MIN_COMMITTEE_LENGTH)),
+        );
+    }
+    // The predecessor's frame, re-stamped as this epoch's. `None` means the ring
+    // wrapped past `target - 1`, which needs `WEIGHT_RING_EPOCHS` commits between
+    // two adjacent epochs — the cursor advances by one per commit, so it cannot.
+    // Reverting on the impossible branch is deliberate: the alternative is an
+    // epoch whose `stakes` leg reads empty, which stops every node from spawning
+    // its engine anyway, silently and one epoch later.
+    let Some(frozen) = read_weights(sdk, target - 1)? else {
+        return revert_with(
+            sdk,
+            ERR_COMMITTEE_TOO_SMALL,
+            &(U256::from(eligible), U256::from(MIN_COMMITTEE_LENGTH)),
+        );
+    };
+    write_ring_compact(sdk, target, &frozen)?;
+    let index = storage.epoch_index_accessor().entry(target);
+    index.record_accessor().set_checked(sdk, record as u32)?;
+    index.length_accessor().set_checked(sdk, length as u32)?;
+    storage
+        .dkg_qual_accessor()
+        .entry(target)
+        .set_checked(sdk, false)?;
+    storage
+        .last_committed_epoch_p1_accessor()
+        .set_checked(sdk, target.checked_add(1).ok_or(ExitCode::IntegerOverflow)?)?;
+    events::CommitteeCarriedOver {
+        epoch: target,
+        eligible: eligible as u32,
+        members: length as u32,
+    }
+    .emit(sdk)
+}
+
 /// Public handler `0xe505b249` (`commitEpochCommittee`).
 ///
 /// Derives the next epoch's committee and freezes it, with its leader weights.
@@ -587,6 +690,10 @@ fn selected_committee_at<SDK: SharedAPI>(
 /// node, before any transaction in the block runs — which means no transaction
 /// can repair the state afterwards. Each one is therefore an assertion of an
 /// assumption held elsewhere, not a condition this contract expects to meet.
+///
+/// A short eligible set is the one condition that is NOT asserted that way any
+/// more: it is reachable by ordinary permissionless action (one owner exiting),
+/// so it takes the carry-over in [`carry_committee_forward`] instead of a revert.
 pub fn commit_epoch_committee<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     ensure_non_payable(sdk)?;
     ensure_mutable(sdk)?;
@@ -609,11 +716,7 @@ pub fn commit_epoch_committee<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitC
     let selection_epoch = target.saturating_sub(MAX_COMMITTEE_LOOKAHEAD_EPOCHS);
     let mut members = selected_committee_at(sdk, selection_epoch)?;
     if members.len() < MIN_COMMITTEE_LENGTH {
-        return revert_with(
-            sdk,
-            ERR_COMMITTEE_TOO_SMALL,
-            &(U256::from(members.len()), U256::from(MIN_COMMITTEE_LENGTH)),
-        );
+        return carry_committee_forward(sdk, target, members.len());
     }
     // Peer-key ascending IS the consensus index space: `record_production`
     // credits `produced[epoch][leader_index]` and `judge` resolves that same
