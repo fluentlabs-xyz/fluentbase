@@ -67,42 +67,43 @@ The per-epoch beacon key (`commitEpochBeaconKey` `0x6ece9cb1` /
 contains either selector is the 2026-08-16 build and is STALE. The current build
 is below; its selector scan lists these two as required ABSENCES.
 
-## This build — 2026-08-18
+## This build — 2026-09-04
 
-Rebuilt after the on-chain `PK_E` rollback (2026-08-17) and FLU-1134 (committee
-retention + the three-structure storage layout). The 2026-08-16 section this
-replaces is gone wholesale, per the rule above.
+Rebuilt for Э0.2 (`.dpos-study/PLAN.md`): `commitEpochCommittee` no longer reverts
+`ERR_COMMITTEE_TOO_SMALL` when the selection falls below `MIN_COMMITTEE_LENGTH`.
+It carries the previous epoch's committee forward instead — record pointer,
+length and re-stamped weight frame — writes `dkgQual[target] = false`, advances
+the cursor, and emits the new `CommitteeCarriedOver(uint64 indexed epoch, uint32
+eligible, uint32 members)`. The revert survives only at `target == 0`. This
+closes R-111 / R-112 / K-3, the one path on which a single honest `undelegate`
+killed every node at the next epoch boundary with no way back (reproduced on the
+stand: `.dpos-study/EXPERIMENTS.md` §5, E2 and E5).
 
-- worktree HEAD: `29ae97ef`
-  (`refactor(staking)!: retain epoch committees instead of pruning them (FLU-1134)`)
-- worktree was DIRTY at build time, deliberately: the uncommitted delta is
-  FLU-1134 phases 2-4 — the `committee_records` / `epoch_index` / `weight_ring`
-  split, the ring-miss forfeit, and the deletion of `resolveSigner` and
-  `getEpochCommitteeLength`. A build from clean HEAD would produce a contract
-  with the OLD `epoch_committees` layout, which this node's reader cannot decode
-  (it expects the four-array return with a possibly-empty stakes leg).
-- `git status --porcelain contracts/staking` at build time — 10 modified files,
-  `10 files changed, 884 insertions(+), 184 deletions(-)`. Indicative only; the
-  per-file hashes below are the record, and `README.md` is not compiled:
+- worktree HEAD: `bc42042a` (`wip`)
+- **HEAD moved since the 2026-08-18 section this replaces.** That section
+  described a build from `29ae97ef` DIRTY with 10 files (the FLU-1134 phases 2-4
+  delta). Those files are now COMMITTED: the per-file hashes below for the eleven
+  files this build did not touch are byte-identical to the ones recorded there,
+  and `git show HEAD:contracts/staking/src/{consensus,events,tests}.rs | sha256sum`
+  reproduces that section's recorded hashes for the other three. So the baseline
+  of this build is exactly the source that produced the previous blob, and the
+  whole delta between the two blobs is the three dirty files below.
+- worktree DIRTY at build time, deliberately: the uncommitted delta is Э0.2 and
+  nothing else. `git status --porcelain contracts/staking` — 3 modified files,
+  `3 files changed, 358 insertions(+), 18 deletions(-)`:
 
-      M contracts/staking/README.md
-      M contracts/staking/src/consensus.rs
-      M contracts/staking/src/consts.rs
-      M contracts/staking/src/events.rs
-      M contracts/staking/src/initializer.rs
-      M contracts/staking/src/lib.rs
-      M contracts/staking/src/liveness.rs
-      M contracts/staking/src/staking.rs
-      M contracts/staking/src/storage.rs
-      M contracts/staking/src/tests.rs
+      M contracts/staking/src/consensus.rs   (carry_committee_forward + write_ring split)
+      M contracts/staking/src/events.rs      (CommitteeCarriedOver)
+      M contracts/staking/src/tests.rs       (the carry-over behaviour test)
 
 - SHA-256 of every source file in `contracts/staking/src` as built (dirty
-  content, not the committed content — `git show` will NOT reproduce these):
+  content, not the committed content — `git show` will NOT reproduce the three
+  starred ones):
 
       205ef64f73269a7ed948ba28bbe75c550d3d9a88c375b8327bb1ba42ed07c1bc  src/config.rs
-      e518d0f98f62b2853b235c25ada2e85424f76a258dc6f63286d760ca1b3aeaef  src/consensus.rs
+      52353942b8dbd3a45c7c04a3ede782d7c6aaca5971f0a866ffd6e76980b5a442  src/consensus.rs   *
       a9c28d73e53546e8138a1418c20b2e273a8c8bca74747cf6553b9054e2758c58  src/consts.rs
-      19b44f8d3b01c1c0aba484cd32193bb98675a5398e8e512aefa01c80370b5584  src/events.rs
+      3a5c920cfc1f27c2cbcb5838db3717def3994d7e1fe690d13daf345f68645af6  src/events.rs      *
       3f69dfe02d27be45e6b723e3f128b7049d74abe5c1b6dafac82b5af47d8b5576  src/evidence.rs
       6e19613ec6ba6bc6ffe405b70ad998cc5ba4a1d05c42e851c11fc2f7f38e33f3  src/initializer.rs
       41664ada99d94f2761d511883215d0a36ca2e765b05a410e3f661367a9ba9d20  src/lib.rs
@@ -110,7 +111,7 @@ replaces is gone wholesale, per the rule above.
       87fdd853b1c4d37cbc7421a07c8a6458afc486ff4300289b52015d9958fdf20f  src/math.rs
       f2ecf55fb1ab645347f78753e897bb1b8bc63c8c013967a8edfb9e92e323b74c  src/staking.rs
       94a01f24f8fa81415ad0a9b5a9ded60d05c44d7cdbb1f35ca5a9f7d34a509f53  src/storage.rs
-      e0d7192e14f66a0bc9b468d952d7b5809a0986de2362b45a0c16f9e8ca223360  src/tests.rs
+      fe90ab03374c81debe3442ec6d4cac78470d523c2ada0052c86751db3373eddf  src/tests.rs       *
       de3751f4f574a205ae8d9aa6cf800d7098f040ac37415debc89cf106634ebe19  src/types.rs
       6c2256b44b8c57d4ea0b34ca2adaf485591c2a0ba9f7d4f123ba6fe7b27f91a6  src/util.rs
 
@@ -118,41 +119,36 @@ replaces is gone wholesale, per the rule above.
 
       find src -name '*.rs' | sort | xargs sha256sum
 
-- `fluentbase_contracts_staking.wasm` — 414,513 bytes (was 425,932 on 2026-08-16)
-  `8f5895a586f172afb97a4894ccf66f18367118802f895ca7424b88426bf79797`
-- `fluentbase_contracts_staking.rwasm` — 2,854,198 bytes (was 2,950,957)
-  `f30deb0d6a9a0d15a3ac0344076139f301b9d2a29b8cbb1281a993d5df33529e`
-- Both shrank: the beacon-key layer came out and the committee storage lost
-  `prune_committees`, `resolveSigner` and `getEpochCommitteeLength`.
-- Selector scan on the `.rwasm`, extended beyond the four the check above lists
-  because this build DELETES selectors as well as adding them — an absence is as
-  much a correctness claim as a presence:
+- `fluentbase_contracts_staking.wasm` — 416,781 bytes (was 414,513 on 2026-08-18)
+  `c350bffb97e667fbcc152903dd534cacac2fbf112d213d4defe6ec56d4c3d91b`
+- `fluentbase_contracts_staking.rwasm` — 2,868,708 bytes (was 2,854,198)
+  `988955e5fea07cc65d543b74933e68a7451a1375ea0fac98d980c198660697f4`
+- Both grew (+2,268 / +14,510): the carry-over branch, the ring-write split and
+  one more event descriptor. Nothing was deleted.
+- `cargo test --lib` in `contracts/staking`: **162 passed, 0 failed** (161 before,
+  plus `a_short_selection_carries_the_previous_committee_instead_of_stopping_the_chain`).
+  That test was confirmed to FAIL against the pre-change contract — the branch was
+  temporarily reverted to the old `revert_with` and the test reddened on the
+  "a short selection must not revert" assertion — so it is not vacuous.
+- Selector scan on the `.rwasm`. The four the general check above lists, plus the
+  reads the node makes and the four absences the previous section established.
+  `getEpochCommittee` is `0x80b562de` and `getEpochRewards` is `0x54c3e84b`
+  (`cast sig`); the previous section named neither, so a scan copied from it would
+  silently skip them:
 
-      present, 1 each:  recordProduction commitEpochCommittee slashEquivocation
-                        producedAt getEpochCommitteeWithStakes getEpochCommittee
-                        getEpochRewards getDkgQual
-      absent, 0 each:   commitEpochBeaconKey getEpochBeaconKey
+      present, 1 each:  recordProduction (0x1752910e) commitEpochCommittee (0xe505b249)
+                        slashEquivocation (0xdc6fb3f2) producedAt (0x91c7d453)
+                        getEpochCommitteeWithStakes (0xa4d160c1)
+                        getEpochCommittee (0x80b562de) getEpochRewards (0x54c3e84b)
+                        getDkgQual (0x2660899f)
+      absent, 0 each:   commitEpochBeaconKey (0x6ece9cb1) getEpochBeaconKey (0xc9adaf5c)
                         resolveSigner getEpochCommitteeLength
 
-  The two beacon-key selectors are the 2026-08-16 staleness marker; the other two
-  are FLU-1134's deletions. A blob carrying any of the four is not this build.
-- **Determinism re-confirmed on this build.** Two release builds an hour apart,
-  separated only by doc-comment edits to `consensus.rs` / `storage.rs` /
-  `staking.rs`, produced BIT-IDENTICAL `.rwasm`
-  (`f30deb0d…`, 2026-08-17 23:48 and 2026-08-18 00:44). Consistent with the
-  earlier data point below: source hashes that move without the blob moving mean
-  the delta was comment-only.
-- **NOT yet done for this build:** the smoke docker image has not been rebuilt,
-  so no golden snapshot is trustworthy against these blobs yet, and the devnet has
-  not been run at all against FLU-1134.
-
-- **Reproducibility data point, from the 2026-08-16 build** (kept because it is
-  the original observation the note above re-confirms): those blobs were built
-  twice from this worktree, the second time after a doc-comment-only edit to
-  `src/consensus.rs`. Both builds produced BIT-IDENTICAL `.wasm` and `.rwasm`. So
-  the toolchain is deterministic for this crate, and a source hash that moves
-  without the blob moving means the change emitted no code — worth checking
-  before assuming a rebuild is needed.
+  `CommitteeCarriedOver` is an EVENT, so it has no selector to scan for; its
+  presence is pinned by the contract test rather than by this scan.
+- **The smoke docker image was rebuilt after this swap and the devnet was run
+  against it** — see the Э0 log (`.dpos-study/E0-LOG.md`) for what was observed.
+  Any golden snapshot taken before 2026-09-04 is stale (`golden.py::_image_id`).
 
 ### Previous build — 2026-08-08 (superseded)
 

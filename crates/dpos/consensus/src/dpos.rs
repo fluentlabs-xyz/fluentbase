@@ -1996,8 +1996,10 @@ impl DposLayer {
                  operator command that fixes this. What resolves it is on-chain \
                  state plus block production: `getDposActivationBlock()` must be \
                  scheduled, the registry must hold at least {min} activated \
-                 validators with consensus keys (the commit reverts \
-                 ERR_COMMITTEE_TOO_SMALL below that), and the producer must then \
+                 validators with consensus keys (below that the FIRST commit, at \
+                 epoch 0, reverts ERR_COMMITTEE_TOO_SMALL — a later epoch carries \
+                 the previous committee forward instead, but epoch 0 has none to \
+                 carry), and the producer must then \
                  have advanced far enough for the commit to land and finalize. \
                  Relaunch once the committee is readable at the finalized block.",
                 min = fluentbase_staking_reader::reader::MIN_COMMITTEE_LENGTH,

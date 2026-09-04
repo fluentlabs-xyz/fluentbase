@@ -626,6 +626,21 @@ alloy_sol_types::sol! {
     // there is nothing left to disagree.
     function commitEpochCommittee() external;
 
+    // The commit found fewer than MIN_COMMITTEE_LENGTH eligible validators and
+    // re-seated the previous epoch's committee rather than reverting — the
+    // revert being a pre-execution block-execution error on every node, which
+    // one validator owner could trigger by withdrawing their own stake.
+    //
+    // Decoded here for the same reason the close events are: logs emitted inside
+    // a pre-execution system call never become receipts, so `eth_getLogs` shows
+    // NOTHING of them (checked on the devnet: a 1,296-block chain with ~40
+    // commits carried exactly two staking logs, both from an ordinary
+    // transaction). This line and its counter are therefore the ONLY way anyone
+    // learns the chain is in the carried state — and it is a state that must be
+    // steered out of, because the seats stay filled by validators the selection
+    // would no longer choose and are not replaced until the population recovers.
+    event CommitteeCarriedOver(uint64 indexed epoch, uint32 eligible, uint32 members);
+
     // `slashEquivocation(uint64,uint32)` — the equivocation VERDICT,
     // system-caller only. It carries no evidence and the contract verifies none:
     // every committee member checked the charge against the evidence in the
@@ -692,6 +707,30 @@ fn encode_slash_equivocation_call(epoch: u64, accused: u8) -> Vec<u8> {
 /// The chain being CLOSED is the trap worth naming: adding an event to the
 /// contract means adding an arm here too, or it is emitted into silence on the
 /// one call path that would otherwise have surfaced it.
+/// Surface the one `commitEpochCommittee` outcome an operator has to act on.
+///
+/// The commit's other event (`EpochCommitteeCommitted`) is the ordinary case and
+/// says nothing actionable, so it is deliberately not decoded. This one says the
+/// selection came back below the floor: the chain kept going on the previous
+/// committee, and it will keep doing that, epoch after epoch, until enough
+/// validators are registered, keyed and activated again. `error!` and not `warn!`
+/// because nothing else reports it — a system call's logs never reach a receipt.
+fn emit_commit_observability(logs: &[alloy_primitives::Log]) {
+    use alloy_sol_types::SolEvent;
+    for log in logs {
+        if let Ok(carried) = CommitteeCarriedOver::decode_log(log) {
+            tracing::error!(
+                target: "fluentbase::consensus",
+                epoch = carried.epoch,
+                eligible = carried.eligible,
+                members = carried.members,
+                "epoch_committee_carried_over"
+            );
+            metrics::counter!("dpos_epoch_committee_carried_over_total").increment(1);
+        }
+    }
+}
+
 fn emit_close_observability(logs: &[alloy_primitives::Log]) {
     use alloy_sol_types::SolEvent;
     for log in logs {
@@ -1013,7 +1052,8 @@ where
                 ))
             })?;
         match ras.result {
-            ExecutionResult::Success { .. } => {
+            ExecutionResult::Success { ref logs, .. } => {
+                emit_commit_observability(logs);
                 self.evm.db_mut().commit(ras.state);
                 Ok(())
             }
@@ -1377,8 +1417,9 @@ mod tests {
     #[test]
     fn close_events_decode_from_fabricated_logs() {
         use super::{
-            CorrelatedFailureEpoch, EpochBlendRewardsCommitted, EpochWeightsUnavailable,
-            PartialEpoch, ProductionVerdictFailed, StipendLegSkipped, StipendSkipped,
+            CommitteeCarriedOver, CorrelatedFailureEpoch, EpochBlendRewardsCommitted,
+            EpochWeightsUnavailable, PartialEpoch, ProductionVerdictFailed, StipendLegSkipped,
+            StipendSkipped,
         };
         use alloy_sol_types::SolEvent;
 
@@ -1403,6 +1444,22 @@ mod tests {
         assert_eq!(
             EpochWeightsUnavailable::SIGNATURE,
             "EpochWeightsUnavailable(uint64,uint32)"
+        );
+        // The COMMIT-path event, decoded by `emit_commit_observability` rather
+        // than by the close router. Its topic0 was read straight off the
+        // contract (`events::CommitteeCarriedOver::SELECTOR`) and pinned here as
+        // a literal, not recomputed from this signature: recomputing would make
+        // both halves of the pin come from the same side, which is precisely the
+        // failure this class of test keeps producing.
+        assert_eq!(
+            CommitteeCarriedOver::SIGNATURE,
+            "CommitteeCarriedOver(uint64,uint32,uint32)"
+        );
+        assert_eq!(
+            CommitteeCarriedOver::SIGNATURE_HASH,
+            alloy_primitives::b256!(
+                "ed59ae1f26b3006ee27f22cdcc4adb48a0c039c2dee83b0d80de5795bfecb8e5"
+            )
         );
 
         // The same-arity pair. Only the NAME separates them, so only topic0 can —
@@ -1443,6 +1500,20 @@ mod tests {
             EpochWeightsUnavailable::decode_log(&lost_log).expect("fabricated log must decode");
         assert_eq!(decoded.epoch, 11);
         assert_eq!(decoded.members, 51);
+
+        let carried_log = fabricate(
+            CommitteeCarriedOver {
+                epoch: 20,
+                eligible: 3,
+                members: 4,
+            }
+            .encode_log_data(),
+        );
+        let decoded_carried =
+            CommitteeCarriedOver::decode_log(&carried_log).expect("fabricated log must decode");
+        assert_eq!(decoded_carried.epoch, 20);
+        assert_eq!(decoded_carried.eligible, 3);
+        assert_eq!(decoded_carried.members, 4);
 
         let failed_log = fabricate(
             ProductionVerdictFailed {

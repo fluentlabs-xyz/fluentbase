@@ -140,6 +140,13 @@ mod abi {
         // NOT via a permissionless marker tx. `true` ⇒ the committee changed at
         // `epoch` (its DKG re-mints the beacon key); `false` ⇒ unchanged (carry
         // forward). Consumed by `beacon::carry` as the carry-forward arbiter.
+        //
+        // A COMMITTEE-CARRY-OVER (the selection fell below `MIN_COMMITTEE_LENGTH`
+        // and the contract re-seated the previous committee) writes `false` here,
+        // and that is the same fact by the same rule rather than a special case:
+        // the record is carried BYTE-IDENTICALLY, so the committee really did not
+        // change and `carry.rs`'s soundness argument — no set bit in `(m, E]`
+        // implies `committee[E] == committee[m]` — still holds over it.
         function getDkgQual(uint64 epoch) external view returns (bool);
 
         // Chain-configuration views. Formerly a separate `ChainConfig` predeploy;
@@ -151,13 +158,25 @@ mod abi {
     }
 }
 
-/// Smallest committee the contract will commit: `commitEpochCommittee` reverts
-/// `ERR_COMMITTEE_TOO_SMALL` below it (`consensus.rs:523-529`), and
-/// `setActiveValidatorsLength` refuses to store a cap under it
-/// (`config.rs:499-503`), so a non-empty committee shorter than this cannot be a
-/// legal on-chain state.
+/// Smallest committee the contract will commit, so a non-empty committee shorter
+/// than this cannot be a legal on-chain state.
 ///
-/// MUST mirror the staking contract's `MIN_COMMITTEE_LENGTH` (`consts.rs:388`).
+/// Two contract-side rules hold that. `setActiveValidatorsLength` refuses to
+/// store a cap under it. And when the SELECTION comes back shorter,
+/// `commitEpochCommittee` does not write the short set — it re-seats the
+/// previous epoch's committee verbatim (`carry_committee_forward`) and sets
+/// `dkgQual = false`, so what this reader sees is still the last legal
+/// committee, at its full length. It used to revert there instead; that revert
+/// is a pre-execution block-execution error on every node, which one validator
+/// owner could trigger by withdrawing their own stake, so it was replaced by the
+/// carry. The only surviving revert is at epoch 0, where there is nothing to
+/// carry.
+///
+/// The floor is therefore still an invariant of every committee this reader
+/// decodes — which is why the read-side check below is a hard error and not a
+/// warning.
+///
+/// MUST mirror the staking contract's `MIN_COMMITTEE_LENGTH` (`consts.rs`).
 pub const MIN_COMMITTEE_LENGTH: usize = 4;
 
 /// Mirrors the staking contract's `BALANCE_COMPACT_PRECISION` (`consts.rs:336`,
