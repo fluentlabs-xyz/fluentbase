@@ -15,7 +15,10 @@ members = [
     "crates/sdk-derive",
     "crates/testing",
     "crates/types",
-    "crates/dpos/*",
+    "crates/dpos/bls",
+    "crates/dpos/consensus",
+    "crates/dpos/p2p",
+    "crates/dpos/staking-reader",
     "devnet/local-dpos-smoke/genesis-bootstrap",
     "e2e",
 ]
