@@ -158,6 +158,24 @@ where
         spec_exec_mailbox: crate::spec_exec::Mailbox,
         page_cache: CacheRef,
     ) -> eyre::Result<Self> {
+        // Every family this engine and its children register carries `epoch` as a
+        // LABEL, not as part of the name. Without it the per-epoch engines all
+        // register the same series under the same fixed name prefix, and a node
+        // running N engines at once exports N copies of every simplex family with
+        // identical label sets — which Prometheus ingests as "different value but
+        // same timestamp" and drops silently at `up = 1` (measured: 223 series
+        // repeated up to 7x, 55% of samples lost per scrape).
+        //
+        // `with_attribute` and NOT a per-epoch `with_label`: a label goes into the
+        // metric NAME, so an epoch there would grow the family set without bound
+        // and make every dashboard query epoch-specific. The runtime's exposition
+        // writer groups all registrations of one family under a SINGLE HELP/TYPE
+        // header (`commonware_runtime::utils::MetricEncoder`), so labelled
+        // duplicates do not reproduce the second-HELP-line failure that costs the
+        // whole scrape. Runtime task gauges deliberately ignore attributes, so
+        // their cardinality is unchanged.
+        let context = context.with_attribute("epoch", cfg.epoch.get());
+
         // A non-unique committee is reachable from on-chain data
         // (`Staking.setConsensusKeys` does NOT enforce cross-validator
         // uniqueness of peerPubkey/blsPubkey). Return an error so the caller
