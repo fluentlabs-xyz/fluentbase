@@ -3,6 +3,7 @@ use fluentbase_sdk::{
     calc_create_address, syscall::SYSCALL_ID_CALL, Address, Bytes, STATE_MAIN, U256,
 };
 use fluentbase_testing::{EvmTestingContext, TxBuilder};
+use revm::context_interface::cfg::gas::TOTAL_COST_FLOOR_PER_TOKEN;
 use std::{
     fmt::Write,
     time::{Duration, Instant},
@@ -269,19 +270,17 @@ fn measure_calldata_gas(calldata_size: usize) -> u64 {
 fn test_calldata_below_threshold() {
     const BLOB_SIZE: usize = 128 * 1024;
 
-    // Below threshold: linear, no surcharge
-    let gas_0 = measure_calldata_gas(0);
+    // Below threshold: linear, no surcharge. Compare two non-empty inputs because EIP-7623's
+    // calldata floor applies to them, while the zero-input transaction is execution-cost-bound.
+    // Mixing those branches makes this assertion sensitive to unrelated fixed runtime costs.
     let gas_half = measure_calldata_gas(BLOB_SIZE / 2);
     let gas_full = measure_calldata_gas(BLOB_SIZE);
 
-    let delta_half = gas_half - gas_0;
-    let delta_full = gas_full - gas_0;
-    assert!(
-        delta_full.abs_diff(delta_half * 2) <= 100,
-        "below threshold must be linear: gas_0={}, gas_half={}, gas_full={}",
-        gas_0,
-        gas_half,
-        gas_full,
+    let expected_increment = (BLOB_SIZE / 2) as u64 * TOTAL_COST_FLOOR_PER_TOKEN;
+    assert_eq!(
+        gas_full - gas_half,
+        expected_increment,
+        "below-threshold calldata must retain the EIP-7623 linear floor price",
     );
 }
 

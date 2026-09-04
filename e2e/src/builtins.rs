@@ -3,7 +3,7 @@ use fluentbase_revm::RwasmHaltReason;
 use fluentbase_sdk::{
     calc_create_address, Address, Bytes, CHARGE_FUEL_BASE_COST, COPY_BASE_FUEL_COST,
     COPY_WORD_FUEL_COST, DEBUG_LOG_BASE_FUEL_COST, DEBUG_LOG_WORD_FUEL_COST, FUEL_DENOM_RATE,
-    KECCAK_BASE_FUEL_COST, KECCAK_WORD_FUEL_COST, STATE_FUEL_COST,
+    KECCAK_BASE_FUEL_COST, KECCAK_WORD_FUEL_COST, OUTPUT_WORD_FUEL_COST, STATE_FUEL_COST,
 };
 use fluentbase_testing::{EvmTestingContext, TxBuilder};
 use revm::{
@@ -101,7 +101,7 @@ fn test_write_builtin() {
     let words = (123000 + 31) / 32;
     let expected_fuel = 512 * FUEL_DENOM_RATE as u32
         + COPY_BASE_FUEL_COST
-        + COPY_WORD_FUEL_COST * words
+        + OUTPUT_WORD_FUEL_COST * words
         + 2 * BASE_FUEL_COST
         + CALL_FUEL_COST;
     assert_eq!(gas, fuel_to_gas(expected_fuel));
