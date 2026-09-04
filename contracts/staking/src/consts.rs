@@ -208,13 +208,8 @@ pub const SIG_COMMITTEE_SELECTION_EPOCH: u32 = derive_keccak256_id!("committeeSe
 pub const SIG_COMMIT_EPOCH_COMMITTEE: u32 = derive_keccak256_id!("commitEpochCommittee()");
 // 0x2660899f
 pub const SIG_GET_DKG_QUAL: u32 = derive_keccak256_id!("getDkgQual(uint64)");
-// 0xd7f1733d
-pub const SIG_RESOLVE_SIGNER: u32 = derive_keccak256_id!("resolveSigner(uint64,uint32)");
 // 0x80b562de
 pub const SIG_GET_EPOCH_COMMITTEE: u32 = derive_keccak256_id!("getEpochCommittee(uint64)");
-// 0xe3e6cedc
-pub const SIG_GET_EPOCH_COMMITTEE_LENGTH: u32 =
-    derive_keccak256_id!("getEpochCommitteeLength(uint64)");
 // 0xa4d160c1
 pub const SIG_GET_EPOCH_COMMITTEE_WITH_STAKES: u32 =
     derive_keccak256_id!("getEpochCommitteeWithStakes(uint64)");
@@ -299,6 +294,18 @@ pub const ERR_EPOCH_COMMITTEE_NOT_COMMITTED: u32 =
 pub const ERR_SIGNER_INDEX_OUT_OF_RANGE: u32 =
     derive_keccak256_id!("SignerIndexOutOfRange(uint64,uint32,uint256)");
 pub const ERR_COMMITTEE_TOO_SMALL: u32 = derive_keccak256_id!("CommitteeTooSmall(uint256,uint256)");
+/// A committee longer than one weight-ring frame holds.
+///
+/// An assertion, not a condition the contract expects to meet: the cap is
+/// enforced at `initialize` and by `setActiveValidatorsLength`, and the
+/// selection truncates to it, so `MAX_ACTIVE_VALIDATORS_LENGTH` already bounds
+/// this two layers up. It is checked again here because the failure it prevents
+/// is the one this storage design exists to make unrepresentable — an
+/// over-long committee writes past its frame into the NEXT epoch's weights,
+/// under this epoch's fresh stamp, and every read of both epochs then answers
+/// confidently and wrongly. A halted chain is recoverable; that is not.
+pub const ERR_COMMITTEE_EXCEEDS_WEIGHT_RING: u32 =
+    derive_keccak256_id!("CommitteeExceedsWeightRing(uint256,uint256)");
 pub const ERR_EPOCH_NOT_ACCRUED: u32 = derive_keccak256_id!("EpochNotAccrued(uint64)");
 pub const ERR_EPOCH_NOT_YET_COMMITTABLE: u32 =
     derive_keccak256_id!("EpochNotYetCommittable(uint64,uint64)");
@@ -360,6 +367,36 @@ pub const DEFAULT_ACTIVE_VALIDATORS_LENGTH: u64 = 21;
 /// that keeps those loops payable. No derivation is recorded for 51, and it has
 /// not been measured against rWasm fuel on this runtime.
 pub const MAX_ACTIVE_VALIDATORS_LENGTH: u64 = 51;
+
+/// Epochs of frozen leader weights the ring buffer keeps.
+///
+/// Membership is retained forever; weights are not, because they change every
+/// epoch while membership changes on an event. The ring bounds them by
+/// construction — slot `E mod N` — so nothing has to be deleted and the cost
+/// stops growing.
+///
+/// **The bound this has to satisfy is not the one first written down.** Epoch E
+/// stays readable while `current − E < N − 2`: the close reads at a lag of one,
+/// and the frame ahead is already claimed. Two arguments for a large N were
+/// offered and both are false — a run of parked blocks does not lengthen the
+/// close's lag (`last_processed_block` and `close_epoch` both run above the park
+/// arm), and a commit-less epoch is not ring-write-less (the node's drain runs
+/// unconditionally after the recorder). What actually consumes the margin is
+/// produced-but-**unrecorded** blocks.
+///
+/// At 16 that is 13 epochs, roughly 1.12 M consecutive unrecorded blocks at an
+/// 86,400-block epoch. The conclusion outlived both of its stated reasons, which
+/// is recorded rather than tidied away.
+pub const WEIGHT_RING_EPOCHS: u64 = 16;
+
+/// Ring pair-slots one epoch occupies: two members' weights and their shared
+/// epoch stamp pack into one 32-byte slot (`14 + 14 + 4`).
+pub const PAIRS_MAX: usize = (MAX_ACTIVE_VALIDATORS_LENGTH as usize).div_ceil(2);
+
+/// Total ring length. Sized against the cap rather than the launch
+/// configuration, deliberately: `commitEpochCommittee` is a system call that
+/// must not fail, so it is judged on its worst case.
+pub const WEIGHT_RING_SLOTS: usize = WEIGHT_RING_EPOCHS as usize * PAIRS_MAX;
 
 /// Smallest committee `commitEpochCommittee` will accept.
 ///

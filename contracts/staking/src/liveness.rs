@@ -1,6 +1,7 @@
 //! Block-production accounting for the production-liveness tier.
 
 use crate::{
+    consensus,
     consts::*,
     events, math, staking,
     storage::{chain_config_storage, consensus_storage, production_liveness_storage},
@@ -74,9 +75,11 @@ pub fn record_production<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<
 
     // Length only, never the committee: this runs on every block, and
     // materializing 51 members with their keys costs orders of magnitude more
-    // than the whole per-block budget.
-    let committee = consensus_storage().epoch_committees_accessor().entry(epoch);
-    let committee_size = committee.len_checked(sdk)?;
+    // than the whole per-block budget. The length lives in the index rather than
+    // being read off the record for exactly that reason — and `committee_length_at`
+    // rather than `committee_at`, because the two halves share a slot but not a
+    // read and the record pointer is not wanted here.
+    let committee_size = consensus::committee_length_at(sdk, epoch)?;
     // Not yet committed: park the block. It is neither counted nor credited,
     // which keeps `sum(produced) == blocks_in_epoch` true by construction and
     // leaves the epoch short of its expectation, i.e. tainted.
@@ -254,19 +257,31 @@ fn judge<SDK: SharedAPI>(
     current: u64,
     recorded: u32,
 ) -> Result<(), ExitCode> {
-    let consensus = consensus_storage();
-    let committee = consensus.epoch_committees_accessor().entry(epoch);
-    let member_count = committee.len_checked(sdk)?;
+    let (record, member_count) = consensus::committee_at(sdk, epoch)?;
     if member_count == 0 {
         return Ok(());
     }
+    // Ring miss: forfeit this epoch's verdicts and announce it. Not an error —
+    // the close is a pre-execution system call, so a propagated one is a chain
+    // halt no transaction can repair. And not a silent skip: the two arms around
+    // this one are silent, which is exactly why a miss must not look like them.
+    let Some(frozen) = consensus::read_weights(sdk, epoch)? else {
+        events::EpochWeightsUnavailable {
+            epoch,
+            members: member_count as u32,
+        }
+        .emit(sdk)?;
+        return Ok(());
+    };
+    let seated = consensus_storage()
+        .committee_records_accessor()
+        .entry(record);
     let mut members = Vec::with_capacity(member_count as usize);
     let mut weights = Vec::with_capacity(member_count as usize);
     let mut total_weight = U256::ZERO;
-    for index in 0..member_count {
-        let entry = committee.at(index);
-        members.push(entry.validator_accessor().get_checked(sdk)?);
-        let weight = math::expand_balance(entry.weight_accessor().get_checked(sdk)?);
+    for (index, frozen_weight) in frozen.into_iter().enumerate() {
+        members.push(seated.at(index as u64).get_checked(sdk)?);
+        let weight = math::expand_balance(frozen_weight);
         total_weight = total_weight
             .checked_add(weight)
             .ok_or(ExitCode::IntegerOverflow)?;

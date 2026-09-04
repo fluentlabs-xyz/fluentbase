@@ -21,7 +21,7 @@ use fluentbase_sdk::{
     byteorder::BE,
     bytes::BytesMut,
     codec::{Encoder, FunctionArgs, SolidityABI},
-    keccak256, Address, Bytes, ContextReader, ExitCode, SharedAPI, B256, U256,
+    keccak256, Address, Bytes, ContextReader, ExitCode, SharedAPI, Uint, B256, U256,
 };
 
 const BLS_POP_DST: &[u8] = b"BLS_POP_BLS12381G1_XMD:SHA-256_SSWU_RO_POP_";
@@ -362,7 +362,36 @@ pub fn committee_selection_epoch<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), Ex
     write_abi(sdk, &target.saturating_sub(MAX_COMMITTEE_LOOKAHEAD_EPOCHS))
 }
 
-fn committee_changed<SDK: SharedAPI>(
+/// Which membership record `epoch` seats, and how many of its entries.
+///
+/// The length comes from the index, not the record — see the field docs for why
+/// that is a hot-path choice rather than a divergence guard. `length == 0` is
+/// the sole encoding of "not committed"; `record == 0` is a real pointer,
+/// because genesis mints record 0.
+///
+/// Two SLOADs: the halves share a slot but `get_checked` reads per field. Use
+/// [`committee_length_at`] where the pointer is not wanted.
+/// How many members `epoch` seats, without touching the record pointer.
+///
+/// `record_production` runs on every block and wants the length alone. The two
+/// halves share a slot but not a read: `get_checked` is one `read_at(slot,
+/// offset)` per field, so [`committee_at`] costs two SLOADs where this costs one.
+pub(crate) fn committee_length_at<SDK: SharedAPI>(sdk: &SDK, epoch: u64) -> Result<u64, ExitCode> {
+    Ok(consensus_storage()
+        .epoch_index_accessor()
+        .entry(epoch)
+        .length_accessor()
+        .get_checked(sdk)? as u64)
+}
+
+pub(crate) fn committee_at<SDK: SharedAPI>(sdk: &SDK, epoch: u64) -> Result<(u64, u64), ExitCode> {
+    let index = consensus_storage().epoch_index_accessor().entry(epoch);
+    let length = index.length_accessor().get_checked(sdk)? as u64;
+    let record = index.record_accessor().get_checked(sdk)? as u64;
+    Ok((record, length))
+}
+
+pub(crate) fn committee_changed<SDK: SharedAPI>(
     sdk: &SDK,
     target: u64,
     members: &[CommitteeMember],
@@ -370,25 +399,123 @@ fn committee_changed<SDK: SharedAPI>(
     if target == 0 {
         return Ok(false);
     }
-    let incumbent = consensus_storage()
-        .epoch_committees_accessor()
-        .entry(target - 1);
-    if incumbent.len_checked(sdk)? as usize != members.len() {
+    // The index's length, NOT the incumbent record's own: the record is shared
+    // across epochs and a shorter successor must still read as changed.
+    let (record, length) = committee_at(sdk, target - 1)?;
+    if length as usize != members.len() {
         return Ok(true);
     }
     // Positional, and both sides are peer-key ordered, so an unchanged set
-    // cannot read as changed.
+    // cannot read as changed. This holds for all time only because the sort key
+    // is immutable — see the consensus-key writer, which never releases a peer
+    // key. Allowing key rotation would void it with no change here.
+    let incumbent = consensus_storage()
+        .committee_records_accessor()
+        .entry(record);
     for (index, member) in members.iter().enumerate() {
-        if incumbent
-            .at(index as u64)
-            .validator_accessor()
-            .get_checked(sdk)?
-            != member.validator
-        {
+        if incumbent.at(index as u64).get_checked(sdk)? != member.validator {
             return Ok(true);
         }
     }
     Ok(false)
+}
+
+/// First ring slot of `epoch`'s frame.
+const fn ring_base(epoch: u64) -> usize {
+    (epoch % WEIGHT_RING_EPOCHS) as usize * PAIRS_MAX
+}
+
+/// Freeze `members`' leader weights into `epoch`'s ring frame.
+///
+/// Writes are contiguous from index 0 of the frame, which is what lets a reader
+/// trust pair 0's stamp — see [`read_weights`].
+fn write_ring<SDK: SharedAPI>(
+    sdk: &mut SDK,
+    epoch: u64,
+    members: &[CommitteeMember],
+) -> Result<(), ExitCode> {
+    // See `ERR_COMMITTEE_EXCEEDS_WEIGHT_RING`: an assertion of the cap held two
+    // layers up, kept local because overrunning the frame corrupts the NEXT
+    // epoch's weights silently.
+    if members.len() > PAIRS_MAX * 2 {
+        return revert_with(
+            sdk,
+            ERR_COMMITTEE_EXCEEDS_WEIGHT_RING,
+            &(U256::from(members.len()), U256::from(PAIRS_MAX * 2)),
+        );
+    }
+    let ring = consensus_storage().weight_ring_accessor();
+    let base = ring_base(epoch);
+    let stamp = epoch as u32;
+    let mut index = 0;
+    while index < members.len() {
+        let pair = ring.at(base + index / 2);
+        pair.a_accessor().set_checked(
+            sdk,
+            math::compact_balance(members[index].weight).ok_or(ExitCode::IntegerOverflow)?,
+        )?;
+        // On an odd count the second half is written to zero rather than left
+        // holding the previous occupant's weight under this epoch's fresh stamp.
+        // Nothing reads it — the count bound stops one short — but writing it
+        // makes that state stop existing, so the bound becomes a belt rather than
+        // the only guard. One warm store into a slot this frame has already
+        // dirtied.
+        let b = match members.get(index + 1) {
+            Some(member) => {
+                math::compact_balance(member.weight).ok_or(ExitCode::IntegerOverflow)?
+            }
+            None => Uint::ZERO,
+        };
+        pair.b_accessor().set_checked(sdk, b)?;
+        pair.stamp_accessor().set_checked(sdk, stamp)?;
+        index += 2;
+    }
+    Ok(())
+}
+
+/// Frozen leader weights for `epoch`, or `None` once the ring has wrapped past
+/// it.
+///
+/// Bounded by `epoch_index[epoch].length` — **never** by the ring's extent, and
+/// never by scanning stamps. The count is the authority; the stamp only
+/// invalidates.
+///
+/// **The stamp checked is pair 0's, and "the last pair read" is the unsafe
+/// reading this excludes by name.** Ring writes for one epoch are contiguous
+/// from index 0 within its frame, and `MIN_COMMITTEE_LENGTH` guarantees at least
+/// two pairs, so every occupant of a frame writes pair 0 — pair 0's stamp is the
+/// frame's most recent occupant. Concretely: let E seat 51 (26 pairs) and
+/// `E + N` seat 4 (2 pairs). `E + N` overwrites pairs 0–1 and leaves pairs 2–25
+/// carrying E's stamp and E's weights. A reader for E that checked its last pair
+/// would find stamp E, conclude the frame is E's, and then read pairs 0–1 — which
+/// now hold `E + N`'s weights. A confidently wrong answer, which is the exact
+/// failure the stamp exists to prevent.
+///
+/// An epoch with no committee has no weights and that is not a ring miss, so it
+/// answers `Some(vec![])`.
+pub(crate) fn read_weights<SDK: SharedAPI>(
+    sdk: &SDK,
+    epoch: u64,
+) -> Result<Option<Vec<Uint<112, 2>>>, ExitCode> {
+    let (_, length) = committee_at(sdk, epoch)?;
+    if length == 0 {
+        return Ok(Some(Vec::new()));
+    }
+    let ring = consensus_storage().weight_ring_accessor();
+    let base = ring_base(epoch);
+    if ring.at(base).stamp_accessor().get_checked(sdk)? != epoch as u32 {
+        return Ok(None);
+    }
+    let mut weights = Vec::with_capacity(length as usize);
+    for index in 0..length as usize {
+        let pair = ring.at(base + index / 2);
+        weights.push(if index % 2 == 0 {
+            pair.a_accessor().get_checked(sdk)?
+        } else {
+            pair.b_accessor().get_checked(sdk)?
+        });
+    }
+    Ok(Some(weights))
 }
 
 /// The peer key of `validator`, if its consensus keys are active at `epoch`.
@@ -499,21 +626,38 @@ pub fn commit_epoch_committee<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitC
     members.sort_unstable_by_key(|member| member.peer_pubkey);
 
     let changed = committee_changed(sdk, target, &members)?;
-    let stored = storage.epoch_committees_accessor().entry(target);
-    for member in &members {
-        let entry = stored.grow_checked(sdk)?;
-        entry
-            .validator_accessor()
-            .set_checked(sdk, member.validator)?;
-        // The weight is the one ranking already read at the SELECTION epoch —
-        // the same vintage that decided membership — carried through rather
-        // than looked up again. It is written beside its validator, in one
-        // entry, so the two cannot come apart.
-        entry.weight_accessor().set_checked(
-            sdk,
-            math::compact_balance(member.weight).ok_or(ExitCode::IntegerOverflow)?,
-        )?;
-    }
+    // `target == 0` ALWAYS appends. `committee_changed` short-circuits to
+    // `false` at genesis, which was inert while the committee write was
+    // unconditional — this line is what makes `changed` decide whether a record
+    // exists at all, and the `else` arm would resolve a record that was never
+    // written. Repurposing a branch requires establishing what its inertness
+    // rested on; here it rested on nobody caring what the genesis answer was.
+    //
+    // Knock-on: after this, "a record was appended" no longer implies
+    // "changed == true" — epoch 0 is the counterexample. Anything asking "did
+    // the committee change at E" must read `dkg_qual[E]`, never infer it from a
+    // record's existence.
+    let record = if changed || target == 0 {
+        let stored = storage.committee_records_accessor().entry(target);
+        for member in &members {
+            stored
+                .grow_checked(sdk)?
+                .set_checked(sdk, member.validator)?;
+        }
+        target
+    } else {
+        committee_at(sdk, target - 1)?.0
+    };
+    let index = storage.epoch_index_accessor().entry(target);
+    index.record_accessor().set_checked(sdk, record as u32)?;
+    index
+        .length_accessor()
+        .set_checked(sdk, members.len() as u32)?;
+    // The weights are the ranking already read at the SELECTION epoch — the same
+    // vintage that decided membership — carried through rather than looked up
+    // again, and written from this same slice in this same call. That is what
+    // the alignment proof is a statement about.
+    write_ring(sdk, target, &members)?;
     storage
         .dkg_qual_accessor()
         .entry(target)
@@ -546,17 +690,17 @@ pub fn get_dkg_qual<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), E
 
 /// The validator seated at `signer_idx` of `epoch`'s frozen committee.
 ///
-/// The committee array is the consensus index space, so this is the only
-/// mapping from a signer index to an identity. `resolveSigner` and the
-/// system-call slash entry share it rather than each walking the array, because
-/// a disagreement between them would resolve a verdict onto the wrong validator.
+/// The membership record is the consensus index space, so this is the only
+/// mapping from a signer index to an identity — and it stays a shared helper
+/// rather than an inlined walk because a second walk that disagreed would
+/// resolve a verdict onto the wrong validator. It had two callers; `resolveSigner`
+/// was deleted for want of any, and the system-call slash entry is the survivor.
 fn committee_member_at<SDK: SharedAPI>(
     sdk: &mut SDK,
     epoch: u64,
     signer_idx: u32,
 ) -> Result<Address, ExitCode> {
-    let committee = consensus_storage().epoch_committees_accessor().entry(epoch);
-    let len = committee.len_checked(sdk)?;
+    let (record, len) = committee_at(sdk, epoch)?;
     if len == 0 {
         return revert_with(sdk, ERR_EPOCH_COMMITTEE_NOT_COMMITTED, &epoch);
     }
@@ -567,29 +711,21 @@ fn committee_member_at<SDK: SharedAPI>(
             &(epoch, signer_idx, U256::from(len)),
         );
     }
-    committee
+    consensus_storage()
+        .committee_records_accessor()
+        .entry(record)
         .at(signer_idx as u64)
-        .validator_accessor()
         .get_checked(sdk)
 }
 
-/// Public handler `0xd7f1733d` (`resolveSigner`).
-///
-/// Resolves a committee signer index to its validator address and consensus key.
-pub fn resolve_signer<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), ExitCode> {
-    ensure_non_payable(sdk)?;
-    ensure_initialized(sdk)?;
-    let command = decode::<EpochSignerCommand>(input)?;
-    let validator = committee_member_at(sdk, command.epoch, command.signer_idx)?;
-    write_abi(sdk, &validator)
-}
-
 fn read_committee<SDK: SharedAPI>(sdk: &SDK, epoch: u64) -> Result<Vec<Address>, ExitCode> {
-    let committee = consensus_storage().epoch_committees_accessor().entry(epoch);
-    let len = committee.len_checked(sdk)?;
+    let (record, len) = committee_at(sdk, epoch)?;
+    let members = consensus_storage()
+        .committee_records_accessor()
+        .entry(record);
     let mut result = Vec::with_capacity(len as usize);
     for index in 0..len {
-        result.push(committee.at(index).validator_accessor().get_checked(sdk)?);
+        result.push(members.at(index).get_checked(sdk)?);
     }
     Ok(result)
 }
@@ -606,27 +742,6 @@ pub fn get_epoch_committee<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Resul
     )
 }
 
-/// Public handler `0xe3e6cedc` (`getEpochCommitteeLength`).
-///
-/// Returns the committed committee size for an epoch.
-pub fn get_epoch_committee_length<SDK: SharedAPI>(
-    sdk: &mut SDK,
-    input: &[u8],
-) -> Result<(), ExitCode> {
-    ensure_non_payable(sdk)?;
-    ensure_initialized(sdk)?;
-    let epoch = decode::<U64Command>(input)?.value;
-    write_abi(
-        sdk,
-        &U256::from(
-            consensus_storage()
-                .epoch_committees_accessor()
-                .entry(epoch)
-                .len_checked(sdk)?,
-        ),
-    )
-}
-
 /// Public handler `0xa4d160c1` (`getEpochCommitteeWithStakes`).
 ///
 /// Returns an epoch committee with consensus keys, historical stakes and the
@@ -638,6 +753,13 @@ pub fn get_epoch_committee_length<SDK: SharedAPI>(
 /// Unlike the other three legs it is read LIVE rather than frozen at the commit:
 /// a verdict landing mid-epoch has to be visible to the committee it names,
 /// which is the whole reason for reporting it.
+///
+/// **Membership answers at any depth; weights do not.** Once the ring has
+/// wrapped past `epoch` the `stakes` leg comes back **empty** while the other
+/// three stay populated — an explicit not-retained, never a vector of zeros,
+/// because a caller cannot tell zeros from a real answer. The length disagreement
+/// is the signal; the node's reader is taught to read it as absence rather than
+/// as the corruption it would have been when the two legs came from one vector.
 pub fn get_epoch_committee_with_stakes<SDK: SharedAPI>(
     sdk: &mut SDK,
     input: &[u8],
@@ -645,23 +767,17 @@ pub fn get_epoch_committee_with_stakes<SDK: SharedAPI>(
     ensure_non_payable(sdk)?;
     ensure_initialized(sdk)?;
     let epoch = decode::<U64Command>(input)?.value;
-    // The returned arrays are built from one stored vector, so they are
-    // equal-length and correctly paired by construction. This used to read two
-    // parallel vectors and revert when their lengths disagreed; there is no
-    // longer a state in which they can.
-    let committee = consensus_storage().epoch_committees_accessor().entry(epoch);
-    let len = committee.len_checked(sdk)?;
+    let (record, len) = committee_at(sdk, epoch)?;
+    let members = consensus_storage()
+        .committee_records_accessor()
+        .entry(record);
+    let weights = read_weights(sdk, epoch)?;
     let mut validators = Vec::with_capacity(len as usize);
     let mut keys = Vec::with_capacity(len as usize);
-    let mut stakes = Vec::with_capacity(len as usize);
     let mut tombstoned = Vec::with_capacity(len as usize);
     for index in 0..len {
-        let entry = committee.at(index);
-        let validator = entry.validator_accessor().get_checked(sdk)?;
+        let validator = members.at(index).get_checked(sdk)?;
         keys.push(read_consensus_keys(sdk, validator)?);
-        stakes.push(math::expand_balance(
-            entry.weight_accessor().get_checked(sdk)?,
-        ));
         tombstoned.push(
             consensus_storage()
                 .tombstoned_accessor()
@@ -670,6 +786,11 @@ pub fn get_epoch_committee_with_stakes<SDK: SharedAPI>(
         );
         validators.push(validator);
     }
+    let stakes: Vec<U256> = weights
+        .unwrap_or_default()
+        .into_iter()
+        .map(math::expand_balance)
+        .collect();
     write_returns(sdk, &(validators, keys, stakes, tombstoned))
 }
 // Equivocation proofs and permanent validator tombstoning.

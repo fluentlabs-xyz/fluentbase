@@ -137,9 +137,7 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
         SIG_COMMITTEE_SELECTION_EPOCH => consensus::committee_selection_epoch(sdk),
         SIG_COMMIT_EPOCH_COMMITTEE => consensus::commit_epoch_committee(sdk),
         SIG_GET_DKG_QUAL => consensus::get_dkg_qual(sdk, params),
-        SIG_RESOLVE_SIGNER => consensus::resolve_signer(sdk, params),
         SIG_GET_EPOCH_COMMITTEE => consensus::get_epoch_committee(sdk, params),
-        SIG_GET_EPOCH_COMMITTEE_LENGTH => consensus::get_epoch_committee_length(sdk, params),
         SIG_GET_EPOCH_COMMITTEE_WITH_STAKES => {
             consensus::get_epoch_committee_with_stakes(sdk, params)
         }

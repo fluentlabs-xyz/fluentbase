@@ -117,7 +117,8 @@ seizure of the offender's self-stake. They differ only in who established that t
 `slashEquivocation(uint64 epoch, uint32 signerIdx)` is **system-caller only** and carries no evidence. It
 records a verdict the committee has already reached: every member verified the charge against the block it
 rode in before voting for that block, which is the same trust basis as any other state transition. The
-signer index is resolved against `epoch`'s frozen committee, the same lookup `resolveSigner` answers. A
+signer index is resolved against `epoch`'s frozen committee via `committee_member_at` (`resolveSigner`,
+its former public wrapper, is deleted — it had no callers). A
 repeat verdict against an already-tombstoned validator returns successfully and changes nothing — two
 proposers may carry the same charge, and a system caller must not be able to fail a pre-execution call on a
 race.

@@ -2,7 +2,7 @@
 
 use crate::{
     config::active_validators_length_at,
-    consensus::{store_consensus_keys, verify_consensus_keys},
+    consensus::{self, store_consensus_keys, verify_consensus_keys},
     consts::*,
     events, liveness, math,
     storage::{
@@ -1899,11 +1899,13 @@ pub fn get_epoch_rewards<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<
     ensure_non_payable(sdk)?;
     ensure_initialized(sdk)?;
     let epoch = decode::<U64Command>(input)?.value;
-    let committee = consensus_storage().epoch_committees_accessor().entry(epoch);
-    let len = committee.len_checked(sdk)?;
+    let (record, len) = consensus::committee_at(sdk, epoch)?;
+    let seated = consensus_storage()
+        .committee_records_accessor()
+        .entry(record);
     let mut total = U256::ZERO;
     for index in 0..len {
-        let validator = committee.at(index).validator_accessor().get_checked(sdk)?;
+        let validator = seated.at(index).get_checked(sdk)?;
         total = total
             .checked_add(U256::from(
                 staking_storage()
@@ -1982,32 +1984,50 @@ fn assign_epoch_shares<SDK: SharedAPI>(sdk: &mut SDK, epoch: u64) -> Result<U256
     if pot.is_zero() {
         return Ok(U256::ZERO);
     }
-    let consensus = consensus_storage();
-    let committee = consensus.epoch_committees_accessor().entry(epoch);
-    let len = committee.len_checked(sdk)?;
+    let state = consensus_storage();
+    let (record, len) = consensus::committee_at(sdk, epoch)?;
     if len == 0 {
         return Ok(U256::ZERO);
     }
+    // Ring miss: forfeit this epoch's stipend and announce it. Never an error —
+    // this runs inside the close, a pre-execution system call, so a propagated
+    // one is an unrepairable chain halt. Never a silent zero either: three arms
+    // in this function already return zero for legitimate reasons, and a fourth
+    // that means "we lost the weights" must not be indistinguishable from them.
+    let Some(frozen) = consensus::read_weights(sdk, epoch)? else {
+        events::EpochWeightsUnavailable {
+            epoch,
+            members: len as u32,
+        }
+        .emit(sdk)?;
+        return Ok(U256::ZERO);
+    };
+    let seated = state.committee_records_accessor().entry(record);
     // Weights are the ones frozen at commit time, not a live stake walk: the
     // committee was ranked and the leader drawn from this same vector, so a
     // stake change after the commit must not move anyone's share.
     let mut weights = vec![U256::ZERO; len as usize];
     let mut total_weight = U256::ZERO;
-    for index in 0..len {
-        let entry = committee.at(index);
-        let validator = entry.validator_accessor().get_checked(sdk)?;
-        if consensus
+    for (index, frozen_weight) in frozen.into_iter().enumerate() {
+        let validator = seated.at(index as u64).get_checked(sdk)?;
+        if state
             .tombstoned_accessor()
             .entry(validator)
             .get_checked(sdk)?
         {
             continue;
         }
-        let weight = U256::from(entry.weight_accessor().get_checked(sdk)?);
+        // The RAW compact weight, not `expand_balance`, unlike `judge` and
+        // `get_epoch_committee_with_stakes`. Harmless because the split is
+        // pro-rata and the expansion is a uniform multiply that cancels — but a
+        // real difference between functions that look alike, and tidying it into
+        // consistency would move the magnitudes inside the overflow-checked
+        // multiply below. Preserved deliberately.
+        let weight = U256::from(frozen_weight);
         if weight.is_zero() {
             continue;
         }
-        weights[index as usize] = weight;
+        weights[index] = weight;
         total_weight = total_weight
             .checked_add(weight)
             .ok_or(ExitCode::IntegerOverflow)?;
@@ -2024,10 +2044,7 @@ fn assign_epoch_shares<SDK: SharedAPI>(sdk: &mut SDK, epoch: u64) -> Result<U256
         if share.is_zero() {
             continue;
         }
-        let validator = committee
-            .at(index as u64)
-            .validator_accessor()
-            .get_checked(sdk)?;
+        let validator = seated.at(index as u64).get_checked(sdk)?;
         let snapshot = touch_snapshot_at_or_before(sdk, validator, epoch)?;
         snapshot.total_blend_rewards_accessor().set_checked(
             sdk,
@@ -2097,7 +2114,7 @@ pub(crate) fn settle_up_to<SDK: SharedAPI>(sdk: &mut SDK, up_to: u64) -> Result<
     let source = chain_config_storage()
         .blend_reserve_accessor()
         .get_checked(sdk)?;
-    // A committee may be committed up to two epochs ahead, so `epoch_committees`
+    // A committee may be committed up to two epochs ahead, so `epoch_index`
     // holds entries for epochs that have not started and whose closes have not
     // run. Skipping one and advancing the cursor past it is irrecoverable, and
     // it opens the claim gate on an epoch that has not happened.

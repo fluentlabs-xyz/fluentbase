@@ -1,11 +1,12 @@
 use super::*;
 use crate::{
+    consensus::{committee_changed, CommitteeMember},
     consts::{STATUS_ACTIVE, STATUS_JAIL, STATUS_PENDING},
     storage::{
         chain_config_storage, consensus_storage, initializer_storage, production_liveness_storage,
         staking_storage, CapCheckpointStorage, ConsensusKeysStorage, DelegationOpStorage,
-        EpochCommitteeMemberStorage, ProductionValidatorStorage, UndelegationOpStorage,
-        ValidatorSnapshotStorage, ValidatorStorage,
+        EpochIndexStorage, ProductionValidatorStorage, UndelegationOpStorage,
+        ValidatorSnapshotStorage, ValidatorStorage, WeightPairStorage,
     },
     types::{
         AddressAmountCommand, AddressCommand, AddressU16Command, BoolCommand, ConsensusKeys,
@@ -84,15 +85,23 @@ fn compact_storage_matches_solidity_struct_layouts() {
     assert_eq!(CapCheckpointStorage::SLOTS, 1);
     assert_eq!(<CapCheckpointStorage as StorageLayout>::BYTES, 12);
 
-    // The committee entry replaced two parallel vectors of one slot each, so at
-    // two slots the merge is storage-neutral — it buys the impossibility of a
-    // misalignment, not a smaller footprint. It does not fit in one slot:
-    // 20 bytes of address plus 14 of `uint112` is 34.
-    assert_eq!(EpochCommitteeMemberStorage::SLOTS, 2);
-    assert_eq!(<EpochCommitteeMemberStorage as StorageLayout>::BYTES, 34);
-    let member = EpochCommitteeMemberStorage::new(slot, 0);
-    assert_eq!(member.validator_accessor().slot(), slot);
-    assert_eq!(member.weight_accessor().slot(), slot + U256::from(1));
+    // The whole ring design rests on this fitting one slot: two `uint112`
+    // weights and a `uint32` stamp are exactly 32 bytes, so the stamp rides free
+    // AND shares the store with the weights it vouches for. At 33 the stamp
+    // would cost a second slot and a torn state would become representable.
+    assert_eq!(WeightPairStorage::SLOTS, 1);
+    assert_eq!(<WeightPairStorage as StorageLayout>::BYTES, 32);
+    let pair = WeightPairStorage::new(slot, 0);
+    assert_eq!(pair.a_accessor().slot(), slot);
+    assert_eq!(pair.b_accessor().slot(), slot);
+    assert_eq!(pair.stamp_accessor().slot(), slot);
+    assert_eq!(pair.a_accessor().offset(), 18);
+    assert_eq!(pair.b_accessor().offset(), 4);
+    assert_eq!(pair.stamp_accessor().offset(), 0);
+
+    // Both halves in one slot, so writing an epoch's index is one store.
+    assert_eq!(EpochIndexStorage::SLOTS, 1);
+    assert_eq!(<EpochIndexStorage as StorageLayout>::BYTES, 8);
 
     // Nothing on the per-block path writes this record any more, and its three
     // remaining fields are 20 bytes: the whole record is one slot, so an
@@ -291,20 +300,45 @@ fn store_test_consensus_keys(
         .unwrap();
 }
 
-/// Writes an epoch committee with its frozen leader weights, the pair
-/// `commitEpochCommittee` appends and the stipend reads back.
+/// Writes an epoch committee the way `commitEpochCommittee` does: a membership
+/// record keyed by the epoch that mints it, an index entry pointing at it, and
+/// the frozen leader weights in that epoch's ring frame.
 fn commit_test_committee(sdk: &mut TestingContextImpl, epoch: u64, members: &[(Address, U256)]) {
-    let committee = consensus_storage().epoch_committees_accessor().entry(epoch);
-    for (validator, stake) in members {
-        let entry = committee.grow_checked(sdk).unwrap();
-        entry
-            .validator_accessor()
+    let consensus = consensus_storage();
+    let record = consensus.committee_records_accessor().entry(epoch);
+    for (validator, _) in members {
+        record
+            .grow_checked(sdk)
+            .unwrap()
             .set_checked(sdk, *validator)
             .unwrap();
-        entry
-            .weight_accessor()
-            .set_checked(sdk, crate::math::compact_balance(*stake).unwrap())
+    }
+    let index = consensus.epoch_index_accessor().entry(epoch);
+    index
+        .record_accessor()
+        .set_checked(sdk, epoch as u32)
+        .unwrap();
+    index
+        .length_accessor()
+        .set_checked(sdk, members.len() as u32)
+        .unwrap();
+    let ring = consensus.weight_ring_accessor();
+    let base = (epoch % WEIGHT_RING_EPOCHS) as usize * PAIRS_MAX;
+    let mut i = 0;
+    while i < members.len() {
+        let pair = ring.at(base + i / 2);
+        pair.a_accessor()
+            .set_checked(sdk, crate::math::compact_balance(members[i].1).unwrap())
             .unwrap();
+        let b = match members.get(i + 1) {
+            Some((_, stake)) => crate::math::compact_balance(*stake).unwrap(),
+            None => fluentbase_sdk::Uint::ZERO,
+        };
+        pair.b_accessor().set_checked(sdk, b).unwrap();
+        pair.stamp_accessor()
+            .set_checked(sdk, epoch as u32)
+            .unwrap();
+        i += 2;
     }
 }
 
@@ -3301,14 +3335,6 @@ fn committee_commit_is_system_gated_and_returns_epoch_stakes() {
     // Peer keys are handed out in fixture order and the sort is on that key, so
     // the committed committee is the fixture list exactly — pin all of it.
     assert_eq!(decode_output::<Vec<Address>>(&output), expected_committee);
-    let (_, output) = harness.call(encode_call(
-        SIG_RESOLVE_SIGNER,
-        &EpochSignerCommand {
-            epoch: 0,
-            signer_idx: 1,
-        },
-    ));
-    assert_eq!(decode_output::<Address>(&output), validator_b);
     let (_, output) = harness.call(encode_empty_call(SIG_NEXT_EPOCH_TO_COMMIT));
     assert_eq!(decode_output::<u64>(&output), 1);
     let (_, output) = harness.call(encode_call(
@@ -3571,12 +3597,6 @@ fn a_refused_commit_writes_neither_committee_nor_cursor() {
 
     let (_, output) = harness.call(encode_empty_call(SIG_NEXT_EPOCH_TO_COMMIT));
     assert_eq!(decode_output::<u64>(&output), 0);
-    let (_, output) = harness.call(encode_call(
-        SIG_GET_EPOCH_COMMITTEE_LENGTH,
-        &U64Command { value: 0 },
-    ));
-    assert_eq!(decode_output::<U256>(&output), U256::ZERO);
-
     for (index, validator) in validators.iter().enumerate() {
         let key_byte = (index + 1) as u8;
         store_test_consensus_keys(
@@ -3683,6 +3703,312 @@ fn a_raised_minimum_does_not_empty_the_next_committee() {
     assert_eq!(decode_output::<Vec<Address>>(&output), validators);
 }
 
+// `committee_changed` short-circuits to `false` at genesis, which was inert
+// while the committee write was unconditional. Making it decide whether a record
+// exists at all turns it load-bearing, so epoch 0 has to append anyway — and the
+// knock-on is that a record's existence no longer implies the committee changed.
+#[test]
+fn the_genesis_commit_mints_a_record_although_nothing_changed() {
+    let owner = Address::with_last_byte(0xa0);
+    let validator = Address::with_last_byte(0x01);
+    let mut harness = Harness::new(1_000);
+    let (validators, stakes) = with_filler_validators(&[(validator, DEFAULT_MIN_VALIDATOR_STAKE)]);
+    assert_eq!(
+        harness.initialize(owner, validators.clone(), stakes, 0),
+        ExitCode::Ok
+    );
+
+    harness.set_caller(SYSTEM_CALLER);
+    assert_eq!(
+        harness
+            .call(encode_empty_call(SIG_COMMIT_EPOCH_COMMITTEE))
+            .0,
+        ExitCode::Ok
+    );
+
+    let consensus = consensus_storage();
+    let index = consensus.epoch_index_accessor().entry(0);
+    assert_eq!(
+        index.record_accessor().get_checked(&harness.sdk).unwrap(),
+        0,
+        "epoch 0 points at record 0, which is a real pointer and not absence"
+    );
+    assert_eq!(
+        index.length_accessor().get_checked(&harness.sdk).unwrap() as usize,
+        validators.len()
+    );
+    assert_eq!(
+        consensus
+            .committee_records_accessor()
+            .entry(0)
+            .len_checked(&harness.sdk)
+            .unwrap() as usize,
+        validators.len(),
+        "the record exists; the else arm would have resolved one that does not"
+    );
+    assert!(
+        !consensus
+            .dkg_qual_accessor()
+            .entry(0)
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        "a record was appended AND changed is false — the one epoch where \
+         inferring the change bit from a record's existence is wrong"
+    );
+
+    let (_, output) = harness.call(encode_call(
+        SIG_GET_EPOCH_COMMITTEE,
+        &U64Command { value: 0 },
+    ));
+    assert_eq!(decode_output::<Vec<Address>>(&output), validators);
+}
+
+// The pair-0 rule, against the case that motivates it. A long epoch followed by
+// a short one `WEIGHT_RING_EPOCHS` later leaves the tail pairs carrying the OLD
+// stamp and the old weights, while pairs 0..k hold the new epoch's. A reader
+// that checked its last pair would find its own stamp there, accept the frame,
+// and then read the successor's weights out of the head.
+#[test]
+fn a_short_successor_cannot_let_its_predecessor_read_the_wrong_weights() {
+    let owner = Address::with_last_byte(0xa0);
+    let mut harness = Harness::new(1_000);
+    assert_eq!(
+        harness.initialize(owner, Vec::new(), Vec::new(), 0),
+        ExitCode::Ok
+    );
+
+    let long: Vec<(Address, U256)> = (1..=8u8)
+        .map(|i| {
+            (
+                Address::with_last_byte(i),
+                DEFAULT_MIN_VALIDATOR_STAKE * U256::from(i),
+            )
+        })
+        .collect();
+    let short: Vec<(Address, U256)> = (1..=4u8)
+        .map(|i| (Address::with_last_byte(i), DEFAULT_MIN_VALIDATOR_STAKE))
+        .collect();
+    commit_test_committee(&mut harness.sdk, 0, &long);
+    commit_test_committee(&mut harness.sdk, WEIGHT_RING_EPOCHS, &short);
+
+    let base = 0usize;
+    let ring = consensus_storage().weight_ring_accessor();
+    assert_eq!(
+        ring.at(base + 3)
+            .stamp_accessor()
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        0,
+        "the tail the short successor did not reach still carries epoch 0's stamp"
+    );
+
+    let (exit, output) = harness.call(encode_call(
+        SIG_GET_EPOCH_COMMITTEE_WITH_STAKES,
+        &U64Command { value: 0 },
+    ));
+    assert_eq!(exit, ExitCode::Ok);
+    let (seated, _, stakes, _): (Vec<Address>, Vec<ConsensusKeys>, Vec<U256>, Vec<bool>) =
+        decode_returns(&output);
+    assert_eq!(seated.len(), 8, "membership answers at any depth");
+    assert!(
+        stakes.is_empty(),
+        "weights do not: the ring wrapped, so the answer is an explicit \
+         not-retained rather than a vector of somebody else's numbers"
+    );
+}
+
+// The odd-count belt, asserted against the REAL commit.
+//
+// An earlier version of this drove `commit_test_committee`, which is a
+// hand-written mirror of `write_ring` — including its own `b = 0`. That test
+// passed with the store deleted from production, which makes it worse than no
+// test: it reported coverage it did not have. Here the frame is DIRTIED by the
+// fixture and then written by `commitEpochCommittee` itself, so removing the
+// store fails this.
+//
+// Nothing reads the half in question — the count bound stops one short — so what
+// is asserted is that the state stops existing, which is what turns the bound
+// into a belt instead of the only guard.
+#[test]
+fn an_odd_member_count_leaves_no_stale_half_in_the_ring() {
+    let (mut harness, members) = liveness_harness(&[DEFAULT_MIN_VALIDATOR_STAKE; 5], 5);
+
+    // Fixture, not the code under test: leave the previous occupant's weight and
+    // stamp in the pair the five-member commit will only half-fill.
+    let ring = consensus_storage().weight_ring_accessor();
+    let stale = ring.at(2);
+    stale
+        .b_accessor()
+        .set_checked(
+            &mut harness.sdk,
+            crate::math::compact_balance(DEFAULT_MIN_VALIDATOR_STAKE).unwrap(),
+        )
+        .unwrap();
+    stale
+        .stamp_accessor()
+        .set_checked(&mut harness.sdk, 0xdead_beef)
+        .unwrap();
+
+    harness.set_caller(SYSTEM_CALLER);
+    assert_eq!(
+        harness
+            .call(encode_empty_call(SIG_COMMIT_EPOCH_COMMITTEE))
+            .0,
+        ExitCode::Ok
+    );
+
+    assert_eq!(
+        consensus_storage()
+            .epoch_index_accessor()
+            .entry(0)
+            .length_accessor()
+            .get_checked(&harness.sdk)
+            .unwrap() as usize,
+        members.len(),
+        "five members, so three pairs with the last one half-used"
+    );
+    let last = consensus_storage().weight_ring_accessor().at(2);
+    assert_eq!(
+        last.stamp_accessor().get_checked(&harness.sdk).unwrap(),
+        0,
+        "the commit claimed the pair"
+    );
+    assert!(
+        !last
+            .a_accessor()
+            .get_checked(&harness.sdk)
+            .unwrap()
+            .is_zero(),
+        "and filled its first half"
+    );
+    assert!(
+        last.b_accessor()
+            .get_checked(&harness.sdk)
+            .unwrap()
+            .is_zero(),
+        "the unused half is written to zero, not left holding the previous \
+         occupant's weight under this epoch's fresh stamp"
+    );
+}
+
+// The order-sensitivity half of the alignment proof. `committee_changed` is what
+// licenses reusing a record across epochs, and it may only do so when the new
+// slice is positionally identical to the incumbent. A set-based comparison would
+// call a reordering unchanged, the record would be reused, and every index that
+// resolves through it — the slash resolver, the leader weights, `judge` — would
+// point at the wrong member. Same members, different order, must read as
+// changed.
+#[test]
+fn committee_changed_compares_positions_not_membership() {
+    let owner = Address::with_last_byte(0xa0);
+    let mut harness = Harness::new(1_000);
+    assert_eq!(
+        harness.initialize(owner, Vec::new(), Vec::new(), 0),
+        ExitCode::Ok
+    );
+
+    let seated: Vec<(Address, U256)> = (1..=4u8)
+        .map(|i| (Address::with_last_byte(i), DEFAULT_MIN_VALIDATOR_STAKE))
+        .collect();
+    commit_test_committee(&mut harness.sdk, 0, &seated);
+
+    let same_order: Vec<CommitteeMember> = seated
+        .iter()
+        .map(|(validator, weight)| CommitteeMember {
+            validator: *validator,
+            peer_pubkey: B256::ZERO,
+            weight: *weight,
+        })
+        .collect();
+    assert!(
+        !committee_changed(&harness.sdk, 1, &same_order).unwrap(),
+        "an identical slice is not a change"
+    );
+
+    let mut swapped: Vec<CommitteeMember> = seated
+        .iter()
+        .map(|(validator, weight)| CommitteeMember {
+            validator: *validator,
+            peer_pubkey: B256::ZERO,
+            weight: *weight,
+        })
+        .collect();
+    swapped.swap(0, 1);
+    assert!(
+        committee_changed(&harness.sdk, 1, &swapped).unwrap(),
+        "the same set in a different order IS a change"
+    );
+}
+
+// The key-immutability half of the alignment proof. `committee_changed` compares
+// positionally against a frozen record, and both sides are peer-key ordered — so
+// the comparison is only meaningful for all time because the sort key can never
+// move. Nothing in `committee_changed` would notice if it could; this is where
+// that rests.
+#[test]
+fn a_peer_key_cannot_be_reassigned_so_the_sort_key_is_immutable() {
+    let first_owner = Address::with_last_byte(0xa0);
+    let second_owner = Address::with_last_byte(0xa1);
+    let first_validator = Address::with_last_byte(0x01);
+    let second_validator = Address::with_last_byte(0x02);
+    let verifier = Address::with_last_byte(0xb0);
+    let shared_peer_pubkey = B256::with_last_byte(0x11);
+    let mut harness = Harness::new(1_000);
+    assert_eq!(
+        harness.initialize(first_owner, Vec::new(), Vec::new(), 0),
+        ExitCode::Ok
+    );
+    chain_config_storage()
+        .bls_verifier_accessor()
+        .set_checked(&mut harness.sdk, verifier)
+        .unwrap();
+
+    harness.set_caller(first_owner);
+    assert_eq!(
+        harness
+            .call(encode_args_call(
+                SIG_REGISTER_VALIDATOR,
+                &RegisterValidatorCommand {
+                    validator: first_validator,
+                    commission_rate: 0,
+                    initial_stake: DEFAULT_MIN_VALIDATOR_STAKE,
+                    bls_pubkey_uncompressed: Bytes::from(vec![
+                        0x11;
+                        BLS_PUBKEY_UNCOMPRESSED_LENGTH
+                    ]),
+                    bls_pop_uncompressed: Bytes::from(vec![0x22; BLS_POP_UNCOMPRESSED_LENGTH]),
+                    peer_pubkey: shared_peer_pubkey,
+                },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+
+    harness.set_caller(second_owner);
+    assert_revert_selector(
+        harness.call(encode_args_call(
+            SIG_REGISTER_VALIDATOR,
+            &RegisterValidatorCommand {
+                validator: second_validator,
+                commission_rate: 0,
+                initial_stake: DEFAULT_MIN_VALIDATOR_STAKE,
+                bls_pubkey_uncompressed: Bytes::from(vec![0x44; BLS_PUBKEY_UNCOMPRESSED_LENGTH]),
+                bls_pop_uncompressed: Bytes::from(vec![0x55; BLS_POP_UNCOMPRESSED_LENGTH]),
+                peer_pubkey: shared_peer_pubkey,
+            },
+        )),
+        ERR_PEER_PUBKEY_ALREADY_IN_USE,
+    );
+    assert_eq!(
+        consensus_storage()
+            .peer_pubkey_owner_accessor()
+            .entry(shared_peer_pubkey)
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        first_validator
+    );
+}
+
 // The retired horizon stood at `target + undelegatePeriod + 8 + 1`. Nothing
 // deletes a committee now, so every reader that resolves against one has to keep
 // answering arbitrarily far past where the wall used to be. `getEpochRewards` is
@@ -3741,14 +4067,6 @@ fn a_committee_stays_readable_far_past_the_retired_pruning_horizon() {
         &U64Command { value: 0 },
     ));
     assert_eq!(decode_output::<Vec<Address>>(&output), validators);
-    let (_, output) = harness.call(encode_call(
-        SIG_RESOLVE_SIGNER,
-        &EpochSignerCommand {
-            epoch: 0,
-            signer_idx: 0,
-        },
-    ));
-    assert_eq!(decode_output::<Address>(&output), validators[0]);
     let (_, output) = harness.call(encode_call(
         SIG_GET_EPOCH_COMMITTEE_WITH_STAKES,
         &U64Command { value: 0 },
@@ -6304,9 +6622,10 @@ fn an_uncommitted_evidence_epoch_does_not_block_a_slash() {
     let consensus = consensus_storage();
     assert_eq!(
         consensus
-            .epoch_committees_accessor()
+            .epoch_index_accessor()
             .entry(CORPUS_EPOCH)
-            .len_checked(&harness.sdk)
+            .length_accessor()
+            .get_checked(&harness.sdk)
             .unwrap(),
         0,
         "the epoch the evidence names has no committee"
@@ -8431,6 +8750,136 @@ fn install_close_call_handler(harness: &Harness, state: Rc<RefCell<CloseCallStat
 // load-bearing. A leg that ran first would find no scalar for the epoch just
 // closed, take the deferral arm meant for an epoch whose close is still coming,
 // and fail on every boundary from then on.
+// Closes `epoch` from a block inside `at_epoch`, i.e. after a run of blocks that
+// were produced but never recorded. That run is what consumes the weight ring's
+// margin; parking does not, because a parked block never reaches the close.
+fn close_epoch_late(harness: &mut Harness, epoch: u64, at_epoch: u64) -> ExitCode {
+    production_liveness_storage()
+        .last_processed_block_accessor()
+        .set_checked(
+            &mut harness.sdk,
+            1_000 + (epoch + 1) * DEFAULT_EPOCH_BLOCK_INTERVAL - 1,
+        )
+        .unwrap();
+    record_production(harness, 1_000 + at_epoch * DEFAULT_EPOCH_BLOCK_INTERVAL, 0)
+}
+
+// This replaces a test that asserted nothing. The old one parked a run of blocks
+// and expected the ring to have turned; parking happens BELOW the close, so a
+// parked run costs no ring revolutions whatever. The margin is consumed by
+// blocks that were produced and never recorded — the close then runs late and
+// has to find its own epoch's weights still in the frame.
+#[test]
+fn a_late_close_still_reads_its_own_epochs_weights() {
+    let pot = U256::from(400);
+    let (mut harness, members) = liveness_harness(&[DEFAULT_MIN_VALIDATOR_STAKE; 4], 4);
+    equal_weight_committee(&mut harness.sdk, 0, &members);
+    let config = chain_config_storage();
+    config
+        .blend_stipend_per_epoch_accessor()
+        .set_checked(&mut harness.sdk, pot)
+        .unwrap();
+    config
+        .blend_reserve_accessor()
+        .set_checked(&mut harness.sdk, Address::with_last_byte(0xc0))
+        .unwrap();
+    production_liveness_storage()
+        .blocks_in_epoch_accessor()
+        .entry(0)
+        .set_checked(&mut harness.sdk, DEFAULT_EPOCH_BLOCK_INTERVAL as u32 / 2)
+        .unwrap();
+
+    let state = Rc::new(RefCell::new(CloseCallState {
+        balance: pot,
+        pulled: Vec::new(),
+        self_call_fuel: None,
+        self_calls: 0,
+    }));
+    install_close_call_handler(&harness, state.clone());
+
+    // Twelve epochs of unrecorded blocks — inside the bound, since nothing
+    // committed in between has claimed frame 0.
+    assert_eq!(close_epoch_late(&mut harness, 0, 12), ExitCode::Ok);
+
+    for member in &members {
+        assert!(
+            !staking_storage()
+                .validator_snapshots_accessor()
+                .entry(*member)
+                .entry(0)
+                .total_blend_rewards_accessor()
+                .get_checked(&harness.sdk)
+                .unwrap()
+                .is_zero(),
+            "the late close paid from epoch 0's own frozen weights"
+        );
+    }
+}
+
+// And once a later epoch has actually claimed the frame, the close forfeits and
+// announces it. Not a revert — the close is a pre-execution system call, so a
+// propagated error is a chain halt nothing can repair. Not a silent zero either,
+// which is the whole point of the event.
+#[test]
+fn a_close_past_the_ring_forfeits_the_epoch_and_says_so() {
+    let pot = U256::from(400);
+    let (mut harness, members) = liveness_harness(&[DEFAULT_MIN_VALIDATOR_STAKE; 4], 4);
+    equal_weight_committee(&mut harness.sdk, 0, &members);
+    // The frame is only lost when a later epoch writes it — the ring does not
+    // age, it is overwritten.
+    equal_weight_committee(&mut harness.sdk, WEIGHT_RING_EPOCHS, &members);
+    let config = chain_config_storage();
+    config
+        .blend_stipend_per_epoch_accessor()
+        .set_checked(&mut harness.sdk, pot)
+        .unwrap();
+    config
+        .blend_reserve_accessor()
+        .set_checked(&mut harness.sdk, Address::with_last_byte(0xc0))
+        .unwrap();
+    production_liveness_storage()
+        .blocks_in_epoch_accessor()
+        .entry(0)
+        .set_checked(&mut harness.sdk, DEFAULT_EPOCH_BLOCK_INTERVAL as u32 / 2)
+        .unwrap();
+
+    let state = Rc::new(RefCell::new(CloseCallState {
+        balance: pot,
+        pulled: Vec::new(),
+        self_call_fuel: None,
+        self_calls: 0,
+    }));
+    install_close_call_handler(&harness, state.clone());
+    harness.sdk.take_logs();
+
+    assert_eq!(
+        close_epoch_late(&mut harness, 0, WEIGHT_RING_EPOCHS + 1),
+        ExitCode::Ok,
+        "the chain keeps running"
+    );
+
+    let logs = harness.sdk.take_logs();
+    let (data, _) = find_log(
+        &logs,
+        events::EpochWeightsUnavailable::SELECTOR,
+        "EpochWeightsUnavailable",
+    );
+    assert_eq!(decode_output::<u32>(data), members.len() as u32);
+    for member in &members {
+        assert!(
+            staking_storage()
+                .validator_snapshots_accessor()
+                .entry(*member)
+                .entry(0)
+                .total_blend_rewards_accessor()
+                .get_checked(&harness.sdk)
+                .unwrap()
+                .is_zero(),
+            "forfeited, not paid from the successor's weights"
+        );
+    }
+}
+
 #[test]
 fn the_close_pays_the_epoch_it_has_just_accrued() {
     let pot = U256::from(400);

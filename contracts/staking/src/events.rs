@@ -137,6 +137,32 @@ pub struct ProductionExclusionReleased {
     pub bite_epoch: u64,
 }
 
+/// The weight ring has wrapped past `epoch`, so it can neither be judged nor
+/// paid.
+///
+/// Distinct from `PartialEpoch` on purpose. That one means blocks went missing,
+/// which is the *cause* a ring miss would be a *consequence* of; conflating them
+/// makes the alert unreadable.
+///
+/// This should be unreachable. The close reads at a lag of one while the ring
+/// holds `WEIGHT_RING_EPOCHS`, so reaching it means the bound behind that
+/// constant is wrong. Hence forfeit-and-announce rather than a graceful degraded
+/// mode: a mode for a state that should not exist is a mode nobody will debug.
+/// Reverting would be worse — the close is a pre-execution system call, so a
+/// propagated error is a chain halt no transaction can repair — and a silent
+/// zero worse than both, being indistinguishable from an epoch that legitimately
+/// paid nothing.
+///
+/// Node-side, this rides `recordProduction`, whose logs ARE forwarded to
+/// `emit_close_observability`; but that is a closed signature match, so the
+/// event is mute until an arm is added for it.
+#[derive(Event)]
+pub struct EpochWeightsUnavailable {
+    #[indexed]
+    pub epoch: u64,
+    pub members: u32,
+}
+
 /// Mandatory rather than diagnostic: the partial-epoch taint is derived from
 /// the block count instead of stored, so one unrecorded block silently costs a
 /// whole epoch its verdicts while the tier still reads as enabled.

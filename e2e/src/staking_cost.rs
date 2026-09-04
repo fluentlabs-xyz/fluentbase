@@ -102,6 +102,14 @@ const MAX_SETTLE_CATCHUP: u64 = 4;
 /// 3_264_563 of accrual (see `PATH_A_ACCRUAL_MAX`). The close does the work for
 /// ONE epoch where the leg did it for `MAX_SETTLE_CATCHUP`, which is where the
 /// net saving comes from — not from the work getting cheaper.
+///
+/// Re-measured after FLU-1134 restructured the committee storage the close reads
+/// (2026-08-17, same day): **3_992_457**, down a further 49_200. Small next to
+/// the commit's 544_400, and it should be: the close READS the committee where
+/// the commit WRITES it, and the layout change is a write-side saving. Recorded
+/// because a measurement left stale is how a ceiling stops meaning anything, and
+/// this file's own rule says so two constants up. The ceiling stays at 4_640_000
+/// — 16% over, which is the headroom this file uses.
 const PATH_A_INTERCEPT_MAX: f64 = 4_640_000.0;
 /// Measured 2026-08-17: 4_600 gas per roster entry, unchanged from 2026-08-06.
 ///
@@ -109,7 +117,8 @@ const PATH_A_INTERCEPT_MAX: f64 = 4_640_000.0;
 /// and the exclusion sweep, neither of which the stipend split touches, and the
 /// measurement confirms it to the digit. 5_300 is already ~15% over it.
 const PATH_A_SLOPE_MAX: f64 = 5_300.0;
-/// Measured 2026-08-17: roster 5_643. Was 4_871 on 2026-08-06.
+/// Measured 2026-08-17: roster 5_654 after FLU-1134 (5_643 before it, on the same
+/// day; 4_871 on 2026-08-06).
 ///
 /// A floor that RISES is the one direction that cannot be left alone: 4_280 was
 /// 12% under the old measurement and is 24% under this one, so it would no longer
@@ -126,6 +135,10 @@ const PATH_A_ROSTER_FLOOR: f64 = 4_960.0;
 ///
 /// This replaces a ~1.5M estimate that was decomposed from other measurements
 /// rather than measured. The estimate was low by 2.2x.
+///
+/// Re-measured after FLU-1134 (2026-08-17): **3_214_963**, down 49_600. Same
+/// cause and the same size as the intercept's fall — it IS the intercept's fall,
+/// since the accrual is where the close reads the committee.
 const PATH_A_ACCRUAL_MAX: u64 = 3_750_000;
 
 /// Measured 2026-08-06: 544_000.
@@ -135,14 +148,26 @@ const VIEW_SLOPE_MAX: f64 = 14_700.0;
 /// Measured 2026-08-06: roster 2_301.
 const VIEW_ROSTER_FLOOR: f64 = 2_020.0;
 
-/// Measured 2026-08-06: 2_574_893.
+/// Measured 2026-08-17: **2_030_493**, down 544_400 from 2_574_893 on
+/// 2026-08-06 — a fall of 21%.
 ///
-/// This rose by ~143k when the committee and its frozen weights merged into one
-/// vector of pairs. The merge was made for safety — a misaligned pairing is now
-/// unrepresentable rather than length-checked — and it costs slightly more to
-/// write than two parallel pushes did. Recorded so the next reader does not
-/// mistake a deliberate price for a regression.
-const COMMIT_INTERCEPT_MAX: f64 = 2_960_000.0;
+/// The whole of it comes from FLU-1134's layout change, and the direction is the
+/// opposite of the last two entries here. It used to rise: +143k when the
+/// committee and its weights merged into one vector of pairs, bought for safety.
+/// Splitting them again — but by LIFETIME rather than back into parallel vectors
+/// — pays that back several times over. Membership is a record appended only
+/// when the committee actually changes, so an unchanged epoch writes no member
+/// slots at all; the weights go into a fixed ring where two `uint112` and their
+/// epoch stamp share one 32-byte slot instead of a member costing two.
+///
+/// The plan that authorised this predicted ~445k at the cap. The measurement is
+/// 544_400, so the estimate was ~18% low — recorded rather than quietly
+/// corrected, because the estimate is what the decision was made against.
+///
+/// Pinned DOWN to the measurement with the ~15% headroom this file uses
+/// elsewhere, not left at the old ceiling. A ceiling that no longer binds
+/// records nothing.
+const COMMIT_INTERCEPT_MAX: f64 = 2_340_000.0;
 /// The same walk the view above pays for, so the same slope to the digit: both
 /// rank the whole roster. Note that these are two independent ceilings against
 /// one literal, so they catch a slope that RISES; a commit that stopped
@@ -154,8 +179,10 @@ const COMMIT_INTERCEPT_MAX: f64 = 2_960_000.0;
 const COMMIT_SLOPE_MAX: f64 = 14_700.0;
 /// The binding limit of the three — see the minimum rule above.
 ///
-/// Measured 2026-08-06: roster 2_143.
-const COMMIT_ROSTER_FLOOR: f64 = 1_885.0;
+/// Measured 2026-08-17: roster 2_185, up from 2_143 on 2026-08-06. The commit
+/// got cheaper at the intercept and its slope did not move, so the roster it can
+/// carry inside the 30M budget grew.
+const COMMIT_ROSTER_FLOOR: f64 = 1_920.0;
 
 /// Measured 2026-08-17: 48_852, i.e. 0.4% of the cap. Was 6_651_928 — 55.4% of
 /// it — on 2026-08-06.

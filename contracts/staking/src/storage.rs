@@ -2,7 +2,7 @@
 
 use crate::consts::{
     BLS_PUBKEY_WORDS, CHAIN_CONFIG_STORAGE_SLOT, CONSENSUS_STORAGE_SLOT, INITIALIZER_STORAGE_SLOT,
-    PRODUCTION_LIVENESS_STORAGE_SLOT, STAKING_STORAGE_SLOT,
+    PRODUCTION_LIVENESS_STORAGE_SLOT, STAKING_STORAGE_SLOT, WEIGHT_RING_SLOTS,
 };
 use fluentbase_sdk::{
     derive::Storage,
@@ -162,25 +162,48 @@ pub struct ConsensusKeysStorage {
     activation_epoch: StorageU64,
 }
 
-/// One committed committee member: the validator and the weight frozen with it.
+/// Which membership record an epoch seats, and how many of its entries.
 ///
-/// These used to be two parallel vectors, aligned only by every writer doing the
-/// right thing. Nothing in the layout made a misalignment unrepresentable, three
-/// separate readers each carried a length check against it, and the failure was
-/// silent where it mattered most: the node zips the two arrays positionally and
-/// keys its leader-election weight map by each entry's peer key, so a same-length
-/// misalignment would have reweighted the leader lottery without reverting
-/// anywhere. One vector of pairs removes the state rather than guarding it.
+/// **The length is duplicated for the hot path, and for nothing else.**
+/// `record_production` reads it on every block and would otherwise pay a second
+/// lookup into the record; `committee_length_at` touches this field alone.
+///
+/// It is NOT here because it can disagree with the record. An earlier version of
+/// this comment claimed "a later epoch may seat fewer members than the record
+/// holds", and that state is **unreachable**: `committee_changed` returns `false`
+/// only when the incumbent length matches AND every position matches, so every
+/// epoch sharing a record was committed with exactly that record's length. The
+/// equality holds by induction over the single writer. Readers still bound by
+/// THIS field — it is free and it does not depend on the record — but a test can
+/// never fail on the difference, and a justification that names an impossible
+/// state teaches the next reader something false.
+///
+/// `length == 0` keeps its existing meaning — not yet committed. `record == 0`
+/// does **not** mean absence: genesis mints record 0, so zero is a real pointer.
+/// The record key is the minting epoch narrowed to `u32`; epochs at or beyond
+/// 2^32 would resolve to a different record, which is unreachable at any block
+/// rate this chain will see.
 #[derive(Storage)]
-pub struct EpochCommitteeMemberStorage {
-    validator: StorageAddress,
-    /// Leader weight in `BALANCE_COMPACT_PRECISION` units, stamped at commit
-    /// time from the selection epoch.
-    ///
-    /// Computing it live at read time makes it depend on the block height each
-    /// node happens to read at, and the leader is drawn from these weights — so
-    /// an unfrozen weight is a per-node leader split, not a rounding error.
-    weight: StorageUint112,
+pub struct EpochIndexStorage {
+    record: StorageU32,
+    length: StorageU32,
+}
+
+/// Two members' frozen leader weights and the epoch they belong to, in one slot.
+///
+/// `14 + 14 + 4 = 32`, so the derive gives `SLOTS == 1` and the stamp costs
+/// nothing. Sharing the slot is what makes a torn state unrepresentable: no
+/// write ordering can leave the stamp disagreeing with the weights it vouches
+/// for, because they are the same store.
+///
+/// The stamp is the epoch truncated to `u32`. Two epochs that alias are 2^32
+/// apart — at an 86,400-block epoch, longer than the chain will exist — and the
+/// ring only ever has to tell `E` apart from `E − 16`, `E − 32`, …
+#[derive(Storage)]
+pub struct WeightPairStorage {
+    a: StorageUint112,
+    b: StorageUint112,
+    stamp: StorageU32,
 }
 
 /// ERC-7201 namespaced consensus, committee, and equivocation state.
@@ -188,7 +211,20 @@ pub struct EpochCommitteeMemberStorage {
 pub struct ConsensusStorage {
     consensus_keys: StorageMap<Address, ConsensusKeysStorage>,
     peer_pubkey_owner: StorageMap<B256, StorageAddress>,
-    epoch_committees: StorageMap<u64, StorageVec<EpochCommitteeMemberStorage>>,
+    /// Ordered member addresses, keyed by the epoch that minted them and
+    /// appended only when the committee actually changes.
+    ///
+    /// Never pruned: signature verification, slashing identity and deep catch-up
+    /// all resolve at arbitrary depth, and this record is the only thing that
+    /// makes that possible. Peer-key ascending, enforced at commit — and the
+    /// order stays meaningful for all time only because the sort key is
+    /// immutable, which is half of the alignment proof and the half that is easy
+    /// to lose.
+    committee_records: StorageMap<u64, StorageVec<StorageAddress>>,
+    epoch_index: StorageMap<u64, EpochIndexStorage>,
+    /// Frozen leader weights for the last `WEIGHT_RING_EPOCHS` epochs, at
+    /// `(E mod N) * PAIRS_MAX + i / 2`.
+    weight_ring: StorageArray<WeightPairStorage, WEIGHT_RING_SLOTS>,
     dkg_qual: StorageMap<u64, StorageBool>,
     last_committed_epoch_p1: StorageU64,
     tombstoned: StorageMap<Address, StorageBool>,
