@@ -1,6 +1,7 @@
 SOLIDITY_CONTRACTS_DIR ?= ../../../solidity-contracts
 
 .PHONY: case-growth case-quorum case-seed-continuity clean down golden logs regen-contracts \
+        xp-up xp-down xp-status xp-e5 xp-e2 xp-byz \
         smoke-all smoke-base smoke-base-dry-run smoke-byzantine \
         smoke-cert-cascade smoke-cert-catchup smoke-cert-follow smoke-cert-keyless \
         smoke-crash-survivor \
@@ -357,3 +358,49 @@ smoke-prod-dry-run:
 # Aggregate (CI entry point).
 smoke-all:
 	@python3 -m dpos_harness case all
+
+# --- scripts/xp: the SAME stand at an arbitrary N ------------------------------------------
+# The default stack is hardwired to 4 validators + a full-node, which is exactly the size at
+# which R-111/R-112 are indistinguishable from any other death: one exit or one tombstone takes
+# the visible population to 3 and every node dies. Anything about committee size needs N as a
+# knob, so scripts/xp generates the same two-phase compose pair for any N under its own docker
+# project (xp<N>) and its own /24, and carries the scenarios EXPERIMENTS.md part 5 was run with.
+#
+# The image is the ordinary `fluent-dpos-smoke:local` — build it once via `make up` (or any
+# case) before the first xp bring-up; genN.py only writes compose files.
+#
+#   make xp-up N=6      generate + bring up through the sequencer->DPoS migration
+#   make xp-e5 N=6      E5: honest exits one at a time until the chain stops
+#   make xp-e2 N=6      E2: ONE honest full exit (undelegate) by validator XP_IDX (default N-1)
+#   make xp-byz N=6     E1: equivocation on XP_BYZ (default: the last validator); needs N>=5
+#   make xp-status N=6  head/finalized/hash per node
+#   make xp-down N=6    tear the stand down with its volume
+N ?= 6
+XP_IDX ?= $(shell expr $(N) - 1)
+XP_BYZ ?= $(shell expr $(N) - 1)
+XP := scripts/xp
+
+xp-up:
+	@python3 $(XP)/genN.py $(N)
+	@$(XP)/bringupN.sh $(N)
+	@$(XP)/statusN.sh $(N)
+
+xp-status:
+	@$(XP)/statusN.sh $(N)
+
+xp-e5:
+	@python3 $(XP)/exits.py $(N)
+
+xp-e2:
+	@$(XP)/e2exit.sh $(N) $(XP_IDX)
+	@$(XP)/e2watch.sh $(N)
+
+# Refuses at N<5 inside byz_overlay.sh/genN.py: at N=4 this stops being an equivocation case
+# and becomes R-111 by another writer (R-112). XP_ALLOW_SMALL_BYZ=1 to do it anyway.
+xp-byz:
+	@python3 $(XP)/inc.py $(N) $(XP_BYZ) xp-byz-n$(N)
+
+xp-down:
+	@docker compose -p xp$(N) -f $(XP)/out/xp$(N).yml -f $(XP)/out/xp$(N).dpos.yml down -v \
+	  --remove-orphans 2>/dev/null || docker compose -p xp$(N) -f $(XP)/out/xp$(N).yml down -v \
+	  --remove-orphans
