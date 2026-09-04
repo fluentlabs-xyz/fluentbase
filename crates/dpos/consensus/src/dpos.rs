@@ -945,8 +945,6 @@ pub struct DposLayerConfig<D, XC, A, U> {
     pub executed: XC,
     /// Pool-backed ordering assembly (node-built — pool trait bounds live there).
     pub assembler: Arc<A>,
-    /// This node's own proposals only (agreed data once embedded).
-    pub fee_recipient: Address,
     pub target_gas_limit: u64,
     /// Cert-feed sink (node-built): wired as the marshal's second
     /// application-`Reporter` so a node-side feed actor can serve the
@@ -1551,7 +1549,6 @@ impl DposLayer {
             deriver,
             executed,
             assembler,
-            fee_recipient,
             target_gas_limit,
             feed,
             spawn_unblocked,
@@ -2661,7 +2658,6 @@ impl DposLayer {
             deriver,
             executed,
             assembler,
-            fee_recipient,
             target_gas_limit,
             boundary_hook,
 
@@ -2832,7 +2828,6 @@ pub struct FollowerLayerConfig<D, XC, A, U> {
     /// A follower never proposes, so this is never exercised; the OuterBuilder
     /// requires it at the type level.
     pub assembler: Arc<A>,
-    pub fee_recipient: Address,
     pub target_gas_limit: u64,
     /// Cert-feed sink (the marshal's 2nd application-`Reporter`) for this node's
     /// `consensus` RPC latest-tier. `None` for nodes that don't serve the feed.
@@ -2943,7 +2938,6 @@ impl DposLayer {
             deriver,
             executed,
             assembler,
-            fee_recipient,
             target_gas_limit,
             feed,
             fcu_heartbeat_interval,
@@ -3560,7 +3554,6 @@ impl DposLayer {
             deriver,
             executed,
             assembler,
-            fee_recipient,
             target_gas_limit,
             boundary_hook,
 
@@ -4213,7 +4206,7 @@ mod visibility_retry_tests {
     use super::*;
     use crate::{application::ParentHeaderMissing, digest::Digest, order_block::OrderBlock};
     use alloy_consensus::{Block as AlloyBlock, BlockBody};
-    use alloy_primitives::{Address, Bytes};
+    use alloy_primitives::Bytes;
     use commonware_runtime::{deterministic, Runner as _};
     use reth_ethereum_primitives::TransactionSigned;
     use std::sync::atomic::{AtomicU32, Ordering};
@@ -4224,7 +4217,6 @@ mod visibility_retry_tests {
             height: 7,
             proposal_view: 0,
             timestamp: 7,
-            fee_recipient: Address::ZERO,
             gas_limit: 30_000_000,
             extra_data: Bytes::new(),
             result: B256::ZERO,
@@ -4739,7 +4731,7 @@ mod refetch_hole_tests {
         digest::Digest,
         order_block::OrderBlock,
     };
-    use alloy_primitives::{Address, Bytes, B256};
+    use alloy_primitives::{Bytes, B256};
     use commonware_consensus::{
         simplex::types::{Finalization, Finalize, Proposal},
         types::{Epoch, Height, Round, View},
@@ -4799,7 +4791,6 @@ mod refetch_hole_tests {
             height,
             proposal_view: 0,
             timestamp: 1_700_000_000 + height,
-            fee_recipient: Address::ZERO,
             gas_limit: 30_000_000,
             extra_data: Bytes::new(),
             result: B256::ZERO,

@@ -125,7 +125,6 @@ where
         node.pool.clone(),
         executed.clone(),
     ));
-    let fee_recipient = fluentbase_types::PRECOMPILE_FEE_MANAGER;
     let target_gas_limit = node.chain_spec().genesis().gas_limit;
 
     // B3 — serving side (D4): the cert-inlet feeds each VERIFIED pair here →
@@ -226,7 +225,6 @@ where
         deriver,
         executed,
         assembler,
-        fee_recipient,
         target_gas_limit,
         feed: None,
         fcu_heartbeat_interval: Duration::from_secs(8),

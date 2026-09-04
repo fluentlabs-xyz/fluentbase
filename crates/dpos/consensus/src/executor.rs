@@ -3836,7 +3836,7 @@ mod tests {
     use super::*;
     use crate::{digest::Digest, order_block::K};
     use alloy_consensus::{Block as AlloyBlock, BlockBody, Header as AlloyHeader};
-    use alloy_primitives::{Address, Bytes, U256};
+    use alloy_primitives::{Bytes, U256};
     use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadStatus, PayloadStatusEnum};
     use commonware_runtime::{deterministic, Runner as _};
     use reth_ethereum_primitives::TransactionSigned;
@@ -3881,7 +3881,6 @@ mod tests {
             height,
             proposal_view: 0,
             timestamp: 1_700_000_000 + height,
-            fee_recipient: Address::ZERO,
             gas_limit: 30_000_000,
             extra_data: Bytes::new(),
             result,

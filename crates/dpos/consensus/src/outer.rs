@@ -26,7 +26,7 @@ use crate::{
     timeouts::ConsensusTimeouts,
     REPLAY_BUFFER, WRITE_BUFFER,
 };
-use alloy_primitives::{Address, B256};
+use alloy_primitives::B256;
 use commonware_broadcast::buffered;
 use commonware_consensus::{
     marshal::{
@@ -604,8 +604,6 @@ pub struct OuterBuilder<B, P, BE, D, XC, A, R: slasher::StakingStateRead + Send 
     pub executed: XC,
     /// Pool-backed ordering assembly with the in-flight suffix overlay.
     pub assembler: Arc<A>,
-    /// This node's proposals only — agreed data once embedded in an artifact.
-    pub fee_recipient: Address,
     pub target_gas_limit: u64,
     /// Observer for finalized blocks — wired to
     /// [`fluentbase_staking_reader::EpochTransition::on_finalized`] for
@@ -1131,7 +1129,6 @@ where
             self.boundary_hook,
             self.executed,
             self.assembler,
-            self.fee_recipient,
             self.target_gas_limit,
             self.dpos_activation_block,
             self.chain_id,

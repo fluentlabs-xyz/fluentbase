@@ -25,7 +25,7 @@ use crate::{
     slasher::{evidence::verify_block_charge, ChargeStore, TombstoneSet},
 };
 use alloy_consensus::Transaction as _;
-use alloy_primitives::{Address, Bytes, B256};
+use alloy_primitives::{Bytes, B256};
 use alloy_rpc_types_engine::{ForkchoiceState, ForkchoiceUpdated, PayloadStatus};
 use commonware_codec::Encode as _;
 use commonware_consensus::{
@@ -268,9 +268,8 @@ pub struct FluentApp<XC, A> {
     verify_gate_last_logged_height: Arc<AtomicU64>,
     executed: XC,
     assembler: Arc<A>,
-    /// Proposer-local fields — they shape only this node's OWN proposals
-    /// (agreed data once embedded); verify never reads them.
-    fee_recipient: Address,
+    /// Proposer-local field — it shapes only this node's OWN proposals
+    /// (agreed data once embedded); verify never reads it.
     target_gas_limit: u64,
     /// Chain-wide sequencer→DPoS activation block — origin of the `result_target`
     /// pre-activation window (`height < activation + K` ⇒ `result` is ZERO). A
@@ -341,7 +340,6 @@ impl<XC: Clone, A> Clone for FluentApp<XC, A> {
             verify_gate_last_logged_height: self.verify_gate_last_logged_height.clone(),
             executed: self.executed.clone(),
             assembler: self.assembler.clone(),
-            fee_recipient: self.fee_recipient,
             target_gas_limit: self.target_gas_limit,
             dpos_activation_block: self.dpos_activation_block,
             chain_id: self.chain_id,
@@ -365,7 +363,6 @@ where
         boundary_hook: Arc<dyn Fn(OrderBlock) + Send + Sync>,
         executed: XC,
         assembler: Arc<A>,
-        fee_recipient: Address,
         target_gas_limit: u64,
         dpos_activation_block: u64,
         chain_id: u64,
@@ -394,7 +391,6 @@ where
             verify_gate_last_logged_height: Arc::new(AtomicU64::new(u64::MAX)),
             executed,
             assembler,
-            fee_recipient,
             target_gas_limit,
             dpos_activation_block,
         }
@@ -660,7 +656,6 @@ where
             // guess, and it is checked at THIS block's own vote below.
             proposal_view: context.round.view().get(),
             timestamp,
-            fee_recipient: self.fee_recipient,
             gas_limit,
             extra_data,
             result,
@@ -1208,6 +1203,7 @@ pub trait DerivedBlockBuilder: Send + Sync + 'static {
 mod tests {
     use super::*;
     use crate::beacon::{certify::SeedStore, keys::BeaconKeys, surface::PlaneRandomnessConfig};
+    use alloy_primitives::Address;
     use crate::slasher::Message;
     use commonware_consensus::types::{Epoch, View};
     use commonware_cryptography::{ed25519::PrivateKey as Ed25519PrivateKey, Signer as _};
@@ -1304,7 +1300,6 @@ mod tests {
             height,
             proposal_view: 0,
             timestamp: 1_700_000_000 + height,
-            fee_recipient: Address::ZERO,
             gas_limit: 30_000_000,
             extra_data: Bytes::new(),
             result: B256::ZERO,
@@ -1466,7 +1461,6 @@ mod tests {
             hook,
             NoChain,
             Arc::new(NoTxs),
-            Address::ZERO,
             30_000_000,
             // Tests anchor at activation (genesis.height == activation == 0),
             // so the pre-activation window is unchanged by the anchor/activation split.
@@ -1520,7 +1514,6 @@ mod tests {
             Arc::new(|_b: OrderBlock| {}),
             executed,
             Arc::new(NoTxs),
-            Address::ZERO,
             30_000_000,
             0,
             TEST_CHAIN_ID,
@@ -1943,7 +1936,6 @@ mod tests {
             Arc::new(|_b: OrderBlock| {}),
             NoChain,
             Arc::new(NoTxs),
-            Address::ZERO,
             30_000_000,
             0,
             TEST_CHAIN_ID,

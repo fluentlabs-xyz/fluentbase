@@ -2177,9 +2177,6 @@ where
         crate::derive::RethBlockDeriver::new(node.provider.clone(), node.evm_config.clone());
     let executed = ProviderExecutedChain::new(node.provider.clone());
     let assembler = Arc::new(PoolAssembler::new(node.pool.clone(), executed.clone()));
-    // The protocol fee manager — same recipient the pre-deferred attrs
-    // builder used; uniform across honest nodes (agreed data once embedded).
-    let fee_recipient = fluentbase_types::PRECOMPILE_FEE_MANAGER;
     // Gas-limit target = the operator's `--builder.gaslimit` (the canonical reth
     // knob — the SAME source the payload builder reads via `gas_limit_for`),
     // falling back to the chain's genesis gas limit when unset. The EIP-1559
@@ -2271,7 +2268,6 @@ where
         deriver,
         executed,
         assembler,
-        fee_recipient,
         target_gas_limit,
         feed: feed_sink,
         // Mid-epoch promotion trigger: the executor fires it on each finalized-advance

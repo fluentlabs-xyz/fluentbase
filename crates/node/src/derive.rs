@@ -576,11 +576,14 @@ where
     // (`FluentPayloadAttributesBuilder::build_attrs`) except the
     // node-local values it used: prev_randao (was `B256::random()`) is the
     // beacon-resolved value (`H(seed(h))` or the gated `order.digest()`
-    // fallback, decided by the caller), and timestamp/fee_recipient/gas_limit
-    // come from the agreed OrderBlock.
+    // fallback, decided by the caller), and timestamp/gas_limit come from the
+    // agreed OrderBlock. The beneficiary is NOT agreed data: it is the protocol
+    // fee manager, the single value `crates/node/src/consensus.rs` requires of
+    // every DPoS header (`beneficiary == PRECOMPILE_FEE_MANAGER`), so it is
+    // written here from the constant rather than carried in the artifact.
     let attrs = NextBlockEnvAttributes {
         timestamp: order.timestamp,
-        suggested_fee_recipient: order.fee_recipient,
+        suggested_fee_recipient: fluentbase_types::PRECOMPILE_FEE_MANAGER,
         prev_randao,
         gas_limit: order.gas_limit,
         parent_beacon_block_root: Some(B256::ZERO),
@@ -710,7 +713,6 @@ mod tests {
             height: genesis_header.number + 1,
             proposal_view: 0,
             timestamp: genesis_header.timestamp + 1,
-            fee_recipient: Address::repeat_byte(0x77),
             gas_limit: genesis_header.gas_limit,
             // The real production record, not an arbitrary byte string: this
             // test is the ONLY place the record's trip into an EVM header is
@@ -764,7 +766,10 @@ mod tests {
         // nonce-7 (gap) deterministically skipped; nonce-0 included.
         assert_eq!(a.body().transactions.len(), 1);
         // Agreed-field mapping into the derived header.
-        assert_eq!(a.header().beneficiary, order.fee_recipient);
+        assert_eq!(
+            a.header().beneficiary,
+            fluentbase_types::PRECOMPILE_FEE_MANAGER
+        );
         assert_eq!(a.header().timestamp, order.timestamp);
         assert_eq!(a.header().gas_limit, order.gas_limit);
         assert_eq!(a.header().extra_data, order.extra_data);

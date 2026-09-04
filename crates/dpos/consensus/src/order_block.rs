@@ -6,7 +6,7 @@
 
 use crate::digest::Digest;
 use crate::slasher::evidence::MAX_EQUIVOCATION_SIZE;
-use alloy_primitives::{keccak256, Address, Bytes, B256};
+use alloy_primitives::{keccak256, Bytes, B256};
 use bytes::{Buf, BufMut};
 use commonware_codec::{Encode as _, EncodeSize, FixedSize, Read, Write};
 use commonware_consensus::{types::Height, Heightable};
@@ -100,8 +100,6 @@ pub struct OrderBlock {
     /// wall-clock bound gates the VOTE only; the state transition copies this
     /// verbatim (`derive.rs`), so STF determinism is unaffected.
     pub timestamp: u64,
-    /// Proposer's fee recipient — derived header beneficiary.
-    pub fee_recipient: Address,
     /// Derived block gas limit, as AGREED in the artifact: derivation and
     /// `verify` read THIS field — never a node's local config — so every node
     /// derives an identical block. `verify` only bounds it within the EIP-1559
@@ -228,7 +226,6 @@ pub fn anchor_order_block(
         // is a plain value, not a sentinel — nothing may branch on it.
         proposal_view: 0,
         timestamp: anchor.timestamp(),
-        fee_recipient: Address::ZERO,
         // Seeds the EIP-1559 ±1/1024 gas-limit progression of the ordering chain.
         gas_limit: anchor.gas_limit(),
         extra_data: Bytes::new(),
@@ -239,7 +236,7 @@ pub fn anchor_order_block(
 }
 
 // Wire format (all integers big-endian via commonware primitives):
-//   parent(32) ‖ height(8) ‖ proposal_view(8) ‖ timestamp(8) ‖ fee_recipient(20)
+//   parent(32) ‖ height(8) ‖ proposal_view(8) ‖ timestamp(8)
 //   ‖ gas_limit(8) ‖ result(32) ‖ extra_data_len(4)+bytes ‖ txs as one RLP list
 //   ‖ beacon_flags(1)
 //   ‖ [equivocation_len(4)+bytes].
@@ -280,7 +277,6 @@ impl Write for OrderBlock {
         self.height.write(buf);
         self.proposal_view.write(buf);
         self.timestamp.write(buf);
-        buf.put_slice(self.fee_recipient.as_slice());
         self.gas_limit.write(buf);
         buf.put_slice(self.result.as_slice());
         (self.extra_data.len() as u32).write(buf);
@@ -314,7 +310,6 @@ impl EncodeSize for OrderBlock {
             + self.height.encode_size()
             + self.proposal_view.encode_size()
             + self.timestamp.encode_size()
-            + self.fee_recipient.as_slice().len()
             + self.gas_limit.encode_size()
             + self.result.as_slice().len()
             + LEN_PREFIX
@@ -336,7 +331,6 @@ impl Read for OrderBlock {
         let height = u64::read_cfg(buf, &())?;
         let proposal_view = u64::read_cfg(buf, &())?;
         let timestamp = u64::read_cfg(buf, &())?;
-        let fee_recipient = Address::from(<[u8; 20]>::read_cfg(buf, &())?);
         let gas_limit = u64::read_cfg(buf, &())?;
         let result = B256::from(<[u8; 32]>::read_cfg(buf, &())?);
         let extra_len = u32::read_cfg(buf, &())? as usize;
@@ -409,7 +403,6 @@ impl Read for OrderBlock {
             height,
             proposal_view,
             timestamp,
-            fee_recipient,
             gas_limit,
             extra_data,
             result,
@@ -466,7 +459,7 @@ impl commonware_consensus::Block for OrderBlock {
 mod tests {
     use super::*;
     use alloy_consensus::{Block as AlloyBlock, BlockBody, Header};
-    use alloy_primitives::U256;
+    use alloy_primitives::{Address, U256};
     use commonware_codec::ReadExt as _;
     use reth_primitives_traits::SealedBlock;
 
@@ -476,7 +469,6 @@ mod tests {
             height: 42,
             proposal_view: 7,
             timestamp: 1_700_000_000,
-            fee_recipient: Address::repeat_byte(0x22),
             gas_limit: 50_000_000,
             extra_data: Bytes::from(vec![1u8, 2, 3]),
             result: B256::repeat_byte(0x33),
@@ -576,15 +568,18 @@ mod tests {
     ///
     /// The constant is NOT a capture of the current encoder. It is the same
     /// pre-shrink capture the previous revision pinned, edited by hand in exactly
-    /// two places — flags `06` → `04`, and the 50-byte seed body deleted — so it
-    /// still testifies against an independently-produced encoding rather than
+    /// three places — flags `06` → `04`, the 50-byte seed body deleted, and the
+    /// 20-byte `fee_recipient` field deleted when the beneficiary stopped being
+    /// agreed data (it is now written at derive time from
+    /// `PRECOMPILE_FEE_MANAGER`, the only value the EL header check accepts) — so
+    /// it still testifies against an independently-produced encoding rather than
     /// against the code under test.
     #[test]
     fn the_shrink_leaves_bit_2_byte_identical() {
         const PRE_SHRINK_GOLDEN: &str = "\
 1111111111111111111111111111111111111111111111111111111111111111\
 000000000000002a0000000000000007000000006553f100\
-22222222222222222222222222222222222222220000000002faf080\
+0000000002faf080\
 3333333333333333333333333333333333333333333333333333333333333333\
 00000003010203c004\
 000000085a5a5a5a5a5a5a5a";
@@ -650,10 +645,6 @@ mod tests {
                 ..base.clone()
             },
             OrderBlock {
-                fee_recipient: Address::repeat_byte(0xBB),
-                ..base.clone()
-            },
-            OrderBlock {
                 gas_limit: base.gas_limit + 1,
                 ..base.clone()
             },
@@ -687,7 +678,6 @@ mod tests {
         b.height.write(buf);
         b.proposal_view.write(buf);
         b.timestamp.write(buf);
-        buf.extend_from_slice(b.fee_recipient.as_slice());
         b.gas_limit.write(buf);
         buf.extend_from_slice(b.result.as_slice());
     }

@@ -1133,7 +1133,7 @@ mod watchdog_tests {
 mod tests {
     use super::*;
     use crate::{digest::Digest, order_block::OrderBlock};
-    use alloy_primitives::{Address, Bytes};
+    use alloy_primitives::Bytes;
     use commonware_codec::DecodeExt as _;
     use commonware_consensus::{
         simplex::types::{Finalization, Finalize, Proposal},
@@ -1198,7 +1198,6 @@ mod tests {
             height,
             proposal_view: 0,
             timestamp: 1_700_000_000 + height,
-            fee_recipient: Address::ZERO,
             gas_limit: 30_000_000,
             extra_data: Bytes::new(),
             result,
