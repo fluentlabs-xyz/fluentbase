@@ -583,6 +583,24 @@ mod tests {
     };
 
     #[test]
+    fn execute_with_missing_module_hash_returns_error() {
+        let mut executor = RuntimeFactoryExecutor::new(import_linker_v1_preview());
+        let missing_hash = fluentbase_types::keccak256(b"FLU-1310: module never warmed up");
+
+        for _ in 0..2 {
+            let result = executor.execute(
+                BytecodeOrHash::Hash(missing_hash),
+                RuntimeContext::default().with_fuel_limit(1234),
+            );
+            assert_eq!(result.exit_code, ExitCode::UnknownError.into_i32());
+            assert_eq!(result.fuel_consumed, 1234);
+            assert_eq!(result.fuel_refunded, 0);
+            assert!(result.output.is_empty());
+            assert!(result.return_data.is_empty());
+        }
+    }
+
+    #[test]
     fn call_id_overflow() {
         let mut executor = RuntimeFactoryExecutor::new(import_linker_v1_preview());
 

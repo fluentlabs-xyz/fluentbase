@@ -351,6 +351,136 @@ mod tests {
         LruMap::with_seed(ModuleMemoryLimiter::new(max_bytes), TEST_SEED)
     }
 
+    #[test]
+    fn factory_index_is_bounded_under_deployment_churn() {
+        let mut factory = ModuleFactory {
+            inner: Arc::new(Mutex::new(ModuleFactoryInner {
+                cached_modules: new_cache(500),
+            })),
+        };
+
+        for id in 0..1000 {
+            factory
+                .get_module_or_init(BytecodeOrHash::Bytecode {
+                    bytecode: module(100),
+                    hash: key(id),
+                    address: fluentbase_types::Address::ZERO,
+                })
+                .unwrap();
+            let ctx = factory.inner.lock().unwrap();
+            assert!(ctx.cached_modules.len() <= 5);
+            assert_eq!(
+                ctx.cached_modules.limiter().module_keys_by_code_hash.len(),
+                ctx.cached_modules.len()
+            );
+        }
+    }
+
+    #[test]
+    fn hash_only_misses_do_not_poison_factory_after_eviction() {
+        let mut factory = ModuleFactory {
+            inner: Arc::new(Mutex::new(ModuleFactoryInner {
+                cached_modules: new_cache(100),
+            })),
+        };
+
+        assert!(matches!(
+            factory.get_module_or_init(BytecodeOrHash::Hash(key(1))),
+            Err(ExitCode::UnknownError)
+        ));
+        for id in [1, 2, 1] {
+            factory
+                .get_module_or_init(BytecodeOrHash::Bytecode {
+                    bytecode: module(100),
+                    hash: key(id),
+                    address: fluentbase_types::Address::ZERO,
+                })
+                .unwrap();
+            let cached = factory
+                .get_module_or_init(BytecodeOrHash::Hash(key(id)))
+                .unwrap();
+            assert_eq!(cached.hint_section.len(), 100);
+            assert!(matches!(
+                factory.get_module_or_init(BytecodeOrHash::Hash(key(3 - id))),
+                Err(ExitCode::UnknownError)
+            ));
+        }
+        assert!(!factory.inner.is_poisoned());
+    }
+
+    #[test]
+    fn rejected_modules_are_returned_without_index_entries() {
+        let mut factory = ModuleFactory {
+            inner: Arc::new(Mutex::new(ModuleFactoryInner {
+                cached_modules: new_cache(100),
+            })),
+        };
+
+        for hint_size in [0, 101] {
+            let uncached = factory
+                .get_module_or_init(BytecodeOrHash::Bytecode {
+                    bytecode: module(hint_size),
+                    hash: key(1),
+                    address: fluentbase_types::Address::ZERO,
+                })
+                .unwrap();
+            assert_eq!(uncached.hint_section.len(), hint_size);
+            let ctx = factory.inner.lock().unwrap();
+            assert!(ctx.cached_modules.is_empty());
+            assert!(ctx
+                .cached_modules
+                .limiter()
+                .module_keys_by_code_hash
+                .is_empty());
+        }
+    }
+
+    #[test]
+    fn evicting_older_profile_preserves_newer_hash_mapping() {
+        let mut cache = new_cache(200);
+        let code_hash = key(42);
+        let older = cache_key_with_address_byte(code_hash, 0xaa);
+        let newer = cache_key_with_address_byte(code_hash, 0xbb);
+
+        cache.insert(older, module(100));
+        cache.insert(newer, module(100));
+        cache.insert(cache_key(1), module(100));
+
+        assert!(cache.get(&older).is_none());
+        assert!(cache.get(&newer).is_some());
+        assert_eq!(
+            cache.limiter().module_keys_by_code_hash.get(&code_hash),
+            Some(&newer)
+        );
+        cache.remove(&newer);
+        assert!(!cache
+            .limiter()
+            .module_keys_by_code_hash
+            .contains_key(&code_hash));
+    }
+
+    #[test]
+    fn replacement_restores_hash_mapping_after_another_profile_is_removed() {
+        let mut cache = new_cache(200);
+        let code_hash = key(42);
+        let key_a = cache_key_with_address_byte(code_hash, 0xaa);
+        let key_b = cache_key_with_address_byte(code_hash, 0xbb);
+
+        cache.insert(key_a, module(100));
+        cache.insert(key_b, module(100));
+        cache.remove(&key_b);
+        assert!(!cache
+            .limiter()
+            .module_keys_by_code_hash
+            .contains_key(&code_hash));
+
+        cache.insert(key_a, module(50));
+        assert_eq!(
+            cache.limiter().module_keys_by_code_hash.get(&code_hash),
+            Some(&key_a)
+        );
+    }
+
     // ==================== Basic Operations ====================
 
     #[test]
@@ -401,6 +531,7 @@ mod tests {
 
         assert_eq!(cache.len(), 0);
         assert_eq!(cache.limiter().current_bytes(), 0);
+        assert!(cache.limiter().module_keys_by_code_hash.is_empty());
     }
 
     // ==================== LRU Eviction ====================
@@ -517,6 +648,7 @@ mod tests {
 
         assert_eq!(cache.len(), 0);
         assert_eq!(cache.limiter().current_bytes(), 0);
+        assert!(cache.limiter().module_keys_by_code_hash.is_empty());
     }
 
     #[test]
@@ -528,6 +660,7 @@ mod tests {
 
         assert_eq!(cache.len(), 0);
         assert_eq!(cache.limiter().current_bytes(), 0);
+        assert!(cache.limiter().module_keys_by_code_hash.is_empty());
     }
 
     // ==================== Limiter Construction ====================
