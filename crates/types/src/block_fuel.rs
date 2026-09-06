@@ -108,11 +108,11 @@ pub const BLS_G1_DECOMPRESS_COST: u32 = 600 * FUEL_DENOM_RATE as u32;
 pub const UINT256_MUL_MOD_COST: u32 = 8 * FUEL_DENOM_RATE as u32;
 pub const UINT256_X2048_MUL_COST: u32 = 5_000 * FUEL_DENOM_RATE as u32;
 
-/// Calldata surcharge threshold (128 KB).
+/// Calldata surcharge threshold (128 KiB).
 ///
-/// Ethereum L1 rejects transactions above this size at the RPC level.
-/// Fluent L2 accepts large calldata but applies a quadratic surcharge above this threshold
-/// to bound block data to L1 blob capacity.
+/// Geth's legacy transaction pool limits encoded transactions to 128 KiB, but Ethereum does not
+/// impose a protocol-level input-size limit at this threshold. Fluent L2 accepts larger input and
+/// applies a quadratic surcharge to the excess to bound block data to L1 blob capacity.
 pub const CALLDATA_QUADRATIC_THRESHOLD: u64 = 128 * 1024;
 
 /// Divisor in `surcharge = 3*words + words²/DIVISOR`.
