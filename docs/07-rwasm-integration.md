@@ -77,3 +77,24 @@ A dependency bump can silently change any of these.
 6. update docs in same PR.
 
 If one of these steps is skipped, regressions can escape into consensus path.
+
+## Curve dependency upgrades
+
+`sp1-curves` is pinned to `=5.2.4`. The raw Weierstrass add/double syscalls validate
+coordinate bounds, but do not require curve membership. Version 5.2.4 uses generic
+field arithmetic for secp256k1; version 6.1.0 switches to `k256` point conversion and
+unwraps the result in `sw_add_k256` and `sw_double_k256`. Reduced off-curve coordinates
+that reach these syscalls can therefore panic the host after an unchecked upgrade.
+
+Before changing the pin:
+
+- Inspect the resolved implementation of curve addition, doubling and decompression
+  for panics on off-curve points, infinity, equal points and unreduced coordinates.
+- Run the runtime Weierstrass tests in release mode with both `std` and `std,wasmtime`.
+  Keep `secp256k1_off_curve_inputs_preserve_arithmetic_without_panicking` passing;
+  it covers reduced off-curve inputs that coordinate-bound checks permit today.
+- Patch an incompatible dependency before adopting it. Rejecting previously accepted
+  inputs is a protocol behavior change and requires explicit compatibility review,
+  including proof/runtime agreement; a dependency bump must not silently introduce it.
+- Recheck all workspace lockfiles and record the version and regression results in
+  the upgrade PR.
