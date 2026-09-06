@@ -252,6 +252,154 @@ mod tests {
     }
 
     #[test]
+    fn runtime_outcome_rejects_overflowing_log_count() {
+        let mut encoded = RuntimeExecutionOutcomeV1::default().encode();
+        // exit code (4), output length (8), storage count (4), then log count (8).
+        encoded[16..24].copy_from_slice(&u64::MAX.to_le_bytes());
+        assert!(decode::<RuntimeExecutionOutcomeV1>(encoded.into()).is_err());
+    }
+
+    #[test]
+    fn runtime_outcome_rejects_lengths_without_bodies() {
+        let empty = RuntimeExecutionOutcomeV1::default().encode();
+        // All these prefixes fit in a few bytes. None may allocate based on the count.
+        for len in [1_000_000, u32::MAX as u64, u64::MAX] {
+            for (name, offset) in [("output", 4), ("logs", 16)] {
+                let mut encoded = empty[..offset].to_vec();
+                encoded.extend_from_slice(&len.to_le_bytes());
+                assert!(
+                    decode::<RuntimeExecutionOutcomeV1>(encoded.into()).is_err(),
+                    "{name}: {len}"
+                );
+            }
+        }
+        for (name, offset) in [("storage", 12), ("touched slots", 25), ("transfers", 29)] {
+            let mut encoded = empty[..offset].to_vec();
+            encoded.extend_from_slice(&u32::MAX.to_le_bytes());
+            assert!(
+                decode::<RuntimeExecutionOutcomeV1>(encoded.into()).is_err(),
+                "{name}"
+            );
+        }
+
+        let mut encoded = empty[..24].to_vec();
+        encoded.push(1); // Some(new_metadata)
+        encoded.extend_from_slice(&u64::MAX.to_le_bytes());
+        assert!(decode::<RuntimeExecutionOutcomeV1>(encoded.into()).is_err());
+
+        for (topics, data_len) in [(u32::MAX, 0u64), (0, u64::MAX)] {
+            let mut encoded = empty[..16].to_vec();
+            encoded.extend_from_slice(&1u64.to_le_bytes()); // One log.
+            encoded.extend_from_slice(&topics.to_le_bytes());
+            encoded.extend_from_slice(&data_len.to_le_bytes());
+            assert!(decode::<RuntimeExecutionOutcomeV1>(encoded.into()).is_err());
+        }
+    }
+
+    #[test]
+    fn runtime_new_frame_rejects_storage_without_body() {
+        let mut encoded = encode(&RuntimeNewFrameInputV1::default()).unwrap();
+        encoded[24..28].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert!(decode::<RuntimeNewFrameInputV1>(encoded.into()).is_err());
+    }
+
+    #[test]
+    fn runtime_outcome_preserves_legacy_trailing_fields() {
+        let empty = RuntimeExecutionOutcomeV1::default();
+        let encoded = empty.encode();
+        // Before touched slots, before transfers, and the current format.
+        for len in [25, 29, 33] {
+            let (decoded, consumed) =
+                decode::<RuntimeExecutionOutcomeV1>(encoded[..len].to_vec().into()).unwrap();
+            assert_eq!(decoded, empty);
+            assert_eq!(consumed, len);
+        }
+        for len in [26, 27, 28, 30, 31, 32] {
+            assert!(decode::<RuntimeExecutionOutcomeV1>(encoded[..len].to_vec().into()).is_err());
+        }
+    }
+
+    #[test]
+    fn runtime_outcome_checks_truncated_collection_elements() {
+        let outcome = RuntimeExecutionOutcomeV1 {
+            output: bytes!("1122"),
+            storage: Some([(U256::from(1), U256::from(2))].into()),
+            logs: vec![JournalLog {
+                topics: vec![B256::repeat_byte(3)],
+                data: bytes!("445566"),
+            }],
+            new_metadata: Some(bytes!("7788")),
+            touched_storage_slots: Some(vec![U256::from(1)]),
+            transfers: Some(vec![(Address::repeat_byte(4), U256::from(5))]),
+            ..Default::default()
+        };
+        let encoded = outcome.encode();
+        // Only complete legacy envelopes ending just before an optional field are valid.
+        let before_transfers = encoded.len() - 4 - 52;
+        let before_touched = before_transfers - 4 - 32;
+        for len in 0..encoded.len() {
+            let result = decode::<RuntimeExecutionOutcomeV1>(encoded[..len].to_vec().into());
+            assert_eq!(
+                result.is_ok(),
+                len == before_touched || len == before_transfers,
+                "truncated at {len}"
+            );
+        }
+        assert_eq!(
+            RuntimeExecutionOutcomeV1::decode(encoded.into()),
+            Some(outcome)
+        );
+    }
+
+    #[test]
+    fn runtime_outcome_log_data_remains_zero_copy() {
+        let outcome = RuntimeExecutionOutcomeV1 {
+            logs: vec![JournalLog {
+                topics: vec![B256::repeat_byte(3)],
+                data: bytes!("445566"),
+            }],
+            ..Default::default()
+        };
+        let encoded: Bytes = outcome.encode().into();
+        let (decoded, consumed) = decode::<RuntimeExecutionOutcomeV1>(encoded.clone()).unwrap();
+        assert_eq!(decoded, outcome);
+        assert_eq!(consumed, encoded.len());
+        let data_start = 4 + 8 + 4 + 8 + 4 + 32 + 8;
+        assert_eq!(
+            decoded.logs[0].data.as_ptr(),
+            encoded[data_start..].as_ptr()
+        );
+    }
+
+    #[test]
+    fn runtime_outcome_supports_variable_integer_encoding_and_limits() {
+        let outcome = RuntimeExecutionOutcomeV1 {
+            logs: vec![JournalLog::default(); 10],
+            touched_storage_slots: Some(vec![U256::from(1)]),
+            transfers: Some(vec![(Address::ZERO, U256::from(2))]),
+            ..Default::default()
+        };
+        let config = bincode::config::standard();
+        let encoded: Bytes = bincode::encode_to_vec(&outcome, config).unwrap().into();
+        let (decoded, consumed) =
+            decode_from_bytes::<RuntimeExecutionOutcomeV1, _>(encoded.clone(), config).unwrap();
+        assert_eq!(decoded, outcome);
+        assert_eq!(consumed, encoded.len());
+        assert!(decode_from_bytes::<RuntimeExecutionOutcomeV1, _>(
+            encoded.clone(),
+            config.with_limit::<64>()
+        )
+        .is_err());
+        let (decoded, consumed) = decode_from_bytes::<RuntimeExecutionOutcomeV1, _>(
+            encoded.clone(),
+            config.with_limit::<1024>(),
+        )
+        .unwrap();
+        assert_eq!(decoded, outcome);
+        assert_eq!(consumed, encoded.len());
+    }
+
+    #[test]
     fn test_runtime_new_frame_input_v1_encode_decode() {
         let mut storage = BTreeMap::new();
         let mut v = RuntimeNewFrameInputV1 {

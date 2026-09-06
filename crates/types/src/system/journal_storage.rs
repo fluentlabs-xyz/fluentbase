@@ -215,6 +215,33 @@ mod tests {
     use super::*;
 
     #[test]
+    fn generic_log_decode_rejects_unbacked_lengths() {
+        for (topics, data_len) in [(u32::MAX, 0u64), (0, u64::MAX)] {
+            let mut encoded = topics.to_le_bytes().to_vec();
+            encoded.extend_from_slice(&data_len.to_le_bytes());
+            assert!(bincode::decode_from_slice::<JournalLog, _>(
+                &encoded,
+                bincode::config::legacy()
+            )
+            .is_err());
+        }
+    }
+
+    #[test]
+    fn generic_log_decode_preserves_data_across_chunks() {
+        let log = JournalLog {
+            topics: vec![B256::repeat_byte(1), B256::repeat_byte(2)],
+            data: vec![3; 2050].into(),
+        };
+        let config = bincode::config::legacy().with_limit::<4096>();
+        let encoded = bincode::encode_to_vec(&log, config).unwrap();
+        let (decoded, consumed) =
+            bincode::decode_from_slice::<JournalLog, _>(&encoded, config).unwrap();
+        assert_eq!(decoded, log);
+        assert_eq!(consumed, encoded.len());
+    }
+
+    #[test]
     fn storage_reads_base_and_dirty() {
         let mut base = BTreeMap::new();
         base.insert(U256::from(1u64), U256::from(10u64));
