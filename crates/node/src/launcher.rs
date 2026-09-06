@@ -20,6 +20,9 @@ use std::{future::Future, time::Duration};
 use tokio::{sync::mpsc, task::JoinHandle, time::Interval};
 use tracing::{error, info};
 
+#[cfg(test)]
+mod tests;
+
 pub async fn launch_consensus_validator<N, AddOns: RethRpcAddOns<N>, B>(
     handle: &NodeHandle<N, AddOns>,
     block_time: Duration,
