@@ -1,0 +1,20 @@
+name: Panic policy
+
+on:
+  push:
+    branches: [ main, devel, "release/*" ]
+  pull_request:
+    branches: [ main, devel, "release/*" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  panic-policy:
+    name: Shipped panic policy
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Check production profiles and security documentation
+        run: python3 .github/scripts/check-panic-policy.py

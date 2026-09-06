@@ -105,8 +105,22 @@ Why it matters: mismatch can mint/burn/settle wrong amounts.
 
 ## 9) Panic policy
 
-The default release profile uses `panic = "unwind"`; the reproducible release profile overrides it
-with `panic = "abort"`. Consensus behavior must not depend on which profile built the binary.
+Cargo profiles have the following panic strategies. CI checks this table against `Cargo.toml`,
+including inherited settings, with `.github/scripts/check-panic-policy.py`.
+
+| Profile | Panic strategy | Build path |
+| --- | --- | --- |
+| `release` | `unwind` | Default local release builds |
+| `maxperf` | `abort` | Published `fluent` / `fluent-rwasm` binaries and Docker images |
+| `reproducible` | `abort` | Opt-in reproducible node builds |
+
+An unexpected host panic in a shipped node terminates the process immediately, so a poisoned global
+module-cache mutex cannot be reused by later tasks. Operators must supervise the process and restart
+it after a failure. Restarting does not fix the underlying invariant violation: the same input may
+fail again and require a software fix. Abort does not run destructors or drain in-flight tasks.
+
+Consensus behavior must not depend on which profile built the binary. The panic strategy is a last
+resort for unexpected host failures; it does not implement the guest-trap containment policy in §5.
 
 - A panic is not a transaction or block rollback mechanism.
 - Consensus-reachable failures must return deterministic frame, transaction, or block errors.
