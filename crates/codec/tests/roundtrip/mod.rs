@@ -9,5 +9,6 @@ use fluentbase_codec::{
 };
 
 mod func;
+mod struct_headers;
 mod structs;
 mod tuples;
