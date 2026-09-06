@@ -359,7 +359,18 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
         };
 
         // If we have a cached module, then use it, otherwise create a new one and cache
-        let module = self.module_factory.get_module_or_init(bytecode_or_hash);
+        let module = match self.module_factory.get_module_or_init(bytecode_or_hash) {
+            Ok(module) => module,
+            Err(exit_code) => {
+                let result = ExecutionResult {
+                    exit_code: exit_code.into_i32(),
+                    fuel_consumed: ctx.fuel_limit,
+                    ..Default::default()
+                };
+                metrics::record_execution(RuntimeModeLabel::Contract, state, &timer, &result);
+                return result;
+            }
+        };
 
         // If there is no cached store, then construct a new one (slow)
         let fuel_limit_value = ctx.fuel_limit;
@@ -507,7 +518,9 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
     }
 
     fn warmup(&mut self, bytecode: RwasmModule, hash: B256, address: Address) {
-        self.module_factory
+        // Supplying bytecode always returns the module, even when it cannot be cached.
+        let _ = self
+            .module_factory
             .get_module_or_init(BytecodeOrHash::Bytecode {
                 bytecode,
                 hash,

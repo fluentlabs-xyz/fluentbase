@@ -1,9 +1,11 @@
 use fluentbase_types::{
-    BytecodeOrHash, CompilationBackend, CompilationConfigFingerprint, CompiledModuleCacheKey, B256,
+    BytecodeOrHash, CompilationBackend, CompilationConfigFingerprint, CompiledModuleCacheKey,
+    ExitCode, B256,
 };
 use rwasm::RwasmModule;
 use schnellru::{Limiter, LruMap};
 use std::{
+    collections::HashMap,
     marker::PhantomData,
     sync::{Arc, LazyLock, Mutex},
 };
@@ -24,7 +26,11 @@ impl ModuleFactory {
     }
 
     /// Returns a cached module for the given bytecode or compiles and caches it on first use.
-    pub fn get_module_or_init(&mut self, bytecode_or_hash: BytecodeOrHash) -> RwasmModule {
+    /// Hash-only lookups require a resident module from an earlier bytecode warmup.
+    pub fn get_module_or_init(
+        &mut self,
+        bytecode_or_hash: BytecodeOrHash,
+    ) -> Result<RwasmModule, ExitCode> {
         let mut ctx = self.inner.lock().unwrap();
         let code_hash = bytecode_or_hash.code_hash();
         let module_key = match &bytecode_or_hash {
@@ -39,41 +45,46 @@ impl ModuleFactory {
             BytecodeOrHash::Hash(_hash) => {
                 // Hash-only lookups are only valid after an earlier bytecode warmup. Keep this
                 // deterministic by resolving through the explicit code-hash index.
-                let Some(module_key) = ctx.module_keys_by_code_hash.get(&code_hash).copied() else {
-                    panic!("runtime: can't compile just by hash")
-                };
-                module_key
+                ctx.cached_modules
+                    .limiter()
+                    .module_keys_by_code_hash
+                    .get(&code_hash)
+                    .copied()
+                    .ok_or(ExitCode::UnknownError)?
             }
         };
 
         if let Some(entry) = ctx.cached_modules.get(&module_key) {
-            return entry.clone();
+            return Ok(entry.clone());
         }
 
         let rwasm_module = match bytecode_or_hash {
             BytecodeOrHash::Bytecode { bytecode, .. } => bytecode,
-            BytecodeOrHash::Hash(_hash) => {
-                // TODO(dmitry123): Do we want to have lock here until resources are warmed up?
-                panic!("runtime: can't compile just by hash")
-            }
+            BytecodeOrHash::Hash(_) => return Err(ExitCode::UnknownError),
         };
 
-        ctx.module_keys_by_code_hash.insert(code_hash, module_key);
-        ctx.cached_modules.insert(module_key, rwasm_module.clone());
-        rwasm_module
+        if !ctx.cached_modules.insert(module_key, rwasm_module.clone())
+            && ctx.cached_modules.is_empty()
+        {
+            // An initial table allocation can fail after on_insert without an on_removed
+            // callback. Clearing also rolls back that tentative index entry and byte charge.
+            ctx.cached_modules.clear();
+        }
+        Ok(rwasm_module)
     }
 }
 
 struct ModuleFactoryInner {
     pub cached_modules:
         LruMap<CompiledModuleCacheKey, RwasmModule, ModuleMemoryLimiter<RwasmModule>>,
-    pub module_keys_by_code_hash: std::collections::HashMap<B256, CompiledModuleCacheKey>,
 }
 
 /// Maximum memory for module cache: 1 GB
 ///
 /// This limits only the estimated size of cached module content,
 /// not the hash table overhead (which is negligible for typical workloads).
+/// The code-hash index contains at most one entry per resident module; its allocation
+/// is bounded by peak cache residency rather than lifetime deployment count.
 pub const CACHED_MODULES_SIZE_LIMIT: usize = 1024 * 1024 * 1024;
 
 impl Default for ModuleFactoryInner {
@@ -82,7 +93,6 @@ impl Default for ModuleFactoryInner {
             cached_modules: LruMap::new(ModuleMemoryLimiter::<RwasmModule>::new(
                 CACHED_MODULES_SIZE_LIMIT,
             )),
-            module_keys_by_code_hash: std::collections::HashMap::new(),
         }
     }
 }
@@ -162,6 +172,8 @@ impl SizeEstimator for RwasmModule {
 pub struct ModuleMemoryLimiter<V> {
     max_bytes: usize,
     current_bytes: usize,
+    // Owned by the limiter so all LRU removal paths prune the index under the factory lock.
+    module_keys_by_code_hash: HashMap<B256, CompiledModuleCacheKey>,
     _marker: PhantomData<V>,
 }
 
@@ -175,6 +187,7 @@ impl<V> ModuleMemoryLimiter<V> {
         Self {
             max_bytes,
             current_bytes: 0,
+            module_keys_by_code_hash: HashMap::new(),
             _marker: PhantomData,
         }
     }
@@ -223,6 +236,7 @@ impl<V: SizeEstimator> Limiter<CompiledModuleCacheKey, V> for ModuleMemoryLimite
         }
 
         self.current_bytes = self.current_bytes.saturating_add(size);
+        self.module_keys_by_code_hash.insert(key.code_hash, key);
         Some((key, value))
     }
 
@@ -237,7 +251,7 @@ impl<V: SizeEstimator> Limiter<CompiledModuleCacheKey, V> for ModuleMemoryLimite
     fn on_replace(
         &mut self,
         _length: usize,
-        _old_key: &mut CompiledModuleCacheKey,
+        old_key: &mut CompiledModuleCacheKey,
         _new_key: Self::KeyToInsert<'_>,
         old_value: &mut V,
         new_value: &mut V,
@@ -253,19 +267,27 @@ impl<V: SizeEstimator> Limiter<CompiledModuleCacheKey, V> for ModuleMemoryLimite
             .current_bytes
             .saturating_sub(old_size)
             .saturating_add(new_size);
+        self.module_keys_by_code_hash
+            .insert(old_key.code_hash, *old_key);
 
         true
     }
 
     /// Updates size tracking after an entry is removed.
-    fn on_removed(&mut self, _key: &mut CompiledModuleCacheKey, value: &mut V) {
+    fn on_removed(&mut self, key: &mut CompiledModuleCacheKey, value: &mut V) {
         let size = value.estimate_size();
         self.current_bytes = self.current_bytes.saturating_sub(size);
+        // The same code hash can have multiple compilation profiles. Removing an older
+        // profile must not discard the index entry for a newer, still-resident profile.
+        if self.module_keys_by_code_hash.get(&key.code_hash) == Some(key) {
+            self.module_keys_by_code_hash.remove(&key.code_hash);
+        }
     }
 
     /// Resets size tracking when the cache is cleared.
     fn on_cleared(&mut self) {
         self.current_bytes = 0;
+        self.module_keys_by_code_hash.clear();
     }
 
     /// Controls whether the internal hash table can grow its bucket array.
