@@ -1,11 +1,15 @@
 use crate::{
-    bincode::{decode_from_bytes, BytesReader, DecodeBytes, ZeroCopyBytes},
+    bincode::{decode_from_bytes, decode_vec, BytesReader, DecodeBytes, ZeroCopyBytes},
     system::JournalLog,
     ExitCode,
 };
 use alloc::{collections::BTreeMap, vec::Vec};
 use alloy_primitives::{Address, Bytes, U256};
-use bincode::de::{read::Reader, Decoder};
+use bincode::{
+    config::{Config, IntEncoding},
+    de::{read::Reader, Decoder},
+    error::DecodeError,
+};
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct RuntimeNewFrameInputV1 {
@@ -48,6 +52,8 @@ impl<Context> DecodeBytes<Context> for RuntimeNewFrameInputV1 {
         let input: ZeroCopyBytes = DecodeBytes::<Context>::decode_bytes(d)?;
         let context: ZeroCopyBytes = DecodeBytes::<Context>::decode_bytes(d)?;
         let storage_len: u32 = bincode::Decode::decode(d)?;
+        d.reader()
+            .ensure_collection_body(storage_len as usize, 64)?;
         let storage = if storage_len > 0 {
             let mut storage = BTreeMap::<U256, U256>::new();
             for _ in 0..storage_len {
@@ -149,6 +155,8 @@ impl<Context> DecodeBytes<Context> for RuntimeExecutionOutcomeV1 {
         let exit_code: i32 = bincode::Decode::decode(d)?;
         let output: ZeroCopyBytes = DecodeBytes::decode_bytes(d)?;
         let storage_len: u32 = bincode::Decode::decode(d)?;
+        d.reader()
+            .ensure_collection_body(storage_len as usize, 64)?;
         let storage = if storage_len > 0 {
             let mut storage = BTreeMap::<U256, U256>::new();
             for _ in 0..storage_len {
@@ -160,18 +168,25 @@ impl<Context> DecodeBytes<Context> for RuntimeExecutionOutcomeV1 {
         } else {
             None
         };
-        let logs: Vec<JournalLog> = bincode::Decode::decode(d)?;
+        let logs_len: u64 = bincode::Decode::decode(d)?;
+        let logs_len =
+            usize::try_from(logs_len).map_err(|_| DecodeError::OutsideUsizeRange(logs_len))?;
+        // Even an empty log encodes a u32 topic count and a u64 data length.
+        let min_log_bytes = match d.config().int_encoding() {
+            IntEncoding::Fixed => 12,
+            _ => 2,
+        };
+        let logs = decode_vec(d, logs_len, min_log_bytes, JournalLog::decode_bytes)?;
         let new_metadata: Option<ZeroCopyBytes> = DecodeBytes::decode_bytes(d)?;
 
         // Backward compatibility: older outcomes do not have this trailing field.
         let touched_storage_slots = if d.reader().peek_read(1).is_some() {
             let touched_slots_len: u32 = bincode::Decode::decode(d)?;
             if touched_slots_len > 0 {
-                let mut touched_storage_slots = Vec::with_capacity(touched_slots_len as usize);
-                for _ in 0..touched_slots_len {
+                let touched_storage_slots = decode_vec(d, touched_slots_len as usize, 32, |d| {
                     let slot: [u8; 32] = bincode::Decode::decode(d)?;
-                    touched_storage_slots.push(U256::from_le_bytes(slot));
-                }
+                    Ok(U256::from_le_bytes(slot))
+                })?;
                 Some(touched_storage_slots)
             } else {
                 None
@@ -184,12 +199,11 @@ impl<Context> DecodeBytes<Context> for RuntimeExecutionOutcomeV1 {
         let transfers = if d.reader().peek_read(1).is_some() {
             let transfers_len: u32 = bincode::Decode::decode(d)?;
             if transfers_len > 0 {
-                let mut transfers = Vec::with_capacity(transfers_len as usize);
-                for _ in 0..transfers_len {
+                let transfers = decode_vec(d, transfers_len as usize, 52, |d| {
                     let recipient: [u8; 20] = bincode::Decode::decode(d)?;
                     let amount: [u8; 32] = bincode::Decode::decode(d)?;
-                    transfers.push((Address::from(recipient), U256::from_le_bytes(amount)));
-                }
+                    Ok((Address::from(recipient), U256::from_le_bytes(amount)))
+                })?;
                 Some(transfers)
             } else {
                 None
