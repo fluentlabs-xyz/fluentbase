@@ -124,9 +124,8 @@ macro_rules! impl_int {
 
                 B::$write_method(&mut buf[start..end], *self);
 
-                // Fill the rest of the buffer with 0x00 or 0xFF depending on the sign of the
-                // integer
-                let fill_val = if *self > 0 { 0x00 } else { 0xFF };
+                // Only negative integers sign-extend; zero and positive integers zero-extend.
+                let fill_val = if self.cmp(&0).is_lt() { 0xFF } else { 0x00 };
 
                 for i in offset..start {
                     buf[i] = fill_val;
