@@ -71,12 +71,33 @@ Universal Token runtime is currently in engine-metered set.
 
 ---
 
-## Calldata surcharge
+## Ethereum compatibility: transaction gas and calldata
 
-Large calldata gets extra quadratic surcharge above threshold.
-Purpose is practical block-data pressure control.
+[EIP-7825](https://eips.ethereum.org/EIPS/eip-7825) caps the gas limit declared by an Ethereum
+transaction at `2^24` gas (16,777,216), independently of the block gas limit. Ethereum clients
+reject transactions above that cap from the transaction pool and reject blocks containing them.
 
-This is part of block economics, not only runtime internals.
+Fluentbase does not enforce this fixed per-transaction cap. WASM smart contracts can require more
+than `2^24` gas, so limiting every transaction to Ethereum's cap would prevent valid WASM execution.
+This does not make transaction execution literally unlimited: the transaction gas limit must still
+fit within the current block gas limit and pass the usual intrinsic-gas, balance, and fee checks.
+
+Fluentbase instead controls large transaction input through gas pricing. Input up to 128 KiB
+(131,072 bytes) receives no Fluent-specific surcharge beyond the normal intrinsic calldata gas.
+For larger input, only the excess is divided into 32-byte words and charged using:
+
+```text
+words = ceil((input_length - 128 KiB) / 32)
+surcharge = 3 * words + floor(words^2 / 30)
+```
+
+The transaction is rejected if its declared gas limit cannot cover the intrinsic gas plus this
+surcharge. This policy allows transactions above 128 KiB rather than imposing a protocol-level
+input-size limit, while the quadratic term constrains block-data pressure.
+
+Consequently, Ethereum tooling must not assume that Fluentbase applies EIP-7825: a transaction with
+a gas limit above `2^24` can be valid on Fluentbase if it satisfies the block-level and economic
+constraints above.
 
 ---
 
