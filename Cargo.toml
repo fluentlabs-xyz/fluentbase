@@ -370,6 +370,8 @@ lto = "thin"
 
 [profile.maxperf]
 inherits = "release"
+# Shipped nodes must not continue with poisoned global state after a host panic.
+panic = "abort"
 lto = "fat"
 codegen-units = 1
 
