@@ -43,6 +43,8 @@ SolidityABI::encode(&value, &mut buf, 0)
 
 - Big-endian byte order
 - 32-byte alignment (Ethereum compatible)
+- Derived structs with dynamic members require `ALIGN = 32` for encoding, decoding, and partial
+  decoding. Static structs also support packed mode.
 - Dynamic structure encoding:
 
   ```

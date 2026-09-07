@@ -5,7 +5,7 @@ use crate::{
         get_aligned_slice, is_big_endian, read_u32_aligned, validate_collection_body,
         write_u32_aligned, Encoder,
     },
-    error::{CodecError, DecodingError},
+    error::{CodecError, DecodingError, EncodingError},
 };
 use alloc::vec::Vec;
 use alloy_primitives::{Signed, Uint, I128, I8, U128};
@@ -488,6 +488,11 @@ where
             element.clear();
             element.resize(item_size, 0);
             item.encode(&mut element, 0)?;
+            if element.len() > item_size {
+                return Err(CodecError::Encoding(EncodingError::InvalidInputData(
+                    "static array element exceeds its declared width".to_string(),
+                )));
+            }
             element.resize(item_size, 0);
             let at = offset + (item_size * i);
             buf[at..at + item_size].copy_from_slice(&element);

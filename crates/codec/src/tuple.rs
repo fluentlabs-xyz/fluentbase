@@ -53,12 +53,10 @@ where
             // `header_el_size`. Writing the head at `offset` and then splitting at
             // `header_el_size` puts the member's encoding on top of the head whenever the tuple
             // does not start at zero.
-            let buf_len = buf.len();
-            let body_at = if buf_len == 0 {
-                current_offset + header_el_size
-            } else {
-                buf_len
-            };
+            let head_end = current_offset
+                .checked_add(header_el_size)
+                .ok_or(CodecError::Overflow)?;
+            let body_at = buf.len().max(head_end);
 
             write_u32_aligned::<B, ALIGN>(buf, current_offset, body_at as u32);
 
@@ -146,7 +144,7 @@ macro_rules! impl_encoder_for_tuple {
 
                 if $is_solidity {
                     // Solidity mode
-                    let aligned_offset = align_up::<ALIGN>(offset);
+                    let aligned_offset = offset;
                     let is_dynamic = Self::IS_DYNAMIC;
 
                     let aligned_header_size = {
@@ -162,8 +160,9 @@ macro_rules! impl_encoder_for_tuple {
                     };
 
                     let mut tail = if is_dynamic {
-                        let buf_len = buf.len();
-                        let offset = if buf_len == 0 { align_up::<ALIGN>(4) } else { buf_len };
+                        let head_end = aligned_offset.checked_add(align_up::<ALIGN>(4))
+                            .ok_or(CodecError::Overflow)?;
+                        let offset = buf.len().max(head_end);
                         write_u32_aligned::<B, ALIGN>(buf, aligned_offset, offset as u32);
                         if buf.len() < aligned_header_size + offset {
                             buf.resize(aligned_header_size + offset, 0);

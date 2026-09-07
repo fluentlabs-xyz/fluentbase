@@ -226,7 +226,6 @@ impl<const N: usize, B: ByteOrder, const ALIGN: usize, const IS_STATIC: bool>
     /// occupies its aligned width.
     fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
         let width = align_up::<ALIGN>(N);
-        let offset = align_up::<ALIGN>(offset);
         if buf.remaining() < offset + width {
             return Err(CodecError::Decoding(DecodingError::BufferTooSmall {
                 expected: offset + width,

@@ -2,6 +2,7 @@
 name = "codec-conformance"
 version = "0.0.0"
 edition = "2021"
+rust-version = "1.93.1"
 publish = false
 
 [dependencies]
