@@ -138,29 +138,17 @@ impl CodecStruct {
 
     /// Generate expression for calculating header size
     fn generate_header_size_expr(&self, sol_mode: bool, is_static: bool) -> TokenStream2 {
+        if sol_mode {
+            // Parent containers must advance by the same aligned head that encode writes.
+            return self.generate_aligned_header_size(sol_mode, is_static);
+        }
+
         let crate_path = Self::get_crate_path();
 
         let header_sizes = self.fields.iter().map(|field| {
             let ty = &field.ty;
-            if sol_mode {
-                // Every member occupies a whole number of words in the head area: one word if it
-                // is dynamic (an offset), its aligned inline width otherwise. Summing the raw
-                // HEADER_SIZE instead would report 16 for `{u32, u64, i32}` and 65 for
-                // `{U256, Address, bool}`, and `Vec<T>` strides by this constant.
-                let member = quote! {
-                    <#ty as #crate_path::Encoder<B, ALIGN, {true}, {#is_static}>>
-                };
-                quote! {
-                    if #member ::IS_DYNAMIC {
-                        32
-                    } else {
-                        #crate_path::align_up::<ALIGN>(#member ::HEADER_SIZE)
-                    }
-                }
-            } else {
-                quote! {
-                    #crate_path::align_up::<ALIGN>(<#ty as #crate_path::Encoder<B, ALIGN, {false}, {#is_static}>>::HEADER_SIZE)
-                }
+            quote! {
+                #crate_path::align_up::<ALIGN>(<#ty as #crate_path::Encoder<B, ALIGN, {false}, {#is_static}>>::HEADER_SIZE)
             }
         });
 
