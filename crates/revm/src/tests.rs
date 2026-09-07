@@ -41,6 +41,134 @@ impl MemoryReaderTr for ForwardInputMemoryReader {
     }
 }
 
+mod runtime_upgrade_validation_tests {
+    use super::*;
+    use fluentbase_sdk::{
+        compile_rwasm_maybe_system,
+        syscall::{encode, SYSCALL_ID_UPGRADE_WASM_RUNTIME},
+        PRECOMPILE_RUNTIME_UPGRADE,
+    };
+    use revm::handler::system_interruption::SystemInterruptionInputs;
+
+    fn upgrade(
+        ctx: &mut RwasmContext<InMemoryDB>,
+        target: Address,
+        binary: &[u8],
+    ) -> InstructionResult {
+        let mut input = Vec::new();
+        encode::upgrade_runtime_into(&mut input, &target, binary);
+        let mr = ForwardInputMemoryReader(input.into());
+        let mut frame = RwasmFrame::default();
+        frame.interpreter.input.target_address = PRECOMPILE_RUNTIME_UPGRADE;
+        frame.interpreter.gas = Gas::new(1_000_000);
+        let inputs = SystemInterruptionInputs {
+            call_id: 0,
+            code_hash: SYSCALL_ID_UPGRADE_WASM_RUNTIME,
+            input: 0..mr.0.len(),
+            fuel_limit: 0,
+            state: STATE_MAIN,
+            fuel16_ptr: 0,
+            gas: Gas::new(1_000_000),
+            preloaded_slot_costs: None,
+        };
+        let action =
+            execute_rwasm_interruption::<_, NoOpInspector>(&mut frame, None, ctx, inputs, mr)
+                .unwrap();
+        if let Some(outcome) = frame.interrupted_outcome {
+            outcome.result.unwrap().result
+        } else {
+            action
+                .into_interpreter_action()
+                .instruction_result()
+                .unwrap()
+        }
+    }
+
+    #[test]
+    fn system_runtime_upgrade_rejects_bad_hint_before_writing_code() {
+        let target = PRECOMPILE_EVM_RUNTIME;
+        let old_code = Bytecode::new_legacy(bytes!("00"));
+        let mut db = InMemoryDB::default();
+        db.insert_account_info(target, AccountInfo::default().with_code(old_code.clone()));
+        let mut ctx = RwasmContext::new(db, RwasmSpecId::PRAGUE);
+        for hint in [
+            b"invalid wasm".to_vec(),
+            wat::parse_str(
+                r#"(module
+            (func $start unreachable) (start $start)
+            (func (export "main") (param i32 i32) (result i32) i32.const 0))"#,
+            )
+            .unwrap(),
+        ] {
+            // Bypass the contract compiler to exercise the host's independent admission gate.
+            let binary = rwasm::RwasmModuleBuilder::default()
+                .with_hint_section(&hint)
+                .build()
+                .serialize();
+            assert_eq!(
+                upgrade(&mut ctx, target, &binary),
+                fluentbase_evm::types::instruction_result_from_exit_code(
+                    fluentbase_sdk::ExitCode::MalformedBuiltinParams,
+                    true
+                )
+            );
+            assert!(
+                !ctx.journaled_state.inner.state.contains_key(&target),
+                "validation must precede journal writes"
+            );
+            assert_eq!(
+                ctx.db().cache.accounts[&target].info.code.as_ref(),
+                Some(&old_code)
+            );
+        }
+    }
+
+    #[test]
+    fn system_runtime_upgrade_accepts_valid_hint() {
+        let target = PRECOMPILE_EVM_RUNTIME;
+        let mut ctx = RwasmContext::new(InMemoryDB::default(), RwasmSpecId::PRAGUE);
+        let wasm = wat::parse_str(
+            r#"(module
+            (memory (export "memory") 1)
+            (func (export "main") (param i32 i32) (result i32) i32.const 0))"#,
+        )
+        .unwrap();
+        let binary = compile_rwasm_maybe_system(&target, &wasm)
+            .unwrap()
+            .rwasm_module
+            .serialize();
+        assert_eq!(upgrade(&mut ctx, target, &binary), InstructionResult::Stop);
+        assert_eq!(
+            ctx.journaled_state.inner.state[&target]
+                .info
+                .code
+                .as_ref()
+                .unwrap()
+                .original_bytes()
+                .as_ref(),
+            &binary
+        );
+    }
+
+    #[test]
+    fn ordinary_runtime_upgrade_does_not_require_system_hint() {
+        let target = Address::repeat_byte(0xee);
+        let mut ctx = RwasmContext::new(InMemoryDB::default(), RwasmSpecId::PRAGUE);
+        let binary = rwasm::RwasmModule::empty().serialize();
+        assert_eq!(upgrade(&mut ctx, target, &binary), InstructionResult::Stop);
+        assert_eq!(
+            ctx.journaled_state.inner.state[&target]
+                .info
+                .code
+                .as_ref()
+                .unwrap()
+                .original_bytes()
+                .as_ref(),
+            &binary
+        );
+    }
+}
+
 #[cfg(test)]
 mod metadata_storage_gas_tests {
     use super::*;

@@ -51,9 +51,23 @@ Upgrade syscall handler enforces:
 - allowed only via runtime-upgrade precompile execution path,
 - payload must decode correctly,
 - bytecode must be valid rWasm payload,
+- system-runtime Wasm hints must compile and instantiate with both rWasm and Wasmtime before
+  any account code is replaced; start functions are rejected without executing them, and `main`
+  must match the `(i32, i32) -> i32` ABI used by the system-runtime executor,
 - target account is loaded and code is replaced deterministically.
 
 This enforcement is the final security boundary; contract-side checks alone are not enough.
+
+Both node flavours include Wasmtime for this validation. The `wasmtime` feature still selects
+the execution backend; admission rules are independent of that selection. The runtime-upgrade
+CLI performs the same validation during preflight. The EVM upgrade syscall installs analyzed EVM
+bytecode rather than a system-runtime hint, so it retains its existing EVM validation.
+
+Invalid system-runtime hints return `MalformedBuiltinParams` before installation. Loading an
+invalid hint already present in state also returns this error, consumes the supplied frame fuel,
+and leaves no cached runtime instance. These admission and execution changes require a coordinated
+node rollout at a network-agreed activation point. Existing genesis artifacts are not regenerated
+by this change; contract callers receive the host validation without rebuilding the upgrade contract.
 
 ---
 

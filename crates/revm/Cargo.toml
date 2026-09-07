@@ -49,6 +49,7 @@ fluentbase-sdk = { workspace = true }
 sha2.workspace = true
 serde_json = { workspace = true, features = ["alloc"] }
 alloy-primitives.workspace = true
+wat = "1.223.0"
 
 [features]
 default = ["std", "c-kzg", "secp256k1", "portable", "blst"]

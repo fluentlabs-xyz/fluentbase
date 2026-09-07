@@ -13,7 +13,9 @@ use crate::{
     ExecutionResult, NextAction,
 };
 use fluentbase_evm::{types::instruction_result_from_exit_code, EthereumMetadata};
-use fluentbase_runtime::{default_runtime_executor, RuntimeExecutor};
+use fluentbase_runtime::{
+    default_runtime_executor, runtime::validate_system_runtime, RuntimeExecutor,
+};
 use fluentbase_sdk::{
     byteorder::{ByteOrder, LittleEndian, ReadBytesExt},
     bytes::Buf,
@@ -1262,6 +1264,15 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let Ok(rwasm_bytecode) = RwasmBytecode::new(rwasm_binary.clone()) else {
                 return_halt!(MalformedBuiltinParams);
             };
+            // Admission must be identical on both node flavours and complete before state writes.
+            // Validate the hint actually executed by system runtimes, including when this syscall
+            // is invoked directly by a replacement runtime-upgrade contract.
+            if is_execute_using_system_runtime(&target_address)
+                && validate_system_runtime(&rwasm_bytecode.module.hint_section, target_address)
+                    .is_err()
+            {
+                return_halt!(MalformedBuiltinParams);
+            }
             let bytecode = Bytecode::Rwasm(rwasm_bytecode.into());
             // Make sure an account is loaded
             _ = ctx.journal_mut().load_account_with_code(target_address)?;

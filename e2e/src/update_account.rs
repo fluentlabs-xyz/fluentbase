@@ -299,6 +299,55 @@ const CANONICAL_PRECOMPILE_TARGET: Address = PRECOMPILE_RIPEMD160;
 const FLUENT_TARGET: Address = PRECOMPILE_WEBAUTHN_VERIFIER;
 const UPDATER_ADDRESS: Address = address!("0x8888888888888888888888888888888888888888");
 
+#[test]
+fn test_system_runtime_genesis_hints_pass_upgrade_validation() {
+    for (address, contract) in GENESIS_CONTRACTS_BY_ADDRESS.iter() {
+        if !fluentbase_sdk::is_execute_using_system_runtime(address) {
+            continue;
+        }
+        let module = rwasm::RwasmModule::new_checked(&contract.rwasm_bytecode)
+            .unwrap()
+            .0;
+        fluentbase_runtime::runtime::validate_system_runtime(&module.hint_section, *address)
+            .unwrap_or_else(|error| {
+                panic!("{} ({address}) failed validation: {error}", contract.name)
+            });
+    }
+}
+
+#[test]
+fn test_system_runtime_upgrade_rejects_incompatible_main_without_state_changes() {
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
+    let target = PRECOMPILE_WEBAUTHN_VERIFIER;
+    let old_code = ctx.get_code(target).unwrap().original_bytes();
+    let wasm: Bytes = wat::parse_str(
+        r#"(module
+        (memory (export "memory") 1)
+        (func (export "main") (param i32 i32) (result i64) i64.const 0))"#,
+    )
+    .unwrap()
+    .into();
+    // The contract's rWasm compiler accepts this signature, but SystemRuntime reads an i32.
+    assert!(compile_rwasm_maybe_system(&target, &wasm).is_ok());
+    let input = upgradeToCall {
+        target_address: target,
+        genesis_hash: U256::ZERO,
+        genesis_version: "invalid-runtime".to_string(),
+        wasm_bytecode: wasm,
+    }
+    .abi_encode();
+    let result = ctx.call_evm_tx(
+        DEFAULT_UPDATE_GENESIS_AUTH,
+        PRECOMPILE_RUNTIME_UPGRADE,
+        input.into(),
+        None,
+        None,
+    );
+    assert!(!result.is_success(), "{result:?}");
+    assert!(result.logs().is_empty());
+    assert_eq!(ctx.get_code(target).unwrap().original_bytes(), old_code);
+}
+
 /// A minimal WASM runtime, valid enough to compile but small enough to keep upgrade tests cheap.
 fn upgrade_wasm_module() -> Bytes {
     wat::parse_str(
