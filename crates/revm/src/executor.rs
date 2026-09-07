@@ -726,6 +726,11 @@ pub(crate) fn process_runtime_execution_outcome<CTX: ContextTr>(
         ctx.journal_mut().sstore(*target_address, k, v)?;
     }
 
+    // KNOWN LIMITATION (FLU-1306): buffered logs do not pay the LOG base/topic/data gas
+    // charged by the direct EMIT_LOG syscall. This underpricing is accepted to preserve
+    // existing network execution. Adding charges can change transaction success, gas usage,
+    // and resulting state; any repricing requires a coordinated network fork with the old
+    // rules retained for historical replay. Preserve the current policy here.
     for JournalLog { topics, data } in logs {
         ctx.journal_mut().log(Log {
             address: *target_address,
@@ -734,6 +739,9 @@ pub(crate) fn process_runtime_execution_outcome<CTX: ContextTr>(
     }
 
     if let Some(new_metadata) = new_metadata {
+        // Code-deposit gas is already charged by the EVM and Universal Token constructors
+        // before they emit new_metadata. EVM charges canonical runtime bytecode; Universal
+        // Token charges its metadata payload. Charging deposit here would charge it twice.
         // Safety: `new_metadata` should only be set by ownable accounts. If a non-ownable system
         // contract sets it, that indicates a severe invariant break; fail the frame
         // deterministically instead of panicking (with `panic = "abort"` a panic kills the node).
@@ -752,6 +760,10 @@ pub(crate) fn process_runtime_execution_outcome<CTX: ContextTr>(
     }
 
     if let Some(transfers) = transfers {
+        // KNOWN LIMITATION (FLU-1306): buffered native transfers do not pay CALL-style
+        // account-access, value-transfer, or new-account gas. As with buffered logs above,
+        // this underpricing is accepted for existing networks. Preserve these semantics
+        // until repricing is explicitly activated by a coordinated network fork.
         // Make sure contract can't overspend its balance
         let balance_required = transfers.iter().fold(U256::ZERO, |result, (_, amount)| {
             result.saturating_add(*amount)
