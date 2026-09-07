@@ -141,13 +141,6 @@ const PATH_A_ROSTER_FLOOR: f64 = 4_960.0;
 /// since the accrual is where the close reads the committee.
 const PATH_A_ACCRUAL_MAX: u64 = 3_750_000;
 
-/// Measured 2026-08-06: 544_000.
-const VIEW_INTERCEPT_MAX: f64 = 625_000.0;
-/// Measured 2026-08-06: 12_800 gas per roster entry.
-const VIEW_SLOPE_MAX: f64 = 14_700.0;
-/// Measured 2026-08-06: roster 2_301.
-const VIEW_ROSTER_FLOOR: f64 = 2_020.0;
-
 /// Measured 2026-08-17: **2_030_493**, down 544_400 from 2_574_893 on
 /// 2026-08-06 — a fall of 21%.
 ///
@@ -168,21 +161,37 @@ const VIEW_ROSTER_FLOOR: f64 = 2_020.0;
 /// elsewhere, not left at the old ceiling. A ceiling that no longer binds
 /// records nothing.
 const COMMIT_INTERCEPT_MAX: f64 = 2_340_000.0;
-/// The same walk the view above pays for, so the same slope to the digit: both
-/// rank the whole roster. Note that these are two independent ceilings against
-/// one literal, so they catch a slope that RISES; a commit that stopped
-/// re-deriving would send this slope toward zero and both guards would still
-/// read green. Detecting that needs the two fitted slopes compared against each
-/// other, which no assertion here does.
+/// Re-measured 2026-09-07: **17_100** gas per active-set entry, up 4_300 from
+/// 12_800 on 2026-08-06. The cost REGRESSED; the threshold had not aged.
 ///
-/// Measured 2026-08-06: 12_800 gas per roster entry.
-const COMMIT_SLOPE_MAX: f64 = 14_700.0;
+/// The rise is bought, not accidental. The eligibility filter moved BEFORE the
+/// stake cut, so the consensus-key read — `peer_pubkey` and its activation epoch,
+/// two slots — is now paid for every candidate instead of only for the `cap`
+/// that were seated. Ranking still walks the whole set as it always did; what
+/// changed is how many of them get asked whether they could take a seat. That is
+/// the price of the ordering itself: filtering after the cut spent a seat on a
+/// validator that could not take it and did not pass it on, which is the defect
+/// the reorder removes.
+///
+/// The alternative that would win it back is ranking first and then walking DOWN
+/// the ranked list taking eligible members until `cap` is filled — identical
+/// output, key read paid only down to the cut. It needs a selection that can
+/// yield more than `cap` on demand, which `top_k_by_stake_at` cannot, so it is
+/// not done here.
+///
+/// Pinned UP to the measurement with the ~15% headroom this file uses elsewhere.
+const COMMIT_SLOPE_MAX: f64 = 19_700.0;
 /// The binding limit of the three — see the minimum rule above.
 ///
-/// Measured 2026-08-17: roster 2_185, up from 2_143 on 2026-08-06. The commit
-/// got cheaper at the intercept and its slope did not move, so the roster it can
-/// carry inside the 30M budget grew.
-const COMMIT_ROSTER_FLOOR: f64 = 1_920.0;
+/// Re-measured 2026-09-07: roster **1_648**, down from 2_185 on 2026-08-17, for
+/// the slope above. Pinned DOWN by the same ~12% this file used when it last
+/// moved a floor, NOT left at 1_920 where it would fail the very measurement it
+/// is being set against.
+///
+/// Worth its own line: 1_648 is thirty-two times `MAX_ACTIVE_VALIDATORS_LENGTH`
+/// (51, `consts.rs`), the largest active set the contract will accept. This guard
+/// is a canary for the SHAPE of the cost, not a limit anything can reach.
+const COMMIT_ROSTER_FLOOR: f64 = 1_450.0;
 
 /// Measured 2026-08-17: 48_852, i.e. 0.4% of the cap. Was 6_651_928 — 55.4% of
 /// it — on 2026-08-06.
@@ -331,8 +340,6 @@ sol! {
         function commitEpochCommittee() external;
         function settleEpochStipend(uint64 epoch) external;
 
-        function getValidatorsWithKeysAt(uint64 epoch) external view
-            returns (address[] validators, EpochConsensusKeys[] keys);
         function blocksInEpoch(uint64 epoch) external view returns (uint32);
         function pendingExclusions() external view returns (address[]);
         function getEpochRewards(uint64 epoch) external view returns (uint256);
@@ -657,47 +664,33 @@ fn first_block(epoch: u64) -> u64 {
 }
 
 // ---------------------------------------------------------------------------
-// Path B: the committee-selection view the node reads at every epoch boundary.
+// Path B: the committee commit the node makes at every epoch boundary.
 // ---------------------------------------------------------------------------
 
+/// The READ half of this path is gone. Until 2026-09-07 the node re-derived the
+/// committee off `getValidatorsWithKeysAt(epoch)` and this test measured that
+/// view beside the commit that froze the same selection; the view, the per-epoch
+/// selection roster it walked and the epoch-addressed cap it read were all
+/// deleted when the contract dropped to ONE selection algorithm. `VIEW_*` guards
+/// went with them. The commit is the whole path now, and it is the half that was
+/// always load-bearing: it runs as a pre-execution system call against the 30M
+/// budget, where the view ran as an ordinary `eth_call` with no budget at all.
+///
+/// The `roster` axis is now the size of the ACTIVE VALIDATOR SET, which is what
+/// the commit walks. The name is kept because the fixture builds it the same way
+/// and the constants are pinned against the old measurements.
 #[test]
-fn path_b_selection_view_cost_by_roster_size() {
-    println!("\n=== PATH B: getValidatorsWithKeysAt(epoch), by selection-roster size ===");
-    println!(
-        "{:>8}  {:>16}  {:>16}",
-        "roster", "view frame gas", "commit frame gas"
-    );
-    let mut points: Vec<(usize, u64)> = Vec::new();
+fn path_b_committee_commit_cost_by_roster_size() {
+    println!("\n=== PATH B: commitEpochCommittee(), by active-set size ===");
+    println!("{:>8}  {:>16}", "roster", "commit frame gas");
     let mut commit_points: Vec<(usize, u64)> = Vec::new();
     for roster in [COMMITTEE, 100, 200, 400] {
         let mut fixture = fixture(roster, true);
-        let measured = measure(
-            &mut fixture.context,
-            OWNER,
-            IStaking::getValidatorsWithKeysAtCall { epoch: 0 }.abi_encode(),
-        );
-        let decoded = IStaking::getValidatorsWithKeysAtCall::abi_decode_returns(&measured.output)
-            .expect("selection view decodes");
-        assert_eq!(decoded.validators.len(), COMMITTEE);
-        // The write half of the same path: it re-derives the identical selection
-        // and freezes it.
         let commit = fixture.commit_committee();
-        println!(
-            "{roster:>8}  {:>16}  {:>16}",
-            measured.frame_gas, commit.frame_gas
-        );
-        points.push((roster, measured.frame_gas));
+        println!("{roster:>8}  {:>16}", commit.frame_gas);
         commit_points.push((roster, commit.frame_gas));
     }
     let mut guards = Guards::default();
-
-    let (view_base, view_slope) = linear_fit(&points);
-    let view_roster = roster_at_budget(view_base, view_slope);
-    println!("\ngetValidatorsWithKeysAt fit: {view_base:.0} + {view_slope:.0} * roster");
-    println!("view exhausts the 30M budget at roster ~= {view_roster:.0}");
-    guards.at_most("view intercept", view_base, VIEW_INTERCEPT_MAX);
-    guards.at_most("view gas per roster entry", view_slope, VIEW_SLOPE_MAX);
-    guards.at_least("view roster headroom", view_roster, VIEW_ROSTER_FLOOR);
 
     let (commit_base, commit_slope) = linear_fit(&commit_points);
     let commit_roster = roster_at_budget(commit_base, commit_slope);

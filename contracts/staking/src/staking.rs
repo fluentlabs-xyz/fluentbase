@@ -1,7 +1,6 @@
 //! Staking ownership, epoch reads, and validator lifecycle methods.
 
 use crate::{
-    config::active_validators_length_at,
     consensus::{self, store_consensus_keys, verify_consensus_keys},
     consts::*,
     events, liveness, math,
@@ -27,7 +26,10 @@ fn address_arg(input: &[u8]) -> Result<Address, ExitCode> {
     Ok(decode::<AddressCommand>(input)?.value)
 }
 
-fn validator_status<SDK: SharedAPI>(sdk: &SDK, validator: Address) -> Result<u8, ExitCode> {
+pub(crate) fn validator_status<SDK: SharedAPI>(
+    sdk: &SDK,
+    validator: Address,
+) -> Result<u8, ExitCode> {
     staking_storage()
         .validators_accessor()
         .entry(validator)
@@ -178,13 +180,9 @@ fn seed_selection_membership<SDK: SharedAPI>(
     visible: bool,
     since_epoch: u64,
 ) -> Result<(), ExitCode> {
-    let storage = staking_storage();
-    if visible {
-        storage
-            .selection_roster_accessor()
-            .push_checked(sdk, validator)?;
-    }
-    let membership = storage.selection_membership_accessor().entry(validator);
+    let membership = staking_storage()
+        .selection_membership_accessor()
+        .entry(validator);
     membership.visible_accessor().set_checked(sdk, visible)?;
     // Written directly rather than through `set_selection_visible` so the seed
     // takes effect at `since_epoch` itself, with no next-epoch delay: a genesis
@@ -198,20 +196,7 @@ fn seed_selection_membership<SDK: SharedAPI>(
     membership.prev2_from_accessor().set_checked(sdk, 0)?;
     membership
         .effective_from_accessor()
-        .set_checked(sdk, since_epoch)?;
-    membership.rostered_accessor().set_checked(sdk, visible)
-}
-
-fn ensure_rostered<SDK: SharedAPI>(sdk: &mut SDK, validator: Address) -> Result<(), ExitCode> {
-    let storage = staking_storage();
-    let membership = storage.selection_membership_accessor().entry(validator);
-    if !membership.rostered_accessor().get_checked(sdk)? {
-        storage
-            .selection_roster_accessor()
-            .push_checked(sdk, validator)?;
-        membership.rostered_accessor().set_checked(sdk, true)?;
-    }
-    Ok(())
+        .set_checked(sdk, since_epoch)
 }
 
 pub(crate) fn set_selection_visible<SDK: SharedAPI>(
@@ -282,52 +267,15 @@ pub(crate) fn selection_visible_at<SDK: SharedAPI>(
     }
 }
 
-pub(crate) fn selection_candidates_at<SDK: SharedAPI>(
-    sdk: &SDK,
-    epoch: u64,
-) -> Result<Vec<Address>, ExitCode> {
-    let storage = staking_storage();
-    let roster = storage.selection_roster_accessor();
-    let len = roster.len_checked(sdk)?;
-    let mut candidates = Vec::with_capacity(len as usize);
-    for index in 0..len {
-        let validator = roster.at(index).get_checked(sdk)?;
-        if selection_visible_at(sdk, validator, epoch)? {
-            candidates.push(validator);
-        }
-    }
-    Ok(candidates)
-}
-
-/// Number of roster members that could actually be seated at `epoch`.
-///
-/// Counts the same population `selection_candidates_at` returns, measured
-/// rather than materialized because it runs at every epoch close.
-pub(crate) fn count_selection_visible_at<SDK: SharedAPI>(
-    sdk: &SDK,
-    epoch: u64,
-) -> Result<u64, ExitCode> {
-    let roster = staking_storage().selection_roster_accessor();
-    let len = roster.len_checked(sdk)?;
-    let mut visible = 0;
-    for index in 0..len {
-        let validator = roster.at(index).get_checked(sdk)?;
-        if selection_visible_at(sdk, validator, epoch)? {
-            visible += 1;
-        }
-    }
-    Ok(visible)
-}
-
 /// Stamp `validator` selection-invisible from the next epoch onward.
 ///
 /// Refuses — returning `false`, never reverting — when the validator is already
-/// invisible at the bite epoch, or when the visible pool does not strictly
-/// exceed that epoch's cap. Selection takes `min(cap, visible)` with no
-/// backfill floor, so excluding the marginal candidate would shrink the
-/// committee instead of replacing a seat. A revert is not available here: the
-/// caller must be able to leave no trace of a refusal, and reverting would halt
-/// the chain over a condition that is normal on a small network.
+/// invisible at the bite epoch, or when the eligible population less this
+/// validator would no longer reach [`MIN_COMMITTEE_LENGTH`]. Below the floor the
+/// commit reverts, and the commit is a pre-execution system call, so an
+/// exclusion that pushed the population under it would stop the chain over a
+/// liveness verdict. A revert is not available here either: the caller must be
+/// able to leave no trace of a refusal.
 ///
 /// Best-effort by construction: the stamp bites two selection epochs after this
 /// check, and registrations in between can invalidate it either way.
@@ -340,9 +288,8 @@ pub(crate) fn apply_production_exclusion<SDK: SharedAPI>(
         return Ok(false);
     }
     // No "stamps already issued this close" term: an earlier stamp in the same
-    // close is already invisible at `bite_epoch`, so the count excludes it.
-    if count_selection_visible_at(sdk, bite_epoch)? <= active_validators_length_at(sdk, bite_epoch)?
-    {
+    // close is already invisible at `bite_epoch`, so this read excludes it.
+    if !eligible_population_at_least(sdk, bite_epoch, MIN_COMMITTEE_LENGTH as u64 + 1)? {
         return Ok(false);
     }
     set_selection_visible(sdk, validator, false, current_epoch(sdk)?)?;
@@ -382,31 +329,55 @@ pub(crate) fn release_production_exclusion<SDK: SharedAPI>(
     .emit(sdk)
 }
 
-pub(crate) fn selected_validators_at<SDK: SharedAPI>(
+/// Does `epoch` have at least `wanted` Active, selection-visible validators?
+///
+/// A BOUND, not a count, and the scan stops the moment it is met. The only
+/// caller asks "would removing one leave the committee floor standing", which
+/// needs `MIN_COMMITTEE_LENGTH + 1` and nothing finer — and the exact count is a
+/// walk of the whole Active set, two SLOADs per entry, on the epoch close. At the
+/// production ceiling of 51 validators that is a hundred reads for an answer that
+/// six of them settle. Stopping early is why this is a predicate.
+///
+/// Mirrors the population `selected_committee_at` ranks, minus its consensus-key
+/// term: a validator that is Active and visible but keyless is counted here and
+/// dropped there. Counting the wider set is the conservative direction for the
+/// only caller — an exclusion refused because the count looked too small never
+/// happens, while one allowed on a count that was too large is what the commit's
+/// own floor still catches.
+///
+/// WHICH validators the early exit stops on does not matter: the caller removes
+/// exactly one, so `population >= wanted` gives `population - 1 >= wanted - 1`
+/// whether or not the one being removed is among those counted.
+pub(crate) fn eligible_population_at_least<SDK: SharedAPI>(
     sdk: &SDK,
     epoch: u64,
-) -> Result<Vec<(Address, U256)>, ExitCode> {
-    let candidates = selection_candidates_at(sdk, epoch)?;
-    let cap = active_validators_length_at(sdk, epoch)? as usize;
-    top_k_by_stake_at(sdk, candidates, epoch, cap)
-}
-
-/// The same selection as `selected_validators_at`, without the weights.
-pub(crate) fn selected_addresses_at<SDK: SharedAPI>(
-    sdk: &SDK,
-    epoch: u64,
-) -> Result<Vec<Address>, ExitCode> {
-    Ok(selected_validators_at(sdk, epoch)?
-        .into_iter()
-        .map(|(validator, _)| validator)
-        .collect())
+    wanted: u64,
+) -> Result<bool, ExitCode> {
+    if wanted == 0 {
+        return Ok(true);
+    }
+    let active = staking_storage().active_validators_accessor();
+    let len = active.len_checked(sdk)?;
+    let mut population = 0;
+    for index in 0..len {
+        let validator = active.at(index).get_checked(sdk)?;
+        if validator_status(sdk, validator)? == STATUS_ACTIVE
+            && selection_visible_at(sdk, validator, epoch)?
+        {
+            population += 1;
+            if population >= wanted {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
 }
 
 /// Live committee view.
 ///
-/// Deliberately reads the scalar cap, not the epoch-addressed one: this answers
-/// "who would be selected right now", so epoch purity neither holds here nor is
-/// claimed for it. Only `selected_validators_at` feeds committee commits.
+/// Answers "who would be selected right now" — ranked and cut like the commit,
+/// but without the commit's eligibility filter, so it can name a validator the
+/// commit would drop. Only `selected_committee_at` feeds committee commits.
 pub(crate) fn selected_validators<SDK: SharedAPI>(sdk: &SDK) -> Result<Vec<Address>, ExitCode> {
     let storage = staking_storage();
     let active = storage.active_validators_accessor();
@@ -430,8 +401,13 @@ pub(crate) fn selected_validators<SDK: SharedAPI>(sdk: &SDK) -> Result<Vec<Addre
 
 /// Match Solidity's partial selection sort exactly.
 ///
-/// Equal-stake candidates retain roster order; an address tie-breaker would
-/// choose a different committee at the top-k boundary.
+/// Equal-stake candidates retain the order of the candidate vector; an address
+/// tie-breaker would choose a different committee at the top-k boundary. NB that
+/// vector is now `active_validators`, which `remove_active` mutates by
+/// swap-remove — so on equal stakes a departure and a return can change WHICH of
+/// two tied validators sits above the cut. Deterministic (every node reads the
+/// same vector) but history-dependent, where the append-only roster it replaced
+/// was not.
 /// Returns each selected validator with the stake it was ranked on.
 ///
 /// The weight is returned rather than dropped because the committee commit
@@ -899,7 +875,6 @@ pub fn activate_validator<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result
     storage
         .active_validators_accessor()
         .push_checked(sdk, validator)?;
-    ensure_rostered(sdk, validator)?;
     // The visibility stamp is the whole selection filter, so re-stamping here
     // would silently cancel a running exclusion. The validator still becomes
     // Active; it stays unselectable until the exclusion's own release path
@@ -1293,9 +1268,10 @@ pub(crate) fn undelegate_from<SDK: SharedAPI>(
     )?;
 
     if full_owner_exit {
-        // Stake and membership both change at `before_epoch`. The active
-        // registry is updated immediately, while historical selection for the
-        // current epoch remains available for committee validation.
+        // Stake changes at `before_epoch`; membership changes NOW. `remove_active`
+        // is immediate and the selection reads the live active set, so the next
+        // commit no longer seats this validator whatever epoch it selects from —
+        // there is no historical selection view left to re-derive.
         deactivate_validator_at(sdk, validator, before_epoch - 1)?;
         emit_modified(sdk, validator)?;
     }

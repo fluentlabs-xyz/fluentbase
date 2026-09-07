@@ -85,9 +85,11 @@ validator-creation call; there is no separate key-registration phase.
 - Equivocation tombstones are permanent and prevent key reuse.
 - Compressed BLS public keys are stored as three fixed `bytes32` words. Validator creation rejects any verifier output
   that is not exactly 96 bytes, avoiding dynamic-bytes metadata and making malformed stored key lengths unrepresentable.
-- Committee selection ranks candidates by stake first and drops those without active, correctly
-  shaped consensus keys afterwards. The order matters: filtering before the cut would promote a
-  lower-staked keyed validator into the committee, changing which validators the epoch seats.
+- Committee selection drops the ineligible FIRST and ranks by stake afterwards. Eligible means all
+  three of: status Active, selection-visible (no running production exclusion), and holding a
+  consensus key active by the selection epoch. The order matters the other way round: filtering
+  after the cut spent a seat on a validator that could not take it and did not pass the seat to the
+  next candidate, so a population of twenty eligible validators could seat four.
 - `commitEpochCommittee` takes no argument. It derives the committee itself and sorts it ascending by
   peer key, which is the order the consensus index space uses — `recordProduction` credits the member
   at the carried leader index. Producing that order rather than checking a supplied one removes the
@@ -96,10 +98,18 @@ validator-creation call; there is no separate key-registration phase.
   in the block, and the node treats a non-success result as a block-execution error, so there is no
   retry and no transaction can repair the state afterwards. A committee below `MIN_COMMITTEE_LENGTH`
   is therefore an assertion of an assumption — that the chain always has that many eligible
-  validators — not a condition the contract expects to meet.
-- The committee-size cap is epoch-addressed. Changing it schedules the new value from the next epoch,
-  so an epoch that has already started keeps the cap it was selected under. The scalar getter reports
-  the latest scheduled value immediately and is not epoch-correct by design.
+  validators — not a condition the contract expects to meet. That assumption is reachable by
+  ordinary permissionless action: one owner withdrawing their own self-stake, or one equivocation
+  tombstone, removes a validator from the active set IMMEDIATELY, so on a network sitting at the
+  floor the very next commit reverts and the chain stops. The alternative — carrying the previous
+  committee forward — was removed on 2026-09-07 because it froze the seats, tombstoned members
+  included, in the quorum denominator.
+- The committee-size cap is one live scalar. Changing it governs the next commit, not a future epoch:
+  the per-epoch checkpoint history was removed with the rest of the epoch-addressed selection surface.
+  What is still frozen per epoch is the COMMITTED committee itself, written once by the commit and
+  never rewritten — that, and not a reconstructable selection view, is the record of what an epoch
+  seated. The `effectiveEpoch` field of `ActiveValidatorsLengthChanged` is a leftover of the old
+  scheduling and no longer names the first epoch the new cap governs.
 - Leader weights are frozen at commit time from the selection epoch, and are never recomputed on
   read. An unfrozen weight would depend on the block height each node reads at, and the leader is
   drawn from those weights.

@@ -50,9 +50,6 @@ pub const SIG_GET_STAKING_TOKEN: u32 = derive_keccak256_id!("getStakingToken()")
 // 0x32cc6f08
 pub const SIG_GET_ACTIVE_VALIDATORS_LENGTH: u32 =
     derive_keccak256_id!("getActiveValidatorsLength()");
-// 0xd9b083ba
-pub const SIG_GET_ACTIVE_VALIDATORS_LENGTH_AT: u32 =
-    derive_keccak256_id!("getActiveValidatorsLengthAt(uint64)");
 // 0x346c90a8
 pub const SIG_GET_EPOCH_BLOCK_INTERVAL: u32 = derive_keccak256_id!("getEpochBlockInterval()");
 // 0xa2a50528
@@ -197,13 +194,8 @@ pub const SIG_GET_CONSENSUS_KEYS: u32 = derive_keccak256_id!("getConsensusKeys(a
 pub const SIG_GET_VALIDATORS_WITH_KEYS: u32 = derive_keccak256_id!("getValidatorsWithKeys()");
 // 0xd96cbd7b
 pub const SIG_GET_REGISTRY_WITH_KEYS: u32 = derive_keccak256_id!("getRegistryWithKeys()");
-// 0x7cfba9f3
-pub const SIG_GET_VALIDATORS_WITH_KEYS_AT: u32 =
-    derive_keccak256_id!("getValidatorsWithKeysAt(uint64)");
 // 0xc06a82de
 pub const SIG_NEXT_EPOCH_TO_COMMIT: u32 = derive_keccak256_id!("nextEpochToCommit()");
-// 0x8bd070e4
-pub const SIG_COMMITTEE_SELECTION_EPOCH: u32 = derive_keccak256_id!("committeeSelectionEpoch()");
 // 0xe505b249
 pub const SIG_COMMIT_EPOCH_COMMITTEE: u32 = derive_keccak256_id!("commitEpochCommittee()");
 // 0x2660899f
@@ -493,8 +485,7 @@ pub const STIPEND_FUEL_CAP: u64 = 12_000_000 * FUEL_DENOM_RATE;
 /// same number, because they are the same offset — how far back of the target
 /// epoch its membership is selected from.
 ///
-/// Both `commit_epoch_committee` and the `committeeSelectionEpoch` getter must
-/// read it, or the node selects from an epoch the contract will reject.
+/// `commit_epoch_committee` is its only reader.
 pub const MAX_COMMITTEE_LOOKAHEAD_EPOCHS: u64 = 2;
 
 pub const BLS_PUBKEY_UNCOMPRESSED_LENGTH: usize = 256;

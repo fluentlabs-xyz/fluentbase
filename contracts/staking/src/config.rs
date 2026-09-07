@@ -43,7 +43,6 @@ pub(crate) fn apply_initial_config<SDK: SharedAPI>(
     config
         .active_validators_length_accessor()
         .set_checked(sdk, command.active_validators_length as u64)?;
-    schedule_cap_checkpoint(sdk, 0, command.active_validators_length)?;
     config
         .epoch_block_interval_accessor()
         .set_checked(sdk, command.epoch_block_interval as u64)?;
@@ -255,65 +254,6 @@ pub fn get_active_validators_length<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(),
     )
 }
 
-/// Committee size cap in force at `epoch`.
-///
-/// Backward scan over the checkpoint history. An empty history means the
-/// contract is not initialized yet, in which case the scalar is the only
-/// answer available.
-pub(crate) fn active_validators_length_at<SDK: SharedAPI>(
-    sdk: &SDK,
-    epoch: u64,
-) -> Result<u64, ExitCode> {
-    let config = chain_config_storage();
-    let checkpoints = config.cap_checkpoints_accessor();
-    let mut index = checkpoints.len_checked(sdk)?;
-    while index > 0 {
-        index -= 1;
-        let checkpoint = checkpoints.at(index);
-        if checkpoint.from_epoch_accessor().get_checked(sdk)? <= epoch {
-            return Ok(checkpoint.value_accessor().get_checked(sdk)? as u64);
-        }
-    }
-    config.active_validators_length_accessor().get_checked(sdk)
-}
-
-/// Records `value` as the cap from `from_epoch` onward.
-///
-/// A repeat set inside the same epoch overwrites the pending tail instead of
-/// appending, so a scheduled-but-not-yet-effective cap can still be corrected
-/// without leaving an unreachable checkpoint behind.
-fn schedule_cap_checkpoint<SDK: SharedAPI>(
-    sdk: &mut SDK,
-    from_epoch: u64,
-    value: u32,
-) -> Result<(), ExitCode> {
-    let checkpoints = chain_config_storage().cap_checkpoints_accessor();
-    let len = checkpoints.len_checked(sdk)?;
-    if len > 0 {
-        let tail = checkpoints.at(len - 1);
-        if tail.from_epoch_accessor().get_checked(sdk)? == from_epoch {
-            return tail.value_accessor().set_checked(sdk, value);
-        }
-    }
-    // `grow_checked` does not zero the new element, so both fields are written.
-    let entry = checkpoints.grow_checked(sdk)?;
-    entry.from_epoch_accessor().set_checked(sdk, from_epoch)?;
-    entry.value_accessor().set_checked(sdk, value)
-}
-
-/// Public handler `0xd9b083ba` (`getActiveValidatorsLengthAt`).
-///
-/// Returns the committee size cap that was in force at `epoch`.
-pub fn get_active_validators_length_at<SDK: SharedAPI>(
-    sdk: &mut SDK,
-    input: &[u8],
-) -> Result<(), ExitCode> {
-    ensure_non_payable(sdk)?;
-    let epoch = decode::<U64Command>(input)?.value;
-    let value = active_validators_length_at(sdk, epoch)?;
-    write_abi(sdk, &value)
-}
-
 /// Public handler `0x346c90a8` (`getEpochBlockInterval`).
 ///
 /// Returns the configured epoch block interval.
@@ -512,12 +452,8 @@ pub fn set_active_validators_length<SDK: SharedAPI>(
     }
     let field = chain_config_storage().active_validators_length_accessor();
     let previous = field.get_checked(sdk)?;
-    // The scalar reports the latest SCHEDULED value immediately; the checkpoint
-    // governs epoch-correct reads. Splitting the two is what keeps an epoch that
-    // has already started immutable.
     field.set_checked(sdk, value as u64)?;
     let effective_epoch = next_epoch(sdk)?;
-    schedule_cap_checkpoint(sdk, effective_epoch, value)?;
     events::ActiveValidatorsLengthChanged {
         prev_value: previous as u32,
         new_value: value,

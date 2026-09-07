@@ -40,10 +40,6 @@ pub struct ChainConfigStorage {
     /// Revoking that approval stops payments without forfeiting them, because
     /// the failed pull reverts and leaves the settlement cursor in place.
     blend_reserve: StorageAddress,
-    /// Committee size cap history, ascending by `from_epoch`.
-    ///
-    /// Appended, never inserted: declaration order is the storage layout.
-    cap_checkpoints: StorageVec<CapCheckpointStorage>,
     min_verdict_due_blocks: StorageU32,
     exclusion_backoff_cap: StorageU32,
     /// Kill switch for the production-liveness tier, seeded `true` at init.
@@ -75,18 +71,6 @@ pub struct ValidatorSnapshotStorage {
     commission_rate: StorageU16,
     /// Per-epoch BLEND reward in token base units; never copied forward.
     total_blend_rewards: StorageUint96,
-}
-
-/// Committee size cap in force from `from_epoch` onward.
-///
-/// The epoch-frozen selection view stands on three epoch-addressed legs:
-/// visibility, stake, and this cap. Reading the cap live was the missing leg —
-/// a governance change would retroactively rewrite the committee of an epoch
-/// that had already been committed.
-#[derive(Storage)]
-pub struct CapCheckpointStorage {
-    from_epoch: StorageU64,
-    value: StorageU32,
 }
 
 /// Effective delegation balance beginning at `epoch`.
@@ -141,7 +125,6 @@ pub struct SelectionMembershipStorage {
     visible: StorageBool,
     prev_visible: StorageBool,
     effective_from: StorageU64,
-    rostered: StorageBool,
     /// Epoch from which `prev_visible` took effect.
     ///
     /// Appended, never inserted: declaration order is the storage layout.
@@ -243,7 +226,6 @@ pub struct StakingStorage {
     validators: StorageMap<Address, ValidatorStorage>,
     owner_validators: StorageMap<Address, StorageAddress>,
     active_validators: StorageVec<StorageAddress>,
-    selection_roster: StorageVec<StorageAddress>,
     selection_membership: StorageMap<Address, SelectionMembershipStorage>,
     validator_snapshots: StorageMap<Address, StorageMap<u64, ValidatorSnapshotStorage>>,
     validator_delegations: StorageMap<Address, StorageMap<Address, ValidatorDelegationStorage>>,

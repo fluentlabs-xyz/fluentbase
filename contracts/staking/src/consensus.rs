@@ -6,8 +6,8 @@ use crate::{
     evidence::{self, EvidenceShape},
     math,
     staking::{
-        remove_active, remove_delegation_from_totals, selected_addresses_at, selected_validators,
-        selected_validators_at, set_selection_visible,
+        remove_active, remove_delegation_from_totals, selected_validators, selection_visible_at,
+        set_selection_visible, top_k_by_stake_at, validator_status,
     },
     storage::{chain_config_storage, consensus_storage, staking_storage},
     types::{AddressCommand, ConsensusKeys, EpochSignerCommand, EquivocationCommand, U64Command},
@@ -321,19 +321,6 @@ pub fn get_registry_with_keys<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitC
     write_validators_with_keys(sdk, validators, None)
 }
 
-/// Public handler `0x7cfba9f3` (`getValidatorsWithKeysAt`).
-///
-/// Returns the selected validators and consensus keys for an epoch.
-pub fn get_validators_with_keys_at<SDK: SharedAPI>(
-    sdk: &mut SDK,
-    input: &[u8],
-) -> Result<(), ExitCode> {
-    ensure_non_payable(sdk)?;
-    ensure_initialized(sdk)?;
-    let epoch = decode::<U64Command>(input)?.value;
-    write_validators_with_keys(sdk, selected_addresses_at(sdk, epoch)?, Some(epoch))
-}
-
 /// Public handler `0xc06a82de` (`nextEpochToCommit`).
 ///
 /// Returns the next epoch whose committee can be committed.
@@ -346,20 +333,6 @@ pub fn next_epoch_to_commit<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCod
             .last_committed_epoch_p1_accessor()
             .get_checked(sdk)?,
     )
-}
-
-/// Public handler `0x8bd070e4` (`committeeSelectionEpoch`).
-///
-/// Returns the validator-selection epoch used by the next committee commit.
-pub fn committee_selection_epoch<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
-    ensure_non_payable(sdk)?;
-    ensure_initialized(sdk)?;
-    let target = consensus_storage()
-        .last_committed_epoch_p1_accessor()
-        .get_checked(sdk)?;
-    // Must stay the same offset `commit_epoch_committee` selects from, or the
-    // node ranks the wrong epoch's stake and its submission is rejected.
-    write_abi(sdk, &target.saturating_sub(MAX_COMMITTEE_LOOKAHEAD_EPOCHS))
 }
 
 /// Which membership record `epoch` seats, and how many of its entries.
@@ -443,11 +416,11 @@ fn write_ring<SDK: SharedAPI>(
 
 /// The store half of [`write_ring`], over weights that are already compacted.
 ///
-/// Split out for the carry-over in [`commit_epoch_committee`], which has no
-/// `CommitteeMember` slice to compact: its weights come back out of the previous
-/// epoch's ring frame, already `uint112`, and are re-stamped into this epoch's.
-/// Compacting is the only thing the two paths do differently, so it is the only
-/// thing above this line.
+/// Split out for a second caller that is now gone — the committee carry-over,
+/// which re-stamped the previous epoch's already-`uint112` frame and so had
+/// nothing to compact. [`write_ring`] is the only caller left; the split is kept
+/// because the two halves are a compaction pass and a store pass, and folding
+/// them back would put the `IntegerOverflow` of the first inside the second.
 fn write_ring_compact<SDK: SharedAPI>(
     sdk: &mut SDK,
     epoch: u64,
@@ -559,120 +532,63 @@ pub(crate) struct CommitteeMember {
     pub weight: U256,
 }
 
-/// Committee for `epoch`: the selection view, retained to members whose
-/// consensus keys are active by `epoch`.
+/// Committee for `epoch`: the Active validators that are ELIGIBLE at `epoch`,
+/// ranked by stake and cut to the configured cap.
 ///
-/// The key filter runs *after* the stake cut, never before. Filtering first
-/// would promote a lower-staked keyed validator into the committee, changing
-/// which validators the epoch seats.
-fn selected_committee_at<SDK: SharedAPI>(
+/// Eligible means all three of: status Active, selection-visible at `epoch` (the
+/// production-exclusion stamp), and holding a consensus key active by `epoch`.
+///
+/// The whole filter runs *before* the stake cut. A validator that cannot be
+/// seated occupying a slot in the cut and being dropped afterwards spent that
+/// seat on nobody — the seat was not passed to the next eligible validator, and
+/// a population of twenty eligible validators could seat four. Filtering first
+/// is what makes the cut hand out `min(cap, eligible)` seats to validators that
+/// can actually take them, and what lets a production exclusion free a seat for
+/// the next candidate instead of shrinking the committee.
+pub(crate) fn selected_committee_at<SDK: SharedAPI>(
     sdk: &SDK,
     epoch: u64,
 ) -> Result<Vec<CommitteeMember>, ExitCode> {
-    let selected = selected_validators_at(sdk, epoch)?;
-    let mut eligible = Vec::with_capacity(selected.len());
-    for (validator, weight) in selected {
+    let active = staking_storage().active_validators_accessor();
+    let active_len = active.len_checked(sdk)?;
+    let mut candidates = Vec::with_capacity(active_len as usize);
+    for index in 0..active_len {
+        let validator = active.at(index).get_checked(sdk)?;
+        if validator_status(sdk, validator)? != STATUS_ACTIVE
+            || !selection_visible_at(sdk, validator, epoch)?
+        {
+            continue;
+        }
         if let Some(peer_pubkey) = active_peer_key_at(sdk, validator, epoch)? {
-            eligible.push(CommitteeMember {
-                validator,
-                peer_pubkey,
-                weight,
-            });
+            candidates.push((validator, peer_pubkey));
         }
     }
-    Ok(eligible)
-}
-
-/// Re-seat `epoch - 1`'s committee at `epoch`, because the selection for `epoch`
-/// came back below [`MIN_COMMITTEE_LENGTH`].
-///
-/// **This exists because the alternative is an unrecoverable chain.** The commit
-/// is a pre-execution system call: a revert here is a block-execution error on
-/// every node, before any transaction in the block runs, so the state that
-/// caused it can never be repaired — not by governance, not by the validators
-/// themselves, not by a restart. And reaching the floor takes no attack and no
-/// bug: one owner withdrawing their own self-stake is an ordinary, individually
-/// valid, permissionless transaction that returns success, and the network dies
-/// two epochs later. Carrying the incumbents forward keeps blocks coming, and
-/// blocks are the only thing that can carry the repair.
-///
-/// What is carried is the record POINTER and the LENGTH, so the seated set is
-/// byte-identical to `epoch - 1`'s — not the short set that was just derived,
-/// which is why nothing downstream ever sees a committee under the floor. With
-/// the set unchanged, `dkgQual[epoch]` is `false` by the same rule every other
-/// unchanged commit follows, and the beacon carries its key forward rather than
-/// attempting a ceremony over a set it cannot assemble.
-///
-/// The weights are `epoch - 1`'s frozen frame, re-stamped into `epoch`'s. They
-/// are one epoch staler than usual, which shifts leader election by one epoch of
-/// stake drift and nothing else: every node reads the same frozen frame, so no
-/// two nodes can disagree.
-///
-/// **The one surviving revert is `epoch == 0`.** Genesis has nothing to carry,
-/// and a genesis that cannot seat a committee never leaves block zero — loud,
-/// immediate, and fixed by relaunching rather than unrecoverable mid-chain.
-/// `epoch >= 1` always has a predecessor with a non-empty record: the cursor is
-/// monotone and every commit that advances it writes a length of at least
-/// [`MIN_COMMITTEE_LENGTH`] (a fresh set) or of the predecessor it carried, so a
-/// zero length above genesis is not a reachable state. It is still checked, and
-/// still reverts, because the alternative would be seating an empty committee.
-///
-/// **What this does NOT fix.** The seats stay filled by validators the selection
-/// would no longer choose, including any tombstoned one that was already seated:
-/// the node severs its transport and refuses its proposals but does not vacate
-/// its seat, so it counts toward the quorum denominator. A carried committee of
-/// `n` therefore keeps finalizing while at most `f = (n-1)/3` of its seats are
-/// dead, and halts beyond that — the ordinary BFT bound, reached here without
-/// re-selection to relieve it. That halt is recoverable (the members can come
-/// back); the revert this replaces was not.
-fn carry_committee_forward<SDK: SharedAPI>(
-    sdk: &mut SDK,
-    target: u64,
-    eligible: usize,
-) -> Result<(), ExitCode> {
-    let storage = consensus_storage();
-    let (record, length) = if target == 0 {
-        (0, 0)
-    } else {
-        committee_at(sdk, target - 1)?
-    };
-    if length == 0 {
-        return revert_with(
-            sdk,
-            ERR_COMMITTEE_TOO_SMALL,
-            &(U256::from(eligible), U256::from(MIN_COMMITTEE_LENGTH)),
-        );
+    let cap = chain_config_storage()
+        .active_validators_length_accessor()
+        .get_checked(sdk)? as usize;
+    let ranked = top_k_by_stake_at(
+        sdk,
+        candidates.iter().map(|(validator, _)| *validator).collect(),
+        epoch,
+        cap,
+    )?;
+    let mut members = Vec::with_capacity(ranked.len());
+    for (validator, weight) in ranked {
+        // `ranked` is a subset of `candidates`, so the key is always found; the
+        // key was read in the filter pass above rather than a second time here,
+        // which is one fewer SLOAD pair per seated member.
+        let peer_pubkey = candidates
+            .iter()
+            .find(|(candidate, _)| *candidate == validator)
+            .map(|(_, peer_pubkey)| *peer_pubkey)
+            .ok_or(ExitCode::Panic)?;
+        members.push(CommitteeMember {
+            validator,
+            peer_pubkey,
+            weight,
+        });
     }
-    // The predecessor's frame, re-stamped as this epoch's. `None` means the ring
-    // wrapped past `target - 1`, which needs `WEIGHT_RING_EPOCHS` commits between
-    // two adjacent epochs — the cursor advances by one per commit, so it cannot.
-    // Reverting on the impossible branch is deliberate: the alternative is an
-    // epoch whose `stakes` leg reads empty, which stops every node from spawning
-    // its engine anyway, silently and one epoch later.
-    let Some(frozen) = read_weights(sdk, target - 1)? else {
-        return revert_with(
-            sdk,
-            ERR_COMMITTEE_TOO_SMALL,
-            &(U256::from(eligible), U256::from(MIN_COMMITTEE_LENGTH)),
-        );
-    };
-    write_ring_compact(sdk, target, &frozen)?;
-    let index = storage.epoch_index_accessor().entry(target);
-    index.record_accessor().set_checked(sdk, record as u32)?;
-    index.length_accessor().set_checked(sdk, length as u32)?;
-    storage
-        .dkg_qual_accessor()
-        .entry(target)
-        .set_checked(sdk, false)?;
-    storage
-        .last_committed_epoch_p1_accessor()
-        .set_checked(sdk, target.checked_add(1).ok_or(ExitCode::IntegerOverflow)?)?;
-    events::CommitteeCarriedOver {
-        epoch: target,
-        eligible: eligible as u32,
-        members: length as u32,
-    }
-    .emit(sdk)
+    Ok(members)
 }
 
 /// Public handler `0xe505b249` (`commitEpochCommittee`).
@@ -690,10 +606,6 @@ fn carry_committee_forward<SDK: SharedAPI>(
 /// node, before any transaction in the block runs — which means no transaction
 /// can repair the state afterwards. Each one is therefore an assertion of an
 /// assumption held elsewhere, not a condition this contract expects to meet.
-///
-/// A short eligible set is the one condition that is NOT asserted that way any
-/// more: it is reachable by ordinary permissionless action (one owner exiting),
-/// so it takes the carry-over in [`carry_committee_forward`] instead of a revert.
 pub fn commit_epoch_committee<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     ensure_non_payable(sdk)?;
     ensure_mutable(sdk)?;
@@ -716,7 +628,11 @@ pub fn commit_epoch_committee<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitC
     let selection_epoch = target.saturating_sub(MAX_COMMITTEE_LOOKAHEAD_EPOCHS);
     let mut members = selected_committee_at(sdk, selection_epoch)?;
     if members.len() < MIN_COMMITTEE_LENGTH {
-        return carry_committee_forward(sdk, target, members.len());
+        return revert_with(
+            sdk,
+            ERR_COMMITTEE_TOO_SMALL,
+            &(U256::from(members.len()), U256::from(MIN_COMMITTEE_LENGTH)),
+        );
     }
     // Peer-key ascending IS the consensus index space: `record_production`
     // credits `produced[epoch][leader_index]` and `judge` resolves that same
