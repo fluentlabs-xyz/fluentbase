@@ -34,14 +34,7 @@ impl ModuleFactory {
         hash: B256,
         address: Address,
     ) -> RwasmModule {
-        let module_key = CompiledModuleCacheKey::new(
-            hash,
-            CompilationConfigFingerprint::from_config(
-                &fluentbase_sdk_config_for_runtime_cache(address),
-                CompilationBackend::Rwasm,
-                address,
-            ),
-        );
+        let module_key = module_key_for(hash, address);
         self.inner
             .lock()
             .unwrap()
@@ -63,6 +56,7 @@ struct ModuleFactoryInner {
 }
 
 impl ModuleFactoryInner {
+    /// Returns the resident module that hash-only lookups resolve to for `code_hash`.
     fn get_resident(&mut self, code_hash: B256) -> Option<RwasmModule> {
         let module_key = self.cached_modules.limiter().resident_key(&code_hash)?;
         // The index is written by `on_insert` and pruned on every removal path (`on_removed`,
@@ -71,6 +65,7 @@ impl ModuleFactoryInner {
         self.cached_modules.get(&module_key).cloned()
     }
 
+    /// Returns the cached module under `module_key`, inserting `module` on first use.
     fn get_or_insert(
         &mut self,
         module_key: CompiledModuleCacheKey,
@@ -112,6 +107,22 @@ impl Default for ModuleFactoryInner {
     }
 }
 
+/// Derives the cache key for `hash` compiled under the profile of `address`.
+///
+/// The fingerprint covers the address itself, so the same code deployed at several addresses
+/// occupies one entry per address.
+fn module_key_for(hash: B256, address: Address) -> CompiledModuleCacheKey {
+    CompiledModuleCacheKey::new(
+        hash,
+        CompilationConfigFingerprint::from_config(
+            &fluentbase_sdk_config_for_runtime_cache(address),
+            CompilationBackend::Rwasm,
+            address,
+        ),
+    )
+}
+
+/// Returns the compilation config that modules executed at `address` are cached under.
 fn fluentbase_sdk_config_for_runtime_cache(address: Address) -> rwasm::CompilationConfig {
     let is_system_runtime = fluentbase_types::is_execute_using_system_runtime(&address);
     let should_charge_fuel = false;
@@ -185,11 +196,12 @@ impl SizeEstimator for RwasmModule {
 pub struct ModuleMemoryLimiter<V> {
     max_bytes: usize,
     current_bytes: usize,
-    /// Code hash to the most recently inserted resident profile for it.
+    /// Code hash to the resident profiles that share it, oldest insertion first.
     ///
-    /// Owned by the limiter so every LRU removal path, including eviction inside `insert`,
-    /// prunes the index under the factory lock.
-    module_keys_by_code_hash: HashMap<B256, CompiledModuleCacheKey>,
+    /// Hash-only lookups resolve to the last entry: the most recently inserted or replaced
+    /// profile. Owned by the limiter so every LRU removal path, including eviction inside
+    /// `insert`, prunes the index under the factory lock.
+    module_keys_by_code_hash: HashMap<B256, Vec<CompiledModuleCacheKey>>,
     _marker: PhantomData<V>,
 }
 
@@ -223,17 +235,33 @@ impl<V> ModuleMemoryLimiter<V> {
         self.max_bytes.saturating_sub(self.current_bytes)
     }
 
-    /// Returns the cache key of the resident profile indexed under `code_hash`.
+    /// Returns the cache key that hash-only lookups resolve to for `code_hash`.
     fn resident_key(&self, code_hash: &B256) -> Option<CompiledModuleCacheKey> {
-        self.module_keys_by_code_hash.get(code_hash).copied()
+        self.module_keys_by_code_hash
+            .get(code_hash)
+            .and_then(|profiles| profiles.last().copied())
     }
 
-    /// Drops the index entry for `key`.
+    /// Makes `key` the profile that hash-only lookups resolve to for its code hash.
+    fn index_key(&mut self, key: CompiledModuleCacheKey) {
+        let profiles = self
+            .module_keys_by_code_hash
+            .entry(key.code_hash)
+            .or_default();
+        profiles.retain(|profile| *profile != key);
+        profiles.push(key);
+    }
+
+    /// Drops `key` from the index.
     ///
-    /// The same code hash can have several compilation profiles. Forgetting one profile must not
-    /// discard the entry of another, still-resident profile.
+    /// The same code hash can have several resident profiles. Forgetting one keeps the others
+    /// reachable by hash, so the hash entry goes away only with its last profile.
     fn forget_key(&mut self, key: &CompiledModuleCacheKey) {
-        if self.module_keys_by_code_hash.get(&key.code_hash) == Some(key) {
+        let Some(profiles) = self.module_keys_by_code_hash.get_mut(&key.code_hash) else {
+            return;
+        };
+        profiles.retain(|profile| profile != key);
+        if profiles.is_empty() {
             self.module_keys_by_code_hash.remove(&key.code_hash);
         }
     }
@@ -267,7 +295,7 @@ impl<V: SizeEstimator> Limiter<CompiledModuleCacheKey, V> for ModuleMemoryLimite
         }
 
         self.current_bytes = self.current_bytes.saturating_add(size);
-        self.module_keys_by_code_hash.insert(key.code_hash, key);
+        self.index_key(key);
         Some((key, value))
     }
 
@@ -298,9 +326,8 @@ impl<V: SizeEstimator> Limiter<CompiledModuleCacheKey, V> for ModuleMemoryLimite
             .current_bytes
             .saturating_sub(old_size)
             .saturating_add(new_size);
-        // Re-point the index at the replaced profile, as `on_insert` does for a fresh entry.
-        self.module_keys_by_code_hash
-            .insert(old_key.code_hash, *old_key);
+        // The replaced profile becomes the hash target, as a fresh insert does.
+        self.index_key(*old_key);
 
         true
     }
@@ -379,6 +406,19 @@ mod tests {
         LruMap::with_seed(ModuleMemoryLimiter::new(max_bytes), TEST_SEED)
     }
 
+    /// Counts every profile the code-hash index holds across all hashes.
+    fn indexed_profiles(
+        cache: &LruMap<CompiledModuleCacheKey, RwasmModule, ModuleMemoryLimiter<RwasmModule>>,
+    ) -> usize {
+        cache
+            .limiter()
+            .module_keys_by_code_hash
+            .values()
+            .map(Vec::len)
+            .sum()
+    }
+
+    /// Creates a factory with its own cache of `max_bytes`, detached from the global one.
     fn new_factory(max_bytes: usize) -> ModuleFactory {
         ModuleFactory {
             inner: Arc::new(Mutex::new(ModuleFactoryInner {
@@ -387,6 +427,7 @@ mod tests {
         }
     }
 
+    /// Index cardinality must follow residency, not the number of hashes ever seen.
     #[test]
     fn factory_index_is_bounded_under_deployment_churn() {
         let mut factory = new_factory(500);
@@ -396,12 +437,13 @@ mod tests {
             let ctx = factory.inner.lock().unwrap();
             assert!(ctx.cached_modules.len() <= 5);
             assert_eq!(
-                ctx.cached_modules.limiter().module_keys_by_code_hash.len(),
+                indexed_profiles(&ctx.cached_modules),
                 ctx.cached_modules.len()
             );
         }
     }
 
+    /// A hash resolves while its module is resident and stops resolving once it is evicted.
     #[test]
     fn hash_only_lookups_follow_residency_across_eviction() {
         let mut factory = new_factory(100);
@@ -415,6 +457,39 @@ mod tests {
         }
     }
 
+    /// Evicting the profile a hash resolves to must fall back to another resident profile of
+    /// the same code hash instead of making it unreachable.
+    #[test]
+    fn evicting_indexed_profile_falls_back_to_remaining_resident_profile() {
+        let mut factory = new_factory(200);
+        let code_hash = key(42);
+        let (addr_a, addr_b) = (Address::repeat_byte(0xaa), Address::repeat_byte(0xbb));
+        let (key_a, key_b) = (
+            module_key_for(code_hash, addr_a),
+            module_key_for(code_hash, addr_b),
+        );
+
+        factory.get_or_insert_module(module(100), code_hash, addr_a);
+        factory.get_or_insert_module(module(100), code_hash, addr_b);
+        // Touch profile A so the next eviction takes profile B, the one lookups resolve to.
+        factory.get_or_insert_module(module(100), code_hash, addr_a);
+        factory.get_or_insert_module(module(100), key(1), Address::ZERO);
+
+        {
+            let ctx = factory.inner.lock().unwrap();
+            assert!(ctx.cached_modules.peek(&key_a).is_some());
+            assert!(ctx.cached_modules.peek(&key_b).is_none());
+            assert_eq!(
+                ctx.cached_modules.limiter().resident_key(&code_hash),
+                Some(key_a)
+            );
+            assert_eq!(indexed_profiles(&ctx.cached_modules), 2);
+        }
+        let cached = factory.get_resident_module(code_hash).unwrap();
+        assert_eq!(cached.hint_section.len(), 100);
+    }
+
+    /// Modules the limiter refuses are still returned but leave no trace in the index.
     #[test]
     fn rejected_modules_are_returned_without_index_entries() {
         let mut factory = new_factory(100);
@@ -432,6 +507,7 @@ mod tests {
         }
     }
 
+    /// Evicting an older profile keeps the newer, still-resident profile as the hash target.
     #[test]
     fn evicting_older_profile_preserves_newer_hash_mapping() {
         let mut cache = new_cache(200);
@@ -445,19 +521,20 @@ mod tests {
 
         assert!(cache.get(&older).is_none());
         assert!(cache.get(&newer).is_some());
-        assert_eq!(
-            cache.limiter().module_keys_by_code_hash.get(&code_hash),
-            Some(&newer)
-        );
+        assert_eq!(cache.limiter().resident_key(&code_hash), Some(newer));
         cache.remove(&newer);
+        assert!(cache.limiter().resident_key(&code_hash).is_none());
+        // The unrelated module stays indexed; only this code hash must be gone.
         assert!(!cache
             .limiter()
             .module_keys_by_code_hash
             .contains_key(&code_hash));
     }
 
+    /// Removing the hash target falls back to the remaining profile; the hash entry goes away
+    /// only with the last one.
     #[test]
-    fn replacement_restores_hash_mapping_after_another_profile_is_removed() {
+    fn removing_indexed_profile_falls_back_to_remaining_profile() {
         let mut cache = new_cache(200);
         let code_hash = key(42);
         let key_a = cache_key_with_address_byte(code_hash, 0xaa);
@@ -465,17 +542,31 @@ mod tests {
 
         cache.insert(key_a, module(100));
         cache.insert(key_b, module(100));
+        assert_eq!(cache.limiter().resident_key(&code_hash), Some(key_b));
+
         cache.remove(&key_b);
-        assert!(!cache
-            .limiter()
-            .module_keys_by_code_hash
-            .contains_key(&code_hash));
+        assert_eq!(cache.limiter().resident_key(&code_hash), Some(key_a));
+
+        cache.remove(&key_a);
+        assert!(cache.limiter().resident_key(&code_hash).is_none());
+        assert!(cache.limiter().module_keys_by_code_hash.is_empty());
+    }
+
+    /// Replacing a profile's value makes it the hash target again without duplicating it.
+    #[test]
+    fn replacing_a_profile_makes_it_the_hash_target() {
+        let mut cache = new_cache(200);
+        let code_hash = key(42);
+        let key_a = cache_key_with_address_byte(code_hash, 0xaa);
+        let key_b = cache_key_with_address_byte(code_hash, 0xbb);
+
+        cache.insert(key_a, module(100));
+        cache.insert(key_b, module(100));
+        assert_eq!(cache.limiter().resident_key(&code_hash), Some(key_b));
 
         cache.insert(key_a, module(50));
-        assert_eq!(
-            cache.limiter().module_keys_by_code_hash.get(&code_hash),
-            Some(&key_a)
-        );
+        assert_eq!(cache.limiter().resident_key(&code_hash), Some(key_a));
+        assert_eq!(indexed_profiles(&cache), 2);
     }
 
     // ==================== Basic Operations ====================
