@@ -414,6 +414,7 @@ mod code_copy_tests {
 #[cfg(test)]
 mod code_hash_tests {
     use super::*;
+    use fluentbase_sdk::syscall::SYSCALL_ID_CODE_SIZE;
     use revm::handler::system_interruption::SystemInterruptionInputs;
 
     fn execute_syscall(
@@ -458,6 +459,50 @@ mod code_hash_tests {
         input[20..28].copy_from_slice(&0u64.to_le_bytes());
         input[28..36].copy_from_slice(&1u64.to_le_bytes());
         input.into()
+    }
+
+    #[test]
+    fn malformed_analyzed_metadata_uses_empty_code_fallbacks() {
+        let target = Address::from([0x43; 20]);
+        let metadata = EthereumMetadata::new_analyzed(bytes!("00"))
+            .write_to_bytes()
+            .slice(..32);
+        let account_bytecode = Bytecode::new_ownable_account(PRECOMPILE_EVM_RUNTIME, metadata);
+        let mut db = InMemoryDB::default();
+        db.insert_account_info(
+            target,
+            AccountInfo {
+                nonce: 1,
+                code_hash: account_bytecode.hash_slow(),
+                code: Some(account_bytecode),
+                ..Default::default()
+            },
+        );
+        let mut ctx = RwasmContext::new(db, RwasmSpecId::PRAGUE);
+        let mut frame = RwasmFrame::default();
+
+        for (syscall, input, expected) in [
+            (
+                SYSCALL_ID_CODE_SIZE,
+                code_hash_input(target),
+                Bytes::from(vec![0; 32]),
+            ),
+            (
+                SYSCALL_ID_CODE_HASH,
+                code_hash_input(target),
+                Bytes::copy_from_slice(revm::primitives::KECCAK_EMPTY.as_slice()),
+            ),
+            (
+                SYSCALL_ID_CODE_COPY,
+                code_copy_input(target),
+                Bytes::from(vec![0]),
+            ),
+        ] {
+            assert_eq!(
+                execute_syscall(&mut ctx, &mut frame, syscall, input),
+                expected
+            );
+        }
     }
 
     #[test]

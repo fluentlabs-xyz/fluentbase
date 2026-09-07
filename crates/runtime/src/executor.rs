@@ -470,7 +470,7 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
         metrics::set_recoverable_runtimes(self.recoverable_runtimes.len());
         let (mode, state) = runtime_labels(&runtime);
         let mut fuel_remaining = runtime.remaining_fuel();
-        let resume_inner = |runtime: &mut ExecutionMode| {
+        let mut resume_inner = |runtime: &mut ExecutionMode| {
             // Copy return data into return data
             runtime.context_mut().execution_result.return_data = return_data.to_vec();
             if fuel16_ptr > 0 {
@@ -479,17 +479,32 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
                 LittleEndian::write_i64(&mut buffer[8..], fuel_refunded);
                 runtime.memory_write(fuel16_ptr as usize, &buffer)?;
             }
-            runtime.resume(exit_code, fuel_consumed)
+            // Check the child charge before resuming, independently of backend behavior.
+            // Memory-write failures above have not charged the child and must keep the old baseline.
+            let adjusted_fuel = fuel_remaining
+                .map(|remaining| {
+                    remaining
+                        .checked_sub(fuel_consumed)
+                        .ok_or(TrapCode::OutOfFuel)
+                })
+                .transpose()?;
+            let result = runtime.resume(exit_code, fuel_consumed);
+            if result != Err(TrapCode::OutOfFuel) {
+                fuel_remaining = adjusted_fuel;
+            }
+            result
         };
-        let result = resume_inner(&mut runtime);
-        // We need to adjust the fuel limit because `fuel_consumed` should not be included into spent.
-        if result != Err(TrapCode::OutOfFuel) {
-            // Safety: We can safely unwrap here, because `OutOfFuel` check we did in `resume_inner` and the result is ok.
-            fuel_remaining = fuel_remaining.map(|v| v.checked_sub(fuel_consumed).unwrap());
-        }
-        let fuel_consumed = runtime
-            .remaining_fuel()
-            .and_then(|remaining_fuel| Some(fuel_remaining? - remaining_fuel));
+        let mut result = resume_inner(&mut runtime);
+        let fuel_consumed = fuel_remaining
+            .zip(runtime.remaining_fuel())
+            .map(|(before, after)| {
+                before.checked_sub(after).unwrap_or_else(|| {
+                    // A backend that resets fuel or omits the child charge violates the resume
+                    // contract. Halt deterministically instead of wrapping the reported usage.
+                    result = Err(TrapCode::OutOfFuel);
+                    before
+                })
+            });
         let runtime_result =
             self.handle_execution_result(result, fuel_consumed, runtime.context_mut());
         let result = self.try_remember_runtime(runtime_result, runtime);
@@ -557,7 +572,9 @@ fn runtime_labels(runtime: &ExecutionMode) -> (RuntimeModeLabel, &'static str) {
 mod tests {
     use crate::{
         executor::{ExecutionInterruption, RuntimeExecutor, RuntimeFactoryExecutor, RuntimeResult},
-        runtime::{test_contract_module_with_memory, ContractRuntime, ExecutionMode},
+        runtime::{
+            test_contract_module_with_memory, ContractRuntime, ExecutionMode, SystemRuntime,
+        },
         RuntimeContext,
     };
     use fluentbase_types::{
@@ -565,8 +582,8 @@ mod tests {
         MAX_IN_FLIGHT_MEMORY_BYTES,
     };
     use rwasm::{
-        ExecutionEngine, RwasmModule, StrategyDefinition, TrapCode, N_BYTES_PER_MEMORY_PAGE,
-        N_DEFAULT_MAX_MEMORY_PAGES,
+        CompilationConfig, ExecutionEngine, RwasmModule, RwasmModuleInner, StrategyDefinition,
+        TrapCode, N_BYTES_PER_MEMORY_PAGE, N_DEFAULT_MAX_MEMORY_PAGES,
     };
 
     #[test]
@@ -624,6 +641,114 @@ mod tests {
         let result = executor.memory_read(42, 0, &mut buffer);
 
         assert_eq!(result, Err(TrapCode::MemoryOutOfBounds));
+    }
+
+    fn interrupted_contract(executor: &mut RuntimeFactoryExecutor) -> u32 {
+        let wasm = wat::parse_str(
+            r#"(module
+                (import "fluentbase_v1preview" "_exec"
+                    (func $exec (param i32 i32 i32 i32 i32) (result i32)))
+                (memory (export "memory") 1)
+                (func (export "main")
+                    i32.const 0 i32.const 0 i32.const 0 i32.const 0 i32.const 0
+                    call $exec
+                    drop))"#,
+        )
+        .unwrap();
+        let config = CompilationConfig::default()
+            .with_entrypoint_name("main".into())
+            .with_import_linker(executor.import_linker.clone());
+        let (module, _) = RwasmModule::compile(config, &wasm).unwrap();
+        let result = executor.execute(
+            BytecodeOrHash::Bytecode {
+                bytecode: module,
+                hash: B256::with_last_byte(0x36),
+                address: Address::ZERO,
+            },
+            RuntimeContext::default()
+                .with_fuel_limit(100_000)
+                .with_call_depth(1),
+        );
+        assert!(result.exit_code > 0, "contract must interrupt: {result:?}");
+        result.exit_code as u32
+    }
+
+    #[test]
+    fn resume_memory_error_does_not_subtract_uncharged_child_fuel() {
+        for child_fuel in [100, u64::MAX] {
+            let mut executor = RuntimeFactoryExecutor::new(import_linker_v1_preview());
+            let call_id = interrupted_contract(&mut executor);
+            let result = executor.resume(call_id, &[], u32::MAX, child_fuel, 0, 0);
+
+            assert_eq!(result.exit_code, ExitCode::MemoryOutOfBounds.into_i32());
+            assert_eq!(result.fuel_consumed, 0);
+            assert!(executor.recoverable_runtimes.is_empty());
+        }
+    }
+
+    #[test]
+    fn resume_contract_excludes_child_fuel_from_reported_usage() {
+        let mut usage = vec![];
+        for child_fuel in [0, 100] {
+            let mut executor = RuntimeFactoryExecutor::new(import_linker_v1_preview());
+            let call_id = interrupted_contract(&mut executor);
+            let result = executor.resume(call_id, &[], 64, child_fuel, 0, 0);
+
+            assert_eq!(result.exit_code, ExitCode::Ok.into_i32());
+            assert!(executor.recoverable_runtimes.is_empty());
+            usage.push(result.fuel_consumed);
+        }
+        assert_eq!(usage[0], usage[1]);
+    }
+
+    #[test]
+    fn resume_contract_rejects_excessive_child_fuel() {
+        let mut executor = RuntimeFactoryExecutor::new(import_linker_v1_preview());
+        let call_id = interrupted_contract(&mut executor);
+        let result = executor.resume(call_id, &[], 0, u64::MAX, 0, 0);
+
+        assert_eq!(result.exit_code, ExitCode::OutOfFuel.into_i32());
+        assert!(result.fuel_consumed <= 100_000);
+        assert!(executor.recoverable_runtimes.is_empty());
+    }
+
+    #[test]
+    fn resume_system_rejects_inconsistent_child_fuel_accounting() {
+        // Model an engine-metered system runtime becoming resumable after an upgrade.
+        // Its current resume implementation re-enters execution without charging child fuel.
+        for child_fuel in [100, u64::MAX] {
+            SystemRuntime::reset_cached_runtimes();
+            let mut executor = RuntimeFactoryExecutor::new(import_linker_v1_preview());
+            let module = RwasmModuleInner {
+                hint_section: wat::parse_str(
+                    r#"(module
+                        (memory (export "memory") 1)
+                        (func (export "main") (param i32 i32) (result i32) i32.const 0))"#,
+                )
+                .unwrap(),
+                ..Default::default()
+            }
+            .into();
+            let mut runtime = SystemRuntime::new(
+                module,
+                executor.import_linker.clone(),
+                B256::with_last_byte(0x37),
+                Address::ZERO,
+                RuntimeContext::default().with_fuel_limit(100_000),
+                true,
+            );
+            runtime.execute().unwrap();
+            executor
+                .recoverable_runtimes
+                .insert(1, ExecutionMode::System(runtime));
+
+            let result = executor.resume(1, &[], 0, child_fuel, 0, 0);
+
+            assert_eq!(result.exit_code, ExitCode::OutOfFuel.into_i32());
+            assert!(result.fuel_consumed <= 100_000);
+            assert!(executor.recoverable_runtimes.is_empty());
+            SystemRuntime::reset_cached_runtimes();
+        }
     }
 
     /// Initial pages the Rust/Wasm toolchain emits for a contract that allocates nothing of its
