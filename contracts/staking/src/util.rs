@@ -136,9 +136,16 @@ fn erc20_transfer_input(to: Address, amount: U256) -> Result<Vec<u8>, ExitCode> 
     Ok(input)
 }
 
+/// Moves `amount` of the staking token from `from` to `to` under this
+/// contract's allowance.
+///
+/// The recipient is a parameter and not this contract: a deposit names the
+/// contract, and a stipend claim names the person, because the stipend is drawn
+/// off the BLEND reserve and never lands here on its way.
 pub(crate) fn safe_transfer_from<SDK: SharedAPI>(
     sdk: &mut SDK,
     from: Address,
+    to: Address,
     amount: U256,
 ) -> Result<(), ExitCode> {
     let token = chain_config_storage()
@@ -147,8 +154,7 @@ pub(crate) fn safe_transfer_from<SDK: SharedAPI>(
     if token.is_zero() {
         return revert(sdk, ERR_ZERO_STAKING_TOKEN);
     }
-    let recipient = sdk.context().contract_address();
-    let input = erc20_transfer_from_input(from, recipient, amount)?;
+    let input = erc20_transfer_from_input(from, to, amount)?;
     let result = sdk.call(token, U256::ZERO, &input, None);
     if !result.status.is_ok() {
         sdk.write(result.data);
@@ -239,6 +245,66 @@ pub(crate) fn try_transfer<SDK: SharedAPI>(
     // revert, so garbage from the token reads as "the tokens did not move" and
     // folds like any other refusal.
     Ok(result.data.is_empty() || SolidityABI::<bool>::decode(&result.data, 0).unwrap_or(false))
+}
+
+fn erc20_scalar_read<SDK: SharedAPI>(sdk: &mut SDK, token: Address, input: Vec<u8>) -> U256 {
+    let result = sdk.static_call(token, &input, None);
+    if !result.status.is_ok() {
+        return U256::ZERO;
+    }
+    SolidityABI::<U256>::decode(&result.data, 0).unwrap_or(U256::ZERO)
+}
+
+/// BLEND the reserve can actually deliver right now: `min(balance, allowance)`.
+///
+/// Every failure of the CALLEE reads as ZERO — a missing token, a reverting
+/// call, a static call that ran out of fuel, a return this cannot decode. That
+/// rule is what lets this be called from `close_epoch`, which is a
+/// pre-execution system call: a propagated failure there is a block-execution
+/// failure on every node and no transaction can repair it. It was confirmed on
+/// the real rWasm blob before it was relied on — a nested failure, by revert AND
+/// by fuel exhaustion, discards only its own frame and the outer one carries on.
+///
+/// It is NOT unconditionally infallible, and the difference is worth stating.
+/// Reading this contract's own token slot and encoding two fixed-size arguments
+/// can still return `Err`. Both are host-level failures on data this chain
+/// owns, in the same class as every other storage read in the close; the
+/// third-party token is the input nobody here controls, and that one is what is
+/// swallowed.
+///
+/// Both halves are needed and neither implies the other: a funded reserve that
+/// revoked its approval can pay nothing, and a generous approval over an empty
+/// balance is a promise the token will refuse.
+pub(crate) fn reserve_available<SDK: SharedAPI>(
+    sdk: &mut SDK,
+    reserve: Address,
+) -> Result<U256, ExitCode> {
+    let token = chain_config_storage()
+        .staking_token_accessor()
+        .get_checked(sdk)?;
+    if token.is_zero() {
+        return Ok(U256::ZERO);
+    }
+    let spender = sdk.context().contract_address();
+
+    let mut params = BytesMut::new();
+    SolidityABI::<Address>::encode(&reserve, &mut params, 0)
+        .map_err(|_| ExitCode::MalformedBuiltinParams)?;
+    let mut input = SIG_ERC20_BALANCE_OF.to_be_bytes().to_vec();
+    input.extend_from_slice(&params);
+    let balance = erc20_scalar_read(sdk, token, input);
+    if balance.is_zero() {
+        return Ok(U256::ZERO);
+    }
+
+    let mut params = BytesMut::new();
+    SolidityABI::<(Address, Address)>::encode(&(reserve, spender), &mut params, 0)
+        .map_err(|_| ExitCode::MalformedBuiltinParams)?;
+    let mut input = SIG_ERC20_ALLOWANCE.to_be_bytes().to_vec();
+    input.extend_from_slice(&params);
+    let allowance = erc20_scalar_read(sdk, token, input);
+
+    Ok(core::cmp::min(balance, allowance))
 }
 
 #[cfg(test)]

@@ -35,10 +35,14 @@ pub struct ChainConfigStorage {
     bls_verifier: StorageAddress,
     min_undelegate_blocks: StorageU256,
     /// Address the epoch stipend is drawn from, not a contract implementing a
-    /// reserve interface: settlement pulls with `transferFrom`, so any holder
-    /// that has approved this contract works — a wallet, a multisig, a treasury.
-    /// Revoking that approval stops payments without forfeiting them, because
-    /// the failed pull reverts and leaves the settlement cursor in place.
+    /// reserve interface: a claim pulls with `transferFrom`, so any holder that
+    /// has approved this contract works — a wallet, a multisig, a treasury.
+    ///
+    /// Revoking that approval no longer merely pauses payment. The epoch close
+    /// reads `min(balanceOf, allowance)` before it prices an epoch and forfeits
+    /// the epoch outright when that is short, so every epoch closing inside the
+    /// revoked window is worth zero for good. Only already-accrued epochs wait
+    /// for the approval to come back.
     blend_reserve: StorageAddress,
     min_verdict_due_blocks: StorageU32,
     exclusion_backoff_cap: StorageU32,
@@ -229,7 +233,6 @@ pub struct StakingStorage {
     selection_membership: StorageMap<Address, SelectionMembershipStorage>,
     validator_snapshots: StorageMap<Address, StorageMap<u64, ValidatorSnapshotStorage>>,
     validator_delegations: StorageMap<Address, StorageMap<Address, ValidatorDelegationStorage>>,
-    last_rewarded_epoch_p1: StorageU64,
     /// Sorted epochs with materialized validator snapshots.
     ///
     /// Allows historical lookups to use binary search instead of scanning every
@@ -277,24 +280,6 @@ pub struct ProductionLivenessStorage {
     /// Live exclusions; the length is the concurrent count.
     pending_exclusions: StorageVec<StorageAddress>,
     validators: StorageMap<Address, ProductionValidatorStorage>,
-    /// BLEND the epoch's close assigned to its committee, stored as `sum + 1`.
-    ///
-    /// Zero means "this epoch never closed", which is not the same as an epoch
-    /// that closed owing nothing: `1` is the second. Both an all-zero-weight
-    /// committee and a zero configured rate reach `1`, and both are forfeited —
-    /// they closed, and they closed owing nothing.
-    ///
-    /// The state a zero has to be told apart from is neither of those. It is an
-    /// epoch the close never ran for AND that recorded blocks, which is the one
-    /// case settlement DEFERS: blocks recorded means the close is still coming.
-    /// A zero with no blocks recorded is forfeited too, because no close will
-    /// ever run for it. So the scalar alone does not decide — `blocks_in_epoch`
-    /// is the other half, and `pay_epoch` is where the two are read together.
-    ///
-    /// It is a sum of already-floored shares, written in the same frame as the
-    /// per-validator credits it stands for, so the payment can never pull more
-    /// than the ledger promises.
-    assigned_at_close_p1: StorageMap<u64, StorageU256>,
 }
 
 pub fn initializer_storage() -> InitializerStorage {

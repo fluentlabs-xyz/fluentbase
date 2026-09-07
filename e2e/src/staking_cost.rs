@@ -36,13 +36,6 @@ const ACTIVATION: u64 = 51 * 20;
 /// Per-call budget of a system call: `revm-rwasm` `crates/handler/src/system_call.rs:64`
 /// builds every one of them with `gas_limit(30_000_000)`.
 const SYSTEM_CALL_BUDGET: f64 = 30_000_000.0;
-/// `STIPEND_FUEL_CAP` in gas: `12_000_000 * FUEL_DENOM_RATE` fuel, and fuel
-/// converts back at the same rate (`crates/revm/src/executor.rs:420`).
-const STIPEND_CAP_GAS: u64 = 12_000_000;
-/// Mirrors the contract's `consts.rs::MAX_SETTLE_CATCHUP`. Epochs one settlement
-/// call may fund, and therefore the number of token pulls the two "maximum
-/// catch-up" measurements below must be able to count.
-const MAX_SETTLE_CATCHUP: u64 = 4;
 
 // ---------------------------------------------------------------------------
 // Cost guards.
@@ -98,10 +91,12 @@ const MAX_SETTLE_CATCHUP: u64 = 4;
 /// silently spent the whole improvement this change bought.
 ///
 /// The fall is the stipend split moving out of the payment leg and into the
-/// close: the leg shed 6_603_076 (see `STIPEND_LEG_MAX`) while the close took on
-/// 3_264_563 of accrual (see `PATH_A_ACCRUAL_MAX`). The close does the work for
-/// ONE epoch where the leg did it for `MAX_SETTLE_CATCHUP`, which is where the
-/// net saving comes from — not from the work getting cheaper.
+/// close: the leg shed 6_603_076 while the close took on 3_264_563 of accrual
+/// (see `PATH_A_ACCRUAL_MAX`). The close did the work for ONE epoch where the leg
+/// did it for four, which is where the net saving comes from — not from the work
+/// getting cheaper. Both the leg and the constants that priced it are gone as of
+/// 2026-09-07; this paragraph is kept because the 3_552_595 above is only
+/// intelligible with it.
 ///
 /// Re-measured after FLU-1134 restructured the committee storage the close reads
 /// (2026-08-17, same day): **3_992_457**, down a further 49_200. Small next to
@@ -110,6 +105,15 @@ const MAX_SETTLE_CATCHUP: u64 = 4;
 /// because a measurement left stale is how a ceiling stops meaning anything, and
 /// this file's own rule says so two constants up. The ceiling stays at 4_640_000
 /// — 16% over, which is the headroom this file uses.
+///
+/// Re-measured 2026-09-07 after the stipend payment left the close entirely:
+/// **3_954_277**, down 59_980 from the 4_014_257 this suite measured the same
+/// day before the change. That is the fuel-capped self-call and the four-epoch
+/// settlement walk leaving, less the two `static_call`s the close now makes to
+/// read the reserve — a net saving of 1.5%, which is small because the leg was
+/// already only 0.4% of its own cap. Ceiling left at 4_640_000: it is 17% over
+/// the new figure, still inside the band this file uses, and re-pinning for a
+/// 1.5% move would spend more attention than it buys.
 const PATH_A_INTERCEPT_MAX: f64 = 4_640_000.0;
 /// Measured 2026-08-17: 4_600 gas per roster entry, unchanged from 2026-08-06.
 ///
@@ -135,6 +139,11 @@ const PATH_A_ROSTER_FLOOR: f64 = 4_960.0;
 ///
 /// This replaces a ~1.5M estimate that was decomposed from other measurements
 /// rather than measured. The estimate was low by 2.2x.
+///
+/// Re-measured 2026-09-07 after the close started reading the BLEND reserve
+/// before it prices an epoch: **3_211_372**, down 3_591. Two `static_call`s and
+/// their ABI encoding, measured rather than assumed; the accrual is otherwise
+/// untouched by the stipend split.
 ///
 /// Re-measured after FLU-1134 (2026-08-17): **3_214_963**, down 49_600. Same
 /// cause and the same size as the intercept's fall — it IS the intercept's fall,
@@ -192,37 +201,6 @@ const COMMIT_SLOPE_MAX: f64 = 19_700.0;
 /// (51, `consts.rs`), the largest active set the contract will accept. This guard
 /// is a canary for the SHAPE of the cost, not a limit anything can reach.
 const COMMIT_ROSTER_FLOOR: f64 = 1_450.0;
-
-/// Measured 2026-08-17: 48_852, i.e. 0.4% of the cap. Was 6_651_928 — 55.4% of
-/// it — on 2026-08-06.
-///
-/// A fall of 6_603_076, or 99.27%. The leg no longer splits a pot or walks a
-/// committee; it reads one scalar per epoch and transfers it, so its cost is
-/// `MAX_SETTLE_CATCHUP` × ~12_200 and is independent of committee size.
-///
-/// **This guard's job changed with that, and the number is not a percentage band
-/// over the measurement.** The old 8_000_000 was 20% over a figure that was
-/// genuinely approaching the contract's 12M cap. At 48_852 the leg cannot
-/// approach that cap by growing — it would have to change shape — so a
-/// percentage band would only fire on benign per-epoch edits (one more event, one
-/// more read), and 8_000_000 would let it grow 164x unremarked. Neither is a
-/// guard.
-///
-/// 250_000 is set to catch the regression that actually matters: a per-member
-/// walk returning to the payment path. One committee-sized walk at 51 members
-/// costs on the order of 1M, so any such change trips this immediately, while
-/// ~5.1x of today absorbs several extra storage operations per settled epoch.
-///
-/// The consequence of crossing the contract's own cap is still silent — the
-/// self-call takes `OutOfFuel`, `settle_stipend_leg` swallows it as a status —
-/// but it now costs only a deferral: the accrual ran in the outer frame and the
-/// epochs stay owed.
-const STIPEND_LEG_MAX: u64 = 250_000;
-
-const _: () = assert!(
-    STIPEND_LEG_MAX < STIPEND_CAP_GAS,
-    "the stipend guard must trip before the contract's own cap does"
-);
 
 /// Collects threshold violations instead of panicking on the first one.
 ///
@@ -308,12 +286,6 @@ sol! {
 
     /// The close's accrual fact: what the epoch owes, decided at its close.
     event EpochBlendRewardsCommitted(uint64 indexed epoch, uint256 blendAmount);
-    /// The payment paid nobody for this epoch, whether because the close owed
-    /// nothing or because no close will ever run for it.
-    event StipendSkipped(uint64 indexed epoch);
-    /// The fuel-capped payment frame was discarded. Emitted from the outer frame,
-    /// which is why it survives when the two events above do not.
-    event StipendLegSkipped(uint64 indexed epoch);
 
     interface IStaking {
         function initialize(
@@ -338,7 +310,6 @@ sol! {
 
         function recordProduction(uint8 leaderIndex) external;
         function commitEpochCommittee() external;
-        function settleEpochStipend(uint64 epoch) external;
 
         function blocksInEpoch(uint64 epoch) external view returns (uint32);
         function pendingExclusions() external view returns (address[]);
@@ -398,39 +369,44 @@ fn deploy_bls_verifier(context: &mut EvmTestingContext) -> Address {
     )
 }
 
-/// ERC-20 stand-in that models one allowance and nothing else: `transferFrom`
-/// succeeds for `OWNER` and reverts for anybody else, every other call returns
-/// `1`. That is the whole surface the stipend needs now — it pulls the pot off
-/// the configured address, so an address that has not approved the staking
-/// contract is exactly an address whose `transferFrom` reverts. No balances are
-/// tracked; this measures gas, not solvency.
+/// ERC-20 stand-in for the BLEND token, in the two shapes the contract uses it.
+///
+/// `transferFrom` succeeds for `OWNER` and reverts for anybody else — an address
+/// that has not approved the staking contract is exactly an address whose
+/// `transferFrom` reverts. `balanceOf` and `allowance`, which the epoch close
+/// reads before it prices an epoch, both answer 2^80-1: far above any pot this
+/// file configures, so the close is never forfeited for want of funding and the
+/// measured frame is the full accrual. Every other selector returns `1`. No
+/// balances are tracked; this measures gas, not solvency.
 ///
 /// It DOES count successful pulls, in storage slot zero, and that counter is the
-/// only positive evidence in this file that a measured frame did the settlement
-/// work it is being priced for. Read it with `committed_pulls`. Being storage, it
-/// unwinds with a discarded frame, which is exactly the discrimination needed:
-/// the stipend leg's self-call is the one frame here whose failure is swallowed.
-fn deploy_token(context: &mut EvmTestingContext) -> Address {
-    deploy_runtime(
-        context,
-        &hex!(
-            // selector == transferFrom(address,address,uint256) ?
-            "60003560e01c6323b872dd14601957"
-            // no: return true
-            "600160005260206000f3"
-            // yes: is the `from` argument OWNER?
-            "5b"
-            "60043573"
-            "1111111111111111111111111111111111111111"
-            "14603b57"
-            // no: revert, which is what an unapproved source looks like
-            "60006000fd"
-            // yes: sstore(0, sload(0) + 1), then return true
-            "5b"
-            "600054600101600055"
-            "600160005260206000f3"
-        ),
+/// only positive evidence in this file that a measured frame moved money — which
+/// after the stipend split is evidence that it must NOT. Read it with
+/// `committed_pulls`.
+fn counting_token() -> Vec<u8> {
+    hex!(
+        // sel = calldata[0..4]
+        "60003560e01c"
+        // sel == transferFrom(address,address,uint256) ? -> 0x42
+        "80" "6323b872dd" "14" "6042" "57"
+        // sel == balanceOf(address) ? -> 0x2e
+        "80" "6370a08231" "14" "602e" "57"
+        // sel == allowance(address,address) ? -> 0x2e
+        "80" "63dd62ed3e" "14" "602e" "57"
+        // anything else: return true
+        "600160005260206000f3"
+        // 0x2e: return 2^80 - 1
+        "5b" "69ffffffffffffffffffff" "60005260206000f3"
+        // 0x42: is the `from` argument OWNER?
+        "5b" "60043573"
+        "1111111111111111111111111111111111111111"
+        "14" "6064" "57"
+        // no: revert, which is what an unapproved source looks like
+        "60006000fd"
+        // 0x64: sstore(0, sload(0) + 1), then return true
+        "5b" "600054" "600101" "600055" "600160005260206000f3"
     )
+    .to_vec()
 }
 
 /// Successful `transferFrom` calls the token has COMMITTED, ever.
@@ -445,8 +421,13 @@ fn committed_pulls(context: &mut EvmTestingContext, token: Address) -> u64 {
         .to()
 }
 
-/// An address that never approved the staking contract, used to stall the
-/// settlement cursor so that a later close has to catch up over several epochs.
+/// An address that has not approved the staking contract.
+///
+/// It no longer changes what a close does — the mock token answers the close's
+/// two reserve reads generously whatever address they name, so `fixture`'s
+/// `source_is_approved` now only decides which address is CONFIGURED. Kept
+/// because that configuration is still the production-realistic one for a chain
+/// whose treasury has not approved yet.
 const UNAPPROVED: Address = Address::repeat_byte(0x99);
 
 // ---------------------------------------------------------------------------
@@ -553,55 +534,6 @@ struct Fixture {
 /// They are seeded through `initialize`, the only path that makes a validator
 /// Active and selection-visible from epoch 0 with no warm-up delay, so the
 /// committee can be committed immediately.
-fn fixture(roster: usize, source_is_approved: bool) -> Fixture {
-    let mut context = EvmTestingContext::default().with_full_genesis();
-    set_block(&context, ACTIVATION - 1);
-
-    let verifier = deploy_bls_verifier(&mut context);
-    let token = deploy_token(&mut context);
-
-    let validators: Vec<Address> = (0..roster).map(validator_address).collect();
-    let calldata = IStaking::initializeCall {
-        initialStakeOwner: OWNER,
-        validators: validators.clone(),
-        initialStakes: vec![TOKEN * U256::from(10); roster],
-        blsPubkeysUncompressed: (0..roster).map(bls_pubkey).collect(),
-        blsPopsUncompressed: vec![vec![0x22u8; 128].into(); roster],
-        peerPubkeys: (0..roster).map(peer_pubkey).collect(),
-        commissionRate: 0,
-        stakingToken: token,
-        activeValidatorsLength: COMMITTEE as u32,
-        epochBlockInterval: INTERVAL as u32,
-        undelegatePeriod: 7,
-        minValidatorStakeAmount: TOKEN,
-        minStakingAmount: TOKEN,
-        dposActivationBlock: ACTIVATION,
-        blsVerifier: verifier,
-        minUndelegateBlocks: U256::ZERO,
-        blendReserve: if source_is_approved {
-            OWNER
-        } else {
-            UNAPPROVED
-        },
-    }
-    .abi_encode();
-    call(&mut context, GENESIS_GOVERNANCE, calldata);
-
-    call(
-        &mut context,
-        GENESIS_GOVERNANCE,
-        IStaking::setBlendStipendPerEpochCall {
-            value: TOKEN * U256::from(COMMITTEE),
-        }
-        .abi_encode(),
-    );
-
-    Fixture {
-        context,
-        validators,
-        token,
-    }
-}
 
 impl Fixture {
     /// Successful `transferFrom` calls the token has committed so far.
@@ -655,6 +587,61 @@ impl Fixture {
             IStaking::pendingExclusionsCall {}.abi_encode(),
         );
         IStaking::pendingExclusionsCall::abi_decode_returns(&output).unwrap()
+    }
+}
+
+/// Genesis with `roster` active, equally staked, key-carrying validators.
+///
+/// They are seeded through `initialize`, the only path that makes a validator
+/// Active and selection-visible from epoch 0 with no warm-up delay, so the
+/// committee can be committed immediately.
+fn fixture(roster: usize, source_is_approved: bool) -> Fixture {
+    let mut context = EvmTestingContext::default().with_full_genesis();
+    set_block(&context, ACTIVATION - 1);
+
+    let verifier = deploy_bls_verifier(&mut context);
+    let token = deploy_runtime(&mut context, &counting_token());
+
+    let validators: Vec<Address> = (0..roster).map(validator_address).collect();
+    let calldata = IStaking::initializeCall {
+        initialStakeOwner: OWNER,
+        validators: validators.clone(),
+        initialStakes: vec![TOKEN * U256::from(10); roster],
+        blsPubkeysUncompressed: (0..roster).map(bls_pubkey).collect(),
+        blsPopsUncompressed: vec![vec![0x22u8; 128].into(); roster],
+        peerPubkeys: (0..roster).map(peer_pubkey).collect(),
+        commissionRate: 0,
+        stakingToken: token,
+        activeValidatorsLength: COMMITTEE as u32,
+        epochBlockInterval: INTERVAL as u32,
+        undelegatePeriod: 7,
+        minValidatorStakeAmount: TOKEN,
+        minStakingAmount: TOKEN,
+        dposActivationBlock: ACTIVATION,
+        blsVerifier: verifier,
+        minUndelegateBlocks: U256::ZERO,
+        blendReserve: if source_is_approved {
+            OWNER
+        } else {
+            UNAPPROVED
+        },
+    }
+    .abi_encode();
+    call(&mut context, GENESIS_GOVERNANCE, calldata);
+
+    call(
+        &mut context,
+        GENESIS_GOVERNANCE,
+        IStaking::setBlendStipendPerEpochCall {
+            value: TOKEN * U256::from(COMMITTEE),
+        }
+        .abi_encode(),
+    );
+
+    Fixture {
+        context,
+        validators,
+        token,
     }
 }
 
@@ -712,21 +699,21 @@ fn path_b_committee_commit_cost_by_roster_size() {
 // ---------------------------------------------------------------------------
 
 /// Full committee, every judgeable member failing, maximum stamps, maximum
-/// releases, maximum settlement catch-up, all in one close.
+/// releases, all in one close.
 ///
 /// The schedule:
-///   epochs 0..=1  liveness tier off and the stipend drawn from an address that
-///                 never approved the contract, so nothing is judged and the
-///                 settlement cursor stays at epoch 0.
+///   epochs 0..=1  liveness tier off, so nothing is judged.
 ///   epoch 2       tier armed mid-epoch.
 ///   close(2)      50 first-time failures trip the correlation guard: verdicts
 ///                 are stamped, no exclusion is applied.
 ///   close(3)      the same 50 fail again as repeats, the guard stands down,
 ///                 `stamp` applies two exclusions.
 ///   close(4)      WORST. Judges 51 again, releases the two exclusions that
-///                 expire, applies two more, and — the approved source having
-///                 been configured mid-epoch — settles epochs 0..=3, which is
-///                 `MAX_SETTLE_CATCHUP`.
+///                 expire, applies two more, and accrues the epoch it closes.
+///
+/// The settlement catch-up that used to be the fourth term here is gone with the
+/// payment leg: the close reads the reserve and assigns credits, and no token
+/// moves until somebody claims.
 #[test]
 fn path_a_record_production_epoch_close_worst_case() {
     println!("\n=== PATH A: recordProduction at an epoch boundary ===");
@@ -741,15 +728,6 @@ fn path_a_record_production_epoch_close_worst_case() {
     let roster_at_30m = roster_at_budget(base, per_entry);
     println!("\nfit: worst close frame_gas ~= {base:.0} + {per_entry:.0} * roster");
     println!("30M budget exhausted at roster ~= {roster_at_30m:.0}");
-    // The 18M framing applies to the part of the close that is NOT the
-    // fuel-capped stipend leg. That part is what `close(epoch 3)` above
-    // measures: judge plus two stamps, with the stipend leg failing fast.
-    println!(
-        "note: the 18M residual applies to the non-stipend part, printed above \
-         as close(epoch 3); the WORST figure includes the stipend leg's actual \
-         consumption, not its 12M reservation"
-    );
-
     let mut guards = Guards::default();
     guards.at_most("path A intercept", base, PATH_A_INTERCEPT_MAX);
     guards.at_most("path A gas per roster entry", per_entry, PATH_A_SLOPE_MAX);
@@ -796,10 +774,6 @@ fn worst_case_close(roster: usize) -> u64 {
                 );
                 fixture.govern(IStaking::setMinVerdictDueBlocksCall { value: 1 }.abi_encode());
             }
-            if epoch == 4 {
-                // Unblock the stipend leg, so close(4) has four epochs to settle.
-                fixture.govern(IStaking::setBlendReserveCall { value: OWNER }.abi_encode());
-            }
         }
         assert_eq!(
             fixture.blocks_in_epoch(epoch),
@@ -823,32 +797,25 @@ fn worst_case_close(roster: usize) -> u64 {
     );
 
     // Proof that the worst case really happened: two exclusions expired and were
-    // released while two more were stamped, and four epochs settled.
+    // released while two more were stamped.
     assert_eq!(fixture.pending_exclusions().len(), 2);
-    // COUNT the transfers, positively. Two weaker forms were tried and both are
-    // vacuous in the direction that matters. `epoch_rewards(e) > 0` stopped
-    // proving settlement when the close took over writing that ledger — it is an
-    // accrual record now and fills in whether or not a token moves. And "no
-    // `StipendSkipped` was emitted" is vacuously TRUE of a walk that settled
-    // NOTHING, so a regression that advances the cursor early would empty this
-    // frame of settlement work, LOWER the measured intercept, and read green
-    // against a ceiling. The pull counter is the only assertion here that fails
-    // in both directions.
+    // COUNT the transfers, positively — and the count that proves the close is
+    // doing its job is now ZERO. The close reads the reserve and writes credits;
+    // a regression that pulled the pot onto this contract would show up here and
+    // nowhere else, because `epoch_rewards` fills in either way.
     assert_eq!(
-        pulls_in_close, MAX_SETTLE_CATCHUP,
-        "the close must fund exactly MAX_SETTLE_CATCHUP epochs, or the figure \
-         above is not the worst case being guarded"
-    );
-    assert_eq!(
-        worst.events(StipendLegSkipped::SIGNATURE_HASH),
-        0,
-        "the payment frame was discarded"
+        pulls_in_close, 0,
+        "the close must move no money: the reserve pays each claim directly"
     );
     assert_eq!(
         worst.events(EpochBlendRewardsCommitted::SIGNATURE_HASH),
         1,
         "a close accrues exactly the one epoch it closes"
     );
+    // Every epoch accrued, including the ones that closed before any of this —
+    // the accrual is unconditional on funding here because the mock token
+    // answers both reserve reads far above the pot. A forfeited epoch would
+    // shrink the measured frame and read green against the ceiling.
     for epoch in 0..5u64 {
         assert!(
             fixture.epoch_rewards(epoch) > U256::ZERO,
@@ -861,20 +828,17 @@ fn worst_case_close(roster: usize) -> u64 {
 /// What the accrual costs inside the close, measured rather than decomposed.
 ///
 /// Two fixtures identical in every respect but the configured stipend rate. At
-/// zero the accrual returns at its `pot.is_zero()` arm and writes only the
-/// closed-marker scalar; above zero it walks the committee, splits the pot and
-/// writes a credit per member. The difference is the split.
+/// zero the accrual returns at its `pot.is_zero()` arm before it reads anything;
+/// above zero it asks the reserve what it can cover, walks the committee, splits
+/// the pot and writes a credit per member. The difference is that whole tail.
 ///
-/// One thing is deliberately not held constant: the payment skips in the zero arm
-/// and transfers in the funded one. `path_a_stipend_leg_cost_at_max_catchup`
-/// prices that whole leg at four epochs, so the confound is bounded by a quarter
-/// of that figure — two orders of magnitude below what is being measured here.
+/// Nothing moves money in either arm any more, so the two are cleanly comparable
+/// — the confound the old payment leg introduced here is gone with it.
 ///
 /// Both epochs are reported on purpose. Epoch 0's per-validator snapshots already
 /// exist, materialized by `initialize`, so its accrual is the credit writes
 /// alone. Epoch 1's do not, so it also pays `touch_snapshot_at_or_before` per
-/// member — the steady-state shape, and work that MOVED out of the settlement
-/// leg rather than being new.
+/// member — the steady-state shape.
 #[test]
 fn path_a_close_accrual_cost() {
     println!("\n=== PATH A: the accrual the close carries ===");
@@ -933,81 +897,4 @@ fn closes_at_stipend_rate(rate: U256) -> Vec<u64> {
         }
     }
     closes
-}
-
-/// The stipend leg alone, through `settleEpochStipend`, which runs the identical
-/// `settle_up_to`. This is what has to fit inside `STIPEND_FUEL_CAP` — 12M
-/// gas-equivalent — when the close forwards it as a self-call.
-#[test]
-fn path_a_stipend_leg_cost_at_max_catchup() {
-    let mut fixture = fixture(COMMITTEE, false);
-    println!("\n=== PATH A: stipend leg (settle_up_to) at maximum catch-up ===");
-    let stalled_baseline = fixture.committed_pulls();
-
-    for _ in 0..3 {
-        fixture.commit_committee();
-    }
-    for epoch in 0..5u64 {
-        let start = first_block(epoch);
-        for offset in 0..INTERVAL {
-            fixture.record(start + offset);
-            if offset == 1 && (1..=3).contains(&epoch) {
-                fixture.commit_committee();
-            }
-        }
-    }
-    // The cursor is still at epoch 0: every close so far hit the unapproved
-    // source and its self-call frame was discarded. That premise is ASSERTED
-    // rather than left to this comment — if it ever stops holding,
-    // `settle_up_to` early-returns, the measured frame collapses to nothing and
-    // `STIPEND_LEG_MAX` passes on a no-op.
-    //
-    // Against the post-genesis baseline, not against zero: `initialize` pulls the
-    // genesis stakes through the same `transferFrom` and the counter sees it.
-    assert_eq!(
-        fixture.committed_pulls(),
-        stalled_baseline,
-        "the stall did not hold, so the cursor is not at epoch 0 and there is no \
-         maximum catch-up left to measure"
-    );
-    fixture.govern(IStaking::setBlendReserveCall { value: OWNER }.abi_encode());
-
-    let measured = measure(
-        &mut fixture.context,
-        SYSTEM_CALLER,
-        IStaking::settleEpochStipendCall { epoch: 3 }.abi_encode(),
-    );
-    println!(
-        "settle 4 epochs x {COMMITTEE} members: frame {} / tx {} / post-refund {}",
-        measured.frame_gas, measured.tx_gas, measured.tx_gas_after_refund
-    );
-    println!(
-        "against STIPEND_FUEL_CAP ({STIPEND_CAP_GAS} gas-equivalent): {:.1}%",
-        measured.frame_gas as f64 / STIPEND_CAP_GAS as f64 * 100.0
-    );
-    // Four real pulls, COUNTED. The leg is priced on what it does, and after the
-    // split it can walk four epochs while paying for none of them — "no
-    // `StipendSkipped`" would be vacuously true of a walk that settled nothing,
-    // which is the shrink-to-nothing failure `STIPEND_LEG_MAX` cannot see.
-    assert_eq!(
-        fixture.committed_pulls() - stalled_baseline,
-        MAX_SETTLE_CATCHUP,
-        "the measured frame did not fund MAX_SETTLE_CATCHUP epochs"
-    );
-    for epoch in 0..4u64 {
-        let credited = fixture.epoch_rewards(epoch);
-        println!("  epoch {epoch} accrued rewards: {credited}");
-        assert!(
-            credited > U256::ZERO,
-            "epoch {epoch} must have been accrued, or the leg had nothing to pay"
-        );
-    }
-
-    let mut guards = Guards::default();
-    guards.at_most(
-        "stipend leg at MAX_SETTLE_CATCHUP",
-        measured.frame_gas as f64,
-        STIPEND_LEG_MAX as f64,
-    );
-    guards.finish();
 }

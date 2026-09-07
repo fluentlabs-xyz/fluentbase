@@ -3,7 +3,7 @@
 use fluentbase_sdk::{
     address,
     derive::{derive_keccak256_id, erc7201_slot},
-    uint, Address, FUEL_DENOM_RATE, U256,
+    uint, Address, U256,
 };
 
 pub const SIG_LEN_BYTES: usize = 4;
@@ -93,6 +93,10 @@ pub const SIG_ERC20_TRANSFER_FROM: u32 =
     derive_keccak256_id!("transferFrom(address,address,uint256)");
 // 0xa9059cbb
 pub const SIG_ERC20_TRANSFER: u32 = derive_keccak256_id!("transfer(address,uint256)");
+// 0x70a08231
+pub const SIG_ERC20_BALANCE_OF: u32 = derive_keccak256_id!("balanceOf(address)");
+// 0xdd62ed3e
+pub const SIG_ERC20_ALLOWANCE: u32 = derive_keccak256_id!("allowance(address,address)");
 // 0xc910df38
 pub const SIG_GET_SLASH_FUND_ADDRESS: u32 = derive_keccak256_id!("getSlashFundAddress()");
 // 0xa79e7263
@@ -155,9 +159,6 @@ pub const SIG_PENDING_EXCLUSIONS: u32 = derive_keccak256_id!("pendingExclusions(
 pub const SIG_LAST_PROCESSED_BLOCK: u32 = derive_keccak256_id!("lastProcessedBlock()");
 // 0x1752910e
 pub const SIG_RECORD_PRODUCTION: u32 = derive_keccak256_id!("recordProduction(uint8)");
-// 0x92d321ab
-pub const SIG_SETTLE_EPOCH_STIPEND_FROM: u32 =
-    derive_keccak256_id!("settleEpochStipendFrom(uint64)");
 // 0x457179fd
 pub const SIG_GET_VALIDATOR_FEE: u32 = derive_keccak256_id!("getValidatorFee(address)");
 // 0xc6fb9065
@@ -178,14 +179,18 @@ pub const SIG_CLAIM_DELEGATOR_FEE: u32 = derive_keccak256_id!("claimDelegatorFee
 // 0xfe38ebef
 pub const SIG_CLAIM_DELEGATOR_FEE_AT_EPOCH: u32 =
     derive_keccak256_id!("claimDelegatorFeeAtEpoch(address,uint64)");
+// 0xa789083d
+pub const SIG_GET_DELEGATOR_PRINCIPAL: u32 =
+    derive_keccak256_id!("getDelegatorPrincipal(address,address)");
+// 0xe75f359c
+pub const SIG_WITHDRAW_DELEGATOR_PRINCIPAL: u32 =
+    derive_keccak256_id!("withdrawDelegatorPrincipal(address)");
 // 0x5ef9e8c6
 pub const SIG_CALC_AVAILABLE_FOR_REDELEGATE_AMOUNT: u32 =
     derive_keccak256_id!("calcAvailableForRedelegateAmount(address,address)");
 // 0x8ecb3fc9
 pub const SIG_REDELEGATE_DELEGATOR_FEE: u32 =
     derive_keccak256_id!("redelegateDelegatorFee(address)");
-// 0xa631344a
-pub const SIG_SETTLE_EPOCH_STIPEND: u32 = derive_keccak256_id!("settleEpochStipend(uint64)");
 // 0x54c3e84b
 pub const SIG_GET_EPOCH_REWARDS: u32 = derive_keccak256_id!("getEpochRewards(uint64)");
 // 0xad36f42f
@@ -258,7 +263,6 @@ pub const ERR_PENDING_DELEGATION: u32 = derive_keccak256_id!("PendingDelegation(
 pub const ERR_STAKING_TOKEN_CALL_FAILED: u32 = derive_keccak256_id!("StakingTokenCallFailed()");
 pub const ERR_UNKNOWN_METHOD: u32 = derive_keccak256_id!("UnknownMethod()");
 pub const ERR_ONLY_SYSTEM_CALL: u32 = derive_keccak256_id!("OnlySystemCall()");
-pub const ERR_ONLY_SELF_CALL: u32 = derive_keccak256_id!("OnlySelfCall()");
 pub const ERR_ZERO_VALUE: u32 = derive_keccak256_id!("ZeroValue(string)");
 pub const ERR_ACTIVE_VALIDATORS_LENGTH_BELOW_COMMITTEE_FLOOR: u32 =
     derive_keccak256_id!("ActiveValidatorsLengthBelowCommitteeFloor(uint32,uint32)");
@@ -298,7 +302,6 @@ pub const ERR_COMMITTEE_TOO_SMALL: u32 = derive_keccak256_id!("CommitteeTooSmall
 /// confidently and wrongly. A halted chain is recoverable; that is not.
 pub const ERR_COMMITTEE_EXCEEDS_WEIGHT_RING: u32 =
     derive_keccak256_id!("CommitteeExceedsWeightRing(uint256,uint256)");
-pub const ERR_EPOCH_NOT_ACCRUED: u32 = derive_keccak256_id!("EpochNotAccrued(uint64)");
 pub const ERR_EPOCH_NOT_YET_COMMITTABLE: u32 =
     derive_keccak256_id!("EpochNotYetCommittable(uint64,uint64)");
 pub const ERR_ALREADY_SLASHED_FOR_EQUIVOCATION: u32 =
@@ -436,51 +439,12 @@ pub const WARMUP_DELAY: u64 = 2;
 /// not been measured against rWasm fuel on this runtime.
 pub const MAX_EPOCHS_PER_CLAIM: u64 = 1_000;
 
-/// Inherited from the Solidity, where it was sized against measured EVM gas for
-/// one settled epoch inside a 12M caller bound.
-///
-/// Measured on rWasm 2026-08-17, after the accrual moved to the close: a settled
-/// epoch costs **12_213 gas** (`e2e/src/staking_cost.rs`, 48_852 for four), and
-/// no longer varies with committee size — the payment reads one scalar and
-/// transfers it. Four therefore consume 0.4% of `STIPEND_FUEL_CAP`, and the leg
-/// would need ~982 epochs in one call to reach it.
-///
-/// Before the split the same measurement was 1_662_982 per epoch and four
-/// already consumed 55.4% of the cap, so **seven would have exceeded it**. The
-/// inherited 4 was very nearly right for the implementation it was inherited
-/// with; it is now three orders of magnitude below anything that binds.
-///
-/// Left at 4 here deliberately, because raising it is a behaviour change that
-/// belongs in its own review, but it should be raised: recovery from a stall is
-/// `MAX_SETTLE_CATCHUP - 1` epochs per epoch, and this is the only thing
-/// bounding it. 32 is the recommendation: 390_816 gas, 1.3% of the close's 30M
-/// system-call budget, an order of magnitude off the recovery time, and still
-/// two orders below the leg's own cap.
-///
-/// This argument used to carry a second half — that a lagging cursor also
-/// pinned committee storage, because pruning refused to pass the settlement
-/// cursor. Committees are no longer pruned at all, so a lagging cursor costs
-/// recovery time and nothing else.
-pub const MAX_SETTLE_CATCHUP: u64 = 4;
 /// Exclusions stamped by one epoch close.
 ///
 /// Deliberately low: a correlated loss of `f` seats is answered over at least
 /// eight closes, which gives a healed cause time to clear the verdicts before
 /// most stamps land.
 pub const MAX_STAMPS_PER_CLOSE: usize = 2;
-/// Fuel forwarded to the tolerant stipend leg.
-///
-/// The Solidity bound is 12M gas. Fuel is gas scaled by `FUEL_DENOM_RATE`, so
-/// passing the gas figure straight into the fuel slot under-provisions the
-/// frame twentyfold and turns the leg into a guaranteed `OutOfFuel`.
-///
-/// Measured on rWasm 2026-08-17: the leg spends 48_852 at `MAX_SETTLE_CATCHUP`,
-/// 0.4% of this. It was 55.4% before the accrual moved to the close. Oversized
-/// now, and harmlessly so — this caps the blast radius of the one leg whose
-/// failure is tolerated, and what it protects is no longer load-bearing, because
-/// the entitlement is recorded above this frame and a discarded payment is a
-/// deferral rather than a loss.
-pub const STIPEND_FUEL_CAP: u64 = 12_000_000 * FUEL_DENOM_RATE;
 /// How far ahead of the current epoch a committee may be committed, and — the
 /// same number, because they are the same offset — how far back of the target
 /// epoch its membership is selected from.

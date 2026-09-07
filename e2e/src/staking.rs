@@ -49,7 +49,7 @@ sol! {
         ) external;
         function delegate(address validator, uint256 amount) external;
         function undelegate(address validator, uint256 amount) external;
-        function claimDelegatorFee(address validator) external;
+        function withdrawDelegatorPrincipal(address validator) external;
         function getConsensusKeys(address validator)
             external
             view
@@ -59,7 +59,6 @@ sol! {
             view
             returns (uint256 delegatedAmount, uint64 atEpoch);
         function recordProduction(uint8 leaderIndex) external;
-        function settleEpochStipendFrom(uint64 epoch) external;
         function lastProcessedBlock() external view returns (uint64);
         function blocksInEpoch(uint64 epoch) external view returns (uint32);
     }
@@ -325,7 +324,7 @@ fn genesis_staking_custodies_and_returns_blend_through_real_rwasm_calls() {
         &mut context,
         OWNER,
         GENESIS_STAKING,
-        IStakingRwasm::claimDelegatorFeeCall {
+        IStakingRwasm::withdrawDelegatorPrincipalCall {
             validator: VALIDATOR,
         }
         .abi_encode(),
@@ -361,12 +360,6 @@ fn record_production_drives_the_epoch_close_through_real_rwasm() {
     let record =
         |_block_number: u64| IStakingRwasm::recordProductionCall { leaderIndex: 0 }.abi_encode();
     assert_reverts(&mut context, OWNER, GENESIS_STAKING, record(1_000));
-    assert_reverts(
-        &mut context,
-        SYSTEM_CALLER,
-        GENESIS_STAKING,
-        IStakingRwasm::settleEpochStipendFromCall { epoch: 0 }.abi_encode(),
-    );
 
     context = context.with_block_number(1_000);
     call(&mut context, SYSTEM_CALLER, GENESIS_STAKING, record(1_000));

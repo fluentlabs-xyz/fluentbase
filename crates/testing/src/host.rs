@@ -381,13 +381,20 @@ impl SharedAPI for TestingContextImpl {
         unimplemented!("not supported for testing context")
     }
 
+    /// Routed to the same handler as `call`, with a zero value.
+    ///
+    /// A mocked callee is a closure, not a frame, so there is no state for
+    /// staticness to protect here; what a test needs is that a read reaches its
+    /// mock at all. Implemented rather than left `unimplemented!` because the
+    /// staking contract reads its BLEND reserve this way, and a panic here would
+    /// take down every test whose epoch close prices an epoch.
     fn static_call(
         &mut self,
-        _address: Address,
-        _input: &[u8],
-        _fuel_limit: Option<u64>,
+        address: Address,
+        input: &[u8],
+        fuel_limit: Option<u64>,
     ) -> SyscallResult<Bytes> {
-        unimplemented!("not supported for testing context")
+        self.call(address, U256::ZERO, input, fuel_limit)
     }
 
     fn destroy_account(&mut self, _address: Address) -> SyscallResult<()> {

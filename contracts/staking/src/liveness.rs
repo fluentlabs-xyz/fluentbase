@@ -5,18 +5,19 @@ use crate::{
     consts::*,
     events, math, staking,
     storage::{chain_config_storage, consensus_storage, production_liveness_storage},
-    types::{RecordProductionCommand, U64Command},
+    types::RecordProductionCommand,
     util::{
         current_epoch, current_epoch_at_block, decode, ensure_initialized, ensure_mutable,
         ensure_non_payable, revert,
     },
 };
 #[cfg(feature = "devnet-views")]
-use crate::{types::EpochSignerCommand, util::write_abi};
-use alloc::{vec, vec::Vec};
-use fluentbase_sdk::{
-    bytes::BytesMut, codec::SolidityABI, Address, ContextReader, ExitCode, SharedAPI, U256,
+use crate::{
+    types::{EpochSignerCommand, U64Command},
+    util::write_abi,
 };
+use alloc::{vec, vec::Vec};
+use fluentbase_sdk::{Address, ContextReader, ExitCode, SharedAPI, U256};
 
 /// Epoch at whose close `validator` is released, or `0` when not excluded.
 pub(crate) fn readmit_at_epoch_of<SDK: SharedAPI>(
@@ -120,15 +121,23 @@ pub fn record_production<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<
     )
 }
 
-/// Close `epoch`: releases, verdicts, stipend.
+/// Close `epoch`: releases, verdicts, accrual.
 ///
-/// Three legs in that order and with three different failure policies. Releases
-/// first and unconditionally, so an expiring exclusion cannot be held hostage by
-/// the correlation guard or by the kill switch.
-/// Verdicts second and fail-loud, because a rolled-back no-op would retry every
-/// block forever with a warning as its only symptom. The stipend last and
-/// tolerant, because it is the one leg where a frozen payment is preferable to
-/// any chance of a frozen chain.
+/// Three legs in that order. Releases first and unconditionally, so an expiring
+/// exclusion cannot be held hostage by the correlation guard or by the kill
+/// switch. Verdicts second and fail-loud, because a rolled-back no-op would
+/// retry every block forever with a warning as its only symptom. The accrual
+/// last, and fail-loud too — it is NOT infallible, and saying so would be
+/// wrong: `assign_epoch_shares` propagates a failed committee read, a failed
+/// snapshot write and every overflow check it makes.
+///
+/// What IS guaranteed is narrower and is the part that was bought: the one
+/// OUTWARD call the accrual makes — asking the BLEND reserve what it can cover
+/// — never raises. It scores every failure as zero instead. That matters
+/// because this whole function runs as a pre-execution system call, so a
+/// propagated error is a block-execution failure on every node that no
+/// transaction can repair, and a third party's token is the one input here
+/// nobody on this chain controls.
 fn close_epoch<SDK: SharedAPI>(sdk: &mut SDK, epoch: u64) -> Result<(), ExitCode> {
     let config = chain_config_storage();
     let current = current_epoch(sdk)?;
@@ -185,20 +194,11 @@ fn close_epoch<SDK: SharedAPI>(sdk: &mut SDK, epoch: u64) -> Result<(), ExitCode
         judge(sdk, epoch, current, recorded)?;
     }
 
-    // Unconditional, and above the leg that spends it. `close_epoch` only ever
-    // runs for the epoch of the last recorded block, so an epoch it skips here
-    // is an epoch nothing will ever accrue for — and the payment cursor, which
-    // walks contiguously, would sit in front of it forever waiting.
-    //
-    // In the main frame, not inside the leg: the leg's failure is swallowed as a
-    // status, which the payment survives because the cursor retries it, and an
-    // accrual would not.
-    staking::accrue_epoch(sdk, epoch, recorded)?;
-    // No longer gated on this epoch having produced. Payment is a scalar read
-    // and a transfer now, so holding the cursor back across a run of empty
-    // epochs buys nothing and leaves it a backlog to recover through at
-    // `MAX_SETTLE_CATCHUP` per close.
-    settle_stipend_leg(sdk, epoch)
+    // The last leg, and the only one that decides money. It moves none: it reads
+    // the reserve, writes what the epoch is worth to each seat, and stops. What
+    // used to follow it — a self-call that pulled the whole epoch's pot onto this
+    // contract behind a fuel cap — is gone with the balance it fed.
+    staking::accrue_epoch(sdk, epoch, recorded)
 }
 
 /// Release every exclusion whose term has expired. Bounded by `f`.
@@ -467,37 +467,6 @@ fn stamp<SDK: SharedAPI>(
                 .ok_or(ExitCode::IntegerOverflow)?,
         )?;
         pending.push_checked(sdk, members[best])?;
-    }
-    Ok(())
-}
-
-/// Run the stipend inside a fuel-capped self-call.
-///
-/// The host builds a real frame with its own journal checkpoint, so a revert
-/// inside it discards only that frame's writes — every release and verdict
-/// above has already landed and survives. Failure arrives as a status and never
-/// as an unwind: `unwrap` on the result would abort the outer frame under
-/// `panic = "abort"`, which is the exact opposite of tolerance. `OutOfFuel` and
-/// a revert are distinguishable and both are tolerated.
-///
-/// The event is emitted from this frame deliberately: a log written inside the
-/// discarded frame goes with it, and a system call leaves no receipt to read the
-/// failure from instead.
-///
-/// What the discarded frame takes with it is the *payment* and nothing else. The
-/// accrual ran above this call, so every epoch the leg failed to fund is still
-/// on the ledger and still owed; `StipendLegSkipped` reports a deferral, not a
-/// loss.
-fn settle_stipend_leg<SDK: SharedAPI>(sdk: &mut SDK, epoch: u64) -> Result<(), ExitCode> {
-    let mut params = BytesMut::new();
-    SolidityABI::<U64Command>::encode(&U64Command { value: epoch }, &mut params, 0)
-        .map_err(|_| ExitCode::MalformedBuiltinParams)?;
-    let mut input = SIG_SETTLE_EPOCH_STIPEND_FROM.to_be_bytes().to_vec();
-    input.extend_from_slice(&params);
-    let own_address = sdk.context().contract_address();
-    let result = sdk.call(own_address, U256::ZERO, &input, Some(STIPEND_FUEL_CAP));
-    if !result.status.is_ok() {
-        events::StipendLegSkipped { epoch }.emit(sdk)?;
     }
     Ok(())
 }

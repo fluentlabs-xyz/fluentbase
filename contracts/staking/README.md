@@ -14,7 +14,8 @@ The core validator staking contract implemented as a normal rWasm contract and d
   `Fluent.storage.Consensus`, `Fluent.storage.StakingStorage`, and
   `Fluent.storage.ProductionLiveness`.
 - Keeps `StakingPool` external and unchanged; this crate does not deploy or replace it.
-- Calls configured BLS verifier and BLEND reserve contracts.
+- Calls the configured BLS verifier, and the BLEND token on behalf of the configured reserve — reading what the
+  reserve can cover at an epoch close, and moving it straight to a claimant at a claim.
 
 ## Lifecycle
 
@@ -24,7 +25,7 @@ The core validator staking contract implemented as a normal rWasm contract and d
    genesis validator stake; it grants no contract authority.
 3. Governance manages chain configuration, dependency rotation, and validator status.
 4. Validator creation verifies and stores consensus keys atomically; delegators approve and deposit BLEND.
-5. The system caller commits epoch committees and settles the stipend for epochs that have finished.
+5. The system caller commits epoch committees and closes finished epochs; the close prices an epoch and moves no money.
 6. Verified equivocation permanently tombstones a validator and seizes its self-stake. Block-production liveness never
    jails and never touches stake; it only excludes a validator from selection for a bounded number of epochs.
 
@@ -58,30 +59,41 @@ validator-creation call; there is no separate key-registration phase.
 - A full owner exit moves an active validator to pending in the same transaction and removes its next-epoch selection
   visibility.
 - Delegation amounts must use `BALANCE_COMPACT_PRECISION`.
-- Undelegated principal is released only after its maturity epoch and is claimed through the reward path.
-- Reward claims and views never consume epochs at or beyond the exclusive settled frontier. Matured undelegated
-  principal is processed against its own bounded cursor, so delayed reward settlement cannot block withdrawals.
+- Undelegated principal is released only after its maturity epoch, through `withdrawDelegatorPrincipal`, which is a
+  separate handler from the reward claim and draws on a separate pot.
+- **A reward and a matured withdrawal are two claims over two cursors and two pots.** The reward is drawn off the BLEND
+  reserve straight to the recipient and never enters this contract; the principal is a deposit this contract holds and
+  goes out of its own balance. `claimed_through_epoch` and `undelegate_gap` move independently, so an unfunded reserve
+  cannot hold up a withdrawal and an empty withdrawal queue cannot hold up a reward. Reward claims are bounded by the
+  current epoch — there is no settlement frontier to bound them by.
 - A validator owner's undelegated principal matures on the ordinary schedule; no separate liability deadline applies.
 - Equivocation evidence does not expire. The offender is resolved from the signing key, which is recorded permanently,
   so a report stays valid for as long as there is stake to seize.
 - Equivocation seizure consumes both active and pending self-principal.
-- Claims, stipend catch-up, and committee pruning are bounded per call.
+- Claims and committee pruning are bounded per call.
 - BLEND transfers accept ERC-20 tokens that return `true` or no data; explicit `false` reverts.
 - The epoch stipend is flat pro-rata over the committee's frozen leader weights and consults no liveness verdict. The
   only exclusions are a permanent equivocation tombstone and a zero frozen weight.
-- **Deciding what an epoch owes and paying it are separate acts.** The close splits the pot and writes the
-  per-validator credits together with the total it assigned, in one frame; the settlement cursor later pulls that
-  total and moves on. Nothing on the payment path reads a committee or a weight.
-- The credits and the total the payment pulls are computed from the same figure in the same frame, and that figure is
-  the sum of the floored shares, never the pot. The contract therefore never owes more than it computed, and the
-  remainder of at most `n − 1` base units stays with the funder.
-- **A failed pull defers the epoch; it never forfeits it.** The disbursement is all-or-nothing — reverted calls and
-  malformed return values revert settlement — but the entitlement is already recorded, so a refusal costs a delay and
-  nothing else. A revoked allowance holds the epochs it stops and pays every one of them once it is restored.
-- An accrued epoch is not claimable until it is funded. All three claim walks bound themselves by the settlement
-  cursor, which is what keeps the two apart without letting a claim run ahead of the money.
-- `getEpochRewards` reports what an epoch was ACCRUED, not what has been PAID for it. It fills in at the close, whether
-  or not a token ever moves, so it cannot be used to diagnose a stalled cursor.
+- **The stipend never enters this contract.** The close only records what each seat is owed; a claim pulls that amount
+  off the BLEND reserve straight to the claimant. Everything this contract holds is somebody's deposit, so a balance
+  check on it is a check on deposits and never on stipend solvency.
+- The credits an epoch writes are the sum of the floored shares, never the pot, so the remainder of at most `n − 1`
+  base units is simply never assigned.
+- **An epoch the reserve cannot cover is forfeited, permanently.** Before it prices an epoch, the close reads
+  `min(balanceOf(reserve), allowance(reserve, staking))`; below the pot the epoch closes at zero and nothing revisits
+  it, so a later top-up funds later epochs and never that one. All-or-nothing, not pro rata: a credit written to a
+  snapshot is one the reserve was good for when it was written.
+- **Every failure of that read scores zero, never an error.** A missing token, a reverting call, an undecodable answer
+  — all read as "the reserve can cover nothing". The close is a pre-execution system call, so the alternative to a
+  quiet zero is a chain halt no transaction can repair.
+- A zero in `EpochBlendRewardsCommitted` therefore has several causes — zero rate, empty committee, all-zero weights,
+  an epoch that recorded no block, weights aged out of the ring, and a reserve that is empty, unapproved or unreadable
+  — and the contract does not tell them apart. That is accepted: the reserve cases are a configuration error, checked
+  off-chain at deployment.
+- A CLAIM, unlike the close, is allowed to revert, and does: a reserve that cannot pay a claim fails it rather than
+  paying short.
+- `getEpochRewards` reports what an epoch was ACCRUED, which is what is owed. Nothing records what has been claimed
+  against it.
 - Equivocation tombstones are permanent and prevent key reuse.
 - Compressed BLS public keys are stored as three fixed `bytes32` words. Validator creation rejects any verifier output
   that is not exactly 96 bytes, avoiding dynamic-bytes metadata and making malformed stored key lengths unrepresentable.
@@ -180,7 +192,7 @@ bytes are unchanged.
 ## Block-production liveness
 
 The system caller reports every block's producer through `recordProduction`. When the epoch rolls
-over, the close runs four legs with three deliberately different failure policies:
+over, the close runs three legs with three deliberately different failure policies:
 
 1. **Releases** — unconditional. Neither a tainted epoch nor the `productionLivenessDisabled` kill
    switch holds an expiring exclusion back: tying releases to either would freeze them during
@@ -196,17 +208,14 @@ over, the close runs four legs with three deliberately different failure policie
    position, so its header carries empty `extra_data` and the node issues no record for it. Epoch 0
    is therefore complete at `interval - 1`, and expecting the full interval there would taint a
    healthy first day on every chain and leave it permanently unjudged.
-3. **Accrual** — unconditional and fail-loud, in the close's own frame. It decides what the closing
-   epoch owes its committee and records it, moving no money. Unconditional because the close only
-   ever runs for the epoch of the last recorded block: an epoch it skips here is one nothing will
-   ever accrue for, and the settlement cursor walks contiguously and would wait on it forever. So an
-   epoch that recorded nothing still gets marked closed, owing nothing. It runs in the main frame,
-   not inside the tolerant leg below, because the leg's failure is survivable only while a retrying
-   cursor exists to re-do the work — and the payment cursor no longer does that work.
-4. **Payment** — tolerant. It runs in a fuel-capped self-call so a failing payment cannot roll back
-   the releases, verdicts and accrual of the same close; a failure emits `StipendLegSkipped` from
-   the outer frame. What the discarded frame takes with it is the payment and only the payment: the
-   epochs it could not fund are still recorded and still owed.
+3. **Accrual** — last, and it decides what the closing epoch owes its committee and records it,
+   moving no money. It cannot fail: its one outward call asks the BLEND reserve what it can cover,
+   and reads every failure as zero rather than raising it. What that produces is a forfeit — the
+   epoch closes owing nothing, for good, because nothing ever revisits a closed epoch.
+
+   There is no fourth leg. The close used to end in a fuel-capped self-call that pulled the epoch's
+   pot onto this contract behind a global payment cursor; the reserve pays each claimant directly
+   now, so there is nothing left for the close to move and nothing to be tolerant about.
 
 The consequence of failing liveness is a temporary, auto-reversing **exclusion** from committee
 selection, never a stake penalty and never a jail — equivocation is the only path to `Jail`. An

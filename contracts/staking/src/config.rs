@@ -758,8 +758,14 @@ pub fn get_blend_reserve<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> 
 /// Public handler `0x7899ae8f` (`setBlendReserve`).
 ///
 /// Rotates the address the epoch stipend is drawn from, under governance
-/// control. The new address must have approved this contract for BLEND, or
-/// settlement defers every epoch until it does.
+/// control.
+///
+/// The new address must ALREADY hold the pot and have approved this contract
+/// for it. There is no grace period: the first epoch to close after this call
+/// reads the new address, and an address that cannot cover the pot forfeits
+/// that epoch permanently. Rotating to an unfunded or unapproved holder burns
+/// every epoch until it is funded, the same way a fresh chain burns the epochs
+/// that run before its treasury approves.
 pub fn set_blend_reserve<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), ExitCode> {
     ensure_governance_mutation(sdk)?;
     let value = decode::<AddressCommand>(input)?.value;

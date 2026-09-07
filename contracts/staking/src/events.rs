@@ -196,15 +196,6 @@ pub struct CorrelatedFailureEpoch {
     pub tolerance: U256,
 }
 
-/// The liveness legs of this close have already committed, and so has the
-/// accrual; only the payment was lost. The reward cursor did not advance, so the
-/// next close retries contiguously and the epochs it skipped are still owed.
-#[derive(Event)]
-pub struct StipendLegSkipped {
-    #[indexed]
-    pub epoch: u64,
-}
-
 #[derive(Event)]
 pub struct ValidatorOwnerClaimed {
     #[indexed]
@@ -239,12 +230,6 @@ pub struct EpochBlendRewardsCommitted {
     #[indexed]
     pub epoch: u64,
     pub blend_amount: U256,
-}
-
-#[derive(Event)]
-pub struct StipendSkipped {
-    #[indexed]
-    pub epoch: u64,
 }
 
 #[derive(Event)]

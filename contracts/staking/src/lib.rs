@@ -119,13 +119,13 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
         SIG_GET_PENDING_DELEGATOR_FEE => staking::get_pending_delegator_fee(sdk, params),
         SIG_CLAIM_DELEGATOR_FEE => staking::claim_delegator_fee(sdk, params),
         SIG_CLAIM_DELEGATOR_FEE_AT_EPOCH => staking::claim_delegator_fee_at_epoch(sdk, params),
+        SIG_GET_DELEGATOR_PRINCIPAL => staking::get_delegator_principal(sdk, params),
+        SIG_WITHDRAW_DELEGATOR_PRINCIPAL => staking::withdraw_delegator_principal(sdk, params),
         SIG_CALC_AVAILABLE_FOR_REDELEGATE_AMOUNT => {
             staking::calc_available_for_redelegate_amount(sdk, params)
         }
         SIG_REDELEGATE_DELEGATOR_FEE => staking::redelegate_delegator_fee(sdk, params),
         SIG_GET_EPOCH_REWARDS => staking::get_epoch_rewards(sdk, params),
-        SIG_SETTLE_EPOCH_STIPEND => staking::settle_epoch_stipend(sdk, params),
-        SIG_SETTLE_EPOCH_STIPEND_FROM => staking::settle_epoch_stipend_from(sdk, params),
 
         // Consensus
         SIG_GET_CONSENSUS_KEYS => consensus::get_consensus_keys(sdk, params),

@@ -4,10 +4,7 @@ use crate::{
     consensus::{self, store_consensus_keys, verify_consensus_keys},
     consts::*,
     events, liveness, math,
-    storage::{
-        chain_config_storage, consensus_storage, production_liveness_storage, staking_storage,
-        ValidatorSnapshotStorage,
-    },
+    storage::{chain_config_storage, consensus_storage, staking_storage, ValidatorSnapshotStorage},
     types::{
         AddressAmountCommand, AddressCommand, AddressU16Command, RegisterValidatorCommand,
         TwoAddressesCommand, U64Command, ValidatorBlockCommand, ValidatorDelegatorCommand,
@@ -15,8 +12,8 @@ use crate::{
     },
     util::{
         current_epoch, current_epoch_at_block, decode, decode_args, ensure_governance,
-        ensure_initialized, ensure_mutable, ensure_non_payable, next_epoch, revert, revert_with,
-        safe_transfer, safe_transfer_from, write_abi,
+        ensure_initialized, ensure_mutable, ensure_non_payable, next_epoch, reserve_available,
+        revert, revert_with, safe_transfer, safe_transfer_from, write_abi,
     },
 };
 use alloc::{vec, vec::Vec};
@@ -1038,7 +1035,8 @@ pub fn register_validator<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result
         since_epoch,
     )?;
     store_consensus_keys(sdk, command.validator, verified, since_epoch)?;
-    safe_transfer_from(sdk, owner, command.initial_stake)
+    let vault = sdk.context().contract_address();
+    safe_transfer_from(sdk, owner, vault, command.initial_stake)
 }
 
 /// Public handler `0x026e402b` (`delegate`).
@@ -1080,11 +1078,14 @@ pub(crate) fn delegate_to<SDK: SharedAPI>(
         return revert_with(sdk, ERR_VALIDATOR_NOT_FOUND, &validator);
     }
     // A tombstone is permanent and the equivocation seizure has already run, so
-    // anything delegated from here on can never earn. `claim_delegator_before`
-    // reaches this through the redelegate branch, so `redelegateDelegatorFee`
-    // reverts here too rather than folding a claim back into a dead validator;
-    // the same claim stays payable through `claimDelegatorFee`, which runs the
-    // identical path with `redelegate: false` and never calls this.
+    // anything delegated from here on can never earn.
+    // `claim_delegator_reward_before` reaches this through the redelegate
+    // branch, so `redelegateDelegatorFee` reverts here too rather than folding a
+    // claim back into a dead validator; the same claim stays payable through
+    // `claimDelegatorFee`, which runs the identical path with
+    // `redelegate: false` and never calls this. `withdrawDelegatorPrincipal`
+    // never comes here at all, so a matured deposit is still withdrawable from a
+    // tombstoned validator.
     if consensus_storage()
         .tombstoned_accessor()
         .entry(validator)
@@ -1129,7 +1130,8 @@ pub(crate) fn delegate_to<SDK: SharedAPI>(
     }
 
     if pull_tokens {
-        safe_transfer_from(sdk, delegator, amount)?;
+        let vault = sdk.context().contract_address();
+        safe_transfer_from(sdk, delegator, vault, amount)?;
     }
     events::Delegated {
         validator,
@@ -1285,7 +1287,7 @@ pub(crate) fn undelegate_from<SDK: SharedAPI>(
     .emit(sdk)?;
     Ok(())
 }
-// Snapshot rewards, bounded claims, and finalized stipend settlement.
+// Snapshot rewards and bounded claims.
 
 fn snapshot_payout<SDK: SharedAPI>(
     sdk: &SDK,
@@ -1326,14 +1328,8 @@ fn validator_owner_rewards<SDK: SharedAPI>(
         return Ok(U256::ZERO);
     }
     let mut epoch = record.claimed_at_accessor().get_checked(sdk)?;
-    let settled_epoch_p1 = staking_storage()
-        .last_rewarded_epoch_p1_accessor()
-        .get_checked(sdk)?;
     // Bound historical work; callers can continue from the stored cursor.
-    let before_epoch = core::cmp::min(
-        core::cmp::min(before_epoch, settled_epoch_p1),
-        epoch.saturating_add(MAX_EPOCHS_PER_CLAIM),
-    );
+    let before_epoch = core::cmp::min(before_epoch, epoch.saturating_add(MAX_EPOCHS_PER_CLAIM));
     let mut rewards = U256::ZERO;
     while epoch < before_epoch {
         rewards = rewards
@@ -1344,12 +1340,18 @@ fn validator_owner_rewards<SDK: SharedAPI>(
     Ok(rewards)
 }
 
-fn delegator_claimable<SDK: SharedAPI>(
+/// A delegator's unclaimed REWARD, and nothing else.
+///
+/// The matured principal has its own reader and its own cursor. They are read
+/// apart because they are now PAID apart: the reward is pulled off the BLEND
+/// reserve straight to the delegator and never touches this contract, while the
+/// principal is a deposit this contract still holds. One number over two sources
+/// would need a rule for the half that fails.
+fn delegator_reward_claimable<SDK: SharedAPI>(
     sdk: &SDK,
     validator: Address,
     delegator: Address,
     reward_before_epoch: u64,
-    principal_before_epoch: u64,
 ) -> Result<U256, ExitCode> {
     let delegation = staking_storage()
         .validator_delegations_accessor()
@@ -1390,10 +1392,24 @@ fn delegator_claimable<SDK: SharedAPI>(
             index += 1;
         }
     }
+    Ok(claimable)
+}
 
+/// A delegator's matured undelegation principal, and nothing else.
+fn delegator_principal_claimable<SDK: SharedAPI>(
+    sdk: &SDK,
+    validator: Address,
+    delegator: Address,
+    principal_before_epoch: u64,
+) -> Result<U256, ExitCode> {
+    let delegation = staking_storage()
+        .validator_delegations_accessor()
+        .entry(validator)
+        .entry(delegator);
     let undelegates = delegation.undelegate_queue_accessor();
     let undelegate_len = undelegates.len_checked(sdk)?;
     let mut undelegate_gap = delegation.undelegate_gap_accessor().get_checked(sdk)?;
+    let mut claimable = U256::ZERO;
     while undelegate_gap < undelegate_len {
         let operation = undelegates.at(undelegate_gap);
         if operation.epoch_accessor().get_checked(sdk)? > principal_before_epoch {
@@ -1454,10 +1470,6 @@ fn capped_delegator_reward_epoch<SDK: SharedAPI>(
     delegator: Address,
     before_epoch: u64,
 ) -> Result<u64, ExitCode> {
-    let settled_epoch_p1 = staking_storage()
-        .last_rewarded_epoch_p1_accessor()
-        .get_checked(sdk)?;
-    let before_epoch = core::cmp::min(before_epoch, settled_epoch_p1);
     let start = match delegate_claim_start(sdk, validator, delegator)? {
         Some((_, start)) => start,
         None => return Ok(before_epoch),
@@ -1497,12 +1509,16 @@ fn capped_delegator_principal_epoch<SDK: SharedAPI>(
     ))
 }
 
-fn consume_delegator_claim<SDK: SharedAPI>(
+/// Consumes the REWARD cursor only, and returns what it accrued.
+///
+/// It never reads or writes `undelegate_gap`: the two cursors are independent,
+/// and a reward claim that nudged the withdrawal queue would silently mature
+/// principal the delegator did not ask for.
+fn consume_delegator_reward<SDK: SharedAPI>(
     sdk: &mut SDK,
     validator: Address,
     delegator: Address,
     reward_before_epoch: u64,
-    principal_before_epoch: u64,
 ) -> Result<U256, ExitCode> {
     let storage = staking_storage();
     let delegation = storage
@@ -1547,12 +1563,31 @@ fn consume_delegator_claim<SDK: SharedAPI>(
             .claimed_through_epoch_accessor()
             .set_checked(sdk, epoch)?;
     }
+    Ok(claimable)
+}
 
+/// Consumes the WITHDRAWAL cursor only, and returns the principal it matured.
+///
+/// It never reads or writes `claimed_through_epoch`, so an empty BLEND reserve
+/// cannot hold a matured deposit hostage — this path does not touch the reserve
+/// at all. The principal is paid out of this contract's own balance, where the
+/// delegation put it.
+fn consume_delegator_principal<SDK: SharedAPI>(
+    sdk: &mut SDK,
+    validator: Address,
+    delegator: Address,
+    principal_before_epoch: u64,
+) -> Result<U256, ExitCode> {
+    let delegation = staking_storage()
+        .validator_delegations_accessor()
+        .entry(validator)
+        .entry(delegator);
     let undelegates = delegation.undelegate_queue_accessor();
     let undelegate_len = undelegates.len_checked(sdk)?;
     let mut undelegate_gap = delegation.undelegate_gap_accessor().get_checked(sdk)?;
     let pending_undelegated = delegation.pending_undelegated_accessor();
     let mut pending_principal = pending_undelegated.get_checked(sdk)?;
+    let mut claimable = U256::ZERO;
     while undelegate_gap < undelegate_len {
         let operation = undelegates.at(undelegate_gap);
         if operation.epoch_accessor().get_checked(sdk)? > principal_before_epoch {
@@ -1627,13 +1662,10 @@ fn claim_validator_before<SDK: SharedAPI>(
         return revert_with(sdk, ERR_VALIDATOR_NOT_FOUND, &validator);
     }
     let claimed_at = record.claimed_at_accessor().get_checked(sdk)?;
-    let settled_epoch_p1 = staking_storage()
-        .last_rewarded_epoch_p1_accessor()
-        .get_checked(sdk)?;
     // Advancing the cursor before transfer is safe because a failed call
     // reverts the whole contract transaction.
     let capped = core::cmp::min(
-        core::cmp::min(before_epoch, settled_epoch_p1),
+        before_epoch,
         claimed_at
             .checked_add(MAX_EPOCHS_PER_CLAIM)
             .ok_or(ExitCode::IntegerOverflow)?,
@@ -1648,7 +1680,7 @@ fn claim_validator_before<SDK: SharedAPI>(
     }
     let owner = record.owner_accessor().get_checked(sdk)?;
     record.claimed_at_accessor().set_checked(sdk, epoch)?;
-    safe_transfer(sdk, owner, amount)?;
+    pay_stipend(sdk, owner, amount)?;
     events::ValidatorOwnerClaimed {
         validator,
         amount,
@@ -1695,20 +1727,13 @@ pub fn get_delegator_fee<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<
     let requested_epoch = current_epoch(sdk)?;
     let reward_before_epoch =
         capped_delegator_reward_epoch(sdk, command.validator, command.delegator, requested_epoch)?;
-    let principal_before_epoch = capped_delegator_principal_epoch(
-        sdk,
-        command.validator,
-        command.delegator,
-        requested_epoch,
-    )?;
     write_abi(
         sdk,
-        &delegator_claimable(
+        &delegator_reward_claimable(
             sdk,
             command.validator,
             command.delegator,
             reward_before_epoch,
-            principal_before_epoch,
         )?,
     )
 }
@@ -1726,25 +1751,24 @@ pub fn get_pending_delegator_fee<SDK: SharedAPI>(
     let requested_epoch = next_epoch(sdk)?;
     let reward_before_epoch =
         capped_delegator_reward_epoch(sdk, command.validator, command.delegator, requested_epoch)?;
-    let principal_before_epoch = capped_delegator_principal_epoch(
-        sdk,
-        command.validator,
-        command.delegator,
-        requested_epoch,
-    )?;
     write_abi(
         sdk,
-        &delegator_claimable(
+        &delegator_reward_claimable(
             sdk,
             command.validator,
             command.delegator,
             reward_before_epoch,
-            principal_before_epoch,
         )?,
     )
 }
 
-fn claim_delegator_before<SDK: SharedAPI>(
+/// The delegator's REWARD claim: the reserve pays the delegator directly.
+///
+/// The matured withdrawal principal is deliberately not here — it is a separate
+/// handler over a separate cursor and a separate source. When `redelegate` is
+/// set, what gets re-staked is therefore the reward alone; a delegator who asked
+/// to withdraw principal no longer has it silently re-staked under them.
+fn claim_delegator_reward_before<SDK: SharedAPI>(
     sdk: &mut SDK,
     validator: Address,
     delegator: Address,
@@ -1753,21 +1777,27 @@ fn claim_delegator_before<SDK: SharedAPI>(
 ) -> Result<(), ExitCode> {
     let reward_before_epoch =
         capped_delegator_reward_epoch(sdk, validator, delegator, before_epoch)?;
-    let principal_before_epoch =
-        capped_delegator_principal_epoch(sdk, validator, delegator, before_epoch)?;
-    let claimable = consume_delegator_claim(
-        sdk,
-        validator,
-        delegator,
-        reward_before_epoch,
-        principal_before_epoch,
-    )?;
+    let claimable = consume_delegator_reward(sdk, validator, delegator, reward_before_epoch)?;
     if redelegate {
         let (amount, dust) = available_for_redelegate(sdk, claimable)?;
         if !amount.is_zero() {
+            // Book the stake first, then fetch the money — the same order
+            // `delegate_to` uses for an ordinary delegation. It matters here
+            // because `delegate_to` is where the tombstone refusal lives: a
+            // refused redelegation must make no token call at all, not one it
+            // then unwinds.
+            //
+            // `pull_tokens: false` — the delegator never held this money. It
+            // comes off the reserve and into this contract, where every other
+            // delegation sits: the stake is a deposit however it was earned.
             delegate_to(sdk, delegator, validator, amount, false)?;
+            let vault = sdk.context().contract_address();
+            let source = chain_config_storage()
+                .blend_reserve_accessor()
+                .get_checked(sdk)?;
+            safe_transfer_from(sdk, source, vault, amount)?;
         }
-        safe_transfer(sdk, delegator, dust)?;
+        pay_stipend(sdk, delegator, dust)?;
         events::Redelegated {
             validator,
             staker: delegator,
@@ -1777,7 +1807,7 @@ fn claim_delegator_before<SDK: SharedAPI>(
         }
         .emit(sdk)
     } else {
-        safe_transfer(sdk, delegator, claimable)?;
+        pay_stipend(sdk, delegator, claimable)?;
         events::Claimed {
             validator,
             staker: delegator,
@@ -1786,6 +1816,46 @@ fn claim_delegator_before<SDK: SharedAPI>(
         }
         .emit(sdk)
     }
+}
+
+/// Moves an owed stipend from the BLEND reserve straight to `recipient`.
+///
+/// The money never enters this contract. Everything the contract holds is
+/// somebody's deposit, and mixing the two made a balance check on this contract
+/// look like a solvency check while measuring principal.
+fn pay_stipend<SDK: SharedAPI>(
+    sdk: &mut SDK,
+    recipient: Address,
+    amount: U256,
+) -> Result<(), ExitCode> {
+    if amount.is_zero() {
+        return Ok(());
+    }
+    let source = chain_config_storage()
+        .blend_reserve_accessor()
+        .get_checked(sdk)?;
+    safe_transfer_from(sdk, source, recipient, amount)
+}
+
+/// Pays out every undelegation whose term has matured, from this contract's own
+/// balance.
+fn withdraw_delegator_principal_before<SDK: SharedAPI>(
+    sdk: &mut SDK,
+    validator: Address,
+    delegator: Address,
+    before_epoch: u64,
+) -> Result<(), ExitCode> {
+    let principal_before_epoch =
+        capped_delegator_principal_epoch(sdk, validator, delegator, before_epoch)?;
+    let principal = consume_delegator_principal(sdk, validator, delegator, principal_before_epoch)?;
+    safe_transfer(sdk, delegator, principal)?;
+    events::Claimed {
+        validator,
+        staker: delegator,
+        amount: principal,
+        epoch: principal_before_epoch,
+    }
+    .emit(sdk)
 }
 
 /// Public handler `0x426594b1` (`claimDelegatorFee`).
@@ -1797,7 +1867,7 @@ pub fn claim_delegator_fee<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Resul
     ensure_initialized(sdk)?;
     let validator = decode::<AddressCommand>(input)?.value;
     let delegator = sdk.context().contract_caller();
-    claim_delegator_before(sdk, validator, delegator, current_epoch(sdk)?, false)
+    claim_delegator_reward_before(sdk, validator, delegator, current_epoch(sdk)?, false)
 }
 
 /// Public handler `0xfe38ebef` (`claimDelegatorFeeAtEpoch`).
@@ -1815,13 +1885,62 @@ pub fn claim_delegator_fee_at_epoch<SDK: SharedAPI>(
         return revert(sdk, ERR_INVALID_CLAIM_EPOCH);
     }
     let delegator = sdk.context().contract_caller();
-    claim_delegator_before(
+    claim_delegator_reward_before(
         sdk,
         command.validator,
         delegator,
         command.before_epoch,
         false,
     )
+}
+
+/// Public handler `0xa789083d` (`getDelegatorPrincipal`).
+///
+/// Returns the undelegated principal a delegator can withdraw right now. The
+/// other half of what `getDelegatorFee` used to return in one number, split with
+/// the claim it mirrors — without it a delegator can see the reward owed but not
+/// the deposit waiting for them.
+pub fn get_delegator_principal<SDK: SharedAPI>(
+    sdk: &mut SDK,
+    input: &[u8],
+) -> Result<(), ExitCode> {
+    ensure_non_payable(sdk)?;
+    ensure_initialized(sdk)?;
+    let command = decode::<ValidatorDelegatorCommand>(input)?;
+    let principal_before_epoch = capped_delegator_principal_epoch(
+        sdk,
+        command.validator,
+        command.delegator,
+        current_epoch(sdk)?,
+    )?;
+    write_abi(
+        sdk,
+        &delegator_principal_claimable(
+            sdk,
+            command.validator,
+            command.delegator,
+            principal_before_epoch,
+        )?,
+    )
+}
+
+/// Public handler `0xe75f359c` (`withdrawDelegatorPrincipal`).
+///
+/// Pays out undelegations whose term has matured. Separate from the reward claim
+/// because the two draw on different money: this one on the deposits the
+/// contract holds, the reward on the BLEND reserve. An unfunded reserve
+/// therefore cannot block a withdrawal, and an empty withdrawal queue cannot
+/// block a reward.
+pub fn withdraw_delegator_principal<SDK: SharedAPI>(
+    sdk: &mut SDK,
+    input: &[u8],
+) -> Result<(), ExitCode> {
+    ensure_non_payable(sdk)?;
+    ensure_mutable(sdk)?;
+    ensure_initialized(sdk)?;
+    let validator = decode::<AddressCommand>(input)?.value;
+    let delegator = sdk.context().contract_caller();
+    withdraw_delegator_principal_before(sdk, validator, delegator, current_epoch(sdk)?)
 }
 
 /// Public handler `0x5ef9e8c6` (`calcAvailableForRedelegateAmount`).
@@ -1837,18 +1956,11 @@ pub fn calc_available_for_redelegate_amount<SDK: SharedAPI>(
     let requested_epoch = current_epoch(sdk)?;
     let reward_before_epoch =
         capped_delegator_reward_epoch(sdk, command.validator, command.delegator, requested_epoch)?;
-    let principal_before_epoch = capped_delegator_principal_epoch(
-        sdk,
-        command.validator,
-        command.delegator,
-        requested_epoch,
-    )?;
-    let claimable = delegator_claimable(
+    let claimable = delegator_reward_claimable(
         sdk,
         command.validator,
         command.delegator,
         reward_before_epoch,
-        principal_before_epoch,
     )?;
     write_abi(sdk, &available_for_redelegate(sdk, claimable)?)
 }
@@ -1865,7 +1977,7 @@ pub fn redelegate_delegator_fee<SDK: SharedAPI>(
     ensure_initialized(sdk)?;
     let validator = decode::<AddressCommand>(input)?.value;
     let delegator = sdk.context().contract_caller();
-    claim_delegator_before(sdk, validator, delegator, current_epoch(sdk)?, true)
+    claim_delegator_reward_before(sdk, validator, delegator, current_epoch(sdk)?, true)
 }
 
 /// Public handler `0x54c3e84b` (`getEpochRewards`).
@@ -1898,39 +2010,26 @@ pub fn get_epoch_rewards<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<
 
 /// Records what `epoch` owes its committee, at its close, and moves no money.
 ///
-/// One `assigned` produces both the per-validator credits and the `assigned + 1`
-/// scalar the payment later pulls, in this one frame, so the contract can never
-/// owe more than it computed. Every path through here writes that scalar: its
-/// absence is the witness that the epoch never closed, and telling that apart
-/// from an epoch that closed owing nothing is what keeps `pay_epoch` from
-/// forfeiting a real entitlement.
-///
 /// The credit is an assignment, not an accumulation. `close_epoch` runs once per
-/// epoch, but that guarantee used to be carried by the monotone settlement
-/// cursor, which no longer stands between an accrual and a second one; an
-/// overwrite makes a re-entry idempotent instead of resting on it.
+/// epoch, and an overwrite makes a re-entry idempotent rather than resting on
+/// that.
+///
+/// Nothing here settles, and there is no cursor behind it that could come back
+/// to an epoch later: what this frame assigns is what the epoch is worth, for
+/// good. The stipend is drawn off the BLEND reserve by each claim, one recipient
+/// at a time.
 pub(crate) fn accrue_epoch<SDK: SharedAPI>(
     sdk: &mut SDK,
     epoch: u64,
     recorded: u32,
 ) -> Result<(), ExitCode> {
     // An epoch that was never recorded at all is reachable — a stalled recorder,
-    // a pre-activation prefix — and must not draw a full pot for no work. It is
-    // still marked closed: this is the only close it will ever get.
+    // a pre-activation prefix — and must not draw a full pot for no work.
     let assigned = if recorded == 0 {
         U256::ZERO
     } else {
         assign_epoch_shares(sdk, epoch)?
     };
-    production_liveness_storage()
-        .assigned_at_close_p1_accessor()
-        .entry(epoch)
-        .set_checked(
-            sdk,
-            assigned
-                .checked_add(U256::ONE)
-                .ok_or(ExitCode::IntegerOverflow)?,
-        )?;
     events::EpochBlendRewardsCommitted {
         epoch,
         blend_amount: assigned,
@@ -1954,10 +2053,49 @@ pub(crate) fn accrue_epoch<SDK: SharedAPI>(
 /// (`e2e/src/staking_cost.rs`, 2026-08-17). The slot is warm by then. Not worth
 /// widening the intermediate vector for.
 fn assign_epoch_shares<SDK: SharedAPI>(sdk: &mut SDK, epoch: u64) -> Result<U256, ExitCode> {
-    let pot = chain_config_storage()
-        .blend_stipend_per_epoch_accessor()
-        .get_checked(sdk)?;
+    let config = chain_config_storage();
+    let pot = config.blend_stipend_per_epoch_accessor().get_checked(sdk)?;
     if pot.is_zero() {
+        return Ok(U256::ZERO);
+    }
+    // The reserve is asked once, here, whether it can cover this epoch — and the
+    // answer is final. Below the pot the epoch closes at zero FOREVER: nothing
+    // revisits a closed epoch, so a reserve topped up afterwards funds later
+    // epochs and never this one. All-or-nothing rather than pro rata.
+    //
+    // READ WHAT THIS DOES AND DOES NOT GUARANTEE. It is a SPOT reading of a pool
+    // that is also the source of every unpaid claim from every earlier epoch,
+    // and nothing here reserves, escrows or debits anything — the whole point of
+    // this design is that the stipend never enters this contract, so there is no
+    // place to hold it. So:
+    //
+    //   * It does NOT prove the epoch will be payable. Whatever it measures can
+    //     leave the reserve before anyone claims, either by the holder moving it
+    //     or by claims against older epochs. The credit written below is a
+    //     record of what is owed, not a guarantee it can be collected.
+    //   * It does NOT prove the reserve covers what is already owed. Two epochs
+    //     can pass this test against the same tokens; the second to be claimed
+    //     then finds the pull refused and waits for a top-up.
+    //   * Because `claimValidatorFee` is permissionless and pays the OWNER,
+    //     ANY caller can drain the reserve toward its floor on demand. A run of
+    //     such calls immediately before a boundary makes the closing epoch score
+    //     short and burn, at the cost of gas alone.
+    //
+    // The operational rule that makes the gate mean something is therefore held
+    // off-chain: fund the reserve well above one epoch's pot. A gate that
+    // measured "unpaid obligations plus this epoch" instead would need the
+    // contract to track what has been claimed against every open epoch, which is
+    // the accounting this design exists to remove.
+    //
+    // A read that fails counts as zero, which merges "the reserve is empty",
+    // "the approval was revoked" and "the token did not answer" into one
+    // outcome, and merges all three with the `pot.is_zero()` arm above and the
+    // two below. That indistinguishability is accepted deliberately: the close
+    // is a pre-execution system call, so the alternative to a quiet zero is a
+    // chain halt, and the configuration that produces it is checked off-chain at
+    // deployment.
+    let reserve = config.blend_reserve_accessor().get_checked(sdk)?;
+    if reserve_available(sdk, reserve)? < pot {
         return Ok(U256::ZERO);
     }
     let state = consensus_storage();
@@ -2031,119 +2169,4 @@ fn assign_epoch_shares<SDK: SharedAPI>(sdk: &mut SDK, epoch: u64) -> Result<U256
             .ok_or(ExitCode::IntegerOverflow)?;
     }
     Ok(assigned)
-}
-
-/// Pays what the epoch's close recorded: one scalar, one transfer, no decisions.
-///
-/// It reads no committee and no weight — the split already happened, against the
-/// weights frozen for that epoch, however long ago that was.
-///
-/// A missing scalar is the one thing this has to interpret, and the block
-/// counter separates its two meanings. A close that ran owing nothing is NOT one
-/// of them — that writes `1`, and is paid as a zero. Missing means the close
-/// never ran. With nothing recorded, no close ever will, and nothing was owed
-/// anyway, so the epoch is forfeited and the cursor moves on. With blocks
-/// recorded, `last_processed` reached that epoch and the next recorded block
-/// therefore closed it, so the only way to be here is a close still pending in
-/// this very block — forfeiting would throw away an accrual about to exist.
-fn pay_epoch<SDK: SharedAPI>(sdk: &mut SDK, epoch: u64, source: Address) -> Result<(), ExitCode> {
-    let storage = production_liveness_storage();
-    let accrued_p1 = storage
-        .assigned_at_close_p1_accessor()
-        .entry(epoch)
-        .get_checked(sdk)?;
-    if accrued_p1.is_zero() {
-        if storage
-            .blocks_in_epoch_accessor()
-            .entry(epoch)
-            .get_checked(sdk)?
-            != 0
-        {
-            // A revert defers, a guard return forfeits — see this function's
-            // caller.
-            return revert_with(sdk, ERR_EPOCH_NOT_ACCRUED, &epoch);
-        }
-        events::StipendSkipped { epoch }.emit(sdk)?;
-        return Ok(());
-    }
-    let assigned = accrued_p1 - U256::ONE;
-    if assigned.is_zero() {
-        events::StipendSkipped { epoch }.emit(sdk)?;
-        return Ok(());
-    }
-    // All or nothing, and a shortfall must revert rather than pay what it can:
-    // the cursor advances past every epoch this returns `Ok` for and never comes
-    // back. A failed pull leaves the cursor where it is and the epoch is paid in
-    // full once the source can cover it — the entitlement is already on the
-    // ledger either way, so a refusal costs a delay and nothing else.
-    safe_transfer_from(sdk, source, assigned)
-}
-
-/// Pays every accrued-but-unfunded epoch up to `up_to`, contiguously from the
-/// cursor.
-///
-/// The cursor advances past every epoch this returns `Ok` for, so a replay
-/// re-draws nothing — and the claim gates read the same cursor, which is what
-/// keeps an epoch that has been accrued but not yet funded unclaimable.
-pub(crate) fn settle_up_to<SDK: SharedAPI>(sdk: &mut SDK, up_to: u64) -> Result<(), ExitCode> {
-    let storage = staking_storage();
-    let source = chain_config_storage()
-        .blend_reserve_accessor()
-        .get_checked(sdk)?;
-    // A committee may be committed up to two epochs ahead, so `epoch_index`
-    // holds entries for epochs that have not started and whose closes have not
-    // run. Skipping one and advancing the cursor past it is irrecoverable, and
-    // it opens the claim gate on an epoch that has not happened.
-    let current = current_epoch(sdk)?;
-    if current == 0 {
-        return Ok(());
-    }
-    let up_to = core::cmp::min(up_to, current - 1);
-    let first = storage.last_rewarded_epoch_p1_accessor().get_checked(sdk)?;
-    if first != 0 && up_to.checked_add(1).ok_or(ExitCode::IntegerOverflow)? <= first {
-        return Ok(());
-    }
-    let mut epoch = first;
-    let mut settled = 0;
-    while epoch <= up_to && settled < MAX_SETTLE_CATCHUP {
-        pay_epoch(sdk, epoch, source)?;
-        storage
-            .last_rewarded_epoch_p1_accessor()
-            .set_checked(sdk, epoch.checked_add(1).ok_or(ExitCode::IntegerOverflow)?)?;
-        epoch = epoch.checked_add(1).ok_or(ExitCode::IntegerOverflow)?;
-        settled += 1;
-    }
-    Ok(())
-}
-
-/// Public handler `0xa631344a` (`settleEpochStipend`).
-///
-/// Settles and distributes the epoch stipend.
-pub fn settle_epoch_stipend<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), ExitCode> {
-    ensure_non_payable(sdk)?;
-    ensure_mutable(sdk)?;
-    ensure_initialized(sdk)?;
-    if sdk.context().contract_caller() != SYSTEM_CALLER {
-        return revert(sdk, ERR_ONLY_SYSTEM_CALL);
-    }
-    settle_up_to(sdk, decode::<U64Command>(input)?.value)
-}
-
-/// Public handler `0x92d321ab` (`settleEpochStipendFrom`).
-///
-/// The stipend leg of the epoch close. Reachable only from this contract's own
-/// fuel-capped self-call, which is what gives the leg a journal checkpoint of
-/// its own: a failure here discards this frame and nothing the close already
-/// committed above it.
-pub fn settle_epoch_stipend_from<SDK: SharedAPI>(
-    sdk: &mut SDK,
-    input: &[u8],
-) -> Result<(), ExitCode> {
-    ensure_non_payable(sdk)?;
-    ensure_mutable(sdk)?;
-    ensure_initialized(sdk)?;
-    if sdk.context().contract_caller() != sdk.context().contract_address() {
-        return revert(sdk, ERR_ONLY_SELF_CALL);
-    }
-    settle_up_to(sdk, decode::<U64Command>(input)?.value)
 }

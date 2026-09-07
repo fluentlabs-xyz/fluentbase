@@ -14,7 +14,7 @@ use crate::{
         decode_args, ensure_mutable, ensure_non_payable, revert, revert_with, safe_transfer_from,
     },
 };
-use fluentbase_sdk::{Address, ExitCode, SharedAPI, U256};
+use fluentbase_sdk::{Address, ContextReader, ExitCode, SharedAPI, U256};
 
 /// Public handler `0xdfa8efb0` (`initialize`).
 ///
@@ -107,5 +107,6 @@ fn pull_initial_stakes<SDK: SharedAPI>(
     if total_stakes.is_zero() {
         return Ok(());
     }
-    safe_transfer_from(sdk, sponsor, total_stakes)
+    let vault = sdk.context().contract_address();
+    safe_transfer_from(sdk, sponsor, vault, total_stakes)
 }
