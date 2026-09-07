@@ -50,3 +50,11 @@ wasmtime = [
     "fluentbase-revm/wasmtime",
     "fluentbase-runtime/wasmtime",
 ]
+
+# `fluentbase-genesis` embeds the ~130 MB `genesis-devnet.json` via `include_str!`.
+# With the default release profile's local ThinLTO, every one of the 16 codegen
+# units carries that constant and rustc peaks at ~16 GiB, which gets it OOM-killed
+# on the shared self-hosted runners (silent `exit status: 254` under sccache).
+# A single codegen unit keeps the same compile at ~1.6 GiB.
+[profile.release.package.fluentbase-genesis]
+codegen-units = 1
