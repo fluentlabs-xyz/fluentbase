@@ -48,6 +48,8 @@ Fluentbase SDK provides bidirectional conversion between Solidity and Rust types
 - `[u8; N]` is `uint8[N]`, never `bytesN`. The codec encodes a Rust array one word per element,
   and the selector describes that layout; a `bytesN` parameter is declared as `FixedBytes<N>`
   (or `B32`, `B256`, ...), which is encoded as a single right-padded word
+- `B512`, `B1024`, `B2048` and `FixedBytes<N>` with N > 32 have no Solidity ABI type and are
+  rejected in Solidity-mode signatures; use `Bytes` for a dynamic blob or `[u8; N]` for `uint8[N]`
 - References (`&T` and `&mut T`) are dereferenced during conversion
 - Custom structs must implement `Codec` for serialization/deserialization
 

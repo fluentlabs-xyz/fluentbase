@@ -250,6 +250,16 @@ mod tests {
     }
 
     #[test]
+    fn test_wide_fixed_bytes_aliases_have_no_signature() {
+        // Solidity's fixed-bytes types stop at `bytes32`, and the codec writes `B512` as one
+        // inline 64-byte blob that no Solidity type describes, so no selector can be derived.
+        let sig: Signature = parse_quote! {
+            fn verify(signature: B512) -> bool
+        };
+        assert!(FunctionABI::from_signature(&sig).is_err());
+    }
+
+    #[test]
     fn test_function_with_no_return() {
         let sig: Signature = parse_quote! {
             fn initialize(admin: Address)
