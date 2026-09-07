@@ -125,7 +125,7 @@ macro_rules! impl_value_type {
     };
 }
 
-impl_value_type!(bool, u8, u16, u32, u64, i16, i32, i64, Address);
+impl_value_type!(bool, u8, u16, u32, u64, i8, i16, i32, i64, u128, i128, Address);
 
 impl<const N: usize> SolidityEventTopic for FixedBytes<N> {
     const IS_REFERENCE_TYPE: bool = false;

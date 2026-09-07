@@ -143,8 +143,19 @@ impl CodecStruct {
         let header_sizes = self.fields.iter().map(|field| {
             let ty = &field.ty;
             if sol_mode {
+                // Every member occupies a whole number of words in the head area: one word if it
+                // is dynamic (an offset), its aligned inline width otherwise. Summing the raw
+                // HEADER_SIZE instead would report 16 for `{u32, u64, i32}` and 65 for
+                // `{U256, Address, bool}`, and `Vec<T>` strides by this constant.
+                let member = quote! {
+                    <#ty as #crate_path::Encoder<B, ALIGN, {true}, {#is_static}>>
+                };
                 quote! {
-                    <#ty as #crate_path::Encoder<B, ALIGN, {true}, {#is_static}>>::HEADER_SIZE
+                    if #member ::IS_DYNAMIC {
+                        32
+                    } else {
+                        #crate_path::align_up::<ALIGN>(#member ::HEADER_SIZE)
+                    }
                 }
             } else {
                 quote! {
@@ -194,7 +205,7 @@ impl CodecStruct {
                 quote! {
                     if <#ty as #crate_path::Encoder<B, ALIGN, {true}, {#is_static}>>::IS_DYNAMIC {
                         <#ty as #crate_path::Encoder<B, ALIGN, {true}, {#is_static}>>::encode(&self.#ident, &mut tail, tail_offset)?;
-                        tail_offset += #crate_path::align_up::<ALIGN>(4);
+                        tail_offset += 32;
                     } else {
                         <#ty as #crate_path::Encoder<B, ALIGN, {true}, {#is_static}>>::encode(&self.#ident, &mut tail, tail_offset)?;
                         tail_offset += #crate_path::align_up::<ALIGN>(<#ty as #crate_path::Encoder<B, ALIGN, {true}, {#is_static}>>::HEADER_SIZE);
@@ -247,13 +258,21 @@ impl CodecStruct {
 
         if sol_mode {
             quote! {
-                let aligned_offset = #crate_path::align_up::<ALIGN>(offset);
+                let aligned_offset = offset;
                 let is_dynamic = <Self as #crate_path::Encoder<B, ALIGN, {true}, {#is_static}>>::IS_DYNAMIC;
+                if is_dynamic && ALIGN != 32 {
+                    return Err(#crate_path::CodecError::Encoding(
+                        #crate_path::EncodingError::InvalidInputData(
+                            "dynamic Solidity structs require 32-byte alignment".into(),
+                        ),
+                    ));
+                }
                 let aligned_header_size = #aligned_header_size;
 
                 let mut tail = if is_dynamic {
-                    let buf_len = buf.len();
-                    let offset = if buf_len != 0 { buf_len } else { 32 };
+                    let head_end = aligned_offset.checked_add(32)
+                        .ok_or(#crate_path::CodecError::Overflow)?;
+                    let offset = buf.len().max(head_end);
                     #crate_path::write_u32_aligned::<B, ALIGN>(buf, aligned_offset, offset as u32);
                     if buf.len() < aligned_header_size + offset {
                         buf.resize(aligned_header_size + offset, 0);
@@ -301,7 +320,15 @@ impl CodecStruct {
 
         let decode_body = if sol_mode {
             quote! {
-                let mut aligned_offset = #crate_path::align_up::<ALIGN>(offset);
+                let aligned_offset = offset;
+
+                if <Self as #crate_path::Encoder<B, ALIGN, {true}, {#is_static}>>::IS_DYNAMIC && ALIGN != 32 {
+                    return Err(#crate_path::CodecError::Decoding(
+                        #crate_path::DecodingError::InvalidData(
+                            "dynamic Solidity structs require 32-byte alignment".into(),
+                        ),
+                    ));
+                }
 
                 let mut tmp = if <Self as #crate_path::Encoder<B, ALIGN, {true}, {#is_static}>>::IS_DYNAMIC {
                     let offset = #crate_path::read_u32_aligned::<B, ALIGN>(&buf.chunk(), aligned_offset)? as usize;
@@ -337,9 +364,16 @@ impl CodecStruct {
         if sol_mode {
             quote! {
                 // For Solidity ABI encoding
-                let aligned_offset = #crate_path::align_up::<ALIGN>(offset);
+                let aligned_offset = offset;
 
                 if <Self as #crate_path::Encoder<B, ALIGN, {true}, {#is_static}>>::IS_DYNAMIC {
+                    if ALIGN != 32 {
+                        return Err(#crate_path::CodecError::Decoding(
+                            #crate_path::DecodingError::InvalidData(
+                                "dynamic Solidity structs require 32-byte alignment".into(),
+                            ),
+                        ));
+                    }
                     // For dynamic structs, read the offset pointer
                     let data_offset = #crate_path::read_u32_aligned::<B, ALIGN>(&buffer.chunk(), aligned_offset)? as usize;
                     // Return the actual data location and the header size
