@@ -1,10 +1,13 @@
-use crate::{Bytes, B256, U256};
+use crate::{
+    bincode::{decode_vec, BytesReader, DecodeBytes, ZeroCopyBytes},
+    Bytes, B256, U256,
+};
 use alloc::{
     collections::{BTreeMap, BTreeSet},
     vec::Vec,
 };
 use bincode::{
-    de::Decoder,
+    de::{read::Reader, Decoder},
     enc::Encoder,
     error::{DecodeError, EncodeError},
 };
@@ -39,13 +42,49 @@ impl bincode::Encode for JournalLog {
 impl<C> bincode::Decode<C> for JournalLog {
     fn decode<D: Decoder<Context = C>>(d: &mut D) -> Result<Self, DecodeError> {
         let topics_len: u32 = bincode::Decode::decode(d)?;
-        let mut topics = Vec::with_capacity(topics_len as usize);
+        d.claim_container_read::<B256>(topics_len as usize)?;
+        // Generic readers need not support lookahead. Grow only after reading each topic,
+        // so even an unlimited decoder cannot reserve memory from a forged length alone.
+        let mut topics = Vec::new();
         for _ in 0..topics_len {
+            d.unclaim_bytes_read(core::mem::size_of::<B256>());
             let topic: [u8; 32] = bincode::Decode::decode(d)?;
+            topics
+                .try_reserve(1)
+                .map_err(|_| DecodeError::Other("failed to reserve log topics"))?;
             topics.push(B256::new(topic));
         }
-        let data: Vec<u8> = bincode::Decode::decode(d)?;
+        let data_len: u64 = bincode::Decode::decode(d)?;
+        let data_len =
+            usize::try_from(data_len).map_err(|_| DecodeError::OutsideUsizeRange(data_len))?;
+        d.claim_container_read::<u8>(data_len)?;
+        let mut data = Vec::new();
+        let mut buffer = [0u8; 1024];
+        while data.len() < data_len {
+            let len = (data_len - data.len()).min(buffer.len());
+            d.reader().read(&mut buffer[..len])?;
+            data.try_reserve(len)
+                .map_err(|_| DecodeError::Other("failed to reserve log data"))?;
+            data.extend_from_slice(&buffer[..len]);
+        }
         Ok(JournalLog {
+            topics,
+            data: data.into(),
+        })
+    }
+}
+
+impl<C> DecodeBytes<C> for JournalLog {
+    fn decode_bytes<D: Decoder<Context = C, R = BytesReader>>(
+        d: &mut D,
+    ) -> Result<Self, DecodeError> {
+        let topics_len: u32 = bincode::Decode::decode(d)?;
+        let topics = decode_vec(d, topics_len as usize, 32, |d| {
+            let topic: [u8; 32] = bincode::Decode::decode(d)?;
+            Ok(B256::new(topic))
+        })?;
+        let data: ZeroCopyBytes = DecodeBytes::decode_bytes(d)?;
+        Ok(Self {
             topics,
             data: data.into(),
         })
@@ -174,6 +213,33 @@ impl JournalStorage {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn generic_log_decode_rejects_unbacked_lengths() {
+        for (topics, data_len) in [(u32::MAX, 0u64), (0, u64::MAX)] {
+            let mut encoded = topics.to_le_bytes().to_vec();
+            encoded.extend_from_slice(&data_len.to_le_bytes());
+            assert!(bincode::decode_from_slice::<JournalLog, _>(
+                &encoded,
+                bincode::config::legacy()
+            )
+            .is_err());
+        }
+    }
+
+    #[test]
+    fn generic_log_decode_preserves_data_across_chunks() {
+        let log = JournalLog {
+            topics: vec![B256::repeat_byte(1), B256::repeat_byte(2)],
+            data: vec![3; 2050].into(),
+        };
+        let config = bincode::config::legacy().with_limit::<4096>();
+        let encoded = bincode::encode_to_vec(&log, config).unwrap();
+        let (decoded, consumed) =
+            bincode::decode_from_slice::<JournalLog, _>(&encoded, config).unwrap();
+        assert_eq!(decoded, log);
+        assert_eq!(consumed, encoded.len());
+    }
 
     #[test]
     fn storage_reads_base_and_dirty() {

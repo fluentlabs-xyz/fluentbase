@@ -46,6 +46,18 @@ Fluentbase runtime executor owns:
 
 This is the concrete runtime-host handshake point used in every interruption cycle.
 
+Structured system-runtime outcomes are decoded completely before the host applies their effects.
+Collection counts must fit the remaining encoded body before reservation or iteration; byte payloads
+use checked zero-copy slices. These input-derived bounds also apply with bincode's legacy configuration,
+so safety does not depend on a fixed envelope-size cap. Generic log readers without lookahead grow
+their buffers only after reading the corresponding data. Existing envelope encodings, including
+outcomes without the optional trailing touched-slot or transfer fields, remain supported.
+
+An invalid envelope after a successful runtime exit halts the frame with `MalformedBuiltinParams`
+and clears the raw envelope from return data. If execution already failed (for example, out of fuel),
+the host preserves that failure reason. No buffered effects or preload refunds are applied on decode
+failure; the existing frame rollback path handles any earlier execution effects.
+
 ---
 
 ## Why version bumps are risky

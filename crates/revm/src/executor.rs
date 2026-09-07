@@ -659,17 +659,21 @@ pub(crate) fn process_runtime_execution_outcome<CTX: ContextTr>(
         return Ok(());
     }
 
-    // Try to decode output params (in some cases it's not possible because output might be corrupted,
-    // so instead of print warning into output and return Ok w/o state commitment, there is nothing we can
-    // do here, it's a trap)
+    // Decode the entire envelope before applying any effects. Invalid lengths are rejected
+    // against the encoded body before allocation and must halt the frame deterministically.
     let Ok((runtime_output, _)): Result<(RuntimeExecutionOutcomeV1, usize), _> =
         bincode::decode_from_bytes(return_data.clone(), bincode::config::legacy())
     else {
-        #[cfg(feature = "std")]
-        eprintln!(
-            "WARN: failed to decode structured runtime execution outcome: exit_code={}",
-            exit_code
+        warn!(
+            ?exit_code,
+            "revm: failed to decode structured runtime execution outcome, halting frame"
         );
+        // A runtime trap (for example out of fuel) may leave no envelope. Preserve its
+        // existing failure reason; only a successful runtime exit needs to become a halt.
+        if exit_code.is_ok() {
+            *exit_code = ExitCode::MalformedBuiltinParams;
+        }
+        *return_data = Bytes::new();
         return Ok(());
     };
 
