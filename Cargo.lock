@@ -5033,6 +5033,7 @@ dependencies = [
  "fluentbase-types",
  "hashbrown 0.16.1",
  "hex-literal",
+ "minicov",
  "rwasm",
  "spin 0.10.0",
 ]
@@ -7380,6 +7381,16 @@ checksum = "f7c44f8e672c00fe5308fa235f821cb4198414e1c77935c1ab6948d3fd78550e"
 dependencies = [
  "mime",
  "unicase",
+]
+
+[[package]]
+name = "minicov"
+version = "0.3.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4869b6a491569605d66d3952bcdf03df789e5b536e5f0cf7758a7f08a55ae24d"
+dependencies = [
+ "cc",
+ "walkdir",
 ]
 
 [[package]]

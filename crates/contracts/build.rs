@@ -10,6 +10,8 @@ use std::{
     process::Command,
 };
 
+const ENV_SYSTEM_CONTRACTS_WASM_DIR: &str = "FLUENTBASE_SYSTEM_CONTRACTS_WASM_DIR";
+
 #[derive(Default, Debug)]
 struct PackagesResolver {
     manifest_dirs: Vec<PathBuf>,
@@ -261,6 +263,7 @@ fn main() {
     println!("cargo:rerun-if-env-changed={}", ENV_DOCKER_DIGEST);
     println!("cargo:rerun-if-env-changed={}", ENV_ALLOW_UNVERIFIED_IMAGE);
     println!("cargo:rerun-if-env-changed=FLUENTBASE_CONTRACTS_IGNORE_DEFAULT_RUST_FLAGS");
+    println!("cargo:rerun-if-env-changed={ENV_SYSTEM_CONTRACTS_WASM_DIR}");
 
     let fluentbase_root_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("../..");
     let root_metadata = MetadataCommand::new()
@@ -340,7 +343,23 @@ fn main() {
         "    pub wasm_bytecode: &'static [u8],".to_string(),
         "}".to_string(),
     ];
-    for (name, path) in paths {
+    let system_contracts_wasm_dir = env::var_os(ENV_SYSTEM_CONTRACTS_WASM_DIR).map(PathBuf::from);
+    if let Some(path) = &system_contracts_wasm_dir {
+        assert!(
+            path.is_absolute() && path.is_dir(),
+            "{ENV_SYSTEM_CONTRACTS_WASM_DIR} must point to an existing absolute directory: {}",
+            path.display()
+        );
+    }
+
+    for (name, mut path) in paths {
+        if let Some(override_dir) = &system_contracts_wasm_dir {
+            let override_path = override_dir.join(format!("{name}.wasm"));
+            if override_path.is_file() {
+                println!("cargo:rerun-if-changed={}", override_path.display());
+                path = override_path;
+            }
+        }
         let constant_name = name.to_uppercase().replace('-', "_");
         let path = path.to_str().unwrap();
         code.push(format!(

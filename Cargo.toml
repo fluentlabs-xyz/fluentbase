@@ -132,6 +132,7 @@ proptest = { version = "1.5.0" }
 unty = "0.0.4"
 humantime = "2.1"
 humantime-serde = "1.1"
+minicov = { version = "=0.3.8", default-features = false, features = ["alloc"] }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 directories = "6.0.0"
 

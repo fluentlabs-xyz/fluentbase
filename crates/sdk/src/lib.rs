@@ -9,6 +9,8 @@ pub extern crate rwasm as rwasm_core;
 mod address;
 mod allocator;
 pub mod constructor;
+#[cfg(all(feature = "guest-coverage", target_arch = "wasm32"))]
+mod coverage;
 pub mod debug;
 pub mod entrypoint;
 pub mod leb128;
@@ -26,6 +28,9 @@ pub mod universal_token;
 
 pub use address::*;
 pub use allocator::*;
+#[cfg(all(feature = "guest-coverage", target_arch = "wasm32"))]
+#[doc(hidden)]
+pub use coverage::dump_guest_coverage;
 pub use fluentbase_codec as codec;
 pub use fluentbase_crypto as crypto;
 pub use fluentbase_sdk_derive as derive;

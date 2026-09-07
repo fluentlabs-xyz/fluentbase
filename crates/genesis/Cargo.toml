@@ -35,6 +35,7 @@ debug-print = [
     "fluentbase-revm/debug-print",
     "fluentbase-evm/debug-print",
 ]
+guest-coverage = []
 svm = ["fluentbase-contracts/svm"]
 wasmtime = []
 std = [

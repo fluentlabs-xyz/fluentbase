@@ -18,6 +18,8 @@ macro_rules! basic_entrypoint {
             app.main();
         }
         #[cfg(target_arch = "wasm32")]
+        $crate::define_coverage_entrypoint!();
+        #[cfg(target_arch = "wasm32")]
         $crate::define_panic_handler!();
         #[cfg(target_arch = "wasm32")]
         $crate::define_heap_base_allocator!();
@@ -44,6 +46,8 @@ macro_rules! entrypoint_with_storage {
             let mut app = $struct_typ::new(sdk, U256::from(0), 0);
             app.main();
         }
+        #[cfg(target_arch = "wasm32")]
+        $crate::define_coverage_entrypoint!();
         #[cfg(target_arch = "wasm32")]
         $crate::define_panic_handler!();
         #[cfg(target_arch = "wasm32")]
@@ -79,6 +83,7 @@ macro_rules! define_entrypoint {
                 let sdk = SharedContextImpl::new(RwasmContext {});
                 __deploy_entry(sdk);
             }
+            $crate::define_coverage_entrypoint!();
         }
     };
     ($main_func:ident) => {
@@ -97,6 +102,7 @@ macro_rules! define_entrypoint {
             }
             #[no_mangle]
             extern "C" fn deploy() {}
+            $crate::define_coverage_entrypoint!();
         }
     };
 }
@@ -129,6 +135,26 @@ macro_rules! entrypoint {
     };
 }
 
+#[cfg(feature = "guest-coverage")]
+#[macro_export]
+#[doc(hidden)]
+macro_rules! define_coverage_entrypoint {
+    () => {
+        #[cfg(target_arch = "wasm32")]
+        #[no_mangle]
+        extern "C" fn __fluentbase_coverage_dump() {
+            $crate::dump_guest_coverage();
+        }
+    };
+}
+
+#[cfg(not(feature = "guest-coverage"))]
+#[macro_export]
+#[doc(hidden)]
+macro_rules! define_coverage_entrypoint {
+    () => {};
+}
+
 #[macro_export]
 macro_rules! system_entrypoint {
     ($main_func:ident, $deploy_func:ident) => {
@@ -151,6 +177,7 @@ macro_rules! system_entrypoint {
                 $crate::BlockListAllocator::gc();
                 exit_code.into_i32()
             }
+            $crate::define_coverage_entrypoint!();
         }
         #[cfg(target_arch = "wasm32")]
         #[panic_handler]
@@ -177,6 +204,7 @@ macro_rules! system_entrypoint {
             }
             #[no_mangle]
             extern "C" fn deploy() {}
+            $crate::define_coverage_entrypoint!();
         }
         $crate::define_panic_handler!();
         $crate::define_block_list_allocator!();

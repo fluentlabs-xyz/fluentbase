@@ -50,3 +50,4 @@ wasmtime = [
     "fluentbase-revm/wasmtime",
     "fluentbase-runtime/wasmtime",
 ]
+guest-coverage = ["wasmtime", "fluentbase-runtime/guest-coverage"]
