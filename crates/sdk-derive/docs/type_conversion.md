@@ -14,7 +14,7 @@ Fluentbase SDK provides bidirectional conversion between Solidity and Rust types
 | `address` | `Address` | 20-byte type |
 | `string` | `String` | UTF-8 encoded |
 | `bytes` | `Bytes` | Dynamic byte array |
-| `bytes1` to `bytes32` | `FixedBytes<N>` or `[u8; N]` | Fixed-size byte arrays |
+| `bytes1` to `bytes32` | `FixedBytes<N>` | Fixed-size byte arrays, one right-padded word |
 | `uint8`/`uint16`/.../`uint128` | `u8`/`u16`/.../`u128` | Standard primitives |
 | `uint256` | `U256` | 256-bit unsigned integer |
 | `int8`/`int16`/.../`int128` | `i8`/`i16`/.../`i128` | Standard primitives |
@@ -32,20 +32,22 @@ Fluentbase SDK provides bidirectional conversion between Solidity and Rust types
 | `Address` | `address` | 20-byte type |
 | `String` or `&str` | `string` | UTF-8 encoded |
 | `Bytes` | `bytes` | Dynamic byte array |
-| `FixedBytes<N>` | `bytesN` | Fixed-size byte arrays |
-| `[u8; N]` where N ≤ 32 | `bytesN` | Special case for byte arrays |
+| `FixedBytes<N>` (N ≤ 32), `B8` to `B256` | `bytesN` | Fixed-size byte arrays, one right-padded word |
+| `[u8; N]` | `uint8[N]` | Byte arrays are ordinary fixed arrays: one word per element |
 | `u8`/`u16`/.../`u128` | `uint8`/`uint16`/.../`uint128` | Standard integers |
 | `U256` or `u256` | `uint256` | 256-bit unsigned integer |
 | `i8`/`i16`/.../`i128` | `int8`/`int16`/.../`int128` | Signed integers |
 | `I256` or `i256` | `int256` | 256-bit signed integer |
 | `Vec<T>` | `T[]` | Dynamic arrays |
-| `[T; N]` (except `[u8; N]` where N ≤ 32) | `T[N]` | Fixed-size arrays |
+| `[T; N]` | `T[N]` | Fixed-size arrays |
 | `(T1,T2,...)` | `(T1,T2,...)` | Tuples |
 | Custom structs | Tuples/structs | With `Codec` trait |
 
 ## Special Cases
 
-- `[u8; N]` where N ≤ 32 is automatically converted to `bytesN` in Solidity
+- `[u8; N]` is `uint8[N]`, never `bytesN`. The codec encodes a Rust array one word per element,
+  and the selector describes that layout; a `bytesN` parameter is declared as `FixedBytes<N>`
+  (or `B32`, `B256`, ...), which is encoded as a single right-padded word
 - References (`&T` and `&mut T`) are dereferenced during conversion
 - Custom structs must implement `Codec` for serialization/deserialization
 
@@ -61,6 +63,7 @@ use fluentbase_sdk::{
     derive::{router, Contract},
     Address,
     Bytes,
+    FixedBytes,
     SharedAPI,
     I256,
     U256,
@@ -75,7 +78,8 @@ pub trait SolidityTypesAPI {
     // Test various Solidity types mapping to Rust types
     fn address_test(&self, addr: Address) -> Address;
     fn bytes_test(&self, data: Bytes) -> Bytes;
-    fn fixed_bytes_test(&self, data: [u8; 32]) -> [u8; 32];
+    fn fixed_bytes_test(&self, data: FixedBytes<32>) -> FixedBytes<32>;
+    fn byte_array_test(&self, data: [u8; 32]) -> [u8; 32];
     fn uint256_test(&self, value: U256) -> U256;
     fn int256_test(&self, value: I256) -> I256;
     fn bool_test(&self, value: bool) -> bool;
@@ -97,7 +101,12 @@ impl<SDK: SharedAPI> SolidityTypesAPI for App<SDK> {
     }
 
     #[function_id("fixedBytesTest(bytes32)", validate(true))]
-    fn fixed_bytes_test(&self, data: [u8; 32]) -> [u8; 32] {
+    fn fixed_bytes_test(&self, data: FixedBytes<32>) -> FixedBytes<32> {
+        data
+    }
+
+    #[function_id("byteArrayTest(uint8[32])", validate(true))]
+    fn byte_array_test(&self, data: [u8; 32]) -> [u8; 32] {
         data
     }
 
@@ -143,7 +152,8 @@ basic_entrypoint!(App);
 
 - Use standard numeric types when possible (`u8`, `u16`, etc.) rather than always using `U256`
 - Implement `Codec` for all custom types used in contract interfaces
-- For fixed-size byte arrays, use `[u8; N]` where N ≤ 32 for proper `bytesN` conversion
+- For a Solidity `bytesN` parameter use `FixedBytes<N>` (or `B256` and friends); a `[u8; N]`
+  parameter is a `uint8[N]` and occupies N words
 - Test your contract interfaces thoroughly to ensure type compatibility
 - Only use `function_id` attribute inside `router` or `client` macros
 - When working with complex data structures, consider gas costs in Solidity
