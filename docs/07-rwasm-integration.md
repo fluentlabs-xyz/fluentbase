@@ -46,6 +46,18 @@ Fluentbase runtime executor owns:
 
 This is the concrete runtime-host handshake point used in every interruption cycle.
 
+Structured system-runtime outcomes are decoded completely before the host applies their effects.
+Collection counts must fit the remaining encoded body before reservation or iteration; byte payloads
+use checked zero-copy slices. These input-derived bounds also apply with bincode's legacy configuration,
+so safety does not depend on a fixed envelope-size cap. Generic log readers without lookahead grow
+their buffers only after reading the corresponding data. Existing envelope encodings, including
+outcomes without the optional trailing touched-slot or transfer fields, remain supported.
+
+An invalid envelope after a successful runtime exit halts the frame with `MalformedBuiltinParams`
+and clears the raw envelope from return data. If execution already failed (for example, out of fuel),
+the host preserves that failure reason. No buffered effects or preload refunds are applied on decode
+failure; the existing frame rollback path handles any earlier execution effects.
+
 ---
 
 ## Why version bumps are risky
@@ -77,3 +89,24 @@ A dependency bump can silently change any of these.
 6. update docs in same PR.
 
 If one of these steps is skipped, regressions can escape into consensus path.
+
+## Curve dependency upgrades
+
+`sp1-curves` is pinned to `=5.2.4`. The raw Weierstrass add/double syscalls validate
+coordinate bounds, but do not require curve membership. Version 5.2.4 uses generic
+field arithmetic for secp256k1; version 6.1.0 switches to `k256` point conversion and
+unwraps the result in `sw_add_k256` and `sw_double_k256`. Reduced off-curve coordinates
+that reach these syscalls can therefore panic the host after an unchecked upgrade.
+
+Before changing the pin:
+
+- Inspect the resolved implementation of curve addition, doubling and decompression
+  for panics on off-curve points, infinity, equal points and unreduced coordinates.
+- Run the runtime Weierstrass tests in release mode with both `std` and `std,wasmtime`.
+  Keep `secp256k1_off_curve_inputs_preserve_arithmetic_without_panicking` passing;
+  it covers reduced off-curve inputs that coordinate-bound checks permit today.
+- Patch an incompatible dependency before adopting it. Rejecting previously accepted
+  inputs is a protocol behavior change and requires explicit compatibility review,
+  including proof/runtime agreement; a dependency bump must not silently introduce it.
+- Recheck all workspace lockfiles and record the version and regression results in
+  the upgrade PR.

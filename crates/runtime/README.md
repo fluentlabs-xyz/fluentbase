@@ -69,9 +69,9 @@ Module caching and warmup
 
 - ModuleFactory::get_or_insert_module caches a supplied rWASM module under its code hash, bounded by a 1 GiB
   memory limiter that also prunes the code-hash index on eviction.
-- ModuleFactory::get_resident_module looks a module up by code hash alone. RuntimeExecutor::execute fails fast when
-  that lookup misses: hash-only execution is a host-side contract that requires an earlier warmup, and no consensus
-  input can produce it.
+- ModuleFactory::get_resident_module looks a module up by code hash alone. Residency is node-local, so
+  RuntimeExecutor::execute fails the frame as a host fault (UnexpectedFatalExecutionFailure) when that lookup misses
+  instead of producing a contract revert other nodes would not see.
 - With the wasmtime feature, get_wasmtime_module_or_compile and warmup_wasmtime allow precompilation and warming the
   caches to eliminate first-run latency.
 

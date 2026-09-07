@@ -1,9 +1,9 @@
 //! This is temporary single-node consensus that is used for block production for Fluent,
 //! it will be replaced with DPoS consensus later.
-use alloy_network::AnyNetwork;
+use alloy_network::Ethereum;
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::ForkchoiceState;
-use eyre::OptionExt;
+use eyre::{OptionExt, WrapErr};
 use reth_consensus_debug_client::{BlockProvider, RpcBlockProvider};
 use reth_engine_primitives::ConsensusEngineHandle;
 use reth_node_api::FullNodeComponents;
@@ -15,10 +15,13 @@ use reth_payload_primitives::{
 };
 use reth_primitives_traits::{HeaderTy, NodePrimitives, SealedBlock, SealedHeaderFor};
 use reth_storage_api::BlockReader;
-use reth_tasks::shutdown::GracefulShutdown;
-use std::{sync::Arc, time::Duration};
-use tokio::{sync::mpsc, time::Interval};
+use reth_tasks::{shutdown::GracefulShutdown, TaskExecutor};
+use std::{future::Future, time::Duration};
+use tokio::{sync::mpsc, task::JoinHandle, time::Interval};
 use tracing::{error, info};
+
+#[cfg(test)]
+mod tests;
 
 pub async fn launch_consensus_validator<N, AddOns: RethRpcAddOns<N>, B>(
     handle: &NodeHandle<N, AddOns>,
@@ -173,52 +176,99 @@ pub async fn launch_consensus_node<Node, AddOns: RethRpcAddOns<Node>>(
     consensus_url: String,
 ) -> eyre::Result<()>
 where
-    Node: FullNodeComponents<Types: DebugNode<Node>>,
+    Node: FullNodeComponents<Types: DebugNode<Node, RpcBlock = alloy_rpc_types_eth::Block>>,
 {
     info!(target: "reth::cli", "Using RPC consensus client: {}", consensus_url);
 
-    let block_provider =
-        RpcBlockProvider::<AnyNetwork, _>::new(consensus_url.as_str(), |block_response| {
-            let json =
-                serde_json::to_value(block_response).expect("Block serialization cannot fail");
-            let rpc_block =
-                serde_json::from_value(json).expect("Block deserialization cannot fail");
-            Node::Types::rpc_to_primitive_block(rpc_block)
-        })
-        .await?;
+    // Decode directly into the supported RPC block type. Unsupported transaction types now
+    // become provider errors, which the subscription logs before continuing, not panics in
+    // an infallible AnyNetwork-to-Ethereum conversion callback.
+    let block_provider = RpcBlockProvider::<Ethereum, _>::new(
+        consensus_url.as_str(),
+        Node::Types::rpc_to_primitive_block,
+    )
+    .await?;
 
     let beacon_engine_handle = handle.node.add_ons_handle.beacon_engine_handle.clone();
-    handle
-        .node
-        .task_executor
-        .spawn_critical_task("consensus node worker", async move {
-            new_block_fetcher(beacon_engine_handle, Arc::new(block_provider)).await
-        });
+    spawn_consensus_follower(
+        &handle.node.task_executor,
+        beacon_engine_handle,
+        block_provider,
+    );
     Ok(())
 }
 
+fn spawn_consensus_follower<
+    P: BlockProvider,
+    T: PayloadTypes<BuiltPayload: BuiltPayload<Primitives: NodePrimitives<Block = P::Block>>>,
+>(
+    task_executor: &TaskExecutor,
+    engine_handle: ConsensusEngineHandle<T>,
+    block_provider: P,
+) -> JoinHandle<()> {
+    let executor = task_executor.clone();
+    task_executor.spawn_critical_with_graceful_shutdown_signal(
+        "consensus node worker",
+        move |shutdown| async move {
+            if let Err(err) =
+                new_block_fetcher(engine_handle, block_provider, shutdown.ignore_guard()).await
+            {
+                error!(target: "engine::local", %err, "Consensus follower failed; shutting down node");
+                if let Err(err) = executor.initiate_graceful_shutdown() {
+                    error!(target: "engine::local", %err, "Failed to request node shutdown");
+                }
+            }
+        },
+    )
+}
+
 async fn new_block_fetcher<
-    P: BlockProvider + Clone,
+    P: BlockProvider,
     T: PayloadTypes<BuiltPayload: BuiltPayload<Primitives: NodePrimitives<Block = P::Block>>>,
 >(
     engine_handle: ConsensusEngineHandle<T>,
     block_provider: P,
-) {
-    let mut block_stream = {
-        let (tx, rx) = mpsc::channel::<P::Block>(64);
-        let block_provider = block_provider.clone();
-        tokio::spawn(async move {
-            block_provider.subscribe_blocks(tx).await;
-        });
-        rx
-    };
+    shutdown: impl Future<Output = ()>,
+) -> eyre::Result<()> {
+    let (tx, mut block_stream) = mpsc::channel::<P::Block>(64);
+    // Poll the subscription in this critical worker so a panic cannot be swallowed by a
+    // detached task. Dropping the worker also cancels the subscription.
+    let subscription = block_provider.subscribe_blocks(tx);
+    tokio::pin!(subscription, shutdown);
 
-    while let Some(block) = block_stream.recv().await {
-        let payload = T::block_to_payload(SealedBlock::new_unhashed(block));
-        let block_hash = payload.block_hash();
-        // Send new events to execution client
-        let _ = engine_handle.new_payload(payload).await;
-        let state = ForkchoiceState::same_hash(block_hash);
-        let _ = engine_handle.fork_choice_updated(state, None).await;
+    loop {
+        tokio::select! {
+            biased;
+
+            _ = &mut shutdown => {
+                info!(target: "engine::local", "Shutting down consensus node worker");
+                return Ok(());
+            }
+            _ = &mut subscription => {
+                eyre::bail!("Consensus block subscription ended unexpectedly");
+            }
+            block = block_stream.recv() => {
+                let block = block.ok_or_eyre("Consensus block stream closed unexpectedly")?;
+                let payload = T::block_to_payload(SealedBlock::new_unhashed(block));
+                let block_hash = payload.block_hash();
+                // Once processing starts, finish the payload/FCU pair before observing shutdown.
+                // SYNCING/ACCEPTED are allowed: the engine may need to fetch missing ancestors.
+                let status = engine_handle
+                    .new_payload(payload)
+                    .await
+                    .wrap_err("Failed to submit consensus payload")?;
+                if status.is_invalid() {
+                    eyre::bail!("Invalid consensus payload {block_hash}: {status:?}");
+                }
+                let state = ForkchoiceState::same_hash(block_hash);
+                let result = engine_handle
+                    .fork_choice_updated(state, None)
+                    .await
+                    .wrap_err("Failed to update consensus fork choice")?;
+                if result.is_invalid() {
+                    eyre::bail!("Invalid consensus fork choice {block_hash}: {result:?}");
+                }
+            }
+        }
     }
 }

@@ -11,6 +11,8 @@ exclude = [
     "examples/svm",
     # exclude revm e2e testing suite to let it be a separate crate
     "evm-e2e",
+    # conformance corpus: thousands of generated cases, must not be compiled by CI
+    "codec-conformance",
 ]
 resolver = "2"
 
@@ -136,7 +138,8 @@ reqwest = { version = "0.12", default-features = false, features = ["blocking", 
 directories = "6.0.0"
 
 # sp1
-sp1-curves = { version = "5.2.4" }
+# Re-audit off-curve syscall inputs before changing this pin; see docs/07-rwasm-integration.md.
+sp1-curves = { version = "=5.2.4" }
 generic-array = { version = "=1.1.0", default-features = false, features = ["alloc"] }
 
 num-derive = { version = "0.4" }

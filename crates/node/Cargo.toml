@@ -81,6 +81,9 @@ eyre = { workspace = true }
 directories = { workspace = true }
 flate2 = { workspace = true }
 
+[dev-dependencies]
+jsonrpsee = { version = "0.26.0", features = ["server"] }
+
 [features]
 default = ["std"]
 std = [

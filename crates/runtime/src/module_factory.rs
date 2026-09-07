@@ -1,3 +1,4 @@
+use crate::metrics;
 use fluentbase_types::{
     Address, CompilationBackend, CompilationConfigFingerprint, CompiledModuleCacheKey, B256,
 };
@@ -24,6 +25,14 @@ impl ModuleFactory {
         INSTANCE.clone()
     }
 
+    /// Creates a factory with its own cache instead of the process-wide one.
+    #[cfg(test)]
+    pub(crate) fn isolated(max_bytes: usize) -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(ModuleFactoryInner::with_size_limit(max_bytes))),
+        }
+    }
+
     /// Returns the cached module for `bytecode`, inserting it on first use.
     ///
     /// Always yields a module: when the memory limiter rejects the entry, the supplied module is
@@ -35,18 +44,44 @@ impl ModuleFactory {
         address: Address,
     ) -> RwasmModule {
         let module_key = module_key_for(hash, address);
-        self.inner
-            .lock()
-            .unwrap()
-            .get_or_insert(module_key, bytecode)
+        self.lock_cache().get_or_insert(module_key, bytecode)
     }
 
     /// Returns the resident module for `code_hash`, promoting it in the LRU.
     ///
     /// Yields `None` when no module with this code hash is resident: none was ever supplied
-    /// through [`Self::get_or_insert_module`], or the memory limiter evicted it since.
+    /// through [`Self::get_or_insert_module`], or the memory limiter evicted it since. That is a
+    /// node-local condition, not a property of the input, so the caller must fail the execution
+    /// as a host fault rather than as a contract revert. Nothing in here panics: the lock is
+    /// shared by every execution thread, and a panic while holding it would poison it for all.
     pub fn get_resident_module(&mut self, code_hash: B256) -> Option<RwasmModule> {
-        self.inner.lock().unwrap().get_resident(code_hash)
+        let module = self.lock_cache().get_resident(code_hash);
+        if module.is_none() {
+            // The index mirrors residency, so a miss cannot tell "never warmed up" from
+            // "evicted": both leave no trace by design.
+            metrics::record_module_cache_hash_miss("not_resident");
+        }
+        module
+    }
+
+    /// Locks the cache, recovering from a poisoned lock by discarding the cached contents.
+    ///
+    /// A poisoned lock means some other thread panicked while holding it. The cache is pure
+    /// (bytecode in, compiled module out), so throwing it away is always safe and only costs
+    /// recompilation. Propagating the poison instead would make every later execution on every
+    /// thread fail at this lock, leaving the node alive but unable to execute anything.
+    fn lock_cache(&self) -> std::sync::MutexGuard<'_, ModuleFactoryInner> {
+        self.inner.lock().unwrap_or_else(|poisoned| {
+            let mut guard = poisoned.into_inner();
+            // The size limit is plain configuration set at construction, so it is safe to keep.
+            let max_bytes = guard.cached_modules.limiter().max_bytes();
+            *guard = ModuleFactoryInner::with_size_limit(max_bytes);
+            // `into_inner` leaves the poison flag set; without clearing it every later lock
+            // would land here and discard the cache again.
+            self.inner.clear_poison();
+            metrics::record_module_cache_reset();
+            guard
+        })
     }
 }
 
@@ -56,6 +91,13 @@ struct ModuleFactoryInner {
 }
 
 impl ModuleFactoryInner {
+    /// Creates an empty cache with a content budget of `max_bytes`.
+    fn with_size_limit(max_bytes: usize) -> Self {
+        Self {
+            cached_modules: LruMap::new(ModuleMemoryLimiter::<RwasmModule>::new(max_bytes)),
+        }
+    }
+
     /// Returns the resident module that hash-only lookups resolve to for `code_hash`.
     fn get_resident(&mut self, code_hash: B256) -> Option<RwasmModule> {
         let module_key = self.cached_modules.limiter().resident_key(&code_hash)?;
@@ -99,11 +141,7 @@ pub const CACHED_MODULES_SIZE_LIMIT: usize = 1024 * 1024 * 1024;
 
 impl Default for ModuleFactoryInner {
     fn default() -> Self {
-        Self {
-            cached_modules: LruMap::new(ModuleMemoryLimiter::<RwasmModule>::new(
-                CACHED_MODULES_SIZE_LIMIT,
-            )),
-        }
+        Self::with_size_limit(CACHED_MODULES_SIZE_LIMIT)
     }
 }
 
@@ -418,19 +456,10 @@ mod tests {
             .sum()
     }
 
-    /// Creates a factory with its own cache of `max_bytes`, detached from the global one.
-    fn new_factory(max_bytes: usize) -> ModuleFactory {
-        ModuleFactory {
-            inner: Arc::new(Mutex::new(ModuleFactoryInner {
-                cached_modules: new_cache(max_bytes),
-            })),
-        }
-    }
-
     /// Index cardinality must follow residency, not the number of hashes ever seen.
     #[test]
     fn factory_index_is_bounded_under_deployment_churn() {
-        let mut factory = new_factory(500);
+        let mut factory = ModuleFactory::isolated(500);
 
         for id in 0..1000 {
             factory.get_or_insert_module(module(100), key(id), Address::ZERO);
@@ -446,7 +475,7 @@ mod tests {
     /// A hash resolves while its module is resident and stops resolving once it is evicted.
     #[test]
     fn hash_only_lookups_follow_residency_across_eviction() {
-        let mut factory = new_factory(100);
+        let mut factory = ModuleFactory::isolated(100);
 
         assert!(factory.get_resident_module(key(1)).is_none());
         for id in [1, 2, 1] {
@@ -461,7 +490,7 @@ mod tests {
     /// the same code hash instead of making it unreachable.
     #[test]
     fn evicting_indexed_profile_falls_back_to_remaining_resident_profile() {
-        let mut factory = new_factory(200);
+        let mut factory = ModuleFactory::isolated(200);
         let code_hash = key(42);
         let (addr_a, addr_b) = (Address::repeat_byte(0xaa), Address::repeat_byte(0xbb));
         let (key_a, key_b) = (
@@ -492,7 +521,7 @@ mod tests {
     /// Modules the limiter refuses are still returned but leave no trace in the index.
     #[test]
     fn rejected_modules_are_returned_without_index_entries() {
-        let mut factory = new_factory(100);
+        let mut factory = ModuleFactory::isolated(100);
 
         for hint_size in [0, 101] {
             let uncached = factory.get_or_insert_module(module(hint_size), key(1), Address::ZERO);
@@ -805,5 +834,79 @@ mod tests {
         assert!(cache.get(&cache_key(0)).is_some());
         assert!(cache.get(&cache_key(250)).is_some());
         assert!(cache.get(&cache_key(499)).is_some());
+    }
+
+    // ==================== Factory Lookups ====================
+
+    /// Warms `id` into `factory` as a `hint_size`-byte module at an address derived from `id`.
+    fn warm(factory: &mut ModuleFactory, id: u16, hint_size: usize) {
+        factory.get_or_insert_module(module(hint_size), key(id), Address::repeat_byte(id as u8));
+    }
+
+    #[test]
+    fn hash_lookup_without_warmup_misses_instead_of_panicking() {
+        let mut factory = ModuleFactory::isolated(1000);
+
+        assert!(factory.get_resident_module(key(1)).is_none());
+    }
+
+    #[test]
+    fn hash_lookup_after_warmup_hits() {
+        let mut factory = ModuleFactory::isolated(1000);
+
+        warm(&mut factory, 1, 100);
+        assert!(factory.get_resident_module(key(1)).is_some());
+    }
+
+    #[test]
+    fn hash_lookup_after_eviction_misses_and_drops_stale_index_entry() {
+        // Room for a single module: warming the second evicts the first.
+        let mut factory = ModuleFactory::isolated(100);
+        warm(&mut factory, 1, 100);
+        warm(&mut factory, 2, 100);
+
+        assert!(factory.get_resident_module(key(1)).is_none());
+        assert!(
+            factory
+                .inner
+                .lock()
+                .unwrap()
+                .cached_modules
+                .limiter()
+                .resident_key(&key(1))
+                .is_none(),
+            "stale index entry must be dropped"
+        );
+
+        // Re-warming with bytecode restores the hash path.
+        warm(&mut factory, 1, 100);
+        assert!(factory.get_resident_module(key(1)).is_some());
+    }
+
+    #[test]
+    fn poisoned_lock_is_recovered_by_discarding_the_cache() {
+        let mut factory = ModuleFactory::isolated(1000);
+        warm(&mut factory, 1, 100);
+
+        // Poison the lock the way a panicking execution thread would: unwind while holding it.
+        let inner = factory.inner.clone();
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = inner.lock().unwrap();
+            panic!("simulated panic while holding the module cache lock");
+        }));
+        assert!(inner.is_poisoned());
+
+        // The cache is usable again and its contents were discarded rather than trusted.
+        assert!(factory.get_resident_module(key(1)).is_none());
+        assert!(!inner.is_poisoned(), "recovery must clear the poison flag");
+        assert_eq!(
+            inner.lock().unwrap().cached_modules.limiter().max_bytes(),
+            1000,
+            "recovery must keep the configured size limit"
+        );
+
+        // Re-warming works and is not thrown away on the next lock.
+        warm(&mut factory, 1, 100);
+        assert!(factory.get_resident_module(key(1)).is_some());
     }
 }

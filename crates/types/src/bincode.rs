@@ -5,6 +5,7 @@ pub use ::bincode::{
     error::DecodeError,
     *,
 };
+use alloc::vec::Vec;
 use core::ops::{Deref, DerefMut};
 
 #[derive(Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -57,6 +58,46 @@ impl BytesReader {
     pub fn new(bytes: Bytes) -> Self {
         Self { bytes }
     }
+
+    /// Check the encoded body before allocating or iterating over a declared collection.
+    pub(crate) fn ensure_collection_body(
+        &self,
+        len: usize,
+        min_element_bytes: usize,
+    ) -> Result<(), DecodeError> {
+        let required = len
+            .checked_mul(min_element_bytes)
+            .ok_or(DecodeError::LimitExceeded)?;
+        if required > self.bytes.len() {
+            return Err(DecodeError::UnexpectedEnd {
+                additional: required - self.bytes.len(),
+            });
+        }
+        Ok(())
+    }
+}
+
+/// Decode a collection whose element count is bounded by the remaining encoded body.
+/// This also honors a caller's bincode limit, but does not require one for allocation safety.
+pub(crate) fn decode_vec<D: Decoder<R = BytesReader>, T>(
+    decoder: &mut D,
+    len: usize,
+    min_element_bytes: usize,
+    mut decode_item: impl FnMut(&mut D) -> Result<T, DecodeError>,
+) -> Result<Vec<T>, DecodeError> {
+    decoder
+        .reader()
+        .ensure_collection_body(len, min_element_bytes)?;
+    decoder.claim_container_read::<T>(len)?;
+    let mut values = Vec::new();
+    values
+        .try_reserve_exact(len)
+        .map_err(|_| DecodeError::Other("failed to reserve decoded collection"))?;
+    for _ in 0..len {
+        decoder.unclaim_bytes_read(core::mem::size_of::<T>());
+        values.push(decode_item(decoder)?);
+    }
+    Ok(values)
 }
 
 /// Extension methods for a Reader that is backed by `Bytes`.

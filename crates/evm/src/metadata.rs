@@ -25,10 +25,9 @@ impl EthereumMetadata {
             return None;
         }
         Some(match B256::from_slice(&metadata[0..32]) {
-            ETHEREUM_METADATA_VERSION_ANALYZED => Self::Analyzed(
-                AnalyzedBytecode::deserialize(&metadata[32..])
-                    .unwrap_or_else(|_| unreachable!("failed to deserialize analyzed bytecode")),
-            ),
+            ETHEREUM_METADATA_VERSION_ANALYZED => {
+                Self::Analyzed(AnalyzedBytecode::deserialize(&metadata[32..]).ok()?)
+            }
             hash => {
                 let bytecode = metadata.slice(32..);
                 Self::Legacy(LegacyBytecode { hash, bytecode })
@@ -75,6 +74,49 @@ impl EthereumMetadata {
         match self {
             EthereumMetadata::Legacy(bytecode) => bytecode.bytecode.clone(),
             EthereumMetadata::Analyzed(bytecode) => bytecode.bytecode.slice(0..bytecode.len()),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_truncated_analyzed_metadata() {
+        let metadata = EthereumMetadata::new_analyzed(Bytes::from_static(&[0x60, 0x00, 0x5b]))
+            .write_to_bytes();
+        for len in 0..metadata.len() {
+            assert!(
+                EthereumMetadata::read_from_bytes(&metadata.slice(..len)).is_none(),
+                "accepted metadata truncated to {len} bytes"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_analyzed_metadata_with_invalid_code_length() {
+        let mut metadata = EthereumMetadata::new_analyzed(Bytes::from_static(&[0x00]))
+            .write_to_bytes()
+            .to_vec();
+        // The original code length follows the version and code hash.
+        metadata[64..72].copy_from_slice(&u64::MAX.to_le_bytes());
+        assert!(EthereumMetadata::read_from_bytes(&metadata.into()).is_none());
+    }
+
+    #[test]
+    fn valid_metadata_preserves_code_queries() {
+        for code in [Bytes::new(), Bytes::from_static(&[0x60, 0x00, 0x5b])] {
+            for metadata in [
+                EthereumMetadata::new_legacy(code.clone()),
+                EthereumMetadata::new_analyzed(code.clone()),
+            ] {
+                let decoded =
+                    EthereumMetadata::read_from_bytes(&metadata.write_to_bytes()).unwrap();
+                assert_eq!(decoded.code_size(), code.len());
+                assert_eq!(decoded.code_copy(), code);
+                assert_eq!(decoded.code_hash(), crypto_keccak256(&code));
+            }
         }
     }
 }

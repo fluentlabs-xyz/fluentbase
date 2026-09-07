@@ -414,6 +414,7 @@ mod code_copy_tests {
 #[cfg(test)]
 mod code_hash_tests {
     use super::*;
+    use fluentbase_sdk::syscall::SYSCALL_ID_CODE_SIZE;
     use revm::handler::system_interruption::SystemInterruptionInputs;
 
     fn execute_syscall(
@@ -458,6 +459,50 @@ mod code_hash_tests {
         input[20..28].copy_from_slice(&0u64.to_le_bytes());
         input[28..36].copy_from_slice(&1u64.to_le_bytes());
         input.into()
+    }
+
+    #[test]
+    fn malformed_analyzed_metadata_uses_empty_code_fallbacks() {
+        let target = Address::from([0x43; 20]);
+        let metadata = EthereumMetadata::new_analyzed(bytes!("00"))
+            .write_to_bytes()
+            .slice(..32);
+        let account_bytecode = Bytecode::new_ownable_account(PRECOMPILE_EVM_RUNTIME, metadata);
+        let mut db = InMemoryDB::default();
+        db.insert_account_info(
+            target,
+            AccountInfo {
+                nonce: 1,
+                code_hash: account_bytecode.hash_slow(),
+                code: Some(account_bytecode),
+                ..Default::default()
+            },
+        );
+        let mut ctx = RwasmContext::new(db, RwasmSpecId::PRAGUE);
+        let mut frame = RwasmFrame::default();
+
+        for (syscall, input, expected) in [
+            (
+                SYSCALL_ID_CODE_SIZE,
+                code_hash_input(target),
+                Bytes::from(vec![0; 32]),
+            ),
+            (
+                SYSCALL_ID_CODE_HASH,
+                code_hash_input(target),
+                Bytes::copy_from_slice(revm::primitives::KECCAK_EMPTY.as_slice()),
+            ),
+            (
+                SYSCALL_ID_CODE_COPY,
+                code_copy_input(target),
+                Bytes::from(vec![0]),
+            ),
+        ] {
+            assert_eq!(
+                execute_syscall(&mut ctx, &mut frame, syscall, input),
+                expected
+            );
+        }
     }
 
     #[test]
@@ -1212,5 +1257,98 @@ mod resume_boundary_tests {
         .unwrap();
 
         assert_eq!(exit_code, ExitCode::UnknownError);
+    }
+
+    #[test]
+    fn malformed_runtime_outcome_halts_before_applying_effects() {
+        use fluentbase_sdk::system::JournalLog;
+
+        let mut ctx = new_context();
+        let target = Address::repeat_byte(0x22);
+        let mut gas = Gas::new(100_000);
+        let mut exit_code = ExitCode::Ok;
+        let outcome = RuntimeExecutionOutcomeV1 {
+            output: bytes!("112233"),
+            storage: Some([(U256::from(1), U256::from(2))].into()),
+            logs: vec![JournalLog {
+                topics: vec![B256::repeat_byte(3)],
+                data: bytes!("445566"),
+            }],
+            new_metadata: Some(bytes!("778899")),
+            touched_storage_slots: Some(vec![U256::from(1)]),
+            ..Default::default()
+        };
+        let mut encoded = outcome.encode();
+        let transfers_offset = encoded.len() - 4;
+        encoded[transfers_offset..].copy_from_slice(&u32::MAX.to_le_bytes());
+        let mut return_data: Bytes = encoded.into();
+
+        process_runtime_execution_outcome(
+            &target,
+            &mut ctx,
+            &mut gas,
+            &mut return_data,
+            &mut exit_code,
+            None,
+            Some(&[(U256::from(9), 2_100)]),
+        )
+        .unwrap();
+
+        assert_eq!(exit_code, ExitCode::MalformedBuiltinParams);
+        assert!(return_data.is_empty());
+        assert!(ctx.journaled_state.inner.state.is_empty());
+        assert!(ctx.journaled_state.inner.logs.is_empty());
+        assert_eq!(gas.remaining(), 100_000);
+    }
+
+    #[test]
+    fn overflowing_runtime_log_count_halts_without_panicking() {
+        let mut ctx = new_context();
+        let mut frame = RwasmFrame::default();
+        frame.interpreter.gas = Gas::new(100_000);
+        frame.interpreter.input.target_address = PRECOMPILE_EVM_RUNTIME;
+        let mut encoded = RuntimeExecutionOutcomeV1::default().encode();
+        encoded[16..24].copy_from_slice(&u64::MAX.to_le_bytes());
+
+        let next_action = process_exec_result::<_, NoOpInspector>(
+            &mut frame,
+            &mut ctx,
+            None,
+            ExitCode::Ok.into_i32(),
+            encoded.into(),
+            None,
+        )
+        .unwrap();
+
+        let NextAction::Return(result) = next_action else {
+            panic!("expected a returned halt");
+        };
+        assert_eq!(result.result, InstructionResult::MalformedBuiltinParams);
+        assert!(result.output.is_empty());
+    }
+
+    #[test]
+    fn malformed_runtime_outcome_preserves_existing_failure_reason() {
+        for original_exit in [ExitCode::OutOfFuel, ExitCode::Panic, ExitCode::UnknownError] {
+            let mut ctx = new_context();
+            let mut gas = Gas::new(100_000);
+            let mut exit_code = original_exit;
+            let mut return_data = bytes!("deadbeef");
+
+            process_runtime_execution_outcome(
+                &Address::ZERO,
+                &mut ctx,
+                &mut gas,
+                &mut return_data,
+                &mut exit_code,
+                None,
+                None,
+            )
+            .unwrap();
+
+            assert_eq!(exit_code, original_exit);
+            assert!(return_data.is_empty());
+            assert_eq!(gas.remaining(), 100_000);
+        }
     }
 }
