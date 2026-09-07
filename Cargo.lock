@@ -4768,6 +4768,7 @@ dependencies = [
  "hashbrown 0.16.1",
  "hex",
  "hex-literal",
+ "proptest",
  "serde",
 ]
 
