@@ -1,3 +1,4 @@
+use crate::metrics;
 use fluentbase_types::{
     BytecodeOrHash, CompilationBackend, CompilationConfigFingerprint, CompiledModuleCacheKey, B256,
 };
@@ -23,9 +24,23 @@ impl ModuleFactory {
         INSTANCE.clone()
     }
 
+    /// Creates a factory with its own cache instead of the process-wide one.
+    #[cfg(test)]
+    pub(crate) fn isolated(max_bytes: usize) -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(ModuleFactoryInner::with_size_limit(max_bytes))),
+        }
+    }
+
     /// Returns a cached module for the given bytecode or compiles and caches it on first use.
-    pub fn get_module_or_init(&mut self, bytecode_or_hash: BytecodeOrHash) -> RwasmModule {
-        let mut ctx = self.inner.lock().unwrap();
+    ///
+    /// Returns `None` only for a hash-only lookup whose module is not cached, either because
+    /// nothing warmed it up or because the LRU evicted it. That is a node-local condition, not a
+    /// property of the input, so the caller must fail the execution as a host fault rather than
+    /// as a contract revert. Nothing in here panics: this lock is shared by every execution
+    /// thread, and a panic while holding it would poison it for all of them.
+    pub fn get_module_or_init(&mut self, bytecode_or_hash: BytecodeOrHash) -> Option<RwasmModule> {
+        let mut ctx = self.lock_cache();
         let code_hash = bytecode_or_hash.code_hash();
         let module_key = match &bytecode_or_hash {
             BytecodeOrHash::Bytecode { address, .. } => CompiledModuleCacheKey::new(
@@ -40,27 +55,49 @@ impl ModuleFactory {
                 // Hash-only lookups are only valid after an earlier bytecode warmup. Keep this
                 // deterministic by resolving through the explicit code-hash index.
                 let Some(module_key) = ctx.module_keys_by_code_hash.get(&code_hash).copied() else {
-                    panic!("runtime: can't compile just by hash")
+                    metrics::record_module_cache_hash_miss("never_warmed");
+                    return None;
                 };
                 module_key
             }
         };
 
         if let Some(entry) = ctx.cached_modules.get(&module_key) {
-            return entry.clone();
+            return Some(entry.clone());
         }
 
         let rwasm_module = match bytecode_or_hash {
             BytecodeOrHash::Bytecode { bytecode, .. } => bytecode,
             BytecodeOrHash::Hash(_hash) => {
-                // TODO(dmitry123): Do we want to have lock here until resources are warmed up?
-                panic!("runtime: can't compile just by hash")
+                // The index outlived the module: the LRU evicted it. Drop the stale index entry
+                // so the next bytecode-carrying call re-warms it cleanly.
+                ctx.module_keys_by_code_hash.remove(&code_hash);
+                metrics::record_module_cache_hash_miss("evicted");
+                return None;
             }
         };
 
         ctx.module_keys_by_code_hash.insert(code_hash, module_key);
         ctx.cached_modules.insert(module_key, rwasm_module.clone());
-        rwasm_module
+        Some(rwasm_module)
+    }
+
+    /// Locks the cache, recovering from a poisoned lock by discarding the cached contents.
+    ///
+    /// A poisoned lock means some other thread panicked while holding it. The cache is pure
+    /// (bytecode in, compiled module out), so throwing it away is always safe and only costs
+    /// recompilation. Propagating the poison instead would make every later execution on every
+    /// thread fail at this lock, leaving the node alive but unable to execute anything.
+    fn lock_cache(&self) -> std::sync::MutexGuard<'_, ModuleFactoryInner> {
+        self.inner.lock().unwrap_or_else(|poisoned| {
+            let mut guard = poisoned.into_inner();
+            *guard = ModuleFactoryInner::default();
+            // `into_inner` leaves the poison flag set; without clearing it every later lock
+            // would land here and discard the cache again.
+            self.inner.clear_poison();
+            metrics::record_module_cache_reset();
+            guard
+        })
     }
 }
 
@@ -76,14 +113,18 @@ struct ModuleFactoryInner {
 /// not the hash table overhead (which is negligible for typical workloads).
 pub const CACHED_MODULES_SIZE_LIMIT: usize = 1024 * 1024 * 1024;
 
-impl Default for ModuleFactoryInner {
-    fn default() -> Self {
+impl ModuleFactoryInner {
+    fn with_size_limit(max_bytes: usize) -> Self {
         Self {
-            cached_modules: LruMap::new(ModuleMemoryLimiter::<RwasmModule>::new(
-                CACHED_MODULES_SIZE_LIMIT,
-            )),
+            cached_modules: LruMap::new(ModuleMemoryLimiter::<RwasmModule>::new(max_bytes)),
             module_keys_by_code_hash: std::collections::HashMap::new(),
         }
+    }
+}
+
+impl Default for ModuleFactoryInner {
+    fn default() -> Self {
+        Self::with_size_limit(CACHED_MODULES_SIZE_LIMIT)
     }
 }
 
@@ -562,5 +603,87 @@ mod tests {
         assert!(cache.get(&cache_key(0)).is_some());
         assert!(cache.get(&cache_key(250)).is_some());
         assert!(cache.get(&cache_key(499)).is_some());
+    }
+
+    // ==================== Factory Lookups ====================
+
+    fn bytecode(id: u16, hint_size: usize) -> BytecodeOrHash {
+        BytecodeOrHash::Bytecode {
+            bytecode: module(hint_size),
+            hash: key(id),
+            address: fluentbase_types::Address::repeat_byte(id as u8),
+        }
+    }
+
+    #[test]
+    fn hash_lookup_without_warmup_misses_instead_of_panicking() {
+        let mut factory = ModuleFactory::isolated(1000);
+
+        assert!(factory
+            .get_module_or_init(BytecodeOrHash::Hash(key(1)))
+            .is_none());
+    }
+
+    #[test]
+    fn hash_lookup_after_warmup_hits() {
+        let mut factory = ModuleFactory::isolated(1000);
+
+        assert!(factory.get_module_or_init(bytecode(1, 100)).is_some());
+        assert!(factory
+            .get_module_or_init(BytecodeOrHash::Hash(key(1)))
+            .is_some());
+    }
+
+    #[test]
+    fn hash_lookup_after_eviction_misses_and_drops_stale_index_entry() {
+        // Room for a single module: warming the second evicts the first.
+        let mut factory = ModuleFactory::isolated(100);
+        factory.get_module_or_init(bytecode(1, 100));
+        factory.get_module_or_init(bytecode(2, 100));
+
+        assert!(factory
+            .get_module_or_init(BytecodeOrHash::Hash(key(1)))
+            .is_none());
+        assert!(
+            !factory
+                .inner
+                .lock()
+                .unwrap()
+                .module_keys_by_code_hash
+                .contains_key(&key(1)),
+            "stale index entry must be dropped"
+        );
+
+        // Re-warming with bytecode restores the hash path.
+        factory.get_module_or_init(bytecode(1, 100));
+        assert!(factory
+            .get_module_or_init(BytecodeOrHash::Hash(key(1)))
+            .is_some());
+    }
+
+    #[test]
+    fn poisoned_lock_is_recovered_by_discarding_the_cache() {
+        let mut factory = ModuleFactory::isolated(1000);
+        factory.get_module_or_init(bytecode(1, 100));
+
+        // Poison the lock the way a panicking execution thread would: unwind while holding it.
+        let inner = factory.inner.clone();
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = inner.lock().unwrap();
+            panic!("simulated panic while holding the module cache lock");
+        }));
+        assert!(inner.is_poisoned());
+
+        // The cache is usable again and its contents were discarded rather than trusted.
+        assert!(factory
+            .get_module_or_init(BytecodeOrHash::Hash(key(1)))
+            .is_none());
+        assert!(!inner.is_poisoned(), "recovery must clear the poison flag");
+
+        // Re-warming works and is not thrown away on the next lock.
+        assert!(factory.get_module_or_init(bytecode(1, 100)).is_some());
+        assert!(factory
+            .get_module_or_init(BytecodeOrHash::Hash(key(1)))
+            .is_some());
     }
 }

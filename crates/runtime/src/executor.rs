@@ -358,13 +358,27 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
             BytecodeOrHash::Hash(_) => None,
         };
 
-        // If we have a cached module, then use it, otherwise create a new one and cache
-        let module = self.module_factory.get_module_or_init(bytecode_or_hash);
-
-        // If there is no cached store, then construct a new one (slow)
         let fuel_limit_value = ctx.fuel_limit;
         let fuel_limit = Some(fuel_limit_value);
 
+        // If we have a cached module, then use it, otherwise create a new one and cache.
+        //
+        // Only a hash-only lookup can miss: nothing warmed the module, or the LRU evicted it.
+        // That depends on this node's cache rather than on the input, so it must not become a
+        // contract revert that other nodes would not produce. Fail the frame as a host fault.
+        let Some(module) = self.module_factory.get_module_or_init(bytecode_or_hash) else {
+            let result = ExecutionResult {
+                exit_code: ExitCode::UnexpectedFatalExecutionFailure.into_i32(),
+                fuel_consumed: fuel_limit_value,
+                fuel_refunded: 0,
+                output: vec![],
+                return_data: vec![],
+            };
+            metrics::record_execution(RuntimeModeLabel::Contract, state, &timer, &result);
+            return result;
+        };
+
+        // If there is no cached store, then construct a new one (slow)
         let mut exec_mode = if let Some((address, code_hash)) = system_runtime_params {
             let consume_fuel = fluentbase_types::is_engine_metered_precompile(&address);
             let runtime = SystemRuntime::new(
@@ -507,7 +521,9 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
     }
 
     fn warmup(&mut self, bytecode: RwasmModule, hash: B256, address: Address) {
-        self.module_factory
+        // A bytecode-carrying lookup always yields a module; only hash-only lookups can miss.
+        let _ = self
+            .module_factory
             .get_module_or_init(BytecodeOrHash::Bytecode {
                 bytecode,
                 hash,
@@ -611,6 +627,25 @@ mod tests {
 
         assert_eq!(result.exit_code, ExitCode::UnknownError.into_i32());
         assert_eq!(result.fuel_consumed, 100);
+        assert_eq!(result.fuel_refunded, 0);
+        assert!(result.output.is_empty());
+        assert!(result.return_data.is_empty());
+    }
+
+    #[test]
+    fn execute_by_hash_without_cached_module_fails_as_host_fault() {
+        let mut executor = RuntimeFactoryExecutor::new(import_linker_v1_preview());
+        // Nothing ever warmed this hash, so the shared cache cannot serve it.
+        let result = executor.execute(
+            BytecodeOrHash::Hash(B256::repeat_byte(0xD1)),
+            RuntimeContext::default().with_fuel_limit(1_000),
+        );
+
+        assert_eq!(
+            result.exit_code,
+            ExitCode::UnexpectedFatalExecutionFailure.into_i32()
+        );
+        assert_eq!(result.fuel_consumed, 1_000);
         assert_eq!(result.fuel_refunded, 0);
         assert!(result.output.is_empty());
         assert!(result.return_data.is_empty());
