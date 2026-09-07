@@ -20,9 +20,9 @@
 //! # Where the sweep stops
 //!
 //! Dynamic types are written with the buffer ending exactly at `offset`, so the value is appended
-//! rather than dropped into the middle. Their tails go to the end of the buffer and their head
-//! words are absolute positions, so overwriting them into a longer buffer exercises a separate
-//! known limitation rather than the property under test here. Static types get both arrangements.
+//! rather than dropped into the middle. Static types get both arrangements. The dedicated
+//! review regressions also check tuple and struct bodies against Alloy when a longer buffer
+//! already contains other fields.
 
 use alloy_primitives::{Address, Bytes, FixedBytes, I256, U256};
 use byteorder::{BigEndian, ByteOrder, LittleEndian};
@@ -105,6 +105,8 @@ fn offsets<const ALIGN: usize>() -> impl Strategy<Value = usize> {
         Just(0usize),
         Just(ALIGN),
         Just(ALIGN * 3),
+        Just(1usize),
+        Just(ALIGN + 1),
         (1usize..4).prop_map(|n| n * ALIGN),
     ]
 }
@@ -226,15 +228,11 @@ proptest! {
         let pairs: Vec<[u32; 2]> = numbers.chunks(2).filter(|c| c.len() == 2).map(|c| [c[0], c[1]]).collect();
         check_dynamic::<BigEndian, 32, true, _>(&pairs, offset, fill);
 
-        // Tuples of two or more members with a dynamic member are deliberately absent. They
-        // compute their members' offsets against the buffer rather than against the start of the
-        // tuple, so `encode` honours an offset of zero and nothing else: `(u32, String)` written
-        // at offset 32 decodes back to `(0, "")`. Nothing generated calls them that way - every
-        // container encodes its members from the start of its own buffer, and `Vec<(u32, String)>`,
-        // `[(u32, String); 3]` and nested tuples all match alloy byte for byte - so this is a
-        // limitation of the direct call, unchanged from before this branch, and sweeping it here
-        // would report it on every run without adding anything. The one-element tuple is covered
-        // by `one_element_tuples_match_the_specification` at the offsets where its contract holds.
+        check_dynamic::<BigEndian, 32, true, _>(&(text.clone(),), offset, fill);
+        check_dynamic::<BigEndian, 32, true, _>(&(7u32, text.clone()), offset, fill);
+        check_dynamic::<BigEndian, 32, true, _>(
+            &(text.clone(), (9u32, text.clone())), offset, fill,
+        );
     }
 
     /// The same in compact mode.

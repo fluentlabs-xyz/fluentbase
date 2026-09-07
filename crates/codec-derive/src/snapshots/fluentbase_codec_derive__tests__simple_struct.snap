@@ -18,7 +18,7 @@ where
             { true },
             { true },
         >>::IS_DYNAMIC {
-            ::fluentbase_sdk::codec::align_up::<ALIGN>(4)
+            32
         } else {
             ::fluentbase_sdk::codec::align_up::<
                 ALIGN,
@@ -37,7 +37,7 @@ where
             { true },
             { true },
         >>::IS_DYNAMIC {
-            ::fluentbase_sdk::codec::align_up::<ALIGN>(4)
+            32
         } else {
             ::fluentbase_sdk::codec::align_up::<
                 ALIGN,
@@ -58,7 +58,7 @@ where
             { true },
             { true },
         >>::IS_DYNAMIC {
-            ::fluentbase_sdk::codec::align_up::<ALIGN>(4)
+            32
         } else {
             ::fluentbase_sdk::codec::align_up::<
                 ALIGN,
@@ -94,13 +94,22 @@ where
         buf: &mut ::fluentbase_sdk::codec::bytes::BytesMut,
         offset: usize,
     ) -> Result<(), ::fluentbase_sdk::codec::CodecError> {
-        let aligned_offset = ::fluentbase_sdk::codec::align_up::<ALIGN>(offset);
+        let aligned_offset = offset;
         let is_dynamic = <Self as ::fluentbase_sdk::codec::Encoder<
             B,
             ALIGN,
             { true },
             { true },
         >>::IS_DYNAMIC;
+        if is_dynamic && ALIGN != 32 {
+            return Err(
+                ::fluentbase_sdk::codec::CodecError::Encoding(
+                    ::fluentbase_sdk::codec::EncodingError::InvalidInputData(
+                        "dynamic Solidity structs require 32-byte alignment".into(),
+                    ),
+                ),
+            );
+        }
         let aligned_header_size = 0
             + if <bool as ::fluentbase_sdk::codec::Encoder<
                 B,
@@ -164,8 +173,10 @@ where
                 )
             };
         let mut tail = if is_dynamic {
-            let buf_len = buf.len();
-            let offset = if buf_len != 0 { buf_len } else { 32 };
+            let head_end = aligned_offset
+                .checked_add(32)
+                .ok_or(::fluentbase_sdk::codec::CodecError::Overflow)?;
+            let offset = buf.len().max(head_end);
             ::fluentbase_sdk::codec::write_u32_aligned::<
                 B,
                 ALIGN,
@@ -193,7 +204,7 @@ where
                 { true },
                 { true },
             >>::encode(&self.bool_val, &mut tail, tail_offset)?;
-            tail_offset += ::fluentbase_sdk::codec::align_up::<ALIGN>(4);
+            tail_offset += 32;
         } else {
             <bool as ::fluentbase_sdk::codec::Encoder<
                 B,
@@ -225,7 +236,7 @@ where
                 { true },
                 { true },
             >>::encode(&self.bytes_val, &mut tail, tail_offset)?;
-            tail_offset += ::fluentbase_sdk::codec::align_up::<ALIGN>(4);
+            tail_offset += 32;
         } else {
             <Bytes as ::fluentbase_sdk::codec::Encoder<
                 B,
@@ -261,7 +272,7 @@ where
                 { true },
                 { true },
             >>::encode(&self.vec_val, &mut tail, tail_offset)?;
-            tail_offset += ::fluentbase_sdk::codec::align_up::<ALIGN>(4);
+            tail_offset += 32;
         } else {
             <Vec<
                 u32,
@@ -292,7 +303,22 @@ where
         buf: &impl ::fluentbase_sdk::codec::bytes::Buf,
         offset: usize,
     ) -> Result<Self, ::fluentbase_sdk::codec::CodecError> {
-        let mut aligned_offset = ::fluentbase_sdk::codec::align_up::<ALIGN>(offset);
+        let aligned_offset = offset;
+        if <Self as ::fluentbase_sdk::codec::Encoder<
+            B,
+            ALIGN,
+            { true },
+            { true },
+        >>::IS_DYNAMIC && ALIGN != 32
+        {
+            return Err(
+                ::fluentbase_sdk::codec::CodecError::Decoding(
+                    ::fluentbase_sdk::codec::DecodingError::InvalidData(
+                        "dynamic Solidity structs require 32-byte alignment".into(),
+                    ),
+                ),
+            );
+        }
         let mut tmp = if <Self as ::fluentbase_sdk::codec::Encoder<
             B,
             ALIGN,
@@ -410,13 +436,22 @@ where
         buffer: &impl ::fluentbase_sdk::codec::bytes::Buf,
         offset: usize,
     ) -> Result<(usize, usize), ::fluentbase_sdk::codec::CodecError> {
-        let aligned_offset = ::fluentbase_sdk::codec::align_up::<ALIGN>(offset);
+        let aligned_offset = offset;
         if <Self as ::fluentbase_sdk::codec::Encoder<
             B,
             ALIGN,
             { true },
             { true },
         >>::IS_DYNAMIC {
+            if ALIGN != 32 {
+                return Err(
+                    ::fluentbase_sdk::codec::CodecError::Decoding(
+                        ::fluentbase_sdk::codec::DecodingError::InvalidData(
+                            "dynamic Solidity structs require 32-byte alignment".into(),
+                        ),
+                    ),
+                );
+            }
             let data_offset = ::fluentbase_sdk::codec::read_u32_aligned::<
                 B,
                 ALIGN,
@@ -459,7 +494,7 @@ where
             { true },
             { false },
         >>::IS_DYNAMIC {
-            ::fluentbase_sdk::codec::align_up::<ALIGN>(4)
+            32
         } else {
             ::fluentbase_sdk::codec::align_up::<
                 ALIGN,
@@ -478,7 +513,7 @@ where
             { true },
             { false },
         >>::IS_DYNAMIC {
-            ::fluentbase_sdk::codec::align_up::<ALIGN>(4)
+            32
         } else {
             ::fluentbase_sdk::codec::align_up::<
                 ALIGN,
@@ -499,7 +534,7 @@ where
             { true },
             { false },
         >>::IS_DYNAMIC {
-            ::fluentbase_sdk::codec::align_up::<ALIGN>(4)
+            32
         } else {
             ::fluentbase_sdk::codec::align_up::<
                 ALIGN,
@@ -540,13 +575,22 @@ where
         buf: &mut ::fluentbase_sdk::codec::bytes::BytesMut,
         offset: usize,
     ) -> Result<(), ::fluentbase_sdk::codec::CodecError> {
-        let aligned_offset = ::fluentbase_sdk::codec::align_up::<ALIGN>(offset);
+        let aligned_offset = offset;
         let is_dynamic = <Self as ::fluentbase_sdk::codec::Encoder<
             B,
             ALIGN,
             { true },
             { false },
         >>::IS_DYNAMIC;
+        if is_dynamic && ALIGN != 32 {
+            return Err(
+                ::fluentbase_sdk::codec::CodecError::Encoding(
+                    ::fluentbase_sdk::codec::EncodingError::InvalidInputData(
+                        "dynamic Solidity structs require 32-byte alignment".into(),
+                    ),
+                ),
+            );
+        }
         let aligned_header_size = 0
             + if <bool as ::fluentbase_sdk::codec::Encoder<
                 B,
@@ -610,8 +654,10 @@ where
                 )
             };
         let mut tail = if is_dynamic {
-            let buf_len = buf.len();
-            let offset = if buf_len != 0 { buf_len } else { 32 };
+            let head_end = aligned_offset
+                .checked_add(32)
+                .ok_or(::fluentbase_sdk::codec::CodecError::Overflow)?;
+            let offset = buf.len().max(head_end);
             ::fluentbase_sdk::codec::write_u32_aligned::<
                 B,
                 ALIGN,
@@ -639,7 +685,7 @@ where
                 { true },
                 { false },
             >>::encode(&self.bool_val, &mut tail, tail_offset)?;
-            tail_offset += ::fluentbase_sdk::codec::align_up::<ALIGN>(4);
+            tail_offset += 32;
         } else {
             <bool as ::fluentbase_sdk::codec::Encoder<
                 B,
@@ -671,7 +717,7 @@ where
                 { true },
                 { false },
             >>::encode(&self.bytes_val, &mut tail, tail_offset)?;
-            tail_offset += ::fluentbase_sdk::codec::align_up::<ALIGN>(4);
+            tail_offset += 32;
         } else {
             <Bytes as ::fluentbase_sdk::codec::Encoder<
                 B,
@@ -707,7 +753,7 @@ where
                 { true },
                 { false },
             >>::encode(&self.vec_val, &mut tail, tail_offset)?;
-            tail_offset += ::fluentbase_sdk::codec::align_up::<ALIGN>(4);
+            tail_offset += 32;
         } else {
             <Vec<
                 u32,
@@ -738,7 +784,22 @@ where
         buf: &impl ::fluentbase_sdk::codec::bytes::Buf,
         offset: usize,
     ) -> Result<Self, ::fluentbase_sdk::codec::CodecError> {
-        let mut aligned_offset = ::fluentbase_sdk::codec::align_up::<ALIGN>(offset);
+        let aligned_offset = offset;
+        if <Self as ::fluentbase_sdk::codec::Encoder<
+            B,
+            ALIGN,
+            { true },
+            { false },
+        >>::IS_DYNAMIC && ALIGN != 32
+        {
+            return Err(
+                ::fluentbase_sdk::codec::CodecError::Decoding(
+                    ::fluentbase_sdk::codec::DecodingError::InvalidData(
+                        "dynamic Solidity structs require 32-byte alignment".into(),
+                    ),
+                ),
+            );
+        }
         let mut tmp = if <Self as ::fluentbase_sdk::codec::Encoder<
             B,
             ALIGN,
@@ -856,13 +917,22 @@ where
         buffer: &impl ::fluentbase_sdk::codec::bytes::Buf,
         offset: usize,
     ) -> Result<(usize, usize), ::fluentbase_sdk::codec::CodecError> {
-        let aligned_offset = ::fluentbase_sdk::codec::align_up::<ALIGN>(offset);
+        let aligned_offset = offset;
         if <Self as ::fluentbase_sdk::codec::Encoder<
             B,
             ALIGN,
             { true },
             { false },
         >>::IS_DYNAMIC {
+            if ALIGN != 32 {
+                return Err(
+                    ::fluentbase_sdk::codec::CodecError::Decoding(
+                        ::fluentbase_sdk::codec::DecodingError::InvalidData(
+                            "dynamic Solidity structs require 32-byte alignment".into(),
+                        ),
+                    ),
+                );
+            }
             let data_offset = ::fluentbase_sdk::codec::read_u32_aligned::<
                 B,
                 ALIGN,
