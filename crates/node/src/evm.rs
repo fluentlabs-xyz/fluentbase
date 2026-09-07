@@ -614,7 +614,6 @@ alloy_sol_types::sol! {
         uint256 due
     );
     event CorrelatedFailureEpoch(uint64 indexed epoch, uint256 newFailures, uint256 tolerance);
-    event StipendLegSkipped(uint64 indexed epoch);
 
     // The epoch-committee freeze, system-caller only. It takes NO argument: the
     // contract derives the committee itself and sorts it ascending by peer pubkey
@@ -626,20 +625,13 @@ alloy_sol_types::sol! {
     // there is nothing left to disagree.
     function commitEpochCommittee() external;
 
-    // The commit found fewer than MIN_COMMITTEE_LENGTH eligible validators and
-    // re-seated the previous epoch's committee rather than reverting — the
-    // revert being a pre-execution block-execution error on every node, which
-    // one validator owner could trigger by withdrawing their own stake.
-    //
-    // Decoded here for the same reason the close events are: logs emitted inside
-    // a pre-execution system call never become receipts, so `eth_getLogs` shows
-    // NOTHING of them (checked on the devnet: a 1,296-block chain with ~40
-    // commits carried exactly two staking logs, both from an ordinary
-    // transaction). This line and its counter are therefore the ONLY way anyone
-    // learns the chain is in the carried state — and it is a state that must be
-    // steered out of, because the seats stay filled by validators the selection
-    // would no longer choose and are not replaced until the population recovers.
-    event CommitteeCarriedOver(uint64 indexed epoch, uint32 eligible, uint32 members);
+    // The ordinary commit outcome. Decoded here because logs emitted inside a
+    // pre-execution system call never become receipts — `eth_getLogs` shows
+    // NOTHING of them — so this decode is the only way anyone ever sees the size
+    // of a committed committee. The committee is frozen two epochs ahead, so the
+    // value belongs to epoch `current + 2`. It never drops below
+    // MIN_COMMITTEE_LENGTH: a short selection reverts instead.
+    event EpochCommitteeCommitted(uint64 indexed epoch, address[] committee);
 
     // `slashEquivocation(uint64,uint32)` — the equivocation VERDICT,
     // system-caller only. It carries no evidence and the contract verifies none:
@@ -650,14 +642,27 @@ alloy_sol_types::sol! {
     // verdict rides in `extra_data`, verbatim into the header.
     function slashEquivocation(uint64 epoch, uint32 signerIdx) external;
 
-    // Stipend-settlement events emitted by the settle leg the epoch CLOSE drives —
-    // so they arrive on the `recordProduction` system call's logs, once per epoch
-    // instead of once per block. Decoded for node-side observability only (system
-    // calls produce no receipt). Same contract as the liveness events above, which
-    // is why the router below matches on TOPIC and not on `log.address`. Keep
-    // byte-identical to `contracts/staking/src/events.rs:211-221`.
+    // What the epoch CLOSE decided the epoch owes its committee — so it arrives
+    // on the `recordProduction` system call's logs, once per epoch instead of
+    // once per block. Decoded for node-side observability only (system calls
+    // produce no receipt). Same contract as the liveness events above, which is
+    // why the router below matches on TOPIC and not on `log.address`. Keep
+    // byte-identical to `contracts/staking/src/events.rs`.
+    //
+    // A zero here has SIX meanings and the contract does not tell them apart: a
+    // zero configured rate, an empty committee, a committee of zero weights, an
+    // epoch that recorded no block, weights aged out of the ring (which does
+    // carry its own `EpochWeightsUnavailable`), and — since the stipend stopped
+    // entering the contract — a BLEND reserve that could not cover the epoch,
+    // whether because it is empty, has not approved this contract, or did not
+    // answer. That last group is a config error and is checked off-chain at
+    // deployment; the indistinguishability was accepted rather than overlooked.
+    //
+    // `StipendSkipped` and `StipendLegSkipped` used to be decoded here too. Both
+    // belonged to the settlement pass that pulled an epoch's pot onto the staking
+    // contract, and that pass is gone: the reserve pays each claim directly, so
+    // there is no second act to report on and no fuel-capped leg to lose.
     event EpochBlendRewardsCommitted(uint64 indexed epoch, uint256 blendAmount);
-    event StipendSkipped(uint64 indexed epoch);
 
     // Ahead-commit pipeline (2-epoch committee warm-up): committee[N] is committed
     // TWO epochs ahead from EffBal(N-2). `nextEpochToCommit` = the next-uncommitted
@@ -691,46 +696,46 @@ fn encode_slash_equivocation_call(epoch: u64, accused: u8) -> Vec<u8> {
     .abi_encode()
 }
 
+/// Surface the `commitEpochCommittee` outcome.
+///
+/// Logs emitted inside a pre-execution system call never become receipts, so
+/// decoding here is the only way the size of a committed committee is ever
+/// visible. A gauge and not a counter: what matters is the current number of
+/// seats, and the commit freezes the set two epochs ahead of the epoch it runs
+/// in. The value never falls below MIN_COMMITTEE_LENGTH — a short selection
+/// reverts instead of committing.
+fn emit_commit_observability(logs: &[alloy_primitives::Log]) {
+    use alloy_sol_types::SolEvent;
+    for log in logs {
+        if let Ok(committed) = EpochCommitteeCommitted::decode_log(log) {
+            tracing::info!(
+                target: "fluentbase::consensus",
+                epoch = committed.epoch,
+                members = committed.committee.len(),
+                "epoch_committee_committed"
+            );
+            metrics::gauge!("dpos_epoch_committee_size").set(committed.committee.len() as f64);
+        }
+    }
+}
+
 /// Surface the close-time events of the `recordProduction` system call in node
 /// logs + metrics. System calls produce no receipt and the executor commits and
 /// discards `ras.logs`, so these are otherwise invisible without forensic
 /// archaeology. Pure observability — reads the emitted logs, mutates no state,
 /// runs identically on every node.
 ///
-/// The liveness events AND the stipend events arrive on this one call from the
-/// one staking contract, so they are told apart by TOPIC, not by `log.address`.
+/// The liveness events and the reward event arrive on this one call from the one
+/// staking contract, so they are told apart by TOPIC, not by `log.address`.
 /// `SolEvent::decode_log` verifies topic0 itself, so this decode chain IS the
-/// topic match: the seven signatures are distinct — including the same-arity pair
-/// `StipendLegSkipped` / `StipendSkipped`, which differ by name and therefore by
-/// topic0 — and a log that matches none of them falls through untouched.
+/// topic match: the five signatures are distinct, and a log that matches none of
+/// them falls through untouched.
 ///
 /// The chain being CLOSED is the trap worth naming: adding an event to the
 /// contract means adding an arm here too, or it is emitted into silence on the
-/// one call path that would otherwise have surfaced it.
-/// Surface the one `commitEpochCommittee` outcome an operator has to act on.
-///
-/// The commit's other event (`EpochCommitteeCommitted`) is the ordinary case and
-/// says nothing actionable, so it is deliberately not decoded. This one says the
-/// selection came back below the floor: the chain kept going on the previous
-/// committee, and it will keep doing that, epoch after epoch, until enough
-/// validators are registered, keyed and activated again. `error!` and not `warn!`
-/// because nothing else reports it — a system call's logs never reach a receipt.
-fn emit_commit_observability(logs: &[alloy_primitives::Log]) {
-    use alloy_sol_types::SolEvent;
-    for log in logs {
-        if let Ok(carried) = CommitteeCarriedOver::decode_log(log) {
-            tracing::error!(
-                target: "fluentbase::consensus",
-                epoch = carried.epoch,
-                eligible = carried.eligible,
-                members = carried.members,
-                "epoch_committee_carried_over"
-            );
-            metrics::counter!("dpos_epoch_committee_carried_over_total").increment(1);
-        }
-    }
-}
-
+/// one call path that would otherwise have surfaced it. It cuts the other way as
+/// well — an arm DELETED here makes its event silent without breaking a build,
+/// which is how `StipendSkipped` and `StipendLegSkipped` left.
 fn emit_close_observability(logs: &[alloy_primitives::Log]) {
     use alloy_sol_types::SolEvent;
     for log in logs {
@@ -764,13 +769,6 @@ fn emit_close_observability(logs: &[alloy_primitives::Log]) {
                 "production_correlated_failure_epoch"
             );
             metrics::counter!("dpos_production_correlated_failure_total").increment(1);
-        } else if let Ok(skipped) = StipendLegSkipped::decode_log(log) {
-            tracing::error!(
-                target: "fluentbase::rewards",
-                epoch = skipped.epoch,
-                "production_stipend_leg_skipped"
-            );
-            metrics::counter!("dpos_stipend_leg_skipped_total").increment(1);
         } else if let Ok(committed) = EpochBlendRewardsCommitted::decode_log(log) {
             tracing::info!(
                 target: "fluentbase::rewards",
@@ -779,13 +777,15 @@ fn emit_close_observability(logs: &[alloy_primitives::Log]) {
                 "epoch_blend_rewards_committed"
             );
             metrics::counter!("dpos_epoch_blend_rewards_committed_total").increment(1);
-        } else if let Ok(skipped) = StipendSkipped::decode_log(log) {
-            tracing::debug!(
-                target: "fluentbase::rewards",
-                epoch = skipped.epoch,
-                "epoch_stipend_skipped"
-            );
-            metrics::counter!("dpos_epoch_stipend_skipped_total").increment(1);
+            // The AMOUNT, not just the fact. `StipendSkipped` used to be the
+            // signal that an epoch paid nobody, and it is gone with the
+            // settlement pass; without this gauge a chain forfeiting every epoch
+            // — a revoked approval, a drained reserve, a rotation to an
+            // unapproved holder — ticks the counter above exactly like a healthy
+            // one, and the only trace is a log line. A gauge and not a counter
+            // because what matters is the level of the most recent close.
+            metrics::gauge!("dpos_epoch_blend_rewards_committed")
+                .set(f64::from(committed.blendAmount));
         } else if let Ok(lost) = EpochWeightsUnavailable::decode_log(log) {
             // `error!`, not `warn!`: the epoch forfeited BOTH its verdicts and
             // its stipend, and on chain the outcome is byte-identical to an epoch
@@ -1406,8 +1406,8 @@ mod tests {
     /// `sol!` event ABI must stay byte-identical to
     /// `contracts/staking/src/events.rs` or the `decode_log` topic match silently
     /// never fires — and for `PartialEpoch` and `EpochWeightsUnavailable` that
-    /// silence is the whole failure mode they exist to break. Pin all seven
-    /// canonical signatures and prove a fabricated log decodes to the exact field
+    /// silence is the whole failure mode they exist to break. Pin every canonical
+    /// signature and prove a fabricated log decodes to the exact field
     /// values.
     ///
     /// Every log is fabricated at ONE address, because that is now the truth: the
@@ -1417,9 +1417,8 @@ mod tests {
     #[test]
     fn close_events_decode_from_fabricated_logs() {
         use super::{
-            CommitteeCarriedOver, CorrelatedFailureEpoch, EpochBlendRewardsCommitted,
-            EpochWeightsUnavailable, PartialEpoch, ProductionVerdictFailed, StipendLegSkipped,
-            StipendSkipped,
+            CorrelatedFailureEpoch, EpochBlendRewardsCommitted, EpochCommitteeCommitted,
+            EpochWeightsUnavailable, PartialEpoch, ProductionVerdictFailed,
         };
         use alloy_sol_types::SolEvent;
 
@@ -1435,38 +1434,29 @@ mod tests {
             CorrelatedFailureEpoch::SIGNATURE,
             "CorrelatedFailureEpoch(uint64,uint256,uint256)"
         );
-        assert_eq!(StipendLegSkipped::SIGNATURE, "StipendLegSkipped(uint64)");
         assert_eq!(
             EpochBlendRewardsCommitted::SIGNATURE,
             "EpochBlendRewardsCommitted(uint64,uint256)"
         );
-        assert_eq!(StipendSkipped::SIGNATURE, "StipendSkipped(uint64)");
         assert_eq!(
             EpochWeightsUnavailable::SIGNATURE,
             "EpochWeightsUnavailable(uint64,uint32)"
         );
         // The COMMIT-path event, decoded by `emit_commit_observability` rather
         // than by the close router. Its topic0 was read straight off the
-        // contract (`events::CommitteeCarriedOver::SELECTOR`) and pinned here as
-        // a literal, not recomputed from this signature: recomputing would make
-        // both halves of the pin come from the same side, which is precisely the
-        // failure this class of test keeps producing.
+        // contract (`events::EpochCommitteeCommitted::SELECTOR`) and pinned here
+        // as a literal, not recomputed from this signature: recomputing would
+        // make both halves of the pin come from the same side, which is precisely
+        // the failure this class of test keeps producing.
         assert_eq!(
-            CommitteeCarriedOver::SIGNATURE,
-            "CommitteeCarriedOver(uint64,uint32,uint32)"
+            EpochCommitteeCommitted::SIGNATURE,
+            "EpochCommitteeCommitted(uint64,address[])"
         );
         assert_eq!(
-            CommitteeCarriedOver::SIGNATURE_HASH,
+            EpochCommitteeCommitted::SIGNATURE_HASH,
             alloy_primitives::b256!(
-                "ed59ae1f26b3006ee27f22cdcc4adb48a0c039c2dee83b0d80de5795bfecb8e5"
+                "015ffbf030c2f06f58cedc968ae2ec9df38a79be1a74f68686ca971ce1994a5d"
             )
-        );
-
-        // The same-arity pair. Only the NAME separates them, so only topic0 can —
-        // which is the property the address-free router now rests on.
-        assert_ne!(
-            StipendLegSkipped::SIGNATURE_HASH,
-            StipendSkipped::SIGNATURE_HASH
         );
 
         const CONTRACT: alloy_primitives::Address = alloy_primitives::Address::repeat_byte(0xcc);
@@ -1501,19 +1491,22 @@ mod tests {
         assert_eq!(decoded.epoch, 11);
         assert_eq!(decoded.members, 51);
 
-        let carried_log = fabricate(
-            CommitteeCarriedOver {
+        let committee = vec![
+            validator,
+            alloy_primitives::address!("00000000000000000000000000000000000000bb"),
+            alloy_primitives::address!("00000000000000000000000000000000000000cc"),
+        ];
+        let committed_log = fabricate(
+            EpochCommitteeCommitted {
                 epoch: 20,
-                eligible: 3,
-                members: 4,
+                committee: committee.clone(),
             }
             .encode_log_data(),
         );
-        let decoded_carried =
-            CommitteeCarriedOver::decode_log(&carried_log).expect("fabricated log must decode");
-        assert_eq!(decoded_carried.epoch, 20);
-        assert_eq!(decoded_carried.eligible, 3);
-        assert_eq!(decoded_carried.members, 4);
+        let decoded_committed = EpochCommitteeCommitted::decode_log(&committed_log)
+            .expect("fabricated log must decode");
+        assert_eq!(decoded_committed.epoch, 20);
+        assert_eq!(decoded_committed.committee, committee);
 
         let failed_log = fabricate(
             ProductionVerdictFailed {
@@ -1543,14 +1536,6 @@ mod tests {
         assert_eq!(decoded_corr.epoch, 11);
         assert_eq!(decoded_corr.newFailures, alloy_primitives::U256::from(3u64));
 
-        let leg_log = fabricate(StipendLegSkipped { epoch: 13 }.encode_log_data());
-        assert_eq!(
-            StipendLegSkipped::decode_log(&leg_log)
-                .expect("fabricated log must decode")
-                .epoch,
-            13
-        );
-
         let committed_log = fabricate(
             EpochBlendRewardsCommitted {
                 epoch: 15,
@@ -1566,20 +1551,12 @@ mod tests {
             alloy_primitives::U256::from(4200u64)
         );
 
-        let skipped_log = fabricate(StipendSkipped { epoch: 17 }.encode_log_data());
-        assert_eq!(
-            StipendSkipped::decode_log(&skipped_log)
-                .expect("fabricated log must decode")
-                .epoch,
-            17
-        );
-
         // Distinct topic0 — one event's log must never decode as another's, and
         // this is the whole of the routing now that `log.address` is out of it.
         assert!(PartialEpoch::decode_log(&failed_log).is_err());
         assert!(ProductionVerdictFailed::decode_log(&partial_log).is_err());
-        assert!(StipendLegSkipped::decode_log(&skipped_log).is_err());
-        assert!(StipendSkipped::decode_log(&leg_log).is_err());
+        assert!(EpochBlendRewardsCommitted::decode_log(&partial_log).is_err());
+        assert!(CorrelatedFailureEpoch::decode_log(&committed_log).is_err());
     }
 
     /// The one syscall the executor injects per block. Its selector and argument

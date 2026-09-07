@@ -228,7 +228,8 @@ INIT_STAKE_V0_WEI = 5 * INIT_STAKE_WEI
 INIT_UNDELEGATE_PERIOD = 16
 INIT_MIN_UNDELEGATE_BLOCKS = 0
 INIT_COMMISSION_RATE = 0
-#: The BLEND the stipend is drawn from (`transferFrom(blendReserve, staking, …)`), approved in
+#: The BLEND the stipend is drawn from (`transferFrom(blendReserve, claimant, …)` — since 2026-09-07
+#: the stipend goes straight to the claimant and never lands on the staking contract), approved in
 #: the same allowance as the genesis stakes because both draw on the deployer.
 STIPEND_BUDGET_WEI = 1_000_000 * 10 ** 18
 #: `setBlendStipendPerEpoch` — 10 BLEND, the devnet value `genesis-bootstrap` uses. 0 is the
