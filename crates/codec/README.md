@@ -80,6 +80,47 @@ For dynamic types, the codec stores metadata that enables partial reading. For e
 - Vectors store offset and length information
 - HashMaps store separate metadata for keys and values, allowing independent access
 
+### Maps and Sets
+
+`HashMap` and `HashSet` are extensions - the Solidity ABI has no mapping type. They cannot appear in
+a contract method signature: `rust_to_sol` accepts no generic type other than `Vec` and
+`FixedBytes`, so the router and client macros reject them. They are reachable only from a direct
+`SolidityABI::encode` call inside a contract.
+
+Both are dynamic. Region offsets are relative to their own slot, not to the start of the encoding.
+
+  ```
+  HashMap header:
+    - offset (u32): position of the body
+    - length (u32): number of entries
+    - keys offset (u32): relative to this slot
+    - values offset (u32): relative to this slot
+  Keys region:
+    - count (u32)
+    - encoded keys
+  Values region:
+    - count (u32)
+    - encoded values
+  ```
+
+  ```
+  HashSet header:
+    - offset (u32): position of the body
+    - length (u32): number of elements
+    - data offset (u32): relative to this slot
+  Data region:
+    - count (u32)
+    - encoded elements
+  ```
+
+Rules:
+
+- Entries are sorted by key, elements by value, before encoding: the same contents always produce
+  the same bytes regardless of insertion order
+- Keys and values occupy separate counted regions, so keys can be read without decoding values
+- Elements within a region are strided by `align_up::<ALIGN>(T::HEADER_SIZE)`
+- `partial_decode` returns the offset of the length word and the number of entries, as for `Vec`
+
 ## Usage Examples
 
 ### Basic Structure
