@@ -1,6 +1,5 @@
 use fluentbase_types::{
-    BytecodeOrHash, CompilationBackend, CompilationConfigFingerprint, CompiledModuleCacheKey,
-    ExitCode, B256,
+    Address, CompilationBackend, CompilationConfigFingerprint, CompiledModuleCacheKey, B256,
 };
 use rwasm::RwasmModule;
 use schnellru::{Limiter, LruMap};
@@ -25,58 +24,74 @@ impl ModuleFactory {
         INSTANCE.clone()
     }
 
-    /// Returns a cached module for the given bytecode or compiles and caches it on first use.
-    /// Hash-only lookups require a resident module from an earlier bytecode warmup.
-    pub fn get_module_or_init(
+    /// Returns the cached module for `bytecode`, inserting it on first use.
+    ///
+    /// Always yields a module: when the memory limiter rejects the entry, the supplied module is
+    /// returned without being cached.
+    pub fn get_or_insert_module(
         &mut self,
-        bytecode_or_hash: BytecodeOrHash,
-    ) -> Result<RwasmModule, ExitCode> {
-        let mut ctx = self.inner.lock().unwrap();
-        let code_hash = bytecode_or_hash.code_hash();
-        let module_key = match &bytecode_or_hash {
-            BytecodeOrHash::Bytecode { address, .. } => CompiledModuleCacheKey::new(
-                code_hash,
-                CompilationConfigFingerprint::from_config(
-                    &fluentbase_sdk_config_for_runtime_cache(*address),
-                    CompilationBackend::Rwasm,
-                    *address,
-                ),
+        bytecode: RwasmModule,
+        hash: B256,
+        address: Address,
+    ) -> RwasmModule {
+        let module_key = CompiledModuleCacheKey::new(
+            hash,
+            CompilationConfigFingerprint::from_config(
+                &fluentbase_sdk_config_for_runtime_cache(address),
+                CompilationBackend::Rwasm,
+                address,
             ),
-            BytecodeOrHash::Hash(_hash) => {
-                // Hash-only lookups are only valid after an earlier bytecode warmup. Keep this
-                // deterministic by resolving through the explicit code-hash index.
-                ctx.cached_modules
-                    .limiter()
-                    .module_keys_by_code_hash
-                    .get(&code_hash)
-                    .copied()
-                    .ok_or(ExitCode::UnknownError)?
-            }
-        };
+        );
+        self.inner
+            .lock()
+            .unwrap()
+            .get_or_insert(module_key, bytecode)
+    }
 
-        if let Some(entry) = ctx.cached_modules.get(&module_key) {
-            return Ok(entry.clone());
-        }
-
-        let rwasm_module = match bytecode_or_hash {
-            BytecodeOrHash::Bytecode { bytecode, .. } => bytecode,
-            BytecodeOrHash::Hash(_) => return Err(ExitCode::UnknownError),
-        };
-
-        if !ctx.cached_modules.insert(module_key, rwasm_module.clone())
-            && ctx.cached_modules.is_empty()
-        {
-            // An initial table allocation can fail after on_insert without an on_removed
-            // callback. Clearing also rolls back that tentative index entry and byte charge.
-            ctx.cached_modules.clear();
-        }
-        Ok(rwasm_module)
+    /// Returns the resident module for `code_hash`, promoting it in the LRU.
+    ///
+    /// Yields `None` when no module with this code hash is resident: none was ever supplied
+    /// through [`Self::get_or_insert_module`], or the memory limiter evicted it since.
+    pub fn get_resident_module(&mut self, code_hash: B256) -> Option<RwasmModule> {
+        self.inner.lock().unwrap().get_resident(code_hash)
     }
 }
 
 struct ModuleFactoryInner {
     pub cached_modules:
         LruMap<CompiledModuleCacheKey, RwasmModule, ModuleMemoryLimiter<RwasmModule>>,
+}
+
+impl ModuleFactoryInner {
+    fn get_resident(&mut self, code_hash: B256) -> Option<RwasmModule> {
+        let module_key = self.cached_modules.limiter().resident_key(&code_hash)?;
+        // The index is written by `on_insert` and pruned on every removal path (`on_removed`,
+        // `on_cleared`, and the failed-insert rollback in `get_or_insert`), so a hit names a
+        // resident entry and `get` only promotes it.
+        self.cached_modules.get(&module_key).cloned()
+    }
+
+    fn get_or_insert(
+        &mut self,
+        module_key: CompiledModuleCacheKey,
+        module: RwasmModule,
+    ) -> RwasmModule {
+        if let Some(entry) = self.cached_modules.get(&module_key) {
+            return entry.clone();
+        }
+        if !self.cached_modules.insert(module_key, module.clone()) {
+            // `on_insert` indexes the key and charges its size before the table insert, which
+            // can still fail on a table allocation error without an `on_removed` callback. Drop
+            // the tentative index entry so the index keeps mirroring residency; a rejected entry
+            // was never indexed, so this is a no-op for it.
+            self.cached_modules.limiter_mut().forget_key(&module_key);
+            if self.cached_modules.is_empty() {
+                // Nothing is resident, so the byte charge must be zero as well.
+                self.cached_modules.clear();
+            }
+        }
+        module
+    }
 }
 
 /// Maximum memory for module cache: 1 GB
@@ -97,9 +112,7 @@ impl Default for ModuleFactoryInner {
     }
 }
 
-fn fluentbase_sdk_config_for_runtime_cache(
-    address: fluentbase_types::Address,
-) -> rwasm::CompilationConfig {
+fn fluentbase_sdk_config_for_runtime_cache(address: Address) -> rwasm::CompilationConfig {
     let is_system_runtime = fluentbase_types::is_execute_using_system_runtime(&address);
     let should_charge_fuel = false;
 
@@ -172,7 +185,10 @@ impl SizeEstimator for RwasmModule {
 pub struct ModuleMemoryLimiter<V> {
     max_bytes: usize,
     current_bytes: usize,
-    // Owned by the limiter so all LRU removal paths prune the index under the factory lock.
+    /// Code hash to the most recently inserted resident profile for it.
+    ///
+    /// Owned by the limiter so every LRU removal path, including eviction inside `insert`,
+    /// prunes the index under the factory lock.
     module_keys_by_code_hash: HashMap<B256, CompiledModuleCacheKey>,
     _marker: PhantomData<V>,
 }
@@ -205,6 +221,21 @@ impl<V> ModuleMemoryLimiter<V> {
     /// Returns remaining available memory in bytes.
     pub const fn available_bytes(&self) -> usize {
         self.max_bytes.saturating_sub(self.current_bytes)
+    }
+
+    /// Returns the cache key of the resident profile indexed under `code_hash`.
+    fn resident_key(&self, code_hash: &B256) -> Option<CompiledModuleCacheKey> {
+        self.module_keys_by_code_hash.get(code_hash).copied()
+    }
+
+    /// Drops the index entry for `key`.
+    ///
+    /// The same code hash can have several compilation profiles. Forgetting one profile must not
+    /// discard the entry of another, still-resident profile.
+    fn forget_key(&mut self, key: &CompiledModuleCacheKey) {
+        if self.module_keys_by_code_hash.get(&key.code_hash) == Some(key) {
+            self.module_keys_by_code_hash.remove(&key.code_hash);
+        }
     }
 }
 
@@ -267,21 +298,18 @@ impl<V: SizeEstimator> Limiter<CompiledModuleCacheKey, V> for ModuleMemoryLimite
             .current_bytes
             .saturating_sub(old_size)
             .saturating_add(new_size);
+        // Re-point the index at the replaced profile, as `on_insert` does for a fresh entry.
         self.module_keys_by_code_hash
             .insert(old_key.code_hash, *old_key);
 
         true
     }
 
-    /// Updates size tracking after an entry is removed.
+    /// Updates size tracking and the code-hash index after an entry is removed.
     fn on_removed(&mut self, key: &mut CompiledModuleCacheKey, value: &mut V) {
         let size = value.estimate_size();
         self.current_bytes = self.current_bytes.saturating_sub(size);
-        // The same code hash can have multiple compilation profiles. Removing an older
-        // profile must not discard the index entry for a newer, still-resident profile.
-        if self.module_keys_by_code_hash.get(&key.code_hash) == Some(key) {
-            self.module_keys_by_code_hash.remove(&key.code_hash);
-        }
+        self.forget_key(key);
     }
 
     /// Resets size tracking when the cache is cleared.
@@ -351,22 +379,20 @@ mod tests {
         LruMap::with_seed(ModuleMemoryLimiter::new(max_bytes), TEST_SEED)
     }
 
+    fn new_factory(max_bytes: usize) -> ModuleFactory {
+        ModuleFactory {
+            inner: Arc::new(Mutex::new(ModuleFactoryInner {
+                cached_modules: new_cache(max_bytes),
+            })),
+        }
+    }
+
     #[test]
     fn factory_index_is_bounded_under_deployment_churn() {
-        let mut factory = ModuleFactory {
-            inner: Arc::new(Mutex::new(ModuleFactoryInner {
-                cached_modules: new_cache(500),
-            })),
-        };
+        let mut factory = new_factory(500);
 
         for id in 0..1000 {
-            factory
-                .get_module_or_init(BytecodeOrHash::Bytecode {
-                    bytecode: module(100),
-                    hash: key(id),
-                    address: fluentbase_types::Address::ZERO,
-                })
-                .unwrap();
+            factory.get_or_insert_module(module(100), key(id), Address::ZERO);
             let ctx = factory.inner.lock().unwrap();
             assert!(ctx.cached_modules.len() <= 5);
             assert_eq!(
@@ -377,53 +403,24 @@ mod tests {
     }
 
     #[test]
-    fn hash_only_misses_do_not_poison_factory_after_eviction() {
-        let mut factory = ModuleFactory {
-            inner: Arc::new(Mutex::new(ModuleFactoryInner {
-                cached_modules: new_cache(100),
-            })),
-        };
+    fn hash_only_lookups_follow_residency_across_eviction() {
+        let mut factory = new_factory(100);
 
-        assert!(matches!(
-            factory.get_module_or_init(BytecodeOrHash::Hash(key(1))),
-            Err(ExitCode::UnknownError)
-        ));
+        assert!(factory.get_resident_module(key(1)).is_none());
         for id in [1, 2, 1] {
-            factory
-                .get_module_or_init(BytecodeOrHash::Bytecode {
-                    bytecode: module(100),
-                    hash: key(id),
-                    address: fluentbase_types::Address::ZERO,
-                })
-                .unwrap();
-            let cached = factory
-                .get_module_or_init(BytecodeOrHash::Hash(key(id)))
-                .unwrap();
+            factory.get_or_insert_module(module(100), key(id), Address::ZERO);
+            let cached = factory.get_resident_module(key(id)).unwrap();
             assert_eq!(cached.hint_section.len(), 100);
-            assert!(matches!(
-                factory.get_module_or_init(BytecodeOrHash::Hash(key(3 - id))),
-                Err(ExitCode::UnknownError)
-            ));
+            assert!(factory.get_resident_module(key(3 - id)).is_none());
         }
-        assert!(!factory.inner.is_poisoned());
     }
 
     #[test]
     fn rejected_modules_are_returned_without_index_entries() {
-        let mut factory = ModuleFactory {
-            inner: Arc::new(Mutex::new(ModuleFactoryInner {
-                cached_modules: new_cache(100),
-            })),
-        };
+        let mut factory = new_factory(100);
 
         for hint_size in [0, 101] {
-            let uncached = factory
-                .get_module_or_init(BytecodeOrHash::Bytecode {
-                    bytecode: module(hint_size),
-                    hash: key(1),
-                    address: fluentbase_types::Address::ZERO,
-                })
-                .unwrap();
+            let uncached = factory.get_or_insert_module(module(hint_size), key(1), Address::ZERO);
             assert_eq!(uncached.hint_section.len(), hint_size);
             let ctx = factory.inner.lock().unwrap();
             assert!(ctx.cached_modules.is_empty());

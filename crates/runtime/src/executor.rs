@@ -75,6 +75,9 @@ pub trait RuntimeExecutor {
     /// Executes the entry function of the module determined by the current execution state.
     ///
     /// Returns either a finalized result.
+    ///
+    /// A hash-only `bytecode_or_hash` requires a resident module from an earlier
+    /// [`Self::warmup`]; a miss is a programmer error and fails fast.
     fn execute(&mut self, bytecode_or_hash: BytecodeOrHash, ctx: RuntimeContext)
         -> ExecutionResult;
 
@@ -94,7 +97,9 @@ pub trait RuntimeExecutor {
     /// Drop a runtime we don't need to resume anymore
     fn forget_runtime(&mut self, call_id: u32);
 
-    /// Warm up the bytecode
+    /// Caches `bytecode` under `hash` so later hash-only executions can find it.
+    ///
+    /// Residency is best effort: the module cache may reject the module or evict it later.
     fn warmup(&mut self, bytecode: RwasmModule, hash: B256, address: Address);
 
     /// Resets the per-transaction call identifier counter and clears recoverable runtimes.
@@ -358,18 +363,19 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
             BytecodeOrHash::Hash(_) => None,
         };
 
-        // If we have a cached module, then use it, otherwise create a new one and cache
-        let module = match self.module_factory.get_module_or_init(bytecode_or_hash) {
-            Ok(module) => module,
-            Err(exit_code) => {
-                let result = ExecutionResult {
-                    exit_code: exit_code.into_i32(),
-                    fuel_consumed: ctx.fuel_limit,
-                    ..Default::default()
-                };
-                metrics::record_execution(RuntimeModeLabel::Contract, state, &timer, &result);
-                return result;
-            }
+        // Supplied bytecode is cached on first use; a bare hash must already be resident.
+        let module = match bytecode_or_hash {
+            BytecodeOrHash::Bytecode {
+                bytecode,
+                hash,
+                address,
+            } => self
+                .module_factory
+                .get_or_insert_module(bytecode, hash, address),
+            BytecodeOrHash::Hash(code_hash) => self
+                .module_factory
+                .get_resident_module(code_hash)
+                .unwrap_or_else(|| missing_resident_module(code_hash)),
         };
 
         // If there is no cached store, then construct a new one (slow)
@@ -518,14 +524,8 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
     }
 
     fn warmup(&mut self, bytecode: RwasmModule, hash: B256, address: Address) {
-        // Supplying bytecode always returns the module, even when it cannot be cached.
-        let _ = self
-            .module_factory
-            .get_module_or_init(BytecodeOrHash::Bytecode {
-                bytecode,
-                hash,
-                address,
-            });
+        self.module_factory
+            .get_or_insert_module(bytecode, hash, address);
     }
 
     fn reset_call_id_counter(&mut self) {
@@ -559,6 +559,26 @@ fn runtime_mode_label(runtime: &ExecutionMode) -> RuntimeModeLabel {
     }
 }
 
+/// Fails fast on a hash-only execution whose module is not resident.
+///
+/// Hash-only execution is a host-side contract: the caller warmed the module up through
+/// [`RuntimeExecutor::warmup`] and it is still resident. No consensus input can produce it
+/// today. REVM always supplies bytecode, and the guest exec-by-hash continuation is disabled in
+/// `syscall_exec_continue`. A miss is therefore a programmer error rather than a transaction
+/// outcome, which is what the panic policy in `docs/05-security-invariants.md` reserves panics
+/// for.
+///
+/// The module factory lock is released before this runs, so the panic cannot poison the shared
+/// cache. If exec-by-hash ever becomes reachable from guest input, this must turn into a
+/// deterministic exit code or a bytecode lookup: cache residency differs between nodes.
+#[cold]
+fn missing_resident_module(code_hash: B256) -> ! {
+    panic!(
+        "runtime: no resident module for code hash {code_hash}; \
+         hash-only execution requires an earlier bytecode warmup"
+    )
+}
+
 fn runtime_labels(runtime: &ExecutionMode) -> (RuntimeModeLabel, &'static str) {
     (
         runtime_mode_label(runtime),
@@ -581,23 +601,33 @@ mod tests {
         ExecutionEngine, RwasmModule, StrategyDefinition, TrapCode, N_BYTES_PER_MEMORY_PAGE,
         N_DEFAULT_MAX_MEMORY_PAGES,
     };
+    use std::panic::AssertUnwindSafe;
 
     #[test]
-    fn execute_with_missing_module_hash_returns_error() {
+    fn execute_with_missing_module_hash_fails_fast_outside_the_cache_lock() {
         let mut executor = RuntimeFactoryExecutor::new(import_linker_v1_preview());
         let missing_hash = fluentbase_types::keccak256(b"FLU-1310: module never warmed up");
 
-        for _ in 0..2 {
-            let result = executor.execute(
+        let panic = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            executor.execute(
                 BytecodeOrHash::Hash(missing_hash),
                 RuntimeContext::default().with_fuel_limit(1234),
-            );
-            assert_eq!(result.exit_code, ExitCode::UnknownError.into_i32());
-            assert_eq!(result.fuel_consumed, 1234);
-            assert_eq!(result.fuel_refunded, 0);
-            assert!(result.output.is_empty());
-            assert!(result.return_data.is_empty());
-        }
+            )
+        }))
+        .unwrap_err();
+        let message = panic
+            .downcast_ref::<String>()
+            .expect("panic payload must be the formatted message");
+        assert!(message.contains("no resident module"), "{message}");
+
+        // The shared module cache stays usable: warm a module up and execute it by hash.
+        let hash = fluentbase_types::keccak256(b"FLU-1310: module warmed up after the miss");
+        executor.warmup(test_contract_module_with_memory(1), hash, Address::ZERO);
+        let result = executor.execute(
+            BytecodeOrHash::Hash(hash),
+            RuntimeContext::default().with_fuel_limit(1_000_000),
+        );
+        assert_eq!(result.exit_code, ExitCode::Ok.into_i32());
     }
 
     #[test]
