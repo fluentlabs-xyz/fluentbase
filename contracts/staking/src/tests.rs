@@ -11,8 +11,8 @@ use crate::{
     types::{
         AddressAmountCommand, AddressCommand, AddressU16Command, BoolCommand, ConsensusKeys,
         EpochSignerCommand, EquivocationCommand, InitializeCommand, RecordProductionCommand,
-        RegisterValidatorCommand, TwoAddressesCommand, U256Command, U32Command, U64Command,
-        ValidatorBlockCommand, ValidatorDelegatorCommand, ValidatorEpochCommand,
+        RegisterValidatorCommand, U256Command, U32Command, U64Command, ValidatorBlockCommand,
+        ValidatorDelegatorCommand, ValidatorEpochCommand,
     },
 };
 use fluentbase_sdk::{
@@ -1143,8 +1143,12 @@ fn get_consensus_keys_matches_dynamic_struct_return_vectors() {
         }
     );
 
-    let (status, multi_value_output) =
-        harness.call(encode_empty_call(SIG_GET_VALIDATORS_WITH_KEYS));
+    // The two-vector return shape, on the ONE handler that still has it. This
+    // assertion used to ride on `getValidatorsWithKeys`, deleted 2026-09-08 for
+    // having no consumer; both handlers share `write_validators_with_keys`, so
+    // moving it here is what keeps that encoder covered. Without it a
+    // `getRegistryWithKeys` that answers two empty vectors passes the suite.
+    let (status, multi_value_output) = harness.call(encode_empty_call(SIG_GET_REGISTRY_WITH_KEYS));
     assert_eq!(status, ExitCode::Ok);
     assert_eq!(
         decode_returns::<(Vec<Address>, Vec<ConsensusKeys>)>(&multi_value_output),
@@ -1191,8 +1195,6 @@ fn derived_selectors_match_independent_hex_pins() {
         (SIG_CURRENT_EPOCH, 0x76671808),
         (SIG_NEXT_EPOCH, 0xaea0e78b),
         (SIG_GET_STAKING_TOKEN, 0x9f9106d1),
-        (SIG_MAX_ACTIVE_VALIDATORS, 0x5d887462),
-        (SIG_MAX_BLEND_STIPEND_PER_EPOCH, 0x2bc2fec4),
         (SIG_GET_VALIDATOR_DELEGATION, 0xd951e186),
         (SIG_GET_VALIDATOR_DELEGATED_STAKE_AT, 0xe8810ea7),
         (SIG_REGISTER_VALIDATOR, 0x8d6067ed),
@@ -1206,7 +1208,6 @@ fn derived_selectors_match_independent_hex_pins() {
         (SIG_ACTIVATE_VALIDATOR, 0xb46e5520),
         (SIG_DISABLE_VALIDATOR, 0x1fe97684),
         (SIG_CHANGE_VALIDATOR_COMMISSION_RATE, 0x14f8649f),
-        (SIG_CHANGE_VALIDATOR_OWNER, 0x0052c9e1),
         (SIG_SET_ACTIVE_VALIDATORS_LENGTH, 0xc227a412),
         (SIG_SET_EPOCH_BLOCK_INTERVAL, 0xaf70fa2c),
         (SIG_SET_DPOS_ACTIVATION_BLOCK, 0xf517ca6a),
@@ -1218,24 +1219,18 @@ fn derived_selectors_match_independent_hex_pins() {
         (SIG_GET_BLEND_RESERVE, 0x37dff538),
         (SIG_SET_BLEND_RESERVE, 0x7899ae8f),
         (SIG_GET_VALIDATOR_FEE, 0x457179fd),
-        (SIG_GET_PENDING_VALIDATOR_FEE, 0xc6fb9065),
         (SIG_CLAIM_VALIDATOR_FEE_AT_EPOCH, 0xadf2a79c),
         (SIG_GET_DELEGATOR_FEE, 0x52b7bea2),
-        (SIG_CLAIM_DELEGATOR_FEE_AT_EPOCH, 0xfe38ebef),
         (SIG_GET_DELEGATOR_PRINCIPAL, 0xa789083d),
         (SIG_WITHDRAW_DELEGATOR_PRINCIPAL, 0xe75f359c),
         (SIG_ERC20_BALANCE_OF, 0x70a08231),
         (SIG_ERC20_ALLOWANCE, 0xdd62ed3e),
-        (SIG_CALC_AVAILABLE_FOR_REDELEGATE_AMOUNT, 0x5ef9e8c6),
         (SIG_COMMIT_EPOCH_COMMITTEE, 0xe505b249),
         (SIG_GET_EPOCH_COMMITTEE_WITH_STAKES, 0xa4d160c1),
         (SIG_SLASH_EQUIVOCATION, 0xdc6fb3f2),
         (SIG_SLASH_EQUIVOCATION_NOTARIZE, 0xe28d2f63),
         (SIG_SLASH_EQUIVOCATION_FINALIZE, 0xadd07a3e),
         (SIG_SLASH_EQUIVOCATION_NULLIFY_FINALIZE, 0xa10827e9),
-        (SIG_DEFAULT_MIN_VERDICT_DUE_BLOCKS, 0x6fd3afb7),
-        (SIG_DEFAULT_EXCLUSION_BACKOFF_CAP, 0xd4c30c1a),
-        (SIG_MAX_MIN_VERDICT_DUE_BLOCKS, 0x9b9a11ba),
         (SIG_GET_MIN_VERDICT_DUE_BLOCKS, 0xee3ad0e7),
         (SIG_SET_MIN_VERDICT_DUE_BLOCKS, 0x4fae9dea),
         (SIG_GET_EXCLUSION_BACKOFF_CAP, 0x6bed0322),
@@ -1744,18 +1739,6 @@ fn an_owner_who_withdrew_his_whole_bond_cannot_be_activated() {
 fn staking_is_a_genesis_rwasm_contract_not_a_system_precompile() {
     assert!(!is_execute_using_system_runtime(&GENESIS_STAKING));
     assert!(!is_engine_metered_precompile(&GENESIS_STAKING));
-}
-
-#[test]
-fn embedded_chain_config_exposes_solidity_public_constants() {
-    let mut harness = Harness::new(0);
-    let (_, output) = harness.call(encode_empty_call(SIG_MAX_ACTIVE_VALIDATORS));
-    assert_eq!(
-        decode_output::<u32>(&output),
-        MAX_ACTIVE_VALIDATORS_LENGTH as u32
-    );
-    let (_, output) = harness.call(encode_empty_call(SIG_MAX_BLEND_STIPEND_PER_EPOCH));
-    assert_eq!(decode_output::<U256>(&output), MAX_BLEND_STIPEND_PER_EPOCH);
 }
 
 #[test]
@@ -3233,21 +3216,6 @@ fn reward_views_split_blend_between_owner_and_delegators() {
         decode_output::<U256>(&output),
         U256::from(9) * DEFAULT_MIN_STAKING_AMOUNT / U256::from(2)
     );
-
-    let (_, output) = harness.call(encode_call(
-        SIG_CALC_AVAILABLE_FOR_REDELEGATE_AMOUNT,
-        &ValidatorDelegatorCommand {
-            validator,
-            delegator,
-        },
-    ));
-    assert_eq!(
-        decode_output::<(U256, U256)>(&output),
-        (
-            U256::from(9) * DEFAULT_MIN_STAKING_AMOUNT / U256::from(2),
-            U256::ZERO
-        )
-    );
 }
 
 #[test]
@@ -4428,55 +4396,6 @@ fn sole_validator_owner_full_exit_deactivates_without_leaving_subminimum_dust() 
             "the exited validator is still selected at epoch {epoch}"
         );
     }
-}
-
-#[test]
-fn validator_owner_is_immutable_and_cannot_detach_self_stake() {
-    let contract_owner = Address::with_last_byte(0xa0);
-    let owner = Address::with_last_byte(0x01);
-    let attempted_owner = Address::with_last_byte(0x02);
-    let stake = DEFAULT_MIN_VALIDATOR_STAKE;
-    let mut harness = Harness::new(1_000);
-    assert_eq!(
-        harness.initialize(contract_owner, vec![owner], vec![stake], 500),
-        ExitCode::Ok
-    );
-
-    let before = harness.sdk.dump_storage();
-    harness.set_caller(owner);
-    assert_revert_selector(
-        harness.call(encode_call(
-            SIG_CHANGE_VALIDATOR_OWNER,
-            &TwoAddressesCommand {
-                validator: owner,
-                value: attempted_owner,
-            },
-        )),
-        ERR_VALIDATOR_OWNER_IMMUTABLE,
-    );
-    assert_eq!(harness.sdk.dump_storage(), before);
-
-    let record = staking_storage().validators_accessor().entry(owner);
-    assert_eq!(
-        record.owner_accessor().get_checked(&harness.sdk).unwrap(),
-        owner
-    );
-    assert_eq!(
-        staking_storage()
-            .owner_validators_accessor()
-            .entry(owner)
-            .get_checked(&harness.sdk)
-            .unwrap(),
-        owner
-    );
-    assert_eq!(
-        staking_storage()
-            .owner_validators_accessor()
-            .entry(attempted_owner)
-            .get_checked(&harness.sdk)
-            .unwrap(),
-        Address::ZERO
-    );
 }
 
 fn epoch_reward(sdk: &TestingContextImpl, validator: Address, epoch: u64) -> U256 {
@@ -6991,18 +6910,6 @@ fn production_liveness_ships_disabled_on_a_fresh_chain() {
             DEFAULT_MIN_VERDICT_DUE_BLOCKS,
         ),
         (SIG_GET_EXCLUSION_BACKOFF_CAP, DEFAULT_EXCLUSION_BACKOFF_CAP),
-        (
-            SIG_DEFAULT_MIN_VERDICT_DUE_BLOCKS,
-            DEFAULT_MIN_VERDICT_DUE_BLOCKS,
-        ),
-        (
-            SIG_DEFAULT_EXCLUSION_BACKOFF_CAP,
-            DEFAULT_EXCLUSION_BACKOFF_CAP,
-        ),
-        (
-            SIG_MAX_MIN_VERDICT_DUE_BLOCKS,
-            DEFAULT_MIN_VERDICT_DUE_BLOCKS,
-        ),
     ] {
         let (exit, output) = harness.call(encode_empty_call(selector));
         assert_eq!(exit, ExitCode::Ok);
@@ -8946,10 +8853,10 @@ fn the_close_asks_the_reserve_about_itself_and_not_about_the_contract() {
 }
 
 // The two read paths duplicate the two consume paths, walk for walk, so they can
-// drift apart in silence. `getDelegatorFee` and `getPendingDelegatorFee` must
-// report the REWARD alone and `getDelegatorPrincipal` the deposit alone, with a
-// matured withdrawal sitting in the queue — which is exactly the state in which
-// a re-merged view would report their sum.
+// drift apart in silence. `getDelegatorFee` must report the REWARD alone and
+// `getDelegatorPrincipal` the deposit alone, with a matured withdrawal sitting
+// in the queue — which is exactly the state in which a re-merged view would
+// report their sum.
 #[test]
 fn the_delegator_views_report_the_reward_and_the_deposit_apart() {
     let owner = Address::with_last_byte(0xa0);
@@ -8987,25 +8894,14 @@ fn the_delegator_views_report_the_reward_and_the_deposit_apart() {
     };
 
     // The delegator holds half the stake, so half of the epoch's blend.
-    for selector in [SIG_GET_DELEGATOR_FEE, SIG_GET_PENDING_DELEGATOR_FEE] {
-        let (_, output) = harness.call(encode_call(selector, &command));
-        assert_eq!(
-            decode_output::<U256>(&output),
-            reward,
-            "a reward view must not fold in the matured deposit"
-        );
-    }
+    let (_, output) = harness.call(encode_call(SIG_GET_DELEGATOR_FEE, &command));
+    assert_eq!(
+        decode_output::<U256>(&output),
+        reward,
+        "a reward view must not fold in the matured deposit"
+    );
     let (_, output) = harness.call(encode_call(SIG_GET_DELEGATOR_PRINCIPAL, &command));
     assert_eq!(decode_output::<U256>(&output), stake);
-    // And what the redelegate handler would take is the reward alone as well.
-    let (_, output) = harness.call(encode_call(
-        SIG_CALC_AVAILABLE_FOR_REDELEGATE_AMOUNT,
-        &command,
-    ));
-    assert_eq!(
-        decode_output::<(U256, U256)>(&output).0 + decode_output::<(U256, U256)>(&output).1,
-        reward
-    );
 
     // The views agree with what the claims actually pay: same numbers, and the
     // two together are what the merged view used to return.

@@ -47,11 +47,6 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
         SIG_INITIALIZE => initializer::initialize(sdk, params),
 
         // ChainConfig
-        SIG_MAX_ACTIVE_VALIDATORS => config::max_active_validators(sdk),
-        SIG_MAX_BLEND_STIPEND_PER_EPOCH => config::max_blend_stipend_per_epoch(sdk),
-        SIG_DEFAULT_MIN_VERDICT_DUE_BLOCKS => config::default_min_verdict_due_blocks(sdk),
-        SIG_DEFAULT_EXCLUSION_BACKOFF_CAP => config::default_exclusion_backoff_cap(sdk),
-        SIG_MAX_MIN_VERDICT_DUE_BLOCKS => config::max_min_verdict_due_blocks(sdk),
         SIG_GET_STAKING_TOKEN => config::get_staking_token(sdk),
         SIG_GET_ACTIVE_VALIDATORS_LENGTH => config::get_active_validators_length(sdk),
         SIG_GET_EPOCH_BLOCK_INTERVAL => config::get_epoch_block_interval(sdk),
@@ -102,7 +97,6 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
         SIG_ACTIVATE_VALIDATOR => staking::activate_validator(sdk, params),
         SIG_DISABLE_VALIDATOR => staking::disable_validator(sdk, params),
         SIG_CHANGE_VALIDATOR_COMMISSION_RATE => staking::change_commission(sdk, params),
-        SIG_CHANGE_VALIDATOR_OWNER => staking::change_owner(sdk, params),
         SIG_GET_VALIDATOR_DELEGATION => staking::get_validator_delegation(sdk, params),
         SIG_GET_VALIDATOR_DELEGATED_STAKE_AT => {
             staking::get_validator_delegated_stake_at(sdk, params)
@@ -111,24 +105,17 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
         SIG_DELEGATE => staking::delegate(sdk, params),
         SIG_UNDELEGATE => staking::undelegate(sdk, params),
         SIG_GET_VALIDATOR_FEE => staking::get_validator_fee(sdk, params),
-        SIG_GET_PENDING_VALIDATOR_FEE => staking::get_pending_validator_fee(sdk, params),
         SIG_CLAIM_VALIDATOR_FEE => staking::claim_validator_fee(sdk, params),
         SIG_CLAIM_VALIDATOR_FEE_AT_EPOCH => staking::claim_validator_fee_at_epoch(sdk, params),
         SIG_GET_DELEGATOR_FEE => staking::get_delegator_fee(sdk, params),
-        SIG_GET_PENDING_DELEGATOR_FEE => staking::get_pending_delegator_fee(sdk, params),
         SIG_CLAIM_DELEGATOR_FEE => staking::claim_delegator_fee(sdk, params),
-        SIG_CLAIM_DELEGATOR_FEE_AT_EPOCH => staking::claim_delegator_fee_at_epoch(sdk, params),
         SIG_GET_DELEGATOR_PRINCIPAL => staking::get_delegator_principal(sdk, params),
         SIG_WITHDRAW_DELEGATOR_PRINCIPAL => staking::withdraw_delegator_principal(sdk, params),
-        SIG_CALC_AVAILABLE_FOR_REDELEGATE_AMOUNT => {
-            staking::calc_available_for_redelegate_amount(sdk, params)
-        }
         SIG_REDELEGATE_DELEGATOR_FEE => staking::redelegate_delegator_fee(sdk, params),
         SIG_GET_EPOCH_REWARDS => staking::get_epoch_rewards(sdk, params),
 
         // Consensus
         SIG_GET_CONSENSUS_KEYS => consensus::get_consensus_keys(sdk, params),
-        SIG_GET_VALIDATORS_WITH_KEYS => consensus::get_validators_with_keys(sdk),
         SIG_GET_REGISTRY_WITH_KEYS => consensus::get_registry_with_keys(sdk),
         SIG_NEXT_EPOCH_TO_COMMIT => consensus::next_epoch_to_commit(sdk),
         SIG_COMMIT_EPOCH_COMMITTEE => consensus::commit_epoch_committee(sdk),

@@ -7,8 +7,7 @@ use crate::{
     storage::{chain_config_storage, consensus_storage, staking_storage, ValidatorSnapshotStorage},
     types::{
         AddressAmountCommand, AddressCommand, AddressU16Command, RegisterValidatorCommand,
-        TwoAddressesCommand, U64Command, ValidatorBlockCommand, ValidatorDelegatorCommand,
-        ValidatorEpochCommand,
+        U64Command, ValidatorBlockCommand, ValidatorDelegatorCommand, ValidatorEpochCommand,
     },
     util::{
         current_epoch, current_epoch_at_block, decode, decode_args, ensure_governance,
@@ -925,27 +924,6 @@ pub fn change_commission<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<
     emit_modified(sdk, command.validator)
 }
 
-/// Public handler `0x0052c9e1` (`changeValidatorOwner`).
-///
-/// Rejects validator-owner changes because validator ownership is immutable.
-pub fn change_owner<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), ExitCode> {
-    ensure_non_payable(sdk)?;
-    ensure_mutable(sdk)?;
-    ensure_initialized(sdk)?;
-    let command: TwoAddressesCommand = decode(input)?;
-    let owner = staking_storage()
-        .validators_accessor()
-        .entry(command.validator)
-        .owner_accessor()
-        .get_checked(sdk)?;
-    if owner.is_zero() {
-        return revert_with(sdk, ERR_VALIDATOR_NOT_FOUND, &command.validator);
-    }
-    if owner != sdk.context().contract_caller() {
-        return revert_with(sdk, ERR_ONLY_VALIDATOR_OWNER, &owner);
-    }
-    revert(sdk, ERR_VALIDATOR_OWNER_IMMUTABLE)
-}
 // Validator registration and BLEND delegation principal accounting.
 
 /// Public handler `0xd951e186` (`getValidatorDelegation`).
@@ -1636,22 +1614,6 @@ pub fn get_validator_fee<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<
     )
 }
 
-/// Public handler `0xc6fb9065` (`getPendingValidatorFee`).
-///
-/// Returns the validator owner's rewards including the pending epoch.
-pub fn get_pending_validator_fee<SDK: SharedAPI>(
-    sdk: &mut SDK,
-    input: &[u8],
-) -> Result<(), ExitCode> {
-    ensure_non_payable(sdk)?;
-    ensure_initialized(sdk)?;
-    let validator = decode::<AddressCommand>(input)?.value;
-    write_abi(
-        sdk,
-        &validator_owner_rewards(sdk, validator, next_epoch(sdk)?)?,
-    )
-}
-
 fn claim_validator_before<SDK: SharedAPI>(
     sdk: &mut SDK,
     validator: Address,
@@ -1725,30 +1687,6 @@ pub fn get_delegator_fee<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<
     ensure_initialized(sdk)?;
     let command = decode::<ValidatorDelegatorCommand>(input)?;
     let requested_epoch = current_epoch(sdk)?;
-    let reward_before_epoch =
-        capped_delegator_reward_epoch(sdk, command.validator, command.delegator, requested_epoch)?;
-    write_abi(
-        sdk,
-        &delegator_reward_claimable(
-            sdk,
-            command.validator,
-            command.delegator,
-            reward_before_epoch,
-        )?,
-    )
-}
-
-/// Public handler `0xc2fd58fc` (`getPendingDelegatorFee`).
-///
-/// Returns a delegator's rewards including the pending epoch.
-pub fn get_pending_delegator_fee<SDK: SharedAPI>(
-    sdk: &mut SDK,
-    input: &[u8],
-) -> Result<(), ExitCode> {
-    ensure_non_payable(sdk)?;
-    ensure_initialized(sdk)?;
-    let command = decode::<ValidatorDelegatorCommand>(input)?;
-    let requested_epoch = next_epoch(sdk)?;
     let reward_before_epoch =
         capped_delegator_reward_epoch(sdk, command.validator, command.delegator, requested_epoch)?;
     write_abi(
@@ -1870,30 +1808,6 @@ pub fn claim_delegator_fee<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Resul
     claim_delegator_reward_before(sdk, validator, delegator, current_epoch(sdk)?, false)
 }
 
-/// Public handler `0xfe38ebef` (`claimDelegatorFeeAtEpoch`).
-///
-/// Claims delegator rewards through the requested epoch.
-pub fn claim_delegator_fee_at_epoch<SDK: SharedAPI>(
-    sdk: &mut SDK,
-    input: &[u8],
-) -> Result<(), ExitCode> {
-    ensure_non_payable(sdk)?;
-    ensure_mutable(sdk)?;
-    ensure_initialized(sdk)?;
-    let command = decode::<ValidatorEpochCommand>(input)?;
-    if command.before_epoch > current_epoch(sdk)? {
-        return revert(sdk, ERR_INVALID_CLAIM_EPOCH);
-    }
-    let delegator = sdk.context().contract_caller();
-    claim_delegator_reward_before(
-        sdk,
-        command.validator,
-        delegator,
-        command.before_epoch,
-        false,
-    )
-}
-
 /// Public handler `0xa789083d` (`getDelegatorPrincipal`).
 ///
 /// Returns the undelegated principal a delegator can withdraw right now. The
@@ -1941,28 +1855,6 @@ pub fn withdraw_delegator_principal<SDK: SharedAPI>(
     let validator = decode::<AddressCommand>(input)?.value;
     let delegator = sdk.context().contract_caller();
     withdraw_delegator_principal_before(sdk, validator, delegator, current_epoch(sdk)?)
-}
-
-/// Public handler `0x5ef9e8c6` (`calcAvailableForRedelegateAmount`).
-///
-/// Returns the claimable rewards that can be redelegated.
-pub fn calc_available_for_redelegate_amount<SDK: SharedAPI>(
-    sdk: &mut SDK,
-    input: &[u8],
-) -> Result<(), ExitCode> {
-    ensure_non_payable(sdk)?;
-    ensure_initialized(sdk)?;
-    let command = decode::<ValidatorDelegatorCommand>(input)?;
-    let requested_epoch = current_epoch(sdk)?;
-    let reward_before_epoch =
-        capped_delegator_reward_epoch(sdk, command.validator, command.delegator, requested_epoch)?;
-    let claimable = delegator_reward_claimable(
-        sdk,
-        command.validator,
-        command.delegator,
-        reward_before_epoch,
-    )?;
-    write_abi(sdk, &available_for_redelegate(sdk, claimable)?)
 }
 
 /// Public handler `0x8ecb3fc9` (`redelegateDelegatorFee`).

@@ -45,12 +45,6 @@ pub struct AddressU16Command {
 }
 
 #[derive(Default, Debug, Codec)]
-pub struct TwoAddressesCommand {
-    pub validator: Address,
-    pub value: Address,
-}
-
-#[derive(Default, Debug, Codec)]
 pub struct ValidatorDelegatorCommand {
     pub validator: Address,
     pub delegator: Address,

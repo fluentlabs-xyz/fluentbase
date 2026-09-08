@@ -173,48 +173,6 @@ fn validate_initialization<SDK: SharedAPI>(
     Ok(())
 }
 
-/// Public handler `0x5d887462` (`MAX_ACTIVE_VALIDATORS`).
-///
-/// Returns the protocol max active validators limit.
-pub fn max_active_validators<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
-    ensure_non_payable(sdk)?;
-    write_abi(sdk, &(MAX_ACTIVE_VALIDATORS_LENGTH as u32))
-}
-
-/// Public handler `0x2bc2fec4` (`MAX_BLEND_STIPEND_PER_EPOCH`).
-///
-/// Returns the protocol max blend stipend per epoch limit.
-pub fn max_blend_stipend_per_epoch<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
-    ensure_non_payable(sdk)?;
-    write_abi(sdk, &MAX_BLEND_STIPEND_PER_EPOCH)
-}
-
-/// Public handler `0x6fd3afb7` (`DEFAULT_MIN_VERDICT_DUE_BLOCKS`).
-///
-/// Returns the protocol default verdict due-block floor.
-pub fn default_min_verdict_due_blocks<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
-    ensure_non_payable(sdk)?;
-    write_abi(sdk, &DEFAULT_MIN_VERDICT_DUE_BLOCKS)
-}
-
-/// Public handler `0xd4c30c1a` (`DEFAULT_EXCLUSION_BACKOFF_CAP`).
-///
-/// Returns the protocol default exclusion backoff cap.
-pub fn default_exclusion_backoff_cap<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
-    ensure_non_payable(sdk)?;
-    write_abi(sdk, &DEFAULT_EXCLUSION_BACKOFF_CAP)
-}
-
-/// Public handler `0x9b9a11ba` (`MAX_MIN_VERDICT_DUE_BLOCKS`).
-///
-/// Returns the protocol ceiling on the verdict due-block floor, which is the
-/// shipped default: it is already where the verdict test is conclusive, so
-/// governance may lower the floor and never raise it.
-pub fn max_min_verdict_due_blocks<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
-    ensure_non_payable(sdk)?;
-    write_abi(sdk, &DEFAULT_MIN_VERDICT_DUE_BLOCKS)
-}
-
 /// Public handler `0x9f9106d1` (`getStakingToken`).
 ///
 /// Returns the configured staking token.

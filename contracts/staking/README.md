@@ -128,8 +128,7 @@ validator-creation call; there is no separate key-registration phase.
 - A seizure has one recipient — the configured slash fund, or the burn sink when none is set. Nobody
   is paid for reporting, so no submitter of a slash can profit from copying another's evidence.
 - A validator's `owner` is its immutable administrative, validator-fee, self-stake, and slashing identity.
-  `changeValidatorOwner` remains in the compatibility ABI but always reverts with
-  `ValidatorOwnerImmutable()`.
+  There is no ABI point that changes it.
 
 ## Equivocation slashing
 
@@ -160,7 +159,9 @@ active-set removal are already written, and the recipient is not chosen by whoev
 ## Solidity parity
 
 The Solidity staking source is not checked into this repository. Its mutable-owner self-stake lookup remains affected
-and must also disable validator ownership changes before it is deployed or used as the canonical implementation.
+and must make validator ownership immutable before it is deployed or used as the canonical implementation. This
+implementation carries no ABI point that changes an owner — the `changeValidatorOwner` entry that used to reject the
+attempt was deleted 2026-09-08, so there is nothing here for the Solidity side to mirror.
 
 ## Event ABI audit
 

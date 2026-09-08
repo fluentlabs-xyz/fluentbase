@@ -42,9 +42,6 @@ pub const SIG_DISABLE_VALIDATOR: u32 = derive_keccak256_id!("disableValidator(ad
 // 0x14f8649f
 pub const SIG_CHANGE_VALIDATOR_COMMISSION_RATE: u32 =
     derive_keccak256_id!("changeValidatorCommissionRate(address,uint16)");
-// 0x0052c9e1
-pub const SIG_CHANGE_VALIDATOR_OWNER: u32 =
-    derive_keccak256_id!("changeValidatorOwner(address,address)");
 // 0x9f9106d1
 pub const SIG_GET_STAKING_TOKEN: u32 = derive_keccak256_id!("getStakingToken()");
 // 0x32cc6f08
@@ -74,20 +71,6 @@ pub const SIG_REGISTER_VALIDATOR: u32 =
 pub const SIG_DELEGATE: u32 = derive_keccak256_id!("delegate(address,uint256)");
 // 0x4d99dd16
 pub const SIG_UNDELEGATE: u32 = derive_keccak256_id!("undelegate(address,uint256)");
-// 0x5d887462
-pub const SIG_MAX_ACTIVE_VALIDATORS: u32 = derive_keccak256_id!("MAX_ACTIVE_VALIDATORS()");
-// 0x2bc2fec4
-pub const SIG_MAX_BLEND_STIPEND_PER_EPOCH: u32 =
-    derive_keccak256_id!("MAX_BLEND_STIPEND_PER_EPOCH()");
-// 0x6fd3afb7
-pub const SIG_DEFAULT_MIN_VERDICT_DUE_BLOCKS: u32 =
-    derive_keccak256_id!("DEFAULT_MIN_VERDICT_DUE_BLOCKS()");
-// 0xd4c30c1a
-pub const SIG_DEFAULT_EXCLUSION_BACKOFF_CAP: u32 =
-    derive_keccak256_id!("DEFAULT_EXCLUSION_BACKOFF_CAP()");
-// 0x9b9a11ba
-pub const SIG_MAX_MIN_VERDICT_DUE_BLOCKS: u32 =
-    derive_keccak256_id!("MAX_MIN_VERDICT_DUE_BLOCKS()");
 // 0x23b872dd
 pub const SIG_ERC20_TRANSFER_FROM: u32 =
     derive_keccak256_id!("transferFrom(address,address,uint256)");
@@ -157,9 +140,6 @@ pub const SIG_LAST_PROCESSED_BLOCK: u32 = derive_keccak256_id!("lastProcessedBlo
 pub const SIG_RECORD_PRODUCTION: u32 = derive_keccak256_id!("recordProduction(uint8)");
 // 0x457179fd
 pub const SIG_GET_VALIDATOR_FEE: u32 = derive_keccak256_id!("getValidatorFee(address)");
-// 0xc6fb9065
-pub const SIG_GET_PENDING_VALIDATOR_FEE: u32 =
-    derive_keccak256_id!("getPendingValidatorFee(address)");
 // 0xff4794fc
 pub const SIG_CLAIM_VALIDATOR_FEE: u32 = derive_keccak256_id!("claimValidatorFee(address)");
 // 0xadf2a79c
@@ -167,23 +147,14 @@ pub const SIG_CLAIM_VALIDATOR_FEE_AT_EPOCH: u32 =
     derive_keccak256_id!("claimValidatorFeeAtEpoch(address,uint64)");
 // 0x52b7bea2
 pub const SIG_GET_DELEGATOR_FEE: u32 = derive_keccak256_id!("getDelegatorFee(address,address)");
-// 0xc2fd58fc
-pub const SIG_GET_PENDING_DELEGATOR_FEE: u32 =
-    derive_keccak256_id!("getPendingDelegatorFee(address,address)");
 // 0x426594b1
 pub const SIG_CLAIM_DELEGATOR_FEE: u32 = derive_keccak256_id!("claimDelegatorFee(address)");
-// 0xfe38ebef
-pub const SIG_CLAIM_DELEGATOR_FEE_AT_EPOCH: u32 =
-    derive_keccak256_id!("claimDelegatorFeeAtEpoch(address,uint64)");
 // 0xa789083d
 pub const SIG_GET_DELEGATOR_PRINCIPAL: u32 =
     derive_keccak256_id!("getDelegatorPrincipal(address,address)");
 // 0xe75f359c
 pub const SIG_WITHDRAW_DELEGATOR_PRINCIPAL: u32 =
     derive_keccak256_id!("withdrawDelegatorPrincipal(address)");
-// 0x5ef9e8c6
-pub const SIG_CALC_AVAILABLE_FOR_REDELEGATE_AMOUNT: u32 =
-    derive_keccak256_id!("calcAvailableForRedelegateAmount(address,address)");
 // 0x8ecb3fc9
 pub const SIG_REDELEGATE_DELEGATOR_FEE: u32 =
     derive_keccak256_id!("redelegateDelegatorFee(address)");
@@ -191,8 +162,6 @@ pub const SIG_REDELEGATE_DELEGATOR_FEE: u32 =
 pub const SIG_GET_EPOCH_REWARDS: u32 = derive_keccak256_id!("getEpochRewards(uint64)");
 // 0xad36f42f
 pub const SIG_GET_CONSENSUS_KEYS: u32 = derive_keccak256_id!("getConsensusKeys(address)");
-// 0xd41c52eb
-pub const SIG_GET_VALIDATORS_WITH_KEYS: u32 = derive_keccak256_id!("getValidatorsWithKeys()");
 // 0xd96cbd7b
 pub const SIG_GET_REGISTRY_WITH_KEYS: u32 = derive_keccak256_id!("getRegistryWithKeys()");
 // 0xc06a82de
@@ -235,7 +204,6 @@ pub const ERR_VALIDATOR_OWNER_ALREADY_IN_USE: u32 =
 pub const ERR_NOT_PENDING_VALIDATOR: u32 = derive_keccak256_id!("NotPendingValidator(address)");
 pub const ERR_NOT_ACTIVE_VALIDATOR: u32 = derive_keccak256_id!("NotActiveValidator()");
 pub const ERR_ONLY_VALIDATOR_OWNER: u32 = derive_keccak256_id!("OnlyValidatorOwner(address)");
-pub const ERR_VALIDATOR_OWNER_IMMUTABLE: u32 = derive_keccak256_id!("ValidatorOwnerImmutable()");
 pub const ERR_ZERO_STAKING_TOKEN: u32 = derive_keccak256_id!("ZeroStakingToken()");
 pub const ERR_INVALID_CHAIN_CONFIG: u32 = derive_keccak256_id!("InvalidChainConfig()");
 pub const ERR_AMOUNT_TOO_LOW: u32 = derive_keccak256_id!("AmountTooLow(uint256)");
@@ -477,7 +445,7 @@ pub const EVIDENCE_MESSAGE_KIND_FINALIZE: u8 = 2;
 /// together: a different share invalidates the sample size chosen there.
 pub const MIN_PRODUCTION_SHARE_DENOMINATOR: u64 = 2;
 /// Both the shipped floor and the highest one governance may set — the setter
-/// bounds against this constant and `MAX_MIN_VERDICT_DUE_BLOCKS()` returns it.
+/// bounds against this constant.
 ///
 /// One number does both jobs because one fact decides both. The floor is a
 /// confidence gate on a statistical test: a member fails at `produced * 2 < due`,

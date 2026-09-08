@@ -7,8 +7,8 @@ use crate::{
     evidence::{self, EvidenceShape},
     math,
     staking::{
-        remove_active, remove_delegation_from_totals, selected_validators, selection_visible_at,
-        set_selection_visible, top_k_by_stake_at, validator_status,
+        remove_active, remove_delegation_from_totals, selection_visible_at, set_selection_visible,
+        top_k_by_stake_at, validator_status,
     },
     storage::{chain_config_storage, consensus_storage, staking_storage},
     types::{AddressCommand, ConsensusKeys, EpochSignerCommand, EquivocationCommand, U64Command},
@@ -255,15 +255,6 @@ fn write_validators_with_keys<SDK: SharedAPI>(
         keys.push(value);
     }
     write_returns(sdk, &(validators, keys))
-}
-
-/// Public handler `0xd41c52eb` (`getValidatorsWithKeys`).
-///
-/// Returns selected validators together with their active consensus keys.
-pub fn get_validators_with_keys<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
-    ensure_non_payable(sdk)?;
-    ensure_initialized(sdk)?;
-    write_validators_with_keys(sdk, selected_validators(sdk)?, None)
 }
 
 /// Public handler `0xd96cbd7b` (`getRegistryWithKeys`).
