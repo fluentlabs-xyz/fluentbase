@@ -16,7 +16,7 @@ use crate::{
 };
 use fluentbase_sdk::{Address, ContextReader, ExitCode, SharedAPI, U256};
 
-/// Public handler `0xdfa8efb0` (`initialize`).
+/// Public handler `0xfecaf0f1` (`initialize`).
 ///
 /// Atomically initializes chain configuration, dependencies, and genesis validators.
 pub fn initialize<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), ExitCode> {

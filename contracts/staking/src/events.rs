@@ -94,12 +94,6 @@ pub struct MinStakingAmountChanged {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Event)]
-pub struct BlsVerifierChanged {
-    pub prev_value: Address,
-    pub new_value: Address,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Event)]
 pub struct BlendReserveChanged {
     pub prev_value: Address,
     pub new_value: Address,

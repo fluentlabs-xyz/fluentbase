@@ -159,7 +159,11 @@ impl Harness {
             })
             .with_block_number(block_number)
             .with_gas_limit(gas_limit);
-        sdk.set_call_handler(|_address, _value, input, _fuel_limit| {
+        reset_bls_precompiles();
+        sdk.set_call_handler(|address, _value, input, _fuel_limit| {
+            if let Some(reply) = mock_precompile_reply(address, input) {
+                return reply;
+            }
             if input.len() < SIG_LEN_BYTES {
                 return SyscallResult::new(Bytes::new(), 0, 0, ExitCode::MalformedBuiltinParams);
             }
@@ -244,11 +248,6 @@ impl Harness {
             min_validator_stake_amount: DEFAULT_MIN_VALIDATOR_STAKE,
             min_staking_amount: DEFAULT_MIN_STAKING_AMOUNT,
             dpos_activation_block: self.sdk.context().block_number(),
-            bls_verifier: if validator_count == 0 {
-                Address::ZERO
-            } else {
-                Address::with_last_byte(0xb0)
-            },
             min_undelegate_blocks: U256::ZERO,
             blend_reserve: Address::with_last_byte(0xf2),
         }
@@ -417,6 +416,37 @@ struct StipendFunding {
     transfers: Vec<(Address, U256)>,
 }
 
+/// The 96-byte zcash key that a `byte`-filled 256-byte EIP-2537 G2 really
+/// compresses to.
+///
+/// Both halves of `x` are that byte, so the reference is the byte repeated; the
+/// leading byte also carries the compression flag and the y-sign. Every fill
+/// byte in this file is above the `0x0d` that leads `(p-1)/2`, so the sign is
+/// always set — asserted rather than assumed, because a lower fill byte would
+/// make this silently wrong.
+fn compressed_key_of(byte: u8) -> Vec<u8> {
+    assert!(byte > 0x0d, "fill byte {byte:#04x} is not above (p-1)/2");
+    let mut key = vec![byte; BLS_PUBKEY_LENGTH];
+    key[0] = byte | 0x80 | 0x20;
+    key
+}
+
+/// A 128-byte EIP-2537 G1 whose UNCHECKED compression is exactly `compressed`.
+///
+/// Not a curve point, and it does not need to be: the premise of
+/// `compress_g1_unchecked` is that it never asks. `x` is the reference itself,
+/// flag bits included, because compression only ORs those bits back in; `y`
+/// picks the half of the field that reproduces the reference's sign bit.
+fn g1_preimage_of(compressed: &[u8]) -> Bytes {
+    assert_eq!(compressed.len(), BLS_SIGNATURE_LENGTH);
+    let mut point = vec![0u8; BLS_POP_UNCOMPRESSED_LENGTH];
+    point[16..64].copy_from_slice(compressed);
+    if compressed[0] & 0x20 != 0 {
+        point[80..].fill(0xff);
+    }
+    Bytes::from(point)
+}
+
 fn encode_mock_return<T>(value: &T) -> Bytes
 where
     T: fluentbase_sdk::codec::Encoder<fluentbase_sdk::byteorder::BE, 32, true, false>,
@@ -426,31 +456,149 @@ where
     output.freeze().into()
 }
 
-/// The BLS verifier and the staking token as every harness sees them, so a test
-/// that needs its own handler can record the call and still answer it here.
-///
-/// `compressG2Unchecked` derives the compressed key from the first byte of the
-/// uncompressed one: a validator registered with `0x11`-filled bytes therefore
-/// owns the `0x33`-filled compressed key that `bls_pubkey_owner` is keyed on.
-/// `compressG1Unchecked` keeps the leading 48 bytes, which is what lets a test
-/// feed the slash path the exact signatures a corpus evidence blob carries.
+// ── stand-ins for the five precompiles the inlined verifier calls ──────────
+//
+// The verifier is no longer an address this contract stores, so there is no
+// contract left to mock: `bls.rs` static-calls `0x02`, `0x05`, `0x0b`, `0x0f`
+// and `0x10` directly. The substitution point moved one floor down, and so does
+// the stub.
+//
+// SHA-256 is honest — `crypto_sha256` is the same implementation the `0x02`
+// predeploy runs (`contracts/sha256`) — so the bytes recorded below are the
+// bytes the contract really hashed, and the namespace read back out of them is
+// really the namespace it signed under. MODEXP, MAP_FP_TO_G1 and G1ADD return
+// deterministic values of the correct width and nothing more; reducing mod p
+// and mapping to a curve point are not things a unit harness does.
+//
+// PAIRING is a POLICY, not a pairing. It answers "the equation holds" unless a
+// test says otherwise, and that switch is the whole point: the retired
+// external-verifier stub answered `true` unconditionally, so
+// `InvalidProofOfPossession` and the verify half of
+// `EquivocationSignatureInvalid` were unreachable from any test in this file.
+// It decides nothing about BLS12-381. That claim is made in
+// `e2e/src/staking.rs` against the real predeploys, with vectors the node's
+// blst produced, and again on the devnet.
+const PRECOMPILE_SHA256: Address = Address::with_last_byte(0x02);
+const PRECOMPILE_MODEXP: Address = Address::with_last_byte(0x05);
+const PRECOMPILE_G1ADD: Address = Address::with_last_byte(0x0b);
+const PRECOMPILE_PAIRING: Address = Address::with_last_byte(0x0f);
+const PRECOMPILE_MAP_FP_TO_G1: Address = Address::with_last_byte(0x10);
+
+#[derive(Default)]
+struct BlsPrecompiles {
+    /// `None` accepts every pairing. `Some(list)` accepts only a verify whose
+    /// hashed preimage carried one of these namespaces; `Some(empty)` accepts
+    /// nothing, which is how a forged signature is spelled here.
+    accept: Option<Vec<Vec<u8>>>,
+    /// A precompile told to answer one byte short of its fixed width, which is
+    /// one of the two ways `PrecompileFailed` is reachable.
+    truncate: Option<Address>,
+    /// A precompile told to refuse the call outright — the other way.
+    refuse: Option<Address>,
+    /// A precompile told to answer the right width, all zeroes — which for a
+    /// point is the EIP-2537 encoding of infinity.
+    zero: Option<Address>,
+    /// The namespace of the verify in flight, recovered from the
+    /// `expand_message_xmd` preimage rather than from an ABI argument — after
+    /// the inline there is no argument to read.
+    current_namespace: Vec<u8>,
+    /// One entry per pairing, in order.
+    seen: Rc<RefCell<Vec<Bytes>>>,
+}
+
+thread_local! {
+    static BLS_PRECOMPILES: RefCell<BlsPrecompiles> = RefCell::new(BlsPrecompiles::default());
+}
+
+/// Cleared per `Harness`, because several tests build one per loop iteration and
+/// a namespace list left over from the previous one would silently decide the
+/// next.
+fn reset_bls_precompiles() {
+    BLS_PRECOMPILES.with(|mock| *mock.borrow_mut() = BlsPrecompiles::default());
+}
+
+/// Deterministic filler of an exact width. Not a curve point and not pretending
+/// to be one; what matters is that it is a function of the whole input, so a
+/// changed preimage changes everything downstream of it.
+fn mock_precompile_output(tag: u8, input: &[u8], length: usize) -> Vec<u8> {
+    let mut out = Vec::with_capacity(length + 32);
+    let mut counter = 0u8;
+    while out.len() < length {
+        let mut buffer = Vec::with_capacity(input.len() + 2);
+        buffer.push(tag);
+        buffer.push(counter);
+        buffer.extend_from_slice(input);
+        out.extend_from_slice(fluentbase_sdk::crypto::crypto_sha256(&buffer).as_slice());
+        counter = counter.wrapping_add(1);
+    }
+    out.truncate(length);
+    out
+}
+
+/// `Z(64×0x00) ‖ I2OSP(len(ns),1) ‖ ns ‖ msg ‖ I2OSP(128,2) ‖ 0x00 ‖ DST'` is the
+/// only SHA-256 input of a verify that begins with a full zero block — the four
+/// `b_i` blocks begin with a digest and are 77 bytes wide. Returns the namespace
+/// it carries.
+fn namespace_from_xmd_preimage(input: &[u8]) -> Option<Vec<u8>> {
+    if input.len() <= 65 || input[..64].iter().any(|byte| *byte != 0) {
+        return None;
+    }
+    let length = input[64] as usize;
+    input.get(65..65 + length).map(<[u8]>::to_vec)
+}
+
+/// Answers a call addressed to one of the five precompiles, or `None` if the
+/// call is not one — every handler in this file forwards to it first, because
+/// any path that verifies a key now makes these calls.
+fn mock_precompile_reply(address: Address, input: &[u8]) -> Option<SyscallResult<Bytes>> {
+    let (tag, width) = match address {
+        PRECOMPILE_SHA256 => (0x02, 32),
+        PRECOMPILE_MODEXP => (0x05, 48),
+        PRECOMPILE_G1ADD => (0x0b, 128),
+        PRECOMPILE_MAP_FP_TO_G1 => (0x10, 128),
+        PRECOMPILE_PAIRING => (0x0f, 32),
+        _ => return None,
+    };
+    if BLS_PRECOMPILES.with(|mock| mock.borrow().refuse == Some(address)) {
+        return Some(SyscallResult::new(Bytes::new(), 0, 0, ExitCode::Panic));
+    }
+    let truncated = BLS_PRECOMPILES.with(|mock| mock.borrow().truncate == Some(address));
+    let width = if truncated { width - 1 } else { width };
+
+    let data = match address {
+        PRECOMPILE_SHA256 => {
+            if let Some(namespace) = namespace_from_xmd_preimage(input) {
+                BLS_PRECOMPILES.with(|mock| mock.borrow_mut().current_namespace = namespace);
+            }
+            let mut digest = fluentbase_sdk::crypto::crypto_sha256(input).to_vec();
+            digest.truncate(width);
+            digest
+        }
+        PRECOMPILE_PAIRING => BLS_PRECOMPILES.with(|mock| {
+            let mock = mock.borrow_mut();
+            let namespace = mock.current_namespace.clone();
+            let holds = match &mock.accept {
+                None => true,
+                Some(accepted) => accepted.iter().any(|entry| entry == &namespace),
+            };
+            mock.seen.borrow_mut().push(Bytes::from(namespace));
+            let mut word = vec![0u8; width];
+            if holds && !word.is_empty() {
+                word[width - 1] = 1;
+            }
+            word
+        }),
+        _ if BLS_PRECOMPILES.with(|mock| mock.borrow().zero == Some(address)) => vec![0u8; width],
+        _ => mock_precompile_output(tag, input, width),
+    };
+    Some(SyscallResult::new(Bytes::from(data), 0, 0, ExitCode::Ok))
+}
+
+/// The staking token as every harness sees it, so a test that needs its own
+/// handler can record the call and still answer it here.
 fn mock_external_return(selector: u32, args: &[u8]) -> Option<Bytes> {
+    let _ = args;
     match selector {
-        SIG_BLS_COMPRESS_G2_UNCHECKED => {
-            let (uncompressed,) = SolidityABI::<(Bytes,)>::decode_function_args(&args).unwrap();
-            let compressed = uncompressed[0].wrapping_add(0x22);
-            Some(encode_mock_return(&Bytes::from(vec![
-                compressed;
-                BLS_PUBKEY_LENGTH
-            ])))
-        }
-        SIG_BLS_COMPRESS_G1_UNCHECKED => {
-            let (uncompressed,) = SolidityABI::<(Bytes,)>::decode_function_args(&args).unwrap();
-            Some(encode_mock_return(
-                &uncompressed.slice(..BLS_SIGNATURE_LENGTH),
-            ))
-        }
-        SIG_BLS_VERIFY => Some(encode_mock_return(&true)),
         SIG_ERC20_TRANSFER_FROM | SIG_ERC20_TRANSFER => Some(encode_mock_return(&true)),
         // A reserve that can always cover the epoch. The close asks before it
         // prices an epoch, and a harness that has nothing to say about funding
@@ -517,6 +665,9 @@ fn install_stipend_token(
     }));
     let state = funding.clone();
     sdk.set_call_handler(move |address, _value, input, _fuel_limit| {
+        if let Some(reply) = mock_precompile_reply(address, input) {
+            return reply;
+        }
         if input.len() < SIG_LEN_BYTES {
             return SyscallResult::new(Bytes::new(), 0, 0, ExitCode::MalformedBuiltinParams);
         }
@@ -716,17 +867,12 @@ fn solidity_bytes_calldata_reaches_staking_handlers() {
 fn register_validator_cast_calldata_registers_consensus_keys_atomically() {
     let owner = Address::with_last_byte(0xa0);
     let validator = Address::with_last_byte(0x01);
-    let verifier = Address::with_last_byte(0xb0);
     let mut harness = Harness::new(1_000);
     harness.set_caller(owner);
     assert_eq!(
         harness.initialize(owner, Vec::new(), Vec::new(), 0),
         ExitCode::Ok
     );
-    chain_config_storage()
-        .bls_verifier_accessor()
-        .set_checked(&mut harness.sdk, verifier)
-        .unwrap();
 
     let calls = Rc::new(RefCell::new(Vec::new()));
     let recorded_calls = calls.clone();
@@ -735,6 +881,9 @@ fn register_validator_cast_calldata_registers_consensus_keys_atomically() {
     harness
         .sdk
         .set_call_handler(move |address, _value, input, _fuel_limit| {
+            if let Some(reply) = mock_precompile_reply(address, input) {
+                return reply;
+            }
             let selector = u32::from_be_bytes(input[..SIG_LEN_BYTES].try_into().unwrap());
             if selector == SIG_ERC20_TRANSFER_FROM {
                 let (from, to, amount) =
@@ -744,26 +893,11 @@ fn register_validator_cast_calldata_registers_consensus_keys_atomically() {
                     .push((address, from, to, amount));
                 return SyscallResult::new(encode_mock_return(&true), 0, 0, ExitCode::Ok);
             }
-            assert_eq!(address, verifier);
-            recorded_calls.borrow_mut().push(input.to_vec());
-            let output = match selector {
-                SIG_BLS_COMPRESS_G2_UNCHECKED => hex!(
-                    "0000000000000000000000000000000000000000000000000000000000000020
-                     0000000000000000000000000000000000000000000000000000000000000060
-                     3333333333333333333333333333333333333333333333333333333333333333
-                     3333333333333333333333333333333333333333333333333333333333333333
-                     3333333333333333333333333333333333333333333333333333333333333333"
-                )
-                .to_vec(),
-                SIG_BLS_VERIFY => {
-                    hex!("0000000000000000000000000000000000000000000000000000000000000001")
-                        .to_vec()
-                }
-                _ => {
-                    return SyscallResult::new(Bytes::new(), 0, 0, ExitCode::MalformedBuiltinParams)
-                }
-            };
-            SyscallResult::new(output.into(), 0, 0, ExitCode::Ok)
+            // Anything that is neither a precompile nor the token: there is no
+            // third callee left, and recording it is how this test would notice
+            // one coming back.
+            recorded_calls.borrow_mut().push((address, input.to_vec()));
+            SyscallResult::new(Bytes::new(), 0, 0, ExitCode::MalformedBuiltinParams)
         });
 
     // cast calldata
@@ -795,13 +929,10 @@ fn register_validator_cast_calldata_registers_consensus_keys_atomically() {
     harness.sdk.take_logs();
     assert_eq!(harness.call(calldata), (ExitCode::Ok, Vec::new()));
 
-    let calls = calls.borrow();
-    assert_eq!(calls.len(), 2);
-    assert_eq!(
-        &calls[0][..SIG_LEN_BYTES],
-        &SIG_BLS_COMPRESS_G2_UNCHECKED.to_be_bytes()
-    );
-    assert_eq!(&calls[1][..SIG_LEN_BYTES], &SIG_BLS_VERIFY.to_be_bytes());
+    // The verifier used to be two calls to a stored address. Registration now
+    // reaches nothing outside this contract but the BLEND token and the fixed
+    // precompiles, and there is no address in storage that could redirect it.
+    assert_eq!(*calls.borrow(), Vec::new());
     assert_eq!(
         *pulls.borrow(),
         vec![(
@@ -817,7 +948,7 @@ fn register_validator_cast_calldata_registers_consensus_keys_atomically() {
         .entry(validator);
     assert_eq!(
         consensus::read_bls_pubkey(&harness.sdk, validator).unwrap(),
-        Bytes::from(vec![0x33; BLS_PUBKEY_LENGTH])
+        Bytes::from(compressed_key_of(0x11))
     );
     assert_eq!(
         stored
@@ -846,49 +977,6 @@ fn solidity_bytes_outputs_and_event_match_cast_vectors() {
     assert_eq!(
         SolidityABI::<Bytes>::decode(&encoded_bytes, 0).unwrap(),
         Bytes::from_static(&[0xaa, 0xbb, 0xcc])
-    );
-
-    assert_eq!(
-        encode_args_call(
-            SIG_BLS_COMPRESS_G2_UNCHECKED,
-            &(Bytes::from_static(&[0xaa, 0xbb, 0xcc]),),
-        ),
-        hex!(
-            "a5d2dd22
-             0000000000000000000000000000000000000000000000000000000000000020
-             0000000000000000000000000000000000000000000000000000000000000003
-             aabbcc0000000000000000000000000000000000000000000000000000000000"
-        )
-    );
-    assert_eq!(
-        encode_args_call(
-            SIG_BLS_VERIFY,
-            &(
-                Bytes::from_static(&[0x01]),
-                Bytes::from_static(&[0x02, 0x03]),
-                Bytes::from_static(&[0x04]),
-                Bytes::from_static(&[0x05, 0x06]),
-                Bytes::from_static(&[0x07]),
-            ),
-        ),
-        hex!(
-            "8bf26133
-             00000000000000000000000000000000000000000000000000000000000000a0
-             00000000000000000000000000000000000000000000000000000000000000e0
-             0000000000000000000000000000000000000000000000000000000000000120
-             0000000000000000000000000000000000000000000000000000000000000160
-             00000000000000000000000000000000000000000000000000000000000001a0
-             0000000000000000000000000000000000000000000000000000000000000001
-             0100000000000000000000000000000000000000000000000000000000000000
-             0000000000000000000000000000000000000000000000000000000000000002
-             0203000000000000000000000000000000000000000000000000000000000000
-             0000000000000000000000000000000000000000000000000000000000000001
-             0400000000000000000000000000000000000000000000000000000000000000
-             0000000000000000000000000000000000000000000000000000000000000002
-             0506000000000000000000000000000000000000000000000000000000000000
-             0000000000000000000000000000000000000000000000000000000000000001
-             0700000000000000000000000000000000000000000000000000000000000000"
-        )
     );
 
     // Three elements, not one: a single-element array puts every head slot at offset 0, so it
@@ -1049,7 +1137,7 @@ fn get_consensus_keys_matches_dynamic_struct_return_vectors() {
     assert_eq!(
         decode_output::<ConsensusKeys>(&nonempty_output),
         ConsensusKeys {
-            bls_pubkey: Bytes::from(vec![0x33; BLS_PUBKEY_LENGTH]),
+            bls_pubkey: Bytes::from(compressed_key_of(0x11)),
             peer_pubkey: B256::with_last_byte(1),
             activation_epoch: 0,
         }
@@ -1063,7 +1151,7 @@ fn get_consensus_keys_matches_dynamic_struct_return_vectors() {
         (
             vec![validator],
             vec![ConsensusKeys {
-                bls_pubkey: Bytes::from(vec![0x33; BLS_PUBKEY_LENGTH]),
+                bls_pubkey: Bytes::from(compressed_key_of(0x11)),
                 peer_pubkey: B256::with_last_byte(1),
                 activation_epoch: 0,
             }],
@@ -1086,25 +1174,20 @@ fn parameterized_custom_errors_use_solidity_abi() {
         ExitCode::Ok
     );
     harness.set_caller(GENESIS_GOVERNANCE);
-    for (selector, field) in [
-        (SIG_SET_BLS_VERIFIER, "blsVerifier"),
-        (SIG_SET_BLEND_RESERVE, "blendReserve"),
-    ] {
-        let (_, output) = harness.call(encode_call(
-            selector,
-            &AddressCommand {
-                value: Address::ZERO,
-            },
-        ));
-        assert_eq!(&output[..4], &ERR_ZERO_VALUE.to_be_bytes());
-        assert_eq!(decode_output::<String>(&output[4..]), field);
-    }
+    let (_, output) = harness.call(encode_call(
+        SIG_SET_BLEND_RESERVE,
+        &AddressCommand {
+            value: Address::ZERO,
+        },
+    ));
+    assert_eq!(&output[..4], &ERR_ZERO_VALUE.to_be_bytes());
+    assert_eq!(decode_output::<String>(&output[4..]), "blendReserve");
 }
 
 #[test]
 fn derived_selectors_match_independent_hex_pins() {
     for (actual, pinned) in [
-        (SIG_INITIALIZE, 0xdfa8efb0),
+        (SIG_INITIALIZE, 0xfecaf0f1),
         (SIG_CURRENT_EPOCH, 0x76671808),
         (SIG_NEXT_EPOCH, 0xaea0e78b),
         (SIG_GET_STAKING_TOKEN, 0x9f9106d1),
@@ -1132,7 +1215,6 @@ fn derived_selectors_match_independent_hex_pins() {
         (SIG_SET_UNDELEGATE_PERIOD, 0x41d8a080),
         (SIG_SET_MIN_VALIDATOR_STAKE_AMOUNT, 0xe1a2e863),
         (SIG_SET_MIN_STAKING_AMOUNT, 0x612d669e),
-        (SIG_SET_BLS_VERIFIER, 0x466ae541),
         (SIG_GET_BLEND_RESERVE, 0x37dff538),
         (SIG_SET_BLEND_RESERVE, 0x7899ae8f),
         (SIG_GET_VALIDATOR_FEE, 0x457179fd),
@@ -1162,6 +1244,16 @@ fn derived_selectors_match_independent_hex_pins() {
         (SIG_SET_PRODUCTION_LIVENESS_DISABLED, 0x8fc07556),
         (SIG_RECORD_PRODUCTION, 0x1752910e),
         (ERR_MIN_VERDICT_DUE_BLOCKS_TOO_HIGH, 0xb1776ed0),
+        // The inlined verifier's five errors. They are the ones the retired
+        // `BLS12381Verifier` predeploy raised, so a caller that decoded a revert
+        // from it decodes the same revert now — which is only true while these
+        // strings are exact. Every other assertion about them in this file
+        // compares the contract's constant against itself.
+        (ERR_BLS_INFINITY_POINT, 0x5a3dde75),
+        (ERR_BLS_NAMESPACE_TOO_LONG, 0xcfa39070),
+        (ERR_BLS_DST_TOO_LONG, 0x8c978650),
+        (ERR_BLS_PRECOMPILE_FAILED, 0x84e81692),
+        (ERR_BLS_INVALID_POINT_LENGTH, 0x3532eb3b),
     ] {
         assert_eq!(actual, pinned);
     }
@@ -1352,10 +1444,6 @@ fn governance_lifecycle_updates_active_registry() {
         harness.initialize(owner, Vec::new(), Vec::new(), 0),
         ExitCode::Ok
     );
-    chain_config_storage()
-        .bls_verifier_accessor()
-        .set_checked(&mut harness.sdk, Address::with_last_byte(0xb0))
-        .unwrap();
 
     harness.set_caller(validator);
     assert_eq!(
@@ -1468,10 +1556,6 @@ fn register_validator_rejects_a_subminimum_bond() {
         harness.initialize(owner, Vec::new(), Vec::new(), 0),
         ExitCode::Ok
     );
-    chain_config_storage()
-        .bls_verifier_accessor()
-        .set_checked(&mut harness.sdk, Address::with_last_byte(0xb0))
-        .unwrap();
     harness.set_caller(validator);
 
     assert_revert_selector(
@@ -1513,10 +1597,6 @@ fn a_raised_validator_minimum_does_not_block_activating_an_earlier_registrant() 
         harness.initialize(owner, Vec::new(), Vec::new(), 0),
         ExitCode::Ok
     );
-    chain_config_storage()
-        .bls_verifier_accessor()
-        .set_checked(&mut harness.sdk, Address::with_last_byte(0xb0))
-        .unwrap();
 
     harness.set_caller(validator);
     assert_eq!(
@@ -1589,10 +1669,6 @@ fn an_owner_who_withdrew_his_whole_bond_cannot_be_activated() {
         harness.initialize(sponsor, Vec::new(), Vec::new(), 0),
         ExitCode::Ok
     );
-    chain_config_storage()
-        .bls_verifier_accessor()
-        .set_checked(&mut harness.sdk, Address::with_last_byte(0xb0))
-        .unwrap();
 
     harness.set_caller(validator);
     assert_eq!(
@@ -1697,7 +1773,6 @@ fn stores_chain_configuration_in_its_own_namespace() {
     command.min_validator_stake_amount = BALANCE_COMPACT_PRECISION;
     command.min_staking_amount = BALANCE_COMPACT_PRECISION;
     command.dpos_activation_block = 1_000;
-    command.bls_verifier = Address::with_last_byte(0xb2);
     command.min_undelegate_blocks = U256::from(701);
     assert_revert_selector(
         harness.call(encode_args_call(SIG_INITIALIZE, &command)),
@@ -1750,7 +1825,6 @@ fn governance_updates_embedded_chain_configuration() {
     let owner = Address::with_last_byte(0xa0);
     let outsider = Address::with_last_byte(0xb0);
     let slash_fund = Address::with_last_byte(0xc1);
-    let bls_verifier = Address::with_last_byte(0xc2);
     let blend_reserve = Address::with_last_byte(0xc5);
     let replacement_reserve = Address::with_last_byte(0xd5);
     let mut harness = Harness::new(1_000);
@@ -1807,7 +1881,6 @@ fn governance_updates_embedded_chain_configuration() {
     }
     for (selector, value) in [
         (SIG_SET_SLASH_FUND_ADDRESS, slash_fund),
-        (SIG_SET_BLS_VERIFIER, bls_verifier),
         (SIG_SET_BLEND_RESERVE, replacement_reserve),
     ] {
         assert_eq!(
@@ -1839,7 +1912,6 @@ fn governance_updates_embedded_chain_configuration() {
     }
     for (selector, expected) in [
         (SIG_GET_SLASH_FUND_ADDRESS, slash_fund),
-        (SIG_GET_BLS_VERIFIER, bls_verifier),
         (SIG_GET_BLEND_RESERVE, replacement_reserve),
     ] {
         let (exit, output) = harness.call(encode_empty_call(selector));
@@ -2051,18 +2123,11 @@ fn initializer_pulls_genesis_stake_from_declared_sponsor() {
     harness
         .sdk
         .set_call_handler(move |address, _value, input, _fuel_limit| {
+            if let Some(reply) = mock_precompile_reply(address, input) {
+                return reply;
+            }
             let selector = u32::from_be_bytes(input[..SIG_LEN_BYTES].try_into().unwrap());
             let output = match selector {
-                SIG_BLS_COMPRESS_G2_UNCHECKED => {
-                    let args = &input[SIG_LEN_BYTES..];
-                    let (uncompressed,) =
-                        SolidityABI::<(Bytes,)>::decode_function_args(&args).unwrap();
-                    encode_mock_return(&Bytes::from(vec![
-                        uncompressed[0].wrapping_add(0x22);
-                        BLS_PUBKEY_LENGTH
-                    ]))
-                }
-                SIG_BLS_VERIFY => encode_mock_return(&true),
                 SIG_ERC20_TRANSFER_FROM => {
                     let (from, to, amount) =
                         decode_output::<(Address, Address, U256)>(&input[SIG_LEN_BYTES..]);
@@ -2135,17 +2200,12 @@ fn initialize_and_registration_reject_bad_commission_and_duplicate_validator() {
 fn register_validator_verifies_and_stores_consensus_keys_in_one_call() {
     let owner = Address::with_last_byte(0xa0);
     let validator = Address::with_last_byte(0x01);
-    let verifier = Address::with_last_byte(0xb0);
     let peer_pubkey = B256::with_last_byte(0x11);
     let mut harness = Harness::new(1_000);
     assert_eq!(
         harness.initialize(owner, Vec::new(), Vec::new(), 0),
         ExitCode::Ok
     );
-    chain_config_storage()
-        .bls_verifier_accessor()
-        .set_checked(&mut harness.sdk, verifier)
-        .unwrap();
     harness.set_caller(owner);
 
     assert_eq!(
@@ -2179,7 +2239,7 @@ fn register_validator_verifies_and_stores_consensus_keys_in_one_call() {
     );
     assert_eq!(
         consensus::read_bls_pubkey(&harness.sdk, validator).unwrap(),
-        Bytes::from(vec![0x33; BLS_PUBKEY_LENGTH])
+        Bytes::from(compressed_key_of(0x11))
     );
     let keys = consensus_storage()
         .consensus_keys_accessor()
@@ -2199,7 +2259,7 @@ fn register_validator_verifies_and_stores_consensus_keys_in_one_call() {
     assert_eq!(
         consensus_storage()
             .bls_pubkey_owner_accessor()
-            .entry(keccak256(vec![0x33; BLS_PUBKEY_LENGTH]))
+            .entry(keccak256(compressed_key_of(0x11)))
             .get_checked(&harness.sdk)
             .unwrap(),
         validator
@@ -2212,21 +2272,16 @@ fn registration_rejects_replayed_bls_key_and_pop_without_partial_state() {
     let second_owner = Address::with_last_byte(0xa1);
     let first_validator = Address::with_last_byte(0x01);
     let second_validator = Address::with_last_byte(0x02);
-    let verifier = Address::with_last_byte(0xb0);
     let first_peer_pubkey = B256::with_last_byte(0x11);
     let second_peer_pubkey = B256::with_last_byte(0x12);
     let bls_pubkey_uncompressed = Bytes::from(vec![0x11; BLS_PUBKEY_UNCOMPRESSED_LENGTH]);
     let bls_pop_uncompressed = Bytes::from(vec![0x22; BLS_POP_UNCOMPRESSED_LENGTH]);
-    let bls_pubkey_hash = keccak256(vec![0x33; BLS_PUBKEY_LENGTH]);
+    let bls_pubkey_hash = keccak256(compressed_key_of(0x11));
     let mut harness = Harness::new(1_000);
     assert_eq!(
         harness.initialize(first_owner, Vec::new(), Vec::new(), 0),
         ExitCode::Ok
     );
-    chain_config_storage()
-        .bls_verifier_accessor()
-        .set_checked(&mut harness.sdk, verifier)
-        .unwrap();
 
     harness.set_caller(first_owner);
     assert_eq!(
@@ -2293,51 +2348,48 @@ fn registration_rejects_replayed_bls_key_and_pop_without_partial_state() {
         .is_zero());
 }
 
+/// A registration whose proof of possession does not verify writes nothing.
+///
+/// `InvalidProofOfPossession` had no test at all while the verifier was an
+/// external contract, because the shared stub answered `true` to every
+/// `verify` and no test installed one that answered `false`. It is the gate
+/// that stops a validator from registering a public key it does not hold the
+/// secret for — the whole premise of the rogue-key defence — so an unreachable
+/// gate was the one worth reaching first.
 #[test]
-fn registration_rejects_non_96_byte_compressed_key_without_partial_state() {
+fn registration_rejects_a_forged_proof_of_possession_without_partial_state() {
     let owner = Address::with_last_byte(0xa0);
     let validator = Address::with_last_byte(0x01);
-    let verifier = Address::with_last_byte(0xb0);
     let peer_pubkey = B256::with_last_byte(0x11);
     let mut harness = Harness::new(1_000);
     assert_eq!(
         harness.initialize(owner, Vec::new(), Vec::new(), 0),
         ExitCode::Ok
     );
-    chain_config_storage()
-        .bls_verifier_accessor()
-        .set_checked(&mut harness.sdk, verifier)
-        .unwrap();
-    harness
-        .sdk
-        .set_call_handler(move |address, _value, input, _fuel_limit| {
-            assert_eq!(address, verifier);
-            assert_eq!(
-                u32::from_be_bytes(input[..SIG_LEN_BYTES].try_into().unwrap()),
-                SIG_BLS_COMPRESS_G2_UNCHECKED
-            );
-            SyscallResult::new(
-                encode_mock_return(&Bytes::from(vec![0x33; BLS_PUBKEY_LENGTH - 1])),
-                0,
-                0,
-                ExitCode::Ok,
-            )
-        });
+    reject_every_pairing();
     harness.set_caller(owner);
 
-    assert_revert_selector(
-        harness.call(encode_args_call(
-            SIG_REGISTER_VALIDATOR,
-            &RegisterValidatorCommand {
-                validator,
-                commission_rate: 0,
-                initial_stake: DEFAULT_MIN_VALIDATOR_STAKE,
-                bls_pubkey_uncompressed: Bytes::from(vec![0x11; BLS_PUBKEY_UNCOMPRESSED_LENGTH]),
-                bls_pop_uncompressed: Bytes::from(vec![0x22; BLS_POP_UNCOMPRESSED_LENGTH]),
-                peer_pubkey,
-            },
-        )),
-        ERR_INVALID_CONSENSUS_KEY_ENCODING,
+    let (exit, output) = harness.call(encode_args_call(
+        SIG_REGISTER_VALIDATOR,
+        &RegisterValidatorCommand {
+            validator,
+            commission_rate: 0,
+            initial_stake: DEFAULT_MIN_VALIDATOR_STAKE,
+            bls_pubkey_uncompressed: Bytes::from(vec![0x11; BLS_PUBKEY_UNCOMPRESSED_LENGTH]),
+            bls_pop_uncompressed: Bytes::from(vec![0x22; BLS_POP_UNCOMPRESSED_LENGTH]),
+            peer_pubkey,
+        },
+    ));
+    assert_eq!(exit, ExitCode::Panic);
+    assert_eq!(
+        &output[..SIG_LEN_BYTES],
+        &ERR_INVALID_PROOF_OF_POSSESSION.to_be_bytes()
+    );
+    // The error names the rejected validator, which is what a caller reads to
+    // learn WHOSE registration failed inside a batch.
+    assert_eq!(
+        decode_output::<Address>(&output[SIG_LEN_BYTES..]),
+        validator
     );
     assert_eq!(
         staking_storage()
@@ -2943,6 +2995,9 @@ fn a_tombstone_refuses_redelegation_without_stranding_the_claim() {
     harness
         .sdk
         .set_call_handler(move |address, _value, input, _fuel_limit| {
+            if let Some(reply) = mock_precompile_reply(address, input) {
+                return reply;
+            }
             assert_eq!(address, token);
             let (_, to, amount) =
                 SolidityABI::<(Address, Address, U256)>::decode(&&input[SIG_LEN_BYTES..], 0)
@@ -3247,7 +3302,7 @@ fn committee_commit_is_system_gated_and_returns_epoch_stakes() {
         keys.iter()
             .map(|value| value.bls_pubkey[0])
             .collect::<Vec<_>>(),
-        vec![0x33, 0x34, 0x35, 0x36]
+        vec![0xb1, 0xb2, 0xb3, 0xb4]
     );
     assert_eq!(stakes, expected_stakes);
 
@@ -3849,17 +3904,12 @@ fn a_peer_key_cannot_be_reassigned_so_the_sort_key_is_immutable() {
     let second_owner = Address::with_last_byte(0xa1);
     let first_validator = Address::with_last_byte(0x01);
     let second_validator = Address::with_last_byte(0x02);
-    let verifier = Address::with_last_byte(0xb0);
     let shared_peer_pubkey = B256::with_last_byte(0x11);
     let mut harness = Harness::new(1_000);
     assert_eq!(
         harness.initialize(first_owner, Vec::new(), Vec::new(), 0),
         ExitCode::Ok
     );
-    chain_config_storage()
-        .bls_verifier_accessor()
-        .set_checked(&mut harness.sdk, verifier)
-        .unwrap();
 
     harness.set_caller(first_owner);
     assert_eq!(
@@ -4625,7 +4675,10 @@ fn the_owner_and_delegator_claims_split_an_accrued_epoch_by_its_commission() {
     let recorded = transfers.clone();
     harness
         .sdk
-        .set_call_handler(move |_address, _value, input, _fuel_limit| {
+        .set_call_handler(move |address, _value, input, _fuel_limit| {
+            if let Some(reply) = mock_precompile_reply(address, input) {
+                return reply;
+            }
             let (_, to, amount) =
                 SolidityABI::<(Address, Address, U256)>::decode(&&input[SIG_LEN_BYTES..], 0)
                     .unwrap();
@@ -4727,6 +4780,9 @@ fn a_permissionless_owner_claim_pays_the_owner_off_the_reserve() {
     harness
         .sdk
         .set_call_handler(move |address, _value, input, _fuel_limit| {
+            if let Some(reply) = mock_precompile_reply(address, input) {
+                return reply;
+            }
             assert_eq!(address, STAKING_TOKEN);
             assert_eq!(
                 u32::from_be_bytes(input[..SIG_LEN_BYTES].try_into().unwrap()),
@@ -5344,6 +5400,9 @@ fn equivocation_seizes_active_and_pending_self_delegation() {
     harness
         .sdk
         .set_call_handler(move |address, _value, input, _fuel_limit| {
+            if let Some(reply) = mock_precompile_reply(address, input) {
+                return reply;
+            }
             assert_eq!(address, token);
             assert_eq!(
                 u32::from_be_bytes(input[..SIG_LEN_BYTES].try_into().unwrap()),
@@ -5436,9 +5495,9 @@ const NULLIFY_FINALIZE_ROUTE: ProofRoute = ProofRoute {
 /// compresses to, carrying `route`'s conflict.
 ///
 /// The evidence is the node-side corpus blob and the two uncompressed signatures
-/// are that blob's own signature bytes padded to the 128-byte G1 width the mock
-/// verifier compresses back down, so the report carries exactly what the parser
-/// will find inside the blob.
+/// are 128-byte G1 preimages of that blob's own compressed signatures, so the
+/// contract's own `compress_g1_unchecked` reproduces exactly what the parser
+/// finds inside the blob.
 fn equivocation_report(
     sdk: &mut TestingContextImpl,
     route: &ProofRoute,
@@ -5446,16 +5505,11 @@ fn equivocation_report(
 ) -> EquivocationCommand {
     let blob = Bytes::copy_from_slice(route.blob);
     let decoded = evidence::decode(sdk, &blob, route.shape).expect("the corpus blob parses");
-    let uncompressed = |signature: &Bytes| {
-        let mut padded = signature.to_vec();
-        padded.resize(BLS_POP_UNCOMPRESSED_LENGTH, 0);
-        Bytes::from(padded)
-    };
     EquivocationCommand {
         evidence: blob,
         pk_uncompressed: Bytes::from(vec![pk_byte; BLS_PUBKEY_UNCOMPRESSED_LENGTH]),
-        sig1_uncompressed: uncompressed(&decoded.sig1),
-        sig2_uncompressed: uncompressed(&decoded.sig2),
+        sig1_uncompressed: g1_preimage_of(&decoded.sig1),
+        sig2_uncompressed: g1_preimage_of(&decoded.sig2),
     }
 }
 
@@ -5491,18 +5545,24 @@ fn slash_with_evidence(
 /// Records every ERC-20 transfer the contract makes while still answering the
 /// verifier calls the slash path depends on.
 ///
-/// `signatures_valid` is the answer the stand-in verifier gives to
-/// `verifyPairing`; `false` is the only way a test reaches the gate that decides
-/// whether the supplied signatures actually belong to the named key.
+/// `signatures_valid` is the verdict the PAIRING stand-in gives; `false` is the
+/// only way a test reaches the gate that decides whether the supplied signatures
+/// actually belong to the named key.
 fn record_transfers(
     harness: &Harness,
     signatures_valid: bool,
 ) -> Rc<RefCell<Vec<(Address, U256)>>> {
+    if !signatures_valid {
+        reject_every_pairing();
+    }
     let transfers = Rc::new(RefCell::new(Vec::<(Address, U256)>::new()));
     let recorded = transfers.clone();
     harness
         .sdk
         .set_call_handler(move |address, _value, input, _fuel_limit| {
+            if let Some(reply) = mock_precompile_reply(address, input) {
+                return reply;
+            }
             if input.len() < SIG_LEN_BYTES {
                 return SyscallResult::new(Bytes::new(), 0, 0, ExitCode::MalformedBuiltinParams);
             }
@@ -5512,9 +5572,6 @@ fn record_transfers(
                 recorded.borrow_mut().push(
                     SolidityABI::<(Address, U256)>::decode(&&input[SIG_LEN_BYTES..], 0).unwrap(),
                 );
-            }
-            if selector == SIG_BLS_VERIFY && !signatures_valid {
-                return SyscallResult::new(encode_mock_return(&false), 0, 0, ExitCode::Ok);
             }
             match mock_external_return(selector, &input[SIG_LEN_BYTES..]) {
                 Some(output) => SyscallResult::new(output, 0, 0, ExitCode::Ok),
@@ -5536,45 +5593,364 @@ const NS_NULLIFY: &[u8] = b"FLUENT_DPOS_V1_\x00\x00\x00\x00\x00\x00\x00\x00_NULL
 const NS_FINALIZE: &[u8] = b"FLUENT_DPOS_V1_\x00\x00\x00\x00\x00\x00\x00\x00_FINALIZE";
 const NS_ALL: &[&[u8]] = &[NS_NOTARIZE, NS_NULLIFY, NS_FINALIZE];
 
-/// Records the namespace of every BLS verify the contract performs, and accepts
-/// a signature only under the namespaces listed in `accept`.
+/// Records the namespace of every verify the contract performs, and accepts a
+/// signature only under the namespaces listed in `accept`.
 ///
-/// The shared handler answers `true` for any namespace at all
-/// (`mock_external_return`, `SIG_BLS_VERIFY`), which makes the whole
-/// kind -> domain-separator -> verifier chain invisible to tests: the message
-/// bytes of a legal notarize/nullify pair and of a slashable pair are identical,
-/// and the namespace is the only thing that tells them apart.
+/// Answering `true` for any namespace at all makes the whole
+/// kind -> domain-separator -> verify chain invisible: the message bytes of a
+/// legal notarize/nullify pair and of a slashable pair are identical, and the
+/// namespace is the only thing that tells them apart.
+///
+/// After the inline there is no ABI argument to read the namespace out of. It is
+/// read out of the `expand_message_xmd` preimage the contract feeds SHA-256
+/// instead — which is strictly better evidence: it is the domain the contract
+/// actually hashed under, not the one it said it would.
 fn record_verify_namespaces(
     harness: &Harness,
     accept: &'static [&'static [u8]],
 ) -> Rc<RefCell<Vec<Bytes>>> {
-    let seen = Rc::new(RefCell::new(Vec::<Bytes>::new()));
-    let recorder = seen.clone();
-    harness
-        .sdk
-        .set_call_handler(move |_address, _value, input, _fuel_limit| {
-            if input.len() < SIG_LEN_BYTES {
-                return SyscallResult::new(Bytes::new(), 0, 0, ExitCode::MalformedBuiltinParams);
-            }
-            let selector = u32::from_be_bytes(input[..SIG_LEN_BYTES].try_into().unwrap());
-            if selector == SIG_BLS_VERIFY {
-                // verify(bytes,bytes,bytes,bytes,bytes)
-                //       = (namespace, message, dst, signature, pubkey)
-                let (namespace, _msg, _dst, _sig, _pk) =
-                    SolidityABI::<(Bytes, Bytes, Bytes, Bytes, Bytes)>::decode_function_args(
-                        &&input[SIG_LEN_BYTES..],
-                    )
-                    .unwrap();
-                let accepted = accept.contains(&namespace.as_ref());
-                recorder.borrow_mut().push(namespace);
-                return SyscallResult::new(encode_mock_return(&accepted), 0, 0, ExitCode::Ok);
-            }
-            match mock_external_return(selector, &input[SIG_LEN_BYTES..]) {
-                Some(output) => SyscallResult::new(output, 0, 0, ExitCode::Ok),
-                None => SyscallResult::new(Bytes::new(), 0, 0, ExitCode::MalformedBuiltinParams),
-            }
-        });
-    seen
+    let _ = harness;
+    BLS_PRECOMPILES.with(|mock| {
+        let mut mock = mock.borrow_mut();
+        mock.accept = Some(accept.iter().map(|entry| entry.to_vec()).collect());
+        mock.seen = Rc::new(RefCell::new(Vec::new()));
+        mock.seen.clone()
+    })
+}
+
+/// Every pairing fails, which is what an invalid signature looks like from this
+/// contract's side.
+fn reject_every_pairing() {
+    BLS_PRECOMPILES.with(|mock| mock.borrow_mut().accept = Some(Vec::new()));
+}
+
+/// `address` answers one byte short of the width the verifier demands.
+fn truncate_precompile(address: Address) {
+    BLS_PRECOMPILES.with(|mock| mock.borrow_mut().truncate = Some(address));
+}
+
+/// `address` refuses the call.
+fn refuse_precompile(address: Address) {
+    BLS_PRECOMPILES.with(|mock| mock.borrow_mut().refuse = Some(address));
+}
+
+/// `address` answers the right width, all zeroes.
+fn zero_precompile(address: Address) {
+    BLS_PRECOMPILES.with(|mock| mock.borrow_mut().zero = Some(address));
+}
+
+/// A 256-byte EIP-2537 G2 with the four coordinates spelled out, so a test can
+/// see which half of `x` the compression puts first and which coordinate the
+/// sign is read from.
+fn g2_point(x_c0: &[u8], x_c1: &[u8], y_c0: &[u8], y_c1: &[u8]) -> Vec<u8> {
+    let mut point = vec![0u8; BLS_PUBKEY_UNCOMPRESSED_LENGTH];
+    for (offset, coordinate) in [(16, x_c0), (80, x_c1), (144, y_c0), (208, y_c1)] {
+        point[offset..offset + 48].copy_from_slice(coordinate);
+    }
+    point
+}
+
+/// `(p-1)/2`, the exact boundary of the y-sign rule.
+const FIELD_HALF: [u8; 48] = hex!(
+    "0d0088f51cbff34d258dd3db21a5d66bb23ba5c279c2895fb39869507b587b120f55ffff58a9ffffdcff7fffffffd555"
+);
+
+/// The zcash G2 form puts the IMAGINARY coefficient first while EIP-2537 puts
+/// the real one first, and the sign comes from `y.c1` and only falls back to
+/// `y.c0` when `y.c1` is zero. Both halves of that were a single line in the
+/// Solidity and are a single line here; a swap produces a well-formed 96-byte
+/// key that matches nothing any node registered.
+#[test]
+fn g2_compression_swaps_the_halves_and_reads_the_sign_from_c1() {
+    let mut harness = Harness::new(0);
+    let low = [0x01u8; 48];
+    let high = [0xf0u8; 48];
+    // Leading bytes deliberately clear of BOTH flag bits: a key whose own first
+    // byte already carries `0x80` or `0x20` cannot tell a set flag from an
+    // unset one, and reads as passing whatever the sign rule does.
+    let x_c0 = [0x0au8; 48];
+    let x_c1 = [0x15u8; 48];
+
+    let point = g2_point(&x_c0, &x_c1, &high, &low);
+    let compressed = bls::compress_g2_unchecked(&mut harness.sdk, &point).unwrap();
+    // x.c1 leads, x.c0 follows, and the leading byte gains only the compression
+    // flag: y.c1 is below the half, and y.c0 is NOT consulted because y.c1 is
+    // non-zero — even though y.c0 here is above the half.
+    assert_eq!(compressed[0], 0x15 | 0x80);
+    assert_eq!(&compressed[1..48], &[0x15; 47]);
+    assert_eq!(&compressed[48..], &[0x0a; 48]);
+
+    // y.c1 zero hands the decision to y.c0.
+    let point = g2_point(&x_c0, &x_c1, &high, &[0x00; 48]);
+    let compressed = bls::compress_g2_unchecked(&mut harness.sdk, &point).unwrap();
+    assert_eq!(compressed[0], 0x15 | 0x80 | 0x20);
+}
+
+/// The comparison against `(p-1)/2` is STRICT. At exactly the half the sign bit
+/// stays clear; one above sets it. An off-by-one here mints a key that is the
+/// negation of the one the node holds.
+#[test]
+fn the_y_sign_bit_is_strictly_above_half_the_field() {
+    let mut harness = Harness::new(0);
+    let mut above = FIELD_HALF;
+    above[47] += 1;
+
+    // `0x15` carries neither flag bit of its own, so the two answers differ.
+    let at = g2_point(&[0x0a; 48], &[0x15; 48], &[0x00; 48], &FIELD_HALF);
+    let over = g2_point(&[0x0a; 48], &[0x15; 48], &[0x00; 48], &above);
+    assert_eq!(
+        bls::compress_g2_unchecked(&mut harness.sdk, &at).unwrap()[0],
+        0x15 | 0x80
+    );
+    assert_eq!(
+        bls::compress_g2_unchecked(&mut harness.sdk, &over).unwrap()[0],
+        0x15 | 0x80 | 0x20
+    );
+}
+
+/// `verify` refuses infinity on all three of the points it handles.
+///
+/// PAIRING SKIPS an infinity pair rather than rejecting it, so an all-zero point
+/// on any side would drop a factor out of `e(sig, -G2gen) · e(H, pk) == 1` and
+/// leave the rest to hold on its own. The guard is the whole reason the equation
+/// means anything, and it is three separate calls — the signature, the key, and
+/// the hash the precompiles just produced. Nothing else in this file reaches any
+/// of them: the two callers hand `verify` points that other checks already
+/// rejected, and `H` comes back from a precompile that cannot be asked for
+/// infinity except by a test that asks.
+#[test]
+fn verify_refuses_an_infinity_point_on_every_side() {
+    let dst = b"BLS_POP_BLS12381G1_XMD:SHA-256_SSWU_RO_POP_";
+    let key = vec![0x11u8; BLS_PUBKEY_UNCOMPRESSED_LENGTH];
+    let signature = vec![0x22u8; BLS_POP_UNCOMPRESSED_LENGTH];
+
+    for (label, sig, pk, zero_g1add) in [
+        (
+            "signature",
+            vec![0u8; BLS_POP_UNCOMPRESSED_LENGTH],
+            key.clone(),
+            false,
+        ),
+        (
+            "public key",
+            signature.clone(),
+            vec![0u8; BLS_PUBKEY_UNCOMPRESSED_LENGTH],
+            false,
+        ),
+        ("hash-to-curve result", signature.clone(), key.clone(), true),
+    ] {
+        let mut harness = Harness::new(0);
+        if zero_g1add {
+            zero_precompile(PRECOMPILE_G1ADD);
+        }
+        assert_eq!(
+            bls::verify(&mut harness.sdk, b"ns", b"m", dst, &sig, &pk).err(),
+            Some(ExitCode::Panic),
+            "{label} at infinity was not refused"
+        );
+        assert_eq!(
+            &harness.sdk.take_output()[..SIG_LEN_BYTES],
+            &ERR_BLS_INFINITY_POINT.to_be_bytes(),
+            "{label} at infinity raised the wrong error"
+        );
+    }
+}
+
+/// The G1 side of the same sign rule, on its own inputs.
+///
+/// Nothing else in this file reaches it: every G1 compression here runs over a
+/// corpus signature whose leading byte already carries the flag bits, so a
+/// dropped sign bit changes no byte. `y` is the only input that moves.
+#[test]
+fn g1_compression_takes_the_sign_from_y_alone() {
+    let mut harness = Harness::new(0);
+    let mut point = vec![0u8; BLS_POP_UNCOMPRESSED_LENGTH];
+    point[16..64].fill(0x15);
+
+    point[80..].copy_from_slice(&FIELD_HALF);
+    let compressed = bls::compress_g1_unchecked(&mut harness.sdk, &point).unwrap();
+    assert_eq!(compressed[0], 0x15 | 0x80);
+    assert_eq!(&compressed[1..], &[0x15; 47]);
+
+    let mut above = FIELD_HALF;
+    above[47] += 1;
+    point[80..].copy_from_slice(&above);
+    let compressed = bls::compress_g1_unchecked(&mut harness.sdk, &point).unwrap();
+    assert_eq!(compressed[0], 0x15 | 0x80 | 0x20);
+    // `x` is untouched by the sign: only the leading byte's flags move.
+    assert_eq!(&compressed[1..], &[0x15; 47]);
+}
+
+/// Compressing the all-zero EIP-2537 encoding would hand back a well-formed
+/// `0x80…` reference for the point at infinity, which PAIRING SKIPS rather than
+/// rejects — so the equation would hold for free. Both widths refuse it, and
+/// both refuse a wrong width outright.
+#[test]
+fn compression_refuses_infinity_and_a_wrong_width() {
+    let mut harness = Harness::new(0);
+    type Compress = fn(&mut TestingContextImpl, &[u8]) -> Option<ExitCode>;
+    let g2: Compress = |sdk, point| bls::compress_g2_unchecked(sdk, point).err();
+    let g1: Compress = |sdk, point| bls::compress_g1_unchecked(sdk, point).err();
+    for (compress, point, expected) in [
+        (g2, vec![0u8; 256], ERR_BLS_INFINITY_POINT),
+        (g1, vec![0u8; 128], ERR_BLS_INFINITY_POINT),
+        (g2, vec![0x11u8; 255], ERR_BLS_INVALID_POINT_LENGTH),
+        (g1, vec![0x11u8; 129], ERR_BLS_INVALID_POINT_LENGTH),
+    ] {
+        assert_eq!(compress(&mut harness.sdk, &point), Some(ExitCode::Panic));
+        assert_eq!(
+            &harness.sdk.take_output()[..SIG_LEN_BYTES],
+            &expected.to_be_bytes()
+        );
+    }
+}
+
+/// The length prefix `union_unique` writes is ONE byte; the node writes a full
+/// LEB128 varint. They agree only while every namespace stays under 128 bytes,
+/// and the guard is what keeps the day they stop agreeing from being silent.
+/// No caller can reach this today — both namespaces are built in this contract
+/// and are 23 to 32 bytes — which is exactly why it is worth pinning: the
+/// pressure on a later reader is to delete it as dead.
+#[test]
+fn a_namespace_that_would_outgrow_one_length_byte_is_refused() {
+    let mut harness = Harness::new(0);
+    let key = vec![0x11u8; BLS_PUBKEY_UNCOMPRESSED_LENGTH];
+    let signature = vec![0x22u8; BLS_POP_UNCOMPRESSED_LENGTH];
+    let dst = b"BLS_POP_BLS12381G1_XMD:SHA-256_SSWU_RO_POP_";
+
+    assert!(bls::verify(&mut harness.sdk, &[0x5a; 127], b"m", dst, &signature, &key).unwrap());
+    assert_eq!(
+        bls::verify(&mut harness.sdk, &[0x5a; 128], b"m", dst, &signature, &key).err(),
+        Some(ExitCode::Panic)
+    );
+    assert_eq!(
+        &harness.sdk.take_output()[..SIG_LEN_BYTES],
+        &ERR_BLS_NAMESPACE_TOO_LONG.to_be_bytes()
+    );
+}
+
+/// RFC 9380's long-DST workaround is deliberately absent, so a DST past the
+/// short-DST limit is refused rather than quietly rehashed into a different
+/// domain. Unreachable from a caller for the same reason as the namespace guard.
+#[test]
+fn a_dst_past_the_short_dst_limit_is_refused() {
+    let mut harness = Harness::new(0);
+    let key = vec![0x11u8; BLS_PUBKEY_UNCOMPRESSED_LENGTH];
+    let signature = vec![0x22u8; BLS_POP_UNCOMPRESSED_LENGTH];
+
+    assert!(bls::verify(
+        &mut harness.sdk,
+        b"ns",
+        b"m",
+        &[0x44; 255],
+        &signature,
+        &key
+    )
+    .unwrap());
+    assert_eq!(
+        bls::verify(
+            &mut harness.sdk,
+            b"ns",
+            b"m",
+            &[0x44; 256],
+            &signature,
+            &key
+        )
+        .err(),
+        Some(ExitCode::Panic)
+    );
+    assert_eq!(
+        &harness.sdk.take_output()[..SIG_LEN_BYTES],
+        &ERR_BLS_DST_TOO_LONG.to_be_bytes()
+    );
+}
+
+/// A precompile that answers the wrong width, or refuses, must stop the call.
+///
+/// A short MODEXP answer shifts the field element inside the 64-byte MAP input;
+/// a short MAP or G1ADD answer shifts the 384-byte per-pair boundary inside the
+/// PAIRING input. Either would be read as a different, well-formed point, and
+/// the verify would then be answering about something nobody signed. Reachable
+/// through the public registration path, not only in isolation.
+#[test]
+fn a_precompile_that_answers_wrongly_stops_the_registration() {
+    for (address, break_it) in [
+        (PRECOMPILE_MODEXP, truncate_precompile as fn(Address)),
+        (PRECOMPILE_MAP_FP_TO_G1, truncate_precompile),
+        (PRECOMPILE_G1ADD, truncate_precompile),
+        (PRECOMPILE_SHA256, refuse_precompile),
+        (PRECOMPILE_MODEXP, refuse_precompile),
+    ] {
+        let owner = Address::with_last_byte(0xa0);
+        let validator = Address::with_last_byte(0x01);
+        let mut harness = Harness::new(1_000);
+        assert_eq!(
+            harness.initialize(owner, Vec::new(), Vec::new(), 0),
+            ExitCode::Ok
+        );
+        break_it(address);
+        harness.set_caller(owner);
+
+        let (exit, output) = harness.call(encode_args_call(
+            SIG_REGISTER_VALIDATOR,
+            &RegisterValidatorCommand {
+                validator,
+                commission_rate: 0,
+                initial_stake: DEFAULT_MIN_VALIDATOR_STAKE,
+                bls_pubkey_uncompressed: Bytes::from(vec![0x11; BLS_PUBKEY_UNCOMPRESSED_LENGTH]),
+                bls_pop_uncompressed: Bytes::from(vec![0x22; BLS_POP_UNCOMPRESSED_LENGTH]),
+                peer_pubkey: B256::with_last_byte(0x11),
+            },
+        ));
+        assert_eq!(exit, ExitCode::Panic, "{address} did not stop the call");
+        assert_eq!(
+            &output[..SIG_LEN_BYTES],
+            &ERR_BLS_PRECOMPILE_FAILED.to_be_bytes()
+        );
+        assert_eq!(
+            staking_storage()
+                .validators_accessor()
+                .entry(validator)
+                .status_accessor()
+                .get_checked(&harness.sdk)
+                .unwrap(),
+            STATUS_NOT_FOUND
+        );
+    }
+}
+
+/// PAIRING is the one precompile whose refusal is NOT a revert: a bad point, a
+/// dirty EIP-2537 pad, a non-canonical coordinate and a plain wrong signature
+/// all arrive there and all mean "this signature is not valid", which is a
+/// verdict the caller has to be able to act on rather than a malformed call.
+#[test]
+fn a_refused_pairing_is_an_invalid_signature_and_not_a_broken_call() {
+    let owner = Address::with_last_byte(0xa0);
+    let validator = Address::with_last_byte(0x01);
+    let mut harness = Harness::new(1_000);
+    assert_eq!(
+        harness.initialize(owner, Vec::new(), Vec::new(), 0),
+        ExitCode::Ok
+    );
+    refuse_precompile(PRECOMPILE_PAIRING);
+    harness.set_caller(owner);
+
+    let (exit, output) = harness.call(encode_args_call(
+        SIG_REGISTER_VALIDATOR,
+        &RegisterValidatorCommand {
+            validator,
+            commission_rate: 0,
+            initial_stake: DEFAULT_MIN_VALIDATOR_STAKE,
+            bls_pubkey_uncompressed: Bytes::from(vec![0x11; BLS_PUBKEY_UNCOMPRESSED_LENGTH]),
+            bls_pop_uncompressed: Bytes::from(vec![0x22; BLS_POP_UNCOMPRESSED_LENGTH]),
+            peer_pubkey: B256::with_last_byte(0x11),
+        },
+    ));
+    assert_eq!(exit, ExitCode::Panic);
+    assert_eq!(
+        &output[..SIG_LEN_BYTES],
+        &ERR_INVALID_PROOF_OF_POSSESSION.to_be_bytes()
+    );
 }
 
 /// Each slash route must hash its two messages under the domain separators its
@@ -5786,6 +6162,9 @@ fn record_transfers_refusing(
     harness
         .sdk
         .set_call_handler(move |address, _value, input, _fuel_limit| {
+            if let Some(reply) = mock_precompile_reply(address, input) {
+                return reply;
+            }
             if input.len() < SIG_LEN_BYTES {
                 return SyscallResult::new(Bytes::new(), 0, 0, ExitCode::MalformedBuiltinParams);
             }
@@ -8099,7 +8478,12 @@ fn token_reply(input: &[u8], state: &Rc<RefCell<CloseCallState>>) -> SyscallResu
 fn install_close_call_handler(harness: &Harness, state: Rc<RefCell<CloseCallState>>) {
     harness
         .sdk
-        .set_call_handler(move |_address, _value, input, _fuel_limit| token_reply(input, &state));
+        .set_call_handler(move |address, _value, input, _fuel_limit| {
+            if let Some(reply) = mock_precompile_reply(address, input) {
+                return reply;
+            }
+            token_reply(input, &state)
+        });
 }
 
 // The close accrues and then pays inside one call, so the order of the two is
@@ -8642,7 +9026,10 @@ fn delegator_claim_amounts(
     let (a, b) = (pulled.clone(), transferred.clone());
     harness
         .sdk
-        .set_call_handler(move |_address, _value, input, _fuel_limit| {
+        .set_call_handler(move |address, _value, input, _fuel_limit| {
+            if let Some(reply) = mock_precompile_reply(address, input) {
+                return reply;
+            }
             let selector = u32::from_be_bytes(input[..SIG_LEN_BYTES].try_into().unwrap());
             if selector == SIG_ERC20_TRANSFER_FROM {
                 let (_, _, amount) =

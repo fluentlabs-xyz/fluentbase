@@ -32,7 +32,6 @@ pub struct ChainConfigStorage {
     min_staking_amount: StorageU256,
     slash_fund_address: StorageAddress,
     blend_stipend_per_epoch: StorageU256,
-    bls_verifier: StorageAddress,
     min_undelegate_blocks: StorageU256,
     /// Address the epoch stipend is drawn from, not a contract implementing a
     /// reserve interface: a claim pulls with `transferFrom`, so any holder that

@@ -16,10 +16,10 @@ pub const STATUS_JAIL: u8 = 3;
 // ABI selectors are derived from their canonical signatures. The pinned hex
 // values remain beside them to make ABI drift visible during review.
 
-// 0xdfa8efb0
+// 0xfecaf0f1
 pub const SIG_INITIALIZE: u32 =
     derive_keccak256_id!(
-        "initialize(address,address[],uint256[],bytes[],bytes[],bytes32[],uint16,address,uint32,uint32,uint32,uint256,uint256,uint64,address,uint256,address)"
+        "initialize(address,address[],uint256[],bytes[],bytes[],bytes32[],uint16,address,uint32,uint32,uint32,uint256,uint256,uint64,uint256,address)"
     );
 // 0x76671808
 pub const SIG_CURRENT_EPOCH: u32 = derive_keccak256_id!("currentEpoch()");
@@ -121,10 +121,6 @@ pub const SIG_SET_MIN_VALIDATOR_STAKE_AMOUNT: u32 =
     derive_keccak256_id!("setMinValidatorStakeAmount(uint256)");
 // 0x612d669e
 pub const SIG_SET_MIN_STAKING_AMOUNT: u32 = derive_keccak256_id!("setMinStakingAmount(uint256)");
-// 0xc6b904ad
-pub const SIG_GET_BLS_VERIFIER: u32 = derive_keccak256_id!("getBlsVerifier()");
-// 0x466ae541
-pub const SIG_SET_BLS_VERIFIER: u32 = derive_keccak256_id!("setBlsVerifier(address)");
 // 0x37dff538
 pub const SIG_GET_BLEND_RESERVE: u32 = derive_keccak256_id!("getBlendReserve()");
 // 0x7899ae8f
@@ -210,10 +206,6 @@ pub const SIG_GET_EPOCH_COMMITTEE: u32 = derive_keccak256_id!("getEpochCommittee
 // 0xa4d160c1
 pub const SIG_GET_EPOCH_COMMITTEE_WITH_STAKES: u32 =
     derive_keccak256_id!("getEpochCommitteeWithStakes(uint64)");
-// 0xa5d2dd22
-pub const SIG_BLS_COMPRESS_G2_UNCHECKED: u32 = derive_keccak256_id!("compressG2Unchecked(bytes)");
-// 0x8bf26133
-pub const SIG_BLS_VERIFY: u32 = derive_keccak256_id!("verify(bytes,bytes,bytes,bytes,bytes)");
 // 0xdc6fb3f2
 pub const SIG_SLASH_EQUIVOCATION: u32 = derive_keccak256_id!("slashEquivocation(uint64,uint32)");
 // 0xe28d2f63
@@ -225,8 +217,6 @@ pub const SIG_SLASH_EQUIVOCATION_FINALIZE: u32 =
 // 0xa10827e9
 pub const SIG_SLASH_EQUIVOCATION_NULLIFY_FINALIZE: u32 =
     derive_keccak256_id!("slashEquivocationNullifyFinalize(bytes,bytes,bytes,bytes)");
-// 0x8f498050
-pub const SIG_BLS_COMPRESS_G1_UNCHECKED: u32 = derive_keccak256_id!("compressG1Unchecked(bytes)");
 
 pub const ERR_ALREADY_INITIALIZED: u32 = derive_keccak256_id!("InvalidInitialization()");
 pub const ERR_NOT_INITIALIZED: u32 = derive_keccak256_id!("NotInitialized()");
@@ -306,7 +296,14 @@ pub const ERR_EPOCH_NOT_YET_COMMITTABLE: u32 =
     derive_keccak256_id!("EpochNotYetCommittable(uint64,uint64)");
 pub const ERR_ALREADY_SLASHED_FOR_EQUIVOCATION: u32 =
     derive_keccak256_id!("AlreadySlashedForEquivocation(address)");
-pub const ERR_BLS_VERIFIER_NOT_CONFIGURED: u32 = derive_keccak256_id!("BlsVerifierNotConfigured()");
+// The five errors the inlined BLS verifier raises. Their names and selectors
+// are the ones the external `BLS12381Verifier` predeploy used, so a caller that
+// decoded a revert from it decodes the same revert now.
+pub const ERR_BLS_INFINITY_POINT: u32 = derive_keccak256_id!("InfinityPoint()");
+pub const ERR_BLS_NAMESPACE_TOO_LONG: u32 = derive_keccak256_id!("NamespaceTooLong()");
+pub const ERR_BLS_DST_TOO_LONG: u32 = derive_keccak256_id!("DstTooLong()");
+pub const ERR_BLS_PRECOMPILE_FAILED: u32 = derive_keccak256_id!("PrecompileFailed()");
+pub const ERR_BLS_INVALID_POINT_LENGTH: u32 = derive_keccak256_id!("InvalidPointLength()");
 pub const ERR_INVALID_PROOF_OF_POSSESSION: u32 =
     derive_keccak256_id!("InvalidProofOfPossession(address)");
 pub const ERR_INVALID_CONSENSUS_KEY_ENCODING: u32 =

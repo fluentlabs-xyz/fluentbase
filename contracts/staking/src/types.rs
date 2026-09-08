@@ -27,7 +27,6 @@ pub struct InitializeCommand {
     pub min_validator_stake_amount: U256,
     pub min_staking_amount: U256,
     pub dpos_activation_block: u64,
-    pub bls_verifier: Address,
     pub min_undelegate_blocks: U256,
     pub blend_reserve: Address,
 }

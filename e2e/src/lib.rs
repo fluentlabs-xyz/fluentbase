@@ -28,6 +28,8 @@ use revm::{bytecode::Bytecode, state::AccountInfo};
 #[cfg(test)]
 mod blockhash;
 #[cfg(test)]
+mod bls_vectors;
+#[cfg(test)]
 mod bridge;
 #[cfg(test)]
 mod builtins;
@@ -47,6 +49,8 @@ mod fuel;
 mod gas;
 #[cfg(test)]
 mod helpers;
+#[cfg(test)]
+mod staking_bls;
 // #[cfg(test)]
 // mod nitro;
 #[cfg(test)]

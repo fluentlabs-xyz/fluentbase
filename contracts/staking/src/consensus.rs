@@ -1,6 +1,7 @@
 //! Consensus-key registration and deterministic epoch committee commits.
 
 use crate::{
+    bls,
     consts::*,
     events,
     evidence::{self, EvidenceShape},
@@ -20,23 +21,11 @@ use alloc::vec::Vec;
 use fluentbase_sdk::{
     byteorder::BE,
     bytes::BytesMut,
-    codec::{Encoder, FunctionArgs, SolidityABI},
+    codec::{FunctionArgs, SolidityABI},
     keccak256, Address, Bytes, ContextReader, ExitCode, SharedAPI, Uint, B256, U256,
 };
 
 const BLS_POP_DST: &[u8] = b"BLS_POP_BLS12381G1_XMD:SHA-256_SSWU_RO_POP_";
-
-fn encode_external_call<T>(selector: u32, params: &T) -> Result<Vec<u8>, ExitCode>
-where
-    T: FunctionArgs<BE, 32, true, false>,
-{
-    let mut encoded = BytesMut::new();
-    SolidityABI::<T>::encode_function_args(params, &mut encoded)
-        .map_err(|_| ExitCode::MalformedBuiltinParams)?;
-    let mut input = selector.to_be_bytes().to_vec();
-    input.extend_from_slice(&encoded);
-    Ok(input)
-}
 
 /// Encode a Solidity function's return tuple without an outer tuple offset.
 fn write_returns<SDK, T>(sdk: &mut SDK, value: &T) -> Result<(), ExitCode>
@@ -49,25 +38,6 @@ where
         .map_err(|_| ExitCode::MalformedBuiltinParams)?;
     sdk.write(output.freeze());
     Ok(())
-}
-
-fn external_call<SDK, T>(
-    sdk: &mut SDK,
-    target: Address,
-    selector: u32,
-    params: &T,
-) -> Result<Bytes, ExitCode>
-where
-    SDK: SharedAPI,
-    T: FunctionArgs<BE, 32, true, false>,
-{
-    let input = encode_external_call(selector, params)?;
-    let result = sdk.call(target, U256::ZERO, &input, None);
-    if !result.status.is_ok() {
-        sdk.write(result.data);
-        return Err(result.status);
-    }
-    Ok(result.data)
 }
 
 fn read_consensus_keys<SDK: SharedAPI>(
@@ -148,24 +118,8 @@ pub(crate) fn verify_consensus_keys<SDK: SharedAPI>(
         return revert_with(sdk, ERR_PEER_PUBKEY_ALREADY_IN_USE, &peer_pubkey);
     }
 
-    let verifier = chain_config_storage()
-        .bls_verifier_accessor()
-        .get_checked(sdk)?;
-    if verifier.is_zero() {
-        return revert(sdk, ERR_BLS_VERIFIER_NOT_CONFIGURED);
-    }
-    let compressed_output = external_call(
-        sdk,
-        verifier,
-        SIG_BLS_COMPRESS_G2_UNCHECKED,
-        &(bls_pubkey_uncompressed.clone(),),
-    )?;
-    let compressed = SolidityABI::<Bytes>::decode(&compressed_output, 0)
-        .map_err(|_| ExitCode::MalformedBuiltinParams)?;
-    if compressed.len() != BLS_PUBKEY_LENGTH {
-        return revert(sdk, ERR_INVALID_CONSENSUS_KEY_ENCODING);
-    }
-    let bls_pubkey_hash = keccak256(&compressed);
+    let compressed = bls::compress_g2_unchecked(sdk, &bls_pubkey_uncompressed)?;
+    let bls_pubkey_hash = keccak256(compressed);
     if !consensus
         .bls_pubkey_owner_accessor()
         .entry(bls_pubkey_hash)
@@ -174,26 +128,27 @@ pub(crate) fn verify_consensus_keys<SDK: SharedAPI>(
     {
         return revert_with(sdk, ERR_BLS_PUBKEY_ALREADY_IN_USE, &bls_pubkey_hash);
     }
-    let verify_output = external_call(
+    // The compressed key is what the node registered its identity under, and it
+    // is what goes into the signed message — the PoP is a signature over the
+    // validator's own public key. The uncompressed bytes go in beside it, and
+    // PAIRING is what ties the two together: an attacker who finds a second
+    // 256-byte preimage compressing to a registered key still has to pass a
+    // pairing over THOSE bytes, which rejects a non-canonical coordinate and a
+    // dirty EIP-2537 pad.
+    let valid = bls::verify(
         sdk,
-        verifier,
-        SIG_BLS_VERIFY,
-        &(
-            fluent_namespace(sdk),
-            compressed.clone(),
-            Bytes::from_static(BLS_POP_DST),
-            bls_pop_uncompressed,
-            bls_pubkey_uncompressed,
-        ),
+        &fluent_namespace(sdk),
+        &compressed,
+        BLS_POP_DST,
+        &bls_pop_uncompressed,
+        &bls_pubkey_uncompressed,
     )?;
-    let valid = SolidityABI::<bool>::decode(&verify_output, 0)
-        .map_err(|_| ExitCode::MalformedBuiltinParams)?;
     if !valid {
         return revert_with(sdk, ERR_INVALID_PROOF_OF_POSSESSION, &validator);
     }
 
-    // The length check above already pinned `compressed` to exactly
-    // `BLS_PUBKEY_WORDS` whole words, so the chunking cannot leave a remainder.
+    // `compress_g2_unchecked` returns exactly `BLS_PUBKEY_WORDS` whole words, so
+    // the chunking cannot leave a remainder.
     let mut bls_pubkey = [B256::ZERO; BLS_PUBKEY_WORDS];
     for (word, chunk) in bls_pubkey
         .iter_mut()
@@ -205,7 +160,7 @@ pub(crate) fn verify_consensus_keys<SDK: SharedAPI>(
     Ok(VerifiedConsensusKeys {
         bls_pubkey,
         bls_pubkey_hash,
-        encoded_bls_pubkey: compressed,
+        encoded_bls_pubkey: Bytes::copy_from_slice(&compressed),
         peer_pubkey,
     })
 }
@@ -222,8 +177,14 @@ pub(crate) fn store_consensus_keys<SDK: SharedAPI>(
     if !keys.peer_pubkey_accessor().get_checked(sdk)?.is_zero() {
         return revert_with(sdk, ERR_CONSENSUS_KEYS_ALREADY_SET, &validator);
     }
-    // Recheck after verifier calls so a reentrant peer-key claim cannot be
-    // overwritten when the external call returns.
+    // Duplicates the check `verify_consensus_keys` already made, and is
+    // UNREACHABLE today: nothing runs between the two that could claim the key.
+    // It used to be reachable — the verifier was an external contract and could
+    // reenter — and that reason left with the external call. Kept as a
+    // belt-and-braces guard on the write itself rather than deleted, because it
+    // is the last thing standing between a future caller that skips
+    // `verify_consensus_keys` and a silently overwritten owner. No test reaches
+    // it, and none can.
     if !consensus
         .peer_pubkey_owner_accessor()
         .entry(verified.peer_pubkey)
@@ -232,8 +193,7 @@ pub(crate) fn store_consensus_keys<SDK: SharedAPI>(
     {
         return revert_with(sdk, ERR_PEER_PUBKEY_ALREADY_IN_USE, &verified.peer_pubkey);
     }
-    // Recheck after verifier calls so a reentrant BLS-key claim cannot be
-    // overwritten when the external call returns.
+    // Same as the peer-key recheck above: duplicated, unreachable, kept.
     if !consensus
         .bls_pubkey_owner_accessor()
         .entry(verified.bls_pubkey_hash)
@@ -816,21 +776,6 @@ pub fn get_epoch_committee_with_stakes<SDK: SharedAPI>(
 
 const BLS_SIG_DST: &[u8] = b"BLS_SIG_BLS12381G1_XMD:SHA-256_SSWU_RO_POP_";
 
-fn call_decode<SDK, T, R>(
-    sdk: &mut SDK,
-    target: Address,
-    selector: u32,
-    params: &T,
-) -> Result<R, ExitCode>
-where
-    SDK: SharedAPI,
-    T: FunctionArgs<BE, 32, true, false>,
-    R: Encoder<BE, 32, true, false>,
-{
-    let output = external_call(sdk, target, selector, params)?;
-    SolidityABI::<R>::decode(&output, 0).map_err(|_| ExitCode::MalformedBuiltinParams)
-}
-
 /// `kind` is an `EVIDENCE_MESSAGE_KIND_*`: the kind of one message, not of the
 /// conflict. A nullify/finalize proof carries two different kinds and reaches
 /// this twice with different values.
@@ -995,18 +940,8 @@ fn slash_from_evidence<SDK: SharedAPI>(
     shape: EvidenceShape,
 ) -> Result<(), ExitCode> {
     let consensus = consensus_storage();
-    let config = chain_config_storage();
     let evidence = evidence::decode(sdk, &command.evidence, shape)?;
-    let verifier = config.bls_verifier_accessor().get_checked(sdk)?;
-    if verifier.is_zero() {
-        return revert(sdk, ERR_BLS_VERIFIER_NOT_CONFIGURED);
-    }
-    let supplied_key = call_decode::<_, _, Bytes>(
-        sdk,
-        verifier,
-        SIG_BLS_COMPRESS_G2_UNCHECKED,
-        &(command.pk_uncompressed.clone(),),
-    )?;
+    let supplied_key = bls::compress_g2_unchecked(sdk, &command.pk_uncompressed)?;
     // Identity comes from the key, not from a historical committee seat.
     // `bls_pubkey_owner` is write-once and never released, so this answer cannot
     // be pruned out from under a late reporter. The compression is unchecked by
@@ -1014,7 +949,7 @@ fn slash_from_evidence<SDK: SharedAPI>(
     // below, not this lookup.
     let validator = consensus
         .bls_pubkey_owner_accessor()
-        .entry(keccak256(&supplied_key))
+        .entry(keccak256(supplied_key))
         .get_checked(sdk)?;
     if validator.is_zero() {
         return revert(sdk, ERR_EQUIVOCATION_KEY_NOT_REGISTERED);
@@ -1032,46 +967,28 @@ fn slash_from_evidence<SDK: SharedAPI>(
     if registered_keys.peer_pubkey.is_zero() {
         return revert_with(sdk, ERR_CONSENSUS_KEYS_NOT_SET, &validator);
     }
-    let supplied_sig1 = call_decode::<_, _, Bytes>(
-        sdk,
-        verifier,
-        SIG_BLS_COMPRESS_G1_UNCHECKED,
-        &(command.sig1_uncompressed.clone(),),
-    )?;
-    let supplied_sig2 = call_decode::<_, _, Bytes>(
-        sdk,
-        verifier,
-        SIG_BLS_COMPRESS_G1_UNCHECKED,
-        &(command.sig2_uncompressed.clone(),),
-    )?;
-    if keccak256(&supplied_sig1) != keccak256(&evidence.sig1)
-        || keccak256(&supplied_sig2) != keccak256(&evidence.sig2)
+    let supplied_sig1 = bls::compress_g1_unchecked(sdk, &command.sig1_uncompressed)?;
+    let supplied_sig2 = bls::compress_g1_unchecked(sdk, &command.sig2_uncompressed)?;
+    if keccak256(supplied_sig1) != keccak256(&evidence.sig1)
+        || keccak256(supplied_sig2) != keccak256(&evidence.sig2)
     {
         return revert(sdk, ERR_EQUIVOCATION_SIGNATURE_INVALID);
     }
-    let valid1 = call_decode::<_, _, bool>(
+    let valid1 = bls::verify(
         sdk,
-        verifier,
-        SIG_BLS_VERIFY,
-        &(
-            namespace(sdk, evidence.kind1),
-            evidence.msg1,
-            Bytes::from_static(BLS_SIG_DST),
-            command.sig1_uncompressed,
-            command.pk_uncompressed.clone(),
-        ),
+        &namespace(sdk, evidence.kind1),
+        &evidence.msg1,
+        BLS_SIG_DST,
+        &command.sig1_uncompressed,
+        &command.pk_uncompressed,
     )?;
-    let valid2 = call_decode::<_, _, bool>(
+    let valid2 = bls::verify(
         sdk,
-        verifier,
-        SIG_BLS_VERIFY,
-        &(
-            namespace(sdk, evidence.kind2),
-            evidence.msg2,
-            Bytes::from_static(BLS_SIG_DST),
-            command.sig2_uncompressed,
-            command.pk_uncompressed,
-        ),
+        &namespace(sdk, evidence.kind2),
+        &evidence.msg2,
+        BLS_SIG_DST,
+        &command.sig2_uncompressed,
+        &command.pk_uncompressed,
     )?;
     if !valid1 || !valid2 {
         return revert(sdk, ERR_EQUIVOCATION_SIGNATURE_INVALID);

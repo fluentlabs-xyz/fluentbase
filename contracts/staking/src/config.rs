@@ -74,12 +74,6 @@ pub(crate) fn apply_initial_config<SDK: SharedAPI>(
     config
         .production_liveness_disabled_accessor()
         .set_checked(sdk, true)?;
-    if !command.bls_verifier.is_zero() {
-        config
-            .bls_verifier_accessor()
-            .set_checked(sdk, command.bls_verifier)?;
-    }
-
     events::ActiveValidatorsLengthChanged {
         prev_value: DEFAULT_ACTIVE_VALIDATORS_LENGTH as u32,
         new_value: command.active_validators_length,
@@ -126,13 +120,6 @@ pub(crate) fn apply_initial_config<SDK: SharedAPI>(
         new_value: true,
     }
     .emit(sdk)?;
-    if !command.bls_verifier.is_zero() {
-        events::BlsVerifierChanged {
-            prev_value: Address::ZERO,
-            new_value: command.bls_verifier,
-        }
-        .emit(sdk)?;
-    }
     events::BlendReserveChanged {
         prev_value: Address::ZERO,
         new_value: command.blend_reserve,
@@ -704,38 +691,6 @@ pub fn set_production_liveness_disabled<SDK: SharedAPI>(
     let previous = field.get_checked(sdk)?;
     field.set_checked(sdk, value)?;
     events::ProductionLivenessDisabledChanged {
-        prev_value: previous,
-        new_value: value,
-    }
-    .emit(sdk)
-}
-
-/// Public handler `0xc6b904ad` (`getBlsVerifier`).
-///
-/// Returns the configured BLS verifier.
-pub fn get_bls_verifier<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
-    ensure_non_payable(sdk)?;
-    write_abi(
-        sdk,
-        &chain_config_storage()
-            .bls_verifier_accessor()
-            .get_checked(sdk)?,
-    )
-}
-
-/// Public handler `0x466ae541` (`setBlsVerifier`).
-///
-/// Updates the configured BLS verifier.
-pub fn set_bls_verifier<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), ExitCode> {
-    ensure_governance_mutation(sdk)?;
-    let value = decode::<AddressCommand>(input)?.value;
-    if value.is_zero() {
-        return zero_value(sdk, "blsVerifier");
-    }
-    let field = chain_config_storage().bls_verifier_accessor();
-    let previous = field.get_checked(sdk)?;
-    field.set_checked(sdk, value)?;
-    events::BlsVerifierChanged {
         prev_value: previous,
         new_value: value,
     }

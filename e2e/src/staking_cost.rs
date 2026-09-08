@@ -303,7 +303,6 @@ sol! {
             uint256 minValidatorStakeAmount,
             uint256 minStakingAmount,
             uint64 dposActivationBlock,
-            address blsVerifier,
             uint256 minUndelegateBlocks,
             address blendReserve
         ) external;
@@ -346,27 +345,6 @@ fn deploy_runtime(context: &mut EvmTestingContext, runtime: &[u8]) -> Address {
     ];
     init.extend_from_slice(runtime);
     context.deploy_evm_tx(OWNER, Bytes::from(init))
-}
-
-/// `compressG2Unchecked(bytes)` echoes the first 96 bytes of its argument, so
-/// distinct uncompressed keys give distinct compressed keys. Every other
-/// selector returns `true`.
-fn deploy_bls_verifier(context: &mut EvmTestingContext) -> Address {
-    deploy_runtime(
-        context,
-        &hex!(
-            // selector == compressG2Unchecked(bytes) ?
-            "60003560e01c63a5d2dd2214601957"
-            // no: return true
-            "600160005260206000f3"
-            // yes:
-            "5b"
-            // head: offset 0x20, length 0x60
-            "60206000526060602052"
-            // body: calldata[0x44..0xa4], return 0xa0 bytes
-            "6060604460403760a06000f3"
-        ),
-    )
 }
 
 /// ERC-20 stand-in for the BLEND token, in the two shapes the contract uses it.
@@ -515,12 +493,14 @@ fn peer_pubkey(index: usize) -> B256 {
     B256::from(bytes)
 }
 
+/// Real keys, because `initialize` now runs a real pairing over every one of
+/// them. See `crate::bls_vectors`.
 fn bls_pubkey(index: usize) -> Bytes {
-    let mut bytes = vec![0x11u8; 256];
-    bytes[0] = 0xc0;
-    bytes[1] = (index >> 8) as u8;
-    bytes[2] = index as u8;
-    Bytes::from(bytes)
+    Bytes::copy_from_slice(crate::bls_vectors::pubkey(index))
+}
+
+fn bls_pop(index: usize) -> Bytes {
+    Bytes::copy_from_slice(crate::bls_vectors::pop(index))
 }
 
 struct Fixture {
@@ -528,12 +508,6 @@ struct Fixture {
     validators: Vec<Address>,
     token: Address,
 }
-
-/// Genesis with `roster` active, equally staked, key-carrying validators.
-///
-/// They are seeded through `initialize`, the only path that makes a validator
-/// Active and selection-visible from epoch 0 with no warm-up delay, so the
-/// committee can be committed immediately.
 
 impl Fixture {
     /// Successful `transferFrom` calls the token has committed so far.
@@ -597,9 +571,12 @@ impl Fixture {
 /// committee can be committed immediately.
 fn fixture(roster: usize, source_is_approved: bool) -> Fixture {
     let mut context = EvmTestingContext::default().with_full_genesis();
+    // Pinned, not inherited: the proof of possession each validator below carries
+    // was signed under this chain id, and a mismatch would fail the whole genesis
+    // with `InvalidProofOfPossession`.
+    context.cfg.chain_id = crate::bls_vectors::CHAIN_ID;
     set_block(&context, ACTIVATION - 1);
 
-    let verifier = deploy_bls_verifier(&mut context);
     let token = deploy_runtime(&mut context, &counting_token());
 
     let validators: Vec<Address> = (0..roster).map(validator_address).collect();
@@ -608,7 +585,7 @@ fn fixture(roster: usize, source_is_approved: bool) -> Fixture {
         validators: validators.clone(),
         initialStakes: vec![TOKEN * U256::from(10); roster],
         blsPubkeysUncompressed: (0..roster).map(bls_pubkey).collect(),
-        blsPopsUncompressed: vec![vec![0x22u8; 128].into(); roster],
+        blsPopsUncompressed: (0..roster).map(bls_pop).collect(),
         peerPubkeys: (0..roster).map(peer_pubkey).collect(),
         commissionRate: 0,
         stakingToken: token,
@@ -618,7 +595,6 @@ fn fixture(roster: usize, source_is_approved: bool) -> Fixture {
         minValidatorStakeAmount: TOKEN,
         minStakingAmount: TOKEN,
         dposActivationBlock: ACTIVATION,
-        blsVerifier: verifier,
         minUndelegateBlocks: U256::ZERO,
         blendReserve: if source_is_approved {
             OWNER

@@ -2,7 +2,9 @@ use crate::EvmTestingContextWithGenesis;
 use alloy_sol_types::{sol, SolCall};
 use fluentbase_sdk::{
     address, hex,
-    universal_token::{ApproveCommand, BalanceOfCommand, InitialSettings, UniversalTokenCommand},
+    universal_token::{
+        ApproveCommand, BalanceOfCommand, InitialSettings, TransferCommand, UniversalTokenCommand,
+    },
     Address, Bytes, B256, GENESIS_GOVERNANCE, GENESIS_STAKING, U256,
 };
 use fluentbase_testing::EvmTestingContext;
@@ -35,7 +37,6 @@ sol! {
             uint256 minValidatorStakeAmount,
             uint256 minStakingAmount,
             uint64 dposActivationBlock,
-            address blsVerifier,
             uint256 minUndelegateBlocks,
             address blendReserve
         ) external;
@@ -88,6 +89,29 @@ fn assert_reverts(
     );
 }
 
+/// Like [`assert_reverts`], but pins WHICH revert. A registration has a dozen
+/// ways to fail and most of them are cheaper to hit by accident than the one a
+/// test means to reach.
+fn assert_reverts_with(
+    context: &mut EvmTestingContext,
+    caller: Address,
+    callee: Address,
+    input: Vec<u8>,
+    selector: [u8; 4],
+) {
+    let result = context.call_evm_tx(caller, callee, input.into(), Some(20_000_000), None);
+    assert!(
+        !result.is_success(),
+        "call unexpectedly succeeded: {result:?}"
+    );
+    let output = result.output().cloned().unwrap_or_default();
+    assert_eq!(
+        &output[..4],
+        &selector,
+        "reverted, but not for the reason under test: {output:?}"
+    );
+}
+
 fn token_balance(context: &mut EvmTestingContext, token: Address, owner: Address) -> U256 {
     let mut input = Vec::new();
     BalanceOfCommand { owner }.encode_for_send(&mut input);
@@ -95,11 +119,7 @@ fn token_balance(context: &mut EvmTestingContext, token: Address, owner: Address
     U256::try_from_be_slice(&output).expect("ERC-20 balanceOf output")
 }
 
-fn initialize_calldata(
-    staking_token: Address,
-    bls_verifier: Address,
-    initial_stakes: Vec<U256>,
-) -> Vec<u8> {
+fn initialize_calldata(staking_token: Address, initial_stakes: Vec<U256>) -> Vec<u8> {
     let has_initial_validator = !initial_stakes.is_empty();
     let validators = if !has_initial_validator {
         Vec::new()
@@ -113,12 +133,12 @@ fn initialize_calldata(
         blsPubkeysUncompressed: if !has_initial_validator {
             Vec::new()
         } else {
-            vec![vec![0x11; 256].into()]
+            vec![Bytes::copy_from_slice(crate::bls_vectors::pubkey(0))]
         },
         blsPopsUncompressed: if !has_initial_validator {
             Vec::new()
         } else {
-            vec![vec![0x22; 128].into()]
+            vec![Bytes::copy_from_slice(crate::bls_vectors::pop(0))]
         },
         peerPubkeys: if !has_initial_validator {
             Vec::new()
@@ -133,46 +153,27 @@ fn initialize_calldata(
         minValidatorStakeAmount: TOKEN,
         minStakingAmount: TOKEN,
         dposActivationBlock: 1_000,
-        blsVerifier: bls_verifier,
         minUndelegateBlocks: U256::ZERO,
         blendReserve: Address::repeat_byte(0x66),
     }
     .abi_encode()
 }
 
-fn deploy_mock_bls_verifier(context: &mut EvmTestingContext) -> Address {
-    // Init bytecode for a Solidity mock that returns bytes(96) from
-    // compressG2Unchecked(bytes) and true from verify(bytes,bytes,bytes,bytes,bytes).
-    context.deploy_evm_tx(
-        OWNER,
-        Bytes::from_static(&hex!(
-            "6080604052348015600f57600080fd5b506102cd8061001f6000396000f3fe60806040523480156100
-             1057600080fd5b50600436106100365760003560e01c80638bf261331461003b578063a5d2dd221461
-             006e575b600080fd5b6100596100493660046100fc565b60019a9950505050505050505050565b6040
-             5190151581526020015b60405180910390f35b61008161007c366004610207565b61008e565b604051
-             6100659190610249565b60408051606080825260808201909252816020820181803683370190505093
-             92505050565b60008083601f8401126100c557600080fd5b50813567ffffffffffffffff8111156100
-             dd57600080fd5b6020830191508360208285010111156100f557600080fd5b9250929050565b600080
-             60008060008060008060008060a08b8d03121561011b57600080fd5b8a3567ffffffffffffffff8111
-             1561013257600080fd5b61013e8d828e016100b3565b909b5099505060208b013567ffffffffffffff
-             ff81111561015e57600080fd5b61016a8d828e016100b3565b90995097505060408b013567ffffffff
-             ffffffff81111561018a57600080fd5b6101968d828e016100b3565b90975095505060608b013567ff
-             ffffffffffffff8111156101b657600080fd5b6101c28d828e016100b3565b90955093505060808b01
-             3567ffffffffffffffff8111156101e257600080fd5b6101ee8d828e016100b3565b91508093505080
-             9150509295989b9194979a5092959850565b6000806020838503121561021a57600080fd5b823567ff
-             ffffffffffffff81111561023157600080fd5b61023d858286016100b3565b90969095509350505050
-             565b602081526000825180602084015260005b81811015610277576020818601810151604086840101
-             520161025a565b506000604082850101526040601f19601f8301168401019150509291505056fea264
-             6970667358221220f07b58ae9a9816fe76d1d4ededd0059334efa5a878d8eadfb08a543038e7910364
-             736f6c63430008220033"
-        )),
-    )
-}
-
+/// A registration whose proof of possession is REAL, verified by the contract
+/// against the real EIP-2537 precompiles.
+///
+/// This is the honest end of the PoP coverage. The unit tests in
+/// `contracts/staking/src/tests.rs` drive a policy stub — they can reach the
+/// branches, but they decide nothing about BLS12-381. Here the signature was
+/// made by `blst` inside the node, the pairing that accepts it is arkworks
+/// inside the predeploy, and the hash-to-curve between them is the contract's
+/// own. The last assertion closes the loop from the other side: the 96-byte
+/// identity the contract stored is the one `blst` compressed, which is what
+/// pins the EIP-2537-to-zcash half-swap and the y-sign rule.
 #[test]
-fn staking_accepts_solidity_bytes_for_consensus_keys() {
+fn staking_accepts_a_real_proof_of_possession_and_stores_the_key_blst_compressed() {
     let mut context = EvmTestingContext::default().with_full_genesis();
-    let verifier = deploy_mock_bls_verifier(&mut context);
+    context.cfg.chain_id = crate::bls_vectors::CHAIN_ID;
     let token = context.deploy_evm_tx(
         OWNER,
         InitialSettings {
@@ -194,7 +195,7 @@ fn staking_accepts_solidity_bytes_for_consensus_keys() {
         &mut context,
         GENESIS_GOVERNANCE,
         GENESIS_STAKING,
-        initialize_calldata(token, verifier, Vec::new()),
+        initialize_calldata(token, Vec::new()),
     );
     let mut approve = Vec::new();
     ApproveCommand {
@@ -211,8 +212,8 @@ fn staking_accepts_solidity_bytes_for_consensus_keys() {
             validator: VALIDATOR,
             commissionRate: 0,
             initialStake: TOKEN,
-            blsPubkeyUncompressed: vec![0x11; 256].into(),
-            blsPopUncompressed: vec![0x22; 128].into(),
+            blsPubkeyUncompressed: crate::bls_vectors::pubkey(0).to_vec().into(),
+            blsPopUncompressed: crate::bls_vectors::pop(0).to_vec().into(),
             peerPubkey: B256::with_last_byte(0x01),
         }
         .abi_encode(),
@@ -227,15 +228,88 @@ fn staking_accepts_solidity_bytes_for_consensus_keys() {
         .abi_encode(),
     );
     let result = IStakingRwasm::getConsensusKeysCall::abi_decode_returns(&output).unwrap();
-    assert_eq!(result.blsPubkey.as_ref(), &[0; 96]);
+    assert_eq!(
+        result.blsPubkey.as_ref(),
+        crate::bls_vectors::pubkey_compressed(0)
+    );
     assert_eq!(result.peerPubkey, B256::with_last_byte(0x01));
     assert_eq!(result.activationEpoch, 1);
+
+    // One byte of the proof flipped, and the same registration is refused —
+    // named, not merely refused: `InvalidProofOfPossession` is the gate under
+    // test and a registration has cheaper ways to fail.
+    //
+    // A second owner, because one account may own only one validator.
+    let second_owner = Address::repeat_byte(0x55);
+    let second = Address::repeat_byte(0x77);
+    let mut transfer = Vec::new();
+    TransferCommand {
+        to: second_owner,
+        amount: TOKEN * U256::from(2),
+    }
+    .encode_for_send(&mut transfer);
+    call(&mut context, OWNER, token, transfer);
+    let mut approve = Vec::new();
+    ApproveCommand {
+        spender: GENESIS_STAKING,
+        amount: TOKEN * U256::from(2),
+    }
+    .encode_for_send(&mut approve);
+    call(&mut context, second_owner, token, approve);
+    context.add_balance(second_owner, U256::from(10u128).pow(U256::from(20)));
+
+    let registration = |pop: Vec<u8>| {
+        IStakingRwasm::registerValidatorCall {
+            validator: second,
+            commissionRate: 0,
+            initialStake: TOKEN,
+            blsPubkeyUncompressed: crate::bls_vectors::pubkey(1).to_vec().into(),
+            blsPopUncompressed: pop.into(),
+            peerPubkey: B256::with_last_byte(0x02),
+        }
+        .abi_encode()
+    };
+    // Two forgeries, because they fail at DIFFERENT places and only one of them
+    // reaches the pairing's verdict.
+    //
+    // A flipped bit puts the signature off the curve, and the EIP-2537 pairing
+    // precompile REFUSES such input rather than answering "does not verify" — so
+    // this one is caught by the precompile-status check.
+    let mangled = {
+        let mut bytes = crate::bls_vectors::pop(1).to_vec();
+        *bytes.last_mut().unwrap() ^= 1;
+        bytes
+    };
+    // Another validator's proof of possession is a perfectly well-formed point
+    // in the right subgroup; it just proves possession of a different key. This
+    // one reaches the pairing and is rejected by its verdict — the branch that
+    // decides whether a validator may register a public key it does not hold the
+    // secret for.
+    let wrong_key = crate::bls_vectors::pop(2).to_vec();
+    for forged in [mangled, wrong_key] {
+        assert_reverts_with(
+            &mut context,
+            second_owner,
+            GENESIS_STAKING,
+            registration(forged),
+            // InvalidProofOfPossession(address)
+            hex!("1a4e671e"),
+        );
+    }
+    // The untouched proof for the same key goes through, so what the line above
+    // caught is the flipped byte and not some other difference between the calls.
+    call(
+        &mut context,
+        second_owner,
+        GENESIS_STAKING,
+        registration(crate::bls_vectors::pop(1).to_vec()),
+    );
 }
 
 #[test]
 fn genesis_staking_custodies_and_returns_blend_through_real_rwasm_calls() {
     let mut context = EvmTestingContext::default().with_full_genesis();
-    let verifier = deploy_mock_bls_verifier(&mut context);
+    context.cfg.chain_id = crate::bls_vectors::CHAIN_ID;
     let initial_supply = TOKEN * U256::from(1_000);
     let token = context.deploy_evm_tx(
         OWNER,
@@ -255,7 +329,7 @@ fn genesis_staking_custodies_and_returns_blend_through_real_rwasm_calls() {
         &mut context,
         OWNER,
         GENESIS_STAKING,
-        initialize_calldata(token, verifier, vec![TOKEN]),
+        initialize_calldata(token, vec![TOKEN]),
     );
 
     let mut approve = Vec::new();
@@ -269,13 +343,13 @@ fn genesis_staking_custodies_and_returns_blend_through_real_rwasm_calls() {
         &mut context,
         GENESIS_GOVERNANCE,
         GENESIS_STAKING,
-        initialize_calldata(token, verifier, vec![TOKEN]),
+        initialize_calldata(token, vec![TOKEN]),
     );
     assert_reverts(
         &mut context,
         GENESIS_GOVERNANCE,
         GENESIS_STAKING,
-        initialize_calldata(token, verifier, vec![TOKEN]),
+        initialize_calldata(token, vec![TOKEN]),
     );
     call(
         &mut context,
@@ -346,13 +420,13 @@ fn genesis_staking_custodies_and_returns_blend_through_real_rwasm_calls() {
 #[test]
 fn record_production_drives_the_epoch_close_through_real_rwasm() {
     let mut context = EvmTestingContext::default().with_full_genesis();
-    let verifier = deploy_mock_bls_verifier(&mut context);
+    context.cfg.chain_id = crate::bls_vectors::CHAIN_ID;
     context = context.with_block_number(999);
     call(
         &mut context,
         GENESIS_GOVERNANCE,
         GENESIS_STAKING,
-        initialize_calldata(Address::repeat_byte(0x44), verifier, Vec::new()),
+        initialize_calldata(Address::repeat_byte(0x44), Vec::new()),
     );
 
     // The height is the block context now, so the closure keeps its parameter

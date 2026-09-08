@@ -9,6 +9,7 @@
 
 extern crate alloc;
 
+mod bls;
 mod config;
 mod consensus;
 mod consts;
@@ -68,8 +69,6 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
         SIG_SET_UNDELEGATE_PERIOD => config::set_undelegate_period(sdk, params),
         SIG_SET_MIN_VALIDATOR_STAKE_AMOUNT => config::set_min_validator_stake_amount(sdk, params),
         SIG_SET_MIN_STAKING_AMOUNT => config::set_min_staking_amount(sdk, params),
-        SIG_GET_BLS_VERIFIER => config::get_bls_verifier(sdk),
-        SIG_SET_BLS_VERIFIER => config::set_bls_verifier(sdk, params),
         SIG_GET_BLEND_RESERVE => config::get_blend_reserve(sdk),
         SIG_SET_BLEND_RESERVE => config::set_blend_reserve(sdk, params),
         SIG_GET_MIN_VERDICT_DUE_BLOCKS => config::get_min_verdict_due_blocks(sdk),
