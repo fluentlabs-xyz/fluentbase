@@ -19,7 +19,6 @@ regen-contracts:
 	cp $(SOLIDITY_CONTRACTS_DIR)/out/StakingPool.sol/StakingPool.json                       contracts/
 	cp $(SOLIDITY_CONTRACTS_DIR)/out/FluentGovernance.sol/FluentGovernance.json             contracts/
 	cp $(SOLIDITY_CONTRACTS_DIR)/out/MockBlendToken.sol/MockBlendToken.json                 contracts/
-	cp $(SOLIDITY_CONTRACTS_DIR)/out/BLS12381Verifier.sol/BLS12381Verifier.json             contracts/
 	cp $(SOLIDITY_CONTRACTS_DIR)/out/PrevRandaoProbe.sol/PrevRandaoProbe.json               contracts/
 	cp $(SOLIDITY_CONTRACTS_DIR)/out/MockRollup.sol/MockRollup.json                         contracts/
 	git -C $(SOLIDITY_CONTRACTS_DIR) rev-parse HEAD > contracts/.vendor-sha

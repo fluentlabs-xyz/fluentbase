@@ -5,7 +5,7 @@ use alloy_sol_types::{sol, SolCall, SolValue};
 use fluentbase_genesis_bootstrap::{
     artifacts, bootstrap,
     bootstrap::{
-        PredeployState, BLS_VERIFIER_ADDR, GOVERNANCE_ADDR, GOVERNANCE_VOTING_PERIOD_BLOCKS,
+        PredeployState, GOVERNANCE_ADDR, GOVERNANCE_VOTING_PERIOD_BLOCKS,
         STAKING_ADDR, STAKING_POOL_ADDR, STAKING_TOKEN_ADDR,
     },
     keys,
@@ -123,7 +123,6 @@ fn bootstrap_produces_all_predeploy_bytecode() {
         STAKING_POOL_ADDR,
         GOVERNANCE_ADDR,
         STAKING_TOKEN_ADDR,
-        BLS_VERIFIER_ADDR,
     ] {
         let code = state
             .bytecode_by_address
@@ -324,7 +323,6 @@ fn bare_installs_only_the_governor() {
         STAKING_ADDR,
         STAKING_POOL_ADDR,
         STAKING_TOKEN_ADDR,
-        BLS_VERIFIER_ADDR,
     ] {
         assert!(
             !state.bytecode_by_address.contains_key(&addr),
@@ -357,8 +355,19 @@ fn balance_of(ctx: &mut EvmTestingContext, account: Address) -> U256 {
     U256::abi_decode(&out).expect("decode balanceOf")
 }
 
+/// Every genesis validator is registered, and the identity the module stored is
+/// the one `blst` compressed on this side.
+///
+/// The second half is a cross-implementation check that has no other home. The
+/// module compresses the 256-byte EIP-2537 key itself now; EIP-2537 orders the
+/// real coefficient of `x` first and zcash orders the imaginary one first, and
+/// the y-sign is read from `y.c1` with `y.c0` only as a tiebreak. Get either
+/// wrong and you get a well-formed 96-byte key that matches nothing any node
+/// ever registered — which surfaces as slashing that silently never fires, not
+/// as a failure here. `blst` produced the right-hand side; the arkworks
+/// precompiles and the module's own byte handling produced the left.
 #[test]
-fn bootstrap_registers_consensus_keys_per_validator() {
+fn bootstrap_registers_each_validator_under_the_key_blst_compressed() {
     let (key_set, state) = run_bootstrap();
     let mut ctx = ctx_from_predeploy(&state);
 
@@ -368,7 +377,49 @@ fn bootstrap_registers_consensus_keys_per_validator() {
         let out = eth_call(&mut ctx, STAKING_ADDR, calldata.into());
 
         let keys = ConsensusKeys::abi_decode(&out).expect("decode getConsensusKeys");
-        assert!(!keys.blsPubkey.is_empty(), "BLS pubkey empty for {addr:?}");
+        assert_eq!(
+            keys.blsPubkey.as_ref(),
+            &v.bls.public_bytes()[..],
+            "stored identity for {addr:?} is not the compressed key the node signs under"
+        );
         assert_ne!(keys.peerPubkey, B256::ZERO, "peer pubkey zero for {addr:?}");
     }
+}
+
+/// A proof of possession made for a different chain does not get in.
+///
+/// This is the whole point of the change, exercised end to end: the module runs
+/// the pairing itself, against precompiles at addresses fixed by the fork, and
+/// there is no stored verifier address a governance call could point somewhere
+/// friendlier. The keys below are real and their proofs are real — they are just
+/// bound to `SMOKE_CHAIN_ID + 1`, and the namespace the module hashes under is
+/// taken from `block.chainid`. Nothing about the encoding differs, so what
+/// rejects this is the pairing and only the pairing.
+#[test]
+fn a_proof_of_possession_bound_to_another_chain_is_refused() {
+    let foreign = keys::derive(SMOKE_MNEMONIC, SMOKE_PEERS, SMOKE_CHAIN_ID + 1).unwrap();
+    let arts = artifacts::load(&contracts_dir()).unwrap();
+    let outcome = bootstrap::run(
+        &foreign,
+        &arts,
+        SMOKE_CHAIN_ID,
+        &bootstrap::BootstrapParams::default(),
+    );
+    let error = outcome.expect_err("genesis accepted a proof of possession from another chain");
+    let text = format!("{error:?}");
+    assert!(
+        text.contains("Staking.initialize"),
+        "the refusal came from somewhere other than the genesis initialize: {text}"
+    );
+
+    // The same keys, under the chain they were signed for, go through — so what
+    // the assertion above caught is the namespace and not some other difference
+    // between the two runs.
+    bootstrap::run(
+        &foreign,
+        &arts,
+        SMOKE_CHAIN_ID + 1,
+        &bootstrap::BootstrapParams::default(),
+    )
+    .expect("the same keys must bootstrap the chain they were signed for");
 }

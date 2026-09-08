@@ -77,7 +77,196 @@ Two more joined it later the same day — `settleEpochStipend` `0xa631344a` and
 that took the stipend out of this contract's balance, and a node built against it
 expects a payment pass that no longer exists.
 
-## This build — 2026-09-07 (second build of the day)
+## This build — 2026-09-08
+
+Rebuilt for one change: **the BLS verifier is inside the module**
+(`.dpos-study/BLS_VERIFY_PORT_SPEC.md`, task 1.10).
+
+The module used to reach a verifier contract through an address in its own
+storage, moved by a governance setter (`setBlsVerifier`). A substituted verifier
+accepts a forged proof of possession, and a forged PoP forges a whole committee's
+quorum (`pk' = pk_x - Σ pk_i`). That address is gone. `contracts/staking/src/bls.rs`
+is a port of `solidity-contracts@f641789f:contracts/libraries/BLS12381Verifier.sol`
+and calls the EIP-2537 precompiles itself — `0x02` SHA-256, `0x05` MODEXP, `0x0b`
+G1ADD, `0x0f` PAIRING, `0x10` MAP_FP_TO_G1 — at addresses the fork fixes and no
+setter can move. The arithmetic did not move; only the byte assembly and the calls
+did.
+
+**ABI break.** `initialize` loses its `address blsVerifier` (argument 15) and goes
+from seventeen arguments to sixteen: `0xdfa8efb0` -> `0xfecaf0f1` (both from
+`cast sig`). `getBlsVerifier` (`0xc6b904ad`) and `setBlsVerifier` (`0x466ae541`)
+are deleted, with the `BlsVerifierChanged` event, the
+`BlsVerifierNotConfigured()` error and the `bls_verifier` slot in
+`ChainConfigStorage` — which shifts every slot below it. Nothing outside the crate
+reads that layout and nothing is deployed.
+
+**Two places outside the contract broke SILENTLY and are fixed in the same
+change**: `genesis-bootstrap/src/bootstrap.rs` kept its own `sol!` copy of the
+interface (it would have gone on compiling and sending `0xdfa8efb0`), and
+`dpos_harness/stack/production_path.py` builds the calldata from a hardcoded
+signature string. Both now carry sixteen arguments. `BLS12381Verifier.json`, its
+`Makefile` regen line, the `0x…5208` predeploy and the `forge create` of it are
+deleted; the address is left vacant rather than reassigned.
+
+- worktree HEAD: `100c02c4` (`feat(staking)!: draw the stipend from the reserve
+  instead of the contract balance`), unchanged since the previous section.
+- worktree DIRTY at build time, deliberately. The contract delta is 10 files —
+  `bls.rs` NEW, and `config.rs`, `consensus.rs`, `consts.rs`, `events.rs`,
+  `initializer.rs`, `lib.rs`, `storage.rs`, `types.rs`, `tests.rs` modified. Outside the crate and
+  part of the same change: `e2e/src/staking.rs`, `e2e/src/staking_cost.rs`,
+  `e2e/src/staking_bls.rs` (new), `e2e/src/bls_vectors.rs` +
+  `e2e/src/bls_pop_vectors.bin` (new), `contracts/Cargo.toml` (excludes a
+  hook-created `.claude` directory that breaks the workspace glob).
+- SHA-256 of every source file in `contracts/staking/src` as built. Reproduce
+  with, from `contracts/staking`: `find src -name '*.rs' | sort | xargs sha256sum`
+
+      a710d7e5c7cbd7cbe84e4594b0840ad5992e68a3d4b7a24812f22222d6a444f4  src/bls.rs         * NEW
+      6e4b83186c70ef0682f5e29b6666bc96a999081a0cd5fd30041981d18fed8b5e  src/config.rs      *
+      617efa37c505910402940ddfd4ecacb9f3578ae9d21804c2ffd852900c137f09  src/consensus.rs   *
+      2a157fa3ba7829dcb171f52f794ecfd4309e3d73dd3b7c690dda5dfe83dc396e  src/consts.rs      *
+      d45fb01e4297ae6343f30fda113c95cabbc9bb6114593e8c0a98249c60e48905  src/events.rs      *
+      3f69dfe02d27be45e6b723e3f128b7049d74abe5c1b6dafac82b5af47d8b5576  src/evidence.rs
+      5f587627e81d7f38e52cfd974bf6c234de84f93925dd174f946b974dfac0987b  src/initializer.rs *
+      4218de7942e6b247c76b15c1ffc84e27caf49126121f8f878ecee7bffde15b4c  src/lib.rs         *
+      8014b9c6f627bb0b5ead26cfb203e835b017e4899ff2b38657b34f941dca9c07  src/liveness.rs
+      87fdd853b1c4d37cbc7421a07c8a6458afc486ff4300289b52015d9958fdf20f  src/math.rs
+      7e489b52d6644442c9e4e1140cbe2f91a22dcc3718da00292b0f79efbcc3a491  src/staking.rs
+      a4533236f45682cdd955dc7f58ff34e2df8f5c14bf05ff7e71912387ba8d9b86  src/storage.rs     *
+      2321f7d673f28190b260d80f87f96fdedd00d8430d86d380b20cb3f48d7c3924  src/tests.rs       *
+      4c5c27e9faccfb65ae1eaf325ec00bd2515a8b6cafd1724a8d0169369c25c115  src/types.rs       *
+      a76fa8763d1e7e9279b488295d53e02476990890806ff9b77e8ce77a02433327  src/util.rs
+
+  These fifteen are the sources as they stand, re-taken after the review pass
+  below. `consensus.rs` and `initializer.rs` moved after the first build (a
+  comment corrected in each) and `tests.rs` moved twice (tests added); the wasm
+  and rwasm were REBUILT from exactly these sources afterwards and came out
+  byte-identical to the blobs recorded above, which are the ones the devnet ran.
+  An earlier revision of this section pinned a stale `consensus.rs` digest — the
+  adversarial review below caught it, and it is worth saying why it happened: a
+  workspace-wide `cargo fmt` ran between the hashing and the recording.
+- `fluentbase_contracts_staking.wasm` — 412,702 bytes (was 411,835)
+  `238cd91e13833db2a0b7a6c1fce25d1243b8cda888bd03a92915c787b14c747a`
+- `fluentbase_contracts_staking.rwasm` — 2,834,075 bytes (was 2,831,192)
+  `96cbf32fb61b26d72dc054cb6d53ba467c961ddc66611fbc4b4bb966b5c3fcf4`
+- Both GREW (+867 / +2,883) despite five deleted handlers and a deleted storage
+  slot: the hash-to-curve pipeline, the two compressions and the five precompile
+  call sites cost more code than the seven ABI-encoded external calls they replace.
+- **The build is not byte-reproducible from identical sources** — the note under
+  the 2026-09-07 section still holds. A digest mismatch is evidence the sources
+  moved; a match is the only thing that proves they did not.
+
+### Gas, measured
+
+Two independent measurements, both real, neither an estimate.
+
+**1. The two contract paths, before and after, on real rWasm.** Same harness
+(`e2e`, `EvmTestingContext` with the full genesis), same arkworks EIP-2537
+predeploys, real `blst`-made signatures on both sides. The "before" run is a git
+worktree of `100c02c4` with the REAL `BLS12381Verifier` deployed from
+`BLS12381Verifier.json` — not the mock the e2e fixtures used to install, which
+would have measured nothing. Frame gas, EVM transaction intrinsic removed:
+
+| path | before (external verifier) | after (inline) | delta |
+|---|---|---|---|
+| `registerValidator` (1 × compressG2 + 1 × verify) | 606,273 | **491,418** | −114,855 (−18.9 %) |
+| `slashEquivocationNotarize` (1 × compressG2 + 2 × compressG1 + 2 × verify) | 605,524 | **372,655** | −232,869 (−38.5 %) |
+
+Both numbers come from `cargo test -p fluentbase-e2e --release both_bls_paths -- --nocapture`.
+The saving is the seven `CALL`s and their ABI encode/decode, not the cryptography:
+the pairings cost the same either way.
+
+**2. The retired verifier's own cost, reproduced on anvil.** `anvil 1.6.0-v1.7.0
+--hardfork prague`, the artefact deployed, `gasUsed` from the receipt. This
+reproduces `BLS_VERIFY_PORT_SPEC.md` §7 rather than copying it:
+
+| call | tx gasUsed | execution | spec §7 execution |
+|---|---|---|---|
+| `verify` (PoP, valid) | 195,861 | **165,789** | 165,789 |
+| `compressG2Unchecked` (256 B) | 85,229 | 60,581 | 60,812 |
+| `compressG1Unchecked` (128 B) | 57,163 | 34,155 | 34,143 |
+| `unionUnique` (23+96 B) | 27,140 | 3,684 | 3,738 |
+| bare `PAIRING` precompile, 2 pairs | 133,860 | **102,900** | 102,900 |
+
+`verify` and the bare pairing reproduce exactly; the two compressions differ by
+~230 gas because a different vector was used and its y-sign branch differs.
+
+**A trap worth recording.** `cast send` without `--gas-limit` takes its limit from
+`eth_estimateGas`, and this anvil under-estimates an EIP-2537-heavy call by half
+(99,305 against 195,861) — and then REPORTS THE ESTIMATE as `gasUsed`, with
+`status = 0x1`. The first run of this measurement produced 99,305 and looked
+perfectly ordinary. Every figure above was taken with an explicit
+`--gas-limit 3000000`.
+
+### Tests
+
+- `cargo test` in `contracts/staking`: **162 passed, 0 failed** (153 before);
+  **163** with `--features devnet-views` (154 before). One test removed with the
+  branch it covered (`registration_rejects_non_96_byte_compressed_key_...` — the
+  compression returns a fixed-width array now, so the branch is gone), ten added.
+- `cargo test -p fluentbase-e2e --release`: staking suites green.
+- `cargo test -p fluentbase-genesis-bootstrap`: **8 passed**, including two new
+  ones — the stored identity equals `blst`'s compression of the same key, and a
+  proof of possession bound to another chain is refused.
+- `make harness-test`: **2082 passed, 10 skipped**.
+- `cargo clippy --all-targets` and `cargo fmt --check` clean.
+- **Every new or rewritten test was shown red by a mutation, and the mutation
+  reverted.** Fifteen mutations, across all four suites:
+
+  | mutation | kills |
+  |---|---|
+  | `verify` ignores the pairing verdict | the forged-PoP unit test, the slash-signature test, the wrong-entry-point test, the e2e wrong-key PoP, the wrong-chain PoP in `bootstrap_smoke` |
+  | G2 compression keeps the EIP-2537 half order | the compression test, the two stored-key tests, the e2e blst-compression check, `bootstrap_smoke`'s |
+  | the y-sign compare becomes non-strict | the strictness test |
+  | the y-sign bit is never set (G2) | six unit tests |
+  | the y-sign bit is never set (G1) | the G1 sign test |
+  | G1 reads `x` from the `y` half | the G1 sign test, the domain-separator test |
+  | infinity is compressed instead of refused | the infinity/width test |
+  | the namespace guard is off by one | the namespace test |
+  | the DST guard is off by one | the DST test |
+  | the precompile output width is unchecked | the wrong-width test |
+  | a failed pairing reverts instead of answering false | the refused-pairing test |
+  | every evidence kind hashes under one domain | the domain-separator test |
+  | the evidence path signs under the PoP DST | `both_bls_paths` |
+  | the evidence namespace loses its kind suffix | `both_bls_paths` |
+  | the harness `initialize` signature keeps seventeen arguments | the python bring-up test |
+
+- **What the mutation pass found, and what it cost to find.** The first attempt
+  at the e2e mutations was WRONG twice over, and both traps are worth recording.
+
+  1. Editing `contracts/staking/src/**` does not reliably rebuild the wasm that
+     `e2e` links: cargo's `rerun-if-changed` on the `contracts` directory did not
+     fire, and one run compared a mutated artefact against a stale one and called
+     it a baseline. A mutation pass over this boundary MUST check that the wasm
+     digest actually moved. `cargo clean -p fluentbase-contracts` before the
+     rebuild is what makes it move.
+  2. The first e2e forgery flipped one bit of a proof of possession. That puts
+     the point off the curve, and the EIP-2537 pairing precompile REFUSES such
+     input rather than answering "does not verify" — so the rejection came from
+     the precompile-status check and the verdict branch was never reached. The
+     test survived `verify` returning `true` unconditionally and looked fine.
+     The test now also feeds ANOTHER validator's proof of possession: a
+     well-formed point in the right subgroup that proves possession of a
+     different key. That one reaches the verdict, and the mutation kills it.
+
+### The unit harness stubs the precompiles, and says so
+
+`contracts/staking/src/tests.rs` answers `0x02`/`0x05`/`0x0b`/`0x0f`/`0x10` by
+address. SHA-256 is honest — `crypto_sha256`, the same implementation `0x02` runs
+— so the namespace a test reads back is the one the contract really hashed.
+MODEXP, MAP_FP_TO_G1 and G1ADD return deterministic values of the right width.
+PAIRING is a policy, not a pairing: it answers "the equation holds" unless a test
+says otherwise. That switch is the point — the retired external-verifier stub
+answered `true` unconditionally, so `InvalidProofOfPossession` and the verify half
+of `EquivocationSignatureInvalid` were unreachable from any test in the file. It
+decides nothing about BLS12-381; that lives in `e2e/src/staking_bls.rs`,
+`e2e/src/staking.rs` and `genesis-bootstrap`, all of which run the real
+predeploys against signatures `blst` made.
+
+Note also that `crates/testing/src/host.rs` routes `static_call` into the same
+handler as `call`, so nothing in the unit harness checks that these calls are
+static. That is a coverage hole, not a finding about the contract.
+
+### Previous build — 2026-09-07 (second build of the day, superseded)
 
 Rebuilt for one change: **the stipend never enters the staking contract**
 (`.dpos-study/PLAN.md` 1.7).

@@ -191,8 +191,9 @@ def register_joiner(ctx, addrs, idx=JOINER_IDX, delegate=True):
          minimum self-stake, AND the consensus keys. `setConsensusKeys` has no counterpart on the
          module: the keys are arguments 4-6 here and are PoP-verified inside this call. That also
          retires the two ordering rules the old two-step form needed — "keys after registration"
-         (the record must exist) and "keys after `setBlsVerifier`" (the verifier must be wired) —
-         because there is no longer a moment between the two at which either could be violated.
+         (the record must exist) and "keys after the verifier is wired" — the second because there
+         is no verifier to wire: the module verifies the PoP itself against the EIP-2537
+         precompiles, whose addresses are fixed by the fork.
       3. governance `activateValidator(addr)` — Pending → Active. The joiner keeps running the
          unified follower substrate throughout; there is no operator choreography.
       4. `approve(STAKING_RT, 2e18)` + 5. `delegate(addr, 2e18)` — the weight that makes the

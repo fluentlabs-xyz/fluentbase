@@ -749,30 +749,43 @@ def test_the_bring_up_phases_run_in_bash_order():
     bu = _bringup()
     bu.run()
     notes = [i.note for i in bu.p.log if i.note]
-    want = ["phaseA-up", "spammer-key", "fund-spammer", "deploy-token", "deploy-verifier",
+    want = ["phaseA-up", "spammer-key", "fund-spammer", "deploy-token",
             "token-transfer", "install-staking-module", "send:BLEND.approve(staking)",
             "send:Staking.initialize", "dpos-cold-restart"]
     assert [n for n in want if n in notes] == want
 
 
-def test_the_verifier_and_the_keys_ride_initialize_rather_than_a_setter():
-    """`setBlsVerifier` and `setConsensusKeys` are both DELETED, and the ordering rule between
-    them ("the verifier MUST precede the keys") goes with them rather than moving.
+def test_the_keys_ride_initialize_and_no_verifier_is_deployed_or_wired():
+    """`setBlsVerifier`, `setConsensusKeys` AND the verifier contract itself are all gone.
 
-    That rule described the two-contract split: install the verifier by setter, then feed keys in
-    one at a time and have each PoP checked against it. The module verifies every genesis PoP
-    INSIDE the initializer, so a deferred verifier reverts `ERR_BLS_VERIFIER_NOT_CONFIGURED` on
-    the first key of the very call that would have set it. Argument 15 is the verifier, arguments
-    4-6 are the keys, one call, no window."""
+    The ordering rule ("the verifier MUST precede the keys") described a two-contract split:
+    install a verifier by setter, then feed keys in one at a time and have each PoP checked
+    against it. Neither half is left. The module verifies every genesis PoP INSIDE the
+    initializer, and it does so itself against the EIP-2537 precompiles — there is no address to
+    set, nothing to deploy, and no window between two calls. Arguments 4-6 are the keys.
+
+    The `forge create` assertion is the load-bearing half of this test now: a bring-up that still
+    deployed a verifier would be building calldata for a `blsVerifier` argument that the contract
+    no longer has, which is a wrong-selector send and not a revert anybody reads."""
     bu = _bringup()
     bu.run()
     argvs = [" ".join(i.argv) for i in bu.p.log]
     assert not [a for a in argvs if "setBlsVerifier" in a or "setConsensusKeys" in a]
+    assert not [a for a in argvs if "BLS12381Verifier" in a]
     init = next(a for a in argvs if PP.INITIALIZE_SIG in a)
-    assert bu.verifier in init and bu.token in init
+    assert bu.token in init
+    # Sixteen argument types, not seventeen. `cast send` derives the selector from this
+    # string, so a stale argument list is a send under a selector the dispatcher does not
+    # know — no compile error, no type error, and no revert anybody can read.
+    assert PP.INITIALIZE_SIG.count(",") + 1 == 16
+    args = init.split(PP.INITIALIZE_SIG, 1)[1].split()
+    # The positional arguments run until the first flag. Sixteen types in the signature and
+    # sixteen values on the command line: this is what catches a list that drifted from the
+    # contract's, which `cast` would otherwise send under a selector nobody answers.
+    positional = args[: next(i for i, a in enumerate(args) if a.startswith("--"))]
+    assert len(positional) == 16, positional
     # `dposActivationBlock` (argument 14) is the unscheduled sentinel at init: a real value would
     # engage the node's pre-execution section against a registry that is not complete yet.
-    args = init.split(PP.INITIALIZE_SIG, 1)[1].split()
     assert args[13] == str(PP.INIT_DPOS_ACTIVATION_BLOCK) == "0"
     # ...and it is scheduled for real afterwards, by governance.
     assert any("setDposActivationBlock(uint64)" in a for a in argvs)
@@ -965,8 +978,8 @@ def test_gov_wait_verdicts(state, head, end, stalled, verdict):
 def test_a_terminal_verdict_names_the_state_rather_than_a_timeout():
     """bash: "proposal Defeated (state=3)". Reporting a timeout for a proposal that LOST sends the
     reader looking at chain throughput."""
-    _, msg = V.gov_wait_verdict("3", 5, 10, 0, desc="setBlsVerifier")
-    assert "Defeated" in msg and "state=3" in msg and "setBlsVerifier" in msg
+    _, msg = V.gov_wait_verdict("3", 5, 10, 0, desc="setBlendReserve")
+    assert "Defeated" in msg and "state=3" in msg and "setBlendReserve" in msg
 
 
 @pytest.mark.parametrize("byte,name", [(0, "Pending"), (1, "Active"), (3, "Defeated"),

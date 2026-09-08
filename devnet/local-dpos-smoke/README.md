@@ -151,8 +151,10 @@ The full prod lifecycle on a chain where the staking cluster is deployed at
    `commitEpochCommittee` system call identically from block 1. `genesis-init`
    also seeds the runtime-upgrade precompile's owner slot with the governance
    signer, the only key the delivery is allowed to use.
-2. The host driver deploys `MockBlendToken` + `BLS12381Verifier` (`forge
-   create`), then DELIVERS the staking module to the running chain with
+2. The host driver deploys `MockBlendToken` (`forge create`) — and only that;
+   the staking module verifies BLS proofs of possession itself against the
+   EIP-2537 precompiles, so there is no verifier contract to deploy and no
+   address to pass. It then DELIVERS the staking module to the running chain with
    `runtime-upgrade install-local --wasm contracts/fluentbase_contracts_staking.wasm
    --target 0x…520011`. The upgrade precompile compiles the wasm on-chain with
    the same address-aware config genesis uses, so the delivered bytes match a

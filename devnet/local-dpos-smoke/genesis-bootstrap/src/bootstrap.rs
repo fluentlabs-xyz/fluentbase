@@ -15,11 +15,16 @@ use crate::pop;
 // at exactly that address or every governance write reverts `ERR_ONLY_GOVERNANCE`.
 pub const STAKING_ADDR: Address = fluentbase_types::GENESIS_STAKING;
 pub const GOVERNANCE_ADDR: Address = fluentbase_types::GENESIS_GOVERNANCE;
-// The three predeploys that stayed Solidity keep their historical 0x...520N
-// devnet slots (well clear of the EIP-2537/2935 precompiles at 0x01..0x12).
+// The two predeploys that stayed Solidity keep their historical 0x...520N devnet
+// slots (well clear of the EIP-2537/2935 precompiles at 0x01..0x12).
+//
+// `0x...5208` used to hold `BLS12381Verifier`. The staking module verifies BLS
+// signatures itself now and reaches the EIP-2537 precompiles directly, so the
+// slot is not filled and its address is not passed to anything. It is left
+// vacant rather than reassigned, so a stale harness still pointing at it fails
+// loudly instead of hitting somebody else's code.
 pub const STAKING_POOL_ADDR: Address = address!("0x0000000000000000000000000000000000005203");
 pub const STAKING_TOKEN_ADDR: Address = address!("0x0000000000000000000000000000000000005207");
-pub const BLS_VERIFIER_ADDR: Address = address!("0x0000000000000000000000000000000000005208");
 
 // EVM canonical SYSTEM_CALLER (`consts.rs::SYSTEM_CALLER`) — used to satisfy the
 // `ERR_ONLY_SYSTEM_CALL` guard on `commitEpochCommittee`.
@@ -27,10 +32,10 @@ const SYSTEM_CALLER: Address = address!("0xfffffffffffffffffffffffffffffffffffff
 
 // `initialize` verifies one BLS proof-of-possession per genesis validator inside a
 // single call (`initializer.rs` → `consensus::verify_consensus_keys`), each a
-// hash-to-curve plus a pairing through the Solidity verifier, so the whole init
-// sequence runs well past the 50 M an individual predeploy call used to need. This
-// is an in-process bootstrap EVM with `BlockEnv::gas_limit = u64::MAX`, not a
-// consensus budget.
+// hash-to-curve and a pairing the staking module now runs itself against the
+// EIP-2537 precompiles, so the whole init sequence runs well past the 50 M an
+// individual predeploy call used to need. This is an in-process bootstrap EVM with
+// `BlockEnv::gas_limit = u64::MAX`, not a consensus budget.
 const BOOTSTRAP_GAS_LIMIT: u64 = 500_000_000;
 
 // Governor voting window, in blocks — the value
@@ -103,7 +108,6 @@ mod abi {
                 uint256 minValidatorStakeAmount,
                 uint256 minStakingAmount,
                 uint64 dposActivationBlock,
-                address blsVerifier,
                 uint256 minUndelegateBlocks,
                 address blendReserve
             ) external;
@@ -191,32 +195,15 @@ pub fn run(
         false,
     )?;
     deploy_governance(&mut ctx, deployer, &artefacts.governance)?;
-    // BLS12381Verifier is stateless (no storage, no constructor args) —
-    // just place the runtime bytecode at the canonical address. We still
-    // route through deploy_to_canonical to keep one code path for all
-    // predeploys.
-    deploy_to_canonical(
-        &mut ctx,
-        deployer,
-        &artefacts.bls_verifier,
-        BLS_VERIFIER_ADDR,
-        &[],
-        false,
-    )?;
 
     // Everything below runs through the rWasm executor, which rejects bare legacy
     // bytecode (`execute_rwasm_frame` returns `NotSupportedBytecode` for anything
-    // that is neither rWasm-native nor an OwnableAccount). Re-install the four
+    // that is neither rWasm-native nor an OwnableAccount). Re-install the three
     // Solidity predeploys in the production OwnableAccount(EVM_RUNTIME, ..) form
     // BEFORE the flip, or the first call into any of them halts.
     wrap_evm_predeploys(
         &mut ctx,
-        &[
-            STAKING_TOKEN_ADDR,
-            STAKING_POOL_ADDR,
-            GOVERNANCE_ADDR,
-            BLS_VERIFIER_ADDR,
-        ],
+        &[STAKING_TOKEN_ADDR, STAKING_POOL_ADDR, GOVERNANCE_ADDR],
     )?;
     ctx.disabled_rwasm = false;
     ctx.add_bytecode(STAKING_ADDR, artefacts.staking_rwasm.clone());
@@ -332,10 +319,10 @@ pub fn run(
     )?;
 
     // One call seeds the chain configuration, the dependency addresses and every
-    // genesis validator with its stake and verified consensus keys. The verifier rides
-    // it inline: leaving it zero and wiring it afterwards through a setter is what the
-    // old two-contract split did, and it now reverts `ERR_BLS_VERIFIER_NOT_CONFIGURED`
-    // on the first key verification inside this very call.
+    // genesis validator with its stake and verified consensus keys. There is no
+    // verifier argument any more and no setter that could supply one: the module
+    // verifies each proof of possession itself, against the fixed EIP-2537
+    // precompile addresses.
     let staking_init = abi::IStaking::initializeCall {
         initialStakeOwner: blend_holder,
         validators: validator_addrs,
@@ -351,7 +338,6 @@ pub fn run(
         minValidatorStakeAmount: smoke_min_stake,
         minStakingAmount: smoke_min_stake,
         dposActivationBlock: dpos_activation_block,
-        blsVerifier: BLS_VERIFIER_ADDR,
         minUndelegateBlocks: U256::ZERO,
         blendReserve: blend_holder,
     }
@@ -429,7 +415,6 @@ pub fn run(
             STAKING_POOL_ADDR,
             GOVERNANCE_ADDR,
             STAKING_TOKEN_ADDR,
-            BLS_VERIFIER_ADDR,
         ],
     ))
 }

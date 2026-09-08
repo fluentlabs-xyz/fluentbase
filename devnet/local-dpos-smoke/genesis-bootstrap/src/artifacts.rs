@@ -21,11 +21,10 @@ pub struct Artefacts {
     /// different code hash than the one the runtime-upgrade path produces. Provenance
     /// and the build command: `contracts/STAKING_ARTEFACT.md`.
     pub staking_rwasm: Bytes,
-    /// Solidity init bytecode for the four contracts that stayed Solidity.
+    /// Solidity init bytecode for the three contracts that stayed Solidity.
     pub staking_pool: Bytes,
     pub governance: Bytes,
     pub mock_blend_token: Bytes,
-    pub bls_verifier: Bytes,
 }
 
 fn load_one(path: &Path) -> eyre::Result<Bytes> {
@@ -55,6 +54,5 @@ pub fn load(dir: &Path) -> eyre::Result<Artefacts> {
         staking_pool: load_one(&dir.join("StakingPool.json"))?,
         governance: load_one(&dir.join("FluentGovernance.json"))?,
         mock_blend_token: load_one(&dir.join("MockBlendToken.json"))?,
-        bls_verifier: load_one(&dir.join("BLS12381Verifier.json"))?,
     })
 }

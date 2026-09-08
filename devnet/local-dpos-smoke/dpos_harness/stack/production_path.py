@@ -56,13 +56,14 @@ from the generated profile in two:
    left: `genesis-bootstrap bare` writes the fixed `GENESIS_STAKING` address into that file, and
    the delivery below installs the module at exactly that address. The create-nonce drift detector
    it used to be goes with its subject.
-5. **the verifier rides `initialize`; there is no `setBlsVerifier` and no `setConsensusKeys`.**
-   The old ordering rule ("`setBlsVerifier` MUST precede `setConsensusKeys`") described the
-   two-contract split: install the verifier by setter, then feed keys in one at a time and have
-   each PoP checked against it. The module verifies every genesis PoP INSIDE the initializer, so a
-   deferred verifier reverts `ERR_BLS_VERIFIER_NOT_CONFIGURED` on the first key of the very call
-   that would have set it. Argument 15 is the verifier, arguments 4-6 are the keys, and the
-   ordering constraint disappears rather than moving.
+5. **there is no verifier contract at all, and no `setConsensusKeys`.**
+   The old ordering rule ("`setBlsVerifier` MUST precede `setConsensusKeys`") described a
+   two-contract split: install a verifier by setter, then feed keys in one at a time and have each
+   PoP checked against it. Both halves are gone. The module verifies every genesis PoP INSIDE the
+   initializer, and it does so itself — against the EIP-2537 precompiles at their fork-fixed
+   addresses, with no address in its storage and no setter to move one. `initialize` therefore
+   takes SIXTEEN arguments, not seventeen, and its selector changed with the argument list; keys
+   are arguments 4-6.
 6. **the spammer starts BEFORE the deploys** and keeps user tx pressure on the mempool across
    every transition the case then measures. Its key is mnemonic index 6 — an account that issues
    no other transaction, or its nonce races the deploy txs (`core/spammer.py`).
@@ -73,14 +74,13 @@ A runtime-upgrade install places CODE and nothing else: no constructor runs, sto
 empty. So every piece of state the genesis stands receive from `bootstrap::run` has to be
 issued here as ordinary transactions, and the ORDER is not free:
 
-1. `forge create` the BLEND token and the BLS verifier. Both are Solidity, both are plain
-   CREATEs, and both are ARGUMENTS to step 4.
+1. `forge create` the BLEND token. It is Solidity, a plain CREATE, and an ARGUMENT to step 4.
 2. Deliver the module: `runtime-upgrade install-local --wasm … --target GENESIS_STAKING`.
    Signed with the GOVERNANCE SIGNER, which is the address `genesis-bootstrap bare` seeds into
    the upgrade precompile's owner slot — any other key fails `only_owner`.
 3. `BLEND.approve(staking, …)` from the stake sponsor. `initialize` PULLS the genesis stakes
    inside its own call, so the allowance has to exist before it, not after.
-4. `initialize`, the 17-argument one-shot, permissionless, sent by the deployer. It seeds the
+4. `initialize`, the 16-argument one-shot, permissionless, sent by the deployer. It seeds the
    FIVE initial validators with their stakes and consensus keys and takes
    `dpos_activation_block = 0`.
 5. `setProductionLivenessDisabled(false)` and `setBlendStipendPerEpoch`, both from the Governor
@@ -158,10 +158,12 @@ JOINER_BLEND_WEI = "10000000000000000000"
 SPAMMER_MNEMONIC_INDEX = "6"
 DEFAULT_MNEMONIC = "test test test test test test test test test test test junk"
 
-#: The two `forge create` targets, in bash's order. Both are ARGUMENTS to `initialize` (the token
-#: is argument 8, the verifier argument 15) rather than things wired up afterwards by a setter.
+#: The one remaining `forge create` target. It is an ARGUMENT to `initialize` (argument 8) rather
+#: than something wired up afterwards by a setter.
+#:
+#: `BLS12381Verifier` used to be deployed here as well and passed as argument 15. The staking
+#: module verifies BLS signatures itself now, so there is nothing to deploy and nothing to pass.
 TOKEN_CONTRACT = "contracts/staking/mocks/MockBlendToken.sol:MockBlendToken"
-VERIFIER_CONTRACT = "contracts/libraries/BLS12381Verifier.sol:BLS12381Verifier"
 
 #: The runtime-upgrade delivery. `runtime-upgrade` is a HOST binary, like `forge` and `cast` —
 #: the smoke image ships only `fluent` and `genesis-bootstrap`. Unlike those two it is built
@@ -203,12 +205,18 @@ UPGRADE_OK_RESULTS = ("upgraded", "up_to_date")
 
 # ── the `initialize` arguments this stand seeds ────────────────────────────────────────
 #: `initialize(address,address[],uint256[],bytes[],bytes[],bytes32[],uint16,address,uint32,
-#: uint32,uint32,uint256,uint256,uint64,address,uint256,address)` — pinned against the
-#: contract's own `SIG_INITIALIZE` (`contracts/staking/src/consts.rs`). Seventeen arguments in
-#: one selector, so a re-ordering is a silent wrong-argument call rather than a revert; the
-#: keyword-built list below is what keeps the positions honest.
+#: uint32,uint32,uint256,uint256,uint64,uint256,address)` — pinned against the contract's own
+#: `SIG_INITIALIZE` (`contracts/staking/src/consts.rs`). Sixteen arguments in one selector, so a
+#: re-ordering is a silent wrong-argument call rather than a revert; the keyword-built list below
+#: is what keeps the positions honest.
+#:
+#: This string IS the selector `cast send` computes. When the contract's argument list moves,
+#: nothing here fails to build and nothing type-checks — the call simply goes out under a
+#: selector the dispatcher does not know and the bring-up dies at the send. The `address
+#: blsVerifier` that used to sit at position 15 came out with the external verifier, taking the
+#: selector from `0xdfa8efb0` to `0xfecaf0f1`.
 INITIALIZE_SIG = ("initialize(address,address[],uint256[],bytes[],bytes[],bytes32[],uint16,"
-                  "address,uint32,uint32,uint32,uint256,uint256,uint64,address,uint256,address)")
+                  "address,uint32,uint32,uint32,uint256,uint256,uint64,uint256,address)")
 #: 1 BLEND. The baseline per-validator genesis stake and `minValidatorStakeAmount`/
 #: `minStakingAmount` — the contract rejects a zero minimum, and a stake must be a multiple of
 #: `BALANCE_COMPACT_PRECISION` (1e10), which 1e18 is.
@@ -326,9 +334,9 @@ def _read_host(service: str):
 class RotationBringUp:
     """`pp_bring_up_rotation` (lib.sh:1252-1357) — the 14-phase runtime-forge bring-up.
 
-    Leaves the stack UP with the DPoS chain live past the anchor, and exposes the eleven facts the
+    Leaves the stack UP with the DPoS chain live past the anchor, and exposes the ten facts the
     bash exported for the case to read afterwards: `deployer_key`, `deployer_addr`, `token`,
-    `verifier`, `staking_rt`, `chain_config_rt`, `gov_addr`, `liveness_rt`, `act`, `anchor`,
+    `staking_rt`, `chain_config_rt`, `gov_addr`, `liveness_rt`, `act`, `anchor`,
     `epoch_len` — plus `epoch_first_block()`, which bash defines at FILE scope (lib.sh:1362)
     precisely so it outlives the helper's `local`s.
 
@@ -364,13 +372,12 @@ class RotationBringUp:
         self.post_manifest = post_manifest
         # Facts the case reads afterwards. The three contract addresses are CONSTANTS, not deploy
         # outcomes — one module at a fixed address, with `chain_config_rt` / `liveness_rt` as
-        # aliases for the read surfaces that used to be separate predeploys. `token` and
-        # `verifier` are still discovered, because they are still `forge create`d here.
+        # aliases for the read surfaces that used to be separate predeploys. `token` is still
+        # discovered, because it is still `forge create`d here.
         self.deployer_key = ""
         self.deployer_addr = ""
         self.spammer_addr = ""
         self.token = ""
-        self.verifier = ""
         self.staking_rt = topology.GENESIS_STAKING
         self.chain_config_rt = topology.GENESIS_STAKING
         self.gov_addr = topology.GENESIS_GOVERNANCE
@@ -494,20 +501,16 @@ class RotationBringUp:
         self.spammers.start(spammer_key, self.deployer_addr, self.rpc, note="production-path")
         print(f"  tx spammer started (from {self.spammer_addr})", flush=True)
 
-        # -- step 1: forge-create the token and the BLS verifier -------------------
-        # Both are Solidity and both are plain CREATEs, so `forge create` still works and still
-        # discovers their addresses. They are ARGUMENTS to `initialize` (8 and 15), not things
-        # wired up by a setter afterwards.
-        print("== runtime deploy: token + BLS verifier ==", flush=True)
+        # -- step 1: forge-create the token ----------------------------------------
+        # Solidity, and a plain CREATE, so `forge create` still works and still discovers its
+        # address. It is ARGUMENT 8 to `initialize`, not something wired up by a setter
+        # afterwards. The BLS verifier used to be deployed here too; the module carries it now.
+        print("== runtime deploy: token ==", flush=True)
         self.token = self._forge_create(TOKEN_CONTRACT, "deploy-token",
                                         "0xToKeN0000000000000000000000000000000000")
         if not self.token.startswith("0x"):
             self._fail("MockBlendToken deploy")
-        self.verifier = self._forge_create(VERIFIER_CONTRACT, "deploy-verifier",
-                                           "0xVeRiFiEr00000000000000000000000000000000")
-        if not self.verifier.startswith("0x"):
-            self._fail("BLS12381Verifier deploy")
-        print(f"  token={self.token} verifier={self.verifier}", flush=True)
+        print(f"  token={self.token}", flush=True)
 
         # The joiner's BLEND, sent before the staking cluster exists. `checked=True` is bash's
         # bare call under `set -e` — see Chain.token_transfer.
@@ -667,17 +670,15 @@ class RotationBringUp:
               flush=True)
 
     def _initialize_staking(self, chain: Chain) -> None:
-        """Steps 3+4: `BLEND.approve(staking, …)` then the 17-argument `initialize`.
+        """Steps 3+4: `BLEND.approve(staking, …)` then the 16-argument `initialize`.
 
         `initialize` PULLS the genesis stakes with `transferFrom` inside its own call, so the
         allowance has to exist first; the same allowance also covers the stipend budget, because
         both draw on the deployer (`MockBlendToken` minted the whole supply to it).
 
         The consensus keys of all `committee_size` seeded validators ride arguments 4-6 and are
-        PoP-verified inside this call against argument 15, the freshly deployed verifier. That is
-        why there is no `setBlsVerifier` step any more: a zero verifier here reverts
-        `ERR_BLS_VERIFIER_NOT_CONFIGURED` on the first key, inside the very call that would have
-        configured it.
+        PoP-verified inside this call, by the module itself against the EIP-2537 precompiles.
+        There is no verifier argument and no setter that could supply one.
 
         `epochBlockInterval` is `ACTIVATION_GRID`, not a separate knob, and the coupling is
         deliberate: the activation block this stand schedules is computed on that grid
@@ -699,7 +700,7 @@ class RotationBringUp:
                    self.staking_rt, total_stake + STIPEND_BUDGET_WEI)
 
         # Built positionally against INITIALIZE_SIG, one argument per line with the parameter
-        # name beside it. Seventeen arguments share one selector, so a transposed pair is a
+        # name beside it. Sixteen arguments share one selector, so a transposed pair is a
         # silently wrong call, not a revert.
         args = [
             self.deployer_addr,                                    # 1  initialStakeOwner
@@ -716,9 +717,8 @@ class RotationBringUp:
             INIT_STAKE_WEI,                                        # 12 minValidatorStakeAmount
             INIT_STAKE_WEI,                                        # 13 minStakingAmount
             INIT_DPOS_ACTIVATION_BLOCK,                            # 14 dposActivationBlock
-            self.verifier,                                         # 15 blsVerifier
-            INIT_MIN_UNDELEGATE_BLOCKS,                            # 16 minUndelegateBlocks
-            self.deployer_addr,                                    # 17 blendReserve
+            INIT_MIN_UNDELEGATE_BLOCKS,                            # 15 minUndelegateBlocks
+            self.deployer_addr,                                    # 16 blendReserve
         ]
         self._send(chain, "Staking.initialize", self.staking_rt, INITIALIZE_SIG, *args)
         print(f"  initialized: {n} seeded validators, activeValidatorsLength={n}, "
