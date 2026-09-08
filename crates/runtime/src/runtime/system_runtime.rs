@@ -404,19 +404,11 @@ fn prepare_system_runtime(
         compile_wasmtime_module_cached(config, wasm, fluentbase_types::keccak256(cache_identity).0)
             .map_err(|_| TrapCode::IllegalOpcode)?;
     // The rWasm state router permits arbitrary entrypoint types for trusted runtimes.
-    // SystemRuntime::execute passes the C main arguments and reads an i32 status, so
-    // enforce that ABI before a backend can return a differently typed value.
-    let main = module
-        .get_export("main")
-        .and_then(|export| export.func().cloned())
-        .ok_or(TrapCode::IllegalOpcode)?;
-    if main.params().len() != 2
-        || !main.params().all(|ty| ty.is_i32())
-        || main.results().len() != 1
-        || !main.results().all(|ty| ty.is_i32())
-    {
-        return Err(TrapCode::IllegalOpcode);
-    }
+    // SystemRuntime::execute calls `main(argc, argv) -> i32` and `deploy() -> i32` and reads an
+    // i32 status, so enforce that ABI before a backend can return a differently typed value.
+    // `deploy` is optional: runtimes that never run in the deploy state do not export it.
+    require_entrypoint_abi(&module, "main", 2, true)?;
+    require_entrypoint_abi(&module, "deploy", 0, false)?;
     // rWasm 0.4.7's WasmtimeExecutor constructor panics on module-dependent errors.
     // Use it only to create a store/linker from a fixed, empty module, then instantiate
     // the supplied module through Wasmtime's fallible APIs with the same resource limits.
@@ -445,6 +437,29 @@ fn prepare_system_runtime(
     } else {
         Ok(interpreter)
     }
+}
+
+/// Requires an exported entrypoint to be a function taking `params` i32 arguments and returning
+/// one i32. A missing export is an error only when `required`.
+fn require_entrypoint_abi(
+    module: &rwasm::wasmtime::WasmtimeModule,
+    name: &str,
+    params: usize,
+    required: bool,
+) -> Result<(), TrapCode> {
+    let Some(export) = module.get_export(name) else {
+        return if required {
+            Err(TrapCode::IllegalOpcode)
+        } else {
+            Ok(())
+        };
+    };
+    let func = export.func().ok_or(TrapCode::IllegalOpcode)?;
+    let matches = func.params().len() == params
+        && func.params().all(|ty| ty.is_i32())
+        && func.results().len() == 1
+        && func.results().all(|ty| ty.is_i32());
+    matches.then_some(()).ok_or(TrapCode::IllegalOpcode)
 }
 
 fn system_runtime_compilation_config(
@@ -519,6 +534,14 @@ mod tests {
                 (func (export "main") (param i32 i32) (result i32) i32.const 0))"#,
             r#"(module (func (export "main") (param i32 i32) (result i64) i64.const 0))"#,
             r#"(module (func (export "main") (result i32) i32.const 0))"#,
+            // `deploy` is optional, but every EVM CREATE runs the owner runtime in the deploy
+            // state and reads an i32 status from it, so an exported `deploy` must be `() -> i32`.
+            r#"(module (func (export "deploy") (result i64) i64.const 0)
+                (func (export "main") (param i32 i32) (result i32) i32.const 0))"#,
+            r#"(module (func (export "deploy") (param i32) (result i32) i32.const 0)
+                (func (export "main") (param i32 i32) (result i32) i32.const 0))"#,
+            r#"(module (global (export "deploy") i32 (i32.const 0))
+                (func (export "main") (param i32 i32) (result i32) i32.const 0))"#,
         ];
         for address in [
             fluentbase_types::PRECOMPILE_EVM_RUNTIME,
@@ -537,6 +560,47 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn system_runtime_deploy_entrypoint_is_optional_and_executes() {
+        for source in [
+            r#"(module (memory (export "memory") 1)
+                (func (export "main") (param i32 i32) (result i32) i32.const 0))"#,
+            r#"(module (memory (export "memory") 1)
+                (func (export "deploy") (result i32) i32.const 0)
+                (func (export "main") (param i32 i32) (result i32) i32.const 0))"#,
+        ] {
+            let wasm = wat::parse_str(source).unwrap();
+            assert_eq!(
+                validate_system_runtime(&wasm, Address::ZERO),
+                Ok(()),
+                "{source}"
+            );
+        }
+        SystemRuntime::reset_cached_runtimes();
+        let module = system_module(
+            r#"(module (memory (export "memory") 1)
+            (func (export "deploy") (result i32) i32.const 0)
+            (func (export "main") (param i32 i32) (result i32) i32.const 0))"#,
+        );
+        let mut runtime = SystemRuntime::new(
+            module,
+            import_linker_v1_preview(),
+            test_code_hash(),
+            Address::ZERO,
+            RuntimeContext::default()
+                .with_fuel_limit(10_000)
+                .with_state(STATE_DEPLOY),
+            false,
+        )
+        .unwrap();
+        runtime.execute().unwrap();
+        assert_eq!(
+            runtime.context().execution_result.exit_code,
+            ExitCode::Ok.into_i32()
+        );
+        SystemRuntime::reset_cached_runtimes();
     }
 
     #[test]
