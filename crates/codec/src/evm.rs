@@ -256,9 +256,17 @@ impl<const N: usize, B: ByteOrder, const ALIGN: usize, const IS_STATIC: bool>
     /// occupies its aligned width.
     fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
         let width = <Self as Encoder<B, ALIGN, true, IS_STATIC>>::HEADER_SIZE;
-        if buf.remaining() < offset + width {
+        // `offset` comes from the caller, so the end of the field is checked arithmetic, or a
+        // wrapped sum would produce a bound small enough to pass. An overflow is its own error:
+        // there is no honest "expected" buffer size to report for it.
+        let end = offset.checked_add(width).ok_or_else(|| {
+            CodecError::Decoding(DecodingError::BufferOverflow {
+                msg: "Overflow occurred when calculating the end offset of FixedBytes".to_string(),
+            })
+        })?;
+        if buf.remaining() < end {
             return Err(CodecError::Decoding(DecodingError::BufferTooSmall {
-                expected: offset + width,
+                expected: end,
                 found: buf.remaining(),
                 msg: "Buffer too small to decode FixedBytes".to_string(),
             }));

@@ -67,6 +67,8 @@ jobs:
             features: std
             kind: workspace
             cache-key: root-e2e-std
+            # Doctests are not sharded across the matrix - one entry owns them.
+            doctests: true
 
           # ---------------------------
           # evm-e2e suite (good_coverage_tests)
@@ -160,6 +162,21 @@ jobs:
             --no-default-features \
             --features "${{ matrix.features }}" \
             --no-fail-fast \
+            --locked
+
+      # nextest does not run doctests, so a `compile_fail` doctest - the codec uses one to pin
+      # that a fixed-bytes type wider than bytes32 cannot be instantiated for the Solidity ABI -
+      # is not covered by the step above. Kept as its own step so a failure reads as "doctests".
+      - name: Run doctests (codec)
+        if: matrix.doctests
+        run: |
+          set -euxo pipefail
+          cargo test --doc \
+            --manifest-path=./Cargo.toml \
+            --package fluentbase-codec \
+            --release \
+            --no-default-features \
+            --features "${{ matrix.features }}" \
             --locked
 
       - name: Run ethereum tests (evm-e2e)

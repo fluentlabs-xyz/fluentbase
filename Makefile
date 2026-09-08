@@ -58,6 +58,13 @@ run-e2e-tests:
 run-codec-conformance:
 	$(MAKE) -C codec-conformance all
 
+# nextest does not run doctests, so the codec's `compile_fail` doctest - which pins that a
+# fixed-bytes type wider than bytes32 cannot be instantiated for the Solidity ABI - needs its own
+# invocation to be covered at all.
+.PHONY: run-codec-doctests
+run-codec-doctests:
+	cargo test --doc --manifest-path=./Cargo.toml --package fluentbase-codec $(TEST_PROFILE) --no-default-features --features "$(TEST_FEATURES)"
+
 .PHONY: run-contracts-tests
 run-contracts-tests:
 	cargo nextest run --manifest-path=./contracts/Cargo.toml --workspace $(TEST_PROFILE) --no-default-features --features "$(TEST_FEATURES)"
@@ -71,6 +78,8 @@ test:
 	$(MAKE) run-e2e-tests TEST_FEATURES=std,wasmtime TEST_PROFILE=--release
 	# devnet/mainnet: rwasm case
 	$(MAKE) run-e2e-tests TEST_FEATURES=std TEST_PROFILE=--release
+	# doctests, which nextest does not run
+	$(MAKE) run-codec-doctests TEST_FEATURES=std TEST_PROFILE=--release
 
 .PHONY: coverage coverage-root coverage-contracts coverage-examples-deps coverage-evm-e2e-deps
 coverage: coverage-root coverage-contracts coverage-examples-deps coverage-evm-e2e-deps

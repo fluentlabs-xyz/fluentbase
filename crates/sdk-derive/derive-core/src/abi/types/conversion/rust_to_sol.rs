@@ -62,6 +62,12 @@ fn convert_path_type(type_path: &syn::TypePath) -> Result<SolType, ConversionErr
 
     let type_name = last_segment.ident.to_string();
 
+    // A `B<bits>` alias is decided before the primitive table, so that a width the Solidity ABI
+    // has no type for is rejected rather than silently mapped to something else.
+    if let Some(width) = fixed_bytes_alias_width(&type_name) {
+        return fixed_bytes(width, &type_name);
+    }
+
     // Try primitive types first
     if let Some(result) = convert_primitive_type(&type_name) {
         return Ok(result);
@@ -71,13 +77,6 @@ fn convert_path_type(type_path: &syn::TypePath) -> Result<SolType, ConversionErr
     match type_name.as_str() {
         "Vec" => convert_vec_type(last_segment),
         "FixedBytes" => convert_fixed_bytes(&type_name, &last_segment.arguments),
-        // Solidity's fixed-bytes types stop at `bytes32`. The codec writes these aliases as one
-        // inline blob of N bytes, which no Solidity type describes (`fluentbase-codec` rejects
-        // them in Solidity mode for the same reason), so no selector can be derived for them.
-        "B512" | "B1024" | "B2048" => Err(ConversionError::InvalidBytesSize(format!(
-            "{type_name} is wider than bytes32, the widest fixed-bytes type in the Solidity ABI; \
-             use `Bytes` for a dynamic blob or `[u8; N]` for `uint8[N]`"
-        ))),
         _ => {
             // Special handling for array types is done in convert_array_type
             // Check for unsupported generic parameters in other types
@@ -123,16 +122,6 @@ fn convert_primitive_type(type_name: &str) -> Option<SolType> {
     }
 
     match type_name {
-        "B8" => Some(SolType::FixedBytes(1)),
-        "B16" => Some(SolType::FixedBytes(2)),
-        "B32" => Some(SolType::FixedBytes(4)),
-        "B64" => Some(SolType::FixedBytes(8)),
-        "B96" => Some(SolType::FixedBytes(12)),
-        "B128" => Some(SolType::FixedBytes(16)),
-        "B160" => Some(SolType::FixedBytes(20)),
-        "B192" => Some(SolType::FixedBytes(24)),
-        "B224" => Some(SolType::FixedBytes(28)),
-        "B256" => Some(SolType::FixedBytes(32)),
         "bool" => Some(SolType::Bool),
         "Address" => Some(SolType::Address),
         "String" | "str" => Some(SolType::String),
@@ -198,6 +187,60 @@ fn convert_slice_type(slice: &syn::TypeSlice) -> Result<SolType, ConversionError
     Ok(SolType::Array(Box::new(elem_type)))
 }
 
+/// The width in bytes a `B<bits>` alias stands for, if the name is one.
+///
+/// The list is exactly the aliases the primitive types crate defines; any other `B`-prefixed name
+/// is a user's own type - `B24` and `B4096` are structs, not fixed bytes. Whether a listed width
+/// has a Solidity type is [`fixed_bytes`]'s decision, not this one: every alias is routed there,
+/// so a wide one cannot reach the primitive table and bypass the width rule.
+fn fixed_bytes_alias_width(type_name: &str) -> Option<usize> {
+    const ALIASES: [(&str, usize); 13] = [
+        ("B8", 1),
+        ("B16", 2),
+        ("B32", 4),
+        ("B64", 8),
+        ("B96", 12),
+        ("B128", 16),
+        ("B160", 20),
+        ("B192", 24),
+        ("B224", 28),
+        ("B256", 32),
+        ("B512", 64),
+        ("B1024", 128),
+        ("B2048", 256),
+    ];
+
+    ALIASES
+        .iter()
+        .find(|(name, _)| *name == type_name)
+        .map(|(_, width)| *width)
+}
+
+/// The single home of "the Solidity ABI has no fixed-bytes type wider than `bytes32`".
+///
+/// Both spellings of a fixed-bytes parameter land here - the `B<bits>` aliases and an explicit
+/// `FixedBytes<N>` - so they are accepted and refused on the same rule, with the same message.
+/// `fluentbase-codec` asserts the same bound at the type level for the Solidity ABI.
+fn fixed_bytes(width: usize, described_as: &str) -> Result<SolType, ConversionError> {
+    // The two ways to be outside `bytes1`..`bytes32` fail for different reasons, so they say
+    // different things: there is no zero-width Solidity type at all, while a too-wide one has
+    // `Bytes` and `[u8; N]` to fall back on.
+    if width == 0 {
+        return Err(ConversionError::InvalidBytesSize(format!(
+            "{described_as} is zero bytes wide; the Solidity ABI's fixed-bytes types start at \
+             bytes1"
+        )));
+    }
+    if width > 32 {
+        return Err(ConversionError::InvalidBytesSize(format!(
+            "{described_as} is {width} bytes wide; the Solidity ABI has no fixed-bytes type wider \
+             than bytes32 - use `Bytes` for a dynamic blob or `[u8; {width}]` for \
+             `uint8[{width}]`"
+        )));
+    }
+    Ok(SolType::FixedBytes(width))
+}
+
 fn convert_fixed_bytes(type_name: &str, args: &PathArguments) -> Result<SolType, ConversionError> {
     if let PathArguments::AngleBracketed(angle_args) = args {
         if let Some(GenericArgument::Const(syn::Expr::Lit(syn::ExprLit {
@@ -206,9 +249,7 @@ fn convert_fixed_bytes(type_name: &str, args: &PathArguments) -> Result<SolType,
         }))) = angle_args.args.first()
         {
             if let Ok(size) = lit_int.base10_parse::<usize>() {
-                if size > 0 && size <= 32 {
-                    return Ok(SolType::FixedBytes(size));
-                }
+                return fixed_bytes(size, &format!("{type_name}<{size}>"));
             }
         }
     }
@@ -484,12 +525,22 @@ mod tests {
         assert_type("FixedBytes<1>", SolType::FixedBytes(1));
         assert_type("FixedBytes<32>", SolType::FixedBytes(32));
 
-        // Invalid sizes
+        // Invalid sizes. The two ends fail for different reasons, and each message has to name
+        // its own: a zero-width type has no Solidity counterpart at all, while a too-wide one is
+        // pointed at `Bytes` and `[u8; N]`.
         assert_error("FixedBytes<0>", |e| {
-            assert!(matches!(e, ConversionError::InvalidBytesSize(_)));
+            let ConversionError::InvalidBytesSize(msg) = e else {
+                panic!("expected InvalidBytesSize, got {e:?}");
+            };
+            assert!(msg.contains("zero bytes wide"), "{msg}");
+            assert!(msg.contains("start at bytes1"), "{msg}");
         });
         assert_error("FixedBytes<33>", |e| {
-            assert!(matches!(e, ConversionError::InvalidBytesSize(_)));
+            let ConversionError::InvalidBytesSize(msg) = e else {
+                panic!("expected InvalidBytesSize, got {e:?}");
+            };
+            assert!(msg.contains("33 bytes wide"), "{msg}");
+            assert!(msg.contains("wider than bytes32"), "{msg}");
         });
     }
 

@@ -1120,6 +1120,21 @@ fn packed_mode_matches_the_specification() {
         "bytes32"
     );
 
+    // `[u8; N]` is `uint8[N]` here too, so packed encoding pads each byte to a word rather than
+    // concatenating the bytes the way `bytesN` does. The two stay distinct in packed mode.
+    packed_case!(
+        &mut r,
+        sol_data::FixedArray<sol_data::Uint<8>, 4>,
+        [1u8, 2, 3, 4],
+        "uint8[4], elements padded to a word"
+    );
+    packed_case!(
+        &mut r,
+        sol_data::FixedArray<sol_data::Uint<8>, 32>,
+        core::array::from_fn::<u8, 32, _>(|i| i as u8),
+        "uint8[32], elements padded to a word"
+    );
+
     // "array elements are padded, but still encoded in-place"
     packed_case!(
         &mut r,
