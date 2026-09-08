@@ -315,6 +315,34 @@ fn judge<SDK: SharedAPI>(
         if due_scaled < floor_scaled {
             continue;
         }
+
+        // Retire the ladder after a clean run, BEFORE this epoch's own verdict
+        // reads or writes anything. Placed here rather than next to the failure
+        // arm because it has to run for the members who did NOT fail — a
+        // validator whose run is clean never reaches that arm at all. It runs on
+        // every judged member, so the reset lands on the failing member too: a
+        // failure after a full run starts the ladder at its first rung instead
+        // of resuming a years-old climb.
+        //
+        // `last_failed_epoch_p1` stores epoch+1, so the last failure was at
+        // `p1 - 1` and the run length is `epoch - (p1 - 1)`. Zero means the
+        // validator has never failed and there is no ladder to retire.
+        let judged = storage.validators_accessor().entry(members[index]);
+        let last_failed_p1 = judged.last_failed_epoch_p1_accessor().get_checked(sdk)?;
+        if last_failed_p1 != 0
+            && epoch.saturating_sub(last_failed_p1 - 1) >= KICK_LADDER_RESET_EPOCHS
+        {
+            // The stamp is deliberately left standing, so this condition holds
+            // on every close from here until the next failure. Read before
+            // writing: without the guard a validator that failed once and has
+            // been clean ever since pays a store per judged epoch forever, on
+            // every seat, inside a pre-execution system call.
+            let ladder = judged.kick_count_accessor();
+            if ladder.get_checked(sdk)? != 0 {
+                ladder.set_checked(sdk, 0)?;
+            }
+        }
+
         let produced = storage
             .produced_accessor()
             .entry(epoch)

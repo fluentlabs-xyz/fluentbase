@@ -2958,7 +2958,10 @@ fn a_tombstone_refuses_redelegation_without_stranding_the_claim() {
     staking_storage()
         .validator_snapshots_accessor()
         .entry(validator)
-        .entry(WARMUP_DELAY)
+        // The delegation matures at `WARMUP_DELAY` and the seat it funds is
+        // selected `MAX_COMMITTEE_LOOKAHEAD_EPOCHS` ahead, so this is the first
+        // epoch whose reward that delegation divides.
+        .entry(WARMUP_DELAY + MAX_COMMITTEE_LOOKAHEAD_EPOCHS)
         .total_blend_rewards_accessor()
         .set_checked(
             &mut harness.sdk,
@@ -2990,7 +2993,10 @@ fn a_tombstone_refuses_redelegation_without_stranding_the_claim() {
         });
 
     harness.set_caller(delegator);
-    harness.set_block_number(activation_block + DEFAULT_EPOCH_BLOCK_INTERVAL * (WARMUP_DELAY + 1));
+    harness.set_block_number(
+        activation_block
+            + DEFAULT_EPOCH_BLOCK_INTERVAL * (WARMUP_DELAY + MAX_COMMITTEE_LOOKAHEAD_EPOCHS + 1),
+    );
     // Commission is zero and the delegator held `delegated` of `stake +
     // delegated` at the settled epoch, so half the blend is theirs. It clears the
     // staking minimum, which is what makes the redelegate branch reach the gate
@@ -3189,7 +3195,9 @@ fn reward_views_split_blend_between_owner_and_delegators() {
     let snapshot = staking_storage()
         .validator_snapshots_accessor()
         .entry(validator)
-        .entry(2);
+        // The delegation is booked at epoch 2 and the seat it funds is selected
+        // two epochs ahead, so epoch 4 is the first reward it divides.
+        .entry(4);
     snapshot
         .total_blend_rewards_accessor()
         .set_checked(
@@ -3198,7 +3206,7 @@ fn reward_views_split_blend_between_owner_and_delegators() {
         )
         .unwrap();
 
-    harness.set_block_number(1_600);
+    harness.set_block_number(2_000);
     let (_, output) = harness.call(encode_call(
         SIG_GET_VALIDATOR_FEE,
         &AddressCommand { value: validator },
@@ -4769,7 +4777,10 @@ fn a_reward_and_a_matured_principal_claim_are_independent() {
     staking_storage()
         .validator_snapshots_accessor()
         .entry(validator)
-        .entry(WARMUP_DELAY)
+        // The delegation matures at `WARMUP_DELAY` and the seat it funds is
+        // selected `MAX_COMMITTEE_LOOKAHEAD_EPOCHS` ahead, so this is the first
+        // epoch whose reward that delegation divides.
+        .entry(WARMUP_DELAY + MAX_COMMITTEE_LOOKAHEAD_EPOCHS)
         .total_blend_rewards_accessor()
         .set_checked(
             &mut harness.sdk,
@@ -8877,7 +8888,10 @@ fn the_delegator_views_report_the_reward_and_the_deposit_apart() {
     staking_storage()
         .validator_snapshots_accessor()
         .entry(validator)
-        .entry(WARMUP_DELAY)
+        // The delegation matures at `WARMUP_DELAY` and the seat it funds is
+        // selected `MAX_COMMITTEE_LOOKAHEAD_EPOCHS` ahead, so this is the first
+        // epoch whose reward that delegation divides.
+        .entry(WARMUP_DELAY + MAX_COMMITTEE_LOOKAHEAD_EPOCHS)
         .total_blend_rewards_accessor()
         .set_checked(
             &mut harness.sdk,
@@ -9002,7 +9016,10 @@ fn redelegation_takes_the_reward_and_leaves_the_withdrawal_queue_alone() {
     staking_storage()
         .validator_snapshots_accessor()
         .entry(validator)
-        .entry(WARMUP_DELAY)
+        // The delegation matures at `WARMUP_DELAY` and the seat it funds is
+        // selected `MAX_COMMITTEE_LOOKAHEAD_EPOCHS` ahead, so this is the first
+        // epoch whose reward that delegation divides.
+        .entry(WARMUP_DELAY + MAX_COMMITTEE_LOOKAHEAD_EPOCHS)
         .total_blend_rewards_accessor()
         .set_checked(
             &mut harness.sdk,
@@ -9153,4 +9170,680 @@ fn funding_the_reserve_after_the_close_does_not_revive_the_epoch() {
             "a later top-up does not revive an epoch that already closed at zero"
         );
     }
+}
+
+// --- Payout policy: tombstoned commission, the E-2 split, and rate vintage ---
+
+/// Every `transferFrom` the reserve saw during `body`, as `(recipient, amount)`.
+fn reserve_pulls_during(
+    harness: &mut Harness,
+    body: impl FnOnce(&mut Harness),
+) -> Vec<(Address, U256)> {
+    let pulls = Rc::new(RefCell::new(Vec::<(Address, U256)>::new()));
+    let recorded = pulls.clone();
+    harness
+        .sdk
+        .set_call_handler(move |address, _value, input, _fuel_limit| {
+            if let Some(reply) = mock_precompile_reply(address, input) {
+                return reply;
+            }
+            if u32::from_be_bytes(input[..SIG_LEN_BYTES].try_into().unwrap())
+                == SIG_ERC20_TRANSFER_FROM
+            {
+                let (_, to, amount) =
+                    SolidityABI::<(Address, Address, U256)>::decode(&&input[SIG_LEN_BYTES..], 0)
+                        .unwrap();
+                recorded.borrow_mut().push((to, amount));
+            }
+            SyscallResult::new(encode_mock_return(&true), 0, 0, ExitCode::Ok)
+        });
+    body(harness);
+    let taken = pulls.borrow().clone();
+    taken
+}
+
+/// The epochs `validator` actually has a snapshot for, in order.
+fn materialized_snapshot_epochs(sdk: &TestingContextImpl, validator: Address) -> Vec<u64> {
+    let epochs = staking_storage()
+        .validator_snapshot_epochs_accessor()
+        .entry(validator);
+    (0..epochs.len_checked(sdk).unwrap())
+        .map(|index| epochs.at(index).get_checked(sdk).unwrap())
+        .collect()
+}
+
+fn credit_epoch_reward(harness: &mut Harness, validator: Address, epoch: u64, reward: U256) {
+    staking_storage()
+        .validator_snapshots_accessor()
+        .entry(validator)
+        .entry(epoch)
+        .total_blend_rewards_accessor()
+        .set_checked(
+            &mut harness.sdk,
+            math::narrow_reward(reward).expect("reward fits uint96"),
+        )
+        .unwrap();
+}
+
+fn delegator_fee_of(harness: &mut Harness, validator: Address, delegator: Address) -> U256 {
+    let (_, output) = harness.call(encode_call(
+        SIG_GET_DELEGATOR_FEE,
+        &ValidatorDelegatorCommand {
+            validator,
+            delegator,
+        },
+    ));
+    decode_output::<U256>(&output)
+}
+
+fn validator_fee_of(harness: &mut Harness, validator: Address) -> U256 {
+    let (_, output) = harness.call(encode_call(
+        SIG_GET_VALIDATOR_FEE,
+        &AddressCommand { value: validator },
+    ));
+    decode_output::<U256>(&output)
+}
+
+// A proven equivocator's commission is extinguished — refused at the claim and
+// quoted as nothing by the view — while his delegators still collect their share
+// of the very same epochs. The gate belongs on the owner leg alone: the seizure
+// takes the owner's own bond and never touches a delegator queue.
+//
+// Run twice against one fixture, tombstone off then on, so the "nothing" is
+// measured against the amount that was actually there to pay.
+#[test]
+fn a_tombstone_extinguishes_the_owner_commission_but_not_the_delegator_share() {
+    let owner = Address::with_last_byte(0xa0);
+    let delegator = Address::with_last_byte(0xb0);
+    let validator = Address::with_last_byte(0x01);
+    let stake = DEFAULT_MIN_VALIDATOR_STAKE;
+    let reward = DEFAULT_MIN_STAKING_AMOUNT * U256::from(10);
+
+    for tombstoned in [false, true] {
+        let mut harness = Harness::new(1_000);
+        harness.set_caller(owner);
+        assert_eq!(
+            harness.initialize(owner, vec![validator], vec![stake], 1_000),
+            ExitCode::Ok
+        );
+        staking::delegate_to(&mut harness.sdk, delegator, validator, stake, false).unwrap();
+        // Booked at epoch 2, and the seat it funds is selected two epochs ahead.
+        credit_epoch_reward(&mut harness, validator, 4, reward);
+        consensus_storage()
+            .tombstoned_accessor()
+            .entry(validator)
+            .set_checked(&mut harness.sdk, tombstoned)
+            .unwrap();
+        harness.set_block_number(1_000 + DEFAULT_EPOCH_BLOCK_INTERVAL * 5);
+
+        let commission = reward / U256::from(10);
+        let delegator_share = (reward - commission) / U256::from(2);
+        harness.set_caller(delegator);
+
+        if tombstoned {
+            assert_eq!(
+                validator_fee_of(&mut harness, validator),
+                U256::ZERO,
+                "the owner view must not quote a commission no call can collect"
+            );
+            assert_revert_selector(
+                harness.call(encode_call(
+                    SIG_CLAIM_VALIDATOR_FEE,
+                    &AddressCommand { value: validator },
+                )),
+                ERR_VALIDATOR_TOMBSTONED,
+            );
+        } else {
+            assert_eq!(validator_fee_of(&mut harness, validator), commission);
+            let paid = reserve_pulls_during(&mut harness, |harness| {
+                assert_eq!(
+                    harness
+                        .call(encode_call(
+                            SIG_CLAIM_VALIDATOR_FEE,
+                            &AddressCommand { value: validator },
+                        ))
+                        .0,
+                    ExitCode::Ok
+                );
+            });
+            assert_eq!(paid, vec![(validator, commission)]);
+        }
+
+        // The delegator leg is untouched either way.
+        assert_eq!(
+            delegator_fee_of(&mut harness, validator, delegator),
+            delegator_share,
+            "the delegator's share of the same epoch survives the owner's tombstone"
+        );
+        let paid = reserve_pulls_during(&mut harness, |harness| {
+            harness.set_caller(delegator);
+            assert_eq!(
+                harness
+                    .call(encode_call(
+                        SIG_CLAIM_DELEGATOR_FEE,
+                        &AddressCommand { value: validator },
+                    ))
+                    .0,
+                ExitCode::Ok
+            );
+        });
+        assert_eq!(paid, vec![(delegator, delegator_share)]);
+    }
+}
+
+// The delegator split is the seat's own weight, redistributed. The seat for
+// epoch 4 was weighed at epoch 2, so what divides epoch 4's credit is the epoch-2
+// snapshot and nothing later.
+//
+// The fixture separates the three candidate vintages: a delegation matures at 2,
+// another at 3, and epoch 4 adds nothing. Splitting at 4 or at 3 both give the
+// early delegator a third; only splitting at 2 gives a half. The late delegator
+// is the same boundary read from the other side — its stake matured at 3, so its
+// first reward epoch is 5 and epoch 4 owes it nothing.
+#[test]
+fn the_delegator_split_reproduces_the_seat_weight_frozen_two_epochs_back() {
+    let owner = Address::with_last_byte(0xa0);
+    let early = Address::with_last_byte(0xb0);
+    let late = Address::with_last_byte(0xb1);
+    let validator = Address::with_last_byte(0x01);
+    let stake = DEFAULT_MIN_VALIDATOR_STAKE;
+    let reward = DEFAULT_MIN_STAKING_AMOUNT * U256::from(12);
+
+    let mut harness = Harness::new(1_000);
+    harness.set_caller(owner);
+    assert_eq!(
+        harness.initialize(owner, vec![validator], vec![stake], 0),
+        ExitCode::Ok
+    );
+    staking::delegate_to(&mut harness.sdk, early, validator, stake, false).unwrap();
+    harness.set_block_number(1_000 + DEFAULT_EPOCH_BLOCK_INTERVAL);
+    staking::delegate_to(&mut harness.sdk, late, validator, stake, false).unwrap();
+    credit_epoch_reward(&mut harness, validator, 4, reward);
+    harness.set_block_number(1_000 + DEFAULT_EPOCH_BLOCK_INTERVAL * 5);
+
+    let seat_weight = staking::validator_total_at(&harness.sdk, validator, 2).unwrap();
+    assert_eq!(
+        seat_weight,
+        stake * U256::from(2),
+        "the seat epoch 4 was selected on holds the owner and the early delegator only"
+    );
+    assert_eq!(
+        staking::validator_total_at(&harness.sdk, validator, 3).unwrap(),
+        stake * U256::from(3),
+        "and it is a different number one epoch later, so the two vintages are told apart"
+    );
+
+    harness.set_caller(early);
+    assert_eq!(
+        delegator_fee_of(&mut harness, validator, early),
+        reward * stake / seat_weight,
+        "the share is the delegator's weight in the frozen seat, not in a later total"
+    );
+    assert_eq!(
+        delegator_fee_of(&mut harness, validator, late),
+        U256::ZERO,
+        "stake that matured after the selection earns nothing from that seat"
+    );
+}
+
+// A run of `KICK_LADDER_RESET_EPOCHS` epochs without a failure retires the
+// ladder, and the threshold is a real boundary rather than a direction: the same
+// fixture one epoch shorter leaves the count standing.
+#[test]
+fn a_clean_run_retires_the_kick_ladder_and_one_epoch_short_does_not() {
+    // Literal 30 and 29, NOT `KICK_LADDER_RESET_EPOCHS` and one less: a fixture
+    // written off the constant moves with it, and would stay green for any
+    // threshold at all.
+    for (run, expected) in [(30u64, 0u32), (29u64, 5u32)] {
+        let (mut harness, members) =
+            liveness_harness(&[DEFAULT_MIN_VALIDATOR_STAKE * U256::from(2); 4], 2);
+        set_min_verdict_due_blocks(&mut harness, 10);
+        // Failed at epoch 0 — `last_failed_epoch_p1` is epoch+1 — five episodes
+        // deep. The judged epoch below is therefore `run` epochs after it.
+        let record = production_liveness_storage()
+            .validators_accessor()
+            .entry(members[0]);
+        record
+            .last_failed_epoch_p1_accessor()
+            .set_checked(&mut harness.sdk, 1)
+            .unwrap();
+        record
+            .kick_count_accessor()
+            .set_checked(&mut harness.sdk, 5)
+            .unwrap();
+
+        equal_weight_committee(&mut harness.sdk, run, &members);
+        // Everyone clears the bar, so the close judges without stamping anyone.
+        seed_epoch_production(&mut harness.sdk, run, &[50, 50, 50, 50], 200);
+        assert_eq!(close_epoch_via_record(&mut harness, run), ExitCode::Ok);
+
+        assert_eq!(
+            production_record(&harness.sdk, members[0]).2,
+            expected,
+            "a {run}-epoch run since the last failure"
+        );
+        assert!(
+            pending_exclusion_set(&harness.sdk).is_empty(),
+            "nobody failed this epoch, so nothing was stamped"
+        );
+    }
+}
+
+// The rate that prices an epoch is `min(selection-epoch rate, epoch rate)`. A
+// rise therefore has to clear both vintages before it reaches money — three
+// epochs from the announcement — while a cut lands on the next epoch through the
+// second term.
+//
+// Claimed epoch by epoch rather than in one window, so the assertion names which
+// epoch paid what instead of a sum three vintages could reach by other routes.
+#[test]
+fn a_commission_rise_misses_two_epochs_while_a_cut_lands_on_the_next() {
+    let owner = Address::with_last_byte(0xa0);
+    let delegator = Address::with_last_byte(0xb0);
+    let validator = Address::with_last_byte(0x01);
+    let stake = DEFAULT_MIN_VALIDATOR_STAKE;
+    let reward = DEFAULT_MIN_STAKING_AMOUNT * U256::from(100);
+
+    // Epoch 3 carries a credit too, and it PRECEDES the epoch the change takes
+    // effect in: without it nothing would tell "the second term is read at E"
+    // from "read at E+1". The third pair cuts to a NONZERO rate — with only the
+    // two cuts-to-zero, "min" is indistinguishable from "pay the owner nothing".
+    for (initial, changed, expected) in [
+        (0u16, COMMISSION_RATE_MAX, [0u16, 0, 0, COMMISSION_RATE_MAX]),
+        (COMMISSION_RATE_MAX, 0u16, [COMMISSION_RATE_MAX, 0, 0, 0]),
+        (
+            COMMISSION_RATE_MAX,
+            1_000u16,
+            [COMMISSION_RATE_MAX, 1_000, 1_000, 1_000],
+        ),
+    ] {
+        let mut harness = Harness::new(1_000);
+        harness.set_caller(owner);
+        assert_eq!(
+            harness.initialize(owner, vec![validator], vec![stake], initial),
+            ExitCode::Ok
+        );
+        staking::delegate_to(&mut harness.sdk, delegator, validator, stake, false).unwrap();
+        for epoch in 3..7 {
+            credit_epoch_reward(&mut harness, validator, epoch, reward);
+        }
+
+        // Announced during epoch 3, which schedules it for epoch 4. The genesis
+        // validator is its own owner, so it is the only accepted caller and the
+        // commission recipient.
+        harness.set_block_number(1_000 + DEFAULT_EPOCH_BLOCK_INTERVAL * 3);
+        harness.set_caller(validator);
+        assert_eq!(
+            harness
+                .call(encode_call(
+                    SIG_CHANGE_VALIDATOR_COMMISSION_RATE,
+                    &AddressU16Command {
+                        validator,
+                        value: changed,
+                    },
+                ))
+                .0,
+            ExitCode::Ok
+        );
+        harness.set_block_number(1_000 + DEFAULT_EPOCH_BLOCK_INTERVAL * 7);
+
+        for (index, rate) in expected.into_iter().enumerate() {
+            let epoch = 3 + index as u64;
+            let paid = reserve_pulls_during(&mut harness, |harness| {
+                assert_eq!(
+                    harness
+                        .call(encode_call(
+                            SIG_CLAIM_VALIDATOR_FEE_AT_EPOCH,
+                            &ValidatorEpochCommand {
+                                validator,
+                                before_epoch: epoch + 1,
+                            },
+                        ))
+                        .0,
+                    ExitCode::Ok
+                );
+            });
+            let owed = reward * U256::from(rate) / U256::from(BPS_DENOMINATOR);
+            let expected_pulls = if owed.is_zero() {
+                Vec::new()
+            } else {
+                vec![(validator, owed)]
+            };
+            assert_eq!(
+                paid, expected_pulls,
+                "epoch {epoch} priced at {rate} bps after {initial} -> {changed}"
+            );
+        }
+    }
+}
+
+// Withdrawal is not the same act as leaving the seat. A delegator whose stake
+// counted at the selection epoch earns that epoch even if it withdrew afterwards,
+// and it earns it at the rate in force back then, not at one raised in the
+// meantime. `undelegate_period` is orthogonal: it holds the principal, and holds
+// it whether or not the reward has been paid.
+#[test]
+fn a_delegator_who_left_after_the_selection_still_earns_it_at_the_older_rate() {
+    let owner = Address::with_last_byte(0xa0);
+    let left_at_two = Address::with_last_byte(0xb0);
+    let left_at_three = Address::with_last_byte(0xb1);
+    let validator = Address::with_last_byte(0x01);
+    let stake = DEFAULT_MIN_VALIDATOR_STAKE;
+    let reward = DEFAULT_MIN_STAKING_AMOUNT * U256::from(60);
+
+    let mut harness = Harness::new(1_000);
+    harness.set_caller(owner);
+    assert_eq!(
+        harness.initialize(owner, vec![validator], vec![stake], 500),
+        ExitCode::Ok
+    );
+    staking::delegate_to(&mut harness.sdk, left_at_two, validator, stake, false).unwrap();
+    staking::delegate_to(&mut harness.sdk, left_at_three, validator, stake, false).unwrap();
+    let seat_weight = staking::validator_total_at(&harness.sdk, validator, 2).unwrap();
+    assert_eq!(seat_weight, stake * U256::from(3));
+
+    harness.set_block_number(1_000 + DEFAULT_EPOCH_BLOCK_INTERVAL * 2);
+    staking::undelegate_from(&mut harness.sdk, left_at_two, validator, stake).unwrap();
+    harness.set_block_number(1_000 + DEFAULT_EPOCH_BLOCK_INTERVAL * 3);
+    staking::undelegate_from(&mut harness.sdk, left_at_three, validator, stake).unwrap();
+    harness.set_caller(validator);
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_CHANGE_VALIDATOR_COMMISSION_RATE,
+                &AddressU16Command {
+                    validator,
+                    value: COMMISSION_RATE_MAX,
+                },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+
+    credit_epoch_reward(&mut harness, validator, 4, reward);
+    harness.set_block_number(1_000 + DEFAULT_EPOCH_BLOCK_INTERVAL * 5);
+
+    let commission = reward * U256::from(500) / U256::from(BPS_DENOMINATOR);
+    let share = (reward - commission) * stake / seat_weight;
+    for delegator in [left_at_two, left_at_three] {
+        harness.set_caller(delegator);
+        assert_eq!(
+            delegator_fee_of(&mut harness, validator, delegator),
+            share,
+            "a withdrawal after the selection epoch does not unmake the earning"
+        );
+        let (_, output) = harness.call(encode_call(
+            SIG_GET_DELEGATOR_PRINCIPAL,
+            &ValidatorDelegatorCommand {
+                validator,
+                delegator,
+            },
+        ));
+        assert_eq!(
+            decode_output::<U256>(&output),
+            U256::ZERO,
+            "the undelegation period still holds the deposit; only the tokens wait"
+        );
+    }
+
+    // The claims agree with the views, stop at the requested epoch, and do not
+    // pay twice. `left_at_three`'s queue closes its first entry at reward epoch
+    // 6, past the epoch being claimed through, so its cursor is what proves the
+    // walk stopped where it was told rather than where the queue ended.
+    for delegator in [left_at_two, left_at_three] {
+        let paid = reserve_pulls_during(&mut harness, |harness| {
+            harness.set_caller(delegator);
+            assert_eq!(
+                harness
+                    .call(encode_call(
+                        SIG_CLAIM_DELEGATOR_FEE,
+                        &AddressCommand { value: validator },
+                    ))
+                    .0,
+                ExitCode::Ok
+            );
+        });
+        assert_eq!(paid, vec![(delegator, share)]);
+        assert_eq!(
+            staking_storage()
+                .validator_delegations_accessor()
+                .entry(validator)
+                .entry(delegator)
+                .claimed_through_epoch_accessor()
+                .get_checked(&harness.sdk)
+                .unwrap(),
+            5,
+            "the cursor stops at the claimed epoch, not at the queue entry's end"
+        );
+
+        let again = reserve_pulls_during(&mut harness, |harness| {
+            harness.set_caller(delegator);
+            assert_eq!(
+                harness
+                    .call(encode_call(
+                        SIG_CLAIM_DELEGATOR_FEE,
+                        &AddressCommand { value: validator },
+                    ))
+                    .0,
+                ExitCode::Ok
+            );
+        });
+        assert!(
+            again.is_empty(),
+            "a second claim over the same window pays nothing"
+        );
+    }
+}
+
+// The load-bearing property under the rate rule: lazy materialization copies
+// `commission_rate` from the nearest earlier snapshot, so the rate history is
+// recoverable at any depth however late the snapshot is created. Without it,
+// reading the selection epoch would read a zero for every epoch nothing had
+// happened in.
+//
+// Epoch 5 is deliberately never materialized while it is current: the rise
+// announced during it schedules epoch 6, epoch 7's reward is priced off epoch 5,
+// and only then is epoch 5 brought into being.
+#[test]
+fn a_snapshot_materialized_after_its_epoch_passed_still_carries_the_old_rate() {
+    let owner = Address::with_last_byte(0xa0);
+    let validator = Address::with_last_byte(0x01);
+    let stake = DEFAULT_MIN_VALIDATOR_STAKE;
+    let reward = DEFAULT_MIN_STAKING_AMOUNT * U256::from(100);
+    let old_rate = 500u16;
+
+    let mut harness = Harness::new(1_000);
+    harness.set_caller(owner);
+    assert_eq!(
+        harness.initialize(owner, vec![validator], vec![stake], old_rate),
+        ExitCode::Ok
+    );
+    harness.set_block_number(1_000 + DEFAULT_EPOCH_BLOCK_INTERVAL * 5);
+    harness.set_caller(validator);
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_CHANGE_VALIDATOR_COMMISSION_RATE,
+                &AddressU16Command {
+                    validator,
+                    value: COMMISSION_RATE_MAX,
+                },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+    let epochs = staking_storage()
+        .validator_snapshot_epochs_accessor()
+        .entry(validator);
+    let materialized: Vec<u64> = (0..epochs.len_checked(&harness.sdk).unwrap())
+        .map(|index| epochs.at(index).get_checked(&harness.sdk).unwrap())
+        .collect();
+    assert_eq!(
+        materialized,
+        vec![0, 6],
+        "epoch 5 has no snapshot of its own when the rise is scheduled"
+    );
+
+    credit_epoch_reward(&mut harness, validator, 7, reward);
+    harness.set_block_number(1_000 + DEFAULT_EPOCH_BLOCK_INTERVAL * 8);
+    let owed = reward * U256::from(old_rate) / U256::from(BPS_DENOMINATOR);
+    assert_eq!(
+        validator_fee_of(&mut harness, validator),
+        owed,
+        "epoch 7 is priced off epoch 5, which still reads the pre-rise rate"
+    );
+
+    // Now materialize epoch 5, long after epoch 7 has gone by.
+    let late = staking::touch_snapshot_at_or_before(&mut harness.sdk, validator, 5).unwrap();
+    assert_eq!(
+        late.commission_rate_accessor()
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        old_rate,
+        "materialization copies the rate that was in force, not the current one"
+    );
+    assert_eq!(
+        validator_fee_of(&mut harness, validator),
+        owed,
+        "and the payout does not move when the snapshot is finally written"
+    );
+}
+
+// The same split, but with the credit written by the accrual path instead of by
+// the fixture. Everything above seeds `total_blend_rewards` directly, which
+// leaves the one thing the close does for itself untested: it materializes the
+// snapshot of the epoch it is crediting. That snapshot is NOT the one the split
+// reads, and here the two hold different totals, so a split that drifted onto
+// the epoch it was credited at would divide by three instead of by two.
+#[test]
+fn the_accrual_path_credits_an_epoch_that_is_still_divided_two_epochs_back() {
+    let owner = Address::with_last_byte(0xa0);
+    let early = Address::with_last_byte(0xb0);
+    // Books at epoch 3 purely so the epoch-3 total differs from both its
+    // neighbours: without it, epochs 2 and 3 hold the same number and the
+    // fixture would read the same whether the lag were one epoch or two.
+    let mid = Address::with_last_byte(0xb2);
+    let late = Address::with_last_byte(0xb1);
+    let validator = Address::with_last_byte(0x01);
+    let reserve = Address::with_last_byte(0xc0);
+    let stake = DEFAULT_MIN_VALIDATOR_STAKE;
+    let pot = DEFAULT_MIN_STAKING_AMOUNT * U256::from(30);
+
+    let mut harness = Harness::new(1_000);
+    harness.set_caller(owner);
+    let mut command = harness.initialize_command(owner, vec![validator], vec![stake], 1_000);
+    command.blend_reserve = reserve;
+    assert_eq!(harness.initialize_with(command), ExitCode::Ok);
+    chain_config_storage()
+        .blend_stipend_per_epoch_accessor()
+        .set_checked(&mut harness.sdk, pot)
+        .unwrap();
+
+    staking::delegate_to(&mut harness.sdk, early, validator, stake, false).unwrap();
+    harness.set_block_number(1_000 + DEFAULT_EPOCH_BLOCK_INTERVAL);
+    staking::delegate_to(&mut harness.sdk, mid, validator, stake, false).unwrap();
+    harness.set_block_number(1_000 + DEFAULT_EPOCH_BLOCK_INTERVAL * 3);
+    staking::delegate_to(&mut harness.sdk, late, validator, stake, false).unwrap();
+
+    // Nothing has booked stake at epoch 4, so no entrypoint has materialized its
+    // snapshot. That is the state the close has to handle on its own, and a
+    // fixture where some delegation already created epoch 4 would let the close
+    // skip the materialization entirely and still look right.
+    assert_eq!(
+        materialized_snapshot_epochs(&harness.sdk, validator),
+        vec![0, 2, 3, 5],
+        "epoch 4 has no snapshot before the close runs"
+    );
+
+    commit_test_committee(&mut harness.sdk, 4, &[(validator, stake)]);
+    install_stipend_token(
+        &harness.sdk,
+        reserve,
+        pot * U256::from(10),
+        pot * U256::from(10),
+    );
+    record_test_production(&mut harness.sdk, 4, DEFAULT_EPOCH_BLOCK_INTERVAL as u32);
+    assert_eq!(epoch_reward(&harness.sdk, validator, 4), pot);
+    assert_eq!(
+        materialized_snapshot_epochs(&harness.sdk, validator),
+        vec![0, 2, 3, 4, 5],
+        "the close materialized the epoch it credited"
+    );
+
+    let seat_weight = staking::validator_total_at(&harness.sdk, validator, 2).unwrap();
+    assert_eq!(seat_weight, stake * U256::from(2));
+    assert_eq!(
+        staking::validator_total_at(&harness.sdk, validator, 3).unwrap(),
+        stake * U256::from(3),
+        "epoch 3 is a third distinct total, so a one-epoch lag would read differently"
+    );
+    assert_eq!(
+        staking::validator_total_at(&harness.sdk, validator, 4).unwrap(),
+        stake * U256::from(3),
+        "the snapshot the close created carries epoch 3's total forward"
+    );
+
+    harness.set_block_number(1_000 + DEFAULT_EPOCH_BLOCK_INTERVAL * 5);
+    let pool = pot - pot / U256::from(10);
+    harness.set_caller(early);
+    assert_eq!(
+        delegator_fee_of(&mut harness, validator, early),
+        pool * stake / seat_weight
+    );
+    for later in [mid, late] {
+        assert_eq!(
+            delegator_fee_of(&mut harness, validator, later),
+            U256::ZERO,
+            "stake booked after the selection epoch earns nothing from that credit"
+        );
+    }
+}
+
+// The other half of the reset, and the half the clean-run fixture cannot reach:
+// it lands on the member who fails in the very epoch the run completes. The
+// ladder restarts at its first rung instead of resuming a years-old climb, so
+// the exclusion this failure earns is one epoch, not six.
+//
+// Ten members, not four: `apply_production_exclusion` refuses a stamp that would
+// take the eligible set below the committee floor, and a refused stamp leaves no
+// ladder increment to measure.
+#[test]
+fn the_ladder_reset_also_lands_on_the_member_failing_that_same_epoch() {
+    let (mut harness, members) =
+        liveness_harness(&[DEFAULT_MIN_VALIDATOR_STAKE * U256::from(2); 10], 2);
+    set_min_verdict_due_blocks(&mut harness, 10);
+    let record = production_liveness_storage()
+        .validators_accessor()
+        .entry(members[0]);
+    record
+        .last_failed_epoch_p1_accessor()
+        .set_checked(&mut harness.sdk, 1)
+        .unwrap();
+    record
+        .kick_count_accessor()
+        .set_checked(&mut harness.sdk, 5)
+        .unwrap();
+
+    equal_weight_committee(&mut harness.sdk, 30, &members);
+    // Due is 20 apiece; members[0] produced nothing and fails, the rest clear it.
+    seed_epoch_production(
+        &mut harness.sdk,
+        30,
+        &[0, 20, 20, 20, 20, 20, 20, 20, 20, 20],
+        200,
+    );
+    assert_eq!(close_epoch_via_record(&mut harness, 30), ExitCode::Ok);
+
+    let (stamp, readmit, kicks) = production_record(&harness.sdk, members[0]);
+    assert_eq!(
+        kicks, 1,
+        "the run was retired before this failure was counted, so the ladder \
+         restarts rather than reaching its sixth rung"
+    );
+    assert_eq!(stamp, 31, "and the failure re-stamps the run");
+    assert_eq!(
+        readmit, 32,
+        "one epoch of exclusion, the first rung — not the six the old count \
+         would have bought"
+    );
 }

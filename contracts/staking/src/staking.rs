@@ -111,10 +111,15 @@ pub(crate) fn set_validator<SDK: SharedAPI>(
     // The reward cursor starts where the validator does. Left at zero, a
     // validator registered at epoch N would have to walk MAX_EPOCHS_PER_CLAIM
     // epochs of empty history per call before reaching its first payable
-    // epoch. The delegator side reaches the same floor on read instead
-    // (`delegate_claim_start`, `max(cursor, first)`), because its first epoch
-    // is per delegator-validator pair; an owner has exactly one birth epoch and
-    // it is already known here.
+    // epoch. The delegator side floors itself on read instead
+    // (`delegate_claim_start`, `max(cursor, first)`), because its first epoch is
+    // per delegator-validator pair; an owner has exactly one birth epoch and it
+    // is already known here.
+    //
+    // Not the same floor, though it was once: the delegator's is a REWARD epoch
+    // (`first_reward_epoch_for`), while this one is the stake epoch itself. The
+    // owner therefore opens on two epochs that can pay him nothing, which costs
+    // him two steps of the claim window and nothing else.
     record.claimed_at_accessor().set_checked(sdk, changed_at)?;
     storage
         .owner_validators_accessor()
@@ -509,6 +514,66 @@ fn latest_snapshot_epoch_at_or_before<SDK: SharedAPI>(
         return Ok(None);
     }
     Ok(Some(epochs.at(low - 1).get_checked(sdk)?))
+}
+
+/// The epoch whose snapshot governs what a seat earns at `epoch`.
+///
+/// `commit_epoch_committee` selects the committee for a target epoch from
+/// `target - MAX_COMMITTEE_LOOKAHEAD_EPOCHS` and carries that vintage's weights
+/// through as the frozen ring, so the seat's WEIGHT at `epoch` — the thing the
+/// stipend is divided by across seats — was fixed there. Dividing the seat's
+/// own share by any later vintage lets stake that arrived after the selection
+/// dilute the delegators the seat was actually sized on.
+///
+/// The saturation is the one `commit_epoch_committee` uses, so the two agree on
+/// the first two epochs instead of disagreeing about an epoch below zero.
+///
+/// This is the committee-selection lag and nothing else. `WARMUP_DELAY` happens
+/// to be the same number and is a different quantity; see its own note.
+fn selection_epoch_for(epoch: u64) -> u64 {
+    epoch.saturating_sub(MAX_COMMITTEE_LOOKAHEAD_EPOCHS)
+}
+
+/// The first reward epoch a stake epoch governs — the inverse of
+/// `selection_epoch_for`, saturation and all.
+///
+/// Not a bare `+ MAX_COMMITTEE_LOOKAHEAD_EPOCHS`. `selection_epoch_for` clamps
+/// at zero, so stake epoch 0 governs reward epochs 0 and 1 as well as 2, and
+/// shifting unconditionally would leave the delegator pool of the chain's first
+/// two epochs credited to a seat and claimable by nobody.
+fn first_reward_epoch_for(stake_epoch: u64) -> Result<u64, ExitCode> {
+    if stake_epoch == 0 {
+        return Ok(0);
+    }
+    stake_epoch
+        .checked_add(MAX_COMMITTEE_LOOKAHEAD_EPOCHS)
+        .ok_or(ExitCode::IntegerOverflow)
+}
+
+/// The `(total_delegated, commission_rate)` in force at `epoch`.
+///
+/// Read-only twin of `touch_snapshot_at_or_before`. The payout and the view have
+/// to answer identically and the view holds only `&SDK`, so both go through
+/// here; and reading the latest snapshot at or before `epoch` rather than the
+/// snapshot AT `epoch` gives an unmaterialized epoch the state that was actually
+/// in force — the same answer materializing it would have produced, because
+/// materialization copies from exactly this snapshot.
+fn snapshot_state_at_or_before<SDK: SharedAPI>(
+    sdk: &SDK,
+    validator: Address,
+    epoch: u64,
+) -> Result<(math::U112, u16), ExitCode> {
+    let Some(snapshot_epoch) = latest_snapshot_epoch_at_or_before(sdk, validator, epoch)? else {
+        return Ok((math::U112::ZERO, 0));
+    };
+    let snapshot = staking_storage()
+        .validator_snapshots_accessor()
+        .entry(validator)
+        .entry(snapshot_epoch);
+    Ok((
+        snapshot.total_delegated_accessor().get_checked(sdk)?,
+        snapshot.commission_rate_accessor().get_checked(sdk)?,
+    ))
 }
 
 /// Materializes `epoch` from the latest snapshot that was already effective.
@@ -1267,30 +1332,43 @@ pub(crate) fn undelegate_from<SDK: SharedAPI>(
 }
 // Snapshot rewards and bounded claims.
 
+/// Splits `epoch`'s accrued stipend into the delegator pool and the owner's
+/// commission.
+///
+/// The AMOUNT is read at `epoch` — that is what the close credited this seat.
+/// Everything that divides it is read at the SELECTION epoch, because that is
+/// the vintage the seat's weight was frozen from: see `selection_epoch_for`.
+///
+/// The rate is the MINIMUM of the selection-epoch rate and the epoch's own, so a
+/// rise takes three epochs to reach anyone's money while a cut lands the next
+/// epoch. Reading the selection epoch alone would have been symmetrical and
+/// wrong in the other direction: an announced discount would miss precisely the
+/// delegators it was announced to.
 fn snapshot_payout<SDK: SharedAPI>(
     sdk: &SDK,
     validator: Address,
     epoch: u64,
 ) -> Result<(U256, U256), ExitCode> {
-    let snapshot = staking_storage()
-        .validator_snapshots_accessor()
-        .entry(validator)
-        .entry(epoch);
-    let total_reward = U256::from(snapshot.total_blend_rewards_accessor().get_checked(sdk)?);
+    let total_reward = U256::from(
+        staking_storage()
+            .validator_snapshots_accessor()
+            .entry(validator)
+            .entry(epoch)
+            .total_blend_rewards_accessor()
+            .get_checked(sdk)?,
+    );
     if total_reward.is_zero() {
         return Ok((U256::ZERO, U256::ZERO));
     }
-    if snapshot
-        .total_delegated_accessor()
-        .get_checked(sdk)?
-        .is_zero()
-    {
+    let (selection_total, selection_rate) =
+        snapshot_state_at_or_before(sdk, validator, selection_epoch_for(epoch))?;
+    if selection_total.is_zero() {
         return Ok((U256::ZERO, total_reward));
     }
+    let (_, current_rate) = snapshot_state_at_or_before(sdk, validator, epoch)?;
+    let rate = core::cmp::min(selection_rate, current_rate);
     let owner_reward = total_reward
-        .checked_mul(U256::from(
-            snapshot.commission_rate_accessor().get_checked(sdk)?,
-        ))
+        .checked_mul(U256::from(rate))
         .ok_or(ExitCode::IntegerOverflow)?
         / U256::from(BPS_DENOMINATOR);
     Ok((total_reward - owner_reward, owner_reward))
@@ -1303,6 +1381,16 @@ fn validator_owner_rewards<SDK: SharedAPI>(
 ) -> Result<U256, ExitCode> {
     let record = staking_storage().validators_accessor().entry(validator);
     if record.status_accessor().get_checked(sdk)? == STATUS_NOT_FOUND {
+        return Ok(U256::ZERO);
+    }
+    // Reads what `claim_validator_before` would pay, and a tombstone makes that
+    // nothing. Without this the view would keep quoting a balance no call can
+    // ever collect.
+    if consensus_storage()
+        .tombstoned_accessor()
+        .entry(validator)
+        .get_checked(sdk)?
+    {
         return Ok(U256::ZERO);
     }
     let mut epoch = record.claimed_at_accessor().get_checked(sdk)?;
@@ -1341,8 +1429,13 @@ fn delegator_reward_claimable<SDK: SharedAPI>(
 
     if let Some((mut index, mut epoch)) = delegate_claim_start(sdk, validator, delegator)? {
         while index < delegate_len && epoch < reward_before_epoch {
+            // The queue is stamped in STAKE epochs and this walk is in REWARD
+            // epochs. An entry that takes effect at stake epoch S governs the
+            // rewards of E >= S + MAX_COMMITTEE_LOOKAHEAD_EPOCHS, so the
+            // successor's stamp has to be carried forward by the same lag before
+            // it can close this entry's reward window.
             let changed_at = if index + 1 < delegate_len {
-                delegates.at(index + 1).epoch_accessor().get_checked(sdk)?
+                first_reward_epoch_for(delegates.at(index + 1).epoch_accessor().get_checked(sdk)?)?
             } else {
                 reward_before_epoch
             };
@@ -1350,11 +1443,13 @@ fn delegator_reward_claimable<SDK: SharedAPI>(
             let delegated = delegates.at(index).amount_accessor().get_checked(sdk)?;
             while epoch < end {
                 let (delegator_pool, _) = snapshot_payout(sdk, validator, epoch)?;
-                let snapshot = staking_storage()
-                    .validator_snapshots_accessor()
-                    .entry(validator)
-                    .entry(epoch);
-                let total = snapshot.total_delegated_accessor().get_checked(sdk)?;
+                // Numerator and denominator are both the selection vintage, and
+                // `snapshot_payout` sized the pool it is dividing on that same
+                // vintage. Reading the denominator at `epoch` instead would let a
+                // delegation that arrived after the seat was weighed shrink every
+                // earlier delegator's share of a pot their stake alone earned.
+                let (total, _) =
+                    snapshot_state_at_or_before(sdk, validator, selection_epoch_for(epoch))?;
                 if !total.is_zero() {
                     claimable = claimable
                         .checked_add(
@@ -1426,14 +1521,23 @@ fn delegate_claim_start<SDK: SharedAPI>(
     let cursor = delegation
         .claimed_through_epoch_accessor()
         .get_checked(sdk)?;
-    let first = delegates.at(0).epoch_accessor().get_checked(sdk)?;
+    // Both halves of the `max` have to be REWARD epochs. The cursor already is;
+    // the queue stamp is a stake epoch, and the first reward it can earn is its
+    // selection lag later. Without the shift the walk would open on a reward
+    // epoch whose selection vintage predates the delegation, spending window
+    // budget on epochs that pay this delegator nothing.
+    let first = first_reward_epoch_for(delegates.at(0).epoch_accessor().get_checked(sdk)?)?;
     let start = core::cmp::max(cursor, first);
+    // `start` is at or after the first reward epoch the opening entry governs,
+    // so its selection epoch is at or after that entry's stamp and the search
+    // below always lands on a real entry.
+    let stake_start = selection_epoch_for(start);
 
     let mut low = 0;
     let mut high = len;
     while low < high {
         let middle = low + (high - low) / 2;
-        if delegates.at(middle).epoch_accessor().get_checked(sdk)? <= start {
+        if delegates.at(middle).epoch_accessor().get_checked(sdk)? <= stake_start {
             low = middle + 1;
         } else {
             high = middle;
@@ -1509,8 +1613,13 @@ fn consume_delegator_reward<SDK: SharedAPI>(
 
     if let Some((mut index, mut epoch)) = delegate_claim_start(sdk, validator, delegator)? {
         while index < delegate_len && epoch < reward_before_epoch {
+            // The queue is stamped in STAKE epochs and this walk is in REWARD
+            // epochs. An entry that takes effect at stake epoch S governs the
+            // rewards of E >= S + MAX_COMMITTEE_LOOKAHEAD_EPOCHS, so the
+            // successor's stamp has to be carried forward by the same lag before
+            // it can close this entry's reward window.
             let changed_at = if index + 1 < delegate_len {
-                delegates.at(index + 1).epoch_accessor().get_checked(sdk)?
+                first_reward_epoch_for(delegates.at(index + 1).epoch_accessor().get_checked(sdk)?)?
             } else {
                 reward_before_epoch
             };
@@ -1518,11 +1627,13 @@ fn consume_delegator_reward<SDK: SharedAPI>(
             let delegated = delegates.at(index).amount_accessor().get_checked(sdk)?;
             while epoch < end {
                 let (delegator_pool, _) = snapshot_payout(sdk, validator, epoch)?;
-                let snapshot = storage
-                    .validator_snapshots_accessor()
-                    .entry(validator)
-                    .entry(epoch);
-                let total = snapshot.total_delegated_accessor().get_checked(sdk)?;
+                // Numerator and denominator are both the selection vintage, and
+                // `snapshot_payout` sized the pool it is dividing on that same
+                // vintage. Reading the denominator at `epoch` instead would let a
+                // delegation that arrived after the seat was weighed shrink every
+                // earlier delegator's share of a pot their stake alone earned.
+                let (total, _) =
+                    snapshot_state_at_or_before(sdk, validator, selection_epoch_for(epoch))?;
                 if !total.is_zero() {
                     claimable = claimable
                         .checked_add(
@@ -1622,6 +1733,24 @@ fn claim_validator_before<SDK: SharedAPI>(
     let record = staking_storage().validators_accessor().entry(validator);
     if record.status_accessor().get_checked(sdk)? == STATUS_NOT_FOUND {
         return revert_with(sdk, ERR_VALIDATOR_NOT_FOUND, &validator);
+    }
+    // A proven equivocator's commission is extinguished, not confiscated. The
+    // money was never here to seize: `pay_stipend` pulls it from the BLEND
+    // reserve, so refusing the claim simply leaves it in the reserve, and it is
+    // deliberately NOT routed to the slash fund.
+    //
+    // The gate is on the OWNER path alone. `seize_self_stake` takes the owner's
+    // own bond and touches no delegator queue, and `assign_epoch_shares` already
+    // skips a tombstoned seat, so the only thing left standing was the
+    // already-accrued commission on epochs the validator was still seated for.
+    // Delegators keep their share of those same epochs and claim it through
+    // their own path, which this does not touch.
+    if consensus_storage()
+        .tombstoned_accessor()
+        .entry(validator)
+        .get_checked(sdk)?
+    {
+        return revert_with(sdk, ERR_VALIDATOR_TOMBSTONED, &validator);
     }
     let claimed_at = record.claimed_at_accessor().get_checked(sdk)?;
     // Advancing the cursor before transfer is safe because a failed call

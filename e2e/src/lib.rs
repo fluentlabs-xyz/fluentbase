@@ -60,6 +60,8 @@ mod staking;
 #[cfg(test)]
 mod staking_cost;
 #[cfg(test)]
+mod staking_reserve;
+#[cfg(test)]
 mod stateless;
 // #[cfg(all(test, feature = "svm"))]
 // pub mod svm;

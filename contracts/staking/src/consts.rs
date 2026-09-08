@@ -414,7 +414,9 @@ pub const MAX_STAMPS_PER_CLOSE: usize = 2;
 /// same number, because they are the same offset — how far back of the target
 /// epoch its membership is selected from.
 ///
-/// `commit_epoch_committee` is its only reader.
+/// `commit_epoch_committee` applies it to membership; `selection_epoch_for`
+/// applies the same offset to the reward split, so a seat's stipend is divided
+/// by the vintage its weight was frozen from. Changing this number moves both.
 pub const MAX_COMMITTEE_LOOKAHEAD_EPOCHS: u64 = 2;
 
 pub const BLS_PUBKEY_UNCOMPRESSED_LENGTH: usize = 256;
@@ -466,6 +468,18 @@ pub const DEFAULT_MIN_VERDICT_DUE_BLOCKS: u32 = 100;
 ///
 /// Governance may lower it. No derivation is recorded for 128.
 pub const DEFAULT_EXCLUSION_BACKOFF_CAP: u32 = 128;
+
+/// Epochs without a production failure that retire a validator's backoff ladder.
+///
+/// Measured from the last failure to the epoch currently being judged, NOT as a
+/// count of clean epochs served: `last_failed_epoch_p1` only moves when the
+/// validator is judged, so epochs spent outside the committee count toward the
+/// run. A ladder that only ever climbed made one bad week permanent, and the
+/// exclusion length is already capped by `DEFAULT_EXCLUSION_BACKOFF_CAP` — this
+/// is the other direction, and the two are independent.
+///
+/// No derivation is recorded for 30.
+pub const KICK_LADDER_RESET_EPOCHS: u64 = 30;
 
 /// Ceiling on the per-epoch stipend governance may configure: `10^24` wei,
 /// i.e. 1,000,000 BLEND per epoch. No derivation is recorded for the figure.

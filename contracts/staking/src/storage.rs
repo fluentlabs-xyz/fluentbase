@@ -104,12 +104,18 @@ pub struct ValidatorDelegationStorage {
     /// Keeping the aggregate beside the operation history lets equivocation
     /// seizure remain constant-time even when the queue is fragmented.
     pending_undelegated: StorageU256,
-    /// Exclusive epoch through which rewards have been paid.
+    /// Exclusive REWARD epoch through which rewards have been paid.
     ///
-    /// Separate from `DelegationOpStorage::epoch`, which is the epoch a balance
-    /// takes effect from and must stay immutable: historical stake lookups
-    /// binary-search that field, so advancing it as a payment cursor rewrites
-    /// past-epoch committee views.
+    /// The unit matters: this counts reward epochs, while
+    /// `DelegationOpStorage::epoch` counts STAKE epochs, and the two are
+    /// `MAX_COMMITTEE_LOOKAHEAD_EPOCHS` apart because a seat is weighed that far
+    /// back. `delegate_claim_start` is where the two spaces meet; comparing this
+    /// field against a queue stamp without converting reads a reward window off
+    /// by the selection lag.
+    ///
+    /// Separate from that field also because it must stay immutable: historical
+    /// stake lookups binary-search it, so advancing it as a payment cursor
+    /// rewrites past-epoch committee views.
     claimed_through_epoch: StorageU64,
 }
 
@@ -250,7 +256,9 @@ pub struct ProductionValidatorStorage {
     last_failed_epoch_p1: StorageU64,
     /// Epoch at whose close the exclusion is released (`0` means not excluded).
     readmit_at_epoch: StorageU64,
-    /// Exclusion episodes, not verdicts. Never decays.
+    /// Exclusion episodes, not verdicts. Climbs one per stamp and drops to zero
+    /// in one step after a run of `KICK_LADDER_RESET_EPOCHS` judged epochs
+    /// without a failure; it never decays gradually.
     kick_count: StorageU32,
 }
 
