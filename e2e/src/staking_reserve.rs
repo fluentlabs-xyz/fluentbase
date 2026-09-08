@@ -24,13 +24,27 @@
 use crate::EvmTestingContextWithGenesis;
 use alloy_sol_types::{sol, SolCall, SolEvent};
 use fluentbase_sdk::{
-    address, hex, Address, Bytes, B256, GENESIS_GOVERNANCE, GENESIS_STAKING, U256,
+    address, hex, universal_token::InitialSettings, Address, Bytes, B256, GENESIS_GOVERNANCE,
+    GENESIS_STAKING, U256,
 };
 use fluentbase_testing::EvmTestingContext;
 
 const SYSTEM_CALLER: Address = address!("0xfffffffffffffffffffffffffffffffffffffffe");
 const OWNER: Address = Address::repeat_byte(0x11);
 const TOKEN: U256 = U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]);
+
+/// The reserve of the honest-token fixture, and never the hostile one: the two
+/// halves of this file must not be able to answer for each other.
+const HONEST_RESERVE: Address = Address::repeat_byte(0x77);
+
+/// Neither an owner nor a validator. `claimValidatorFee` is permissionless and
+/// pays the OWNER, so a claim driven from here gains its caller nothing — which
+/// is exactly what makes K-32 a griefing vector rather than a theft.
+const STRANGER: Address = Address::repeat_byte(0x88);
+
+/// The owner's commission, in basis points. Non-zero so the permissionless claim
+/// K-32 names actually moves tokens out of the reserve.
+const COMMISSION_BPS: u16 = 2_000;
 
 /// The reserve address the token below refuses to answer about.
 ///
@@ -49,6 +63,36 @@ const HUGE_GAS: u64 = 2_000_000_000;
 /// `gas_limit(30_000_000)`. Nothing in this harness enforces it, so the one test
 /// that cares about it imposes it by hand.
 const SYSTEM_CALL_BUDGET: u64 = 30_000_000;
+
+/// What must be left of a 30M system call after a fuel-burning token has taken
+/// everything it could from the reserve read.
+///
+/// WHERE THE NUMBER COMES FROM. `erc20_scalar_read` passes `fuel: None`
+/// (`contracts/staking/src/util.rs`), so the callee is handed everything the
+/// EVM will forward — and the EVM keeps 1/64 back:
+/// `crates/revm/src/syscall.rs:423` forwards
+/// `call_stipend_reduction(gas.remaining())`, which is
+/// `gas_limit - gas_limit / 64` (revm-rwasm `8674122`,
+/// `crates/context/interface/src/cfg/gas_params.rs:605-606`, divisor seeded at
+/// `:211`). The burning close measures **29_579_516** gas spent out of 30M —
+/// identical at committees 5, 21 and 51 — leaving **420_484**.
+///
+/// WHY THAT REMAINDER IS ENOUGH TODAY, AND WHY IT IS NOT A DESIGN. The reserve
+/// read is the LAST outward thing the close does: `close_epoch` ends on
+/// `staking::accrue_epoch` (`liveness.rs`), and inside `assign_epoch_shares` the
+/// forfeit arm returns before the committee walk. So after the burn the contract
+/// has one event left to emit, which is why the number does not move with the
+/// committee size.
+///
+/// WHAT THIS FLOOR IS FOR. It is not a regression guard on 420_484 — nobody
+/// chose that number. It is a tripwire on the ORDER of the legs: any work added
+/// after the reserve read gets this remainder and not 30M, and the day it costs
+/// more than the slack below, the close stops fitting in a system call and the
+/// chain halts. Set below the measurement on purpose, so an unrelated
+/// gas-schedule change of a few thousand units does not spend a session, while a
+/// new leg — a storage write is 2_900 and up, an event 375 plus its data — still
+/// trips it long before it can halt a block.
+const BURNT_CLOSE_HEADROOM_FLOOR: u64 = 400_000;
 
 /// Committee cap and roster size the property tests use.
 ///
@@ -98,6 +142,10 @@ sol! {
 
         function blocksInEpoch(uint64 epoch) external view returns (uint32);
         function getEpochRewards(uint64 epoch) external view returns (uint256);
+        function getValidatorFee(address validator) external view returns (uint256);
+
+        function claimValidatorFee(address validator) external;
+        function claimDelegatorFee(address validator) external;
 
         function setBlendStipendPerEpoch(uint256 value) external;
         function setBlendReserve(address value) external;
@@ -105,6 +153,9 @@ sol! {
 
     interface IErc20 {
         function balanceOf(address holder) external view returns (uint256);
+        function allowance(address holder, address spender) external view returns (uint256);
+        function approve(address spender, uint256 amount) external returns (bool);
+        function transfer(address to, uint256 amount) external returns (bool);
     }
 }
 
@@ -399,6 +450,53 @@ impl Fixture {
         call(&mut self.context, GENESIS_GOVERNANCE, calldata);
     }
 
+    /// `min(balanceOf(reserve), allowance(reserve, staking))`, read off the token
+    /// itself — the same two numbers `util.rs::reserve_available` reads.
+    ///
+    /// Read rather than assumed for the same reason `assert_token_refuses`
+    /// exists: "the epoch scored zero" cannot tell a reserve that was really
+    /// short from a fixture that failed to fund one.
+    fn reserve_available(&mut self) -> U256 {
+        let balance = U256::from_be_slice(&erc20(
+            &mut self.context,
+            OWNER,
+            self.token,
+            IErc20::balanceOfCall {
+                holder: HONEST_RESERVE,
+            }
+            .abi_encode(),
+        ));
+        let allowance = U256::from_be_slice(&erc20(
+            &mut self.context,
+            OWNER,
+            self.token,
+            IErc20::allowanceCall {
+                holder: HONEST_RESERVE,
+                spender: GENESIS_STAKING,
+            }
+            .abi_encode(),
+        ));
+        core::cmp::min(balance, allowance)
+    }
+
+    fn balance_of(&mut self, holder: Address) -> U256 {
+        U256::from_be_slice(&erc20(
+            &mut self.context,
+            OWNER,
+            self.token,
+            IErc20::balanceOfCall { holder }.abi_encode(),
+        ))
+    }
+
+    fn validator_fee(&mut self, validator: Address) -> U256 {
+        let output = call(
+            &mut self.context,
+            OWNER,
+            IStaking::getValidatorFeeCall { validator }.abi_encode(),
+        );
+        IStaking::getValidatorFeeCall::abi_decode_returns(&output).unwrap()
+    }
+
     fn blocks_in_epoch(&mut self, epoch: u64) -> u32 {
         let output = call(
             &mut self.context,
@@ -440,6 +538,40 @@ fn first_block(epoch: u64) -> u64 {
     ACTIVATION + epoch * INTERVAL
 }
 
+/// The seed stake `initialize` pulls, per validator.
+const SEED_STAKE: U256 = U256::from_limbs([10_000_000_000_000_000_000, 0, 0, 0]);
+
+fn initialize_calldata(
+    token: Address,
+    reserve: Address,
+    committee: usize,
+    commission: u16,
+) -> Vec<u8> {
+    IStaking::initializeCall {
+        initialStakeOwner: OWNER,
+        validators: (0..committee).map(validator_address).collect(),
+        initialStakes: vec![SEED_STAKE; committee],
+        blsPubkeysUncompressed: (0..committee)
+            .map(|i| Bytes::copy_from_slice(crate::bls_vectors::pubkey(i)))
+            .collect(),
+        blsPopsUncompressed: (0..committee)
+            .map(|i| Bytes::copy_from_slice(crate::bls_vectors::pop(i)))
+            .collect(),
+        peerPubkeys: (0..committee).map(peer_pubkey).collect(),
+        commissionRate: commission,
+        stakingToken: token,
+        activeValidatorsLength: committee as u32,
+        epochBlockInterval: INTERVAL as u32,
+        undelegatePeriod: 7,
+        minValidatorStakeAmount: TOKEN,
+        minStakingAmount: TOKEN,
+        dposActivationBlock: ACTIVATION,
+        minUndelegateBlocks: U256::ZERO,
+        blendReserve: reserve,
+    }
+    .abi_encode()
+}
+
 /// Genesis with `COMMITTEE` active, equally staked, key-carrying validators and
 /// the BLEND reserve pointed at an address the token refuses to answer about.
 fn fixture(refusal: Refusal, committee: usize) -> Fixture {
@@ -450,32 +582,11 @@ fn fixture(refusal: Refusal, committee: usize) -> Fixture {
     set_block(&context, ACTIVATION - 1);
 
     let token = deploy_runtime(&mut context, &refusing_token(refusal));
-
-    let validators: Vec<Address> = (0..committee).map(validator_address).collect();
-    let calldata = IStaking::initializeCall {
-        initialStakeOwner: OWNER,
-        validators,
-        initialStakes: vec![TOKEN * U256::from(10); committee],
-        blsPubkeysUncompressed: (0..committee)
-            .map(|i| Bytes::copy_from_slice(crate::bls_vectors::pubkey(i)))
-            .collect(),
-        blsPopsUncompressed: (0..committee)
-            .map(|i| Bytes::copy_from_slice(crate::bls_vectors::pop(i)))
-            .collect(),
-        peerPubkeys: (0..committee).map(peer_pubkey).collect(),
-        commissionRate: 0,
-        stakingToken: token,
-        activeValidatorsLength: committee as u32,
-        epochBlockInterval: INTERVAL as u32,
-        undelegatePeriod: 7,
-        minValidatorStakeAmount: TOKEN,
-        minStakingAmount: TOKEN,
-        dposActivationBlock: ACTIVATION,
-        minUndelegateBlocks: U256::ZERO,
-        blendReserve: HOSTILE_RESERVE,
-    }
-    .abi_encode();
-    call(&mut context, GENESIS_GOVERNANCE, calldata);
+    call(
+        &mut context,
+        GENESIS_GOVERNANCE,
+        initialize_calldata(token, HOSTILE_RESERVE, committee, 0),
+    );
 
     let mut fixture = Fixture {
         context,
@@ -488,6 +599,102 @@ fn fixture(refusal: Refusal, committee: usize) -> Fixture {
         fixture.commit_committee();
     }
     fixture
+}
+
+/// Genesis against the REAL BLEND token, with a reserve that holds `balance` and
+/// has approved this contract for `allowance`.
+///
+/// Why the real token here and the hand-assembled double above: this half of the
+/// rule turns on a read that SUCCEEDS and answers a number smaller than the pot,
+/// and — for the K-32 case — on that number going DOWN because a claim was paid
+/// out of it. The double answers a constant `2^80 - 1` to everyone it does not
+/// refuse and keeps no ledger, so it can express neither. `universal-token` IS
+/// the BLEND of the production path, so `balanceOf`, `allowance` and the
+/// `transferFrom` a claim makes are the shipped ones rather than stand-ins.
+fn honest_fixture(balance: U256, allowance: U256, commission: u16) -> Fixture {
+    let mut context = EvmTestingContext::default().with_full_genesis();
+    context.cfg.chain_id = crate::bls_vectors::CHAIN_ID;
+    set_block(&context, ACTIVATION - 1);
+    for account in [OWNER, HONEST_RESERVE, STRANGER] {
+        context.add_balance(account, U256::from(10u128).pow(U256::from(20)));
+    }
+
+    let token = context.deploy_evm_tx(
+        OWNER,
+        InitialSettings {
+            token_name: "Blend".into(),
+            token_symbol: "BLEND".into(),
+            decimals: 18,
+            initial_supply: TOKEN * U256::from(1_000_000),
+            minter: OWNER,
+            pauser: Address::ZERO,
+            wrapped: None,
+        }
+        .encode_with_prefix(),
+    );
+
+    let seed = SEED_STAKE * U256::from(COMMITTEE as u64);
+    // Unlike the double, a real token refuses a `transferFrom` nobody approved —
+    // and `initialize` makes one to collect the seed stakes.
+    erc20(
+        &mut context,
+        OWNER,
+        token,
+        IErc20::approveCall {
+            spender: GENESIS_STAKING,
+            amount: seed,
+        }
+        .abi_encode(),
+    );
+    erc20(
+        &mut context,
+        OWNER,
+        token,
+        IErc20::transferCall {
+            to: HONEST_RESERVE,
+            amount: balance,
+        }
+        .abi_encode(),
+    );
+    erc20(
+        &mut context,
+        HONEST_RESERVE,
+        token,
+        IErc20::approveCall {
+            spender: GENESIS_STAKING,
+            amount: allowance,
+        }
+        .abi_encode(),
+    );
+
+    call(
+        &mut context,
+        GENESIS_GOVERNANCE,
+        initialize_calldata(token, HONEST_RESERVE, COMMITTEE, commission),
+    );
+
+    let mut fixture = Fixture {
+        context,
+        committee: COMMITTEE,
+        token,
+    };
+    fixture.govern(IStaking::setBlendStipendPerEpochCall { value: POT }.abi_encode());
+    for _ in 0..3 {
+        fixture.commit_committee();
+    }
+    fixture
+}
+
+/// A call to a contract that is not the staking one.
+fn erc20(
+    context: &mut EvmTestingContext,
+    caller: Address,
+    target: Address,
+    input: Vec<u8>,
+) -> Vec<u8> {
+    let result = context.call_evm_tx(caller, target, input.into(), Some(HUGE_GAS), None);
+    assert!(result.is_success(), "call to {target} failed: {result:?}");
+    result.output().cloned().unwrap_or_default().to_vec()
 }
 
 /// The one committed accrual of a close, decoded.
@@ -574,6 +781,225 @@ fn a_truncated_reserve_read_closes_the_epoch_at_zero() {
     a_refused_reserve_read_scores_zero_and_the_next_epoch_recovers(Refusal::TruncatedWord);
 }
 
+// ---------------------------------------------------------------------------
+// The reserve answers, and answers with LESS than the pot.
+// ---------------------------------------------------------------------------
+
+/// The forfeit branch, on the real runtime, with a reserve that READS FINE.
+///
+/// The three cases above are the arm where the read FAILS. This is the other
+/// arm and the one the money actually turns on: `reserve_available` is
+/// `min(balanceOf, allowance)` and the close forfeits the whole epoch when that
+/// is one base unit under the pot. Until now it had only ever run against a unit
+/// mock.
+///
+/// Both halves of the `min` are driven, because either one alone leaves the
+/// other live: a reserve holding less than a pot behind a generous approval, and
+/// a reserve holding plenty behind an approval smaller than a pot.
+#[test]
+fn a_reserve_that_answers_with_less_than_the_pot_forfeits_the_epoch() {
+    let short = POT - U256::from(1);
+    let plenty = POT * U256::from(100);
+    // The top-up repairs the half that was short, and only that half, so each
+    // case's recovery proves the same term it was short on.
+    type TopUp = fn(&mut Fixture);
+    let fund: TopUp = |fixture| {
+        let calldata = IErc20::transferCall {
+            to: HONEST_RESERVE,
+            amount: plenty_amount(),
+        }
+        .abi_encode();
+        let token = fixture.token;
+        erc20(&mut fixture.context, OWNER, token, calldata);
+    };
+    let approve: TopUp = |fixture| {
+        let calldata = IErc20::approveCall {
+            spender: GENESIS_STAKING,
+            amount: plenty_amount(),
+        }
+        .abi_encode();
+        let token = fixture.token;
+        erc20(&mut fixture.context, HONEST_RESERVE, token, calldata);
+    };
+
+    for (label, balance, allowance, top_up) in [
+        ("balance one unit short of the pot", short, plenty, fund),
+        ("approval one unit short of the pot", plenty, short, approve),
+    ] {
+        let mut fixture = honest_fixture(balance, allowance, 0);
+        assert_eq!(
+            fixture.reserve_available(),
+            short,
+            "{label}: the reserve must really be short, or the zero below means \
+             nothing"
+        );
+
+        fixture.record(first_block(0));
+        fixture.finish_epoch(0);
+        let close = fixture.record(first_block(1));
+
+        assert!(
+            close.succeeded,
+            "{label}: the close must survive the forfeit"
+        );
+        assert_eq!(
+            accrued(&close, 0),
+            U256::ZERO,
+            "{label}: one unit short forfeits the whole epoch"
+        );
+        assert_eq!(fixture.epoch_rewards(0), U256::ZERO, "{label}");
+
+        // A claim for the forfeited epoch pays nothing and takes nothing.
+        let seat = validator_address(0);
+        let reserve_before = fixture.balance_of(HONEST_RESERVE);
+        assert_eq!(fixture.validator_fee(seat), U256::ZERO, "{label}");
+        measure(
+            &mut fixture.context,
+            STRANGER,
+            IStaking::claimValidatorFeeCall { validator: seat }.abi_encode(),
+        );
+        measure(
+            &mut fixture.context,
+            seat,
+            IStaking::claimDelegatorFeeCall { validator: seat }.abi_encode(),
+        );
+        assert_eq!(
+            fixture.balance_of(HONEST_RESERVE),
+            reserve_before,
+            "{label}: a claim against a forfeited epoch must move nothing"
+        );
+
+        // The treasury repairs the short half BEFORE the next close. Epoch 1 is
+        // funded; epoch 0 does not come back.
+        top_up(&mut fixture);
+        assert!(fixture.reserve_available() >= POT, "{label}");
+        fixture.finish_epoch(1);
+        fixture.commit_committee();
+        let recovered = fixture.record(first_block(2));
+        assert!(recovered.succeeded, "{label}");
+        assert_eq!(accrued(&recovered, 1), fixture.epoch_rewards(1), "{label}");
+        assert!(
+            fixture.epoch_rewards(1) > U256::ZERO,
+            "{label}: the epoch that closes after the top-up is funded"
+        );
+        assert_eq!(
+            fixture.epoch_rewards(0),
+            U256::ZERO,
+            "{label}: and the forfeited one stays dead"
+        );
+    }
+}
+
+/// `plenty` as a function, because a `fn` pointer cannot close over a local.
+fn plenty_amount() -> U256 {
+    POT * U256::from(100)
+}
+
+/// K-32 on the real runtime: a permissionless claim between two closes drops the
+/// reserve under the pot, and the epoch closing next burns for it.
+///
+/// Every term here is the shipped one. The reserve holds exactly one pot, so any
+/// outflow at all takes it under; the claim is `claimValidatorFee`, which any
+/// address may send and which pays the OWNER, so the caller gains nothing and
+/// spends only gas; and the burn is the same all-or-nothing forfeit as above.
+/// The audit records this as a vector the contract cannot fix — this is the
+/// vector actually run.
+#[test]
+fn a_claim_between_two_closes_puts_the_reserve_under_the_pot_and_burns_the_epoch() {
+    let mut fixture = honest_fixture(POT, POT, COMMISSION_BPS);
+    assert_eq!(
+        fixture.reserve_available(),
+        POT,
+        "the reserve must start on exactly one pot: the vector is that ANY \
+         outflow takes it under"
+    );
+
+    // Epoch 0 closes against a reserve that covers it, and accrues.
+    fixture.record(first_block(0));
+    fixture.finish_epoch(0);
+    let first = fixture.record(first_block(1));
+    assert!(first.succeeded);
+    let credited = fixture.epoch_rewards(0);
+    assert_eq!(accrued(&first, 0), credited);
+    assert!(
+        credited > U256::ZERO,
+        "epoch 0 must be funded, or the burn below is not caused by the claim"
+    );
+
+    // A stranger claims the seat owner's commission before the next boundary.
+    let seat = validator_address(0);
+    let commission = fixture.validator_fee(seat);
+    assert!(
+        commission > U256::ZERO,
+        "the commission must be non-zero, or the claim moves nothing"
+    );
+    let owner_before = fixture.balance_of(seat);
+    measure(
+        &mut fixture.context,
+        STRANGER,
+        IStaking::claimValidatorFeeCall { validator: seat }.abi_encode(),
+    );
+    assert_eq!(
+        fixture.balance_of(seat) - owner_before,
+        commission,
+        "the claim pays the OWNER, not its caller"
+    );
+    assert_eq!(
+        fixture.balance_of(STRANGER),
+        U256::ZERO,
+        "and the caller is paid nothing for making it"
+    );
+    let available = fixture.reserve_available();
+    assert!(
+        available < POT,
+        "the claim must have taken the reserve under one pot, it holds {available}"
+    );
+
+    // Epoch 1 closes short and burns — permanently.
+    fixture.finish_epoch(1);
+    fixture.commit_committee();
+    let second = fixture.record(first_block(2));
+    assert!(second.succeeded, "the close survives the forfeit");
+    assert_eq!(
+        accrued(&second, 1),
+        U256::ZERO,
+        "a reserve one claim under the pot forfeits the closing epoch whole"
+    );
+    assert_eq!(fixture.epoch_rewards(1), U256::ZERO);
+
+    // The treasury refills afterwards. Epoch 2 is funded; epoch 1 is gone.
+    let calldata = IErc20::transferCall {
+        to: HONEST_RESERVE,
+        amount: POT * U256::from(10),
+    }
+    .abi_encode();
+    let token = fixture.token;
+    erc20(&mut fixture.context, OWNER, token, calldata);
+    erc20(
+        &mut fixture.context,
+        HONEST_RESERVE,
+        token,
+        IErc20::approveCall {
+            spender: GENESIS_STAKING,
+            amount: POT * U256::from(10),
+        }
+        .abi_encode(),
+    );
+    fixture.finish_epoch(2);
+    fixture.commit_committee();
+    let third = fixture.record(first_block(3));
+    assert!(third.succeeded);
+    assert!(
+        fixture.epoch_rewards(2) > U256::ZERO,
+        "the epoch closing after the refill is funded"
+    );
+    assert_eq!(
+        fixture.epoch_rewards(1),
+        U256::ZERO,
+        "and the burnt one is not revived by it"
+    );
+}
+
 /// What the fuel-burning token costs the close, and whether a real system call
 /// could afford it.
 ///
@@ -589,6 +1015,14 @@ fn a_truncated_reserve_read_closes_the_epoch_at_zero() {
 /// made, so whether the close can finish depends on how much work it has left
 /// — and the close's remaining work grows with the committee it splits the pot
 /// across. A five-seat committee says nothing about a fifty-one-seat one.
+///
+/// It ASSERTS the burning arm rather than printing SURVIVED/FAILED beside it.
+/// The earlier version reported and asserted nothing, on the ground that the
+/// outcome is a fact rather than a chosen number — but the outcome is the fact
+/// that matters most here, because "FAILED" spells a chain halt reachable by a
+/// hostile reserve. The floor on the remainder carries the second half of it:
+/// see `BURNT_CLOSE_HEADROOM_FLOOR` for what it is and is not guarding. No fuel
+/// cap is imposed on the read itself; that decision stands.
 #[test]
 fn the_fuel_burning_read_against_the_production_system_call_budget() {
     let unbounded =
@@ -630,11 +1064,18 @@ fn the_fuel_burning_read_against_the_production_system_call_budget() {
         burning.record(first_block(0));
         burning.finish_epoch(0);
         let burnt_close = burning.record_within(first_block(1), budget);
+        let headroom = SYSTEM_CALL_BUDGET.saturating_sub(burnt_close.frame_gas);
         println!(
-            "    committee {committee:>2}: honest close {:>9} gas ({}), burning close {:>9} gas — {}",
+            "    committee {committee:>2}: honest close {:>9} gas ({}), burning close {:>9} gas, \
+             headroom {:>7} — {}",
             honest_close.frame_gas,
-            if honest_close.succeeded { "ok" } else { "FAILED" },
+            if honest_close.succeeded {
+                "ok"
+            } else {
+                "FAILED"
+            },
             burnt_close.frame_gas,
+            headroom,
             if burnt_close.succeeded {
                 "SURVIVED"
             } else {
@@ -646,12 +1087,51 @@ fn the_fuel_burning_read_against_the_production_system_call_budget() {
             "committee {committee}: the honest close must fit in 30M, or the \
              burning arm beside it measures the wrong thing"
         );
+        assert!(
+            burnt_close.succeeded,
+            "committee {committee}: a fuel-burning token in the reserve slot \
+             HALTS THE BLOCK. The close is a pre-execution system call, so this \
+             is a chain stop that no transaction can repair, reachable by any \
+             address that governance points the reserve at."
+        );
+        // ANTI-VACUUM, and it is what the two assertions above cannot do for
+        // themselves: both are ONE-SIDED. A token that quietly stopped burning
+        // would leave the close successful and the headroom larger, and every
+        // line below would pass while measuring a fixture that no longer poses
+        // the question. `assert_token_refuses` runs only in the unbounded arm
+        // and only at `COMMITTEE`; these two cover the sizes this loop exists
+        // for.
+        assert!(
+            burnt_close.frame_gas > honest_close.frame_gas,
+            "committee {committee}: the burning close spent {} gas against the \
+             honest close's {} — the token did not burn, so nothing here is \
+             measuring a burn",
+            burnt_close.frame_gas,
+            honest_close.frame_gas
+        );
+        assert_eq!(
+            accrued(&burnt_close, 0),
+            U256::ZERO,
+            "committee {committee}: the burnt close must have FORFEITED the \
+             epoch. A non-zero accrual means the reserve read came back, which \
+             means the token answered and the burn never happened"
+        );
+        assert!(
+            accrued(&honest_close, 0) > U256::ZERO,
+            "committee {committee}: the honest close must have FUNDED the epoch, \
+             or the zero beside it is not evidence of a refused read"
+        );
+        assert!(
+            headroom >= BURNT_CLOSE_HEADROOM_FLOOR,
+            "committee {committee}: only {headroom} gas of the 30M system call \
+             survived the burning reserve read, under the {BURNT_CLOSE_HEADROOM_FLOOR} \
+             floor. The reserve read is the LAST leg of the close and the EVM \
+             hands the callee all but 1/64 of what is left, so whatever now runs \
+             after it is living on that remainder — see \
+             BURNT_CLOSE_HEADROOM_FLOOR."
+        );
     }
 
-    // No assertion on the burning arm's outcome at any size. This test reports a
-    // measurement: whichever way it comes out is a fact about the shipped
-    // contract, and pinning it would turn a finding into a regression guard for
-    // a number nobody chose.
     assert!(
         unbounded > honest,
         "the burning read must cost the close something, or this measurement is \

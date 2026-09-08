@@ -147,11 +147,21 @@ impl TestingContextImpl {
         self.inner.borrow().logs.clone()
     }
 
+    /// Fails the test when `what` is produced while a `static_call` is open.
+    ///
+    /// Covers the three effects EIP-214 forbids inside a static frame and that
+    /// this host can actually see: a storage write, a transient-storage write,
+    /// and a LOG. All three are reachable here from two directions — a mocked
+    /// callee that reaches back into the host, and the CONTRACT ITSELF, whose
+    /// reserve read (`util.rs`, `erc20_scalar_read`) and five BLS precompile
+    /// reads (`bls.rs`, `call_precompile` and `verify`) all run inside one.
+    /// A log added to any of those paths would revert on a real chain and pass
+    /// here unnoticed.
     fn reject_write_inside_static_call(&self, what: &str) {
         assert_eq!(
             self.inner.borrow().static_depth,
             0,
-            "a mock wrote {what} inside a static call. A real static frame \
+            "{what} was written inside a static call. A real static frame \
              cannot, so whatever this test proved, it did not prove it about \
              the call the contract actually makes."
         );
@@ -314,6 +324,7 @@ impl SharedAPI for TestingContextImpl {
     }
 
     fn emit_log<D: AsRef<[u8]>>(&mut self, topics: &[B256], data: D) -> SyscallResult<()> {
+        self.reject_write_inside_static_call("a log");
         self.inner
             .borrow_mut()
             .logs
@@ -478,12 +489,61 @@ mod tests {
         });
     }
 
+    /// Installs a mock that emits one log and answers nothing.
+    fn install_logging_mock(sdk: &TestingContextImpl) {
+        let mut host = sdk.clone();
+        sdk.set_call_handler(move |_address, _value, _input, _fuel_limit| {
+            host.emit_log(&[B256::ZERO], []);
+            SyscallResult::new(Bytes::new(), 0, 0, ExitCode::Ok)
+        });
+    }
+
     #[test]
-    #[should_panic(expected = "a mock wrote storage inside a static call")]
+    #[should_panic(expected = "storage was written inside a static call")]
     fn a_mock_that_writes_storage_inside_a_static_call_fails_the_test() {
         let mut sdk = TestingContextImpl::default();
         install_writing_mock(&sdk);
         sdk.static_call(Address::ZERO, &[], None);
+    }
+
+    /// LOG is the third thing EIP-214 forbids, and the one the CONTRACT could
+    /// reach on its own: every reserve read and every BLS precompile read runs
+    /// inside a static call, so an event added to one of those paths would
+    /// revert on a real chain and pass here.
+    #[test]
+    #[should_panic(expected = "a log was written inside a static call")]
+    fn a_log_emitted_inside_a_static_call_fails_the_test() {
+        let mut sdk = TestingContextImpl::default();
+        install_logging_mock(&sdk);
+        sdk.static_call(Address::ZERO, &[], None);
+    }
+
+    /// The same log through a plain `call` is legitimate — the gate is about
+    /// staticness, not about logging.
+    #[test]
+    fn the_same_log_is_allowed_through_a_plain_call() {
+        let mut sdk = TestingContextImpl::default();
+        install_logging_mock(&sdk);
+        assert!(sdk
+            .call(Address::ZERO, U256::ZERO, &[], None)
+            .status
+            .is_ok());
+        assert_eq!(sdk.take_logs().len(), 1);
+    }
+
+    /// The window closes with the frame: the gate must not outlive the static
+    /// call that opened it. Without this a single static call would poison
+    /// every later assertion in the same test, and the two panics above would
+    /// pass for the wrong reason.
+    #[test]
+    fn the_log_gate_closes_when_the_static_call_returns() {
+        let mut sdk = TestingContextImpl::default();
+        sdk.set_call_handler(|_address, _value, _input, _fuel_limit| {
+            SyscallResult::new(Bytes::new(), 0, 0, ExitCode::Ok)
+        });
+        sdk.static_call(Address::ZERO, &[], None);
+        sdk.emit_log(&[B256::ZERO], []);
+        assert_eq!(sdk.take_logs().len(), 1);
     }
 
     /// The guard is about staticness, not about mocks writing at all: the same

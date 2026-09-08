@@ -1735,6 +1735,68 @@ fn an_owner_who_withdrew_his_whole_bond_cannot_be_activated() {
     );
 }
 
+/// `ensure_non_payable` and `ensure_mutable` open EVERY handler in the crate,
+/// and until now nothing reached either: the harness leaves `contract_value` at
+/// zero and `contract_is_static` at false, so both guards ran on their passing
+/// input in all 173 tests and deleting either left the whole suite green.
+///
+/// Both are set here through the context the SDK already exposes — no host
+/// change is needed for this, only a test that bothers to set them.
+#[test]
+fn handlers_refuse_value_and_refuse_to_mutate_inside_a_static_frame() {
+    let owner = Address::with_last_byte(0xa0);
+    let validator = Address::with_last_byte(0x01);
+    let mut harness = Harness::new(1_000);
+    assert_eq!(
+        harness.initialize(owner, vec![validator], vec![DEFAULT_MIN_VALIDATOR_STAKE], 0),
+        ExitCode::Ok
+    );
+    harness.set_caller(owner);
+
+    let view = || encode_empty_call(SIG_CURRENT_EPOCH);
+    let mutation = || {
+        encode_call(
+            SIG_DELEGATE,
+            &AddressAmountCommand {
+                validator,
+                amount: DEFAULT_MIN_STAKING_AMOUNT,
+            },
+        )
+    };
+    // The control: both go through on an ordinary call.
+    assert_eq!(harness.call(view()).0, ExitCode::Ok);
+    assert_eq!(harness.call(mutation()).0, ExitCode::Ok);
+
+    // Value attached. `ensure_non_payable` is first in every handler, view and
+    // mutator alike, and it fails without revert data — the contract holds no
+    // native balance and a payment to it would be stranded.
+    harness.sdk.context_mut().value = U256::from(1);
+    for calldata in [view(), mutation()] {
+        assert_eq!(
+            harness.call(calldata),
+            (ExitCode::Panic, Vec::new()),
+            "a payable call must be refused before anything else"
+        );
+    }
+    harness.sdk.context_mut().value = U256::ZERO;
+
+    // Static frame. Views stay legal; anything that writes does not, and it says
+    // so with the SDK's own exit code rather than a contract revert.
+    harness.sdk.context_mut().is_static = true;
+    assert_eq!(
+        harness.call(view()).0,
+        ExitCode::Ok,
+        "a read is still legal inside a static frame"
+    );
+    assert_eq!(
+        harness.call(mutation()),
+        (ExitCode::StateChangeDuringStaticCall, Vec::new()),
+        "a mutating handler must refuse a static frame"
+    );
+    harness.sdk.context_mut().is_static = false;
+    assert_eq!(harness.call(mutation()).0, ExitCode::Ok);
+}
+
 #[test]
 fn staking_is_a_genesis_rwasm_contract_not_a_system_precompile() {
     assert!(!is_execute_using_system_runtime(&GENESIS_STAKING));
@@ -2329,6 +2391,73 @@ fn registration_rejects_replayed_bls_key_and_pop_without_partial_state() {
         .get_checked(&harness.sdk)
         .unwrap()
         .is_zero());
+}
+
+/// `owner_validators` is a one-to-one map and `getValidatorByOwner` is its only
+/// reader, so a second registration from the same owner would overwrite the
+/// first and leave the earlier validator unreachable through the owner it is
+/// still owned by — with the bond already pulled.
+///
+/// The gate that stops it is `set_validator`'s own, and nothing else in the
+/// crate re-checks it: the duplicate-VALIDATOR gates guard a different key.
+#[test]
+fn one_owner_cannot_register_a_second_validator() {
+    let owner = Address::with_last_byte(0xa0);
+    let first_validator = Address::with_last_byte(0x01);
+    let second_validator = Address::with_last_byte(0x02);
+    let mut harness = Harness::new(1_000);
+    assert_eq!(
+        harness.initialize(owner, Vec::new(), Vec::new(), 0),
+        ExitCode::Ok
+    );
+
+    let register = |validator: Address, key: u8, peer: u8| {
+        encode_args_call(
+            SIG_REGISTER_VALIDATOR,
+            &RegisterValidatorCommand {
+                validator,
+                commission_rate: 0,
+                initial_stake: DEFAULT_MIN_VALIDATOR_STAKE,
+                bls_pubkey_uncompressed: Bytes::from(vec![key; BLS_PUBKEY_UNCOMPRESSED_LENGTH]),
+                bls_pop_uncompressed: Bytes::from(vec![
+                    key.wrapping_add(1);
+                    BLS_POP_UNCOMPRESSED_LENGTH
+                ]),
+                peer_pubkey: B256::with_last_byte(peer),
+            },
+        )
+    };
+
+    harness.set_caller(owner);
+    assert_eq!(
+        harness.call(register(first_validator, 0x11, 1)).0,
+        ExitCode::Ok
+    );
+    // Fresh validator address, fresh BLS key, fresh peer key: every other
+    // uniqueness gate passes, so only the owner gate can refuse this.
+    assert_revert_selector(
+        harness.call(register(second_validator, 0x33, 2)),
+        ERR_VALIDATOR_OWNER_ALREADY_IN_USE,
+    );
+
+    assert_eq!(
+        staking_storage()
+            .owner_validators_accessor()
+            .entry(owner)
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        first_validator,
+        "the owner still resolves to the validator it actually paid for"
+    );
+    assert_eq!(
+        staking_storage()
+            .validators_accessor()
+            .entry(second_validator)
+            .status_accessor()
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        STATUS_NOT_FOUND
+    );
 }
 
 /// A registration whose proof of possession does not verify writes nothing.
@@ -3376,6 +3505,77 @@ fn a_committee_with_only_zero_weights_assigns_its_epoch_nothing() {
     );
 }
 
+// An epoch that recorded no block at all draws NOTHING, and the arm that says so
+// is `accrue_epoch`'s own — not one of the zero-returns inside
+// `assign_epoch_shares`. The difference matters because each of those needs a
+// reason of its own to fire — a zero pot, a reserve that cannot cover it, an
+// empty committee, a lost ring frame, a zero total weight — and the fixture
+// below denies every one of them. A stalled recorder or a pre-activation prefix
+// would otherwise buy a full epoch's stipend for zero work.
+#[test]
+fn an_epoch_with_a_committee_but_no_recorded_block_draws_no_pot() {
+    let owner = Address::with_last_byte(0xa0);
+    let validator = Address::with_last_byte(0x01);
+    let reserve = Address::with_last_byte(0xc0);
+    let pot = U256::from(400);
+    let mut harness = Harness::new(1_000);
+    let mut command =
+        harness.initialize_command(owner, vec![validator], vec![DEFAULT_MIN_VALIDATOR_STAKE], 0);
+    command.blend_reserve = reserve;
+    assert_eq!(harness.initialize_with(command), ExitCode::Ok);
+
+    chain_config_storage()
+        .blend_stipend_per_epoch_accessor()
+        .set_checked(&mut harness.sdk, pot)
+        .unwrap();
+    commit_test_committee(
+        &mut harness.sdk,
+        0,
+        &[(validator, DEFAULT_MIN_VALIDATOR_STAKE)],
+    );
+    install_stipend_token(
+        &harness.sdk,
+        reserve,
+        pot * U256::from(10),
+        pot * U256::from(10),
+    );
+    // Everything the accrual needs is in place except the work: this is the same
+    // fixture as a funded close, seeded with a zero block count.
+    assert!(
+        consensus::read_weights(&harness.sdk, 0)
+            .unwrap()
+            .is_some_and(|weights| weights.iter().any(|weight| !weight.is_zero())),
+        "the committee's frozen weights must be present, or the epoch would \
+         score zero for a reason this test is not about"
+    );
+    harness.sdk.take_logs();
+
+    record_test_production(&mut harness.sdk, 0, 0);
+
+    assert_eq!(
+        epoch_reward(&harness.sdk, validator, 0),
+        U256::ZERO,
+        "an epoch nobody recorded a block for owes nothing"
+    );
+    assert_epoch_accrual_event(&harness.sdk, 0, U256::ZERO);
+    // Deliberately no `assert!(pulls.is_empty())` here: the close makes no
+    // `transferFrom` on any path, so that assertion cannot fail and would report
+    // coverage it does not have. The control below is what carries the weight —
+    // and it is the stronger statement, because a reserve that could not cover
+    // the pot would fail it.
+
+    // The control: the identical fixture with one recorded block pays in full,
+    // so the zero above is the block count and nothing else.
+    commit_test_committee(
+        &mut harness.sdk,
+        1,
+        &[(validator, DEFAULT_MIN_VALIDATOR_STAKE)],
+    );
+    harness.sdk.take_logs();
+    record_test_production(&mut harness.sdk, 1, 1);
+    assert_eq!(epoch_reward(&harness.sdk, validator, 1), pot);
+}
+
 #[test]
 fn an_eligible_set_one_short_of_the_floor_is_refused() {
     let owner = Address::with_last_byte(0xa0);
@@ -3827,6 +4027,13 @@ fn an_odd_member_count_leaves_no_stale_half_in_the_ring() {
 // resolves through it — the slash resolver, the leader weights, `judge` — would
 // point at the wrong member. Same members, different order, must read as
 // changed.
+//
+// The length term is asserted separately because the positional loop cannot
+// stand in for it: the loop walks the NEW slice, so a successor that is a strict
+// prefix of the incumbent compares equal all the way down and reads as
+// unchanged. That is the one shape where dropping the term is invisible, and it
+// is the dangerous one — the index would then record the shorter length against
+// the LONGER record.
 #[test]
 fn committee_changed_compares_positions_not_membership() {
     let owner = Address::with_last_byte(0xa0);
@@ -3841,31 +4048,35 @@ fn committee_changed_compares_positions_not_membership() {
         .collect();
     commit_test_committee(&mut harness.sdk, 0, &seated);
 
-    let same_order: Vec<CommitteeMember> = seated
-        .iter()
-        .map(|(validator, weight)| CommitteeMember {
-            validator: *validator,
-            peer_pubkey: B256::ZERO,
-            weight: *weight,
-        })
-        .collect();
+    let slice_of = |members: &[(Address, U256)]| -> Vec<CommitteeMember> {
+        members
+            .iter()
+            .map(|(validator, weight)| CommitteeMember {
+                validator: *validator,
+                peer_pubkey: B256::ZERO,
+                weight: *weight,
+            })
+            .collect()
+    };
+
     assert!(
-        !committee_changed(&harness.sdk, 1, &same_order).unwrap(),
+        !committee_changed(&harness.sdk, 1, &slice_of(&seated)).unwrap(),
         "an identical slice is not a change"
     );
 
-    let mut swapped: Vec<CommitteeMember> = seated
-        .iter()
-        .map(|(validator, weight)| CommitteeMember {
-            validator: *validator,
-            peer_pubkey: B256::ZERO,
-            weight: *weight,
-        })
-        .collect();
+    let mut swapped = slice_of(&seated);
     swapped.swap(0, 1);
     assert!(
         committee_changed(&harness.sdk, 1, &swapped).unwrap(),
         "the same set in a different order IS a change"
+    );
+
+    // A strict prefix of the incumbent. Every position the loop reaches matches,
+    // so only the length term can call this a change.
+    assert!(
+        committee_changed(&harness.sdk, 1, &slice_of(&seated[..3])).unwrap(),
+        "a successor one member shorter IS a change, and the positional walk \
+         alone cannot see it"
     );
 }
 
@@ -4920,7 +5131,12 @@ fn a_reward_and_a_matured_principal_claim_are_independent() {
 fn claiming_rewards_does_not_rewrite_historical_self_stake() {
     let owner = Address::with_last_byte(0xa0);
     let validator = Address::with_last_byte(0x01);
-    let mut harness = Harness::new(0);
+    // NOT block 0. A zero activation block is the unarmed sentinel and pins
+    // every epoch at zero, so the claim below would walk no epochs at all and
+    // consume nothing — which is how this test passed for a claim that never
+    // ran. Armed one epoch in, the claim really does walk forty of them.
+    let activation = DEFAULT_EPOCH_BLOCK_INTERVAL;
+    let mut harness = Harness::new(activation);
     harness.set_caller(owner);
     assert_eq!(
         harness.initialize(owner, vec![validator], vec![DEFAULT_MIN_VALIDATOR_STAKE], 0),
@@ -4928,9 +5144,16 @@ fn claiming_rewards_does_not_rewrite_historical_self_stake() {
     );
 
     // A genesis validator is its own delegator, so its self-stake is the single delegate-queue
-    // entry the claim walks. Settling a frontier is what makes the claim advance at all.
+    // entry the claim walks.
     let past_epoch = 20;
-    harness.set_block_number(DEFAULT_EPOCH_BLOCK_INTERVAL * 40);
+    let now = 40;
+    harness.set_block_number(activation + DEFAULT_EPOCH_BLOCK_INTERVAL * now);
+    let (_, current) = harness.call(encode_empty_call(SIG_CURRENT_EPOCH));
+    assert_eq!(
+        decode_output::<u64>(&current),
+        now,
+        "the chain must really be `now` epochs in, or the claim walks nothing"
+    );
 
     let stake_before =
         staking::delegated_amount_at(&harness.sdk, validator, validator, past_epoch).unwrap();
@@ -4946,6 +5169,19 @@ fn claiming_rewards_does_not_rewrite_historical_self_stake() {
             ))
             .0,
         ExitCode::Ok
+    );
+    // Anti-vacuum: the claim consumed its window. Without this the assertions
+    // below hold for a claim that did nothing at all.
+    assert_eq!(
+        staking_storage()
+            .validator_delegations_accessor()
+            .entry(validator)
+            .entry(validator)
+            .claimed_through_epoch_accessor()
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        now,
+        "the claim must have advanced its own cursor across the window"
     );
 
     assert_eq!(
@@ -6697,6 +6933,70 @@ fn the_system_slash_entry_refuses_every_other_caller() {
         .unwrap());
 }
 
+/// The index route resolves a seat number against ONE array, and both ways of
+/// naming a seat that array does not have must be refused before anything is
+/// written.
+///
+/// Neither refusal had a test. Without them an uncommitted epoch reads the index
+/// pair `(record 0, length 0)` and resolves seat 0 against whatever record 0
+/// holds — some other epoch's committee — and an out-of-range seat reads past the
+/// end of a real record. Both tombstone a validator the verdict never named, and
+/// the caller is the node's pre-execution stage, which cannot take it back.
+#[test]
+fn a_system_verdict_naming_a_seat_the_committee_does_not_have_is_refused() {
+    let sponsor = Address::with_last_byte(0xa0);
+    let offender = Address::with_last_byte(0x01);
+    let bystander = Address::with_last_byte(0x02);
+    let stake = DEFAULT_MIN_VALIDATOR_STAKE * U256::from(4);
+    let uncommitted_epoch = 9u64;
+    let mut harness = Harness::new(1_000);
+    assert_eq!(
+        harness.initialize(sponsor, vec![offender, bystander], vec![stake, stake], 0),
+        ExitCode::Ok
+    );
+    // Record 0 exists and holds two members; epoch 9 has no index entry at all,
+    // so its `(record, length)` reads `(0, 0)` — which is exactly the state that
+    // makes an unguarded resolve land on THIS record.
+    commit_test_committee(
+        &mut harness.sdk,
+        0,
+        &[(offender, stake), (bystander, stake)],
+    );
+    assert_eq!(
+        consensus::committee_at(&harness.sdk, uncommitted_epoch).unwrap(),
+        (0, 0),
+        "the uncommitted epoch must point at record 0 with length 0"
+    );
+
+    assert_revert_selector(
+        system_slash(&mut harness, uncommitted_epoch, 0),
+        ERR_EPOCH_COMMITTEE_NOT_COMMITTED,
+    );
+    assert_revert_selector(
+        system_slash(&mut harness, 0, 2),
+        ERR_SIGNER_INDEX_OUT_OF_RANGE,
+    );
+
+    for validator in [offender, bystander] {
+        assert!(
+            !consensus_storage()
+                .tombstoned_accessor()
+                .entry(validator)
+                .get_checked(&harness.sdk)
+                .unwrap(),
+            "a verdict that named no real seat must tombstone nobody"
+        );
+    }
+    // And the route still works for a seat the committee does have, so the
+    // refusals above are not a blanket one.
+    assert_eq!(system_slash(&mut harness, 0, 1).0, ExitCode::Ok);
+    assert!(consensus_storage()
+        .tombstoned_accessor()
+        .entry(bystander)
+        .get_checked(&harness.sdk)
+        .unwrap());
+}
+
 #[test]
 fn a_system_verdict_tombstones_jails_and_sends_the_whole_seizure_to_the_fund() {
     let sponsor = Address::with_last_byte(0xa0);
@@ -7083,14 +7383,18 @@ fn production_exclusion_bites_at_the_next_epoch_and_not_before() {
     let third = Address::with_last_byte(0x03);
     let fourth = Address::with_last_byte(0x04);
     let fifth = Address::with_last_byte(0x05);
+    let sixth = Address::with_last_byte(0x06);
     let mut harness = Harness::new(1_000);
-    // Five Active validators against a cap of four: one below the cut to take the
-    // freed seat, and a population that still clears MIN_COMMITTEE_LENGTH after
-    // the exclusion — which is what the guard now asks.
+    // SIX Active validators against a cap of four: one below the cut to take the
+    // freed seat, and — the reason for the sixth — a population that still
+    // clears `MIN_COMMITTEE_LENGTH + 1` AFTER the first exclusion. At five the
+    // floor guard alone refuses the repeat stamp, so the repeat leg below was
+    // green whether or not the already-invisible refusal existed at all.
     let mut command = harness.initialize_command(
         owner,
-        vec![first, second, third, fourth, fifth],
+        vec![first, second, third, fourth, fifth, sixth],
         vec![
+            DEFAULT_MIN_VALIDATOR_STAKE * U256::from(6),
             DEFAULT_MIN_VALIDATOR_STAKE * U256::from(5),
             DEFAULT_MIN_VALIDATOR_STAKE * U256::from(4),
             DEFAULT_MIN_VALIDATOR_STAKE * U256::from(3),
@@ -7131,6 +7435,16 @@ fn production_exclusion_bites_at_the_next_epoch_and_not_before() {
     assert_eq!(decode_output::<u64>(data), 1);
 
     harness.sdk.take_logs();
+    // Anti-vacuum: the repeat leg proves something only while the OTHER refusal
+    // — the committee floor — would still let a second stamp through. Asserted
+    // rather than left to the fixture's member count, because shrinking the
+    // roster by one silently turns the leg below into a test of the floor guard.
+    assert!(
+        staking::eligible_population_at_least(&harness.sdk, 1, MIN_COMMITTEE_LENGTH as u64 + 1)
+            .unwrap(),
+        "the population must still clear the floor after the first exclusion, or \
+         the repeat below is refused for the wrong reason"
+    );
     assert!(
         !staking::apply_production_exclusion(&mut harness.sdk, second).unwrap(),
         "a member already invisible at the bite epoch is refused rather than re-stamped"
@@ -9383,6 +9697,93 @@ fn the_delegator_split_reproduces_the_seat_weight_frozen_two_epochs_back() {
         delegator_fee_of(&mut harness, validator, late),
         U256::ZERO,
         "stake that matured after the selection earns nothing from that seat"
+    );
+}
+
+// The other side of the same lag: a seat credited for an epoch whose SELECTION
+// epoch predates the validator's first snapshot has no denominator to divide by,
+// and the whole credit goes to the owner rather than into a delegator pool
+// nobody can draw from.
+//
+// Reachable, and reached the ordinary way: a validator registered at epoch 5
+// materializes its first snapshot at 6, so epoch 7 — whose selection epoch is 5
+// — finds nothing at or before it. Whichever way this arm is decided it decides
+// where a whole epoch's credit goes, and it had no test at all.
+#[test]
+fn a_seat_with_no_snapshot_at_its_selection_epoch_pays_its_whole_credit_to_the_owner() {
+    let sponsor = Address::with_last_byte(0xa0);
+    let seated = Address::with_last_byte(0x01);
+    let latecomer = Address::with_last_byte(0x02);
+    let reward = DEFAULT_MIN_STAKING_AMOUNT * U256::from(100);
+    let mut harness = Harness::new(1_000);
+    assert_eq!(
+        harness.initialize(sponsor, vec![seated], vec![DEFAULT_MIN_VALIDATOR_STAKE], 0),
+        ExitCode::Ok
+    );
+
+    // Registers during epoch 5, so `changed_at` — and the first snapshot — is 6.
+    harness.set_block_number(1_000 + DEFAULT_EPOCH_BLOCK_INTERVAL * 5);
+    harness.set_caller(latecomer);
+    assert_eq!(
+        harness
+            .call(encode_args_call(
+                SIG_REGISTER_VALIDATOR,
+                &RegisterValidatorCommand {
+                    validator: latecomer,
+                    commission_rate: 500,
+                    initial_stake: DEFAULT_MIN_VALIDATOR_STAKE,
+                    bls_pubkey_uncompressed: Bytes::from(vec![
+                        0x33;
+                        BLS_PUBKEY_UNCOMPRESSED_LENGTH
+                    ]),
+                    bls_pop_uncompressed: Bytes::from(vec![0x44; BLS_POP_UNCOMPRESSED_LENGTH]),
+                    peer_pubkey: B256::with_last_byte(2),
+                },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+    assert_eq!(
+        materialized_snapshot_epochs(&harness.sdk, latecomer),
+        vec![6],
+        "the earliest snapshot is above the selection epoch of the credit below"
+    );
+
+    // Epoch 7's seat was weighed at epoch 5, where this validator did not exist.
+    credit_epoch_reward(&mut harness, latecomer, 7, reward);
+    harness.set_block_number(1_000 + DEFAULT_EPOCH_BLOCK_INTERVAL * 8);
+    assert_eq!(
+        staking::validator_total_at(&harness.sdk, latecomer, 5).unwrap(),
+        U256::ZERO,
+        "there is no seat weight at the selection epoch to divide by"
+    );
+
+    assert_eq!(
+        validator_fee_of(&mut harness, latecomer),
+        reward,
+        "with no denominator the credit is the owner's whole, not a commission \
+         slice with the rest stranded in a pool nobody can draw"
+    );
+    assert_eq!(
+        delegator_fee_of(&mut harness, latecomer, latecomer),
+        U256::ZERO,
+        "and the delegator walk pays nothing out of it"
+    );
+    let paid = reserve_pulls_during(&mut harness, |harness| {
+        assert_eq!(
+            harness
+                .call(encode_call(
+                    SIG_CLAIM_VALIDATOR_FEE,
+                    &AddressCommand { value: latecomer },
+                ))
+                .0,
+            ExitCode::Ok
+        );
+    });
+    assert_eq!(
+        paid,
+        vec![(latecomer, reward)],
+        "the claim pays what the view quoted"
     );
 }
 
