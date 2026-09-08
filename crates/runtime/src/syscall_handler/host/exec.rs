@@ -90,9 +90,9 @@ pub fn syscall_exec_continue(
     // Continuation is gated until the root/STF resume ABI is fully defined.
     // Fail deterministically instead of panicking in enabled runtimes.
     //
-    // Enabling this makes hash-only execution reachable from guest input. The executor fails a
-    // hash with no resident module as a host fault, and residency is node-local, so this needs a
-    // bytecode lookup on miss (or an equivalent deterministic rule) first.
+    // Enabling this would execute by bare code hash, which the executor rejects: it keeps no
+    // module cache. The continuation must first resolve the bytecode for `code_hash` and pass
+    // `BytecodeOrHash::Bytecode`.
     (
         context.params.fuel_limit,
         0,

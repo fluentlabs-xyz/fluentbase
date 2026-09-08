@@ -11,7 +11,7 @@ What this crate is (in short):
 
 - Host surface for contracts compiled to rWASM (syscall dispatch, crypto/hashing, IO).
 - A small executor API to run or resume contracts with precise fuel control.
-- A module factory with per-code-hash caches (and optional Wasmtime artifacts) to reduce cold-start costs.
+- A per-thread cache of compiled system runtimes to reduce their cold-start cost.
 
 Core concepts
 
@@ -23,14 +23,15 @@ Core concepts
   wasmtime feature.
 - Syscall handler: Central dispatcher mapping SysFuncIdx to handlers for IO, hashing, curves, bigint, and control (exit,
   exec, resume, fuel).
-- ModuleFactory: Global, lazy-initialized cache keyed by code hash. Stores rWASM modules and, when enabled, compiled
-  Wasmtime modules. Provides warmup hooks.
+- SystemRuntime: Trusted runtimes (EVM, SVM, verifiers) run through a per-thread cache of compiled instances keyed by
+  code hash and compilation-config fingerprint.
 
 Execution flow
 
 1) Prepare a RuntimeContext with the desired fuel limit, state (entry selector), and input bytes.
-2) Call RuntimeExecutor::execute with BytecodeOrHash (either the module and its code hash, or a code hash when already
-   cached).
+2) Call RuntimeExecutor::execute with BytecodeOrHash::Bytecode carrying the parsed module, its code hash, and the
+   account address. The runtime keeps no module cache, so a bare BytecodeOrHash::Hash is rejected with
+   UnexpectedFatalExecutionFailure.
 3) You receive an ExecutionResult (completed) or an interruption encoded as a positive exit_code that acts as a call_id
    to resume later.
 4) To continue after an interruption (e.g., delegated call), call RuntimeExecutor::resume with the call_id, return_data,
@@ -65,22 +66,17 @@ Resumable execution
   execution, supplying any return_data and fuel adjustments.
 - RuntimeExecutor::reset_call_id_counter clears suspended runtimes at the start of a new transaction.
 
-Module caching and warmup
+Module ownership and caching
 
-- ModuleFactory::get_or_insert_module caches a supplied rWASM module under its code hash, bounded by a 1 GiB
-  memory limiter that also prunes the code-hash index on eviction.
-- ModuleFactory::get_resident_module looks a module up by code hash alone. Residency is node-local, so
-  RuntimeExecutor::execute fails the frame as a host fault (UnexpectedFatalExecutionFailure) when that lookup misses
-  instead of producing a contract revert other nodes would not see.
-- With the wasmtime feature, get_wasmtime_module_or_compile and warmup_wasmtime allow precompilation and warming the
-  caches to eliminate first-run latency.
+- The caller owns rWASM modules. REVM passes the parsed module of the account it executes on every call, so the runtime
+  never resolves a module by code hash alone and keeps no process-wide module cache.
+- System runtimes are compiled once per thread and reused across calls (SystemRuntime::COMPILED_RUNTIMES), keyed by
+  code hash and compilation-config fingerprint. An unexpected trap evicts the cached instance.
 
 Feature flags
 
 - std (default): Enables std dependencies in this crate and transitively in rwasm and fluentbase-types.
-- wasmtime: Enables an alternative engine for debugging/profiling, plus compiled-artifact caching.
-- inter-process-lock: Enables an fs2-based lock used by certain wasmtime paths.
-- global-executor: Enables optional global executor helpers (not fully tested).
+- wasmtime: Backs system runtimes with the Wasmtime engine instead of the rWASM interpreter.
 - debug-print, rwasm: Internal toggles.
 
 Notes

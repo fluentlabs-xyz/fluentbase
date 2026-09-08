@@ -4989,7 +4989,6 @@ dependencies = [
  "p256",
  "rand 0.9.4",
  "rwasm",
- "schnellru",
  "sha2",
  "snowbridge-amcl",
  "sp1-curves",

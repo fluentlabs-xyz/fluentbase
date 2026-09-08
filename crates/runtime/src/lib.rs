@@ -12,7 +12,6 @@ mod context_wrapper;
 mod crypto;
 mod executor;
 mod metrics;
-mod module_factory;
 pub mod runtime;
 pub mod syscall_handler;
 

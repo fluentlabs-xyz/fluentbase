@@ -26,7 +26,6 @@ sha2 = { workspace = true, default-features = false }
 num = "0.4.3"
 sp1-curves = { workspace = true }
 bytemuck = { workspace = true }
-schnellru = { workspace = true }
 metrics = { workspace = true, optional = true }
 amcl = { package = "snowbridge-amcl", version = "1.0.2", default-features = false, features = [
     "bls381",

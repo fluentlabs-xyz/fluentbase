@@ -115,10 +115,11 @@ with `panic = "abort"`. Consensus behavior must not depend on which profile buil
   boundaries provide that safety.
 - Reserve panics for genuine programmer invariants that cannot be reached from transaction, block,
   runtime, or other externally influenced input.
-- Process-wide caches must survive a panic on another thread. The compiled-module cache recovers
-  from a poisoned lock by discarding its contents, and a hash-only module lookup that misses
-  returns `UnexpectedFatalExecutionFailure` instead of panicking, so one failed execution cannot
-  wedge every later one on a node that keeps running.
+- Process-wide caches must survive a panic on another thread, and execution outcomes must not
+  depend on what a cache happens to hold. The runtime keeps no process-wide module cache: REVM
+  supplies the parsed module for every execution, and a hash-only execution is rejected with
+  `UnexpectedFatalExecutionFailure` on every node rather than resolved against node-local
+  residency.
 
 Why it matters: the same deterministic input must not become a node-crash or chain-liveness vector,
 and panic-profile differences must not change consensus outcomes.

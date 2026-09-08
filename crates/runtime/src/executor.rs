@@ -1,15 +1,13 @@
 use crate::{
     metrics::{self, RuntimeModeLabel, RuntimeTimer},
-    module_factory::ModuleFactory,
     runtime::{ContractRuntime, ExecutionMode, SystemRuntime},
     RuntimeContext,
 };
 use fluentbase_types::{
     byteorder::{ByteOrder, LittleEndian},
-    import_linker_v1_preview, Address, BytecodeOrHash, ExitCode, HashMap, B256,
-    MAX_IN_FLIGHT_MEMORY_BYTES,
+    import_linker_v1_preview, BytecodeOrHash, ExitCode, HashMap, MAX_IN_FLIGHT_MEMORY_BYTES,
 };
-use rwasm::{ExecutionEngine, ImportLinker, RwasmModule, StrategyDefinition, TrapCode};
+use rwasm::{ExecutionEngine, ImportLinker, StrategyDefinition, TrapCode};
 use std::{cell::RefCell, mem::take, sync::Arc};
 
 /// Finalized outcome of a single runtime invocation.
@@ -74,11 +72,12 @@ impl RuntimeResult {
 pub trait RuntimeExecutor {
     /// Executes the entry function of the module determined by the current execution state.
     ///
-    /// Returns either a finalized result.
+    /// `bytecode_or_hash` must carry the module. The runtime keeps no process-wide module cache
+    /// to resolve a bare hash against, so [`BytecodeOrHash::Hash`] is rejected with
+    /// `UnexpectedFatalExecutionFailure` and the whole fuel limit consumed, identically on every
+    /// node.
     ///
-    /// A hash-only `bytecode_or_hash` needs a resident module from an earlier [`Self::warmup`].
-    /// Residency is node-local, so a miss fails the frame as a host fault with
-    /// `UnexpectedFatalExecutionFailure` rather than as a contract revert.
+    /// Returns either a finalized result.
     fn execute(&mut self, bytecode_or_hash: BytecodeOrHash, ctx: RuntimeContext)
         -> ExecutionResult;
 
@@ -97,11 +96,6 @@ pub trait RuntimeExecutor {
 
     /// Drop a runtime we don't need to resume anymore
     fn forget_runtime(&mut self, call_id: u32);
-
-    /// Caches `bytecode` under `hash` so later hash-only executions can find it.
-    ///
-    /// Residency is best effort: the module cache may reject the module or evict it later.
-    fn warmup(&mut self, bytecode: RwasmModule, hash: B256, address: Address);
 
     /// Resets the per-transaction call identifier counter and clears recoverable runtimes.
     ///
@@ -158,11 +152,6 @@ impl RuntimeExecutor for ThreadLocalExecutor {
             .with_borrow_mut(|runtime_executor| runtime_executor.forget_runtime(call_id))
     }
 
-    fn warmup(&mut self, bytecode: RwasmModule, hash: B256, address: Address) {
-        LOCAL_RUNTIME_EXECUTOR
-            .with_borrow_mut(|runtime_executor| runtime_executor.warmup(bytecode, hash, address))
-    }
-
     fn reset_call_id_counter(&mut self) {
         LOCAL_RUNTIME_EXECUTOR
             .with_borrow_mut(|runtime_executor| runtime_executor.reset_call_id_counter())
@@ -186,8 +175,6 @@ pub fn default_runtime_executor() -> impl RuntimeExecutor {
 }
 
 pub struct RuntimeFactoryExecutor {
-    /// A module factory
-    pub module_factory: ModuleFactory,
     /// Suspended runtimes keyed by per-transaction call identifier.
     pub recoverable_runtimes: HashMap<u32, ExecutionMode>,
     /// An import linker
@@ -204,7 +191,6 @@ pub struct RuntimeFactoryExecutor {
 impl RuntimeFactoryExecutor {
     pub fn new(import_linker: Arc<ImportLinker>) -> Self {
         Self {
-            module_factory: ModuleFactory::new(),
             recoverable_runtimes: HashMap::new(),
             import_linker,
             transaction_call_id_counter: 1,
@@ -356,43 +342,36 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
     ) -> ExecutionResult {
         let timer = RuntimeTimer::start();
         let state = metrics::state_label(ctx.state);
-        let system_runtime_params = match &bytecode_or_hash {
-            BytecodeOrHash::Bytecode { address, hash, .. } => {
-                fluentbase_types::is_execute_using_system_runtime(address)
-                    .then_some((*address, *hash))
-            }
-            BytecodeOrHash::Hash(_) => None,
-        };
-
         let fuel_limit_value = ctx.fuel_limit;
         let fuel_limit = Some(fuel_limit_value);
 
-        // Supplied bytecode is cached on first use; a bare hash must already be resident.
-        //
-        // Only a hash-only lookup can miss: nothing warmed the module, or the LRU evicted it.
-        // That depends on this node's cache rather than on the input, so it must not become a
-        // contract revert that other nodes would not produce. Fail the frame as a host fault.
-        let module = match bytecode_or_hash {
+        // The caller owns the module: REVM hands over the parsed rWASM bytecode of the account it
+        // executes. There is no process-wide module cache to resolve a bare hash against, and
+        // there must not be one, because what is resident would differ between nodes. A
+        // hash-only execution is therefore rejected as a host fault, identically everywhere.
+        let (module, system_runtime_params) = match bytecode_or_hash {
             BytecodeOrHash::Bytecode {
                 bytecode,
                 hash,
                 address,
-            } => Some(
-                self.module_factory
-                    .get_or_insert_module(bytecode, hash, address),
-            ),
-            BytecodeOrHash::Hash(code_hash) => self.module_factory.get_resident_module(code_hash),
-        };
-        let Some(module) = module else {
-            let result = ExecutionResult {
-                exit_code: ExitCode::UnexpectedFatalExecutionFailure.into_i32(),
-                fuel_consumed: fuel_limit_value,
-                fuel_refunded: 0,
-                output: vec![],
-                return_data: vec![],
-            };
-            metrics::record_execution(RuntimeModeLabel::Contract, state, &timer, &result);
-            return result;
+            } => {
+                let system_runtime_params =
+                    fluentbase_types::is_execute_using_system_runtime(&address)
+                        .then_some((address, hash));
+                (bytecode, system_runtime_params)
+            }
+            BytecodeOrHash::Hash(_) => {
+                metrics::record_hash_only_execution_rejected();
+                let result = ExecutionResult {
+                    exit_code: ExitCode::UnexpectedFatalExecutionFailure.into_i32(),
+                    fuel_consumed: fuel_limit_value,
+                    fuel_refunded: 0,
+                    output: vec![],
+                    return_data: vec![],
+                };
+                metrics::record_execution(RuntimeModeLabel::Contract, state, &timer, &result);
+                return result;
+            }
         };
 
         // If there is no cached store, then construct a new one (slow)
@@ -552,11 +531,6 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
         metrics::set_recoverable_runtimes(self.recoverable_runtimes.len());
     }
 
-    fn warmup(&mut self, bytecode: RwasmModule, hash: B256, address: Address) {
-        self.module_factory
-            .get_or_insert_module(bytecode, hash, address);
-    }
-
     fn reset_call_id_counter(&mut self) {
         // For each transaction we reset the `call_id` counter (used to track interruptions)
         self.transaction_call_id_counter = 1;
@@ -661,11 +635,24 @@ mod tests {
     }
 
     #[test]
-    fn execute_by_hash_without_cached_module_fails_as_host_fault() {
+    fn execute_by_hash_is_rejected_as_host_fault_regardless_of_history() {
         let mut executor = RuntimeFactoryExecutor::new(import_linker_v1_preview());
-        // Nothing ever warmed this hash, so the shared cache cannot serve it.
+        let hash = B256::repeat_byte(0xD1);
+
+        // Running the module with its bytecode first must not make the bare hash resolvable:
+        // the outcome of a hash-only execution cannot depend on what this node ran before.
         let result = executor.execute(
-            BytecodeOrHash::Hash(B256::repeat_byte(0xD1)),
+            BytecodeOrHash::Bytecode {
+                bytecode: test_contract_module_with_memory(1),
+                hash,
+                address: Address::ZERO,
+            },
+            RuntimeContext::default().with_fuel_limit(1_000_000),
+        );
+        assert_eq!(result.exit_code, ExitCode::Ok.into_i32());
+
+        let result = executor.execute(
+            BytecodeOrHash::Hash(hash),
             RuntimeContext::default().with_fuel_limit(1_000),
         );
 
@@ -677,20 +664,6 @@ mod tests {
         assert_eq!(result.fuel_refunded, 0);
         assert!(result.output.is_empty());
         assert!(result.return_data.is_empty());
-    }
-
-    #[test]
-    fn execute_by_hash_after_warmup_runs_the_resident_module() {
-        let mut executor = RuntimeFactoryExecutor::new(import_linker_v1_preview());
-        let hash = fluentbase_types::keccak256(b"FLU-1310: module warmed up before execution");
-        executor.warmup(test_contract_module_with_memory(1), hash, Address::ZERO);
-
-        let result = executor.execute(
-            BytecodeOrHash::Hash(hash),
-            RuntimeContext::default().with_fuel_limit(1_000_000),
-        );
-
-        assert_eq!(result.exit_code, ExitCode::Ok.into_i32());
     }
 
     #[test]

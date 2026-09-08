@@ -180,20 +180,13 @@ pub fn record_system_runtime_cache_invalidation(
     .increment(1);
 }
 
-/// Records that the compiled-module cache was discarded after a panic poisoned its lock.
-pub fn record_module_cache_reset() {
+/// Records an execution request that carried only a code hash and was rejected.
+///
+/// The runtime keeps no module cache to resolve a bare hash against, so this counter should stay
+/// at zero; a non-zero value means some host path started executing by hash again.
+pub fn record_hash_only_execution_rejected() {
     #[cfg(feature = "std")]
-    metrics::counter!("fluentbase_module_cache_resets_total").increment(1);
-}
-
-/// Records a hash-only module lookup that found no cached module.
-pub fn record_module_cache_hash_miss(reason: &'static str) {
-    #[cfg(feature = "std")]
-    metrics::counter!(
-        "fluentbase_module_cache_hash_misses_total",
-        "reason" => reason,
-    )
-    .increment(1);
+    metrics::counter!("fluentbase_runtime_hash_only_executions_rejected_total").increment(1);
 }
 
 /// Exposes the active cache-key version for operational dashboards.

@@ -28,9 +28,6 @@ fn fuel_nitro_verifier_evm_ctx() {
     let mut ctx = EvmTestingContext::default().with_full_genesis();
     ctx.add_balance(caller, U256::from(1e18 as u128));
 
-    // Warmup for fair comparison
-    ctx.warmup_bytecode(PRECOMPILE_NITRO_VERIFIER);
-
     // Execute via EVM
     let start = Instant::now();
     let result = TxBuilder::call(&mut ctx, PRECOMPILE_NITRO_VERIFIER)
