@@ -165,9 +165,10 @@ pub const MAX_MESSAGE_SIZE: u32 = 4 * 1024 * 1024;
 // `MAX_REGISTRY_PEER_SET` below for that).
 //
 // MUST mirror the staking module's
-// `contracts/staking/src/consts.rs::MAX_ACTIVE_VALIDATORS_LENGTH` (51, exposed
-// on chain as `MAX_ACTIVE_VALIDATORS()` / `0x5d887462`) and stay ≤ 255 (the u8
-// wire format). Drift between the two literals means a successful
+// `contracts/staking/src/consts.rs::MAX_ACTIVE_VALIDATORS_LENGTH` (51; the
+// `MAX_ACTIVE_VALIDATORS()` getter that used to read it back on chain was
+// deleted 2026-09-08, so the two literals are the only record) and stay ≤ 255
+// (the u8 wire format). Drift between the two literals means a successful
 // `setActiveValidatorsLength` call later fails the startup cap assert
 // (outer.rs) or makes an honest leader's index unencodable. Update both in the
 // SAME PR. The `ChainConfig` predeploy this used to mirror is GONE — it was

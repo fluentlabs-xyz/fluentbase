@@ -77,7 +77,210 @@ Two more joined it later the same day — `settleEpochStipend` `0xa631344a` and
 that took the stipend out of this contract's balance, and a node built against it
 expects a payment pass that no longer exists.
 
-## This build — 2026-09-08
+Eleven more joined it on 2026-09-08 (task 1.5, the section below):
+`changeValidatorOwner` `0x0052c9e1`, `getPendingValidatorFee` `0xc6fb9065`,
+`getPendingDelegatorFee` `0xc2fd58fc`, `claimDelegatorFeeAtEpoch` `0xfe38ebef`,
+`calcAvailableForRedelegateAmount` `0x5ef9e8c6`, `getValidatorsWithKeys`
+`0xd41c52eb`, and the five constant getters `MAX_ACTIVE_VALIDATORS` `0x5d887462`,
+`MAX_BLEND_STIPEND_PER_EPOCH` `0x2bc2fec4`, `DEFAULT_MIN_VERDICT_DUE_BLOCKS`
+`0x6fd3afb7`, `DEFAULT_EXCLUSION_BACKOFF_CAP` `0xd4c30c1a` and
+`MAX_MIN_VERDICT_DUE_BLOCKS` `0x9b9a11ba`. A blob carrying any of them predates
+the dead-surface removal.
+
+## This build — 2026-09-08 (second build of the day)
+
+Rebuilt for one change: **eleven ABI points with no consumer are deleted**
+(`.dpos-study/PLAN.md` 1.5, finding KB-6).
+
+Deleted, selector and handler and dispatch arm: `changeValidatorOwner`
+(`0x0052c9e1` — it validated the caller and then always reverted
+`ValidatorOwnerImmutable()`; the error id and `TwoAddressesCommand` go with it),
+`getPendingValidatorFee` (`0xc6fb9065`), `getPendingDelegatorFee`
+(`0xc2fd58fc`), `claimDelegatorFeeAtEpoch` (`0xfe38ebef`),
+`calcAvailableForRedelegateAmount` (`0x5ef9e8c6`), `getValidatorsWithKeys`
+(`0xd41c52eb`), and the five constant getters `MAX_ACTIVE_VALIDATORS`
+(`0x5d887462`), `MAX_BLEND_STIPEND_PER_EPOCH` (`0x2bc2fec4`),
+`DEFAULT_MIN_VERDICT_DUE_BLOCKS` (`0x6fd3afb7`),
+`DEFAULT_EXCLUSION_BACKOFF_CAP` (`0xd4c30c1a`) and `MAX_MIN_VERDICT_DUE_BLOCKS`
+(`0x9b9a11ba`).
+
+**No ABI point outside that list moved.** `initialize` is untouched — same
+sixteen arguments, same `0xfecaf0f1` — so `genesis-bootstrap/src/bootstrap.rs`
+and `dpos_harness/stack/production_path.py` need no change this time, and
+`min_undelegate_blocks` stays. The five Rust constants behind the deleted getters
+are unchanged and still bound their setters; only the read points are gone.
+
+**Kept, against the same candidate list, each with a named consumer.** These four
+were on the "no consumer" list and are NOT deleted:
+
+| kept | consumer |
+|---|---|
+| `getValidators()` `0xb7ab4db5` | the DEPLOYED `FluentGovernance` runtime: `PUSH4 b7ab4db5` at offset 10400 of `FluentGovernance.json::deployedBytecode`, inside `_votingSupply`, on `_stakingContract` — which `bootstrap.rs::deploy_governance` constructs as `(STAKING_ADDR, STAKING_ADDR)` |
+| `isValidatorActive(address)` `0x42ad55ac` | two call sites in `FluentGovernance.json`'s own `ast` (`onlyValidatorOwner`, guarding `propose`/`proposeWithCustomVotingPeriod`, and `_validatorOwnerVotingPowerAt`) — see the caveat below |
+| `getValidatorStatus(address)` `0xa310624f` | the python stand: `dpos_harness/core/nodes.py:567` `VALIDATOR_STATUS_SIG` |
+| `getEpochRewards(uint64)` `0x54c3e84b` | the CONTRACT worktree's own root workspace: `e2e/src/staking_cost.rs:315` declares it, `:548` calls it, `:797` asserts on it |
+
+**Caveat that kept `isValidatorActive`, stated because it is unresolved.**
+`FluentGovernance.json` is internally inconsistent: its `ast` describes external
+calls its `bytecode` does not make. `isValidatorActive` `0x42ad55ac`,
+`getValidatorByOwner` `0x30108c22` and the error `OnlyValidatorOwner()`
+`0xce66db66` are named in the ABI/AST and absent from both `bytecode` and
+`deployedBytecode` — checked twice, by a raw hex substring scan (alignment-
+independent, so it also covers a selector sitting inside a PUSH32 immediate) and
+by an opcode-aligned PUSH4 walk. `StakingPool.json` shows the same pattern
+(`currentEpoch`, `getDelegatorFee`, `undelegate` in its AST, absent from its
+bytecode). The mismatch is ASYMMETRIC: from the same AST, `getValidators` and
+`getValidatorDelegatedStakeAt` ARE in the governance bytecode.
+
+The blob is older than the **AST**, not than the ABI — measured, because the
+obvious explanation had to be ruled out: all 53 of `FluentGovernance`'s
+`methodIdentifiers` are present in its `deployedBytecode`, none missing
+(`StakingPool` has exactly one absent, `getShares(address,address)`). Editing an
+INTERNAL function does not move the ABI, and every one of these call sites is in
+an internal function or modifier — `onlyValidatorOwner`,
+`_validatorOwnerVotingPowerAt`, `_countVote` — which fits. That last step is
+inference: neither `FluentGovernance.sol` nor `StakingPool.sol` exists in either
+tree, only the compiled artefact, so the cause cannot be proven here.
+
+What this means for `isValidatorActive`: its keep does NOT rest on a consumer in
+running code — there is none today. It rests on two call sites in the source that
+artefact was compiled from. A regenerated `FluentGovernance` WOULD call it, and
+deleting it would then break `propose()` and `proposeWithCustomVotingPeriod()`
+for every validator owner, silently. It stays until someone regenerates these
+artefacts and re-runs the scan. The direction of the mismatch is also why it does
+not weaken the eleven deletions: it produces AST calls absent from bytecode,
+never bytecode calls absent from source, and the bytecode was scanned directly.
+
+- worktree HEAD at build time: `f70ceffe` (`refactor(staking)!: verify BLS in the
+  module instead of a settable verifier`) — the 2026-09-08 BLS change below,
+  which is why the HEAD had moved from `100c02c4`.
+- worktree DIRTY at build time, deliberately: the 8-file delta below
+  (`README.md`, `config.rs`, `consensus.rs`, `consts.rs`, `lib.rs`, `staking.rs`,
+  `tests.rs`, `types.rs`; nothing outside `contracts/staking`).
+  **That delta is now committed as `2fa46f1b`** (`refactor(staking)!: drop eleven
+  ABI points with no consumer`), so unlike every earlier section here these blobs
+  ARE reproducible from a named commit — check out `2fa46f1b` in that worktree
+  and the source digests below are what you get. The build itself is still not
+  byte-reproducible (see the note under the previous section); the digests remain
+  the check.
+- SHA-256 of every source file in `contracts/staking/src` as built. Reproduce
+  with, from `contracts/staking`: `find src -name '*.rs' | sort | xargs sha256sum`
+
+      a710d7e5c7cbd7cbe84e4594b0840ad5992e68a3d4b7a24812f22222d6a444f4  src/bls.rs
+      bea2696e32a65f8e8362610195f71302c692c38269e7eaab19de00f25dbb0d51  src/config.rs      *
+      5fa775eaf8f1ed80ece0b5c9cbe1d2dc9620022f363a8100e84a19c223bdd2b2  src/consensus.rs   *
+      4d50bd8fb9fb7fb3716eaf3942cd659e0292270ce2d5d2ebc1eeb4b67d0e34f2  src/consts.rs      *
+      d45fb01e4297ae6343f30fda113c95cabbc9bb6114593e8c0a98249c60e48905  src/events.rs
+      3f69dfe02d27be45e6b723e3f128b7049d74abe5c1b6dafac82b5af47d8b5576  src/evidence.rs
+      5f587627e81d7f38e52cfd974bf6c234de84f93925dd174f946b974dfac0987b  src/initializer.rs
+      d4165b840ea4b7337a2a474ce62e81ee03b1c4c76d7fe6181d390741544f9aca  src/lib.rs         *
+      8014b9c6f627bb0b5ead26cfb203e835b017e4899ff2b38657b34f941dca9c07  src/liveness.rs
+      87fdd853b1c4d37cbc7421a07c8a6458afc486ff4300289b52015d9958fdf20f  src/math.rs
+      f964364b554523e5c5df250620c2469b0477a1ed8ddef8ce3b6defbc8cb6d85d  src/staking.rs     *
+      a4533236f45682cdd955dc7f58ff34e2df8f5c14bf05ff7e71912387ba8d9b86  src/storage.rs
+      e66d0c5a58df245590b6e39c0b2b723f575dd7192a80375eabc64ffc3f314806  src/tests.rs       *
+      e865fb1d3d6dd9832fde934d1cf530acf63054134ca167b0b8f0930f4a76e6fa  src/types.rs       *
+      a76fa8763d1e7e9279b488295d53e02476990890806ff9b77e8ce77a02433327  src/util.rs
+
+- `fluentbase_contracts_staking.wasm` — 404,068 bytes (was 412,702, −8,634)
+  `6950255e0cd4abea52e70b43d796ecfd04ae08f771ca38d79af2e56facf2aa49`
+- `fluentbase_contracts_staking.rwasm` — 2,783,279 bytes (was 2,834,075, −50,796)
+  `5466af2a12bd5dde6bff1951b4e2f846e4a03d5c38dab44593b9c05742d22f9c`
+- Built with `cargo clean -p fluentbase-contracts` first, per the trap recorded
+  under the previous section: without it the wasm the build links can be stale.
+  The digests above moved, which is the check that trap demands.
+- `src/tests.rs` and `README.md` moved AFTER that build (the coverage repair
+  described under **Tests**). Both are outside the artefact: `tests.rs` is
+  `#[cfg(test)]` and `README.md` is not code. Verified rather than assumed — the
+  blobs were rebuilt from the current sources and came out byte-identical to the
+  two digests above.
+
+### Selector scan of this blob
+
+Run from this directory; all three groups must hold.
+
+    python3 - <<'EOF'
+    import pathlib
+    b = pathlib.Path("fluentbase_contracts_staking.rwasm").read_bytes()
+    must_be_1 = {"recordProduction":0x1752910e, "commitEpochCommittee":0xe505b249,
+                 "slashEquivocation":0xdc6fb3f2, "producedAt":0x91c7d453,
+                 "initialize":0xfecaf0f1, "getValidators":0xb7ab4db5,
+                 "isValidatorActive":0x42ad55ac, "getValidatorStatus":0xa310624f,
+                 "getEpochRewards":0x54c3e84b, "getDelegatorFee":0x52b7bea2,
+                 "claimDelegatorFee":0x426594b1, "claimValidatorFeeAtEpoch":0xadf2a79c,
+                 "redelegateDelegatorFee":0x8ecb3fc9, "getRegistryWithKeys":0xd96cbd7b,
+                 "getValidatorFee":0x457179fd}
+    must_be_0 = {"changeValidatorOwner":0x0052c9e1, "getPendingValidatorFee":0xc6fb9065,
+                 "getPendingDelegatorFee":0xc2fd58fc, "claimDelegatorFeeAtEpoch":0xfe38ebef,
+                 "calcAvailableForRedelegateAmount":0x5ef9e8c6,
+                 "getValidatorsWithKeys":0xd41c52eb, "MAX_ACTIVE_VALIDATORS":0x5d887462,
+                 "MAX_BLEND_STIPEND_PER_EPOCH":0x2bc2fec4,
+                 "DEFAULT_MIN_VERDICT_DUE_BLOCKS":0x6fd3afb7,
+                 "DEFAULT_EXCLUSION_BACKOFF_CAP":0xd4c30c1a,
+                 "MAX_MIN_VERDICT_DUE_BLOCKS":0x9b9a11ba,
+                 "getValidatorsWithKeysAt":0x7cfba9f3, "committeeSelectionEpoch":0x8bd070e4,
+                 "getActiveValidatorsLengthAt":0xd9b083ba, "settleEpochStipend":0xa631344a,
+                 "settleEpochStipendFrom":0x92d321ab, "getBlsVerifier":0xc6b904ad,
+                 "setBlsVerifier":0x466ae541, "commitEpochBeaconKey":0x6ece9cb1,
+                 "getEpochBeaconKey":0xc9adaf5c}
+    for n,s in must_be_1.items(): assert b.count(s.to_bytes(4,"little"))==1, n
+    for n,s in must_be_0.items(): assert b.count(s.to_bytes(4,"little"))==0, n
+    print("selector scan OK")
+    EOF
+
+Run against the blob recorded above: **`selector scan OK`**.
+
+### Tests
+
+- `cargo test` in `contracts/staking`: **160 passed, 0 failed** (162 before);
+  **161** with `--features devnet-views` (163 before). Two tests removed with the
+  handlers they covered, named:
+  `validator_owner_is_immutable_and_cannot_detach_self_stake` (it existed only to
+  assert `changeValidatorOwner`'s revert) and
+  `embedded_chain_config_exposes_solidity_public_constants` (it existed only to
+  read `MAX_ACTIVE_VALIDATORS()` and `MAX_BLEND_STIPEND_PER_EPOCH()`). Five more
+  tests lost assertions but kept their subject:
+  `get_consensus_keys_matches_dynamic_struct_return_vectors`,
+  `reward_views_split_blend_between_owner_and_delegators`,
+  `the_delegator_views_report_the_reward_and_the_deposit_apart`,
+  `derived_selectors_match_independent_hex_pins` and
+  `production_liveness_ships_disabled_on_a_fresh_chain`. Each was shown red again
+  by a mutation, and every mutation reverted:
+
+  | mutation | kills |
+  |---|---|
+  | `get_consensus_keys` returns `ConsensusKeys::default()` | `get_consensus_keys_matches_dynamic_struct_return_vectors` |
+  | `write_validators_with_keys` returns two empty vectors | `get_consensus_keys_matches_dynamic_struct_return_vectors` |
+  | `get_delegator_fee` returns the reward + 1 | `reward_views_split_blend_between_owner_and_delegators`, `the_delegator_views_report_the_reward_and_the_deposit_apart`, `future_delegation_and_noop_commission_do_not_bypass_warmup` |
+  | the pinned signature string `currentEpoch()` drifts to `currentEpochX()` | `derived_selectors_match_independent_hex_pins` |
+  | `get_min_verdict_due_blocks` returns 0 | `production_liveness_setters_enforce_their_bounds`, `production_liveness_ships_disabled_on_a_fresh_chain` |
+
+  **A coverage hole this change opened, and closed.** The deleted
+  `getValidatorsWithKeys` block in
+  `get_consensus_keys_matches_dynamic_struct_return_vectors` was the ONLY
+  assertion anywhere over `write_validators_with_keys`, the shared encoder behind
+  it and `getRegistryWithKeys` (`0xd96cbd7b`) — and `SIG_GET_REGISTRY_WITH_KEYS`
+  appears nowhere in `tests.rs`, at this HEAD or before it. Removing the block
+  therefore left a live production handler with zero coverage: measured, a
+  `write_validators_with_keys` that answers two empty vectors passed all 161
+  tests. The assertion was moved onto `SIG_GET_REGISTRY_WITH_KEYS` (same return
+  shape), and the second row of the table above is that same mutation failing
+  now. Found by an adversarial review pass, not by the author.
+- `cargo test -p fluentbase-e2e` in the contract worktree's ROOT workspace:
+  **116 passed, 0 failed, 9 ignored** — this is the workspace an earlier
+  "no consumers" search missed, and it is where `getEpochRewards`'s consumer
+  lives.
+- `cargo clippy -p fluentbase-contracts-staking --all-targets --features
+  devnet-views` and `cargo fmt --check`: clean.
+- In THIS tree: `cargo test -p fluentbase-node` **59 passed, 0 failed**.
+  `cargo test -p fluentbase-e2e` **100 passed, 9 failed** — all nine are
+  `builtins::*` hardcoded gas pins (e.g. `builtins.rs:87`, 23,607 against an
+  expected 23,095), pre-existing at this tree's HEAD and untouched by this change
+  (no `.rs` file in this tree was modified).
+- **NOT run: the devnet.** This blob has not been on a live stand. The previous
+  section's `make case-growth` result does not carry over.
+
+### Previous build — 2026-09-08 (first build of the day, superseded)
 
 Rebuilt for one change: **the BLS verifier is inside the module**
 (`.dpos-study/BLS_VERIFY_PORT_SPEC.md`, task 1.10).
