@@ -37,6 +37,7 @@ use fluentbase_types::{
     HashMap, SysFuncIdx, B256, STATE_DEPLOY, STATE_MAIN,
 };
 use rwasm::{
+    wasmtime::{compile_wasmtime_module_cached, WasmtimeExecutor, WasmtimeModule},
     CompilationConfig, ImportLinker, Opcode, RwasmModule, StateRouterConfig, StoreTr,
     StrategyDefinition, StrategyExecutor, TrapCode, Value, N_MAX_ALLOWED_MEMORY_PAGES,
 };
@@ -120,8 +121,9 @@ impl SystemRuntime {
     /// If a compatible compiled runtime is present in the thread-local cache, it will be reused.
     /// Otherwise, this function compiles/loads the module and instantiates it with imports wired via
     /// `import_linker`.
-    /// Compilation, entrypoint ABI and instantiation failures return an error without caching an
-    /// instance. Both execution backends must accept the hint regardless of the selected backend.
+    /// Compilation and instantiation failures return an error without caching an instance.
+    /// Loading uses only the backend selected by the `wasmtime` feature; admission
+    /// ([`validate_system_runtime`]) is where both backends must accept the hint.
     ///
     /// ## Fuel metering
     ///
@@ -159,8 +161,7 @@ impl SystemRuntime {
             }
             crate::metrics::record_system_runtime_cache_lookup(cache_key.config_fingerprint, false);
 
-            let executor =
-                prepare_system_runtime(&rwasm_module.hint_section, config, import_linker)?;
+            let executor = load_system_runtime(&rwasm_module.hint_section, config, import_linker)?;
 
             #[allow(clippy::arc_with_non_send_sync)]
             let compiled_runtime = Arc::new(RefCell::new(executor));
@@ -362,37 +363,74 @@ impl SystemRuntime {
 
 /// Checks system-runtime admission using the same rules on both node flavours.
 ///
-/// This only initializes modules; it never invokes a runtime entrypoint. The rWasm
-/// compiler rejects start sections before either backend can instantiate the module.
+/// Admission compiles and instantiates the hint with both rWasm and Wasmtime and enforces the
+/// executor's entrypoint ABI, so a hint accepted here loads on either flavour. It only
+/// initializes modules; it never invokes a runtime entrypoint, and the rWasm compiler rejects
+/// start sections before either backend can instantiate the module.
+///
+/// The default executor is built with the same `import_linker_v1_preview`; keep them in sync.
 pub fn validate_system_runtime(wasm: &[u8], address: Address) -> Result<(), TrapCode> {
     let import_linker = fluentbase_types::import_linker_v1_preview();
     let config = system_runtime_compilation_config(
         import_linker.clone(),
         fluentbase_types::is_engine_metered_precompile(&address),
     );
-    prepare_system_runtime(wasm, config, import_linker).map(|_| ())
+    let definition = compile_rwasm(config.clone(), wasm)?;
+    instantiate_rwasm(&definition, import_linker.clone())?;
+    let module = compile_wasmtime(config, wasm)?;
+    // The rWasm state router permits arbitrary entrypoint types for trusted runtimes.
+    // SystemRuntime::execute calls `main(argc, argv) -> i32` and `deploy() -> i32` and reads an
+    // i32 status, so enforce that ABI before a backend can return a differently typed value.
+    // `deploy` is optional: runtimes that never run in the deploy state do not export it.
+    require_entrypoint_abi(&module, "main", 2, true)?;
+    require_entrypoint_abi(&module, "deploy", 0, false)?;
+    instantiate_wasmtime(&module, import_linker).map(|_| ())
 }
 
-fn prepare_system_runtime(
+/// Loads an admitted hint with the backend selected by the `wasmtime` feature.
+///
+/// The rWasm compiler always runs first as the canonical validator, so no start function can
+/// execute while loading on either flavour. Only admission exercises both backends; the rWasm
+/// flavour never compiles with Wasmtime here.
+fn load_system_runtime(
     wasm: &[u8],
     config: CompilationConfig,
     import_linker: Arc<ImportLinker>,
 ) -> Result<CompiledRuntime, TrapCode> {
-    // Always run the rWasm validator first, including when Wasmtime executes the module.
-    // In particular this rejects start functions, unsupported imports and memory limits.
-    let definition = StrategyDefinition::new_as_rwasm(config.clone(), wasm)
-        .map_err(|_| TrapCode::IllegalOpcode)?;
-    let interpreter = definition
+    let definition = compile_rwasm(config.clone(), wasm)?;
+    if cfg!(feature = "wasmtime") {
+        let module = compile_wasmtime(config, wasm)?;
+        let executor = instantiate_wasmtime(&module, import_linker)?;
+        Ok(StrategyExecutor::Wasmtime { executor })
+    } else {
+        instantiate_rwasm(&definition, import_linker)
+    }
+}
+
+/// Compiles the hint with the rWasm validator. In particular this rejects start functions,
+/// unsupported imports and memory limits.
+fn compile_rwasm(config: CompilationConfig, wasm: &[u8]) -> Result<StrategyDefinition, TrapCode> {
+    StrategyDefinition::new_as_rwasm(config, wasm).map_err(|_| TrapCode::IllegalOpcode)
+}
+
+fn instantiate_rwasm(
+    definition: &StrategyDefinition,
+    import_linker: Arc<ImportLinker>,
+) -> Result<CompiledRuntime, TrapCode> {
+    definition
         .create_executor(
-            import_linker.clone(),
+            import_linker,
             RuntimeContext::default(),
             runtime_syscall_handler,
             None,
             Some(N_MAX_ALLOWED_MEMORY_PAGES),
         )
-        .map_err(|_| TrapCode::IllegalOpcode)?;
+        .map_err(|_| TrapCode::IllegalOpcode)
+}
 
-    use rwasm::wasmtime::{compile_wasmtime_module_cached, WasmtimeExecutor, WasmtimeModule};
+/// Compiles the hint with Wasmtime through rWasm's process-wide module cache. The cache key
+/// covers the compilation config and the Wasm bytes, so admission pre-warms execution.
+fn compile_wasmtime(config: CompilationConfig, wasm: &[u8]) -> Result<WasmtimeModule, TrapCode> {
     let mut cache_identity = CompilationConfigFingerprint::from_config(
         &config,
         CompilationBackend::Wasmtime,
@@ -400,18 +438,19 @@ fn prepare_system_runtime(
     )
     .stable_bytes();
     cache_identity.extend_from_slice(fluentbase_types::keccak256(wasm).as_slice());
-    let module =
-        compile_wasmtime_module_cached(config, wasm, fluentbase_types::keccak256(cache_identity).0)
-            .map_err(|_| TrapCode::IllegalOpcode)?;
-    // The rWasm state router permits arbitrary entrypoint types for trusted runtimes.
-    // SystemRuntime::execute calls `main(argc, argv) -> i32` and `deploy() -> i32` and reads an
-    // i32 status, so enforce that ABI before a backend can return a differently typed value.
-    // `deploy` is optional: runtimes that never run in the deploy state do not export it.
-    require_entrypoint_abi(&module, "main", 2, true)?;
-    require_entrypoint_abi(&module, "deploy", 0, false)?;
-    // rWasm 0.4.7's WasmtimeExecutor constructor panics on module-dependent errors.
-    // Use it only to create a store/linker from a fixed, empty module, then instantiate
-    // the supplied module through Wasmtime's fallible APIs with the same resource limits.
+    compile_wasmtime_module_cached(config, wasm, fluentbase_types::keccak256(cache_identity).0)
+        .map_err(|_| TrapCode::IllegalOpcode)
+}
+
+/// Instantiates a compiled Wasmtime module through fallible APIs.
+///
+/// rWasm 0.4.7's `WasmtimeExecutor` constructor panics on module-dependent errors, so it only
+/// ever receives a fixed, empty module to create the store and linker with the same resource
+/// limits; the supplied module is then instantiated into that store.
+fn instantiate_wasmtime(
+    module: &WasmtimeModule,
+    import_linker: Arc<ImportLinker>,
+) -> Result<WasmtimeExecutor<RuntimeContext>, TrapCode> {
     let empty = WasmtimeModule::new(module.engine(), b"\0asm\x01\0\0\0")
         .map_err(|_| TrapCode::IllegalOpcode)?;
     let mut executor = WasmtimeExecutor::new(
@@ -424,25 +463,20 @@ fn prepare_system_runtime(
     );
     let instance_pre = executor
         .linker
-        .instantiate_pre(&module)
+        .instantiate_pre(module)
         .map_err(|_| TrapCode::IllegalOpcode)?;
     let instance = instance_pre
         .instantiate(&mut executor.store)
         .map_err(|_| TrapCode::IllegalOpcode)?;
     executor.instance_pre = instance_pre;
     executor.instance = instance;
-
-    if cfg!(feature = "wasmtime") {
-        Ok(StrategyExecutor::Wasmtime { executor })
-    } else {
-        Ok(interpreter)
-    }
+    Ok(executor)
 }
 
 /// Requires an exported entrypoint to be a function taking `params` i32 arguments and returning
 /// one i32. A missing export is an error only when `required`.
 fn require_entrypoint_abi(
-    module: &rwasm::wasmtime::WasmtimeModule,
+    module: &WasmtimeModule,
     name: &str,
     params: usize,
     required: bool,
