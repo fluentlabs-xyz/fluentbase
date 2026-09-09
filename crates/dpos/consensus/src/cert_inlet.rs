@@ -455,7 +455,7 @@ pub struct CertInlet<C, E, M> {
     /// owns a consensus plane that re-derives + cross-checks the result) and in
     /// tests. `interval` MUST be `> 0` (the follower cold-start guards it before
     /// wiring — `epoch_of_block` div-by-zeroes on a zero interval).
-    epoch_bind: Option<(u64, u32)>,
+    epoch_bind: Option<(u64, u64)>,
     /// `dpos_cert_inlet_committee_read_deferred_total{reason}` — ticks once per
     /// cert deferred because the committee read hit a TRANSIENT reth
     /// pipeline-backfill state-miss (`ReadError::StateNotMaterialized`), NOT a
@@ -549,7 +549,7 @@ where
     /// wires `(dpos_activation_block, epoch_block_interval)`; a validator inlet /
     /// unit test leaves it `None` (the bind is then a no-op). `interval` MUST be
     /// `> 0` (the caller's cold-start guards it).
-    pub fn with_epoch_math(mut self, activation: u64, interval: u32) -> Self {
+    pub fn with_epoch_math(mut self, activation: u64, interval: u64) -> Self {
         self.epoch_bind = Some((activation, interval));
         self
     }
@@ -629,12 +629,14 @@ where
         // input never trips this; on the validator inlet (`epoch_bind == None`) it
         // is a no-op (the consensus plane re-derives + cross-checks instead).
         if let Some((activation, interval)) = self.epoch_bind {
-            let height_epoch = fluentbase_staking_reader::reader::epoch_of_block(
+            // `epoch_bind` carries a non-zero interval by construction (it is the
+            // frozen geometry), so the shared epoch function cannot answer `None`.
+            let height_epoch = fluentbase_staking_reader::reader::epoch_at_block(
                 uf.block.height,
-                interval,
                 activation,
+                interval,
             );
-            if height_epoch != epoch {
+            if height_epoch != Some(epoch) {
                 warn!(
                     height = uf.block.height,
                     cert_epoch = epoch,

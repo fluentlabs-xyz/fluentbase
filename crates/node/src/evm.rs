@@ -571,111 +571,25 @@ impl<N: FullNodeComponents<Types = Self>> DebugNode<N> for FluentNode {
 
 // ***** мне кажется все же лучше ничего не добавлять в evm.rs, а поместить изменнения в отдельный модуль
 
-// Inline ABI bindings for the ONE rWasm staking system contract: the registry,
-// the epoch committee, the chain-configuration views and the liveness recorder
-// all live at `StakingReaderConfig.staking_address`. Verified against
-// `contracts/staking/src` in the FLU-989 worktree (`consts.rs:160,204,208` the
-// selectors, `events.rs:144-221` the close events); artefact provenance in
-// `devnet/local-dpos-smoke/contracts/STAKING_ARTEFACT.md`. This `sol!()` macro IS
-// the ABI source of truth on the Rust side.
-alloy_sol_types::sol! {
-    // The ONE liveness system call: who produced this block. The height is NOT an
-    // argument — the contract reads `block.number` from its own context
-    // (`liveness.rs:53`) and uses it as both idempotency key and epoch cursor,
-    // because a height it derives cannot disagree with the block it executes in.
-    // `leaderIndex` is the asymmetric half, underivable on-chain, which is why it
-    // is verified at vote time instead. The epoch close — verdicts, exclusion
-    // stamps AND the stipend settlement — is driven from inside the contract, so
-    // there is no second call.
-    function recordProduction(uint8 leaderIndex) external;
-
-    // Close-time events emitted by `recordProduction` (system call) — decoded from
-    // the Success `ras.logs` for node-side observability only. System calls produce
-    // no receipt, so these logs are otherwise invisible. Keep byte-identical to
-    // `contracts/staking/src/events.rs` or the topic match below silently never
-    // fires.
-    //
-    // `PartialEpoch` is the load-bearing one: the partial-epoch taint is DERIVED
-    // from the recorded block count, so ONE unrecorded block silently costs a whole
-    // epoch its verdicts and the tier reads as enabled while judging nothing. Alert
-    // on any occurrence outside epoch 0 (partial by construction).
-    event PartialEpoch(uint64 indexed epoch, uint32 recorded, uint32 expected);
-    // The contract keeps only the last `WEIGHT_RING_EPOCHS` epochs of frozen
-    // leader weights, so an epoch closed far enough behind can be neither judged
-    // nor paid. It forfeits rather than reverting — the close is a pre-execution
-    // system call — and this event is the ONLY thing that says so: on chain the
-    // result is indistinguishable from the four legitimate zero-epochs. Should
-    // be unreachable; an occurrence means the bound behind that constant is wrong.
-    event EpochWeightsUnavailable(uint64 indexed epoch, uint32 members);
-    event ProductionVerdictFailed(
-        uint64 indexed epoch,
-        address indexed validator,
-        uint32 produced,
-        uint256 due
-    );
-    event CorrelatedFailureEpoch(uint64 indexed epoch, uint256 newFailures, uint256 tolerance);
-
-    // The epoch-committee freeze, system-caller only. It takes NO argument: the
-    // contract derives the committee itself and sorts it ascending by peer pubkey
-    // (`consensus.rs:502,538`), which IS the consensus index space `leaderIndex`
-    // and the slash `signerIdx` are resolved against. The node used to derive the
-    // same set and pass it in, but the contract's own derivation was the authority
-    // the check compared against — so the only disagreement it could detect was
-    // with the caller, and its only remedy was to revert. With one derivation
-    // there is nothing left to disagree.
-    function commitEpochCommittee() external;
-
-    // The ordinary commit outcome. Decoded here because logs emitted inside a
-    // pre-execution system call never become receipts — `eth_getLogs` shows
-    // NOTHING of them — so this decode is the only way anyone ever sees the size
-    // of a committed committee. The committee is frozen two epochs ahead, so the
-    // value belongs to epoch `current + 2`. It never drops below
-    // MIN_COMMITTEE_LENGTH: a short selection reverts instead.
-    event EpochCommitteeCommitted(uint64 indexed epoch, address[] committee);
-
-    // `slashEquivocation(uint64,uint32)` — the equivocation VERDICT,
-    // system-caller only. It carries no evidence and the contract verifies none:
-    // every committee member checked the charge against the evidence in the
-    // OrderBlock before voting for the block, so the chain applies what the
-    // committee already agreed. The evidence cannot travel here — a node syncing
-    // the EL from peers has no OrderBlock — which is why only the one-byte
-    // verdict rides in `extra_data`, verbatim into the header.
-    function slashEquivocation(uint64 epoch, uint32 signerIdx) external;
-
-    // What the epoch CLOSE decided the epoch owes its committee — so it arrives
-    // on the `recordProduction` system call's logs, once per epoch instead of
-    // once per block. Decoded for node-side observability only (system calls
-    // produce no receipt). Same contract as the liveness events above, which is
-    // why the router below matches on TOPIC and not on `log.address`. Keep
-    // byte-identical to `contracts/staking/src/events.rs`.
-    //
-    // A zero here has SIX meanings and the contract does not tell them apart: a
-    // zero configured rate, an empty committee, a committee of zero weights, an
-    // epoch that recorded no block, weights aged out of the ring (which does
-    // carry its own `EpochWeightsUnavailable`), and — since the stipend stopped
-    // entering the contract — a BLEND reserve that could not cover the epoch,
-    // whether because it is empty, has not approved this contract, or did not
-    // answer. That last group is a config error and is checked off-chain at
-    // deployment; the indistinguishability was accepted rather than overlooked.
-    //
-    // `StipendSkipped` and `StipendLegSkipped` used to be decoded here too. Both
-    // belonged to the settlement pass that pulled an epoch's pot onto the staking
-    // contract, and that pass is gone: the reserve pays each claim directly, so
-    // there is no second act to report on and no fuel-capped leg to lose.
-    event EpochBlendRewardsCommitted(uint64 indexed epoch, uint256 blendAmount);
-
-    // Ahead-commit pipeline (2-epoch committee warm-up): committee[N] is committed
-    // TWO epochs ahead from EffBal(N-2). `nextEpochToCommit` = the next-uncommitted
-    // epoch N, and with the commit call now argument-free it is the ONLY node-side
-    // evidence that a commit did anything — the ahead-commit loop's termination and
-    // its cursor-stuck guard both rest on it.
-    function nextEpochToCommit() external view returns (uint64);
-
-    // Chain-configuration views. Formerly a separate `ChainConfig` predeploy; same
-    // contract now, so the same address.
-    function getEpochBlockInterval() external view returns (uint32);
-    function getDposActivationBlock() external view returns (uint64);
-}
+// The ONE rWasm staking system contract: the registry, the epoch committee, the
+// chain-configuration views and the liveness recorder all live at
+// `StakingReaderConfig.staking_address`. Its ABI comes from
+// `fluentbase-staking-abi`, which the contract derives its dispatch selectors and
+// its event topic0s from, so a rename there stops this build. This used to be an
+// inline `sol!` calling itself "the ABI source of truth on the Rust side", with
+// the contract holding a second, independent one.
+//
+// The close-event chain in `emit_close_observability` is still CLOSED, and that
+// is worth naming: adding an event to the contract means adding an arm there too,
+// or it is emitted into silence; deleting an arm makes its event silent without
+// breaking a build.
+use fluentbase_staking_abi::{
+    commitEpochCommitteeCall, getDposActivationBlockCall, getEpochBlockIntervalCall,
+    nextEpochToCommitCall, recordProductionCall, slashEquivocationCall, CorrelatedFailureEpoch,
+    EpochBlendRewardsCommitted, EpochCommitteeCommitted, EpochWeightsUnavailable, PartialEpoch,
+    ProductionVerdictFailed,
+};
+use fluentbase_types::staking_protocol::MAX_COMMITTEE_LOOKAHEAD_EPOCHS;
 
 fn encode_record_production_call(leader_index: u8) -> Vec<u8> {
     use alloy_sol_types::SolCall;
@@ -807,7 +721,7 @@ fn emit_close_observability(logs: &[alloy_primitives::Log]) {
 fn read_epoch_block_interval<E>(
     evm: &mut E,
     staking_address: Address,
-) -> Result<u32, BlockExecutionError>
+) -> Result<u64, BlockExecutionError>
 where
     E: Evm,
 {
@@ -985,8 +899,8 @@ fn drive_ahead_commit(
     let mut prev_committed: Option<u64> = None;
     loop {
         let next = driver.read_next_epoch()?;
-        if next > current_epoch + 2 {
-            break; // nothing more committable within the 2-epoch warm-up horizon
+        if next > current_epoch + MAX_COMMITTEE_LOOKAHEAD_EPOCHS {
+            break; // nothing more committable within the committee warm-up horizon
         }
         if let Some(p) = prev_committed {
             if next <= p {
@@ -1143,26 +1057,23 @@ where
 
             // `interval == 0` is unreachable on a live chain: the contract requires
             // epochBlockInterval > 0 on both init and every setter, so the
-            // `else { 0 }` guard is purely defensive (`epoch_of_block` divides).
-            // Shared activation-relative epoch math (the single definition in
-            // `staking-reader`) so the ahead-commit horizon below and the
-            // equivocation verdict can never drift from the consensus/cold-start
-            // epocher.
+            // `unwrap_or(0)` is purely defensive (the shared epoch function
+            // answers `None` there rather than dividing). The activation-relative
+            // epoch math is the SAME code the contract computes its own epochs
+            // with, so the ahead-commit horizon below and the equivocation verdict
+            // cannot drift from the consensus/cold-start epocher or from the chain.
             //
             // Computed HERE, above the recorder, because the verdict leg needs it
             // and it is a pure function of values already in hand — no EVM read,
             // so hoisting it moves no state access across the recorder. The
             // ahead-commit driver's own ordering constraint (see NOTE ON ORDER
             // below) is about the driver, not this arithmetic, and is untouched.
-            let current_epoch = if interval > 0 {
-                fluentbase_staking_reader::reader::epoch_of_block(
-                    block_number,
-                    interval,
-                    activation,
-                )
-            } else {
-                0
-            };
+            let current_epoch = fluentbase_staking_reader::reader::epoch_at_block(
+                block_number,
+                activation,
+                interval,
+            )
+            .unwrap_or(0);
 
             // System-call the staking contract with THIS block's producer, decoded
             // from `block.header.extra_data`, but ONLY at/after DPoS activation.
@@ -1356,6 +1267,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use super::MAX_COMMITTEE_LOOKAHEAD_EPOCHS;
+
     /// The DPoS epoch-commit pre-execution gate must be INERT whenever the
     /// activation read is unreadable or unscheduled — the root fix for the
     /// runtime-deploy deadlock (a pre-DPoS sequencer launched with
@@ -1401,19 +1314,16 @@ mod tests {
         );
     }
 
-    /// The node-side close observability reads the staking contract's close
-    /// events out of the discarded `recordProduction` system-call logs. The Rust
-    /// `sol!` event ABI must stay byte-identical to
-    /// `contracts/staking/src/events.rs` or the `decode_log` topic match silently
-    /// never fires — and for `PartialEpoch` and `EpochWeightsUnavailable` that
-    /// silence is the whole failure mode they exist to break. Pin every canonical
-    /// signature and prove a fabricated log decodes to the exact field
-    /// values.
+    /// The close router tells six events apart by TOPIC alone — every log arrives
+    /// on the one `recordProduction` system call from the one staking contract —
+    /// so what this proves is that a fabricated log decodes to the exact field
+    /// values and that a log of one shape does NOT decode as another.
     ///
-    /// Every log is fabricated at ONE address, because that is now the truth: the
-    /// liveness recorder and the stipend settlement are the same contract, so the
-    /// router matches on topic alone. A fixture that spread them across two
-    /// addresses would pass for the wrong reason.
+    /// The signatures themselves are no longer pinned here. They live in
+    /// `fluentbase-staking-abi`, which pins all six topic0s against hex, and the
+    /// contract asserts its own `#[derive(Event)]` topics against the same crate
+    /// (`close_event_topics_match_the_shared_abi`). Re-asserting them here would
+    /// compare the declaration this file decodes with against itself.
     #[test]
     fn close_events_decode_from_fabricated_logs() {
         use super::{
@@ -1421,43 +1331,6 @@ mod tests {
             EpochWeightsUnavailable, PartialEpoch, ProductionVerdictFailed,
         };
         use alloy_sol_types::SolEvent;
-
-        assert_eq!(
-            PartialEpoch::SIGNATURE,
-            "PartialEpoch(uint64,uint32,uint32)"
-        );
-        assert_eq!(
-            ProductionVerdictFailed::SIGNATURE,
-            "ProductionVerdictFailed(uint64,address,uint32,uint256)"
-        );
-        assert_eq!(
-            CorrelatedFailureEpoch::SIGNATURE,
-            "CorrelatedFailureEpoch(uint64,uint256,uint256)"
-        );
-        assert_eq!(
-            EpochBlendRewardsCommitted::SIGNATURE,
-            "EpochBlendRewardsCommitted(uint64,uint256)"
-        );
-        assert_eq!(
-            EpochWeightsUnavailable::SIGNATURE,
-            "EpochWeightsUnavailable(uint64,uint32)"
-        );
-        // The COMMIT-path event, decoded by `emit_commit_observability` rather
-        // than by the close router. Its topic0 was read straight off the
-        // contract (`events::EpochCommitteeCommitted::SELECTOR`) and pinned here
-        // as a literal, not recomputed from this signature: recomputing would
-        // make both halves of the pin come from the same side, which is precisely
-        // the failure this class of test keeps producing.
-        assert_eq!(
-            EpochCommitteeCommitted::SIGNATURE,
-            "EpochCommitteeCommitted(uint64,address[])"
-        );
-        assert_eq!(
-            EpochCommitteeCommitted::SIGNATURE_HASH,
-            alloy_primitives::b256!(
-                "015ffbf030c2f06f58cedc968ae2ec9df38a79be1a74f68686ca971ce1994a5d"
-            )
-        );
 
         const CONTRACT: alloy_primitives::Address = alloy_primitives::Address::repeat_byte(0xcc);
         let fabricate = |data| alloy_primitives::Log {
@@ -1559,22 +1432,19 @@ mod tests {
         assert!(CorrelatedFailureEpoch::decode_log(&committed_log).is_err());
     }
 
-    /// The one syscall the executor injects per block. Its selector and argument
-    /// packing are the whole contract interface, and a silent drift mis-credits
-    /// production with no other symptom. The height is gone from the wire — the
-    /// contract reads `block.number` itself — so the leader index is now the
-    /// FIRST and only word, which is what the executor tests below read back.
+    /// The one syscall the executor injects per block, pinned by its ARGUMENT
+    /// PACKING against a `cast calldata` vector.
+    ///
+    /// The selector half is gone from here: `fluentbase-staking-abi` pins all
+    /// thirteen selectors against the scan of the deployed rWasm blob, and the
+    /// contract derives its dispatch constant from the same declaration, so a
+    /// rename cannot pass. What a `cast` vector still witnesses independently is
+    /// the encoding — the height is off the wire (the contract reads
+    /// `block.number` itself), so the leader index is the first and only word,
+    /// which is what the executor tests below read back.
     #[test]
     fn record_production_calldata_is_pinned() {
         use alloy_sol_types::SolCall;
-        assert_eq!(
-            super::recordProductionCall::SIGNATURE,
-            "recordProduction(uint8)"
-        );
-        assert_eq!(
-            super::recordProductionCall::SELECTOR,
-            [0x17, 0x52, 0x91, 0x0e]
-        );
         // cast calldata "recordProduction(uint8)" 50
         let encoded = super::encode_record_production_call(50);
         assert_eq!(
@@ -1588,83 +1458,20 @@ mod tests {
         assert_eq!(decoded.leaderIndex, 50);
     }
 
-    /// The committee freeze is fail-loud on a syscall path, so a selector drift
-    /// is a halted chain rather than a missed effect. It takes no argument, which
-    /// leaves the selector as the entire wire — and the on-chain cursor as the
-    /// only evidence the call did anything.
-    #[test]
-    fn commit_epoch_committee_selector_is_pinned() {
-        use alloy_sol_types::SolCall;
-        assert_eq!(
-            super::commitEpochCommitteeCall::SIGNATURE,
-            "commitEpochCommittee()"
-        );
-        assert_eq!(
-            super::commitEpochCommitteeCall::SELECTOR,
-            [0xe5, 0x05, 0xb2, 0x49]
-        );
-        assert_eq!(
-            super::commitEpochCommitteeCall {}.abi_encode(),
-            alloy_primitives::hex!("e505b249")
-        );
-    }
-
-    /// The ahead-commit cursor read. Argument-free, so the selector is the
-    /// entire wire; it is also the only node-side evidence a commit did
-    /// anything, and the commit loop's termination and stuck-cursor guard both
-    /// rest on it. A rename would leave the loop reading a revert.
+    /// The verdict syscall, pinned by its argument packing the same way — and by
+    /// the `u8 → uint32` widening of the committee position in particular, which
+    /// is the one thing about this call that is not a selector.
     ///
-    /// Pinned literally against the contract's `SIG_NEXT_EPOCH_TO_COMMIT`
-    /// (`cast sig "nextEpochToCommit()"` == `0xc06a82de`, matching
-    /// `contracts/staking/src/consts.rs` on `feat/flu-989-port-solidity-delta`).
-    /// This one AGREES with the contract today — no drift to record.
-    #[test]
-    fn next_epoch_to_commit_selector_is_pinned() {
-        use alloy_sol_types::SolCall;
-        assert_eq!(
-            super::nextEpochToCommitCall::SIGNATURE,
-            "nextEpochToCommit()"
-        );
-        assert_eq!(
-            super::nextEpochToCommitCall::SELECTOR,
-            [0xc0, 0x6a, 0x82, 0xde],
-            "node-side nextEpochToCommit selector drifted from the contract's \
-             SIG_NEXT_EPOCH_TO_COMMIT (0xc06a82de, feat/flu-989-port-solidity-delta)"
-        );
-        assert_eq!(
-            super::nextEpochToCommitCall {}.abi_encode(),
-            alloy_primitives::hex!("c06a82de")
-        );
-    }
-
-    /// The verdict syscall is SOFT-failed, so a selector or argument drift
-    /// against `contracts/staking` costs nothing at execution time and shows up
-    /// only as slashes that never land. Pin the signature, the 4-byte selector,
-    /// and the `u8 → uint32` widening of the committee position.
-    ///
-    /// **The contract has no counterpart at all** — `slashEquivocation(uint64,
-    /// uint32)` is dispatched by neither `feat/flu-989-port-solidity-delta` nor
-    /// `origin/feat/flu-989-rust-staking` (verified 2026-08-14: zero hits for
-    /// the signature in `consts.rs` on every branch in this repo that carries
-    /// the contract). So this pin is one-sided by necessity: it holds the node
-    /// still and names the gap, and cannot be made two-sided until the verdict
-    /// path exists on-chain. Merge checklist:
-    /// `crates/dpos/consensus/src/slasher/actor.rs`, entry 4.
+    /// The call is SOFT-failed on the syscall path, so a drift against the
+    /// contract costs nothing at execution time and shows up only as slashes that
+    /// never land. That is why the pin exists at all. It is no longer one-sided:
+    /// `slashEquivocation(uint64,uint32)` is dispatched by the contract in this
+    /// tree (`consts.rs::SIG_SLASH_EQUIVOCATION`, derived from the same shared
+    /// declaration this test encodes with) and the selector appears once in the
+    /// deployed blob.
     #[test]
     fn slash_equivocation_calldata_is_pinned() {
         use alloy_sol_types::SolCall;
-        assert_eq!(
-            super::slashEquivocationCall::SIGNATURE,
-            "slashEquivocation(uint64,uint32)"
-        );
-        assert_eq!(
-            super::slashEquivocationCall::SELECTOR,
-            [0xdc, 0x6f, 0xb3, 0xf2],
-            "node-side slashEquivocation(uint64,uint32) selector drifted from the pinned \
-             0xdc6fb3f2; the contract side is ABSENT on every branch carrying \
-             contracts/staking (checked feat/flu-989-port-solidity-delta and \
-             origin/feat/flu-989-rust-staking), so there is nothing to re-derive it from"
-        );
         // cast calldata "slashEquivocation(uint64,uint32)" 9 50
         let encoded = super::encode_slash_equivocation_call(9, 50);
         assert_eq!(
@@ -1715,32 +1522,37 @@ mod tests {
         }
     }
 
-    /// The one-time `+1 → +2` horizon MIGRATION: a chain that had been committing
-    /// one-ahead (so at a block in epoch E the cursor already sits at E+2, i.e.
-    /// committee[E+1] is committed) must, on the switch block, commit EXACTLY ONE
-    /// extra epoch (E+2, reading its now-final `EffBal(E)`), advance the cursor by
-    /// one to E+3, and then stop — no skip, no double-commit.
+    /// The one-time horizon MIGRATION: a chain that had been committing one epoch
+    /// short of the horizon (so at a block in epoch E the cursor already sits at
+    /// `E + LOOKAHEAD`) must, on the switch block, commit EXACTLY ONE extra epoch
+    /// (reading its now-final `EffBal`), advance the cursor by one, and then stop
+    /// — no skip, no double-commit.
+    ///
+    /// The horizon is the contract's `MAX_COMMITTEE_LOOKAHEAD_EPOCHS`, not a `2`
+    /// this test agrees with by hand: the loop reads the same constant, and a
+    /// node horizon larger than the contract's reverts a fail-loud system call.
     #[test]
     fn ahead_commit_migration_commits_exactly_one_extra_epoch() {
         let current_epoch = 10;
-        // One-ahead steady state left the cursor at E+2 (E+1 already committed).
-        let mut cursor = MockCursor::new(current_epoch + 2);
+        let horizon = current_epoch + MAX_COMMITTEE_LOOKAHEAD_EPOCHS;
+        // One-short steady state left the cursor at the horizon itself.
+        let mut cursor = MockCursor::new(horizon);
         super::drive_ahead_commit(&mut cursor, current_epoch).expect("migration commit");
-        // Exactly one commit — committee[E+2] — and the cursor advanced by one.
-        assert_eq!(cursor.committed, vec![current_epoch + 2]);
-        assert_eq!(cursor.next, current_epoch + 3);
+        // Exactly one commit — committee[horizon] — and the cursor advanced by one.
+        assert_eq!(cursor.committed, vec![horizon]);
+        assert_eq!(cursor.next, horizon + 1);
     }
 
-    /// Steady state under the `+2` horizon: the cursor already sits at E+3
-    /// (committee[E+1] and committee[E+2] both committed), so the block commits
-    /// nothing and terminates immediately.
+    /// Steady state at the horizon: the cursor already sits one past it, so the
+    /// block commits nothing and terminates immediately.
     #[test]
     fn ahead_commit_steady_state_two_ahead_commits_nothing() {
         let current_epoch = 10;
-        let mut cursor = MockCursor::new(current_epoch + 3);
+        let past_horizon = current_epoch + MAX_COMMITTEE_LOOKAHEAD_EPOCHS + 1;
+        let mut cursor = MockCursor::new(past_horizon);
         super::drive_ahead_commit(&mut cursor, current_epoch).expect("steady state");
         assert!(cursor.committed.is_empty());
-        assert_eq!(cursor.next, current_epoch + 3);
+        assert_eq!(cursor.next, past_horizon);
     }
 
     /// A genesis/backlog block drains every uncommitted epoch up to the horizon,
@@ -1748,15 +1560,13 @@ mod tests {
     #[test]
     fn ahead_commit_backlog_drains_up_to_horizon_in_order() {
         let current_epoch = 5;
+        let horizon = current_epoch + MAX_COMMITTEE_LOOKAHEAD_EPOCHS;
         // Fresh chain: nothing committed yet.
         let mut cursor = MockCursor::new(0);
         super::drive_ahead_commit(&mut cursor, current_epoch).expect("backlog drain");
-        // Commits epochs 0..=current+2 inclusive, ascending.
-        assert_eq!(
-            cursor.committed,
-            (0..=current_epoch + 2).collect::<Vec<_>>()
-        );
-        assert_eq!(cursor.next, current_epoch + 3);
+        // Commits epochs 0..=horizon inclusive, ascending.
+        assert_eq!(cursor.committed, (0..=horizon).collect::<Vec<_>>());
+        assert_eq!(cursor.next, horizon + 1);
     }
 
     /// Termination guard: a commit that fails to advance the cursor (contract bug)

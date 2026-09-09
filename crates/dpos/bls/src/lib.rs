@@ -75,20 +75,22 @@ pub type VoteScheme = bls12381_multisig::Scheme<PeerPubkey, Variant>;
 /// notarization/finalization certificate. See [`combined_scheme`].
 pub type Scheme = combined_scheme::CombinedScheme;
 
-/// Compressed pubkey byte length.
-pub const PUBKEY_BYTES: usize = 96;
+/// Key and signature widths on the wire.
+///
+/// The staking contract checks incoming keys and proofs of possession against
+/// the same four numbers (as `BLS_PUBKEY_LENGTH`, `BLS_SIGNATURE_LENGTH`,
+/// `BLS_PUBKEY_UNCOMPRESSED_LENGTH`, `BLS_POP_UNCOMPRESSED_LENGTH`), so they are
+/// declared once in `fluentbase-types` and imported by both sides. Compressed:
+/// G2 pubkey / G1 signature under MinSig. Uncompressed: the EIP-2537 forms, G2
+/// as 4 × 64 and G1 as 2 × 64.
+pub use fluentbase_types::staking_protocol::{
+    BLS_PUBKEY_LENGTH as PUBKEY_BYTES, BLS_PUBKEY_UNCOMPRESSED_LENGTH as PUBKEY_EIP2537_BYTES,
+    BLS_SIGNATURE_LENGTH as SIGNATURE_BYTES,
+    BLS_SIGNATURE_UNCOMPRESSED_LENGTH as SIGNATURE_EIP2537_BYTES,
+};
 
-/// Compressed signature byte length.
-pub const SIGNATURE_BYTES: usize = 48;
-
-/// Private scalar byte length.
+/// Private scalar byte length. Not shared: the contract never sees a secret.
 pub const SECRET_BYTES: usize = 32;
-
-/// EIP-2537 uncompressed pubkey byte length (G2: 4 × 64).
-pub const PUBKEY_EIP2537_BYTES: usize = 256;
-
-/// EIP-2537 uncompressed signature byte length (G1: 2 × 64).
-pub const SIGNATURE_EIP2537_BYTES: usize = 128;
 
 /// Build the base BLS namespace for a given chain.
 ///

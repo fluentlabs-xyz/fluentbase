@@ -60,120 +60,18 @@ use std::{
 use tokio::sync::{mpsc, Mutex as TokioMutex};
 use tracing::{debug, error, info, instrument, warn};
 
-// CONTRACT ABI DELTA — MERGE CHECKLIST (canonical copy; last verified
-// 2026-08-14 against BOTH the committed branch source AND the deployed artifact)
-//
-// READ THIS PARAGRAPH BEFORE THE TABLE. An earlier draft of this block had the
-// conclusion exactly backwards, and the correction is the useful part.
-//
-// There are TWO rWasm contracts in play, not a Solidity one and an rWasm one
-// (Solidity is deprecated and is not a party to any of this):
-//
-//   (a) THE DEPLOYED ARTIFACT — `devnet/local-dpos-smoke/contracts/
-//       fluentbase_contracts_staking.rwasm`. Verified 2026-08-14 by scanning the
-//       binary for little-endian selector constants: it carries all three 4-arg
-//       selectors (0xe28d2f63 / 0xadd07a3e / 0xa10827e9) and 0xdc6fb3f2, and
-//       ZERO occurrences of any 6-arg selector. **It matches this node exactly.**
-//       Per `STAKING_ARTEFACT.md` it was built from a DIRTY worktree whose own
-//       note says a build from a clean HEAD would produce a contract the node
-//       cannot talk to.
-//
-//   (b) THE COMMITTED SOURCE on `feat/flu-989-port-solidity-delta` — 6-arg slash
-//       entry points, a commit-reveal reporter-protection leg, and a 3-array
-//       committee return. Read it with:
-//
-//           git show feat/flu-989-port-solidity-delta:contracts/staking/src/consts.rs
-//
-// SO THE RISK IS THE REVERSE OF WHAT THIS BLOCK USED TO SAY. Equivocation
-// slashing is NOT dead: against what is actually deployed, every call below
-// dispatches. What the table lists is the DELTA that merging (b) will introduce
-// — i.e. merging breaks a currently working path unless the node moves with it.
-//
-// Direction is still toward (b): its commit-reveal leg is a real security
-// addition (it stops an observer copying public evidence out of the mempool and
-// redirecting the reporter reward), not incidental churn. But it must land as
-// ONE change across both sides — any intermediate state breaks slashing in one
-// direction or the other.
-//
-// Every selector quoted here was computed with `cast sig "<signature>"` — read
-// off neither `sol!` declaration. A pin is worth having only when both sides
-// assert the same value independently: a selector derived from the same
-// declaration the production code calls through validates the code against
-// itself and can never catch a rename.
-//
-// 1-3. The three slash entry points (declared immediately below).
-//
-//   node     slashEquivocationNotarize(bytes,bytes,bytes,bytes)        0xe28d2f63
-//   contract slashEquivocationNotarize(bytes,bytes,bytes,bytes,address,bytes32)
-//                                                                     0x2bc5fb10
-//   node     slashEquivocationFinalize(bytes,bytes,bytes,bytes)        0xadd07a3e
-//   contract slashEquivocationFinalize(bytes,bytes,bytes,bytes,address,bytes32)
-//                                                                     0xb034c58b
-//   node     slashEquivocationNullifyFinalize(bytes,bytes,bytes,bytes) 0xa10827e9
-//   contract slashEquivocationNullifyFinalize(bytes,bytes,bytes,bytes,address,bytes32)
-//                                                                     0x337e1437
-//
-//   TODAY: the deployed artifact carries the node's three 4-arg selectors, so
-//   all three calls dispatch and slashing works. AFTER MERGING (b): the branch
-//   source adds `address beneficiary, bytes32 salt` and gates the reveal on a
-//   prior `commitEquivocationReport(bytes32)` (0x32890bc0), whose commitment is
-//   `computeEquivocationReportCommitment(address,uint8,bytes32,bytes32)`
-//   (0xc289d76e) — a commit-reveal leg the node does not implement at all. No
-//   selector overlaps, so post-merge every one of our three calls reverts
-//   `ERR_UNKNOWN_METHOD`; nothing is mis-decoded, it simply stops landing.
-//   Node-side work to merge: widen all three signatures, add `beneficiary` and
-//   `salt` to `SlashCallArgs`, and implement the commit transaction.
-//   Pinned by: `tests/equivocation_evidence_conformance.rs::
-//   helper_extract_then_abi_encode_matches_pinned_calldata` and
-//   `tests/slasher_integration.rs::slash_abi_selectors_are_pinned`.
-//
-// 4. The equivocation VERDICT syscall — `crates/node/src/evm.rs`.
-//
-//   node               slashEquivocation(uint64,uint32)                0xdc6fb3f2
-//   deployed artifact  present  (0xdc6fb3f2 found in the .rwasm)
-//   branch source (b)  ABSENT   (no `SIG_SLASH_EQUIVOCATION` in `consts.rs`,
-//                                nothing dispatches it in `lib.rs`)
-//
-//   So the verdict syscall works against what is deployed and STOPS working when
-//   (b) lands. Because the call is soft-failed on the syscall path, that regression
-//   is SILENT: the block still seals, no metric moves, and the committee's
-//   already-voted verdict is discarded every time. Of everything in this table
-//   this is the one that will not announce itself — either (b) grows the handler
-//   back, or the node's soft-fail becomes loud, before (b) merges.
-//   Pinned by: `crates/node/src/evm.rs::tests::slash_equivocation_calldata_is_pinned`.
-//
-// 5. Return arity — `crates/dpos/staking-reader/src/reader.rs`.
-//
-//   selector matches on both sides (return types do not enter a selector), so
-//   the selector pin passes and proves nothing:
-//     getEpochCommitteeWithStakes(uint64)                              0xa4d160c1
-//   node               returns (address[], ConsensusKeys[], uint256[], bool[] tombstoned)
-//   deployed artifact  returns the same four arrays — the node decodes it today
-//   branch source (b)  returns THREE
-//                      (`consensus.rs`, `write_returns(sdk, &(validators, keys, stakes))`)
-//
-//   The node's fourth array is the live equivocation tombstone. It has no
-//   counterpart in (b), so once (b) lands the decode fails OUTRIGHT rather than
-//   mis-pairing — which is the good failure mode, but it kills
-//   `epoch_committee_snapshot`, the single function every committee consumer
-//   routes through. Effect: the node cannot read a validator set at all. Loud,
-//   immediate, total. Either (b) grows the array back or the node drops it, and
-//   dropping it means finding another carrier for the tombstone.
-//   Pinned by: `reader.rs::tests::view_selectors_are_pinned` (selector) and
-//   `reader.rs::tests::epoch_committee_return_arity_is_pinned` (shape).
-
-// Solidity ABI bindings for the three slash entry points. This `sol!` is the
-// ONE declaration the production encoder and the tests both go through — the
-// tests must never re-declare it, or they would validate the code against
-// itself. See the drift checklist above before changing any signature here.
-alloy_sol_types::sol! {
-    function slashEquivocationNotarize(bytes evidence, bytes pkUncompressed,
-        bytes sig1Uncompressed, bytes sig2Uncompressed) external;
-    function slashEquivocationFinalize(bytes evidence, bytes pkUncompressed,
-        bytes sig1Uncompressed, bytes sig2Uncompressed) external;
-    function slashEquivocationNullifyFinalize(bytes evidence, bytes pkUncompressed,
-        bytes sig1Uncompressed, bytes sig2Uncompressed) external;
-}
+// The three slash entry points come from `fluentbase-staking-abi`, the ONE
+// declaration the contract derives its dispatch selectors from. This used to be
+// a second `sol!` block here, kept in step with a merge checklist that described
+// a delta against an unmerged contract branch; the branch merged as `f16fdd90`
+// and the contract now sits in `contracts/staking` of this tree, so the delta and
+// the checklist are both gone. The production encoder and the conformance tests
+// still go through one declaration — the tests must never re-declare it, or they
+// would validate the code against itself.
+pub use fluentbase_staking_abi::{
+    slashEquivocationFinalizeCall, slashEquivocationNotarizeCall,
+    slashEquivocationNullifyFinalizeCall,
+};
 
 // The slasher consumes `StakingStateRead` re-exported from
 // `fluentbase-staking-reader`. The blanket impl on

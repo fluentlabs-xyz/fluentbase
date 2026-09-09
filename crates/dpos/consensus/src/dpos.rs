@@ -71,7 +71,7 @@ use tracing::{error, info, warn};
 fn read_geometry<Provider, EvmConfig>(
     reader: &RethStakingStateReader<Provider, EvmConfig>,
     at: B256,
-) -> eyre::Result<Option<(u64, u32)>>
+) -> eyre::Result<Option<(u64, u64)>>
 where
     Provider:
         StateProviderFactory + HeaderProvider<Header = Header> + Clone + Send + Sync + 'static,
@@ -1117,7 +1117,7 @@ enum ColdStartKind {
 fn resolve_cold_start_kind(
     archive_finalized: u64,
     activation: u64,
-    interval: u32,
+    interval: u64,
     cs_finalized: u64,
     has_upstream: bool,
 ) -> eyre::Result<ColdStartKind> {
@@ -1134,7 +1134,7 @@ fn resolve_cold_start_kind(
     if archive_finalized > activation {
         return Ok(ColdStartKind::Restart);
     }
-    if cs_finalized >= activation + interval as u64 {
+    if cs_finalized >= activation + interval {
         // EL is past epoch 0 with an empty consensus archive. WITH a sync upstream
         // (plane-tracked or WS) this is a legal deep `Restart`: the pre-engine
         // `cold_start_jump` re-seeds the anchor at the verified frontier (§4.1/§4.3),
@@ -1482,12 +1482,17 @@ async fn enter_finalized_epoch(
     last_delivered: &mut Option<u64>,
     finalized_height: u64,
     activation: u64,
-    interval: u32,
+    interval: u64,
     committee_at: &FollowerCommitteeAt,
     deliver: &FollowerBoundaryDeliver,
 ) -> bool {
-    let epoch =
-        fluentbase_staking_reader::reader::epoch_of_block(finalized_height, interval, activation);
+    // The caller resolved the interval off a live chain config, where zero is
+    // impossible; treat the `None` as "nothing to deliver" rather than dividing.
+    let Some(epoch) =
+        fluentbase_staking_reader::reader::epoch_at_block(finalized_height, activation, interval)
+    else {
+        return true;
+    };
     if *last_delivered >= Some(epoch) {
         return true;
     }
@@ -1648,7 +1653,7 @@ impl DposLayer {
         let dpos_activation_block = reader.dpos_activation_block(cs_finalized_hash)?;
         let interval = reader.epoch_block_interval(cs_finalized_hash)?;
         let epoch_length_blocks =
-            NonZeroU64::new(interval as u64).ok_or_eyre("epoch_block_interval must be > 0")?;
+            NonZeroU64::new(interval).ok_or_eyre("epoch_block_interval must be > 0")?;
 
         // Cold-start discriminator (restart vs fresh migration). The marshal's
         // durable application-metadata is the signal: an empty store (height <=
@@ -1945,18 +1950,19 @@ impl DposLayer {
         }
         let (initial_head_num, initial_head_hash) = (head_num, head_hash);
 
-        let initial_epoch_u64 = fluentbase_staking_reader::reader::epoch_of_block(
+        let initial_epoch_u64 = fluentbase_staking_reader::reader::epoch_at_block(
             latest_finalized,
-            interval,
             dpos_activation_block,
-        );
+            interval,
+        )
+        .ok_or_else(|| eyre!("epochBlockInterval is zero"))?;
 
         // Enforce the node ↔ contract invariant
         //   `activeValidatorsLength <= fluentbase_p2p::MAX_COMMITTEE_SIZE`.
         let active_validators_length = reader
             .active_validators_length(latest_finalized_hash)
             .wrap_err("failed reading Staking.activeValidatorsLength")?;
-        if (active_validators_length as u64) > fluentbase_p2p::constants::MAX_COMMITTEE_SIZE {
+        if active_validators_length > fluentbase_p2p::constants::MAX_COMMITTEE_SIZE {
             return Err(eyre!(
                 "Staking.activeValidatorsLength ({}) exceeds \
                  fluentbase_p2p::constants::MAX_COMMITTEE_SIZE ({}). Node ↔ contract \
@@ -2352,11 +2358,13 @@ impl DposLayer {
                             let Ok(Some(hash)) = wd_provider.block_hash(fin) else {
                                 continue;
                             };
-                            let epoch = fluentbase_staking_reader::reader::epoch_of_block(
+                            let Some(epoch) = fluentbase_staking_reader::reader::epoch_at_block(
                                 fin,
-                                wd_interval,
                                 wd_activation,
-                            );
+                                wd_interval,
+                            ) else {
+                                continue;
+                            };
                             // The snapshot is a deterministic state read — while
                             // finalized is stagnant its inputs cannot change, so a
                             // wedged verifier re-warns from cache instead of re-running
@@ -2454,7 +2462,7 @@ impl DposLayer {
         // Rule Y: the validator-with-upstream re-jump is now SYMMETRIC with the
         // follower — it shares the inlet⇄executor `upstream_frontier`, uses the
         // epoch-relative threshold, and wires the same `rotate` escape.
-        let re_jump_threshold = crate::cold_start_jump::JUMP_THRESHOLD.min(interval as u64);
+        let re_jump_threshold = crate::cold_start_jump::JUMP_THRESHOLD.min(interval);
         let re_jump: Option<crate::executor::ReJump> = upstream.as_ref().map(|up| {
             let up = up.clone();
             // The inlet's SAME upstream-rotation escape (Rule L/Y); bound BEFORE the
@@ -3131,7 +3139,8 @@ impl DposLayer {
             .await;
 
         let initial_epoch_u64 =
-            fluentbase_staking_reader::reader::epoch_of_block(anchor_height, interval, activation);
+            fluentbase_staking_reader::reader::epoch_at_block(anchor_height, activation, interval)
+                .ok_or_else(|| eyre!("epochBlockInterval is zero"))?;
         info!(
             chain_id,
             activation,
@@ -3165,7 +3174,7 @@ impl DposLayer {
         let head_info = canonical_state.chain_info();
 
         let epoch_length_blocks =
-            NonZeroU64::new(interval as u64).ok_or_eyre("epoch_block_interval must be > 0")?;
+            NonZeroU64::new(interval).ok_or_eyre("epoch_block_interval must be > 0")?;
         // The beacon-owned families are registered by `beacon::for_follower`
         // below, which is this path's randomness provider — NOT here. A standalone
         // `BeaconMetrics::register` next to it would register every one of them
@@ -3254,7 +3263,7 @@ impl DposLayer {
         // Epoch-relative re-jump gate: the defer deadlock is "≥2 epochs behind", so
         // recovery fires at `min(serving-window, 1 epoch)` — real-prod epochs ≫ 1024
         // keep 1024; a compressed test epoch heals within an epoch (see `ReJump::threshold`).
-        let re_jump_threshold = crate::cold_start_jump::JUMP_THRESHOLD.min(interval as u64);
+        let re_jump_threshold = crate::cold_start_jump::JUMP_THRESHOLD.min(interval);
         let re_jump: Option<crate::executor::ReJump> = upstream.as_ref().map(|up| {
             let up = up.clone();
             // The inlet's SAME upstream-rotation escape (Rule L): the re-jump's
@@ -3957,7 +3966,7 @@ mod cold_start_kind_tests {
     use alloy_primitives::B256;
 
     const ACTIVATION: u64 = 192;
-    const INTERVAL: u32 = 64;
+    const INTERVAL: u64 = 64;
 
     // The cold-start disposition split (#11): `Stalled` now routes to a
     // retry-forever no-peers self-heal (was a FATAL re-fuse); every other outcome
@@ -4096,7 +4105,7 @@ mod cold_start_kind_tests {
         // cs_finalized == activation + interval is the FIRST fatal height
         // (epoch 0 is [activation, activation + interval)) when there is no upstream.
         let err =
-            resolve_cold_start_kind(0, ACTIVATION, INTERVAL, ACTIVATION + INTERVAL as u64, false)
+            resolve_cold_start_kind(0, ACTIVATION, INTERVAL, ACTIVATION + INTERVAL, false)
                 .unwrap_err();
         assert!(err.to_string().contains("past epoch 0"), "{err}");
     }
@@ -4970,7 +4979,7 @@ mod follower_boundary_tests {
     use std::sync::{Arc, Mutex};
 
     const ACTIVATION: u64 = 100;
-    const INTERVAL: u32 = 10;
+    const INTERVAL: u64 = 10;
 
     fn snapshot(epoch: u64) -> ValidatorSetSnapshot {
         ValidatorSetSnapshot {

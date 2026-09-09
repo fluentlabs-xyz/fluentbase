@@ -50,7 +50,11 @@ impl commonware_cryptography::Digest for Digest {
 }
 
 impl FixedSize for Digest {
-    const SIZE: usize = 32;
+    /// The staking contract's evidence decoder reads exactly this many bytes per
+    /// proposal payload, so the width is declared once and imported by both
+    /// sides: evidence built against a different length does not decode on
+    /// chain, and the slash is lost without a sound.
+    const SIZE: usize = fluentbase_types::staking_protocol::PROPOSAL_PAYLOAD_LENGTH;
 }
 
 impl std::fmt::Display for Digest {

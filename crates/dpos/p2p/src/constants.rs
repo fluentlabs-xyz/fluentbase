@@ -164,16 +164,11 @@ pub const MAX_MESSAGE_SIZE: u32 = 4 * 1024 * 1024;
 // `leader_index: u8`, BLS scheme building), NOT the p2p tracker feed (see
 // `MAX_REGISTRY_PEER_SET` below for that).
 //
-// MUST mirror the staking module's
-// `contracts/staking/src/consts.rs::MAX_ACTIVE_VALIDATORS_LENGTH` (51; the
-// `MAX_ACTIVE_VALIDATORS()` getter that used to read it back on chain was
-// deleted 2026-09-08, so the two literals are the only record) and stay ≤ 255
-// (the u8 wire format). Drift between the two literals means a successful
-// `setActiveValidatorsLength` call later fails the startup cap assert
-// (outer.rs) or makes an honest leader's index unencodable. Update both in the
-// SAME PR. The `ChainConfig` predeploy this used to mirror is GONE — it was
-// absorbed into the one rWasm staking module at `GENESIS_STAKING`.
-pub const MAX_COMMITTEE_SIZE: u64 = 51;
+// The staking module enforces the same cap on the way in
+// (`setActiveValidatorsLength` refuses a larger value and the selection
+// truncates to it), so there is one declaration and both sides import it. It
+// used to be two literals under two names, held together by a comment.
+pub use fluentbase_types::staking_protocol::MAX_COMMITTEE_SIZE;
 
 // Tracker bit-vec guard for the tier-2 registry feed (the FULL Active
 // validator registry ∪ current committee is tracked, not just the

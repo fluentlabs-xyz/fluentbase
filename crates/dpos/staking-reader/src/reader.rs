@@ -88,103 +88,57 @@ fn map_evm_call_err(e: &(dyn std::error::Error + 'static)) -> ReadError {
     ReadError::Backend(e.to_string())
 }
 
-/// Solidity-ABI subset this layer calls. All seven views live on the ONE staking
-/// system contract — the former `ChainConfig` split is gone, so
-/// [`StakingReaderConfig`] carries a single address.
+/// The staking system contract's ABI, from the ONE declaration both sides
+/// compile against (`fluentbase-staking-abi`).
 ///
-/// Verified against the rWasm staking contract (`contracts/staking/src`, FLU-989
-/// worktree; artefact provenance in
-/// `devnet/local-dpos-smoke/contracts/STAKING_ARTEFACT.md`): `types.rs:111-115`
-/// `ConsensusKeys`, `consensus.rs:309,584,683` and `config.rs:245,317,330,343` the
-/// view handlers. The contract dispatches on a raw 4-byte selector, so a signature
-/// typo here reverts `ERR_UNKNOWN_METHOD` rather than mis-decoding — the selectors
-/// are pinned byte-for-byte in `tests::view_selectors_are_pinned`.
+/// The rWasm dispatcher matches raw 4-byte selectors, so a signature typo is not
+/// a mis-decode but an `ERR_UNKNOWN_METHOD` revert against a live chain. That is
+/// why this is an import and no longer a second `sol!` block: the contract
+/// derives its dispatch selectors from the same crate, so a rename there stops
+/// this build too. All of it lives on the ONE staking contract — the former
+/// `ChainConfig` split is gone, so [`StakingReaderConfig`] carries a single
+/// address.
 ///
-/// Kept as an inner module so the Solidity `ConsensusKeys` tuple does not
-/// collide with the hybrid [`ConsensusKeys`] below (same identifier,
-/// different types).
-mod abi {
-    use alloy_sol_types::sol;
-
-    sol! {
-        /// Mirrors the contract's `ConsensusKeys`. `blsPubkey` is exactly 96 B
-        /// when set (compressed BLS12-381 G2, MinSig); empty when unset.
-        #[derive(Debug, PartialEq)]
-        struct ConsensusKeys {
-            bytes blsPubkey;
-            bytes32 peerPubkey;
-            uint64 activationEpoch;
-        }
-
-        // Staking contract. `tombstoned` is the per-member equivocation
-        // tombstone, read LIVE at `at` (the other three legs are frozen at the
-        // commit): it rides this snapshot rather than a view of its own so the
-        // flag arrives on the path the node already takes, at no extra call.
-        //
-        // KNOWN CONTRACT DRIFT — the fourth array has no contract-side
-        // counterpart. `feat/flu-989-port-solidity-delta` (and
-        // `origin/feat/flu-989-rust-staking`) end this handler with
-        // `write_returns(sdk, &(validators, keys, stakes))` — THREE arrays.
-        // Return types do not enter a selector, so `view_selectors_are_pinned`
-        // below passes and proves nothing about this; the arity is pinned
-        // separately by `epoch_committee_return_arity_is_pinned`. Do not
-        // one-sidedly drop the leg — see the merge checklist at the top of
-        // `crates/dpos/consensus/src/slasher/actor.rs`.
-        function getEpochCommitteeWithStakes(uint64 epoch)
-            external view returns (
-                address[] addrs, ConsensusKeys[] keys, uint256[] stakes, bool[] tombstoned);
-        function getRegistryWithKeys()
-            external view returns (address[] addrs, ConsensusKeys[] keys);
-        // Committee-change bit: set DETERMINISTICALLY by the contract at
-        // `commitEpochCommittee` (`dkgQual[epoch] = committee[epoch] != committee[epoch−1]`),
-        // NOT via a permissionless marker tx. `true` ⇒ the committee changed at
-        // `epoch` (its DKG re-mints the beacon key); `false` ⇒ unchanged (carry
-        // forward). Consumed by `beacon::carry` as the carry-forward arbiter.
-        //
-        // A COMMITTEE-CARRY-OVER (the selection fell below `MIN_COMMITTEE_LENGTH`
-        // and the contract re-seated the previous committee) writes `false` here,
-        // and that is the same fact by the same rule rather than a special case:
-        // the record is carried BYTE-IDENTICALLY, so the committee really did not
-        // change and `carry.rs`'s soundness argument — no set bit in `(m, E]`
-        // implies `committee[E] == committee[m]` — still holds over it.
-        function getDkgQual(uint64 epoch) external view returns (bool);
-
-        // Chain-configuration views. Formerly a separate `ChainConfig` predeploy;
-        // same contract now, so the same address.
-        function getEpochBlockInterval() external view returns (uint32);
-        function getDposActivationBlock() external view returns (uint64);
-        function getUndelegatePeriod() external view returns (uint32);
-        function getActiveValidatorsLength() external view returns (uint32);
-    }
-}
+/// Aliased as a module so the Solidity `ConsensusKeys` tuple does not collide
+/// with the hybrid [`ConsensusKeys`] below (same identifier, different types).
+use fluentbase_staking_abi as abi;
+use fluentbase_types::staking_protocol;
 
 /// Smallest committee the contract will commit, so a non-empty committee shorter
 /// than this cannot be a legal on-chain state.
 ///
 /// Two contract-side rules hold that. `setActiveValidatorsLength` refuses to
 /// store a cap under it. And when the SELECTION comes back shorter,
-/// `commitEpochCommittee` does not write the short set — it re-seats the
-/// previous epoch's committee verbatim (`carry_committee_forward`) and sets
-/// `dkgQual = false`, so what this reader sees is still the last legal
-/// committee, at its full length. It used to revert there instead; that revert
-/// is a pre-execution block-execution error on every node, which one validator
-/// owner could trigger by withdrawing their own stake, so it was replaced by the
-/// carry. The only surviving revert is at epoch 0, where there is nothing to
-/// carry.
+/// `commitEpochCommittee` writes nothing at all: it reverts
+/// `CommitteeTooSmall(eligible, MIN_COMMITTEE_LENGTH)` (`0x0a87ec8d`), at every
+/// target epoch including 0. So a committee record either has the full legal
+/// length or does not exist.
+///
+/// That revert is a pre-execution block-execution error on every node at once,
+/// and one validator owner withdrawing their own stake is enough to reach it.
+/// A carry-forward that re-seated the previous committee instead existed for one
+/// day and was removed: it conserved seats the selection would no longer choose,
+/// counted them in the quorum denominator, and aged their weights one epoch per
+/// carry. The BFT bound is accepted instead. Observed live 2026-09-08
+/// (`devnet/local-dpos-smoke/scripts/xp/floor_halt_case.py`): the block at the
+/// boundary is proposed and agreed normally, and every node then fails in the
+/// EXECUTION plane at `derive_and_execute`, within tens of milliseconds of each
+/// other, leaving `nextEpochToCommit` where it was.
 ///
 /// The floor is therefore still an invariant of every committee this reader
 /// decodes — which is why the read-side check below is a hard error and not a
 /// warning.
 ///
-/// MUST mirror the staking contract's `MIN_COMMITTEE_LENGTH` (`consts.rs`).
-pub const MIN_COMMITTEE_LENGTH: usize = 4;
+/// One declaration with the contract, which enforces the same floor at both ends
+/// of the commit.
+pub use staking_protocol::MIN_COMMITTEE_LENGTH;
 
-/// Mirrors the staking contract's `BALANCE_COMPACT_PRECISION` (`consts.rs:336`,
-/// `1e10`): on-chain `totalDelegated` is returned wei-scale (compacted ×1e10 by
-/// `math::expand_balance`). The elector needs only relative weights, so we scale
-/// back to the compacted `uint112` (fits `u128`). MUST mirror the contract —
-/// drift mis-weights leaders.
-pub const BALANCE_COMPACT_PRECISION: u128 = 10_000_000_000;
+/// On-chain `totalDelegated` comes back wei-scale (the contract compacts it by
+/// `1e10`), and the elector needs only relative weights, so we scale back to the
+/// compacted `uint112` (fits `u128`). One declaration with the contract: a drift
+/// would mis-weight leaders on every node equally, so there would be no fork to
+/// notice it by.
+pub use staking_protocol::BALANCE_COMPACT_PRECISION;
 
 /// Upper bound on a compacted stake weight: the contract stores `totalDelegated`
 /// compacted in a `uint112`, so any value at or above `2^112` is not a legal
@@ -192,11 +146,10 @@ pub const BALANCE_COMPACT_PRECISION: u128 = 10_000_000_000;
 ///
 /// This is the bound `WeightedVrf::build` cites when it argues its prefix-sum
 /// accumulator cannot overflow (51 members × `< 2^112` ≈ `2^119` ≪ `u128::MAX`).
-/// Before this constant existed that argument rested on the contract alone —
-/// this function accepted anything up to `u128::MAX` — so the one invariant the
-/// elector's safety depends on was documented on the Rust side and enforced only
-/// on the Solidity side. Keep the two in step.
-const MAX_COMPACT_STAKE: u128 = 1 << 112;
+/// It is derived from the same `COMPACT_STAKE_BITS` the contract's `uint112`
+/// storage width is built from, so the argument no longer rests on two literals
+/// that happen to agree.
+use staking_protocol::MAX_COMPACT_STAKE;
 
 /// Wei-scale `totalDelegated` → compacted `uint112` weight (`u128`). Delegations
 /// are exact multiples of [`BALANCE_COMPACT_PRECISION`] (`math::compact_balance`
@@ -249,7 +202,7 @@ pub struct ValidatorWithKeys {
 }
 
 /// Validator set as read at one specific block. `epoch` is computed locally
-/// from `block_number` (see [`epoch_of_block`]), never via an `eth_call`.
+/// from `block_number` (see [`epoch_at_block`]), never via an `eth_call`.
 #[derive(Clone, Debug)]
 pub struct ValidatorSetSnapshot {
     pub block_hash: B256,
@@ -296,30 +249,26 @@ impl StakingReaderConfig {
     }
 }
 
-/// Relative DPoS epoch: `(block_number - dpos_activation_block) / epoch_block_interval`
-/// (integer division, matching the contract's `math::epoch_at_block`,
-/// `math.rs:49-57`). `dpos_activation_block` is the `uint64` from
-/// `getDposActivationBlock()` — zero ⇒ absolute numbering.
-/// `epoch_block_interval` is the `uint32` from `getEpochBlockInterval()`.
+/// Relative DPoS epoch, from the ONE definition the contract computes its own
+/// epochs with: [`staking_protocol::epoch_at_block`].
 ///
-/// `saturating_sub` mirrors the contract's `block.number < activation ⇒ 0` clamp
-/// (pre-activation blocks all map to epoch 0).
+/// `None` for a zero interval, which is governance-mutable on-chain and which
+/// used to be a divide-by-zero panic here with the guard left to the caller.
+/// Pre-activation blocks clamp to epoch 0.
 ///
-/// Caller MUST ensure `epoch_block_interval > 0` (it is governance-mutable
-/// on-chain): `EpochTransition::on_finalized` and the dpos cold-start both
-/// guard it. A zero here is a divide-by-zero panic.
-#[inline]
-pub fn epoch_of_block(
-    block_number: u64,
-    epoch_block_interval: u32,
-    dpos_activation_block: u64,
-) -> u64 {
-    block_number.saturating_sub(dpos_activation_block) / epoch_block_interval as u64
-}
+/// The one input the two sides read differently is a ZERO activation block. The
+/// contract treats it as the *unarmed* sentinel and answers epoch 0 at any
+/// height; this side treats it as absolute numbering. That is not a drift left
+/// standing: the sentinel is a contract-side rule about a state only the
+/// contract is in, and the node never reaches the input, because
+/// [`RethStakingStateReader::scheduled_dpos_activation`] folds a zero to "not a
+/// DPoS chain yet" before any epoch is computed. In-memory test mocks do reach
+/// it, and absolute numbering is what they mean.
+pub use staking_protocol::epoch_at_block;
 
 /// Activation-relative epoch-boundary predicate: `true` when `block_number` is
 /// the LAST block of its relative epoch, i.e. `(number + 1 - activation)` is a
-/// multiple of `interval`. Activation-relative to match [`epoch_of_block`] and
+/// multiple of `interval`. Activation-relative to match [`epoch_at_block`] and
 /// the consensus `OriginEpocher` (an absolute `(number+1) % interval` check only
 /// agrees when `activation % interval == 0`). Single definition shared by
 /// `EpochTransition`'s frozen-geometry (`is_epoch_boundary_frozen`) and in-flight
@@ -334,7 +283,7 @@ pub fn epoch_of_block(
 #[inline]
 pub fn is_epoch_boundary(
     block_number: u64,
-    epoch_block_interval: u32,
+    epoch_block_interval: u64,
     dpos_activation_block: u64,
 ) -> bool {
     // A PRE-activation block (`block_number < activation`, i.e. `number + 1 <=
@@ -344,7 +293,7 @@ pub fn is_epoch_boundary(
     if block_number < dpos_activation_block {
         return false;
     }
-    (block_number + 1 - dpos_activation_block).is_multiple_of(epoch_block_interval as u64)
+    (block_number + 1 - dpos_activation_block).is_multiple_of(epoch_block_interval)
 }
 
 /// Tracker-feed guard: the peer set fed to `Oracle::track` (the Active
@@ -374,7 +323,7 @@ pub(crate) fn check_peer_set_size(
 /// `accused`) and the contract resolves the accused positionally from its own
 /// stored array. The two agree only while both order by ascending raw
 /// peer-pubkey bytes — the contract sorts on `peer_pubkey: B256` whose derived
-/// `Ord` is byte-lex (`consensus.rs:538`), commonware's `BiMap` sorts on
+/// `Ord` is byte-lex (`consensus::commit_epoch_committee`), commonware's `BiMap` sorts on
 /// `PeerPubkey: Ord` which is the same comparator. Nothing else asserts that
 /// agreement across the two repositories, and a drift slashes the wrong
 /// validator in silence, so this is a hard error rather than a warning. Consumers
@@ -584,7 +533,7 @@ where
     /// Re-read on every call (no cache). The cost is one in-process
     /// EVM STATICCALL per finalized block — negligible relative to a
     /// governance-flip consensus-split blast radius.
-    pub fn epoch_block_interval(&self, at: B256) -> Result<u32, ReadError> {
+    pub fn epoch_block_interval(&self, at: B256) -> Result<u64, ReadError> {
         self.call(
             self.cfg.staking_address,
             &abi::getEpochBlockIntervalCall {},
@@ -643,13 +592,10 @@ where
     }
 
     /// `getActiveValidatorsLength()`. Used at startup by the host adapter to
-    /// enforce the Rust ↔ contract invariant
-    /// `activeValidatorsLength <= fluentbase_p2p::constants::MAX_COMMITTEE_SIZE`.
-    /// The value is bounded on-chain by `MAX_ACTIVE_VALIDATORS` (currently 51);
-    /// if the two caps ever drift, the production record's wire format (u8
-    /// leader_index) or scheme building would break — the startup assert catches
-    /// this earlier with an actionable error pointing at both source files.
-    pub fn active_validators_length(&self, at: B256) -> Result<u32, ReadError> {
+    /// enforce `activeValidatorsLength <= MAX_COMMITTEE_SIZE`. Both sides now
+    /// bound themselves by the same shared constant, so the assert covers a
+    /// configured value the operator set, not a drift between two literals.
+    pub fn active_validators_length(&self, at: B256) -> Result<u64, ReadError> {
         self.call(
             self.cfg.staking_address,
             &abi::getActiveValidatorsLengthCall {},
@@ -800,7 +746,7 @@ pub trait StakingStateRead {
 
     /// `ChainConfig.getEpochBlockInterval()` (blocks per epoch) at `at`.
     /// Read per call (no OnceLock cache).
-    fn epoch_block_interval(&self, at: B256) -> Result<u32, ReadError>;
+    fn epoch_block_interval(&self, at: B256) -> Result<u64, ReadError>;
 
     /// `ChainConfig.getDposActivationBlock()` (relative-epoch origin) at `at`.
     fn dpos_activation_block(&self, at: B256) -> Result<u64, ReadError>;
@@ -849,7 +795,7 @@ where
     ) -> Result<ValidatorSetSnapshot, ReadError> {
         RethStakingStateReader::epoch_committee_snapshot(self, epoch, at)
     }
-    fn epoch_block_interval(&self, at: B256) -> Result<u32, ReadError> {
+    fn epoch_block_interval(&self, at: B256) -> Result<u64, ReadError> {
         RethStakingStateReader::epoch_block_interval(self, at)
     }
     fn dpos_activation_block(&self, at: B256) -> Result<u64, ReadError> {
@@ -870,9 +816,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::{
-        abi, check_committee_ordering, check_peer_set_size, decode_consensus_keys, epoch_of_block,
+        abi, check_committee_ordering, check_peer_set_size, decode_consensus_keys, epoch_at_block,
         is_epoch_boundary, is_unset, map_evm_call_err, map_state_provider_err, StakingReaderConfig,
-        ValidatorWithKeys, MIN_COMMITTEE_LENGTH,
+        staking_protocol, ValidatorWithKeys, MIN_COMMITTEE_LENGTH,
     };
     use crate::error::{ReadError, SHORT_READ_DISPLAY, TORN_RANGE_DISPLAY};
     use alloy_primitives::{address, hex, Address, Bytes, FixedBytes, B256, U256};
@@ -885,29 +831,20 @@ mod tests {
     use rand_core::SeedableRng;
     use reth_storage_api::errors::{db::DatabaseError, provider::ProviderError};
 
+    /// The one input on which this side and the contract read the same call
+    /// differently, kept as the record of a deliberate choice rather than an
+    /// accident. `activation == 0` is absolute numbering here — which is what the
+    /// in-memory mocks below mean by it — and the *unarmed* sentinel on chain,
+    /// where it answers epoch 0 at any height. The gate in
+    /// `scheduled_dpos_activation` is what keeps a real node out of this input;
+    /// the shared formula covers every other one.
     #[test]
-    fn block_zero_is_epoch_zero() {
-        assert_eq!(epoch_of_block(0, 100, 0), 0);
-    }
-    #[test]
-    fn exact_multiple_advances_epoch() {
-        assert_eq!(epoch_of_block(100, 100, 0), 1);
-        assert_eq!(epoch_of_block(199, 100, 0), 1);
-        assert_eq!(epoch_of_block(200, 100, 0), 2);
-    }
-    #[test]
-    fn off_by_one_below_boundary_stays() {
-        assert_eq!(epoch_of_block(99, 100, 0), 0);
-    }
-    #[test]
-    fn relative_to_activation() {
-        // activation=64, interval=32: anchor is relative epoch 0; advances every 32.
-        assert_eq!(epoch_of_block(64, 32, 64), 0);
-        assert_eq!(epoch_of_block(95, 32, 64), 0);
-        assert_eq!(epoch_of_block(96, 32, 64), 1);
-        assert_eq!(epoch_of_block(162, 32, 64), 3);
-        // pre-activation clamps to epoch 0 (saturating_sub).
-        assert_eq!(epoch_of_block(30, 32, 64), 0);
+    fn a_zero_activation_is_absolute_numbering_on_this_side() {
+        assert_eq!(epoch_at_block(0, 0, 100), Some(0));
+        assert_eq!(epoch_at_block(100, 0, 100), Some(1));
+        assert_eq!(epoch_at_block(200, 0, 100), Some(2));
+        // A zero interval is the one shape both sides answer identically.
+        assert_eq!(epoch_at_block(200, 0, 0), None);
     }
 
     #[test]
@@ -1047,8 +984,8 @@ mod tests {
     }
 
     /// `n` members whose raw peer-pubkey bytes ascend — the shape the contract
-    /// commits (`consensus.rs:538` sorts on exactly this key) and the only shape
-    /// the invariant accepts. Real ed25519 keys, because `PeerPubkey::decode`
+    /// commits (`consensus::commit_epoch_committee` sorts on exactly this key) and
+    /// the only shape the invariant accepts. Real ed25519 keys, because `PeerPubkey::decode`
     /// point-validates and arbitrary 32-byte patterns do not decode.
     fn ascending_members(n: usize) -> Vec<ValidatorWithKeys> {
         let mut peers: Vec<PeerPubkey> = (0..n as u64)
@@ -1191,10 +1128,11 @@ mod tests {
     /// signs on behalf of the wrong validator.
     ///
     /// The vector below is the four-array shape, generated independently with
-    /// `cast abi-encode` — a real literal pin, not a re-encoding of the `sol!`
-    /// under test. It IS what the contract emits: the three-vs-four drift this
-    /// used to point at is closed, see
-    /// [`epoch_committee_return_arity_is_pinned`].
+    /// `cast abi-encode` — a real literal pin, not a re-encoding of the
+    /// declaration under test. It IS what the contract emits: the shape comes
+    /// from `fluentbase-staking-abi`, which the contract's handler now answers
+    /// against, so the three-vs-four drift this used to warn about has no second
+    /// declaration to appear in.
     ///
     /// Vector produced by (0x…01/02/03 abbreviated, `0xa1`×96 / `0xb2` / `0xc3`×33,
     /// peer keys `0x11`×32 / `0x22`×32 / `0x33`×32):
@@ -1327,83 +1265,31 @@ mod tests {
         assert!(!is_unset(&decoded.keys[2]));
     }
 
-    /// The hole a selector pin cannot cover: **return types do not enter a
-    /// selector**, so `view_selectors_are_pinned` below agrees with the contract
-    /// on `getEpochCommitteeWithStakes(uint64)` == `0xa4d160c1` while the two
-    /// sides could still disagree about what comes back.
+    /// The fault budget the contract applies to its correlation guard and its
+    /// concurrent-exclusion ceiling is `staking_protocol::fault_tolerance`, and
+    /// the budget commonware actually applies to every Simplex quorum is
+    /// `N3f1::max_faults`. This compares the two against each other, against the
+    /// pinned checkout, over the whole legal committee range — not a copy of
+    /// either formula written out again here.
     ///
-    /// What the test pins is the shape that actually ships, and the one
-    /// length disagreement that is now LEGAL: an empty `stakes` leg beside a
-    /// non-empty `addrs` leg is how the contract says the weight ring has
-    /// wrapped past the epoch. That has to decode, because the reader turns it
-    /// into `weights: None`. Every other length disagreement stays an error, and
-    /// that distinction is the whole reason this test exists rather than a
-    /// length assertion at the call site.
+    /// `n == 0` is excluded on purpose: commonware panics there and the shared
+    /// function answers `0`. No caller reaches it (a committee shorter than
+    /// [`MIN_COMMITTEE_LENGTH`] cannot be a legal on-chain state), and asserting a
+    /// panic would be asserting commonware's precondition, not the agreement.
     #[test]
-    fn epoch_committee_return_arity_is_pinned() {
-        let addr = Address::with_last_byte(1);
-        let key = keys(11);
-        let stake = U256::from(42u64);
-
-        let full = abi::getEpochCommitteeWithStakesCall::abi_encode_returns(
-            &abi::getEpochCommitteeWithStakesReturn {
-                addrs: vec![addr],
-                keys: vec![key.clone()],
-                stakes: vec![stake],
-                tombstoned: vec![true],
-            },
-        );
-        let ret = abi::getEpochCommitteeWithStakesCall::abi_decode_returns(&full)
-            .expect("the four-array return must decode");
-        assert_eq!(ret.addrs.len(), 1);
-        assert_eq!(ret.keys.len(), 1);
-        assert_eq!(ret.stakes, vec![stake]);
-        assert_eq!(ret.tombstoned, vec![true]);
-
-        // Not-retained: membership and tombstones present, weights absent.
-        let not_retained = abi::getEpochCommitteeWithStakesCall::abi_encode_returns(
-            &abi::getEpochCommitteeWithStakesReturn {
-                addrs: vec![addr],
-                keys: vec![key],
-                stakes: vec![],
-                tombstoned: vec![true],
-            },
-        );
-        let ret = abi::getEpochCommitteeWithStakesCall::abi_decode_returns(&not_retained)
-            .expect("an empty stakes leg is a legal encoding, not a decode failure");
-        assert_eq!(ret.addrs.len(), 1);
-        assert!(
-            ret.stakes.is_empty(),
-            "the reader turns exactly this into `weights: None`; if it ever \
-             arrives padded with zeros instead, the leader lottery goes uniform \
-             and nothing says so"
-        );
-    }
-
-    /// The rWasm contract dispatches on the raw 4-byte selector, so a signature
-    /// typo here is not a mis-decode but an `ERR_UNKNOWN_METHOD` revert against a
-    /// live chain. Values are the contract's own handler doc comments
-    /// (`consensus.rs:309,584,683`, `config.rs:245,317,330,343`).
-    ///
-    /// Literal on purpose: `abi::…Call::SELECTOR` is the node's belief, the
-    /// `hex!` is the contract's, and they are independent. A selector pin says
-    /// nothing about return shape — see
-    /// [`epoch_committee_return_arity_is_pinned`] for that half.
-    #[test]
-    fn view_selectors_are_pinned() {
-        assert_eq!(
-            abi::getEpochCommitteeWithStakesCall::SELECTOR,
-            hex!("a4d160c1")
-        );
-        assert_eq!(abi::getRegistryWithKeysCall::SELECTOR, hex!("d96cbd7b"));
-        assert_eq!(abi::getDkgQualCall::SELECTOR, hex!("2660899f"));
-        assert_eq!(abi::getEpochBlockIntervalCall::SELECTOR, hex!("346c90a8"));
-        assert_eq!(abi::getDposActivationBlockCall::SELECTOR, hex!("a2a50528"));
-        assert_eq!(abi::getUndelegatePeriodCall::SELECTOR, hex!("5e7b72ad"));
-        assert_eq!(
-            abi::getActiveValidatorsLengthCall::SELECTOR,
-            hex!("32cc6f08")
-        );
+    fn the_shared_fault_budget_is_commonwares_budget() {
+        use commonware_utils::{Faults as _, N3f1};
+        for n in 1..=(staking_protocol::MAX_COMMITTEE_SIZE as usize) {
+            assert_eq!(
+                staking_protocol::fault_tolerance(n) as u32,
+                N3f1::max_faults(n),
+                "fault budget disagrees with commonware at n = {n}"
+            );
+        }
+        // The floor is DEFINED as the smallest committee tolerating one fault, so
+        // it has to be the smallest `n` at which commonware's budget reaches 1.
+        assert_eq!(N3f1::max_faults(MIN_COMMITTEE_LENGTH), 1);
+        assert_eq!(N3f1::max_faults(MIN_COMMITTEE_LENGTH - 1), 0);
     }
 
     #[test]

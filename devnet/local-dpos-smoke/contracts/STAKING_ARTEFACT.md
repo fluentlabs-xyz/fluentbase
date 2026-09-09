@@ -1,11 +1,15 @@
 # Staking rWasm artefact — provenance
 
-Built from the sibling git worktree `/home/djadjka/Work/audit-482/pr482-study`
-(branch `feat/flu-989-port-solidity-delta`), NOT from this tree. The contract
-sources move here when those commits are squashed and merged; until then these
-two blobs are vendored and must be rebuilt by hand when that branch moves.
+**[REVISED 2026-09-09]** Built from THIS tree: the contract sources live in
+`contracts/staking/` since the merge `f16fdd90`, and the sibling worktree
+`/home/djadjka/Work/audit-482/pr482-study` is history. Every section below dated
+2026-09-08 or earlier was built from that worktree and says so; from the
+2026-09-09 section down, "worktree HEAD" means this repository's HEAD.
 
-Build command (run in the worktree root):
+The two blobs are still VENDORED here by hand — nothing copies them — so they
+must be rebuilt and re-copied whenever `contracts/staking/src` moves.
+
+Build command (run in the repository root):
 
     cargo build --release -p fluentbase-genesis --features devnet-views
 
@@ -77,7 +81,7 @@ Two more joined it later the same day — `settleEpochStipend` `0xa631344a` and
 that took the stipend out of this contract's balance, and a node built against it
 expects a payment pass that no longer exists.
 
-Eleven more joined it on 2026-09-08 (task 1.5, the section below):
+Eleven more joined it on 2026-09-08 (task 1.5):
 `changeValidatorOwner` `0x0052c9e1`, `getPendingValidatorFee` `0xc6fb9065`,
 `getPendingDelegatorFee` `0xc2fd58fc`, `claimDelegatorFeeAtEpoch` `0xfe38ebef`,
 `calcAvailableForRedelegateAmount` `0x5ef9e8c6`, `getValidatorsWithKeys`
@@ -87,7 +91,313 @@ Eleven more joined it on 2026-09-08 (task 1.5, the section below):
 `MAX_MIN_VERDICT_DUE_BLOCKS` `0x9b9a11ba`. A blob carrying any of them predates
 the dead-surface removal.
 
-## This build — 2026-09-08 (second build of the day)
+## This build — 2026-09-09 (Э2.1 + Э2.2, the shared-declaration crates)
+
+Rebuilt because the contract now takes its selectors and its protocol limits from
+two crates it shares with the node (`.dpos-study/PLAN.md` Э2.1 / Э2.2), instead
+of declaring them a second time beside the node's own copies.
+
+**No ABI point moved, in either direction, and the selector scan below is
+unchanged and re-run.** What changed is where each value is DECLARED:
+
+| value | before | now |
+|---|---|---|
+| 13 selectors the node calls + `AlreadySlashedForEquivocation` | `derive_keccak256_id!("…")` here, a `sol!` block in `node/src/evm.rs`, `reader.rs`, `slasher_sink.rs`, `slasher/actor.rs` | ONE `sol!` in `crates/staking-abi`; `consts.rs` computes `u32::from_be_bytes(<…Call as SolCall>::SELECTOR)` off it, the node imports the types |
+| `MIN_COMMITTEE_LENGTH`, `MAX_ACTIVE_VALIDATORS_LENGTH`→`MAX_COMMITTEE_SIZE`, `BALANCE_COMPACT_PRECISION`, `uint112` width, `MAX_COMMITTEE_LOOKAHEAD_EPOCHS`, the four BLS widths, `PROPOSAL_PAYLOAD_LENGTH`, `fault_tolerance`, the epoch formula, `SYSTEM_CALLER` | a literal here and a second literal under `crates/dpos` | ONE declaration in `crates/types/src/staking_protocol.rs`, `pub use`d by both |
+
+A node reading this contract sees no new selector, no removed one and no changed
+one. The blob nevertheless MOVED, and by more than noise: the wasm is **4,358
+bytes SMALLER** and the rwasm **23,822 bytes smaller**. Nothing in the change was
+meant to shrink it; the plausible cause is that `sig::<C>()` folds to the same
+constant the macro produced while several duplicated constants and one duplicated
+function collapsed, and `alloy-sol-types`' generated encode/decode paths are dead
+code the linker drops. This is recorded as an observation, not as a verified
+explanation — no one measured which of the two crates accounts for which bytes.
+
+- repository HEAD at build time: `f16fdd90`, working tree DIRTY (the Э2 change
+  itself, uncommitted at build time — the two commits it becomes are made after
+  this file is written). The per-file digests below are the record of what was
+  actually compiled.
+- SHA-256 of every source file in `contracts/staking/src` as built. Reproduce
+  with, from `contracts/staking`: `find src -name '*.rs' | sort | xargs sha256sum`
+
+      a710d7e5c7cbd7cbe84e4594b0840ad5992e68a3d4b7a24812f22222d6a444f4  src/bls.rs
+      c3c2c67825dd810e63af18610f05770441a3a5fea44537bc11afd483c72749a1  src/config.rs      *
+      c172a418600caa630d5a7e748ff4fabe6834029bacd5b1f351785cb6d988ce40  src/consensus.rs   *
+      bbacb280992663fe3d057daa1cb6f912b8307b5fbbdb85f78652fa31f6e4409f  src/consts.rs      *
+      6f9c65956d1d88ce36d426c626aad4b067b566459eb800812e3215aefe7f8535  src/events.rs
+      3f69dfe02d27be45e6b723e3f128b7049d74abe5c1b6dafac82b5af47d8b5576  src/evidence.rs
+      5f587627e81d7f38e52cfd974bf6c234de84f93925dd174f946b974dfac0987b  src/initializer.rs
+      d4165b840ea4b7337a2a474ce62e81ee03b1c4c76d7fe6181d390741544f9aca  src/lib.rs
+      46e17a0600efaba7d52f0b57f68f1fe75985c3a5f38d47fe7d6a92fc0bdba1a8  src/liveness.rs
+      d106df9221d023e14adbec93ad329685208556ea0d1eb3946b4fde6bcad9b90f  src/math.rs        *
+      c4d2c1388334c90ad5049adad153c72090bfef62121635de91848a337083a5f1  src/staking.rs
+      d9b100f92acb6670c2626352b3cee7e0765b69d85feb28481441d0132cd83f54  src/storage.rs
+      ad31bfa3e9948e6323f77e409a6c527d1e16522cc50f2f2e43f6ad5b4d791e35  src/tests.rs       *
+      e865fb1d3d6dd9832fde934d1cf530acf63054134ca167b0b8f0930f4a76e6fa  src/types.rs
+      a76fa8763d1e7e9279b488295d53e02476990890806ff9b77e8ce77a02433327  src/util.rs
+
+  Five starred files are the whole contract-side delta. `events.rs` is NOT
+  starred by this work — its digest moved because of an unrelated uncommitted
+  doc edit already in the tree. The blob depends on two files OUTSIDE this
+  directory as well, which no digest here covers:
+  `crates/types/src/staking_protocol.rs` and `crates/staking-abi/src/lib.rs`.
+- `fluentbase_contracts_staking.wasm` — 401,778 bytes (was 406,136, −4,358)
+  `4dd7d27a747e1db10629fb453d3e6bcc522c5b0adfd87c476f58945dcf49e8f1`
+- `fluentbase_contracts_staking.rwasm` — 2,775,337 bytes (was 2,799,159, −23,822)
+  `bae5c9c863a3560eb5f9cb4739d3fc2a77c53cd0822b6dc3367b429e0e8f4522`
+- Built with `cargo clean -p fluentbase-contracts` first, per the trap recorded
+  under the 2026-09-08 (first) section.
+
+### Selector scan of this blob
+
+Unchanged from the previous section — Э2 moves no selector — and re-run against
+the new blob. Run from this directory; all three groups must hold.
+
+    python3 - <<'EOF'
+    import pathlib
+    b = pathlib.Path("fluentbase_contracts_staking.rwasm").read_bytes()
+    must_be_1 = {"recordProduction":0x1752910e, "commitEpochCommittee":0xe505b249,
+                 "slashEquivocation":0xdc6fb3f2, "producedAt":0x91c7d453,
+                 "initialize":0xfecaf0f1, "getValidators":0xb7ab4db5,
+                 "isValidatorActive":0x42ad55ac, "getValidatorStatus":0xa310624f,
+                 "getEpochRewards":0x54c3e84b, "getDelegatorFee":0x52b7bea2,
+                 "claimDelegatorFee":0x426594b1, "claimValidatorFeeAtEpoch":0xadf2a79c,
+                 "redelegateDelegatorFee":0x8ecb3fc9, "getRegistryWithKeys":0xd96cbd7b,
+                 "getValidatorFee":0x457179fd,
+                 # added 2026-09-09: the rest of what the node calls, so the scan
+                 # covers every point `fluentbase-staking-abi` declares.
+                 "nextEpochToCommit":0xc06a82de,
+                 "getEpochCommitteeWithStakes":0xa4d160c1, "getDkgQual":0x2660899f,
+                 "getEpochBlockInterval":0x346c90a8, "getDposActivationBlock":0xa2a50528,
+                 "getActiveValidatorsLength":0x32cc6f08, "getUndelegatePeriod":0x5e7b72ad,
+                 "slashEquivocationNotarize":0xe28d2f63,
+                 "slashEquivocationFinalize":0xadd07a3e,
+                 "slashEquivocationNullifyFinalize":0xa10827e9}
+    must_be_0 = {"changeValidatorOwner":0x0052c9e1, "getPendingValidatorFee":0xc6fb9065,
+                 "getPendingDelegatorFee":0xc2fd58fc, "claimDelegatorFeeAtEpoch":0xfe38ebef,
+                 "calcAvailableForRedelegateAmount":0x5ef9e8c6,
+                 "getValidatorsWithKeys":0xd41c52eb, "MAX_ACTIVE_VALIDATORS":0x5d887462,
+                 "MAX_BLEND_STIPEND_PER_EPOCH":0x2bc2fec4,
+                 "DEFAULT_MIN_VERDICT_DUE_BLOCKS":0x6fd3afb7,
+                 "DEFAULT_EXCLUSION_BACKOFF_CAP":0xd4c30c1a,
+                 "MAX_MIN_VERDICT_DUE_BLOCKS":0x9b9a11ba,
+                 "getValidatorsWithKeysAt":0x7cfba9f3, "committeeSelectionEpoch":0x8bd070e4,
+                 "getActiveValidatorsLengthAt":0xd9b083ba, "settleEpochStipend":0xa631344a,
+                 "settleEpochStipendFrom":0x92d321ab, "getBlsVerifier":0xc6b904ad,
+                 "setBlsVerifier":0x466ae541, "commitEpochBeaconKey":0x6ece9cb1,
+                 "getEpochBeaconKey":0xc9adaf5c}
+    for n,s in must_be_1.items(): assert b.count(s.to_bytes(4,"little"))==1, n
+    for n,s in must_be_0.items(): assert b.count(s.to_bytes(4,"little"))==0, n
+    print("selector scan OK")
+    EOF
+
+Run against the blob recorded above: **`selector scan OK`**. The ten selectors
+added to the `must_be_1` group on 2026-09-09 each appear exactly once, which is
+the check that `fluentbase-staking-abi` and this blob agree: the crate's own
+`selectors_match_the_deployed_artefact_scan` pins the same hex from the other
+side.
+
+### Tests
+
+- `cargo test` in `contracts/staking`: **174 passed, 0 failed**; **175** with
+  `--features devnet-views` (174 was the pre-Э2 baseline in both shapes; the one
+  new test is `close_event_topics_match_the_shared_abi`, which compares this
+  crate's `#[derive(Event)]` topic0s against `fluentbase-staking-abi`'s `sol!`
+  ones — the first two-sided check the event layouts have ever had).
+  `cargo clippy --all-targets --features devnet-views` and `cargo fmt --check`:
+  clean.
+- Root workspace: `cargo check --workspace` clean;
+  `cargo test -p fluentbase-e2e --release` **113 passed / 9 failed / 9 ignored**,
+  the nine being `builtins::*` fuel-accounting failures that predate the merge and
+  do not touch this contract. Every `staking*` e2e is green against THIS blob.
+
+## Previous build — 2026-09-08 (third build of the day)
+
+Rebuilt for one change: **the reward split takes the vintage the committee was
+selected from, and the kick ladder retires after a clean run**
+(`.dpos-study/PLAN.md` 1.9), committed as `50e87d33`.
+
+**No ABI point moved, in either direction.** 1.9 adds no handler, removes none
+and renames none; the selector scan below is the previous section's, run again,
+and it holds. What moved is what four existing entry points ANSWER for the same
+chain state:
+
+| entry point | what changed |
+|---|---|
+| `claimValidatorFee(address)`, `claimValidatorFeeAtEpoch(address,uint64)` | revert `ValidatorTombstoned(address)` for a tombstoned validator instead of paying |
+| `getValidatorFee(address)` | answers zero for one, so the view agrees with the claim |
+| `getDelegatorFee(address,address)`, `claimDelegatorFee(address)` | epoch E's reward is divided by the stake held at E−2, not at E, and charged `min(rate[E−2], rate[E])` |
+
+A node reading this contract sees no new selector and no removed one. A node
+reading the NUMBERS sees different ones, which is why this is a rebuild and not
+a no-op.
+
+Also in this build, and the reason the blob matters beyond 1.9:
+`e2e/src/staking_reserve.rs` is new, and it is the first proof on real rWasm that
+an epoch close survives a BLEND token that refuses the reserve read. The claim
+in `util.rs`'s `reserve_available` doc comment used to rest on two e2e tests
+deleted along with the self-call they covered, and on a unit host in which
+`static_call` is routed to `call`. It now rests on three closes against this
+blob: a token that reverts, one that burns every unit of fuel it is handed, and
+one that answers a truncated word. See **Tests** below for the fuel figure,
+which is a finding rather than a guard.
+
+- worktree HEAD at build time: `50e87d33` (`feat(staking)!: divide the stipend
+  by the selection vintage and retire the kick ladder after a clean run`).
+- worktree CLEAN at build time — the first section in this file that can say so.
+  Every earlier blob here was built from a dirty tree, which is why the per-file
+  digests below exist at all. They are still recorded, and they still are the
+  check: this build is reproducible from a named commit, but the build itself is
+  not byte-reproducible (see the note under the 2026-09-07 section).
+- SHA-256 of every source file in `contracts/staking/src` as built. Reproduce
+  with, from `contracts/staking`: `find src -name '*.rs' | sort | xargs sha256sum`
+
+      a710d7e5c7cbd7cbe84e4594b0840ad5992e68a3d4b7a24812f22222d6a444f4  src/bls.rs
+      bea2696e32a65f8e8362610195f71302c692c38269e7eaab19de00f25dbb0d51  src/config.rs
+      5fa775eaf8f1ed80ece0b5c9cbe1d2dc9620022f363a8100e84a19c223bdd2b2  src/consensus.rs
+      572c3c4327e0745b6ee2281d61e3ec823ae996b29481244a5a39b3d1f7817ffa  src/consts.rs      *
+      d45fb01e4297ae6343f30fda113c95cabbc9bb6114593e8c0a98249c60e48905  src/events.rs
+      3f69dfe02d27be45e6b723e3f128b7049d74abe5c1b6dafac82b5af47d8b5576  src/evidence.rs
+      5f587627e81d7f38e52cfd974bf6c234de84f93925dd174f946b974dfac0987b  src/initializer.rs
+      d4165b840ea4b7337a2a474ce62e81ee03b1c4c76d7fe6181d390741544f9aca  src/lib.rs
+      46e17a0600efaba7d52f0b57f68f1fe75985c3a5f38d47fe7d6a92fc0bdba1a8  src/liveness.rs    *
+      87fdd853b1c4d37cbc7421a07c8a6458afc486ff4300289b52015d9958fdf20f  src/math.rs
+      c4d2c1388334c90ad5049adad153c72090bfef62121635de91848a337083a5f1  src/staking.rs     *
+      d9b100f92acb6670c2626352b3cee7e0765b69d85feb28481441d0132cd83f54  src/storage.rs     *
+      86fb3a916db7313d27fd617c41d9b8d2d16151f2693aaf57c9eb0d511b644d5e  src/tests.rs       *
+      e865fb1d3d6dd9832fde934d1cf530acf63054134ca167b0b8f0930f4a76e6fa  src/types.rs
+      a76fa8763d1e7e9279b488295d53e02476990890806ff9b77e8ce77a02433327  src/util.rs
+
+  The five starred files are 1.9's whole delta. `util.rs` is NOT starred, and
+  that is worth one line: two mutations were run through it during this work
+  (see **Tests**) and reverted, and its digest coming back to the value the
+  previous section recorded is what proves the revert was byte-exact.
+
+- `fluentbase_contracts_staking.wasm` — 406,136 bytes (was 404,068, +2,068)
+  `e9ddd524bee4ea28b8f2bedfe12a4fcc1af1e2f138ec1080fcaacbad5b8b0dd7`
+- `fluentbase_contracts_staking.rwasm` — 2,799,159 bytes (was 2,783,279, +15,880)
+  `9f8e0241f5f5412fb6f9763fe25caf66eb390d6b33046ba070f011e404cc0bc2`
+- Built with `cargo clean -p fluentbase-contracts` first, per the trap recorded
+  under the 2026-09-08 (first) section: without it the wasm the build links can
+  be stale. The digests above moved, which is the check that trap demands.
+- **Cross-check the earlier sections could not make.** This rwasm digest is
+  byte-identical to the artefact the contract worktree's own `e2e` suite linked
+  while `staking_reserve.rs` ran — hashed out of
+  `target/release/build/fluentbase-genesis-*/out/`. So the e2e evidence below is
+  evidence about THIS blob, not about a sibling of it.
+
+### Selector scan of that blob
+
+Run from this directory; all three groups must hold. Unchanged from the previous
+section — 1.9 moves no selector — and re-run against the new blob.
+
+    python3 - <<'EOF'
+    import pathlib
+    b = pathlib.Path("fluentbase_contracts_staking.rwasm").read_bytes()
+    must_be_1 = {"recordProduction":0x1752910e, "commitEpochCommittee":0xe505b249,
+                 "slashEquivocation":0xdc6fb3f2, "producedAt":0x91c7d453,
+                 "initialize":0xfecaf0f1, "getValidators":0xb7ab4db5,
+                 "isValidatorActive":0x42ad55ac, "getValidatorStatus":0xa310624f,
+                 "getEpochRewards":0x54c3e84b, "getDelegatorFee":0x52b7bea2,
+                 "claimDelegatorFee":0x426594b1, "claimValidatorFeeAtEpoch":0xadf2a79c,
+                 "redelegateDelegatorFee":0x8ecb3fc9, "getRegistryWithKeys":0xd96cbd7b,
+                 "getValidatorFee":0x457179fd}
+    must_be_0 = {"changeValidatorOwner":0x0052c9e1, "getPendingValidatorFee":0xc6fb9065,
+                 "getPendingDelegatorFee":0xc2fd58fc, "claimDelegatorFeeAtEpoch":0xfe38ebef,
+                 "calcAvailableForRedelegateAmount":0x5ef9e8c6,
+                 "getValidatorsWithKeys":0xd41c52eb, "MAX_ACTIVE_VALIDATORS":0x5d887462,
+                 "MAX_BLEND_STIPEND_PER_EPOCH":0x2bc2fec4,
+                 "DEFAULT_MIN_VERDICT_DUE_BLOCKS":0x6fd3afb7,
+                 "DEFAULT_EXCLUSION_BACKOFF_CAP":0xd4c30c1a,
+                 "MAX_MIN_VERDICT_DUE_BLOCKS":0x9b9a11ba,
+                 "getValidatorsWithKeysAt":0x7cfba9f3, "committeeSelectionEpoch":0x8bd070e4,
+                 "getActiveValidatorsLengthAt":0xd9b083ba, "settleEpochStipend":0xa631344a,
+                 "settleEpochStipendFrom":0x92d321ab, "getBlsVerifier":0xc6b904ad,
+                 "setBlsVerifier":0x466ae541, "commitEpochBeaconKey":0x6ece9cb1,
+                 "getEpochBeaconKey":0xc9adaf5c}
+    for n,s in must_be_1.items(): assert b.count(s.to_bytes(4,"little"))==1, n
+    for n,s in must_be_0.items(): assert b.count(s.to_bytes(4,"little"))==0, n
+    print("selector scan OK")
+    EOF
+
+Run against the blob recorded above: **`selector scan OK`**.
+
+### Tests
+
+- `cargo test` in `contracts/staking`: **168 passed, 0 failed**; **169** with
+  `--features devnet-views`. `cargo clippy --all-targets --features devnet-views`
+  and `cargo fmt --check`: clean.
+- `cargo test -p fluentbase-testing`: **3 passed** — new, and the subject is the
+  harness rather than the contract. `static_call` in `crates/testing/src/host.rs`
+  now fails the test if a mock writes storage inside it. It still routes to the
+  same handler as `call`, so this does NOT make it a static frame: a mock that
+  mutates only its own captured Rust state is invisible to it and always will
+  be. What it catches is a mock reaching back into the host, which is the one
+  class the host can see. The three tests are the guard firing, the same mock
+  being legitimate through a plain `call`, and a read inside a static call still
+  reaching its mock.
+- `cargo test -p fluentbase-e2e --release` in the contract worktree's ROOT
+  workspace: **120 passed, 0 failed, 9 ignored** (116/0/9 before — the four new
+  ones are `staking_reserve`).
+- **The reserve-read proof, and the fuel figure that came out of it.** All three
+  refusals leave `recordProduction` successful, `getEpochRewards(E) == 0`, one
+  `EpochBlendRewardsCommitted{E, 0}` committed, and the next epoch payable once
+  `setBlendReserve` points at an address the token answers for. Frame gas of the
+  close: 72,585 with a reverting token, 72,597 with a truncated word, and
+  **1,968,777,406** with the fuel burner under a 2,000,000,000 transaction limit
+  — the burner takes essentially everything it is offered, because
+  `erc20_scalar_read` passes `fuel: None`.
+
+  Re-run under the budget a node actually gives a system call — 30,000,000
+  (`revm-rwasm` `crates/handler/src/system_call.rs`) — the close **survives**, at
+  29,579,516 frame gas, leaving 420,484. It survives at committee 5, 21 and 51
+  alike, and the figure does not move with the committee, because the forfeit arm
+  returns before the committee walk: the reserve read is the LAST leg of
+  `close_epoch`, and almost nothing follows it. The margin is EVM's 63/64 call
+  rule and nothing else — no cap was set, none is asserted, and no test pins the
+  number. Recorded as a measurement, not as a guard.
+- **Both halves of the rule were shown by mutation, and both mutations reverted.**
+  The blob digest was checked to have MOVED for each, per the trap under the
+  first 2026-09-08 section, and to have come back to
+  `9f8e0241…` afterwards.
+
+  | mutation in `erc20_scalar_read` | result |
+  |---|---|
+  | a failed read answers `U256::MAX` instead of `U256::ZERO` | all four tests red: the epoch accrues its full pot off a token that refused |
+  | a failed read propagates `Err` instead of scoring zero | all four tests red: `recordProduction` itself fails, which on a node is the block failing |
+
+- **The devnet, on this blob and a rebuilt image.** The smoke image was rebuilt
+  before any of it (`339c9553b5a9` → `4d41871fd9a8`), which is what invalidates a
+  golden snapshot — `.vendor-sha` does not fingerprint this blob, see the note
+  near the top of this file. Note also that the image does NOT contain this blob:
+  `genesis-bootstrap` reads `fluentbase_contracts_staking.rwasm` out of the
+  `/contracts` bind mount at container start (`genesis-bootstrap/src/artifacts.rs`),
+  and `production_path.py` installs the `.wasm` at runtime. What a rebuild buys is
+  the golden invalidation, not the blob.
+
+  | run | result |
+  |---|---|
+  | `make case-growth` | PASS, 8m11s. Committee 4→5→6 across two boundaries, finalized 135→419, `dpos_dkg_pinned_idx_out_of_range_total=0` on 6/6 |
+  | `scripts/xp/floor_halt_case.py 4 exit` | PASS. `CommitteeTooSmall(3, 4)` on 4/4 nodes, chain stopped at block 96, cursor never moved |
+  | `scripts/xp/floor_halt_case.py 4 byz` | PASS. Same, on 3/3 honest nodes after the equivocator was tombstoned |
+  | `scripts/xp/floor_halt_case.py 5 exit` | Chain LIVED to block 410, all five up; committee[3] re-seated without the leaver, `dkgQual[3] = true`. The script reports FAIL because it is written to assert the halt — at N=5 there is nothing to halt |
+  | `scripts/xp/floor_halt_case.py 5 byz` | Same: chain lived to 410, committee[3] re-seated without the equivocator, `dkgQual[3] = true` |
+  | `make smoke-byzantine` (five-node stand) | PASS, 8m00s. Equivocator jailed, transport severed, committee[3] re-seated 4 of 5 with `dkgQual` true, safety sweep clean |
+  | one live claim | `claimValidatorFee(v)` from an address that is neither the validator nor its owner: 2 BLEND moved reserve → owner, `getValidatorFee` 2e18 → 0, staking contract's own BLEND balance unchanged at 5e18, 220,396 gas |
+
+  Two things came out of those runs that are facts about the code rather than
+  about the runs. First, the floor halt is an EXECUTION-plane halt: the leader
+  proposes the boundary order block, consensus agrees it, and every node then
+  fails at `try_derive` → `derive.rs:604` → `executor fatal error … stage="finalize"`
+  within 31 ms of each other, exiting cleanly. It is refused neither while the
+  block is BUILT nor while it is VALIDATED, which is the question
+  `floor_halt_case.py`'s own docstring left open. Second, the 1.9 commission rule
+  was observed on a chain: a 10% rate set in epoch 17 (stamped `changed_at = 18`)
+  first reached money at reward epoch 20 and paid 0.25 BLEND per epoch on a
+  2.5-BLEND seat share — `min(rate[E−2], rate[E])`, exactly.
+
+### Previous build — 2026-09-08 (second build of the day, superseded)
 
 Rebuilt for one change: **eleven ABI points with no consumer are deleted**
 (`.dpos-study/PLAN.md` 1.5, finding KB-6).
@@ -195,7 +505,7 @@ never bytecode calls absent from source, and the bytecode was scanned directly.
   blobs were rebuilt from the current sources and came out byte-identical to the
   two digests above.
 
-### Selector scan of this blob
+### Selector scan of that blob
 
 Run from this directory; all three groups must hold.
 

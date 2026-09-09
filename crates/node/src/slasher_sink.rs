@@ -33,7 +33,7 @@ use alloy_primitives::{Address, Bytes, Signature, TxKind, B256, U256};
 use alloy_signer::Signer as _;
 use alloy_signer_aws::AwsSigner;
 use alloy_signer_local::PrivateKeySigner;
-use alloy_sol_types::{sol, SolError};
+use alloy_sol_types::SolError;
 use fluentbase_consensus::slasher::actor::{SlasherTxSink, SubmitOutcome};
 use futures::StreamExt as _;
 use reth_evm::ConfigureEvm;
@@ -75,13 +75,11 @@ const SLASH_GAS_PRICE: u128 = 1_000_000_000;
 /// single-threaded slasher consumer forever.
 const SLASH_INCLUSION_TIMEOUT: Duration = Duration::from_secs(120);
 
-sol! {
-    /// The staking contract's equivocation replay-guard revert
-    /// (`ERR_ALREADY_SLASHED_FOR_EQUIVOCATION`, `contracts/staking/src/consts.rs`).
-    /// The 4-byte selector is matched against the pre-flight simulation's revert
-    /// output to recognise an already-tombstoned victim.
-    error AlreadySlashedForEquivocation(address validator);
-}
+/// The staking contract's equivocation replay-guard revert, from the ONE
+/// declaration the contract's `ERR_ALREADY_SLASHED_FOR_EQUIVOCATION` is derived
+/// from. Its 4-byte selector is matched against the pre-flight simulation's
+/// revert output to recognise an already-tombstoned victim.
+use fluentbase_staking_abi::AlreadySlashedForEquivocation;
 
 /// The two slasher-EOA signing backends behind one async signing surface.
 /// `AwsSigner` implements only the async `Signer` (not `SignerSync`), so both

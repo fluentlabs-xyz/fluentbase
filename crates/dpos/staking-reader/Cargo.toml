@@ -11,6 +11,8 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
+fluentbase-staking-abi = { workspace = true }
+fluentbase-types = { workspace = true }
 fluentbase-bls = { workspace = true }
 alloy-primitives = { workspace = true }
 alloy-consensus = { workspace = true }

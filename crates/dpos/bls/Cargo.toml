@@ -11,6 +11,7 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
+fluentbase-types = { workspace = true }
 commonware-cryptography = { workspace = true, features = ["std"] }
 # commonware-consensus has no `std` feature — it is unconditionally std
 # (only `mocks`/`arbitrary` features exist). Adding features=["std"] errors.

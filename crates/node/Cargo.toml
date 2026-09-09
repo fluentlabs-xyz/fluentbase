@@ -10,6 +10,7 @@ repository.workspace = true
 readme.workspace = true
 
 [dependencies]
+fluentbase-staking-abi = { workspace = true }
 # reth
 reth-ethereum-cli.workspace = true
 reth-chainspec.workspace = true

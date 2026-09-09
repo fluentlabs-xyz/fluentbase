@@ -216,7 +216,7 @@ impl StakingStateRead for StubReader {
             Ok(self.snapshot.clone())
         }
     }
-    fn epoch_block_interval(&self, _at: B256) -> Result<u32, ReadError> {
+    fn epoch_block_interval(&self, _at: B256) -> Result<u64, ReadError> {
         Ok(100)
     }
     fn dpos_activation_block(&self, _at: B256) -> Result<u64, ReadError> {

@@ -32,7 +32,7 @@ use fluentbase_bls::PeerPubkey;
 
 use crate::{
     error::ReadError,
-    reader::{check_peer_set_size, epoch_of_block, is_epoch_boundary, StakingStateRead},
+    reader::{check_peer_set_size, epoch_at_block, is_epoch_boundary, StakingStateRead},
 };
 
 /// Freeze a governance-mutable geometry field on its first observation, then
@@ -157,7 +157,7 @@ pub struct EpochTransition<R, S> {
     /// after genesis — honoring a live governance change here would diverge the
     /// two epoch authorities. A later on-chain change is logged and ignored.
     /// (Correct boundary-synced live re-interval is a separate, deferred task.)
-    frozen_interval: Option<u32>,
+    frozen_interval: Option<u64>,
     /// `dposActivationBlock` frozen on the first finalized block — origin for
     /// the relative epoch numbering (consensus `OriginEpocher` is frozen at
     /// startup, so this is treated as fixed identically to the interval).
@@ -229,11 +229,7 @@ where
     /// asks the epoch authority instead of re-deriving the formula from a
     /// `frozen_geometry()` pair. `None` until the geometry freezes.
     pub fn epoch_at(&self, number: u64) -> Option<u64> {
-        Some(epoch_of_block(
-            number,
-            self.frozen_interval?,
-            self.frozen_activation?,
-        ))
+        epoch_at_block(number, self.frozen_activation?, self.frozen_interval?)
     }
 
     /// Activation-relative boundary predicate over the FROZEN geometry —
@@ -274,7 +270,7 @@ where
     /// (which REQUIRES the freeze), distinct from a plain `Intra` no-op (which can
     /// also mean "already tracked").
     pub fn frozen_geometry(&self) -> Option<(u64, u64)> {
-        Some((self.frozen_activation?, self.frozen_interval? as u64))
+        Some((self.frozen_activation?, self.frozen_interval?))
     }
 
     /// The executed height committee reads resolve at for an
@@ -481,9 +477,12 @@ where
             scheduled_activation,
             "dposActivationBlock (consensus OriginEpocher is frozen)",
         );
-        let epoch_e = epoch_of_block(number, interval, activation);
+        // The interval is non-zero (checked above), so the shared epoch function
+        // cannot answer `None` here.
+        let epoch_e =
+            epoch_at_block(number, activation, interval).ok_or(ReadError::ZeroEpochInterval)?;
 
-        // Boundary detection MUST be activation-relative, matching `epoch_of_block`
+        // Boundary detection MUST be activation-relative, matching `epoch_at_block`
         // (reader.rs) and the consensus `OriginEpocher`: the last block of relative
         // epoch E is where `(number - activation) % interval == interval - 1`, i.e.
         // `(number + 1 - activation) % interval == 0`. The absolute form
@@ -778,7 +777,7 @@ mod tests {
     /// Canned reader: fixed committee size + interval.
     struct MockReader {
         committee: usize,
-        interval: u32,
+        interval: u64,
     }
     impl StakingStateRead for MockReader {
         fn epoch_committee_snapshot(
@@ -796,7 +795,7 @@ mod tests {
                 weights: None,
             })
         }
-        fn epoch_block_interval(&self, _at: B256) -> Result<u32, ReadError> {
+        fn epoch_block_interval(&self, _at: B256) -> Result<u64, ReadError> {
             Ok(self.interval)
         }
         fn dpos_activation_block(&self, _at: B256) -> Result<u64, ReadError> {
@@ -844,7 +843,7 @@ mod tests {
         ) -> Result<ValidatorSetSnapshot, ReadError> {
             self.inner.epoch_committee_snapshot(epoch, at)
         }
-        fn epoch_block_interval(&self, at: B256) -> Result<u32, ReadError> {
+        fn epoch_block_interval(&self, at: B256) -> Result<u64, ReadError> {
             self.inner.epoch_block_interval(at)
         }
         fn dpos_activation_block(&self, at: B256) -> Result<u64, ReadError> {
@@ -879,7 +878,7 @@ mod tests {
             }
             self.inner.epoch_committee_snapshot(epoch, at)
         }
-        fn epoch_block_interval(&self, at: B256) -> Result<u32, ReadError> {
+        fn epoch_block_interval(&self, at: B256) -> Result<u64, ReadError> {
             self.inner.epoch_block_interval(at)
         }
         fn dpos_activation_block(&self, at: B256) -> Result<u64, ReadError> {
@@ -909,7 +908,7 @@ mod tests {
         ) -> Result<ValidatorSetSnapshot, ReadError> {
             self.inner.epoch_committee_snapshot(epoch, at)
         }
-        fn epoch_block_interval(&self, at: B256) -> Result<u32, ReadError> {
+        fn epoch_block_interval(&self, at: B256) -> Result<u64, ReadError> {
             self.inner.epoch_block_interval(at)
         }
         fn dpos_activation_block(&self, _at: B256) -> Result<u64, ReadError> {
@@ -954,7 +953,7 @@ mod tests {
             }
             self.inner.epoch_committee_snapshot(epoch, at)
         }
-        fn epoch_block_interval(&self, at: B256) -> Result<u32, ReadError> {
+        fn epoch_block_interval(&self, at: B256) -> Result<u64, ReadError> {
             self.inner.epoch_block_interval(at)
         }
         fn dpos_activation_block(&self, at: B256) -> Result<u64, ReadError> {
@@ -1920,7 +1919,7 @@ mod tests {
             self.gate(at)?;
             self.inner.epoch_committee_snapshot(epoch, at)
         }
-        fn epoch_block_interval(&self, at: B256) -> Result<u32, ReadError> {
+        fn epoch_block_interval(&self, at: B256) -> Result<u64, ReadError> {
             self.gate(at)?;
             self.inner.epoch_block_interval(at)
         }
@@ -2262,7 +2261,7 @@ mod tests {
     /// must not depend on reth); the value only has to be realistic for the geometry.
     const RETENTION_WINDOW: u64 = 10_064;
     /// The production `epochBlockInterval` (`l2.json` mainnet/testnet).
-    const PROD_INTERVAL: u32 = 86_400;
+    const PROD_INTERVAL: u64 = 86_400;
 
     /// Models a PRUNED node: a state read at a hash whose height is BELOW the
     /// retention floor errors the way reth's `StateAtBlockPruned` reaches this crate
@@ -2293,7 +2292,7 @@ mod tests {
             self.gate(at)?;
             self.inner.epoch_committee_snapshot(epoch, at)
         }
-        fn epoch_block_interval(&self, at: B256) -> Result<u32, ReadError> {
+        fn epoch_block_interval(&self, at: B256) -> Result<u64, ReadError> {
             self.gate(at)?;
             self.inner.epoch_block_interval(at)
         }

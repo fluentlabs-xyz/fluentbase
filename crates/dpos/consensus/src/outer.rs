@@ -976,25 +976,20 @@ where
         let backfill_range =
             (self.last_execution_finalized_height + 1)..=last_consensus_finalized_height.get();
         if !backfill_range.is_empty() {
-            // On-chain `epochBlockInterval` is u32; epoch_of_block takes u32.
-            // Guard the NonZeroU64→u32 narrowing: a value > u32::MAX would
-            // truncate (and a nonzero multiple of 2^32 would truncate to 0 →
-            // div-by-zero in epoch_of_block). Unreachable for a u32-sourced
-            // interval, asserted as defense-in-depth.
-            debug_assert!(
-                self.epoch_length_blocks.get() <= u32::MAX as u64,
-                "epoch_length_blocks exceeds u32 — epoch_of_block interval would truncate"
-            );
-            let epoch_interval = self.epoch_length_blocks.get() as u32;
-            let backfill_start_epoch = fluentbase_staking_reader::reader::epoch_of_block(
+            // `epoch_length_blocks` is a `NonZeroU64` and the shared epoch
+            // function takes the interval at that width, so the narrowing this
+            // used to guard against is gone. A `NonZeroU64` can never make the
+            // function answer `None`.
+            let epoch_interval = self.epoch_length_blocks.get();
+            let backfill_start_epoch = fluentbase_staking_reader::reader::epoch_at_block(
                 self.last_execution_finalized_height,
-                epoch_interval,
                 self.dpos_activation_block,
+                epoch_interval,
             );
-            let backfill_end_epoch = fluentbase_staking_reader::reader::epoch_of_block(
+            let backfill_end_epoch = fluentbase_staking_reader::reader::epoch_at_block(
                 last_consensus_finalized_height.get(),
-                epoch_interval,
                 self.dpos_activation_block,
+                epoch_interval,
             );
             if backfill_start_epoch != backfill_end_epoch {
                 // Cross-epoch backfill: the lazy self-healing scheme cascade
