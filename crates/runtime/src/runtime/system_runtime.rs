@@ -138,18 +138,9 @@ impl SystemRuntime {
         ctx: RuntimeContext,
         consume_fuel: bool,
     ) -> Result<Self, TrapCode> {
-        let config = system_runtime_compilation_config(import_linker.clone(), consume_fuel);
         let cache_key = CompiledModuleCacheKey::new(
             code_hash,
-            CompilationConfigFingerprint::from_config(
-                &config,
-                if cfg!(feature = "wasmtime") {
-                    CompilationBackend::Wasmtime
-                } else {
-                    CompilationBackend::Rwasm
-                },
-                address,
-            ),
+            system_runtime_fingerprint(address, consume_fuel),
         );
         let compiled_runtime = COMPILED_RUNTIMES.with_borrow_mut(|compiled_runtimes| {
             if let Some(compiled_runtime) = compiled_runtimes.get(&cache_key).cloned() {
@@ -161,6 +152,9 @@ impl SystemRuntime {
             }
             crate::metrics::record_system_runtime_cache_lookup(cache_key.config_fingerprint, false);
 
+            // The full config (with the import linker and the state router) is only needed to
+            // load the module, so it is built on the miss path alone.
+            let config = system_runtime_compilation_config(import_linker.clone(), consume_fuel);
             let executor = load_system_runtime(&rwasm_module.hint_section, config, import_linker)?;
 
             #[allow(clippy::arc_with_non_send_sync)]
@@ -509,16 +503,13 @@ fn require_entrypoint_abi(
         .ok_or(TrapCode::IllegalOpcode)
 }
 
-fn system_runtime_compilation_config(
-    import_linker: Arc<ImportLinker>,
-    consume_fuel: bool,
-) -> CompilationConfig {
+/// Compilation policy flags shared by every system runtime.
+///
+/// This is the part of the config the cache fingerprint is derived from; it carries no import
+/// linker and no state router, so computing a cache key stays allocation-free on the per-frame
+/// path. [`system_runtime_compilation_config`] adds the remaining pieces for actual loading.
+fn system_runtime_policy(consume_fuel: bool) -> CompilationConfig {
     CompilationConfig::default()
-        .with_state_router(StateRouterConfig {
-            states: Box::new([("deploy".into(), STATE_DEPLOY), ("main".into(), STATE_MAIN)]),
-            opcode: Some(Opcode::Call(SysFuncIdx::STATE as u32)),
-        })
-        .with_import_linker(import_linker)
         .with_allow_malformed_entrypoint_func_type(true)
         .with_consume_fuel(consume_fuel)
         // Wasmtime meters bulk operations itself; rWasm instrumentation would diverge.
@@ -526,6 +517,34 @@ fn system_runtime_compilation_config(
         .with_consume_fuel_for_params_and_locals(false)
         .with_builtins_consume_fuel(false)
         .with_max_allowed_memory_pages(N_MAX_ALLOWED_MEMORY_PAGES)
+}
+
+/// Cache-key fingerprint for the system runtime at `address` under the active backend.
+fn system_runtime_fingerprint(
+    address: Address,
+    consume_fuel: bool,
+) -> CompilationConfigFingerprint {
+    CompilationConfigFingerprint::from_config(
+        &system_runtime_policy(consume_fuel),
+        if cfg!(feature = "wasmtime") {
+            CompilationBackend::Wasmtime
+        } else {
+            CompilationBackend::Rwasm
+        },
+        address,
+    )
+}
+
+fn system_runtime_compilation_config(
+    import_linker: Arc<ImportLinker>,
+    consume_fuel: bool,
+) -> CompilationConfig {
+    system_runtime_policy(consume_fuel)
+        .with_state_router(StateRouterConfig {
+            states: Box::new([("deploy".into(), STATE_DEPLOY), ("main".into(), STATE_MAIN)]),
+            opcode: Some(Opcode::Call(SysFuncIdx::STATE as u32)),
+        })
+        .with_import_linker(import_linker)
 }
 
 #[cfg(test)]
@@ -560,6 +579,27 @@ mod tests {
 
         assert!(config.consume_fuel);
         assert!(!config.consume_fuel_for_bulk_ops);
+    }
+
+    #[test]
+    fn system_runtime_fingerprint_matches_the_full_compilation_config() {
+        for (address, consume_fuel) in [
+            (fluentbase_types::PRECOMPILE_EVM_RUNTIME, false),
+            (fluentbase_types::PRECOMPILE_WASM_RUNTIME, true),
+        ] {
+            let config =
+                system_runtime_compilation_config(import_linker_v1_preview(), consume_fuel);
+            let backend = if cfg!(feature = "wasmtime") {
+                CompilationBackend::Wasmtime
+            } else {
+                CompilationBackend::Rwasm
+            };
+            assert_eq!(
+                system_runtime_fingerprint(address, consume_fuel),
+                CompilationConfigFingerprint::from_config(&config, backend, address),
+                "{address} consume_fuel={consume_fuel}"
+            );
+        }
     }
 
     #[test]
