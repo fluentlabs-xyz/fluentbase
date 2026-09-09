@@ -69,6 +69,17 @@ e2e на настоящем rWasm (`e2e/src/staking_reserve.rs`, коммиты 
 
 - `make case-growth` на общем ABI (`9b6213be`+`065003ad`): PASS, fin 132→423, 6 валидаторов; `commitEpochCommittee` (fail-loud) прошёл, `EpochCommitteeCommitted` декодировался — calldata и topic0 из общего крейта сошлись с контрактом живьём. Из трёх вьюх, переведённых на `uint64`, живой прогон покрывает 1,5 (`getEpochBlockInterval` каждую границу, `getActiveValidatorsLength` один раз на старте, `getUndelegatePeriod` узел не читает).
 
+### 2026-09-09 — стенд в крейте, Э3.2 шаги 1/6/2 (`history/E3-2-STAND-1.md` §2–§3; коммиты `3e37d505`, `19e677cf`, `87d9e2ba`)
+
+Не девнет — `consensus/src/testbed/`, `commonware_runtime::deterministic` + simulated p2p, фейки ниже швов крейта (derive канонизирует при derive — R-006 не проверяется), комитеты снимками, `StaticRandomness`, без upstream. Доказано на нём:
+- Снятие фичи `external` даёт виртуальное время: `dkg_engine::tests` 21,4 с → 0,17 с, тот же набор тестов. Прод не менялся (tokio-`Pacer::pace` — identity).
+- Общий раздел `consensus_epoch_{E}` у N узлов в одном Storage НЕ маскируется: фаза «все живы» чистая, реплей паникует в voter’е commonware `replaying notarize from another signer`. С префиксом `node{i}-` реплей поднимает всех четверых и цепь идёт дальше (6 → 12). Следствие: R-020-сценарии в стенде возможны только как «drop + replay» (in-memory Storage).
+- Разрез `[0,1]|[2,3]` на пять leader-таймаутов: ни один узел не финализировал (высоты `[3,3,3,3]` на срезе и на восстановлении, по исполненному ярусу), после восстановления одна цепь.
+- Расходящийся `result` на узле 2 (h=3): чужие предложения отвергнуты, `ForkSafety(ResultDivergence)` на h=6=3+K только на узле 2, честные трое в lockstep.
+- seed=1 трижды — побайтно одна трасса `(height, view, leader, digest, hash)`; seed=2 — другая (ключи тоже от seed).
+- Выбывший из комитета (4→3, `epoch_len=5`), оставшийся в tracked peer set, ДОГОНЯЕТ цепь без upstream (`[24,24,24,24]`, четыре границы); вне tracked set с снятыми линками — стоит на границе (`[16,16,16,4]`). Следствие для памяти `dpos-verifier-mode-is-isolated` и шага 3: upstream-плоскость нужна незарегистрированному, не выбывшему зарегистрированному.
+- Эквивокатор (`dpos-devnet-byzantine`): честные трое идут, сам узел не финализирует ничего (движок подменён); улика до слэшера не доходит (`slasher_evidence: None`).
+
 ## §2 Ставилось и не воспроизвелось; снято; стендом не разрешимо
 
 Не воспроизвелось (постановки — `history/EXPERIMENTS.md` часть 2): Ex-5 сценарий 2 (R-006), Ex-11 (R-020), Ex-14 (R-046); Ex-6 — последствие (удержание до порога re-jump) не наблюдалось.
@@ -107,6 +118,8 @@ e2e на настоящем rWasm (`e2e/src/staking_reserve.rs`, коммиты 
 Стендовые работы плана (Э3, `PLAN.md` §2): conformance-набор для reth-трейтов (3.1), детерминированный многоузловой стенд в крейте (3.2), византийские роли (3.3), Ex-21/Ex-19 на devnet (3.4), `bootstrap.rs` на общий ABI (3.9), литералы `51` в питоне (3.10), покрытие `agreement_check.py` (3.11).
 
 ## §4 Как ставить
+
+Стенд в крейте (не докер): `cargo test -p fluentbase-consensus --lib testbed -- --nocapture --test-threads=1` (≈13 с с компиляцией, seed/N/латентность/потери/комитеты по эпохам/партиции/роли — `testbed/stand.rs::StandConfig`, `Stand::node(i).role(..)`, `Stand::partition(..)`); эквивокатор — `--features dpos-devnet-byzantine`. Что он не показывает — `history/E3-2-STAND-1.md` §5.
 
 Стенд: `devnet/local-dpos-smoke` (память проекта `soak-operations-index` — читать первой при работе там). Штатный compose: `docker-compose.yml` + `docker-compose.dpos.yml` — 4 валидатора + full-node, `EPOCH_BLOCK_INTERVAL=32`, `DPOS_ACTIVATION_BLOCK=64`; секвенсер → флеш → `--dpos` → сходимость за якорем (`StaticStack.bring_up_dpos`). `smoke-byzantine` с 09-07 на ПЯТИ узлах (`StaticProfile.committee()`), на четырёх тумбстоун = остановка на полу; 32 юнит-теста стенда перепинены, порт по составу узлов больше не сверяется с bash-эталоном — правки стенда 09-07/09-08 (31 файл, три untracked) на 09-09 **не закоммичены** [KNOWN: `git status`].
 

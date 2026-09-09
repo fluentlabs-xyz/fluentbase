@@ -8,7 +8,7 @@
 
 **Дерево.** Контракт с 2026-09-09 в этом же дереве, `contracts/staking/` (слияние `f16fdd90`); worktree `~/Work/audit-482/pr482-study` — история. Правки стенда 09-07/09-08 (пять узлов `smoke-byzantine`, 32 перепиненных юнит-теста, `floor_halt_case.py`, compose/Makefile/README) **не закоммичены**: `git status` 2026-09-09 — 34 записи под `devnet/local-dpos-smoke/**` [KNOWN].
 
-**Работает** (живые прогоны, источник и дата): devnet 4 валидатора + full-node финализирует 1 блк/с; DKG при интервале 12 и 32; 20 из 20 SIGKILL-перезапусков поднялись; 51 граница подряд (09-04, `history/EXPERIMENTS.md`); `make case-growth` — 6 валидаторов, два живых `registerValidator` с PoP через предеплои, комитет 4→5→6 (09-08 на `50e87d33`, 09-09 на общем ABI — `history/E1-CLOSEOUT.md`, `history/E2-ABI.md` §9); `smoke-byzantine` на пяти узлах PASS; `floor_halt_case.py` при N=5 — цепь жива, комитет пересажен; живая претензия `claimValidatorFee` списывает с резерва прямо владельцу (09-08).
+**Работает** (живые прогоны, источник и дата): devnet 4 валидатора + full-node финализирует 1 блк/с; DKG при интервале 12 и 32; 20 из 20 SIGKILL-перезапусков поднялись; 51 граница подряд (09-04, `history/EXPERIMENTS.md`); `make case-growth` — 6 валидаторов, два живых `registerValidator` с PoP через предеплои, комитет 4→5→6 (09-08 на `50e87d33`, 09-09 на общем ABI — `history/E1-CLOSEOUT.md`, `history/E2-ABI.md` §9); `smoke-byzantine` на пяти узлах PASS; `floor_halt_case.py` при N=5 — цепь жива, комитет пересажен; живая претензия `claimValidatorFee` списывает с резерва прямо владельцу (09-08); стенд в крейте (`consensus/src/testbed/`, deterministic, 09-09 — `history/E3-2-STAND-1.md` §3): N=4/8 lockstep за 0,7–2 с реальных, расходящийся deriver изолирован `SafetyHalt`’ом на одном узле, разрез 2|2 не финализирует, реплей per-node журналов поднимает всех, выбывший из комитета отслеживаемый узел догоняет без upstream.
 
 **Сломано и наблюдалось.**
 - Отказ на полу останавливает цепь: N=4 один выход или один тумбстоун — все узлы `exited/0`, ловится в плане исполнения (`derive.rs`, `stage="finalize"`) — **принято** решением 1.0 (`DECISIONS.md` Д-11), не дефект; `smoke-byzantine` держится только пятым узлом.
@@ -31,11 +31,11 @@
 | `cargo test` из `contracts/staking` | 175/0; 176/0 с `--features devnet-views` | 09-09, `history/E2-ABI.md` §9 |
 | `cargo test -p fluentbase-node` | 57/0 (59 до удаления двух селекторных тестов-копий) | 09-09, там же |
 | `cargo test -p fluentbase-staking-reader` | 59/0 (было 63: −4 теста эпохи, −2 копии, +2) | 09-09, там же |
-| `cargo test -p fluentbase-consensus` | 608 + 3 + 5 + 13 / 0 | 09-09, там же |
+| `cargo test -p fluentbase-consensus` | 617 + 3 + 5 + 13 / 0, 1 ignored (заготовка стенда под шаг 3); с `--features dpos-devnet-byzantine` стенд 10/0/1; lib 13,4 с (было 25,7 с с фичей `external`) | 09-09, `history/E3-2-STAND-1.md` §4 |
 | `cargo test -p fluentbase-p2p -p fluentbase-bls` | зелёные | 09-09, там же |
 | `cargo test -p fluentbase-e2e --release` | 113 / 9 / 9 ignored; девять `builtins::*` — до слияния тоже; все `staking*` зелёные | 09-09, там же |
 | `cargo test -p fluentbase-testing` | 6/0 | 09-08, `history/E1-8-TESTS.md` |
-| `cargo check --workspace`; clippy затронутых крейтов; контракт clippy/fmt | чисто | 09-09, `history/E2-ABI.md` §9 |
+| `cargo check --workspace`; clippy затронутых крейтов; контракт clippy/fmt | чисто; после Э3.2 шагов 1/6/2 — чисто, `--all-targets` тоже (контр-ревью) | 09-09, `history/E2-ABI.md` §9; `history/E3-2-STAND-1.md` §4, §10 |
 | `cargo fmt --check` (корень) | красный на 6 чужих файлах (см. выше) | 09-09 |
 | селекторный скан блоба; `agreement_check.py` | OK; 12 checks, 0 disagree | 09-09 |
 | `make case-growth` | PASS, fin 132→423 | 09-09 |
@@ -86,7 +86,7 @@
 | # | Работа | Статус / что становится проверяемым |
 |---|---|---|
 | [ ] 3.1 | conformance-набор для `BeaconEngineLike`/`ExecutedChain`/`DerivedBlockBuilder` против `FakeChain` и in-process reth | открыто; `reth-e2e-test-utils` не подключён — проверить до оценки (REDESIGN: входит в 3–4 нед. П-8) |
-| [ ] 3.2 | детерминированный многоузловой стенд в крейте (`commonware_runtime::deterministic` + simulated p2p) | открыто; разведка 2026-09-09 — `history/E3-2-STAND-RESEARCH.md`, оценка 9–11 дней (проба: N=4/8 узлов `OuterBuilder` на simulated собрались и пекут блоки без прод-правок) |
+| [~] 3.2 | детерминированный многоузловой стенд в крейте (`commonware_runtime::deterministic` + simulated p2p) | идёт; разведка 2026-09-09 — `history/E3-2-STAND-RESEARCH.md`; шаги 1, 6, 2 сделаны 2026-09-09 — `87d9e2ba`, `3e37d505`, `19e677cf` (стенд `consensus/src/testbed/`, 9 тестов + 1 `#[ignore]` + 1 за фичей `dpos-devnet-byzantine`; `external` снят, dkg-тесты 21,4 с → 0,17 с; префикс разделов по узлу); открыты 3, 4, 5 — `history/E3-2-STAND-1.md` |
 | [ ] 3.3 | византийские роли: dealer с двумя `Reveal`, предложенец с расходящимся `result`, ложный `Latest`, пара h−1 на `Finalized{h}`, вздутая проба | открыто — даёт тест R-001/R-002/R-004/R-006/R-009 до правки и после |
 | [ ] 3.4 | devnet: Ex-21 (follower с прокси, подменяющим σ) и Ex-19 (полная смена комитета на 8 узлах) | открыто — `EXPERIMENTS.md` §3 п.1–2; `cert-mitm-proxy.py` в дереве есть |
 | [ ] 3.9 | `genesis-bootstrap/src/bootstrap.rs` берёт `initialize`/`commitEpochCommittee` из `fluentbase-staking-abi`; `initialize` в общий крейт; четыре копии в `e2e/src/staking*.rs` | открыто (добавлено 09-09) — смена арности `initialize` там соберётся и отревертит на genesis-init |
