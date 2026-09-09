@@ -13,7 +13,9 @@ categories.workspace = true
 [dependencies]
 # fluentbase
 fluentbase-types = { workspace = true }
-rwasm = { workspace = true }
+# Both node flavours validate system runtimes with both backends. The local `wasmtime`
+# feature still selects execution; it no longer selects the upgrade admission rules.
+rwasm = { workspace = true, features = ["wasmtime"] }
 
 # misc
 k256 = { version = "0.13.1", default-features = false, features = ["ecdsa"] }

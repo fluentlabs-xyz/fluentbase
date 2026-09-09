@@ -4974,6 +4974,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "tracing",
+ "wat",
 ]
 
 [[package]]
@@ -5008,6 +5009,7 @@ dependencies = [
  "ethers",
  "flate2",
  "fluentbase-release-verify",
+ "fluentbase-runtime",
  "fluentbase-sdk",
  "futures-util",
  "hex",
@@ -5019,6 +5021,7 @@ dependencies = [
  "sha2",
  "tempfile",
  "tokio",
+ "wat",
 ]
 
 [[package]]

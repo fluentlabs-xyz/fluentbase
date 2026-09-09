@@ -1,4 +1,4 @@
-//! System runtime backed by Wasmtime.
+//! System runtime with shared admission rules for rWasm and Wasmtime.
 //!
 //! This module implements **system runtimes** (trusted, privileged rWasm programs) executed via
 //! Wasmtime. The key difference from `ContractRuntime` is that system runtimes:
@@ -37,6 +37,7 @@ use fluentbase_types::{
     HashMap, SysFuncIdx, B256, STATE_DEPLOY, STATE_MAIN,
 };
 use rwasm::{
+    wasmtime::{compile_wasmtime_module_cached, WasmtimeExecutor, WasmtimeModule},
     CompilationConfig, ImportLinker, Opcode, RwasmModule, StateRouterConfig, StoreTr,
     StrategyDefinition, StrategyExecutor, TrapCode, Value, N_MAX_ALLOWED_MEMORY_PAGES,
 };
@@ -120,6 +121,9 @@ impl SystemRuntime {
     /// If a compatible compiled runtime is present in the thread-local cache, it will be reused.
     /// Otherwise, this function compiles/loads the module and instantiates it with imports wired via
     /// `import_linker`.
+    /// Compilation and instantiation failures return an error without caching an instance.
+    /// Loading uses only the backend selected by the `wasmtime` feature; admission
+    /// ([`validate_system_runtime`]) is where both backends must accept the hint.
     ///
     /// ## Fuel metering
     ///
@@ -133,13 +137,17 @@ impl SystemRuntime {
         address: Address,
         ctx: RuntimeContext,
         consume_fuel: bool,
-    ) -> Self {
+    ) -> Result<Self, TrapCode> {
         let config = system_runtime_compilation_config(import_linker.clone(), consume_fuel);
         let cache_key = CompiledModuleCacheKey::new(
             code_hash,
             CompilationConfigFingerprint::from_config(
                 &config,
-                CompilationBackend::Wasmtime,
+                if cfg!(feature = "wasmtime") {
+                    CompilationBackend::Wasmtime
+                } else {
+                    CompilationBackend::Rwasm
+                },
                 address,
             ),
         );
@@ -149,38 +157,24 @@ impl SystemRuntime {
                     cache_key.config_fingerprint,
                     true,
                 );
-                return compiled_runtime;
+                return Ok(compiled_runtime);
             }
             crate::metrics::record_system_runtime_cache_lookup(cache_key.config_fingerprint, false);
 
-            // `hint_section` contains Wasmtime-compatible wasm bytes for the system runtime.
-            // Any compilation failure here is fatal: genesis/runtime packaging is inconsistent.
-            let typed_module =
-                StrategyDefinition::new(config, &rwasm_module.hint_section, Some(code_hash.0))
-                    .expect("runtime: failed to compile system runtime module");
-            let Ok(executor) = typed_module.create_executor(
-                import_linker,
-                RuntimeContext::default(),
-                runtime_syscall_handler,
-                // We can't set a fuel limit here because it's not known until execution.
-                None,
-                Some(N_MAX_ALLOWED_MEMORY_PAGES),
-            ) else {
-                unreachable!("runtime: failed to create executor for system runtime module")
-            };
+            let executor = load_system_runtime(&rwasm_module.hint_section, config, import_linker)?;
 
             #[allow(clippy::arc_with_non_send_sync)]
             let compiled_runtime = Arc::new(RefCell::new(executor));
             compiled_runtimes.insert(cache_key, compiled_runtime.clone());
-            compiled_runtime
-        });
+            Ok(compiled_runtime)
+        })?;
 
-        Self {
+        Ok(Self {
             compiled_runtime,
             ctx,
             cache_key,
             consume_fuel,
-        }
+        })
     }
 
     /// Executes the system runtime entrypoint and updates `self.ctx.execution_result`.
@@ -367,6 +361,154 @@ impl SystemRuntime {
     }
 }
 
+/// Checks system-runtime admission using the same rules on both node flavours.
+///
+/// Admission compiles and instantiates the hint with both rWasm and Wasmtime and enforces the
+/// executor's entrypoint ABI, so a hint accepted here loads on either flavour. It only
+/// initializes modules; it never invokes a runtime entrypoint, and the rWasm compiler rejects
+/// start sections before either backend can instantiate the module.
+///
+/// The default executor is built with the same `import_linker_v1_preview`; keep them in sync.
+pub fn validate_system_runtime(wasm: &[u8], address: Address) -> Result<(), TrapCode> {
+    let import_linker = fluentbase_types::import_linker_v1_preview();
+    let config = system_runtime_compilation_config(
+        import_linker.clone(),
+        fluentbase_types::is_engine_metered_precompile(&address),
+    );
+    let definition = compile_rwasm(config.clone(), wasm)?;
+    instantiate_rwasm(&definition, import_linker.clone())?;
+    let module = compile_wasmtime(config, wasm)?;
+    // The rWasm state router permits arbitrary entrypoint types for trusted runtimes.
+    // SystemRuntime::execute calls `main(argc, argv) -> i32` and `deploy() -> i32` and reads an
+    // i32 status, so enforce that ABI before a backend can return a differently typed value.
+    // `deploy` is optional: runtimes that never run in the deploy state do not export it. It may
+    // also be the legacy SDK shape `deploy() -> ()`, which older upgrades already installed; the
+    // executor fails such a call cleanly and identically on both backends, whereas a non-i32
+    // result would be read as the i32 status.
+    require_entrypoint_abi(&module, "main", 2, true, false)?;
+    require_entrypoint_abi(&module, "deploy", 0, false, true)?;
+    instantiate_wasmtime(&module, import_linker).map(|_| ())
+}
+
+/// Loads an admitted hint with the backend selected by the `wasmtime` feature.
+///
+/// The rWasm compiler always runs first as the canonical validator, so no start function can
+/// execute while loading on either flavour. Only admission exercises both backends; the rWasm
+/// flavour never compiles with Wasmtime here.
+fn load_system_runtime(
+    wasm: &[u8],
+    config: CompilationConfig,
+    import_linker: Arc<ImportLinker>,
+) -> Result<CompiledRuntime, TrapCode> {
+    let definition = compile_rwasm(config.clone(), wasm)?;
+    if cfg!(feature = "wasmtime") {
+        let module = compile_wasmtime(config, wasm)?;
+        let executor = instantiate_wasmtime(&module, import_linker)?;
+        Ok(StrategyExecutor::Wasmtime { executor })
+    } else {
+        instantiate_rwasm(&definition, import_linker)
+    }
+}
+
+/// Compiles the hint with the rWasm validator. In particular this rejects start functions,
+/// unsupported imports and memory limits.
+fn compile_rwasm(config: CompilationConfig, wasm: &[u8]) -> Result<StrategyDefinition, TrapCode> {
+    StrategyDefinition::new_as_rwasm(config, wasm).map_err(|_| TrapCode::IllegalOpcode)
+}
+
+fn instantiate_rwasm(
+    definition: &StrategyDefinition,
+    import_linker: Arc<ImportLinker>,
+) -> Result<CompiledRuntime, TrapCode> {
+    definition
+        .create_executor(
+            import_linker,
+            RuntimeContext::default(),
+            runtime_syscall_handler,
+            None,
+            Some(N_MAX_ALLOWED_MEMORY_PAGES),
+        )
+        .map_err(|_| TrapCode::IllegalOpcode)
+}
+
+/// Compiles the hint with Wasmtime through rWasm's process-wide module cache. The cache key
+/// covers the compilation config and the Wasm bytes, so admission pre-warms execution.
+fn compile_wasmtime(config: CompilationConfig, wasm: &[u8]) -> Result<WasmtimeModule, TrapCode> {
+    let mut cache_identity = CompilationConfigFingerprint::from_config(
+        &config,
+        CompilationBackend::Wasmtime,
+        Address::ZERO,
+    )
+    .stable_bytes();
+    cache_identity.extend_from_slice(fluentbase_types::keccak256(wasm).as_slice());
+    compile_wasmtime_module_cached(config, wasm, fluentbase_types::keccak256(cache_identity).0)
+        .map_err(|_| TrapCode::IllegalOpcode)
+}
+
+/// Instantiates a compiled Wasmtime module through fallible APIs.
+///
+/// rWasm 0.4.7's `WasmtimeExecutor` constructor panics on module-dependent errors, so it only
+/// ever receives a fixed, empty module to create the store and linker with the same resource
+/// limits; the supplied module is then instantiated into that store.
+fn instantiate_wasmtime(
+    module: &WasmtimeModule,
+    import_linker: Arc<ImportLinker>,
+) -> Result<WasmtimeExecutor<RuntimeContext>, TrapCode> {
+    let empty = WasmtimeModule::new(module.engine(), b"\0asm\x01\0\0\0")
+        .map_err(|_| TrapCode::IllegalOpcode)?;
+    let mut executor = WasmtimeExecutor::new(
+        empty,
+        import_linker,
+        RuntimeContext::default(),
+        runtime_syscall_handler,
+        None,
+        Some(N_MAX_ALLOWED_MEMORY_PAGES),
+    );
+    let instance_pre = executor
+        .linker
+        .instantiate_pre(module)
+        .map_err(|_| TrapCode::IllegalOpcode)?;
+    let instance = instance_pre
+        .instantiate(&mut executor.store)
+        .map_err(|_| TrapCode::IllegalOpcode)?;
+    // Replacing these fields relies on the rWasm 0.4.7 layout: the constructor derives the
+    // store limits from `max_allowed_memory_pages` and the linker from the engine and import
+    // linker, never from the module contents, so nothing else in the executor refers to the
+    // empty module.
+    executor.instance_pre = instance_pre;
+    executor.instance = instance;
+    Ok(executor)
+}
+
+/// Requires an exported entrypoint to be a function taking `params` i32 arguments and returning
+/// one i32, or nothing when `allow_unit_result`. A missing export is an error only when
+/// `required`.
+fn require_entrypoint_abi(
+    module: &WasmtimeModule,
+    name: &str,
+    params: usize,
+    required: bool,
+    allow_unit_result: bool,
+) -> Result<(), TrapCode> {
+    let Some(export) = module.get_export(name) else {
+        return if required {
+            Err(TrapCode::IllegalOpcode)
+        } else {
+            Ok(())
+        };
+    };
+    let func = export.func().ok_or(TrapCode::IllegalOpcode)?;
+    let params_match = func.params().len() == params && func.params().all(|ty| ty.is_i32());
+    let result_matches = match func.results().len() {
+        0 => allow_unit_result,
+        1 => func.results().all(|ty| ty.is_i32()),
+        _ => false,
+    };
+    (params_match && result_matches)
+        .then_some(())
+        .ok_or(TrapCode::IllegalOpcode)
+}
+
 fn system_runtime_compilation_config(
     import_linker: Arc<ImportLinker>,
     consume_fuel: bool,
@@ -386,7 +528,7 @@ fn system_runtime_compilation_config(
         .with_max_allowed_memory_pages(N_MAX_ALLOWED_MEMORY_PAGES)
 }
 
-#[cfg(all(test, feature = "wasmtime"))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use fluentbase_types::{import_linker_v1_preview, ExitCode};
@@ -421,6 +563,160 @@ mod tests {
     }
 
     #[test]
+    fn system_runtime_admission_rejects_invalid_modules() {
+        let invalid_modules = [
+            // Rejected by rWasm before Wasmtime can run a trapping start function.
+            r#"(module (func $start unreachable) (start $start)
+                (func (export "main") (param i32 i32) (result i32) i32.const 0))"#,
+            // Wasm validates, but its active data segment cannot be instantiated.
+            r#"(module (memory (export "memory") 1)
+                (data (i32.const 65536) "x")
+                (func (export "main") (param i32 i32) (result i32) i32.const 0))"#,
+            // An active element segment extends beyond the initial table.
+            r#"(module (table 1 funcref) (func $f) (elem (i32.const 1) $f)
+                (func (export "main") (param i32 i32) (result i32) i32.const 0))"#,
+            r#"(module (import "unknown" "function" (func))
+                (func (export "main") (param i32 i32) (result i32) i32.const 0))"#,
+            r#"(module (memory 65536)
+                (func (export "main") (param i32 i32) (result i32) i32.const 0))"#,
+            r#"(module (func (export "main") (param i32 i32) (result i64) i64.const 0))"#,
+            r#"(module (func (export "main") (result i32) i32.const 0))"#,
+            // `deploy` is optional, but every EVM CREATE runs the owner runtime in the deploy
+            // state and reads an i32 status from it, so an exported `deploy` must return an i32
+            // or, in the legacy SDK shape, nothing at all.
+            r#"(module (func (export "deploy") (result i64) i64.const 0)
+                (func (export "main") (param i32 i32) (result i32) i32.const 0))"#,
+            r#"(module (func (export "deploy") (param i32) (result i32) i32.const 0)
+                (func (export "main") (param i32 i32) (result i32) i32.const 0))"#,
+            r#"(module (global (export "deploy") i32 (i32.const 0))
+                (func (export "main") (param i32 i32) (result i32) i32.const 0))"#,
+        ];
+        for address in [
+            fluentbase_types::PRECOMPILE_EVM_RUNTIME,
+            fluentbase_types::PRECOMPILE_WASM_RUNTIME,
+        ] {
+            assert_eq!(
+                validate_system_runtime(b"invalid wasm", address),
+                Err(TrapCode::IllegalOpcode)
+            );
+            for source in invalid_modules {
+                let wasm = wat::parse_str(source).unwrap();
+                assert_eq!(
+                    validate_system_runtime(&wasm, address),
+                    Err(TrapCode::IllegalOpcode),
+                    "{source}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn system_runtime_deploy_entrypoint_is_optional_and_executes() {
+        for source in [
+            r#"(module (memory (export "memory") 1)
+                (func (export "main") (param i32 i32) (result i32) i32.const 0))"#,
+            r#"(module (memory (export "memory") 1)
+                (func (export "deploy") (result i32) i32.const 0)
+                (func (export "main") (param i32 i32) (result i32) i32.const 0))"#,
+            // Legacy SDK shape, already installed by earlier upgrades on live networks.
+            r#"(module (memory (export "memory") 1)
+                (func (export "deploy"))
+                (func (export "main") (param i32 i32) (result i32) i32.const 0))"#,
+        ] {
+            let wasm = wat::parse_str(source).unwrap();
+            assert_eq!(
+                validate_system_runtime(&wasm, Address::ZERO),
+                Ok(()),
+                "{source}"
+            );
+        }
+        SystemRuntime::reset_cached_runtimes();
+        let module = system_module(
+            r#"(module (memory (export "memory") 1)
+            (func (export "deploy") (result i32) i32.const 0)
+            (func (export "main") (param i32 i32) (result i32) i32.const 0))"#,
+        );
+        let mut runtime = SystemRuntime::new(
+            module,
+            import_linker_v1_preview(),
+            test_code_hash(),
+            Address::ZERO,
+            RuntimeContext::default()
+                .with_fuel_limit(10_000)
+                .with_state(STATE_DEPLOY),
+            false,
+        )
+        .unwrap();
+        runtime.execute().unwrap();
+        assert_eq!(
+            runtime.context().execution_result.exit_code,
+            ExitCode::Ok.into_i32()
+        );
+        SystemRuntime::reset_cached_runtimes();
+    }
+
+    #[test]
+    fn system_runtime_admission_preserves_backend_and_execution() {
+        for address in [
+            fluentbase_types::PRECOMPILE_EVM_RUNTIME,
+            fluentbase_types::PRECOMPILE_WASM_RUNTIME,
+        ] {
+            SystemRuntime::reset_cached_runtimes();
+            let module = system_module(
+                r#"(module
+                (memory (export "memory") 1)
+                (func (export "main") (param i32 i32) (result i32) i32.const 0))"#,
+            );
+            assert_eq!(
+                validate_system_runtime(&module.hint_section, address),
+                Ok(())
+            );
+            let mut runtime = SystemRuntime::new(
+                module,
+                import_linker_v1_preview(),
+                test_code_hash(),
+                address,
+                RuntimeContext::default().with_fuel_limit(10_000),
+                fluentbase_types::is_engine_metered_precompile(&address),
+            )
+            .unwrap();
+            assert_eq!(
+                matches!(
+                    *runtime.compiled_runtime.borrow(),
+                    StrategyExecutor::Wasmtime { .. }
+                ),
+                cfg!(feature = "wasmtime")
+            );
+            runtime.execute().unwrap();
+            assert_eq!(
+                runtime.context().execution_result.exit_code,
+                ExitCode::Ok.into_i32()
+            );
+            assert!(cache_contains(runtime.cache_key));
+        }
+        SystemRuntime::reset_cached_runtimes();
+    }
+
+    #[test]
+    fn system_runtime_rejected_initialization_does_not_poison_cache() {
+        SystemRuntime::reset_cached_runtimes();
+        let module = system_module(
+            r#"(module (func $start unreachable) (start $start)
+            (func (export "main") (param i32 i32) (result i32) i32.const 0))"#,
+        );
+        let result = SystemRuntime::new(
+            module,
+            import_linker_v1_preview(),
+            test_code_hash(),
+            Address::ZERO,
+            RuntimeContext::default(),
+            false,
+        );
+        assert!(matches!(result, Err(TrapCode::IllegalOpcode)));
+        COMPILED_RUNTIMES.with_borrow(|cache| assert!(cache.is_empty()));
+    }
+
+    #[test]
     fn unexpected_trap_evicts_cached_runtime() {
         SystemRuntime::reset_cached_runtimes();
 
@@ -445,7 +741,8 @@ mod tests {
             Address::ZERO,
             RuntimeContext::default().with_fuel_limit(10_000),
             false,
-        );
+        )
+        .unwrap();
         let cache_key = runtime.cache_key;
 
         runtime

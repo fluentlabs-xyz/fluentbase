@@ -389,7 +389,25 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
                 ctx,
                 consume_fuel,
             );
-            ExecutionMode::System(runtime)
+            match runtime {
+                Ok(runtime) => ExecutionMode::System(runtime),
+                Err(trap_code) => {
+                    metrics::record_initialization_error(
+                        RuntimeModeLabel::System,
+                        state,
+                        trap_code,
+                    );
+                    let result = ExecutionResult {
+                        exit_code: ExitCode::MalformedBuiltinParams.into_i32(),
+                        fuel_consumed: fuel_limit_value,
+                        fuel_refunded: 0,
+                        output: vec![],
+                        return_data: vec![],
+                    };
+                    metrics::record_execution(RuntimeModeLabel::System, state, &timer, &result);
+                    return result;
+                }
+            }
         } else {
             let engine = ExecutionEngine::acquire_shared();
             // We always execute untrusted contracts with rWasm VM
@@ -603,6 +621,32 @@ mod tests {
     };
 
     #[test]
+    fn invalid_system_runtime_returns_error_without_panicking() {
+        let mut executor = RuntimeFactoryExecutor::new(import_linker_v1_preview());
+        let bytecode = rwasm::RwasmModuleBuilder::default()
+            .with_hint_section(b"invalid wasm")
+            .build();
+        for _ in 0..2 {
+            let result = executor.execute(
+                BytecodeOrHash::Bytecode {
+                    bytecode: bytecode.clone(),
+                    hash: B256::repeat_byte(0x91),
+                    address: fluentbase_types::PRECOMPILE_EVM_RUNTIME,
+                },
+                RuntimeContext::default().with_fuel_limit(10_000),
+            );
+            assert_eq!(
+                result.exit_code,
+                ExitCode::MalformedBuiltinParams.into_i32()
+            );
+            assert_eq!(result.fuel_consumed, 10_000);
+            assert_eq!(result.fuel_refunded, 0);
+            assert!(result.output.is_empty());
+            assert!(result.return_data.is_empty());
+        }
+    }
+
+    #[test]
     fn call_id_overflow() {
         let mut executor = RuntimeFactoryExecutor::new(import_linker_v1_preview());
 
@@ -771,7 +815,8 @@ mod tests {
                 Address::ZERO,
                 RuntimeContext::default().with_fuel_limit(100_000),
                 true,
-            );
+            )
+            .expect("system runtime must load");
             runtime.execute().unwrap();
             executor
                 .recoverable_runtimes
