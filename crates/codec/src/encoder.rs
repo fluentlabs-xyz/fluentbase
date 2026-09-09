@@ -346,25 +346,24 @@ pub(crate) fn validate_collection_body(
     Ok(())
 }
 
-/// Returns a mutable slice of the buffer at the specified offset, aligned to the specified
-/// alignment. This slice is guaranteed to be large enough to hold the value of value_size.
+/// Returns a mutable value slice within an aligned-width field starting exactly at `offset`.
+/// Alignment pads the field width; it does not move the caller's starting offset.
 pub(crate) fn get_aligned_slice<B: ByteOrder, const ALIGN: usize>(
     buf: &mut BytesMut,
     offset: usize,
     value_size: usize,
 ) -> &mut [u8] {
-    let aligned_offset = align_up::<ALIGN>(offset);
     let word_size = align_up::<ALIGN>(ALIGN.max(value_size));
 
     // Ensure the buffer is large enough
-    ensure_buf_size(buf, aligned_offset + word_size);
+    ensure_buf_size(buf, offset + word_size);
 
     let write_offset = if is_big_endian::<B>() {
         // For big-endian, return slice at the end of the aligned space
-        aligned_offset + word_size - value_size
+        offset + word_size - value_size
     } else {
         // For little-endian, return a slice at the beginning of the aligned space
-        aligned_offset
+        offset
     };
 
     &mut buf[write_offset..write_offset + value_size]
@@ -374,15 +373,14 @@ pub(crate) fn get_aligned_indices<B: ByteOrder, const ALIGN: usize>(
     offset: usize,
     value_size: usize,
 ) -> (usize, usize) {
-    let aligned_offset = align_up::<ALIGN>(offset);
     let word_size = align_up::<ALIGN>(ALIGN.max(value_size));
 
     let write_offset = if is_big_endian::<B>() {
         // For big-endian, return indices at the end of the aligned space
-        aligned_offset + word_size - value_size
+        offset + word_size - value_size
     } else {
         // For little-endian, return indices at the beginning of the aligned space
-        aligned_offset
+        offset
     };
 
     (write_offset, write_offset + value_size)

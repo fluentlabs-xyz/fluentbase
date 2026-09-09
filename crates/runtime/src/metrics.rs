@@ -180,6 +180,22 @@ pub fn record_system_runtime_cache_invalidation(
     .increment(1);
 }
 
+/// Records that the compiled-module cache was discarded after a panic poisoned its lock.
+pub fn record_module_cache_reset() {
+    #[cfg(feature = "std")]
+    metrics::counter!("fluentbase_module_cache_resets_total").increment(1);
+}
+
+/// Records a hash-only module lookup that found no cached module.
+pub fn record_module_cache_hash_miss(reason: &'static str) {
+    #[cfg(feature = "std")]
+    metrics::counter!(
+        "fluentbase_module_cache_hash_misses_total",
+        "reason" => reason,
+    )
+    .increment(1);
+}
+
 /// Exposes the active cache-key version for operational dashboards.
 pub fn set_compilation_cache_fingerprint_version() {
     #[cfg(feature = "std")]

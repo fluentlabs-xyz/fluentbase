@@ -71,6 +71,25 @@ Universal Token runtime is currently in engine-metered set.
 
 ---
 
+## Buffered system-runtime effects
+
+The buffered `RuntimeExecutionOutcomeV1` commit path has accepted gas-pricing limitations:
+
+- Storage writes pay the SLOAD-priced preload but omit dynamic SSTORE write costs (FLU-1160).
+- Buffered logs omit the LOG base/topic/data gas charged by the direct `EMIT_LOG` syscall (FLU-1306).
+- Buffered native transfers omit CALL-style account-access, value-transfer, and new-account gas
+  (FLU-1306).
+
+Preserve this policy for existing networks. Repricing affects calls to already-deployed contracts
+and can change gas usage, transaction success, and resulting state. It requires a coordinated
+network fork that retains the previous execution rules before activation and during historical replay.
+
+Metadata deposit is already charged by the EVM and Universal Token constructors before they emit
+`new_metadata`. EVM charges canonical runtime bytecode; Universal Token charges its metadata payload.
+The host must not charge that deposit again.
+
+---
+
 ## Ethereum compatibility: transaction gas and calldata
 
 [EIP-7825](https://eips.ethereum.org/EIPS/eip-7825) caps the gas limit declared by an Ethereum
