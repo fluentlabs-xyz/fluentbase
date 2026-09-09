@@ -381,9 +381,12 @@ pub fn validate_system_runtime(wasm: &[u8], address: Address) -> Result<(), Trap
     // The rWasm state router permits arbitrary entrypoint types for trusted runtimes.
     // SystemRuntime::execute calls `main(argc, argv) -> i32` and `deploy() -> i32` and reads an
     // i32 status, so enforce that ABI before a backend can return a differently typed value.
-    // `deploy` is optional: runtimes that never run in the deploy state do not export it.
-    require_entrypoint_abi(&module, "main", 2, true)?;
-    require_entrypoint_abi(&module, "deploy", 0, false)?;
+    // `deploy` is optional: runtimes that never run in the deploy state do not export it. It may
+    // also be the legacy SDK shape `deploy() -> ()`, which older upgrades already installed; the
+    // executor fails such a call cleanly and identically on both backends, whereas a non-i32
+    // result would be read as the i32 status.
+    require_entrypoint_abi(&module, "main", 2, true, false)?;
+    require_entrypoint_abi(&module, "deploy", 0, false, true)?;
     instantiate_wasmtime(&module, import_linker).map(|_| ())
 }
 
@@ -474,12 +477,14 @@ fn instantiate_wasmtime(
 }
 
 /// Requires an exported entrypoint to be a function taking `params` i32 arguments and returning
-/// one i32. A missing export is an error only when `required`.
+/// one i32, or nothing when `allow_unit_result`. A missing export is an error only when
+/// `required`.
 fn require_entrypoint_abi(
     module: &WasmtimeModule,
     name: &str,
     params: usize,
     required: bool,
+    allow_unit_result: bool,
 ) -> Result<(), TrapCode> {
     let Some(export) = module.get_export(name) else {
         return if required {
@@ -489,11 +494,15 @@ fn require_entrypoint_abi(
         };
     };
     let func = export.func().ok_or(TrapCode::IllegalOpcode)?;
-    let matches = func.params().len() == params
-        && func.params().all(|ty| ty.is_i32())
-        && func.results().len() == 1
-        && func.results().all(|ty| ty.is_i32());
-    matches.then_some(()).ok_or(TrapCode::IllegalOpcode)
+    let params_match = func.params().len() == params && func.params().all(|ty| ty.is_i32());
+    let result_matches = match func.results().len() {
+        0 => allow_unit_result,
+        1 => func.results().all(|ty| ty.is_i32()),
+        _ => false,
+    };
+    (params_match && result_matches)
+        .then_some(())
+        .ok_or(TrapCode::IllegalOpcode)
 }
 
 fn system_runtime_compilation_config(
@@ -569,7 +578,8 @@ mod tests {
             r#"(module (func (export "main") (param i32 i32) (result i64) i64.const 0))"#,
             r#"(module (func (export "main") (result i32) i32.const 0))"#,
             // `deploy` is optional, but every EVM CREATE runs the owner runtime in the deploy
-            // state and reads an i32 status from it, so an exported `deploy` must be `() -> i32`.
+            // state and reads an i32 status from it, so an exported `deploy` must return an i32
+            // or, in the legacy SDK shape, nothing at all.
             r#"(module (func (export "deploy") (result i64) i64.const 0)
                 (func (export "main") (param i32 i32) (result i32) i32.const 0))"#,
             r#"(module (func (export "deploy") (param i32) (result i32) i32.const 0)
@@ -603,6 +613,10 @@ mod tests {
                 (func (export "main") (param i32 i32) (result i32) i32.const 0))"#,
             r#"(module (memory (export "memory") 1)
                 (func (export "deploy") (result i32) i32.const 0)
+                (func (export "main") (param i32 i32) (result i32) i32.const 0))"#,
+            // Legacy SDK shape, already installed by earlier upgrades on live networks.
+            r#"(module (memory (export "memory") 1)
+                (func (export "deploy"))
                 (func (export "main") (param i32 i32) (result i32) i32.const 0))"#,
         ] {
             let wasm = wat::parse_str(source).unwrap();

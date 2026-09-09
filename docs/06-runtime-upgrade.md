@@ -54,8 +54,8 @@ Upgrade syscall handler enforces:
 - system-runtime Wasm hints must compile and instantiate with both rWasm and Wasmtime before
   any account code is replaced; start functions are rejected without executing them, `main`
   must match the `(i32, i32) -> i32` ABI used by the system-runtime executor, and `deploy`,
-  when exported, must match `() -> i32` (every EVM CREATE runs the owner runtime in the
-  deploy state),
+  when exported, must match `() -> i32` or the legacy `() -> ()` (every EVM CREATE runs the
+  owner runtime in the deploy state and reads an i32 status from it),
 - target account is loaded and code is replaced deterministically.
 
 This enforcement is the final security boundary; contract-side checks alone are not enough.
