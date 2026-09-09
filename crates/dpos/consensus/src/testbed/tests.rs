@@ -800,7 +800,6 @@ fn artifact_on_every_node<'a>(out: &'a Outcome, nodes: &[usize], epoch: u64) -> 
             "node {i}'s epoch-{epoch} agreed proposal (PK_E, log set, confirms) differs from node {}'s",
             nodes[0]
         );
-        assert_eq!(theirs.digest(), proposal.digest());
     }
     first
 }
@@ -815,9 +814,10 @@ fn proposal_bytes(artifact: &[u8]) -> Vec<u8> {
         .to_vec()
 }
 
-/// The seed at `height` on node `nodes[0]`, asserted PRESENT, byte-equal on every
-/// listed node, scoped to `epoch`, and verifying under `pk` (the seed namespace of
-/// the stand's chain id). Also checks `prev_randao` agrees across the nodes.
+/// The seed at `height` on node `nodes[0]`, asserted PRESENT, equal (`Seed`
+/// value equality: round + BLS signature) on every listed node, scoped to
+/// `epoch`, and verifying under `pk` (the seed namespace of the stand's chain
+/// id) on EVERY listed node. Also checks `prev_randao` agrees across the nodes.
 fn seed_agreed_at(
     out: &Outcome,
     nodes: &[usize],
@@ -848,6 +848,11 @@ fn seed_agreed_at(
             Some(&first),
             "node {i}'s σ at height {height} differs from node {}'s (or is missing)",
             nodes[0]
+        );
+        assert!(
+            mine.as_ref()
+                .is_some_and(|m| verify_seed(pk, &ns, m.target_round, &m.signature)),
+            "node {i}'s σ at height {height} does not verify under the given PK"
         );
         assert_eq!(
             mine.as_ref().map(prev_randao_from_seed),
@@ -892,6 +897,7 @@ fn four_nodes_agree_the_epoch_key_and_carry_the_seed_across_the_boundary() {
     );
     assert_eq!(out.diverged, None);
     assert!(out.halted.is_empty(), "{:?}", out.halted);
+    assert!(out.errors().is_empty(), "{:?}", out.errors());
     out.assert_lockstep_except(&[]);
     let all = [0, 1, 2, 3];
     let artifact = artifact_on_every_node(&out, &all, 2);
@@ -981,6 +987,7 @@ fn three_boundaries_with_committee_rotation_keep_dkg_qual_honest() {
     );
     assert_eq!(out.diverged, None);
     assert!(out.halted.is_empty(), "{:?}", out.halted);
+    assert!(out.errors().is_empty(), "{:?}", out.errors());
     out.assert_lockstep_except(&[]);
     let all = [0, 1, 2, 3];
     let members = [0, 1, 2];
@@ -1078,6 +1085,7 @@ fn one_absent_dealer_does_not_stop_the_key() {
         out.errors()
     );
     assert!(out.halted.is_empty(), "{:?}", out.halted);
+    assert!(out.errors().is_empty(), "{:?}", out.errors());
     let members = [0, 1, 2];
     out.assert_lockstep_except(&[3]);
     let artifact = artifact_on_every_node(&out, &members, 2);
@@ -1087,11 +1095,11 @@ fn one_absent_dealer_does_not_stop_the_key() {
         3,
         "three dealers pinned, the absent one not"
     );
-    assert!(
-        out.artifacts[3].is_empty(),
-        "node 3 has no plane and holds {:?}",
-        out.artifacts[3].keys()
-    );
+    // "Node 3 ran no plane" has no observation of its own here: the stand's
+    // `artifacts[3]` is empty by construction, and `beacon::absent` registers
+    // the same `dkg_*` families (`surface.rs::absent`) — its zero counters are
+    // structural too. What does observe the absence is the three-log pinned
+    // set above and node 3 parking at 63 below.
     for i in members {
         assert_eq!(
             out.metric(i, "dkg_ceremony_ok_total"),
@@ -1136,16 +1144,19 @@ fn one_absent_dealer_does_not_stop_the_key() {
 /// signer's scheme needs the epoch's material, and after a restart the ceremony
 /// store holds only what `load_all(share_dir)` put back — with an empty share
 /// dir every node is `Withheld(NoUsableShare)` and the chain parks at 70 (the
-/// negative control below). "No second ceremony for epoch 2" is NOT what the
-/// zero `dkg_ceremony_ok` count proves: the actor only ever starts `now + 1`,
-/// so a restart inside epoch 2 could not re-deal epoch 2 with or without the
-/// share — the count pins that nothing else was minted either.
+/// negative control below). What this test does NOT isolate: the SOURCE of σ
+/// for 64..70 in phase 2 — the seed journal replays them, but the re-derive
+/// could also take them off the archived certificates (the spec-exec reporter
+/// records every recovered σ), and a σ is unique per `(round, PK)`, so "the
+/// journal replayed something else" cannot show as a different value, only as
+/// a missing one. "No second ceremony for epoch 2" is not what the
+/// `dkg_ceremony_ok` count proves either: the actor only ever starts
+/// `now + 1`, so the count is printed, not asserted.
 ///
 /// Falsifier: a node that cannot come back (`timed_out`); an epoch-2 agreed
-/// proposal that differs from phase 1's; a σ at 64..70 that differs from phase
-/// 1's (the journal replayed something else) or is missing (the executor could
-/// not re-derive); a `demoted_no_polynomial` count (a share NOT reloaded); two
-/// chains.
+/// proposal that differs from phase 1's; a σ at 64..70 missing or scoped to
+/// another round; a `demoted_no_polynomial` count (a share NOT reloaded); an
+/// ERROR line; two chains.
 #[test]
 fn restart_replays_key_and_seed_journals() {
     let cfg = StandConfig::live(4, 1);
@@ -1182,6 +1193,7 @@ fn restart_replays_key_and_seed_journals() {
     );
     assert_eq!(second.diverged, None);
     assert!(second.halted.is_empty(), "{:?}", second.halted);
+    assert!(second.errors().is_empty(), "{:?}", second.errors());
     second.assert_lockstep_except(&[]);
     for i in all {
         for (h, hash) in &first.hashes[i] {
@@ -1208,15 +1220,13 @@ fn restart_replays_key_and_seed_journals() {
     for h in 71..=min {
         seed_agreed_at(&second, &all, h, 2, &pk);
     }
+    // Printed, not asserted: the actor only ever starts `now + 1` = 3, and on
+    // the stable schedule that is a carry-forward, so a zero here is the
+    // schedule's doing and says nothing about the restart.
     let ceremonies: Vec<Option<f64>> = all
         .iter()
         .map(|&i| second.metric(i, "dkg_ceremony_ok_total"))
         .collect();
-    assert_eq!(
-        ceremonies,
-        vec![Some(0.0); 4],
-        "a ceremony finalized in phase 2 — a re-mint for an epoch whose share was on disk"
-    );
     for i in all {
         assert_eq!(
             second.metric(i, "epoch_engine_demoted_no_polynomial_total"),
@@ -1258,15 +1268,23 @@ fn a_live_dkg_run_reproduces_the_seed_trace_byte_for_byte() {
             out.seeds[0].get(&70).cloned().flatten().is_some(),
             "seed {seed}: no σ at height 70 — the trace carries no seed"
         );
-        (out.trace_bytes(0), out.real_elapsed)
+        let sigma = out.seeds[0].get(&70).cloned().flatten();
+        (out.trace_bytes(0), out.real_elapsed, sigma)
     };
-    let (a, t_a) = run(1);
-    let (b, t_b) = run(1);
-    let (c, t_c) = run(1);
-    let (d, t_d) = run(2);
+    let (a, t_a, sigma_1) = run(1);
+    let (b, t_b, _) = run(1);
+    let (c, t_c, _) = run(1);
+    let (d, t_d, sigma_2) = run(2);
     assert_eq!(a, b, "seed 1, runs 1 and 2 differ");
     assert_eq!(a, c, "seed 1, runs 1 and 3 differ");
     assert_ne!(a, d, "seed 2 reproduced seed 1's trace");
+    // The σ field itself differs, not only the leaders and digests around it
+    // (a different key set mints a different PK_2, so this is expected — the
+    // assert pins that the field is live in the comparison).
+    assert_ne!(
+        sigma_1, sigma_2,
+        "seed 2 reproduced seed 1's σ at height 70"
+    );
     eprintln!(
         "(B5) trace bytes={} real={t_a:?}/{t_b:?}/{t_c:?}/{t_d:?}",
         a.len()
@@ -1274,10 +1292,11 @@ fn a_live_dkg_run_reproduces_the_seed_trace_byte_for_byte() {
 }
 
 /// (B4′) The negative control for (B4): the same restart with every node's
-/// share dir WIPED between the phases. The journals replay (`PK_2`, σ of
-/// 64..70, the artifact), the executor re-derives 1..70 — and then every node
-/// is `Withheld(NoUsableShare)` for epoch 2, nobody signs, and the chain parks
-/// at 70. This is what (B4)'s "advanced past 70" observation rules out.
+/// share dir WIPED between the phases. The executor re-derives 1..70 (the
+/// height vector says so) — and then every node is `Withheld(NoUsableShare)`
+/// for epoch 2 (the demote counter says so), nobody signs, and the chain parks
+/// at 70. This is what (B4)'s "advanced past 70" observation rules out. The
+/// journals' replay is not asserted here — (B4) covers the proposal and σ.
 ///
 /// Falsifier: the chain advancing past 70 without shares (then a share is not
 /// what the signer needs, and (B4) proves nothing about the reload); a
@@ -1289,6 +1308,7 @@ fn restart_without_the_share_dirs_parks_the_chain_verify_only() {
     let (first, checkpoint) =
         Stand::new(cfg.clone()).run_until_recover(reached(70), Duration::from_secs(200));
     assert!(!first.timed_out, "{:?}", first.heights);
+    first.assert_lockstep_except(&[]);
     let resume_from = first.heights.iter().copied().max().unwrap();
     std::fs::remove_dir_all(&cfg.share_root).expect("wipe the share root");
 
@@ -1304,7 +1324,11 @@ fn restart_without_the_share_dirs_parks_the_chain_verify_only() {
         "the chain advanced without a share on any node: {:?}",
         second.heights
     );
-    assert_eq!(second.heights, vec![70; 4], "re-derived to 70 and parked");
+    assert_eq!(
+        second.heights,
+        vec![resume_from; 4],
+        "re-derived to the stop height and parked"
+    );
     assert!(second.halted.is_empty(), "{:?}", second.halted);
     for i in 0..4 {
         let demoted = second.metric(i, "epoch_engine_demoted_no_polynomial_total");

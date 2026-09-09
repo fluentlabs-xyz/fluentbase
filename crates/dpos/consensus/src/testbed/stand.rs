@@ -216,8 +216,13 @@ pub(super) enum Role {
     #[cfg(feature = "dpos-devnet-byzantine")]
     Equivocate,
     /// `Beacon::Live` only: this node brings up NO beacon plane (no share, no
-    /// dealer log, no agreement seat) and runs `beacon::absent` instead — a
-    /// verifier that never signs. The dealer that is missing from the ceremony.
+    /// dealer log, no agreement seat, no `BEACON_CHANNEL` registration) and
+    /// runs `beacon::absent` instead — a verifier that never signs, from epoch
+    /// 0 on. This models a validator WITHOUT a beacon module, not a committee
+    /// member that merely failed to deal: such a member still receives the
+    /// others' dealings, recovers its share over the pinned set and keeps
+    /// signing (`DkgActor::drive_finalization`'s doc). For the ceremony the
+    /// effect is the same — one dealer fewer.
     AbsentBeacon,
 }
 
