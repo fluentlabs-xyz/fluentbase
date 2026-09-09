@@ -1320,6 +1320,34 @@ mod resume_boundary_tests {
     }
 
     #[test]
+    fn system_runtime_fatal_exit_halts_instead_of_surfacing_fatal_external_error() {
+        let mut ctx = new_context();
+        let mut frame = RwasmFrame::default();
+        frame.interpreter.gas = Gas::new(100_000);
+        // A system runtime that traps reports `UnexpectedFatalExecutionFailure` without an
+        // envelope. The frame must halt like any other failure: forwarding the code as
+        // `FatalExternalError` makes REVM terminate the process.
+        frame.interpreter.input.target_address = PRECOMPILE_EVM_RUNTIME;
+
+        let next_action = process_exec_result::<_, NoOpInspector>(
+            &mut frame,
+            &mut ctx,
+            None,
+            ExitCode::UnexpectedFatalExecutionFailure.into_i32(),
+            Bytes::new(),
+            None,
+        )
+        .unwrap();
+
+        match next_action {
+            NextAction::Return(result) => {
+                assert_eq!(result.result, InstructionResult::UnknownError);
+            }
+            _ => panic!("expected a returned halt"),
+        }
+    }
+
+    #[test]
     fn missing_resume_result_halts_instead_of_panicking() {
         let mut ctx = new_context();
         let mut frame = RwasmFrame::default();
