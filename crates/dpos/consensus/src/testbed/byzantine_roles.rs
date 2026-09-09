@@ -126,13 +126,35 @@ pub(super) struct TwoRevealCfg {
 #[derive(Clone)]
 pub(super) struct TwoRevealSender<S> {
     inner: S,
+    report: ByzReport,
     cfg: Option<TwoRevealCfg>,
 }
 
 impl<S> TwoRevealSender<S> {
-    pub(super) fn new(inner: S, cfg: Option<TwoRevealCfg>) -> Self {
-        Self { inner, cfg }
+    pub(super) fn new(inner: S, report: ByzReport, cfg: Option<TwoRevealCfg>) -> Self {
+        Self { inner, report, cfg }
     }
+}
+
+/// Record an outgoing `ShareConfirm`. Runs on EVERY node — see
+/// [`ByzFacts::confirms_sent`] for why the honest ones matter most.
+fn note_confirm(report: &ByzReport, wire: &[u8]) {
+    let max = NonZeroU32::new(fluentbase_p2p::constants::MAX_COMMITTEE_SIZE as u32)
+        .expect("MAX_COMMITTEE_SIZE > 0");
+    let mut buf = wire;
+    let Ok(BeaconMessage::Dkg(payload)) = BeaconMessage::read(&mut buf) else {
+        return;
+    };
+    let Ok(msg) = DkgMsg::read_cfg(&mut payload.as_ref(), &max) else {
+        return;
+    };
+    let DkgBody::Confirm(confirm) = msg.body else {
+        return;
+    };
+    report.with(|f| {
+        f.confirms_sent
+            .push((confirm.idx, confirm.recorded.clone()))
+    });
 }
 
 /// Mint a second, independently dealt but validly signed log of `me_key` over the
@@ -154,8 +176,8 @@ fn second_log(cfg: &TwoRevealCfg, epoch: u64) -> Option<DealerReveal> {
     Some(dealer.finalize::<N3f1>())
 }
 
-/// Split one intercepted `Reveal` into `(bytes for the others, bytes for the
-/// victim)`, recording the tamper's own witness. `None` ⇒ nothing was swapped.
+/// Split one intercepted `Reveal` into the bytes for the others and the bytes for
+/// the victim, recording the tamper's own witness. `None` ⇒ nothing was swapped.
 fn split_reveal(cfg: &TwoRevealCfg, wire: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
     let max = NonZeroU32::new(fluentbase_p2p::constants::MAX_COMMITTEE_SIZE as u32)
         .expect("MAX_COMMITTEE_SIZE > 0");
@@ -222,6 +244,7 @@ fn split_reveal(cfg: &TwoRevealCfg, wire: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
 pub(super) struct TwoRevealChecked<S> {
     inner: S,
     recipients: Recipients<PeerPubkey>,
+    report: ByzReport,
     cfg: Option<TwoRevealCfg>,
 }
 
@@ -243,6 +266,9 @@ impl<S: Sender<PublicKey = PeerPubkey>> CheckedSender for TwoRevealChecked<S> {
         priority: bool,
     ) -> Result<Vec<Self::PublicKey>, Self::Error> {
         let bytes: Bytes = Into::<IoBufs>::into(message).coalesce().into();
+        if matches!(self.recipients, Recipients::All) {
+            note_confirm(&self.report, bytes.as_ref());
+        }
         let split = self
             .cfg
             .as_ref()
@@ -288,6 +314,7 @@ impl<S: Sender<PublicKey = PeerPubkey>> LimitedSender for TwoRevealSender<S> {
         Ok(TwoRevealChecked {
             inner: self.inner.clone(),
             recipients,
+            report: self.report.clone(),
             cfg: self.cfg.clone(),
         })
     }

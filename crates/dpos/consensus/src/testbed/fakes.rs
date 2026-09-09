@@ -677,6 +677,15 @@ pub(super) struct ByzFacts {
     pub both_logs_check: bool,
     /// The victim the forged log was addressed to.
     pub victim: Option<PeerPubkey>,
+    /// Every `ShareConfirm` this node BROADCAST: its own committee seat, and the
+    /// `(seat, log hash)` set it claims to hold. Recorded on EVERY node, the
+    /// honest ones included, because it is the only place the stand can read a
+    /// node's `recorded_dkg_logs` index: the confirmation is minted from that index
+    /// alone (`beacon/confirmations.rs::mint`), which is written only by the
+    /// ceremony's `record_checked_log`. A victim whose confirm names the FORGED
+    /// hash at the dealer's seat is a direct observation that the second log was
+    /// recorded — not an inference from the share it ends up without.
+    pub confirms_sent: Vec<(u8, Vec<(u8, B256)>)>,
     /// Signer schemes this node's `Randomness` wrapper rebuilt over the
     /// verify-only oracle.
     pub schemes_withheld: u64,

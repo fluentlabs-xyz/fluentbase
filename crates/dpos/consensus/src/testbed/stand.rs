@@ -1615,6 +1615,7 @@ async fn build_node(
             #[cfg(feature = "dpos-devnet-byzantine")]
             let bcs = super::byzantine_roles::TwoRevealSender::new(
                 bcs,
+                byz.clone(),
                 match role {
                     Role::TwoReveals { .. } => {
                         assert_ne!(i, 0, "the two-reveal dealer must not BE its own victim");

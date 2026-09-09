@@ -1840,6 +1840,22 @@ fn a_rotated_out_node_without_the_rejump_parks() {
     );
 }
 
+/// `committee[E]` is peer-key ASCENDING (`commitEpochCommittee` sorts it), so a
+/// node's seat is the position of its peer key in the sorted set. Derived from the
+/// stand's own key schedule, which is a function of the seed alone.
+#[cfg(feature = "dpos-devnet-byzantine")]
+fn committee_seats(seed: u64, n: usize) -> Vec<u8> {
+    use commonware_cryptography::Signer as _;
+    let (peers, _) = super::stand::keys(seed, n);
+    let by_node: Vec<_> = peers.iter().map(|p| p.public_key()).collect();
+    let mut sorted = by_node.clone();
+    sorted.sort();
+    by_node
+        .iter()
+        .map(|pk| u8::try_from(sorted.iter().position(|s| s == pk).expect("member")).expect("u8"))
+        .collect()
+}
+
 // ---------------------------------------------------------------------------
 // Э3.3 — the byzantine beacon / certificate roles (register entries R-002, R-008)
 //
@@ -1869,11 +1885,18 @@ fn a_rotated_out_node_without_the_rejump_parks() {
 /// reach 72 with no halt and no ERROR line. The register's chain-stopping half
 /// needs the second link, which the test below runs.
 ///
+/// **Which branch would be vacuous.** Branch (a) — "the victim kept its share" —
+/// is what a COMPLETELY HONEST run also produces, so it would pass over a wrapper
+/// that swapped nothing. That is why the tamper's witness runs first and why one
+/// of its parts is the victim's OWN `ShareConfirm`: it names the forged hash at
+/// the dealer's seat, which no honest run can.
+///
 /// Falsifier: the wrapper not swapping (`reveals_swapped == 0`), the two logs
-/// hashing equal, either log failing the receiver's own `check`; a victim that
-/// keeps its share (branch (a) — then the first-wins `recorded` rule does not
-/// split the committee and the register is wrong); a second node demoted (then
-/// the split is not confined to the addressed victim); a halt.
+/// hashing equal, either log failing the receiver's own `check`, the victim's
+/// confirmation not naming the forged log; a victim that keeps its share (branch
+/// (a) — then the first-wins `recorded` rule does not split the committee and the
+/// register is wrong); a second node demoted (then the split is not confined to
+/// the addressed victim); a halt.
 #[cfg(feature = "dpos-devnet-byzantine")]
 #[test]
 fn a_dealer_with_two_logs_leaves_the_addressed_victim_without_a_share() {
@@ -1898,6 +1921,37 @@ fn a_dealer_with_two_logs_leaves_the_addressed_victim_without_a_share() {
         byz.both_logs_check,
         "a log the receiver's own `check` would drop is not an equivocation: {byz:?}"
     );
+    // The split reached `DkgCeremony::record_checked_log` on the VICTIM, and this is
+    // an observation rather than an inference from the share it ends up without: a
+    // `ShareConfirm` is minted from `recorded_dkg_logs` alone
+    // (`beacon/confirmations.rs::mint`), which nothing but the ceremony's checked
+    // recording writes — so the hash the victim claims at the dealer's seat IS the
+    // log its ceremony recorded.
+    let seat = committee_seats(1, 4);
+    let dealer_seat = seat[1];
+    let claimed = |node: usize| -> Option<B256> {
+        out.byz[node]
+            .confirms_sent
+            .last()
+            .and_then(|(_, set)| set.iter().find(|(i, _)| *i == dealer_seat))
+            .map(|(_, h)| *h)
+    };
+    assert_eq!(
+        claimed(0),
+        byz.log2_hash,
+        "the victim's own confirmation does not name the FORGED log at the dealer's seat \
+         {dealer_seat} — the second log did not reach `record_checked_log` (confirms {:?})",
+        out.byz[0].confirms_sent
+    );
+    for i in [2, 3] {
+        assert_eq!(
+            claimed(i),
+            byz.log1_hash,
+            "node {i} does not name the ORIGINAL log at the dealer's seat {dealer_seat} — the \
+             split was not addressed (confirms {:?})",
+            out.byz[i].confirms_sent
+        );
+    }
 
     // (2) The two branches of the prediction, mutually exclusive by construction.
     let victim_minted = out.metric(0, "dkg_ceremony_ok_total") == Some(1.0);
@@ -1985,6 +2039,10 @@ fn a_dealer_with_two_logs_leaves_the_addressed_victim_without_a_share() {
 /// quorum'd under (`bls/src/combined_scheme.rs:387-388`), i.e. exactly the vote
 /// quorum — 3 of 4 here — and with node 0 shareless and node 1 silent only two
 /// signers remain.
+///
+/// **Which branch would be vacuous.** Branch (b2) — "a seed was assembled" — is
+/// what an honest run produces, so it would pass over a wrapper that withheld
+/// nothing; `withhold_probe == Some((true, false))` is what rules that out.
 ///
 /// Falsifier: `withhold_probe != Some((true, false))` (then the node had no
 /// partial to withhold and the stop says nothing); a chain that crosses 64
@@ -2123,6 +2181,18 @@ fn drop_the_last_two_from_epoch_two() -> Committees {
 /// by boundary deliveries its own parked executor never produces. That run is
 /// recorded in the session journal as "the path is not reached", not as "not
 /// reproduced".
+///
+/// **That `verify_certificate` returned TRUE in the `NoKey` branch — not that the
+/// certificate was admitted some other way — is pinned by three observations
+/// together.** The epoch-2 oracle WAS attached on the follower
+/// (`dpos_seed_verify_no_key_total` moves only inside `BeaconOracle::verify_seed`,
+/// whose two live callers are `CombinedScheme::verify_certificate` and
+/// `VerifiedSeed::check`), nothing was rejected at the resolver
+/// (`deliveries_rejected == 0`), and the follower later SERVED those very
+/// certificates on — a certificate the marshal refused would not be in its archive
+/// to serve. **Which branch would be vacuous:** branch (b)'s
+/// `deliveries_rejected == 0` half holds on any honest run, so what carries the
+/// claim is the equality between the refused rounds and the forged heights.
 ///
 /// Falsifier: the wrapper forging nothing, forging a σ that reads back equal to
 /// the original, or touching the multisig half; `deliveries_rejected > 0` on a
