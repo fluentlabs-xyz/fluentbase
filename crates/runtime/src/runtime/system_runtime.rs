@@ -471,6 +471,10 @@ fn instantiate_wasmtime(
     let instance = instance_pre
         .instantiate(&mut executor.store)
         .map_err(|_| TrapCode::IllegalOpcode)?;
+    // Replacing these fields relies on the rWasm 0.4.7 layout: the constructor derives the
+    // store limits from `max_allowed_memory_pages` and the linker from the engine and import
+    // linker, never from the module contents, so nothing else in the executor refers to the
+    // empty module.
     executor.instance_pre = instance_pre;
     executor.instance = instance;
     Ok(executor)
