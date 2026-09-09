@@ -81,7 +81,8 @@ A dependency bump can silently change any of these.
 4. verify gas/fuel settlement remains deterministic,
 5. re-audit the invariant-violation halt paths on the rWASM↔REVM resume boundary
    (`crates/revm/src/executor.rs`: `execute_rwasm_resume`, `process_exec_result`,
-   `process_runtime_execution_outcome`; `crates/runtime/src/executor.rs`: `resume`,
+   `process_execution_result`, `process_runtime_execution_outcome`;
+   `crates/runtime/src/executor.rs`: `resume`,
    `memory_read`) — an upgrade that changes trap/interruption behavior may make these
    deterministic `UnknownError` halts reachable, and they must stay typed deterministic halts or
    block-execution errors, not panics. The default release profile unwinds while the reproducible
