@@ -82,7 +82,12 @@ impl FunctionABI {
             return Ok(());
         }
 
-        let structs = resolver.structs()?;
+        let structs = resolver.structs().map_err(|error| {
+            ABIError::StructResolution(format!(
+                "{error}. Annotate the method with #[function_id(\"...\")] to pin its selector \
+                 explicitly."
+            ))
+        })?;
         for parameter in self.inputs.iter_mut().chain(self.outputs.iter_mut()) {
             // Contract signatures live in the crate root, so they resolve from there
             parameter.resolve_structs(structs, "")?;

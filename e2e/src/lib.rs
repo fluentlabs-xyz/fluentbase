@@ -42,6 +42,8 @@ mod eip7951;
 #[cfg(test)]
 mod erc2612;
 #[cfg(test)]
+mod events;
+#[cfg(test)]
 mod evm;
 #[cfg(test)]
 mod fuel;
