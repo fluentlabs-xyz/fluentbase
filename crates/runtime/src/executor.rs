@@ -1,5 +1,5 @@
 use crate::{
-    metrics::{self, RuntimeModeLabel, RuntimeTimer},
+    metrics::{self, RuntimeModeLabel, RuntimeStateLabel, RuntimeTimer},
     module_factory::ModuleFactory,
     runtime::{ContractRuntime, ExecutionMode, SystemRuntime},
     RuntimeContext,
@@ -352,7 +352,7 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
         ctx: RuntimeContext,
     ) -> ExecutionResult {
         let timer = RuntimeTimer::start();
-        let state = metrics::state_label(ctx.state);
+        let state = RuntimeStateLabel::from_state(ctx.state);
         let system_runtime_params = match &bytecode_or_hash {
             BytecodeOrHash::Bytecode { address, hash, .. } => {
                 fluentbase_types::is_execute_using_system_runtime(address)
@@ -598,10 +598,10 @@ fn runtime_mode_label(runtime: &ExecutionMode) -> RuntimeModeLabel {
     }
 }
 
-fn runtime_labels(runtime: &ExecutionMode) -> (RuntimeModeLabel, &'static str) {
+fn runtime_labels(runtime: &ExecutionMode) -> (RuntimeModeLabel, RuntimeStateLabel) {
     (
         runtime_mode_label(runtime),
-        metrics::state_label(runtime.context().state),
+        RuntimeStateLabel::from_state(runtime.context().state),
     )
 }
 
