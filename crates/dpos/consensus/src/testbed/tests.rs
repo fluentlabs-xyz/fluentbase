@@ -1796,11 +1796,12 @@ fn a_rotated_out_node_without_the_rejump_parks() {
         "the parked node acquired an epoch key it has no path to"
     );
     eprintln!(
-        "(C8) heights={:?} rejumps={:?} virtual={:?} real={:?}",
+        "(C8) heights={:?} rejumps={:?} ack_drops={} virtual={:?} real={:?}",
         out.heights,
         (0..4)
             .map(|i| out.upstream[i].rejump_calls)
             .collect::<Vec<_>>(),
+        out.simulator_ack_drops,
         out.virtual_elapsed,
         out.real_elapsed
     );

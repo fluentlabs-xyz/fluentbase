@@ -1395,9 +1395,9 @@ async fn build_node(
         };
         let rejump_calls = upstream_counters.rejump_calls.clone();
         // The steady-state re-jump, modelled on `cold_start_jump` over
-        // `RethElSync`: take the upstream tip, land at `(tip.height − K,
-        // tip.result)` — the committee-attested EVM hash the ordering block
-        // carries (`cold_start_jump.rs:434-446`, `order_block.rs:124-128`) —
+        // `RethElSync`: take the upstream tip and land at the pair
+        // `(tip.height − K, tip.result)` — the committee-attested EVM hash the
+        // ordering block carries (`cold_start_jump.rs:434-446`, `order_block.rs:124-128`) —
         // and let the EL hold it. Forward-only, and `Lagging` inside the pre-K
         // window, as production is.
         //
@@ -1464,8 +1464,8 @@ async fn build_node(
         Arc::new(move || chain.hash_at(chain.tip()))
     };
     // The state hash the COMMITTEE is read at — production's shared
-    // `committee_read_hash` (`node/src/dpos.rs:1382-1404`): `read_at =
-    // max(EL-finalized, live)`, and fall back to the finalized hash when the
+    // `committee_read_hash` (`node/src/dpos.rs:1382-1404`): the read height is
+    // `max(EL-finalized, live)`, and it falls back to the finalized hash when the
     // node has not imported the block at `read_at` yet ("the cert can land a
     // beat before the EL-sync import", `:1397-1398`). The stand's chain has no
     // header/state split, so "not imported" is simply "no executed hash there"
