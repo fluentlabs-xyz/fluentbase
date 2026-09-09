@@ -1,5 +1,7 @@
 //! `Stand`: N `OuterEngine`s on one deterministic runner + one simulated network.
 
+#[cfg(feature = "dpos-devnet-byzantine")]
+use super::fakes::{ByzFacts, ByzReport};
 use super::{
     capture::{self, Captured, Sink},
     fakes::{
@@ -236,6 +238,23 @@ pub(super) enum Role {
     /// The devnet vote equivocator on the vote channel.
     #[cfg(feature = "dpos-devnet-byzantine")]
     Equivocate,
+    /// `Beacon::Live` only (R-002): this node deals TWICE. Its `BEACON_CHANNEL`
+    /// sender splits the one `Reveal` broadcast `seal_dealings` emits — the
+    /// original log to every other member, a second, independently dealt but
+    /// validly signed log of the same dealer over the same `Info` to node 0.
+    /// `withhold_partials` additionally rebuilds this node's signer scheme over
+    /// the epoch's verify-only oracle, so it produces no seed partial and
+    /// therefore casts no vote (`combined_scheme.rs:284-287`) — the second link
+    /// of the register entry.
+    #[cfg(feature = "dpos-devnet-byzantine")]
+    TwoReveals {
+        withhold_partials: bool,
+    },
+    /// (R-008) This node's frontier-plane `Producer` serves `Finalized{h}`
+    /// certificates with a forged σ slot for `h` in
+    /// [`byzantine_roles::FORGE_WINDOW`], leaving the multisig half untouched.
+    #[cfg(feature = "dpos-devnet-byzantine")]
+    ForgedSeedUpstream,
     /// `Beacon::Live` only: this node brings up NO beacon plane (no share, no
     /// dealer log, no agreement seat, no `BEACON_CHANNEL` registration) and
     /// runs `beacon::absent` instead — a verifier that never signs, from epoch
@@ -366,6 +385,12 @@ pub(super) struct Outcome {
     /// `staking_reads[i]` = what node `i` ASKED the fake staking state, split by
     /// whether the epoch was committed at the read height.
     pub staking_reads: Vec<StakingReads>,
+    /// `byz[i]` = what node `i`'s byzantine wrappers actually did — all zeros on
+    /// an honest node and on a build without `dpos-devnet-byzantine`. The tamper's
+    /// own witness: a role test asserts THIS before it asserts anything about how
+    /// the other nodes reacted.
+    #[cfg(feature = "dpos-devnet-byzantine")]
+    pub byz: Vec<ByzFacts>,
     /// The runner's Prometheus text at the end of the run (every node's
     /// families under its `node{i}_` label).
     pub metrics: String,
@@ -756,6 +781,8 @@ struct NodeHandles {
     artifacts: Option<ArtifactSource>,
     observer: EtObserver,
     staking: FakeStaking,
+    #[cfg(feature = "dpos-devnet-byzantine")]
+    byz: ByzReport,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1073,6 +1100,8 @@ async fn drive(
         .map(|node| node.observer.boundaries.lock().unwrap().clone())
         .collect();
     let staking_reads: Vec<StakingReads> = nodes.iter().map(|node| node.staking.reads()).collect();
+    #[cfg(feature = "dpos-devnet-byzantine")]
+    let byz: Vec<ByzFacts> = nodes.iter().map(|node| node.byz.snapshot()).collect();
     let (tracked_sets, tracked_mismatches, tracked_forwarded) = {
         let t = tracked.lock().unwrap();
         (t.per_node.clone(), t.mismatches, t.forwarded)
@@ -1094,6 +1123,8 @@ async fn drive(
         tracked_mismatches,
         tracked_forwarded,
         staking_reads,
+        #[cfg(feature = "dpos-devnet-byzantine")]
+        byz,
         metrics,
         logs,
         simulator_ack_drops,
@@ -1178,6 +1209,8 @@ pub(super) async fn frontier_plane(
     me: PeerPubkey,
     marshal_slot: Arc<OnceLock<MarshalMailbox>>,
     counters: UpstreamCounters,
+    #[cfg(feature = "dpos-devnet-byzantine")] byz: ByzReport,
+    #[cfg(feature = "dpos-devnet-byzantine")] forge_seed_slot: bool,
 ) -> PlaneUpstreamHandle<deterministic::Context> {
     let (sender, receiver) = oracle
         .control(me.clone())
@@ -1186,6 +1219,10 @@ pub(super) async fn frontier_plane(
         .expect("frontier channel");
     let (handler, waiters) = new_bridge(marshal_slot);
     let handler = CountingHandler::new(handler, counters);
+    // The R-008 role wraps the SERVE side, so the victim's own consumer path is
+    // production's verbatim.
+    #[cfg(feature = "dpos-devnet-byzantine")]
+    let handler = super::byzantine_roles::ForgedSeedProducer::new(handler, byz, forge_seed_slot);
     let (engine, mailbox) = commonware_resolver::p2p::Engine::new(
         ctx.with_label("frontier_resolver"),
         commonware_resolver::p2p::Config {
@@ -1227,6 +1264,8 @@ async fn build_node(
 ) -> NodeHandles {
     let ctx_i = ctx.with_label(&format!("node{i}"));
     let me = peers[i].public_key();
+    #[cfg(feature = "dpos-devnet-byzantine")]
+    let byz = ByzReport::default();
 
     // The five plane channels, each behind its own persistent `Muxer`.
     let register = |channel: u64| {
@@ -1390,6 +1429,10 @@ async fn build_node(
             me.clone(),
             marshal_slot.clone(),
             upstream_counters.clone(),
+            #[cfg(feature = "dpos-devnet-byzantine")]
+            byz.clone(),
+            #[cfg(feature = "dpos-devnet-byzantine")]
+            matches!(role, Role::ForgedSeedUpstream),
         )
         .await,
         upstream_counters.clone(),
@@ -1566,6 +1609,33 @@ async fn build_node(
                 let roster = roster.clone();
                 Arc::new(move |target| Some((roster(target.checked_sub(1)?)?, roster(target)?)))
             };
+            // R-002: the BEACON_CHANNEL sender half, wrapped. `None` on every
+            // honest node, and then the wrapper is a pure pass-through — the type
+            // is uniform across roles so `beacon::build`'s `Se` does not branch.
+            #[cfg(feature = "dpos-devnet-byzantine")]
+            let bcs = super::byzantine_roles::TwoRevealSender::new(
+                bcs,
+                match role {
+                    Role::TwoReveals { .. } => {
+                        assert_ne!(i, 0, "the two-reveal dealer must not BE its own victim");
+                        Some(super::byzantine_roles::TwoRevealCfg {
+                            me_key: peers[i].clone(),
+                            victim: pks[0].clone(),
+                            others: pks
+                                .iter()
+                                .filter(|p| **p != me && **p != pks[0])
+                                .cloned()
+                                .collect(),
+                            committee_for: committee_for.clone(),
+                            namespace: fluentbase_bls::beacon::seed_namespace(&fluent_namespace(
+                                CHAIN_ID,
+                            )),
+                            report: byz.clone(),
+                        })
+                    }
+                    _ => None,
+                },
+            );
             let committee_source: CommitteeSource = {
                 let read = read_committee.clone();
                 Arc::new(move |epoch| epoch_committee_from_snapshot(&read(epoch)?).ok())
@@ -1611,8 +1681,21 @@ async fn build_node(
             .expect("beacon::build");
             // The plane's task handles are detached on drop (commonware `Handle`
             // has no `Drop`); they live until the runner returns.
+            #[cfg(feature = "dpos-devnet-byzantine")]
+            let randomness = match role {
+                Role::TwoReveals {
+                    withhold_partials: true,
+                } => super::byzantine_roles::WithholdingRandomness::wrap(
+                    plane.randomness,
+                    CHAIN_ID,
+                    byz.clone(),
+                ),
+                _ => plane.randomness,
+            };
+            #[cfg(not(feature = "dpos-devnet-byzantine"))]
+            let randomness = plane.randomness;
             (
-                plane.randomness,
+                randomness,
                 Some(plane.artifact_bytes),
                 Some(plane.agreement_intake),
             )
@@ -1827,5 +1910,7 @@ async fn build_node(
         artifacts,
         observer,
         staking,
+        #[cfg(feature = "dpos-devnet-byzantine")]
+        byz,
     }
 }

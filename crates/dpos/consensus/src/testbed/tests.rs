@@ -64,6 +64,10 @@ fn a_frontier_fetch_with_no_peer_times_out_on_the_runtime_clock() {
                 me,
                 Arc::new(std::sync::OnceLock::new()),
                 UpstreamCounters::default(),
+                #[cfg(feature = "dpos-devnet-byzantine")]
+                Default::default(),
+                #[cfg(feature = "dpos-devnet-byzantine")]
+                false,
             )
             .await;
             let t0 = ctx.current();
@@ -1833,5 +1837,457 @@ fn a_rotated_out_node_without_the_rejump_parks() {
         out.simulator_ack_drops,
         out.virtual_elapsed,
         out.real_elapsed
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Э3.3 — the byzantine beacon / certificate roles (register entries R-002, R-008)
+//
+// Each test states what the register PREDICTED, carries BOTH branches of that
+// prediction as mutually exclusive assertions, prints which one the run took, and
+// asserts the one that was observed. Every one first asserts that its wrapper
+// actually tampered: a green branch over a wrapper that swapped nothing would
+// state nothing about production at all.
+// ---------------------------------------------------------------------------
+
+/// (R-002) Node 1 deals TWICE: every member but node 0 receives the log its
+/// `seal_dealings` broadcast, node 0 receives a second, independently dealt and
+/// validly signed log of the same dealer over the same `Info`.
+///
+/// **What R-002 predicted** (`.dpos-study/REGISTER.md`, R-002): the confirms are
+/// hash-sensitive, the agreement pins the majority's hash, and the victim's
+/// `all_held` is false FOREVER — no refetch (the dealer is already in
+/// `recorded`), recompute looping — so the victim holds no share for the epoch
+/// and every carry-forward epoch after it.
+///
+/// **What the run showed (2026-09-09): branch (b) — REPRODUCED, for the victim.**
+/// Node 0 finishes the epoch-2 ceremony with `dkg_ceremony_ok = 0` and
+/// `epoch_engine_demoted_no_polynomial = 2`, while nodes 1, 2 and 3 all mint
+/// (`ok = 1`, no demote) and hold the same `PK_2`. Node 0 holds the AGREED
+/// ARTIFACT for epoch 2 — it knows the key, it just has no share under it. The
+/// CHAIN does not stop: three signers is exactly `quorum(4)`, so all four nodes
+/// reach 72 with no halt and no ERROR line. The register's chain-stopping half
+/// needs the second link, which the test below runs.
+///
+/// Falsifier: the wrapper not swapping (`reveals_swapped == 0`), the two logs
+/// hashing equal, either log failing the receiver's own `check`; a victim that
+/// keeps its share (branch (a) — then the first-wins `recorded` rule does not
+/// split the committee and the register is wrong); a second node demoted (then
+/// the split is not confined to the addressed victim); a halt.
+#[cfg(feature = "dpos-devnet-byzantine")]
+#[test]
+fn a_dealer_with_two_logs_leaves_the_addressed_victim_without_a_share() {
+    let mut stand = Stand::new(StandConfig::live(4, 1));
+    stand.node(1).role(Role::TwoReveals {
+        withhold_partials: false,
+    });
+    let out = stand.run_until(reached(72), Duration::from_secs(200));
+
+    // (1) THE TAMPER'S OWN WITNESS, before anything about the reaction.
+    let byz = &out.byz[1];
+    assert!(
+        byz.reveals_swapped >= 1,
+        "the two-reveal wrapper swapped nothing: {byz:?}"
+    );
+    assert_eq!(byz.reveals_seen, byz.reveals_swapped, "{byz:?}");
+    assert!(
+        byz.log1_hash.is_some() && byz.log1_hash != byz.log2_hash,
+        "the two logs are the same bytes: {byz:?}"
+    );
+    assert!(
+        byz.both_logs_check,
+        "a log the receiver's own `check` would drop is not an equivocation: {byz:?}"
+    );
+
+    // (2) The two branches of the prediction, mutually exclusive by construction.
+    let victim_minted = out.metric(0, "dkg_ceremony_ok_total") == Some(1.0);
+    let victim_demoted = out
+        .metric(0, "epoch_engine_demoted_no_polynomial_total")
+        .unwrap_or(0.0)
+        >= 1.0;
+    assert_ne!(
+        victim_minted,
+        victim_demoted,
+        "the victim both minted and was demoted, or neither — neither branch of R-002 applies: \
+         ok={:?} demote={:?}",
+        out.metric(0, "dkg_ceremony_ok_total"),
+        out.metric(0, "epoch_engine_demoted_no_polynomial_total")
+    );
+    eprintln!(
+        "(R-002/a) branch = {} | heights={:?} log1={:?} log2={:?} virtual={:?} real={:?}",
+        if victim_demoted {
+            "(b) REPRODUCED — the victim holds no share"
+        } else {
+            "(a) NOT reproduced — the victim kept its share"
+        },
+        out.heights,
+        byz.log1_hash,
+        byz.log2_hash,
+        out.virtual_elapsed,
+        out.real_elapsed
+    );
+    assert!(
+        victim_demoted,
+        "branch (a) was observed: the victim minted a share despite holding the other log — \
+         R-002's `record_checked_log` split did not happen (metrics: ok={:?}, demote={:?})",
+        out.metric(0, "dkg_ceremony_ok_total"),
+        out.metric(0, "epoch_engine_demoted_no_polynomial_total")
+    );
+
+    // (3) The observed branch, in full.
+    assert!(!out.timed_out, "heights {:?}", out.heights);
+    assert!(out.halted.is_empty(), "{:?}", out.halted);
+    assert!(out.errors().is_empty(), "{:?}", out.errors());
+    assert_eq!(out.diverged, None);
+    out.assert_lockstep_except(&[]);
+    assert_eq!(
+        out.metric(0, "dkg_ceremony_ok_total"),
+        Some(0.0),
+        "the victim must not have finished the ceremony"
+    );
+    for i in [1, 2, 3] {
+        assert_eq!(
+            out.metric(i, "dkg_ceremony_ok_total"),
+            Some(1.0),
+            "node {i} (not the victim) must have minted"
+        );
+        assert_eq!(
+            out.metric(i, "epoch_engine_demoted_no_polynomial_total"),
+            Some(0.0),
+            "node {i} (not the victim) must keep its share — the split is addressed"
+        );
+    }
+    // The victim knows the KEY (the agreement's artifact reaches it) and has no
+    // SHARE under it: that is precisely the state R-002 describes.
+    let pk = pk_of(artifact_on_every_node(&out, &[0, 1, 2, 3], 2));
+    for h in 2 * EPOCH_LEN..=*out.heights.iter().min().unwrap() {
+        seed_agreed_at(&out, &[1, 2, 3], h, 2, &pk);
+    }
+}
+
+/// (R-002, second link) The same two-log dealer, now also withholding its seed
+/// partial: its signer scheme is rebuilt over the epoch's VERIFY-ONLY oracle, so
+/// `SeedOracle::sign_partial` answers `None` (`beacon/oracle.rs:172-189`) and
+/// `CombinedScheme::sign` therefore casts NO VOTE at all
+/// (`bls/src/combined_scheme.rs:284-287`).
+///
+/// **What R-002 predicted:** with the victim shareless, the remaining honest
+/// signers are `n − 1 − f = t − 1`, so every seed needs the byzantine dealer's
+/// partial and withholding it means no certificate of the epoch can be assembled
+/// — the chain stops. The register marked the threshold `t = quorum(n)` as
+/// `[LIKELY]`, unread since 09-03.
+///
+/// **What the run showed (2026-09-09): branch (b1) — the BLOCKER reproduced
+/// whole.** All four nodes stop at 63, the last block of the pre-beacon epoch;
+/// `halted` is empty and there is not one ERROR line, so the stop is SILENT. No
+/// node derives 64. The threshold is confirmed, not assumed: `assemble` computes
+/// it as `M::quorum(participants)` from the same fault model the vote half just
+/// quorum'd under (`bls/src/combined_scheme.rs:387-388`), i.e. exactly the vote
+/// quorum — 3 of 4 here — and with node 0 shareless and node 1 silent only two
+/// signers remain.
+///
+/// Falsifier: `withhold_probe != Some((true, false))` (then the node had no
+/// partial to withhold and the stop says nothing); a chain that crosses 64
+/// (branch (b2) — then the seed threshold is NOT the vote quorum and the register
+/// is wrong about it); a halt latch or an ERROR line (then the stop is loud, and
+/// "silent" is the part that makes this a blocker).
+#[cfg(feature = "dpos-devnet-byzantine")]
+#[test]
+fn a_two_log_dealer_that_also_withholds_its_partial_stops_the_chain_silently() {
+    let mut stand = Stand::new(StandConfig::live(4, 1));
+    stand.node(1).role(Role::TwoReveals {
+        withhold_partials: true,
+    });
+    let out = stand.run_until(reached(72), Duration::from_secs(200));
+
+    // (1) Both tampers' own witnesses.
+    let byz = &out.byz[1];
+    assert!(byz.reveals_swapped >= 1, "{byz:?}");
+    assert!(
+        byz.log1_hash.is_some() && byz.log1_hash != byz.log2_hash,
+        "{byz:?}"
+    );
+    assert!(byz.both_logs_check, "{byz:?}");
+    assert!(
+        byz.schemes_withheld >= 1,
+        "no signer scheme was rebuilt over the verify-only oracle: {byz:?}"
+    );
+    assert_eq!(
+        byz.withhold_probe,
+        Some((true, false)),
+        "the withholding did not take effect: the honest scheme must sign a probe subject of \
+         the epoch and the rebuilt one must not ({byz:?})"
+    );
+
+    // (2) The two branches.
+    let crossed = out.heights.iter().any(|h| *h >= 2 * EPOCH_LEN);
+    eprintln!(
+        "(R-002/b) branch = {} | heights={:?} virtual={:?} real={:?}",
+        if crossed {
+            "(b2) NOT reproduced — a seed was assembled without the withheld partial"
+        } else {
+            "(b1) REPRODUCED — the chain stops at the bootstrap boundary"
+        },
+        out.heights,
+        out.virtual_elapsed,
+        out.real_elapsed
+    );
+    assert!(
+        !crossed,
+        "branch (b2) was observed: some node crossed {} with a σ, so the seed threshold is not \
+         `M::quorum(participants)` (`bls/src/combined_scheme.rs:387-388`) — heights {:?}",
+        2 * EPOCH_LEN,
+        out.heights
+    );
+
+    // (3) The observed branch, in full: a SILENT stop one block short.
+    assert_eq!(
+        out.heights,
+        vec![2 * EPOCH_LEN - 1; 4],
+        "every node is expected to park on the last block of the pre-beacon epoch"
+    );
+    assert!(out.timed_out, "the run is expected to end on its deadline");
+    assert!(
+        out.halted.is_empty(),
+        "the stop must be silent: {:?}",
+        out.halted
+    );
+    assert!(
+        out.errors().is_empty(),
+        "the stop must be silent: {:?}",
+        out.errors()
+    );
+    seedless_on_every_node(&out, &[0, 1, 2, 3], 1..2 * EPOCH_LEN);
+    // The victim is shareless for the same reason as in the test above, and the
+    // other two members did mint — so what is missing is one PARTIAL, not a key.
+    assert_eq!(out.metric(0, "dkg_ceremony_ok_total"), Some(0.0));
+    for i in [1, 2, 3] {
+        assert_eq!(
+            out.metric(i, "dkg_ceremony_ok_total"),
+            Some(1.0),
+            "node {i}"
+        );
+    }
+}
+
+/// The (R-008) schedule: all five members in epochs 0 and 1, `[0, 1, 2]` from
+/// epoch 2 on. Nodes 3 and 4 are therefore inside the committee while the epoch-2
+/// ceremony runs and OUTSIDE it from the first block of epoch 2 — the height at
+/// which they first need `PK_2` and have to reach the chain through the upstream
+/// plane.
+#[cfg(feature = "dpos-devnet-byzantine")]
+fn drop_the_last_two_from_epoch_two() -> Committees {
+    Committees::Schedule(Arc::new(|epoch, n| {
+        Some(if epoch >= 2 {
+            vec![0, 1, 2]
+        } else {
+            (0..n).collect()
+        })
+    }))
+}
+
+/// (R-008) The three committee members serve `Finalized{h}` over the frontier
+/// plane with the σ slot of the certificate replaced, for `h` in
+/// `byzantine_roles::FORGE_WINDOW`. The planted σ is a REAL σ of another round of
+/// the same epoch (harvested from the answer for 64), so it is a valid G1 point
+/// that cannot verify for the round it is planted into; the multisig half is
+/// re-encoded byte-identically.
+///
+/// **What R-008 predicted** (`.dpos-study/REGISTER.md`, R-008): `verify_certificate`
+/// under `SeedCheck::NoKey` accepts any σ, so a follower with no `PK_E` puts the
+/// forged certificate in its archive and quarantines the σ; when the key lands the
+/// σ is refused as `Invalid` and dropped, and the archive keeps serving the
+/// forgery to other nodes, which see a data fault and rotate away from the honest
+/// follower. `record_data_fault` is never called, so the follower does not rotate
+/// away from the LYING upstream.
+///
+/// **What the run showed (2026-09-09): branch (a) — REPRODUCED, whole, including
+/// the archive poisoning.** Node 0 forged the six certificates 65..70. Nodes 3
+/// and 4 rejected NOTHING (`deliveries_rejected == 0`) and counted the keyless
+/// admission (`dpos_seed_verify_no_key_total` non-zero while
+/// `dpos_seed_verify_ok_total` was still 0 at that point). Both later obtained
+/// `PK_2` and `promote_epoch` refused exactly the six forged rounds
+/// (`beacon/certify.rs:310-317`), one ERROR line each, six per node — the rounds
+/// are `(2, view h − 63)` for exactly the six forged heights, which is what ties
+/// the refusal back to THIS wrapper's bytes. Neither node ever derived 64..70:
+/// what carried them forward was the production re-jump (EL sync), not the σ.
+/// And node 3 SERVED the forged certificates on to node 4 — its
+/// `served_seed_replays` names the heights at which it handed out a σ it had
+/// already served under a different round, which an honest archive cannot do
+/// because σ is unique per `(round, PK)` (`beacon/seed.rs`).
+///
+/// The re-jump gate is production's own and is load-bearing here rather than
+/// decorative: WITHOUT it the follower parks at 63 forever and never acquires
+/// `PK_2` at all, because the key-repair sweep only considers epochs STRICTLY
+/// BELOW its scheme frontier (`epoch_manager.rs:1677`) and its frontier is driven
+/// by boundary deliveries its own parked executor never produces. That run is
+/// recorded in the session journal as "the path is not reached", not as "not
+/// reproduced".
+///
+/// Falsifier: the wrapper forging nothing, forging a σ that reads back equal to
+/// the original, or touching the multisig half; `deliveries_rejected > 0` on a
+/// follower (branch (b) — then the `NoKey` admission is not what the entry
+/// describes); no promote refusal at all together with a zero keyless-admission
+/// count (branch (c) — the path was not reached); a refusal naming a round the
+/// wrapper did not forge; a follower deriving one of the forged heights (then a
+/// forged σ reached the executor, which would be worse than R-008 says); the
+/// three members losing lockstep.
+#[cfg(feature = "dpos-devnet-byzantine")]
+#[test]
+fn a_forged_seed_slot_is_admitted_with_no_key_and_refused_when_the_key_lands() {
+    let mut cfg = StandConfig::live(5, 1);
+    cfg.committees = drop_the_last_two_from_epoch_two();
+    // Every link left in place, so the two outsiders can still acquire `PK_2`
+    // after the fact — the half of R-008 that only exists once the key lands.
+    cfg.peer_set = PeerSet::CommitteeTrackedOnly;
+    cfg.re_jump_threshold = Some(crate::cold_start_jump::JUMP_THRESHOLD.min(EPOCH_LEN));
+    let mut stand = Stand::new(cfg);
+    for i in 0..3 {
+        stand.node(i).role(Role::ForgedSeedUpstream);
+    }
+    let out = stand.run_until(
+        |p| p.min_height_of(&[0, 1, 2]) >= 140,
+        Duration::from_secs(300),
+    );
+    assert!(!out.timed_out, "heights {:?}", out.heights);
+
+    // (1) THE TAMPER'S OWN WITNESS.
+    let forged: Vec<u64> = (0..3)
+        .flat_map(|i| out.byz[i].forged_heights.clone())
+        .collect();
+    assert!(
+        !forged.is_empty(),
+        "no certificate was forged: {:?}",
+        (0..5).map(|i| out.byz[i].clone()).collect::<Vec<_>>()
+    );
+    for i in 0..3 {
+        let byz = &out.byz[i];
+        if byz.forged_heights.is_empty() {
+            continue;
+        }
+        assert!(
+            byz.forged_seed_differs,
+            "node {i} served a 'forged' σ that read back as the original: {byz:?}"
+        );
+        assert!(
+            byz.forged_vote_half_intact,
+            "node {i}'s forge touched the multisig half: {byz:?}"
+        );
+        for h in &byz.forged_heights {
+            assert!(
+                crate::testbed::byzantine_roles::FORGE_WINDOW.contains(h),
+                "node {i} forged {h}, outside the window: {byz:?}"
+            );
+        }
+    }
+
+    // (2) The three branches. `followers` are the two nodes outside `committee[2]`.
+    let followers = [3usize, 4];
+    let rejected: u64 = followers
+        .iter()
+        .map(|&i| out.upstream[i].deliveries_rejected)
+        .sum();
+    let keyless: f64 = followers
+        .iter()
+        .map(|&i| {
+            out.metric(i, "dpos_seed_verify_no_key_total")
+                .unwrap_or(0.0)
+        })
+        .sum();
+    let refusals = out.logs_containing("quarantined seed does not verify");
+    let branch = if rejected > 0 {
+        "(b) NOT reproduced — a follower rejected the forged certificate outright"
+    } else if refusals.is_empty() {
+        "(c) PATH NOT REACHED — nothing was admitted keyless, or no key ever landed"
+    } else {
+        "(a) REPRODUCED — admitted with no key, refused when the key landed"
+    };
+    eprintln!(
+        "(R-008) branch = {branch} | heights={:?} forged={forged:?} keyless={keyless} \
+         refusals={} replays={:?} virtual={:?} real={:?}",
+        out.heights,
+        refusals.len(),
+        (0..5)
+            .map(|i| out.byz[i].served_seed_replays.clone())
+            .collect::<Vec<_>>(),
+        out.virtual_elapsed,
+        out.real_elapsed
+    );
+    assert_eq!(
+        rejected, 0,
+        "branch (b) was observed: a follower rejected the forged certificate, so `NoKey` \
+         admission is not the gate R-008 names — upstream {:?}",
+        out.upstream
+    );
+    assert!(
+        keyless > 0.0,
+        "branch (c) was observed: no keyless admission was counted, the `NoKey` window never \
+         opened"
+    );
+    assert!(
+        !refusals.is_empty(),
+        "branch (c) was observed: the `NoKey` window opened but no key ever landed, so nothing \
+         was promoted and the second half of R-008 was not exercised"
+    );
+
+    // (3) The observed branch, in full.
+    out.assert_lockstep_except(&followers);
+    assert!(out.halted.is_empty(), "{:?}", out.halted);
+    // The ONLY ERROR lines this run may carry are the promote refusals.
+    for line in out.errors() {
+        assert!(
+            line.text.contains("quarantined seed does not verify"),
+            "unexpected ERROR line: {line:?}"
+        );
+    }
+    // Every refused round is a height THIS wrapper forged: view = h − (2·L − 1).
+    let mut refused_heights: Vec<u64> = refusals
+        .iter()
+        .map(|l| {
+            let view = l
+                .text
+                .rsplit_once("View(")
+                .and_then(|(_, rest)| rest.split(')').next())
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or_else(|| panic!("no view in {l:?}"));
+            assert!(
+                l.text.contains("Epoch(2)"),
+                "a refusal outside epoch 2: {l:?}"
+            );
+            view + 2 * EPOCH_LEN - 1
+        })
+        .collect();
+    refused_heights.sort_unstable();
+    refused_heights.dedup();
+    let mut forged_sorted = forged.clone();
+    forged_sorted.sort_unstable();
+    forged_sorted.dedup();
+    assert_eq!(
+        refused_heights, forged_sorted,
+        "the rounds refused at promote are not the heights the wrapper forged"
+    );
+    // No follower ever derived a forged height: the σ was dropped, not consumed.
+    for &i in &followers {
+        for h in &forged_sorted {
+            assert!(
+                out.seeds[i].get(h).cloned().flatten().is_none(),
+                "follower {i} derived height {h} — a forged σ reached its executor"
+            );
+        }
+        assert!(
+            out.metric(i, "dpos_seed_verify_ok_total").unwrap_or(0.0) > 0.0,
+            "follower {i} never verified a σ, so it never obtained an epoch key at all"
+        );
+    }
+    // Archive poisoning: a follower handed a forged certificate on to the other.
+    let relayed: Vec<u64> = followers
+        .iter()
+        .flat_map(|&i| out.byz[i].served_seed_replays.clone())
+        .collect();
+    assert!(
+        !relayed.is_empty(),
+        "no follower relayed the forgery — the archive-poisoning half of R-008 was not reached \
+         (serve counts {:?})",
+        out.upstream
     );
 }

@@ -653,6 +653,78 @@ impl<U: CertUpstream> CertUpstream for CountingUpstream<U> {
     }
 }
 
+/// What one node's byzantine wrappers did — the tamper's own witness.
+///
+/// Every field is written by a wrapper and read by a test. A wrapper that never
+/// fired leaves the counters at zero, which is what makes "the branch I asserted
+/// is the branch the run took" checkable instead of assumed.
+#[cfg(feature = "dpos-devnet-byzantine")]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) struct ByzFacts {
+    // ---- R-002, `Role::TwoReveals` ----
+    /// `DkgBody::Reveal` broadcasts this node's wrapper intercepted.
+    pub reveals_seen: u64,
+    /// Of those, the ones it actually split (original to the others, forged to
+    /// the victim).
+    pub reveals_swapped: u64,
+    /// `keccak256(encode(L1))` — the log every honest member but the victim got.
+    pub log1_hash: Option<B256>,
+    /// `keccak256(encode(L2))` — the log the victim got instead.
+    pub log2_hash: Option<B256>,
+    /// Both logs `check` against the epoch's `Info` AND name this node as the
+    /// dealer — the production predicate a receiver applies
+    /// (`ceremony.rs::handle`'s `Reveal` arm).
+    pub both_logs_check: bool,
+    /// The victim the forged log was addressed to.
+    pub victim: Option<PeerPubkey>,
+    /// Signer schemes this node's `Randomness` wrapper rebuilt over the
+    /// verify-only oracle.
+    pub schemes_withheld: u64,
+    /// `(the honest scheme signs a probe subject, the withheld one does)` at the
+    /// last rebuild — the withholding's own witness. `Some((true, false))` is the
+    /// only shape that proves the partial is being withheld rather than absent.
+    pub withhold_probe: Option<(bool, bool)>,
+
+    // ---- R-008, `Role::ForgedSeedUpstream` ----
+    /// `Finalized{h}` answers this node served inside the window with a σ slot
+    /// present.
+    pub certs_seen: u64,
+    /// Of those, the ones whose σ slot it replaced.
+    pub certs_forged: u64,
+    /// The heights it forged, in order.
+    pub forged_heights: Vec<u64>,
+    /// Every forged answer decoded back to `Some(σ')` with `σ' != σ`.
+    pub forged_seed_differs: bool,
+    /// Every forged answer's multisig half re-encoded byte-identically — the
+    /// certificate bitmap and aggregate were NOT touched (and are not compared
+    /// as bytes anywhere else: this is the one place the stand knows both
+    /// versions of the same certificate).
+    pub forged_vote_half_intact: bool,
+    /// ARCHIVE-POISONING WITNESS, kept by every node that is NOT forging: the
+    /// heights it served whose σ had already been served under a DIFFERENT round.
+    /// A σ is unique per `(round, PK)` (`seed.rs`), so an honest archive can never
+    /// produce one — a non-empty list means this node relayed a forgery it had
+    /// itself accepted.
+    pub served_seed_replays: Vec<u64>,
+}
+
+/// A node's [`ByzFacts`] behind a handle the stand can clone into its wrappers
+/// and read at collection time.
+#[cfg(feature = "dpos-devnet-byzantine")]
+#[derive(Clone, Debug, Default)]
+pub(super) struct ByzReport(Arc<Mutex<ByzFacts>>);
+
+#[cfg(feature = "dpos-devnet-byzantine")]
+impl ByzReport {
+    pub(super) fn snapshot(&self) -> ByzFacts {
+        self.0.lock().expect("byz report").clone()
+    }
+
+    pub(super) fn with<R>(&self, f: impl FnOnce(&mut ByzFacts) -> R) -> R {
+        f(&mut self.0.lock().expect("byz report"))
+    }
+}
+
 /// The production `FrontierHandler` behind a call counter — what the node's
 /// frontier resolver engine gets as producer and consumer.
 #[derive(Clone)]

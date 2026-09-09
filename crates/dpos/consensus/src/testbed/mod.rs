@@ -49,6 +49,11 @@
 //! `Randomness` trait's error types are `pub(crate)`, so a separate crate cannot
 //! promote a node to `Signer`.
 
+/// The byzantine wrappers of Э3.3 (`Role::TwoReveals`, `Role::ForgedSeedUpstream`),
+/// gated exactly as `crate::byzantine` is — a stand built without the feature has
+/// no way to reach them.
+#[cfg(feature = "dpos-devnet-byzantine")]
+mod byzantine_roles;
 mod capture;
 mod fakes;
 mod stand;
