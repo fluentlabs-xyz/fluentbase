@@ -3,8 +3,9 @@
 use super::{
     capture::{self, Captured, Sink},
     fakes::{
-        genesis_sealed, CountingHandler, CountingUpstream, FakeBeacon, FakeChain, FakeDeriver,
-        NoSink, NoTxs, Schedule, SnapshotReader, UpstreamCounters, UpstreamStats,
+        genesis_sealed, CountingHandler, CountingUpstream, ElNetwork, FakeBeacon, FakeChain,
+        FakeDeriver, FakeStaking, Members, NoSink, NoTxs, StakingReads, UpstreamCounters,
+        UpstreamStats,
     },
 };
 use crate::{
@@ -50,12 +51,15 @@ use fluentbase_bls::{
 use fluentbase_p2p::{
     constants::{
         BEACON_CHANNEL, BEACON_RESOLVER_CHANNEL, BROADCAST_CHANNEL, CERT_CHANNEL,
-        DKG_SUBCHANNEL_BASE, FRONTIER_CHANNEL, MARSHAL_CHANNEL, RESOLVER_CHANNEL, VOTE_CHANNEL,
+        DKG_SUBCHANNEL_BASE, FRONTIER_CHANNEL, MARSHAL_CHANNEL, MAX_REGISTRY_PEER_SET,
+        RESOLVER_CHANNEL, VOTE_CHANNEL,
     },
     NoopBlocker,
 };
-use fluentbase_staking_reader::reader::{
-    is_epoch_boundary, ConsensusKeys, ValidatorSetSnapshot, ValidatorWithKeys,
+use fluentbase_staking_reader::{
+    epoch_transition::{PeerSetSink, TransitionOutcome, PENDING_RETRY_BACKOFF},
+    reader::ValidatorSetSnapshot,
+    EpochTransition, StakingStateRead as _,
 };
 use fluentbase_types::staking_protocol::epoch_at_block;
 use rand_08::{rngs::StdRng, SeedableRng as _};
@@ -64,7 +68,7 @@ use std::{
     num::{NonZeroU32, NonZeroU64},
     path::PathBuf,
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex, OnceLock,
     },
     time::{Duration, Instant},
@@ -100,12 +104,25 @@ pub(super) struct StandConfig {
     /// directory (`beacon::build` reloads shares through `std::fs`), one per
     /// `StandConfig::live` call, reused by a replay over the same config.
     pub share_root: PathBuf,
-    /// The epoch the boundary relay's cold-start arm enters — production's
-    /// `EpochTransition::cold_start` at the node's finalized block. `0` for a
-    /// fresh chain; a replay sets it to the epoch of the height the nodes
-    /// stopped at (the relay then waits for the NEXT boundary block, and
-    /// `soft_enter_committees` covers the earlier epochs for verification).
-    pub cold_start_epoch: u64,
+    /// What this node's EXECUTION layer persisted across a restart: the
+    /// `(height, executed hash)` of its finalized block, production's
+    /// `(latest_finalized, latest_finalized_hash)` read out of reth before
+    /// `EpochTransition::cold_start` (`consensus/src/dpos.rs:2044-2047`).
+    /// `None` = a fresh chain, cold-started at genesis.
+    ///
+    /// The stand's block BODIES are not persisted (the replay re-derives
+    /// 1..=height into a fresh `FakeChain`), so this is the marker only. The
+    /// EPOCH is NOT configured any more: `cold_start` derives it from `height`
+    /// over the geometry it freezes from the state at `hash`.
+    pub resume_from: Option<(u64, B256)>,
+    /// The steady-state re-jump gate. `None` (the default) pins it at `u64::MAX`
+    /// so the jump never fires and the stand keeps a CONTIGUOUS chain on every
+    /// node — which every test written before step 5 assumes. `Some(t)` is
+    /// production's own gate, `JUMP_THRESHOLD.min(epoch_block_interval)`
+    /// (`consensus/src/dpos.rs:2466`); with it a node whose executor has fallen
+    /// more than `t` behind the upstream frontier EL-syncs forward and leaves a
+    /// hole, exactly as a production node does.
+    pub re_jump_threshold: Option<u64>,
 }
 
 /// The randomness surface every node runs.
@@ -177,7 +194,8 @@ impl StandConfig {
             peer_set: PeerSet::AllNodes,
             beacon: Beacon::Static,
             share_root: PathBuf::new(),
-            cold_start_epoch: 0,
+            resume_from: None,
+            re_jump_threshold: None,
         }
     }
 
@@ -197,6 +215,9 @@ impl StandConfig {
     }
 }
 
+/// WHO sits in each epoch's committee — the stand's INPUT. It says nothing
+/// about WHEN an epoch becomes readable or at WHICH state hash: that is
+/// [`FakeStaking`]'s answer, from the contract's commit rule.
 #[derive(Clone)]
 pub(super) enum Committees {
     /// Every node, every epoch.
@@ -324,10 +345,35 @@ pub(super) struct Outcome {
     /// `i` holds for epoch `e` (`Beacon::Live`; empty otherwise). Read through
     /// the plane's own `ArtifactSource` — what `consensus_getEpochArtifact` serves.
     pub artifacts: Vec<BTreeMap<u64, Vec<u8>>>,
+    /// `et_steps[i]` = every `cold_start` / `on_finalized` node `i`'s
+    /// `EpochTransition` answered, in call order.
+    pub et_steps: Vec<Vec<EtStep>>,
+    /// `et_boundaries[i]` = every boundary trigger node `i`'s transition
+    /// delivered to its epoch manager, with the state hash it read at.
+    pub et_boundaries: Vec<Vec<EtBoundary>>,
+    /// `geometry[i]` = `EpochTransition::frozen_geometry()` of node `i` at the
+    /// end of the run: `(dposActivationBlock, epochBlockInterval)` or `None`
+    /// when nothing froze it.
+    pub geometry: Vec<Option<(u64, u64)>>,
+    /// `tracked[i]` = every `(epoch, peer set)` node `i`'s transition handed its
+    /// `PeerSetSink`.
+    pub tracked: Vec<Vec<(u64, Vec<PeerPubkey>)>>,
+    /// How many times two nodes' transitions tracked DIFFERENT peer sets for the
+    /// same epoch. Must be zero.
+    pub tracked_mismatches: u64,
+    /// `staking_reads[i]` = what node `i` ASKED the fake staking state, split by
+    /// whether the epoch was committed at the read height.
+    pub staking_reads: Vec<StakingReads>,
     /// The runner's Prometheus text at the end of the run (every node's
     /// families under its `node{i}_` label).
     pub metrics: String,
     pub logs: Vec<Captured>,
+    /// How many times the SIMULATED network failed to return a send-ack — see
+    /// [`Outcome::SIMULATOR_ACK_DROP`]. Counted rather than hidden: the
+    /// exemption in [`Outcome::errors`] must never be able to swallow anything
+    /// else, and a run where this grows without bound is worth looking at even
+    /// though no single occurrence means a fault.
+    pub simulator_ack_drops: u64,
     pub log_capture_live: bool,
     pub partitions: Vec<PartitionObservation>,
     pub timed_out: bool,
@@ -361,10 +407,45 @@ impl Outcome {
         }
     }
 
+    /// The ONE ERROR line the stand does not count against a run, matched on the
+    /// full `target: message` prefix and nothing looser.
+    ///
+    /// What it is, by code: `simulated::Sender::send` enqueues the message with a
+    /// oneshot ack channel and then awaits it
+    /// (`CW:p2p/src/simulated/network.rs:879-887`); the network replies at
+    /// `:774-776` and logs this line when the reply fails, which happens only if
+    /// the receiver was dropped — that is, the task that called `send` was
+    /// dropped between the enqueue and the ack. The message itself was already
+    /// handed to the transmitter for every recipient the reply names, so nothing
+    /// was lost on the wire.
+    ///
+    /// When it fires here: at an epoch boundary that registers a NEW tracked peer
+    /// set. Registration is not the cause but the trigger — it adds an await
+    /// inside the network actor's loop (`:406-419` runs `broadcast_peer_list`)
+    /// and can make a peer stop being connectable once the oldest of the four
+    /// retained sets is evicted (`:317-345`) — while `abort_below`
+    /// (`epoch_manager.rs:1381-1395`) is dropping the outgoing epoch's engine,
+    /// which is what leaves a send mid-flight. Establishing the mechanism was
+    /// code; attributing the dropped task to the aborted engine was experiment
+    /// (it appears exactly on the boundaries that register a new set and not
+    /// otherwise).
+    ///
+    /// Why it is not production: the authenticated transport has its own
+    /// registration path (`authenticated::discovery`) and no oneshot ack behind
+    /// each `send`, so this failure has no counterpart there. The stand cannot
+    /// reorder it away either — the ordering that produces it is production's
+    /// own (`EpochTransition` tracks the peer set BEFORE it fires the boundary
+    /// trigger, `epoch_transition.rs:647` then `:660`, so the INCOMING epoch's
+    /// engine never sends on an unregistered set; the send that is lost belongs
+    /// to the OUTGOING engine the manager aborts).
+    pub(super) const SIMULATOR_ACK_DROP: &'static str =
+        "commonware_p2p::simulated::network: failed to send ack";
+
     pub(super) fn errors(&self) -> Vec<&Captured> {
         self.logs
             .iter()
             .filter(|l| l.level == tracing::Level::ERROR)
+            .filter(|l| !l.text.starts_with(Self::SIMULATOR_ACK_DROP))
             .collect()
     }
 
@@ -524,34 +605,118 @@ pub(super) fn keys(seed: u64, n: usize) -> (Vec<Ed25519PrivateKey>, Vec<Validato
     (peers, bls)
 }
 
-fn snapshot(
-    epoch: u64,
-    epoch_len: u64,
-    members: &[usize],
-    peers: &[Ed25519PrivateKey],
-    bls: &[ValidatorBlsKeypair],
-) -> ValidatorSetSnapshot {
-    let validators = members
-        .iter()
-        .map(|&i| ValidatorWithKeys {
-            address: Address::with_last_byte(i as u8 + 1),
-            keys: ConsensusKeys {
-                bls_pubkey: BlsPubkey::decode(bls[i].public_bytes().as_slice())
-                    .expect("bls pubkey"),
-                peer_pubkey: peers[i].public_key(),
-                activation_epoch: 0,
-            },
-            tombstoned: false,
-        })
-        .collect();
-    ValidatorSetSnapshot {
-        block_hash: B256::ZERO,
-        block_number: epoch * epoch_len,
-        epoch,
-        validators,
-        // `None` is "the weight ring has wrapped" and the manager refuses the
-        // snapshot; equal unit weights are the plain lottery.
-        weights: Some(vec![1; members.len()]),
+/// One `EpochTransition` call and what it answered — the stand's window into the
+/// state machine that now walks the boundaries.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct EtStep {
+    /// The finalized height handed to `cold_start` / `on_finalized`.
+    pub number: u64,
+    pub outcome: Result<TransitionOutcome, String>,
+}
+
+/// One boundary trigger the transition delivered: the epoch and the state it
+/// read the committee at. `block_hash` is the executed hash of
+/// `boundary − result_lag` (`epoch_transition.rs:290-293`), or the cold-start
+/// anchor for the first entry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct EtBoundary {
+    pub epoch: u64,
+    pub block_hash: B256,
+    pub block_number: u64,
+}
+
+/// What every node's `EpochTransition` did, per node.
+#[derive(Clone, Default)]
+struct EtObserver {
+    steps: Arc<Mutex<Vec<EtStep>>>,
+    boundaries: Arc<Mutex<Vec<EtBoundary>>>,
+    /// `EpochTransition::frozen_geometry()` sampled after every call to it.
+    /// Sampled rather than read at collection time BECAUSE reading it there
+    /// needs `.await` on the transition's mutex, and an extra yield in the
+    /// collection phase lets the torn-down tasks emit one more round of network
+    /// sends whose acks then fail — an ERROR line that says nothing about the
+    /// run. The value is write-once in the transition itself
+    /// (`epoch_transition.rs:44-65`), so a sample after the last call is the
+    /// final value.
+    geometry: Arc<Mutex<Option<(u64, u64)>>>,
+}
+
+/// The `PeerSetSink` half of the production wiring: `EpochTransition` hands the
+/// assembled `active_registry ∪ committee[E] ∪ committee[E+1]` set here and the
+/// simulated network's `Manager::track` takes it, exactly as the node hands it
+/// to the real `Oracle` (`node/src/dpos.rs:1566`, `consensus/src/dpos.rs:2036`).
+///
+/// Two differences the stand cannot avoid, both from having ONE simulated
+/// Oracle stand in for N production ones:
+///
+/// * N nodes track the same epoch. A repeat `track(id, ..)` is refused with a
+///   warn and never applied (`CW:p2p/src/simulated/network.rs:269-284`), so
+///   only the first node's registration of an epoch reaches the network. Every
+///   node's is RECORDED, and the tests compare them.
+/// * A set identical to the last one registered is not re-registered. The
+///   simulated network keeps only `tracked_peer_sets` (4) sets and evicts the
+///   rest, so one id per epoch would push the older sets out for no modelling
+///   gain; and registering a new id mid-run drops the ack of a message already
+///   in flight, which surfaces as `failed to send ack`
+///   (`CW:p2p/src/simulated/network.rs:775`) — a simulator artifact with no
+///   consensus meaning. Membership CHANGES are still registered, which is what
+///   the peer-set tests observe.
+#[derive(Clone)]
+struct TrackSink {
+    node: usize,
+    oracle: Oracle,
+    shared: Arc<Mutex<Tracked>>,
+}
+
+#[derive(Default)]
+struct Tracked {
+    /// `epoch -> the set the FIRST node's transition tracked for it`. Seeded
+    /// with the epoch-0 set the harness registers before any node exists (the
+    /// engines need a peer set to be there), so the transitions' own epoch-0
+    /// track is a no-op against it.
+    by_epoch: BTreeMap<u64, Vec<PeerPubkey>>,
+    /// `per_node[i]` = every `(epoch, set)` node `i`'s transition tracked.
+    per_node: Vec<Vec<(u64, Vec<PeerPubkey>)>>,
+    /// How many times a node tracked a set for an epoch that DIFFERS from the
+    /// one already recorded for it. Forwarding only the first node's set would
+    /// otherwise swallow the disagreement in silence: the union is a function of
+    /// chain state alone, so a difference means two nodes read different
+    /// committees for one epoch.
+    mismatches: u64,
+}
+
+impl PeerSetSink for TrackSink {
+    fn track(
+        &mut self,
+        epoch: u64,
+        peers: Set<PeerPubkey>,
+    ) -> impl core::future::Future<Output = ()> + Send {
+        let members: Vec<PeerPubkey> = peers.iter().cloned().collect();
+        let forward = {
+            let mut shared = self.shared.lock().unwrap();
+            shared.per_node[self.node].push((epoch, members.clone()));
+            let changed = shared
+                .by_epoch
+                .last_key_value()
+                .is_none_or(|(_, last)| *last != members);
+            match shared.by_epoch.get(&epoch) {
+                Some(recorded) if *recorded != members => {
+                    shared.mismatches += 1;
+                    false
+                }
+                Some(_) => false,
+                None => {
+                    shared.by_epoch.insert(epoch, members);
+                    changed
+                }
+            }
+        };
+        let mut manager = self.oracle.manager();
+        async move {
+            if forward {
+                manager.track(epoch, peers).await;
+            }
+        }
     }
 }
 
@@ -562,6 +727,8 @@ struct NodeHandles {
     upstream: UpstreamCounters,
     /// `Beacon::Live`: the plane's artifact read.
     artifacts: Option<ArtifactSource>,
+    observer: EtObserver,
+    staking: FakeStaking,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -579,24 +746,42 @@ async fn drive(
     let (peers, bls) = keys(cfg.seed, n);
     let pks: Vec<PeerPubkey> = peers.iter().map(|p| p.public_key()).collect();
 
-    let schedule: Schedule = {
-        let (peers, bls, committees, epoch_len) = (
-            peers.clone(),
-            bls.clone(),
-            cfg.committees.clone(),
-            cfg.epoch_len,
-        );
-        Arc::new(move |epoch: u64| {
-            let members = match &committees {
-                Committees::All => Some((0..n).collect::<Vec<_>>()),
-                Committees::Schedule(f) => f(epoch, n),
-            }?;
-            Some(snapshot(epoch, epoch_len, &members, &peers, &bls))
+    let members: Members = {
+        let committees = cfg.committees.clone();
+        Arc::new(move |epoch: u64| match &committees {
+            Committees::All => Some((0..n).collect::<Vec<_>>()),
+            Committees::Schedule(f) => f(epoch, n),
         })
     };
-    // The one snapshot `StaticRandomness` deals its shares from: every node, so
-    // every node derives the SAME sharing whatever the epoch's committee is.
-    let full_snapshot = snapshot(0, cfg.epoch_len, &(0..n).collect::<Vec<_>>(), &peers, &bls);
+    // `getRegistryWithKeys()`. `PeerSet::AllNodes` is the production shape — a
+    // registry that holds every activated validator, so a rotated-out member
+    // stays in the tracked union (`epoch_transition.rs:600-606`). The
+    // committee-only configurations model the OTHER production case, a node
+    // that is not in the registry at all, by emptying it: the tracked set is
+    // then `committee[E] ∪ committee[E+1]` and an outsider falls out of it.
+    let registry: Vec<PeerPubkey> = match cfg.peer_set {
+        PeerSet::AllNodes => pks.clone(),
+        PeerSet::Committee { .. } | PeerSet::CommitteeTrackedOnly => Vec::new(),
+    };
+    let bls_pubkeys: Vec<BlsPubkey> = bls
+        .iter()
+        .map(|k| BlsPubkey::decode(k.public_bytes().as_slice()).expect("bls pubkey"))
+        .collect();
+    // Seeded in the SAME order the sink records: `PeerSetSink::track` takes a
+    // `commonware_utils::ordered::Set`, which is sorted, so seeding the harness's
+    // epoch-0 registration in node-index order would read as a disagreement with
+    // every node and re-register the set.
+    let tracked = Arc::new(Mutex::new(Tracked {
+        by_epoch: BTreeMap::from([(
+            0u64,
+            Set::from_iter_dedup(pks.iter().cloned())
+                .iter()
+                .cloned()
+                .collect::<Vec<PeerPubkey>>(),
+        )]),
+        per_node: vec![Vec::new(); n],
+        mismatches: 0,
+    }));
 
     // Two simulated networks (see `PeerSet`): the consensus plane and the
     // upstream plane. Every node is a tracked peer of every other one on both
@@ -640,6 +825,8 @@ async fn drive(
         }
     }
 
+    // The stand's devp2p EL peer, shared by every node — see `ElNetwork`.
+    let el_network = ElNetwork::default();
     let genesis_sealed = genesis_sealed();
     let genesis_hash = genesis_sealed.hash();
     let genesis_block = anchor_order_block(&genesis_sealed).expect("anchor");
@@ -655,8 +842,12 @@ async fn drive(
             &bls,
             &oracle,
             &upstream_oracle,
-            schedule.clone(),
-            full_snapshot.clone(),
+            members.clone(),
+            el_network.clone(),
+            &pks,
+            &bls_pubkeys,
+            registry.clone(),
+            tracked.clone(),
             genesis_hash,
             genesis_block.clone(),
         )
@@ -722,19 +913,17 @@ async fn drive(
             }
         }
         if cfg.peer_set != PeerSet::AllNodes {
-            let max_height = progress.heights.iter().copied().max().unwrap_or(0);
-            if let Some(epoch) = epoch_at_block(max_height, 0, cfg.epoch_len) {
+            // The links follow what the nodes' `EpochTransition`s actually
+            // TRACKED, never the schedule: the tracked set is the state machine's
+            // own `active_registry ∪ committee[E] ∪ committee[E+1]`, and it is
+            // the set the authenticated transport would keep connections for.
+            let latest = {
+                let t = tracked.lock().unwrap();
+                t.by_epoch.last_key_value().map(|(e, m)| (*e, m.clone()))
+            };
+            if let Some((epoch, members)) = latest {
                 if epoch > tracked_epoch {
-                    if let Some(snap) = schedule(epoch) {
-                        let members: Vec<PeerPubkey> = snap
-                            .validators
-                            .iter()
-                            .map(|v| v.keys.peer_pubkey.clone())
-                            .collect();
-                        oracle
-                            .manager()
-                            .track(epoch, Set::from_iter_dedup(members.iter().cloned()))
-                            .await;
+                    {
                         // Sever every consensus-plane link that touches a node
                         // outside the set (and its upstream-plane links unless
                         // the config keeps them); restore the links among
@@ -822,6 +1011,12 @@ async fn drive(
         })
         .collect();
     let logs = sink.lock().unwrap().clone();
+    let simulator_ack_drops = logs
+        .iter()
+        .filter(|l| {
+            l.level == tracing::Level::ERROR && l.text.starts_with(Outcome::SIMULATOR_ACK_DROP)
+        })
+        .count() as u64;
     let upstream = nodes.iter().map(|h| h.upstream.snapshot()).collect();
     let seeds = nodes
         .iter()
@@ -839,6 +1034,23 @@ async fn drive(
             None => BTreeMap::new(),
         })
         .collect();
+    let geometry: Vec<Option<(u64, u64)>> = nodes
+        .iter()
+        .map(|node| *node.observer.geometry.lock().unwrap())
+        .collect();
+    let et_steps: Vec<Vec<EtStep>> = nodes
+        .iter()
+        .map(|node| node.observer.steps.lock().unwrap().clone())
+        .collect();
+    let et_boundaries: Vec<Vec<EtBoundary>> = nodes
+        .iter()
+        .map(|node| node.observer.boundaries.lock().unwrap().clone())
+        .collect();
+    let staking_reads: Vec<StakingReads> = nodes.iter().map(|node| node.staking.reads()).collect();
+    let (tracked_sets, tracked_mismatches) = {
+        let t = tracked.lock().unwrap();
+        (t.per_node.clone(), t.mismatches)
+    };
     let metrics = ctx.encode();
     Outcome {
         heights,
@@ -849,8 +1061,15 @@ async fn drive(
         traces,
         seeds,
         artifacts,
+        et_steps,
+        et_boundaries,
+        geometry,
+        tracked: tracked_sets,
+        tracked_mismatches,
+        staking_reads,
         metrics,
         logs,
+        simulator_ack_drops,
         log_capture_live,
         partitions: part_obs,
         timed_out,
@@ -970,8 +1189,12 @@ async fn build_node(
     bls: &[ValidatorBlsKeypair],
     oracle: &Oracle,
     upstream_oracle: &Oracle,
-    schedule: Schedule,
-    full_snapshot: ValidatorSetSnapshot,
+    members: Members,
+    el_network: ElNetwork,
+    pks: &[PeerPubkey],
+    bls_pubkeys: &[BlsPubkey],
+    registry: Vec<PeerPubkey>,
+    tracked: Arc<Mutex<Tracked>>,
     genesis_hash: B256,
     genesis_block: OrderBlock,
 ) -> NodeHandles {
@@ -1032,24 +1255,90 @@ async fn build_node(
     let plane_clock = PlaneClock::default();
     plane_clock.register(&ctx_i);
 
-    let chain = FakeChain::with_genesis(genesis_hash);
+    let chain = FakeChain::with_genesis_on(genesis_hash, el_network);
     let divergent_at = match role {
         Role::DivergentResult { at } => Some(at),
         _ => None,
     };
     let deriver = FakeDeriver::new(chain.clone(), divergent_at);
-    let reader = SnapshotReader {
-        schedule: schedule.clone(),
-        epoch_len: cfg.epoch_len,
-    };
+    // The staking contract as a state machine over this node's executed heights.
+    // The SAME instance answers the slasher, the beacon plane's committee reads
+    // and the `EpochTransition` below — one contract per node, as in production.
+    let staking = FakeStaking::new(
+        chain.clone(),
+        members,
+        pks,
+        bls_pubkeys,
+        registry,
+        cfg.epoch_len,
+    );
     let (hook_tx, mut hook_rx) = mpsc::unbounded_channel::<OrderBlock>();
+
+    // The production epoch state machine. `bridge_tx` is built FIRST so the
+    // transition is wired at construction, and the forwarder that turns
+    // `(u64, snapshot)` into the `OuterEngine`'s `(Epoch, snapshot)` is spawned
+    // after the engine exists — the shape of `consensus/src/dpos.rs:2025-2041`
+    // and its `bridge_rx` drain at `:2739-2749`.
+    let (bridge_tx, mut bridge_rx) = mpsc::channel::<(u64, ValidatorSetSnapshot)>(64);
+    let observer = EtObserver::default();
+    let et = Arc::new(tokio::sync::Mutex::new(EpochTransition::new(
+        staking.clone(),
+        TrackSink {
+            node: i,
+            oracle: oracle.clone(),
+            shared: tracked,
+        },
+        MAX_REGISTRY_PEER_SET as usize,
+        Some(bridge_tx),
+        {
+            let chain = chain.clone();
+            Arc::new(move |h| chain.executed_state_hash(h))
+        },
+        crate::order_block::K,
+    )));
+
+    // Cold start, at the anchor this node's execution layer persisted: genesis
+    // on a fresh chain, the finalized `(height, hash)` on a replay — production
+    // reads exactly that pair out of reth and hands it over
+    // (`consensus/src/dpos.rs:2044-2047`). The EPOCH is not supplied: `cold_start`
+    // freezes the geometry from the state at `hash` and derives it.
+    let (cold_number, cold_hash) = cfg.resume_from.unwrap_or((0, genesis_hash));
+    chain.note_hash(cold_number, cold_hash);
+    let cold_outcome = {
+        let mut guard = et.lock().await;
+        let out = guard.cold_start(cold_hash, cold_number).await;
+        *observer.geometry.lock().unwrap() = guard.frozen_geometry();
+        out
+    };
+    observer.steps.lock().unwrap().push(EtStep {
+        number: cold_number,
+        outcome: cold_outcome.map_err(|e| format!("{e:?}")),
+    });
+
+    // The catch-up committee reader, through the state machine's own
+    // side-effect-free span walk over the node's finalized tip — the shape of
+    // `consensus/src/dpos.rs:2431-2449`.
     let soft_enter = {
-        let schedule = schedule.clone();
+        let et = et.clone();
+        let chain = chain.clone();
         Arc::new(move |from: Epoch, to: Epoch| {
-            let span: Vec<(u64, ValidatorSetSnapshot)> = (from.get()..=to.get())
-                .filter_map(|e| schedule(e).map(|s| (e, s)))
-                .collect();
-            Box::pin(async move { span }) as futures::future::BoxFuture<'static, _>
+            let et = et.clone();
+            let chain = chain.clone();
+            Box::pin(async move {
+                let anchor = chain.tip();
+                let collected = Mutex::new(Vec::new());
+                let record = |epoch: u64, snap: ValidatorSetSnapshot| {
+                    collected
+                        .lock()
+                        .expect("span collector")
+                        .push((epoch, snap));
+                };
+                et.lock()
+                    .await
+                    .soft_enter_span(from.get(), to.get(), anchor, &record)
+                    .await;
+                collected.into_inner().expect("span collector")
+            }) as futures::future::BoxFuture<'static, _>
         })
     };
     let engine_partition_prefix = if cfg.shared_engine_partitions {
@@ -1079,25 +1368,82 @@ async fn build_node(
     // wires it for a plane validator (`get_latest` → height). The re-jump
     // itself is NOT modelled (it drives reth EL sync): its gate is `u64::MAX`
     // and the callback a counted no-op `Lagging`.
+    // The LIVE upstream frontier — production's `LiveFrontierTee::live_height`
+    // (`cert_inlet.rs:343-347`), advanced to the height of an upstream
+    // finalization this node has seen. One difference, stated because it is the
+    // stand's and not production's: production advances it ONLY past the cert
+    // inlet's BLS-verify gate (`cert_inlet.rs:896-898`) so a lying upstream
+    // cannot steer the committee read, while the stand has no inlet and tees it
+    // where the executor's frontier probe already asks — before any verify.
+    // Every upstream in this stand is an honest peer serving real certificates,
+    // so the two coincide here; a Byzantine-upstream role (Э3.3) has to move
+    // this behind a verify before it means anything.
+    let live_height = Arc::new(AtomicU64::new(0));
     let re_jump = {
         let probe: FrontierProbeFn = {
             let up = upstream.clone();
+            let live = live_height.clone();
             Arc::new(move || {
                 let up = up.clone();
-                Box::pin(
-                    async move { up.get_latest().await.map(|uf| Height::new(uf.block.height)) },
-                )
+                let live = live.clone();
+                Box::pin(async move {
+                    let uf = up.get_latest().await?;
+                    live.fetch_max(uf.block.height, Ordering::Relaxed);
+                    Some(Height::new(uf.block.height))
+                })
             })
         };
         let rejump_calls = upstream_counters.rejump_calls.clone();
-        let call: ReJumpFn = Arc::new(move |_from: u64| {
-            rejump_calls.fetch_add(1, Ordering::SeqCst);
-            Box::pin(async { JumpOutcome::Lagging })
-        });
+        // The steady-state re-jump, modelled on `cold_start_jump` over
+        // `RethElSync`: take the upstream tip, land at `(tip.height − K,
+        // tip.result)` — the committee-attested EVM hash the ordering block
+        // carries (`cold_start_jump.rs:434-446`, `order_block.rs:124-128`) —
+        // and let the EL hold it. Forward-only, and `Lagging` inside the pre-K
+        // window, as production is.
+        //
+        // NOT modelled, and it matters: production AUTHENTICATES the landing
+        // before accepting it (`verify_jump_structural` + a 2f+1 BLS multisig
+        // against `committee[E]` read at the landing's own state) and re-asserts
+        // the L1 trust root through `ElSync::holds`. The stand trusts the served
+        // frontier outright, so this models the HONEST-upstream path only; a
+        // lying-upstream role (Э3.3) has to add the auth before it means
+        // anything.
+        let call: ReJumpFn = {
+            let up = upstream.clone();
+            let chain = chain.clone();
+            Arc::new(move |from: u64| {
+                let up = up.clone();
+                let chain = chain.clone();
+                let calls = rejump_calls.clone();
+                Box::pin(async move {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    let Some(uf) = up.get_latest().await else {
+                        return JumpOutcome::Lagging;
+                    };
+                    if uf.block.result == B256::ZERO {
+                        return JumpOutcome::Lagging; // inside the pre-K window
+                    }
+                    let landing = uf.block.height.saturating_sub(crate::order_block::K);
+                    if landing <= from {
+                        return JumpOutcome::Lagging; // forward-only
+                    }
+                    if !chain.land_jump(landing, uf.block.result) {
+                        // The peer cannot serve the attested landing — production's
+                        // `BadTarget`/`InvalidTarget` shape, non-fatal, retried.
+                        return JumpOutcome::Lagging;
+                    }
+                    JumpOutcome::Landed {
+                        landing,
+                        hash: uf.block.result,
+                        floor: landing.saturating_sub(crate::order_block::K),
+                    }
+                })
+            })
+        };
         ReJump {
             call,
             upstream_frontier: Arc::new(AtomicU64::new(0)),
-            threshold: u64::MAX,
+            threshold: cfg.re_jump_threshold.unwrap_or(u64::MAX),
             rotate: None,
             probe: Some(probe),
         }
@@ -1109,21 +1455,56 @@ async fn build_node(
     // standing in for the staking reads. Built BEFORE the `OuterBuilder`, which
     // takes its randomness and adopts its agreement instances.
     let (dkg_height_tx, dkg_height_rx) = mpsc::channel::<u64>(256);
+    // The node's EL-FINALIZED executed hash. Two consumers, and production keeps
+    // them apart on purpose: the `dkgQual` reads take THIS one
+    // (`node/src/dpos.rs:1519-1524` — `finalized_block_number` only, no live
+    // cursor), while the committee reads take the teed cursor below.
+    let finalized_hash = {
+        let chain = chain.clone();
+        Arc::new(move || chain.hash_at(chain.tip()))
+    };
+    // The state hash the COMMITTEE is read at — production's shared
+    // `committee_read_hash` (`node/src/dpos.rs:1382-1404`): `read_at =
+    // max(EL-finalized, live)`, and fall back to the finalized hash when the
+    // node has not imported the block at `read_at` yet ("the cert can land a
+    // beat before the EL-sync import", `:1397-1398`). The stand's chain has no
+    // header/state split, so "not imported" is simply "no executed hash there"
+    // and the fallback is the same branch.
+    let committee_read_hash = {
+        let chain = chain.clone();
+        let live = live_height.clone();
+        Arc::new(move || -> Option<B256> {
+            let fin = chain.tip();
+            let read_at = fin.max(live.load(Ordering::Relaxed));
+            chain.hash_at(read_at).or_else(|| chain.hash_at(fin))
+        })
+    };
     let (randomness, artifacts, agreement_intake) = match (cfg.beacon, role) {
-        (Beacon::Static, _) => (StaticRandomness::build(CHAIN_ID, full_snapshot), None, None),
+        (Beacon::Static, _) => (
+            StaticRandomness::build(CHAIN_ID, staking.all_validators_snapshot()),
+            None,
+            None,
+        ),
         (Beacon::Live, Role::AbsentBeacon) => (beacon::absent(&ctx_i), None, None),
         (Beacon::Live, _) => {
             let (bcs, bcr) = register(BEACON_CHANNEL).await;
             let (brs, brr) = register(BEACON_RESOLVER_CHANNEL).await;
+            let read_committee = {
+                let staking = staking.clone();
+                let at = committee_read_hash.clone();
+                move |epoch: u64| -> Option<ValidatorSetSnapshot> {
+                    let snap = staking.epoch_committee_snapshot(epoch, at()?).ok()?;
+                    (!snap.validators.is_empty()).then_some(snap)
+                }
+            };
             let roster = {
-                let schedule = schedule.clone();
+                let read = read_committee.clone();
                 move |epoch: u64| -> Option<Set<PeerPubkey>> {
-                    let snap = schedule(epoch)?;
-                    if snap.validators.is_empty() {
-                        return None;
-                    }
                     Some(Set::from_iter_dedup(
-                        snap.validators.iter().map(|v| v.keys.peer_pubkey.clone()),
+                        read(epoch)?
+                            .validators
+                            .iter()
+                            .map(|v| v.keys.peer_pubkey.clone()),
                     ))
                 }
             };
@@ -1136,26 +1517,16 @@ async fn build_node(
                 Arc::new(move |target| Some((roster(target.checked_sub(1)?)?, roster(target)?)))
             };
             let committee_source: CommitteeSource = {
-                let schedule = schedule.clone();
-                Arc::new(move |epoch| {
-                    let snap = schedule(epoch)?;
-                    if snap.validators.is_empty() {
-                        return None;
-                    }
-                    epoch_committee_from_snapshot(&snap).ok()
-                })
+                let read = read_committee.clone();
+                Arc::new(move |epoch| epoch_committee_from_snapshot(&read(epoch)?).ok())
             };
-            // The contract's rule, over the schedule: `dkgQual[e] = committee[e]
-            // != committee[e-1]`; "committed" = the schedule has the epoch. The
-            // state hash is irrelevant here (every read is the schedule), so
-            // `dkg_qual_at` answers a constant.
+            // `getDkgQual(epoch)` + "is the epoch committed", both read at the
+            // finalized state — the two legs of the production probe
+            // (`node/src/dpos.rs:1526-1543`), here answered by the contract
+            // state machine instead of by the schedule.
             let dkg_qual_probe: DkgQualProbe = {
-                let roster = roster.clone();
-                Arc::new(move |epoch, _at| {
-                    let committed = roster(epoch).is_some();
-                    let bit = committed && epoch > 0 && roster(epoch) != roster(epoch - 1);
-                    Some((bit, committed))
-                })
+                let staking = staking.clone();
+                Arc::new(move |epoch, at| staking.dkg_qual(epoch, at).ok())
             };
             let plane = beacon::build(
                 &ctx_i,
@@ -1175,13 +1546,13 @@ async fn build_node(
                     committee_for,
                     committee_pair_for,
                     committee_source,
-                    dkg_qual_at: Arc::new(|| Some(B256::ZERO)),
+                    dkg_qual_at: finalized_hash.clone(),
                     dkg_qual_probe,
                     heights: dkg_height_rx,
                     plane_clock: plane_clock.clone(),
                     geometry: {
-                        let epoch_len = cfg.epoch_len;
-                        Box::pin(async move { Some((0, epoch_len)) })
+                        let et = et.clone();
+                        Box::pin(async move { et.lock().await.frozen_geometry() })
                     },
                     partition_prefix: format!("node{i}-"),
                 },
@@ -1247,8 +1618,8 @@ async fn build_node(
         fcu_pace: Duration::ZERO,
         canonical_state: reth_chain_state::CanonicalInMemoryState::empty(),
         slasher_staking_address: Address::ZERO,
-        slasher_reader: reader,
-        slasher_latest_finalized_hash: Arc::new(|| None),
+        slasher_reader: staking.clone(),
+        slasher_latest_finalized_hash: finalized_hash.clone(),
         slasher_sink: Arc::new(NoSink),
         slasher_wal_partition: format!("node{i}-slasher-wal"),
         slasher_evidence: None,
@@ -1265,35 +1636,79 @@ async fn build_node(
         .set(outer.marshal_mailbox())
         .unwrap_or_else(|_| panic!("marshal slot filled twice"));
 
-    // Cold start: the epoch-0 verifier so the marshal can check certificates
-    // before the first boundary (as `dpos.rs::launch` does).
-    let snap0 = schedule(0).expect("epoch 0 committee");
-    let committee0 = epoch_committee_from_snapshot(&snap0).expect("unique committee");
+    // Cold-start register: the verify-only scheme for the epoch the transition
+    // entered, so the marshal can check certificates before the first boundary
+    // (`consensus/src/dpos.rs:2713-2724` registers `initial_epoch`, not 0).
+    // FAIL-LOUD, as production is: an unfrozen geometry, an unreadable committee
+    // or an empty one at the anchor all `bail!` there
+    // (`consensus/src/dpos.rs:1992-2011`, `:2716-2724`). Degrading to "register
+    // epoch 0, or nothing" would hide exactly the class of failure the
+    // cold-start tests are about.
+    let initial_epoch = et
+        .lock()
+        .await
+        .epoch_at(cold_number)
+        .expect("geometry frozen by cold_start, so the anchor has an epoch");
+    let snap = staking
+        .epoch_committee_snapshot(initial_epoch, cold_hash)
+        .expect("the cold-start committee reads at the anchor");
+    assert!(
+        !snap.validators.is_empty(),
+        "empty committee for the cold-start epoch {initial_epoch} at the anchor"
+    );
+    let committee = epoch_committee_from_snapshot(&snap).expect("unique committee");
     outer.cold_start_register(
-        Epoch::new(0),
-        build_verifier(&fluent_namespace(CHAIN_ID), committee0.bimap, 0, None),
+        Epoch::new(initial_epoch),
+        build_verifier(
+            &fluent_namespace(CHAIN_ID),
+            committee.bimap,
+            initial_epoch,
+            None,
+        ),
     );
 
-    // Boundary relay — the stand-in for `EpochTransition` (step 5): the
-    // cold-start arm enters `cfg.cold_start_epoch`; on the last block of epoch
-    // E it hands the manager `(E+1, committee[E+1])` from the schedule.
-    let boundary_tx = outer.boundary_sender();
+    // Bridge forwarder: `(u64, snapshot)` from the transition to the engine's
+    // `(Epoch, snapshot)` boundary receiver — `consensus/src/dpos.rs:2739-2749`.
+    // It also records what the transition delivered and at which state hash.
+    {
+        let boundary_tx = outer.boundary_sender();
+        let boundaries = observer.boundaries.clone();
+        ctx_i.with_label("epoch_bridge").spawn(move |_| async move {
+            while let Some((epoch, snap)) = bridge_rx.recv().await {
+                boundaries.lock().unwrap().push(EtBoundary {
+                    epoch,
+                    block_hash: snap.block_hash,
+                    block_number: snap.block_number,
+                });
+                if boundary_tx.send((Epoch::new(epoch), snap)).await.is_err() {
+                    return;
+                }
+            }
+        });
+    }
+
+    // The boundary feeder: every ORDERING-finalized block reaches
+    // `on_finalized`, which is where production drives this instance from —
+    // `boundary_hook` → `enter_boundary(block.height)` → `on_finalized(number)`
+    // (`consensus/src/dpos.rs:2291-2294`, `:2202`). NOT the executor side: the
+    // EL-finalized cursor (`FakeChain::advance_finalized`) is what the OTHER
+    // production transition consumes, the beacon plane's peer-set tracker
+    // (`node/src/dpos.rs:1695`), and this one's `read_height_for` subtracts K
+    // from its input, so feeding it an already-lagged height would read K blocks
+    // too low.
     let trace = Arc::new(Mutex::new(Vec::<TraceEntry>::new()));
     {
-        let (schedule, trace, epoch_len, cold) = (
-            schedule.clone(),
+        let (trace, et_feed, steps, geometry) = (
             trace.clone(),
-            cfg.epoch_len,
-            cfg.cold_start_epoch,
+            et.clone(),
+            observer.steps.clone(),
+            observer.geometry.clone(),
         );
+        let repoking = Arc::new(AtomicBool::new(false));
+        let ctx_repoke = ctx_i.with_label("boundary_repoke");
         ctx_i
-            .with_label("boundary_relay")
+            .with_label("boundary_feed")
             .spawn(move |_| async move {
-                let mut last_sent: Option<u64> = None;
-                if let Some(s0) = schedule(cold) {
-                    let _ = boundary_tx.send((Epoch::new(cold), s0)).await;
-                    last_sent = Some(cold);
-                }
                 while let Some(block) = hook_rx.recv().await {
                     trace.lock().unwrap().push(TraceEntry {
                         height: block.height,
@@ -1305,26 +1720,40 @@ async fn build_node(
                         digest: block.digest().0,
                         hash: None,
                     });
-                    if !is_epoch_boundary(block.height, 0, epoch_len) {
-                        continue;
-                    }
-                    let Some(epoch) = epoch_at_block(block.height, 0, epoch_len) else {
-                        continue;
+                    let parked = {
+                        let mut guard = et_feed.lock().await;
+                        let outcome = guard.on_finalized(block.height).await;
+                        *geometry.lock().unwrap() = guard.frozen_geometry();
+                        steps.lock().unwrap().push(EtStep {
+                            number: block.height,
+                            outcome: outcome.map_err(|e| format!("{e:?}")),
+                        });
+                        guard.has_pending_boundary()
                     };
-                    let next = epoch + 1;
-                    if last_sent.is_some_and(|l| next <= l) {
-                        continue;
+                    // Re-poke loop: a parked boundary replays only on the next
+                    // `on_finalized`, and during catch-up the parked boundary IS
+                    // the last deliverable block (`consensus/src/dpos.rs:2168-2203`).
+                    // One loop at a time is enough here — the single-slot park
+                    // means there is only ever one boundary to drive.
+                    if parked && !repoking.swap(true, Ordering::SeqCst) {
+                        let (et, steps, repoking) =
+                            (et_feed.clone(), steps.clone(), repoking.clone());
+                        ctx_repoke.clone().spawn(move |c| async move {
+                            loop {
+                                c.sleep(PENDING_RETRY_BACKOFF).await;
+                                let mut guard = et.lock().await;
+                                let Some(number) = guard.pending_boundary() else {
+                                    break;
+                                };
+                                let outcome = guard.on_finalized(number).await;
+                                steps.lock().unwrap().push(EtStep {
+                                    number,
+                                    outcome: outcome.map_err(|e| format!("{e:?}")),
+                                });
+                            }
+                            repoking.store(false, Ordering::SeqCst);
+                        });
                     }
-                    let Some(snap) = schedule(next) else {
-                        continue;
-                    };
-                    if snap.validators.is_empty() {
-                        continue;
-                    }
-                    if boundary_tx.send((Epoch::new(next), snap)).await.is_err() {
-                        return;
-                    }
-                    last_sent = Some(next);
                 }
             });
     }
@@ -1346,5 +1775,7 @@ async fn build_node(
         trace,
         upstream: upstream_counters,
         artifacts,
+        observer,
+        staking,
     }
 }

@@ -17,6 +17,7 @@ use fluentbase_bls::{
     beacon::{seed_namespace, verify_seed, GroupPublic},
     fluent_namespace,
 };
+use fluentbase_staking_reader::epoch_transition::TransitionOutcome;
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 /// (A) One node, nobody to serve it: `PlaneUpstreamHandle::get_latest` on the
@@ -763,6 +764,20 @@ fn replay_over_shared_journals_records_the_collision() {
 
 const EPOCH_LEN: u64 = 32;
 
+/// The finalized-executed hash every node agreed on at `height` — the EL marker
+/// a restart carries over (`StandConfig::resume_from`). Asserts the nodes agree,
+/// so a replay is never seeded from one node's private fork.
+fn finalized_hash_at(out: &Outcome, height: u64) -> B256 {
+    let hashes: Vec<B256> = (0..out.hashes.len())
+        .map(|i| out.hashes[i][(height - 1) as usize].1)
+        .collect();
+    assert!(
+        hashes.iter().all(|h| *h == hashes[0]),
+        "nodes disagree on the executed hash at {height}: {hashes:?}"
+    );
+    hashes[0]
+}
+
 /// `PK_E` out of an artifact's wire bytes — the value the plane serves to a peer
 /// over `consensus_getEpochArtifact`, decoded by the production decoder.
 fn pk_of(artifact: &[u8]) -> GroupPublic {
@@ -861,6 +876,19 @@ fn seed_agreed_at(
         );
     }
     first
+}
+
+/// The nodes that DERIVED `height` — the ones that hold a σ record for it.
+///
+/// A node that EL-synced a range never called `derive_and_execute` over it: reth
+/// backfilled the bodies from peers and executed them, and `prev_randao` was
+/// already in the header. So it holds the block and its hash, and holds NO σ for
+/// it. Production is the same shape (`cold_start_jump::RethElSync::sync_to`), so
+/// a cross-node σ comparison has to ask who derived, not who is present.
+fn derivers_of(out: &Outcome, height: u64) -> Vec<usize> {
+    (0..out.seeds.len())
+        .filter(|&i| out.seeds[i].get(&height).cloned().flatten().is_some())
+        .collect()
 }
 
 fn seedless_on_every_node(out: &Outcome, nodes: &[usize], heights: std::ops::Range<u64>) {
@@ -967,15 +995,35 @@ fn rotate_four_three_four() -> Committees {
 /// names for its epoch — epoch 4's σ under `PK_3`, not under a fourth key — and
 /// identical on every node.
 ///
+/// **Runs with the production steady-state re-jump gate**
+/// (`JUMP_THRESHOLD.min(epoch_block_interval)`, `consensus/src/dpos.rs:2466`),
+/// and that is load-bearing rather than incidental. Once the committee reads are
+/// contract-timed (step 5), the rotated-out node cannot acquire `PK_3` while it
+/// sits keyless at the live epoch — the repair sweep that would pull it is woken
+/// only by a boundary trigger or a local key insert (`epoch_manager.rs:730`,
+/// `:817`) and the catch-up span that raises the frontier is neither
+/// (`:741-757`, `:1811`) — so it falls behind, and the RE-JUMP is what carries
+/// it forward. With the gate at `u64::MAX` (the stand's default) it parks at 95
+/// forever; that observation is pinned by
+/// `a_rotated_out_node_without_the_rejump_parks`.
+///
+/// One consequence is recorded rather than asserted away: the node EL-SYNCS the
+/// range it jumps over, so it holds those blocks and their hashes but NO σ
+/// record for them — reth executed bodies that already carried `prev_randao`.
+/// The per-height σ comparison therefore runs over the nodes that DERIVED the
+/// height, with a floor of 3 of 4.
+///
 /// Falsifier: an artifact for epoch 4 (a ceremony ran on an unchanged
 /// committee); a key repeated across mints; an epoch-4 σ that fails under
 /// `PK_3`; a node that stops at a boundary (memory trap (1): a non-epoch-pure
 /// committee overflows the dealer index and the finalize stalls — here the
-/// committees are the schedule's, so a stall is a finding, not a stand error).
+/// committees are the schedule's, so a stall is a finding, not a stand error);
+/// fewer than three nodes deriving a height.
 #[test]
 fn three_boundaries_with_committee_rotation_keep_dkg_qual_honest() {
     let mut cfg = StandConfig::live(4, 1);
     cfg.committees = rotate_four_three_four();
+    cfg.re_jump_threshold = Some(crate::cold_start_jump::JUMP_THRESHOLD.min(EPOCH_LEN));
     let end = 5 * EPOCH_LEN + 8;
     let out = Stand::new(cfg).run_until(reached(end), Duration::from_secs(400));
     assert!(
@@ -1014,7 +1062,17 @@ fn three_boundaries_with_committee_rotation_keep_dkg_qual_honest() {
             5 => (5, &pk5),
             _ => unreachable!(),
         };
-        let seed = seed_agreed_at(&out, &all, h, epoch, pk);
+        // Whoever DERIVED `h` agreed on its σ. The rotated-out node EL-syncs
+        // part of epoch 3-4 (see the re-jump note above) and holds no σ record
+        // for that range, so it drops out of the comparison there — and the
+        // floor of 3 keeps the check from degenerating into a self-comparison.
+        let derivers = derivers_of(&out, h);
+        assert!(
+            derivers.len() >= 3,
+            "only {} node(s) derived height {h}: {derivers:?}",
+            derivers.len()
+        );
+        let seed = seed_agreed_at(&out, &derivers, h, epoch, pk);
         // The carried epoch's σ is under PK_3 and under NO other mint.
         if epoch == 4 {
             for other in [&pk2, &pk5] {
@@ -1172,13 +1230,14 @@ fn restart_replays_key_and_seed_journals() {
         .collect();
     let resume_from = first.heights.iter().copied().max().unwrap();
 
-    // The restarted process cold-starts in the epoch it stopped in, as
-    // `EpochTransition::cold_start` does at the node's finalized block; with the
-    // relay left at epoch 0 the replayed nodes re-derive 1..70 and then sit in
-    // epoch 0 with no engine for epoch 2 (observed 2026-09-09: `[70,70,70,70]`,
-    // no halt, no error, timed out).
+    // The restart hands the nodes the EL marker their execution layer persisted
+    // — `(finalized height, its executed hash)`, production's
+    // `(latest_finalized, latest_finalized_hash)`. `cold_start` derives the epoch
+    // from it; nothing here says "2". With a genesis anchor instead, the replayed
+    // nodes re-derive 1..70 and then sit in epoch 0 with no engine for epoch 2
+    // (observed 2026-09-09: `[70,70,70,70]`, no halt, no error, timed out).
     let mut cfg = cfg;
-    cfg.cold_start_epoch = resume_from / EPOCH_LEN;
+    cfg.resume_from = Some((resume_from, finalized_hash_at(&first, resume_from)));
     let second = Stand::new(cfg).replay(
         checkpoint,
         move |p| p.min_height() >= resume_from + 12,
@@ -1312,8 +1371,10 @@ fn restart_without_the_share_dirs_parks_the_chain_verify_only() {
     let resume_from = first.heights.iter().copied().max().unwrap();
     std::fs::remove_dir_all(&cfg.share_root).expect("wipe the share root");
 
+    // Same EL marker as (B4) — this control differs from it in the share dirs
+    // only.
     let mut cfg = cfg;
-    cfg.cold_start_epoch = resume_from / EPOCH_LEN;
+    cfg.resume_from = Some((resume_from, finalized_hash_at(&first, resume_from)));
     let second = Stand::new(cfg).replay(
         checkpoint,
         move |p| p.min_height() > resume_from,
@@ -1344,5 +1405,403 @@ fn restart_without_the_share_dirs_parks_the_chain_verify_only() {
         (0..4)
             .map(|i| second.metric(i, "epoch_engine_demoted_no_polynomial_total"))
             .collect::<Vec<_>>()
+    );
+}
+
+// ---------------------------------------------------------------------------
+// (C) The boundary walk through the production `EpochTransition` over the fake
+// staking state. Step 5 of the Э3.2 evaluation.
+// ---------------------------------------------------------------------------
+
+/// The boundary list the transition MUST produce, computed here from nothing but
+/// the run's finalized-executed hashes and the rule at
+/// `epoch_transition.rs:290-293` (`read_height_for(number) = number − result_lag`,
+/// clamped to the cold-start anchor): the cold-start entry at the anchor, then
+/// one entry per boundary block `B = E * epoch_len − 1`, carrying `epoch E` and
+/// the executed hash of `B − K`.
+fn expected_boundaries(out: &Outcome, node: usize, epoch_len: u64, upto: u64) -> Vec<(u64, B256)> {
+    let hash_at = |h: u64| -> B256 {
+        if h == 0 {
+            // The genesis anchor is not in `hashes`, which starts at height 1.
+            return super::fakes::genesis_sealed().hash();
+        }
+        out.hashes[node][(h - 1) as usize].1
+    };
+    let mut want = vec![(0u64, hash_at(0))];
+    let mut boundary = epoch_len - 1;
+    while boundary <= upto {
+        want.push((
+            boundary / epoch_len + 1,
+            hash_at(boundary - crate::order_block::K),
+        ));
+        boundary += epoch_len;
+    }
+    want
+}
+
+/// (C2) The chain's committee handoff now runs through the production
+/// `EpochTransition` over `FakeStaking`, and the state it reads the committee at
+/// is a real executed hash of a real height, not a constant.
+///
+/// The assert compares each node's boundary trace against a list this test
+/// recomputes from `FakeChain`'s hashes and the `number − result_lag` rule —
+/// not against anything the stand handed the transition.
+///
+/// Falsifier: a boundary read at a hash of the wrong height (the epoch-N
+/// snapshot carrying `hash_at(B)` instead of `hash_at(B − 3)`, or a constant);
+/// two nodes entering an epoch on different state; a geometry frozen to
+/// something other than the contract's `(0, 32)`; the transition skipping an
+/// epoch or repeating one.
+#[test]
+fn the_epoch_transition_walks_the_boundaries_from_the_fake_state() {
+    let mut cfg = StandConfig::live(4, 1);
+    cfg.committees = rotate_four_three_four();
+    let out = Stand::new(cfg).run_until(reached(3 * EPOCH_LEN - 1), Duration::from_secs(300));
+    assert!(!out.timed_out, "heights {:?}", out.heights);
+    assert_eq!(out.diverged, None);
+    assert!(out.halted.is_empty(), "{:?}", out.halted);
+
+    for i in 0..4 {
+        assert_eq!(
+            out.geometry[i],
+            Some((0, EPOCH_LEN)),
+            "node {i} froze the epoch geometry to something other than the \
+             contract's (dposActivationBlock, epochBlockInterval)"
+        );
+    }
+    let want = expected_boundaries(&out, 0, EPOCH_LEN, *out.heights.iter().min().unwrap());
+    for i in 0..4 {
+        let got: Vec<(u64, B256)> = out.et_boundaries[i]
+            .iter()
+            .map(|b| (b.epoch, b.block_hash))
+            .collect();
+        assert!(
+            got.len() >= 4,
+            "node {i} walked only {} boundaries: {got:?}",
+            got.len()
+        );
+        assert_eq!(
+            got.as_slice(),
+            &want[..got.len()],
+            "node {i}'s boundary walk differs from the one computed from \
+             FakeChain.hash_at(boundary − K): {got:?} vs {want:?}"
+        );
+    }
+    // The nodes agree on the first four entries, so "each matches the computed
+    // list" is not four independent claims about four different chains.
+    for i in 1..4 {
+        assert_eq!(
+            &out.et_boundaries[i][..4],
+            &out.et_boundaries[0][..4],
+            "node {i} entered the first four epochs on different state than node 0"
+        );
+    }
+    // The peer set every transition handed its sink is the same on every node:
+    // the union `active_registry ∪ committee[E] ∪ committee[E+1]` is a function
+    // of chain state alone, so a per-node difference means two nodes read
+    // different committees for one epoch. Counted at the sink over the MEMBERS,
+    // not their count — the registry union makes every set the same SIZE under
+    // `PeerSet::AllNodes`, so a length comparison here would be vacuous.
+    assert_eq!(
+        out.tracked_mismatches, 0,
+        "two nodes' transitions tracked different peer sets for one epoch"
+    );
+    for i in 0..4 {
+        assert!(
+            out.tracked[i].len() >= 4,
+            "node {i} tracked only {} epochs: {:?}",
+            out.tracked[i].len(),
+            out.tracked[i]
+                .iter()
+                .map(|(e, m)| (*e, m.len()))
+                .collect::<Vec<_>>()
+        );
+    }
+    // The one exempted ERROR line is BOUNDED by the peer-set registrations that
+    // trigger it (at most one lost ack per registration, and a node never tracks
+    // more epochs than it walks), so the exemption cannot hide a stream of them.
+    assert!(
+        out.simulator_ack_drops <= out.tracked[0].len() as u64,
+        "simulator ack drops ({}) outran the peer-set registrations that can \
+         cause them ({})",
+        out.simulator_ack_drops,
+        out.tracked[0].len()
+    );
+    eprintln!(
+        "(C2) heights={:?} ack_drops={} boundaries={:?} geometry={:?} virtual={:?} real={:?}",
+        out.heights,
+        out.simulator_ack_drops,
+        out.et_boundaries[0]
+            .iter()
+            .map(|b| (b.epoch, b.block_number))
+            .collect::<Vec<_>>(),
+        out.geometry,
+        out.virtual_elapsed,
+        out.real_elapsed
+    );
+}
+
+/// (C3 + C5, one observation) An epoch the contract has NOT committed at the
+/// read height is not readable early, and every staking read the plane and the
+/// transition make resolves at a REAL executed hash of this node's chain.
+///
+/// The two are one observation on the fake: `StakingReads::uncommitted` counts
+/// the reads that came back with an empty committee because the epoch was past
+/// the contract's `current_epoch + MAX_COMMITTEE_LOOKAHEAD_EPOCHS` horizon at
+/// the read height, and `unknown_state` counts reads at a hash this chain never
+/// sealed — which is what a constant `dkg_qual_at` would produce.
+///
+/// Under the 2-epoch warm-up the only window where an epoch is uncommitted is
+/// GENESIS: the bootstrap commits epoch 0 alone, and from block 1 on every
+/// epoch up to `epoch(h) + 2` is committed. The transition's own cold start hits
+/// it — `track_and_trigger` reads `committee[1]` at the genesis hash for the
+/// peer-set union (`epoch_transition.rs:631-638`).
+///
+/// Falsifier: zero uncommitted reads (the fake answers any epoch, and the
+/// "committee not yet committed" branch is unreachable — the state before this
+/// step); a read at an unknown hash (the state hash is not the chain's); the DKG
+/// failing to mint `PK_2` because of the refusal.
+#[test]
+fn a_committee_not_yet_committed_is_not_read_early() {
+    let out = Stand::new(StandConfig::live(4, 1)).run_until(reached(72), Duration::from_secs(200));
+    assert!(!out.timed_out, "heights {:?}", out.heights);
+    assert!(out.errors().is_empty(), "{:?}", out.errors());
+    for i in 0..4 {
+        let reads = &out.staking_reads[i];
+        assert_eq!(
+            reads.unknown_state, 0,
+            "node {i} read the staking state at a hash its chain never sealed \
+             ({reads:?}) — the read cursor is not the chain's"
+        );
+        assert!(
+            reads.uncommitted.get(&1).copied().unwrap_or(0) >= 1,
+            "node {i} never got the 'not committed yet' answer for epoch 1 at \
+             the genesis state: {reads:?}"
+        );
+        assert!(
+            reads.committed.values().sum::<u64>() > 50,
+            "node {i} barely read the staking state at all: {reads:?}"
+        );
+    }
+    // And the refusal did not stop the bootstrap mint.
+    let all = [0, 1, 2, 3];
+    let pk2 = pk_of(artifact_on_every_node(&out, &all, 2));
+    seedless_on_every_node(&out, &all, 1..2 * EPOCH_LEN);
+    seed_agreed_at(&out, &all, 2 * EPOCH_LEN, 2, &pk2);
+    eprintln!(
+        "(C3) reads={:?} virtual={:?} real={:?}",
+        out.staking_reads[0], out.virtual_elapsed, out.real_elapsed
+    );
+}
+
+/// (C4) A restarted node is handed only the `(height, hash)` its execution layer
+/// persisted; the epoch it resumes in is the transition's own answer.
+///
+/// Falsifier: the nodes standing up in epoch 0 (the observation of session 3
+/// §2 #2, when the stand supplied the epoch from config and a genesis anchor
+/// left them there); a first outcome that is not a cold start at the resume
+/// height; a geometry that did not freeze on the resumed state.
+#[test]
+fn cold_start_computes_the_epoch_from_the_finalized_state() {
+    let cfg = StandConfig::live(4, 1);
+    let (first, checkpoint) =
+        Stand::new(cfg.clone()).run_until_recover(reached(70), Duration::from_secs(200));
+    assert!(!first.timed_out, "{:?}", first.heights);
+    first.assert_lockstep_except(&[]);
+    let resume_from = first.heights.iter().copied().max().unwrap();
+
+    let mut cfg = cfg;
+    cfg.resume_from = Some((resume_from, finalized_hash_at(&first, resume_from)));
+    let second = Stand::new(cfg).replay(
+        checkpoint,
+        move |p| p.min_height() >= resume_from + 12,
+        Duration::from_secs(200),
+    );
+    assert!(
+        !second.timed_out,
+        "after replay: heights {:?} halted {:?}",
+        second.heights, second.halted
+    );
+    // On a boundary-aligned anchor `cold_start` enters E+1, not E
+    // (`epoch_transition.rs:519-521`) — a real production arm, but not the one
+    // this test is about, so pin that the fixture is not on one.
+    assert_ne!(
+        (resume_from + 1) % EPOCH_LEN,
+        0,
+        "the resume height is a boundary: cold_start enters E+1 there, and the \
+         expectation below would be wrong for a production-correct reason"
+    );
+    let want_epoch = resume_from / EPOCH_LEN;
+    for i in 0..4 {
+        assert_eq!(
+            second.geometry[i],
+            Some((0, EPOCH_LEN)),
+            "node {i} did not freeze the geometry on the resumed state"
+        );
+        let first_step = second.et_steps[i]
+            .first()
+            .unwrap_or_else(|| panic!("node {i}'s transition made no call at all"));
+        // This half is the STAND's own bookkeeping (the feeder records the
+        // height it passed in), kept as a guard that the stand fed the anchor it
+        // was configured with. The production claim is the outcome below.
+        assert_eq!(
+            first_step.number, resume_from,
+            "node {i} cold-started at a height other than the persisted finalized one"
+        );
+        assert_eq!(
+            first_step.outcome,
+            Ok(TransitionOutcome::EpochAdvanced(want_epoch)),
+            "node {i} did not enter epoch {want_epoch} = {resume_from} / {EPOCH_LEN} on the \
+             cold start"
+        );
+    }
+    eprintln!(
+        "(C4) resume_from={resume_from} entered={want_epoch} heights={:?} geometry={:?} real={:?}",
+        second.heights, second.geometry, second.real_elapsed
+    );
+}
+
+/// (C7, verify-only) Zero committee overlap at a boundary HALTS the chain, and
+/// nothing detects it. Project memory's trap (7): σ has no backfill, so a
+/// committee that shares no member with its predecessor can neither serve the
+/// old epoch's key nor be served the new one — enforced nowhere.
+///
+/// N=8, committee `[0,1,2,3]` through epoch 2 and `[4,5,6,7]` from epoch 3. Both
+/// halves walk their boundaries through the transition; then the chain stops.
+/// The outgoing half enters epoch 3 as verifiers holding only the epoch-2
+/// artifact and parks at the last block of epoch 2; the incoming half minted the
+/// epoch-3 artifact (it is `committee[3]`, so it dealt during epoch 2) but never
+/// held the epoch-2 key and parked a whole epoch earlier, at the last block of
+/// epoch 1.
+///
+/// This test pins the FACT, not a wish: nothing here says the halt is
+/// acceptable. What it forbids is the fact changing silently.
+///
+/// Falsifier: any node crossing its park height (then zero overlap is
+/// survivable and the memory note is wrong); a `SafetyHalt` (then the stop is
+/// DETECTED rather than silent, which is a different — and better — world);
+/// executed hashes disagreeing (a fork rather than a stop).
+#[test]
+fn a_zero_overlap_boundary_halts_the_chain_verify_only() {
+    let mut cfg = StandConfig::live(8, 1);
+    cfg.committees = Committees::Schedule(Arc::new(|epoch, _n| {
+        Some(if epoch <= 2 {
+            vec![0, 1, 2, 3]
+        } else {
+            vec![4, 5, 6, 7]
+        })
+    }));
+    let out = Stand::new(cfg).run_until(reached(3 * EPOCH_LEN + 4), Duration::from_secs(400));
+    assert!(
+        out.timed_out,
+        "the chain crossed the zero-overlap boundary: {:?}",
+        out.heights
+    );
+    assert_eq!(
+        out.heights,
+        vec![
+            3 * EPOCH_LEN - 1,
+            3 * EPOCH_LEN - 1,
+            3 * EPOCH_LEN - 1,
+            3 * EPOCH_LEN - 1,
+            2 * EPOCH_LEN - 1,
+            2 * EPOCH_LEN - 1,
+            2 * EPOCH_LEN - 1,
+            2 * EPOCH_LEN - 1
+        ],
+        "the outgoing committee parks at the last block of epoch 2 and the \
+         incoming one a whole epoch earlier"
+    );
+    assert!(
+        out.halted.is_empty(),
+        "the stop was detected as a safety fault: {:?}",
+        out.halted
+    );
+    assert_eq!(out.diverged, None);
+    for i in 0..4 {
+        assert_eq!(
+            out.artifacts[i].keys().copied().collect::<Vec<_>>(),
+            vec![2],
+            "outgoing node {i} holds an artifact other than epoch 2's"
+        );
+    }
+    for i in 4..8 {
+        assert_eq!(
+            out.artifacts[i].keys().copied().collect::<Vec<_>>(),
+            vec![3],
+            "incoming node {i} holds an artifact other than epoch 3's"
+        );
+    }
+    eprintln!(
+        "(C7) heights={:?} boundaries(out)={:?} boundaries(in)={:?} virtual={:?} real={:?}",
+        out.heights,
+        out.et_boundaries[0]
+            .iter()
+            .map(|b| (b.epoch, b.block_number))
+            .collect::<Vec<_>>(),
+        out.et_boundaries[4]
+            .iter()
+            .map(|b| (b.epoch, b.block_number))
+            .collect::<Vec<_>>(),
+        out.virtual_elapsed,
+        out.real_elapsed
+    );
+}
+
+/// (C8, verify-only) The "before" half of the re-jump exit: with the jump gate
+/// pinned at `u64::MAX` — the stand's default, and what every test written
+/// before step 5 assumes — the rotated-out node PARKS and never comes back.
+///
+/// This is the observation the sweep-wake gap produces, kept so a fix to it has
+/// something to move. The mechanism, read out of the code rather than guessed:
+/// the node enters epoch 3 as a verifier holding no artifact for it; nothing
+/// spends a network pull for the LIVE epoch's key (`epoch_manager.rs:1106-1111`
+/// goes to `soft_enter`, and the repair sweep excludes the frontier by
+/// construction at `:1677`); the sweep is woken only by a boundary trigger
+/// (`:730`) or a local `PK_epoch` insert (`:817`), and the catch-up span that
+/// raises the frontier wakes neither (`:741-757`, `:1811`). So it sits at the
+/// last block of epoch 2 with the network four epochs ahead.
+///
+/// It pins the FACT, not a wish: nothing here says parking is acceptable.
+///
+/// Falsifier: the node moving off 95 with the gate closed (then the wedge has
+/// some other exit and the "after" test proves less than it claims); the
+/// committee members failing to go on without it; a halt (the park is
+/// verify-only, not a safety fault); the three disagreeing on a hash.
+#[test]
+fn a_rotated_out_node_without_the_rejump_parks() {
+    let mut cfg = StandConfig::live(4, 1);
+    cfg.committees = rotate_four_three_four();
+    assert_eq!(
+        cfg.re_jump_threshold, None,
+        "the gate must stay closed here"
+    );
+    let members = [0, 1, 2];
+    let out = Stand::new(cfg).run_until(
+        move |p| p.min_height_of(&members) >= 5 * EPOCH_LEN + 8,
+        Duration::from_secs(400),
+    );
+    assert!(!out.timed_out, "heights {:?}", out.heights);
+    assert_eq!(
+        out.heights[3],
+        3 * EPOCH_LEN - 1,
+        "the rotated-out node did not park at the last block of epoch 2: {:?}",
+        out.heights
+    );
+    assert!(out.halted.is_empty(), "{:?}", out.halted);
+    out.assert_lockstep_except(&[3]);
+    assert_eq!(
+        out.artifacts[3].keys().copied().collect::<Vec<_>>(),
+        vec![2],
+        "the parked node acquired an epoch key it has no path to"
+    );
+    eprintln!(
+        "(C8) heights={:?} rejumps={:?} virtual={:?} real={:?}",
+        out.heights,
+        (0..4)
+            .map(|i| out.upstream[i].rejump_calls)
+            .collect::<Vec<_>>(),
+        out.virtual_elapsed,
+        out.real_elapsed
     );
 }

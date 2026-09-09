@@ -20,8 +20,12 @@ use bytes::Bytes;
 use commonware_consensus::types::Height;
 use commonware_resolver::{p2p::Producer, Consumer};
 use commonware_utils::channel::oneshot as cw_oneshot;
-use fluentbase_bls::PeerPubkey;
-use fluentbase_staking_reader::{reader::ValidatorSetSnapshot, ReadError, StakingStateRead};
+use fluentbase_bls::{BlsPubkey, PeerPubkey};
+use fluentbase_staking_reader::{
+    reader::{ConsensusKeys, ValidatorSetSnapshot, ValidatorWithKeys},
+    ReadError, StakingStateRead,
+};
+use fluentbase_types::staking_protocol::{epoch_at_block, MAX_COMMITTEE_LOOKAHEAD_EPOCHS};
 use reth_ethereum_primitives::TransactionSigned;
 use reth_primitives_traits::SealedBlock;
 use std::{
@@ -58,6 +62,36 @@ pub(super) fn genesis_sealed() -> ExecBlock {
     sealed_at(B256::ZERO, 0, B256::ZERO)
 }
 
+/// What the NETWORK executed, height → finalized-executed hash — the stand's
+/// devp2p EL peer. Every node publishes a height here the moment its own
+/// executor finalizes it (first writer wins, so a divergent deriver cannot
+/// overwrite a hash the honest majority already published), and a node that
+/// EL-syncs reads bodies out of it exactly as reth backfills them from peers.
+///
+/// This is the seam that makes a re-jump mean anything: EL sync does not need σ,
+/// because the block arrives fully formed with its `prev_randao` already in the
+/// header — which is why a node parked for want of an epoch key can still be
+/// carried forward by it.
+#[derive(Clone, Default)]
+pub(super) struct ElNetwork {
+    executed: Arc<Mutex<BTreeMap<u64, B256>>>,
+}
+
+impl ElNetwork {
+    fn publish(&self, height: u64, hash: B256) {
+        self.executed.lock().unwrap().entry(height).or_insert(hash);
+    }
+
+    fn range(&self, upto: u64) -> Vec<(u64, B256)> {
+        self.executed
+            .lock()
+            .unwrap()
+            .range(..=upto)
+            .map(|(h, x)| (*h, *x))
+            .collect()
+    }
+}
+
 /// Height → canonical EVM hash, canonicalized at derive (last writer wins — a
 /// finalized derive replaces a speculative sibling, modelling a reth reorg).
 #[derive(Clone, Default)]
@@ -72,14 +106,80 @@ pub(super) struct FakeChain {
     /// writer wins, like `canonical`): `None` in a beacon-INACTIVE epoch. The
     /// object the live-beacon tests compare across nodes.
     seeds: Arc<Mutex<BTreeMap<u64, Option<Seed>>>>,
+    /// Reverse index `executed hash -> height`, the read [`FakeStaking`] needs to
+    /// answer "what was the contract state at this hash". Every hash this chain
+    /// ever sealed stays in it (a reorged-out sibling still HAS a number), and it
+    /// is deliberately NOT `canonical`'s inverse: [`Self::note_hash`] also puts
+    /// the persisted finalized marker of a RESTARTED node here, a height whose
+    /// block this process has not re-derived yet.
+    by_hash: Arc<Mutex<BTreeMap<B256, u64>>>,
+    /// The devp2p peer this node's EL syncs from. Written on every finalized
+    /// height this node executes; read only by a re-jump landing.
+    el_network: ElNetwork,
 }
 
 impl FakeChain {
-    pub(super) fn with_genesis(hash: B256) -> Self {
-        let chain = Self::default();
+    pub(super) fn with_genesis_on(hash: B256, el_network: ElNetwork) -> Self {
+        let chain = Self {
+            el_network,
+            ..Self::default()
+        };
         chain.canonical.lock().unwrap().insert(0, hash);
+        chain.note_hash(0, hash);
         chain.finalized.advance(0);
         chain
+    }
+
+    /// A re-jump landing. `RethElSync::sync_to` FCUs reth toward the
+    /// committee-ATTESTED `result` of the upstream tip and waits for reth to
+    /// declare it canonical AND EXECUTED (`cold_start_jump.rs:434-455`), which
+    /// means reth devp2p-backfilled and executed every body up to it — so the
+    /// landing is not a lone hash on top of a hole, it is a whole executed
+    /// prefix. Modelled by copying that prefix out of [`ElNetwork`].
+    ///
+    /// Returns `false` when the peer cannot serve the landing hash — the stand's
+    /// form of "the served branch is not the one the network executed", which
+    /// production catches with `verify_jump_structural` + the BLS multisig.
+    pub(super) fn land_jump(&self, height: u64, hash: B256) -> bool {
+        if self.el_network.executed.lock().unwrap().get(&height) != Some(&hash) {
+            return false;
+        }
+        for (h, x) in self.el_network.range(height) {
+            self.land(h, x);
+        }
+        self.finalized.advance(height);
+        self.finalized_tip.fetch_max(height, Ordering::SeqCst);
+        true
+    }
+
+    /// Record `hash` as the executed hash of `height` WITHOUT making it canonical.
+    /// Used for the genesis anchor and for a replayed node's persisted finalized
+    /// marker — the one height a restarted node knows a hash for before it has
+    /// re-derived anything (reth's finalized marker survives the process; the
+    /// stand's block bodies do not).
+    pub(super) fn note_hash(&self, height: u64, hash: B256) {
+        self.by_hash.lock().unwrap().insert(hash, height);
+    }
+
+    /// Height of an executed hash, or `None` when this chain never sealed it.
+    pub(super) fn height_of(&self, hash: B256) -> Option<u64> {
+        self.by_hash.lock().unwrap().get(&hash).copied()
+    }
+
+    /// The three-valued executed-state probe [`fluentbase_consensus::executed_state_hash`]
+    /// is in production (`executed.rs:45-65`), over this chain: `Ok(None)` strictly
+    /// above the executed head, `Ok(Some)` at a materialized height, `Err` for a
+    /// materialized height with no hash (the header-index fault arm).
+    pub(super) fn executed_state_hash(&self, height: u64) -> Result<Option<B256>, ReadError> {
+        let best = self.executed_tip();
+        if height > best {
+            return Ok(None);
+        }
+        self.spec_hash_at(height).map(Some).ok_or_else(|| {
+            ReadError::Backend(format!(
+                "testbed: no executed hash at {height} (best={best})"
+            ))
+        })
     }
 
     /// Tier-F tip: the highest finalized-executed height.
@@ -104,6 +204,7 @@ impl FakeChain {
 
     fn land(&self, height: u64, hash: B256) {
         self.canonical.lock().unwrap().insert(height, hash);
+        self.note_hash(height, hash);
     }
 }
 
@@ -124,8 +225,16 @@ impl ExecutedChain for FakeChain {
         self.finalized.resolve(height, |h| self.spec_hash_at(h))
     }
     fn advance_finalized(&self, height: u64) {
+        let from = self.finalized_tip.load(Ordering::SeqCst);
         self.finalized.advance(height);
         self.finalized_tip.fetch_max(height, Ordering::SeqCst);
+        // Publish what this node just finalized-executed, so a peer that has to
+        // EL-sync can be served the bodies it never derived.
+        for h in from + 1..=height {
+            if let Some(x) = self.spec_hash_at(h) {
+                self.el_network.publish(h, x);
+            }
+        }
     }
 }
 
@@ -212,39 +321,221 @@ impl OrderingAssembler for NoTxs {
     fn observe_finalized(&self, _block: &OrderBlock) {}
 }
 
-/// `epoch → committee snapshot`, or `None` past the schedule.
-pub(super) type Schedule = Arc<dyn Fn(u64) -> Option<ValidatorSetSnapshot> + Send + Sync>;
+/// `epoch → member node indices`, or `None` for an epoch the contract never
+/// committed a committee for. This is the stand's INPUT: WHO sits in an epoch.
+/// WHEN that epoch becomes readable, and at WHICH hash, is [`FakeStaking`]'s
+/// answer, not this closure's.
+pub(super) type Members = Arc<dyn Fn(u64) -> Option<Vec<usize>> + Send + Sync>;
 
-/// The staking-state read the slasher (and nothing else in this stand) sees:
-/// committees from the schedule, the rest constant.
-#[derive(Clone)]
-pub(super) struct SnapshotReader {
-    pub(super) schedule: Schedule,
-    pub(super) epoch_len: u64,
+/// How many staking reads answered "committed" and how many answered "not
+/// committed yet", per epoch — the observation the not-yet-committed tests
+/// assert on. Counted inside [`FakeStaking`], so it says what the plane and the
+/// `EpochTransition` actually ASKED, not what the stand arranged.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) struct StakingReads {
+    /// `epoch -> reads that came back with a committee`.
+    pub committed: BTreeMap<u64, u64>,
+    /// Reads that came back EMPTY because the epoch is not committed at the read
+    /// height yet, per epoch. Production answers those with `Ok` and an empty
+    /// `validators`, never an error — `reader.rs:633`.
+    pub uncommitted: BTreeMap<u64, u64>,
+    /// Reads at a hash this chain never sealed (production: a state read at an
+    /// unknown block).
+    pub unknown_state: u64,
 }
 
-impl StakingStateRead for SnapshotReader {
+/// The staking contract as a STATE MACHINE OVER EXECUTED HEIGHT.
+///
+/// Every read takes `at: B256` — an executed hash of some height of the node's
+/// own [`FakeChain`] — and answers the contract state AS OF that height. The
+/// two rules it reproduces:
+///
+/// * **Commit height.** The node's pre-execution stage drains
+///   `commitEpochCommittee()` on EVERY block while
+///   `nextEpochToCommit() <= current_epoch + MAX_COMMITTEE_LOOKAHEAD_EPOCHS`
+///   (`node/src/evm.rs:895-918`, `:1227-1231`), and the contract reverts a
+///   target above that horizon (`contracts/staking/src/consensus.rs:572-578`).
+///   So after block `h` every epoch `<= epoch(h) + 2` is committed. Genesis is
+///   the one exception: it is not executed by that stage, and the bootstrap
+///   issues exactly ONE `commitEpochCommittee`, for epoch 0
+///   (`devnet/local-dpos-smoke/genesis-bootstrap/src/bootstrap.rs:399-408`).
+/// * **Not committed = `Ok` with an empty committee**, NOT a `ReadError`. The
+///   production reader documents and returns exactly that (`reader.rs:633-634`),
+///   and `EpochTransition` keys three separate branches on it
+///   (`epoch_transition.rs:523`, `:545`, `:631`); an `Err` there would take the
+///   boundary down instead of parking it.
+///
+/// `dkgQual[e] = committee[e] != committee[e-1]`, set inside the same commit
+/// (`contracts/staking/src/consensus.rs:598`, `staking-abi/src/lib.rs:110`), so
+/// it is readable exactly when the committee is.
+///
+/// NOT modelled (step 5b): `recordProduction`, penalties, tombstones, registry
+/// mutation. The registry is a fixed set.
+#[derive(Clone)]
+pub(super) struct FakeStaking {
+    chain: FakeChain,
+    members: Members,
+    /// Every stand node as the contract would hold it, indexed by node number.
+    validators: Arc<Vec<ValidatorWithKeys>>,
+    /// `getRegistryWithKeys()` — height-invariant here (no registry mutation).
+    registry: Arc<Vec<PeerPubkey>>,
+    epoch_len: u64,
+    reads: Arc<Mutex<StakingReads>>,
+}
+
+impl FakeStaking {
+    pub(super) fn new(
+        chain: FakeChain,
+        members: Members,
+        peers: &[PeerPubkey],
+        bls: &[BlsPubkey],
+        registry: Vec<PeerPubkey>,
+        epoch_len: u64,
+    ) -> Self {
+        let validators = peers
+            .iter()
+            .zip(bls)
+            .enumerate()
+            .map(|(i, (peer, bls))| ValidatorWithKeys {
+                address: Address::with_last_byte(i as u8 + 1),
+                keys: ConsensusKeys {
+                    bls_pubkey: *bls,
+                    peer_pubkey: peer.clone(),
+                    activation_epoch: 0,
+                },
+                tombstoned: false,
+            })
+            .collect();
+        Self {
+            chain,
+            members,
+            validators: Arc::new(validators),
+            registry: Arc::new(registry),
+            epoch_len,
+            reads: Arc::new(Mutex::new(StakingReads::default())),
+        }
+    }
+
+    pub(super) fn reads(&self) -> StakingReads {
+        self.reads.lock().unwrap().clone()
+    }
+
+    /// Every stand node in one epoch-0 snapshot. NOT a contract read: it is the
+    /// fixed anonymous sharing `StaticRandomness` deals from, which by
+    /// construction covers every node whatever an epoch's committee is.
+    pub(super) fn all_validators_snapshot(&self) -> ValidatorSetSnapshot {
+        let validators = self.validators.as_ref().clone();
+        ValidatorSetSnapshot {
+            block_hash: B256::ZERO,
+            block_number: 0,
+            epoch: 0,
+            weights: Some(vec![1u128; validators.len()]),
+            validators,
+        }
+    }
+
+    /// Whether `epoch`'s committee is committed in the state at `height` — the
+    /// contract's own horizon. See the type doc for both anchors.
+    fn committed_at(&self, epoch: u64, height: u64) -> bool {
+        if height == 0 {
+            return epoch == 0;
+        }
+        match epoch_at_block(height, 0, self.epoch_len) {
+            Some(current) => epoch <= current + MAX_COMMITTEE_LOOKAHEAD_EPOCHS,
+            None => false,
+        }
+    }
+
+    fn height_at(&self, at: B256) -> Result<u64, ReadError> {
+        self.chain.height_of(at).ok_or_else(|| {
+            self.reads.lock().unwrap().unknown_state += 1;
+            ReadError::Backend(format!("testbed: no state at {at}"))
+        })
+    }
+
+    /// The committee the contract would hold for `epoch`, peer-key ASCENDING as
+    /// `commitEpochCommittee` sorts it (`contracts/staking/src/consensus.rs:596`).
+    fn committee(&self, epoch: u64) -> Option<Vec<ValidatorWithKeys>> {
+        let mut members: Vec<ValidatorWithKeys> = (self.members)(epoch)?
+            .into_iter()
+            .map(|i| self.validators[i].clone())
+            .collect();
+        if members.is_empty() {
+            return None;
+        }
+        members.sort_unstable_by(|a, b| a.keys.peer_pubkey.cmp(&b.keys.peer_pubkey));
+        Some(members)
+    }
+
+    /// `getDkgQual(epoch)` paired with "is `epoch`'s committee committed at
+    /// `at`" — the two legs `beacon::carry::DkgQualProbe` reads
+    /// (`carry.rs:181`). An uncommitted epoch reads its bit as the contract
+    /// map's default `false` over an empty committee, which is `(false, false)`.
+    pub(super) fn dkg_qual(&self, epoch: u64, at: B256) -> Result<(bool, bool), ReadError> {
+        let snap = self.epoch_committee_snapshot(epoch, at)?;
+        if snap.validators.is_empty() {
+            return Ok((false, false));
+        }
+        if epoch == 0 {
+            // `committee_changed` short-circuits to `false` at genesis
+            // (`contracts/staking/src/consensus.rs:598-609`).
+            return Ok((false, true));
+        }
+        let prev = self.epoch_committee_snapshot(epoch - 1, at)?;
+        let keys = |s: &ValidatorSetSnapshot| -> Vec<PeerPubkey> {
+            s.validators
+                .iter()
+                .map(|v| v.keys.peer_pubkey.clone())
+                .collect()
+        };
+        Ok((keys(&prev) != keys(&snap), true))
+    }
+}
+
+impl StakingStateRead for FakeStaking {
     fn epoch_committee_snapshot(
         &self,
         epoch: u64,
-        _at: B256,
+        at: B256,
     ) -> Result<ValidatorSetSnapshot, ReadError> {
-        Ok((self.schedule)(epoch).unwrap_or(ValidatorSetSnapshot {
-            block_hash: B256::ZERO,
-            block_number: 0,
+        let height = self.height_at(at)?;
+        let validators = self
+            .committed_at(epoch, height)
+            .then(|| self.committee(epoch))
+            .flatten();
+        let mut reads = self.reads.lock().unwrap();
+        let counter = if validators.is_some() {
+            &mut reads.committed
+        } else {
+            &mut reads.uncommitted
+        };
+        *counter.entry(epoch).or_default() += 1;
+        drop(reads);
+        // An uncommitted / missed-commit epoch is `Ok` with `validators: []`
+        // and `weights: Some(vec![])` — the empty `stakes` leg beside an empty
+        // `addrs` takes the equal-length arm (`reader.rs:667-680`), NOT the
+        // `weights: None` "ring has wrapped" arm.
+        let validators = validators.unwrap_or_default();
+        let weights = Some(vec![1u128; validators.len()]);
+        Ok(ValidatorSetSnapshot {
+            block_hash: at,
+            block_number: height,
             epoch,
-            validators: vec![],
-            weights: None,
-        }))
+            validators,
+            weights,
+        })
     }
-    fn epoch_block_interval(&self, _at: B256) -> Result<u64, ReadError> {
+    fn epoch_block_interval(&self, at: B256) -> Result<u64, ReadError> {
+        self.height_at(at)?;
         Ok(self.epoch_len)
     }
-    fn dpos_activation_block(&self, _at: B256) -> Result<u64, ReadError> {
+    fn dpos_activation_block(&self, at: B256) -> Result<u64, ReadError> {
+        self.height_at(at)?;
         Ok(0)
     }
-    fn active_registry_peers(&self, _at: B256) -> Result<Vec<PeerPubkey>, ReadError> {
-        Ok(vec![])
+    fn active_registry_peers(&self, at: B256) -> Result<Vec<PeerPubkey>, ReadError> {
+        self.height_at(at)?;
+        Ok(self.registry.as_ref().clone())
     }
 }
 
