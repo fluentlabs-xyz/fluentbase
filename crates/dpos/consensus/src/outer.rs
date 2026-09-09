@@ -590,7 +590,17 @@ pub struct OuterBuilder<B, P, BE, D, XC, A, R: slasher::StakingStateRead + Send 
     pub timeouts: ConsensusTimeouts,
     pub mailbox_size: usize,
     pub deque_size: usize,
+    /// Prefix of the marshal's archive partitions (`{prefix}-v3-…`,
+    /// `{prefix}-v2-…`; `consensus_marshal` in production).
     pub partition_prefix: String,
+    /// Prefix of the PER-EPOCH journal partitions the epoch manager opens:
+    /// `{prefix}consensus_epoch_{E}` and `{prefix}dkg_epoch_{E}` — see
+    /// [`epoch_manager::Config::partition_prefix`]. Production passes `""`
+    /// (on-disk names unchanged); the in-crate deterministic testbed passes
+    /// `node{i}-`. Separate from [`Self::partition_prefix`] because the marshal
+    /// prefix is a NAME (`consensus_marshal`) and this one is a namespace
+    /// prepended to names.
+    pub engine_partition_prefix: String,
     pub resolver_initial: Duration,
     pub resolver_timeout: Duration,
     pub resolver_fetch_retry: Duration,
@@ -1248,6 +1258,7 @@ where
                 register_scheme,
                 scheme_pins: scheme_provider.clone(),
                 soft_enter_span,
+                partition_prefix: self.engine_partition_prefix,
                 #[cfg(feature = "dpos-devnet-byzantine")]
                 byzantine: self.byzantine,
             },

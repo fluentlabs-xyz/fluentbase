@@ -234,6 +234,8 @@ pub(crate) struct AgreementConfig<P, R, L> {
     pub mailbox_size: usize,
     pub timeouts: AgreementTimeouts,
     pub page_cache: CacheRef,
+    /// See [`agreement_partition`].
+    pub partition_prefix: String,
 }
 
 /// The four already-registered network routes an instance runs on: the three
@@ -245,12 +247,14 @@ pub(crate) struct AgreementNetworks<VS, VR, CS, CR, XS, XR, BS, BR> {
     pub bodies: (BS, BR),
 }
 
-/// The journal partition for the agreement instance of `target_epoch`.
+/// The journal partition for the agreement instance of `target_epoch`, under
+/// `prefix` (production passes `""`; the in-crate testbed a per-node prefix, see
+/// [`crate::engine::engine_partition`]).
 ///
 /// Disjoint from the ordering plane's `consensus_epoch_{n}` by name, and removed
 /// wholesale after the abort — nothing else ever reclaims it.
-pub fn agreement_partition(target_epoch: u64) -> String {
-    format!("dkg_epoch_{target_epoch}")
+pub fn agreement_partition(prefix: &str, target_epoch: u64) -> String {
+    format!("{prefix}dkg_epoch_{target_epoch}")
 }
 
 /// Start the agreement instance for `cfg.target_epoch` and return the supervisor
@@ -324,7 +328,7 @@ where
             let (verdict_tx, mut verdict_rx) = tokio::sync::mpsc::channel(1);
             let reporter = DkgReporter::new(target_epoch, verdict_tx);
 
-            let partition = agreement_partition(target_epoch);
+            let partition = agreement_partition(&cfg.partition_prefix, target_epoch);
             let engine = simplex::Engine::new(
                 ctx.with_label("dkg_simplex"),
                 simplex::Config {
@@ -528,6 +532,8 @@ pub struct AgreementPlaneConfig<P, R> {
     pub committee: CommitteeSource,
     pub mailbox_size: usize,
     pub timeouts: AgreementTimeouts,
+    /// See [`agreement_partition`]. Production passes `""`.
+    pub partition_prefix: String,
 }
 
 /// Start the plane's launcher: one long-lived task that turns a target epoch on
@@ -698,6 +704,7 @@ where
             mailbox_size: cfg.mailbox_size,
             timeouts: cfg.timeouts,
             page_cache,
+            partition_prefix: cfg.partition_prefix.clone(),
         },
         AgreementNetworks {
             vote,
@@ -933,8 +940,24 @@ mod tests {
 
     #[test]
     fn partition_is_disjoint_from_the_ordering_plane() {
-        assert_eq!(agreement_partition(7), "dkg_epoch_7");
-        assert_ne!(agreement_partition(7), format!("consensus_epoch_{}", 7));
+        // An empty prefix is the production spelling: the on-disk names must not
+        // move when the prefix parameter is threaded through.
+        assert_eq!(agreement_partition("", 7), "dkg_epoch_7");
+        assert_eq!(crate::engine::engine_partition("", 7), "consensus_epoch_7");
+        assert_ne!(
+            agreement_partition("", 7),
+            crate::engine::engine_partition("", 7)
+        );
+        // A per-node prefix keeps the two planes disjoint and separates nodes.
+        assert_eq!(agreement_partition("node2-", 7), "node2-dkg_epoch_7");
+        assert_eq!(
+            crate::engine::engine_partition("node2-", 7),
+            "node2-consensus_epoch_7"
+        );
+        assert_ne!(
+            crate::engine::engine_partition("node1-", 7),
+            crate::engine::engine_partition("node2-", 7)
+        );
     }
 
     fn signing_set(seed: u64, n: usize) -> (Vec<Ed25519PrivateKey>, Vec<ValidatorBlsKeypair>) {
@@ -1293,6 +1316,7 @@ mod tests {
                     pinned: FixedPinned(if silent { None } else { Some(key.clone()) }),
                     confirms: pool.clone(),
                     metrics: BeaconMetrics::default(),
+                    partition_prefix: String::new(),
                     artifacts: stores[i].clone(),
                     mailbox_size: 64,
                     // The coarse production set is asserted separately; here the
@@ -1426,6 +1450,7 @@ mod tests {
                     artifacts: ArtifactStore::new(),
                     committee,
                     mailbox_size: 64,
+                    partition_prefix: String::new(),
                     timeouts: AgreementTimeouts {
                         leader: Duration::from_secs(2),
                         certification: Duration::from_secs(3),
@@ -1536,7 +1561,7 @@ mod tests {
             for epoch in [TARGET] {
                 assert!(
                     context
-                        .scan(&agreement_partition(epoch))
+                        .scan(&agreement_partition("", epoch))
                         .await
                         .map(|blobs| blobs.is_empty())
                         .unwrap_or(true),

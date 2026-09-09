@@ -1966,6 +1966,7 @@ where
                 geometry_ready.notified().await;
                 et_arc.lock().await.frozen_geometry()
             }),
+            partition_prefix: String::new(),
         },
     )
     .await?;

@@ -319,6 +319,7 @@ async fn prune_agreements<E: Storage>(
     context: &E,
     agreements: &mut BTreeMap<Epoch, Handle<()>>,
     cutoff: u64,
+    partition_prefix: &str,
 ) {
     let stale: Vec<Epoch> = agreements
         .keys()
@@ -347,7 +348,10 @@ async fn prune_agreements<E: Storage>(
         if agreements.contains_key(&Epoch::new(epoch)) {
             continue;
         }
-        match context.remove(&agreement_partition(epoch), None).await {
+        match context
+            .remove(&agreement_partition(partition_prefix, epoch), None)
+            .await
+        {
             Ok(()) => info!(epoch, "epoch-key agreement journal partition reclaimed"),
             // Nothing to reclaim: the overwhelmingly common case, since the band is
             // swept on every prune whether or not an instance ever ran there.
@@ -563,6 +567,14 @@ pub struct Config<B, XC, A> {
     /// [`crate::outer::OuterBuilder::build`] over `register_scheme` + `chain_id`
     /// + the node-side committee reader threaded from `dpos.rs`.
     pub soft_enter_span: Arc<dyn Fn(Epoch, Epoch) -> BoxFuture<'static, Epoch> + Send + Sync>,
+    /// Prefix of every per-epoch journal partition this manager opens or sweeps:
+    /// the ordering engines' `{prefix}consensus_epoch_{E}`
+    /// ([`crate::engine::engine_partition`]) and the adopted agreement instances'
+    /// `{prefix}dkg_epoch_{E}` ([`crate::beacon::agreement_partition`]).
+    /// Production passes `""` (the on-disk names are unchanged); the in-crate
+    /// deterministic testbed passes `node{i}-`, because its N nodes share one
+    /// in-memory `Storage`.
+    pub partition_prefix: String,
     /// DEVNET/TEST-ONLY byzantine validator behaviour (gated behind
     /// `dpos-devnet-byzantine`). `None` on every honest node. Passed into every
     /// per-epoch [`EpochEngineConfig`] so the engine swaps in a
@@ -1382,7 +1394,13 @@ where
             }
         }
         let context = self.context.as_present().clone();
-        prune_agreements(&context, &mut self.dkg_agreements, cutoff).await;
+        prune_agreements(
+            &context,
+            &mut self.dkg_agreements,
+            cutoff,
+            &self.cfg.partition_prefix,
+        )
+        .await;
         self.deferred_spawns.retain(|e| e.get() >= cutoff);
         // Prune `roles` to the trailing scheme-retention window: the sole reader is
         // `soft_enter`'s `roles.get(&epoch)` for the epoch under reconcile
@@ -1449,6 +1467,7 @@ where
                 mailbox_size: self.cfg.mailbox_size,
                 register_scheme: self.cfg.register_scheme.clone(),
                 scheme,
+                partition_prefix: self.cfg.partition_prefix.clone(),
                 #[cfg(feature = "dpos-devnet-byzantine")]
                 byzantine: self.cfg.byzantine,
             },
@@ -3122,7 +3141,7 @@ mod tests {
             // Let the spawned tasks reach their park before anything is aborted.
             ctx.sleep(Duration::from_millis(1)).await;
 
-            prune_agreements(&ctx, &mut agreements, 5).await;
+            prune_agreements(&ctx, &mut agreements, 5, "").await;
             assert_eq!(
                 agreements.keys().copied().collect::<Vec<_>>(),
                 vec![Epoch::new(5)],
@@ -3155,7 +3174,7 @@ mod tests {
             // leak. Epoch 5: the frontier's own live instance. Epoch 20: outside the
             // swept band, so a sweep that ignored the band would look identical.
             for epoch in [3u64, 5, 20] {
-                ctx.open(&agreement_partition(epoch), b"blob")
+                ctx.open(&agreement_partition("", epoch), b"blob")
                     .await
                     .expect("partition");
             }
@@ -3166,18 +3185,18 @@ mod tests {
                     .spawn(move |_| async move { std::future::pending::<()>().await }),
             );
 
-            prune_agreements(&ctx, &mut agreements, 5).await;
+            prune_agreements(&ctx, &mut agreements, 5, "").await;
 
             assert!(
-                ctx.scan(&agreement_partition(3)).await.is_err(),
+                ctx.scan(&agreement_partition("", 3)).await.is_err(),
                 "the partition an aborted supervisor left behind was never reclaimed"
             );
             assert!(
-                ctx.scan(&agreement_partition(5)).await.is_ok(),
+                ctx.scan(&agreement_partition("", 5)).await.is_ok(),
                 "the live instance's own partition must survive"
             );
             assert!(
-                ctx.scan(&agreement_partition(20)).await.is_ok(),
+                ctx.scan(&agreement_partition("", 20)).await.is_ok(),
                 "the sweep must stay inside its band"
             );
         });

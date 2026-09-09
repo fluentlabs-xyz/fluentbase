@@ -95,12 +95,24 @@ pub struct EpochEngineConfig<B, XC, A> {
     /// carries a seed partial, and whether it can sign at all, were decided
     /// above it.
     pub scheme: BlsScheme,
+    /// Prefix of this engine's journal partition (see [`engine_partition`]).
+    /// Production passes `""`, so the on-disk name stays `consensus_epoch_{E}`;
+    /// the in-crate deterministic testbed passes `node{i}-` because its N nodes
+    /// share ONE in-memory `Storage` and would otherwise replay each other's
+    /// voter journal.
+    pub partition_prefix: String,
     /// DEVNET/TEST-ONLY byzantine validator behaviour (gated behind
     /// `dpos-devnet-byzantine`). `None` on every honest node. When
     /// `Some(ByzantineMode::Equivocate)` (and this node can sign), `new()` builds
     /// the [`Inner::Equivocate`] variant instead of the honest `simplex::Engine`.
     #[cfg(feature = "dpos-devnet-byzantine")]
     pub byzantine: Option<crate::byzantine::ByzantineMode>,
+}
+
+/// The journal partition of the ordering-plane engine for `epoch`, under
+/// `prefix`. An empty prefix yields the historical `consensus_epoch_{epoch}`.
+pub fn engine_partition(prefix: &str, epoch: u64) -> String {
+    format!("{prefix}consensus_epoch_{epoch}")
 }
 
 /// The per-epoch engine variant chosen in [`EpochEngine::new`]. Honest nodes are
@@ -282,7 +294,7 @@ where
                     spec_exec_mailbox,
                 )),
                 strategy: Sequential,
-                partition: format!("consensus_epoch_{}", cfg.epoch.get()),
+                partition: engine_partition(&cfg.partition_prefix, cfg.epoch.get()),
                 mailbox_size: cfg.mailbox_size,
                 epoch: cfg.epoch,
                 replay_buffer: REPLAY_BUFFER,

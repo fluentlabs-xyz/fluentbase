@@ -353,6 +353,10 @@ where
     /// chain for geometry the plane already froze. `None` ⇒ the geometry is
     /// unreadable and no `DkgActor` starts.
     pub geometry: BoxFuture<'static, Option<(u64, u64)>>,
+    /// Prefix of the epoch-key agreement journal partitions
+    /// (`{prefix}dkg_epoch_{E}`, see [`crate::beacon::agreement_partition`]).
+    /// Production passes `""`; the in-crate testbed a per-node prefix.
+    pub partition_prefix: String,
 }
 
 /// Read one stored artifact's wire bytes, or `None` where this node holds none.
@@ -447,6 +451,7 @@ where
         heights,
         plane_clock,
         geometry,
+        partition_prefix,
     } = cfg;
     let dkg_qual_for = frozen_dkg_qual(dkg_qual_at, dkg_qual_probe);
     let me = peer_keypair.public_key();
@@ -724,6 +729,7 @@ where
             committee: committee_source,
             mailbox_size: AGREEMENT_MAILBOX,
             timeouts: AgreementTimeouts::coarse(),
+            partition_prefix,
         },
         AgreementMuxes {
             vote: vote_mux,
