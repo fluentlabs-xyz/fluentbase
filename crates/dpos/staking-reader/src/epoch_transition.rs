@@ -530,10 +530,16 @@ where
         }
 
         // Boundary: when the LAST block of epoch E finalizes, spawn epoch E+1. Its
-        // committee was committed one epoch ahead (at the first block of epoch E,
-        // §4.4), so the frozen `getEpochCommittee(E+1)` is on-chain by now and the
-        // genesis block for engine E+1 (= this finalized last-block of E) is
-        // stored. The engine-E engine keeps producing until E+1 takes over.
+        // committee is committed by now with room to spare: the node's
+        // pre-execution stage drains `commitEpochCommittee()` on EVERY block
+        // while `nextEpochToCommit() <= current_epoch + MAX_COMMITTEE_LOOKAHEAD_EPOCHS`
+        // (`node/src/evm.rs:895-918`, called at `:1227-1231`), and the contract
+        // reverts a target above that horizon
+        // (`contracts/staking/src/consensus.rs:572-578`) — so the state at any
+        // block of epoch `E − 1` already holds `committee[E + 1]`, and the read
+        // below happens at `E`'s last block minus `result_lag`. The genesis block
+        // for engine E+1 (= this finalized last-block of E) is stored. The
+        // engine-E engine keeps producing until E+1 takes over.
         let next = epoch_e + 1;
         if is_boundary && self.last_tracked_epoch < Some(next) {
             // Missed-commit epoch: `Staking.sol` allows an epoch with no
@@ -544,11 +550,13 @@ where
             let snap = self.reader.epoch_committee_snapshot(next, at)?;
             if snap.validators.is_empty() {
                 // committee[next] not yet readable at the deterministic spawn height
-                // (`executed_hash(B−1−K)`). Under the v41 QUALIFY-BEFORE-COMMIT schedule
-                // this is a TRANSIENT state-visibility lag, never a genuine missed
-                // commit: EVERY epoch now gets a committee — candidate-if-qualified else
-                // the incumbent carry — committed at `H_qual = B−8 ≤ B−1−K`, so an empty
-                // read here can only be reth's eager-canonicalization state lag. KEEP the
+                // (`executed_hash(B−K)`). Under the 2-epoch committee warm-up this is a
+                // TRANSIENT state-visibility lag, never a genuine missed commit: the
+                // ahead-commit loop runs on EVERY block and commits immediately, with no
+                // deferral and no qualify-before-commit branch (`node/src/evm.rs:940-946`
+                // says so in as many words), so `committee[next]` was frozen a whole
+                // epoch before this read and an empty answer here can only be reth's
+                // eager-canonicalization state lag. KEEP the
                 // boundary PARKED so the re-poke loop RE-READS on subsequent finalized
                 // observations until the snapshot materializes; dropping to `None` here
                 // would lose the epoch-E+1 engine spawn PERMANENTLY (the wedge amplifier
@@ -568,8 +576,8 @@ where
                         epoch = next,
                         boundary = number,
                         "epoch boundary: committee[next] empty at the spawn height — parking \
-                         for re-poke (transient state-visibility lag; v41 schedule guarantees \
-                         a committed committee by H_qual = B−8)"
+                         for re-poke (transient state-visibility lag; the ahead-commit loop \
+                         froze this committee an epoch ago)"
                     );
                     self.warned_empty_boundary = Some(number);
                 }
