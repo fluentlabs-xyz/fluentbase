@@ -454,7 +454,8 @@ pub struct CertInlet<C, E, M> {
     /// where committee reads are fully trusted); `None` on a validator inlet (it
     /// owns a consensus plane that re-derives + cross-checks the result) and in
     /// tests. `interval` MUST be `> 0` (the follower cold-start guards it before
-    /// wiring — `epoch_of_block` div-by-zeroes on a zero interval).
+    /// wiring; the shared `epoch_at_block` answers `None` on a zero interval and
+    /// `ingest` treats that as a height that matches no epoch).
     epoch_bind: Option<(u64, u64)>,
     /// `dpos_cert_inlet_committee_read_deferred_total{reason}` — ticks once per
     /// cert deferred because the committee read hit a TRANSIENT reth

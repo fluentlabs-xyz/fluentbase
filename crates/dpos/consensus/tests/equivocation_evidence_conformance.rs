@@ -606,41 +606,38 @@ fn slash_abi_signatures_and_selectors_are_pinned() {
     assert_eq!(
         slashEquivocationNotarizeCall::SIGNATURE,
         pinned::SIG_NOTARIZE,
-        "node-side slash-notarize signature drifted from the pin; \
-         contract side is slashEquivocationNotarize(bytes,bytes,bytes,bytes,address,bytes32) \
-         on feat/flu-989-port-solidity-delta"
+        "node-side slash-notarize signature drifted from the pin; the contract \
+         dispatches the same four-argument form off the same shared declaration"
     );
     assert_eq!(
         slashEquivocationNotarizeCall::SELECTOR,
         pinned::SEL_NOTARIZE,
-        "node-side slash-notarize selector drifted from the pinned 0xe28d2f63; \
-         contract side is 0x2bc5fb10 on feat/flu-989-port-solidity-delta"
+        "node-side slash-notarize selector drifted from the pinned 0xe28d2f63, \
+         which is the selector the deployed blob dispatches on"
     );
     assert_eq!(
         slashEquivocationFinalizeCall::SIGNATURE,
         pinned::SIG_FINALIZE,
-        "node-side slash-finalize signature drifted from the pin; \
-         contract side is slashEquivocationFinalize(bytes,bytes,bytes,bytes,address,bytes32) \
-         on feat/flu-989-port-solidity-delta"
+        "node-side slash-finalize signature drifted from the pin; the contract \
+         dispatches the same four-argument form off the same shared declaration"
     );
     assert_eq!(
         slashEquivocationFinalizeCall::SELECTOR,
         pinned::SEL_FINALIZE,
-        "node-side slash-finalize selector drifted from the pinned 0xadd07a3e; \
-         contract side is 0xb034c58b on feat/flu-989-port-solidity-delta"
+        "node-side slash-finalize selector drifted from the pinned 0xadd07a3e, \
+         which is the selector the deployed blob dispatches on"
     );
     assert_eq!(
         slashEquivocationNullifyFinalizeCall::SIGNATURE,
         pinned::SIG_NULLIFY_FINALIZE,
-        "node-side slash-nullify-finalize signature drifted from the pin; contract side is \
-         slashEquivocationNullifyFinalize(bytes,bytes,bytes,bytes,address,bytes32) \
-         on feat/flu-989-port-solidity-delta"
+        "node-side slash-nullify-finalize signature drifted from the pin; the contract \
+         dispatches the same four-argument form off the same shared declaration"
     );
     assert_eq!(
         slashEquivocationNullifyFinalizeCall::SELECTOR,
         pinned::SEL_NULLIFY_FINALIZE,
-        "node-side slash-nullify-finalize selector drifted from the pinned 0xa10827e9; \
-         contract side is 0x337e1437 on feat/flu-989-port-solidity-delta"
+        "node-side slash-nullify-finalize selector drifted from the pinned 0xa10827e9, \
+         which is the selector the deployed blob dispatches on"
     );
 
     // A name collision would route to the wrong contract branch.
@@ -708,10 +705,9 @@ fn slash_calldata_layout_is_pinned_literally() {
             encode_calldata(&zeroed(kind)),
             expected,
             "{kind:?}: production slash calldata drifted from the literal pin — \
-             the node's four-argument ABI moved. The contract \
-             (feat/flu-989-port-solidity-delta) takes SIX arguments \
-             (…,address beneficiary,bytes32 salt); see the merge checklist in \
-             crates/dpos/consensus/src/slasher/actor.rs"
+             the node's four-argument ABI moved. The contract takes the same \
+             four arguments and derives its selector from the same declaration, \
+             so this vector pins the ENCODING, which no selector covers"
         );
     }
 }

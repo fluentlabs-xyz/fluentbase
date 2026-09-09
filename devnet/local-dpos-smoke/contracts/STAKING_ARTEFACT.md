@@ -133,15 +133,20 @@ explanation — no one measured which of the two crates accounts for which bytes
       d106df9221d023e14adbec93ad329685208556ea0d1eb3946b4fde6bcad9b90f  src/math.rs        *
       c4d2c1388334c90ad5049adad153c72090bfef62121635de91848a337083a5f1  src/staking.rs
       d9b100f92acb6670c2626352b3cee7e0765b69d85feb28481441d0132cd83f54  src/storage.rs
-      ad31bfa3e9948e6323f77e409a6c527d1e16522cc50f2f2e43f6ad5b4d791e35  src/tests.rs       *
+      b43c8e34e460f2119f26d98c3051253f27928d8c61798b3af645393d5c07a01d  src/tests.rs       *
       e865fb1d3d6dd9832fde934d1cf530acf63054134ca167b0b8f0930f4a76e6fa  src/types.rs
       a76fa8763d1e7e9279b488295d53e02476990890806ff9b77e8ce77a02433327  src/util.rs
 
   Five starred files are the whole contract-side delta. `events.rs` is NOT
   starred by this work — its digest moved because of an unrelated uncommitted
-  doc edit already in the tree. The blob depends on two files OUTSIDE this
-  directory as well, which no digest here covers:
-  `crates/types/src/staking_protocol.rs` and `crates/staking-abi/src/lib.rs`.
+  doc edit already in the tree. `src/tests.rs` is `#[cfg(test)]` and enters no
+  artefact, so its digest moved AFTER this build (a review pass added
+  `the_view_returns_decode_under_the_node_s_declaration`) without invalidating
+  the blob; the value above is the current one. The blob depends on three inputs
+  OUTSIDE this directory that no digest here covers:
+  `crates/types/src/staking_protocol.rs`, `crates/staking-abi/src/lib.rs`, and
+  `contracts/staking/Cargo.toml` (which is where the dependency on the second of
+  them is declared).
 - `fluentbase_contracts_staking.wasm` — 401,778 bytes (was 406,136, −4,358)
   `4dd7d27a747e1db10629fb453d3e6bcc522c5b0adfd87c476f58945dcf49e8f1`
 - `fluentbase_contracts_staking.rwasm` — 2,775,337 bytes (was 2,799,159, −23,822)
@@ -200,13 +205,17 @@ side.
 
 ### Tests
 
-- `cargo test` in `contracts/staking`: **174 passed, 0 failed**; **175** with
-  `--features devnet-views` (174 was the pre-Э2 baseline in both shapes; the one
-  new test is `close_event_topics_match_the_shared_abi`, which compares this
-  crate's `#[derive(Event)]` topic0s against `fluentbase-staking-abi`'s `sol!`
-  ones — the first two-sided check the event layouts have ever had).
-  `cargo clippy --all-targets --features devnet-views` and `cargo fmt --check`:
-  clean.
+- `cargo test` in `contracts/staking`: **175 passed, 0 failed**; **176** with
+  `--features devnet-views`. The pre-Э2 baseline was 174 WITH the feature; the
+  no-feature baseline was never measured, so read 175/176 as the measurement and
+  not as a delta against a number nobody took. Two new tests, both two-sided and
+  both firsts: `close_event_topics_match_the_shared_abi` compares this crate's
+  `#[derive(Event)]` topic0s against `fluentbase-staking-abi`'s `sol!` ones, and
+  `the_view_returns_decode_under_the_node_s_declaration` hands the REAL handler's
+  output bytes to the node's `abi_decode_returns` — the return SHAPE is the one
+  thing sharing a `sol!` does not close by itself, because the handler encodes a
+  Rust tuple through its own codec. `cargo clippy --all-targets --features
+  devnet-views` and `cargo fmt --check`: clean.
 - Root workspace: `cargo check --workspace` clean;
   `cargo test -p fluentbase-e2e --release` **113 passed / 9 failed / 9 ignored**,
   the nine being `builtins::*` fuel-accounting failures that predate the merge and

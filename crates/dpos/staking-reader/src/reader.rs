@@ -268,7 +268,9 @@ pub use staking_protocol::epoch_at_block;
 
 /// Activation-relative epoch-boundary predicate: `true` when `block_number` is
 /// the LAST block of its relative epoch, i.e. `(number + 1 - activation)` is a
-/// multiple of `interval`. Activation-relative to match [`epoch_at_block`] and
+/// multiple of `interval`. Argument order matches [`epoch_at_block`] deliberately
+/// — the two used to disagree, and both take three `u64`s, so a swap compiles.
+/// Activation-relative to match [`epoch_at_block`] and
 /// the consensus `OriginEpocher` (an absolute `(number+1) % interval` check only
 /// agrees when `activation % interval == 0`). Single definition shared by
 /// `EpochTransition`'s frozen-geometry (`is_epoch_boundary_frozen`) and in-flight
@@ -283,8 +285,8 @@ pub use staking_protocol::epoch_at_block;
 #[inline]
 pub fn is_epoch_boundary(
     block_number: u64,
-    epoch_block_interval: u64,
     dpos_activation_block: u64,
+    epoch_block_interval: u64,
 ) -> bool {
     // A PRE-activation block (`block_number < activation`, i.e. `number + 1 <=
     // activation`, incl. block `activation - 1` whose rel would be 0) belongs to
@@ -817,8 +819,8 @@ where
 mod tests {
     use super::{
         abi, check_committee_ordering, check_peer_set_size, decode_consensus_keys, epoch_at_block,
-        is_epoch_boundary, is_unset, map_evm_call_err, map_state_provider_err, StakingReaderConfig,
-        staking_protocol, ValidatorWithKeys, MIN_COMMITTEE_LENGTH,
+        is_epoch_boundary, is_unset, map_evm_call_err, map_state_provider_err, staking_protocol,
+        StakingReaderConfig, ValidatorWithKeys, MIN_COMMITTEE_LENGTH,
     };
     use crate::error::{ReadError, SHORT_READ_DISPLAY, TORN_RANGE_DISPLAY};
     use alloy_primitives::{address, hex, Address, Bytes, FixedBytes, B256, U256};
@@ -854,7 +856,7 @@ mod tests {
         // of them spurious boundaries — bug 3). Block activation-1 (== 63) too.
         for n in 0..64u64 {
             assert!(
-                !is_epoch_boundary(n, 32, 64),
+                !is_epoch_boundary(n, 64, 32),
                 "pre-activation block {n} must not be a boundary"
             );
         }
@@ -866,22 +868,22 @@ mod tests {
         for k in 1..5u64 {
             let last = 64 + k * 32 - 1;
             assert!(
-                is_epoch_boundary(last, 32, 64),
+                is_epoch_boundary(last, 64, 32),
                 "block {last} is a boundary"
             );
-            assert!(!is_epoch_boundary(last - 1, 32, 64));
-            assert!(!is_epoch_boundary(last + 1, 32, 64));
+            assert!(!is_epoch_boundary(last - 1, 64, 32));
+            assert!(!is_epoch_boundary(last + 1, 64, 32));
         }
     }
 
     #[test]
     fn absolute_numbering_activation_zero_is_unchanged() {
         // activation=0 (mocks / absolute numbering): boundary at every interval-1.
-        assert!(is_epoch_boundary(99, 100, 0));
-        assert!(is_epoch_boundary(199, 100, 0));
-        assert!(!is_epoch_boundary(0, 100, 0));
-        assert!(!is_epoch_boundary(98, 100, 0));
-        assert!(!is_epoch_boundary(100, 100, 0));
+        assert!(is_epoch_boundary(99, 0, 100));
+        assert!(is_epoch_boundary(199, 0, 100));
+        assert!(!is_epoch_boundary(0, 0, 100));
+        assert!(!is_epoch_boundary(98, 0, 100));
+        assert!(!is_epoch_boundary(100, 0, 100));
     }
 
     fn keys(seed: u64) -> abi::ConsensusKeys {

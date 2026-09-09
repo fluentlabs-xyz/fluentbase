@@ -809,8 +809,10 @@ where
         // larger than 255 would make an honest leader's index unencodable, so
         // every voter would reject every block it proposed — a silent,
         // permanent loss of that member's whole slot share. Fail at startup
-        // instead, before any block is proposed. Mirrored constant:
-        // `MAX_ACTIVE_VALIDATORS_LENGTH` in `contracts/staking/src/consts.rs`.
+        // instead, before any block is proposed. The cap is ONE declaration,
+        // `fluentbase_types::staking_protocol::MAX_COMMITTEE_SIZE`, which the
+        // staking module imports under the same name — so this asserts a
+        // configured value, not an agreement between two literals.
         assert!(
             fluentbase_p2p::constants::MAX_COMMITTEE_SIZE <= u8::MAX as u64,
             "wire format requires leader_index to fit u8; \

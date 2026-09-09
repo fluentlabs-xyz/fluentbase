@@ -1620,7 +1620,7 @@ impl DposLayer {
         // Dedicated reader instance for the slasher (NOT shared with ET).
         // `RethStakingStateReader` is not `Clone`; ctor args are
         // already cloned at the call sites. Each instance lazy-inits its own
-        // `OnceLock<u32>` epoch interval/undelegate cache on first call —
+        // `OnceLock` epoch-geometry cache on first call —
         // negligible (~2 extra reads at startup).
         let reader_for_slasher = RethStakingStateReader::new(
             provider.clone(),
@@ -1966,10 +1966,11 @@ impl DposLayer {
             return Err(eyre!(
                 "Staking.activeValidatorsLength ({}) exceeds \
                  fluentbase_p2p::constants::MAX_COMMITTEE_SIZE ({}). Node ↔ contract \
-                 cap drift detected — bump MAX_COMMITTEE_SIZE in \
-                 crates/dpos/p2p/src/constants.rs AND MAX_ACTIVE_VALIDATORS_LENGTH in \
-                 the staking module's contracts/staking/src/consts.rs in the SAME PR, \
-                 then redeploy/upgrade.",
+                 cap exceeded — the chain has a configured active-set larger \
+                 than the node can encode. Raise the ONE declaration, \
+                 fluentbase_types::staking_protocol::MAX_COMMITTEE_SIZE (both \
+                 sides import it), then redeploy/upgrade. It must stay <= 255 \
+                 while the production record carries a one-byte leader index.",
                 active_validators_length,
                 fluentbase_p2p::constants::MAX_COMMITTEE_SIZE,
             ));
@@ -4104,9 +4105,8 @@ mod cold_start_kind_tests {
     fn boundary_exactly_one_interval_is_overshoot() {
         // cs_finalized == activation + interval is the FIRST fatal height
         // (epoch 0 is [activation, activation + interval)) when there is no upstream.
-        let err =
-            resolve_cold_start_kind(0, ACTIVATION, INTERVAL, ACTIVATION + INTERVAL, false)
-                .unwrap_err();
+        let err = resolve_cold_start_kind(0, ACTIVATION, INTERVAL, ACTIVATION + INTERVAL, false)
+            .unwrap_err();
         assert!(err.to_string().contains("past epoch 0"), "{err}");
     }
 

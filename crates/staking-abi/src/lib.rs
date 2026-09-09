@@ -8,9 +8,16 @@
 //! the only thing holding them together was a hex literal transcribed out of a
 //! doc comment. A rename on either side is now a compile error on the other.
 //!
-//! Scope: exactly the surface that crosses the boundary. Handlers the node never
-//! calls keep their own `derive_keccak256_id!` in the contract's `consts.rs` —
-//! they are not duplicated anywhere, so there is nothing to share.
+//! Scope: the surface the RUNNING node crosses. Handlers no node-side code calls
+//! keep their own `derive_keccak256_id!` in the contract's `consts.rs`.
+//!
+//! That scope has a known hole, named here rather than left to be discovered:
+//! `initialize` and `commitEpochCommittee` are declared a THIRD time, in
+//! `devnet/local-dpos-smoke/genesis-bootstrap/src/bootstrap.rs`'s own `sol!`,
+//! and `initialize` a fourth through sixth time across `e2e/src/staking*.rs`.
+//! `bootstrap.rs` is not a test — it builds the genesis state a real stand runs
+//! on, so an arity change to `initialize` compiles there and reverts at
+//! genesis-init. Bringing it in is stand work, deliberately not done here.
 //!
 //! `no_std` and `alloy-sol-types` only, because the contract compiles to
 //! `wasm32-unknown-unknown` with no `std`.
@@ -163,11 +170,17 @@ mod tests {
     use super::*;
     use alloy_sol_types::{SolCall, SolError, SolEvent};
 
-    /// Every selector this crate hands to both sides, pinned against the hex in
-    /// `devnet/local-dpos-smoke/contracts/STAKING_ARTEFACT.md` — the scan of the
-    /// deployed rWasm blob, which is an EXTERNAL witness: it is derived from
-    /// neither declaration, it is what a live chain actually dispatches on, and
-    /// it is re-run against every rebuilt blob.
+    /// The thirteen CALL selectors this crate hands to both sides, pinned against
+    /// the hex in `devnet/local-dpos-smoke/contracts/STAKING_ARTEFACT.md` — the
+    /// scan of the deployed rWasm blob, which is an EXTERNAL witness: it is
+    /// derived from neither declaration, it is what a live chain actually
+    /// dispatches on, and it is re-run against every rebuilt blob.
+    ///
+    /// The fourteenth entry, `AlreadySlashedForEquivocation`, is NOT in that
+    /// scan and cannot be: the scan walks handler selectors, and an error
+    /// selector never appears as one. Its independent witness is
+    /// `e2e/src/staking_bls.rs`, which asserts these four bytes coming back from
+    /// a real rWasm revert.
     ///
     /// This is the one pin worth having. Recomputing a selector from the
     /// signature string next to it would put both halves on the same side, which

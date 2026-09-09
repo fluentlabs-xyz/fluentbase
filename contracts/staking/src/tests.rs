@@ -7197,6 +7197,58 @@ fn the_committee_snapshot_reports_the_tombstone_against_its_own_member() {
     );
 }
 
+/// The RETURN SHAPE of the two views the node decodes, checked against the
+/// node's declaration on bytes this contract actually produced.
+///
+/// A return type does not enter a selector, so the selector pins say nothing
+/// about it: the node could agree with us on `0xa4d160c1` and still decode four
+/// arrays where we wrote three. And sharing `fluentbase-staking-abi` does NOT
+/// close this by itself — the handler encodes a Rust tuple through
+/// `write_returns`' own `SolidityABI` codec, which is a second, independent
+/// spelling of the same shape. This is the only place the two spellings meet.
+///
+/// So: call the real handler, take its raw output, and hand it to the node's
+/// own `abi_decode_returns`. Drop a leg, reorder two, or widen
+/// `activationEpoch`, and this goes red on the side that changed it.
+#[test]
+fn the_view_returns_decode_under_the_node_s_declaration() {
+    use fluentbase_staking_abi::{self as abi, SolCall};
+
+    let sponsor = Address::with_last_byte(0xa0);
+    let first = Address::with_last_byte(0x01);
+    let second = Address::with_last_byte(0x02);
+    let stake = DEFAULT_MIN_VALIDATOR_STAKE * U256::from(4);
+    let mut harness = Harness::new(1_000);
+    assert_eq!(
+        harness.initialize(sponsor, vec![first, second], vec![stake, stake], 0),
+        ExitCode::Ok
+    );
+    commit_test_committee(&mut harness.sdk, 0, &[(first, stake), (second, stake)]);
+
+    let (exit, output) = harness.call(encode_call(
+        SIG_GET_EPOCH_COMMITTEE_WITH_STAKES,
+        &U64Command { value: 0 },
+    ));
+    assert_eq!(exit, ExitCode::Ok);
+    let decoded = abi::getEpochCommitteeWithStakesCall::abi_decode_returns(&output)
+        .expect("the node's declaration must decode what this handler writes");
+    assert_eq!(decoded.addrs, vec![first, second]);
+    assert_eq!(decoded.keys.len(), 2);
+    assert_eq!(decoded.stakes.len(), 2);
+    assert_eq!(decoded.tombstoned, vec![false, false]);
+    // The keys leg is the one a head-stride defect shifts against the addresses
+    // without failing to decode, so check a field of it rather than its length.
+    assert_eq!(decoded.keys[0].blsPubkey.len(), BLS_PUBKEY_LENGTH);
+    assert_eq!(decoded.keys[1].blsPubkey.len(), BLS_PUBKEY_LENGTH);
+
+    let (exit, output) = harness.call(encode_empty_call(SIG_GET_REGISTRY_WITH_KEYS));
+    assert_eq!(exit, ExitCode::Ok);
+    let decoded = abi::getRegistryWithKeysCall::abi_decode_returns(&output)
+        .expect("the node's declaration must decode what this handler writes");
+    assert_eq!(decoded.addrs, vec![first, second]);
+    assert_eq!(decoded.keys.len(), 2);
+}
+
 /// Two proposers may carry the same charge, and the epoch-boundary fallback may
 /// land beside a block-borne one. The second verdict has to be inert rather than
 /// a failed system call.

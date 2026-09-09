@@ -403,10 +403,11 @@ mod tests {
     /// NOT ack — so the entry would be retried forever across restarts.
     ///
     /// Pinned literally: `cast sig "AlreadySlashedForEquivocation(address)"` ==
-    /// `0x8300031d`, which is what the contract's
-    /// `ERR_ALREADY_SLASHED_FOR_EQUIVOCATION` derives on
-    /// `feat/flu-989-port-solidity-delta`. This one AGREES with the contract
-    /// today — no drift to record.
+    /// `0x8300031d`. The contract's `ERR_ALREADY_SLASHED_FOR_EQUIVOCATION`
+    /// derives from the SAME shared declaration this file imports, so the
+    /// independent half of the pin is the live rWasm revert asserted by
+    /// `e2e/src/staking_bls.rs` — not this hex, and not the blob's selector
+    /// scan, which covers handlers only and carries no error selectors.
     #[test]
     fn already_slashed_error_selector_is_pinned() {
         use alloy_sol_types::SolError as _;
@@ -418,8 +419,8 @@ mod tests {
             AlreadySlashedForEquivocation::SELECTOR,
             [0x83, 0x00, 0x03, 0x1d],
             "node-side AlreadySlashedForEquivocation selector drifted from the pinned \
-             0x8300031d; the contract side is ERR_ALREADY_SLASHED_FOR_EQUIVOCATION in \
-             contracts/staking/src/consts.rs on feat/flu-989-port-solidity-delta"
+             0x8300031d, which `e2e/src/staking_bls.rs` observes coming back from a \
+             real rWasm revert"
         );
     }
 }

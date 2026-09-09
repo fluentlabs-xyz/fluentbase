@@ -237,8 +237,8 @@ where
     fn is_epoch_boundary_frozen(&self, number: u64) -> Option<bool> {
         Some(is_epoch_boundary(
             number,
-            self.frozen_interval?,
             self.frozen_activation?,
+            self.frozen_interval?,
         ))
     }
 
@@ -492,7 +492,7 @@ where
         // peer-set handoff at a different block than `OriginEpocher` treats as the
         // boundary — the exact "two epoch authorities diverge" failure the freeze
         // logic above guards against.
-        let is_boundary = is_epoch_boundary(number, interval, activation);
+        let is_boundary = is_epoch_boundary(number, activation, interval);
 
         // Cold-start bootstrap: on the very first finalized block, stand up the
         // CURRENT epoch's engine. Its committee is already committed on-chain (the

@@ -818,8 +818,12 @@ fn slasher_rejects_tampered_evidence_at_verify_pre_submit() {
 /// agree through any rename. These literals were computed with
 /// `cast sig "<signature>"` and are the independent half of the pin.
 ///
-/// The contract-side counterparts differ (six arguments, not four); the merge
-/// checklist is at the top of `crates/dpos/consensus/src/slasher/actor.rs`.
+/// The contract-side counterparts are the SAME four-argument forms and derive
+/// their dispatch constants from the same `fluentbase-staking-abi` declaration
+/// (`contracts/staking/src/consts.rs::SIG_SLASH_EQUIVOCATION_*`), so these
+/// literals now pin an agreement rather than name a gap. The six-argument
+/// contract-side variant this comment used to warn about was on a branch that
+/// merged as `f16fdd90` without it.
 mod slash_abi {
     /// `cast sig "slashEquivocationNotarize(bytes,bytes,bytes,bytes)"`
     pub const SEL_NOTARIZE: [u8; 4] = [0xe2, 0x8d, 0x2f, 0x63];
@@ -844,21 +848,21 @@ fn slash_abi_selectors_are_pinned() {
         slashEquivocationNotarizeCall::SELECTOR,
         slash_abi::SEL_NOTARIZE,
         "node emits {:?} for slashEquivocationNotarize; pinned literal is 0xe28d2f63 and the \
-         contract (feat/flu-989-port-solidity-delta, six args) is 0x2bc5fb10",
+         contract dispatches the same selector off the same shared declaration",
         slashEquivocationNotarizeCall::SELECTOR
     );
     assert_eq!(
         slashEquivocationFinalizeCall::SELECTOR,
         slash_abi::SEL_FINALIZE,
         "node emits {:?} for slashEquivocationFinalize; pinned literal is 0xadd07a3e and the \
-         contract (feat/flu-989-port-solidity-delta, six args) is 0xb034c58b",
+         contract dispatches the same selector off the same shared declaration",
         slashEquivocationFinalizeCall::SELECTOR
     );
     assert_eq!(
         slashEquivocationNullifyFinalizeCall::SELECTOR,
         slash_abi::SEL_NULLIFY_FINALIZE,
         "node emits {:?} for slashEquivocationNullifyFinalize; pinned literal is 0xa10827e9 and \
-         the contract (feat/flu-989-port-solidity-delta, six args) is 0x337e1437",
+         the contract dispatches the same selector off the same shared declaration",
         slashEquivocationNullifyFinalizeCall::SELECTOR
     );
 }

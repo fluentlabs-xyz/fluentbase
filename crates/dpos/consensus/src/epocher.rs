@@ -62,9 +62,16 @@ impl OriginEpocher {
 
 impl Epocher for OriginEpocher {
     fn containing(&self, height: Height) -> Option<EpochInfo> {
-        // Heights below the origin predate DPoS and have no relative epoch.
-        let rel = height.get().checked_sub(self.origin)?;
-        let epoch = Epoch::new(rel / self.length);
+        // Heights below the origin predate DPoS and have no relative epoch. That
+        // `None` is this type's own rule and is NOT the shared function's — it
+        // clamps such a height to epoch 0 — so the gate stays here and only the
+        // arithmetic below is shared with the staking module and the reader.
+        height.get().checked_sub(self.origin)?;
+        let epoch = Epoch::new(fluentbase_types::staking_protocol::epoch_at_block(
+            height.get(),
+            self.origin,
+            self.length,
+        )?);
         let (first, last) = self.bounds(epoch)?;
         Some(EpochInfo::new(epoch, height, first, last))
     }
