@@ -207,18 +207,27 @@ pub fn resolve_precompiled_runtime_from_input(input: &[u8]) -> Address {
     }
 }
 
-/// Authority address that is allowed to update the code of arbitrary accounts.
+/// Bootstrap owner of the runtime-upgrade contract: allowed to update the code of arbitrary
+/// accounts while the contract's owner slot is still empty.
 ///
-/// This is the "admin" for genesis/state upgrade operations and should be
-/// treated as highly privileged.
+/// This is the "admin" for genesis/state upgrade operations and should be treated as highly
+/// privileged. It is a launch-only default: once a chain is live the owner must be moved to a
+/// multisig with `changeOwner`, and to a different key than the fee-manager owner, so that one
+/// key compromise cannot yield both system-code installation and treasury withdrawal (see
+/// `docs/06-runtime-upgrade.md`, "Bootstrap authorities").
 ///
-/// P.S: This address is default for genesis-init, but once a chain is live, it should be
-///  reannounced or changed to smart contract (multisig). The address can be changed by upgrading
-///  the runtime.
+/// The value is compiled into the contract bytecode and read by every network whose owner slot
+/// is still empty, so changing it changes who owns the role on such a network at its next
+/// contract upgrade.
 pub const DEFAULT_UPDATE_GENESIS_AUTH: Address =
     address!("0xa7bf6a9168fe8a111307b7c94b8883fe02b30934");
 
-/// Default fee manager, should be changed after a chain is live
+/// Bootstrap owner of the fee-manager contract, read while its owner slot is still empty.
+///
+/// Currently the same launch key as [`DEFAULT_UPDATE_GENESIS_AUTH`]. The launch runbook must
+/// reassign it to a treasury multisig distinct from the upgrade owner before the chain is exposed
+/// (see `docs/06-runtime-upgrade.md`, "Bootstrap authorities"); changing the value here has the
+/// same consensus caveat as the upgrade authority.
 pub const DEFAULT_FEE_MANAGER_AUTH: Address =
     address!("0xa7bf6a9168fe8a111307b7c94b8883fe02b30934");
 

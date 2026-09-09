@@ -28,6 +28,8 @@ use revm::{bytecode::Bytecode, state::AccountInfo};
 #[cfg(test)]
 mod blockhash;
 #[cfg(test)]
+mod bootstrap_authority;
+#[cfg(test)]
 mod bridge;
 #[cfg(test)]
 mod builtins;

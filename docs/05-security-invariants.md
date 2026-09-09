@@ -80,6 +80,9 @@ Why it matters: envelope mis-handling can commit invalid side effects.
 
 - runtime-upgrade path must remain tightly scoped,
 - authority defaults/owner transitions must be explicit and reviewed,
+- the runtime-upgrade owner and the fee-manager owner must be distinct keys on a live network;
+  the compiled-in bootstrap defaults are launch-only (see `06-runtime-upgrade.md`, "Bootstrap
+  authorities"),
 - governance key handling is high-risk surface.
 
 Why it matters: upgrade authority compromise is full-system compromise.
