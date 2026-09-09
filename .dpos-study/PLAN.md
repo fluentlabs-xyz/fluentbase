@@ -86,7 +86,7 @@
 | # | Работа | Статус / что становится проверяемым |
 |---|---|---|
 | [ ] 3.1 | conformance-набор для `BeaconEngineLike`/`ExecutedChain`/`DerivedBlockBuilder` против `FakeChain` и in-process reth | открыто; `reth-e2e-test-utils` не подключён — проверить до оценки (REDESIGN: входит в 3–4 нед. П-8) |
-| [ ] 3.2 | детерминированный многоузловой стенд в крейте (`commonware_runtime::deterministic` + simulated p2p) | открыто (ГИПОТЕЗА 2–3 нед.) |
+| [ ] 3.2 | детерминированный многоузловой стенд в крейте (`commonware_runtime::deterministic` + simulated p2p) | открыто; разведка 2026-09-09 — `history/E3-2-STAND-RESEARCH.md`, оценка 9–11 дней (проба: N=4/8 узлов `OuterBuilder` на simulated собрались и пекут блоки без прод-правок) |
 | [ ] 3.3 | византийские роли: dealer с двумя `Reveal`, предложенец с расходящимся `result`, ложный `Latest`, пара h−1 на `Finalized{h}`, вздутая проба | открыто — даёт тест R-001/R-002/R-004/R-006/R-009 до правки и после |
 | [ ] 3.4 | devnet: Ex-21 (follower с прокси, подменяющим σ) и Ex-19 (полная смена комитета на 8 узлах) | открыто — `EXPERIMENTS.md` §3 п.1–2; `cert-mitm-proxy.py` в дереве есть |
 | [ ] 3.9 | `genesis-bootstrap/src/bootstrap.rs` берёт `initialize`/`commitEpochCommittee` из `fluentbase-staking-abi`; `initialize` в общий крейт; четыре копии в `e2e/src/staking*.rs` | открыто (добавлено 09-09) — смена арности `initialize` там соберётся и отревертит на genesis-init |
