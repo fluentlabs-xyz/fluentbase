@@ -1924,16 +1924,23 @@ fn a_dealer_with_two_logs_leaves_the_addressed_victim_without_a_share() {
     // The split reached `DkgCeremony::record_checked_log` on the VICTIM, and this is
     // an observation rather than an inference from the share it ends up without: a
     // `ShareConfirm` is minted from `recorded_dkg_logs` alone
-    // (`beacon/confirmations.rs::mint`), which nothing but the ceremony's checked
-    // recording writes — so the hash the victim claims at the dealer's seat IS the
-    // log its ceremony recorded.
+    // (`beacon/confirmations.rs::mint`), and the only writer of the hash at ANOTHER
+    // member's seat is `record_checked_log` (`ceremony.rs`). The ceremony's other
+    // two writers of `signed_logs` cannot produce this entry: `seal_dealings` files
+    // only the node's OWN log, and the journal resume replays records those two
+    // wrote — and no node restarts here.
+    //
+    // Scoped to the epoch the confirmation was framed under, not to "the last one":
+    // a longer run mints one per target epoch and the last would then be a property
+    // of the run's length.
     let seat = committee_seats(1, 4);
     let dealer_seat = seat[1];
     let claimed = |node: usize| -> Option<B256> {
         out.byz[node]
             .confirms_sent
-            .last()
-            .and_then(|(_, set)| set.iter().find(|(i, _)| *i == dealer_seat))
+            .iter()
+            .rfind(|(epoch, _, _)| *epoch == 2)
+            .and_then(|(_, _, set)| set.iter().find(|(i, _)| *i == dealer_seat))
             .map(|(_, h)| *h)
     };
     assert_eq!(
@@ -1988,7 +1995,10 @@ fn a_dealer_with_two_logs_leaves_the_addressed_victim_without_a_share() {
         out.metric(0, "epoch_engine_demoted_no_polynomial_total")
     );
 
-    // (3) The observed branch, in full.
+    // (3) The observed branch, in full. Most of what follows an HONEST run also
+    // satisfies — it carries "and the chain goes on anyway", not "the tampering
+    // worked". The two load-bearing lines are the victim's `dkg_ceremony_ok == 0`
+    // and the `victim_demoted` above; everything else is the surrounding claim.
     assert!(!out.timed_out, "heights {:?}", out.heights);
     assert!(out.halted.is_empty(), "{:?}", out.halted);
     assert!(out.errors().is_empty(), "{:?}", out.errors());
@@ -2031,24 +2041,38 @@ fn a_dealer_with_two_logs_leaves_the_addressed_victim_without_a_share() {
 /// — the chain stops. The register marked the threshold `t = quorum(n)` as
 /// `[LIKELY]`, unread since 09-03.
 ///
-/// **What the run showed (2026-09-09): branch (b1) — the BLOCKER reproduced
-/// whole.** All four nodes stop at 63, the last block of the pre-beacon epoch;
-/// `halted` is empty and there is not one ERROR line, so the stop is SILENT. No
-/// node derives 64. The threshold is confirmed, not assumed: `assemble` computes
-/// it as `M::quorum(participants)` from the same fault model the vote half just
-/// quorum'd under (`bls/src/combined_scheme.rs:387-388`), i.e. exactly the vote
-/// quorum — 3 of 4 here — and with node 0 shareless and node 1 silent only two
-/// signers remain.
+/// **What the run showed (2026-09-09): branch (b1).** All four nodes stop at 63,
+/// the last block of the pre-beacon epoch; `halted` is empty and there is not one
+/// ERROR line, so the stop is SILENT. No node derives 64. What that DOES pin: ONE
+/// byzantine dealer disabled a SECOND, honest node — the victim of the log split
+/// above — and four minus two is below `quorum(4)`, so the damage of a single
+/// participant reached past the BFT bound.
 ///
-/// **Which branch would be vacuous.** Branch (b2) — "a seed was assembled" — is
+/// **What it does NOT pin, and the register's phrasing hides it.** A withheld seed
+/// partial is not a seedless vote — it is NO VOTE: `CombinedScheme::sign` returns
+/// `None` the moment the oracle does (`bls/src/combined_scheme.rs:284-287`), and a
+/// vote that did carry `seed: None` in a beacon-active epoch is rejected whole by
+/// `verify_attestation` (the `None => false` arm). So the seed threshold and the
+/// multisig quorum cannot be separated by any run: with the victim withheld and
+/// this node silent, two of four can attest, and 2 < `N3f1::quorum(4) = 3` stops
+/// the chain BEFORE any seed is assembled, whatever the seed threshold is. The
+/// threshold itself is READ, not measured here — `assemble` computes it as
+/// `M::quorum(participants)` from the same fault model the vote half quorums under
+/// (`bls/src/combined_scheme.rs:387-388`) — and the register's `[LIKELY]` is
+/// settled by that line, not by this test.
+///
+/// **Which branch would be vacuous.** Branch (b2) — "the chain crossed 64" — is
 /// what an honest run produces, so it would pass over a wrapper that withheld
-/// nothing; `withhold_probe == Some((true, false))` is what rules that out.
+/// nothing; `withhold_probe == Some((true, false))` is what rules that out. Branch
+/// (b2) is also NOT the threshold falsifier it was first written as: crossing 64
+/// here would mean a vote with no seed partial was COUNTED, i.e. the
+/// `verify_attestation` arm above stopped applying.
 ///
 /// Falsifier: `withhold_probe != Some((true, false))` (then the node had no
-/// partial to withhold and the stop says nothing); a chain that crosses 64
-/// (branch (b2) — then the seed threshold is NOT the vote quorum and the register
-/// is wrong about it); a halt latch or an ERROR line (then the stop is loud, and
-/// "silent" is the part that makes this a blocker).
+/// partial to withhold and the stop says nothing); a chain that crosses 64 (branch
+/// (b2) — then an attestation without a partial was counted toward a quorum); a
+/// halt latch or an ERROR line (then the stop is loud, and "silent" is the part
+/// that makes this a blocker).
 #[cfg(feature = "dpos-devnet-byzantine")]
 #[test]
 fn a_two_log_dealer_that_also_withholds_its_partial_stops_the_chain_silently() {
@@ -2082,7 +2106,7 @@ fn a_two_log_dealer_that_also_withholds_its_partial_stops_the_chain_silently() {
     eprintln!(
         "(R-002/b) branch = {} | heights={:?} virtual={:?} real={:?}",
         if crossed {
-            "(b2) NOT reproduced — a seed was assembled without the withheld partial"
+            "(b2) NOT reproduced — a quorum formed without the withheld partial"
         } else {
             "(b1) REPRODUCED — the chain stops at the bootstrap boundary"
         },
@@ -2092,8 +2116,9 @@ fn a_two_log_dealer_that_also_withholds_its_partial_stops_the_chain_silently() {
     );
     assert!(
         !crossed,
-        "branch (b2) was observed: some node crossed {} with a σ, so the seed threshold is not \
-         `M::quorum(participants)` (`bls/src/combined_scheme.rs:387-388`) — heights {:?}",
+        "branch (b2) was observed: some node crossed {} while two of four could attest, so a \
+         vote carrying no seed partial was counted toward a quorum \
+         (`bls/src/combined_scheme.rs::verify_attestation`) — heights {:?}",
         2 * EPOCH_LEN,
         out.heights
     );
@@ -2162,8 +2187,7 @@ fn drop_the_last_two_from_epoch_two() -> Committees {
 /// **What the run showed (2026-09-09): branch (a) — REPRODUCED, whole, including
 /// the archive poisoning.** Node 0 forged the six certificates 65..70. Nodes 3
 /// and 4 rejected NOTHING (`deliveries_rejected == 0`) and counted the keyless
-/// admission (`dpos_seed_verify_no_key_total` non-zero while
-/// `dpos_seed_verify_ok_total` was still 0 at that point). Both later obtained
+/// admission (`dpos_seed_verify_no_key_total` non-zero). Both later obtained
 /// `PK_2` and `promote_epoch` refused exactly the six forged rounds
 /// (`beacon/certify.rs:310-317`), one ERROR line each, six per node — the rounds
 /// are `(2, view h − 63)` for exactly the six forged heights, which is what ties
@@ -2184,15 +2208,26 @@ fn drop_the_last_two_from_epoch_two() -> Committees {
 ///
 /// **That `verify_certificate` returned TRUE in the `NoKey` branch — not that the
 /// certificate was admitted some other way — is pinned by three observations
-/// together.** The epoch-2 oracle WAS attached on the follower
-/// (`dpos_seed_verify_no_key_total` moves only inside `BeaconOracle::verify_seed`,
-/// whose two live callers are `CombinedScheme::verify_certificate` and
-/// `VerifiedSeed::check`), nothing was rejected at the resolver
-/// (`deliveries_rejected == 0`), and the follower later SERVED those very
-/// certificates on — a certificate the marshal refused would not be in its archive
-/// to serve. **Which branch would be vacuous:** branch (b)'s
-/// `deliveries_rejected == 0` half holds on any honest run, so what carries the
-/// claim is the equality between the refused rounds and the forged heights.
+/// together.** The epoch-2 oracle WAS attached on the follower: the two live
+/// callers of `SeedOracle::verify_seed` are `CombinedScheme::verify_certificate`
+/// and `VerifiedSeed::check`, and the two implementations that bump
+/// `dpos_seed_verify_no_key_total` are `BeaconOracle` and `KeyOnlyOracle`
+/// (`beacon/oracle.rs`) — of which this stand can only build the first, since
+/// nothing here constructs a `--cert-follow` `FollowerRandomness`. Nothing was
+/// rejected at the resolver (`deliveries_rejected == 0`). And the follower later
+/// SERVED those very certificates on — a certificate the marshal refused would not
+/// be in its archive to serve; the seed slot is checked on EVERY certificate
+/// rather than batched away, because `CombinedScheme` overrides only
+/// `verify_certificate` and the batch default calls it per item
+/// (`CW:cryptography/src/certificate.rs:284-303`).
+///
+/// **Which branches would be vacuous:** branch (b)'s `deliveries_rejected == 0`
+/// (the resolver counts a rejection only on bytes that fail to DECODE — there is
+/// no crypto on that path) and branch (c)'s `keyless > 0.0` (a node outside
+/// `committee[2]` holds no `PK_2` yet, so an honest run counts keyless admissions
+/// too) both hold on an honest run. What carries the claim is
+/// `!refusals.is_empty()` and the equality between the refused rounds and the
+/// forged heights.
 ///
 /// Falsifier: the wrapper forging nothing, forging a σ that reads back equal to
 /// the original, or touching the multisig half; `deliveries_rejected > 0` on a

@@ -658,6 +658,12 @@ impl<U: CertUpstream> CertUpstream for CountingUpstream<U> {
 /// Every field is written by a wrapper and read by a test. A wrapper that never
 /// fired leaves the counters at zero, which is what makes "the branch I asserted
 /// is the branch the run took" checkable instead of assumed.
+/// One broadcast `ShareConfirm` as the wire saw it: the ceremony epoch it was
+/// framed under, the confirming member's committee seat, and the `(seat, log
+/// hash)` set it claims to hold.
+#[cfg(feature = "dpos-devnet-byzantine")]
+pub(super) type SentConfirm = (u64, u8, Vec<(u8, B256)>);
+
 #[cfg(feature = "dpos-devnet-byzantine")]
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(super) struct ByzFacts {
@@ -677,15 +683,18 @@ pub(super) struct ByzFacts {
     pub both_logs_check: bool,
     /// The victim the forged log was addressed to.
     pub victim: Option<PeerPubkey>,
-    /// Every `ShareConfirm` this node BROADCAST: its own committee seat, and the
-    /// `(seat, log hash)` set it claims to hold. Recorded on EVERY node, the
+    /// Every `ShareConfirm` this node BROADCAST: the ceremony epoch it was framed
+    /// under, its own committee seat, and the `(seat, log hash)` set it claims to
+    /// hold. The EPOCH is carried because a reader must be able to scope the claim
+    /// — a longer run mints a confirmation per target epoch, and "the last one" is
+    /// then a property of the run's length. Recorded on EVERY node, the
     /// honest ones included, because it is the only place the stand can read a
     /// node's `recorded_dkg_logs` index: the confirmation is minted from that index
     /// alone (`beacon/confirmations.rs::mint`), which is written only by the
     /// ceremony's `record_checked_log`. A victim whose confirm names the FORGED
     /// hash at the dealer's seat is a direct observation that the second log was
     /// recorded — not an inference from the share it ends up without.
-    pub confirms_sent: Vec<(u8, Vec<(u8, B256)>)>,
+    pub confirms_sent: Vec<SentConfirm>,
     /// Signer schemes this node's `Randomness` wrapper rebuilt over the
     /// verify-only oracle.
     pub schemes_withheld: u64,

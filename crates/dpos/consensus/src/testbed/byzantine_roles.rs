@@ -153,7 +153,7 @@ fn note_confirm(report: &ByzReport, wire: &[u8]) {
     };
     report.with(|f| {
         f.confirms_sent
-            .push((confirm.idx, confirm.recorded.clone()))
+            .push((msg.ceremony_epoch, confirm.idx, confirm.recorded.clone()))
     });
 }
 
@@ -197,13 +197,22 @@ fn split_reveal(cfg: &TwoRevealCfg, wire: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
     let committee = (cfg.committee_for)(epoch)?;
     let info = info_for(&cfg.namespace, epoch, committee).ok()?;
     let checks = |l: &DealerReveal| l.clone().check(&info).is_some_and(|(pk, _)| pk == me);
+    // A `Reveal` this node did not sign is NOT ours to split: the actor broadcasts
+    // only its own sealed log today (`ceremony.rs::seal_dealings` and the resume
+    // re-broadcast), but relaying somebody else's would make `log1` a foreign log
+    // and splitting it would forge a THIRD party's equivocation. Leave it alone;
+    // `reveals_seen` still counts it, and the test's
+    // `reveals_seen == reveals_swapped` is what turns that into a red.
+    if !checks(&log1) {
+        return None;
+    }
     let h1 = keccak256(log1.encode());
     let h2 = keccak256(log2.encode());
     assert_ne!(
         h1, h2,
         "the two-reveal role minted a SECOND log identical to the first — nothing is split"
     );
-    let both_check = checks(&log1) && checks(&log2);
+    let both_check = checks(&log2);
     assert!(
         both_check,
         "the two-reveal role minted a log the receiver's own `check` would drop"
