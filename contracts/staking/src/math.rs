@@ -1,11 +1,13 @@
 //! Pure arithmetic shared by staking state transitions.
 
-use fluentbase_sdk::{Uint, U256};
+use fluentbase_sdk::{staking_protocol, Uint, U256};
 
 use crate::consts::BALANCE_COMPACT_PRECISION;
 
 pub type U96 = Uint<96, 2>;
-pub type U112 = Uint<112, 2>;
+/// The compact stake unit. Its width is shared with the node, which rejects any
+/// weight at or above `2^COMPACT_STAKE_BITS` before the leader elector sees it.
+pub type U112 = Uint<{ staking_protocol::COMPACT_STAKE_BITS }, 2>;
 
 /// Convert a full-precision BLEND balance into the compact `uint112` unit.
 pub fn compact_balance(amount: U256) -> Option<U112> {
@@ -25,35 +27,43 @@ pub fn narrow_reward(amount: U256) -> Option<U96> {
     U96::checked_from_limbs_slice(amount.as_limbs())
 }
 
-/// Simplex fault tolerance `f = ⌊(n−1)/3⌋`.
+/// Simplex fault tolerance `f = ⌊(n−1)/3⌋`, re-exported from the shared crate.
 ///
-/// Kept byte-equal to the off-chain consensus so the correlation guard and the
-/// concurrent-exclusion ceiling cannot disagree with it.
-pub fn fault_tolerance(n: usize) -> usize {
-    if n == 0 {
-        0
-    } else {
-        (n - 1) / 3
-    }
-}
+/// One definition with the off-chain consensus, so the correlation guard and the
+/// concurrent-exclusion ceiling cannot disagree with the budget commonware
+/// actually applies to a quorum. A node-side test compares the shared function
+/// against `N3f1::max_faults` from the pinned commonware checkout.
+pub use staking_protocol::fault_tolerance;
 
 /// Map a block to its activation-relative epoch, clamping pre-activation blocks.
 ///
-/// A zero activation block is the unarmed sentinel, not "armed at genesis".
-/// `ensure_dpos_not_active` keeps the governance setters open on it and the node
-/// reads it the same way, so this must not disagree with them. Without the first
-/// half of the clamp an unsigned `block_number < 0` is never true, so an unarmed
-/// chain counts epochs from genesis and then drops them back to zero the moment
-/// a real activation block is scheduled — a backwards jump that rewrites which
-/// delegation checkpoint a stake belongs to.
+/// The formula and the pre-activation clamp are
+/// [`staking_protocol::epoch_at_block`] — the same code the node computes its
+/// epochs with. What stays here is the ONE rule that is the contract's alone: a
+/// zero activation block is the unarmed sentinel, not "armed at genesis". Without
+/// it an unsigned `block_number < 0` is never true, so an unarmed chain counts
+/// epochs from genesis and then drops them back to zero the moment a real
+/// activation block is scheduled — a backwards jump that rewrites which
+/// delegation checkpoint a stake belongs to. `ensure_dpos_not_active` keeps the
+/// governance setters open on exactly that state, and the devnet production path
+/// initializes into it deliberately.
+///
+/// The node does NOT read a zero activation this way, and does not have to: its
+/// `scheduled_dpos_activation` folds a zero to "not a DPoS chain yet" and skips
+/// the whole epoch section, so the input never reaches its epoch math.
 pub fn epoch_at_block(block_number: u64, activation_block: u64, interval: u64) -> Option<u64> {
-    if interval == 0 {
-        return None;
+    if activation_block == 0 {
+        // The unarmed sentinel is a CONTRACT-side rule, so it stays here rather
+        // than in the shared formula. `ensure_dpos_not_active` keeps the
+        // governance setters open on a zero activation; the node never reaches
+        // this input at all, because `scheduled_dpos_activation` folds a zero to
+        // "not a DPoS chain yet" before any epoch is computed. Interval zero is
+        // still answered by the shared function, so the two sides cannot
+        // disagree about it.
+        return staking_protocol::epoch_at_block(block_number, activation_block, interval)
+            .map(|_| 0);
     }
-    if activation_block == 0 || block_number < activation_block {
-        return Some(0);
-    }
-    Some((block_number - activation_block) / interval)
+    staking_protocol::epoch_at_block(block_number, activation_block, interval)
 }
 
 #[cfg(test)]

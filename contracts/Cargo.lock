@@ -2110,6 +2110,7 @@ name = "fluentbase-contracts-staking"
 version = "0.1.0"
 dependencies = [
  "fluentbase-sdk",
+ "fluentbase-staking-abi",
  "fluentbase-testing",
 ]
 
@@ -2256,6 +2257,13 @@ dependencies = [
  "syn-solidity",
  "thiserror 2.0.18",
  "tracing",
+]
+
+[[package]]
+name = "fluentbase-staking-abi"
+version = "1.3.3"
+dependencies = [
+ "alloy-sol-types",
 ]
 
 [[package]]

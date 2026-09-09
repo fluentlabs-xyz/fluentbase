@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 fluentbase-sdk = { workspace = true }
+fluentbase-staking-abi = { workspace = true }
 
 [dev-dependencies]
 fluentbase-testing = { workspace = true }
@@ -15,7 +16,7 @@ path = "src/lib.rs"
 
 [features]
 default = ["std"]
-std = ["fluentbase-sdk/std", "fluentbase-testing/std"]
+std = ["fluentbase-sdk/std", "fluentbase-staking-abi/std", "fluentbase-testing/std"]
 debug-print = ["fluentbase-sdk/debug-print", "fluentbase-testing/debug-print"]
 # Views with no production consumer: `e2e/` and the node repo's devnet
 # smoke/soak harness are the only callers. Off by default so the production

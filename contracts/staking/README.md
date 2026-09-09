@@ -14,8 +14,13 @@ The core validator staking contract implemented as a normal rWasm contract and d
   `Fluent.storage.Consensus`, `Fluent.storage.StakingStorage`, and
   `Fluent.storage.ProductionLiveness`.
 - Keeps `StakingPool` external and unchanged; this crate does not deploy or replace it.
-- Calls the configured BLS verifier, and the BLEND token on behalf of the configured reserve — reading what the
-  reserve can cover at an epoch close, and moving it straight to a claimant at a claim.
+- Verifies BLS12-381 signatures ITSELF, against the EIP-2537 precompiles at the addresses the
+  fork fixes (`0x02`, `0x05`, `0x0b`, `0x0f`, `0x10` — `src/bls.rs`). There is no configured
+  verifier and no setter for one: `blsVerifier`, `setBlsVerifier` and `getBlsVerifier` were
+  removed on 2026-09-08, so a substituted verifier can no longer accept a forged proof of
+  possession.
+- Calls the BLEND token on behalf of the configured reserve — reading what the reserve can cover
+  at an epoch close, and moving it straight to a claimant at a claim.
 
 ## Lifecycle
 

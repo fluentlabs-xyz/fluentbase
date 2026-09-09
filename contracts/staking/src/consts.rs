@@ -3,8 +3,25 @@
 use fluentbase_sdk::{
     address,
     derive::{derive_keccak256_id, erc7201_slot},
-    uint, Address, U256,
+    staking_protocol, uint, Address, U256,
 };
+use fluentbase_staking_abi::{self as abi, SolCall, SolError};
+
+/// A selector from the shared ABI crate, in the `u32` form the dispatcher
+/// compares against.
+///
+/// Every handler the NODE calls gets its selector this way, so a rename in
+/// `fluentbase-staking-abi` is a compile error here and a compile error in the
+/// node at the same time. Handlers with no node-side caller keep
+/// `derive_keccak256_id!` below: they exist in one place only, so there is
+/// nothing to hold in step.
+const fn sig<C: SolCall>() -> u32 {
+    u32::from_be_bytes(C::SELECTOR)
+}
+
+const fn err<E: SolError>() -> u32 {
+    u32::from_be_bytes(E::SELECTOR)
+}
 
 pub const SIG_LEN_BYTES: usize = 4;
 
@@ -45,12 +62,11 @@ pub const SIG_CHANGE_VALIDATOR_COMMISSION_RATE: u32 =
 // 0x9f9106d1
 pub const SIG_GET_STAKING_TOKEN: u32 = derive_keccak256_id!("getStakingToken()");
 // 0x32cc6f08
-pub const SIG_GET_ACTIVE_VALIDATORS_LENGTH: u32 =
-    derive_keccak256_id!("getActiveValidatorsLength()");
+pub const SIG_GET_ACTIVE_VALIDATORS_LENGTH: u32 = sig::<abi::getActiveValidatorsLengthCall>();
 // 0x346c90a8
-pub const SIG_GET_EPOCH_BLOCK_INTERVAL: u32 = derive_keccak256_id!("getEpochBlockInterval()");
+pub const SIG_GET_EPOCH_BLOCK_INTERVAL: u32 = sig::<abi::getEpochBlockIntervalCall>();
 // 0xa2a50528
-pub const SIG_GET_DPOS_ACTIVATION_BLOCK: u32 = derive_keccak256_id!("getDposActivationBlock()");
+pub const SIG_GET_DPOS_ACTIVATION_BLOCK: u32 = sig::<abi::getDposActivationBlockCall>();
 // 0x5e7b72ad
 pub const SIG_GET_UNDELEGATE_PERIOD: u32 = derive_keccak256_id!("getUndelegatePeriod()");
 // 0x6f856847
@@ -137,7 +153,7 @@ pub const SIG_PENDING_EXCLUSIONS: u32 = derive_keccak256_id!("pendingExclusions(
 #[cfg(feature = "devnet-views")]
 pub const SIG_LAST_PROCESSED_BLOCK: u32 = derive_keccak256_id!("lastProcessedBlock()");
 // 0x1752910e
-pub const SIG_RECORD_PRODUCTION: u32 = derive_keccak256_id!("recordProduction(uint8)");
+pub const SIG_RECORD_PRODUCTION: u32 = sig::<abi::recordProductionCall>();
 // 0x457179fd
 pub const SIG_GET_VALIDATOR_FEE: u32 = derive_keccak256_id!("getValidatorFee(address)");
 // 0xff4794fc
@@ -163,29 +179,26 @@ pub const SIG_GET_EPOCH_REWARDS: u32 = derive_keccak256_id!("getEpochRewards(uin
 // 0xad36f42f
 pub const SIG_GET_CONSENSUS_KEYS: u32 = derive_keccak256_id!("getConsensusKeys(address)");
 // 0xd96cbd7b
-pub const SIG_GET_REGISTRY_WITH_KEYS: u32 = derive_keccak256_id!("getRegistryWithKeys()");
+pub const SIG_GET_REGISTRY_WITH_KEYS: u32 = sig::<abi::getRegistryWithKeysCall>();
 // 0xc06a82de
-pub const SIG_NEXT_EPOCH_TO_COMMIT: u32 = derive_keccak256_id!("nextEpochToCommit()");
+pub const SIG_NEXT_EPOCH_TO_COMMIT: u32 = sig::<abi::nextEpochToCommitCall>();
 // 0xe505b249
-pub const SIG_COMMIT_EPOCH_COMMITTEE: u32 = derive_keccak256_id!("commitEpochCommittee()");
+pub const SIG_COMMIT_EPOCH_COMMITTEE: u32 = sig::<abi::commitEpochCommitteeCall>();
 // 0x2660899f
-pub const SIG_GET_DKG_QUAL: u32 = derive_keccak256_id!("getDkgQual(uint64)");
+pub const SIG_GET_DKG_QUAL: u32 = sig::<abi::getDkgQualCall>();
 // 0x80b562de
 pub const SIG_GET_EPOCH_COMMITTEE: u32 = derive_keccak256_id!("getEpochCommittee(uint64)");
 // 0xa4d160c1
-pub const SIG_GET_EPOCH_COMMITTEE_WITH_STAKES: u32 =
-    derive_keccak256_id!("getEpochCommitteeWithStakes(uint64)");
+pub const SIG_GET_EPOCH_COMMITTEE_WITH_STAKES: u32 = sig::<abi::getEpochCommitteeWithStakesCall>();
 // 0xdc6fb3f2
-pub const SIG_SLASH_EQUIVOCATION: u32 = derive_keccak256_id!("slashEquivocation(uint64,uint32)");
+pub const SIG_SLASH_EQUIVOCATION: u32 = sig::<abi::slashEquivocationCall>();
 // 0xe28d2f63
-pub const SIG_SLASH_EQUIVOCATION_NOTARIZE: u32 =
-    derive_keccak256_id!("slashEquivocationNotarize(bytes,bytes,bytes,bytes)");
+pub const SIG_SLASH_EQUIVOCATION_NOTARIZE: u32 = sig::<abi::slashEquivocationNotarizeCall>();
 // 0xadd07a3e
-pub const SIG_SLASH_EQUIVOCATION_FINALIZE: u32 =
-    derive_keccak256_id!("slashEquivocationFinalize(bytes,bytes,bytes,bytes)");
+pub const SIG_SLASH_EQUIVOCATION_FINALIZE: u32 = sig::<abi::slashEquivocationFinalizeCall>();
 // 0xa10827e9
 pub const SIG_SLASH_EQUIVOCATION_NULLIFY_FINALIZE: u32 =
-    derive_keccak256_id!("slashEquivocationNullifyFinalize(bytes,bytes,bytes,bytes)");
+    sig::<abi::slashEquivocationNullifyFinalizeCall>();
 
 pub const ERR_ALREADY_INITIALIZED: u32 = derive_keccak256_id!("InvalidInitialization()");
 pub const ERR_NOT_INITIALIZED: u32 = derive_keccak256_id!("NotInitialized()");
@@ -252,7 +265,7 @@ pub const ERR_COMMITTEE_TOO_SMALL: u32 = derive_keccak256_id!("CommitteeTooSmall
 ///
 /// An assertion, not a condition the contract expects to meet: the cap is
 /// enforced at `initialize` and by `setActiveValidatorsLength`, and the
-/// selection truncates to it, so `MAX_ACTIVE_VALIDATORS_LENGTH` already bounds
+/// selection truncates to it, so `MAX_COMMITTEE_SIZE` already bounds
 /// this two layers up. It is checked again here because the failure it prevents
 /// is the one this storage design exists to make unrepresentable — an
 /// over-long committee writes past its frame into the NEXT epoch's weights,
@@ -262,8 +275,7 @@ pub const ERR_COMMITTEE_EXCEEDS_WEIGHT_RING: u32 =
     derive_keccak256_id!("CommitteeExceedsWeightRing(uint256,uint256)");
 pub const ERR_EPOCH_NOT_YET_COMMITTABLE: u32 =
     derive_keccak256_id!("EpochNotYetCommittable(uint64,uint64)");
-pub const ERR_ALREADY_SLASHED_FOR_EQUIVOCATION: u32 =
-    derive_keccak256_id!("AlreadySlashedForEquivocation(address)");
+pub const ERR_ALREADY_SLASHED_FOR_EQUIVOCATION: u32 = err::<abi::AlreadySlashedForEquivocation>();
 // The five errors the inlined BLS verifier raises. Their names and selectors
 // are the ones the external `BLS12381Verifier` predeploy used, so a caller that
 // decoded a revert from it decodes the same revert now.
@@ -298,8 +310,10 @@ pub const BPS_DENOMINATOR: u32 = 10_000;
 ///
 /// Stake is stored as a `uint112` count of these units, so any amount that is
 /// not a whole multiple of it cannot be represented and is rejected by
-/// `math::compact_balance`.
-pub const BALANCE_COMPACT_PRECISION: U256 = uint!(10_000_000_000_U256);
+/// `math::compact_balance`. The node divides by the same figure to recover the
+/// weight its leader elector ranks on, which is why the number lives in
+/// `fluentbase_types::staking_protocol` and not here.
+pub const BALANCE_COMPACT_PRECISION: U256 = staking_protocol::BALANCE_COMPACT_PRECISION_U256;
 
 /// Highest commission a validator may charge its delegators: 3000 bps == 30%.
 ///
@@ -326,7 +340,11 @@ pub const DEFAULT_ACTIVE_VALIDATORS_LENGTH: u64 = 21;
 /// commit, the liveness verdict pass, the stipend split — so it is the figure
 /// that keeps those loops payable. No derivation is recorded for 51, and it has
 /// not been measured against rWasm fuel on this runtime.
-pub const MAX_ACTIVE_VALIDATORS_LENGTH: u64 = 51;
+///
+/// The node bounds its certificate-bitmap codec and its one-byte leader index
+/// by the same number, so it is declared once, shared, and imported here under
+/// the shared name.
+pub use staking_protocol::MAX_COMMITTEE_SIZE;
 
 /// Epochs of frozen leader weights the ring buffer keeps.
 ///
@@ -351,7 +369,7 @@ pub const WEIGHT_RING_EPOCHS: u64 = 16;
 
 /// Ring pair-slots one epoch occupies: two members' weights and their shared
 /// epoch stamp pack into one 32-byte slot (`14 + 14 + 4`).
-pub const PAIRS_MAX: usize = (MAX_ACTIVE_VALIDATORS_LENGTH as usize).div_ceil(2);
+pub const PAIRS_MAX: usize = (MAX_COMMITTEE_SIZE as usize).div_ceil(2);
 
 /// Total ring length. Sized against the cap rather than the launch
 /// configuration, deliberately: `commitEpochCommittee` is a system call that
@@ -381,7 +399,10 @@ pub const WEIGHT_RING_SLOTS: usize = WEIGHT_RING_EPOCHS as usize * PAIRS_MAX;
 /// pre-execution system call. `initialize` does not: a genesis with too small a
 /// cap simply never leaves block zero, which is loud, immediate, and fixed by
 /// relaunching.
-pub const MIN_COMMITTEE_LENGTH: usize = 4;
+///
+/// The node asserts the same floor when it decodes a committee, so the number is
+/// shared rather than mirrored.
+pub use staking_protocol::MIN_COMMITTEE_LENGTH;
 
 /// Reported as `prev_value` in the `UndelegatePeriodChanged` init event.
 ///
@@ -416,19 +437,24 @@ pub const MAX_STAMPS_PER_CLOSE: usize = 2;
 ///
 /// `commit_epoch_committee` applies it to membership; `selection_epoch_for`
 /// applies the same offset to the reward split, so a seat's stipend is divided
-/// by the vintage its weight was frozen from. Changing this number moves both.
-pub const MAX_COMMITTEE_LOOKAHEAD_EPOCHS: u64 = 2;
+/// by the vintage its weight was frozen from. Changing this number moves both —
+/// and it moves the node's ahead-commit horizon too, which is why it is shared.
+pub use staking_protocol::MAX_COMMITTEE_LOOKAHEAD_EPOCHS;
 
-pub const BLS_PUBKEY_UNCOMPRESSED_LENGTH: usize = 256;
-pub const BLS_POP_UNCOMPRESSED_LENGTH: usize = 128;
-pub const BLS_PUBKEY_LENGTH: usize = 96;
+/// Key and signature widths on the wire, shared with the node's `fluentbase-bls`
+/// (which knows them as `PUBKEY_EIP2537_BYTES` / `SIGNATURE_EIP2537_BYTES` /
+/// `PUBKEY_BYTES` / `SIGNATURE_BYTES`). A proof of possession is a G1 signature,
+/// so it has the signature width.
+pub use staking_protocol::{
+    BLS_PUBKEY_LENGTH, BLS_PUBKEY_UNCOMPRESSED_LENGTH,
+    BLS_SIGNATURE_UNCOMPRESSED_LENGTH as BLS_POP_UNCOMPRESSED_LENGTH,
+};
 /// 32-byte words a compressed BLS12-381 G2 key occupies in storage.
 ///
 /// The storage array width, the split of the verifier's compressed output, and
 /// the read that reassembles it all have to agree with this.
 pub const BLS_PUBKEY_WORDS: usize = BLS_PUBKEY_LENGTH / U256::BYTES;
-pub const BLS_SIGNATURE_LENGTH: usize = 48;
-pub const PROPOSAL_PAYLOAD_LENGTH: usize = 32;
+pub use staking_protocol::{BLS_SIGNATURE_LENGTH, PROPOSAL_PAYLOAD_LENGTH};
 
 /// Message kinds as `consensus::namespace` reads them.
 ///
@@ -484,7 +510,12 @@ pub const KICK_LADDER_RESET_EPOCHS: u64 = 30;
 /// Ceiling on the per-epoch stipend governance may configure: `10^24` wei,
 /// i.e. 1,000,000 BLEND per epoch. No derivation is recorded for the figure.
 pub const MAX_BLEND_STIPEND_PER_EPOCH: U256 = uint!(1_000_000_000_000_000_000_000_000_U256);
-pub const SYSTEM_CALLER: Address = address!("0xfffffffffffffffffffffffffffffffffffffffe");
+/// The address every pre-execution system call arrives from.
+///
+/// The node reaches for the same constant (`fluentbase_types::SYSTEM_ADDRESS`)
+/// when it issues those calls; this crate used to repeat the literal even though
+/// it already imports `GENESIS_GOVERNANCE` from that same crate.
+pub use fluentbase_sdk::SYSTEM_ADDRESS as SYSTEM_CALLER;
 pub const EQUIVOCATION_BURN_SINK: Address = address!("0x000000000000000000000000000000000000dead");
 
 /// Reported as `prev_value` in the `MinValidatorStakeAmountChanged` init event:

@@ -1254,6 +1254,87 @@ fn derived_selectors_match_independent_hex_pins() {
     }
 }
 
+/// The node decodes five close events and one commit event out of the discarded
+/// logs of a PRE-EXECUTION system call. Those logs never become receipts, so a
+/// topic0 that does not match is not an error anywhere — the arm simply never
+/// fires, and for `PartialEpoch` and `EpochWeightsUnavailable` that silence is
+/// the exact failure they exist to break.
+///
+/// Both halves are real and independent: the left is what THIS crate's `Event`
+/// derive computes from its own field names and types, the right is what the
+/// shared ABI crate's `sol!` computes from the node's declaration. Renaming a
+/// field on either side turns this red. `fluentbase-staking-abi` pins the same
+/// six hashes against hex literals, so a coordinated edit to both declarations
+/// is caught there.
+#[test]
+fn close_event_topics_match_the_shared_abi() {
+    use fluentbase_staking_abi::{self as abi, SolEvent};
+
+    for (name, ours, theirs, their_sig) in [
+        (
+            "PartialEpoch",
+            (
+                events::PartialEpoch::SIGNATURE,
+                events::PartialEpoch::SELECTOR,
+            ),
+            abi::PartialEpoch::SIGNATURE_HASH,
+            abi::PartialEpoch::SIGNATURE,
+        ),
+        (
+            "EpochWeightsUnavailable",
+            (
+                events::EpochWeightsUnavailable::SIGNATURE,
+                events::EpochWeightsUnavailable::SELECTOR,
+            ),
+            abi::EpochWeightsUnavailable::SIGNATURE_HASH,
+            abi::EpochWeightsUnavailable::SIGNATURE,
+        ),
+        (
+            "ProductionVerdictFailed",
+            (
+                events::ProductionVerdictFailed::SIGNATURE,
+                events::ProductionVerdictFailed::SELECTOR,
+            ),
+            abi::ProductionVerdictFailed::SIGNATURE_HASH,
+            abi::ProductionVerdictFailed::SIGNATURE,
+        ),
+        (
+            "CorrelatedFailureEpoch",
+            (
+                events::CorrelatedFailureEpoch::SIGNATURE,
+                events::CorrelatedFailureEpoch::SELECTOR,
+            ),
+            abi::CorrelatedFailureEpoch::SIGNATURE_HASH,
+            abi::CorrelatedFailureEpoch::SIGNATURE,
+        ),
+        (
+            "EpochBlendRewardsCommitted",
+            (
+                events::EpochBlendRewardsCommitted::SIGNATURE,
+                events::EpochBlendRewardsCommitted::SELECTOR,
+            ),
+            abi::EpochBlendRewardsCommitted::SIGNATURE_HASH,
+            abi::EpochBlendRewardsCommitted::SIGNATURE,
+        ),
+        (
+            "EpochCommitteeCommitted",
+            (
+                events::EpochCommitteeCommitted::SIGNATURE,
+                events::EpochCommitteeCommitted::SELECTOR,
+            ),
+            abi::EpochCommitteeCommitted::SIGNATURE_HASH,
+            abi::EpochCommitteeCommitted::SIGNATURE,
+        ),
+    ] {
+        let (our_sig, our_topic) = ours;
+        assert_eq!(our_sig, their_sig, "{name}: canonical signature drifted");
+        assert_eq!(
+            our_topic, theirs.0,
+            "{name}: topic0 drifted from the declaration the node decodes with"
+        );
+    }
+}
+
 // Pinned apart from the table above because these four constants only exist
 // under `devnet-views`, and an array literal takes no attributes on its
 // elements. `make test-contracts` runs both shapes so this is not a test that

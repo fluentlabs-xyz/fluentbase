@@ -17,6 +17,7 @@ mod import_linker;
 mod native_api;
 #[cfg(target_arch = "wasm32")]
 mod rwasm_context;
+pub mod staking_protocol;
 mod sys_func_idx;
 mod syscall;
 pub mod system;

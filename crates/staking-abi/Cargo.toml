@@ -1,0 +1,18 @@
+[package]
+name = "fluentbase-staking-abi"
+version.workspace = true
+description = "The one declaration of the Fluent staking contract's ABI: the calls the node issues, the views it reads, the events it decodes"
+authors.workspace = true
+repository.workspace = true
+edition.workspace = true
+readme.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+alloy-sol-types = { workspace = true }
+
+[features]
+default = ["std"]
+std = ["alloy-sol-types/std"]

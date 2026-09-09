@@ -5542,6 +5542,7 @@ dependencies = [
  "commonware-parallel",
  "commonware-utils",
  "ctr",
+ "fluentbase-types",
  "hex",
  "hkdf",
  "hmac",
@@ -5642,7 +5643,9 @@ dependencies = [
  "eyre",
  "fluentbase-bls",
  "fluentbase-p2p",
+ "fluentbase-staking-abi",
  "fluentbase-staking-reader",
+ "fluentbase-types",
  "futures",
  "hex",
  "metrics",
@@ -5828,6 +5831,7 @@ dependencies = [
  "fluentbase-p2p",
  "fluentbase-revm",
  "fluentbase-runtime",
+ "fluentbase-staking-abi",
  "fluentbase-staking-reader",
  "fluentbase-types",
  "futures",
@@ -5903,6 +5907,7 @@ dependencies = [
  "eyre",
  "fluentbase-bls",
  "fluentbase-staking-reader",
+ "fluentbase-types",
  "hex",
  "hickory-resolver 0.24.4",
  "rand 0.8.6",
@@ -6033,6 +6038,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "fluentbase-staking-abi"
+version = "1.3.3"
+dependencies = [
+ "alloy-sol-types",
+]
+
+[[package]]
 name = "fluentbase-staking-reader"
 version = "1.3.3"
 dependencies = [
@@ -6048,6 +6060,8 @@ dependencies = [
  "commonware-storage",
  "commonware-utils",
  "fluentbase-bls",
+ "fluentbase-staking-abi",
+ "fluentbase-types",
  "rand 0.8.6",
  "rand_core 0.6.4",
  "reth-evm",

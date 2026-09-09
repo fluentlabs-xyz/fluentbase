@@ -47,7 +47,14 @@ pub struct Undelegated {
 pub struct ActiveValidatorsLengthChanged {
     pub prev_value: u32,
     pub new_value: u32,
-    /// First epoch the new cap governs committee selection.
+    /// `next_epoch` at the moment of the change — an ANNOUNCEMENT, not a rule.
+    ///
+    /// The cap is stored immediately and committee selection reads it LIVE
+    /// (`top_k_by_stake_at`'s `cap` argument comes from the scalar, not from a
+    /// per-epoch checkpoint), so a change made in epoch E already governs the
+    /// next commit, whichever epoch that commits FOR. The epoch-addressed cap
+    /// this field was named for was deleted with the second selection algorithm.
+    /// Nothing in either tree reads the field.
     pub effective_epoch: u64,
 }
 

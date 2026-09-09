@@ -18,6 +18,7 @@ readme = "README.md"
 # fluentbase
 fluentbase-build = { path = "../crates/build" }
 fluentbase-sdk = { path = "../crates/sdk", default-features = false }
+fluentbase-staking-abi = { path = "../crates/staking-abi", default-features = false }
 fluentbase-evm = { path = "../crates/evm", default-features = false }
 #fluentbase-svm-common = { path = "../crates/svm-common", default-features = false }
 #fluentbase-svm = { path = "../crates/svm", default-features = false }

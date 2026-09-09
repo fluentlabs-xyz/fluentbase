@@ -141,7 +141,7 @@ fn validate_initialization<SDK: SharedAPI>(
     // editing the genesis and relaunching. The setter's mistake is the
     // unrecoverable one, because it lands on a chain that is already running.
     if command.active_validators_length == 0
-        || command.active_validators_length as u64 > MAX_ACTIVE_VALIDATORS_LENGTH
+        || command.active_validators_length as u64 > MAX_COMMITTEE_SIZE
         || command.epoch_block_interval == 0
         || command.undelegate_period == 0
         || command.min_validator_stake_amount.is_zero()
@@ -388,11 +388,11 @@ pub fn set_active_validators_length<SDK: SharedAPI>(
             &(value, MIN_COMMITTEE_LENGTH as u32),
         );
     }
-    if value as u64 > MAX_ACTIVE_VALIDATORS_LENGTH {
+    if value as u64 > MAX_COMMITTEE_SIZE {
         return revert_with(
             sdk,
             ERR_MAX_ACTIVE_VALIDATORS_EXCEEDED,
-            &(value, MAX_ACTIVE_VALIDATORS_LENGTH as u32),
+            &(value, MAX_COMMITTEE_SIZE as u32),
         );
     }
     let field = chain_config_storage().active_validators_length_accessor();

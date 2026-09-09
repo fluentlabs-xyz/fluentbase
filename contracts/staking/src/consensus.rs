@@ -375,7 +375,7 @@ fn write_ring<SDK: SharedAPI>(
 fn write_ring_compact<SDK: SharedAPI>(
     sdk: &mut SDK,
     epoch: u64,
-    weights: &[Uint<112, 2>],
+    weights: &[math::U112],
 ) -> Result<(), ExitCode> {
     // See `ERR_COMMITTEE_EXCEEDS_WEIGHT_RING`: an assertion of the cap held two
     // layers up, kept local because overrunning the frame corrupts the NEXT
@@ -431,7 +431,7 @@ fn write_ring_compact<SDK: SharedAPI>(
 pub(crate) fn read_weights<SDK: SharedAPI>(
     sdk: &SDK,
     epoch: u64,
-) -> Result<Option<Vec<Uint<112, 2>>>, ExitCode> {
+) -> Result<Option<Vec<math::U112>>, ExitCode> {
     let (_, length) = committee_at(sdk, epoch)?;
     if length == 0 {
         return Ok(Some(Vec::new()));
