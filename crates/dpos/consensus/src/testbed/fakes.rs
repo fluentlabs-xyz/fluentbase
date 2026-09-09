@@ -8,14 +8,18 @@ use crate::{
     cert_follow::{CertUpstream, UpstreamFinalized},
     fault::EngineError,
     order_block::OrderBlock,
+    plane_upstream::{FrontierHandler, FrontierKey},
     slasher::actor::{SlasherTxSink, SubmitOutcome},
 };
 use alloy_consensus::{Block as AlloyBlock, BlockBody, Header as AlloyHeader};
-use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
+use alloy_primitives::{keccak256, Address, Bytes as AlloyBytes, B256, U256};
 use alloy_rpc_types_engine::{
     ForkchoiceState, ForkchoiceUpdated, PayloadStatus, PayloadStatusEnum,
 };
+use bytes::Bytes;
 use commonware_consensus::types::Height;
+use commonware_resolver::{p2p::Producer, Consumer};
+use commonware_utils::channel::oneshot as cw_oneshot;
 use fluentbase_bls::PeerPubkey;
 use fluentbase_staking_reader::{reader::ValidatorSetSnapshot, ReadError, StakingStateRead};
 use reth_ethereum_primitives::TransactionSigned;
@@ -41,7 +45,7 @@ pub(super) fn sealed_at(parent: B256, number: u64, discriminator: B256) -> ExecB
         gas_limit: 30_000_000,
         timestamp: number,
         difficulty: U256::ZERO,
-        extra_data: Bytes::from(discriminator.to_vec()),
+        extra_data: AlloyBytes::from(discriminator.to_vec()),
         ..Default::default()
     };
     let body: BlockBody<TransactionSigned> = BlockBody::default();
@@ -240,22 +244,143 @@ impl SlasherTxSink for NoSink {
     fn submit<'a>(
         &'a self,
         _target: Address,
-        _calldata: Bytes,
+        _calldata: AlloyBytes,
     ) -> std::pin::Pin<Box<dyn core::future::Future<Output = SubmitOutcome> + Send + 'a>> {
         Box::pin(async { SubmitOutcome::Failed("testbed NoSink: no staking contract".into()) })
     }
 }
 
-/// The `Option<U>::None` upstream: the stand has no cert upstream (step 3).
+/// What one node's upstream plane did, counted at both ends of the production
+/// code: the client (`CertUpstream` calls and how many came back `Some`) and the
+/// serve side (`Producer::produce` requests from peers, `Consumer::deliver`
+/// results). A node that followed the chain with `latest_delivered ==
+/// finalized_delivered == 0` did not follow THROUGH the plane.
 #[derive(Clone, Default)]
-pub(super) struct NoUpstream;
+pub(super) struct UpstreamCounters {
+    pub latest_calls: Arc<AtomicU64>,
+    pub latest_delivered: Arc<AtomicU64>,
+    pub finalized_calls: Arc<AtomicU64>,
+    pub finalized_delivered: Arc<AtomicU64>,
+    /// `produce` calls this node answered for peers (any key).
+    pub serve_requests: Arc<AtomicU64>,
+    /// `deliver` calls the resolver made on this node that decoded.
+    pub deliveries_decoded: Arc<AtomicU64>,
+    /// `deliver` calls that did NOT decode (`false` — the R-009 arm).
+    pub deliveries_rejected: Arc<AtomicU64>,
+    /// `ReJump::call` invocations — the stand's re-jump is a no-op `Lagging`
+    /// and its gate is `u64::MAX`, so this stays 0.
+    pub rejump_calls: Arc<AtomicU64>,
+}
 
-impl CertUpstream for NoUpstream {
-    async fn get_finalization(&self, _height: Height) -> Option<UpstreamFinalized> {
-        None
+/// A plain-number snapshot of [`UpstreamCounters`] for the outcome.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct UpstreamStats {
+    pub latest_calls: u64,
+    pub latest_delivered: u64,
+    pub finalized_calls: u64,
+    pub finalized_delivered: u64,
+    pub serve_requests: u64,
+    pub deliveries_decoded: u64,
+    pub deliveries_rejected: u64,
+    pub rejump_calls: u64,
+}
+
+impl UpstreamCounters {
+    pub(super) fn snapshot(&self) -> UpstreamStats {
+        let get = |c: &AtomicU64| c.load(Ordering::SeqCst);
+        UpstreamStats {
+            latest_calls: get(&self.latest_calls),
+            latest_delivered: get(&self.latest_delivered),
+            finalized_calls: get(&self.finalized_calls),
+            finalized_delivered: get(&self.finalized_delivered),
+            serve_requests: get(&self.serve_requests),
+            deliveries_decoded: get(&self.deliveries_decoded),
+            deliveries_rejected: get(&self.deliveries_rejected),
+            rejump_calls: get(&self.rejump_calls),
+        }
+    }
+}
+
+/// The production `PlaneUpstreamHandle` behind a call counter — the `U` the
+/// stand hands `OuterEngine::start`.
+#[derive(Clone)]
+pub(super) struct CountingUpstream<U> {
+    inner: U,
+    counters: UpstreamCounters,
+}
+
+impl<U: CertUpstream> CountingUpstream<U> {
+    pub(super) fn new(inner: U, counters: UpstreamCounters) -> Self {
+        Self { inner, counters }
+    }
+}
+
+impl<U: CertUpstream> CertUpstream for CountingUpstream<U> {
+    async fn get_finalization(&self, height: Height) -> Option<UpstreamFinalized> {
+        self.counters.finalized_calls.fetch_add(1, Ordering::SeqCst);
+        let got = self.inner.get_finalization(height).await;
+        if got.is_some() {
+            self.counters
+                .finalized_delivered
+                .fetch_add(1, Ordering::SeqCst);
+        }
+        got
     }
     async fn get_latest(&self) -> Option<UpstreamFinalized> {
-        None
+        self.counters.latest_calls.fetch_add(1, Ordering::SeqCst);
+        let got = self.inner.get_latest().await;
+        if got.is_some() {
+            self.counters
+                .latest_delivered
+                .fetch_add(1, Ordering::SeqCst);
+        }
+        got
     }
-    async fn rotate(&self) {}
+    async fn rotate(&self) {
+        self.inner.rotate().await
+    }
+}
+
+/// The production `FrontierHandler` behind a call counter — what the node's
+/// frontier resolver engine gets as producer and consumer.
+#[derive(Clone)]
+pub(super) struct CountingHandler {
+    inner: FrontierHandler,
+    counters: UpstreamCounters,
+}
+
+impl CountingHandler {
+    pub(super) fn new(inner: FrontierHandler, counters: UpstreamCounters) -> Self {
+        Self { inner, counters }
+    }
+}
+
+impl Producer for CountingHandler {
+    type Key = FrontierKey;
+
+    async fn produce(&mut self, key: FrontierKey) -> cw_oneshot::Receiver<Bytes> {
+        self.counters.serve_requests.fetch_add(1, Ordering::SeqCst);
+        self.inner.produce(key).await
+    }
+}
+
+impl Consumer for CountingHandler {
+    type Key = FrontierKey;
+    type Value = Bytes;
+    type Failure = ();
+
+    async fn deliver(&mut self, key: FrontierKey, value: Bytes) -> bool {
+        let ok = self.inner.deliver(key, value).await;
+        let counter = if ok {
+            &self.counters.deliveries_decoded
+        } else {
+            &self.counters.deliveries_rejected
+        };
+        counter.fetch_add(1, Ordering::SeqCst);
+        ok
+    }
+
+    async fn failed(&mut self, key: FrontierKey, failure: ()) {
+        self.inner.failed(key, failure).await
+    }
 }

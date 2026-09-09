@@ -18,11 +18,16 @@
 //!   the epoch manager with a boundary relay that mirrors
 //!   `EpochTransition::on_finalized`'s cold-start + boundary arms.
 //! * Randomness is `StaticRandomness` (beacon-INACTIVE epochs, no DKG plane —
-//!   step 4). No upstream plane (step 3), so a node outside the committee has no
-//!   backfill source.
+//!   step 4).
+//! * The upstream plane is REAL (step 3): every node runs the production
+//!   frontier resolver + `PlaneUpstreamHandle` over `FRONTIER_CHANNEL` on a
+//!   second simulated network, counted at both ends ([`fakes::UpstreamCounters`]),
+//!   and the executor's frozen-tip probe is wired as in `dpos.rs::launch`; the
+//!   re-jump itself (reth EL sync) is a counted no-op behind a `u64::MAX` gate.
 //!
 //! What the stand reports: executed heights and hashes per node, the first
-//! `(node, height)` whose executed hash disagrees with the others, every node's
+//! height whose executed hashes disagree (a minority node, or a tie), what
+//! each node's upstream plane asked and served, every node's
 //! typed `SafetyHalt` reason, the `(height, view, leader, digest, hash)` trace of
 //! every finalized block per node, and the WARN/ERROR log lines captured by
 //! [`capture`]. Log lines carry NO node label: commonware attaches a tracing
