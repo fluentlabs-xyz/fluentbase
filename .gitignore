@@ -45,3 +45,4 @@ evm-e2e/tests/
 datadir
 .claude
 graphify-out
+.dpos-study
