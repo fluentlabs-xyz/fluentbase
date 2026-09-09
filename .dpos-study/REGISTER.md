@@ -8,7 +8,7 @@
 - §1 R-001..R-120 (узел; R-101..R-110 — граница узел↔контракт; R-111..R-113 — инцидент пола; R-114..R-119 — дубли; R-120 — принятый риск)
 - §2 K-1..K-40 (контракт) и 14 групп дублей DUPLICATES
 - §3 Упрощения B-1..B-11, BB-1..BB-12, CB-1..CB-13
-- §4 Трассировка A/BA/C/COVERAGE/UNDERSTANDING → R (дословно из `history/REGISTER.md` часть 6)
+- §4 Трассировка A/BA/C/COVERAGE/UNDERSTANDING/CONTRACT-UNDERSTANDING → R и K
 
 ## §0 Шкала, статусы, откуда что взято
 
@@ -23,9 +23,9 @@
 ## §1 R-001..R-120
 
 ### R-001 · BLOCKER · Прыжок cold-start/re-jump синхронизирует reth к неаутентифицированному хэшу, а комитет для проверки читается из уже синхронизированного состояния
-- Механизм: любой отслеживаемый пир отвечает на `Latest` парой `(finalization, block)`, где `payload == block.digest`,`block.height > anchor + threshold`,`block.result` — хэш его собственной EVM-ветки с подменённым стейкинг-состоянием. Узел даёт reth FCU на этот хэш, reth скачивает ветку по devp2p и финализирует её (эксперимент AUDIT A-1, п. 3), после чего `verify_jump_authenticated` читает `committee[E]` из подменённого состояния и проверка проходит. Эпоха раунда сертификата не сверяется с `epoch_of(block.height)`.
-- Последствие: (а) узел живёт на чужой цепи, RPC отдаёт чужое состояние, валидатор перестаёт участвовать; (б) если атакующий сохранил настоящий комитет — через K блоков `ResultDivergence` → `SafetyHalt` с маркером на диске (`executor.rs`), узел выключен до ручного вмешательства; (в) даже при `AuthFailed` reth уже получил `finalized` на чужой хэш и начал pipeline-backfill к нему, обратный FCU reth отклоняет; узел ротирует upstream и повторяет прыжок (`dpos.rs`), но EL остаётся с чужим finalized-указателем (это C-08).
-- Якоря: `cold_start_jump.rs` (порядок `get_latest` → `verify_jump_structural` → `el.sync_to` → `verify_jump_authenticated`), (`sync_to`: FCU `head=safe=finalized=latest.block.result`), (`scheme_at(epoch, landing_hash, None)` — комитет из состояния на `landing_hash`). Входы: `dpos.rs` (cold start валидатора, L1 = `None`), (re-jump, L1 = `None`), `executor.rs` (`maybe_re_jump`),`plane_upstream.rs ` (`deliver` принимает любую декодируемую пару), `` (`fetch_one`: `FrontierKey::Latest` — резолвер сам выбирает пира из отслеживаемого набора). Отслеживаемый набор = реестр ∪ `committee[e]` ∪ `committee[e+1]` (`staking-reader/src/epoch_transition.rs`), до 4096 (`p2p/src/constants.rs`).
+- Механизм: любой отслеживаемый пир отвечает на `Latest` парой `(finalization, block)`, где `payload == block.digest`, `block.height > anchor + threshold`, `block.result` — хэш его собственной EVM-ветки с подменённым стейкинг-состоянием. Узел даёт reth FCU на этот хэш, reth скачивает ветку по devp2p и финализирует её (эксперимент AUDIT A-1, п. 3), после чего `verify_jump_authenticated` читает `committee[E]` из подменённого состояния и проверка проходит. Эпоха раунда сертификата не сверяется с `epoch_of(block.height)`.
+- Последствие: (а) узел живёт на чужой цепи, RPC отдаёт чужое состояние, валидатор перестаёт участвовать; (б) если атакующий сохранил настоящий комитет — через K блоков `ResultDivergence` → `SafetyHalt` с маркером на диске (`executor.rs`), узел выключен до ручного вмешательства; (в) — снят Ex-2, см. статус — даже при `AuthFailed` reth уже получил `finalized` на чужой хэш и начал pipeline-backfill к нему, обратный FCU reth отклоняет; узел ротирует upstream и повторяет прыжок (`dpos.rs`), но EL остаётся с чужим finalized-указателем (это C-08).
+- Якоря: `cold_start_jump.rs` (порядок `get_latest` → `verify_jump_structural` → `el.sync_to` → `verify_jump_authenticated`), (`sync_to`: FCU `head=safe=finalized=latest.block.result`), (`scheme_at(epoch, landing_hash, None)` — комитет из состояния на `landing_hash`). Входы: `dpos.rs` (cold start валидатора, L1 = `None`), (re-jump, L1 = `None`), `executor.rs` (`maybe_re_jump`), `plane_upstream.rs ` (`deliver` принимает любую декодируемую пару), (`fetch_one`: `FrontierKey::Latest` — резолвер сам выбирает пира из отслеживаемого набора). Отслеживаемый набор = реестр ∪ `committee[e]` ∪ `committee[e+1]` (`staking-reader/src/epoch_transition.rs`), до 4096 (`p2p/src/constants.rs`).
 - Уверенность (REGISTER, 09-03): `[KNOWN]` порядок вызовов, чтение комитета при `landing_hash`, отсутствие L1 на валидаторе, `deliver`/`fetch_one`. Эксперимент AUDIT A-1 (reth финализирует названный хэш после devp2p-доставки) — `[LIKELY]`, в сессии не повторялся.
 - Ход по плану 09-04 (INDEX): Э4 / С — П-4 (фронтир только по проверенной финализации; `sync_to` после аутентификации) + П-1 (комитет из локально финализированного состояния)
 - Связано: R-004 (ложный frontier заставляет здоровый узел прыгать), R-016 (порог прыжка мал), R-009 (`deliver` не связывает ключ с содержимым), R-040 (эпоха ↔ высота не связаны на by-height путях), R-007 (re-jump — единственный выход из σ-hold, то есть R-007 ведёт сюда).
@@ -33,8 +33,8 @@
 
 ### R-002 · BLOCKER · Эквивокация dealer-лога навсегда лишает share честные узлы, записавшие «не тот» лог; один византийский dealer, удерживающий partial, останавливает выпуск seed
 - Механизм: dealer B шлёт `Reveal(L1)` узлу A и `Reveal(L2)` узлам C, D. Confirm'ы hash-sensitive; лидер пинует набор с H(L2), confirm'ов C+D+B = quorum ⇒ артефакт пинует L2. У A `all_held = false` навсегда: refetch не идёт (dealer уже в `recorded`), recompute зациклен. A без share на эпоху и все carry-forward эпохи. Подписантов seed остаётся n−1−f = t−1 честных ⇒ каждый seed требует partial от B; B удерживает ⇒ ни одного сертификата (`beacon/oracle.rs`: «NO certificate of this epoch can be assembled»). Обнаружение двух валидных подписей одного dealer'а под разными логами нигде не выполняется.
-- Последствие: остановка цепи до смены комитета (которая сама требует блоков) при одном византийском участнике. Порог живучести beacon ниже BFT-границы.
-- Якоря: `beacon/ceremony.rs` (`record_checked_log`:`recorded.insert(pk)` — первый лог dealer'а побеждает, хэш не участвует), (`ingest_signed_log`: валидный лог того же dealer'а с другим хэшем ⇒ `(true, empty)` — fetch считается выполненным, лог отброшен), (`scoped_pinned_logs`: несовпадение хэша ⇒ `missing`),`beacon/actor.rs ` (`fetch_missing_logs` пропускает dealer'ов из `recorded`), (`want = dealers − held` по ключу dealer'а), (`validate_share_on_poly` ложен ⇒ запись остаётся в `recompute_pending`), `dkg_agree.rs` (`verify` паркуется на `Missing`, `fetch_bodies` доставляет лог, который отбрасывается). Комментарий кода признаёт остаток: `actor.rs`.
+- Последствие: остановка цепи до смены комитета (которая сама требует блоков) при одном византийском участнике. Порог живучести beacon ниже BFT-границы. Охват шире, чем описан механизм: одна жертва — случай f = 1; общий случай — f жертв одним dealer'ом; порог живучести маяка — не f, а 0 (`history/VERIFY-BLOCKERS.md` R-002 «Тяжесть»). Ссылка `oracle.rs` в записи использована не по назначению (там же).
+- Якоря: `beacon/ceremony.rs` (`record_checked_log`:`recorded.insert(pk)` — первый лог dealer'а побеждает, хэш не участвует), (`ingest_signed_log`: валидный лог того же dealer'а с другим хэшем ⇒ `(true, empty)` — fetch считается выполненным, лог отброшен), (`scoped_pinned_logs`: несовпадение хэша ⇒ `missing`), `beacon/actor.rs ` (`fetch_missing_logs` пропускает dealer'ов из `recorded`), (`want = dealers − held` по ключу dealer'а), (`validate_share_on_poly` ложен ⇒ запись остаётся в `recompute_pending`), `dkg_agree.rs` (`verify` паркуется на `Missing`, `fetch_bodies` доставляет лог, который отбрасывается). Комментарий кода признаёт остаток: `actor.rs`.
 - Уверенность (REGISTER, 09-03): `[KNOWN]` все звенья (`record_checked_log`,`ingest_signed_log`,`scoped_pinned_logs`,`fetch_missing_logs`,`want`, gate recompute, `oracle.rs`). Предположение: порог seed t = quorum(n) — `[LIKELY]` по UNDERSTANDING §7 (`combined_scheme.rs`), в сессии не перечитано.
 - Ход по плану 09-04 (INDEX): Э5 / С — П-9: идентичность лога `(dealer, hash)`; refetch по несовпадению хэша; две подписи одного dealer — улика
 - Связано: R-036 (честная эквивокация лога через `NoFile` даёт тот же раскол без злого умысла), R-039 (share не проверяется против полинома на live-пути), R-025 (окно heal — 1 эпоха, поэтому жертва не восстановится и позже), R-026.
@@ -43,7 +43,7 @@
 ### R-003 · SERIOUS (пересмотрено 09-04: было BLOCKER — нужны f+1 записей Active-реестра, туда пускает только governance) · `corroborate_frontier` считает любых отслеживаемых пиров; f+1 записей реестра переводят валидатор в verify-only до рестарта
 - Механизм: при n=4 порог 2. Два пира из реестра (не из комитета) шлют по одному кадру на VOTE-сабканал с эпохой `10^9`.`highest_observed_epoch = 10^9`; каждая настоящая граница «не live», `reconcile_roles` делает `soft_enter` и выходит; `PINS_PER_SENDER` не мешает (одна эпоха на отправителя).
 - Последствие: узел не спавнит движки до рестарта. Обработав так > f валидаторов, цепь останавливают. Нужно f+1 отслеживаемых идентичностей, то есть f+1 записей реестра; попасть в реестр (`getRegistryWithKeys` = список активных) можно только через `activateValidator`, а он governance-only (`consensus.rs`, `staking.rs`), так что f+1 идентичностей — не действие одного участника.
-- Якоря: `epoch_manager.rs` (`threshold = (n−1)/3 + 1`, отправитель — любой аутентифицированный пир; `highest_observed_epoch` только растёт), (`is_live_epoch = epoch >= highest_observed_epoch`), (не live ⇒ только `soft_enter`,`return`); источник `their_epoch` — id сабканала кадра без подписи и без проверки членства (`node/dpos.rs`). Отслеживаемый набор — `staking-reader/src/epoch_transition.rs`.
+- Якоря: `epoch_manager.rs` (`threshold = (n−1)/3 + 1`, отправитель — любой аутентифицированный пир; `highest_observed_epoch` только растёт), (`is_live_epoch = epoch >= highest_observed_epoch`), (не live ⇒ только `soft_enter`, `return`); источник `their_epoch` — id сабканала кадра без подписи и без проверки членства (`node/dpos.rs`). Отслеживаемый набор — `staking-reader/src/epoch_transition.rs`.
 - Уверенность (REGISTER, 09-03): `[KNOWN]` порог, отсутствие фильтра членства, `is_live_epoch`,`soft_enter`-ветка.
 - Ход по плану 09-04 (INDEX): Э4 / С — П-4: `corroborate_frontier`,`observed_reporters`,`sender_pins` удаляются; тяжесть → SERIOUS (см. PLAN §8)
 - Связано: R-004 (тот же класс — неподписанный сигнал двигает состояние узла), R-096 (hint целится в отправителя backup-голоса).
@@ -60,8 +60,8 @@
 
 ### R-111 · BLOCKER · Популяция селекционно-видимых валидаторов ничем не удерживается выше `MIN_COMMITTEE_LENGTH`: как только видимых остаётся 3, системный вызов `commitEpochCommittee` ревёртит в предысполнении и вся сеть одновременно умирает фатальным `Corruption`, необратимо. Роковой шаг — обычная успешная транзакция честного оператора
 - Механизм: (1) владелец валидатора снимает весь собственный стейк одной транзакцией `undelegate` — либо governance вызывает `disable_validator`; (2) `set_selection_visible(v, false, E)` (`staking.rs`) делает это действующим с эпохи `E+1`; (3) на первом блоке эпохи `E+1` узел коммитит `target = E+3`, контракт выбирает при `selection_epoch = E+1`; (4) если видимых осталось 3 — ревёрт; (5) узел превращает его в `BlockExecutionError` → `Corruption` → смерть executor'а → abort-all. Одновременность — общий вход: чистая функция от согласованного блока и его пред-состояния (`consensus.rs` утверждает это же и добавляет, что чинящая транзакция после этого невозможна).
-- Последствие: необратимая остановка ВСЕЙ сети. Узлы умирают в пределах 3,2–14 мс друг от друга; перезапуск воспроизводит ту же смерть; состояние живёт в контракте, а исправить его нечем — транзакция требует блока, блоков больше нет. Инициатор гибнет вместе со всеми.
-- Якоря: контракт, `/home/djadjka/Work/audit-482/pr482-study/contracts/staking/src`):`consensus.rs ` (`commit_epoch_committee`;`selection_epoch = target − 2`, ревёрт `ERR_COMMITTEE_TOO_SMALL` с `(len, MIN)`),`consts.rs ` (`MIN_COMMITTEE_LENGTH = 4` и его обоснование), `consensus.rs` → `staking.rs` → `staking.rs` (кандидаты = видимые члены роестра) → `staking.rs` (`k = min(cap, len)`),`staking.rs ` (роестр только растёт). Небайзантийские писатели штампа невидимости, оба БЕЗ floor-проверки: `staking.rs` (`deactivate_validator_at`) ← `staking.rs` (`disable_validator`, governance) и ← `staking.rs, :1295-1300` (`undelegate` при `full_owner_exit`, **permissionless**; `staking.rs`: «A full exit is therefore never blocked»). Защищённый аналог существует и не переиспользован: `staking.rs` (`apply_production_exclusion` отказывает при `count_selection_visible_at(bite) <= active_validators_length_at(bite)`), причём против ПОТОЛКА, не против минимума.
+- Последствие: необратимая остановка ВСЕЙ сети. Узлы умирают в пределах 3, 2–14 мс друг от друга; перезапуск воспроизводит ту же смерть; состояние живёт в контракте, а исправить его нечем — транзакция требует блока, блоков больше нет. Инициатор гибнет вместе со всеми.
+- Якоря: контракт, `/home/djadjka/Work/audit-482/pr482-study/contracts/staking/src`):`consensus.rs ` (`commit_epoch_committee`;`selection_epoch = target − 2`, ревёрт `ERR_COMMITTEE_TOO_SMALL` с `(len, MIN)`), `consts.rs ` (`MIN_COMMITTEE_LENGTH = 4` и его обоснование), `consensus.rs` → `staking.rs` → `staking.rs` (кандидаты = видимые члены роестра) → `staking.rs` (`k = min(cap, len)`), `staking.rs ` (роестр только растёт). Небайзантийские писатели штампа невидимости, оба БЕЗ floor-проверки: `staking.rs` (`deactivate_validator_at`) ← `staking.rs` (`disable_validator`, governance) и ← `staking.rs, :1295-1300` (`undelegate` при `full_owner_exit`, **permissionless**; `staking.rs`: «A full exit is therefore never blocked»). Защищённый аналог существует и не переиспользован: `staking.rs` (`apply_production_exclusion` отказывает при `count_selection_visible_at(bite) <= active_validators_length_at(bite)`), причём против ПОТОЛКА, не против минимума.
 - Уверенность (REGISTER, 09-03): **подтверждено экспериментом** (`EXPERIMENTS.md` §5.3, §5.5.5). E2 (`n = 4`, один выход `undelegate`: мертвы все четыре узла, ноль строк о тумбстоуне). E5 (`n = 6`, старт с `V = 5`: выход `V 5→4` — цепь живёт четыре эпохи; выход `V 4→3` — четыре узла умирают за 9 мс на `commitEpochCommittee(epoch 27)`; всего от `V = 6` понадобилось три честных выхода = `V − 3`; строк о джейле/эквивокации во всех шести логах — 0). Первый прогон E5 был негоден (гонка с фазой 1 стенда) и переигран с гейтом готовности. Достижимость при `V = 51` — по коду (`EXPERIMENTS.md` §5.5.3): 48 выходов, ни один ничем не ограничен; стенд на 51 узел не строился.
 - Ход по плану 09-04 (INDEX): Э0 / С — контракт B-1: коммит не ревёртит, при недоборе переиспользует предыдущую запись; `dkg_qual=false`
 - Связано: R-112 (тот же ревёрт, тот же фатал, но византийский писатель того же штампа — разделены, потому что разная достижимость и разный ответственный), R-113 (пропущенный инвариант, общая причина обеих), R-032/R-033 (класс «`Corruption` ⇒ shutdown»; здесь наблюдён end-to-end на пути ИСПОЛНЕНИЯ у валидатора).
@@ -69,7 +69,7 @@
 
 ### R-006 · SERIOUS · Guard #2 читает канонический хэш reth до FCU целевого блока: на догоне проверка пуста, при спекулятивном сиблинге — ложный SafetyHalt
 - Механизм: узел отстал ≥ K и догоняет без спекуляции; `block_hash(h) = None` ⇒ `result_matches = None` ⇒ guard молча пропускает; расхождение ловится только обратной проверкой на h+K, когда h..h+2 уже FCU'нуты как `safe`. Сценарий 2: узел спекулятивно исполнил сиблинг A на высоте h (нотаризация, затем nullify), сеть финализировала B, узел отстал ≥ K; `correctly_speculated = false`, re-derive B → import без FCU; `block_hash(h) = A ≠ hash(B)` ⇒ `Some(false)` ⇒ `Fault::fork_safety(ResultDivergence)` ⇒ `park_halted` + маркер.
-- Последствие: сценарий 1 — заявленный «единственный детектор на пути догона» не работает (комментарий ); сценарий 2 — необратимая остановка честного узла при штатной комбинации «таймаут лидера + отставание на K». Тест `guard2_convergence_mismatch_engages_safety_halt` (`executor.rs`) проходит, потому что `FakeDeriver` канонизирует при derive (``), чего reth не делает.
+- Последствие: сценарий 1 — заявленный «единственный детектор на пути догона» не работает (комментарий); сценарий 2 — необратимая остановка честного узла при штатной комбинации «таймаут лидера + отставание на K». Тест `guard2_convergence_mismatch_engages_safety_halt` (`executor.rs`) проходит, потому что `FakeDeriver` канонизирует при derive, чего reth не делает.
 - Якоря: `executor.rs` (guard #2: `result_matches(block_{h+K}.result, …, spec_executed_hash)`; срабатывает только на `Some(false)`), → (для целевого блока только `submit_finalized_payload`, без FCU), (FCU целевого блока — позже), (спекулятивный блок канонизируется FCU `head=derived`), (`correctly_speculated`).`spec_executed_hash = provider.block_hash(h)` — каноническая цепь (`node/ordering.rs`); `order_block.rs` (`result_matches` ⇒ `None`, когда хэша нет). reth: `InsertExecutedBlock` не меняет канонической цепи (`RETH:crates/engine/tree/src/tree/mod.rs`, по AUDIT/CORE).
 - Уверенность (REGISTER, 09-03): `[KNOWN]` порядок guard → import → FCU, `result_matches`, FCU в `spec_execute`,`correctly_speculated`.`[LIKELY]` поведение `InsertExecutedBlock` в reth (по анкерам CORE/AUDIT, checkout не открывался).
 - Ход по плану 09-04 (INDEX): Э6 / С — П-6 п.3: guard #2 сравнивает с локальным `derived_hash`; тест переписать на conformance-фейке (Э3)
@@ -106,7 +106,7 @@
 ### R-010 · SERIOUS · `verify_block` не проверяет `fee_recipient`
 - Механизм: лидер ставит любой адрес; верификаторы голосуют «да»; deriver в `crates/node` исполняет блок с этим получателем.
 - Последствие: любой лидер присваивает комиссии любого блока.
-- Якоря: `application.rs` (`structural_checks`:`proposal_view`, timestamp, gas, production record, Σ gas — поля `fee_recipient` нет), (`verify_block` — grep по файлу: `fee_recipient` только в конфигурации и `build_proposal`,`,,,, `); поле `order_block.rs`.
+- Якоря: `application.rs` (`structural_checks`:`proposal_view`, timestamp, gas, production record, Σ gas — поля `fee_recipient` нет), (`verify_block` — grep по файлу: `fee_recipient` только в конфигурации и `build_proposal`); поле `order_block.rs`.
 - Уверенность (REGISTER, 09-03): `[KNOWN]`.
 - Ход по плану 09-04 (INDEX): Э0 / П — удалить поле `fee_recipient` из `OrderBlock`; deriver ставит `PRECOMPILE_FEE_MANAGER` (EL иначе отвергает блок, `node/consensus.rs`)
 - Связано: —. Правка: сверять с адресом, привязанным к `ctx.leader` в снапшоте (маппинг peer→address есть в `ValidatorSetSnapshot`).
@@ -115,7 +115,7 @@
 ### R-013 · SERIOUS · BROADCAST: буфер тел держит до 64 сообщений по 4 MiB на каждого «primary»-пира; primary-набор — реестр, не комитет
 - Механизм: пир из реестра за 8 с заливает 64 валидно закодированных `OrderBlock` по 4 MiB ⇒ 256 MiB на пира; сотни записей реестра ⇒ десятки GiB. CPU: до 32 MiB/с декодирования на пира.
 - Последствие: удалённое исчерпание памяти и CPU.
-- Якоря: `outer.rs` (`buffered::Engine` с `deque_size = self.deque_size`),`dpos.rs ` (`deque_size: 64`),`order_block.rs ` (`MAX_ORDER_BLOCK_SIZE = 4 MiB`), (`read` включает RLP-декод транзакций; подписи не проверяются), `p2p/src/constants.rs` (8/с), (4 MiB). `CW:broadcast/src/buffered/engine.rs` — кэш для любого пира из `latest.primary` (по CORE/UNDERSTANDING §12.6).
+- Якоря: `outer.rs` (`buffered::Engine` с `deque_size = self.deque_size`), `dpos.rs ` (`deque_size: 64`), `order_block.rs ` (`MAX_ORDER_BLOCK_SIZE = 4 MiB`), (`read` включает RLP-декод транзакций; подписи не проверяются), `p2p/src/constants.rs` (8/с), (4 MiB). `CW:broadcast/src/buffered/engine.rs` — кэш для любого пира из `latest.primary` (по CORE/UNDERSTANDING §12.6).
 - Уверенность (REGISTER, 09-03): `[KNOWN]deque_size`, размеры, квота. `[LIKELY]` семантика `primary` в commonware (CORE D-2, Ex-8). Стоимость декодирования не измерена (Ex-9).
 - Ход по плану 09-04 (INDEX): Э4 / С+ — П-5 сужает primary до комитета; отдельно `deque_size ≤ 4` + байтовый лимит в `outer.rs`
 - Связано: R-037 (тот же механизм в DKG body engine), R-029 (нет блокировщика), R-054.
@@ -123,7 +123,7 @@
 
 ### R-014 · SERIOUS · `VoteStore` хранит непроверенные голоса; далёкие view никогда не вытесняются
 - Механизм: член комитета шлёт голоса со своим индексом и view `2^40..`, 128/с; каждый становится записью (≈100–200 Б). Ложные пары `Conflicting*` ⇒ `resolve_committee` (EVM) на каждую.
-- Последствие: ≈1,6 GiB в сутки на каждый узел от одного члена комитета; голоса за далёкие view не эквивокация, слэша нет. Одного византийского члена достаточно, чтобы вывести из памяти весь комитет за дни — но медленно и наблюдаемо.
+- Последствие: ≈1, 6 GiB в сутки на каждый узел от одного члена комитета; голоса за далёкие view не эквивокация, слэша нет. Одного византийского члена достаточно, чтобы вывести из памяти весь комитет за дни — но медленно и наблюдаемо.
 - Якоря: `slasher/actor.rs` (`remember_*` без проверки подписи), (`retain_floor`:`view >= floor − 64`, верхней границы нет). Reporter получает голоса до batch-verify; батчер привязывает отправителя к индексу подписанта и отбрасывает не-участников (`CW:batcher/round.rs`, по AUDIT).
 - Уверенность (REGISTER, 09-03): `[KNOWN]VoteStore`,`retain_floor`.`[LIKELY]` порядок Reporter/batch-verify в commonware. Рост — Ex-10.
 - Ход по плану 09-04 (INDEX): Э4 / П — голоса в `VoteStore` только после batch-verify; view сверху ≤ `floor + activity_timeout`
@@ -132,15 +132,15 @@
 
 ### R-112 · SERIOUS · Тумбстоун за эквивокацию — третий писатель того же штампа невидимости, тоже без floor-проверки; при `V = 4` один византийский валидатор необратимо останавливает сеть
 - Последствие: то же, что у R-111.
-- Якоря: `consensus.rs` (`apply_equivocation_penalty`, штамп безусловный), входы — системный вызов `slashEquivocation` (`consensus.rs`) и permissionless-обработчики с уликой `slash_notarize` / `slash_from_evidence` (`consensus.rs`, — без `ensure_governance` и без `SYSTEM_CALLER`). Далее — ровно цепочка R-111, шаги (2)–(5). Единственное ограничение — одноразовость на валидатора .
+- Якоря: `consensus.rs` (`apply_equivocation_penalty`, штамп безусловный), входы — системный вызов `slashEquivocation` (`consensus.rs`) и permissionless-обработчики с уликой `slash_notarize` / `slash_from_evidence` (`consensus.rs`, — без `ensure_governance` и без `SYSTEM_CALLER`). Далее — ровно цепочка R-111, шаги (2)–(5). Единственное ограничение — одноразовость на валидатора.
 - Уверенность (REGISTER, 09-03): **подтверждено экспериментом** при `n = 4` и `n = 5` (`EXPERIMENTS.md` §5.3): E1 (`n=4`, один эквивокатор — сеть мертва за 35,3 с), E3 (`n=5`, один эквивокатор — сеть ЖИВА, `V 5→4`), E4 (`n=5`, второй эквивокатор — мертва, `V 4→3`). Ревёрт во всех случаях `0x0a87ec8d(3, 4)`. Недостижимость при `V = 51` — по коду.
 - Ход по плану 09-04 (INDEX): Э0 / С — то же, что R-111 (B-1); tombstoned член в перенесённом комитете маскируется узлом
 - Связано: R-111 (тот же штамп, тот же ревёрт, небайзантийские писатели), R-113, R-034 (`tombstoned` как единственный источник).
 - **Статус 2026-09-09:** снята — как R-111 (1.0): тумбстоун на сети ровно на полу останавливает цепь на ближайшем коммите (X2); `smoke-byzantine` держится только пятым узлом. Маскирование tombstoned-члена узлом (отказ лидеру, разрыв транспорта) не вычёркивает место. _Источник:_ history/PLAN.md §2 Э1 1.0; history/E1-REFLECTION.md X2
 
 ### R-114 · SERIOUS · ABI-сигнатуры системных вызовов объявлены независимо на обеих сторонах; промах селектора у двух fail-loud вызовов даёт фатальную ветку R-111
-- Механизм: сигнатура-строка существует в двух экземплярах; селектор каждая сторона считает от своего. Правка на одной стороне (переименование, смена арности) меняет её селектор, вызовы узла перестают попадать в обработчик. Для `recordProduction` и `commitEpochCommittee` диспозиция в узле fail-loud (`evm.rs`, ) ⇒ `BlockExecutionError` ⇒ `Corruption` ⇒ abort-all у всех узлов одновременно, без самолечения (та же цепочка, что в R-111). Для `slashEquivocation` диспозиция мягкая (`evm.rs`) ⇒ тихая потеря слэша.
-- Якоря (узел): `crates/node/src/evm.rs` (`recordProduction(uint8)`, `commitEpochCommittee`, `slashEquivocation(uint64,uint32)`) — блок `sol!`; `crates/dpos/staking-reader/src/reader.rs` — семь вьюх (`getEpochCommitteeWithStakes`, `getRegistryWithKeys`, `getDkgQual`, `getEpochBlockInterval`, `getDposActivationBlock`, `getUndelegatePeriod`, `getActiveValidatorsLength`). Контракт: те же строки, объявленные заново через `derive_keccak256_id!` — `consts.rs`. Диспетчер rWasm сопоставляет сырые 4 байта, так что расхождение строки — не мис-декод, а `ERR_UNKNOWN_METHOD`-ревёрт против живой цепи.
+- Механизм: сигнатура-строка существует в двух экземплярах; селектор каждая сторона считает от своего. Правка на одной стороне (переименование, смена арности) меняет её селектор, вызовы узла перестают попадать в обработчик. Для `recordProduction` и `commitEpochCommittee` диспозиция в узле fail-loud (`evm.rs`) ⇒ `BlockExecutionError` ⇒ `Corruption` ⇒ abort-all у всех узлов одновременно, без самолечения (та же цепочка, что в R-111). Для `slashEquivocation` диспозиция мягкая (`evm.rs`) ⇒ тихая потеря слэша.
+- Якоря (узел): `crates/node/src/evm.rs` (`recordProduction(uint8)`, `commitEpochCommittee`, `slashEquivocation(uint64, uint32)`) — блок `sol!`; `crates/dpos/staking-reader/src/reader.rs` — семь вьюх (`getEpochCommitteeWithStakes`, `getRegistryWithKeys`, `getDkgQual`, `getEpochBlockInterval`, `getDposActivationBlock`, `getUndelegatePeriod`, `getActiveValidatorsLength`). Контракт: те же строки, объявленные заново через `derive_keccak256_id!` — `consts.rs`. Диспетчер rWasm сопоставляет сырые 4 байта, так что расхождение строки — не мис-декод, а `ERR_UNKNOWN_METHOD`-ревёрт против живой цепи.
 - Уверенность (REGISTER, 09-03): `[KNOWN]` — обе стороны прочитаны, тесты открыты.
 - Ход по плану 09-04 (INDEX): Э2 / С — общий ABI-крейт: `sol!` узла и селекторы контракта из одного источника
 - Связано: R-111 (та же фатальная ветка), R-113 (тот же класс «инвариант держится согласием чисел»), R-119. Полный разбор класса — `history/DUPLICATES.md`.
@@ -148,7 +148,7 @@
 
 ### R-115 · SERIOUS · Пространство имён подписи для улик собрано вручную в контракте, а его суффиксы принадлежат commonware: расхождение молча выключает слэшинг по уликам
 - Механизм: три величины дублированы разом — 15-байтовый префикс, порядок байт chain_id и три суффикса. Расхождение любой из них меняет подписываемое сообщение, `SIG_BLS_VERIFY` возвращает `false`, и `slash_from_evidence` ревёртит `ERR_EQUIVOCATION_SIGNATURE_INVALID` (`consensus.rs`). Это обычная транзакция, а не системный вызов: цепь продолжает работать, а путь доказательства эквивокации по уликам просто перестаёт существовать.
-- Якоря: узел): `crates/dpos/bls/src/lib.rs` — `fluent_namespace(chain_id) = b"FLUENT_DPOS_V1_" ‖ chain_id.to_be_bytes`; doc явно говорит, что суффиксы `_NOTARIZE`/`_NULLIFY`/`_FINALIZE`/`_SEED` добавляет commonware, а не этот код. Источник суффиксов — `CW:consensus/src/simplex/scheme/mod.rs`. контракт): `consensus.rs`,`fn namespace(sdk, kind)` — собирает всё сам: `b"FLUENT_DPOS_V1_"` ‖ `block_chain_id.to_be_bytes` ‖ `b"_NOTARIZE" | b"_NULLIFY" | b"_FINALIZE"`, выбирая суффикс по `EVIDENCE_MESSAGE_KIND_*` (`consts.rs`).
+- Якоря: узел): `crates/dpos/bls/src/lib.rs` — `fluent_namespace(chain_id) = b"FLUENT_DPOS_V1_" ‖ chain_id.to_be_bytes`; doc явно говорит, что суффиксы `_NOTARIZE`/`_NULLIFY`/`_FINALIZE`/`_SEED` добавляет commonware, а не этот код. Источник суффиксов — `CW:consensus/src/simplex/scheme/mod.rs`. контракт): `consensus.rs`, `fn namespace(sdk, kind)` — собирает всё сам: `b"FLUENT_DPOS_V1_"` ‖ `block_chain_id.to_be_bytes` ‖ `b"_NOTARIZE" | b"_NULLIFY" | b"_FINALIZE"`, выбирая суффикс по `EVIDENCE_MESSAGE_KIND_*` (`consts.rs`).
 - Уверенность (REGISTER, 09-03): `[KNOWN]` — прочитаны все три стороны (узел, контракт, checkout commonware).
 - Ход по плану 09-04 (INDEX): Э2 / С — namespace+суффиксы: тест узла читает литералы commonware, контракт получает вектор из узла
 - Связано: R-022 (слэшер и доставка улик), R-114, R-113. Разбор — `history/DUPLICATES.md`, группа 1.
@@ -168,25 +168,25 @@
 - Уверенность (REGISTER, 09-03): `[KNOWN]` — комментарий, тест и текущая сторона контракта прочитаны. Состояние названных веток в этой сессии не проверялось — цитируется комментарий узла.
 - Ход по плану 09-04 (INDEX): Э2 / С — форма возврата из общего ABI; тяжесть → MODERATE (дрейф между ветками не подтверждён, см. PLAN §8)
 - Связано: R-033, R-114. Разбор — `history/DUPLICATES.md`, группа 4.
-- **Статус 2026-09-09:** закрыта — `065003ad` (2.1). Общий `sol!` форму возврата НЕ закрывает (контракт кодирует ответ своим кодеком по Rust-кортежу); держит тест `the_view_returns_decode_under_the_node_s_declaration` (проверен мутацией). Дрейф между ветками не существовал — ветка слита `f16fdd90`. _Источник:_ history/E2-ABI.md §1 гр.4, §10 п.1
+- **Статус 2026-09-09:** закрыта — `065003ad` + `0972059d` (2.1 и контр-ревью: тест внесён `0972059d`). Общий `sol!` форму возврата НЕ закрывает (контракт кодирует ответ своим кодеком по Rust-кортежу); держит тест `the_view_returns_decode_under_the_node_s_declaration` (проверен мутацией). Дрейф между ветками не существовал — ветка слита `f16fdd90`. _Источник:_ history/E2-ABI.md §1 гр.4, §10 п.1
 
 ### R-005 · MINOR (пересмотрено 09-04: было MODERATE в REGISTER, BLOCKER в AUDIT; VERIFY-BLOCKERS предлагал NIT) · PoP ключей комитета узлом не проверяется; защита от rogue-key целиком на контракте
 - Механизм: если контракт не проверяет PoP, участник регистрирует `pk' = pk_x − Σ pk_i`; агрегат кворума схлопывается в его ключ, и он один собирает сертификат.
 - Последствие: подделка сертификата одним участником ⇒ финализация расходящихся блоков.
-- Якоря: `bls/src/scheme.rs` — комментарий-обещание «PoP verified on-chain at `Staking.setConsensusKeys`»;`staking-reader/src/reader.rs ` (`decode_consensus_keys`: только `BlsPubkey::decode`, то есть subgroup-check). `verify_pop` вызывается только из тестов `bls/tests/*` (grep по `crates/`). Ссылка AUDIT `bls/src/scheme.rs` неверна: файл 153 строки, продакшн до .
+- Якоря: `bls/src/scheme.rs` — комментарий-обещание «PoP verified on-chain at `Staking.setConsensusKeys`»;`staking-reader/src/reader.rs ` (`decode_consensus_keys`: только `BlsPubkey::decode`, то есть subgroup-check). `verify_pop` вызывается только из тестов `bls/tests/*` (grep по `crates/`). Ссылка AUDIT `bls/src/scheme.rs` неверна: файл 153 строки, продакшн до.
 - Уверенность (REGISTER, 09-03): `[KNOWN]` узел не проверяет; `[KNOWN]` контракт проверяет.
 - Ход по плану 09-04 (INDEX): — / — — узел PoP не проверяет осознанно; остаток — K-1/K-23 контракта (Э1)
 - Связано: R-034, R-035, R-011, R-012 (тот же класс — ВЕРА контракту).
 - **Статус 2026-09-09:** закрыта — `f70ceffe` (1.10: верификатор инлайн, `setBlsVerifier` удалён; K-1 закрыт). Узел PoP не проверяет осознанно (INDEX: «—»). Остаток: предеплои `0x02/0x05/0x0b/0x0f/0x10` обновляемы через `runtime-upgrade` (R10.1). _Источник:_ history/PLAN.md §2 Э1 1.10; history/E1-REFLECTION.md R10.1
 
 ### R-011 · MODERATE · Геометрия эпох заморожена на первом чтении; изменение `epochBlockInterval`/`dposActivationBlock` в контракте расколет сеть между перезапущенными и работающими узлами
-- Механизм: governance меняет interval; стартовавшие после узлы считают эпохи по-новому, работающие — по-старому; `OriginEpocher`,`is_epoch_boundary`, партиции `consensus_epoch_{E}` и сабканалы расходятся.
+- Механизм: governance меняет interval; стартовавшие после узлы считают эпохи по-новому, работающие — по-старому; `OriginEpocher`, `is_epoch_boundary`, партиции `consensus_epoch_{E}` и сабканалы расходятся.
 - Последствие: две группы валидаторов с разными эпохами ⇒ нет кворума либо два кворума при n ≥ 8.
-- Якоря: `staking-reader/src/epoch_transition.rs` (`freeze_or_warn`: расхождение только warn), ; `dpos.rs` (валидатор читает при `cs_finalized_hash` на старте).
+- Якоря: `staking-reader/src/epoch_transition.rs` (`freeze_or_warn`: расхождение только warn); `dpos.rs` (валидатор читает при `cs_finalized_hash` на старте).
 - Уверенность (REGISTER, 09-03): `[KNOWN]` узел; `[KNOWN]` контракт.
 - Ход по плану 09-04 (INDEX): Э2 / С — B-9: геометрия в chainspec; сеттеры контракта удаляются, genesis-bootstrap берёт из chainspec
 - Связано: R-024 (константы не согласованы с интервалом), R-019.
-- **Статус 2026-09-09:** отложена — Э2.4 (B-9/П-10: геометрия в chainspec). не пересматривалась после 09-04. _Источник:_ history/PLAN.md §2 Э2 2.4
+- **Статус 2026-09-09:** отложена — Э2.4 (B-9/П-10: геометрия в chainspec); механизм после 09-04 не пересматривался. _Источник:_ history/PLAN.md §2 Э2 2.4
 
 ### R-015 · MODERATE · Цикл повторного применения в `try_derive` не ограничен, если EL не канонизирует производный блок
 - Механизм: reth принимает payload, FCU отвечает `Valid`, но канонической на h остаётся другой блок. Цикл крутится внутри `try_derive`: mailbox не читается, Tip/SpecNotarized не обрабатываются, heartbeat не шлётся, латч halt не проверяется.
@@ -200,7 +200,7 @@
 ### R-016 · MODERATE · Порог re-jump для валидатора равен `min(1024, interval)`: при малом интервале короткая задержка исполнения запускает прыжок с поверхностью R-001
 - Механизм: `interval = 32`, узел отстал на 33 блока (например, hold R-007 30 с) ⇒ спавнится re-jump.
 - Последствие: лишние прыжки, каждый — вход в R-001/R-004.
-- Якоря: `dpos.rs` (`JUMP_THRESHOLD.min(interval)`),`executor.rs `.
+- Якоря: `dpos.rs` (`JUMP_THRESHOLD.min(interval)`), `executor.rs `.
 - Уверенность (REGISTER, 09-03): `[KNOWN]`.
 - Ход по плану 09-04 (INDEX): Э5 / С+ — после П-2 (удержание больше не зависит от re-jump) порог сделать абсолютным
 - Связано: R-001, R-004, R-007 (поднимать порог можно только после того, как σ-hold перестанет зависеть от re-jump — конфликт, см. часть 2).
@@ -213,7 +213,7 @@
 - Уверенность (REGISTER, 09-03): `[KNOWN]`.
 - Ход по плану 09-04 (INDEX): Э5 / С+ — П-2 + ребро «финализация легла в marshal → epoch_manager» (добавить при П-2)
 - Связано: R-007, R-045; правка — `seed_edge` в `select!` при непустом `deferred_spawns`.
-- **Статус 2026-09-09:** не пересматривалась после 09-04; по плану — Э5 5.3 смягчает (ребро «финализация легла в marshal → epoch_manager» добавить при П-2; VERIFY: ни одно П его не даёт). _Источник:_ history/PLAN.md §2 Э5; history/VERIFY-history/REDESIGN.md ч.1
+- **Статус 2026-09-09:** не пересматривалась после 09-04; по плану — Э5 5.3 смягчает (ребро «финализация легла в marshal → epoch_manager» добавить при П-2; VERIFY: ни одно П его не даёт). _Источник:_ history/PLAN.md §2 Э5; history/VERIFY-REDESIGN.md ч.1
 
 ### R-020 · MODERATE · Журналы ключей и сидов пишутся write-behind; валидатор без upstream после kill -9 может не подняться
 - Механизм: блок финализирован, σ в памяти и в канале журнала, процесс убит до `sync`; если архив финализаций marshal тоже не успел, σ негде взять ⇒ без upstream — фатальный старт с требованием ресинка EL.
@@ -226,7 +226,7 @@
 
 ### R-021 · MODERATE · Ошибка записи share-файла не останавливает принятие share; после рестарта heal возможен только в окне одной эпохи
 - Последствие: валидатор с ошибкой диска подписывает до рестарта, после — verify-only без сообщения о причине, кроме старого warn.
-- Якоря: `beacon/actor.rs` (warn и продолжение), (`lo = now − 1`),`beacon/mod.rs ` (`JOURNAL_RETENTION_EPOCHS = 1`).
+- Якоря: `beacon/actor.rs` (warn и продолжение), (`lo = now − 1`), `beacon/mod.rs ` (`JOURNAL_RETENTION_EPOCHS = 1`).
 - Уверенность (REGISTER, 09-03): `[KNOWN]`.
 - Ход по плану 09-04 (INDEX): Э5 / П — ошибка persist ⇒ не принимать share (громкая демоция) — правка в `beacon/actor.rs` при П-3
 - Связано: R-025, R-020, R-072.
@@ -238,7 +238,7 @@
 - Уверенность (REGISTER, 09-03): `[KNOWN]`.
 - Ход по плану 09-04 (INDEX): Э6 / С+ — П-7 супервизирует consumer и повторяет tx; ack недекодируемой записи WAL — отдельно (`slasher/actor.rs`); при Д-4=B-4 WAL исчезает
 - Связано: R-027, R-028, R-032.
-- **Статус 2026-09-09:** отложена — Э6 6.2 (П-7) / зависит от Д-4: при КB-4 WAL и consumer исчезают целиком (1.2, открыта). не пересматривалась после 09-04. _Источник:_ history/PLAN.md §2 Э1 1.2, Э6 6.2; history/DECISIONS.md Д-4
+- **Статус 2026-09-09:** отложена — Э6 6.2 (П-7) / зависит от Д-4: при КB-4 WAL и consumer исчезают целиком (1.2, открыта); механизм после 09-04 не пересматривался. _Источник:_ history/PLAN.md §2 Э1 1.2, Э6 6.2; history/DECISIONS.md Д-4
 
 ### R-023 · MODERATE · `Confirm` с произвольной эпохой от любого пира вызывает EVM-чтение комитета до проверки подписи
 - Механизм: поток `Confirm` с произвольными эпохами: 1 сообщение → 1 staticcall; при 4096 пирах — тысячи чтений в секунду.
@@ -250,7 +250,7 @@
 - **Статус 2026-09-09:** не пересматривалась после 09-04; по плану — Э4 4.3 смягчает (П-5), 4.4 (фильтр `target_epoch ∈ [now, now+2]` до `committee_for`). _Источник:_ history/PLAN.md §2 Э4
 
 ### R-024 · MODERATE · `DKG_MARGIN_BLOCKS = 20` — константа, не согласованная с интервалом эпохи
-- Последствие: при малом интервале ни одна церемония не завершится; при чуть большем — окно в секунды.
+- Последствие: при малом интервале окно деалинга нулевое, при чуть большем — окно в секунды (формулировка «ни одна церемония не завершится» опровергнута Ex-14 — см. статус).
 - Якоря: `beacon/actor.rs`, (`saturating_sub`: при `interval ≤ 20` окно деалинга нулевое).
 - Уверенность (REGISTER, 09-03): `[KNOWN]`.
 - Ход по плану 09-04 (INDEX): Э2 / С — B-9: `DKG_MARGIN` как доля интервала в chainspec; проверка при старте
@@ -268,7 +268,7 @@
 ### R-026 · MODERATE · Потеря тела согласованного предложения: инстанс агрирования не перезапускается, узел входит в эпоху без share; heal только через pull после начала эпохи
 - Механизм: узел парковал `verify` (тела нет), сертификат пришёл по сети, `bodies.subscribe` не дождался за 45 с (решённое тело никто не ретранслирует).
 - Последствие: узел пропускает начало эпохи как verify-only, затем heal через pull + `finalize_over_pinned`; если он единственный держатель тела — ключ эпохи потерян для всех (A-33).
-- Якоря: `beacon/dkg_engine.rs` (`resolve_artifact == None` ⇒ `dkg_agree_body_lost`, инстанс завершается без артефакта; комментарий «has to re-agree on a fresh instance» ложен),, (`started` содержит target, повтор игнорируется); `beacon/actor.rs` (актор повторяет только announce); pull артефакта стартует из `drive_recompute` для `e ∈ [now−1, now]` .
+- Якоря: `beacon/dkg_engine.rs` (`resolve_artifact == None` ⇒ `dkg_agree_body_lost`, инстанс завершается без артефакта; комментарий «has to re-agree on a fresh instance» ложен), (`started` содержит target, повтор игнорируется); `beacon/actor.rs` (актор повторяет только announce); pull артефакта стартует из `drive_recompute` для `e ∈ [now−1, now]`.
 - Уверенность (REGISTER, 09-03): `[KNOWN]dkg_engine.rs`; путь heal — `[LIKELY]` по BEACON.
 - Ход по плану 09-04 (INDEX): Э5 / С — П-9: потеря тела ⇒ немедленный `pull_artifact`
 - Связано: R-025, R-002, R-037; правка — `pull_artifact` сразу при потере тела.
@@ -276,7 +276,7 @@
 
 ### R-027 · MODERATE · Слэшер: пустой комитет при чтении = `Permanent` drop улики, хотя комитет может быть закоммичен позже
 - Механизм: EL отстаёт на эпоху (обычно при догоне), улика текущей эпохи приходит от движка ⇒ снапшот пуст ⇒ улика уничтожена.
-- Якоря: `slasher/actor.rs` (пустой снапшот ⇒ `Permanent`), чтение при EL-finalized хэше .
+- Якоря: `slasher/actor.rs` (пустой снапшот ⇒ `Permanent`), чтение при EL-finalized хэше.
 - Уверенность (REGISTER, 09-03): `[KNOWN]`.
 - Ход по плану 09-04 (INDEX): Э4 / С — П-1: пустой ответ = `NotYetCommitted`, всегда retry
 - Связано: R-022, R-014, R-066; правка — `Transient`.
@@ -292,7 +292,7 @@
 
 ### R-030 · MODERATE · Классификация транзиентных ошибок reth по подстрокам
 - Последствие: смена текста в reth ⇒ транзиент классифицирован как `Backend` ⇒ `Corruption` ⇒ follower падает (R-033).
-- Якоря: `staking-reader/src/reader.rs` (`display.contains(TORN_RANGE_DISPLAY | SHORT_READ_DISPLAY | SNAPSHOT_DISPLAY)`),`staking-reader/src/error.rs `.
+- Якоря: `staking-reader/src/reader.rs` (`display.contains(TORN_RANGE_DISPLAY | SHORT_READ_DISPLAY | SNAPSHOT_DISPLAY)`), `staking-reader/src/error.rs `.
 - Уверенность (REGISTER, 09-03): `[KNOWN]`.
 - Ход по плану 09-04 (INDEX): Э8 / П — B-11: типизированные транзиентные ошибки в форке reth
 - Связано: R-033; закрывается AUDIT B-11.
@@ -300,7 +300,7 @@
 
 ### R-031 · MODERATE · Executor — один актор; сетевая проба и бесконечные циклы транспорта выполняются inline в его цикле
 - Последствие: пока пиры не отвечают или reth недоступен — Tip не обрабатывается, heartbeat не шлётся, ack'и marshal не отдаются (окно 16 заполняется), латч halt не проверяется; ordering-плоскость уходит вперёд до потолка 2 эпох, затем узел выпадает из комитета без явного сигнала.
-- Якоря: `executor.rs` (`probe_frontier` awaited в теле `select!`; на plane-пути это `fetch_one` с таймаутом 8 с, `plane_upstream.rs, `; при быстрой каденции 200 мс — до 8 с из каждых 8,2 с), `executor.rs` [ссылка уточнена, history/REFS.md] (`fcu_retrying_transport`: бесконечный retry по 200 мс внутри обработчика), `application.rs` (`derive_with_visibility_retry`, 10 с), R-015.
+- Якоря: `executor.rs` (`probe_frontier` awaited в теле `select!`; на plane-пути это `fetch_one` с таймаутом 8 с, `plane_upstream.rs, `; при быстрой каденции 200 мс — до 8 с из каждых 8, 2 с), `executor.rs` [ссылка уточнена, history/REFS.md] (`fcu_retrying_transport`: бесконечный retry по 200 мс внутри обработчика), `application.rs` (`derive_with_visibility_retry`, 10 с), R-015.
 - Уверенность (REGISTER, 09-03): `[KNOWN]`.
 - Ход по плану 09-04 (INDEX): Э6 / С — П-6: проба и `sync_to` в spawn; циклы ограничены
 - Связано: R-004 (проба — её вход), R-015, R-061; закрывается AUDIT B-8, CORE CB-12/CB-13.
@@ -315,7 +315,7 @@
 - **Статус 2026-09-09:** не пересматривалась после 09-04; по плану — Э6 6.2 (П-7). _Источник:_ history/PLAN.md §2 Э6
 
 ### R-033 · MODERATE · Follower: любая `Corruption`-ошибка чтения комитета (revert контракта, AbiDecode) = shutdown
-- Якоря: `cert_inlet.rs` (только три варианта ⇒ `Defer`, остальное `Corruption`), (`Err(e) ⇒ return Err`),`dpos.rs ` (break ⇒ `shutdown.cancel`).
+- Якоря: `cert_inlet.rs` (только три варианта ⇒ `Defer`, остальное `Corruption`), (`Err(e) ⇒ return Err`), `dpos.rs ` (break ⇒ `shutdown.cancel`).
 - Уверенность (REGISTER, 09-03): `[KNOWN]`.
 - Ход по плану 09-04 (INDEX): Э4 / С+ — П-1 единая классификация ошибок; П-7 перезапуск inlet вместо shutdown
 - Связано: R-030, R-042, R-063.
@@ -323,7 +323,7 @@
 
 ### R-036 · MODERATE · `maybe_start` при `NoFile` после дедлайна печати переизлагает и переподписывает второй лог — честная эквивокация логов, включающая R-002
 - Механизм: потеря/восстановление `share_dir` из бэкапа после печати; узлы, уже записавшие L1, второй Reveal игнорируют (first-wins), опоздавшие записывают L2 ⇒ раскол как в R-002 без злого умысла.
-- Якоря: `beacon/actor.rs` (`NoFile ⇒ start_fresh` без проверки `last_height` против дедлайна; проверка есть только для `Present`, ), (`seal_dealings` на следующем тике с тем же детерминированным полиномом, `ceremony.rs`, но другим набором ack/reveal ⇒ другой `SignedDealerLog`). Комментарий `share_state.rs` («re-dealing fresh would draw new OsRng randomness») устарел.
+- Якоря: `beacon/actor.rs` (`NoFile ⇒ start_fresh` без проверки `last_height` против дедлайна; проверка есть только для `Present`), (`seal_dealings` на следующем тике с тем же детерминированным полиномом, `ceremony.rs`, но другим набором ack/reveal ⇒ другой `SignedDealerLog`). Комментарий `share_state.rs` («re-dealing fresh would draw new OsRng randomness») устарел.
 - Уверенность (REGISTER, 09-03): `[KNOWN]` ветка `NoFile`;`seal_dealings` — `[KNOWN]`.
 - Ход по плану 09-04 (INDEX): Э5 / С — П-9: `NoFile` после дедлайна ⇒ не стартовать
 - Связано: R-002, R-072.
@@ -331,7 +331,7 @@
 
 ### R-037 · MODERATE · Body-engine агрирования буферизует до 51 тела на каждого отправителя из `latest.primary`, а не только от членов комитета
 - Последствие: 4096 пиров × 51 × 154 KiB ≈ 30 GiB в худшем случае; окно — время жизни агрирования.
-- Якоря: `beacon/dkg_transport.rs` (`deque_size = MAX_COMMITTEE_SIZE`, кодек ``); тело `DkgProposal` ≤ ~154 KiB (`beacon/artifact.rs`, по BEACON); `CW:broadcast/src/buffered/engine.rs` (по BEACON).
+- Якоря: `beacon/dkg_transport.rs` (`deque_size = MAX_COMMITTEE_SIZE`, кодек `()`); тело `DkgProposal` ≤ ~154 KiB (`beacon/artifact.rs`, по BEACON); `CW:broadcast/src/buffered/engine.rs` (по BEACON).
 - Уверенность (REGISTER, 09-03): `[KNOWN]deque_size`; размер тела и семантика `primary` — `[LIKELY]` (Ex-8).
 - Ход по плану 09-04 (INDEX): Э4 / С+ — П-5 + `deque_size = 1..2` в `dkg_transport.rs`
 - Связано: R-013, R-029; правка — `deque_size = 1..2`.
@@ -356,7 +356,7 @@
 
 ### R-040 · MODERATE · By-height fetch'и не связывают эпоху раунда с высотой; сертификат старого комитета за любой высотой попадает в архив
 - Механизм: ключи `committee[E′]` старой эпохи скомпрометированы; upstream отвечает на `Finalized{last(E−1)}` блоком нужной высоты с сертификатом `round.epoch = E′`;`boundary_lookup` берёт из него `proposal_view` (`epoch_manager.rs`) ⇒ иная база лидера или отложенный спавн.
-- Якоря: `cert_follow.rs` (только `block.height == height`),`cold_start_jump.rs ` (эпоха из `round` сертификата), `dpos.rs` (`refetch_verified_archive_hole` — то же); результат уходит в marshal через `verified` + `report(Finalization)` без проверки высота↔эпоха (`CW:marshal/core/actor.rs`, по CORE). Follower-инлет имеет `epoch_bind` (`dpos.rs`), эти три пути — нет.
+- Якоря: `cert_follow.rs` (только `block.height == height`), `cold_start_jump.rs ` (эпоха из `round` сертификата), `dpos.rs` (`refetch_verified_archive_hole` — то же); результат уходит в marshal через `verified` + `report(Finalization)` без проверки высота↔эпоха (`CW:marshal/core/actor.rs`, по CORE). Follower-инлет имеет `epoch_bind` (`dpos.rs`), эти три пути — нет.
 - Уверенность (REGISTER, 09-03): `[KNOWN]` три места; marshal — `[LIKELY]`.
 - Ход по плану 09-04 (INDEX): Э4 / С — П-1/П-4: одна проверка `epoch_of(height) == round.epoch`
 - Связано: R-001 (та же проверка нужна и там), R-009.
@@ -372,25 +372,25 @@
 
 ### R-042 · MODERATE · Follower: `sync_to` при известной геометрии фатален на любой `SyncFailure`
 - Последствие: перезапуск-шторм follower'ов при проблемах devp2p.
-- Якоря: `dpos.rs`, (`el.sync_to(&latest).await?`) — 90 с без devp2p-пиров или 300 с застоя валят `launch_follower`; ниже тот же прыжок обёрнут в `cold_start_jump_self_heal` с вечным повтором .
+- Якоря: `dpos.rs`, (`el.sync_to(&latest).await?`) — 90 с без devp2p-пиров или 300 с застоя валят `launch_follower`; ниже тот же прыжок обёрнут в `cold_start_jump_self_heal` с вечным повтором.
 - Уверенность (REGISTER, 09-03): `[KNOWN]`.
 - Ход по плану 09-04 (INDEX): Э6 / С — B-2: один лончер, `sync_to` под self-heal и у follower
 - Связано: R-033, R-064; закрывается AUDIT B-2.
 - **Статус 2026-09-09:** не пересматривалась после 09-04; по плану — Э6 6.3 (B-2: один лончер; зависит от Д-5). _Источник:_ history/PLAN.md §2 Э6
 
 ### R-101 · MODERATE · Узел морозит геометрию эпох в том самом окне, где контракт ещё разрешает её менять
-- Механизм: governance планирует активацию на `H`; узел на первом же finalized-блоке видит `Some(H)`, проходит гейт и морозит пару `(I, H)` — это происходит до блока `H`. Governance переносит запуск (`I'`,`H'`) — сеттеры ещё открыты, потому что `block_number < H`. Работавшие узлы держат `(I, H)` и печатают один `warn!`; стартовавшие после морозят `(I', H')`; контракт и pre-execution обоих считают по `(I', H')`.
+- Механизм: governance планирует активацию на `H`; узел на первом же finalized-блоке видит `Some(H)`, проходит гейт и морозит пару `(I, H)` — это происходит до блока `H`. Governance переносит запуск (`I'`, `H'`) — сеттеры ещё открыты, потому что `block_number < H`. Работавшие узлы держат `(I, H)` и печатают один `warn!`; стартовавшие после морозят `(I', H')`; контракт и pre-execution обоих считают по `(I', H')`.
 - Последствие: consensus-плоскость расходится и между узлами, и со своим же EL. `leader_index` в `extra_data` считается против комитета `E_frozen`, а `recordProduction` кредитует `produced[E_live][leader_index]` и валидирует индекс против `committee_length_at(E_live)` (`liveness.rs, 76-99`); `OriginEpocher`, `is_epoch_boundary`, партиции `consensus_epoch_{E}` и сабканалы расходятся.
-- Якоря: узла: `staking-reader/src/epoch_transition.rs` (гейт `scheduled_dpos_activation`), и (`freeze_or_warn` для интервала и активации), (позднейшее расхождение — только `warn!`); живое, незамороженное чтение на стороне исполнителя — `node/evm.rs` (интервал на каждом блоке) и `node/evm.rs` (`current_epoch`). контракта: `config.rs` (`ensure_dpos_not_active` запрещает правку только при `activation != 0 && block_number >= activation`), `` (`setEpochBlockInterval`), `` (`setDposActivationBlock`); `util.rs` и `math.rs` — эпоха контракта считается по живым значениям.
+- Якоря: узла: `staking-reader/src/epoch_transition.rs` (гейт `scheduled_dpos_activation`), и (`freeze_or_warn` для интервала и активации), (позднейшее расхождение — только `warn!`); живое, незамороженное чтение на стороне исполнителя — `node/evm.rs` (интервал на каждом блоке) и `node/evm.rs` (`current_epoch`). контракта: `config.rs` (`ensure_dpos_not_active` запрещает правку только при `activation != 0 && block_number >= activation`), (`setEpochBlockInterval`), (`setDposActivationBlock`); `util.rs` и `math.rs` — эпоха контракта считается по живым значениям.
 - Уверенность (REGISTER, 09-03): `[KNOWN]` обе стороны.
 - Ход по плану 09-04 (INDEX): Э2 / С — B-9: геометрия из chainspec, менять нечего
 - Связано: R-011 (несёт её достижимый остаток), R-102, AUDIT B-9.
-- **Статус 2026-09-09:** отложена — Э2.4 (B-9: геометрия из chainspec, менять нечего). не пересматривалась после 09-04. _Источник:_ history/PLAN.md §2 Э2 2.4
+- **Статус 2026-09-09:** отложена — Э2.4 (B-9: геометрия из chainspec, менять нечего); механизм после 09-04 не пересматривался. _Источник:_ history/PLAN.md §2 Э2 2.4
 
 ### R-113 · MODERATE · Минимум размера комитета утверждается на ВЫХОДЕ останавливающего цепь системного вызова, а на ВХОДЕ проверяется только по пути потолка; путь популяции не проверяется нигде
 - Механизм: константа документирует собственное допущение и признаёт, что закрывает только одну дыру — `consts.rs`: «asserts that assumption rather than testing a condition the contract expects to meet … The **one way to break the assumption by configuration rather than by circumstance** is a committee cap below this floor». Путь «по обстоятельствам» назван и оставлен открытым, хотя в том же файле есть три перехода состояния, которые им и являются.
 - Последствие: не самостоятельное — это общая причина R-111 и R-112. Заведена отдельно, потому что это пропущенный инвариант, а не дефект одного вызова: любая будущая причина уменьшить популяцию унаследует тот же исход.
-- Якоря: единственные два места, где `MIN_COMMITTEE_LENGTH` вообще участвует в проверке (исчерпывающий `grep` по не-тестовым файлам): `consensus.rs` — ревёрт `commitEpochCommittee`, то есть УТВЕРЖДЕНИЕ допущения на выходе, останавливающее цепь; `config.rs` — гвард `setActiveValidatorsLength`, то есть проверка на входе, но только для потолка. Пять писателей штампа видимости (`grep "set_selection_visible"`:`consensus.rs `,`staking.rs ` плюс прямая сид-запись `staking.rs`) — floor-проверка есть ровно у одного, `staking.rs`, и та против потолка, а не против минимума.
+- Якоря: единственные два места, где `MIN_COMMITTEE_LENGTH` вообще участвует в проверке (исчерпывающий `grep` по не-тестовым файлам): `consensus.rs` — ревёрт `commitEpochCommittee`, то есть УТВЕРЖДЕНИЕ допущения на выходе, останавливающее цепь; `config.rs` — гвард `setActiveValidatorsLength`, то есть проверка на входе, но только для потолка. Пять писателей штампа видимости (`grep "set_selection_visible"`:`consensus.rs `, `staking.rs ` плюс прямая сид-запись `staking.rs`) — floor-проверка есть ровно у одного, `staking.rs`, и та против потолка, а не против минимума.
 - Уверенность (REGISTER, 09-03): `[KNOWN]` целиком. Перечни писателей штампа и мест проверки минимума получены исчерпывающим `grep` по не-тестовым файлам, а не по памяти; недостижимость `ERR_EPOCH_NOT_YET_COMMITTABLE` обоснована по коду обеих сторон (`EXPERIMENTS.md` §5.5.8). `[GUESS]` в записи не осталось.
 - Ход по плану 09-04 (INDEX): Э0 / С — B-1 закрывает исход; общий крейт (Э2) связывает `MIN_COMMITTEE_LENGTH`, lookahead `2` и формулу `f`
 - Связано: R-111, R-112.
@@ -399,7 +399,7 @@
 ### R-117 · MODERATE · Три числовых предела контракта скопированы в `staking-reader` с пометкой «MUST mirror» и ссылками, которые уже протухли
 - Механизм: три величины продублированы, удерживаются только комментариями, и комментарии просят об этом прямым текстом — «MUST mirror the contract — drift mis-weights leaders», «Keep the two in step» (, где признано, что инвариант «был документирован на стороне Rust и обеспечивался только на стороне Solidity»). Уже протухшие номера строк в двух из трёх ссылок — прямое свидетельство, что механизма здесь нет.
 - Последствие: `MIN_COMMITTEE_LENGTH` — узел считает легальным состояние, которое цепь отвергает (расхождение с реальным порогом R-111); `BALANCE_COMPACT_PRECISION` — веса лидеров считаются в других единицах, лотерея лидера смещена молча (форка нет, все узлы неправы одинаково); `MAX_COMPACT_STAKE` — ломается аргумент о невозможности переполнения префиксной суммы в `WeightedVrf::build`.
-- Якоря: `staking-reader/src/reader.rs MIN_COMMITTEE_LENGTH = 4` (ссылается на `consts.rs`, фактически `consts.rs`; и на `consensus.rs`, фактически ); `BALANCE_COMPACT_PRECISION = 10_000_000_000` (ссылается на `consts.rs`, фактически ); `MAX_COMPACT_STAKE = 1 << 112` против типа хранения `StorageUint112` (`storage.rs`) и `math::U112` (`math.rs`).
+- Якоря: `staking-reader/src/reader.rs MIN_COMMITTEE_LENGTH = 4` (ссылается на `consts.rs`, фактически `consts.rs`; и на `consensus.rs`, фактически); `BALANCE_COMPACT_PRECISION = 10_000_000_000` (ссылается на `consts.rs`, фактически); `MAX_COMPACT_STAKE = 1 << 112` против типа хранения `StorageUint112` (`storage.rs`) и `math::U112` (`math.rs`).
 - Уверенность (REGISTER, 09-03): `[KNOWN]`.
 - Ход по плану 09-04 (INDEX): Э2 / С — `MIN_COMMITTEE_LENGTH`,`BALANCE_COMPACT_PRECISION`,`2^112` — из общего крейта констант
 - Связано: R-111, R-113, R-057. Разбор — `history/DUPLICATES.md`, группы 5-7.
@@ -414,9 +414,9 @@
 - **Статус 2026-09-09:** закрыта — `9b6213be` + `065003ad` (2.2: одно имя `MAX_COMMITTEE_SIZE`, контрактное `MAX_ACTIVE_VALIDATORS_LENGTH` удалено). _Источник:_ history/E2-ABI.md §1 гр.8
 
 ### R-012 · MINOR · Узел решает «комитет сменился» по равенству множеств peer-ключей; контракт ставит `dkgQual` по своему правилу; расхождение = эпоха без пригодного ключа
-- Механизм: валидатор ротирует BLS-ключ при том же peer-ключе. Контракт ставит `dkgQual[E] = true`. Узлы видят `next == cur` и не запускают церемонию. `chain_key_epoch(E) = E`,`has_mint(E) = false` ⇒ `NoUsableMint` у всех ⇒ `Withheld` ⇒ ни один движок не спавнится.
+- Механизм: валидатор ротирует BLS-ключ при том же peer-ключе. Контракт ставит `dkgQual[E] = true`. Узлы видят `next == cur` и не запускают церемонию. `chain_key_epoch(E) = E`, `has_mint(E) = false` ⇒ `NoUsableMint` у всех ⇒ `Withheld` ⇒ ни один движок не спавнится.
 - Последствие: остановка цепи.
-- Якоря: `beacon/actor.rs` (`next == cur` на `Set<PeerPubkey>`),`node/dpos.rs ` (`committee_pair_for` строит ростеры только из `peer_pubkey`); потребители бита: `beacon/carry.rs` (`select_carry_scheme`: ключ в силе = `chain_key_epoch` по `dkgQual`),`resolve.rs `,`oracle.rs `.
+- Якоря: `beacon/actor.rs` (`next == cur` на `Set<PeerPubkey>`), `node/dpos.rs ` (`committee_pair_for` строит ростеры только из `peer_pubkey`); потребители бита: `beacon/carry.rs` (`select_carry_scheme`: ключ в силе = `chain_key_epoch` по `dkgQual`), `resolve.rs `, `oracle.rs `.
 - Уверенность (REGISTER, 09-03): `[KNOWN]` узловая логика; `[KNOWN]` правило контракта.
 - Ход по плану 09-04 (INDEX): Э5 / С+ — П-3 сравнивает записи П-1; решение Д-7 — читать `getDkgQual` вместо вывода
 - Связано: R-017, R-005, R-035.
@@ -425,7 +425,7 @@
 ### R-017 · MINOR · Дисковое правило `reconcile_journals` удаляет действующий mint при более новом «отклонённом» mint'е; RAM-правило его сохраняет; после двух рестартов — verify-only
 - Механизм: store держит mint 3 (бит установлен) и mint 5 (бит сброшен). До рестарта резолвер отдаёт mint 3. Первый `on_height` после рестарта при `now ≥ 5` удаляет `beacon-share-e3.bin`; следующий рестарт грузит только mint 5 ⇒ `NoUsableMint`.
 - Последствие: тихая демоция после двух рестартов; на всём комитете — ноль подписантов.
-- Якоря: `beacon/share_state.rs` (удаляются share-файлы строго ниже `max{e ≤ now}`),`beacon/actor.rs ` (`ceremony_retain_floor`: RAM хранит всё `≥ max{k ≤ now − 8}`),`beacon/carry.rs ` (ключ в силе = последний `dkgQual`-бит, не максимальный mint); код сам держит `declined`-ветви, потому что доказательство опирается на контракт (`actor.rs`).
+- Якоря: `beacon/share_state.rs` (удаляются share-файлы строго ниже `max{e ≤ now}`), `beacon/actor.rs ` (`ceremony_retain_floor`: RAM хранит всё `≥ max{k ≤ now − 8}`), `beacon/carry.rs ` (ключ в силе = последний `dkgQual`-бит, не максимальный mint); код сам держит `declined`-ветви, потому что доказательство опирается на контракт (`actor.rs`).
 - Уверенность (REGISTER, 09-03): `[KNOWN]` оба floor'а.
 - Ход по плану 09-04 (INDEX): Э5 / С — П-3: одно правило вытеснения
 - Связано: R-012, R-025, R-020; правка — дисковый floor = `ceremony_retain_floor`, либо не удалять share-файлы вовсе.
@@ -434,15 +434,15 @@
 ### R-019 · MINOR · `MAX_COMMITTEE_SIZE` проверяется один раз при старте; рост комитета после старта делает сертификаты недекодируемыми у всех
 - Механизм: контракт коммитит комитет из 52 членов ⇒ битмапы > 51 отвергаются, узел молча перестаёт принимать сертификаты эпохи.
 - Последствие: остановка сети без предупреждения от узла.
-- Якоря: `dpos.rs` (проверка `activeValidatorsLength ≤ 51` только в `launch`); декодеры с cap: `plane_upstream.rs`, `cert_inlet.rs`,`beacon/artifact.rs `,`slasher/evidence.rs `; индексы > 255 — `IndexExceedsWireFormat` (`application.rs`).
+- Якоря: `dpos.rs` (проверка `activeValidatorsLength ≤ 51` только в `launch`); декодеры с cap: `plane_upstream.rs`, `cert_inlet.rs`, `beacon/artifact.rs `, `slasher/evidence.rs `; индексы > 255 — `IndexExceedsWireFormat` (`application.rs`).
 - Уверенность (REGISTER, 09-03): `[KNOWN]` узел; `[KNOWN]` контракт.
 - Ход по плану 09-04 (INDEX): Э4 / С — П-1 проверяет размер в конструкторе записи; число — из общего крейта (Э2)
 - Связано: R-011; правка — проверять размер каждого снапшота в `epoch_committee_snapshot`.
-- **Статус 2026-09-09:** не пересматривалась после 09-04; по плану — Э4 4.1 (П-1: размер в конструкторе записи). Число 51 с 2.2 общее (`staking_protocol::MAX_COMMITTEE_SIZE`, R-118 закрыта) — разовая проверка при старте осталась. _Источник:_ history/PLAN.md §2 Э4; history/E2-ABI.md §1 гр.8
+- **Статус 2026-09-09:** смягчена — `9b6213be` (2.2: число 51 общее, `staking_protocol::MAX_COMMITTEE_SIZE`; R-118 закрыта); разовая проверка при старте осталась — по плану Э4 4.1 (П-1: размер в конструкторе записи). _Источник:_ history/PLAN.md §2 Э4; history/E2-ABI.md §1 гр.8
 
 ### R-028 · MINOR · In-block equivocation charge не имеет контрактного обработчика; `next_charge` повторяет тот же charge в каждом блоке и блокирует остальных обвиняемых
 - Последствие: верификация charge в `verify_block` и `extra_data` — мёртвая машинерия (все валидаторы платят BLS-проверку двух подписей за блок); наказание приходит только через WAL-транзакцию на смене эпохи; один обвиняемый с низким индексом занимает слот charge на все блоки.
-- Якоря: `slasher/actor.rs` (удаление только при `tombstoned`),`application.rs `, (гейт в `verify_block`); контрагент `node/evm.rs` («The contract has no counterpart at all» для `slashEquivocation(uint64,uint32)`), (revert складывается в skip).
+- Якоря: `slasher/actor.rs` (удаление только при `tombstoned`), `application.rs `, (гейт в `verify_block`); контрагент `node/evm.rs` («The contract has no counterpart at all» для `slashEquivocation(uint64, uint32)`), (revert складывается в skip).
 - Уверенность (REGISTER, 09-03): `[KNOWN]next_charge`;`[KNOWN]` контрактная сторона.
 - Ход по плану 09-04 (INDEX): Э1 / С+ — Д-4: при B-4 in-block charge — единственный путь; `next_charge` снимать после включения в блок
 - Связано: R-022, R-027, R-104. AUDIT B-3 (добавить контрактный обработчик) — отменён.
@@ -458,7 +458,7 @@
 
 ### R-035 · MINOR · `getEpochCommitteeWithStakes` с пустыми `stakes` ⇒ движок не спавнится ни у кого
 - Последствие: если контракт отдаёт пустые `stakes` раньше, чем узлы входят в эпоху, — остановка сети.
-- Якоря: `staking-reader/src/reader.rs`, `weighted_vrf.rs` (`weights: None` ⇒ `WeightsUnavailable`),`epoch_manager.rs ` (`Err` ⇒ `false`, без повтора).
+- Якоря: `staking-reader/src/reader.rs`, `weighted_vrf.rs` (`weights: None` ⇒ `WeightsUnavailable`), `epoch_manager.rs ` (`Err` ⇒ `false`, без повтора).
 - Уверенность (REGISTER, 09-03): `[KNOWN]weighted_vrf.rs`,`epoch_manager.rs `; reader — `[KNOWN]`; контракт — `[KNOWN]`.
 - Ход по плану 09-04 (INDEX): Э4 / С+ — П-1 якорь гарантирует веса; повтор спавна при `WeightsUnavailable` — отдельно (`epoch_manager.rs`)
 - Связано: R-045 (нет повтора спавна), R-012.
@@ -475,13 +475,13 @@
 ### R-044 · MINOR · Отказ голосовать за блок tombstoned-лидера зависит от момента чтения снапшота
 - Последствие: только живучесть (пустые view лидера)
 - Якоря: `application.rs`; `TombstoneSet::observe` из `node/dpos.rs` по EL-finalized
-- Уверенность (REGISTER, 09-03): `[KNOWN]application
+- Уверенность (REGISTER, 09-03): `[KNOWN]` `application.rs`
 - Ход по плану 09-04 (INDEX): Э4 / С+ — как R-034 (Д-1)
 - Связано: R-034. К-8 закрыт: флаг необратим и монотонен (`consensus.rs`), так что расхождение между узлами разрешается только в одну сторону; тяжесть не менялась.
 - **Статус 2026-09-09:** не пересматривалась после 09-04; как R-034 (Д-1). _Источник:_ history/PLAN.md §2 Э4
 
 ### R-045 · MINOR · `EpochEngine::new` регистрирует схему до `WeightedVrf::try_new`; при `WeightsUnavailable` эпоха без движка и без повтора, а signer-схема исключает эпоху из repair-sweep
-- Якоря: `engine.rs` vs ; `epoch_manager.rs` (`false` без записи в `deferred_spawns`), ; `outer.rs` (`verifier_epochs` исключает схемы с `me`); понижение signer→verifier запрещено (`outer.rs`)
+- Якоря: `engine.rs` vs ; `epoch_manager.rs` (`false` без записи в `deferred_spawns`); `outer.rs` (`verifier_epochs` исключает схемы с `me`); понижение signer→verifier запрещено (`outer.rs`)
 - Уверенность (REGISTER, 09-03): `[KNOWN]`
 - Ход по плану 09-04 (INDEX): Э4 / С+ — П-1 смягчает; elector до регистрации схемы — правка `engine.rs /258` отдельно
 - Связано: R-035, R-018, R-075.
@@ -506,7 +506,7 @@
 - **Статус 2026-09-09:** не пересматривалась после 09-04; по плану — Э7 (считать после `from_iter_dedup`). _Источник:_ history/PLAN.md §2 Э7
 
 ### R-049 · MINOR · Follower читает комитеты при нулевом хэше, если finalized ещё нет; результат начального FCU игнорируется; ошибка `cold_start_register` пропускается
-- Якоря: `dpos.rs` (`unwrap_or_default`), (`let _ =`),
+- Якоря: `dpos.rs` (`unwrap_or_default`), (`let _ =`)
 - Уверенность (REGISTER, 09-03): `[KNOWN]` первые два
 - Ход по плану 09-04 (INDEX): Э6 / С+ — B-2 убирает половину; `let _ =` и ZERO-хэш — отдельно (`dpos.rs`)
 - Связано: R-074; закрывается AUDIT B-2.
@@ -522,7 +522,7 @@
 
 ### R-051 · MINOR · Torn-журнал DKG (первая запись нечитаема) = пропуск эпохи; хвост усекается молча
 - Якоря: `beacon/share_state.rs`, `beacon/actor.rs`
-- Уверенность (REGISTER, 09-03): `[KNOWN]actor
+- Уверенность (REGISTER, 09-03): `[KNOWN]` `actor.rs`
 - Ход по плану 09-04 (INDEX): Э5 / С+ — П-9 пересмотреть: `Torn` до дедлайна ⇒ `start_fresh`
 - Связано: R-072.
 - **Статус 2026-09-09:** не пересматривалась после 09-04; по плану — Э5 5.2 смягчает (пересмотреть вместе с R-072: `Torn` до дедлайна ⇒ `start_fresh`). _Источник:_ history/PLAN.md §2 Э5
@@ -534,14 +534,15 @@
 - **Статус 2026-09-09:** не пересматривалась после 09-04; по плану — Э5 5.1 (BB-5: удалить v1/v2-ветви чтения share-файла; бесплатно при свежем генезисе). _Источник:_ history/PLAN.md §2 Э5, §7
 
 ### R-053 · MINOR · Два разных `Agreed`-ключа для одной эпохи — только `debug_assert`; в release побеждает первый
+- Последствие: достижимо только при ≥ quorum эквивокации комитета агрегации.
 - Якоря: `beacon/keys.rs`; `beacon/artifact.rs` (first-wins)
-- Уверенность (REGISTER, 09-03): `[KNOWN]keys
+- Уверенность (REGISTER, 09-03): `[KNOWN]` `keys.rs`
 - Ход по плану 09-04 (INDEX): Э5 / С — П-3: ключ только из артефакта, first-wins
 - Связано: R-068.
 - **Статус 2026-09-09:** не пересматривалась после 09-04; по плану — Э5 5.1 (П-3: ключ только из артефакта, first-wins). _Источник:_ history/PLAN.md §2 Э5
 
 ### R-054 · MINOR · Ингресс DKG буферизует Commitment/Share от любого пира без проверки членства
-- Якоря: `beacon/ceremony.rs` (`pending_pub`/`pending_priv` по `from`),`beacon/actor.rs ` (`pending` для будущих эпох по отправителю, per-sender слот). Объём: `DealerPubMsg` ограничен кодеком размером комитета (≈3,4 KiB при n=51, по BEACON) × число подключённых пиров ≈ 14 MiB при 4096
+- Якоря: `beacon/ceremony.rs` (`pending_pub`/`pending_priv` по `from`), `beacon/actor.rs ` (`pending` для будущих эпох по отправителю, per-sender слот). Объём: `DealerPubMsg` ограничен кодеком размером комитета (≈3, 4 KiB при n=51, по BEACON) × число подключённых пиров ≈ 14 MiB при 4096
 - Уверенность (REGISTER, 09-03): `[KNOWN]` буферизация; размер — `[LIKELY]` по BEACON
 - Ход по плану 09-04 (INDEX): Э4 / С — П-5: `Member` на входе
 - Связано: R-023, R-029.
@@ -555,10 +556,10 @@
 
 ### R-056 · MINOR · Скан `chain_key_epoch` — по одному EVM-чтению на эпоху без смены комитета; `select_carry_scheme` вызывается со свежим memo на каждый probe
 - Последствие: на devnet-интервале 32 через год ~10⁶ шагов на probe; на проде пренебрежимо
-- Якоря: `beacon/carry.rs`,, ; `resolve.rs`; `surface.rs`
-- Уверенность (REGISTER, 09-03): `[KNOWN]carry
+- Якоря: `beacon/carry.rs`; `resolve.rs`; `surface.rs`
+- Уверенность (REGISTER, 09-03): `[KNOWN]` `carry.rs`
 - Ход по плану 09-04 (INDEX): Э5 / С — П-3: скан `chain_key_epoch` удаляется
-- **Статус 2026-09-09:** не пересматривалась после 09-04; по плану — Э5 5.1 (скан `chain_key_epoch` удаляется). _Источник:_ history/PLAN.md §2 Э5
+- **Статус 2026-09-09:** не пересматривалась после 09-04; по плану — Э5 5.1 (скан `chain_key_epoch` удаляется). Закрывается BB-3 (§3); эксперимент Ex-15 в очереди (`EXPERIMENTS.md` §3). _Источник:_ history/PLAN.md §2 Э5
 
 ### R-057 · MINOR · Предсказуемость лидера: лидер v+1 = f(σ_v); в эпохах без witness — константный seed
 - Якоря: `weighted_vrf.rs`, `epoch_manager.rs`
@@ -573,7 +574,7 @@
 - **Статус 2026-09-09:** не пересматривалась после 09-04; по плану — Э7 (документ оператора «не удалять `consensus_epoch_*`»). _Источник:_ history/PLAN.md §2 Э7
 
 ### R-059 · MINOR · EVIDENCE: батч до 102 голосов = 102 BLS-проверки + чтение комитета на батч
-- Якоря: `slasher/gossip.rs` (`0..=2·MAX_COMMITTEE_SIZE`), ; квота 16/с
+- Якоря: `slasher/gossip.rs` (`0..=2·MAX_COMMITTEE_SIZE`); квота 16/с
 - Уверенность (REGISTER, 09-03): `[KNOWN]` cap
 - Ход по плану 09-04 (INDEX): Э7 / П — кэш комитета на эпоху в `gossip.rs`; батч ≤ 102 оставить
 - **Статус 2026-09-09:** не пересматривалась после 09-04; по плану — Э7 (кэш комитета на эпоху в `gossip.rs`). _Источник:_ history/PLAN.md §2 Э7
@@ -594,11 +595,11 @@
 - Якоря: `p2p/src/config.rs`
 - Уверенность (REGISTER, 09-03): `[LIKELY]`
 - Ход по плану 09-04 (INDEX): Э2 / С — chain_id только из chainspec
-- **Статус 2026-09-09:** отложена — Э2.4 (chain_id только из chainspec). не пересматривалась после 09-04. _Источник:_ history/PLAN.md §2 Э2 2.4
+- **Статус 2026-09-09:** отложена — Э2.4 (chain_id только из chainspec); механизм после 09-04 не пересматривался. _Источник:_ history/PLAN.md §2 Э2 2.4
 
 ### R-063 · MINOR · `cert_inlet` молча отбрасывает сертификат, когда комитет ещё не читается и кэша нет
 - Последствие: высота восстанавливается повторным запросом marshal при `FollowerResolver::Upstream`; при `Noop` — потеряна, но `Noop` «not a reachable production config» (`cert_inlet.rs`, по CORE CB-2)
-- Якоря: `cert_inlet.rs`, (`Entry::Vacant(_) => return Ok()`)
+- Якоря: `cert_inlet.rs`, (`Entry::Vacant(_) => return Ok(())`)
 - Уверенность (REGISTER, 09-03): `[KNOWN]` ветки drop
 - Ход по плану 09-04 (INDEX): Э4 / С+ — П-1 меняет код, не поведение; ветка `Noop` уходит с CB-2 (Э6)
 - Связано: R-009, R-033.
@@ -606,13 +607,13 @@
 
 ### R-064 · MINOR · Бесконечные циклы ожидания без give-up: `wait_for_activation_block`, `cold_start_jump_self_heal`, re-poke границы, `EL_SYNC_BACKSTOP_CEILING = 6 ч`
 - Якоря: `dpos.rs`; `cold_start_jump.rs`
-- Уверенность (REGISTER, 09-03): `[KNOWN]dpos
+- Уверенность (REGISTER, 09-03): `[KNOWN]` `dpos.rs` [ссылка уточнена, REFS.md] частично
 - Ход по плану 09-04 (INDEX): Э6 / С+ — П-7: алерт-метрики; циклы без give-up остаются осознанно
 - Связано: R-042.
 - **Статус 2026-09-09:** не пересматривалась после 09-04; по плану — Э6 6.2 смягчает (алерт-метрики; циклы без give-up остаются осознанно). _Источник:_ history/PLAN.md §2 Э6
 
 ### R-065 · MINOR · `enter_boundary` порождает по одному вечному re-poke циклу на каждый вызов под общим мьютексом `EpochTransition`
-- Якоря: `dpos.rs` (цикл на каждый `Update::Block` и на каждое приземление re-jump; два цикла на одну границу признаны комментарием )
+- Якоря: `dpos.rs` (цикл на каждый `Update::Block` и на каждое приземление re-jump; два цикла на одну границу признаны комментарием)
 - Уверенность (REGISTER, 09-03): `[KNOWN]`
 - Ход по плану 09-04 (INDEX): Э8 / П — CB-8: один драйвер границы с `watch<u64>`
 - **Статус 2026-09-09:** не пересматривалась после 09-04; по плану — Э8 (CB-8: один драйвер границы с `watch<u64>`). _Источник:_ history/PLAN.md §2 Э8
@@ -631,14 +632,14 @@
 - **Статус 2026-09-09:** не пересматривалась после 09-04; по плану — Э7 (`try_send` из актора в mailbox резолвера). _Источник:_ history/PLAN.md §2 Э7
 
 ### R-068 · MINOR · Key-journal записывает проигравшее значение при конфликте `Agreed`-vs-`Agreed`; после рестарта RAM и диск расходятся
-- Якоря: `beacon/keys.rs` (`set_pk` шлёт в persist всегда, независимо от исхода `insert`),`beacon/key_journal.rs `;`Ordinal::put` перезаписывает индекс
+- Якоря: `beacon/keys.rs` (`set_pk` шлёт в persist всегда, независимо от исхода `insert`), `beacon/key_journal.rs `;`Ordinal::put` перезаписывает индекс
 - Уверенность (REGISTER, 09-03): `[KNOWN]set_pk`
 - Ход по плану 09-04 (INDEX): Э5 / С — П-3: `key_journal.rs` удаляется
 - Связано: R-053; исчезает при AUDIT B-7.
 - **Статус 2026-09-09:** не пересматривалась после 09-04; по плану — Э5 5.1 (`key_journal.rs` удаляется). _Источник:_ history/PLAN.md §2 Э5
 
 ### R-069 · MINOR · `on_invalid_seed` судит по ключу живой эпохи, а `Agreed` хранится под эпохой mint'а: на carry-forward эпохах вердикт всегда `Quarantine`; отброшенный при promote σ запросить нельзя
-- Якоря: `beacon/keys.rs` (`cached_at_least(epoch, Agreed)` при живой `epoch`),`beacon/certify.rs `,`beacon/log_resolver.rs `
+- Якоря: `beacon/keys.rs` (`cached_at_least(epoch, Agreed)` при живой `epoch`), `beacon/certify.rs `, `beacon/log_resolver.rs `
 - Уверенность (REGISTER, 09-03): `[KNOWN]`
 - Ход по плану 09-04 (INDEX): Э5 / С — П-2: `on_invalid_seed`/`promote_epoch` удаляются
 - Связано: R-008 (часть его цепочки).
@@ -646,19 +647,19 @@
 
 ### R-070 · MINOR · Два реестра метрик: `BeaconMetrics` на commonware (`:19100`), свидетели расхождения ключей — на `metrics::`
 - Якоря: `beacon/metrics.rs`; `keys.rs`, `surface.rs`, `resolve.rs`, `key_journal.rs`, `seed_journal.rs`, `artifact.rs`
-- Уверенность (REGISTER, 09-03): `[KNOWN]keys
+- Уверенность (REGISTER, 09-03): `[KNOWN]` `keys.rs`
 - Ход по плану 09-04 (INDEX): Э0 / П — все счётчики в один реестр; reth-реестр открыть в compose
 - **Статус 2026-09-09:** смягчена наполовину — `2cc13bcd` (Э0.4: реестр reth открыт `--metrics=0.0.0.0:9001` в compose, семьи `metrics::` видны — 515 семейств). Единого реестра нет и не будет в этой форме: часть вызовов (`node/src/derive.rs`, `node/src/evm.rs`) без контекста `impl Metrics`; склейка двух экспозиций в один эндпойнт опасна (дубль имени семьи роняет весь скрейп). _Источник:_ history/E0-LOG.md 0.4
 
 ### R-071 · MINOR · Ненаблюдаемые состояния beacon: размер quarantine/terminal-пинов, живые церемонии и фазы, `agreed_pinned`, возраст отложенного finalize, `recompute_pending`/`want`, `nondurable_logs`, sit-out по `Torn`, view агрирования, in-flight резолвера
-- Якоря: `beacon/certify.rs`,`beacon/actor.rs `
+- Якоря: `beacon/certify.rs`, `beacon/actor.rs `
 - Уверенность (REGISTER, 09-03): `[LIKELY]`
 - Ход по плану 09-04 (INDEX): Э7 / П — gauges beacon: церемонии, фазы, `recompute_pending`,`nondurable_logs`
 - Связано: R-077.
 - **Статус 2026-09-09:** не пересматривалась после 09-04; по плану — Э7 (gauges beacon). _Источник:_ history/PLAN.md §2 Э7
 
 ### R-072 · MINOR · Torn первого же журнального рекорда ⇒ сидеть вне эпохи, хотя ничего не отправлено
-- Якоря: `beacon/actor.rs` (`start_fresh` пишет журнал до рассылки ), `share_state.rs`, `actor.rs`
+- Якоря: `beacon/actor.rs` (`start_fresh` пишет журнал до рассылки), `share_state.rs`, `actor.rs`
 - Уверенность (REGISTER, 09-03): `[KNOWN]`
 - Ход по плану 09-04 (INDEX): Э5 / С+ — П-9 пересмотреть вместе с R-051
 - Связано: R-036 (обратная сторона: `Torn` до дедлайна ⇒ `start_fresh` безопасен по детерминизму), R-051.
@@ -686,7 +687,7 @@
 
 ### R-076 · MINOR · Follower: эпоха, пропущенная `enter_finalized_epoch`, не имеет схемы; сертификаты этой эпохи marshal «принимает» без сохранения
 - Якоря: `dpos.rs` (принято как допустимое), `CW:marshal/core/actor.rs` (по CORE)
-- Уверенность (REGISTER, 09-03): `[KNOWN]` комментарий/код `dpos
+- Уверенность (REGISTER, 09-03): `[KNOWN]` комментарий/код `dpos.rs`
 - Ход по плану 09-04 (INDEX): Э4 / С — П-1: схема есть для любой `E ≤ epoch(fin)+2`
 - **Статус 2026-09-09:** не пересматривалась после 09-04; по плану — Э4 4.1 (П-1: схема есть для любой `E ≤ epoch(fin)+2`). _Источник:_ history/PLAN.md §2 Э4
 
@@ -699,7 +700,7 @@
 
 ### R-078 · MINOR · Паника marshal при ошибке архива (`panic!("failed to finalize")`) превращается супервизором в abort-all
 - Якоря: `CW:marshal/core/actor.rs` (по CORE); `outer.rs`
-- Уверенность (REGISTER, 09-03): `[KNOWN]outer
+- Уверенность (REGISTER, 09-03): `[KNOWN]` `outer.rs`
 - Ход по плану 09-04 (INDEX): Э6 / С+ — П-7: причина выхода в маркере; abort-all остаётся
 - Связано: R-032.
 - **Статус 2026-09-09:** не пересматривалась после 09-04; по плану — Э6 6.2 смягчает (причина выхода в маркере; abort-all остаётся). _Источник:_ history/PLAN.md §2 Э6
@@ -723,16 +724,16 @@
 - **Статус 2026-09-09:** закрыта — `c31c258f` (1.1: чекпойнты cap удалены, кап читается скаляром; по столбцу «Закрывает» PLAN 1.1). _Источник:_ history/PLAN.md §2 Э1 1.1
 
 ### R-104 · MINOR · Узел утверждает, что контрактного обработчика `slashEquivocation(uint64,uint32)` не существует; он есть
-- Якоря: `node/evm.rs`: «**The contract has no counterpart at all** … verified 2026-08-14: zero hits for the signature in `consts.rs` on every branch». Ветка в утверждении — та самая, из которой читались исходники. Обработчик: `consts.rs`, диспетчер `lib.rs`, реализация `consensus.rs` (только `SYSTEM_CALLER`, молчаливый `Ok()` на уже tombstone'нутой жертве). Селектор `0xdc6fb3f2` присутствует ровно один раз в развёрнутом devnet-блобе (скан `.rwasm`,`history/CONTRACT.md` часть 3). Тег: MINOR. Новая; отменяет механизм R-028 и задачу AUDIT B-3. Уверенность: `[KNOWN]` обе стороны.
+- Якоря: `node/evm.rs`: «**The contract has no counterpart at all** … verified 2026-08-14: zero hits for the signature in `consts.rs` on every branch». Ветка в утверждении — та самая, из которой читались исходники. Обработчик: `consts.rs`, диспетчер `lib.rs`, реализация `consensus.rs` (только `SYSTEM_CALLER`, молчаливый `Ok()` на уже tombstone'нутой жертве). Селектор `0xdc6fb3f2` присутствует ровно один раз в развёрнутом devnet-блобе (скан `.rwasm`, `history/CONTRACT.md` часть 3). Тег: MINOR. Новая; отменяет механизм R-028 и задачу AUDIT B-3. Уверенность: `[KNOWN]` обе стороны.
 - Уверенность (REGISTER, 09-03): `[KNOWN]` обе стороны
 - Ход по плану 09-04 (INDEX): Э2 / С — комментарий уходит вместе с ручным `sol!`
 - **Статус 2026-09-09:** закрыта — `065003ad` (2.1: комментарий «The contract has no counterpart at all» удалён вместе с тестом-носителем). _Источник:_ history/E2-ABI.md §2.3
 
 ### R-105 · MINOR · Узел утверждает, что контракт не проверяет межвалидаторную уникальность ключей; проверяет, и дважды каждый
-- Якоря: Четыре места узла ссылаются на несуществующую `Staking.setConsensusKeys`:`scheme.rs ` и, `bls/src/scheme.rs`, `engine.rs`; два из них утверждают свойство — «does NOT enforce cross-validator uniqueness of peerPubkey/blsPubkey». Контракт отвергает занятый peer-ключ (`consensus.rs`) и занятый BLS-ключ, и перепроверяет оба после внешних вызовов верификатора против reentrancy (, ); перезапись собственных ключей запрещена . Защитный код узла остаётся оправданным, но заявленная достижимость («reachable from on-chain data», `engine.rs`) отсутствует. Тег: MINOR. Новая. Уверенность: `[KNOWN]` обе стороны.
+- Якоря: Четыре места узла ссылаются на несуществующую `Staking.setConsensusKeys`:`scheme.rs ` и, `bls/src/scheme.rs`, `engine.rs`; два из них утверждают свойство — «does NOT enforce cross-validator uniqueness of peerPubkey/blsPubkey». Контракт отвергает занятый peer-ключ (`consensus.rs`) и занятый BLS-ключ, и перепроверяет оба после внешних вызовов верификатора против reentrancy; перезапись собственных ключей запрещена . Защитный код узла остаётся оправданным, но заявленная достижимость («reachable from on-chain data», `engine.rs`) отсутствует. Тег: MINOR. Новая. Уверенность: `[KNOWN]` обе стороны.
 - Уверенность (REGISTER, 09-03): `[KNOWN]` обе стороны
 - Ход по плану 09-04 (INDEX): Э7 / П — четыре комментария про `setConsensusKeys` удалить
-- **Статус 2026-09-09:** не пересматривалась после 09-04; по плану — Э7 (четыре комментария про `setConsensusKeys` удалить). После 2.1 единственный оставшийся «MUST mirror» — `bls/src/scheme.rs` (ссылается на `Staking.sol`) — правится с 2.3. _Источник:_ history/PLAN.md §2 Э7; history/E2-ABI.md §5
+- **Статус 2026-09-09:** смягчена — `065003ad` (2.1: после неё единственный оставшийся «MUST mirror» — `bls/src/scheme.rs`, ссылается на `Staking.sol`, правится с 2.3); четыре комментария про `setConsensusKeys` — по плану Э7. _Источник:_ history/PLAN.md §2 Э7; history/E2-ABI.md §5
 
 ### R-106 · MINOR · Узел ссылается на несуществующее расписание коммита и на несуществующее состояние «пропущенная эпоха»
 - Якоря: `staking-reader/src/epoch_transition.rs` — «`Staking.sol` allows an epoch with no `commitEpochCommittee` … a skip is safe»; курсор `last_committed_epoch_p1` читается как `target` и становится `target+1` в том же вызове (`consensus.rs`), так что эпоха может отстать, но не может быть пропущена. Там же — «the v41 QUALIFY-BEFORE-COMMIT schedule … committed at `H_qual = B−8`»; ни того расписания, ни `H_qual` в контракте нет, `commitEpochCommittee` не принимает аргументов и её собственная документация фиксирует удаление той схемы (`consensus.rs`), а пацинг целиком узловой (`node/evm.rs`). Поведение узла (парковка + re-poke) для реального состояния верно, и фактическая гарантия сильнее заявленной. Тег: MINOR. Новая. Уверенность: `[KNOWN]` обе стороны. Связано: R-066.
@@ -781,13 +782,13 @@
 - **Статус 2026-09-09:** закрыта — `065003ad` (2.1: объявление `getUndelegatePeriod` удалено из узла — E2-ABI §2.7; `activationEpoch` после перехода на общий ABI не декодируется — по столбцу «Закрывает» PLAN 2.1, отдельно не подтверждено [LIKELY]). _Источник:_ history/E2-ABI.md §2.7; history/PLAN.md §2 Э2 2.1
 
 ### R-085 · MINOR (пересмотрено 09-04: было NIT — по Ex-17) · Регистрация метрик при двух плоскостях в одном процессе: `prometheus-client` не отклоняет дубликаты имён; в проде регистрация одна на процесс; 8 семей без префикса `dpos_`
-- Якоря: Регистрация метрик при двух плоскостях в одном процессе: `prometheus-client` не отклоняет дубликаты имён; в проде регистрация одна на процесс; 8 семей без префикса `dpos_` (`beacon/metrics.rs`). Прежний: BEACON BA-12 NIT; COVERAGE §5 п. 9 (тот же вопрос). **Повышено до MINOR** по итогам эксперимента. Эксперимент 2026-09-04 (Ex-17, `EXPERIMENTS.md`): «8 семей без `dpos_`» — подтверждено точно. Дублирующихся СЕМЕЙ в живом экспорте нет (280 семей, ни одного повторного `# TYPE`) и при регистрации «одна на процесс» быть не может; зато **подтверждено экспериментом** дублирование СЕРИЙ — per-epoch simplex-движки регистрируются под фиксированным префиксом без метки эпохи, 223 серии повторяются до 7 раз, и настоящий Prometheus при `up = 1` и пустой `lastError` молча отбрасывает 1115–1337 из 2465 samples на каждом скрейпе (`Error on ingesting samples with different value but same timestamp`) — 55,6 % экспорта, ровно консенсусная наблюдаемость. Дубль ИМЕНИ (а не серии) парсер отвергает целиком (`second HELP line for metric name`), то есть терялся бы весь скрейп. Связано: R-073/R-041 — число живых движков прямо задаёт долю потерь.
+- Якоря: Регистрация метрик при двух плоскостях в одном процессе: `prometheus-client` не отклоняет дубликаты имён; в проде регистрация одна на процесс; 8 семей без префикса `dpos_` (`beacon/metrics.rs`). Прежний: BEACON BA-12 NIT; COVERAGE §5 п. 9 (тот же вопрос). **Повышено до MINOR** по итогам эксперимента. Эксперимент 2026-09-04 (Ex-17, `EXPERIMENTS.md`): «8 семей без `dpos_`» — подтверждено точно. Дублирующихся СЕМЕЙ в живом экспорте нет (280 семей, ни одного повторного `# TYPE`) и при регистрации «одна на процесс» быть не может; зато **подтверждено экспериментом** дублирование СЕРИЙ — per-epoch simplex-движки регистрируются под фиксированным префиксом без метки эпохи, и настоящий Prometheus при `up = 1` и пустой `lastError` молча отбрасывает часть samples на каждом скрейпе (`Error on ingesting samples with different value but same timestamp`), ровно консенсусная наблюдаемость; цифры серий и доли потерь — `EXPERIMENTS.md` §1 Ex-17. Дубль ИМЕНИ (а не серии) парсер отвергает целиком (`second HELP line for metric name`), то есть терялся бы весь скрейп. Связано: R-073/R-041 — число живых движков прямо задаёт долю потерь.
 - Ход по плану 09-04 (INDEX): Э0 / П — per-epoch simplex-метрики с меткой эпохи либо abort старых движков (Д-8); тяжесть MINOR по Ex-17
 - Связано: R-073/R-041 — число живых движков прямо задаёт долю потерь.
 - **Статус 2026-09-09:** закрыта — `2cc13bcd` (Э0.4: `EpochEngine::new` вешает атрибут `epoch` на контекст; дублей серий 0, Prometheus `num_dropped` 0). Остаток вне записи: `promtool check metrics` — линт (183 семьи без HELP, 40 имён `_total_total`) — отдельная гигиена. _Источник:_ history/E0-LOG.md 0.4; history/EXPERIMENTS.md Ex-17
 
 ### R-086 · NIT · `keys.rs`: неограниченные множества `reported_invalid_seed`
-- Якоря: `keys.rs`: неограниченные множества `reported_invalid_seed` (, растёт на эпоху), `extra_notifiers` . Кэш `carry.rs` без границы обоснован  — не дефект. Прежний: BEACON BA-16 NIT. `[LIKELY]`.
+- Якоря: `keys.rs`: неограниченные множества `reported_invalid_seed` (, растёт на эпоху), `extra_notifiers` . Кэш `carry.rs` без границы обоснован — не дефект. Прежний: BEACON BA-16 NIT. `[LIKELY]`.
 - Ход по плану 09-04 (INDEX): Э5 / С+ — П-2 убирает `reported_invalid_seed`;`extra_notifiers` — bounded
 - **Статус 2026-09-09:** не пересматривалась после 09-04; по плану — Э5 5.3 смягчает (`reported_invalid_seed` уходит с П-2). _Источник:_ history/PLAN.md §2 Э5
 
@@ -827,12 +828,12 @@
 - **Статус 2026-09-09:** не пересматривалась после 09-04; по плану — Э7. _Источник:_ history/PLAN.md §2 Э7
 
 ### R-094 · NIT · Result-gate делает 41 итерацию
-- Якоря: Result-gate делает 41 итерацию (`0..=polls`), BiMap клонируется на каждый verify с обвинением (`application.rs`, ). Прежний: CORE C-23 NIT. `[LIKELY]`.
+- Якоря: Result-gate делает 41 итерацию (`0..=polls`), BiMap клонируется на каждый verify с обвинением (`application.rs`). Прежний: CORE C-23 NIT. `[LIKELY]`.
 - Ход по плану 09-04 (INDEX): Э8 / П — `0..polls`; не клонировать BiMap
 - **Статус 2026-09-09:** не пересматривалась после 09-04; по плану — Э8 (гигиена). _Источник:_ history/PLAN.md §2 Э8
 
 ### R-095 · NIT · `UpstreamResolver::cancel` снимает высоту из `inflight`, пока задача летит — возможен дубль pull'а
-- Якоря: `UpstreamResolver::cancel` снимает высоту из `inflight`, пока задача летит — возможен дубль pull'а (`cert_inlet.rs` vs ). Прежний: CORE C-24 NIT. `[LIKELY]`. Связано: R-009.
+- Якоря: `UpstreamResolver::cancel` снимает высоту из `inflight`, пока задача летит — возможен дубль pull'а (`cert_inlet.rs` vs). Прежний: CORE C-24 NIT. `[LIKELY]`. Связано: R-009.
 - Ход по плану 09-04 (INDEX): Э8 / П — `cancel` не трогать `inflight`, пока задача жива
 - Связано: R-009.
 - **Статус 2026-09-09:** не пересматривалась после 09-04; по плану — Э8 (гигиена). _Источник:_ history/PLAN.md §2 Э8
@@ -870,7 +871,7 @@
 - **Статус 2026-09-09:** закрыта — `065003ad` (2.1: комментарий «KNOWN CONTRACT DRIFT» удалён; дрейфа нет — ветка слита `f16fdd90`, контракт возвращает четыре массива). _Источник:_ history/E2-ABI.md §2.4
 
 ### R-108 · NIT · `getEpochBlockInterval`, `getActiveValidatorsLength`, `getUndelegatePeriod` объявлены `returns (uint32)`
-- Якоря: `getEpochBlockInterval`,`getActiveValidatorsLength`,`getUndelegatePeriod` объявлены `returns (uint32)` (`staking-reader/src/reader.rs`, интервал ещё раз в `node/evm.rs`), а контракт хранит и отдаёт эти поля как `u64` (`config.rs` — запись; — чтение). На проводе одно слово, значения по построению влезают в `u32` (сеттеры принимают `U32Command`,`config.rs `), так что ширину проверяет декодер alloy на узле, а не ABI контракта. Направление отказа безопасное, но одностороннее. Новая. `[KNOWN]` обе стороны.
+- Якоря: `getEpochBlockInterval`, `getActiveValidatorsLength`, `getUndelegatePeriod` объявлены `returns (uint32)` (`staking-reader/src/reader.rs`, интервал ещё раз в `node/evm.rs`), а контракт хранит и отдаёт эти поля как `u64` (`config.rs` — запись; — чтение). На проводе одно слово, значения по построению влезают в `u32` (сеттеры принимают `U32Command`, `config.rs `), так что ширину проверяет декодер alloy на узле, а не ABI контракта. Направление отказа безопасное, но одностороннее. Новая. `[KNOWN]` обе стороны.
 - Ход по плану 09-04 (INDEX): Э2 / С — ширины из общего ABI
 - **Статус 2026-09-09:** закрыта — `065003ad` (2.1: три вьюхи объявлены `uint64` по стороне контракта; `u32 → u64` разошлось на `epoch_transition.rs`, `dpos.rs`, `cert_inlet.rs`, `outer.rs`). Живьём проверены 1,5 вьюхи из 3 (E2-ABI §9). _Источник:_ history/E2-ABI.md §2.1, §9
 
@@ -881,7 +882,7 @@
 
 ## §2 K-1..K-40 (контракт) и группы дублей
 
-Тяжесть — по `history/AUDIT-history/CONTRACT.md` (09-04); пути — `contracts/staking/src/` (контракт с 09-09 в этом дереве, слияние `f16fdd90`). K-3 = R-111. Часть T AUDIT-CONTRACT (тесты как ложная уверенность, T-1..T-8): T-1 (заглушка `verify` всегда `true`) ушла с 1.10; T-5 (эмуляция самовызова) — с 1.7; T-6 закрыта тестом `handlers_refuse_value_and_refuse_to_mutate_inside_a_static_frame` (E1-8-TESTS F-5); T-7 частично (F-11); остаток — `history/E1-8-TESTS.md` §3.
+Тяжесть — по `history/AUDIT-CONTRACT.md` (09-04); пути — `contracts/staking/src/` (контракт с 09-09 в этом дереве, слияние `f16fdd90`). K-3 = R-111. Часть T AUDIT-CONTRACT (тесты как ложная уверенность, T-1..T-8): T-1 (заглушка `verify` всегда `true`) ушла с 1.10; T-5 (эмуляция самовызова) — с 1.7; T-6 закрыта тестом `handlers_refuse_value_and_refuse_to_mutate_inside_a_static_frame` (E1-8-TESTS F-5); T-7 частично (F-11); остаток — `history/E1-8-TESTS.md` §3. Вердикты «не дефект» V-15 и V-19 (`history/AUDIT-CONTRACT.md` часть V) опирались на то, что КB-2 уберёт историю видимости целиком; 1.1 (`c31c258f`) её не убрала (X4) — оба вердикта требуют перепроверки. F7 (`history/E1-CLOSEOUT.md`): `getValidatorOwner(address)` и `getGovernance()` в ABI отсутствуют — владелец читается только перебором `getValidatorByOwner`, адрес governance с цепи не читается вовсе; открыта, проверено 09-09 (`grep` по `consts.rs`).
 
 | № | Тяжесть (AUDIT-CONTRACT) | Суть | Файл (`contracts/staking/src/`) | Ход по плану 09-04 | **Статус 2026-09-09** | Источник |
 |---|---|---|---|---|---|---|
@@ -907,7 +908,7 @@
 | K-20 | NIT | события при init сообщают выдуманные «предыдущие» значения | `config.rs` | Э8 / П — — | не пересматривалась после 09-04; Э8 | history/PLAN.md Э8 |
 | K-21 | NIT | `min_undelegate_blocks` без сеттера ограничивает закрытые сеттеры | `config.rs` | Э1 / С — КB-6 | открыта — 1.5 оставила `min_undelegate_blocks` (поле `InitializeCommand`, смена селектора `initialize`); после Э2 общий источник снимает причину не удалять. Столбец «Закрывает» 1.5 расходится с текстом ячейки (отчёт §4) | history/PLAN.md 1.5 |
 | K-22 | MINOR | отказ фонда оставляет конфискат на контракте без пути вывода; событие `seized = 0` | `consensus.rs` | Э1 / П — 1.6 | отложена — 1.6, открыта | history/PLAN.md 1.6 |
-| K-23 | SERIOUS при подтверждении / NIT | личность в слэше через `compressG2Unchecked`; точка вне кривой с тем же x даёт тот же ключ | `consensus.rs` | Э1 / С+ — КB-4 снимает экспозицию слэша; для PoP остаётся дырой (верификатора нет в дереве, D-4) | снята — гипотеза опровергнута чтением верификатора 09-04 (PAIRING отвергает точку вне кривой; `_rejectInfinity` явно); после 1.10 верификатор инлайн | history/DECISIONS.md Д-4 п.9; history/AUDIT-history/CONTRACT.md K-23 |
+| K-23 | SERIOUS при подтверждении / NIT | личность в слэше через `compressG2Unchecked`; точка вне кривой с тем же x даёт тот же ключ | `consensus.rs` | Э1 / С+ — КB-4 снимает экспозицию слэша; для PoP остаётся дырой (верификатора нет в дереве, D-4) | снята — гипотеза опровергнута чтением верификатора 09-04 (PAIRING отвергает точку вне кривой; `_rejectInfinity` явно); после 1.10 верификатор инлайн | history/DECISIONS.md Д-4 п.9; history/AUDIT-CONTRACT.md K-23 |
 | K-24 | MINOR | `kick_count` никогда не убывает | `liveness.rs` | Э1 / П — политика (Д-10) | закрыта — `50e87d33` (1.9в: сброс `kick_count` через 30 эпох с последнего провала). Остаток — решение Д-13 (потолок лестницы 128 недостижим) | history/PLAN.md 1.9, §5 Д-13 |
 | K-25 | MODERATE | liveness-исключение — оружие большинства предложенцев против честного (кто пишет `leader_index`, тот судит) | `liveness.rs` | — / — — граница проекта; узел проверяет `leader_index == expected` (`application.rs:227-235`); B-10 | снята — граница проекта (узел проверяет `leader_index == expected`); B-10 — Э8 | history/INDEX.md §2 |
 | K-26 | MINOR | `MAX_SETTLE_CATCHUP = 4` замораживает все награды, пока курсор отстаёт | `staking.rs` | Э1 / С — КB-3 (Д-10) | закрыта — `100c02c4` (1.7: курсор и `MAX_SETTLE_CATCHUP` удалены). Цена: отсрочка стала форфейтом, форфейт — гриферским (W2, F-16) | history/PLAN.md 1.7; history/E1-REFLECTION.md W2 |
@@ -918,8 +919,8 @@
 | K-31 | NIT | `setDposActivationBlock` допускает `value == block_number` | `config.rs` | Э2 / С — сеттер уходит с B-9 | отложена — Э2.4 (сеттер уходит с B-9) | history/PLAN.md 2.4 |
 | K-32 | NIT | претензия владельца permissionless: любой двигает `claimed_at` | `staking.rs` | Э1 / С — КB-6 | открыта, и усилена — после 1.7 беспермиссионная претензия стала гриферским вектором (опустить резерв под пот ⇒ эпоха сгорает; W2); живьём 09-08 (прогон 7), запинена e2e `a_claim_between_two_closes_…` (F-16). Столбец «Закрывает» 1.5 расходится (отчёт §4) | history/E1-CLOSEOUT.md прогон 7; history/E1-8-TESTS.md F-16 |
 | K-33 | MINOR | делегатор не может вывести ничего одну эпоху после любой делегации | `staking.rs` | Э1 / П — UX (Д-10) | не пересматривалась после 09-04; UX (Д-10 не касается) | history/DECISIONS.md Д-10 |
-| K-34 | вопрос | семантика `fuel: None` на хосте | `util.rs`, `crates/sdk/src/system.rs` | Э1 / С — КB-3 снимает self-call | открыта, расширилась — самовызов удалён (1.7), но `fuel: None` теперь в пяти местах (`util.rs` ×3, `bls.rs` ×2; D11); замер F1: горелка в слоте резерва съедает 29 579 516 из 30 000 000, блок выживает на правиле 63/64 — запинено `the_fuel_burning_read_against_the_production_system_call_budget` (F-14) | history/E1-REFLECTION.md D11; history/E1-CLOSEOUT.md F1; history/E1-8-TESTS.md F-14 |
-| K-35..K-39 | — | проверено, не находки (запас кольца, `u32`-счётчики, реентрантность через токен, `ensure_non_payable` везде) | — | — / — — — | не находки (проверено 09-04) | history/AUDIT-history/CONTRACT.md |
+| K-34 | вопрос | семантика `fuel: None` на хосте | `util.rs`, `crates/sdk/src/system.rs` | Э1 / С — КB-3 снимает self-call | открыта, расширилась — самовызов удалён (1.7), но `fuel: None` теперь в пяти местах (`util.rs` ×3, `bls.rs` ×2; D11); замер F1 (`EXPERIMENTS.md` §1): горелка в слоте резерва съедает почти весь бюджет системного вызова, блок выживает на правиле 63/64 — запинено `the_fuel_burning_read_against_the_production_system_call_budget` (F-14) | history/E1-REFLECTION.md D11; history/E1-CLOSEOUT.md F1; history/E1-8-TESTS.md F-14 |
+| K-35..K-39 | — | проверено, не находки (запас кольца, `u32`-счётчики, реентрантность через токен, `ensure_non_payable` везде) | — | — / — — — | не находки (проверено 09-04) | history/AUDIT-CONTRACT.md |
 | K-40 | NIT | адрес валидатора — произвольный параметр `registerValidator`; чужой адрес можно занять навсегда | `staking.rs` | Э8 / П — требовать подпись адреса или `validator = caller` | не пересматривалась после 09-04; Э8 | history/PLAN.md Э8 |
 ### 14 групп величин, продублированных на границе узел↔контракт (DUPLICATES)
 
@@ -930,7 +931,7 @@
 | 1 | Суффиксы namespace подписи (`_NOTARIZE/_NULLIFY/_FINALIZE`) + префикс + кодировка chain_id | — | — | отложена — Э2.3; исчезает с `evidence.rs` при Д-4 = КB-4 (R-115) |
 | 2 | Индексное пространство комитета (сортировка по peer-ключу) | — | — | отложена — Э2.3; единственный оставшийся «MUST mirror» (`bls/src/scheme.rs`) (R-116) |
 | 3 | ABI-сигнатуры системных вызовов и вьюх | `crates/staking-abi` (`fluentbase-staking-abi`, один `sol!`) | компилируемый импорт с обеих сторон; свидетели `selectors_match_the_deployed_artefact_scan`, `derived_selectors_match_independent_hex_pins` | закрыта — `9b6213be`+`065003ad` (R-114) |
-| 4 | Арность/форма возврата `getEpochCommitteeWithStakes` | общий `sol!`; контракт кодирует ответ своим кодеком | **тест** `the_view_returns_decode_under_the_node_s_declaration` (мутация проверена) + `epoch_committee_return_matches_the_contract_abi_encoding` | закрыта тестом, не компилятором — `065003ad` (R-119) |
+| 4 | Арность/форма возврата `getEpochCommitteeWithStakes` | общий `sol!`; контракт кодирует ответ своим кодеком | **тест** `the_view_returns_decode_under_the_node_s_declaration` (мутация проверена) + `epoch_committee_return_matches_the_contract_abi_encoding` | закрыта тестом, не компилятором — `0972059d` поверх `065003ad` (R-119) |
 | 5 | `MIN_COMMITTEE_LENGTH = 4` | `staking_protocol::MIN_COMMITTEE_LENGTH` | `pub use` обеих сторон | закрыта — `9b6213be` (R-117) |
 | 6 | `BALANCE_COMPACT_PRECISION = 1e10` | `staking_protocol::BALANCE_COMPACT_PRECISION` (+ `_U256`) | `pub use`; тест `the_u256_precision_is_the_same_number_as_the_u128_one` | закрыта — `9b6213be` (R-117) |
 | 7 | Граница компактного стейка `2^112` | `staking_protocol::COMPACT_STAKE_BITS`, `MAX_COMPACT_STAKE` | контракт `Uint<{COMPACT_STAKE_BITS},2>`; узел `use` | закрыта — `9b6213be` (R-117); остаток: имя типа `StorageUint112` в SDK — третье место, мутацией не проверено |
@@ -986,9 +987,9 @@
 | CB-11 | `CertInlet.schemes` → провайдер marshal | — | Конфликт с R-008 (эвикция после verify-fail); К-11 отвечен: комитет закоммиченной эпохи неизменяем, опираться на это безопасно | не пересматривалась после 09-04; П-1 (Э4 4.1) делает ненужным — не делать одновременно с П-1 |
 | CB-12 | Убрать гистерезис `probe_fast_left`/`FRONTIER_PROBE_FAST_BURST` | — | После переноса пробы в spawn (R-031) | не пересматривалась после 09-04; Э6 6.1 |
 | CB-13 | `ReJump.probe`/`rotate: Option` → свойство `CertUpstream` | — | Вместе с R-004/R-031 | не пересматривалась после 09-04; Э6 6.1 |
-## §4 Трассировка A/BA/C/COVERAGE/UNDERSTANDING → R
+## §4 Трассировка A/BA/C/COVERAGE/UNDERSTANDING/CONTRACT-UNDERSTANDING → R и K
 
-Дословно из `history/REGISTER.md` часть 6 (09-03); номера строк там — от 09-03.
+Дословно из `history/REGISTER.md` часть 6 (09-03), кроме подраздела `CONTRACT-UNDERSTANDING` §15 (добавлен 09-09 по `history/AUDIT-CONTRACT.md` части V); номера строк там — от 09-03.
 
 Записи R-101..R-110 источника в этой таблице не имеют: они найдены сверкой обеих сторон
 границы по исходникам контракта и описаны в `history/CONTRACT.md` часть 2, а не в одном из
@@ -1171,6 +1172,10 @@ R-111, R-112 и R-113 источника во входных документа�
 | §2.4 `dkg_agree.rs` × `Automaton` | закрыто BEACON (часть 5, пробелы) |
 | §5 п. 1–10 и «кроме десяти» | → часть 5, абзац «пробелы проверки»; п. 9 → Ex-17 |
 | §1, §3, §4 (таблицы покрытия) | статистика, находок нет |
+
+### history/CONTRACT-UNDERSTANDING.md, §15 (открытые вопросы)
+
+Вердикты — `history/AUDIT-CONTRACT.md` часть V (V-1..V-22). Пятнадцать сведены в записи K (1 → K-40, 2 → K-16, 3 → K-6, 4 → K-30, 5 → K-10, 6 → K-28, 9 → K-26 + K-9, 10 → K-12, 11 → K-2, 13 → K-19, 14 → K-18, 17 → K-21, 18 → K-20, 22 → K-17). Без номера K остались 7, 8, 12, 15, 16, 19, 20, 21 — вердикт «не дефект» либо «часть K-2»; из них V-15 и V-19 требуют перепроверки (см. §2).
 
 ### history/UNDERSTANDING.md, §11 (подозрения) и прочее
 
