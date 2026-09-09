@@ -144,8 +144,18 @@ impl FakeChain {
         if self.el_network.executed.lock().unwrap().get(&height) != Some(&hash) {
             return false;
         }
+        // COMPARE, never overwrite: a height this node already derived is its own
+        // evidence, and letting a peer's answer replace it would let a divergent
+        // node that reached a height first (`ElNetwork::publish` is
+        // first-writer-wins, and nothing orders the honest majority first) rewrite
+        // history under a jumper. A mismatch is the served branch disagreeing with
+        // what this node executed — production's `verify_jump_structural` refusal.
         for (h, x) in self.el_network.range(height) {
-            self.land(h, x);
+            match self.spec_hash_at(h) {
+                Some(mine) if mine != x => return false,
+                Some(_) => {}
+                None => self.land(h, x),
+            }
         }
         self.finalized.advance(height);
         self.finalized_tip.fetch_max(height, Ordering::SeqCst);

@@ -1083,6 +1083,21 @@ fn three_boundaries_with_committee_rotation_keep_dkg_qual_honest() {
             }
         }
     }
+    // The recovery went through the RE-JUMP, and the node came back to deriving.
+    // Without both, "artifacts 2/3/5 everywhere" could be reached by some other
+    // route and the test would say nothing about the exit it enables.
+    assert!(
+        out.upstream[3].rejump_calls >= 1,
+        "the rotated-out node never re-jumped: {:?}",
+        (0..4)
+            .map(|i| out.upstream[i].rejump_calls)
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        derivers_of(&out, min),
+        all.to_vec(),
+        "at the last common height {min} not every node was deriving again"
+    );
     let ok: Vec<Option<f64>> = all
         .iter()
         .map(|&i| out.metric(i, "dkg_ceremony_ok_total"))
@@ -1517,15 +1532,16 @@ fn the_epoch_transition_walks_the_boundaries_from_the_fake_state() {
                 .collect::<Vec<_>>()
         );
     }
-    // The one exempted ERROR line is BOUNDED by the peer-set registrations that
-    // trigger it (at most one lost ack per registration, and a node never tracks
-    // more epochs than it walks), so the exemption cannot hide a stream of them.
+    // The one exempted ERROR line can only be produced by a peer-set
+    // REGISTRATION that actually reached the network, so bound it by those and
+    // not by anything looser. The bound is not "one per registration" derived
+    // from code — an aborted engine can have several sends in flight — but a
+    // stream of drops with no registrations at all would mean the exemption is
+    // covering something else entirely, and that this catches.
     assert!(
-        out.simulator_ack_drops <= out.tracked[0].len() as u64,
-        "simulator ack drops ({}) outran the peer-set registrations that can \
-         cause them ({})",
-        out.simulator_ack_drops,
-        out.tracked[0].len()
+        out.tracked_forwarded > 0 || out.simulator_ack_drops == 0,
+        "{} exempted ack drops with no peer-set registration to cause them",
+        out.simulator_ack_drops
     );
     eprintln!(
         "(C2) heights={:?} ack_drops={} boundaries={:?} geometry={:?} virtual={:?} real={:?}",
@@ -1794,6 +1810,19 @@ fn a_rotated_out_node_without_the_rejump_parks() {
         out.artifacts[3].keys().copied().collect::<Vec<_>>(),
         vec![2],
         "the parked node acquired an epoch key it has no path to"
+    );
+    // It is parked for want of the KEY, not for want of blocks: its upstream
+    // plane is being served the whole time. Without this the same height vector
+    // would also be produced by a node nobody feeds, and the test would pin the
+    // wrong mechanism.
+    let u3 = out.upstream[3];
+    assert!(
+        u3.latest_delivered > 0 && u3.finalized_delivered > 0,
+        "the parked node was not being served by the upstream plane at all: {u3:?}"
+    );
+    assert_eq!(
+        u3.rejump_calls, 0,
+        "the gate was supposed to be closed, but the node re-jumped"
     );
     eprintln!(
         "(C8) heights={:?} rejumps={:?} ack_drops={} virtual={:?} real={:?}",

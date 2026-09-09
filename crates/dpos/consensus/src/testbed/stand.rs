@@ -361,6 +361,8 @@ pub(super) struct Outcome {
     /// How many times two nodes' transitions tracked DIFFERENT peer sets for the
     /// same epoch. Must be zero.
     pub tracked_mismatches: u64,
+    /// Peer-set registrations that actually reached the simulated network.
+    pub tracked_forwarded: u64,
     /// `staking_reads[i]` = what node `i` ASKED the fake staking state, split by
     /// whether the epoch was committed at the read height.
     pub staking_reads: Vec<StakingReads>,
@@ -438,14 +440,33 @@ impl Outcome {
     /// trigger, `epoch_transition.rs:647` then `:660`, so the INCOMING epoch's
     /// engine never sends on an unregistered set; the send that is lost belongs
     /// to the OUTGOING engine the manager aborts).
+    ///
+    /// THE SAME MESSAGE IS PRINTED BY A SECOND, UNRELATED BRANCH, and that one
+    /// must NOT be exempt: at `:686-695` the network drops a message outright
+    /// because its ORIGIN is not in any tracked peer set, and reports it with the
+    /// same text. The two are told apart by the field the macro renders: that
+    /// branch replies `Vec::new()` (`err=[]`) while the ack path replies the
+    /// recipient list it already delivered to (`err=[…]`, non-empty). Only the
+    /// non-empty form is exempt, so a genuinely dropped message still fails a
+    /// test — which matters under `PeerSet::Committee`, where a node CAN fall out
+    /// of the four retained sets.
     pub(super) const SIMULATOR_ACK_DROP: &'static str =
         "commonware_p2p::simulated::network: failed to send ack";
+    /// The dropped-message form of the same line — never exempt. See above.
+    const SIMULATOR_MESSAGE_DROPPED: &'static str =
+        "commonware_p2p::simulated::network: failed to send ack err=[]";
+
+    fn is_exempt_ack_drop(line: &Captured) -> bool {
+        line.level == tracing::Level::ERROR
+            && line.text.starts_with(Self::SIMULATOR_ACK_DROP)
+            && !line.text.starts_with(Self::SIMULATOR_MESSAGE_DROPPED)
+    }
 
     pub(super) fn errors(&self) -> Vec<&Captured> {
         self.logs
             .iter()
             .filter(|l| l.level == tracing::Level::ERROR)
-            .filter(|l| !l.text.starts_with(Self::SIMULATOR_ACK_DROP))
+            .filter(|l| !Self::is_exempt_ack_drop(l))
             .collect()
     }
 
@@ -683,6 +704,9 @@ struct Tracked {
     /// chain state alone, so a difference means two nodes read different
     /// committees for one epoch.
     mismatches: u64,
+    /// How many peer-set registrations actually reached the simulated network —
+    /// the only events that can cost an ack (see `Outcome::SIMULATOR_ACK_DROP`).
+    forwarded: u64,
 }
 
 impl PeerSetSink for TrackSink {
@@ -707,6 +731,9 @@ impl PeerSetSink for TrackSink {
                 Some(_) => false,
                 None => {
                     shared.by_epoch.insert(epoch, members);
+                    if changed {
+                        shared.forwarded += 1;
+                    }
                     changed
                 }
             }
@@ -781,6 +808,7 @@ async fn drive(
         )]),
         per_node: vec![Vec::new(); n],
         mismatches: 0,
+        forwarded: 0,
     }));
 
     // Two simulated networks (see `PeerSet`): the consensus plane and the
@@ -1013,9 +1041,7 @@ async fn drive(
     let logs = sink.lock().unwrap().clone();
     let simulator_ack_drops = logs
         .iter()
-        .filter(|l| {
-            l.level == tracing::Level::ERROR && l.text.starts_with(Outcome::SIMULATOR_ACK_DROP)
-        })
+        .filter(|l| Outcome::is_exempt_ack_drop(l))
         .count() as u64;
     let upstream = nodes.iter().map(|h| h.upstream.snapshot()).collect();
     let seeds = nodes
@@ -1047,9 +1073,9 @@ async fn drive(
         .map(|node| node.observer.boundaries.lock().unwrap().clone())
         .collect();
     let staking_reads: Vec<StakingReads> = nodes.iter().map(|node| node.staking.reads()).collect();
-    let (tracked_sets, tracked_mismatches) = {
+    let (tracked_sets, tracked_mismatches, tracked_forwarded) = {
         let t = tracked.lock().unwrap();
-        (t.per_node.clone(), t.mismatches)
+        (t.per_node.clone(), t.mismatches, t.forwarded)
     };
     let metrics = ctx.encode();
     Outcome {
@@ -1066,6 +1092,7 @@ async fn drive(
         geometry,
         tracked: tracked_sets,
         tracked_mismatches,
+        tracked_forwarded,
         staking_reads,
         metrics,
         logs,
@@ -1325,7 +1352,10 @@ async fn build_node(
             let et = et.clone();
             let chain = chain.clone();
             Box::pin(async move {
-                let anchor = chain.tip();
+                // The EL-finalized height, as production passes it
+                // (`consensus/src/dpos.rs:2435` reads `get_finalized_num_hash`);
+                // `soft_enter_span` subtracts `result_lag` again on top.
+                let anchor = chain.tip().saturating_sub(crate::order_block::K);
                 let collected = Mutex::new(Vec::new());
                 let record = |epoch: u64, snap: ValidatorSetSnapshot| {
                     collected
@@ -1455,13 +1485,25 @@ async fn build_node(
     // standing in for the staking reads. Built BEFORE the `OuterBuilder`, which
     // takes its randomness and adopts its agreement instances.
     let (dkg_height_tx, dkg_height_rx) = mpsc::channel::<u64>(256);
-    // The node's EL-FINALIZED executed hash. Two consumers, and production keeps
-    // them apart on purpose: the `dkgQual` reads take THIS one
-    // (`node/src/dpos.rs:1519-1524` — `finalized_block_number` only, no live
-    // cursor), while the committee reads take the teed cursor below.
+    // The node's EL-FINALIZED height and the hash there. NOT `chain.tip()`:
+    // that is the ORDERING-finalized cursor (`FakeChain::advance_finalized` is
+    // called with `order.height`, `executor.rs:2971` → `:3498`), while what
+    // production's `finalized_block_number()` answers is reth's engine-API
+    // `finalized` tag, which the executor sets to the result-final height
+    // `ordering_finalized − K` (`executor.rs:3261-3272`, `update_finalized`
+    // `:248-252`). Reading at the ordering cursor would sit K blocks HIGHER than
+    // production and could make an epoch readable up to K blocks early.
+    let el_finalized = {
+        let chain = chain.clone();
+        move || chain.tip().saturating_sub(crate::order_block::K)
+    };
+    // Two consumers, and production keeps them apart on purpose: the `dkgQual`
+    // reads take THIS one (`node/src/dpos.rs:1519-1524` — `finalized_block_number`
+    // only, no live cursor), while the committee reads take the teed cursor below.
     let finalized_hash = {
         let chain = chain.clone();
-        Arc::new(move || chain.hash_at(chain.tip()))
+        let fin = el_finalized.clone();
+        Arc::new(move || chain.hash_at(fin()))
     };
     // The state hash the COMMITTEE is read at — production's shared
     // `committee_read_hash` (`node/src/dpos.rs:1382-1404`): the read height is
@@ -1473,9 +1515,17 @@ async fn build_node(
     let committee_read_hash = {
         let chain = chain.clone();
         let live = live_height.clone();
+        let el_fin = el_finalized.clone();
         Arc::new(move || -> Option<B256> {
-            let fin = chain.tip();
-            let read_at = fin.max(live.load(Ordering::Relaxed));
+            let fin = el_fin();
+            let live = live.load(Ordering::Relaxed);
+            // Production's startup guard: with neither a finalized marker nor a
+            // live cursor the committee is NOT readable, because `unwrap_or(0)`
+            // there would read it at genesis (`node/src/dpos.rs:1391-1394`).
+            if fin == 0 && live == 0 && chain.tip() == 0 {
+                return None;
+            }
+            let read_at = fin.max(live);
             chain.hash_at(read_at).or_else(|| chain.hash_at(fin))
         })
     };
