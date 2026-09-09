@@ -36,7 +36,7 @@ pub fn syscall_resume_handler(
     let (fuel_consumed, fuel_refunded, exit_code) = syscall_resume_impl(
         caller.data_mut(),
         call_id,
-        &return_data,
+        return_data,
         exit_code,
         fuel_consumed,
         fuel_refunded,
@@ -55,7 +55,7 @@ pub fn syscall_resume_handler(
 pub fn syscall_resume_impl(
     ctx: &mut RuntimeContext,
     call_id: u32,
-    return_data: &[u8],
+    return_data: Vec<u8>,
     exit_code: i32,
     fuel_consumed: u64,
     fuel_refunded: i64,

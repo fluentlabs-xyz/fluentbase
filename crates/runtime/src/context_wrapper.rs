@@ -83,7 +83,7 @@ impl NativeAPI for RuntimeContextWrapper {
         let (fuel_consumed, fuel_refunded, exit_code) = syscall_resume_impl(
             &mut self.ctx.borrow_mut(),
             call_id,
-            return_data,
+            return_data.to_vec(),
             exit_code,
             fuel_consumed,
             fuel_refunded,
