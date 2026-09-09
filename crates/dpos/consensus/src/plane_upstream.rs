@@ -38,6 +38,7 @@ use commonware_codec::{
 use commonware_consensus::{marshal::Identifier, simplex::types::Finalization, types::Height};
 use commonware_cryptography::ed25519::PublicKey;
 use commonware_resolver::{p2p::Producer, Consumer, Resolver as _};
+use commonware_runtime::Clock;
 use commonware_utils::{channel::oneshot as cw_oneshot, Span};
 use fluentbase_bls::Scheme as BlsScheme;
 use std::{
@@ -66,7 +67,9 @@ type Waiters = Arc<Mutex<HashMap<FrontierKey, Vec<oneshot::Sender<UpstreamFinali
 /// returning `None`. Bounds the jump's single-shot `get_latest` so an isolated /
 /// not-yet-tracked node returns `None` (→ `Lagging` → boot on the treadmill) rather
 /// than hanging; the resolver's own retry/multi-peer fallback delivers well inside
-/// this window when a tracked peer holds the data.
+/// this window when a tracked peer holds the data. Measured on the runtime
+/// [`Clock`] (the tokio timer in production, virtual time under the
+/// deterministic runner), never on a tokio timer directly.
 const FRONTIER_FETCH_TIMEOUT: Duration = Duration::from_secs(8);
 
 /// Resolver request key: two subjects, fixed-layout `Span`.
@@ -249,18 +252,24 @@ pub fn new_bridge(marshal_slot: Arc<OnceLock<MarshalMailbox>>) -> (FrontierHandl
     )
 }
 
-/// A plane-native [`CertUpstream`] over the frontier resolver. Holds the client
-/// resolver mailbox (to issue fetches) + the shared [`Waiters`] map (to await the
-/// resolver's delivery). Cloneable (mpsc + `Arc`), `Send + Sync + 'static`.
+/// A plane-native [`CertUpstream`] over the frontier resolver. Holds the runtime
+/// clock (to bound a fetch), the client resolver mailbox (to issue fetches) + the
+/// shared [`Waiters`] map (to await the resolver's delivery). Cloneable (mpsc +
+/// `Arc`), `Send + Sync + 'static`.
 #[derive(Clone)]
-pub struct PlaneUpstreamHandle {
+pub struct PlaneUpstreamHandle<E: Clock> {
+    context: E,
     mailbox: FrontierResolverMailbox,
     waiters: Waiters,
 }
 
-impl PlaneUpstreamHandle {
-    pub fn new(mailbox: FrontierResolverMailbox, waiters: Waiters) -> Self {
-        Self { mailbox, waiters }
+impl<E: Clock> PlaneUpstreamHandle<E> {
+    pub fn new(context: E, mailbox: FrontierResolverMailbox, waiters: Waiters) -> Self {
+        Self {
+            context,
+            mailbox,
+            waiters,
+        }
     }
 
     /// Register a waiter, issue an (untargeted) fetch, and await the delivery with a
@@ -277,12 +286,19 @@ impl PlaneUpstreamHandle {
             .push(tx);
         let mut mailbox = self.mailbox.clone();
         mailbox.fetch(key).await;
-        match tokio::time::timeout(FRONTIER_FETCH_TIMEOUT, rx).await {
-            Ok(Ok(uf)) => {
+        // The bound runs on the runtime `Clock` (the `beacon/artifact.rs` pull
+        // seam's form): a tokio timer would need a tokio reactor, which the
+        // deterministic runner does not provide.
+        let answer = tokio::select! {
+            answer = rx => answer.ok(),
+            () = self.context.sleep(FRONTIER_FETCH_TIMEOUT) => None,
+        };
+        match answer {
+            Some(uf) => {
                 tracing::debug!(%key, height = uf.block.height, "frontier fetch delivered");
                 Some(uf)
             }
-            _ => {
+            None => {
                 tracing::debug!(%key, "frontier fetch timed out (no tracked peer served it)");
                 // Timed out (or the sender was dropped): prune the now-closed waiter and,
                 // if this key has no remaining waiters, cancel the in-flight fetch so the
@@ -310,7 +326,7 @@ impl PlaneUpstreamHandle {
     }
 }
 
-impl CertUpstream for PlaneUpstreamHandle {
+impl<E: Clock> CertUpstream for PlaneUpstreamHandle<E> {
     fn get_finalization(
         &self,
         height: Height,

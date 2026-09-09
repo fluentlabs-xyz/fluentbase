@@ -1012,7 +1012,7 @@ pub(crate) struct BeaconPlane {
     /// The plane-native `CertUpstream` client handle. Threaded into the validator
     /// overlay as the `U: CertUpstream` when no `--dpos.follower-upstream` is set, so a
     /// plain `--dpos` validator runs the jump / Hybrid backfill plane-natively.
-    pub plane_upstream: fluentbase_consensus::PlaneUpstreamHandle,
+    pub plane_upstream: fluentbase_consensus::PlaneUpstreamHandle<Context>,
     /// The 5 persistent non-beacon `Muxer` broker tasks (vote/cert/resolver/
     /// broadcast/marshal), the vote-backup forwarder, and the four route-miss
     /// observers — aborted ONLY at process shutdown (they outlive every
@@ -1818,8 +1818,11 @@ where
             priority_responses: false,
         },
     );
-    let plane_upstream =
-        fluentbase_consensus::PlaneUpstreamHandle::new(frontier_mailbox, frontier_waiters);
+    let plane_upstream = fluentbase_consensus::PlaneUpstreamHandle::new(
+        ctx.clone(),
+        frontier_mailbox,
+        frontier_waiters,
+    );
     let frontier_resolver_handle =
         frontier_engine.start((handles.frontier_sender, handles.frontier_receiver));
 
@@ -2026,7 +2029,7 @@ where
 #[derive(Clone)]
 pub(crate) enum ValidatorUpstream {
     Ws(crate::cert_follow::upstream::UpstreamHandle),
-    Plane(fluentbase_consensus::PlaneUpstreamHandle),
+    Plane(fluentbase_consensus::PlaneUpstreamHandle<Context>),
 }
 
 impl fluentbase_consensus::CertUpstream for ValidatorUpstream {
@@ -2082,7 +2085,7 @@ pub(crate) async fn launch_dpos_layer<N, AddOns>(
     beacon_engine: crate::importer::RethImporter,
     cert_feed: Option<CertFeed>,
     shared_beacon: SharedBeaconPlane,
-    plane_upstream: fluentbase_consensus::PlaneUpstreamHandle,
+    plane_upstream: fluentbase_consensus::PlaneUpstreamHandle<Context>,
     evidence: fluentbase_consensus::slasher::EvidenceBridge,
     upstream_frontier: std::sync::Arc<std::sync::atomic::AtomicU64>,
     agreement_intake: mpsc::Receiver<(commonware_consensus::types::Epoch, Handle<()>)>,
