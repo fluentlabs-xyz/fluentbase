@@ -202,7 +202,7 @@ use crate::SCHEME_RETENTION_EPOCHS;
 use commonware_parallel::Sequential;
 use commonware_runtime::{
     buffer::paged::CacheRef, spawn_cell, BufferPooler, Clock, ContextCell, Handle, Metrics,
-    Network as RNetwork, Pacer, Spawner, Storage,
+    Network as RNetwork, Spawner, Storage,
 };
 use commonware_storage::archive::{immutable, Archive as _, Identifier};
 use commonware_utils::{NZUsize, NZU16, NZU64};
@@ -433,7 +433,7 @@ pub(crate) async fn init_finalized_blocks_archive<E>(
     partition_prefix: &str,
 ) -> FinalizedBlocksArchive<E>
 where
-    E: BufferPooler + Clock + CryptoRngCore + Spawner + Storage + Metrics + RNetwork + Pacer,
+    E: BufferPooler + Clock + CryptoRngCore + Spawner + Storage + Metrics + RNetwork,
 {
     let page_cache = CacheRef::from_pooler(context, PAGE_CACHE_PAGE_SIZE, PAGE_CACHE_CAPACITY);
     immutable::Archive::init(
@@ -477,7 +477,7 @@ pub(crate) async fn init_finalizations_archive<E>(
     page_cache: CacheRef,
 ) -> FinalizationsArchive<E>
 where
-    E: BufferPooler + Clock + CryptoRngCore + Spawner + Storage + Metrics + RNetwork + Pacer,
+    E: BufferPooler + Clock + CryptoRngCore + Spawner + Storage + Metrics + RNetwork,
 {
     use commonware_cryptography::certificate::Scheme as _;
     immutable::Archive::init(
@@ -691,7 +691,7 @@ pub struct OuterBuilder<B, P, BE, D, XC, A, R: slasher::StakingStateRead + Send 
 /// [`epoch_manager::Actor`].
 pub struct OuterEngine<E, B, P, BE, D, XC, A, R>
 where
-    E: BufferPooler + Clock + CryptoRngCore + Spawner + Storage + Metrics + RNetwork + Pacer,
+    E: BufferPooler + Clock + CryptoRngCore + Spawner + Storage + Metrics + RNetwork,
     B: Blocker<PublicKey = PublicKey> + Clone,
     P: PeerProvider<PublicKey = PublicKey> + Clone,
     BE: BeaconEngineLike<ExecutionData = D::Derived> + Clone + Send + Sync + 'static,
@@ -796,7 +796,7 @@ where
     ///
     pub async fn build<E>(self, context: E) -> eyre::Result<OuterEngine<E, B, P, BE, D, XC, A, R>>
     where
-        E: BufferPooler + Clock + CryptoRngCore + Spawner + Storage + Metrics + RNetwork + Pacer,
+        E: BufferPooler + Clock + CryptoRngCore + Spawner + Storage + Metrics + RNetwork,
     {
         // Fail loud and early on misconfigured timeouts so a deep panic
         // inside commonware (`voter/actor.rs:136`) becomes an actionable
@@ -1286,7 +1286,7 @@ where
 
 impl<E, B, P, BE, D, XC, A, R> OuterEngine<E, B, P, BE, D, XC, A, R>
 where
-    E: BufferPooler + Clock + CryptoRngCore + Spawner + Storage + Metrics + RNetwork + Pacer,
+    E: BufferPooler + Clock + CryptoRngCore + Spawner + Storage + Metrics + RNetwork,
     B: Blocker<PublicKey = PublicKey> + Clone,
     P: PeerProvider<PublicKey = PublicKey> + Clone,
     BE: BeaconEngineLike<ExecutionData = D::Derived> + Clone + Send + Sync + 'static,

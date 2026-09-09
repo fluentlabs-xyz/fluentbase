@@ -30,7 +30,7 @@ commonware-cryptography = { workspace = true, features = ["std"] }
 commonware-consensus = { workspace = true }
 commonware-utils = { workspace = true, features = ["std"] }
 commonware-math = { workspace = true, features = ["std"] }
-commonware-runtime = { workspace = true, features = ["external"] }
+commonware-runtime = { workspace = true }
 bytes = { workspace = true }
 pin-project = "1.1"
 rand_core = { workspace = true }

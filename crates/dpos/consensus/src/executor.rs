@@ -62,9 +62,7 @@ use commonware_consensus::{
     types::{Height, Round},
     Reporter,
 };
-use commonware_runtime::{
-    spawn_cell, Clock, ContextCell, FutureExt as _, Handle, Metrics as _, Pacer, Spawner,
-};
+use commonware_runtime::{spawn_cell, Clock, ContextCell, Handle, Metrics as _, Spawner};
 use commonware_utils::{
     acknowledgement::Exact, channel::oneshot, futures::OptionFuture, vec::NonEmptyVec,
     Acknowledgement as _,
@@ -86,6 +84,27 @@ use std::{
 };
 use tokio::{select, sync::mpsc};
 use tracing::{debug, error, error_span, info, info_span, instrument, warn, Level, Span};
+
+/// Pacing of an execution-layer call (`fork_choice_updated`, `import_derived`).
+///
+/// Production runs under commonware's tokio runtime, whose `Pacer::pace`
+/// returns the future unchanged (`runtime/src/tokio/runtime.rs:773-785`;
+/// `Cell<C>` only delegates, `runtime/src/utils/cell.rs:191-201`), so the
+/// `fcu_pace` latency has never delayed an EL call on a node. The deterministic
+/// implementation — a `Waiter` that blocks the OS thread until the future is
+/// ready — was reachable only through the runtime's `external` feature, which
+/// this crate no longer enables: under it the deterministic runtime sleeps a
+/// real millisecond per cycle and never skips idle time, which pins every test
+/// in the crate to wall-clock time. This local extension keeps the call sites
+/// and the `fcu_pace` knob in place with the production (tokio) semantics.
+trait PaceElCall: std::future::Future + Sized {
+    /// Run the call immediately; `expected_latency` is documentation only.
+    fn pace_el_call(self, _expected_latency: Duration) -> Self {
+        self
+    }
+}
+
+impl<F: std::future::Future> PaceElCall for F {}
 
 /// One executor command paired with its tracing span (preserves the causal
 /// `parent` for `#[instrument]`).
@@ -966,7 +985,7 @@ pub struct Actor<E, BE, D, XC, MarshalMailbox> {
 
 impl<E, BE, D, XC, MarshalMailbox> Actor<E, BE, D, XC, MarshalMailbox>
 where
-    E: Clock + commonware_runtime::Metrics + Pacer + Spawner + Send + 'static,
+    E: Clock + commonware_runtime::Metrics + Spawner + Send + 'static,
     BE: BeaconEngineLike<ExecutionData = D::Derived> + Send + Sync + 'static,
     D: DerivedBlockBuilder,
     XC: ExecutedChain,
@@ -1967,7 +1986,7 @@ where
             match self
                 .beacon_engine
                 .fork_choice_updated(forkchoice)
-                .pace(&self.context, self.fcu_pace)
+                .pace_el_call(self.fcu_pace)
                 .await
             {
                 Ok(fcu) => {
@@ -2028,7 +2047,7 @@ where
         let resp = self
             .beacon_engine
             .fork_choice_updated(self.last_canonicalized.forkchoice)
-            .pace(&self.context, self.fcu_pace)
+            .pace_el_call(self.fcu_pace)
             .await;
         // GAP-2 CLOSURE (family 5): a heartbeat FCU transport failure is
         // `FaultClass::TransientExternal(EngineRetry)` — fire-and-forget (the
@@ -2334,7 +2353,7 @@ where
                     safe_block_hash: landing_hash,
                     finalized_block_hash: floor_hash,
                 })
-                .pace(&self.context, self.fcu_pace)
+                .pace_el_call(self.fcu_pace)
                 .await;
             if let Err(error) = resp {
                 warn!(
@@ -2684,7 +2703,7 @@ where
         let fcu = self
             .beacon_engine
             .fork_choice_updated(new.forkchoice)
-            .pace(&self.context, self.fcu_pace)
+            .pace_el_call(self.fcu_pace)
             .await
             .map_err(|error| {
                 Fault::new(
@@ -3695,7 +3714,7 @@ where
                     safe_block_hash: parent_hash,
                     finalized_block_hash: self.last_canonicalized.forkchoice.finalized_block_hash,
                 })
-                .pace(&self.context, self.fcu_pace)
+                .pace_el_call(self.fcu_pace)
                 .await
             {
                 // A transport failure is absorbed as before (the next derive is
@@ -3776,7 +3795,7 @@ where
         let status = match self
             .beacon_engine
             .import_derived(derived)
-            .pace(&self.context, self.fcu_pace)
+            .pace_el_call(self.fcu_pace)
             .await
         {
             Ok(status) => {
