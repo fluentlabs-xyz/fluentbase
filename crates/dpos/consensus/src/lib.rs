@@ -58,6 +58,8 @@ pub mod scheme;
 pub mod slasher;
 pub mod spec_exec;
 pub mod sync_metrics;
+#[cfg(test)]
+mod testbed;
 pub mod timeouts;
 /// Stake-weighted VRF leader elector (used by [`engine`], same crate).
 mod weighted_vrf;

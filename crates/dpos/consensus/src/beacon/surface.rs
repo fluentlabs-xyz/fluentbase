@@ -1506,6 +1506,11 @@ mod tests {
     /// that silently matched nothing because it was resolved against the manifest
     /// directory. Its own non-vacuity assertion is what caught it, which is the
     /// argument for writing that assertion.)
+    ///
+    /// `testbed/` is exempt: it is a `#[cfg(test)]` module, not a core file, and
+    /// it is the consumer this substitute exists for (N nodes promoted to
+    /// `Signer` with no DKG plane — research E3-2 §2 #4). A core file naming the
+    /// type still fails.
     #[test]
     fn no_file_outside_the_beacon_names_the_static_implementation() {
         let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
@@ -1530,6 +1535,8 @@ mod tests {
                 let rel = path.strip_prefix(&src).expect("under src").to_owned();
                 if rel.starts_with("beacon") {
                     inside += 1;
+                } else if rel.starts_with("testbed") {
+                    // The in-crate deterministic stand (see the doc comment).
                 } else {
                     outside.push(rel.display().to_string());
                 }
