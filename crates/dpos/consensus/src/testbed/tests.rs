@@ -4,10 +4,20 @@
 
 use super::{
     fakes::UpstreamCounters,
-    stand::{Committees, Divergence, PeerSet, Progress, Role, Stand, StandConfig},
+    stand::{
+        Committees, Divergence, Outcome, PeerSet, Progress, Role, Stand, StandConfig, CHAIN_ID,
+    },
+};
+use crate::beacon::{
+    artifact::decode_artifact, outcome::group_public_key, seed::prev_randao_from_seed, Seed,
 };
 use alloy_primitives::B256;
-use std::{sync::Arc, time::Duration};
+use commonware_codec::Encode as _;
+use fluentbase_bls::{
+    beacon::{seed_namespace, verify_seed, GroupPublic},
+    fluent_namespace,
+};
+use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 /// (A) One node, nobody to serve it: `PlaneUpstreamHandle::get_latest` on the
 /// deterministic runner. The resolver has no candidate peer (the tracked set is
@@ -550,9 +560,10 @@ fn a_two_by_two_split_is_a_tie_not_a_minority() {
 }
 
 /// (6) Determinism: seed 1 three times gives the byte-identical
-/// `(height, view, leader, digest, executed hash)` trace on node 0; seed 2
+/// `(height, view, leader, digest, executed hash, σ)` trace on node 0; seed 2
 /// gives a different one. The keys are a function of the seed too, so the
-/// seed-2 run differs in key material as well as in scheduling.
+/// seed-2 run differs in key material as well as in scheduling. (`Beacon::Static`
+/// — σ here is the static sharing's; the live-plane form is (B5).)
 ///
 /// Falsifier: any scheduling nondeterminism in the crate (a `HashMap`
 /// iteration order reaching a vote, a wall-clock read) shows as a differing
@@ -738,5 +749,576 @@ fn replay_over_shared_journals_records_the_collision() {
     assert!(
         message.contains("replaying notarize from another signer"),
         "unexpected panic: {message}"
+    );
+}
+
+// ── Step 4: the live beacon plane ────────────────────────────────────────────
+//
+// Every test below runs `StandConfig::live`: `beacon::build` on each node, the
+// DKG on the consensus network's BEACON channels, `epoch_len = 32` (the deal
+// window is `epoch_len − DKG_MARGIN_BLOCKS = 12` blocks). By
+// `DETERMINISTIC_BOOTSTRAP_EPOCH = 2` the first key is minted for EPOCH 2 during
+// epoch 1 and epochs 0–1 run seedless, so "the boundary" a seed has to cross is
+// height 64.
+
+const EPOCH_LEN: u64 = 32;
+
+/// `PK_E` out of an artifact's wire bytes — the value the plane serves to a peer
+/// over `consensus_getEpochArtifact`, decoded by the production decoder.
+fn pk_of(artifact: &[u8]) -> GroupPublic {
+    let (proposal, _) = decode_artifact(artifact).expect("the served artifact decodes");
+    *group_public_key(&proposal.group_key)
+}
+
+/// The number of dealer logs the agreed artifact pins.
+fn dealers_of(artifact: &[u8]) -> usize {
+    decode_artifact(artifact).expect("decodes").0.logs.len()
+}
+
+/// Every listed node holds an artifact for `epoch` whose AGREED half — the
+/// `DkgProposal`: target epoch, pinned dealer-log set, `PK_E` + public
+/// polynomial, share-confirmations — encodes to the same bytes as node
+/// `nodes[0]`'s; returns node `nodes[0]`'s wire bytes. The finalization half is
+/// NOT byte-compared: it is a multisig aggregate over whichever ≥ quorum voters
+/// each node's instance collected, and two honest nodes legitimately hold
+/// different signer sets (the certificate-bitmap trap). The run of 2026-09-09
+/// showed exactly that: 1682-byte artifacts identical up to byte 1584 and
+/// differing in the 49-byte tail on every pair of nodes.
+fn artifact_on_every_node<'a>(out: &'a Outcome, nodes: &[usize], epoch: u64) -> &'a [u8] {
+    let first = out.artifacts[nodes[0]]
+        .get(&epoch)
+        .unwrap_or_else(|| panic!("node {} holds no artifact for epoch {epoch}", nodes[0]));
+    let (proposal, _) = decode_artifact(first).expect("decodes");
+    for &i in &nodes[1..] {
+        let mine = out.artifacts[i]
+            .get(&epoch)
+            .unwrap_or_else(|| panic!("node {i} holds no artifact for epoch {epoch}"));
+        let (theirs, _) = decode_artifact(mine).expect("decodes");
+        assert_eq!(
+            theirs.encode(),
+            proposal.encode(),
+            "node {i}'s epoch-{epoch} agreed proposal (PK_E, log set, confirms) differs from node {}'s",
+            nodes[0]
+        );
+        assert_eq!(theirs.digest(), proposal.digest());
+    }
+    first
+}
+
+/// The agreed half of an artifact as bytes — what [`artifact_on_every_node`]
+/// compares, and what a replay has to reproduce.
+fn proposal_bytes(artifact: &[u8]) -> Vec<u8> {
+    decode_artifact(artifact)
+        .expect("decodes")
+        .0
+        .encode()
+        .to_vec()
+}
+
+/// The seed at `height` on node `nodes[0]`, asserted PRESENT, byte-equal on every
+/// listed node, scoped to `epoch`, and verifying under `pk` (the seed namespace of
+/// the stand's chain id). Also checks `prev_randao` agrees across the nodes.
+fn seed_agreed_at(
+    out: &Outcome,
+    nodes: &[usize],
+    height: u64,
+    epoch: u64,
+    pk: &GroupPublic,
+) -> Seed {
+    let ns = seed_namespace(&fluent_namespace(CHAIN_ID));
+    let first = out.seeds[nodes[0]]
+        .get(&height)
+        .cloned()
+        .flatten()
+        .unwrap_or_else(|| panic!("node {} derived height {height} without σ", nodes[0]));
+    assert_eq!(
+        first.target_round.epoch().get(),
+        epoch,
+        "σ at height {height} is scoped to the wrong epoch: {:?}",
+        first.target_round
+    );
+    assert!(
+        verify_seed(pk, &ns, first.target_round, &first.signature),
+        "σ at height {height} does not verify under the given PK"
+    );
+    for &i in &nodes[1..] {
+        let mine = out.seeds[i].get(&height).cloned().flatten();
+        assert_eq!(
+            mine.as_ref(),
+            Some(&first),
+            "node {i}'s σ at height {height} differs from node {}'s (or is missing)",
+            nodes[0]
+        );
+        assert_eq!(
+            mine.as_ref().map(prev_randao_from_seed),
+            Some(prev_randao_from_seed(&first)),
+            "prev_randao differs at height {height}"
+        );
+    }
+    first
+}
+
+fn seedless_on_every_node(out: &Outcome, nodes: &[usize], heights: std::ops::Range<u64>) {
+    for h in heights {
+        for &i in nodes {
+            assert!(
+                out.seeds[i].get(&h).cloned().flatten().is_none(),
+                "node {i} derived height {h} WITH a σ in a pre-beacon epoch"
+            );
+        }
+    }
+}
+
+/// (B1) N=4, live DKG: committee[2] deals during epoch 1, the agreement pins one
+/// dealer set, every node adopts the SAME artifact — compared as bytes between
+/// nodes, and as the decoded `PK_2` — and from the first block of epoch 2
+/// (height 64) on, every finalization carries a σ that every node reads
+/// identically, that verifies under that `PK_2`, and that yields one
+/// `prev_randao`. Heights 1..64 are seedless on every node.
+///
+/// Falsifier: artifact bytes or `PK_2` differing between two nodes; a node
+/// deriving any height ≥ 64 without σ, or with a σ another node did not see; a
+/// σ that fails `verify_seed` under the agreed key; a σ before the bootstrap
+/// boundary; a `dkg_ceremony_fail` or `engine_demoted_no_polynomial` count.
+#[test]
+fn four_nodes_agree_the_epoch_key_and_carry_the_seed_across_the_boundary() {
+    let out = Stand::new(StandConfig::live(4, 1)).run_until(reached(72), Duration::from_secs(200));
+    assert!(
+        !out.timed_out,
+        "heights {:?} halted {:?} errors {:?}",
+        out.heights,
+        out.halted,
+        out.errors()
+    );
+    assert_eq!(out.diverged, None);
+    assert!(out.halted.is_empty(), "{:?}", out.halted);
+    out.assert_lockstep_except(&[]);
+    let all = [0, 1, 2, 3];
+    let artifact = artifact_on_every_node(&out, &all, 2);
+    let pk = pk_of(artifact);
+    for i in all {
+        assert_eq!(
+            pk_of(&out.artifacts[i][&2]).encode(),
+            pk.encode(),
+            "PK_2 on node {i}"
+        );
+        for e in [0, 1, 3] {
+            assert!(
+                !out.artifacts[i].contains_key(&e),
+                "node {i} holds an artifact for epoch {e} — only epoch 2 was minted"
+            );
+        }
+        assert_eq!(
+            out.metric(i, "dkg_ceremony_ok_total"),
+            Some(1.0),
+            "node {i}"
+        );
+        assert_eq!(
+            out.metric(i, "dkg_ceremony_fail_total"),
+            Some(0.0),
+            "node {i}"
+        );
+        assert_eq!(
+            out.metric(i, "epoch_engine_demoted_no_polynomial_total"),
+            Some(0.0),
+            "node {i}"
+        );
+    }
+    assert_eq!(dealers_of(artifact), 4, "four dealers pinned");
+    seedless_on_every_node(&out, &all, 1..2 * EPOCH_LEN);
+    let min = *out.heights.iter().min().unwrap();
+    for h in 2 * EPOCH_LEN..=min {
+        seed_agreed_at(&out, &all, h, 2, &pk);
+    }
+    eprintln!(
+        "(B1) heights={:?} artifact_bytes={} dealers={} σ@64={:?} virtual={:?} real={:?} warns={:?}",
+        out.heights,
+        artifact.len(),
+        dealers_of(artifact),
+        out.seeds[0][&64].as_ref().map(|s| s.target_round),
+        out.virtual_elapsed,
+        out.real_elapsed,
+        out.logs.iter().map(|l| l.text.as_str()).collect::<Vec<_>>()
+    );
+}
+
+/// The (B2) schedule: 4 → 3 → 4. Epochs 0–2 all four (2 is the bootstrap
+/// mint), epochs 3–4 `[0,1,2]` (3 is a change ⇒ `dkgQual[3]`, 4 is stable ⇒
+/// carry-forward), epoch 5 all four again (a change ⇒ `dkgQual[5]`).
+fn rotate_four_three_four() -> Committees {
+    Committees::Schedule(Arc::new(|epoch, n| {
+        Some(match epoch {
+            3 | 4 => vec![0, 1, 2],
+            _ => (0..n).collect(),
+        })
+    }))
+}
+
+/// (B2) Committee rotation over three minting boundaries with the `dkgQual` bit
+/// derived from the schedule. What the run has to show: an artifact for epochs
+/// 2, 3 and 5 (the mints) and NONE for epoch 4 (carried); three DISTINCT keys;
+/// the σ of every height verifying under the key the chain's `dkgQual` history
+/// names for its epoch — epoch 4's σ under `PK_3`, not under a fourth key — and
+/// identical on every node.
+///
+/// Falsifier: an artifact for epoch 4 (a ceremony ran on an unchanged
+/// committee); a key repeated across mints; an epoch-4 σ that fails under
+/// `PK_3`; a node that stops at a boundary (memory trap (1): a non-epoch-pure
+/// committee overflows the dealer index and the finalize stalls — here the
+/// committees are the schedule's, so a stall is a finding, not a stand error).
+#[test]
+fn three_boundaries_with_committee_rotation_keep_dkg_qual_honest() {
+    let mut cfg = StandConfig::live(4, 1);
+    cfg.committees = rotate_four_three_four();
+    let end = 5 * EPOCH_LEN + 8;
+    let out = Stand::new(cfg).run_until(reached(end), Duration::from_secs(400));
+    assert!(
+        !out.timed_out,
+        "heights {:?} halted {:?} errors {:?}",
+        out.heights,
+        out.halted,
+        out.errors()
+    );
+    assert_eq!(out.diverged, None);
+    assert!(out.halted.is_empty(), "{:?}", out.halted);
+    out.assert_lockstep_except(&[]);
+    let all = [0, 1, 2, 3];
+    let members = [0, 1, 2];
+    let pk2 = pk_of(artifact_on_every_node(&out, &all, 2));
+    let pk3 = pk_of(artifact_on_every_node(&out, &members, 3));
+    let pk5 = pk_of(artifact_on_every_node(&out, &all, 5));
+    for i in all {
+        assert!(
+            !out.artifacts[i].contains_key(&4),
+            "node {i} holds an artifact for epoch 4 — the stable committee re-minted"
+        );
+    }
+    assert_ne!(pk2.encode(), pk3.encode(), "epoch 3 re-used epoch 2's key");
+    assert_ne!(pk3.encode(), pk5.encode(), "epoch 5 re-used epoch 3's key");
+    assert_ne!(pk2.encode(), pk5.encode(), "epoch 5 re-used epoch 2's key");
+    seedless_on_every_node(&out, &all, 1..2 * EPOCH_LEN);
+    let min = *out.heights.iter().min().unwrap();
+    let ns = seed_namespace(&fluent_namespace(CHAIN_ID));
+    for h in 2 * EPOCH_LEN..=min {
+        let epoch = h / EPOCH_LEN;
+        let (key_epoch, pk) = match epoch {
+            2 => (2, &pk2),
+            3 | 4 => (3, &pk3),
+            5 => (5, &pk5),
+            _ => unreachable!(),
+        };
+        let seed = seed_agreed_at(&out, &all, h, epoch, pk);
+        // The carried epoch's σ is under PK_3 and under NO other mint.
+        if epoch == 4 {
+            for other in [&pk2, &pk5] {
+                assert!(
+                    !verify_seed(other, &ns, seed.target_round, &seed.signature),
+                    "epoch-4 σ at {h} verifies under a key other than PK_{key_epoch}"
+                );
+            }
+        }
+    }
+    let ok: Vec<Option<f64>> = all
+        .iter()
+        .map(|&i| out.metric(i, "dkg_ceremony_ok_total"))
+        .collect();
+    assert_eq!(
+        ok,
+        vec![Some(3.0), Some(3.0), Some(3.0), Some(2.0)],
+        "ceremonies finalized per node (members: 2, 3, 5; node 3: 2, 5)"
+    );
+    for i in all {
+        assert_eq!(
+            out.metric(i, "dkg_ceremony_fail_total"),
+            Some(0.0),
+            "node {i}"
+        );
+    }
+    eprintln!(
+        "(B2) heights={:?} artifacts={:?} ceremonies_ok={ok:?} virtual={:?} real={:?} warns={:?}",
+        out.heights,
+        out.artifacts
+            .iter()
+            .map(|a| a.keys().copied().collect::<Vec<_>>())
+            .collect::<Vec<_>>(),
+        out.virtual_elapsed,
+        out.real_elapsed,
+        out.logs.iter().map(|l| l.text.as_str()).collect::<Vec<_>>()
+    );
+}
+
+/// (B3) N=4, node 3 brings up NO beacon (`Role::AbsentBeacon`: no share, no
+/// dealer log, no agreement seat, `beacon::absent` as its randomness — a
+/// verifier that never signs). By the code, before the run: the dealer quorum
+/// at n=4 under `N3f1` is `n − f = 3` (`ceremony.rs`), the agreement entry bar
+/// at n=4 is the bare quorum 3 (`dkg_engine.rs`), and the agreement instance is
+/// a 4-seat simplex with 3 live seats — so the three dealers finalize, pin a
+/// THREE-log set and mint `PK_2`; the chain goes on with σ on the three. Node 3
+/// has no σ source at all (`absent::seed_for` is `None`, `mandatory_at(2)`
+/// holds), so its executor parks at height 64 (`OwnRoundSeed::Missing`) — it
+/// stops at 63 without a halt.
+///
+/// Falsifier: the three not minting (`dkg_ceremony_ok != 1`, no artifact); a
+/// pinned set of four (a log from a node that never dealt); the chain not
+/// crossing 64 on the three; a halt anywhere; node 3 crossing 64 (then it
+/// derived without σ in a mandatory epoch).
+#[test]
+fn one_absent_dealer_does_not_stop_the_key() {
+    let mut stand = Stand::new(StandConfig::live(4, 1));
+    stand.node(3).role(Role::AbsentBeacon);
+    let out = stand.run_until(
+        |p| p.min_height_of(&[0, 1, 2]) >= 72,
+        Duration::from_secs(200),
+    );
+    assert!(
+        !out.timed_out,
+        "heights {:?} halted {:?} errors {:?}",
+        out.heights,
+        out.halted,
+        out.errors()
+    );
+    assert!(out.halted.is_empty(), "{:?}", out.halted);
+    let members = [0, 1, 2];
+    out.assert_lockstep_except(&[3]);
+    let artifact = artifact_on_every_node(&out, &members, 2);
+    let pk = pk_of(artifact);
+    assert_eq!(
+        dealers_of(artifact),
+        3,
+        "three dealers pinned, the absent one not"
+    );
+    assert!(
+        out.artifacts[3].is_empty(),
+        "node 3 has no plane and holds {:?}",
+        out.artifacts[3].keys()
+    );
+    for i in members {
+        assert_eq!(
+            out.metric(i, "dkg_ceremony_ok_total"),
+            Some(1.0),
+            "node {i}"
+        );
+        assert_eq!(
+            out.metric(i, "dkg_ceremony_fail_total"),
+            Some(0.0),
+            "node {i}"
+        );
+    }
+    seedless_on_every_node(&out, &[0, 1, 2, 3], 1..2 * EPOCH_LEN);
+    let min = out.heights[..3].iter().copied().min().unwrap();
+    for h in 2 * EPOCH_LEN..=min {
+        seed_agreed_at(&out, &members, h, 2, &pk);
+    }
+    assert_eq!(
+        out.heights[3],
+        2 * EPOCH_LEN - 1,
+        "node 3 (no σ source) is expected to park at the bootstrap boundary"
+    );
+    eprintln!(
+        "(B3) heights={:?} dealers={} virtual={:?} real={:?} warns={:?}",
+        out.heights,
+        dealers_of(artifact),
+        out.virtual_elapsed,
+        out.real_elapsed,
+        out.logs.iter().map(|l| l.text.as_str()).collect::<Vec<_>>()
+    );
+}
+
+/// (B4) Phase 1: N=4 live, six blocks into epoch 2 (the key minted, σ flowing),
+/// stop, keep the checkpoint. Phase 2: every node rebuilt over the SAME storage
+/// (key / seed / artifact journals, voter journals, marshal archives) and the
+/// SAME share dirs, cold-starting in epoch 2: `beacon::build` reloads the share
+/// from disk, the key journal replays `PK_2`, the seed journal replays σ of
+/// rounds 64..70 — which phase 2's executor needs, because it re-derives 1..70
+/// into a fresh `FakeChain` — and the chain goes on to 82 with σ.
+///
+/// What proves the share reload: the chain ADVANCING past 70 in epoch 2. A
+/// signer's scheme needs the epoch's material, and after a restart the ceremony
+/// store holds only what `load_all(share_dir)` put back — with an empty share
+/// dir every node is `Withheld(NoUsableShare)` and the chain parks at 70 (the
+/// negative control below). "No second ceremony for epoch 2" is NOT what the
+/// zero `dkg_ceremony_ok` count proves: the actor only ever starts `now + 1`,
+/// so a restart inside epoch 2 could not re-deal epoch 2 with or without the
+/// share — the count pins that nothing else was minted either.
+///
+/// Falsifier: a node that cannot come back (`timed_out`); an epoch-2 agreed
+/// proposal that differs from phase 1's; a σ at 64..70 that differs from phase
+/// 1's (the journal replayed something else) or is missing (the executor could
+/// not re-derive); a `demoted_no_polynomial` count (a share NOT reloaded); two
+/// chains.
+#[test]
+fn restart_replays_key_and_seed_journals() {
+    let cfg = StandConfig::live(4, 1);
+    let (first, checkpoint) =
+        Stand::new(cfg.clone()).run_until_recover(reached(70), Duration::from_secs(200));
+    assert!(!first.timed_out, "{:?}", first.heights);
+    first.assert_lockstep_except(&[]);
+    let all = [0, 1, 2, 3];
+    let artifact1 = artifact_on_every_node(&first, &all, 2).to_vec();
+    let pk = pk_of(&artifact1);
+    let seeds1: BTreeMap<u64, Seed> = (64..=70)
+        .map(|h| (h, seed_agreed_at(&first, &all, h, 2, &pk)))
+        .collect();
+    let resume_from = first.heights.iter().copied().max().unwrap();
+
+    // The restarted process cold-starts in the epoch it stopped in, as
+    // `EpochTransition::cold_start` does at the node's finalized block; with the
+    // relay left at epoch 0 the replayed nodes re-derive 1..70 and then sit in
+    // epoch 0 with no engine for epoch 2 (observed 2026-09-09: `[70,70,70,70]`,
+    // no halt, no error, timed out).
+    let mut cfg = cfg;
+    cfg.cold_start_epoch = resume_from / EPOCH_LEN;
+    let second = Stand::new(cfg).replay(
+        checkpoint,
+        move |p| p.min_height() >= resume_from + 12,
+        Duration::from_secs(200),
+    );
+    assert!(
+        !second.timed_out,
+        "after replay: heights {:?} halted {:?} errors {:?}",
+        second.heights,
+        second.halted,
+        second.errors()
+    );
+    assert_eq!(second.diverged, None);
+    assert!(second.halted.is_empty(), "{:?}", second.halted);
+    second.assert_lockstep_except(&[]);
+    for i in all {
+        for (h, hash) in &first.hashes[i] {
+            assert_eq!(
+                second.hashes[i].get((h - 1) as usize).map(|x| x.1),
+                Some(*hash),
+                "node {i} height {h} changed across the replay"
+            );
+        }
+    }
+    assert_eq!(
+        proposal_bytes(artifact_on_every_node(&second, &all, 2)),
+        proposal_bytes(&artifact1),
+        "the epoch-2 agreed proposal changed across the replay"
+    );
+    for (h, seed) in &seeds1 {
+        assert_eq!(
+            &seed_agreed_at(&second, &all, *h, 2, &pk),
+            seed,
+            "σ at height {h} changed across the replay"
+        );
+    }
+    let min = *second.heights.iter().min().unwrap();
+    for h in 71..=min {
+        seed_agreed_at(&second, &all, h, 2, &pk);
+    }
+    let ceremonies: Vec<Option<f64>> = all
+        .iter()
+        .map(|&i| second.metric(i, "dkg_ceremony_ok_total"))
+        .collect();
+    assert_eq!(
+        ceremonies,
+        vec![Some(0.0); 4],
+        "a ceremony finalized in phase 2 — a re-mint for an epoch whose share was on disk"
+    );
+    for i in all {
+        assert_eq!(
+            second.metric(i, "epoch_engine_demoted_no_polynomial_total"),
+            Some(0.0),
+            "node {i} was demoted after the restart — its share did not come back"
+        );
+    }
+    assert!(
+        second.logs_containing("re-agreeing").is_empty(),
+        "{:?}",
+        second.logs_containing("re-agreeing")
+    );
+    eprintln!(
+        "(B4) phase1 heights={:?} real={:?}; phase2 heights={:?} real={:?} ceremonies={ceremonies:?} warns={:?}",
+        first.heights,
+        first.real_elapsed,
+        second.heights,
+        second.real_elapsed,
+        second.logs.iter().map(|l| l.text.as_str()).collect::<Vec<_>>()
+    );
+}
+
+/// (B5) Determinism with the live plane: seed 1 three times gives the
+/// byte-identical `(height, view, leader, digest, hash, σ)` trace on node 0 —
+/// the σ field is what this adds to (6): the DKG's dealings, the agreement's
+/// views and the recovered threshold signatures all have to replay identically;
+/// seed 2 gives a different trace.
+///
+/// Falsifier: a wall-clock read or OS randomness anywhere in the beacon plane
+/// (a differing σ or view between two runs); a trace without σ (then the field
+/// was not exercised).
+#[test]
+fn a_live_dkg_run_reproduces_the_seed_trace_byte_for_byte() {
+    let run = |seed: u64| {
+        let out =
+            Stand::new(StandConfig::live(4, seed)).run_until(reached(70), Duration::from_secs(200));
+        assert!(!out.timed_out, "seed {seed}: {:?}", out.heights);
+        assert!(
+            out.seeds[0].get(&70).cloned().flatten().is_some(),
+            "seed {seed}: no σ at height 70 — the trace carries no seed"
+        );
+        (out.trace_bytes(0), out.real_elapsed)
+    };
+    let (a, t_a) = run(1);
+    let (b, t_b) = run(1);
+    let (c, t_c) = run(1);
+    let (d, t_d) = run(2);
+    assert_eq!(a, b, "seed 1, runs 1 and 2 differ");
+    assert_eq!(a, c, "seed 1, runs 1 and 3 differ");
+    assert_ne!(a, d, "seed 2 reproduced seed 1's trace");
+    eprintln!(
+        "(B5) trace bytes={} real={t_a:?}/{t_b:?}/{t_c:?}/{t_d:?}",
+        a.len()
+    );
+}
+
+/// (B4′) The negative control for (B4): the same restart with every node's
+/// share dir WIPED between the phases. The journals replay (`PK_2`, σ of
+/// 64..70, the artifact), the executor re-derives 1..70 — and then every node
+/// is `Withheld(NoUsableShare)` for epoch 2, nobody signs, and the chain parks
+/// at 70. This is what (B4)'s "advanced past 70" observation rules out.
+///
+/// Falsifier: the chain advancing past 70 without shares (then a share is not
+/// what the signer needs, and (B4) proves nothing about the reload); a
+/// `demoted_no_polynomial` count of 0; a halt (parking is verify-only, not a
+/// safety fault).
+#[test]
+fn restart_without_the_share_dirs_parks_the_chain_verify_only() {
+    let cfg = StandConfig::live(4, 1);
+    let (first, checkpoint) =
+        Stand::new(cfg.clone()).run_until_recover(reached(70), Duration::from_secs(200));
+    assert!(!first.timed_out, "{:?}", first.heights);
+    let resume_from = first.heights.iter().copied().max().unwrap();
+    std::fs::remove_dir_all(&cfg.share_root).expect("wipe the share root");
+
+    let mut cfg = cfg;
+    cfg.cold_start_epoch = resume_from / EPOCH_LEN;
+    let second = Stand::new(cfg).replay(
+        checkpoint,
+        move |p| p.min_height() > resume_from,
+        Duration::from_secs(60),
+    );
+    assert!(
+        second.timed_out,
+        "the chain advanced without a share on any node: {:?}",
+        second.heights
+    );
+    assert_eq!(second.heights, vec![70; 4], "re-derived to 70 and parked");
+    assert!(second.halted.is_empty(), "{:?}", second.halted);
+    for i in 0..4 {
+        let demoted = second.metric(i, "epoch_engine_demoted_no_polynomial_total");
+        assert!(
+            demoted.is_some_and(|d| d >= 1.0),
+            "node {i} was not demoted for a missing share: {demoted:?}"
+        );
+    }
+    eprintln!(
+        "(B4') phase2 heights={:?} real={:?} demoted={:?}",
+        second.heights,
+        second.real_elapsed,
+        (0..4)
+            .map(|i| second.metric(i, "epoch_engine_demoted_no_polynomial_total"))
+            .collect::<Vec<_>>()
     );
 }

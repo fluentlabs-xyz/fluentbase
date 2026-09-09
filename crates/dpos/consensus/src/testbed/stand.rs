@@ -8,7 +8,14 @@ use super::{
     },
 };
 use crate::{
-    beacon::surface::StaticRandomness,
+    beacon::{
+        self,
+        actor::{CommitteeFor, CommitteePairFor},
+        carry::DkgQualProbe,
+        seed::Seed,
+        surface::StaticRandomness,
+        ArtifactSource, BeaconConfig, CommitteeSource,
+    },
     cert_follow::CertUpstream as _,
     cold_start_jump::JumpOutcome,
     dpos::VoteBackupItem,
@@ -42,8 +49,8 @@ use fluentbase_bls::{
 };
 use fluentbase_p2p::{
     constants::{
-        BROADCAST_CHANNEL, CERT_CHANNEL, DKG_SUBCHANNEL_BASE, FRONTIER_CHANNEL, MARSHAL_CHANNEL,
-        RESOLVER_CHANNEL, VOTE_CHANNEL,
+        BEACON_CHANNEL, BEACON_RESOLVER_CHANNEL, BROADCAST_CHANNEL, CERT_CHANNEL,
+        DKG_SUBCHANNEL_BASE, FRONTIER_CHANNEL, MARSHAL_CHANNEL, RESOLVER_CHANNEL, VOTE_CHANNEL,
     },
     NoopBlocker,
 };
@@ -55,6 +62,7 @@ use rand_08::{rngs::StdRng, SeedableRng as _};
 use std::{
     collections::BTreeMap,
     num::{NonZeroU32, NonZeroU64},
+    path::PathBuf,
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc, Mutex, OnceLock,
@@ -86,6 +94,35 @@ pub(super) struct StandConfig {
     pub shared_engine_partitions: bool,
     /// What the oracle tracks as the peer set.
     pub peer_set: PeerSet,
+    /// Which randomness each node runs — see [`Beacon`].
+    pub beacon: Beacon,
+    /// Root of the per-node `share_dir`s of a `Beacon::Live` stand — a real
+    /// directory (`beacon::build` reloads shares through `std::fs`), one per
+    /// `StandConfig::live` call, reused by a replay over the same config.
+    pub share_root: PathBuf,
+    /// The epoch the boundary relay's cold-start arm enters — production's
+    /// `EpochTransition::cold_start` at the node's finalized block. `0` for a
+    /// fresh chain; a replay sets it to the epoch of the height the nodes
+    /// stopped at (the relay then waits for the NEXT boundary block, and
+    /// `soft_enter_committees` covers the earlier epochs for verification).
+    pub cold_start_epoch: u64,
+}
+
+/// The randomness surface every node runs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Beacon {
+    /// `StaticRandomness`: a fixed anonymous sharing dealt from the full node
+    /// set, σ on demand for any epoch, no DKG plane. The regression fixture of
+    /// the first two sessions' tests.
+    Static,
+    /// The production beacon plane (`beacon::build`) on every node: a live DKG
+    /// on `BEACON_CHANNEL` / `BEACON_RESOLVER_CHANNEL` of the consensus network,
+    /// the epoch-key agreement instances on the plane's mux sub-channels, the
+    /// key / seed / artifact journals on the runner's storage under a per-node
+    /// prefix, shares in `share_root/node{i}`. `committee_for` and the
+    /// `dkgQual` bit come from the schedule (`dkgQual[e] = committee[e] !=
+    /// committee[e-1]`, the contract's rule).
+    Live,
 }
 
 /// The tracked peer set of the CONSENSUS plane (the set the marshal's p2p
@@ -138,6 +175,24 @@ impl StandConfig {
             committees: Committees::All,
             shared_engine_partitions: false,
             peer_set: PeerSet::AllNodes,
+            beacon: Beacon::Static,
+            share_root: PathBuf::new(),
+            cold_start_epoch: 0,
+        }
+    }
+
+    /// [`Self::honest`] with the live beacon plane and a fresh share root.
+    pub(super) fn live(n: usize, seed: u64) -> Self {
+        use std::sync::atomic::AtomicU64;
+        static SEQ: AtomicU64 = AtomicU64::new(0);
+        let nonce = SEQ.fetch_add(1, Ordering::Relaxed);
+        let share_root =
+            std::env::temp_dir().join(format!("fluent-testbed-{}-{nonce}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&share_root);
+        Self {
+            beacon: Beacon::Live,
+            share_root,
+            ..Self::honest(n, seed)
         }
     }
 }
@@ -160,6 +215,10 @@ pub(super) enum Role {
     /// The devnet vote equivocator on the vote channel.
     #[cfg(feature = "dpos-devnet-byzantine")]
     Equivocate,
+    /// `Beacon::Live` only: this node brings up NO beacon plane (no share, no
+    /// dealer log, no agreement seat) and runs `beacon::absent` instead — a
+    /// verifier that never signs. The dealer that is missing from the ceremony.
+    AbsentBeacon,
 }
 
 #[derive(Clone, Debug)]
@@ -253,6 +312,16 @@ pub(super) struct Outcome {
     /// Every node whose `SafetyHalt` latch is engaged, with the typed reason.
     pub halted: Vec<(usize, String)>,
     pub traces: Vec<Vec<TraceEntry>>,
+    /// `seeds[i][h]` = the σ node `i`'s executor derived height `h` from, for
+    /// every `h <= heights[i]` (`None` = seedless).
+    pub seeds: Vec<BTreeMap<u64, Option<Seed>>>,
+    /// `artifacts[i][e]` = the wire bytes of the agreed epoch-key artifact node
+    /// `i` holds for epoch `e` (`Beacon::Live`; empty otherwise). Read through
+    /// the plane's own `ArtifactSource` — what `consensus_getEpochArtifact` serves.
+    pub artifacts: Vec<BTreeMap<u64, Vec<u8>>>,
+    /// The runner's Prometheus text at the end of the run (every node's
+    /// families under its `node{i}_` label).
+    pub metrics: String,
     pub logs: Vec<Captured>,
     pub log_capture_live: bool,
     pub partitions: Vec<PartitionObservation>,
@@ -301,9 +370,11 @@ impl Outcome {
             .collect()
     }
 
-    /// The `(height, view, leader, digest, hash)` trace of node `i`, as bytes —
-    /// the object test (6) compares across runs.
+    /// The `(height, view, leader, digest, hash, σ)` trace of node `i`, as
+    /// bytes — the object test (6) compares across runs. σ is the seed the
+    /// executor derived the height from (`0xFF` = none).
     pub(super) fn trace_bytes(&self, i: usize) -> Vec<u8> {
+        use commonware_codec::Encode as _;
         let mut out = Vec::new();
         for e in &self.traces[i] {
             out.extend_from_slice(&e.height.to_be_bytes());
@@ -311,8 +382,26 @@ impl Outcome {
             out.push(e.leader.unwrap_or(0xFF));
             out.extend_from_slice(e.digest.as_slice());
             out.extend_from_slice(e.hash.unwrap_or(B256::ZERO).as_slice());
+            match self.seeds[i].get(&e.height).cloned().flatten() {
+                Some(seed) => out.extend_from_slice(&seed.encode()),
+                None => out.push(0xFF),
+            }
         }
         out
+    }
+
+    /// The value of one metric family of node `i` (`node{i}_<name>` in the
+    /// runner's exposition), `None` when the family is not registered.
+    pub(super) fn metric(&self, i: usize, name: &str) -> Option<f64> {
+        // prometheus-client appends `_total` to a counter's registered name.
+        let key = format!("node{i}_{name}");
+        let counter = format!("{key}_total");
+        self.metrics.lines().find_map(|line| {
+            let (k, v) = line.split_once(' ')?;
+            (k == key || k == counter)
+                .then(|| v.trim().parse().ok())
+                .flatten()
+        })
     }
 }
 
@@ -466,6 +555,8 @@ struct NodeHandles {
     halt: SafetyHalt,
     trace: Arc<Mutex<Vec<TraceEntry>>>,
     upstream: UpstreamCounters,
+    /// `Beacon::Live`: the plane's artifact read.
+    artifacts: Option<ArtifactSource>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -727,6 +818,23 @@ async fn drive(
         .collect();
     let logs = sink.lock().unwrap().clone();
     let upstream = nodes.iter().map(|h| h.upstream.snapshot()).collect();
+    let seeds = nodes
+        .iter()
+        .zip(&heights)
+        .map(|(node, &tip)| (0..=tip).map(|h| (h, node.chain.seed_at(h))).collect())
+        .collect();
+    let max_epoch =
+        epoch_at_block(heights.iter().copied().max().unwrap_or(0), 0, cfg.epoch_len).unwrap_or(0);
+    let artifacts = nodes
+        .iter()
+        .map(|node| match &node.artifacts {
+            Some(read) => (0..=max_epoch + 2)
+                .filter_map(|e| read(e).map(|bytes| (e, bytes)))
+                .collect(),
+            None => BTreeMap::new(),
+        })
+        .collect();
+    let metrics = ctx.encode();
     Outcome {
         heights,
         hashes,
@@ -734,6 +842,9 @@ async fn drive(
         upstream,
         halted,
         traces,
+        seeds,
+        artifacts,
+        metrics,
         logs,
         log_capture_live,
         partitions: part_obs,
@@ -987,6 +1098,102 @@ async fn build_node(
         }
     };
 
+    // The beacon plane (step 4): `beacon::build` exactly as `node/src/dpos.rs::
+    // build_beacon_plane` calls it, over the consensus network's BEACON /
+    // BEACON_RESOLVER channels and the same four mux brokers, with the schedule
+    // standing in for the staking reads. Built BEFORE the `OuterBuilder`, which
+    // takes its randomness and adopts its agreement instances.
+    let (dkg_height_tx, dkg_height_rx) = mpsc::channel::<u64>(256);
+    let (randomness, artifacts, agreement_intake) = match (cfg.beacon, role) {
+        (Beacon::Static, _) => (StaticRandomness::build(CHAIN_ID, full_snapshot), None, None),
+        (Beacon::Live, Role::AbsentBeacon) => (beacon::absent(&ctx_i), None, None),
+        (Beacon::Live, _) => {
+            let (bcs, bcr) = register(BEACON_CHANNEL).await;
+            let (brs, brr) = register(BEACON_RESOLVER_CHANNEL).await;
+            let roster = {
+                let schedule = schedule.clone();
+                move |epoch: u64| -> Option<Set<PeerPubkey>> {
+                    let snap = schedule(epoch)?;
+                    if snap.validators.is_empty() {
+                        return None;
+                    }
+                    Some(Set::from_iter_dedup(
+                        snap.validators.iter().map(|v| v.keys.peer_pubkey.clone()),
+                    ))
+                }
+            };
+            let committee_for: CommitteeFor = {
+                let roster = roster.clone();
+                Arc::new(roster)
+            };
+            let committee_pair_for: CommitteePairFor = {
+                let roster = roster.clone();
+                Arc::new(move |target| Some((roster(target.checked_sub(1)?)?, roster(target)?)))
+            };
+            let committee_source: CommitteeSource = {
+                let schedule = schedule.clone();
+                Arc::new(move |epoch| {
+                    let snap = schedule(epoch)?;
+                    if snap.validators.is_empty() {
+                        return None;
+                    }
+                    epoch_committee_from_snapshot(&snap).ok()
+                })
+            };
+            // The contract's rule, over the schedule: `dkgQual[e] = committee[e]
+            // != committee[e-1]`; "committed" = the schedule has the epoch. The
+            // state hash is irrelevant here (every read is the schedule), so
+            // `dkg_qual_at` answers a constant.
+            let dkg_qual_probe: DkgQualProbe = {
+                let roster = roster.clone();
+                Arc::new(move |epoch, _at| {
+                    let committed = roster(epoch).is_some();
+                    let bit = committed && epoch > 0 && roster(epoch) != roster(epoch - 1);
+                    Some((bit, committed))
+                })
+            };
+            let plane = beacon::build(
+                &ctx_i,
+                BeaconConfig {
+                    chain_id: CHAIN_ID,
+                    peer_keypair: peers[i].clone(),
+                    bls_keypair: bls[i].clone(),
+                    share_dir: cfg.share_root.join(format!("node{i}")),
+                    share_seal_key: None,
+                    peers: oracle.manager(),
+                    beacon_channel: (bcs, bcr),
+                    resolver_channel: (brs, brr),
+                    vote_mux: vote_mux.clone(),
+                    cert_mux: cert_mux.clone(),
+                    resolver_mux: res_mux.clone(),
+                    bodies_mux: bcast_mux.clone(),
+                    committee_for,
+                    committee_pair_for,
+                    committee_source,
+                    dkg_qual_at: Arc::new(|| Some(B256::ZERO)),
+                    dkg_qual_probe,
+                    heights: dkg_height_rx,
+                    plane_clock: plane_clock.clone(),
+                    geometry: {
+                        let epoch_len = cfg.epoch_len;
+                        Box::pin(async move { Some((0, epoch_len)) })
+                    },
+                    partition_prefix: format!("node{i}-"),
+                },
+            )
+            .await
+            .expect("beacon::build");
+            // The plane's task handles are detached on drop (commonware `Handle`
+            // has no `Drop`); they live until the runner returns.
+            (
+                plane.randomness,
+                Some(plane.artifact_bytes),
+                Some(plane.agreement_intake),
+            )
+        }
+    };
+    let dkg_height_tx = matches!(cfg.beacon, Beacon::Live).then_some(dkg_height_tx);
+
     let outer = OuterBuilder {
         me: me.clone(),
         blocker: NoopBlocker,
@@ -995,7 +1202,7 @@ async fn build_node(
         epoch_length_blocks: NonZeroU64::new(cfg.epoch_len).expect("epoch_len > 0"),
         dpos_activation_block: 0,
         signer_keypair: Some(bls[i].clone()),
-        randomness: StaticRandomness::build(CHAIN_ID, full_snapshot),
+        randomness,
         spawn_unblocked: Arc::new(Notify::new()),
         re_jump: Some(re_jump),
         soft_enter_committees: soft_enter,
@@ -1005,7 +1212,7 @@ async fn build_node(
         safety_halt: halt.clone(),
         tombstones: TombstoneSet::default(),
         plane_clock,
-        dkg_height_tx: None,
+        dkg_height_tx,
         timeouts: ConsensusTimeouts::fluent_1s(),
         mailbox_size: 256,
         deque_size: 64,
@@ -1040,7 +1247,7 @@ async fn build_node(
         slasher_sink: Arc::new(NoSink),
         slasher_wal_partition: format!("node{i}-slasher-wal"),
         slasher_evidence: None,
-        agreement_intake: None,
+        agreement_intake,
         #[cfg(feature = "dpos-devnet-byzantine")]
         byzantine: matches!(role, Role::Equivocate)
             .then_some(crate::byzantine::ByzantineMode::Equivocate),
@@ -1063,19 +1270,24 @@ async fn build_node(
     );
 
     // Boundary relay — the stand-in for `EpochTransition` (step 5): the
-    // cold-start arm enters epoch 0; on the last block of epoch E it hands the
-    // manager `(E+1, committee[E+1])` from the schedule.
+    // cold-start arm enters `cfg.cold_start_epoch`; on the last block of epoch
+    // E it hands the manager `(E+1, committee[E+1])` from the schedule.
     let boundary_tx = outer.boundary_sender();
     let trace = Arc::new(Mutex::new(Vec::<TraceEntry>::new()));
     {
-        let (schedule, trace, epoch_len) = (schedule.clone(), trace.clone(), cfg.epoch_len);
+        let (schedule, trace, epoch_len, cold) = (
+            schedule.clone(),
+            trace.clone(),
+            cfg.epoch_len,
+            cfg.cold_start_epoch,
+        );
         ctx_i
             .with_label("boundary_relay")
             .spawn(move |_| async move {
                 let mut last_sent: Option<u64> = None;
-                if let Some(s0) = schedule(0) {
-                    let _ = boundary_tx.send((Epoch::new(0), s0)).await;
-                    last_sent = Some(0);
+                if let Some(s0) = schedule(cold) {
+                    let _ = boundary_tx.send((Epoch::new(cold), s0)).await;
+                    last_sent = Some(cold);
                 }
                 while let Some(block) = hook_rx.recv().await {
                     trace.lock().unwrap().push(TraceEntry {
@@ -1128,5 +1340,6 @@ async fn build_node(
         halt,
         trace,
         upstream: upstream_counters,
+        artifacts,
     }
 }

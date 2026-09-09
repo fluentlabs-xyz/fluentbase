@@ -68,6 +68,10 @@ pub(super) struct FakeChain {
     /// tier-F tip. The stand compares nodes on THIS tier: tier-S at a height a
     /// node has not finalized yet may hold a notarized-then-nullified sibling.
     finalized_tip: Arc<AtomicU64>,
+    /// The σ the executor handed `derive_and_execute` at each height (last
+    /// writer wins, like `canonical`): `None` in a beacon-INACTIVE epoch. The
+    /// object the live-beacon tests compare across nodes.
+    seeds: Arc<Mutex<BTreeMap<u64, Option<Seed>>>>,
 }
 
 impl FakeChain {
@@ -90,6 +94,12 @@ impl FakeChain {
 
     fn spec_hash_at(&self, height: u64) -> Option<B256> {
         self.canonical.lock().unwrap().get(&height).copied()
+    }
+
+    /// The seed derive saw at `height` (`None` = derived seedless, or never
+    /// derived).
+    pub(super) fn seed_at(&self, height: u64) -> Option<Seed> {
+        self.seeds.lock().unwrap().get(&height).cloned().flatten()
     }
 
     fn land(&self, height: u64, hash: B256) {
@@ -163,6 +173,7 @@ impl DerivedBlockBuilder for FakeDeriver {
         }
         let sealed = sealed_at(parent_evm_hash, order.height, discriminator);
         self.chain.land(order.height, sealed.hash());
+        self.chain.seeds.lock().unwrap().insert(order.height, seed);
         Ok(sealed)
     }
 }
