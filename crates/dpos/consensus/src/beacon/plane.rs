@@ -353,10 +353,20 @@ where
     /// chain for geometry the plane already froze. `None` ⇒ the geometry is
     /// unreadable and no `DkgActor` starts.
     pub geometry: BoxFuture<'static, Option<(u64, u64)>>,
-    /// Prefix of the epoch-key agreement journal partitions
-    /// (`{prefix}dkg_epoch_{E}`, see [`crate::beacon::agreement_partition`]).
-    /// Production passes `""`; the in-crate testbed a per-node prefix.
+    /// Prefix of every storage partition the plane opens: the epoch-key
+    /// agreement journals (`{prefix}dkg_epoch_{E}`, see
+    /// [`crate::beacon::agreement_partition`]) and the key / seed / artifact
+    /// journals (`{prefix}` ‖ [`KEY_JOURNAL_PARTITION`] etc., see
+    /// [`journal_partition`]). Production passes `""`; the in-crate testbed a
+    /// per-node prefix, so N planes on one in-memory `Storage` do not write one
+    /// journal.
     pub partition_prefix: String,
+}
+
+/// A plane journal's partition under the plane's prefix: the production names
+/// verbatim for the empty prefix, `{prefix}{base}` otherwise.
+pub(crate) fn journal_partition(prefix: &str, base: &str) -> String {
+    format!("{prefix}{base}")
 }
 
 /// Read one stored artifact's wire bytes, or `None` where this node holds none.
@@ -519,7 +529,7 @@ where
     let (beacon_keys, key_writer) = super::key_journal::open(
         context.with_label("key_journal"),
         context.with_label("key_journal_writer"),
-        KEY_JOURNAL_PARTITION,
+        &journal_partition(&partition_prefix, KEY_JOURNAL_PARTITION),
     )
     .await?;
 
@@ -557,7 +567,7 @@ where
     let (seed_store, seed_writer) = super::seed_journal::open(
         context.with_label("seed_journal"),
         context.with_label("seed_journal_writer"),
-        SEED_JOURNAL_PARTITION,
+        &journal_partition(&partition_prefix, SEED_JOURNAL_PARTITION),
         super::certify::SEED_RETENTION,
     )
     .await?;
@@ -576,7 +586,7 @@ where
     let (artifact_store, artifact_writer_handle) = artifact::open(
         context.with_label("artifact_store"),
         context.with_label("artifact_store_writer"),
-        ARTIFACT_JOURNAL_PARTITION,
+        &journal_partition(&partition_prefix, ARTIFACT_JOURNAL_PARTITION),
     )
     .await?;
     // Refill from the share files, AFTER the journal's own rehydration. `insert` is
@@ -815,7 +825,10 @@ where
                     };
                     let (promoted, refused) = quarantine.promote_epoch(epoch, oracle.as_ref());
                     if promoted > 0 || refused > 0 {
-                        info!(epoch, promoted, refused, "beacon: re-checked quarantined seeds");
+                        info!(
+                            epoch,
+                            promoted, refused, "beacon: re-checked quarantined seeds"
+                        );
                     }
                 }
             }
@@ -834,4 +847,32 @@ where
         randomness,
         artifact_bytes,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The production journal names are the bare constants: an empty prefix
+    /// changes nothing, and the testbed's per-node prefix lands in front of
+    /// every one of them.
+    #[test]
+    fn journal_partitions_are_the_production_names_under_the_empty_prefix() {
+        assert_eq!(
+            journal_partition("", KEY_JOURNAL_PARTITION),
+            "beacon-key-ordinal"
+        );
+        assert_eq!(
+            journal_partition("", SEED_JOURNAL_PARTITION),
+            "beacon-seed-ordinal"
+        );
+        assert_eq!(
+            journal_partition("", ARTIFACT_JOURNAL_PARTITION),
+            "beacon-artifact-metadata"
+        );
+        assert_eq!(
+            journal_partition("node3-", SEED_JOURNAL_PARTITION),
+            "node3-beacon-seed-ordinal"
+        );
+    }
 }
