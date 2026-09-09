@@ -20,7 +20,6 @@ Each subfolder is an individual crate. Notable crates include:
 - modexp — Modular exponentiation precompile (EIP-198).
 - multicall — Batched/multicall helper contract.
 - nitro — A AWS Nitro attestation verifier.
-- oauth2 — OAuth 2.0 style authentication helper contracts.
 - ripemd160 — RIPEMD-160 precompile.
 - secp256r1 — secp256r1 (P-256) signature verification precompile (EIP-7212).
 - sha256 — SHA-256 hashing precompile.

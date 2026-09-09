@@ -70,8 +70,6 @@ mod exec_input;
 #[cfg(test)]
 mod fee_manager;
 #[cfg(test)]
-mod oauth2;
-#[cfg(test)]
 mod oom;
 #[cfg(test)]
 mod universal_token;

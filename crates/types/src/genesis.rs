@@ -23,11 +23,10 @@ pub const PRECOMPILE_UNUSED_4: Address = address!("0x000000000000000000000000000
 pub const PRECOMPILE_WEBAUTHN_VERIFIER: Address =
     address!("0x0000000000000000000000000000000000520005");
 
-/// Address of the **OAuth2 verifier** runtime.
-///
-/// Used for validating OAuth2/OpenID-style proofs and authorization assertions.
-pub const PRECOMPILE_OAUTH2_VERIFIER: Address =
-    address!("0x0000000000000000000000000000000000520006");
+// `0x…520006` is reserved: it hosted an OAuth2 verifier placeholder that only ever returned
+// `UnreachableCodeReached`, and Fluent Testnet and Mainnet state still carry that code. No
+// runtime is deployed there any more, and the address must not be reused for another runtime
+// without a fork.
 
 /// Address of the **Nitro verifier** runtime.
 ///
@@ -143,7 +142,6 @@ pub const EXECUTE_USING_SYSTEM_RUNTIME_ADDRESSES: &[Address] = &[
     PRECOMPILE_IDENTITY,
     PRECOMPILE_KZG_POINT_EVALUATION,
     PRECOMPILE_NITRO_VERIFIER,
-    PRECOMPILE_OAUTH2_VERIFIER,
     PRECOMPILE_RIPEMD160,
     PRECOMPILE_SECP256K1_RECOVER,
     PRECOMPILE_SHA256,
@@ -170,7 +168,6 @@ pub fn is_execute_using_system_runtime(address: &Address) -> bool {
 ///  be re-enabled in the next releases
 pub const ENGINE_METERED_PRECOMPILES: &[Address] = &[
     PRECOMPILE_NITRO_VERIFIER,
-    PRECOMPILE_OAUTH2_VERIFIER,
     PRECOMPILE_WASM_RUNTIME,
     PRECOMPILE_WEBAUTHN_VERIFIER,
     PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME,
