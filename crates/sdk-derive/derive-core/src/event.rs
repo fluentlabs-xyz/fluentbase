@@ -282,6 +282,20 @@ mod tests {
     }
 
     #[test]
+    fn test_byte_array_fields_sign_as_uint8_arrays() {
+        // `[u8; N]` is laid out one word per element by the codec and hashed as an array when
+        // indexed, so the signature has to say `uint8[N]`; `bytesN` belongs to `FixedBytes<N>`.
+        let input: DeriveInput = parse_quote! {
+            struct Tagged {
+                #[indexed]
+                tag: [u8; 4],
+                digest: B256,
+            }
+        };
+        assert!(generate(input).contains("\"Tagged(uint8[4],bytes32)\""));
+    }
+
+    #[test]
     fn test_no_indexed() {
         let input: DeriveInput = parse_quote! {
             struct DataStored {

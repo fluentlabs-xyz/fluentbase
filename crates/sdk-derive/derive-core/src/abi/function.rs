@@ -227,6 +227,39 @@ mod tests {
     }
 
     #[test]
+    fn test_byte_arrays_advertise_the_layout_the_codec_encodes() {
+        // `[u8; N]` is encoded one word per element, so the selector must say `uint8[N]`.
+        // Advertising `bytes32` would let canonical calldata select the route and then fail to
+        // decode.
+        let sig: Signature = parse_quote! {
+            fn store(root: [u8; 32], tag: [u8; 4]) -> [u8; 32]
+        };
+        let abi = FunctionABI::from_signature(&sig).unwrap();
+        assert_eq!(abi.inputs[0].ty, "uint8[32]");
+        assert_eq!(abi.inputs[1].ty, "uint8[4]");
+        assert_eq!(abi.outputs[0].ty, "uint8[32]");
+        assert_eq!(abi.signature().unwrap(), "store(uint8[32],uint8[4])");
+
+        // `bytesN` stays reachable through the types that carry the single-word codec.
+        let sig: Signature = parse_quote! {
+            fn store(root: FixedBytes<32>, tag: B32) -> B256
+        };
+        let abi = FunctionABI::from_signature(&sig).unwrap();
+        assert_eq!(abi.signature().unwrap(), "store(bytes32,bytes4)");
+        assert_eq!(abi.outputs[0].ty, "bytes32");
+    }
+
+    #[test]
+    fn test_wide_fixed_bytes_aliases_have_no_signature() {
+        // Solidity's fixed-bytes types stop at `bytes32`, and the codec writes `B512` as one
+        // inline 64-byte blob that no Solidity type describes, so no selector can be derived.
+        let sig: Signature = parse_quote! {
+            fn verify(signature: B512) -> bool
+        };
+        assert!(FunctionABI::from_signature(&sig).is_err());
+    }
+
+    #[test]
     fn test_function_with_no_return() {
         let sig: Signature = parse_quote! {
             fn initialize(admin: Address)

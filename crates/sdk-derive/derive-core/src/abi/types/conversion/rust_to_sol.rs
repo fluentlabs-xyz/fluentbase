@@ -62,6 +62,12 @@ fn convert_path_type(type_path: &syn::TypePath) -> Result<SolType, ConversionErr
 
     let type_name = last_segment.ident.to_string();
 
+    // A `B<bits>` alias is decided before the primitive table, so that a width the Solidity ABI
+    // has no type for is rejected rather than silently mapped to something else.
+    if let Some(width) = fixed_bytes_alias_width(&type_name) {
+        return fixed_bytes(width, &type_name);
+    }
+
     // Try primitive types first
     if let Some(result) = convert_primitive_type(&type_name) {
         return Ok(result);
@@ -116,19 +122,6 @@ fn convert_primitive_type(type_name: &str) -> Option<SolType> {
     }
 
     match type_name {
-        "B8" => Some(SolType::FixedBytes(1)),
-        "B16" => Some(SolType::FixedBytes(2)),
-        "B32" => Some(SolType::FixedBytes(4)),
-        "B64" => Some(SolType::FixedBytes(8)),
-        "B96" => Some(SolType::FixedBytes(12)),
-        "B128" => Some(SolType::FixedBytes(16)),
-        "B160" => Some(SolType::FixedBytes(20)),
-        "B192" => Some(SolType::FixedBytes(24)),
-        "B224" => Some(SolType::FixedBytes(28)),
-        "B256" => Some(SolType::FixedBytes(32)),
-        "B512" => Some(SolType::FixedArray(Box::new(SolType::Uint(8)), 64)),
-        "B1024" => Some(SolType::FixedArray(Box::new(SolType::Uint(8)), 128)),
-        "B2048" => Some(SolType::FixedArray(Box::new(SolType::Uint(8)), 256)),
         "bool" => Some(SolType::Bool),
         "Address" => Some(SolType::Address),
         "String" | "str" => Some(SolType::String),
@@ -173,13 +166,10 @@ fn convert_array_type(array: &syn::TypeArray) -> Result<SolType, ConversionError
         ));
     }
 
+    // `[u8; N]` is `uint8[N]`, not `bytesN`. The codec encodes a Rust array element by element -
+    // one word per `u8` - so a selector that said `bytesN` would accept canonical calldata the
+    // router cannot decode. `bytesN` is what `FixedBytes<N>` and the `B8`..`B256` aliases carry.
     let elem_type = rust_to_sol(&array.elem)?;
-    if let SolType::Uint(8) = elem_type {
-        if len <= 32 {
-            return Ok(SolType::FixedBytes(len));
-        }
-    }
-
     Ok(SolType::FixedArray(Box::new(elem_type), len))
 }
 
@@ -197,6 +187,60 @@ fn convert_slice_type(slice: &syn::TypeSlice) -> Result<SolType, ConversionError
     Ok(SolType::Array(Box::new(elem_type)))
 }
 
+/// The width in bytes a `B<bits>` alias stands for, if the name is one.
+///
+/// The list is exactly the aliases the primitive types crate defines; any other `B`-prefixed name
+/// is a user's own type - `B24` and `B4096` are structs, not fixed bytes. Whether a listed width
+/// has a Solidity type is [`fixed_bytes`]'s decision, not this one: every alias is routed there,
+/// so a wide one cannot reach the primitive table and bypass the width rule.
+fn fixed_bytes_alias_width(type_name: &str) -> Option<usize> {
+    const ALIASES: [(&str, usize); 13] = [
+        ("B8", 1),
+        ("B16", 2),
+        ("B32", 4),
+        ("B64", 8),
+        ("B96", 12),
+        ("B128", 16),
+        ("B160", 20),
+        ("B192", 24),
+        ("B224", 28),
+        ("B256", 32),
+        ("B512", 64),
+        ("B1024", 128),
+        ("B2048", 256),
+    ];
+
+    ALIASES
+        .iter()
+        .find(|(name, _)| *name == type_name)
+        .map(|(_, width)| *width)
+}
+
+/// The single home of "the Solidity ABI has no fixed-bytes type wider than `bytes32`".
+///
+/// Both spellings of a fixed-bytes parameter land here - the `B<bits>` aliases and an explicit
+/// `FixedBytes<N>` - so they are accepted and refused on the same rule, with the same message.
+/// `fluentbase-codec` asserts the same bound at the type level for the Solidity ABI.
+fn fixed_bytes(width: usize, described_as: &str) -> Result<SolType, ConversionError> {
+    // The two ways to be outside `bytes1`..`bytes32` fail for different reasons, so they say
+    // different things: there is no zero-width Solidity type at all, while a too-wide one has
+    // `Bytes` and `[u8; N]` to fall back on.
+    if width == 0 {
+        return Err(ConversionError::InvalidBytesSize(format!(
+            "{described_as} is zero bytes wide; the Solidity ABI's fixed-bytes types start at \
+             bytes1"
+        )));
+    }
+    if width > 32 {
+        return Err(ConversionError::InvalidBytesSize(format!(
+            "{described_as} is {width} bytes wide; the Solidity ABI has no fixed-bytes type wider \
+             than bytes32 - use `Bytes` for a dynamic blob or `[u8; {width}]` for \
+             `uint8[{width}]`"
+        )));
+    }
+    Ok(SolType::FixedBytes(width))
+}
+
 fn convert_fixed_bytes(type_name: &str, args: &PathArguments) -> Result<SolType, ConversionError> {
     if let PathArguments::AngleBracketed(angle_args) = args {
         if let Some(GenericArgument::Const(syn::Expr::Lit(syn::ExprLit {
@@ -205,9 +249,7 @@ fn convert_fixed_bytes(type_name: &str, args: &PathArguments) -> Result<SolType,
         }))) = angle_args.args.first()
         {
             if let Ok(size) = lit_int.base10_parse::<usize>() {
-                if size > 0 && size <= 32 {
-                    return Ok(SolType::FixedBytes(size));
-                }
+                return fixed_bytes(size, &format!("{type_name}<{size}>"));
             }
         }
     }
@@ -387,9 +429,16 @@ mod tests {
 
     #[test]
     fn test_array_types() {
-        // Fixed size arrays of u8 up to 32 bytes are now converted to FixedBytes
-        assert_type("[u8; 5]", SolType::FixedBytes(5));
-        assert_type("[u8; 32]", SolType::FixedBytes(32));
+        // Fixed-size arrays of u8 are `uint8[N]`, never `bytesN`: the codec lays them out one
+        // word per element, and the selector has to describe that layout
+        assert_type(
+            "[u8; 5]",
+            SolType::FixedArray(Box::new(SolType::Uint(8)), 5),
+        );
+        assert_type(
+            "[u8; 32]",
+            SolType::FixedArray(Box::new(SolType::Uint(8)), 32),
+        );
 
         // Other fixed size arrays remain as FixedArray
         assert_type(
@@ -401,16 +450,19 @@ mod tests {
             SolType::FixedArray(Box::new(SolType::Address), 3),
         );
 
-        // Nested arrays - now with updated inner type
+        // Nested arrays
         assert_type(
             "[[u8; 5]; 3]",
-            SolType::FixedArray(Box::new(SolType::FixedBytes(5)), 3),
+            SolType::FixedArray(
+                Box::new(SolType::FixedArray(Box::new(SolType::Uint(8)), 5)),
+                3,
+            ),
         );
 
-        // Vec with fixed size arrays - now with updated inner type
+        // Vec with fixed size arrays
         assert_type(
             "Vec<[u8; 5]>",
-            SolType::Array(Box::new(SolType::FixedBytes(5))),
+            SolType::Array(Box::new(SolType::FixedArray(Box::new(SolType::Uint(8)), 5))),
         );
 
         // Dynamic arrays
@@ -422,19 +474,17 @@ mod tests {
     }
 
     #[test]
-    fn test_u8_arrays_to_fixed_bytes() {
-        // Test various sizes to ensure conversion is working
-        assert_type("[u8; 1]", SolType::FixedBytes(1));
-        assert_type("[u8; 16]", SolType::FixedBytes(16));
-        assert_type("[u8; 32]", SolType::FixedBytes(32));
+    fn test_u8_arrays_are_uint8_arrays_at_every_length() {
+        // The mapping does not change at 32: `bytesN` is a different layout (one right-padded
+        // word) and is only reachable through `FixedBytes<N>` and the `B*` aliases
+        for len in [1usize, 16, 32, 33] {
+            assert_type(
+                &format!("[u8; {len}]"),
+                SolType::FixedArray(Box::new(SolType::Uint(8)), len),
+            );
+        }
 
-        // Test that arrays larger than 32 remain as FixedArray
-        assert_type(
-            "[u8; 33]",
-            SolType::FixedArray(Box::new(SolType::Uint(8)), 33),
-        );
-
-        // Test that arrays of other types remain as FixedArray, even if length <= 32
+        // Arrays of other element types are fixed arrays as well
         assert_type(
             "[u16; 32]",
             SolType::FixedArray(Box::new(SolType::Uint(16)), 32),
@@ -475,12 +525,22 @@ mod tests {
         assert_type("FixedBytes<1>", SolType::FixedBytes(1));
         assert_type("FixedBytes<32>", SolType::FixedBytes(32));
 
-        // Invalid sizes
+        // Invalid sizes. The two ends fail for different reasons, and each message has to name
+        // its own: a zero-width type has no Solidity counterpart at all, while a too-wide one is
+        // pointed at `Bytes` and `[u8; N]`.
         assert_error("FixedBytes<0>", |e| {
-            assert!(matches!(e, ConversionError::InvalidBytesSize(_)));
+            let ConversionError::InvalidBytesSize(msg) = e else {
+                panic!("expected InvalidBytesSize, got {e:?}");
+            };
+            assert!(msg.contains("zero bytes wide"), "{msg}");
+            assert!(msg.contains("start at bytes1"), "{msg}");
         });
         assert_error("FixedBytes<33>", |e| {
-            assert!(matches!(e, ConversionError::InvalidBytesSize(_)));
+            let ConversionError::InvalidBytesSize(msg) = e else {
+                panic!("expected InvalidBytesSize, got {e:?}");
+            };
+            assert!(msg.contains("33 bytes wide"), "{msg}");
+            assert!(msg.contains("wider than bytes32"), "{msg}");
         });
     }
 
@@ -490,8 +550,11 @@ mod tests {
         assert_type("&mut bool", SolType::Bool);
         assert_type("&Vec<u8>", SolType::Array(Box::new(SolType::Uint(8))));
 
-        // Fixed size array of u8 is now treated as FixedBytes
-        assert_type("&[u8; 5]", SolType::FixedBytes(5));
+        // A reference does not change the mapping of a byte array either
+        assert_type(
+            "&[u8; 5]",
+            SolType::FixedArray(Box::new(SolType::Uint(8)), 5),
+        );
     }
 
     #[test]
@@ -554,18 +617,15 @@ mod tests {
         }
 
         #[test]
-        fn test_large_b_types() {
-            // Test large B-types that exceed Solidity's 32-byte limit for bytesN
-            // These should convert to fixed arrays of uint8
-            assert_type("B512", SolType::FixedArray(Box::new(SolType::Uint(8)), 64)); // 512 bits = 64 bytes
-            assert_type(
-                "B1024",
-                SolType::FixedArray(Box::new(SolType::Uint(8)), 128),
-            ); // 1024 bits = 128 bytes
-            assert_type(
-                "B2048",
-                SolType::FixedArray(Box::new(SolType::Uint(8)), 256),
-            ); // 2048 bits = 256 bytes
+        fn test_wide_b_types_have_no_solidity_type() {
+            // Solidity's fixed-bytes types stop at `bytes32`. These aliases used to be advertised
+            // as `uint8[N]`, which is not the single inline blob the codec writes for them, so no
+            // selector could ever match the calldata; they are rejected instead
+            for ty in ["B512", "B1024", "B2048"] {
+                assert_error(ty, |e| {
+                    assert!(matches!(e, ConversionError::InvalidBytesSize(_)));
+                });
+            }
         }
 
         #[test]
@@ -606,14 +666,10 @@ mod tests {
                 SolType::FixedArray(Box::new(SolType::FixedBytes(8)), 10),
             );
 
-            // Large B-types in collections
-            assert_type(
-                "Vec<B512>",
-                SolType::Array(Box::new(SolType::FixedArray(
-                    Box::new(SolType::Uint(8)),
-                    64,
-                ))),
-            );
+            // A wide alias is rejected inside a collection as well
+            assert_error("Vec<B512>", |e| {
+                assert!(matches!(e, ConversionError::InvalidBytesSize(_)));
+            });
 
             // Nested collections
             assert_type(
@@ -640,14 +696,10 @@ mod tests {
                 ]),
             );
 
-            // Large B-types in tuples
-            assert_type(
-                "(B512, u64)",
-                SolType::Tuple(vec![
-                    SolType::FixedArray(Box::new(SolType::Uint(8)), 64),
-                    SolType::Uint(64),
-                ]),
-            );
+            // A wide alias is rejected inside a tuple as well
+            assert_error("(B512, u64)", |e| {
+                assert!(matches!(e, ConversionError::InvalidBytesSize(_)));
+            });
         }
 
         #[test]
@@ -677,8 +729,10 @@ mod tests {
                 SolType::FixedArray(Box::new(SolType::FixedBytes(8)), 5),
             );
 
-            // References to large B-types
-            assert_type("&B512", SolType::FixedArray(Box::new(SolType::Uint(8)), 64));
+            // A reference to a wide alias is rejected as well
+            assert_error("&B512", |e| {
+                assert!(matches!(e, ConversionError::InvalidBytesSize(_)));
+            });
         }
 
         #[test]

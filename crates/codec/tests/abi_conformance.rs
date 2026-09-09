@@ -482,7 +482,61 @@ fn fixed_arrays_match_the_specification() {
         [Address::ZERO, Address::repeat_byte(9)]
     );
 
+    // `[u8; N]` is `uint8[N]` - one word per element - and not `bytesN`; the selector derived
+    // from a `[u8; N]` parameter says `uint8[N]` for exactly this reason.
+    case!(
+        &mut r,
+        sol_data::FixedArray<sol_data::Uint<8>, 4>,
+        [1u8, 2, 3, 4]
+    );
+    case!(
+        &mut r,
+        sol_data::FixedArray<sol_data::Uint<8>, 32>,
+        core::array::from_fn::<u8, 32, _>(|i| i as u8)
+    );
+
     r.assert_clean("fixed arrays");
+}
+
+/// `[u8; N]` and `FixedBytes<N>` are different Solidity types with different layouts: `uint8[N]`
+/// is one left-padded word per element, `bytesN` a single right-padded word. The router derives
+/// the selector from the Rust type and encodes the body with this codec, so a selector naming
+/// the wrong one accepts canonical calldata the contract cannot decode. Both layouts are checked
+/// against the specification at every width Solidity has.
+#[test]
+fn byte_arrays_and_fixed_bytes_match_the_specification_at_every_width() {
+    let mut r = Report::default();
+
+    macro_rules! at_width {
+        ($($n:literal),+ $(,)?) => {$({
+            let bytes: [u8; $n] = core::array::from_fn(|i| (i + 1) as u8);
+            case!(
+                &mut r,
+                sol_data::FixedArray<sol_data::Uint<8>, $n>,
+                bytes,
+                concat!("[u8; ", $n, "] as uint8[", $n, "]")
+            );
+            case!(
+                &mut r,
+                sol_data::FixedBytes<$n>,
+                FixedBytes::<$n>::new(bytes),
+                concat!("FixedBytes<", $n, "> as bytes", $n)
+            );
+            // The two are never interchangeable, not even at N = 1: `bytes1` puts the byte
+            // first, `uint8[1]` puts it last.
+            assert_ne!(
+                our_encoding(&bytes),
+                our_encoding(&FixedBytes::<$n>::new(bytes))
+            );
+        })+};
+    }
+
+    at_width!(
+        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
+        26, 27, 28, 29, 30, 31, 32
+    );
+
+    r.assert_clean("byte arrays and fixed bytes at every width");
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -766,6 +820,28 @@ fn function_arguments_match_the_specification() {
         (vec!["a".to_string(), String::new(), "ccc".to_string()],),
         "f(string[]) with three elements"
     );
+    // A byte array and fixed bytes of the same width side by side: N words, then one word.
+    function_args_case!(
+        &mut r,
+        (
+            sol_data::FixedArray<sol_data::Uint<8>, 4>,
+            sol_data::FixedBytes<4>
+        ),
+        ([1u8, 2, 3, 4], FixedBytes::<4>::new([1, 2, 3, 4])),
+        "f(uint8[4],bytes4)"
+    );
+    function_args_case!(
+        &mut r,
+        (
+            sol_data::FixedArray<sol_data::Uint<8>, 32>,
+            sol_data::FixedBytes<32>
+        ),
+        (
+            core::array::from_fn::<u8, 32, _>(|i| i as u8),
+            FixedBytes::<32>::repeat_byte(0xab)
+        ),
+        "f(uint8[32],bytes32)"
+    );
 
     r.assert_clean("function arguments");
 }
@@ -887,6 +963,27 @@ fn indexed_topics_match_the_specification() {
         sol_data::FixedArray<sol_data::Uint<64>, 3>,
         [0u64, 1, u64::MAX],
         "uint64[3] containing zero"
+    );
+
+    // `[u8; N]` is `uint8[N]`: a reference type hashed over one word per byte, not `bytesN`,
+    // which is a value type whose topic is the right-padded word itself.
+    topic_case!(
+        &mut r,
+        sol_data::FixedArray<sol_data::Uint<8>, 4>,
+        [1u8, 2, 3, 4],
+        "uint8[4]"
+    );
+    topic_case!(
+        &mut r,
+        sol_data::FixedArray<sol_data::Uint<8>, 32>,
+        core::array::from_fn::<u8, 32, _>(|i| i as u8),
+        "uint8[32]"
+    );
+    topic_case!(
+        &mut r,
+        sol_data::FixedBytes<32>,
+        FixedBytes::<32>::repeat_byte(0x11),
+        "bytes32"
     );
 
     // Tuples follow the struct rule: members concatenated in place, each padded to a word.
@@ -1021,6 +1118,21 @@ fn packed_mode_matches_the_specification() {
         sol_data::FixedBytes<32>,
         FixedBytes::<32>::repeat_byte(7),
         "bytes32"
+    );
+
+    // `[u8; N]` is `uint8[N]` here too, so packed encoding pads each byte to a word rather than
+    // concatenating the bytes the way `bytesN` does. The two stay distinct in packed mode.
+    packed_case!(
+        &mut r,
+        sol_data::FixedArray<sol_data::Uint<8>, 4>,
+        [1u8, 2, 3, 4],
+        "uint8[4], elements padded to a word"
+    );
+    packed_case!(
+        &mut r,
+        sol_data::FixedArray<sol_data::Uint<8>, 32>,
+        core::array::from_fn::<u8, 32, _>(|i| i as u8),
+        "uint8[32], elements padded to a word"
     );
 
     // "array elements are padded, but still encoded in-place"

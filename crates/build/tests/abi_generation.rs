@@ -77,6 +77,43 @@ fn edge_cases_struct_abi() {
     });
 }
 
+/// `[u8; N]` is published as `uint8[N]` and `FixedBytes<N>` / `B*` as `bytesN`, because that is
+/// what the router encodes. `generate_abi` re-derives every selector from the published entry
+/// and checks it against the router's, so this also exercises that check for both layouts.
+#[test]
+fn byte_array_params_abi() {
+    let (_temp, project) = fixture_to_project("byte_array_params");
+    let abi = generate_abi(&project).expect("generate ABI");
+
+    let function = |name: &str| -> Value {
+        abi.iter()
+            .find(|entry| entry["name"] == name)
+            .unwrap_or_else(|| panic!("`{name}` is missing from the ABI"))
+            .clone()
+    };
+    let types = |params: &Value| -> Vec<String> {
+        params
+            .as_array()
+            .expect("parameters are an array")
+            .iter()
+            .map(|param| {
+                param["type"]
+                    .as_str()
+                    .expect("type is a string")
+                    .to_string()
+            })
+            .collect()
+    };
+
+    let set_tag = function("setTag");
+    assert_eq!(types(&set_tag["inputs"]), ["uint8[4]", "uint8[32]"]);
+    assert_eq!(types(&set_tag["outputs"]), ["uint8[32]"]);
+
+    let set_hash = function("setHash");
+    assert_eq!(types(&set_hash["inputs"]), ["bytes32", "bytes4"]);
+    assert_eq!(types(&set_hash["outputs"]), ["bytes32"]);
+}
+
 /// Root file of a crate whose modules both declare a `Config` struct
 const DUPLICATE_NAMES_ROOT: &str = r#"
 #![cfg_attr(target_arch = "wasm32", no_std)]
