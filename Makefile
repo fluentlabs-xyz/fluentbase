@@ -48,6 +48,9 @@ run-e2e-tests:
 .PHONY: run-contracts-tests
 run-contracts-tests:
 	cargo nextest run --manifest-path=./contracts/Cargo.toml --workspace $(TEST_PROFILE) --no-default-features --features "$(TEST_FEATURES)"
+	# Second shape: the staking contract compiles its devnet-only views out by
+	# default, so the run above never reaches them or their selector pins.
+	cargo nextest run --manifest-path=./contracts/Cargo.toml --workspace $(TEST_PROFILE) --no-default-features --features "$(TEST_FEATURES),fluentbase-contracts-staking/devnet-views"
 	cargo nextest run --manifest-path=./examples/Cargo.toml --workspace $(TEST_PROFILE) --no-default-features --features "$(TEST_FEATURES)"
 
 .PHONY: test

@@ -36,6 +36,10 @@ debug-print = [
     "fluentbase-evm/debug-print",
 ]
 svm = ["fluentbase-contracts/svm"]
+# Builds the staking artifact with its devnet-only views. `fluentbase-contracts`
+# is a build-dependency here, so this is what puts the feature on the artifact
+# that ends up embedded in the genesis blob.
+devnet-views = ["fluentbase-contracts/devnet-views"]
 wasmtime = []
 std = [
     "fluentbase-sdk/std",

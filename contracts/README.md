@@ -24,6 +24,7 @@ Each subfolder is an individual crate. Notable crates include:
 - ripemd160 — RIPEMD-160 precompile.
 - secp256r1 — secp256r1 (P-256) signature verification precompile (EIP-7212).
 - sha256 — SHA-256 hashing precompile.
+- staking — Genesis validator staking, delegation, rewards, committees, and slashing.
 - svm — Solana VM (SVM) integration contracts.
 - wasm — A compiler form Wasm into rWasm (devnet & testnet only).
 - webauthn — WebAuthn verification helpers and tests.

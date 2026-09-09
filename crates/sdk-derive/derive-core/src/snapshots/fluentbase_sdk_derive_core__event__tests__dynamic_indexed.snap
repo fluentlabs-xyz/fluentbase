@@ -1,6 +1,5 @@
 ---
 source: crates/sdk-derive/derive-core/src/event.rs
-assertion_line: 321
 expression: generate(input)
 ---
 impl Message {
@@ -27,7 +26,8 @@ impl Message {
             {
                 let mut buf = fluentbase_sdk::codec::bytes::BytesMut::new();
                 let value = self.sender.clone();
-                SolidityABI::encode(&value, &mut buf, 0).expect("encode indexed field");
+                SolidityABI::encode(&value, &mut buf, 0)
+                    .map_err(|_| fluentbase_sdk::ExitCode::MalformedBuiltinParams)?;
                 if SolidityABI::<Address>::is_dynamic() {
                     fluentbase_sdk::B256::new(SDK::keccak256(&buf).0)
                 } else {
@@ -39,7 +39,8 @@ impl Message {
             {
                 let mut buf = fluentbase_sdk::codec::bytes::BytesMut::new();
                 let value = self.text.clone();
-                SolidityABI::encode(&value, &mut buf, 0).expect("encode indexed field");
+                SolidityABI::encode(&value, &mut buf, 0)
+                    .map_err(|_| fluentbase_sdk::ExitCode::MalformedBuiltinParams)?;
                 if SolidityABI::<String>::is_dynamic() {
                     fluentbase_sdk::B256::new(SDK::keccak256(&buf).0)
                 } else {

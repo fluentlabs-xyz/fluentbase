@@ -45,6 +45,12 @@ flate2 = { workspace = true }
 [dev-dependencies]
 #fluentbase-svm = { workspace = true }
 fluentbase-sdk = { workspace = true }
+# The staking contract's devnet-only views, which this suite calls. Declared here
+# rather than in `[features]` because dev-dependency features are not unified
+# into ordinary builds: the tests always get the views, and `cargo build`, which
+# is what produces the published genesis, never does.
+fluentbase-genesis = { workspace = true, features = ["devnet-views"] }
+fluentbase-contracts = { workspace = true, features = ["devnet-views"] }
 criterion = "0.8.1"
 #solana-curve25519 = { workspace = true, default-features = false }
 #solana-bn254 = { workspace = true, default-features = false }
@@ -85,6 +91,12 @@ debug-print = [
 wasmtime = [
     "fluentbase-runtime/wasmtime",
     "fluentbase-revm/wasmtime",
+]
+# Kept as an explicit opt-in for a plain `cargo build`; the test builds get it
+# through `[dev-dependencies]` above without naming it.
+devnet-views = [
+    "fluentbase-genesis/devnet-views",
+    "fluentbase-contracts/devnet-views",
 ]
 
 [[bench]]

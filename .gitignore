@@ -40,9 +40,9 @@ contracts/target
 examples/target
 
 genesis-*.json
-node_modules
+node_modules/
 evm-e2e/tests/
-datadir
+datadir/
 .claude
-graphify-out
+graphify-out/
 .dpos-study

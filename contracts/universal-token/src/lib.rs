@@ -799,6 +799,7 @@ pub fn main_entry<SDK: SystemAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     let (sig, input) = input.split_at(SIG_LEN_BYTES);
     let sig = u32::from_be_bytes(sig.try_into().unwrap());
     let evm_exit_code = match sig {
+        // ERC20
         SIG_ERC20_SYMBOL => erc20_symbol_handler(sdk, input),
         SIG_ERC20_NAME => erc20_name_handler(sdk, input),
         SIG_ERC20_TRANSFER => erc20_transfer_handler(sdk, input),
@@ -809,15 +810,21 @@ pub fn main_entry<SDK: SystemAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
         SIG_ERC20_TOTAL_SUPPLY => erc20_total_supply_handler(sdk, input),
         SIG_ERC20_BALANCE => erc20_balance_handler(sdk, input),
         SIG_ERC20_BALANCE_OF => erc20_balance_of_handler(sdk, input),
+
+        // ERC20Mintable
         SIG_ERC20_MINT => erc20_mint_handler(sdk, input),
         SIG_ERC20_BURN => erc20_burn_handler(sdk, input),
-        // Pausable extension
+
+        // ERC20Pausable
         SIG_ERC20_PAUSE => erc20_pause_handler(sdk, input),
         SIG_ERC20_UNPAUSE => erc20_unpause_handler(sdk, input),
+
+        // ERC2612
         SIG_ERC20_PERMIT => erc20_permit_handler(sdk, input),
         SIG_ERC20_NONCES => erc20_nonces_handler(sdk, input),
         SIG_ERC20_DOMAIN_SEPARATOR => erc20_domain_separator_handler(sdk, input),
-        // Wrapper extension
+
+        // WrappedNative
         SIG_ERC20_DEPOSIT if sdk.contract_metadata().len() >= INITIAL_SETTINGS_V2_SIZE => {
             erc20_deposit_handler(sdk, input)
         }

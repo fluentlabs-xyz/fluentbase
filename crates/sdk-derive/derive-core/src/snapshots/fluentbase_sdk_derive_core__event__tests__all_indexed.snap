@@ -1,6 +1,5 @@
 ---
 source: crates/sdk-derive/derive-core/src/event.rs
-assertion_line: 279
 expression: generate(input)
 ---
 impl Approval {
@@ -27,7 +26,8 @@ impl Approval {
             {
                 let mut buf = fluentbase_sdk::codec::bytes::BytesMut::new();
                 let value = self.owner.clone();
-                SolidityABI::encode(&value, &mut buf, 0).expect("encode indexed field");
+                SolidityABI::encode(&value, &mut buf, 0)
+                    .map_err(|_| fluentbase_sdk::ExitCode::MalformedBuiltinParams)?;
                 if SolidityABI::<Address>::is_dynamic() {
                     fluentbase_sdk::B256::new(SDK::keccak256(&buf).0)
                 } else {
@@ -39,7 +39,8 @@ impl Approval {
             {
                 let mut buf = fluentbase_sdk::codec::bytes::BytesMut::new();
                 let value = self.spender.clone();
-                SolidityABI::encode(&value, &mut buf, 0).expect("encode indexed field");
+                SolidityABI::encode(&value, &mut buf, 0)
+                    .map_err(|_| fluentbase_sdk::ExitCode::MalformedBuiltinParams)?;
                 if SolidityABI::<Address>::is_dynamic() {
                     fluentbase_sdk::B256::new(SDK::keccak256(&buf).0)
                 } else {
@@ -51,7 +52,8 @@ impl Approval {
             {
                 let mut buf = fluentbase_sdk::codec::bytes::BytesMut::new();
                 let value = self.value.clone();
-                SolidityABI::encode(&value, &mut buf, 0).expect("encode indexed field");
+                SolidityABI::encode(&value, &mut buf, 0)
+                    .map_err(|_| fluentbase_sdk::ExitCode::MalformedBuiltinParams)?;
                 if SolidityABI::<U256>::is_dynamic() {
                     fluentbase_sdk::B256::new(SDK::keccak256(&buf).0)
                 } else {

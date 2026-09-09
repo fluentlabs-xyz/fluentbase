@@ -110,12 +110,32 @@ pub fn read_bytes<B: ByteOrder, const ALIGN: usize, const SOL_MODE: bool>(
     offset: usize,
 ) -> Result<Bytes, CodecError> {
     let (data_offset, data_len) = read_bytes_header::<B, ALIGN, SOL_MODE>(buf, offset)?;
-
-    let data = if SOL_MODE {
-        buf.chunk()[data_offset + 32..data_offset + 32 + data_len].to_vec()
+    let data_start = if SOL_MODE {
+        data_offset
+            .checked_add(align_up::<ALIGN>(mem::size_of::<u32>()))
+            .ok_or_else(|| {
+                CodecError::Decoding(DecodingError::BufferOverflow {
+                    msg: "overflow calculating Solidity bytes body offset".to_string(),
+                })
+            })?
     } else {
-        buf.chunk()[data_offset..data_offset + data_len].to_vec()
+        data_offset
     };
+    let data_end = data_start.checked_add(data_len).ok_or_else(|| {
+        CodecError::Decoding(DecodingError::BufferOverflow {
+            msg: "overflow calculating bytes body end".to_string(),
+        })
+    })?;
+    let available = buf.chunk().len();
+    if data_end > available {
+        return Err(CodecError::Decoding(DecodingError::BufferTooSmall {
+            expected: data_end,
+            found: available,
+            msg: "buffer too small to read bytes body".to_string(),
+        }));
+    }
+
+    let data = buf.chunk()[data_start..data_end].to_vec();
 
     Ok(Bytes::from(data))
 }
@@ -257,6 +277,24 @@ mod tests {
 
         assert_eq!(offset, 32);
         assert_eq!(size, 5);
+    }
+
+    #[test]
+    fn test_read_bytes_rejects_truncated_solidity_body() {
+        let original = alloy_primitives::Bytes::from(vec![1, 2, 3]);
+        let mut buf = BytesMut::new();
+        SolidityABI::encode(&original, &mut buf, 0).unwrap();
+        buf.truncate(64);
+        let encoded = buf.freeze();
+
+        assert!(matches!(
+            read_bytes::<BigEndian, 32, true>(&encoded, 0),
+            Err(CodecError::Decoding(DecodingError::BufferTooSmall {
+                expected: 67,
+                found: 64,
+                ..
+            }))
+        ));
     }
 
     #[test]

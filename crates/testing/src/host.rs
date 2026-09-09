@@ -15,6 +15,9 @@ pub struct TestingContextImpl {
 
 pub type HostTestingContextNativeAPI = RuntimeContextWrapper;
 
+type CallHandler =
+    Box<dyn FnMut(Address, U256, &[u8], Option<u64>) -> SyscallResult<Bytes> + 'static>;
+
 impl TestingContextImpl {
     pub fn with_shared_context_input(self, ctx: SharedContextInputV1) -> Self {
         self.inner.borrow_mut().shared_context_input_v1 = ctx;
@@ -84,6 +87,13 @@ impl TestingContextImpl {
         self.inner.borrow_mut().fuel_limit = Some(gas_limit * FUEL_DENOM_RATE);
         self
     }
+    /// Installs a handler for mocked cross-contract calls.
+    pub fn set_call_handler(
+        &self,
+        handler: impl FnMut(Address, U256, &[u8], Option<u64>) -> SyscallResult<Bytes> + 'static,
+    ) {
+        self.inner.borrow_mut().call_handler = Some(Box::new(handler));
+    }
     pub fn consumed_fuel(&self) -> u64 {
         self.inner.borrow().consumed_fuel
     }
@@ -136,6 +146,26 @@ impl TestingContextImpl {
     pub fn logs(&self) -> Vec<(Bytes, Vec<B256>)> {
         self.inner.borrow().logs.clone()
     }
+
+    /// Fails the test when `what` is produced while a `static_call` is open.
+    ///
+    /// Covers the three effects EIP-214 forbids inside a static frame and that
+    /// this host can actually see: a storage write, a transient-storage write,
+    /// and a LOG. All three are reachable here from two directions — a mocked
+    /// callee that reaches back into the host, and the CONTRACT ITSELF, whose
+    /// reserve read (`util.rs`, `erc20_scalar_read`) and five BLS precompile
+    /// reads (`bls.rs`, `call_precompile` and `verify`) all run inside one.
+    /// A log added to any of those paths would revert on a real chain and pass
+    /// here unnoticed.
+    fn reject_write_inside_static_call(&self, what: &str) {
+        assert_eq!(
+            self.inner.borrow().static_depth,
+            0,
+            "{what} was written inside a static call. A real static frame \
+             cannot, so whatever this test proved, it did not prove it about \
+             the call the contract actually makes."
+        );
+    }
 }
 
 struct TestingContextInner {
@@ -152,6 +182,9 @@ struct TestingContextInner {
     consumed_fuel: u64,
     fuel_limit: Option<u64>,
     contract_metadata: Option<Bytes>,
+    call_handler: Option<CallHandler>,
+    /// How many `static_call`s are on the stack right now.
+    static_depth: u32,
 }
 
 impl Default for TestingContextImpl {
@@ -171,6 +204,8 @@ impl Default for TestingContextImpl {
                 consumed_fuel: 0,
                 fuel_limit: None,
                 contract_metadata: None,
+                call_handler: None,
+                static_depth: 0,
             })),
         }
     }
@@ -178,6 +213,7 @@ impl Default for TestingContextImpl {
 
 impl StorageAPI for TestingContextImpl {
     fn write_storage(&mut self, slot: U256, value: U256) -> SyscallResult<()> {
+        self.reject_write_inside_static_call("storage");
         let target_address = self.inner.borrow().shared_context_input_v1.contract.address;
         self.inner
             .borrow_mut()
@@ -266,6 +302,7 @@ impl SharedAPI for TestingContextImpl {
     }
 
     fn write_transient_storage(&mut self, slot: U256, value: U256) -> SyscallResult<()> {
+        self.reject_write_inside_static_call("transient storage");
         let target_address = self.inner.borrow().shared_context_input_v1.contract.address;
         self.inner
             .borrow_mut()
@@ -287,6 +324,7 @@ impl SharedAPI for TestingContextImpl {
     }
 
     fn emit_log<D: AsRef<[u8]>>(&mut self, topics: &[B256], data: D) -> SyscallResult<()> {
+        self.reject_write_inside_static_call("a log");
         self.inner
             .borrow_mut()
             .logs
@@ -334,12 +372,20 @@ impl SharedAPI for TestingContextImpl {
 
     fn call(
         &mut self,
-        _address: Address,
-        _value: U256,
-        _input: &[u8],
-        _fuel_limit: Option<u64>,
+        address: Address,
+        value: U256,
+        input: &[u8],
+        fuel_limit: Option<u64>,
     ) -> SyscallResult<Bytes> {
-        unimplemented!("not supported for testing context")
+        let mut handler = self
+            .inner
+            .borrow_mut()
+            .call_handler
+            .take()
+            .expect("call handler is not configured for testing context");
+        let result = handler(address, value, input, fuel_limit);
+        self.inner.borrow_mut().call_handler = Some(handler);
+        result
     }
 
     fn call_code(
@@ -361,13 +407,30 @@ impl SharedAPI for TestingContextImpl {
         unimplemented!("not supported for testing context")
     }
 
+    /// Routed to the same handler as `call`, with a zero value — but with the
+    /// one guarantee staticness actually carries enforced around it.
+    ///
+    /// A mocked callee is a closure rather than a frame, so the runtime's own
+    /// static check has nothing to act on here. What it CAN act on is the state
+    /// this host owns: a mock that reaches back into the host and writes to
+    /// storage is doing the thing a real static call cannot, and a test that
+    /// passes on such a mock proves nothing about the shipped call. So the
+    /// window is marked, and a write inside it fails loudly instead of
+    /// succeeding silently. Reads are untouched.
+    ///
+    /// This does NOT make the harness equivalent to a real static frame. It
+    /// catches the one class it can see; a mock that only mutates its own
+    /// captured Rust state is invisible here, and always will be.
     fn static_call(
         &mut self,
-        _address: Address,
-        _input: &[u8],
-        _fuel_limit: Option<u64>,
+        address: Address,
+        input: &[u8],
+        fuel_limit: Option<u64>,
     ) -> SyscallResult<Bytes> {
-        unimplemented!("not supported for testing context")
+        self.inner.borrow_mut().static_depth += 1;
+        let result = self.call(address, U256::ZERO, input, fuel_limit);
+        self.inner.borrow_mut().static_depth -= 1;
+        result
     }
 
     fn destroy_account(&mut self, _address: Address) -> SyscallResult<()> {
@@ -410,5 +473,112 @@ impl SystemAPI for TestingContextImpl {
         // Test host does not emulate nested execution or native-value transfer.
         // Return success so contracts can exercise happy-path call flows in unit tests.
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Installs a mock that writes one storage slot and answers nothing.
+    fn install_writing_mock(sdk: &TestingContextImpl) {
+        let mut host = sdk.clone();
+        sdk.set_call_handler(move |_address, _value, _input, _fuel_limit| {
+            host.write_storage(U256::from(1), U256::from(2));
+            SyscallResult::new(Bytes::new(), 0, 0, ExitCode::Ok)
+        });
+    }
+
+    /// Installs a mock that emits one log and answers nothing.
+    fn install_logging_mock(sdk: &TestingContextImpl) {
+        let mut host = sdk.clone();
+        sdk.set_call_handler(move |_address, _value, _input, _fuel_limit| {
+            host.emit_log(&[B256::ZERO], []);
+            SyscallResult::new(Bytes::new(), 0, 0, ExitCode::Ok)
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "storage was written inside a static call")]
+    fn a_mock_that_writes_storage_inside_a_static_call_fails_the_test() {
+        let mut sdk = TestingContextImpl::default();
+        install_writing_mock(&sdk);
+        sdk.static_call(Address::ZERO, &[], None);
+    }
+
+    /// LOG is the third thing EIP-214 forbids, and the one the CONTRACT could
+    /// reach on its own: every reserve read and every BLS precompile read runs
+    /// inside a static call, so an event added to one of those paths would
+    /// revert on a real chain and pass here.
+    #[test]
+    #[should_panic(expected = "a log was written inside a static call")]
+    fn a_log_emitted_inside_a_static_call_fails_the_test() {
+        let mut sdk = TestingContextImpl::default();
+        install_logging_mock(&sdk);
+        sdk.static_call(Address::ZERO, &[], None);
+    }
+
+    /// The same log through a plain `call` is legitimate — the gate is about
+    /// staticness, not about logging.
+    #[test]
+    fn the_same_log_is_allowed_through_a_plain_call() {
+        let mut sdk = TestingContextImpl::default();
+        install_logging_mock(&sdk);
+        assert!(sdk
+            .call(Address::ZERO, U256::ZERO, &[], None)
+            .status
+            .is_ok());
+        assert_eq!(sdk.take_logs().len(), 1);
+    }
+
+    /// The window closes with the frame: the gate must not outlive the static
+    /// call that opened it. Without this a single static call would poison
+    /// every later assertion in the same test, and the two panics above would
+    /// pass for the wrong reason.
+    #[test]
+    fn the_log_gate_closes_when_the_static_call_returns() {
+        let mut sdk = TestingContextImpl::default();
+        sdk.set_call_handler(|_address, _value, _input, _fuel_limit| {
+            SyscallResult::new(Bytes::new(), 0, 0, ExitCode::Ok)
+        });
+        sdk.static_call(Address::ZERO, &[], None);
+        sdk.emit_log(&[B256::ZERO], []);
+        assert_eq!(sdk.take_logs().len(), 1);
+    }
+
+    /// The guard is about staticness, not about mocks writing at all: the same
+    /// mock through a plain `call` is legitimate and must still work.
+    #[test]
+    fn the_same_mock_is_allowed_through_a_plain_call() {
+        let mut sdk = TestingContextImpl::default();
+        install_writing_mock(&sdk);
+        assert!(sdk
+            .call(Address::ZERO, U256::ZERO, &[], None)
+            .status
+            .is_ok());
+        assert_eq!(sdk.storage(&U256::from(1)).data, U256::from(2));
+    }
+
+    /// And a read inside a static call is untouched — which is the case every
+    /// epoch close in the staking suite depends on.
+    #[test]
+    fn a_static_call_still_reaches_a_reading_mock() {
+        let mut sdk = TestingContextImpl::default();
+        let host = sdk.clone();
+        sdk.set_call_handler(move |_address, _value, _input, _fuel_limit| {
+            let seen = host.storage(&U256::from(7)).data;
+            SyscallResult::new(
+                Bytes::copy_from_slice(&seen.to_be_bytes::<32>()),
+                0,
+                0,
+                ExitCode::Ok,
+            )
+        });
+        sdk.write_storage(U256::from(7), U256::from(9));
+        let result = sdk.static_call(Address::ZERO, &[], None);
+        assert!(result.status.is_ok());
+        assert_eq!(U256::from_be_slice(&result.data), U256::from(9));
+        // The window closed again: a write after the static call is fine.
+        sdk.write_storage(U256::from(7), U256::from(10));
     }
 }

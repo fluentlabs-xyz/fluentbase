@@ -100,6 +100,24 @@ where
     }
 }
 
+/// Stride between element slots in a Solidity array head.
+///
+/// Solidity reserves one 32-byte offset word per element when the element type is dynamic, and
+/// inlines the element itself when it is static. `T::HEADER_SIZE` is the sum of the element's
+/// field header sizes, not the width of its slot in the head — using it for a dynamic element
+/// overshoots and writes into the previous element's tail.
+fn solidity_head_stride<T, B, const ALIGN: usize>() -> usize
+where
+    B: ByteOrder,
+    T: Encoder<B, ALIGN, true, false>,
+{
+    if T::IS_DYNAMIC {
+        ALIGN
+    } else {
+        align_up::<ALIGN>(T::HEADER_SIZE)
+    }
+}
+
 // Implementation for Solidity mode
 impl<T, B: ByteOrder, const ALIGN: usize> Encoder<B, ALIGN, true, false> for Vec<T>
 where
@@ -124,10 +142,10 @@ where
         }
 
         // Encode values
-        let mut value_encoder = BytesMut::zeroed(32 * self.len());
+        let head_stride = solidity_head_stride::<T, B, ALIGN>();
+        let mut value_encoder = BytesMut::zeroed(head_stride * self.len());
         for (index, obj) in self.iter().enumerate() {
-            let elem_offset = ALIGN.max(T::HEADER_SIZE) * index;
-            obj.encode(&mut value_encoder, elem_offset)?;
+            obj.encode(&mut value_encoder, head_stride * index)?;
         }
 
         let data = value_encoder.freeze();
@@ -147,9 +165,9 @@ where
         let mut result = Vec::with_capacity(data_len);
         let chunk = &buf.chunk()[(data_offset + 32) as usize..];
 
+        let head_stride = solidity_head_stride::<T, B, ALIGN>();
         for i in 0..data_len {
-            let elem_offset = i * align_up::<ALIGN>(T::HEADER_SIZE);
-            let value = T::decode(&chunk, elem_offset)?;
+            let value = T::decode(&chunk, head_stride * i)?;
             result.push(value);
         }
 
