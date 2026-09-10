@@ -131,6 +131,25 @@ Consequently, Ethereum tooling must not assume that Fluentbase applies EIP-7825:
 a gas limit above `2^24` can be valid on Fluentbase if it satisfies the block-level and economic
 constraints above.
 
+## Ethereum compatibility: precompile addresses are not pre-warmed
+
+[EIP-2929](https://eips.ethereum.org/EIPS/eip-2929) places the precompile addresses in the initial
+warm set of every transaction, so the first call to one costs the warm account-access price (100 gas).
+
+Fluent precompiles are ordinary rWASM contracts installed at genesis. The node wires the EVM with an
+empty precompile provider (`crates/node/src/evm.rs`: `PrecompilesMap::from_static(...)` over
+`RwasmPrecompiles::precompiles()`), and that provider's warm-address list is what seeds the access
+list at the start of a transaction. It is empty, so no precompile address starts warm: the first
+call to a precompile address in a transaction pays the cold account-access price (2600 gas), and
+later calls in the same transaction pay 100 gas. This has been the behavior on every live network
+since launch, and canonical receipts reflect it. Changing it alters gas usage for existing contracts
+and therefore requires a coordinated network fork.
+
+`RwasmPrecompiles::warm_addresses` in `fluentbase-revm` still returns the canonical EIP-2929 list
+because the native-versus-rWASM state-test comparison runs both sides with Ethereum semantics. Only
+the node wiring is authoritative for chain behavior: anything that replays real transactions must
+seed the same empty warm set, which is what the `e2e/evm` fixture runner does.
+
 ---
 
 ## Operational invariants
