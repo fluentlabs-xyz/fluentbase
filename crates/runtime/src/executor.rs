@@ -1,5 +1,5 @@
 use crate::{
-    metrics::{self, RuntimeModeLabel, RuntimeTimer},
+    metrics::{self, RuntimeModeLabel, RuntimeStateLabel, RuntimeTimer},
     module_factory::ModuleFactory,
     runtime::{ContractRuntime, ExecutionMode, SystemRuntime},
     RuntimeContext,
@@ -84,7 +84,7 @@ pub trait RuntimeExecutor {
     fn resume(
         &mut self,
         call_id: u32,
-        return_data: &[u8],
+        return_data: Vec<u8>,
         fuel16_ptr: u32,
         fuel_consumed: u64,
         fuel_refunded: i64,
@@ -129,7 +129,7 @@ impl RuntimeExecutor for ThreadLocalExecutor {
     fn resume(
         &mut self,
         call_id: u32,
-        return_data: &[u8],
+        return_data: Vec<u8>,
         fuel16_ptr: u32,
         fuel_consumed: u64,
         fuel_refunded: i64,
@@ -183,7 +183,10 @@ pub struct RuntimeFactoryExecutor {
     /// A module factory
     pub module_factory: ModuleFactory,
     /// Suspended runtimes keyed by per-transaction call identifier.
-    pub recoverable_runtimes: HashMap<u32, ExecutionMode>,
+    ///
+    /// Boxed because every interruption cycle takes the runtime out of the map and puts it back
+    /// under a fresh identifier; moving a pointer keeps that from copying the whole store twice.
+    pub recoverable_runtimes: HashMap<u32, Box<ExecutionMode>>,
     /// An import linker
     pub import_linker: Arc<ImportLinker>,
     /// Monotonically increasing counter for assigning call identifiers.
@@ -224,7 +227,7 @@ impl RuntimeFactoryExecutor {
     pub fn try_remember_runtime(
         &mut self,
         runtime_result: RuntimeResult,
-        runtime: ExecutionMode,
+        runtime: Box<ExecutionMode>,
     ) -> ExecutionResult {
         let interruption = match runtime_result {
             RuntimeResult::Result(result) => {
@@ -349,7 +352,7 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
         ctx: RuntimeContext,
     ) -> ExecutionResult {
         let timer = RuntimeTimer::start();
-        let state = metrics::state_label(ctx.state);
+        let state = RuntimeStateLabel::from_state(ctx.state);
         let system_runtime_params = match &bytecode_or_hash {
             BytecodeOrHash::Bytecode { address, hash, .. } => {
                 fluentbase_types::is_execute_using_system_runtime(address)
@@ -379,7 +382,7 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
         };
 
         // If there is no cached store, then construct a new one (slow)
-        let mut exec_mode = if let Some((address, code_hash)) = system_runtime_params {
+        let mut exec_mode = Box::new(if let Some((address, code_hash)) = system_runtime_params {
             let consume_fuel = fluentbase_types::is_engine_metered_precompile(&address);
             let runtime = SystemRuntime::new(
                 module,
@@ -434,7 +437,7 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
                 return result;
             }
             ExecutionMode::Contract(runtime.unwrap())
-        };
+        });
         let mode = runtime_mode_label(&exec_mode);
 
         // Bound the linear memory held simultaneously by every live frame of this transaction.
@@ -480,7 +483,7 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
     fn resume(
         &mut self,
         call_id: u32,
-        return_data: &[u8],
+        return_data: Vec<u8>,
         fuel16_ptr: u32,
         fuel_consumed: u64,
         fuel_refunded: i64,
@@ -502,9 +505,9 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
         metrics::set_recoverable_runtimes(self.recoverable_runtimes.len());
         let (mode, state) = runtime_labels(&runtime);
         let mut fuel_remaining = runtime.remaining_fuel();
-        let mut resume_inner = |runtime: &mut ExecutionMode| {
-            // Copy return data into return data
-            runtime.context_mut().execution_result.return_data = return_data.to_vec();
+        let mut resume_inner = |runtime: &mut ExecutionMode, return_data: Vec<u8>| {
+            // Hand the caller's buffer to the runtime as its return data
+            runtime.context_mut().execution_result.return_data = return_data;
             if fuel16_ptr > 0 {
                 let mut buffer = [0u8; 16];
                 LittleEndian::write_u64(&mut buffer[..8], fuel_consumed);
@@ -526,7 +529,7 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
             }
             result
         };
-        let mut result = resume_inner(&mut runtime);
+        let mut result = resume_inner(&mut runtime, return_data);
         let fuel_consumed = fuel_remaining
             .zip(runtime.remaining_fuel())
             .map(|(before, after)| {
@@ -595,10 +598,10 @@ fn runtime_mode_label(runtime: &ExecutionMode) -> RuntimeModeLabel {
     }
 }
 
-fn runtime_labels(runtime: &ExecutionMode) -> (RuntimeModeLabel, &'static str) {
+fn runtime_labels(runtime: &ExecutionMode) -> (RuntimeModeLabel, RuntimeStateLabel) {
     (
         runtime_mode_label(runtime),
-        metrics::state_label(runtime.context().state),
+        RuntimeStateLabel::from_state(runtime.context().state),
     )
 }
 
@@ -671,7 +674,7 @@ mod tests {
         .unwrap();
         let runtime = ExecutionMode::Contract(strategy_runtime);
 
-        let result = executor.try_remember_runtime(interruption, runtime);
+        let result = executor.try_remember_runtime(interruption, Box::new(runtime));
 
         assert_eq!(result.exit_code, ExitCode::UnknownError.into_i32());
         assert_eq!(result.fuel_consumed, 100);
@@ -684,7 +687,7 @@ mod tests {
         let mut executor = RuntimeFactoryExecutor::new(import_linker_v1_preview());
 
         // No runtime was ever saved under this call_id; resume must fail cleanly, not panic.
-        let result = executor.resume(42, &[], 0, 100, 0, ExitCode::Ok.into_i32());
+        let result = executor.resume(42, vec![], 0, 100, 0, ExitCode::Ok.into_i32());
 
         assert_eq!(result.exit_code, ExitCode::UnknownError.into_i32());
         assert_eq!(result.fuel_consumed, 100);
@@ -757,7 +760,7 @@ mod tests {
         for child_fuel in [100, u64::MAX] {
             let mut executor = RuntimeFactoryExecutor::new(import_linker_v1_preview());
             let call_id = interrupted_contract(&mut executor);
-            let result = executor.resume(call_id, &[], u32::MAX, child_fuel, 0, 0);
+            let result = executor.resume(call_id, vec![], u32::MAX, child_fuel, 0, 0);
 
             assert_eq!(result.exit_code, ExitCode::MemoryOutOfBounds.into_i32());
             assert_eq!(result.fuel_consumed, 0);
@@ -771,7 +774,7 @@ mod tests {
         for child_fuel in [0, 100] {
             let mut executor = RuntimeFactoryExecutor::new(import_linker_v1_preview());
             let call_id = interrupted_contract(&mut executor);
-            let result = executor.resume(call_id, &[], 64, child_fuel, 0, 0);
+            let result = executor.resume(call_id, vec![], 64, child_fuel, 0, 0);
 
             assert_eq!(result.exit_code, ExitCode::Ok.into_i32());
             assert!(executor.recoverable_runtimes.is_empty());
@@ -784,7 +787,7 @@ mod tests {
     fn resume_contract_rejects_excessive_child_fuel() {
         let mut executor = RuntimeFactoryExecutor::new(import_linker_v1_preview());
         let call_id = interrupted_contract(&mut executor);
-        let result = executor.resume(call_id, &[], 0, u64::MAX, 0, 0);
+        let result = executor.resume(call_id, vec![], 0, u64::MAX, 0, 0);
 
         assert_eq!(result.exit_code, ExitCode::OutOfFuel.into_i32());
         assert!(result.fuel_consumed <= 100_000);
@@ -820,9 +823,9 @@ mod tests {
             runtime.execute().unwrap();
             executor
                 .recoverable_runtimes
-                .insert(1, ExecutionMode::System(runtime));
+                .insert(1, Box::new(ExecutionMode::System(runtime)));
 
-            let result = executor.resume(1, &[], 0, child_fuel, 0, 0);
+            let result = executor.resume(1, vec![], 0, child_fuel, 0, 0);
 
             assert_eq!(result.exit_code, ExitCode::OutOfFuel.into_i32());
             assert!(result.fuel_consumed <= 100_000);
@@ -871,7 +874,9 @@ mod tests {
         // frames, not the size of the largest one.
         for (call_id, pages) in [(1u32, 3u32), (2, 5)] {
             let frame = suspended_frame_with_memory(&executor, pages);
-            executor.recoverable_runtimes.insert(call_id, frame);
+            executor
+                .recoverable_runtimes
+                .insert(call_id, Box::new(frame));
         }
 
         assert_eq!(
@@ -884,7 +889,7 @@ mod tests {
     fn in_flight_memory_ignores_frames_that_were_forgotten() {
         let mut executor = RuntimeFactoryExecutor::new(import_linker_v1_preview());
         let frame = suspended_frame_with_memory(&executor, 4);
-        executor.recoverable_runtimes.insert(7, frame);
+        executor.recoverable_runtimes.insert(7, Box::new(frame));
         assert_eq!(
             executor.in_flight_memory_bytes(),
             4 * N_BYTES_PER_MEMORY_PAGE as u64
@@ -900,7 +905,7 @@ mod tests {
         // Room for the four pages already suspended, but not for the frame about to be built.
         executor.max_in_flight_memory_bytes = 5 * N_BYTES_PER_MEMORY_PAGE as u64;
         let frame = suspended_frame_with_memory(&executor, 4);
-        executor.recoverable_runtimes.insert(1, frame);
+        executor.recoverable_runtimes.insert(1, Box::new(frame));
 
         let result = executor.execute(
             contract_bytecode_with_memory(3),
@@ -920,7 +925,7 @@ mod tests {
         let mut executor = RuntimeFactoryExecutor::new(import_linker_v1_preview());
         executor.max_in_flight_memory_bytes = 8 * N_BYTES_PER_MEMORY_PAGE as u64;
         let frame = suspended_frame_with_memory(&executor, 4);
-        executor.recoverable_runtimes.insert(1, frame);
+        executor.recoverable_runtimes.insert(1, Box::new(frame));
 
         let result = executor.execute(
             contract_bytecode_with_memory(3),
@@ -961,7 +966,9 @@ mod tests {
                 "frame {call_id} failed for another reason"
             );
             let frame = suspended_frame(executor, module.clone());
-            executor.recoverable_runtimes.insert(call_id, frame);
+            executor
+                .recoverable_runtimes
+                .insert(call_id, Box::new(frame));
             admitted += 1;
         }
         admitted

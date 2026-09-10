@@ -43,14 +43,9 @@ impl ModuleFactory {
         let mut ctx = self.lock_cache();
         let code_hash = bytecode_or_hash.code_hash();
         let module_key = match &bytecode_or_hash {
-            BytecodeOrHash::Bytecode { address, .. } => CompiledModuleCacheKey::new(
-                code_hash,
-                CompilationConfigFingerprint::from_config(
-                    &fluentbase_sdk_config_for_runtime_cache(*address),
-                    CompilationBackend::Rwasm,
-                    *address,
-                ),
-            ),
+            BytecodeOrHash::Bytecode { address, .. } => {
+                CompiledModuleCacheKey::new(code_hash, runtime_cache_fingerprint(*address))
+            }
             BytecodeOrHash::Hash(_hash) => {
                 // Hash-only lookups are only valid after an earlier bytecode warmup. Keep this
                 // deterministic by resolving through the explicit code-hash index.
@@ -128,13 +123,29 @@ impl Default for ModuleFactoryInner {
     }
 }
 
-fn fluentbase_sdk_config_for_runtime_cache(
-    address: fluentbase_types::Address,
-) -> rwasm::CompilationConfig {
+/// Cache-key fingerprint of the compilation policy applied to a contract executed at `address`.
+///
+/// This runs on every frame, so it must stay allocation-free. The fingerprint covers only the
+/// policy flags and the address ([`CompilationConfigFingerprint::from_config`]); the import
+/// linker and the state router the real compilation config carries do not take part in it, so
+/// they are deliberately left out here. Building them would allocate a full import table per
+/// lookup, which was a fifth of the host-side cost of an EVM call.
+fn runtime_cache_fingerprint(address: fluentbase_types::Address) -> CompilationConfigFingerprint {
+    CompilationConfigFingerprint::from_config(
+        &runtime_cache_policy(address),
+        CompilationBackend::Rwasm,
+        address,
+    )
+}
+
+/// Compilation policy flags for a contract executed at `address`, mirroring the SDK defaults
+/// without the import linker and the state router (see [`runtime_cache_fingerprint`]).
+fn runtime_cache_policy(address: fluentbase_types::Address) -> rwasm::CompilationConfig {
     let is_system_runtime = fluentbase_types::is_execute_using_system_runtime(&address);
     let should_charge_fuel = false;
 
-    fluentbase_sdk_like_default_config()
+    rwasm::CompilationConfig::default()
+        .with_allow_malformed_entrypoint_func_type(is_system_runtime)
         .with_consume_fuel(should_charge_fuel)
         .with_consume_fuel_for_bulk_ops(!is_system_runtime)
         .with_consume_fuel_for_params_and_locals(!is_system_runtime)
@@ -144,24 +155,6 @@ fn fluentbase_sdk_config_for_runtime_cache(
         } else {
             rwasm::N_DEFAULT_MAX_MEMORY_PAGES
         })
-        .with_allow_malformed_entrypoint_func_type(is_system_runtime)
-}
-
-fn fluentbase_sdk_like_default_config() -> rwasm::CompilationConfig {
-    rwasm::CompilationConfig::default()
-        .with_state_router(rwasm::StateRouterConfig {
-            states: Box::new([
-                ("deploy".into(), fluentbase_types::STATE_DEPLOY),
-                ("main".into(), fluentbase_types::STATE_MAIN),
-            ]),
-            opcode: Some(rwasm::Opcode::Call(
-                fluentbase_types::SysFuncIdx::STATE as u32,
-            )),
-        })
-        .with_import_linker(fluentbase_types::import_linker_v1_preview())
-        .with_allow_malformed_entrypoint_func_type(false)
-        .with_consume_fuel_for_bulk_ops(true)
-        .with_builtins_consume_fuel(true)
 }
 
 /// Trait for estimating heap-allocated memory size of cached values.
@@ -356,12 +349,51 @@ mod tests {
     fn cache_key_with_address_byte(code_hash: B256, address_byte: u8) -> CompiledModuleCacheKey {
         CompiledModuleCacheKey::new(
             code_hash,
-            CompilationConfigFingerprint::from_config(
-                &fluentbase_sdk_like_default_config(),
-                CompilationBackend::Rwasm,
-                fluentbase_types::Address::repeat_byte(address_byte),
-            ),
+            runtime_cache_fingerprint(fluentbase_types::Address::repeat_byte(address_byte)),
         )
+    }
+
+    /// The full compilation config the SDK applies to a contract at `address`, including the
+    /// parts the fingerprint must ignore: the import linker and the state router.
+    fn full_runtime_config(address: fluentbase_types::Address) -> rwasm::CompilationConfig {
+        runtime_cache_policy(address)
+            .with_state_router(rwasm::StateRouterConfig {
+                states: Box::new([
+                    ("deploy".into(), fluentbase_types::STATE_DEPLOY),
+                    ("main".into(), fluentbase_types::STATE_MAIN),
+                ]),
+                opcode: Some(rwasm::Opcode::Call(
+                    fluentbase_types::SysFuncIdx::STATE as u32,
+                )),
+            })
+            .with_import_linker(fluentbase_types::import_linker_v1_preview())
+    }
+
+    #[test]
+    fn fingerprint_matches_the_full_compilation_config() {
+        for address in [
+            fluentbase_types::Address::repeat_byte(0x11),
+            fluentbase_types::PRECOMPILE_EVM_RUNTIME,
+            fluentbase_types::PRECOMPILE_WASM_RUNTIME,
+        ] {
+            let expected = CompilationConfigFingerprint::from_config(
+                &full_runtime_config(address),
+                CompilationBackend::Rwasm,
+                address,
+            );
+            assert_eq!(runtime_cache_fingerprint(address), expected, "{address}");
+        }
+    }
+
+    #[test]
+    fn system_and_user_policies_produce_distinct_fingerprints() {
+        let user = runtime_cache_fingerprint(fluentbase_types::Address::repeat_byte(0x11));
+        let system = runtime_cache_fingerprint(fluentbase_types::PRECOMPILE_EVM_RUNTIME);
+        assert!(!user.allow_malformed_entrypoint_func_type);
+        assert!(system.allow_malformed_entrypoint_func_type);
+        assert_eq!(user.max_allowed_memory_pages, rwasm::N_DEFAULT_MAX_MEMORY_PAGES);
+        assert_eq!(system.max_allowed_memory_pages, rwasm::N_MAX_ALLOWED_MEMORY_PAGES);
+        assert_ne!(user.stable_bytes(), system.stable_bytes());
     }
 
     fn new_cache(
