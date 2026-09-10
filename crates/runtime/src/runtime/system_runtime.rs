@@ -442,37 +442,22 @@ fn compile_wasmtime(config: CompilationConfig, wasm: &[u8]) -> Result<WasmtimeMo
 
 /// Instantiates a compiled Wasmtime module through fallible APIs.
 ///
-/// rWasm 0.4.7's `WasmtimeExecutor` constructor panics on module-dependent errors, so it only
-/// ever receives a fixed, empty module to create the store and linker with the same resource
-/// limits; the supplied module is then instantiated into that store.
+/// A module that links or instantiates badly is reported as an error, never a panic: admission
+/// runs this on untrusted upgrade payloads, and the store limits derive from
+/// `N_MAX_ALLOWED_MEMORY_PAGES` rather than from the module contents.
 fn instantiate_wasmtime(
     module: &WasmtimeModule,
     import_linker: Arc<ImportLinker>,
 ) -> Result<WasmtimeExecutor<RuntimeContext>, TrapCode> {
-    let empty = WasmtimeModule::new(module.engine(), b"\0asm\x01\0\0\0")
-        .map_err(|_| TrapCode::IllegalOpcode)?;
-    let mut executor = WasmtimeExecutor::new(
-        empty,
+    WasmtimeExecutor::try_new(
+        module.clone(),
         import_linker,
         RuntimeContext::default(),
         runtime_syscall_handler,
         None,
         Some(N_MAX_ALLOWED_MEMORY_PAGES),
-    );
-    let instance_pre = executor
-        .linker
-        .instantiate_pre(module)
-        .map_err(|_| TrapCode::IllegalOpcode)?;
-    let instance = instance_pre
-        .instantiate(&mut executor.store)
-        .map_err(|_| TrapCode::IllegalOpcode)?;
-    // Replacing these fields relies on the rWasm 0.4.7 layout: the constructor derives the
-    // store limits from `max_allowed_memory_pages` and the linker from the engine and import
-    // linker, never from the module contents, so nothing else in the executor refers to the
-    // empty module.
-    executor.instance_pre = instance_pre;
-    executor.instance = instance;
-    Ok(executor)
+    )
+    .map_err(|_| TrapCode::IllegalOpcode)
 }
 
 /// Requires an exported entrypoint to be a function taking `params` i32 arguments and returning
