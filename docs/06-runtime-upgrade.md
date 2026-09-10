@@ -77,6 +77,38 @@ rebuilding the upgrade contract.
 
 ---
 
+## Bootstrap authorities
+
+Two privileged roles ship with a compiled-in bootstrap owner that applies only while the owner
+slot of the contract is still empty:
+
+- runtime-upgrade (`PRECOMPILE_RUNTIME_UPGRADE`) falls back to `DEFAULT_UPDATE_GENESIS_AUTH` and
+  controls code installation on any account,
+- fee-manager (`PRECOMPILE_FEE_MANAGER`) falls back to `DEFAULT_FEE_MANAGER_AUTH` and controls
+  the fee treasury.
+
+Both defaults are the same launch key, so a network that keeps them is one key compromise away
+from arbitrary system-code installation and treasury withdrawal at once. The launch runbook must
+separate the roles before the network is exposed:
+
+1. From the bootstrap key, call `changeOwner(address)` on the runtime-upgrade contract with the
+   upgrade multisig.
+2. From the bootstrap key, call `changeOwner(address)` on the fee-manager contract with a
+   treasury multisig that is a different key from the upgrade multisig.
+3. Read `owner()` on both contracts: neither may return the bootstrap key, and the two owners
+   must differ.
+
+`changeOwner` rejects the zero address on both contracts, so a written owner slot never falls back
+to the bootstrap key again; only an explicit transfer naming that key restores it. The e2e suite
+pins this rotation in `e2e/src/bootstrap_authority.rs`.
+
+The bootstrap constants are compiled into the contract bytecode and are read by every network
+whose owner slot is still empty. Changing either value therefore changes who owns that role on such
+a network as soon as the contract is upgraded there; write the slot explicitly (steps 1-2) on every
+live network before rotating a constant.
+
+---
+
 ## Legacy testnet-only hook
 
 There is an explicit temporary testnet hook path for legacy upgrade behavior.

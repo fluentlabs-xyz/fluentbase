@@ -1480,3 +1480,270 @@ mod resume_boundary_tests {
         }
     }
 }
+
+/// EIP-8037 state gas on the syscalls that create state: SSTORE (contract and metadata storage)
+/// and SELFDESTRUCT. Each case runs the same syscall under Osaka, where EIP-8037 is inert, and
+/// under Amsterdam, and checks the charge against the canonical `GasParams` formulas the EVM
+/// interpreter applies to the same transition: Amsterdam reprices the regular terms and adds a
+/// state-gas term, and both have to match.
+#[cfg(test)]
+mod eip8037_state_gas_tests {
+    use super::*;
+    use fluentbase_sdk::syscall::SYSCALL_ID_DESTROY_ACCOUNT;
+    use revm::{
+        context::Cfg, handler::system_interruption::SystemInterruptionInputs,
+        interpreter::SStoreResult,
+    };
+
+    const OWNER: Address = address!("1111111111111111111111111111111111111111");
+    const BENEFICIARY: Address = address!("2222222222222222222222222222222222222222");
+    const SLOT: U256 = U256::from_limbs([7, 0, 0, 0]);
+    const GAS_LIMIT: u64 = 10_000_000;
+    const SPECS: [RwasmSpecId; 2] = [RwasmSpecId::OSAKA, RwasmSpecId::AMSTERDAM];
+
+    /// A context at `spec` whose `OWNER` holds `balance`, with `storage` preset on it and an
+    /// optional pre-existing `BENEFICIARY`.
+    fn new_context(
+        spec: RwasmSpecId,
+        balance: U256,
+        storage: Option<(U256, U256)>,
+        beneficiary_exists: bool,
+    ) -> RwasmContext<InMemoryDB> {
+        let mut db = InMemoryDB::default();
+        db.insert_account_info(
+            OWNER,
+            AccountInfo {
+                balance,
+                ..Default::default()
+            },
+        );
+        if let Some((slot, value)) = storage {
+            db.insert_account_storage(OWNER, slot, value).unwrap();
+        }
+        if beneficiary_exists {
+            db.insert_account_info(
+                BENEFICIARY,
+                AccountInfo {
+                    balance: U256::from(1),
+                    ..Default::default()
+                },
+            );
+        }
+        let mut ctx = RwasmContext::new(db, spec);
+        ctx.cfg = CfgEnv::new_with_spec(spec);
+        ctx.block = BlockEnv::default();
+        ctx.tx = TxEnv::default();
+        // The syscalls run inside a frame of `OWNER`, whose account the journal has loaded.
+        ctx.journal_mut().load_account(OWNER).unwrap();
+        ctx
+    }
+
+    /// Runs one syscall in a frame executing at `OWNER` and returns the interpreter result, the
+    /// gas the syscall charged, and the state gas it recorded.
+    fn execute(
+        ctx: &mut RwasmContext<InMemoryDB>,
+        code_hash: B256,
+        input: Vec<u8>,
+        gas_limit: u64,
+    ) -> (InstructionResult, Gas, u64) {
+        let mut frame = RwasmFrame::default();
+        frame.interpreter.input.target_address = OWNER;
+        frame.interpreter.input.account_owner = Some(OWNER);
+        frame.interpreter.gas = Gas::new(gas_limit);
+        let mr = ForwardInputMemoryReader(input.into());
+
+        let interruption_inputs = SystemInterruptionInputs {
+            call_id: 0,
+            code_hash,
+            input: 0..mr.0.len(),
+            fuel_limit: 0,
+            state: STATE_MAIN,
+            fuel16_ptr: 0,
+            gas: Gas::new(gas_limit),
+            preloaded_slot_costs: None,
+        };
+
+        let result = execute_rwasm_interruption::<_, NoOpInspector>(
+            &mut frame,
+            None,
+            ctx,
+            interruption_inputs,
+            mr,
+        )
+        .unwrap();
+
+        let state_gas_spent = frame.interpreter.gas.state_gas_spent();
+        match frame.interrupted_outcome {
+            Some(outcome) => {
+                let result = outcome.result.expect("syscall returns an outcome");
+                (result.result, result.gas, state_gas_spent)
+            }
+            None => {
+                let result = result.into_interpreter_action();
+                (
+                    result.instruction_result().unwrap(),
+                    Gas::new(0),
+                    state_gas_spent,
+                )
+            }
+        }
+    }
+
+    fn write_input(slot: U256, value: U256) -> Vec<u8> {
+        let mut input = vec![0u8; 64];
+        input[0..32].copy_from_slice(&slot.to_le_bytes::<32>());
+        input[32..64].copy_from_slice(&value.to_le_bytes::<32>());
+        input
+    }
+
+    /// What the EVM interpreter charges for a cold SSTORE of `new_value` over `original` at
+    /// `spec`, split into `(regular, state)` gas.
+    fn canonical_sstore_gas(spec: RwasmSpecId, original: U256, new_value: U256) -> (u64, u64) {
+        let cfg = CfgEnv::new_with_spec(spec);
+        let gas_params = cfg.gas_params();
+        let transition = SStoreResult {
+            original_value: original,
+            present_value: original,
+            new_value,
+        };
+        let regular =
+            gas_params.sstore_static_gas() + gas_params.sstore_dynamic_gas(true, &transition, true);
+        let state = if cfg.is_amsterdam_eip8037_enabled() {
+            gas_params.sstore_state_gas(&transition)
+        } else {
+            0
+        };
+        (regular, state)
+    }
+
+    /// Writes `new_value` over `original` in `SLOT` through `code_hash` at `spec`.
+    fn storage_write(
+        spec: RwasmSpecId,
+        code_hash: B256,
+        original: U256,
+        new_value: U256,
+    ) -> (InstructionResult, u64, u64) {
+        let mut ctx = new_context(spec, U256::ZERO, Some((SLOT, original)), false);
+        let (result, gas, state_gas) =
+            execute(&mut ctx, code_hash, write_input(SLOT, new_value), GAS_LIMIT);
+        if result == InstructionResult::Stop {
+            assert_eq!(
+                ctx.journal_mut().sload(OWNER, SLOT).unwrap().data,
+                new_value
+            );
+        }
+        (result, gas.total_gas_spent(), state_gas)
+    }
+
+    #[test]
+    fn storage_write_charges_canonical_state_gas_for_new_slot() {
+        let new_value = U256::from(0xbeefu64);
+        for spec in SPECS {
+            let (regular, state) = canonical_sstore_gas(spec, U256::ZERO, new_value);
+            assert_eq!(state > 0, spec == RwasmSpecId::AMSTERDAM);
+            for code_hash in [SYSCALL_ID_STORAGE_WRITE, SYSCALL_ID_METADATA_STORAGE_WRITE] {
+                let (result, total, state_gas) =
+                    storage_write(spec, code_hash, U256::ZERO, new_value);
+                assert_eq!(result, InstructionResult::Stop);
+                assert_eq!(state_gas, state, "{spec:?} {code_hash:?}");
+                assert_eq!(total, regular + state, "{spec:?} {code_hash:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn storage_write_charges_no_state_gas_when_slot_already_exists() {
+        let original = U256::from(0xbeefu64);
+        let new_value = U256::from(0xcafeu64);
+        for spec in SPECS {
+            let (regular, state) = canonical_sstore_gas(spec, original, new_value);
+            assert_eq!(state, 0);
+            for code_hash in [SYSCALL_ID_STORAGE_WRITE, SYSCALL_ID_METADATA_STORAGE_WRITE] {
+                let (result, total, state_gas) =
+                    storage_write(spec, code_hash, original, new_value);
+                assert_eq!(result, InstructionResult::Stop);
+                assert_eq!(state_gas, 0, "{spec:?} {code_hash:?}");
+                assert_eq!(total, regular, "{spec:?} {code_hash:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn storage_write_runs_out_of_fuel_on_state_gas_under_amsterdam() {
+        let new_value = U256::from(0xbeefu64);
+        let (regular, state) = canonical_sstore_gas(RwasmSpecId::AMSTERDAM, U256::ZERO, new_value);
+        assert!(state > 0);
+
+        // The regular price alone is one state-gas term short.
+        let mut ctx = new_context(RwasmSpecId::AMSTERDAM, U256::ZERO, None, false);
+        let (result, _, _) = execute(
+            &mut ctx,
+            SYSCALL_ID_STORAGE_WRITE,
+            write_input(SLOT, new_value),
+            regular,
+        );
+        assert_eq!(result, InstructionResult::OutOfFuel);
+
+        let mut ctx = new_context(RwasmSpecId::AMSTERDAM, U256::ZERO, None, false);
+        let (result, gas, _) = execute(
+            &mut ctx,
+            SYSCALL_ID_STORAGE_WRITE,
+            write_input(SLOT, new_value),
+            regular + state,
+        );
+        assert_eq!(result, InstructionResult::Stop);
+        assert_eq!(gas.total_gas_spent(), regular + state);
+    }
+
+    /// What the EVM interpreter charges for a SELFDESTRUCT to a cold beneficiary at `spec`,
+    /// split into `(regular, state)` gas.
+    fn canonical_selfdestruct_gas(spec: RwasmSpecId, creates_beneficiary: bool) -> (u64, u64) {
+        let cfg = CfgEnv::new_with_spec(spec);
+        let gas_params = cfg.gas_params();
+        let regular = 5000 + gas_params.selfdestruct_cost(creates_beneficiary, true);
+        let state = if cfg.is_amsterdam_eip8037_enabled() && creates_beneficiary {
+            gas_params.new_account_state_gas()
+        } else {
+            0
+        };
+        (regular, state)
+    }
+
+    /// Self-destructs `OWNER` (holding `balance`) to `BENEFICIARY` at `spec`.
+    fn destroy(spec: RwasmSpecId, balance: U256, beneficiary_exists: bool) -> (u64, u64) {
+        let mut ctx = new_context(spec, balance, None, beneficiary_exists);
+        let (result, gas, state_gas) = execute(
+            &mut ctx,
+            SYSCALL_ID_DESTROY_ACCOUNT,
+            BENEFICIARY.to_vec(),
+            GAS_LIMIT,
+        );
+        assert_eq!(result, InstructionResult::Stop);
+        (gas.total_gas_spent(), state_gas)
+    }
+
+    #[test]
+    fn destroy_account_charges_canonical_state_gas_for_created_beneficiary() {
+        for spec in SPECS {
+            let (regular, state) = canonical_selfdestruct_gas(spec, true);
+            assert_eq!(state > 0, spec == RwasmSpecId::AMSTERDAM);
+            let (total, state_gas) = destroy(spec, U256::from(1), false);
+            assert_eq!(state_gas, state, "{spec:?}");
+            assert_eq!(total, regular + state, "{spec:?}");
+        }
+    }
+
+    #[test]
+    fn destroy_account_charges_no_state_gas_without_a_top_up() {
+        // An existing beneficiary is not created, and a value-less self-destruct creates nothing.
+        for spec in SPECS {
+            let (regular, state) = canonical_selfdestruct_gas(spec, false);
+            assert_eq!(state, 0);
+            for (balance, beneficiary_exists) in [(U256::from(1), true), (U256::ZERO, false)] {
+                let (total, state_gas) = destroy(spec, balance, beneficiary_exists);
+                assert_eq!(state_gas, 0, "{spec:?}");
+                assert_eq!(total, regular, "{spec:?}");
+            }
+        }
+    }
+}

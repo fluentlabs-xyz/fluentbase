@@ -71,6 +71,19 @@ Universal Token runtime is currently in engine-metered set.
 
 ---
 
+## EIP-8037 state gas
+
+[EIP-8037](https://eips.ethereum.org/EIPS/eip-8037) (Amsterdam) adds a state-gas component to
+operations that create state. The active spec is Osaka, so it is inert today, but the syscall
+handlers already mirror the EVM interpreter so a fork that schedules it does not open a gap
+between EVM bytecode and rWasm contracts: `STORAGE_WRITE` and `METADATA_STORAGE_WRITE` charge the
+slot-creation state gas next to the dynamic SSTORE cost, `DESTROY_ACCOUNT` charges the
+account-creation state gas when the beneficiary is created by the top-up, and the CALL family
+charges it when a value transfer creates the callee. All of it is gated on
+`is_amsterdam_eip8037_enabled()`.
+
+---
+
 ## Buffered system-runtime effects
 
 The buffered `RuntimeExecutionOutcomeV1` commit path has accepted gas-pricing limitations:

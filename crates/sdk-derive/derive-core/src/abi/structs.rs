@@ -197,10 +197,7 @@ impl StructResolver {
                 })
                 .as_ref()
                 .map_err(|error| {
-                    ABIError::StructResolution(format!(
-                        "cannot resolve struct parameters: {error}. Annotate the method with \
-                         #[function_id(\"...\")] to pin its selector explicitly."
-                    ))
+                    ABIError::StructResolution(format!("cannot resolve struct parameters: {error}"))
                 }),
         }
     }

@@ -78,8 +78,8 @@ pub fn compilation_config_for_contract_address(contract_address: &Address) -> Co
     let is_system_runtime = is_execute_using_system_runtime(contract_address);
 
     // Most system precompiles manage fuel internally via `_charge_fuel` syscall.
-    // However, some precompiles (NITRO_VERIFIER, OAUTH2_VERIFIER, WASM_RUNTIME,
-    // WEBAUTHN_VERIFIER) don't self-meter, so they need fuel instrumentation.
+    // However, some precompiles (NITRO_VERIFIER, WASM_RUNTIME, WEBAUTHN_VERIFIER)
+    // don't self-meter, so they need fuel instrumentation.
     //
     // P.S: Disabled since we don't want to charge fuel instructions
     let should_charge_fuel = false; // is_engine_metered_precompile(contract_address);

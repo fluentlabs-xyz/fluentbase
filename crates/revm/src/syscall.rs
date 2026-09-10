@@ -326,14 +326,20 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             }
 
             let gas_params = ctx.cfg().gas_params().clone();
-            let result = sstore_gas(&mut frame.interpreter.gas, &gas_params, |skip_cold| {
-                ctx.journal_mut().sstore_skip_cold_load(
-                    current_target_address,
-                    slot,
-                    new_value,
-                    skip_cold,
-                )
-            });
+            let eip8037_enabled = ctx.cfg().is_amsterdam_eip8037_enabled();
+            let result = sstore_gas(
+                &mut frame.interpreter.gas,
+                &gas_params,
+                eip8037_enabled,
+                |skip_cold| {
+                    ctx.journal_mut().sstore_skip_cold_load(
+                        current_target_address,
+                        slot,
+                        new_value,
+                        skip_cold,
+                    )
+                },
+            );
             finish_inspection!();
             match result {
                 Ok(()) => {}
@@ -736,6 +742,11 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                     .gas_params()
                     .selfdestruct_cost(should_charge_top_up, result.is_cold)
             );
+            // EIP-8037: state gas for the account the top-up creates, as the EVM SELFDESTRUCT
+            // charges it.
+            if ctx.cfg().is_amsterdam_eip8037_enabled() && should_charge_top_up {
+                charge_state_gas!(ctx.cfg().gas_params().new_account_state_gas());
+            }
             // Return success (no output payload).
             return_result!(Ok);
         }
@@ -1159,14 +1170,20 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             );
 
             let gas_params = ctx.cfg().gas_params().clone();
-            let result = sstore_gas(&mut frame.interpreter.gas, &gas_params, |skip_cold| {
-                ctx.journal_mut().sstore_skip_cold_load(
-                    account_owner_address,
-                    slot,
-                    new_value,
-                    skip_cold,
-                )
-            });
+            let eip8037_enabled = ctx.cfg().is_amsterdam_eip8037_enabled();
+            let result = sstore_gas(
+                &mut frame.interpreter.gas,
+                &gas_params,
+                eip8037_enabled,
+                |skip_cold| {
+                    ctx.journal_mut().sstore_skip_cold_load(
+                        account_owner_address,
+                        slot,
+                        new_value,
+                        skip_cold,
+                    )
+                },
+            );
             match result {
                 Ok(()) => {}
                 Err(SstoreGasError::OutOfFuel)

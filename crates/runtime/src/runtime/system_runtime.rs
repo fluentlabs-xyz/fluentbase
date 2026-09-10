@@ -15,7 +15,7 @@
 //!
 //! 2. **Engine-metered** (`consume_fuel=true`): Wasmtime automatically meters fuel for both
 //!    wasm instructions and builtin syscalls. This is used by precompiles that don't self-meter:
-//!    NITRO_VERIFIER, OAUTH2_VERIFIER, WASM_RUNTIME, WEBAUTHN_VERIFIER.
+//!    NITRO_VERIFIER, WASM_RUNTIME, WEBAUTHN_VERIFIER.
 //!
 //! ## Why "return output" instead of trapping?
 //! Some system runtimes intentionally avoid `trap` / `halt` paths because they do not always unwind
@@ -128,7 +128,7 @@ impl SystemRuntime {
     /// ## Fuel metering
     ///
     /// The `consume_fuel` parameter determines whether Wasmtime fuel metering is enabled:
-    /// - `true`: Engine automatically meters fuel (for NITRO, OAUTH2, WASM_RUNTIME, WEBAUTHN)
+    /// - `true`: Engine automatically meters fuel (for NITRO, WASM_RUNTIME, WEBAUTHN)
     /// - `false`: Contract self-meters via `_charge_fuel` syscall (for EVM_RUNTIME, etc.)
     pub fn new(
         rwasm_module: RwasmModule,
