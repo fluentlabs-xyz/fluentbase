@@ -8,16 +8,27 @@
 //! the only thing holding them together was a hex literal transcribed out of a
 //! doc comment. A rename on either side is now a compile error on the other.
 //!
-//! Scope: the surface the RUNNING node crosses. Handlers no node-side code calls
-//! keep their own `derive_keccak256_id!` in the contract's `consts.rs`.
+//! SCOPE — the rule, which is checked and not merely asserted: a handler that
+//! MORE THAN ONE place outside `contracts/staking` has to encode is declared
+//! here, once. "Outside" is all four callers: the node, the genesis bootstrap,
+//! the e2e stands, and the Python harness under `devnet/local-dpos-smoke`. A
+//! handler with a single caller outside the contract crate stays declared beside
+//! that caller, and keeps its `derive_keccak256_id!` in the contract's
+//! `consts.rs` — one declaration on each side of a single pairing is not a
+//! duplicate anyone can drift.
 //!
-//! That scope has a known hole, named here rather than left to be discovered:
-//! `initialize` and `commitEpochCommittee` are declared a THIRD time, in
-//! `devnet/local-dpos-smoke/genesis-bootstrap/src/bootstrap.rs`'s own `sol!`,
-//! and `initialize` a fourth through sixth time across `e2e/src/staking*.rs`.
-//! `bootstrap.rs` is not a test — it builds the genesis state a real stand runs
-//! on, so an arity change to `initialize` compiles there and reverts at
-//! genesis-init. Bringing it in is stand work, deliberately not done here.
+//! The Python harness cannot import a Rust crate; its spellings are held against
+//! these declarations by `devnet/local-dpos-smoke/scripts/xp/agreement_check.py`
+//! (G3 against `consts.rs` and the deployed blob, G16 against the harness), which
+//! is also what proves the rule above rather than restating it.
+//!
+//! What that rule retired: `initialize` was spelled out in five separate places —
+//! `devnet/local-dpos-smoke/genesis-bootstrap/src/bootstrap.rs`, which is not a
+//! test but the builder of the genesis state a real stand runs on, and each of
+//! the four `e2e/src/staking*.rs` — so an arity change compiled in all five and
+//! reverted at genesis-init. `blocksInEpoch` and `setBlendStipendPerEpoch` had
+//! three copies each; `registerValidator`, `getEpochRewards`, `setBlendReserve`
+//! and `setProductionLivenessDisabled` two. All are gone.
 //!
 //! `no_std` and `alloy-sol-types` only, because the contract compiles to
 //! `wasm32-unknown-unknown` with no `std`.
@@ -42,6 +53,41 @@ sol! {
         bytes32 peerPubkey;
         uint64 activationEpoch;
     }
+
+    // ---- genesis ------------------------------------------------------------
+
+    /// The one-shot genesis initializer: chain configuration, the dependency
+    /// addresses, and every genesis validator with its stake and its verified
+    /// consensus keys, in a single atomic call.
+    ///
+    /// The running node never issues it — the genesis bootstrap
+    /// (`devnet/local-dpos-smoke/genesis-bootstrap`) and the e2e stands do. It is
+    /// declared here anyway because it is the ABI point with the most callers and
+    /// the least protection: sixteen positional arguments, a permissionless
+    /// handler that is one-shot forever after, and a bare revert as the only
+    /// feedback. Off a shared declaration an arity change is a compile error
+    /// everywhere at once; off five copies it was a stand that came up empty.
+    ///
+    /// The argument order is the contract's `InitializeCommand`
+    /// (`contracts/staking/src/types.rs`), which decodes positionally.
+    function initialize(
+        address initialStakeOwner,
+        address[] validators,
+        uint256[] initialStakes,
+        bytes[] blsPubkeysUncompressed,
+        bytes[] blsPopsUncompressed,
+        bytes32[] peerPubkeys,
+        uint16 commissionRate,
+        address stakingToken,
+        uint32 activeValidatorsLength,
+        uint32 epochBlockInterval,
+        uint32 undelegatePeriod,
+        uint256 minValidatorStakeAmount,
+        uint256 minStakingAmount,
+        uint64 dposActivationBlock,
+        uint256 minUndelegateBlocks,
+        address blendReserve
+    ) external;
 
     // ---- system calls (pre-execution, SYSTEM_ADDRESS only) ------------------
 
@@ -88,6 +134,43 @@ sol! {
     function slashEquivocationNullifyFinalize(bytes evidence, bytes pkUncompressed,
         bytes sig1Uncompressed, bytes sig2Uncompressed) external;
 
+    // ---- stake lifecycle (ordinary txs) -------------------------------------
+    //
+    // None of these is a node call. They are here because the stands and the
+    // Python harness each have to encode them, and a handler more than one
+    // outside place encodes is a handler that drifts.
+
+    /// Registration, with the consensus keys and their proof of possession. The
+    /// module verifies the PoP itself against the EIP-2537 precompiles, so a bad
+    /// proof is refused here rather than at the epoch commit.
+    function registerValidator(
+        address validator,
+        uint16 commissionRate,
+        uint256 initialStake,
+        bytes blsPubkeyUncompressed,
+        bytes blsPopUncompressed,
+        bytes32 peerPubkey
+    ) external;
+    function delegate(address validator, uint256 amount) external;
+    function undelegate(address validator, uint256 amount) external;
+    /// Pays the validator's accrued commission and stipend share to its owner.
+    function claimValidatorFee(address validator) external;
+
+    // ---- governance setters --------------------------------------------------
+    //
+    // `GENESIS_GOVERNANCE`-only. The genesis bootstrap makes all three at
+    // bring-up and the stands move them afterwards, so each has two or three
+    // outside callers.
+
+    /// The production-liveness tier's kill switch. `apply_initial_config` writes
+    /// `true`, so a chain that wants verdicts must flip it after `initialize`.
+    function setProductionLivenessDisabled(bool value) external;
+    /// The per-epoch BLEND stipend; `0` is the OFF sentinel.
+    function setBlendStipendPerEpoch(uint256 value) external;
+    /// The account the stipend is drawn from with `transferFrom`. The epoch close
+    /// prices an epoch off what this account holds AND has approved.
+    function setBlendReserve(address value) external;
+
     // ---- views the node reads ----------------------------------------------
 
     /// The frozen `epoch` committee, joined with keys, weights and the LIVE
@@ -101,6 +184,24 @@ sol! {
     function getEpochCommitteeWithStakes(uint64 epoch)
         external view returns (
             address[] addrs, ConsensusKeys[] keys, uint256[] stakes, bool[] tombstoned);
+
+    /// One validator's consensus identity, read straight out of the registry.
+    ///
+    /// Read by the e2e stands, not by the node — the node takes its keys from
+    /// the two joined views above. It is declared here because `ConsensusKeys`
+    /// is: a copy of this view means a second copy of that struct, which is the
+    /// duplication this crate exists to end.
+    function getConsensusKeys(address validator)
+        external view returns (ConsensusKeys keys);
+
+    /// How many blocks of `epoch` were recorded. Behind the contract's
+    /// `devnet-views` feature, and read by the stands to tell a closed epoch from
+    /// a partial one.
+    function blocksInEpoch(uint64 epoch) external view returns (uint32);
+
+    /// What the epoch close decided `epoch` owes — the read side of
+    /// `EpochBlendRewardsCommitted`.
+    function getEpochRewards(uint64 epoch) external view returns (uint256);
 
     /// The FULL Active-status validator registry — not the stake-weighted
     /// committee. Feeds the consensus p2p tier-2 peer set.
@@ -170,17 +271,27 @@ mod tests {
     use super::*;
     use alloy_sol_types::{SolCall, SolError, SolEvent};
 
-    /// The thirteen CALL selectors this crate hands to both sides, pinned against
-    /// the hex in `devnet/local-dpos-smoke/contracts/STAKING_ARTEFACT.md` — the
-    /// scan of the deployed rWasm blob, which is an EXTERNAL witness: it is
-    /// derived from neither declaration, it is what a live chain actually
-    /// dispatches on, and it is re-run against every rebuilt blob.
+    /// The crate declares 24 calls; this pins the 15 of them that appear in the
+    /// selector scan in `devnet/local-dpos-smoke/contracts/STAKING_ARTEFACT.md` —
+    /// the scan of the deployed rWasm blob, an EXTERNAL witness: it is derived
+    /// from neither declaration, it is what a live chain actually dispatches on,
+    /// and it is re-run against every rebuilt blob.
     ///
-    /// The fourteenth entry, `AlreadySlashedForEquivocation`, is NOT in that
+    /// The sixteenth entry, `AlreadySlashedForEquivocation`, is NOT in that
     /// scan and cannot be: the scan walks handler selectors, and an error
     /// selector never appears as one. Its independent witness is
     /// `e2e/src/staking_bls.rs`, which asserts these four bytes coming back from
     /// a real rWasm revert.
+    ///
+    /// The nine unpinned calls — `getConsensusKeys`, `registerValidator`,
+    /// `delegate`, `undelegate`, `claimValidatorFee`, `blocksInEpoch`,
+    /// `setProductionLivenessDisabled`, `setBlendStipendPerEpoch`,
+    /// `setBlendReserve` — are absent from the scan because nobody added them to
+    /// it, not because they are unwitnessed: every one is ISSUED against the real
+    /// rWasm blob by `e2e/src/staking*.rs` or by the genesis bootstrap, where a
+    /// wrong selector reverts `UnknownMethod` and a wrong argument packing
+    /// reverts on decode. `agreement_check.py` G3 separately counts each of them
+    /// exactly once in the blob.
     ///
     /// This is the one pin worth having. Recomputing a selector from the
     /// signature string next to it would put both halves on the same side, which
@@ -189,9 +300,16 @@ mod tests {
     fn selectors_match_the_deployed_artefact_scan() {
         for (name, actual, pinned) in [
             (
+                "initialize(address,address[],uint256[],bytes[],bytes[],bytes32[],\
+                 uint16,address,uint32,uint32,uint32,uint256,uint256,uint64,\
+                 uint256,address)",
+                initializeCall::SELECTOR,
+                0xfecaf0f1u32,
+            ),
+            (
                 "recordProduction(uint8)",
                 recordProductionCall::SELECTOR,
-                0x1752910eu32,
+                0x1752910e,
             ),
             (
                 "commitEpochCommittee()",
@@ -227,6 +345,11 @@ mod tests {
                 "getRegistryWithKeys()",
                 getRegistryWithKeysCall::SELECTOR,
                 0xd96cbd7b,
+            ),
+            (
+                "getEpochRewards(uint64)",
+                getEpochRewardsCall::SELECTOR,
+                0x54c3e84b,
             ),
             ("getDkgQual(uint64)", getDkgQualCall::SELECTOR, 0x2660899f),
             (

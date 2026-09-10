@@ -1,7 +1,9 @@
 //! Worst-case execution cost of the two hot staking system-call paths.
 //!
-//! Self-contained: nothing outside this file is referenced by it, and nothing
-//! outside references it except the `mod` declaration in `lib.rs`.
+//! Self-contained: nothing outside this file is referenced by it except
+//! `fluentbase-staking-abi`, which declares every call with a second caller once
+//! for all of them; and nothing outside references it except the `mod`
+//! declaration in `lib.rs`.
 //!
 //! Everything here runs through real rWasm in the e2e harness, so the printed
 //! numbers are measured gas, not estimates. The harness charges the EVM
@@ -15,6 +17,13 @@ use alloy_sol_types::{sol, SolCall, SolEvent};
 use fluentbase_sdk::{
     address, hex, Address, Bytes, B256, GENESIS_GOVERNANCE, GENESIS_STAKING, U256,
 };
+// Everything with a second caller outside `contracts/staking` — `initialize`,
+// `recordProduction`, `commitEpochCommittee`, `blocksInEpoch`,
+// `getEpochRewards`, the two governance setters, and the
+// `EpochBlendRewardsCommitted` event — comes from the crate the contract derives
+// its dispatch selectors from, so an ABI change to any of them is a compile
+// error here rather than a revert against the real blob.
+use fluentbase_staking_abi as staking_abi;
 use fluentbase_testing::EvmTestingContext;
 use revm::Database;
 
@@ -277,47 +286,13 @@ fn roster_at_budget(intercept: f64, slope: f64) -> f64 {
     (SYSTEM_CALL_BUDGET - intercept) / slope
 }
 
+// The two handlers this file is the ONLY place outside `contracts/staking` to
+// encode; under the rule in `fluentbase-staking-abi`'s header they stay here.
+// Everything else this file calls comes from the shared crate.
 sol! {
-    struct EpochConsensusKeys {
-        bytes blsPubkey;
-        bytes32 peerPubkey;
-        uint64 activationEpoch;
-    }
-
-    /// The close's accrual fact: what the epoch owes, decided at its close.
-    event EpochBlendRewardsCommitted(uint64 indexed epoch, uint256 blendAmount);
-
     interface IStaking {
-        function initialize(
-            address initialStakeOwner,
-            address[] validators,
-            uint256[] initialStakes,
-            bytes[] blsPubkeysUncompressed,
-            bytes[] blsPopsUncompressed,
-            bytes32[] peerPubkeys,
-            uint16 commissionRate,
-            address stakingToken,
-            uint32 activeValidatorsLength,
-            uint32 epochBlockInterval,
-            uint32 undelegatePeriod,
-            uint256 minValidatorStakeAmount,
-            uint256 minStakingAmount,
-            uint64 dposActivationBlock,
-            uint256 minUndelegateBlocks,
-            address blendReserve
-        ) external;
-
-        function recordProduction(uint8 leaderIndex) external;
-        function commitEpochCommittee() external;
-
-        function blocksInEpoch(uint64 epoch) external view returns (uint32);
         function pendingExclusions() external view returns (address[]);
-        function getEpochRewards(uint64 epoch) external view returns (uint256);
-
-        function setProductionLivenessDisabled(bool value) external;
         function setMinVerdictDueBlocks(uint32 value) external;
-        function setBlendStipendPerEpoch(uint256 value) external;
-        function setBlendReserve(address value) external;
     }
 }
 
@@ -519,7 +494,7 @@ impl Fixture {
         measure(
             &mut self.context,
             SYSTEM_CALLER,
-            IStaking::commitEpochCommitteeCall {}.abi_encode(),
+            staking_abi::commitEpochCommitteeCall {}.abi_encode(),
         )
     }
 
@@ -528,7 +503,7 @@ impl Fixture {
         measure(
             &mut self.context,
             SYSTEM_CALLER,
-            IStaking::recordProductionCall { leaderIndex: 0 }.abi_encode(),
+            staking_abi::recordProductionCall { leaderIndex: 0 }.abi_encode(),
         )
     }
 
@@ -540,18 +515,18 @@ impl Fixture {
         let output = call(
             &mut self.context,
             OWNER,
-            IStaking::blocksInEpochCall { epoch }.abi_encode(),
+            staking_abi::blocksInEpochCall { epoch }.abi_encode(),
         );
-        IStaking::blocksInEpochCall::abi_decode_returns(&output).unwrap()
+        staking_abi::blocksInEpochCall::abi_decode_returns(&output).unwrap()
     }
 
     fn epoch_rewards(&mut self, epoch: u64) -> U256 {
         let output = call(
             &mut self.context,
             OWNER,
-            IStaking::getEpochRewardsCall { epoch }.abi_encode(),
+            staking_abi::getEpochRewardsCall { epoch }.abi_encode(),
         );
-        IStaking::getEpochRewardsCall::abi_decode_returns(&output).unwrap()
+        staking_abi::getEpochRewardsCall::abi_decode_returns(&output).unwrap()
     }
 
     fn pending_exclusions(&mut self) -> Vec<Address> {
@@ -580,7 +555,7 @@ fn fixture(roster: usize, source_is_approved: bool) -> Fixture {
     let token = deploy_runtime(&mut context, &counting_token());
 
     let validators: Vec<Address> = (0..roster).map(validator_address).collect();
-    let calldata = IStaking::initializeCall {
+    let calldata = staking_abi::initializeCall {
         initialStakeOwner: OWNER,
         validators: validators.clone(),
         initialStakes: vec![TOKEN * U256::from(10); roster],
@@ -608,7 +583,7 @@ fn fixture(roster: usize, source_is_approved: bool) -> Fixture {
     call(
         &mut context,
         GENESIS_GOVERNANCE,
-        IStaking::setBlendStipendPerEpochCall {
+        staking_abi::setBlendStipendPerEpochCall {
             value: TOKEN * U256::from(COMMITTEE),
         }
         .abi_encode(),
@@ -746,7 +721,7 @@ fn worst_case_close(roster: usize) -> u64 {
             if epoch == 2 {
                 // Arm the verdict sweep, so close(2) is the first judged close.
                 fixture.govern(
-                    IStaking::setProductionLivenessDisabledCall { value: false }.abi_encode(),
+                    staking_abi::setProductionLivenessDisabledCall { value: false }.abi_encode(),
                 );
                 fixture.govern(IStaking::setMinVerdictDueBlocksCall { value: 1 }.abi_encode());
             }
@@ -784,7 +759,7 @@ fn worst_case_close(roster: usize) -> u64 {
         "the close must move no money: the reserve pays each claim directly"
     );
     assert_eq!(
-        worst.events(EpochBlendRewardsCommitted::SIGNATURE_HASH),
+        worst.events(staking_abi::EpochBlendRewardsCommitted::SIGNATURE_HASH),
         1,
         "a close accrues exactly the one epoch it closes"
     );
@@ -860,7 +835,7 @@ fn path_a_close_accrual_cost() {
 /// and the two arms differ only where the rate makes them.
 fn closes_at_stipend_rate(rate: U256) -> Vec<u64> {
     let mut fixture = fixture(COMMITTEE, true);
-    fixture.govern(IStaking::setBlendStipendPerEpochCall { value: rate }.abi_encode());
+    fixture.govern(staking_abi::setBlendStipendPerEpochCall { value: rate }.abi_encode());
     // Two to close plus the lookahead the commit insists on.
     for _ in 0..3 {
         fixture.commit_committee();

@@ -18,8 +18,10 @@
 //! next epoch payable again once the reserve answers honestly.
 //!
 //! Self-contained, in the same sense as `staking_cost.rs`: it carries its own
-//! `sol!` interface and its own fixture and references nothing outside this file
-//! but the shared BLS vectors.
+//! fixture and its own `sol!` block for the two handlers nothing else calls, and
+//! references nothing outside this file but the shared BLS vectors and
+//! `fluentbase-staking-abi`, which declares every call with a second caller once
+//! for all of them.
 
 use crate::EvmTestingContextWithGenesis;
 use alloy_sol_types::{sol, SolCall, SolEvent};
@@ -27,6 +29,13 @@ use fluentbase_sdk::{
     address, hex, universal_token::InitialSettings, Address, Bytes, B256, GENESIS_GOVERNANCE,
     GENESIS_STAKING, U256,
 };
+// Everything with a second caller outside `contracts/staking` — `initialize`,
+// `recordProduction`, `commitEpochCommittee`, `blocksInEpoch`,
+// `getEpochRewards`, `claimValidatorFee`, the two governance setters, and the
+// `EpochBlendRewardsCommitted` event — comes from the crate the contract derives
+// its dispatch selectors from, so an ABI change to any of them is a compile
+// error here rather than a revert against the real blob.
+use fluentbase_staking_abi as staking_abi;
 use fluentbase_testing::EvmTestingContext;
 
 const SYSTEM_CALLER: Address = address!("0xfffffffffffffffffffffffffffffffffffffffe");
@@ -113,42 +122,14 @@ const ACTIVATION: u64 = INTERVAL * 20;
 /// so an honest read always covers it and a refused read never does.
 const POT: U256 = U256::from_limbs([5_000_000_000_000_000_000, 0, 0, 0]);
 
+// The two handlers this file is the ONLY place outside `contracts/staking` to
+// encode, plus the mock token's ERC-20 surface, which is not the staking
+// contract at all; under the rule in `fluentbase-staking-abi`'s header they stay
+// here. Everything else this file calls comes from the shared crate.
 sol! {
-    /// The close's accrual fact: what the epoch owes, decided at its close.
-    event EpochBlendRewardsCommitted(uint64 indexed epoch, uint256 blendAmount);
-
     interface IStaking {
-        function initialize(
-            address initialStakeOwner,
-            address[] validators,
-            uint256[] initialStakes,
-            bytes[] blsPubkeysUncompressed,
-            bytes[] blsPopsUncompressed,
-            bytes32[] peerPubkeys,
-            uint16 commissionRate,
-            address stakingToken,
-            uint32 activeValidatorsLength,
-            uint32 epochBlockInterval,
-            uint32 undelegatePeriod,
-            uint256 minValidatorStakeAmount,
-            uint256 minStakingAmount,
-            uint64 dposActivationBlock,
-            uint256 minUndelegateBlocks,
-            address blendReserve
-        ) external;
-
-        function recordProduction(uint8 leaderIndex) external;
-        function commitEpochCommittee() external;
-
-        function blocksInEpoch(uint64 epoch) external view returns (uint32);
-        function getEpochRewards(uint64 epoch) external view returns (uint256);
         function getValidatorFee(address validator) external view returns (uint256);
-
-        function claimValidatorFee(address validator) external;
         function claimDelegatorFee(address validator) external;
-
-        function setBlendStipendPerEpoch(uint256 value) external;
-        function setBlendReserve(address value) external;
     }
 
     interface IErc20 {
@@ -361,7 +342,7 @@ impl Fixture {
         measure(
             &mut self.context,
             SYSTEM_CALLER,
-            IStaking::commitEpochCommitteeCall {}.abi_encode(),
+            staking_abi::commitEpochCommitteeCall {}.abi_encode(),
         );
     }
 
@@ -370,7 +351,7 @@ impl Fixture {
         measure(
             &mut self.context,
             SYSTEM_CALLER,
-            IStaking::recordProductionCall { leaderIndex: 0 }.abi_encode(),
+            staking_abi::recordProductionCall { leaderIndex: 0 }.abi_encode(),
         )
     }
 
@@ -380,7 +361,7 @@ impl Fixture {
         measure_with_limit(
             &mut self.context,
             SYSTEM_CALLER,
-            IStaking::recordProductionCall { leaderIndex: 0 }.abi_encode(),
+            staking_abi::recordProductionCall { leaderIndex: 0 }.abi_encode(),
             gas_limit,
         )
     }
@@ -501,18 +482,18 @@ impl Fixture {
         let output = call(
             &mut self.context,
             OWNER,
-            IStaking::blocksInEpochCall { epoch }.abi_encode(),
+            staking_abi::blocksInEpochCall { epoch }.abi_encode(),
         );
-        IStaking::blocksInEpochCall::abi_decode_returns(&output).unwrap()
+        staking_abi::blocksInEpochCall::abi_decode_returns(&output).unwrap()
     }
 
     fn epoch_rewards(&mut self, epoch: u64) -> U256 {
         let output = call(
             &mut self.context,
             OWNER,
-            IStaking::getEpochRewardsCall { epoch }.abi_encode(),
+            staking_abi::getEpochRewardsCall { epoch }.abi_encode(),
         );
-        IStaking::getEpochRewardsCall::abi_decode_returns(&output).unwrap()
+        staking_abi::getEpochRewardsCall::abi_decode_returns(&output).unwrap()
     }
 
     /// Records every block of `epoch` but its first, which the caller has
@@ -547,7 +528,7 @@ fn initialize_calldata(
     committee: usize,
     commission: u16,
 ) -> Vec<u8> {
-    IStaking::initializeCall {
+    staking_abi::initializeCall {
         initialStakeOwner: OWNER,
         validators: (0..committee).map(validator_address).collect(),
         initialStakes: vec![SEED_STAKE; committee],
@@ -593,7 +574,7 @@ fn fixture(refusal: Refusal, committee: usize) -> Fixture {
         committee,
         token,
     };
-    fixture.govern(IStaking::setBlendStipendPerEpochCall { value: POT }.abi_encode());
+    fixture.govern(staking_abi::setBlendStipendPerEpochCall { value: POT }.abi_encode());
     // Committees 0..=2 at once; the lookahead is two epochs.
     for _ in 0..3 {
         fixture.commit_committee();
@@ -678,7 +659,7 @@ fn honest_fixture(balance: U256, allowance: U256, commission: u16) -> Fixture {
         committee: COMMITTEE,
         token,
     };
-    fixture.govern(IStaking::setBlendStipendPerEpochCall { value: POT }.abi_encode());
+    fixture.govern(staking_abi::setBlendStipendPerEpochCall { value: POT }.abi_encode());
     for _ in 0..3 {
         fixture.commit_committee();
     }
@@ -699,7 +680,7 @@ fn erc20(
 
 /// The one committed accrual of a close, decoded.
 fn accrued(close: &Measured, epoch: u64) -> U256 {
-    let payloads = close.event_data(EpochBlendRewardsCommitted::SIGNATURE_HASH);
+    let payloads = close.event_data(staking_abi::EpochBlendRewardsCommitted::SIGNATURE_HASH);
     assert_eq!(
         payloads.len(),
         1,
@@ -747,7 +728,7 @@ fn a_refused_reserve_read_scores_zero_and_the_next_epoch_recovers(refusal: Refus
     );
 
     // --- epoch 1, after the reserve moves to an address the token answers for.
-    fixture.govern(IStaking::setBlendReserveCall { value: OWNER }.abi_encode());
+    fixture.govern(staking_abi::setBlendReserveCall { value: OWNER }.abi_encode());
     fixture.finish_epoch(1);
     fixture.commit_committee();
     let recovered = fixture.record(first_block(2));
@@ -856,7 +837,7 @@ fn a_reserve_that_answers_with_less_than_the_pot_forfeits_the_epoch() {
         measure(
             &mut fixture.context,
             STRANGER,
-            IStaking::claimValidatorFeeCall { validator: seat }.abi_encode(),
+            staking_abi::claimValidatorFeeCall { validator: seat }.abi_encode(),
         );
         measure(
             &mut fixture.context,
@@ -937,7 +918,7 @@ fn a_claim_between_two_closes_puts_the_reserve_under_the_pot_and_burns_the_epoch
     measure(
         &mut fixture.context,
         STRANGER,
-        IStaking::claimValidatorFeeCall { validator: seat }.abi_encode(),
+        staking_abi::claimValidatorFeeCall { validator: seat }.abi_encode(),
     );
     assert_eq!(
         fixture.balance_of(seat) - owner_before,
@@ -1029,7 +1010,7 @@ fn the_fuel_burning_read_against_the_production_system_call_budget() {
         a_refused_reserve_read_scores_zero_and_the_next_epoch_recovers(Refusal::BurnFuel);
     let honest = {
         let mut fixture = fixture(Refusal::Revert, COMMITTEE);
-        fixture.govern(IStaking::setBlendReserveCall { value: OWNER }.abi_encode());
+        fixture.govern(staking_abi::setBlendReserveCall { value: OWNER }.abi_encode());
         fixture.record(first_block(0));
         fixture.finish_epoch(0);
         fixture.record(first_block(1)).frame_gas
@@ -1050,12 +1031,12 @@ fn the_fuel_burning_read_against_the_production_system_call_budget() {
     // production chain runs at.
     println!("\n  under a 30M frame budget:");
     let budget = SYSTEM_CALL_BUDGET
-        + intrinsic(&IStaking::recordProductionCall { leaderIndex: 0 }.abi_encode());
+        + intrinsic(&staking_abi::recordProductionCall { leaderIndex: 0 }.abi_encode());
     let mut committees = vec![COMMITTEE];
     committees.extend_from_slice(&PRODUCTION_COMMITTEES);
     for committee in committees {
         let mut honest = fixture(Refusal::Revert, committee);
-        honest.govern(IStaking::setBlendReserveCall { value: OWNER }.abi_encode());
+        honest.govern(staking_abi::setBlendReserveCall { value: OWNER }.abi_encode());
         honest.record(first_block(0));
         honest.finish_epoch(0);
         let honest_close = honest.record_within(first_block(1), budget);

@@ -7,6 +7,13 @@ use fluentbase_sdk::{
     },
     Address, Bytes, B256, GENESIS_GOVERNANCE, GENESIS_STAKING, U256,
 };
+// Everything with a second caller outside `contracts/staking` — `initialize`,
+// `registerValidator`, `delegate`, `undelegate`, `recordProduction`,
+// `blocksInEpoch`, and `getConsensusKeys` with the `ConsensusKeys` struct it
+// returns — comes from the crate the contract derives its dispatch selectors
+// from, so an ABI change to any of them is a compile error here rather than a
+// revert against the real blob.
+use fluentbase_staking_abi as staking_abi;
 use fluentbase_testing::EvmTestingContext;
 
 const OWNER: Address = Address::repeat_byte(0x11);
@@ -14,54 +21,19 @@ const VALIDATOR: Address = Address::repeat_byte(0x22);
 const TOKEN: U256 = U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]);
 const SYSTEM_CALLER: Address = address!("0xfffffffffffffffffffffffffffffffffffffffe");
 
+// The three handlers this file is the ONLY place outside `contracts/staking` to
+// encode. Under the rule in `fluentbase-staking-abi`'s header they stay here:
+// one declaration on each side of one pairing is not a duplicate anyone can
+// drift, and the contract derives their selectors with `derive_keccak256_id!`.
+// Everything else this file calls comes from the shared crate.
 sol! {
-    struct ConsensusKeys {
-        bytes blsPubkey;
-        bytes32 peerPubkey;
-        uint64 activationEpoch;
-    }
-
     interface IStakingRwasm {
-        function initialize(
-            address initialStakeOwner,
-            address[] validators,
-            uint256[] initialStakes,
-            bytes[] blsPubkeysUncompressed,
-            bytes[] blsPopsUncompressed,
-            bytes32[] peerPubkeys,
-            uint16 commissionRate,
-            address stakingToken,
-            uint32 activeValidatorsLength,
-            uint32 epochBlockInterval,
-            uint32 undelegatePeriod,
-            uint256 minValidatorStakeAmount,
-            uint256 minStakingAmount,
-            uint64 dposActivationBlock,
-            uint256 minUndelegateBlocks,
-            address blendReserve
-        ) external;
-        function registerValidator(
-            address validator,
-            uint16 commissionRate,
-            uint256 initialStake,
-            bytes calldata blsPubkeyUncompressed,
-            bytes calldata blsPopUncompressed,
-            bytes32 peerPubkey
-        ) external;
-        function delegate(address validator, uint256 amount) external;
-        function undelegate(address validator, uint256 amount) external;
         function withdrawDelegatorPrincipal(address validator) external;
-        function getConsensusKeys(address validator)
-            external
-            view
-            returns (ConsensusKeys memory keys);
         function getValidatorDelegation(address validator, address delegator)
             external
             view
             returns (uint256 delegatedAmount, uint64 atEpoch);
-        function recordProduction(uint8 leaderIndex) external;
         function lastProcessedBlock() external view returns (uint64);
-        function blocksInEpoch(uint64 epoch) external view returns (uint32);
     }
 }
 
@@ -126,7 +98,7 @@ fn initialize_calldata(staking_token: Address, initial_stakes: Vec<U256>) -> Vec
     } else {
         vec![VALIDATOR]
     };
-    IStakingRwasm::initializeCall {
+    staking_abi::initializeCall {
         initialStakeOwner: OWNER,
         validators,
         initialStakes: initial_stakes,
@@ -208,7 +180,7 @@ fn staking_accepts_a_real_proof_of_possession_and_stores_the_key_blst_compressed
         &mut context,
         OWNER,
         GENESIS_STAKING,
-        IStakingRwasm::registerValidatorCall {
+        staking_abi::registerValidatorCall {
             validator: VALIDATOR,
             commissionRate: 0,
             initialStake: TOKEN,
@@ -222,12 +194,12 @@ fn staking_accepts_a_real_proof_of_possession_and_stores_the_key_blst_compressed
         &mut context,
         VALIDATOR,
         GENESIS_STAKING,
-        IStakingRwasm::getConsensusKeysCall {
+        staking_abi::getConsensusKeysCall {
             validator: VALIDATOR,
         }
         .abi_encode(),
     );
-    let result = IStakingRwasm::getConsensusKeysCall::abi_decode_returns(&output).unwrap();
+    let result = staking_abi::getConsensusKeysCall::abi_decode_returns(&output).unwrap();
     assert_eq!(
         result.blsPubkey.as_ref(),
         crate::bls_vectors::pubkey_compressed(0)
@@ -259,7 +231,7 @@ fn staking_accepts_a_real_proof_of_possession_and_stores_the_key_blst_compressed
     context.add_balance(second_owner, U256::from(10u128).pow(U256::from(20)));
 
     let registration = |pop: Vec<u8>| {
-        IStakingRwasm::registerValidatorCall {
+        staking_abi::registerValidatorCall {
             validator: second,
             commissionRate: 0,
             initialStake: TOKEN,
@@ -355,7 +327,7 @@ fn genesis_staking_custodies_and_returns_blend_through_real_rwasm_calls() {
         &mut context,
         OWNER,
         GENESIS_STAKING,
-        IStakingRwasm::delegateCall {
+        staking_abi::delegateCall {
             validator: VALIDATOR,
             amount: TOKEN * U256::from(3),
         }
@@ -387,7 +359,7 @@ fn genesis_staking_custodies_and_returns_blend_through_real_rwasm_calls() {
         &mut context,
         OWNER,
         GENESIS_STAKING,
-        IStakingRwasm::undelegateCall {
+        staking_abi::undelegateCall {
             validator: VALIDATOR,
             amount: TOKEN,
         }
@@ -432,7 +404,7 @@ fn record_production_drives_the_epoch_close_through_real_rwasm() {
     // The height is the block context now, so the closure keeps its parameter
     // only to name which block each assertion is about.
     let record =
-        |_block_number: u64| IStakingRwasm::recordProductionCall { leaderIndex: 0 }.abi_encode();
+        |_block_number: u64| staking_abi::recordProductionCall { leaderIndex: 0 }.abi_encode();
     assert_reverts(&mut context, OWNER, GENESIS_STAKING, record(1_000));
 
     context = context.with_block_number(1_000);
@@ -456,10 +428,10 @@ fn record_production_drives_the_epoch_close_through_real_rwasm() {
         &mut context,
         OWNER,
         GENESIS_STAKING,
-        IStakingRwasm::blocksInEpochCall { epoch: 0 }.abi_encode(),
+        staking_abi::blocksInEpochCall { epoch: 0 }.abi_encode(),
     );
     assert_eq!(
-        IStakingRwasm::blocksInEpochCall::abi_decode_returns(&output).unwrap(),
+        staking_abi::blocksInEpochCall::abi_decode_returns(&output).unwrap(),
         0,
         "no committee is committed, so every block parks"
     );

@@ -13,6 +13,7 @@ path = "src/main.rs"
 [dependencies]
 fluentbase-bls = { workspace = true, features = ["plaintext-keys"] }
 fluentbase-genesis = { workspace = true, features = ["std"] }
+fluentbase-staking-abi = { workspace = true }
 fluentbase-testing = { workspace = true }
 fluentbase-types = { workspace = true, features = ["std"] }
 # Enables CfgEnv.disable_eip3607 in the patched revm fork — the bootstrap

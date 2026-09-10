@@ -426,7 +426,9 @@ Deleted, selector and handler and dispatch arm: `changeValidatorOwner`
 **No ABI point outside that list moved.** `initialize` is untouched — same
 sixteen arguments, same `0xfecaf0f1` — so `genesis-bootstrap/src/bootstrap.rs`
 and `dpos_harness/stack/production_path.py` need no change this time, and
-`min_undelegate_blocks` stays. The five Rust constants behind the deleted getters
+`min_undelegate_blocks` stays. (2026-09-10: `bootstrap.rs` no longer spells
+`initialize` at all — it encodes through `fluentbase-staking-abi`, so a future
+arity change breaks its build instead of reverting at genesis-init.) The five Rust constants behind the deleted getters
 are unchanged and still bound their setters; only the read points are gone.
 
 **Kept, against the same candidate list, each with a named consumer.** These four

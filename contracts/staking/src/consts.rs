@@ -10,11 +10,15 @@ use fluentbase_staking_abi::{self as abi, SolCall, SolError};
 /// A selector from the shared ABI crate, in the `u32` form the dispatcher
 /// compares against.
 ///
-/// Every handler the NODE calls gets its selector this way, so a rename in
-/// `fluentbase-staking-abi` is a compile error here and a compile error in the
-/// node at the same time. Handlers with no node-side caller keep
-/// `derive_keccak256_id!` below: they exist in one place only, so there is
-/// nothing to hold in step.
+/// The rule, the same one `fluentbase-staking-abi`'s header states and
+/// `agreement_check.py` G3 enforces: a handler that MORE THAN ONE place outside
+/// this crate has to encode — the node, the genesis bootstrap, the e2e stands,
+/// the Python harness — gets its selector this way, and a rename in the shared
+/// crate is then a compile error here and in every caller at the same time.
+///
+/// A handler with a single caller outside this crate keeps `derive_keccak256_id!`
+/// below: one declaration on each side of one pairing is not a duplicate anyone
+/// can drift, and moving it would only widen the shared crate for nothing.
 const fn sig<C: SolCall>() -> u32 {
     u32::from_be_bytes(C::SELECTOR)
 }
@@ -34,10 +38,7 @@ pub const STATUS_JAIL: u8 = 3;
 // values remain beside them to make ABI drift visible during review.
 
 // 0xfecaf0f1
-pub const SIG_INITIALIZE: u32 =
-    derive_keccak256_id!(
-        "initialize(address,address[],uint256[],bytes[],bytes[],bytes32[],uint16,address,uint32,uint32,uint32,uint256,uint256,uint64,uint256,address)"
-    );
+pub const SIG_INITIALIZE: u32 = sig::<abi::initializeCall>();
 // 0x76671808
 pub const SIG_CURRENT_EPOCH: u32 = derive_keccak256_id!("currentEpoch()");
 // 0xaea0e78b
@@ -81,12 +82,11 @@ pub const SIG_GET_VALIDATOR_DELEGATION: u32 =
 pub const SIG_GET_VALIDATOR_DELEGATED_STAKE_AT: u32 =
     derive_keccak256_id!("getValidatorDelegatedStakeAt(address,uint256)");
 // 0x8d6067ed
-pub const SIG_REGISTER_VALIDATOR: u32 =
-    derive_keccak256_id!("registerValidator(address,uint16,uint256,bytes,bytes,bytes32)");
+pub const SIG_REGISTER_VALIDATOR: u32 = sig::<abi::registerValidatorCall>();
 // 0x026e402b
-pub const SIG_DELEGATE: u32 = derive_keccak256_id!("delegate(address,uint256)");
+pub const SIG_DELEGATE: u32 = sig::<abi::delegateCall>();
 // 0x4d99dd16
-pub const SIG_UNDELEGATE: u32 = derive_keccak256_id!("undelegate(address,uint256)");
+pub const SIG_UNDELEGATE: u32 = sig::<abi::undelegateCall>();
 // 0x23b872dd
 pub const SIG_ERC20_TRANSFER_FROM: u32 =
     derive_keccak256_id!("transferFrom(address,address,uint256)");
@@ -103,8 +103,7 @@ pub const SIG_SET_SLASH_FUND_ADDRESS: u32 = derive_keccak256_id!("setSlashFundAd
 // 0xc8f45d87
 pub const SIG_GET_BLEND_STIPEND_PER_EPOCH: u32 = derive_keccak256_id!("getBlendStipendPerEpoch()");
 // 0x2c91b879
-pub const SIG_SET_BLEND_STIPEND_PER_EPOCH: u32 =
-    derive_keccak256_id!("setBlendStipendPerEpoch(uint256)");
+pub const SIG_SET_BLEND_STIPEND_PER_EPOCH: u32 = sig::<abi::setBlendStipendPerEpochCall>();
 // 0xc227a412
 pub const SIG_SET_ACTIVE_VALIDATORS_LENGTH: u32 =
     derive_keccak256_id!("setActiveValidatorsLength(uint32)");
@@ -123,7 +122,7 @@ pub const SIG_SET_MIN_STAKING_AMOUNT: u32 = derive_keccak256_id!("setMinStakingA
 // 0x37dff538
 pub const SIG_GET_BLEND_RESERVE: u32 = derive_keccak256_id!("getBlendReserve()");
 // 0x7899ae8f
-pub const SIG_SET_BLEND_RESERVE: u32 = derive_keccak256_id!("setBlendReserve(address)");
+pub const SIG_SET_BLEND_RESERVE: u32 = sig::<abi::setBlendReserveCall>();
 // 0xee3ad0e7
 pub const SIG_GET_MIN_VERDICT_DUE_BLOCKS: u32 = derive_keccak256_id!("getMinVerdictDueBlocks()");
 // 0x4fae9dea
@@ -139,10 +138,10 @@ pub const SIG_GET_PRODUCTION_LIVENESS_DISABLED: u32 =
     derive_keccak256_id!("getProductionLivenessDisabled()");
 // 0x8fc07556
 pub const SIG_SET_PRODUCTION_LIVENESS_DISABLED: u32 =
-    derive_keccak256_id!("setProductionLivenessDisabled(bool)");
+    sig::<abi::setProductionLivenessDisabledCall>();
 // 0xf06be669
 #[cfg(feature = "devnet-views")]
-pub const SIG_BLOCKS_IN_EPOCH: u32 = derive_keccak256_id!("blocksInEpoch(uint64)");
+pub const SIG_BLOCKS_IN_EPOCH: u32 = sig::<abi::blocksInEpochCall>();
 // 0x91c7d453
 #[cfg(feature = "devnet-views")]
 pub const SIG_PRODUCED_AT: u32 = derive_keccak256_id!("producedAt(uint64,uint32)");
@@ -157,7 +156,7 @@ pub const SIG_RECORD_PRODUCTION: u32 = sig::<abi::recordProductionCall>();
 // 0x457179fd
 pub const SIG_GET_VALIDATOR_FEE: u32 = derive_keccak256_id!("getValidatorFee(address)");
 // 0xff4794fc
-pub const SIG_CLAIM_VALIDATOR_FEE: u32 = derive_keccak256_id!("claimValidatorFee(address)");
+pub const SIG_CLAIM_VALIDATOR_FEE: u32 = sig::<abi::claimValidatorFeeCall>();
 // 0xadf2a79c
 pub const SIG_CLAIM_VALIDATOR_FEE_AT_EPOCH: u32 =
     derive_keccak256_id!("claimValidatorFeeAtEpoch(address,uint64)");
@@ -175,9 +174,9 @@ pub const SIG_WITHDRAW_DELEGATOR_PRINCIPAL: u32 =
 pub const SIG_REDELEGATE_DELEGATOR_FEE: u32 =
     derive_keccak256_id!("redelegateDelegatorFee(address)");
 // 0x54c3e84b
-pub const SIG_GET_EPOCH_REWARDS: u32 = derive_keccak256_id!("getEpochRewards(uint64)");
+pub const SIG_GET_EPOCH_REWARDS: u32 = sig::<abi::getEpochRewardsCall>();
 // 0xad36f42f
-pub const SIG_GET_CONSENSUS_KEYS: u32 = derive_keccak256_id!("getConsensusKeys(address)");
+pub const SIG_GET_CONSENSUS_KEYS: u32 = sig::<abi::getConsensusKeysCall>();
 // 0xd96cbd7b
 pub const SIG_GET_REGISTRY_WITH_KEYS: u32 = sig::<abi::getRegistryWithKeysCall>();
 // 0xc06a82de

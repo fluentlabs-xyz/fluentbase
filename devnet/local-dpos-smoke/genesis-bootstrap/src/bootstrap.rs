@@ -1,6 +1,12 @@
 use alloy_primitives::{address, Address, Bytes, B256, U256};
 use alloy_sol_types::{SolCall, SolValue};
 use eyre::WrapErr;
+// The staking module's own ABI comes from `fluentbase-staking-abi`, the crate
+// the contract derives its dispatch selectors from — `initialize`,
+// `commitEpochCommittee` and the two governance setters are declared there,
+// once, so a change to any of them is a compile error here instead of a revert
+// at genesis-init.
+use fluentbase_staking_abi as staking_abi;
 use fluentbase_testing::EvmTestingContext;
 use std::collections::HashMap;
 
@@ -82,39 +88,19 @@ pub struct PredeployState {
     pub balance_by_address: HashMap<Address, U256>,
 }
 
+// The OTHER predeploys. Nothing of the staking module is declared here any more
+// — every call this file makes into it comes from `fluentbase-staking-abi`.
+//
 // Each contract's `initialize(...)` lives inside its own interface block so
 // the function name in the `sol!` source is `initialize` — alloy's selector
 // is `keccak256(name + sig)[:4]`, so renaming the function (e.g. to
-// `stakingInitialize`) silently produces a wrong selector and the contract
+// `poolInitialize`) silently produces a wrong selector and the contract
 // dispatcher reverts with empty output. Interface namespacing keeps the
 // on-chain name `initialize` while giving each contract its own Rust type
-// (e.g. `IStaking::initializeCall`).
+// (e.g. `IStakingPool::initializeCall`).
 mod abi {
     use alloy_sol_types::sol;
     sol! {
-        interface IStaking {
-            function initialize(
-                address initialStakeOwner,
-                address[] validators,
-                uint256[] initialStakes,
-                bytes[] blsPubkeysUncompressed,
-                bytes[] blsPopsUncompressed,
-                bytes32[] peerPubkeys,
-                uint16 commissionRate,
-                address stakingToken,
-                uint32 activeValidatorsLength,
-                uint32 epochBlockInterval,
-                uint32 undelegatePeriod,
-                uint256 minValidatorStakeAmount,
-                uint256 minStakingAmount,
-                uint64 dposActivationBlock,
-                uint256 minUndelegateBlocks,
-                address blendReserve
-            ) external;
-            function setProductionLivenessDisabled(bool value) external;
-            function setBlendStipendPerEpoch(uint256 value) external;
-            function commitEpochCommittee() external;
-        }
         interface IStakingPool {
             function initialize(address initialOwner) external;
         }
@@ -326,7 +312,7 @@ pub fn run(
     // verifier argument any more and no setter that could supply one: the module
     // verifies each proof of possession itself, against the fixed EIP-2537
     // precompile addresses.
-    let staking_init = abi::IStaking::initializeCall {
+    let staking_init = staking_abi::initializeCall {
         initialStakeOwner: blend_holder,
         validators: validator_addrs,
         initialStakes: initial_stakes,
@@ -357,7 +343,7 @@ pub fn run(
     // the tier ships off, and an unwritten slot would ship it on. The devnet wants it
     // ON, so the flip is a governance call the initializer cannot make.
     let enable_liveness =
-        abi::IStaking::setProductionLivenessDisabledCall { value: false }.abi_encode();
+        staking_abi::setProductionLivenessDisabledCall { value: false }.abi_encode();
     call_or_die(
         &mut ctx,
         GOVERNANCE_ADDR,
@@ -370,7 +356,7 @@ pub fn run(
     // pro-rata by stake among committee members that met the participation floor.
     let stipend_per_epoch = U256::from(env_u64("BLEND_STIPEND_PER_EPOCH_BLEND", 10))
         * U256::from(10u128).pow(U256::from(18));
-    let set_stipend = abi::IStaking::setBlendStipendPerEpochCall {
+    let set_stipend = staking_abi::setBlendStipendPerEpochCall {
         value: stipend_per_epoch,
     }
     .abi_encode();
@@ -399,7 +385,7 @@ pub fn run(
     // The committee for epoch 0. The contract selects it from its own registry and
     // sorts it on peer pubkey, which IS the consensus index space — there is nothing
     // for this side to supply or to agree with.
-    let commit = abi::IStaking::commitEpochCommitteeCall {}.abi_encode();
+    let commit = staking_abi::commitEpochCommitteeCall {}.abi_encode();
     call_or_die(
         &mut ctx,
         SYSTEM_CALLER,

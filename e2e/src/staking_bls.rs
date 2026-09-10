@@ -12,53 +12,18 @@
 //! was taken with.
 
 use crate::EvmTestingContextWithGenesis;
-use alloy_sol_types::{sol, SolCall};
+use alloy_sol_types::SolCall;
 use fluentbase_sdk::{hex, Address, Bytes, B256, GENESIS_GOVERNANCE, GENESIS_STAKING, U256};
+// Every call this file makes — `initialize`, `registerValidator`,
+// `slashEquivocationNotarize` — comes from the crate the contract derives its
+// dispatch selectors from, so this file has no `sol!` block of its own at all.
+use fluentbase_staking_abi as staking_abi;
 use fluentbase_testing::EvmTestingContext;
 
 const OWNER: Address = Address::repeat_byte(0x11);
 const RELAYER: Address = Address::repeat_byte(0xd7);
 const TOKEN: U256 = U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]);
 const HUGE_GAS: u64 = 30_000_000;
-
-sol! {
-    interface IStaking {
-        function initialize(
-            address initialStakeOwner,
-            address[] validators,
-            uint256[] initialStakes,
-            bytes[] blsPubkeysUncompressed,
-            bytes[] blsPopsUncompressed,
-            bytes32[] peerPubkeys,
-            uint16 commissionRate,
-            address stakingToken,
-            uint32 activeValidatorsLength,
-            uint32 epochBlockInterval,
-            uint32 undelegatePeriod,
-            uint256 minValidatorStakeAmount,
-            uint256 minStakingAmount,
-            uint64 dposActivationBlock,
-            uint256 minUndelegateBlocks,
-            address blendReserve
-        ) external;
-        function registerValidator(
-            address validator,
-            uint16 commissionRate,
-            uint256 initialStake,
-            bytes calldata blsPubkeyUncompressed,
-            bytes calldata blsPopUncompressed,
-            bytes32 peerPubkey
-        ) external;
-        function slashEquivocationNotarize(
-            bytes evidence,
-            bytes pkUncompressed,
-            bytes sig1Uncompressed,
-            bytes sig2Uncompressed
-        ) external;
-        function getConsensusKeys(address validator)
-            external view returns (bytes blsPubkey, bytes32 peerPubkey, uint64 activationEpoch);
-    }
-}
 
 /// A token that answers `true` to everything and `2^80-1` to the two reads the
 /// epoch close makes. Gas here, not solvency.
@@ -161,7 +126,7 @@ fn both_bls_paths_accept_node_made_signatures() {
     context.add_balance(RELAYER, U256::from(10u128).pow(U256::from(20)));
 
     // One genesis validator, so the slash below finds a registered key owner.
-    let init = IStaking::initializeCall {
+    let init = staking_abi::initializeCall {
         initialStakeOwner: OWNER,
         validators: vec![Address::repeat_byte(0xa1)],
         initialStakes: vec![TOKEN * U256::from(10)],
@@ -187,7 +152,7 @@ fn both_bls_paths_accept_node_made_signatures() {
     // validator.
     let second_owner = Address::repeat_byte(0x55);
     context.add_balance(second_owner, U256::from(10u128).pow(U256::from(20)));
-    let register = IStaking::registerValidatorCall {
+    let register = staking_abi::registerValidatorCall {
         validator: Address::repeat_byte(0xa2),
         commissionRate: 0,
         initialStake: TOKEN,
@@ -201,7 +166,7 @@ fn both_bls_paths_accept_node_made_signatures() {
     // The evidence path: one compressG2, two compressG1, two verifies, then the
     // tombstone and the seizure. Succeeds, because a reverted frame in this
     // harness reports the whole gas limit as spent and would measure nothing.
-    let slash = IStaking::slashEquivocationNotarizeCall {
+    let slash = staking_abi::slashEquivocationNotarizeCall {
         evidence: signed_evidence(),
         pkUncompressed: crate::bls_vectors::pubkey(0).to_vec().into(),
         sig1Uncompressed: SIG1_UNCOMPRESSED.to_vec().into(),
@@ -213,7 +178,7 @@ fn both_bls_paths_accept_node_made_signatures() {
     // The slash landed: the same evidence a second time is refused as a re-slash
     // rather than accepted again, which is the state change a successful
     // tombstone leaves behind.
-    let repeat = IStaking::slashEquivocationNotarizeCall {
+    let repeat = staking_abi::slashEquivocationNotarizeCall {
         evidence: signed_evidence(),
         pkUncompressed: crate::bls_vectors::pubkey(0).to_vec().into(),
         sig1Uncompressed: SIG1_UNCOMPRESSED.to_vec().into(),

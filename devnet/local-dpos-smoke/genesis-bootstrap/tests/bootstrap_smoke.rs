@@ -5,11 +5,12 @@ use alloy_sol_types::{sol, SolCall, SolValue};
 use fluentbase_genesis_bootstrap::{
     artifacts, bootstrap,
     bootstrap::{
-        PredeployState, GOVERNANCE_ADDR, GOVERNANCE_VOTING_PERIOD_BLOCKS,
-        STAKING_ADDR, STAKING_POOL_ADDR, STAKING_TOKEN_ADDR,
+        PredeployState, GOVERNANCE_ADDR, GOVERNANCE_VOTING_PERIOD_BLOCKS, STAKING_ADDR,
+        STAKING_POOL_ADDR, STAKING_TOKEN_ADDR,
     },
     keys,
 };
+use fluentbase_staking_abi as staking_abi;
 use fluentbase_testing::EvmTestingContext;
 
 const SMOKE_CHAIN_ID: u64 = 2026;
@@ -82,21 +83,17 @@ fn ctx_from_predeploy(state: &PredeployState) -> EvmTestingContext {
     ctx
 }
 
+// `ConsensusKeys`, `getConsensusKeys`, `getEpochCommitteeWithStakes`,
+// `getDposActivationBlock` and `getActiveValidatorsLength` are the shared crate's
+// — re-spelling them here was a second declaration of each, and the
+// `getActiveValidatorsLength` copy said `uint32` where the contract writes a
+// `u64`. What is left is the three views nothing outside `contracts/staking`
+// reads but this test.
 sol! {
-    struct ConsensusKeys {
-        bytes blsPubkey;
-        bytes32 peerPubkey;
-        uint64 activationEpoch;
-    }
     interface IStakingView {
         function getEpochCommittee(uint64 epoch) external view returns (address[] memory);
-        function getEpochCommitteeWithStakes(uint64 epoch) external view returns (
-            address[] addrs, ConsensusKeys[] keys, uint256[] stakes, bool[] tombstoned);
-        function getConsensusKeys(address validator) external view returns (ConsensusKeys memory);
         function getProductionLivenessDisabled() external view returns (bool);
         function getBlendStipendPerEpoch() external view returns (uint256);
-        function getDposActivationBlock() external view returns (uint64);
-        function getActiveValidatorsLength() external view returns (uint32);
     }
     interface IERC20View {
         function balanceOf(address account) external view returns (uint256);
@@ -200,9 +197,9 @@ fn committed_committee_is_strictly_ascending_on_peer_pubkey() {
     let (_keys, state) = run_bootstrap();
     let mut ctx = ctx_from_predeploy(&state);
 
-    let calldata = IStakingView::getEpochCommitteeWithStakesCall { epoch: 0 }.abi_encode();
+    let calldata = staking_abi::getEpochCommitteeWithStakesCall { epoch: 0 }.abi_encode();
     let out = eth_call(&mut ctx, STAKING_ADDR, calldata.into());
-    let decoded = IStakingView::getEpochCommitteeWithStakesCall::abi_decode_returns(&out)
+    let decoded = staking_abi::getEpochCommitteeWithStakesCall::abi_decode_returns(&out)
         .expect("decode getEpochCommitteeWithStakes");
 
     assert_eq!(decoded.keys.len(), decoded.addrs.len());
@@ -266,17 +263,19 @@ fn sim_shape_seats_a_prefix_and_defers_activation() {
     let cap_out = eth_call(
         &mut ctx,
         STAKING_ADDR,
-        IStakingView::getActiveValidatorsLengthCall {}
+        staking_abi::getActiveValidatorsLengthCall {}
             .abi_encode()
             .into(),
     );
-    let cap = u32::abi_decode(&cap_out).expect("decode getActiveValidatorsLength");
+    // `uint64`, matching the shared declaration and the width the contract
+    // writes; the local copy this test used to carry said `uint32`.
+    let cap = u64::abi_decode(&cap_out).expect("decode getActiveValidatorsLength");
     assert_eq!(cap as usize, SEATED);
 
     let activation_out = eth_call(
         &mut ctx,
         STAKING_ADDR,
-        IStakingView::getDposActivationBlockCall {}
+        staking_abi::getDposActivationBlockCall {}
             .abi_encode()
             .into(),
     );
@@ -319,11 +318,7 @@ fn bare_installs_only_the_governor() {
         "bare installed more than the Governor: {:?}",
         state.bytecode_by_address.keys().collect::<Vec<_>>()
     );
-    for addr in [
-        STAKING_ADDR,
-        STAKING_POOL_ADDR,
-        STAKING_TOKEN_ADDR,
-    ] {
+    for addr in [STAKING_ADDR, STAKING_POOL_ADDR, STAKING_TOKEN_ADDR] {
         assert!(
             !state.bytecode_by_address.contains_key(&addr),
             "bare must leave {addr:?} codeless"
@@ -373,10 +368,10 @@ fn bootstrap_registers_each_validator_under_the_key_blst_compressed() {
 
     for v in &key_set.validators {
         let addr = v.l2_signer.address();
-        let calldata = IStakingView::getConsensusKeysCall { validator: addr }.abi_encode();
+        let calldata = staking_abi::getConsensusKeysCall { validator: addr }.abi_encode();
         let out = eth_call(&mut ctx, STAKING_ADDR, calldata.into());
 
-        let keys = ConsensusKeys::abi_decode(&out).expect("decode getConsensusKeys");
+        let keys = staking_abi::ConsensusKeys::abi_decode(&out).expect("decode getConsensusKeys");
         assert_eq!(
             keys.blsPubkey.as_ref(),
             &v.bls.public_bytes()[..],
