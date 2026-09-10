@@ -17,6 +17,9 @@ mod fluent_testnet {
         fn testnet_20987069_rwasm_gas_mismatch("fixtures/testnet_20987069_rwasm_gas_mismatch.json");
         fn testnet_22882338_hello_world("fixtures/testnet_22882338_hello_world.json");
         fn testnet_24359651_bridge_ust20_received("fixtures/testnet_24359651_bridge_ust20_received.json");
+        fn testnet_35841078_marketplace_proxy("fixtures/testnet_35841078_marketplace_proxy.json");
+        fn testnet_35885389_entrypoint_closed("fixtures/testnet_35885389_entrypoint_closed.json");
+        fn testnet_36201541_entrypoint_gas("fixtures/testnet_36201541_entrypoint_gas.json");
     }
 }
 
