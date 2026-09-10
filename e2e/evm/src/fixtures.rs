@@ -20,6 +20,7 @@ mod fluent_testnet {
         fn testnet_35841078_marketplace_proxy("fixtures/testnet_35841078_marketplace_proxy.json");
         fn testnet_35885389_entrypoint_closed("fixtures/testnet_35885389_entrypoint_closed.json");
         fn testnet_36201541_entrypoint_gas("fixtures/testnet_36201541_entrypoint_gas.json");
+        fn testnet_35833408_batch_mint("fixtures/testnet_35833408_batch_mint.json");
     }
 }
 
