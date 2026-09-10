@@ -1883,6 +1883,8 @@ version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "841d1cc9bed7f9236f321df977030373f4a4163ae1a7dbfe1a51a2c1a51d9100"
 dependencies = [
+ "allocator-api2",
+ "equivalent",
  "foldhash",
 ]
 
@@ -2236,6 +2238,15 @@ name = "log"
 version = "0.4.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0ceec5bc11778974d1bcb055b18002eba7f4b3518b6a0081b3af5f21666da9ad"
+
+[[package]]
+name = "lru"
+version = "0.16.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f66e8d5d03f609abc3a39e6f08e4164ebf1447a732906d39eb9b99b7919ef39"
+dependencies = [
+ "hashbrown 0.16.1",
+]
 
 [[package]]
 name = "mach2"
@@ -3253,15 +3264,16 @@ dependencies = [
 
 [[package]]
 name = "rwasm"
-version = "0.4.7"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba058d30cf12de60276718864a5c31b05b53aab709297556e5a324093d013267"
+checksum = "d682b0223f1284ea3e7322654e6b22d243f25b0e0607c2fe5ec2e54509ee9ecc"
 dependencies = [
  "bincode 2.0.1",
  "bitvec",
  "downcast-rs",
  "hashbrown 0.17.1",
  "libm",
+ "lru",
  "num-derive",
  "num-traits",
  "paste",
