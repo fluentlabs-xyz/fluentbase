@@ -131,7 +131,7 @@ def test_bounds_validation():
     with pytest.raises(ComposeGenError):
         compose_gen.generate(3)          # N < 4
     with pytest.raises(ComposeGenError):
-        compose_gen.generate(52)         # N > 51
+        compose_gen.generate(compose_gen.MAX_COMMITTEE_SIZE + 1)   # N > the committee cap
     with pytest.raises(ComposeGenError):
         compose_gen.generate(6, target=3)   # target < 4
 

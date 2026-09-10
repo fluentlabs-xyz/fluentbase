@@ -741,13 +741,13 @@ class RotationBringUp:
         return converge.wait_finalized_ge(target, timeout)
 
     def _read_epoch_len(self, chain: Chain) -> int:
-        """`printf '%d' "$(pp_chainconfig_call 'getEpochBlockInterval()(uint32)')"`.
+        """`printf '%d' "$(pp_chainconfig_call 'getEpochBlockInterval()(uint64)')"`.
 
         Read through `Chain._pp_cfg_read_retry`, which owns the `[sci]` suffix strip (§2.4 item 9)
         and the 3× retry — bash's bare `printf '%d'` here has neither, and this is the one read in
         the bring-up whose failure mode is a silent 0 rather than a loud abort. The `> 0` assert on
         the caller's side is what bash relies on; the retry only makes a transient not reach it."""
-        got = chain._pp_cfg_read_retry("getEpochBlockInterval()(uint32)")
+        got = chain._pp_cfg_read_retry("getEpochBlockInterval()(uint64)")
         if self.dry:
             # The read above was still ISSUED so its argv reaches the transcript; the canned answer
             # is 0 (an empty dry stdout), which would then trip the `epoch_len > 0` assert and end

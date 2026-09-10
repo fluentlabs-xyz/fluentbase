@@ -391,14 +391,14 @@ def test_a_successful_but_empty_cfg_read_is_zero_not_a_retry():
     ChainConfig that just said there is none."""
     assert V.cfg_value(True, "") == 0
     chain, r = _chain({"cfg-read": RunResult(argv=[], stdout="", rc=0)})
-    assert chain._pp_cfg_read_retry("getEpochBlockInterval()(uint32)") == 0
+    assert chain._pp_cfg_read_retry("getEpochBlockInterval()(uint64)") == 0
     assert len(r.argv_for("cfg-read")) == 1          # answered on the first attempt
 
 
 def test_a_failing_cfg_read_retries_three_times_then_reports_transient():
     assert V.cfg_value(False, "anything") is None
     chain, r = _chain({"cfg-read": RunResult(argv=[], stdout="", rc=1, stderr="no such host")})
-    assert chain._pp_cfg_read_retry("getEpochBlockInterval()(uint32)") is None
+    assert chain._pp_cfg_read_retry("getEpochBlockInterval()(uint64)") is None
     assert len(r.argv_for("cfg-read")) == 3
 
 

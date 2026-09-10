@@ -53,6 +53,18 @@ GEO_RTT = [
 ]
 
 
+#: The committee cap the contract enforces and the node's cert-bitmap codec is bounded by:
+#: `MAX_COMMITTEE_SIZE` in `crates/types/src/staking_protocol.rs:38`, which
+#: `contracts/staking/src/consts.rs` re-exports (it was the contract's
+#: `MAX_ACTIVE_VALIDATORS_LENGTH`).
+#:
+#: Python cannot import a Rust `const`, so this is a TRANSCRIPTION, and the only thing that
+#: makes it safe is that `scripts/xp/agreement_check.py` (G8) reads both this line and the
+#: Rust one and fails when they differ. Keep the name and the `= <int>` spelling — that is
+#: what the checker matches on.
+MAX_COMMITTEE_SIZE = 51
+
+
 class ComposeGenError(Exception):
     pass
 
@@ -97,8 +109,10 @@ def generate(
         )
     if n < 4:
         raise ComposeGenError(f"N={n} < 4 (need INITIAL_F>=1; MIN_COMMITTEE math, D4)")
-    if n > 51:
-        raise ComposeGenError(f"N={n} > 51 (exceeds MAX_COMMITTEE_SIZE=51, dpos.rs:931)")
+    if n > MAX_COMMITTEE_SIZE:
+        raise ComposeGenError(
+            f"N={n} > {MAX_COMMITTEE_SIZE} (exceeds MAX_COMMITTEE_SIZE, "
+            "crates/types/src/staking_protocol.rs:38)")
 
     rotation_slots = int(_envs("SIM_ROTATION_SLOTS", "0"))
     no_cascade = _envs("SIM_NO_CASCADE", "0")

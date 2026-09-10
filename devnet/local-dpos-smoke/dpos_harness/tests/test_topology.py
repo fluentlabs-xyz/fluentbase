@@ -17,6 +17,7 @@ here because each has a silent failure mode:
 from __future__ import annotations
 
 from dpos_harness.core import topology as t
+from dpos_harness.stack import compose_gen
 
 
 # ── service naming ──────────────────────────────────────────────────────────────
@@ -145,10 +146,14 @@ def test_validator_ip_is_arithmetic_not_concatenation():
 
 
 def test_validator_ips_are_unique_and_inside_the_subnet_up_to_the_committee_cap():
-    """51 is MAX_COMMITTEE_SIZE (a product constant, checked in compose_gen) — the IP plan
-    has to survive a full-size committee without leaving the /24 or repeating itself."""
-    ips = [t.validator_ip(i) for i in range(51)]
-    assert len(set(ips)) == 51
+    """`compose_gen.MAX_COMMITTEE_SIZE` is the product cap (transcribed from
+    `crates/types/src/staking_protocol.rs`, checked by `scripts/xp/agreement_check.py` G8) —
+    the IP plan has to survive a full-size committee without leaving the /24 or repeating
+    itself. Read from there rather than re-typed, so raising the cap re-runs this test at the
+    new size instead of silently leaving it at the old one."""
+    cap = compose_gen.MAX_COMMITTEE_SIZE
+    ips = [t.validator_ip(i) for i in range(cap)]
+    assert len(set(ips)) == cap
     assert set(ips).isdisjoint({t.GENESIS_INIT_IP, t.FULL_NODE_IP, t.DOWNSTREAM_IP})
     for ip in ips:
         head, last = ip.rsplit(".", 1)

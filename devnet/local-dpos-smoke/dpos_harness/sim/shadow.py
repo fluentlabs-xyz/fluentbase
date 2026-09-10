@@ -185,7 +185,7 @@ def _current_epoch(chain_config_rt):
     head = nodes.finalized_dec()
     interval = 0
     act = 0
-    out = nodes.chainconfig_call("getEpochBlockInterval()(uint32)", addr=chain_config_rt)
+    out = nodes.chainconfig_call("getEpochBlockInterval()(uint64)", addr=chain_config_rt)
     m = re.match(r"\s*([0-9]+)", out)
     interval = int(m.group(1)) if m else int(os.environ.get("EPOCH_INTERVAL", "0") or 0)
     out = nodes.chainconfig_call("getDposActivationBlock()(uint64)", addr=chain_config_rt)

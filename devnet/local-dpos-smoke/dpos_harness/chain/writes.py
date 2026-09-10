@@ -251,7 +251,7 @@ class Chain:
         MEMOIZED (M4: never default interval→64 / act→0 on a blip → false growth-stall)."""
         head_hex = self._head_hex()
         head = _hex_to_dec(head_hex)
-        interval = self._pp_cfg_read_retry("getEpochBlockInterval()(uint32)")
+        interval = self._pp_cfg_read_retry("getEpochBlockInterval()(uint64)")
         if interval is not None:
             self._interval_cache = str(interval)
         else:
@@ -314,7 +314,7 @@ class Chain:
         read-failed value and every caller aborts on it, so a plain `--dry-run` would never get
         past its first growth step. A canned read still wins (see `owner_addr`)."""
         out = self.p.run(["cast", "call", self.chain_config_rt,
-                          "getActiveValidatorsLength()(uint32)", "--rpc-url", self.rpc],
+                          "getActiveValidatorsLength()(uint64)", "--rpc-url", self.rpc],
                          note="active-len")
         if self.p.dry and not out:
             return DRY_ACTIVE_LEN
