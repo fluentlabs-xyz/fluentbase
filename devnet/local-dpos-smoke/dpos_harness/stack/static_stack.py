@@ -8,12 +8,12 @@ that sit between them. This is the base the 26 smoke cases stand on: 23 of them 
 The choreography, in the order that makes it correct:
 
     1. `docker compose up --build -d`            — phase A, the bare sequencer chain
-    2. converge all five nodes                    — finalized aligned, > 0
+    2. converge every node                        — finalized aligned, > 0
     3. wait until finalized >= the ACTIVATION BLOCK, so the swap anchor lands in relative
        epoch 0 — see `_wait_activation`
     4. graceful-stop ALL FOUR validators at once, then verify each really persisted
     5. reject an anchor outside relative epoch 0
-    6. recreate the four validators under the DPoS overlay + the per-case extra overlay
+    6. recreate the committee under the DPoS overlay + the per-case extra overlay
     7. converge again, strictly PAST the anchor
 
 Steps 3-6 are `_migrate_to_dpos`, and it is the SINGLE point that honours the per-case extra
@@ -125,29 +125,34 @@ class StaticStack:
         return bool(self.p.dry)
 
     def read_sequencer_nodes(self):
-        """`_read_sequencer_nodes` (lib.sh:167-173): the four genesis validators + the
-        full-node, as `(label, "height|hash")` pairs in bash's order. validator-0 and the
-        full-node publish a host RPC; validator-1..3 are reached by `docker compose exec`.
+        """`_read_sequencer_nodes` (lib.sh:167-173): every genesis validator + the full-node, as
+        `(label, "height|hash")` pairs in bash's order. validator-0 and the full-node publish a
+        host RPC; the rest are reached by `docker compose exec`.
+
+        The count comes from `profile.committee()`, NOT from a literal: the bash had four
+        validators and the stand has five since 2026-09-07, and a hardcoded range here declared
+        the stand converged without ever reading the node it left out.
 
         The host-vs-exec choice comes from `topology.HOST_RPC_PORTS` — the same map the compose
         files publish from — so a reader cannot aim at a port the compose file does not expose.
         """
         out = [self._read_host(topology.PINNED_RPC_HOST)]
-        for i in range(1, 4):
-            out.append((topology.validator(i), nodes.check_node(topology.validator(i))))
+        for svc in self.profile.committee()[1:]:
+            out.append((svc, nodes.check_node(svc)))
         out.append(self._read_host(topology.FULL_NODE))
         return out
 
     def read_dpos_nodes(self):
-        """`_read_dpos_nodes` (lib.sh:475-482): the honest-set reader. Same five nodes, minus
-        `converge_exclude`. The full-node is never excluded — it follows the honest quorum's
-        certs and is the check that the cascade tier saw the same chain."""
+        """`_read_dpos_nodes` (lib.sh:475-482): the honest-set reader. Every committee node plus
+        the full-node, minus `converge_exclude`. The full-node is never excluded — it follows the
+        honest quorum's certs and is the check that the cascade tier saw the same chain.
+
+        Same rule as `read_sequencer_nodes`: the set comes from `profile.committee()`."""
         excl = self.converge_exclude
         out = []
         if excl != topology.PINNED_RPC_HOST:
             out.append(self._read_host(topology.PINNED_RPC_HOST))
-        for i in range(1, 4):
-            svc = topology.validator(i)
+        for svc in self.profile.committee()[1:]:
             if excl != svc:
                 out.append((svc, nodes.check_node(svc)))
         out.append(self._read_host(topology.FULL_NODE))
@@ -182,7 +187,7 @@ class StaticStack:
         raise ConvergeError(what, f"did not converge{floor_msg} within {timeout}s ({detail})")
 
     def wait_converge(self, timeout=SEQUENCER_CONVERGE_S):
-        """`wait_converge` (lib.sh:218): all five nodes past genesis and on the producer's chain
+        """`wait_converge` (lib.sh:218): every node past genesis and on the producer's chain
         at their own heights, no floor."""
         return self._wait_aligned(timeout, "", self.read_sequencer_nodes, "phase1-sequencer")
 
@@ -245,7 +250,7 @@ class StaticStack:
         """`_migrate_to_dpos` (lib.sh:409-471). Sets `self.prev_fin` (the anchor, hex).
 
         The sole honouring point of the per-case extra overlay. Four ordered obligations:
-        wait to the activation block, graceful-stop all four validators, verify each flushed,
+        wait to the activation block, graceful-stop the whole committee, verify each flushed,
         recreate under the overlay. Getting any of them out of order breaks 23 cases at once.
         """
         self._wait_activation()

@@ -14,8 +14,23 @@ TWO things reach the stack from here and neither is a case-body concern:
     it the post-swap alignment gate would fail a case whose victim is behaving exactly as
     designed. Bash spells it `export DPOS_CONVERGE_EXCLUDE="validator-3"`.
 
-Standalone because it leaves a JAILED validator and a permanently-shrunk committee behind — there
-is no restore, and any case chained after it would be measuring a 3-node network.
+Standalone because it leaves a JAILED, tombstoned validator behind and SHRINKS the committee for
+good: the offender is dropped from the Active set at once, so every later commit on this five-seat
+genesis seats the four survivors. There is no restore — the tombstone is permanent and the seat is
+not refilled until the population recovers — so any case chained after it would be measuring a
+four-signer chain on a four-seat committee sitting exactly on MIN_COMMITTEE_LENGTH.
+
+THE STAND IS FIVE-SEAT FOR THIS CASE. The bash ran four, where the same jail leaves THREE: on
+contract `bc42042a` that boundary reverted `CommitteeTooSmall(3,4)` into the node's fail-loud arm
+and every honest node died 35 s after the tombstone (R-112, EXPERIMENTS §5.3 E1) while this case
+was green because it stopped three blocks after the jail; Э0.2 carried the previous committee
+forward instead; and since 2026-09-07 the carry is gone and the revert is back on every epoch.
+None of those is what this case is for, so the genesis was sized to leave a legal committee behind
+the jail. The below-the-floor path is a separate scenario (`scripts/xp/floor_halt_case.py`).
+
+THE CASE RUNS THROUGH THAT BOUNDARY AND ASSERTS IT (step 4 in `assert_byzantine`): the committee
+for the boundary epoch drops the offender, seats four, differs from the previous one, and mints a
+DKG ceremony. Roughly two epochs of extra observation (~1.5-2.5 min at the default interval).
 """
 
 from __future__ import annotations

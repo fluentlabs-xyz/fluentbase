@@ -1,7 +1,7 @@
 SOLIDITY_CONTRACTS_DIR ?= ../../../solidity-contracts
 
-.PHONY: case-growth case-quorum case-seed-continuity clean down golden logs regen-contracts \
-        xp-up xp-down xp-status xp-e5 xp-e2 xp-byz \
+.PHONY: case-growth case-quorum case-seed-continuity clean down golden harness-test logs regen-contracts \
+        xp-up xp-down xp-status xp-e5 xp-e2 xp-byz xp-floor xp-metrics xp-agree \
         smoke-all smoke-base smoke-base-dry-run smoke-byzantine \
         smoke-cert-cascade smoke-cert-catchup smoke-cert-follow smoke-cert-keyless \
         smoke-crash-survivor \
@@ -342,8 +342,8 @@ smoke-onchain-dry-run:
 # and a solidity-contracts checkout at $$SOLIDITY_CONTRACTS_DIR, they take 6-18 minutes each, and
 # none of them is in run-all.
 #
-# Each runs ALONE and never chained: every one leaves a rotated (and for production-path, a
-# permanently shrunk + jailed) committee behind, and smoke-vrf-dkg-halt leaves the chain
+# Each runs ALONE and never chained: every one leaves a rotated committee behind, and
+# smoke-vrf-dkg-halt leaves the chain
 # DELIBERATELY and PERMANENTLY halted.
 # The production-path four, docker-free. Here the
 # 14-phase bring-up dominates the diff, so read it in two halves: the phases up to `DPoS chain live
@@ -353,6 +353,26 @@ smoke-prod-dry-run:
 	@for c in smoke-vrf-rotation smoke-vrf-dkg-halt smoke-vrf-dkg-durability \
 	          smoke-production-path; do \
 	  echo "===== $$c ====="; python3 -m dpos_harness case $$c --dry-run; done
+
+# The harness's OWN unit suite, in a throwaway python container — the host has no pytest, which
+# is how `WIRE_HEADER_FIELDS` drifted from `order_block.rs` unnoticed (2026-09-04). The whole
+# repo is in scope, not just this directory: two tests read `crates/` sources
+# (`order_block.rs`, `epoch_manager.rs`) and skip or error without them. Needs network for
+# the one `pip install` (pytest + pyyaml, which `test_compose_parity.py` imports).
+# TWO mounts, and the pair is the point: the repo root READ-ONLY so the `crates/` reads work, and
+# THIS directory read-write on top of it, because two tests write scratch files into the tree
+# (`sim/_seam_mutation_probe.py`, `sim-out/events.jsonl`). A single read-write mount of the repo
+# root would put every file in the tree inside the blast radius of a test bug, for the sake of
+# scratch files that all land under this directory. Run as the host user so nothing is left
+# root-owned; pip goes to `$HOME/.local` inside the container, which is why HOME is /tmp.
+# pip keeps `-q` (progress bars are noise) but NOT `>/dev/null`: the redirect swallowed the
+# error text too, so a failed install showed up only as `No module named pytest` several
+# lines later.
+harness-test:
+	@docker run --rm --user "$$(id -u):$$(id -g)" -e HOME=/tmp \
+	  -v "$(abspath ../..):/repo:ro" -v "$(abspath .):/repo/devnet/local-dpos-smoke" \
+	  -w /repo/devnet/local-dpos-smoke python:3.12-slim \
+	  sh -c "pip -q install --user pytest pyyaml && python -m pytest -q -p no:cacheprovider dpos_harness/tests $(ARGS)"
 
 # Aggregate (CI entry point).
 smoke-all:
@@ -372,6 +392,9 @@ smoke-all:
 #   make xp-e5 N=6      E5: honest exits one at a time until the chain stops
 #   make xp-e2 N=6      E2: ONE honest full exit (undelegate) by validator XP_IDX (default N-1)
 #   make xp-byz N=6     E1: equivocation on XP_BYZ (default: the last validator); needs N>=5
+#   make xp-floor N=4 XP_MODE=byz    committee-floor refusal (exit | decay | byz)
+#   make xp-metrics N=4              both metrics registries of every node on the stand
+#   make xp-agree [XP_LIVE=1 N=4]    node/contract agreement (STAKING_CONTRACT_SRC required)
 #   make xp-status N=6  head/finalized/hash per node
 #   make xp-down N=6    tear the stand down with its volume
 N ?= 6
@@ -398,6 +421,25 @@ xp-e2:
 # and becomes R-111 by another writer (R-112). XP_ALLOW_SMALL_BYZ=1 to do it anyway.
 xp-byz:
 	@python3 $(XP)/inc.py $(N) $(XP_BYZ) xp-byz-n$(N)
+
+# The committee-floor scenarios (R-111/R-112): the population drops below
+# MIN_COMMITTEE_LENGTH and the commit must REFUSE — `CommitteeTooSmall(V, 4)` out of a
+# pre-execution system call, so the boundary block is never executed and the chain stops
+# there. XP_MODE = exit | decay | byz; XP_CONTRACTS_DIR points the stand at another
+# artefact directory.
+xp-floor:
+	@python3 $(XP)/floor_halt_case.py $(N) $(XP_MODE)
+
+# Both metrics registries of every node on stand xp<N>: no duplicate series, executor
+# families actually exported (R-085 / the reth half of R-070).
+xp-metrics:
+	@python3 $(XP)/metrics_dupcheck.py --stand $(N)
+
+# Node/contract agreement. Needs STAKING_CONTRACT_SRC (the staking contract checkout — a
+# separate tree, so there is no default). `XP_LIVE=1` adds the LIVE half against stand xp<N>;
+# without it the offline half runs alone and no stand has to be up.
+xp-agree:
+	@python3 $(XP)/agreement_check.py $(if $(XP_LIVE),--stand $(N),)
 
 xp-down:
 	@docker compose -p xp$(N) -f $(XP)/out/xp$(N).yml -f $(XP)/out/xp$(N).dpos.yml down -v \

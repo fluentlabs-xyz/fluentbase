@@ -29,7 +29,10 @@ from dpos_harness.core.proc import Runner
 from dpos_harness.stack.profiles import StaticProfile
 from dpos_harness.stack.static_stack import StaticStack
 
-VALS = ["validator-0", "validator-1", "validator-2", "validator-3"]
+VALS = ["validator-0", "validator-1", "validator-2", "validator-3", "validator-4"]
+#: FIVE, where the bash said four. `StaticProfile.committee()` carries the reason: a
+#: four-seat stand cannot survive `smoke-byzantine`'s tombstone once the commit reverts
+#: below MIN_COMMITTEE_LENGTH instead of carrying the previous committee forward.
 UP = ["docker", "compose", "up", "--build", "-d"]
 STOP = ["docker", "compose", "stop", "--timeout", "40", *VALS]
 RECREATE = ["docker", "compose", "-f", "docker-compose.yml", "-f", "docker-compose.dpos.yml",

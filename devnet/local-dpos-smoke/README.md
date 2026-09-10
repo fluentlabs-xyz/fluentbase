@@ -8,7 +8,7 @@ thin launcher over it (`python3 -m dpos_harness case <name>`).
 Each bring-up mirrors the production migration in two phases, and both are a
 PRECONDITION of every case rather than a target of their own:
 
-- **phase-1**: validator-0 runs as the sequencer (1 block / sec); validators 1-3
+- **phase-1**: validator-0 runs as the sequencer (1 block / sec); validators 1-4
   and a non-staking full-node follow via `--cert-upstream ws://172.20.0.10:8546`
   (deprecated alias `--sequencer-url`). All 5 must align finalized > 0.
 - **phase-2**: cold-restart validators 0-3 with `--dpos` via the
@@ -104,7 +104,7 @@ one, and reporting it as a pass is the failure mode the suite exists to remove.
   Unset the env var to use the default deterministic mnemonic
   (foundry/hardhat-canonical "test test ... junk").
 - **validator-0 producing blocks but followers stuck at block 0** —
-  one (or more) of validators 1-3 / full-node missing
+  one (or more) of validators 1-4 / full-node missing
   `--dpos.staking-config`. State-root mismatch on
   `commitEpochCommittee` system call causes followers to reject
   the sequencer's blocks. All 5 nodes must pass identical
@@ -123,7 +123,7 @@ one, and reporting it as a pass is the failure mode the suite exists to remove.
 Under `--dpos`, reth devp2p is the EL-block transport for rejoin/catch-up
 (a restarted validator FCU-drives its head toward the consensus tip and
 reth bulk-downloads the gap over eth/68 from its trusted peer). In this
-smoke, validators 1-3 statically pin validator-0's enode
+smoke, validators 1-4 statically pin validator-0's enode
 (`--trusted-peers="$(cat /runtime/v0-enode.txt)" --trusted-only
 --disable-discovery`) and validator-0 is the hub
 (`--p2p-secret-key` + `--port=30303` give it a deterministic enode).
@@ -257,7 +257,7 @@ committee-changed branch is what a rotating stand takes; its four stages are:
 
 plus the durable artifact store's `rehydrated the agreement-artifact store from disk` (its absence
 means the store silently fell back to memory-only), one agreed `view` and one `pinned` size across
-all four validators, and `dpos_dkg_artifact_rejected_total == 0`.
+every validator, and `dpos_dkg_artifact_rejected_total == 0`.
 
 **Read the `view` first when something is slow.** `view = 1` is the happy path — the first leader
 proposed and the instance decided in one round. `view > 1` means a 30 s leader timeout was paid,

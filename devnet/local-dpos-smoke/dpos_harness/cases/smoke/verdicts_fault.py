@@ -59,17 +59,103 @@ TIER_SKEW_MAX = 1
 #: the wire's TOTAL length cannot be pinned, only this prefix's.
 #:
 #: The field ORDER is part of the wire format. Add a field here when `write` grows one and every
-#: offset below follows; `test_smoke_fault_verdicts.py` pins this list against the Rust codec in
-#: both directions, so the two cannot drift silently again.
+#: offset below follows.
+#:
+#: THIS IS A SECOND COPY OF THE CODEC, and it has drifted once already: `fee_recipient` (20 B)
+#: left `OrderBlock::write` on 2026-09-04 (R-010) and this list kept it, so the slice landed 40
+#: hex chars late and `smoke-deferred` reported `LAYOUT CHANGED` on a correct chain. The unit test
+#: that would have caught it needs pytest, which the host does not have. So the copy is now
+#: checked where it is USED: `asserts_fault._assert_result_commitment` reads `order_block.rs` and
+#: refuses to slice until `wire_layout_from_source` agrees with this list (`evaluate_wire_layout`),
+#: and `make harness-test` runs the unit suite in a throwaway python container.
 WIRE_HEADER_FIELDS = (
     ("parent", 32),
     ("height", 8),
     ("proposal_view", 8),
     ("timestamp", 8),
-    ("fee_recipient", 20),
     ("gas_limit", 8),
     ("result", 32),
 )
+
+#: Byte widths of the fixed-size types `OrderBlock::write` emits before `result`, as the Rust
+#: struct spells them. `Digest`/`B256` are 32 (`digest.rs` `FixedSize`, alloy `B256`), the
+#: integers are commonware fixed-width. A type absent here is not fixed-size (or not known) and
+#: makes the layout UNPARSEABLE rather than silently zero-width.
+WIRE_TYPE_BYTES = {"Digest": 32, "B256": 32, "u64": 8, "u32": 4, "u16": 2, "u8": 1}
+
+#: Where the codec lives, relative to this file (`cases/smoke/` → four parents up is the smoke dir,
+#: two more the repo root). `ORDER_BLOCK_SOURCE` overrides it, which is how the drift check is
+#: itself tested against an artificially shifted copy without touching the crate.
+ORDER_BLOCK_SOURCE = os.environ.get(
+    "ORDER_BLOCK_SOURCE",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), *([".."] * 5),
+                 "crates", "dpos", "consensus", "src", "order_block.rs"))
+
+
+def wire_layout_from_source(text: str):
+    """The fixed header `OrderBlock::write` emits, up to and including `result`, read off the
+    Rust source: `[(field, bytes)]`.
+
+    Two parses, both needed. The struct gives each field its TYPE (hence its width); `write`
+    gives the ORDER actually emitted, which the struct cannot — `proposal_view` is declared
+    after `height` but that is a coincidence of the file, not a rule. A `write` statement that
+    is not `self.<f>.write(buf)` / `buf.put_slice(self.<f>.as_slice())` ends the fixed prefix
+    (the first variable-length field is a length prefix, spelled differently). `result` must be
+    reached, or the wire has no attested root at a fixed offset any more and the case's whole
+    premise is gone — that is a `ValueError`, not an empty list."""
+    m = re.search(r"pub struct OrderBlock\s*\{(.*?)\n\}", text, re.S)
+    if not m:
+        raise ValueError("`pub struct OrderBlock {` not found — renamed?")
+    types = dict(re.findall(r"^\s*pub (\w+): ([\w<>]+),", m.group(1), re.M))
+    body = text.split("fn write(&self, buf: &mut impl BufMut)", 1)
+    if len(body) != 2:
+        raise ValueError("`OrderBlock::write` not found — signature changed?")
+    out = []
+    for line in body[1].splitlines():
+        # Blank lines and comments are not STATEMENTS, so they cannot end the fixed prefix. The
+        # `break` below has to fire on the first real non-emitting statement (the length prefix of
+        # the first variable-length field) and on nothing else — without this skip, one `//` line
+        # inserted between two field emits truncates the parse and fails the live case with
+        # `LAYOUT CHANGED` over a comment.
+        stripped = line.strip()
+        if not stripped or stripped.startswith("//"):
+            continue
+        hit = re.match(r"^\s*(?:self\.(\w+)\.write\(buf\)"
+                       r"|buf\.put_slice\(self\.(\w+)\.as_slice\(\)\));\s*$", line)
+        if not hit:
+            if out:
+                break
+            continue
+        name = hit.group(1) or hit.group(2)
+        ty = types.get(name)
+        if ty not in WIRE_TYPE_BYTES:
+            raise ValueError(f"field `{name}` has type {ty!r}, which is not a fixed-size type "
+                             f"this reader knows ({sorted(WIRE_TYPE_BYTES)})")
+        out.append((name, WIRE_TYPE_BYTES[ty]))
+        if name == "result":
+            return out
+    raise ValueError(f"`write` never emits `result` in its fixed prefix (saw {out})")
+
+
+def evaluate_wire_layout(source_text, expected=WIRE_HEADER_FIELDS):
+    """`WIRE_HEADER_FIELDS` == the layout `order_block.rs` actually emits. Returns `(ok, msg)`.
+
+    Run BEFORE the artifact is sliced. A mismatch is a harness defect, and it is reported as
+    one — "the reader's copy of the codec drifted" — instead of as the fabricated safety
+    violation a wrong slice produces. An unreadable or unparseable source is a FAILURE too: a
+    slice taken on faith is exactly what this check exists to stop."""
+    if not (source_text or "").strip():
+        return False, (f"could not read `order_block.rs` ({ORDER_BLOCK_SOURCE}) — refusing to "
+                       "slice the artifact against an unchecked copy of the codec")
+    try:
+        actual = wire_layout_from_source(source_text)
+    except ValueError as e:
+        return False, f"`OrderBlock::write` layout unparseable — {e}"
+    if list(actual) == list(expected):
+        return True, ""
+    return False, (f"WIRE_HEADER_FIELDS drifted from `OrderBlock::write`: harness {list(expected)} "
+                   f"vs source {actual} — fix the list in verdicts_fault.py; the artifact was "
+                   "NOT sliced, because a wrong offset reads as a fake result-divergence")
 
 
 def wire_hex_offset(field):
@@ -83,12 +169,12 @@ def wire_hex_offset(field):
     raise KeyError(field)
 
 
-WIRE_RESULT_OFFSET = wire_hex_offset("result")                              # 168
+WIRE_RESULT_OFFSET = wire_hex_offset("result")                              # 128
 WIRE_RESULT_LEN = dict(WIRE_HEADER_FIELDS)["result"] * 2                    # 64
 #: The whole fixed header must be present before any of it can be sliced. A LENGTH guard cannot
 #: see a field inserted BEFORE the slice — the wire only gets longer — so it is not the drift
 #: detector; `evaluate_result_commitment` is (it re-locates the hash on mismatch).
-WIRE_MIN_LEN = sum(w for _, w in WIRE_HEADER_FIELDS) * 2                    # 232
+WIRE_MIN_LEN = sum(w for _, w in WIRE_HEADER_FIELDS) * 2                    # 192
 
 #: `asserts-fault.sh:182-185` — the throttle and its restore. 0.15 CPU is hard enough that the
 #: victim's verify gate starts timing out (EL backpressure -> nullify); 4 is the compose default.

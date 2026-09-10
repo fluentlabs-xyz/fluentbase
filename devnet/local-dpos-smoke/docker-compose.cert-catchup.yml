@@ -8,7 +8,7 @@
 # WHY THE CASE SHAPES TRAFFIC AT ALL. Guard #2 parks only where the executor's derive
 # DRAINS the marshal's contiguous dispatched prefix faster than repair extends it — the
 # marshal repairs in MAX_REPAIR=20 block batches and dispatches up to MAX_PENDING_ACKS=16
-# ahead of the acks (outer.rs:223,229). On a zero-latency 4-node LAN with small bodies the
+# ahead of the acks (outer.rs:223,229). On a zero-latency LAN with small bodies the
 # fetch always wins, so the park fires at NO value of CERT_CATCHUP_GAP — and depth is not
 # the lever (a deeper gap keeps the same body-ahead-of-derive margin and only risks
 # crossing re_jump_threshold). Empirically the SOAK does produce parks (43 of 323 bundles;
@@ -25,10 +25,12 @@
 # over: it slows the DERIVE, the side that must stay fast, making parks strictly less
 # likely.
 #
-# NET_ADMIN ON ALL FOUR VALIDATORS, not only validator-2: the victim is operator-overridable
+# NET_ADMIN ON EVERY VALIDATOR, not only validator-2: the victim is operator-overridable
 # in both trees (`CERT_CATCHUP_VICTIM`), and a victim without the capability would die at
 # `tc qdisc add` six minutes into an eight-minute case. The capability is inert without the
-# exec; granting it to the committee costs nothing and removes a foot-gun.
+# exec; granting it to the committee costs nothing and removes a foot-gun. validator-4 was
+# added on 2026-09-07 with the fifth stand seat — leaving it out would have re-armed exactly
+# that foot-gun for `CERT_CATCHUP_VICTIM=validator-4`.
 services:
   validator-0:
     cap_add:
@@ -43,5 +45,9 @@ services:
       - NET_ADMIN
 
   validator-3:
+    cap_add:
+      - NET_ADMIN
+
+  validator-4:
     cap_add:
       - NET_ADMIN

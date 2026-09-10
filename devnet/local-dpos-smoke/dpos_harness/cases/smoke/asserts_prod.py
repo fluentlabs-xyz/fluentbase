@@ -28,10 +28,11 @@ skips the only check able to catch a STUCK beacon.
 ═══ WHY THE DIAGNOSTIC PRINTS SURVIVED THE PORT ═══════════════════════════════════════════
 
 `case-production-path.sh:198-200` prints four `[cm-diag]` lines unconditionally — head, epoch,
-`nextEpochToCommit`, `committeeSelectionEpoch` and the first four committees — before it asserts
-anything. They are kept because they are READS: dropping them changes the command transcript this
-port is checked against, and because the committee-selection pair is the first thing anyone looks
-at when the committee is not what the case expected.
+`nextEpochToCommit` and the first four committees — before it asserts anything. They are kept
+because they are READS: dropping them changes the command transcript this port is checked
+against, and because the commit cursor is the first thing anyone looks at when the committee is
+not what the case expected. `committeeSelectionEpoch` was the second; it was removed from the
+contract on 2026-09-07 with the rest of the epoch-addressed selection surface.
 """
 
 from __future__ import annotations
@@ -433,14 +434,13 @@ def assert_production_path(ctx) -> None:
 def _cm_diag(ctx) -> None:
     """`:198-200` — the committee-selection diagnostic, printed unconditionally before the gate.
 
-    `nextEpochToCommit` and `committeeSelectionEpoch` are the first two numbers anyone reads when
-    the committee is not what the case expected, and the first four committees show whether the
-    selection ever ran. Kept because they are READS: dropping them changes the transcript."""
+    `nextEpochToCommit` is the first number anyone reads when the committee is not what the case
+    expected, and the first four committees show whether the selection ever ran. Kept because they
+    are READS: dropping them changes the transcript."""
     head = ctx.check_external(topology.HOST_RPC_PORT).split("|", 1)[0]
     _say(ctx, f"[cm-diag] head={head} epoch={ctx.current_epoch()}")
     nxt = VP.first_token(ctx.staking_call("nextEpochToCommit()(uint64)"))
-    sel = VP.first_token(ctx.staking_call("committeeSelectionEpoch()(uint64)"))
-    _say(ctx, f"[cm-diag] nextEpochToCommit={nxt} committeeSelectionEpoch={sel}")
+    _say(ctx, f"[cm-diag] nextEpochToCommit={nxt}")
     for e in range(4):
         _say(ctx, f"[cm-diag] committee({e})=[{ctx.committee(e)}]")
 

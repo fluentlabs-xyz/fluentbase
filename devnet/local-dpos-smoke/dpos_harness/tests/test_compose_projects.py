@@ -31,6 +31,18 @@ def _name_of(path: pathlib.Path):
     return None
 
 
+def test_the_genesis_contracts_mount_defaults_to_the_checked_in_directory():
+    """`SMOKE_CONTRACTS_DIR` is the operator knob that points genesis-init at ANOTHER vendored
+    artefact directory — how a case is run against an older staking blob to show it goes red
+    there. Nothing in the package sets it, so the only thing standing between every default run
+    and a different set of contracts is the `:-./contracts` fallback: pin it, and pin the
+    variable's NAME, since a rename would silently take every run off the checked-in artefacts
+    with no error anywhere."""
+    text = (SMOKE_DIR / "docker-compose.yml").read_text()
+    assert "- ${SMOKE_CONTRACTS_DIR:-./contracts}:/contracts:ro" in text
+    assert "- ./contracts:/contracts:ro" not in text     # the un-parameterised form is gone
+
+
 @pytest.mark.parametrize("filename,project", sorted(ROOTS.items()))
 def test_each_compose_root_declares_the_project_the_constant_claims(filename, project):
     path = SMOKE_DIR / filename

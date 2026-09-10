@@ -201,9 +201,9 @@ def test_the_hub_delta_is_reported_and_never_gated():
 # ══ smoke-liveness ═════════════════════════════════════════════════════════
 
 def test_validator_address_guard():
-    assert vo.evaluate_validator_addresses(["a", "b", "c", "d"]) == (True, "")
+    assert vo.evaluate_validator_addresses(["a", "b", "c", "d", "e"]) == (True, "")
     ok, msg = vo.evaluate_validator_addresses(["a", "b"])
-    assert ok is False and "expected 4 validator addresses, got 2" in msg
+    assert ok is False and "expected 5 validator addresses, got 2" in msg
     assert vo.evaluate_validator_addresses([])[0] is False
     assert vo.evaluate_validator_addresses(None)[0] is False
 
@@ -926,3 +926,126 @@ def test_an_unreadable_stake_FAILS_rather_than_reading_as_unstaked():
 def test_unequal_light_stakes_FAIL_because_the_case_assumes_1_to_1():
     ok, msg = vo.evaluate_stake_skew([9, 1, 2, 1], 9)
     assert not ok and "not equally staked" in msg
+
+
+# ══ smoke-byzantine — the committee boundary after the jail ════════════════════════════
+
+COMMITTED = ("validator-0  | INFO fluentbase::consensus: epoch_committee_committed epoch=8 "
+             "members=4\n")
+
+
+def test_the_severance_line_gives_the_jail_epoch_and_nothing_else_is_guessed():
+    assert vo.sever_epoch("WARN validator tombstoned — severing its transport peer=x epoch=5") == 5
+    assert vo.sever_epoch("WARN validator tombstoned — severing its transport peer=x") is None
+    assert vo.sever_epoch("") is None
+
+
+def test_the_boundary_wait_runs_two_epochs_past_the_jail_epoch():
+    """Jail read at epoch 5 on interval 32 / activation 64: the boundary commit is on the first
+    block of epoch 6 (= 256) on one reading of the severance epoch and of epoch 7 (= 288) on the
+    other; the target 320 = epoch_start(7) + 32 is past both plus an epoch of the re-seated
+    committee."""
+    assert vo.epoch_start(64, 32, 6) == 256
+    assert vo.carry_wait_target(5, 32, 64) == 320
+    assert vo.carry_wait_budget_s(32) == 3 * 32 + vo.CARRY_WAIT_SLACK_S
+
+
+def test_committed_lines_parse_their_two_fields_and_drop_the_unparseable():
+    assert vo.committed_lines(
+        COMMITTED + "INFO epoch_committee_committed epoch=x\n") == [(8, 4)]
+    assert vo.committed_lines("") == []
+
+
+def test_honest_alive_is_red_on_an_exited_container_or_a_fatal_line():
+    assert vo.evaluate_honest_alive({"validator-0": "running"}, {"validator-0": []}) == (True, "")
+    ok, msg = vo.evaluate_honest_alive({"validator-0": "exited", "validator-1": "running"},
+                                       {"validator-0": [], "validator-1": []})
+    assert not ok and "R-112" in msg and "validator-0 is 'exited'" in msg
+    ok, msg = vo.evaluate_honest_alive({"validator-1": "running"},
+                                       {"validator-1": ["executor fatal error; shutting down"]})
+    assert not ok and "1 fatal line(s)" in msg
+    # An EMPTY state is not running: compose ANSWERED and does not know the service.
+    assert not vo.evaluate_honest_alive({"validator-2": ""}, {"validator-2": []})[0]
+
+
+def test_an_unread_container_state_is_not_reported_as_the_r112_branch():
+    """`None` = `docker compose ps` did not run (daemon down, timeout). Scoring that as `dead`
+    would print "the boundary KILLED honest nodes" for a docker hiccup — the loudest wrong
+    answer this case can give."""
+    ok, msg = vo.evaluate_honest_alive({"validator-0": None, "validator-1": "running"},
+                                       {"validator-0": [], "validator-1": []})
+    assert not ok and "could not be read" in msg and "KILLED" not in msg and "R-112" not in msg
+    assert "validator-0" in msg and "validator-1" not in msg
+
+
+def test_the_commit_witness_is_a_delta_with_the_exact_seat_count():
+    before = {"validator-0": [(3, 4)], "validator-1": []}
+    after = {"validator-0": [(3, 4), (8, 4)], "validator-1": [(8, 4)]}
+    assert vo.evaluate_committed_after_jail(before, after) == (True, "", 8)
+    # Only history: the re-seat the case is about never happened.
+    ok, msg, tgt = vo.evaluate_committed_after_jail(
+        before, {"validator-0": [(3, 4)], "validator-1": []})
+    assert not ok and tgt is None and "without the committee ever shrinking" in msg
+    # A commit of the wrong SIZE is a different experiment (e.g. the jail never landed and all
+    # five seats were re-committed).
+    ok, msg, _ = vo.evaluate_committed_after_jail({}, {"validator-0": [(8, 5)]})
+    assert not ok and "members=4" in msg and "(8, 5)" in msg
+    # Two nodes with NO committed epoch in common did not commit one boundary.
+    ok, msg, _ = vo.evaluate_committed_after_jail(
+        {}, {"validator-0": [(8, 4)], "validator-1": [(9, 4)]})
+    assert not ok and "share NO committed epoch" in msg
+    assert not vo.evaluate_committed_after_jail({}, {})[0]
+
+
+def test_a_baseline_read_one_node_later_is_not_a_boundary_disagreement():
+    """`_floor_snapshot` issues one `docker compose logs` PER SERVICE, so a commit landing between
+    two of those reads sits inside one node's baseline and outside another's. Their fresh slices
+    then start one epoch apart on a perfectly healthy chain, and comparing FIRST elements called
+    that "they did not commit one boundary". The shared epoch is what the case asserts."""
+    both = [(8, 4), (9, 4)]
+    before = {"validator-0": [], "validator-1": [(8, 4)]}   # v1 was read one commit later
+    ok, msg, target = vo.evaluate_committed_after_jail(
+        before, {"validator-0": both, "validator-1": both})
+    assert ok and target == 9, msg
+    # And the divergence it is meant to catch still fails: no epoch in common.
+    ok, _, _ = vo.evaluate_committed_after_jail(
+        {}, {"validator-0": [(8, 4)], "validator-1": [(10, 4)]})
+    assert not ok
+
+
+_CARRY_ADDRS = ["0x" + f"{0xa0 + i:02x}" * 20 for i in range(5)]
+_VICTIM = _CARRY_ADDRS[vo.BYZANTINE_VICTIM_IDX]
+_BEFORE = "[" + ", ".join(_CARRY_ADDRS) + "]"
+_AFTER = "[" + ", ".join(a for a in _CARRY_ADDRS if a != _VICTIM) + "]"
+
+
+def test_the_reseated_committee_drops_the_offender_and_mints_a_ceremony():
+    assert vo.evaluate_reseated_committee(_AFTER, _BEFORE, "true", _VICTIM, 8) == (True, "")
+    assert "EMPTY" in vo.evaluate_reseated_committee("[]", _BEFORE, "true", _VICTIM, 8)[1]
+    # The offender still seated, at the right SIZE — size alone cannot catch it.
+    still = "[" + ", ".join(_CARRY_ADDRS[:vo.BYZANTINE_SEATS_AFTER_JAIL]) + "]"
+    assert "still seats the tombstoned" in vo.evaluate_reseated_committee(
+        still, _BEFORE, "true", _VICTIM, 8)[1]
+    # Right membership, wrong size: three seats is below the floor and a different experiment.
+    short = "[" + ", ".join(a for a in _CARRY_ADDRS[:4] if a != _VICTIM) + "]"
+    assert "seats 3, expected 4" in vo.evaluate_reseated_committee(
+        short, _BEFORE, "true", _VICTIM, 8)[1]
+    # The carry-over shape: the same set again.
+    assert "re-seated the SAME set" in vo.evaluate_reseated_committee(
+        _AFTER, _AFTER, "true", _VICTIM, 8)[1]
+    assert "expected true" in vo.evaluate_reseated_committee(
+        _AFTER, _BEFORE, "false", _VICTIM, 8)[1]
+
+
+def test_an_unread_side_of_the_reseat_is_never_scored_as_a_mismatch():
+    """The brownout shape: `getEpochCommittee(target-1)` (or `getDkgQual`) answers nothing. A raw
+    string compare reads that as "the commit kept the offender" — an accusation about a side
+    nobody read. Both committees decode STRICTLY, and each unread input is its own verdict."""
+    for cur, prev, qual, want in ((_AFTER, "", "true", "returned NOTHING"),
+                                  ("", _BEFORE, "true", "returned NOTHING"),
+                                  (_AFTER, _BEFORE, "", "returned NOTHING")):
+        ok, msg = vo.evaluate_reseated_committee(cur, prev, qual, _VICTIM, 8)
+        assert not ok and want in msg and "SAME set" not in msg, msg
+    # A successful call whose answer is not an address array is UNREAD too, never a mismatch.
+    ok, msg = vo.evaluate_reseated_committee("0xdeadbeef", _BEFORE, "true", _VICTIM, 8)
+    assert not ok and "did not decode" in msg and "SAME set" not in msg

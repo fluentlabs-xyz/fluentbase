@@ -13,6 +13,7 @@ from bisect import bisect_right
 import pytest
 
 from dpos_harness.cases.seed_continuity import (
+    DETERMINISTIC_BOOTSTRAP_EPOCH, epoch_base_kind, terminal_seed_from_certificate,
     LEADER_FALLBACK_DOMAIN,
     build_cum,
     constant_fallback_seed,
@@ -248,3 +249,31 @@ def test_the_seed_continuity_verdict(controls, samples, fin_delta, bad_shares,
     assert code == want_code, reason
     if want_reason is not None:
         assert want_reason in reason
+
+
+# ══ the σ source (2026-09-04): the certificate's trailing seed slot ══════════════════════
+
+def test_the_seed_is_the_last_48_bytes_behind_a_present_flag():
+    """`combined_scheme.rs::write_seed_slot` — `vote ‖ 0x01 ‖ σ(48)`. The vote part is
+    variable-length, so only the tail has a fixed offset; the flag is what says a σ is there."""
+    sig = bytes(range(48))
+    cert = b"\xab" * 70 + b"\x01" + sig
+    assert terminal_seed_from_certificate(cert.hex()) == sig
+    assert terminal_seed_from_certificate("0x" + cert.hex()) == sig
+
+
+def test_a_seedless_certificate_is_refused_not_hashed():
+    """Flag 0 + 48 zero bytes is what a seedless epoch's certificate carries. Hashing those
+    zeros would predict off a base no node uses; the caller must take the constant arm."""
+    with pytest.raises(ValueError, match="carries no σ"):
+        terminal_seed_from_certificate((b"\xab" * 70 + b"\x00" + bytes(48)).hex())
+    with pytest.raises(ValueError, match="cannot carry"):
+        terminal_seed_from_certificate(b"\x01\x02".hex())
+
+
+def test_the_base_arm_follows_the_bootstrap_epoch():
+    """`boundary_base`: the witness arm needs a beacon-ACTIVE predecessor (`mandatory_at(prev)`,
+    `prev >= DETERMINISTIC_BOOTSTRAP_EPOCH`); epochs 0..bootstrap take the constant base."""
+    assert DETERMINISTIC_BOOTSTRAP_EPOCH == 2
+    assert [epoch_base_kind(e) for e in range(5)] == ["constant", "constant", "constant",
+                                                       "witness", "witness"]

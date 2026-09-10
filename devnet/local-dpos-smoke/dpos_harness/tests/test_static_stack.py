@@ -25,7 +25,7 @@ from dpos_harness.stack import dataroot, profiles, static_stack
 from dpos_harness.stack.profiles import GeneratedProfile, StaticProfile
 from dpos_harness.stack.static_stack import StaticStack
 
-VALS = ["validator-0", "validator-1", "validator-2", "validator-3"]
+VALS = ["validator-0", "validator-1", "validator-2", "validator-3", "validator-4"]
 
 
 @pytest.fixture(autouse=True)
@@ -86,7 +86,8 @@ def test_both_profiles_answer_the_same_interface():
 
 
 def test_static_committee_is_the_four_compose_validators():
-    """`lib.sh:35` — `VALS=(validator-0 … validator-3)`. Fixed by the checked-in compose file."""
+    """`lib.sh:35` — `VALS=(validator-0 … validator-4)`. FIVE, not the bash's four: the
+    committee floor makes a four-seat stand unable to survive `smoke-byzantine`'s tombstone."""
     assert list(StaticProfile().committee()) == VALS
 
 
@@ -326,12 +327,17 @@ def _labelled_reads(monkeypatch):
 
 
 def test_read_sequencer_nodes_shape(_labelled_reads):
-    """`lib.sh:167-173`: validator-0 over host 8545, validator-1..3 by `compose exec`, the
-    full-node over host 18545 — in that order. The host-vs-exec split is a topology fact
-    (`HOST_RPC_PORTS`), not a preference."""
+    """`lib.sh:167-173`: validator-0 over host 8545, the rest of the committee by
+    `compose exec`, the full-node over host 18545 — in that order. The host-vs-exec split is a
+    topology fact (`HOST_RPC_PORTS`), not a preference.
+
+    EVERY committee node, spelled out: the reader took its range from a literal until
+    2026-09-07, so when the stand grew to five it declared convergence without ever reading
+    validator-4. This list is what catches that."""
     stack, _ = _dry_stack()
     assert [lbl for lbl, _ in stack.read_sequencer_nodes()] == [
-        "validator-0@8545", "validator-1", "validator-2", "validator-3", "full-node@18545"]
+        "validator-0@8545", "validator-1", "validator-2", "validator-3", "validator-4",
+        "full-node@18545"]
 
 
 def test_read_dpos_nodes_drops_only_the_excluded_validator(_labelled_reads):
@@ -340,14 +346,14 @@ def test_read_dpos_nodes_drops_only_the_excluded_validator(_labelled_reads):
     stack = StaticStack(profile=StaticProfile(), runner=Runner(dry=True),
                         converge_exclude="validator-3")
     assert [lbl for lbl, _ in stack.read_dpos_nodes()] == [
-        "validator-0@8545", "validator-1", "validator-2", "full-node@18545"]
+        "validator-0@8545", "validator-1", "validator-2", "validator-4", "full-node@18545"]
 
 
 def test_read_dpos_nodes_can_exclude_the_pinned_host(_labelled_reads):
     stack = StaticStack(profile=StaticProfile(), runner=Runner(dry=True),
                         converge_exclude="validator-0")
     assert [lbl for lbl, _ in stack.read_dpos_nodes()] == [
-        "validator-1", "validator-2", "validator-3", "full-node@18545"]
+        "validator-1", "validator-2", "validator-3", "validator-4", "full-node@18545"]
 
 
 def test_the_full_node_is_never_excluded(_labelled_reads):

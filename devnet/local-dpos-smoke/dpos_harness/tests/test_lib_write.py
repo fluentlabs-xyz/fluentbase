@@ -264,116 +264,28 @@ def test_dry_runner_records_but_does_not_execute(tmp_path):
     assert r.log[0].argv[0] in ("docker", "cast")   # owner_key read is first
 
 
-# ── selection-view epoch-purity probe (2026-07-21 dkg_logs idx-stall regression) ──
-def _probe_chain(views, epoch=7):
-    """A Chain with the two probe reads and the governance write STUBBED: `views` is the queue
-    selection_view_at() returns (None models an unreadable RPC). Records the gov calls."""
-    from dpos_harness.core.proc import Invocation
+def test_growth_raises_the_cap_and_refill_does_not():
+    """WIRING: the GROWTH path issues exactly one `setActiveValidatorsLength` calldata, and it is
+    aimed at the STAKING runtime.
+
+    The target is the assertion, not a formality. `setActiveValidatorsLength` moved onto the
+    staking module with the rest of ChainConfig, and a governance proposal into an address with
+    no code is INVISIBLE — OZ's `Address.verifyCallResult` never checks `target.code.length`, so
+    the Governor emits `ProposalExecuted`, the receipt reads 0x1, and the cap silently never
+    moves. Nothing downstream would notice: the sim would keep registering validators against a
+    committee that stopped growing.
+
+    This test used to also assert that two `getEpochCommittee` reads bracketed the write — the
+    selection-view epoch-purity probe, deleted 2026-09-07 because its retargeted form could not
+    fail on any path. See `Chain.register_activate` for what the probe guarded and why the class
+    is now closed by construction."""
     c, r = _chain()
-    q = list(views)
-    c.staking_current_epoch = lambda: epoch
-    c.selection_view_at = lambda e: q.pop(0)
-    c.calldata = lambda sig, *a: f"0x{sig}"
-    c.gov_action = lambda *a, **kw: r.log.append(
-        Invocation(argv=["<gov-action>", *[str(x) for x in a]]))
-    return c, r
-
-
-def test_selection_view_purity_fails_the_run_on_a_changed_view():
-    """soak-actions.sh growth branch: a selection view that MOVED across setActiveValidatorsLength
-    means the cap leg is live again — the proven idx-stall class. Fail-loud, never a diagnostic."""
-    c, _ = _probe_chain(["[0xa] [(0x1,0x2,3)]", "[0xa 0xb] [(0x1,0x2,3) (0x4,0x5,6)]"])
-    with pytest.raises(ChainError) as e:
-        c._cap_raise_with_purity_probe(9, 5, 6, None)
-    assert e.value.reason_id == "selection-view-purity"
-    assert "epoch 7 CHANGED" in e.value.message and "2026-07-21" in e.value.message
-
-
-def test_selection_view_purity_fail_id_is_not_demoted():
-    """The probe guards a proven stall class, so its id must never be swallowed into a diagnostic
-    by the liveness-first policy (DEMOTED_INVARIANTS only ever shrinks)."""
-    from dpos_harness.core.policy import DEMOTED_INVARIANTS
-    assert "selection-view-purity" not in DEMOTED_INVARIANTS
-
-
-@pytest.mark.parametrize("views,epoch", [
-    ([None, "[0xa] [(0x1,0x2,3)]"], 7),      # before-read failed
-    (["[0xa] [(0x1,0x2,3)]", None], 7),      # after-read failed
-    ([None, None], None),                    # currentEpoch itself unreadable
-])
-def test_selection_view_purity_skips_on_an_unreadable_read(views, epoch, capsys):
-    """An RPC brownout must WARN and SKIP, never be reported as a purity violation — the whole
-    difference between a useful guard and a flaky one (bash `|| echo READ_FAILED`)."""
-    c, _ = _probe_chain(views, epoch=epoch)
-    c._cap_raise_with_purity_probe(9, 5, 6, None)          # no raise
-    out = capsys.readouterr().out
-    assert "SKIPPED" in out and "cap 5->6" in out
-
-
-def test_selection_view_purity_passes_and_reports_the_epoch(capsys):
-    """A stable view passes and the success line still names the cap move AND the probed epoch."""
-    view = "[0xa 0xb] [(0x1,0x2,3) (0x4,0x5,6)]"
-    c, r = _probe_chain([view, view])
-    c._cap_raise_with_purity_probe(9, 5, 6, None)
-    out = capsys.readouterr().out
-    assert "committee cap 5->6" in out and "EffBal lands @E+3" in out
-    assert "selection-view purity @epoch 7 OK" in out
-    assert _find(r, "<gov-action>", "setActiveValidatorsLength(uint32)")
-
-
-def test_selection_view_read_returns_none_on_a_failed_call():
-    """selection_view_at keeps the READ-FAILED sentinel DISTINCT from a read view (rc!=0 → None),
-    which is what lets the probe skip instead of comparing garbage."""
-    import dpos_harness.core.proc as proc
-
-    class Rec(proc.Runner):
-        def run_capture(self, argv, **kw):
-            self.log.append(proc.Invocation(argv=[str(a) for a in argv]))
-            return proc.RunResult(argv=[str(a) for a in argv], stderr="server error", rc=1)
-
-    c2 = Chain(runner=Rec(dry=False), RPC="http://localhost:8545", STAKING_RT="0xSTAKE")
-    assert c2.selection_view_at(7) is None
-    assert c2.staking_current_epoch() is None
-
-
-class _SigReads(Runner):
-    """A dry Runner whose canned `cast call` answer depends on the SIGNATURE.
-
-    `Runner.reads` keys on an argv PREFIX, and every staking view shares `cast call <staking>` —
-    fine until two of them need answers of a different SHAPE. `selection_view_at` decodes two
-    top-level return values and `currentEpoch` one, and the arity is CHECKED now (a `cast` handed
-    a stale signature decodes the prefix and prints it, rc 0), so one canned string cannot stand
-    in for both."""
-
-    def __init__(self, sig_reads, **kw):
-        super().__init__(**kw)
-        self.sig_reads = sig_reads
-
-    def _canned(self, argv) -> str:
-        for sig, out in self.sig_reads.items():
-            if sig in argv:
-                return out
-        return super()._canned(argv)
-
-
-#: A two-value `getValidatorsWithKeysAt` answer — `(address[], ConsensusKeys[])`, both empty.
-_EMPTY_SELECTION_VIEW = "[]\n[]"
-
-
-def test_growth_cap_raise_brackets_the_write_with_the_probe_reads():
-    """WIRING: on the GROWTH path the two getValidatorsWithKeysAt reads bracket the
-    setActiveValidatorsLength calldata (before/after), and the epoch read precedes them."""
-    c, r = _chain(_SigReads(
-        {"getValidatorsWithKeysAt(uint64)(address[],(bytes,bytes32,uint64)[])":
-         _EMPTY_SELECTION_VIEW}, dry=True))
     c.validator_status = lambda addr: "2"          # register post-assert (canned reads are scalar)
     c.register_activate(6, raise_cap=1)
     lines = [" ".join(a.argv) for a in r.log]
-    view = [i for i, ln in enumerate(lines) if "getValidatorsWithKeysAt(uint64)" in ln]
-    cd = [i for i, ln in enumerate(lines) if "calldata setActiveValidatorsLength(uint32)" in ln]
-    ep = [i for i, ln in enumerate(lines) if "currentEpoch()(uint64)" in ln]
-    assert len(view) == 2 and len(cd) == 1 and len(ep) == 1
-    assert ep[0] < view[0] < cd[0] < view[1]
+    cd = [ln for ln in lines if "calldata setActiveValidatorsLength(uint32)" in ln]
+    assert len(cd) == 1, lines
+    assert any("propose" in ln and "0xSTAKE" in ln for ln in lines), lines
 
 
 def test_the_committee_read_refuses_an_answer_that_is_not_an_address_array():
@@ -389,23 +301,15 @@ def test_the_committee_read_refuses_an_answer_that_is_not_an_address_array():
     assert c2.committee(4) == ""
 
 
-def test_the_purity_probe_refuses_a_truncated_selection_view():
-    """The sharpest case for the arity check. The probe compares raw stdout to ITSELF across one
-    governance write, so a decode that silently lost a return value stays perfectly
-    self-consistent — the probe PASSES, on a view it can no longer fully see, which is worse than
-    no probe. A failed read still answers None (the brownout sentinel), never a raise."""
-    c, _r = _chain(**{"cast call": "[]"})          # one value where the contract returns two
-    with pytest.raises(rpc.CastDecodeError):
-        c.selection_view_at(4)
-
-
-def test_refill_path_runs_no_purity_probe():
-    """REFILL (raise_cap=0) issues no cap-raise, so it must issue no probe read either."""
+def test_refill_path_raises_no_cap():
+    """REFILL (raise_cap=0) fills a hole under the existing cap, so it must issue no cap-raise.
+    A refill that raised the cap would grow the committee on a path whose whole point is that it
+    does not."""
     c, r = _chain()
     c.validator_status = lambda addr: "2"
     c.register_activate(6, raise_cap=0)
     lines = " ".join(" ".join(a.argv) for a in r.log)
-    assert "getValidatorsWithKeysAt" not in lines and "setActiveValidatorsLength" not in lines
+    assert "setActiveValidatorsLength" not in lines
 
 
 def test_current_epoch_parses_the_hex_head_through_the_shared_helper():

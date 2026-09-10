@@ -1,8 +1,8 @@
-# Pipeline 2 phase-2 override: cold-restart validators 0-3 in
+# Pipeline 2 phase-2 override: cold-restart validators 0-4 in
 # `--dpos` mode after the sequencer (validator-0 with --validator) has
 # produced a few finalized blocks. Apply with:
 #   docker compose -f docker-compose.yml -f docker-compose.dpos.yml \
-#     up -d --force-recreate validator-0 validator-1 validator-2 validator-3
+#     up -d --force-recreate validator-0 validator-1 validator-2 validator-3 validator-4
 # full-node is intentionally left in follower mode (--cert-upstream
 # stays valid because validator-0's WS server keeps running under
 # DPoS).
@@ -124,3 +124,29 @@ services:
     ports:
       - "19103:9100"   # DEVNET commonware registry
       - "19013:9001"   # reth registry / `metrics::` families
+
+  validator-4:
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        exec /usr/local/bin/fluent node \
+          --chain=/runtime/genesis-local.json \
+          --datadir=/runtime/reth-data/v4 \
+          --dpos \
+          --dpos.bls-key-path=/runtime/keys/validator-4/bls.hex \
+          --dpos.peer-key-path=/runtime/keys/validator-4/peer.hex \
+          --dpos.staking-config=/runtime/staking-reader.json \
+          --dpos.bootstrappers=/runtime/peers.json \
+          --dpos.dialable=172.20.0.14:9000 \
+          --dpos.metrics-port=9100 \
+          --dpos.slasher-keystore-path=/runtime/keys/validator-4/slasher.json \
+          --dpos.slasher-keystore-password-file=/runtime/keys/validator-4/slasher.pwd \
+          --builder.extradata= \
+          --metrics=0.0.0.0:9001 \
+          --http --http.addr=0.0.0.0 --http.port=8545 --http.api=eth,net,web3 \
+          --trusted-peers="$(cat /runtime/v0-enode.txt)" \
+          --trusted-only \
+          --disable-discovery
+    ports:
+      - "19104:9100"   # DEVNET commonware registry
+      - "19014:9001"   # reth registry / `metrics::` families

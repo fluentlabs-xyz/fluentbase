@@ -575,7 +575,8 @@ class SmokeCtx:
         raw = self._read(["docker", "compose", "exec", "-T", topology.RUNTIME_MOUNT_HOST,
                           "cat", RUNTIME_ADDRESSES_PATH],
                          dry_value=json.dumps({"validators": dry_value or
-                                               ["0x" + f"{0xa0 + i:02x}" * 20 for i in range(4)]}))
+                                               ["0x" + f"{0xa0 + i:02x}" * 20
+                                                for i in range(len(self.profile.committee()))]}))
         try:
             obj = json.loads(raw) if (raw or "").strip() else {}
         except ValueError:
@@ -783,6 +784,28 @@ class SmokeCtx:
         one belongs in the transcript and the other does not."""
         return self._read(["cast", "rpc", "--rpc-url", rpc_url or self.rpc, method,
                            *[str(a) for a in args]], dry_value=dry_value).strip()
+
+    def ps_state(self, service: str, dry_value="running"):
+        """`docker compose ps -a --format '{{.State}}' <svc>` on the BARE project — the
+        container's state as docker reports it (`running`, `exited`, …), `""` when the command
+        SUCCEEDED and compose does not know the service, and `None` when the command itself did
+        not run (docker daemon down, a timeout).
+
+        A READ, not `compose_ps_q`: that one answers only for a container that is UP, which is
+        exactly the reading the byzantine boundary wait cannot use — it needs to tell a node
+        that EXITED from one that is merely slow to answer RPC, and `-a` is what makes a stopped
+        container render at all.
+
+        `read_capture`, not `read`: `proc.read` collapses "the daemon did not answer" into the
+        same `""` a live-but-unknown service produces, and the boundary wait reads any non-
+        `running` state as a DEAD node. One slow `docker compose ps` would then be reported as
+        the network dying at the committee floor. The two are kept apart here so the caller can
+        keep polling through a blip and name an unread state as unread."""
+        def live():
+            r = proc.read_capture(["docker", "compose", "ps", "-a", "--format",
+                                   "{{.State}}", service])
+            return r.stdout.strip() if r.ok else None
+        return self._delegated("ps_state", service, live, dry_value)
 
     def compose_ps_q(self, service: str, dry_value="dry-container-id") -> str:
         """`docker compose ps -q <svc>` — the RUNNING container id (asserts-fault.sh:151,441).

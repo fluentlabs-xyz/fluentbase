@@ -13,7 +13,6 @@ Each test names the `asserts-fault.sh` line its expectation is quoted against.
 from __future__ import annotations
 
 import pathlib
-import re
 
 import pytest
 
@@ -173,8 +172,8 @@ GOOD_HASH = "0x" + "cd" * 32
 
 
 def test_the_committed_result_is_sliced_at_the_codec_offset():
-    """`:140-159` — parent 32 + height 8 + proposal_view 8 + timestamp 8 + fee_recipient 20 +
-    gas_limit 8 = byte 84 = hex 168, and `result` is the 32 bytes there."""
+    """`:140-159` — parent 32 + height 8 + proposal_view 8 + timestamp 8 + gas_limit 8 = byte 64
+    = hex 128, and `result` is the 32 bytes there (`fee_recipient` left the codec 2026-09-04)."""
     ok, msg, committed = vf.evaluate_artifact_wire(GOOD_WIRE, 140)
     assert ok and committed == "cd" * 32
     assert vf.evaluate_result_commitment(committed, GOOD_HASH, 140, 137)[0]
@@ -186,36 +185,113 @@ def test_the_result_offset_is_the_sum_of_the_fields_before_it():
     list and it fails too. That pair is what a bare `WIRE_RESULT_OFFSET = 152` could not do — it
     survived `proposal_view` being inserted into the codec and sliced `gas_limit` instead."""
     widths = dict(vf.WIRE_HEADER_FIELDS)
-    before_result = ("parent", "height", "proposal_view", "timestamp", "fee_recipient",
-                     "gas_limit")
-    assert vf.WIRE_RESULT_OFFSET == 2 * sum(widths[f] for f in before_result) == 168
+    before_result = ("parent", "height", "proposal_view", "timestamp", "gas_limit")
+    assert vf.WIRE_RESULT_OFFSET == 2 * sum(widths[f] for f in before_result) == 128
     assert vf.WIRE_RESULT_LEN == 2 * widths["result"] == 64
     #: the guard falls out of the same list — the fixed header must be present in full
-    assert vf.WIRE_MIN_LEN == vf.WIRE_RESULT_OFFSET + vf.WIRE_RESULT_LEN == 232
+    assert vf.WIRE_MIN_LEN == vf.WIRE_RESULT_OFFSET + vf.WIRE_RESULT_LEN == 192
     assert vf.wire_hex_offset("parent") == 0 and vf.wire_hex_offset("height") == 64
 
 
 def test_the_field_list_matches_the_rust_codec():
     """The other direction, across trees: WIRE_HEADER_FIELDS must name the same fields, in the
-    same order, that `OrderBlock::write` emits before `result`. THE bug this file now pins — the
-    product grew a field and the reader did not follow — is a test failure here, not a live
-    `make smoke-fault` run reporting a fake safety violation."""
-    src = (pathlib.Path(__file__).resolve().parents[4]
-           / "crates/dpos/consensus/src/order_block.rs")
+    same order and at the same widths, that `OrderBlock::write` emits before `result`. THE bug
+    this file now pins — the product grew a field and the reader did not follow — is a test
+    failure here, not a live `make smoke-fault` run reporting a fake safety violation.
+
+    It runs THE SHIPPED PARSER (`vf.wire_layout_from_source`) against the real crate, and that is
+    the point of the assertion, not an implementation detail: the parser is what the live case
+    gates on (`asserts_fault._assert_result_commitment`), so a second copy of it here would pin
+    the crate against a reader nothing else uses. Its own directions are driven off `_SOURCE_STUB`
+    in the tests below; this one proves the stub still describes the file the case will read."""
+    src = pathlib.Path(vf.ORDER_BLOCK_SOURCE)
     if not src.exists():
         pytest.skip(f"consensus crate not in this tree ({src})")
-    body = src.read_text().split("fn write(&self, buf: &mut impl BufMut)", 1)
-    assert len(body) == 2, "OrderBlock::write not found — signature changed?"
-    emitted = []
-    for line in body[1].splitlines():
-        m = re.match(r"^\s*(?:self\.(\w+)\.write\(buf\)"
-                     r"|buf\.put_slice\(self\.(\w+)\.as_slice\(\)\));\s*$", line)
-        if not m:
-            continue
-        emitted.append(m.group(1) or m.group(2))
-        if emitted[-1] == "result":
-            break
-    assert emitted == [name for name, _ in vf.WIRE_HEADER_FIELDS]
+    text = src.read_text()
+    assert vf.wire_layout_from_source(text) == list(vf.WIRE_HEADER_FIELDS)
+    assert vf.evaluate_wire_layout(text) == (True, "")
+
+
+#: A stand-in `order_block.rs` with exactly the fixed prefix the codec emits today, so the
+#: parser's own directions can be driven without the crate: a field ADDED or REMOVED in the
+#: copy must be reported as drift, and an unknown type must be unparseable rather than zero-wide.
+_SOURCE_STUB = """
+pub struct OrderBlock {
+    pub parent: Digest,
+    pub height: u64,
+    pub proposal_view: u64,
+    pub timestamp: u64,
+    pub gas_limit: u64,
+    pub extra_data: Bytes,
+    pub result: B256,
+    pub txs: Vec<TransactionSigned>,
+}
+
+impl Write for OrderBlock {
+    fn write(&self, buf: &mut impl BufMut) {
+        use alloy_rlp::Encodable as _;
+        self.parent.write(buf);
+        self.height.write(buf);
+        self.proposal_view.write(buf);
+        self.timestamp.write(buf);
+        self.gas_limit.write(buf);
+        buf.put_slice(self.result.as_slice());
+        (self.extra_data.len() as u32).write(buf);
+        buf.put_slice(&self.extra_data);
+    }
+}
+"""
+
+
+def test_the_source_parser_reads_the_fixed_prefix_up_to_result():
+    assert vf.wire_layout_from_source(_SOURCE_STUB) == list(vf.WIRE_HEADER_FIELDS)
+    assert vf.evaluate_wire_layout(_SOURCE_STUB) == (True, "")
+
+
+def test_a_field_added_to_the_codec_is_reported_as_drift():
+    """The live shape of the defect, in miniature: the codec grew (or lost) a field and the
+    harness list did not follow. The verdict names BOTH layouts and says the artifact was not
+    sliced — a wrong offset would otherwise read as a fabricated result-divergence."""
+    added = _SOURCE_STUB.replace("    pub gas_limit: u64,\n",
+                                 "    pub gas_limit: u64,\n    pub fee_recipient: B256,\n") \
+                        .replace("        self.gas_limit.write(buf);\n",
+                                 "        self.gas_limit.write(buf);\n"
+                                 "        buf.put_slice(self.fee_recipient.as_slice());\n")
+    ok, msg = vf.evaluate_wire_layout(added)
+    assert not ok and "drifted" in msg and "fee_recipient" in msg and "NOT sliced" in msg
+    removed = _SOURCE_STUB.replace("        self.timestamp.write(buf);\n", "")
+    ok, msg = vf.evaluate_wire_layout(removed)
+    assert not ok and "drifted" in msg
+
+
+def test_a_comment_between_two_field_emits_does_not_truncate_the_prefix():
+    """A `//` line is not a statement. Before the skip, one comment inserted between two emits
+    ended the parse at that point and `evaluate_wire_layout` reported the harness list as drifted
+    — a red live case over a cosmetic edit in the codec. The `break` must still fire on the first
+    real non-emitting statement, which the stub's `(self.extra_data.len() as u32).write(buf);`
+    is: the parse stops at `result` either way, and a field AFTER a comment is still seen."""
+    commented = _SOURCE_STUB.replace(
+        "        self.timestamp.write(buf);\n",
+        "        // the proposer's clock, gated at vote time\n\n"
+        "        self.timestamp.write(buf);\n")
+    assert vf.wire_layout_from_source(commented) == list(vf.WIRE_HEADER_FIELDS)
+    assert vf.evaluate_wire_layout(commented) == (True, "")
+    # ...and a real statement that is not a field emit still ends the prefix: dropping `result`
+    # leaves the length prefix as the first such statement, and that must NOT be read as a field.
+    no_result = commented.replace("        buf.put_slice(self.result.as_slice());\n", "")
+    ok, msg = vf.evaluate_wire_layout(no_result)
+    assert not ok and "never emits `result`" in msg
+
+
+def test_an_unknown_type_or_missing_source_never_passes():
+    widened = _SOURCE_STUB.replace("pub gas_limit: u64,", "pub gas_limit: U256,")
+    ok, msg = vf.evaluate_wire_layout(widened)
+    assert not ok and "unparseable" in msg and "U256" in msg
+    ok, msg = vf.evaluate_wire_layout("")
+    assert not ok and "could not read" in msg
+    no_result = _SOURCE_STUB.replace("        buf.put_slice(self.result.as_slice());\n", "")
+    ok, msg = vf.evaluate_wire_layout(no_result)
+    assert not ok and "never emits `result`" in msg
 
 
 def test_a_missing_artifact_is_a_failure_not_an_empty_comparison():
@@ -231,8 +307,8 @@ def test_a_short_wire_fails_as_codec_drift_not_as_a_bad_chain():
     """`:158` — without the length guard the slice lands in whatever field follows, and a 64-hex
     run of some other field is still 64 hex chars: the comparison would fail and blame the
     chain for what is a codec change."""
-    ok, msg, _ = vf.evaluate_artifact_wire("0x" + "ab" * 100, 140)
-    assert not ok and "codec layout changed" in msg and "200 hex chars" in msg
+    ok, msg, _ = vf.evaluate_artifact_wire("0x" + "ab" * 80, 140)
+    assert not ok and "codec layout changed" in msg and "160 hex chars" in msg
 
 
 def test_a_result_that_does_not_match_the_derived_hash_fails():

@@ -83,7 +83,7 @@ def _dump_offender(ctx, msg: str, nodes) -> None:
 #: The committee of the static stack. NOT `BEACON_NODES`: that set includes the import follower,
 #: which is not a `--dpos` node and runs no agreement instance, so folding it in would turn every
 #: per-node stage verdict into a guaranteed red.
-COMMITTEE_NODES = tuple(topology.validator(i) for i in range(4))
+COMMITTEE_NODES = tuple(topology.validator(i) for i in range(5))
 
 #: The canned log the COMMITTEE-CHANGED branch scans under `--dry-run`. It walks the WHOLE happy
 #: path (all four stages plus the rehydrate line, with the fields the parsers read) so that

@@ -35,13 +35,16 @@ from dpos_harness.core.proc import Runner
 from dpos_harness.stack.profiles import StaticProfile
 from dpos_harness.stack.static_stack import StaticStack
 
-VALS = ["validator-0", "validator-1", "validator-2", "validator-3"]
+VALS = ["validator-0", "validator-1", "validator-2", "validator-3", "validator-4"]
+#: FIVE, where the bash said four. `StaticProfile.committee()` carries the reason: a
+#: four-seat stand cannot survive `smoke-byzantine`'s tombstone once the commit reverts
+#: below MIN_COMMITTEE_LENGTH instead of carrying the previous committee forward.
 UP = ["docker", "compose", "up", "--build", "-d"]
 STOP = ["docker", "compose", "stop", "--timeout", "40", *VALS]
 DOWN = ["docker", "compose", "down", "-v", "--remove-orphans"]
 CAT_ADDRS = ["docker", "compose", "exec", "-T", "validator-0", "cat", "/runtime/addresses.json"]
 #: `driver.SmokeCtx.runtime_addresses`'s canned answer, in `validators[i] == validator-i` order.
-DRY_ADDRS = ["0x" + f"{0xa0 + i:02x}" * 20 for i in range(4)]
+DRY_ADDRS = ["0x" + f"{0xa0 + i:02x}" * 20 for i in range(5)]
 
 TUNED = ("EPOCH_BLOCK_INTERVAL", "EPOCH_INTERVAL", "DPOS_ACTIVATION_BLOCK")
 
@@ -743,8 +746,8 @@ def test_liveness_SKIPS_the_credit_leg_ONLY_on_the_cycle_that_cannot_measure_it(
     assert out.count("on-chain production credit correct") == 3, (
         "the three long cycles must still ASSERT the zero-delta over their outage")
     # the SKIP names the gap, the derived floor and where the floor comes from
-    assert "outage gap=5 < 9" in out
-    assert "K3 + 1 settle + 1 stop-slack + 4 committee" in out
+    assert "outage gap=5 < 10" in out
+    assert "K3 + 1 settle + 1 stop-slack + 5 committee" in out
     assert "too short to carry information" in out
     # …and it says what still covers that cycle, so the skip is not read as a hole
     assert "within-epoch walk / re-jump path" in out
@@ -845,7 +848,7 @@ def test_liveness_FAILS_LOUD_on_a_short_address_list(monkeypatch):
                        **_lv_world(runtime_addresses=lambda dry_value=None: DRY_ADDRS[:2]))
     with pytest.raises(SmokeFailure) as e:
         asserts_onchain.assert_liveness(ctx)
-    assert "expected 4 validator addresses" in e.value.message
+    assert "expected 5 validator addresses" in e.value.message
 
 
 def test_liveness_FAILS_when_the_chain_stops_advancing_with_one_node_down(monkeypatch):
@@ -866,16 +869,51 @@ BYZ_SEVER_LOG = (f"validator-0  | WARN {vo.TOMBSTONE_SEVER_LINE} "
 BYZ_QUIET_LOG = "validator-0  | INFO finalized height=520\n"
 
 
+#: The commit line the node writes at the boundary after the jail (jail read at epoch 5 ⇒ the
+#: first block of epoch 6 commits `committee[8]` seating the four survivors).
+BYZ_COMMITTED_LOG = (f"validator-0  | INFO fluentbase::consensus: {vo.COMMITTED_LINE} "
+                     "epoch=8 members=4\n")
+#: The five-seat committee before the jail, and the four-seat one after it. They MUST differ:
+#: the re-seat verdict asserts the set actually changed.
+BYZ_COMMITTEE_BEFORE = "[" + ", ".join(DRY_ADDRS[:5]) + "]"
+BYZ_COMMITTEE_AFTER = "[" + ", ".join(
+    a for i, a in enumerate(DRY_ADDRS[:5]) if i != vo.BYZANTINE_VICTIM_IDX) + "]"
+
+
+def _byz_staking(sig, *args, dry_value=""):
+    if sig.startswith("getEpochCommittee"):
+        return BYZ_COMMITTEE_BEFORE if int(args[0]) == 7 else BYZ_COMMITTEE_AFTER
+    if sig.startswith("getDkgQual"):
+        return "true"
+    return dry_value
+
+
 def _byz_world(**over):
+    # `finalized_dec` climbs past the floor target on the second read: the boundary wait
+    # (`carry_wait_target(5, 32, 64)` = 64 + 7*32 + 32 = 320) must be observed as REACHED, not
+    # assumed, so the healthy world has to move.
+    fins = iter([520] + [400] * 3 + [520] * 100)
+    # The commit line appears only once the boundary wait has started probing container
+    # states — the pre-jail snapshot must NOT already hold it, or the delta the case asserts
+    # would be zero on the healthy world too. `ps_state` is the wait's only caller.
+    seen = {"boundary": False}
+
+    def ps_state(svc, dry_value=""):
+        seen["boundary"] = True
+        return "running"
+
     world = dict(
         runtime_addresses=lambda dry_value=None: list(DRY_ADDRS),
         validator_status=lambda addr, dry_value="": "3",
         baseline_height=lambda dry_value=0: 500,
         wait_finalized_ge=lambda *a, **k: True,
-        finalized_dec=lambda dry_value=0: 520,
-        logs_all=lambda svc, dry_value="": BYZ_SEVER_LOG,
+        finalized_dec=lambda dry_value=0: next(fins),
+        logs_all=lambda svc, dry_value="": BYZ_SEVER_LOG + (BYZ_COMMITTED_LOG if seen["boundary"]
+                                                            else ""),
         logs_tail=lambda *s, **k: "",
         dump_logs=lambda *a, **k: None,
+        ps_state=ps_state,
+        staking_call=_byz_staking,
     )
     world.update(over)
     return world
@@ -887,14 +925,91 @@ def test_byzantine_passes_on_a_healthy_world(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "jailed (status=Jail) by equivocation slashing" in out
     assert "severed the tombstoned peer's transport" in out
-    assert "OK (smoke-byzantine)" in out and "advanced past 500 in the blocks straight after" in out
-    # The OK line must NOT claim the boundary the case cannot reach.
-    assert "committee-shrink boundary at E+3 is NOT covered here" in out
+    assert "the boundary commit lands on the first block of epoch 6 (= 256)" in out
+    assert "OK (smoke-byzantine)" in out
+    assert "committee[8] RE-SEATED without the equivocator" in out
+    assert "NOT covered" not in out
+
+
+def test_byzantine_FAILS_when_honest_nodes_EXIT_at_the_floor_boundary(monkeypatch):
+    """THE R-112 SHAPE, the one the case was green on until 2026-09-04: the jail lands, the
+    transport is severed, the chain advances for a few blocks — and at the first block of the
+    next epoch `commitEpochCommittee` reverts `CommitteeTooSmall` into the fail-loud arm and
+    every honest node exits. That is what a MIS-SIZED stand produces now: shrink the genesis back
+    to four seats and the jail leaves three. Steps 1-3 are all green here; only the boundary wait
+    sees it, and it must name the branch rather than time out."""
+    # The test clock jumps an hour per `monotonic`, so the wait gets ONE probe: the exit has to
+    # be visible on it. (A slower death would only reach this verdict a probe later.)
+    ctx, _ = _live_ctx(monkeypatch, overlay=vo.BYZANTINE_OVERLAY, **_byz_world(
+        ps_state=lambda svc, dry_value="": "exited",
+        finalized_dec=lambda dry_value=0: 300))
+    with pytest.raises(SmokeFailure) as e:
+        asserts_onchain.assert_byzantine(ctx)
+    assert "KILLED honest nodes" in str(e.value) and "R-112" in str(e.value)
+
+
+def test_byzantine_FAILS_when_the_boundary_passes_WITHOUT_a_reseat(monkeypatch):
+    """The anti-vacuity gate. Every honest node is up and finalized ran two epochs past the
+    jail — which is ALSO what a chain whose tombstone never reached the selection looks like
+    (a slash that did not stamp invisibility). Without a commit line seating four, the boundary
+    the case is named for was never exercised, and that is a red, not a pass."""
+    ctx, _ = _live_ctx(monkeypatch, overlay=vo.BYZANTINE_OVERLAY, **_byz_world(
+        logs_all=lambda svc, dry_value="": BYZ_SEVER_LOG))
+    with pytest.raises(SmokeFailure) as e:
+        asserts_onchain.assert_byzantine(ctx)
+    assert "without the committee ever shrinking" in str(e.value)
+
+
+def test_byzantine_FAILS_when_the_reseated_committee_still_holds_the_equivocator(monkeypatch):
+    """The chain committed a committee of the right SIZE that still seats the tombstoned member —
+    what a selection that ranks and cuts without consulting the tombstone would produce. Size
+    alone cannot catch it, which is why the offender is named in the verdict."""
+    still_holds = "[" + ", ".join(DRY_ADDRS[:vo.BYZANTINE_SEATS_AFTER_JAIL]) + "]"
+
+    def staking(sig, *args, dry_value=""):
+        if sig.startswith("getEpochCommittee"):
+            return BYZ_COMMITTEE_BEFORE if int(args[0]) == 7 else still_holds
+        return "true"
+    ctx, _ = _live_ctx(monkeypatch, overlay=vo.BYZANTINE_OVERLAY,
+                       **_byz_world(staking_call=staking))
+    with pytest.raises(SmokeFailure) as e:
+        asserts_onchain.assert_byzantine(ctx)
+    assert "still seats the tombstoned" in str(e.value)
+
+
+def test_byzantine_FAILS_when_the_boundary_committee_is_an_unchanged_copy(monkeypatch):
+    """The carry-over shape, which the contract no longer has: `committee[8] == committee[7]`
+    means nothing was dropped, so the jail did not reach the selection even though the sizes
+    would agree if the genesis were four-seat."""
+    def staking(sig, *args, dry_value=""):
+        if sig.startswith("getEpochCommittee"):
+            return BYZ_COMMITTEE_AFTER
+        return "true"
+    ctx, _ = _live_ctx(monkeypatch, overlay=vo.BYZANTINE_OVERLAY,
+                       **_byz_world(staking_call=staking))
+    with pytest.raises(SmokeFailure) as e:
+        asserts_onchain.assert_byzantine(ctx)
+    assert "re-seated the SAME set" in str(e.value)
+
+
+def test_byzantine_FAILS_when_the_changed_committee_mints_no_ceremony(monkeypatch):
+    """`dkgQual` must be SET at the boundary: the membership changed, so the epoch owes a
+    ceremony. A clear bit there is the carry-over's signature and means the beacon would carry a
+    key forward over a set it no longer has."""
+    def staking(sig, *args, dry_value=""):
+        if sig.startswith("getEpochCommittee"):
+            return BYZ_COMMITTEE_BEFORE if int(args[0]) == 7 else BYZ_COMMITTEE_AFTER
+        return "false"
+    ctx, _ = _live_ctx(monkeypatch, overlay=vo.BYZANTINE_OVERLAY,
+                       **_byz_world(staking_call=staking))
+    with pytest.raises(SmokeFailure) as e:
+        asserts_onchain.assert_byzantine(ctx)
+    assert "expected true" in str(e.value)
 
 
 def test_byzantine_FAILS_when_no_honest_node_ACTS_on_the_tombstone(monkeypatch):
     """THE F5 WITNESS. The slash landed — `getValidatorStatus` reads Jail — and the chain keeps
-    finalizing, because the honest quorum was already 3-of-4 before the jail and would advance
+    finalizing, because the honest quorum was already 4-of-5 before the jail and would advance
     identically on a cluster that ignored the tombstone outright. Both of the case's other
     assertions are perfectly green here.
 
@@ -1486,9 +1601,10 @@ def _scripted(*values):
     return read
 
 
-#: 9:1:1:1 stakes and a plausible 64-block split, keyed by validator index.
-_WV_STAKES = {0: 9, 1: 1, 2: 1, 3: 1}
-_WV_PRODUCED = {0: 48, 1: 6, 2: 5, 3: 5}
+#: 9:1:1:1:1 stakes and a plausible 64-block split, keyed by validator index — FIVE seats
+#: since the stand grew (`StaticProfile.committee()`).
+_WV_STAKES = {0: 9, 1: 1, 2: 1, 3: 1, 4: 1}
+_WV_PRODUCED = {0: 46, 1: 5, 2: 5, 3: 4, 4: 4}
 
 
 def _wv_world(**over):
@@ -1575,7 +1691,7 @@ def test_weighted_vrf_reads_EVERY_measured_epoch(monkeypatch):
         production=lambda epoch, addr, **k: seen.append(epoch) or (
             _WV_PRODUCED[{a: i for i, a in enumerate(DRY_ADDRS)}[addr]], 64)))
     asserts_onchain.assert_weighted_vrf(ctx)
-    assert sorted(set(seen)) == [3, 4] and len(seen) == 8
+    assert sorted(set(seen)) == [3, 4] and len(seen) == 10
 
 
 def test_the_weighted_vrf_case_brings_up_its_OWN_genesis():

@@ -6,7 +6,7 @@ There are two different devnets in this directory and they are not variants of e
     validator containers, and `stack/bringup.py` drives it through a runtime contract deploy,
     governance, an activation block and a cold restart. This is what the simulation runs on.
   * the **static** profile — the checked-in `docker-compose.yml` + `docker-compose.dpos.yml`
-    pair, four validators and a full-node, genesis-baked contracts, reaching DPoS through a
+    pair, five validators and a full-node, genesis-baked contracts, reaching DPoS through a
     graceful-stop migration (`stack/static_stack.py`). This is what all 26 smoke cases run on.
 
 Before this module existed only the first one was expressible in Python, so the case layer had
@@ -139,7 +139,7 @@ class GeneratedProfile(StackProfile):
 
 class StaticProfile(StackProfile):
     """The checked-in `docker-compose.yml` + `docker-compose.dpos.yml` pair. The smoke cases'
-    devnet: four validators, a full-node, contracts baked into genesis.
+    devnet: five validators, a full-node, contracts baked into genesis.
 
     ═══ THE EXTRA OVERLAY ═══════════════════════════════════════════════════════════════
 
@@ -205,9 +205,16 @@ class StaticProfile(StackProfile):
         return None
 
     def committee(self):
-        """`lib.sh:35` — `VALS=(validator-0 validator-1 validator-2 validator-3)`. The set is
-        fixed by the checked-in compose file, not by a knob."""
-        return tuple(topology.validator(i) for i in range(4))
+        """`lib.sh:35` — `VALS=(validator-0 … validator-4)`. The set is fixed by the
+        checked-in compose file, not by a knob.
+
+        FIVE since 2026-09-07, where the bash said four. `smoke-byzantine` tombstones one
+        member; a four-seat genesis would leave three, below MIN_COMMITTEE_LENGTH, where
+        `commitEpochCommittee` reverts out of a pre-execution system call and every node
+        stops. The bash ran against a contract that carried the previous committee forward
+        instead of reverting, so four was survivable there and is not here. This is the one
+        place the port DELIBERATELY diverges from the bash on stand shape."""
+        return tuple(topology.validator(i) for i in range(5))
 
     def epoch_zero_window(self):
         """`[activation, activation + interval)` — relative epoch 0, the ONLY window a

@@ -31,7 +31,7 @@ _SMOKE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.dirname(os.path.abspath(__file__)))))
 PROBE_JSON = os.path.join(_SMOKE_DIR, "contracts", "PrevRandaoProbe.json")
 
-VALIDATORS = tuple(topology.validator(i) for i in range(4))
+VALIDATORS = tuple(topology.validator(i) for i in range(5))
 
 #: `asserts.sh:45` — how long both tx blocks get to finalize.
 TX_FINALIZE_TIMEOUT_S = 60

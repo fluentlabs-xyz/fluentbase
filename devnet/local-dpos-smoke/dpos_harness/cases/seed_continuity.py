@@ -23,14 +23,19 @@ WHY THIS EXISTS
     which every verified certificate fills and which pins one σ per epoch against retention
     eviction (`epoch_manager.rs::boundary_base` → `Randomness::terminal_seed_at`).
 
-    THE LIVE BLOCKAGE IS UNCHANGED BY THAT MOVE, and it is worth being exact about why: the
-    obstacle was never that the bytes sat in a block body, it is that they appear in NO log
-    line and on NO RPC. `derive-seed` prints `prev_randao = keccak256(sigma)`, a different
-    hash of the same object, and the seed store is process-internal. So the LIVE arm of this
-    case (assertion A, the positive control) can only be predicted for an epoch that takes
-    the CONSTANT arm, and its live scoring stays BLOCKED until σ has a source. The PURE layer
-    below is kept byte-exact against `weighted_vrf.rs` regardless, and is pinned to the Rust
-    conformance vector.
+    WHERE THIS CASE READS THAT σ FROM (2026-09-04 — the live blockage is LIFTED). σ never
+    appears in a log line, but it does ride an RPC: every finalization certificate of a
+    beacon-active epoch carries the round's seed in its trailing slot — `VoteCertificate ‖
+    seed_flag(1 B) ‖ seed_slot(48 B)` (`crates/dpos/bls/src/combined_scheme.rs`:
+    `write_seed_slot`, `SEED_FLAG`, `SEED_SLOT = SIGNATURE_BYTES`; the same 49 trailing bytes
+    `scripts/cert-mitm-proxy.py` clears in `seed-slot` mode). `consensus_getFinalization
+    {"height": h}` serves that certificate for any finalized height, and the seed it carries is
+    σ at `Round(epoch, view)` of that block's own finalization — which for the TERMINAL block of
+    epoch E-1 is exactly the round `epoch_manager.rs::boundary_base` asks the store for. So
+    `witness_fallback_seed` (`sha256(signature.encode())`, `beacon/seed.rs`) is computable off
+    the RPC: `terminal_seed_base` below. The constant arm stays for epochs whose predecessor is
+    beacon-inactive (`mandatory_at`: `epoch >= DETERMINISTIC_BOOTSTRAP_EPOCH = 2`,
+    `beacon/surface.rs`, `beacon/actor.rs`), exactly as `seedless_base` chooses it.
 
     That fallback table is exactly what makes this case TWO-SIDED rather than a smoke
     test. Under the OLD binary the leader after a nullified view was the offline
@@ -76,6 +81,7 @@ Chain.consensus_keys, the Runner docker seam (LIVE COMPOSE_FILE overlay), core.e
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import time
@@ -139,6 +145,38 @@ def constant_fallback_seed(epoch: int, sorted_pubkeys: list) -> bytes:
     for pk in sorted_pubkeys:
         h.update(pk)
     return h.digest()
+
+
+#: `beacon/actor.rs::DETERMINISTIC_BOOTSTRAP_EPOCH` — the first beacon-active epoch. An epoch
+#: whose predecessor is below it inherits nothing and takes the constant base
+#: (`epoch_manager.rs::boundary_base` → `mandatory_at(prev)` false → `Present { seed: None }`).
+DETERMINISTIC_BOOTSTRAP_EPOCH = 2
+#: `combined_scheme.rs` — the certificate's trailing seed slot: a 1-byte present flag, then the
+#: 48-byte compressed G1 signature. Same numbers `scripts/cert-mitm-proxy.py` slices.
+SEED_FLAG_BYTES = 1
+SEED_SLOT_BYTES = 48
+
+
+def terminal_seed_from_certificate(cert_hex: str) -> bytes:
+    """σ's 48 signature bytes out of a finalization certificate's trailing seed slot.
+
+    Raises `ValueError` when the slot is absent (a seedless epoch's certificate carries flag 0
+    and zeros — no σ exists there, and the caller must take the constant arm, never a hash of
+    zeros) or the bytes are too short to hold one. Pure."""
+    raw = bytes.fromhex(cert_hex[2:] if cert_hex.startswith("0x") else cert_hex)
+    tail = SEED_FLAG_BYTES + SEED_SLOT_BYTES
+    if len(raw) < tail:
+        raise ValueError(f"certificate of {len(raw)} bytes cannot carry a {tail}-byte seed slot")
+    flag, sig = raw[-tail], raw[-SEED_SLOT_BYTES:]
+    if flag != 1:
+        raise ValueError(f"seed slot flag is {flag}, not 1 — this certificate carries no σ")
+    return sig
+
+
+def epoch_base_kind(epoch: int) -> str:
+    """Which arm `seedless_base` takes for `epoch`: `"witness"` when the predecessor epoch is
+    beacon-active (σ of its terminal round exists), else `"constant"`."""
+    return "witness" if int(epoch) - 1 >= DETERMINISTIC_BOOTSTRAP_EPOCH else "constant"
 
 
 def witness_fallback_seed(signature_bytes: bytes) -> bytes:
@@ -346,6 +384,44 @@ def _await_dpos_active(nodes, chain, deadline_s: int, dry=False):
                      f"DPoS not active/finalizing within {deadline_s}s (epoch={ep}, fin={fin})")
 
 
+def terminal_seed_base(rpc_url: str, epoch: int, activation: int, interval: int):
+    """The witness base for `epoch`: `sha256(σ)` at the terminal round of `epoch - 1`, read off
+    `consensus_getFinalization` for that epoch's last block. Returns `(base, height, view)`.
+
+    The certificate served for height h is h's own finalization, so its seed is σ at
+    `Round(epoch(h), view(h))` — the round `boundary_base` names for the boundary into `epoch`.
+    Raises `ChainError` when the RPC did not answer or the certificate carries no seed: an epoch
+    whose σ cannot be read is not scored, and it must not fall through to the constant arm (that
+    would be the predictable base the change removed, asserted as though it were still in
+    force)."""
+    from ..chain.writes import ChainError
+    from ..core import rpc as _rpc
+
+    if int(epoch) <= 0:
+        # `epoch - 1` has no terminal block, and `activation + 0 * interval - 1` is the block
+        # BEFORE activation — a pre-DPoS height whose certificate says nothing about any base.
+        # Unreachable while `epoch_base_kind` sends 0..DETERMINISTIC_BOOTSTRAP_EPOCH down the
+        # constant arm; asserted here so the arithmetic cannot start from a predecessor-less epoch
+        # if that constant ever moves.
+        raise ChainError("terminal-seed", f"epoch {epoch} has no predecessor epoch — there is no "
+                                          "terminal round to inherit a base from")
+    h = int(activation) + int(epoch) * int(interval) - 1
+    out = _rpc.rpc_post_url(rpc_url, _rpc.rpc_body("consensus_getFinalization", [{"height": h}]))
+    try:
+        res = (json.loads(out) if (out or "").strip() else {}).get("result") or {}
+    except ValueError:
+        res = {}
+    cert = res.get("certificate")
+    if not cert:
+        raise ChainError("terminal-seed", f"consensus_getFinalization(height={h}) returned no "
+                                          f"certificate: {out[:200]!r}")
+    try:
+        sig = terminal_seed_from_certificate(cert)
+    except ValueError as e:
+        raise ChainError("terminal-seed", f"height {h} (terminal of epoch {epoch - 1}): {e}")
+    return witness_fallback_seed(sig), h, res.get("view")
+
+
 def _service_pubkeys(chain, n: int):
     """peer pubkey -> docker service, from the deterministic genesis derivation."""
     out = {}
@@ -549,17 +625,42 @@ def run_case(argv=None) -> int:
         logs = {svc: nodes.logs_since(svc, since) for svc in live}
         view_of, epoch_of, proposer_of = parse_view_leader_map(logs)
 
-        # LIVE SCORING IS BLOCKED — see the module docstring. `base_of` can only offer the
-        # CONSTANT derivation, which is the base a running binary uses for epoch 0 and for
-        # the degenerate links alone; every epoch that inherits σ from the previous epoch's
-        # terminal ROUND elects off bytes this process cannot see, so assertion A (the
-        # positive control) will read INCONCLUSIVE for those epochs. Do not "fix" that by
-        # relaxing the control: the missing input is that σ, and it needs a source before
-        # this case can be a live gate again. FLU-1204 did NOT provide one and did not make
-        # it harder — the σ moved from the block body into the node's seed store, and
-        # neither has an observer; a log line carrying `sigma.signature` at the boundary is
-        # still the cheapest one.
-        base_of = {e: constant_fallback_seed(e, sorted_pks) for e in set(epoch_of.values())}
+        # THE BASE, per epoch, on the arm the node takes (`epoch_manager.rs::seedless_base`):
+        # the witness base `sha256(σ)` at the predecessor's terminal round for every epoch whose
+        # predecessor is beacon-active, read off the terminal block's finalization certificate
+        # (`terminal_seed_base`); the constant derivation only for the pre-bootstrap links. An
+        # epoch whose σ cannot be read is a `ChainError` — INCONCLUSIVE by the handler below —
+        # never a silent fall-through to the constant arm.
+        # `prof`, not a second `os.environ.get(..., "32")`: the interval this case runs on is the
+        # one `apply_case_env_defaults` put in the environment, and `bringup.py` reads the SAME
+        # variable with a DIFFERENT default (64). Two defaults for one variable is a boundary the
+        # terminal-block arithmetic would cross silently — the epoch would be located in the wrong
+        # place and the base read off the wrong certificate.
+        activation = int(os.environ.get("DPOS_ACTIVATION_BLOCK", "0"))
+        interval = int(prof["SIM_EPOCH_INTERVAL"])
+        if activation <= 0:
+            return fail(RC_INCONCLUSIVE, "DPOS_ACTIVATION_BLOCK not exported by the bring-up — "
+                                         "cannot locate the terminal block of any epoch")
+        if interval <= 0:
+            return fail(RC_INCONCLUSIVE, f"SIM_EPOCH_INTERVAL is {interval} — cannot locate the "
+                                         "terminal block of any epoch")
+        base_of, base_kind = {}, {}
+        for e in sorted(set(epoch_of.values())):
+            base_kind[e] = epoch_base_kind(e)
+            if base_kind[e] == "constant":
+                base_of[e] = constant_fallback_seed(e, sorted_pks)
+            else:
+                try:
+                    base_of[e], h, v = terminal_seed_base(rpc, e, activation, interval)
+                except ChainError as exc:
+                    # UNREAD, not wrong: no σ means no prediction, so no verdict — the same rule
+                    # the bad-share gate applies to an unreadable metric.
+                    return fail(RC_INCONCLUSIVE,
+                                f"INCONCLUSIVE: σ for epoch {e}'s base could not be read "
+                                f"[{exc.reason_id}]: {exc.message}")
+                print(f"CASE-SEED: epoch {e} base = sha256(σ @ terminal of epoch {e - 1}: "
+                      f"height {h}, view {v})", flush=True)
+        print(f"CASE-SEED: base arms {base_kind}", flush=True)
 
         controls, samples = [], []
         for h in sorted(view_of):

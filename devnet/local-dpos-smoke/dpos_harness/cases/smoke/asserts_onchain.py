@@ -123,11 +123,11 @@ _DRY_READABLE_LOG = "(dry) victim log"
 #: Canned `production` readings for the weighted-VRF dry walk, one per validator. They SUM to
 #: `blocksInEpoch` because the verdict they feed checks exactly that, and a transcript whose canned
 #: data fails its own arithmetic is a misleading rehearsal.
-_DRY_PRODUCTION = ((48, 64), (6, 64), (5, 64), (5, 64))
+_DRY_PRODUCTION = ((46, 64), (5, 64), (5, 64), (4, 64), (4, 64))
 
 
 def assert_liveness(ctx) -> None:
-    """With 4 validators (f=1, quorum 3) the network keeps finalizing while ONE is offline, the
+    """With 5 validators (f=1, quorum 4) the network keeps finalizing while ONE is offline, the
     offline validator's on-chain participation counter falls behind the always-up hub's, and the
     validator re-syncs and rejoins on restart.
 
@@ -380,29 +380,46 @@ def assert_byzantine(ctx) -> None:
       1. the offending validator is slashed on-chain and JAILED (`ValidatorStatus.Jail == 3`);
       2. an honest node ACTS on the tombstone — it severs the offender's transport (§7's
          load-bearing reaction);
-      3. the honest 3-of-4 quorum KEEPS finalizing over the blocks immediately after.
+      3. the honest 4-of-5 quorum KEEPS finalizing over the blocks immediately after.
 
     There is no public `tombstoned()` getter, so (1) is asserted through `getValidatorStatus`
     (Addendum D).
 
     (2) EXISTS BECAUSE NEITHER OF THE OTHERS WITNESSES IT. A contract status says the slash
-    landed and nothing about whether any node reacted; and the quorum was already 3-of-4 before
+    landed and nothing about whether any node reacted; and the quorum was already 4-of-5 before
     the jail, so (3) advances identically on a cluster that ignores the tombstone outright. The
     OK line named the severance while the case read no part of it.
 
-    WHAT THIS CASE DOES NOT COVER, said plainly because the docstring used to imply otherwise:
-    the committee-SHRINK epoch-boundary wedge. Committees commit two epochs ahead
-    (`drive_ahead_commit`, node/src/evm.rs), so the first committee that can omit the offender is
-    `E+3` — 64..96 blocks away — and on this stand (`--peers=4`, `MIN_COMMITTEE_LENGTH = 4`) it
-    can never be committed at all: three surviving members would revert `commitEpochCommittee`
-    with `ERR_COMMITTEE_TOO_SMALL`. Exercising that wedge needs a stand with a spare seat.
-    See `vo.evaluate_post_jail_liveness` for the arithmetic.
+      4. the COMMITTEE boundary after the jail, which this docstring used to call unreachable on
+         this stand — it was reachable, and on a four-seat stand it killed the network.
+         Committees commit two epochs ahead (`drive_ahead_commit`, node/src/evm.rs), so the first
+         block of the epoch after the jail commits `committee[E+3]` from a selection the offender
+         is no longer in. On the four-seat stand the bash ran, that selection had THREE members
+         against `MIN_COMMITTEE_LENGTH = 4` and `commitEpochCommittee` reverted
+         `CommitteeTooSmall(3,4)` into the node's fail-loud arm; every honest node shut down
+         within milliseconds (R-112, `.dpos-study/EXPERIMENTS.md` §5.3 E1 — on this topology,
+         35 s after the tombstone, while this case was green because it stopped looking after
+         (3)). The stand is FIVE-seat since 2026-09-07 for exactly that reason, so the jail
+         leaves four — the floor — and the commit succeeds. The case waits two epochs past the
+         jail's epoch with every honest container required to stay `running`, then asserts the
+         commit line seating four on each honest node (the anti-vacuity witness — liveness alone
+         is also what a slash that never landed produces), and that `committee[target]` drops the
+         offender, differs from `committee[target-1]`, and carries `dkgQual` SET because the
+         membership changed (`vo.evaluate_honest_alive`, `evaluate_committed_after_jail`,
+         `evaluate_reseated_committee`). The below-the-floor path is a different case,
+         `scripts/xp/floor_halt_case.py`.
     """
     case = "smoke-byzantine"
     addrs = _addresses(ctx, case)
     vic = addrs[vo.BYZANTINE_VICTIM_IDX].strip()
+    honest = [topology.validator(i) for i in range(len(addrs)) if i != vo.BYZANTINE_VICTIM_IDX]
     _say(ctx, f"smoke-byzantine: validator-3 ({vic}) equivocating; honest quorum live "
               f"(anchor={ctx.stack.prev_fin})")
+
+    # The PRE-JAIL snapshot the boundary assertion (4) deltas against: the fatal trio and the
+    # carried-over lines each honest node has written so far. Taken before the jail is even
+    # awaited, so nothing the boundary does can be mistaken for history.
+    snap = {v: _floor_snapshot(ctx, case, v) for v in honest}
 
     # ── 1: the on-chain equivocation slash → Jail ─────────────────────────────────────
     box = {"status": ""}
@@ -443,10 +460,119 @@ def assert_byzantine(ctx) -> None:
     ctx.check(case, *vo.evaluate_post_jail_liveness(advanced, post_jail),
               on_fail=lambda: ctx.dump_logs(vo.BYZ_STALL_TAIL, topology.validator(0),
                                             topology.validator(1), topology.validator(3)))
-    _ok(ctx, case, f"equivocator jailed on chain, its transport severed by {hub}, and the honest "
-                   f"chain advanced past {post_jail} in the blocks straight after "
-                   f"(now {ctx.finalized_dec()}) — the committee-shrink boundary at E+3 is NOT "
-                   "covered here, see the docstring")
+    _say(ctx, f"smoke-byzantine: honest chain advanced past {post_jail} straight after the jail")
+
+    # ── 4: the COMMITTEE boundary after the jail ──────────────────────────────────────
+    #
+    # The jail's epoch comes off the severance line the hub just logged (`node/src/dpos.rs`: the
+    # epoch of the finalized block the tombstone was read at). The boundary commit is on the
+    # first block of the epoch after the slash's own epoch; `carry_wait_target` runs two epochs
+    # past the logged one so that either reading of the boundary is inside the window, plus one
+    # epoch of the re-seated committee finalizing. Every honest container must stay `running` for
+    # the whole wait — on a mis-sized (four-seat) stand they exit at the boundary, and that is
+    # reported as the R-112 branch rather than as a timeout.
+    jail_epoch = vo.sever_epoch(sever["lines"][0] if sever["lines"] else "")
+    ctx.check(case, jail_epoch is not None,
+              f"the severance line carries no `epoch=` field — cannot place the committee "
+              f"boundary: {sever['lines'][0] if sever['lines'] else ''!r}")
+    target = vo.carry_wait_target(jail_epoch or 0, ctx.interval, ctx.activation_block)
+    budget = vo.carry_wait_budget_s(ctx.interval)
+    _say(ctx, f"smoke-byzantine: jail read at epoch {jail_epoch}; the boundary commit lands on "
+              f"the first block of epoch {(jail_epoch or 0) + 1} "
+              f"(= {vo.epoch_start(ctx.activation_block, ctx.interval, (jail_epoch or 0) + 1)}); "
+              f"observing every honest node to finalized >= {target}")
+    box_floor = {"states": {}}
+
+    def past_floor():
+        box_floor["states"] = {v: ctx.ps_state(v) for v in honest}
+        states = box_floor["states"].values()
+        # `None` = the `docker compose ps` call itself did not run. That is UNREAD, and it must
+        # not end the wait: a single slow daemon call would otherwise be scored as the network
+        # dying at the floor. Keep polling; if it is still unread when the budget runs out,
+        # `evaluate_honest_alive` names it as unread rather than as the R-112 branch.
+        if any(st is None for st in states):
+            return False
+        if any(not str(st).startswith("running") for st in states):
+            return "dead"
+        return "past" if ctx.finalized_dec(dry_value=target) >= target else False
+
+    hit = ctx.poll(past_floor, budget, poll_s=vo.CARRY_POLL_S, dry_value="past")
+    # The UNREAD arm is applied BEFORE the logs are read. `_fatal_lines` goes through
+    # `logs_required`, which raises on an unreadable log — so with docker down entirely, the
+    # container states are `None` AND the log read fails, and whichever runs first owns the
+    # message. Reading the states first is what makes "the state could not be read" reachable at
+    # all; leaving it second reported a dead daemon as an unreadable log, which is true and one
+    # step further from the cause.
+    ctx.check(case, *vo.evaluate_honest_alive(box_floor["states"], {}),
+              on_fail=lambda: ctx.dump_logs(vo.BYZ_STALL_TAIL, *honest))
+    fatal = {v: _fatal_lines(ctx, case, v)[snap[v]["fatal"]:] for v in honest}
+    ctx.check(case, *vo.evaluate_honest_alive(box_floor["states"], fatal),
+              on_fail=lambda: ctx.dump_logs(vo.BYZ_STALL_TAIL, *honest))
+    ctx.check(case, hit == "past",
+              lambda: (f"honest nodes stayed up but finalized did not reach {target} within "
+                       f"{budget}s (now {ctx.finalized_dec()}) — the chain stalled at or after "
+                       "the committee boundary"),
+              on_fail=lambda: ctx.dump_logs(vo.BYZ_STALL_TAIL, *honest))
+    committed = {v: vo.committed_lines(ctx.logs_required(
+                     v, case, "committee-commit scan",
+                     dry_value=f"INFO {vo.COMMITTED_LINE} epoch={(jail_epoch or 0) + 3} "
+                               f"members={vo.BYZANTINE_SEATS_AFTER_JAIL}"))
+                 for v in honest}
+    ok, msg, seated_epoch = vo.evaluate_committed_after_jail(
+        {v: snap[v]["committed"] for v in honest}, committed)
+    ctx.check(case, ok, msg, on_fail=lambda: ctx.dump_logs(vo.BYZ_STALL_TAIL, *honest))
+    seated_epoch = seated_epoch if seated_epoch is not None else (jail_epoch or 0) + 3
+    # The dry committees differ on PURPOSE: the boundary epoch seats the genesis less the
+    # equivocator, the one before it seats them all. A single canned value would make the
+    # "the set actually changed" arm unreachable on a `--dry-run` walk.
+    dry_prev = "[" + ", ".join(addrs[:vo.BYZANTINE_COMMITTEE_SEATS]) + "]"
+    dry_cur = "[" + ", ".join(a for i, a in enumerate(addrs[:vo.BYZANTINE_COMMITTEE_SEATS])
+                              if i != vo.BYZANTINE_VICTIM_IDX) + "]"
+    ctx.check(case, *vo.evaluate_reseated_committee(
+        ctx.staking_call("getEpochCommittee(uint64)(address[])", seated_epoch,
+                         dry_value=dry_cur),
+        ctx.staking_call("getEpochCommittee(uint64)(address[])", seated_epoch - 1,
+                         dry_value=dry_prev),
+        ctx.staking_call("getDkgQual(uint64)(bool)", seated_epoch, dry_value="true"),
+        vic, seated_epoch))
+    _ok(ctx, case, f"equivocator jailed on chain, its transport severed by {hub}, the honest "
+                   f"chain advanced straight after the jail AND through the committee "
+                   f"boundary: committee[{seated_epoch}] RE-SEATED without the equivocator "
+                   f"({vo.BYZANTINE_SEATS_AFTER_JAIL} of "
+                   f"{vo.BYZANTINE_COMMITTEE_SEATS} seats, dkgQual true), every honest node "
+                   f"logged it and stayed up, finalized {ctx.finalized_dec()} >= {target}")
+
+
+#: What a `--dry-run` walk answers the boundary log reads with: one line carrying neither a fatal
+#: marker nor `COMMITTED_LINE`, so the snapshot is empty on both counters and the canned commit
+#: line read later still shows up as a DELTA.
+_DRY_FLOOR_LOG = "validator-0  | INFO dry-run: no fatal and no committee-commit line\n"
+
+
+def _floor_snapshot(ctx, case: str, service: str) -> dict:
+    """Counts of the fatal trio and the committee-commit lines in `service`'s log NOW — the
+    baseline the boundary assertion deltas against.
+
+    `logs_required`, not `logs_all`: an unreadable log answers `""`, which counts ZERO fatal lines
+    and would make the delta below span the WHOLE log — so a fatal line written during bring-up
+    reads as one written at the boundary. The absence-assertion rule (`SmokeCtx.logs_required`)
+    applies to a BASELINE for an absence assertion just as much as to the assertion itself."""
+    text = ctx.logs_required(service, case, "floor-boundary baseline", dry_value=_DRY_FLOOR_LOG)
+    return {"fatal": len(_fatal_lines_of(text)),
+            "committed": vo.committed_lines(text)}
+
+
+def _fatal_lines_of(text: str):
+    return [ln for ln in (text or "").splitlines() if any(m in ln for m in vo.FATAL_LINES)]
+
+
+def _fatal_lines(ctx, case: str, service: str):
+    """The fatal trio in `service`'s log. `logs_required` for the same reason as the baseline: an
+    unreadable log yields `[]`, and "no fatal line" over a log nobody read is a grep matching its
+    own absence — the half of `evaluate_honest_alive` that reads the R-112 signature would then be
+    vacuously green."""
+    return _fatal_lines_of(ctx.logs_required(service, case, "fatal-line scan",
+                                             dry_value=_DRY_FLOOR_LOG))
 
 
 def _dump_byzantine(ctx) -> None:

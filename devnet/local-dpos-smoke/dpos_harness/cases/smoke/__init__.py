@@ -52,8 +52,9 @@ reason: its subject is the FIRST seconds of a node's life against a live chain, 
 would hand it a stack whose beacon-active epochs are minutes old and whose followers are keyed.
 
 The four ON-CHAIN cases each run alone for the STRONGEST version of that reason: none of them
-restores what it broke. `byzantine` can leave a TOMBSTONED validator and a permanently shrunk
-committee; `cert-catchup` and `vrf-dkg-restart-midwindow` bring up a TUNED GENESIS (64-block
+restores what it broke. `byzantine` leaves a TOMBSTONED validator and a SHRUNKEN committee (the
+boundary commit re-seats four of the five genesis members); `cert-catchup` and
+`vrf-dkg-restart-midwindow` bring up a TUNED GENESIS (64-block
 epochs), which is a different chain, not a different phase of the same one. `vrf-dkg-live-heal`
 runs the same tuned genesis and still shares nothing with them: its whole premise is a DKG window
 that opens once, near bring-up, with the victim already down through it — the opposite of

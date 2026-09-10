@@ -178,8 +178,26 @@ def _assert_consensus_tiers(ctx, case: str, k: int) -> int:
     return cons_res
 
 
+def _read_order_block_source() -> str:
+    """The codec source the wire-layout check compares against. `""` when it cannot be read —
+    which `evaluate_wire_layout` fails on, by design."""
+    try:
+        with open(vf.ORDER_BLOCK_SOURCE) as fh:
+            return fh.read()
+    except OSError:
+        return ""
+
+
 def _assert_result_commitment(ctx, case: str, k: int, n: int) -> None:
-    """Step 2 — the artifact at N+K commits the derived hash of N (`asserts-fault.sh:134-171`)."""
+    """Step 2 — the artifact at N+K commits the derived hash of N (`asserts-fault.sh:134-171`).
+
+    THE LAYOUT IS CHECKED AGAINST THE CODEC SOURCE FIRST. `WIRE_HEADER_FIELDS` is a copy of
+    `OrderBlock::write`, and the copy drifted once (`fee_recipient` left the codec, the copy
+    kept it, the slice landed 40 hex late and a correct chain read as `LAYOUT CHANGED`). The
+    unit test that pins the two needs pytest, which the host running this case does not have, so
+    the pin runs HERE, where the copy is consumed: a drift fails the case with a message naming
+    the harness, before any artifact is sliced."""
+    ctx.check(case, *vf.evaluate_wire_layout(_read_order_block_source()))
     height = n + k
     canned_hash = "0x" + "cd" * 32
     artifact = ctx.json_rpc("consensus_getFinalization", [{"height": height}],
@@ -376,7 +394,7 @@ def assert_vrf_fault(ctx) -> None:
               on_fail=lambda: ctx.dump_logs(vf.VRF_FAULT_LOG_TAIL, topology.validator(0)))
     ctx.check(case, ctx.finalized_dec(dry_value=epoch2_probe) > 0, "no finalized block")
 
-    # A1 — one validator down (f=1). With 4 validators the seed quorum is n−f=3, so the three
+    # A1 — one validator down (f=1). With 5 validators the seed quorum is n−f=4, so the four
     # survivors still recover the threshold seed and the beacon stays live.
     _say(ctx, f"smoke-vrf-fault: stopping {victim} (f=1 fault) — the beacon must stay live on the "
               "survivors")
@@ -915,7 +933,7 @@ def _dump_restart_window(ctx, pre, head_dec, restart_at) -> None:
 
 
 def assert_full_restart(ctx) -> None:
-    """Stop ALL four validators, verify each persisted, restart them, and require the network to
+    """Stop THE WHOLE committee, verify each persisted, restart them, and require the network to
     reconverge FROM THE PERSISTED FINALIZED HEAD — DPoS cold restart from disk for the whole set,
     not just for the migration anchor.
 

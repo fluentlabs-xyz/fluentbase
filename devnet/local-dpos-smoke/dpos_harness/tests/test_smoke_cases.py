@@ -28,7 +28,10 @@ from dpos_harness.core.proc import Runner
 from dpos_harness.stack.profiles import StaticProfile
 from dpos_harness.stack.static_stack import StaticStack
 
-VALS = ["validator-0", "validator-1", "validator-2", "validator-3"]
+VALS = ["validator-0", "validator-1", "validator-2", "validator-3", "validator-4"]
+#: FIVE, where the bash said four. `StaticProfile.committee()` carries the reason: a
+#: four-seat stand cannot survive `smoke-byzantine`'s tombstone once the commit reverts
+#: below MIN_COMMITTEE_LENGTH instead of carrying the previous committee forward.
 RPC = "http://localhost:8545"
 UP = ["docker", "compose", "up", "--build", "-d"]
 STOP = ["docker", "compose", "stop", "--timeout", "40", *VALS]
@@ -542,7 +545,8 @@ def _vrf_world(monkeypatch, **over):
         head_dec=_seq(200, 210),
         mixhash_of=lambda svc, block, **kw: mixhash(svc, block),
         mixhash_at=lambda block, **kw: mixhash(block),
-        log_count=_seq(5, 5, 5, 5, 6, 6, 6, 6),
+        # One read per stand node BEFORE, one per node AFTER — five each since the stand grew.
+        log_count=_seq(5, 5, 5, 5, 5, 6, 6, 6, 6, 6),
         logs_all=lambda svc, **kw: "\n".join(
             f"INFO {verdicts.ACTIVE_LINE} prev_randao={mixhash(n)}" for n in range(120, 140)),
         consensus_metrics=_seq("beacon_digest_fallback_total 0\nbeacon_seed_active_total 7\n",
@@ -842,11 +846,11 @@ _PLANE_FAILURES = [
      "non-zero", "a_served_artifact_was_refused_as_misbehaviour"),
     (lambda: dict(node_metrics_text=_plane_metrics(**{
         svc: "" for svc in beacon.COMMITTEE_NODES})),
-     "unreadable on ALL 4", "the_rejection_counter_never_answered"),
+     "unreadable on ALL 5", "the_rejection_counter_never_answered"),
     # A metric RENAME is the same reading as a dead scrape and must not read as "all clear".
     (lambda: dict(node_metrics_text=_plane_metrics(**{
         svc: "some_other_total 0" for svc in beacon.COMMITTEE_NODES})),
-     "unreadable on ALL 4", "the_rejection_family_was_renamed"),
+     "unreadable on ALL 5", "the_rejection_family_was_renamed"),
 ]
 
 
@@ -890,7 +894,7 @@ def test_the_plane_scan_filters_by_epoch(monkeypatch):
 
 def test_the_plane_reads_the_committee_and_not_the_import_follower(monkeypatch):
     """`full-node` is not a `--dpos` node and runs no agreement instance, so including it would
-    make every stage verdict a guaranteed red. The scan set is the four validators."""
+    make every stage verdict a guaranteed red. The scan set is the committee."""
     seen = []
     ctx, _ = _boundary_world(monkeypatch, logs_required=lambda svc, case, what, dry_value="": (
         seen.append(svc), _PLANE_OK)[1])
@@ -1004,7 +1008,7 @@ def test_the_plane_reads_the_DOUBLED_total_the_registry_renders(monkeypatch, cap
     asserts.assert_vrf_boundary(ctx)
 
     out = capsys.readouterr().out
-    assert f"{verdicts.AGREE_REJECT_METRIC}=0 on 4/4 node(s)" in out, (
+    assert f"{verdicts.AGREE_REJECT_METRIC}=0 on 5/5 node(s)" in out, (
         "the gating counter was not EVALUATED over the registry the registry renders")
     assert f"{reported}: " in out and "=7" in out, (
         f"{reported} read as unavailable off a scrape that carries it — the seven "

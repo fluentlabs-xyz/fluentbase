@@ -309,50 +309,6 @@ class Chain:
         except ValueError:
             return 0
 
-    def staking_current_epoch(self):
-        """pp_staking_call 'currentEpoch()(uint64)' — the STAKING contract's OWN epoch cursor,
-        which is the argument domain of the epoch-frozen selection view. Deliberately NOT
-        current_epoch() (that one DERIVES the epoch from head/interval off ChainConfig and
-        memoizes; a derived value that drifts one epoch would make the purity probe compare a
-        different epoch's view before and after). None when the read fails → the probe SKIPS
-        rather than judging an unreadable RPC."""
-        r = self.p.run_capture(["cast", "call", self.staking_rt, "currentEpoch()(uint64)",
-                                "--rpc-url", self.rpc], note="staking-current-epoch")
-        tok = _first_token(r.stdout)
-        if not r.ok or not tok:
-            return None
-        try:
-            return int(tok)
-        except ValueError:
-            return None
-
-    def selection_view_at(self, epoch):
-        """pp_staking_call 'getValidatorsWithKeysAt(uint64)(address[],(bytes,bytes32,uint64)[])'
-        <epoch> — the EPOCH-FROZEN selection view (the candidate set + stake snapshot + cap the
-        committee of that epoch is cut with). Returned as the raw `cast` stdout: the probe only
-        ever compares it to ITSELF across one write, so the decoded shape is irrelevant and any
-        re-encoding would only add a way to lose a difference.
-
-        None when the read failed (rc != 0 / empty) — the bash `|| echo READ_FAILED` sentinel,
-        kept as a DISTINCT value from a successfully-read view so an RPC brownout can never be
-        reported as a purity violation.
-
-        THE ARITY IS CHECKED, and this probe is the sharpest case for it. It compares raw stdout
-        to itself across one governance write, so a decode that silently lost a return value
-        stays perfectly self-consistent — the probe PASSES, on a view it can no longer fully
-        see, which is the one outcome that makes a guard worse than no guard. Two top-level
-        values (`address[]`, `ConsensusKeys[]`) is what the contract returns; anything else is
-        a signature that has drifted off it, and that is a raise, not a None."""
-        r = self.p.run_capture(["cast", "call", self.staking_rt,
-                                "getValidatorsWithKeysAt(uint64)"
-                                "(address[],(bytes,bytes32,uint64)[])", str(epoch),
-                                "--rpc-url", self.rpc], note="selection-view")
-        out = (r.stdout or "").strip()
-        if not r.ok or not out:
-            return None
-        rpc.cast_returns(out, 2, f"getValidatorsWithKeysAt({epoch})")
-        return out
-
     def active_validators_length(self) -> int:
         """DRY answers a canned cap only when the read came back EMPTY — zero is this getter's
         read-failed value and every caller aborts on it, so a plain `--dry-run` would never get
@@ -815,52 +771,28 @@ class Chain:
                 raise ChainError("grow-cap", "read activeValidatorsLength")
             target = int(os.environ.get("SIM_VALIDATORS", "14"))
             new_cap = min(cap + 1, target)
-            self._cap_raise_with_purity_probe(idx, cap, new_cap, voter_idx)
-
-    def _cap_raise_with_purity_probe(self, idx, cap, new_cap, voter_idx) -> None:
-        """The governance cap-raise, WRAPPED in the live selection-view epoch-purity probe
-        (soak-actions.sh sim_register_activate, growth branch).
-
-        The selection view for an epoch that has ALREADY STARTED must be immutable: the committee
-        cap is checkpointed per epoch and setActiveValidatorsLength defers to E+1, so
-        getValidatorsWithKeysAt(S) for S <= currentEpoch cannot move. While the cap was read LIVE,
-        this exact mutation retroactively RESIZED the view of past epochs — the DKG index space
-        then exceeded the committed committee, every member voted false and the chain wedged (the
-        proven 2026-07-21 dkg_logs idx-stall). A real governance cap-raise under a live DKG is
-        exactly what the sim issues every growth step, so this is where that regression is
-        cheapest to catch.
-
-        Capture S and its view BEFORE the write, re-read AFTER: a difference FAILS the run
-        (ChainError — the write layer's fail-loud type; NOT a demoted diagnostic, this is a
-        proven stall class, not harness bookkeeping). The epoch may roll between the two reads —
-        harmless: S is captured once and only ages, and an aged S is still an epoch that has
-        started. An unreadable epoch or view WARNS and SKIPS: an RPC brownout reported as a purity
-        violation would be a flaky guard, which is worse than none."""
-        purity_epoch = self.staking_current_epoch()
-        before = None if purity_epoch is None else self.selection_view_at(purity_epoch)
-        # RETARGETED to `staking_rt`, explicitly, not left to ride on the two fields being equal.
-        # `setActiveValidatorsLength` moved onto the module with the rest of ChainConfig, and a
-        # proposal into an address with no code is INVISIBLE: OZ's `Address.verifyCallResult`
-        # never checks `target.code.length`, so the Governor emits `ProposalExecuted`, the receipt
-        # is 0x1, the purity probe sees no change (correctly — nothing changed), and the cap
-        # silently never moves.
-        self.gov_action(self.staking_rt,
-                        self.calldata("setActiveValidatorsLength(uint32)", new_cap),
-                        f"grow-cap-{new_cap}", voter_idx=voter_idx)
-        after = None if purity_epoch is None else self.selection_view_at(purity_epoch)
-        if before is not None and after is not None and before != after:
-            raise ChainError(
-                "selection-view-purity",
-                f"grow-cap v{idx}: selection view for epoch {purity_epoch} CHANGED across "
-                "setActiveValidatorsLength — the cap leg is live again (2026-07-21 idx-stall "
-                "class)")
-        if before is None or after is None:
-            ep = "<unreadable>" if purity_epoch is None else purity_epoch
-            verdict = f"selection-view purity probe could not read epoch {ep} — SKIPPED"
-        else:
-            verdict = f"selection-view purity @epoch {purity_epoch} OK"
-        print(f"  register_activate v{idx}: committee cap {cap}->{new_cap} "
-              f"(EffBal lands @E+3; {verdict})", flush=True)
+            # RETARGETED to `staking_rt`, explicitly, not left to ride on the two fields being
+            # equal. `setActiveValidatorsLength` moved onto the module with the rest of
+            # ChainConfig, and a proposal into an address with no code is INVISIBLE: OZ's
+            # `Address.verifyCallResult` never checks `target.code.length`, so the Governor emits
+            # `ProposalExecuted`, the receipt is 0x1, and the cap silently never moves.
+            #
+            # This write used to be bracketed by a selection-view epoch-purity probe, removed
+            # 2026-09-07. The probe read `getValidatorsWithKeysAt(S)` — a DERIVED view that
+            # recomputed a past epoch's candidate set from a per-epoch roster and a checkpointed
+            # cap — and caught the 2026-07-21 dkg_logs idx-stall, where the live cap leaked into
+            # that recomputation and resized an epoch that had already been seated. Both the
+            # roster and the cap history are gone: the committee is derived once and stored, and
+            # nothing re-derives a past epoch. The failure class the probe guarded is closed by
+            # construction, and its retargeted form — comparing `getEpochCommittee(S)` across
+            # this write — could not fail on any path, because only the commit writes that array
+            # and only for future epochs. A guard that cannot fire is worse than none: it answers
+            # "who catches this" with a name instead of a check.
+            self.gov_action(self.staking_rt,
+                            self.calldata("setActiveValidatorsLength(uint32)", new_cap),
+                            f"grow-cap-{new_cap}", voter_idx=voter_idx)
+            print(f"  register_activate v{idx}: committee cap {cap}->{new_cap} "
+                  "(EffBal lands @E+3)", flush=True)
 
     def bench_promote(self, idx, voter_idx=None) -> None:
         """sim_bench_promote: activateValidator(idx) ONLY (fills a cap-1 hole; never over-cap)

@@ -1,7 +1,7 @@
 name: fluent-dpos-smoke
 
 # Pipeline 2 phase-1: validator-0 is the sequencer producing
-# blocks at 1s cadence, validators 1-3 + full-node follow via
+# blocks at 1s cadence, validators 1-4 + full-node follow via
 # `--cert-upstream ws://172.20.0.10:8546`. Every node passes
 # `--dpos.staking-config=/runtime/staking-reader.json` so the
 # `commitEpochCommittee` system call runs identically on every
@@ -37,12 +37,17 @@ services:
     entrypoint: ["/usr/local/bin/genesis-bootstrap"]
     command:
       - full
-      - --peers=4
+      # FIVE, not four: `smoke-byzantine` tombstones one member, and a four-seat
+      # genesis would leave THREE — below MIN_COMMITTEE_LENGTH, where the commit
+      # reverts out of a pre-execution system call and the chain stops. Five leaves
+      # exactly the floor standing, which is what keeps that case a demonstration
+      # of surviving a byzantine member rather than of halting below the floor.
+      - --peers=5
       - --bootstrappers=1
       - --output=/runtime
       - --contracts-dir=/contracts
       - --chain-id=2026
-      - --validator-ips=172.20.0.10,172.20.0.11,172.20.0.12,172.20.0.13
+      - --validator-ips=172.20.0.10,172.20.0.11,172.20.0.12,172.20.0.13,172.20.0.14
     # Epoch-numbering tunables (bootstrap.rs reads these; unset ⇒ historic devnet
     # defaults). Forwarded from the host so a tuned case (e.g.
     # case-vrf-dkg-restart-midwindow) can widen the epoch and keep the migration
@@ -64,7 +69,10 @@ services:
       HEAVY_STAKE_MULT: "${HEAVY_STAKE_MULT:-1}"
     volumes:
       - runtime:/runtime
-      - ./contracts:/contracts:ro
+      # `SMOKE_CONTRACTS_DIR` points genesis-init at another vendored-artefact directory — the
+      # way a case is run against an OLDER staking blob to show it goes red there (the
+      # byzantine boundary against `bc42042a`). Default is the checked-in directory.
+      - ${SMOKE_CONTRACTS_DIR:-./contracts}:/contracts:ro
     networks:
       fluent-net:
         ipv4_address: 172.20.0.5
@@ -209,6 +217,30 @@ services:
     networks:
       fluent-net:
         ipv4_address: 172.20.0.13
+
+  validator-4:
+    <<: *fluent-build
+    depends_on:
+      validator-0:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        exec /usr/local/bin/fluent node \
+          --chain=/runtime/genesis-local.json \
+          --cert-upstream=ws://172.20.0.10:8546 \
+          --dpos.staking-config=/runtime/staking-reader.json \
+          --builder.extradata= \
+          --http --http.addr=0.0.0.0 --http.port=8545 --http.api=eth,net,web3 \
+          --trusted-peers="$(cat /runtime/v0-enode.txt)" \
+          --trusted-only \
+          --disable-discovery \
+          --datadir=/runtime/reth-data/v4
+    volumes:
+      - runtime:/runtime
+    networks:
+      fluent-net:
+        ipv4_address: 172.20.0.14
 
   full-node:
     <<: *fluent-build

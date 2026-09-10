@@ -58,7 +58,7 @@ from __future__ import annotations
 
 import re
 
-from ...core import converge
+from ...core import converge, rpc
 
 # ══ the participation sentinels ═══════════════════════════════════════════════════════
 
@@ -113,10 +113,12 @@ def credit_diagnosis(seen, who: str) -> str:
 
 # ══ smoke-liveness ════════════════════════════════════════════════════════════════════
 
-#: `case-liveness.sh:30-32` — the committee is exactly four and `validators[i] == validator-i`.
-#: A shorter list is a genesis/bring-up problem, and mapping a service to the wrong address would
-#: read the HUB's counters as the victim's, which passes the `<` test never.
-EXPECTED_VALIDATORS = 4
+#: `case-liveness.sh:30-32` — the committee is exactly the stand's validators and
+#: `validators[i] == validator-i`. FIVE since 2026-09-07, where the bash said four; see
+#: `StaticProfile.committee()`. A shorter list is a genesis/bring-up problem, and mapping a
+#: service to the wrong address would read the HUB's counters as the victim's, which passes
+#: the `<` test never.
+EXPECTED_VALIDATORS = 5
 
 #: `case-liveness.sh:56` — the budget for the chain to advance the cycle's gap with one node down.
 #: Cycle 1 waits `3*interval + 1` = 97 blocks; at 1 blk/s with the victim's leader views timing
@@ -191,7 +193,7 @@ def production_min_gap(committee_size, k=RESULT_LAG_K, slack=PRODUCTION_STOP_SLA
         Expectation, not a guarantee: this buys "an up victim is expected to be caught", which is
         the honest claim, and the long cycles (window 92 and 27 live) are far past it anyway.
 
-    On this stand: `3 + 1 + 1 + 4 = 9`. Cycles 1, 2 and 4 (gaps 97, 33, 33) assert; cycle 3
+    On this stand: `3 + 1 + 1 + 5 = 10`. Cycles 1, 2 and 4 (gaps 97, 33, 33) assert; cycle 3
     (gap 5) is SKIPPED — loudly, by name, with this arithmetic printed. Its subject is the
     within-epoch walk / re-jump path, which the rejoin and SIGNING legs still cover in full."""
     return int(k) + 1 + int(slack) + int(committee_size)
@@ -381,7 +383,9 @@ def liveness_signing(before: dict, after: dict, min_epoch) -> bool:
 
 
 def evaluate_validator_addresses(addrs):
-    """`:31` — four addresses, or the case cannot map a victim to its on-chain identity.
+    """`:31` — one address per stand validator, or the case cannot map a victim to its
+    on-chain identity. FIVE since 2026-09-07, where the bash said four — see
+    `StaticProfile.committee()` for why the stand grew.
 
     Fail-loud rather than "use what we got": a short list would leave `ADDR[3]` unset, and under
     `set -u` bash aborts. Here it would index-error three assertions later, in the participation
@@ -624,35 +628,231 @@ def evaluate_jailed(status):
 
 
 def evaluate_post_jail_liveness(advanced, post_jail):
-    """`:54-58` — the honest 3-of-4 quorum KEPT finalizing over the blocks IMMEDIATELY after the
+    """`:54-58` — the honest 4-of-5 quorum KEPT finalizing over the blocks IMMEDIATELY after the
     equivocator was tombstoned.
 
-    WHAT THIS DOES AND DOES NOT COVER. It covers the immediate window: the tombstone arms the
-    proposal refusal and the transport severance while the committee is unchanged, and a quorum
-    that could not carry the chain through that would stall here within a few blocks.
-
-    It does NOT cover the committee-SHRINK boundary, and the docstring used to say it did. Two
-    reasons, and the second is the harder one:
-
-      * committees are committed two epochs ahead (`drive_ahead_commit`, node/src/evm.rs — the
-        loop exits at `next > current_epoch + 2`), so `committee[E]`, `[E+1]` and `[E+2]` are all
-        already on chain when the jail lands in E. The first committee that could omit the
-        tombstoned member is `E+3`, which begins up to three epoch intervals later — 64..96 blocks
-        on this stand. `POST_JAIL_BLOCKS` of 3 cannot reach it, and no honest tuning of this
-        constant would: the number is an epoch geometry, not a budget.
-      * and on THIS stand it can never land at all. `genesis-init` seats `--peers=4`; the slash
-        removes the offender from the active set, leaving 3 registered members against
-        `MIN_COMMITTEE_LENGTH = 4` (`staking-reader/reader.rs:161`, mirroring the contract), so
-        `commitEpochCommittee` for `E+3` reverts `ERR_COMMITTEE_TOO_SMALL` into the node's
-        fail-loud arm. Waiting for the boundary would therefore turn this case red on a
-        TOPOLOGY limit rather than on a product defect.
-
-    So the boundary wedge is out of scope here BY CONSTRUCTION, and saying so is the honest
-    position — exercising it needs a stand with a spare seat (the sim's byzantine-tombstone
-    lottery with its spare-pool refill is where that lives)."""
+    This covers the immediate window only: the tombstone arms the proposal refusal and the
+    transport severance while the committee is unchanged, and a quorum that could not carry the
+    chain through that would stall here within a few blocks. The committee-floor boundary is a
+    SEPARATE assertion (`evaluate_committed_after_jail` and friends below) — until 2026-09-04 this
+    docstring claimed that boundary was unreachable on this stand, and the case was green on a
+    build where the whole network died 35 s after the jail (`.dpos-study/EXPERIMENTS.md` §5.3
+    E1). It was reachable; the case simply stopped looking three blocks after the jail."""
     if advanced:
         return True, ""
     return False, f"chain stalled after jail (finalized stuck at ~{post_jail})"
+
+
+# ── the committee boundary after the jail ─────────────────────────────────────────────
+#
+# THE BOUNDARY THIS STAND REACHES, AND WHAT HAPPENS THERE. The tombstone makes the offender
+# selection-invisible from the epoch after the jail (`set_selection_visible(v, false, E)`,
+# contract `consensus.rs::apply_equivocation_penalty`) and removes it from the Active set.
+# Committees are committed two epochs ahead (`drive_ahead_commit`, node/src/evm.rs, loop exits
+# at `next > current_epoch + 2`), so the first block of epoch `E+1` commits `committee[E+3]`
+# from a selection taken at `E+1` — and on this stand (`--peers=5`, `MIN_COMMITTEE_LENGTH = 4`)
+# that selection has FOUR members: the offender is gone and the remaining four are exactly the
+# floor.
+#
+#   The stand is five-seat FOR THIS REASON. On the four-seat stand the bash ran, the same jail
+#   left THREE, and what happened there depended on the contract:
+#     * `bc42042a` and earlier reverted `CommitteeTooSmall(3, 4)` into the node's fail-loud arm
+#       and every honest node shut down (R-112, observed live 35 s after the tombstone);
+#     * Э0.2 carried `committee[E+2]` into `[E+3]` byte-for-byte instead;
+#     * since 2026-09-07 the carry is deleted and the revert is back on every epoch.
+#   None of those is what this case is for. It is for "the equivocator is caught, punished, and
+#   the network carries on", so the stand is sized to leave a legal committee behind the jail.
+#   The below-the-floor path is a DIFFERENT case (`scripts/xp/floor_halt_case.py`).
+#
+# The case waits PAST that boundary and asserts the RE-SEAT: the committee for `E+3` is committed,
+# it does not contain the offender, it is not the previous committee, and `dkgQual[E+3]` is set
+# because the membership changed. The witness of the mechanism is the commit line with
+# `members=4`: a run where the jail never reached the selection would pass every liveness gate
+# for free, and this is what refuses that.
+
+#: `node/src/evm.rs::emit_commit_observability` — the ONLY observable of a commit: the commit is
+#: a pre-execution system call, so its `EpochCommitteeCommitted` event never reaches a receipt or
+#: `eth_getLogs`. Carries `epoch=<target>` and `members=<seated>`.
+COMMITTED_LINE = "epoch_committee_committed"
+#: The seats the jail leaves on the five-seat genesis — exactly MIN_COMMITTEE_LENGTH.
+BYZANTINE_SEATS_AFTER_JAIL = 4
+#: The seats before it.
+BYZANTINE_COMMITTEE_SEATS = 5
+#: How many epochs past the jail's epoch the observation runs: the boundary commit is on the first
+#: block of `E+1` (up to one interval after the jail), and one further epoch is what shows the
+#: re-seated committee actually finalizes rather than merely being written. THREE intervals of
+#: chain time worst-case; the budget adds boot slack.
+CARRY_OBSERVE_EPOCHS = 2
+CARRY_WAIT_SLACK_S = 120
+#: Poll cadence for the boundary wait, and which lines say a node took the fatal branch.
+CARRY_POLL_S = 3
+FATAL_LINES = ("executor fatal error", "did not succeed", "OuterEngine exited cleanly")
+
+_COMMITTED_FIELDS_RE = re.compile(r"\bepoch=(\d+)\b.*?\bmembers=(\d+)\b")
+
+
+def sever_epoch(line: str):
+    """The `epoch=<N>` the tombstone watch logged on its severance line (`node/src/dpos.rs`:
+    the epoch of the finalized block it read the tombstone at). None when the field is missing —
+    the boundary arithmetic cannot start from a guessed epoch."""
+    m = re.search(r"\bepoch=(\d+)\b", line or "")
+    return int(m.group(1)) if m else None
+
+
+def carry_wait_target(jail_epoch, interval, activation, epochs=CARRY_OBSERVE_EPOCHS):
+    """The finalized height the observation runs to: `epochs` full epochs past the jail's
+    epoch. The severance line's epoch is where the tombstone was READ (EL-finalized), which is the
+    slash's own epoch or, across a boundary, the one after it; two epochs past it covers the
+    boundary block on either reading and one epoch of the re-seated committee finalizing."""
+    return epoch_start(activation, interval, int(jail_epoch) + int(epochs)) + int(interval)
+
+
+def carry_wait_budget_s(interval, slack=CARRY_WAIT_SLACK_S, epochs=CARRY_OBSERVE_EPOCHS):
+    return (int(epochs) + 1) * int(interval) + int(slack)
+
+
+def epoch_start(activation, interval, epoch):
+    """First block of relative `epoch` — spelled here rather than imported from `verdicts` on the
+    same no-cross-case-retargeting rule the rest of this file's copies carry."""
+    return int(activation) + int(epoch) * int(interval)
+
+
+def committed_lines(log_text: str):
+    """`(epoch, members)` for every committee-commit line in an ANSI-stripped log, in order.
+    Lines whose fields do not parse are dropped: a commit the node could not describe is not
+    evidence of anything."""
+    out = []
+    for ln in (log_text or "").splitlines():
+        if COMMITTED_LINE not in ln:
+            continue
+        m = _COMMITTED_FIELDS_RE.search(ln)
+        if m:
+            out.append((int(m.group(1)), int(m.group(2))))
+    return out
+
+
+def evaluate_honest_alive(states: dict, fatal: dict):
+    """Every honest node's container is still `running` and none of them wrote a fatal line since
+    the pre-jail snapshot. `states` = `{service: docker state}`, `fatal` = `{service: [lines]}`.
+
+    THIS IS THE LINE A MIS-SIZED STAND FAILS ON. Let the genesis be four-seat and the jail leaves
+    three, `commitEpochCommittee` reverts `CommitteeTooSmall(3, 4)` into the node's fail-loud arm,
+    and the honest nodes exit within milliseconds of each other — `exited` here, and the
+    `did not succeed` / `executor fatal error` / `OuterEngine exited cleanly` trio in their logs.
+
+    A `None` state is UNREAD — `docker compose ps` did not run at all (`SmokeCtx.ps_state`) — and
+    gets its own verdict. Folding it into `dead` would report a daemon hiccup as the R-112 branch,
+    which is the loudest wrong answer this case can give."""
+    unread = sorted(s for s, st in states.items() if st is None)
+    if unread:
+        return False, (f"the container state of {', '.join(unread)} could not be read (`docker "
+                       "compose ps` did not run) — refusing to score the committee-floor boundary "
+                       "over nodes whose liveness nobody observed")
+    dead = {s: st for s, st in sorted(states.items()) if not str(st).startswith("running")}
+    hot = {s: ls for s, ls in sorted(fatal.items()) if ls}
+    if not dead and not hot:
+        return True, ""
+    detail = []
+    for s, st in dead.items():
+        detail.append(f"{s} is {st!r}")
+    for s, ls in hot.items():
+        detail.append(f"{s} logged {len(ls)} fatal line(s), last: {ls[-1].strip()[:240]!r}")
+    return False, ("the committee boundary after the jail KILLED honest nodes — the R-112 branch "
+                   "(`commitEpochCommittee` reverted into the fail-loud arm, which means the "
+                   "selection fell below MIN_COMMITTEE_LENGTH): " + "; ".join(detail))
+
+
+def evaluate_committed_after_jail(before: dict, after: dict,
+                                  members=BYZANTINE_SEATS_AFTER_JAIL):
+    """Every honest node logged at least one committee COMMIT since the pre-jail snapshot, seating
+    exactly `members`. `before`/`after` = `{service: [(epoch, members)]}`. Returns
+    `(ok, msg, target_epoch)`.
+
+    The anti-vacuity gate. Liveness past the boundary is also what a chain whose jail never
+    reached the selection produces (a slash that did not land, a tombstone that did not stamp
+    invisibility), and every other assertion in this case is satisfied by that chain: the
+    committee would simply keep its five seats and nothing would notice. Only a commit that seats
+    `members` says the offender was actually dropped. `members` is pinned to what the jail leaves
+    on the five-seat genesis; a different number is a different experiment.
+
+    The agreed epoch is the SHARED one, not each node's FIRST. The baseline is read one node at a
+    time (`_floor_snapshot` issues a `docker compose logs` per service), so a commit landing
+    between two of those reads is inside one node's baseline and outside another's — their fresh
+    slices then start one epoch apart, and comparing first elements called that "they did not
+    commit one boundary" on a healthy chain. What the case actually asserts is that every honest
+    node witnessed the SAME commit, which is an intersection; an empty one is still the divergence
+    the message describes."""
+    if not after:
+        return False, "no honest node was scanned for the committee-commit line", None
+    missing, seen, shared = [], {}, None
+    for svc, lines in sorted(after.items()):
+        fresh = lines[len(before.get(svc, [])):]
+        good = {t[0] for t in fresh if t[1] == int(members)}
+        seen[svc] = sorted(good)
+        if not good:
+            missing.append(f"{svc}: {len(fresh)} fresh commit line(s), none seating "
+                           f"members={members}"
+                           + (f" (saw {fresh[-1]})" if fresh else ""))
+        else:
+            shared = good if shared is None else (shared & good)
+    if missing:
+        return False, (f"no `{COMMITTED_LINE}` seating {members} on: "
+                       + "; ".join(missing)
+                       + " — the chain crossed the boundary without the committee ever "
+                         "shrinking, so the tombstone never reached the selection and "
+                         "nothing here exercised the re-seat"), None
+    if not shared:
+        return False, (f"honest nodes share NO committed epoch ({seen}) — they did not "
+                       "commit one boundary"), None
+    return True, "", min(shared)
+
+
+def evaluate_reseated_committee(cur_out: str, prev_out: str, qual_out: str, offender, target):
+    """`committee[target]` drops `offender`, differs from `committee[target-1]`, seats exactly
+    `BYZANTINE_SEATS_AFTER_JAIL`, and `dkgQual[target] == true` — the contract's own statement
+    that the jail reached the selection (`consensus.rs::selected_committee_at` skips a validator
+    that is not Active or not selection-visible, and `commitEpochCommittee` sets the DKG bit
+    because the derived set differs from the previous one).
+
+    BOTH committees are decoded STRICTLY (`rpc.cast_addr_array`), and an unread side is its own
+    verdict — the same rule `evaluate_committee_change` states: a `""` from an unreachable node
+    compares unequal to a real committee, so a raw-string compare turns an RPC brownout into
+    "the boundary commit kept the offender", an accusation about a side nobody read. `dkgQual`
+    gets the same treatment: an empty answer is UNREAD, not `false`."""
+    sides = []
+    for raw, e in ((prev_out, int(target) - 1), (cur_out, int(target))):
+        what = f"getEpochCommittee({e})"
+        if not (raw or "").strip():
+            return False, (f"{what} returned NOTHING (unreachable node / RPC brownout) — refusing "
+                           "to judge the re-seat over a committee nobody read")
+        try:
+            sides.append(rpc.cast_addr_array(raw, what))
+        except rpc.CastDecodeError as exc:
+            return False, (f"{what} did not decode as an address array ({exc}) — refusing to "
+                           "judge the re-seat over a committee nobody read")
+    prev, cur = sides
+    if not cur:
+        return False, (f"getEpochCommittee({target}) is EMPTY — the boundary epoch was never "
+                       "committed")
+    victim = (offender or "").strip().lower()
+    if victim and victim in cur:
+        return False, (f"committee[{target}] still seats the tombstoned {victim} — the jail did "
+                       f"not reach the selection:\n  {cur}")
+    if len(cur) != BYZANTINE_SEATS_AFTER_JAIL:
+        return False, (f"committee[{target}] seats {len(cur)}, expected "
+                       f"{BYZANTINE_SEATS_AFTER_JAIL} (the five-seat genesis less the "
+                       f"equivocator):\n  {cur}")
+    if cur == prev:
+        return False, (f"committee[{target}] == committee[{int(target) - 1}] — the boundary "
+                       f"commit re-seated the SAME set, so nothing was dropped:\n  {cur}")
+    qual = (qual_out or "").strip()
+    if not qual:
+        return False, (f"getDkgQual({target}) returned NOTHING (unreachable node / RPC brownout) — "
+                       "refusing to read an unanswered call as a clear DKG bit")
+    if qual != "true":
+        return False, (f"getDkgQual({target}) = {qual!r}, expected true: the committee changed, so "
+                       "the epoch must mint a ceremony rather than carry the old key forward")
+    return True, ""
 
 
 #: `node/src/dpos.rs:1758` — the tombstone watch's severance, logged once per newly-tombstoned
@@ -680,7 +880,7 @@ def evaluate_tombstone_severed(lines, observer):
 
     `getValidatorStatus == Jail` is a contract reading; it says the slash landed, and nothing
     about whether any node acted on it. The three blocks of post-jail liveness do not say it
-    either — the honest quorum was already 3-of-4 before the jail and would advance identically
+    either — the honest quorum was already 4-of-5 before the jail and would advance identically
     if every node ignored the tombstone completely. Between them the case named the severance in
     its OK line and read neither half of it.
 
@@ -868,7 +1068,7 @@ CATCHUP_DEEP_TAIL = 200
 #:
 #: Guard #2 parks where the executor's derive DRAINS the marshal's contiguous dispatched prefix
 #: faster than repair extends it (MAX_REPAIR=20 / MAX_PENDING_ACKS=16, outer.rs:223,229). At zero
-#: latency the fetch always wins on a 4-node LAN with small bodies, so the park fires at NO value
+#: latency the fetch always wins on a zero-RTT LAN with small bodies, so the park fires at NO value
 #: of `CATCHUP_GAP` — and depth is not the lever either (see `evaluate_park_exercised`). Add an
 #: RTT and each repair batch pays it while the derive stays local and untouched: the dispatched
 #: prefix advances in <=20-block steps per round trip and the derive can reach its edge.
@@ -1504,7 +1704,7 @@ def evaluate_weighted_election(epochs, counts_by_epoch, mult):
     (c) ONLY THEN the margin, as the original wrote it.
 
     THE SUM IS ONLY VALID WHILE THE COMMITTEE DOES NOT CHANGE BETWEEN THE EPOCHS, which is true of
-    the 4-validator no-rotation stack this case brings up and would need revisiting on a rotation
+    the no-rotation stack this case brings up and would need revisiting on a rotation
     substrate. Two thirds of that assumption are self-enforcing: a member that LEFT reads
     `(-1,-1)` for the epoch it missed and is rejected below, and a member that JOINED takes blocks
     nobody in `counts_by_epoch` is credited with, so condition (a) stops closing. What is NOT

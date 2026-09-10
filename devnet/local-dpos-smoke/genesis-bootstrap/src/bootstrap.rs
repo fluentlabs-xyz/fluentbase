@@ -298,9 +298,12 @@ pub fn run(
         )?;
     }
 
-    // The BLEND stipend is drawn with `transferFrom(blendReserve, staking, amount)`
-    // (`staking.rs::settle_one`), so the reserve is whatever account holds the pot and
-    // has approved the staking contract. `apply_initial_config` refuses a zero reserve.
+    // The BLEND stipend is drawn with `transferFrom(blendReserve, claimant, amount)` —
+    // straight to whoever claims, never onto the staking contract (the epoch close
+    // only writes credits; `staking.rs::pay_stipend`). The reserve is whatever account
+    // holds the pot and has approved the staking contract, and it is also what the
+    // close READS to decide whether the epoch is affordable at all: below the pot the
+    // epoch closes at zero permanently. `apply_initial_config` refuses a zero reserve.
     // One allowance covers both draws: the genesis stakes `initialize` pulls, and the
     // stipend budget.
     let stipend_budget = U256::from(env_u64("BLEND_RESERVE_GENESIS_BLEND", 1_000_000))
