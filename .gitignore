@@ -27,15 +27,12 @@ contracts/out
 examples/**/lib.wasm
 examples/**/lib.rwasm
 
-revm/e2e/tests
-
-evm-e2e/target
 contracts/target
 examples/target
 
 genesis-*.json
 node_modules
-evm-e2e/tests/
+e2e/evm/tests/
 datadir
 graphify-out/
 

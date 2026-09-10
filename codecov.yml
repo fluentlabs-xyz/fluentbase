@@ -7,5 +7,4 @@ ignore:
   - "**/src/**/*_tests.rs"
   - "crates/testing/**"
   - "e2e/**"
-  - "evm-e2e/**"
   - "examples/**"

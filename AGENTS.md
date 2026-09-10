@@ -14,8 +14,9 @@ Important areas:
 - `crates/` - core Rust crates (`runtime`, `revm`, `evm`, `sdk`, `codec`, `node`, `genesis`, etc.).
 - `contracts/` - system contracts and genesis/runtime upgrade contract artifacts.
 - `examples/` - example contracts/apps.
-- `e2e/` - end-to-end tests and benchmarks.
-- `evm-e2e/` - separate EVM state-test/fixture runner crate, intentionally excluded from the root workspace.
+- `e2e/` - test suites: `e2e/runtime` (workspace member: end-to-end tests and benchmarks), `e2e/evm` (EVM
+  state-test/fixture runner) and `e2e/codec` (Solidity ABI conformance corpus). The latter two are standalone crates
+  intentionally excluded from the root workspace.
 - `flips/`, `docs/` - design and documentation.
 
 SVM-related crates are currently unstable and excluded from the top-level workspace unless explicitly requested.
@@ -156,18 +157,18 @@ cargo nextest run --manifest-path=./examples/Cargo.toml --workspace --release --
 For `evm-e2e`:
 
 ```bash
-make -C evm-e2e sync_tests
-cargo nextest run --manifest-path=./evm-e2e/Cargo.toml --release --no-default-features --features std --package evm-e2e --bin evm-e2e tests::good_coverage_tests
-cargo nextest run --manifest-path=./evm-e2e/Cargo.toml --release --no-default-features --features std,wasmtime --package evm-e2e --bin evm-e2e tests::good_coverage_tests
-cargo nextest run --manifest-path=./evm-e2e/Cargo.toml --release --no-default-features --features std --package evm-e2e --bin evm-e2e fixture
-cargo nextest run --manifest-path=./evm-e2e/Cargo.toml --release --no-default-features --features std,wasmtime --package evm-e2e --bin evm-e2e fixture
+make -C e2e/evm sync_tests
+cargo nextest run --manifest-path=./e2e/evm/Cargo.toml --release --no-default-features --features std --package evm-e2e --bin evm-e2e tests::good_coverage_tests
+cargo nextest run --manifest-path=./e2e/evm/Cargo.toml --release --no-default-features --features std,wasmtime --package evm-e2e --bin evm-e2e tests::good_coverage_tests
+cargo nextest run --manifest-path=./e2e/evm/Cargo.toml --release --no-default-features --features std --package evm-e2e --bin evm-e2e fixture
+cargo nextest run --manifest-path=./e2e/evm/Cargo.toml --release --no-default-features --features std,wasmtime --package evm-e2e --bin evm-e2e fixture
 ```
 
 Use targeted versions of these commands when full suites are too expensive, and clearly state what was and was not run.
 
 ## EVM / Fixture Work
 
-- `evm-e2e` is a separate crate. Do not assume root workspace commands include it.
+- `evm-e2e` (under `e2e/evm`) is a separate crate. Do not assume root workspace commands include it.
 - Reuse existing fixture plumbing instead of duplicating parsing logic:
     - `resolve_externalized_bytecodes`
     - `prepare_env`

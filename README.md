@@ -100,7 +100,9 @@ Example contracts and simple demo apps.
 
 ### `e2e/`
 
-End-to-end tests and benchmarks.
+Test suites. `e2e/runtime` holds the workspace's end-to-end tests and benchmarks. `e2e/evm` (Ethereum state tests and
+fixtures) and `e2e/codec` (Solidity ABI conformance corpus) are standalone crates excluded from the workspace and driven
+by their own `make` targets.
 
 ### `flips/`
 

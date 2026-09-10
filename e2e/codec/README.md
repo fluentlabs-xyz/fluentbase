@@ -5,7 +5,7 @@
 This crate is **not part of the workspace** and is never built by CI. It lives outside because its
 build script turns 1880 corpus vectors into roughly two thousand monomorphised encode/decode paths,
 and `cargo nextest run --workspace` would compile all of them on every run. The precedent is
-`evm-e2e/`, which is excluded the same way.
+`e2e/evm/`, which is excluded the same way.
 
 ## What the corpus is
 

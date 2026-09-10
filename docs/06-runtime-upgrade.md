@@ -100,7 +100,7 @@ separate the roles before the network is exposed:
 
 `changeOwner` rejects the zero address on both contracts, so a written owner slot never falls back
 to the bootstrap key again; only an explicit transfer naming that key restores it. The e2e suite
-pins this rotation in `e2e/src/bootstrap_authority.rs`.
+pins this rotation in `e2e/runtime/src/bootstrap_authority.rs`.
 
 The bootstrap constants are compiled into the contract bytecode and are read by every network
 whose owner slot is still empty. Changing either value therefore changes who owns that role on such

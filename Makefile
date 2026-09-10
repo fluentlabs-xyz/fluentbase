@@ -2,7 +2,7 @@ all: check build
 
 CARGO_LOCKED_FLAGS ?= --locked
 COVERAGE_TARGET ?= $(shell rustc -vV | sed -n 's/^host: //p')
-COVERAGE_IGNORE_FILENAME_REGEX ?= (^|/)(tests?|benches?|examples?|e2e|evm-e2e)(/|$$)|(^|/)crates/testing(/|$$)|/(tests|.*_tests)\.rs$$
+COVERAGE_IGNORE_FILENAME_REGEX ?= (^|/)(tests?|benches?|examples?|e2e)(/|$$)|(^|/)crates/testing(/|$$)|/(tests|.*_tests)\.rs$$
 COVERAGE_IGNORE_DEPENDENCY_REGEX ?= (^|/)(\.?cargo/)?(registry|git)(/|$$)|(^|/)(\.?rustup/)?toolchains(/|$$)|(^|/)rustc(/|$$)|(^|/)target(/|$$)
 EXAMPLES_COVERAGE_DEPENDENCIES ?= fluentbase-crypto,fluentbase-evm,fluentbase-revm,fluentbase-runtime,fluentbase-sdk
 EVM_E2E_COVERAGE_DEPENDENCIES ?= fluentbase-crypto,fluentbase-evm,fluentbase-genesis,fluentbase-revm,fluentbase-runtime,fluentbase-sdk
@@ -29,19 +29,19 @@ update-deps:
 	cargo update --manifest-path=./contracts/Cargo.toml revm
 	cargo update --manifest-path=./examples/Cargo.toml revm
 	cargo update revm
-	cargo update --manifest-path=./evm-e2e/Cargo.toml revm
+	cargo update --manifest-path=./e2e/evm/Cargo.toml revm
 	cargo update --manifest-path=./contracts/Cargo.toml rwasm
 	cargo update --manifest-path=./examples/Cargo.toml rwasm
 	cargo update rwasm
-	cargo update --manifest-path=./evm-e2e/Cargo.toml rwasm
+	cargo update --manifest-path=./e2e/evm/Cargo.toml rwasm
 
 .PHONY: clean
 clean:
 	cargo clean --manifest-path=./contracts/Cargo.toml
 	cargo clean --manifest-path=./examples/Cargo.toml
 	cargo clean
-	cargo clean --manifest-path=./evm-e2e/Cargo.toml
-	cargo clean --manifest-path=./codec-conformance/Cargo.toml
+	cargo clean --manifest-path=./e2e/evm/Cargo.toml
+	cargo clean --manifest-path=./e2e/codec/Cargo.toml
 
 TEST_PROFILE ?=
 TEST_FEATURES ?=
@@ -49,14 +49,14 @@ TEST_FEATURES ?=
 .PHONY: run-e2e-tests
 run-e2e-tests:
 	cargo nextest run --manifest-path=./Cargo.toml --workspace $(TEST_PROFILE) --no-default-features --features $(TEST_FEATURES)
-	$(MAKE) -C evm-e2e sync_tests
-	cargo nextest run --manifest-path=./evm-e2e/Cargo.toml $(TEST_PROFILE) --no-default-features --features "$(TEST_FEATURES)" --package evm-e2e --bin evm-e2e
+	$(MAKE) -C e2e/evm sync_tests
+	cargo nextest run --manifest-path=./e2e/evm/Cargo.toml $(TEST_PROFILE) --no-default-features --features "$(TEST_FEATURES)" --package evm-e2e --bin evm-e2e
 # The codec against the external solc-derived corpus. Deliberately not part of `test`: it fetches
 # a corpus over the network and compiles thousands of generated cases, which is why the crate is
 # excluded from the workspace. Run it when the codec changes.
 .PHONY: run-codec-conformance
 run-codec-conformance:
-	$(MAKE) -C codec-conformance all
+	$(MAKE) -C e2e/codec all
 
 # nextest does not run doctests, so the codec's `compile_fail` doctest - which pins that a
 # fixed-bytes type wider than bytes32 cannot be instantiated for the Solidity ABI - needs its own
@@ -126,29 +126,29 @@ coverage-examples-deps:
 
 coverage-evm-e2e-deps:
 	@test -n "$(COVERAGE_TARGET)"
-	$(MAKE) -C evm-e2e sync_tests
-	cargo llvm-cov clean --manifest-path=./evm-e2e/Cargo.toml --workspace
-	cargo llvm-cov nextest --manifest-path=./evm-e2e/Cargo.toml --release \
+	$(MAKE) -C e2e/evm sync_tests
+	cargo llvm-cov clean --manifest-path=./e2e/evm/Cargo.toml --workspace
+	cargo llvm-cov nextest --manifest-path=./e2e/evm/Cargo.toml --release \
 		--no-default-features --features std --package evm-e2e --bin evm-e2e \
 		--no-fail-fast --locked --no-report \
 		--dep-coverage "$(EVM_E2E_COVERAGE_DEPENDENCIES)" \
 		--target "$(COVERAGE_TARGET)" --coverage-target-only tests::good_coverage_tests
-	cargo llvm-cov nextest --manifest-path=./evm-e2e/Cargo.toml --release \
+	cargo llvm-cov nextest --manifest-path=./e2e/evm/Cargo.toml --release \
 		--no-default-features --features std,wasmtime --package evm-e2e --bin evm-e2e \
 		--no-fail-fast --locked --no-report \
 		--dep-coverage "$(EVM_E2E_COVERAGE_DEPENDENCIES)" \
 		--target "$(COVERAGE_TARGET)" --coverage-target-only tests::good_coverage_tests
-	cargo llvm-cov nextest --manifest-path=./evm-e2e/Cargo.toml --release \
+	cargo llvm-cov nextest --manifest-path=./e2e/evm/Cargo.toml --release \
 		--no-default-features --features std --package evm-e2e --bin evm-e2e \
 		--no-fail-fast --locked --no-report \
 		--dep-coverage "$(EVM_E2E_COVERAGE_DEPENDENCIES)" \
 		--target "$(COVERAGE_TARGET)" --coverage-target-only fixture
-	cargo llvm-cov nextest --manifest-path=./evm-e2e/Cargo.toml --release \
+	cargo llvm-cov nextest --manifest-path=./e2e/evm/Cargo.toml --release \
 		--no-default-features --features std,wasmtime --package evm-e2e --bin evm-e2e \
 		--no-fail-fast --locked --no-report \
 		--dep-coverage "$(EVM_E2E_COVERAGE_DEPENDENCIES)" \
 		--target "$(COVERAGE_TARGET)" --coverage-target-only fixture
-	cargo llvm-cov report --manifest-path=./evm-e2e/Cargo.toml --release \
+	cargo llvm-cov report --manifest-path=./e2e/evm/Cargo.toml --release \
 		--dep-coverage "$(EVM_E2E_COVERAGE_DEPENDENCIES)" \
 		--target "$(COVERAGE_TARGET)" --coverage-target-only --lcov \
 		--output-path coverage-evm-e2e-deps.lcov \
@@ -167,7 +167,7 @@ test-debug:
 #.PHONY: svm_tests
 #svm_tests:
 #	cargo test --frozen --profile test --manifest-path crates/svm/Cargo.toml --
-#	cargo test --frozen --lib svm::tests --profile test --manifest-path e2e/Cargo.toml --
+#	cargo test --frozen --lib svm::tests --profile test --manifest-path e2e/runtime/Cargo.toml --
 
 .PHONY: wasm_contracts_sizes
 wasm_contracts_sizes:
