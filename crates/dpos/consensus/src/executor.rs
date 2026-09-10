@@ -3141,11 +3141,14 @@ where
         // node is BEHIND): the immediate `h + K` look-ahead convergence check.
         // Because `last_tip_height >= h + K`, the committee-attested
         // `order.result` at `h + K` — which commits `executed_hash(h)` — is
-        // ALREADY finalized, so a wrong derive is caught IMMEDIATELY, not K
-        // blocks downstream, and it front-runs the ack (and the `split_off`
-        // prune below). This is the ONLY code-proven result-divergence detector
-        // on the catch-up path; the steady state is covered by the separate
-        // `h − K` backward cross-check further down, and costs NOTHING here (the
+        // ALREADY finalized, so a wrong derive WOULD be caught here, before the
+        // ack (and the `split_off` prune below) — but only when `spec_executed_hash(h)`
+        // is `Some`. On the catch-up path it is `None` until `h`'s own FCU
+        // (reth canonicalises on FCU, not on insert), `result_matches` is `None`,
+        // and this guard stays silent; the verdict then comes from the `h − K`
+        // backward cross-check further down at `h + K` (R-006 scenario 1, pinned
+        // by `testbed::tests::guard_two_on_the_catch_up_path_reads_a_pre_fcu_height`).
+        // The steady state is covered by that backward check too; this costs NOTHING here (the
         // derive of `h` runs when `h+1` is the tip, so the gate is false).
         if behind_by_k {
             let hk = height + crate::order_block::K;
@@ -7442,8 +7445,10 @@ mod tests {
 
     // (d) GUARD #2, re-gated to `last_tip >= h + K`: a catching-up node whose
     // committee-attested block at `h + K` disagrees with the hash it derived
-    // engages SafetyHalt(ResultDivergence) BEFORE the ack — immediately, not K
-    // blocks downstream.
+    // engages SafetyHalt(ResultDivergence) BEFORE the ack. Green ONLY because
+    // this fixture's `FakeDeriver` lands the derived hash at derive time
+    // (`land_on_import` off, the default); with reth's FCU-only canonicalisation the guard reads
+    // `None` and the halt comes K blocks later (R-006 scenario 1, testbed (3b)).
     #[test]
     fn guard2_convergence_mismatch_engages_safety_halt() {
         let runtime = deterministic::Runner::default();

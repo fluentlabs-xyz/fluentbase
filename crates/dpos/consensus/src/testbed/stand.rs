@@ -5,9 +5,10 @@ use super::fakes::{ByzFacts, ByzReport};
 use super::{
     capture::{self, Captured, Sink},
     fakes::{
-        genesis_sealed, CountingHandler, CountingUpstream, ElNetwork, FakeBeacon, FakeChain,
-        FakeDeriver, FakeStaking, Members, NoSink, NoTxs, StakingReads, UpstreamCounters,
-        UpstreamStats,
+        genesis_sealed, CountingHandler, CountingUpstream, ElEvent, ElNetwork, FakeBeacon,
+        FakeChain, FakeDeriver, FakeStaking, JumpCall, JumpCalls, JumpCommitteeReads,
+        JumpCommittees, JumpElSync, Members, NoSink, NoTxs, StakingReads, TeeingUpstream,
+        UpstreamCounters, UpstreamStats, DPOS_ACTIVATION_BLOCK,
     },
 };
 use crate::{
@@ -125,6 +126,15 @@ pub(super) struct StandConfig {
     /// more than `t` behind the upstream frontier EL-syncs forward and leaves a
     /// hole, exactly as a production node does.
     pub re_jump_threshold: Option<u64>,
+    /// `Some((source, victim))`: on the UPSTREAM plane only, leave `victim`
+    /// linked to `source` alone (every other OUTGOING upstream link from either
+    /// is removed; inbound links to them stay, and carry nothing — the resolver
+    /// only answers requests). The CONSENSUS plane is untouched, so both stay healthy
+    /// participants — only `victim`'s frontier discovery is confined to `source`.
+    /// Used by the lying-upstream roles so the victim's `get_latest` is
+    /// deterministically served by the liar (the resolver otherwise picks any
+    /// tracked, linked peer). `None` = the default all-to-all upstream mesh.
+    pub upstream_only_link: Option<(usize, usize)>,
 }
 
 /// The randomness surface every node runs.
@@ -198,6 +208,7 @@ impl StandConfig {
             share_root: PathBuf::new(),
             resume_from: None,
             re_jump_threshold: None,
+            upstream_only_link: None,
         }
     }
 
@@ -255,6 +266,28 @@ pub(super) enum Role {
     /// [`byzantine_roles::FORGE_WINDOW`], leaving the multisig half untouched.
     #[cfg(feature = "dpos-devnet-byzantine")]
     ForgedSeedUpstream,
+    /// (R-004) This node's frontier-plane `Producer` answers `FrontierKey::Latest`
+    /// with the real tip whose `block.height` is inflated by
+    /// [`byzantine_roles::LATEST_INFLATION`] (payload re-pointed so the structural
+    /// gate passes). A victim whose frontier probe / re-jump reads this raises its
+    /// `upstream_frontier` past any real height and re-jumps every tip.
+    #[cfg(feature = "dpos-devnet-byzantine")]
+    InflatedProbe,
+    /// (R-001 var Б) This node's frontier-plane `Producer` answers
+    /// `FrontierKey::Latest` with the real tip whose `block.result` is replaced by
+    /// a hash the honest devp2p peer does not serve (payload re-pointed, multisig
+    /// left real). A victim re-jumping onto it drives reth's EL-sync at an
+    /// unservable branch.
+    #[cfg(feature = "dpos-devnet-byzantine")]
+    LyingUpstream,
+    /// (R-009) This node's frontier-plane `Producer` answers a `Finalized{h}`
+    /// by-height pull (for `h` in [`byzantine_roles::WRONG_HEIGHT_WINDOW`]) with its
+    /// OWN valid pair of height `h − 1` instead of `h`. Nothing is mutated — the pair
+    /// is a wholly real, self-consistent finalization, just of the wrong height. A
+    /// validator catching up by the plane path has its by-height gap "satisfied" by a
+    /// pair that does not close it, so the gap never fills from this peer.
+    #[cfg(feature = "dpos-devnet-byzantine")]
+    WrongHeightFinalized,
     /// `Beacon::Live` only: this node brings up NO beacon plane (no share, no
     /// dealer log, no agreement seat, no `BEACON_CHANNEL` registration) and
     /// runs `beacon::absent` instead — a verifier that never signs, from epoch
@@ -385,6 +418,36 @@ pub(super) struct Outcome {
     /// `staking_reads[i]` = what node `i` ASKED the fake staking state, split by
     /// whether the epoch was committed at the read height.
     pub staking_reads: Vec<StakingReads>,
+    /// `jump_calls[i]` = every steady-state re-jump call node `i` made, in call
+    /// order, with the `JumpOutcome` VARIANT the production function returned,
+    /// the certificate it consumed and the landing it chose. A refused jump is
+    /// invisible anywhere else in this struct — see `fakes::JumpCall`.
+    pub jump_calls: Vec<Vec<JumpCall>>,
+    /// `jump_committee_reads[i]` = every `(epoch, executed hash)` node `i`'s
+    /// steady-state re-jump read `committee[E]` at — recorded inside the stand's
+    /// `CommitteeSource` by production's own `verify_jump_authenticated` call, so
+    /// "the committee was read at the LANDING hash" is observed, not inferred.
+    pub jump_committee_reads: Vec<Vec<(u64, B256)>>,
+    /// `el_events[i]` = every EL tier transition node `i` made, IN ORDER — each
+    /// `derive_and_execute` insert into the executed tree and each
+    /// canonicalization an FCU (or a jump landing) committed. See
+    /// [`fakes::ElEvent`](super::fakes::ElEvent): the two tiers only mean
+    /// something relative to each other, so "the guard read `h` while `h` was
+    /// still tree-only" is an INDEX comparison in this one log and not the
+    /// absence of a line in two.
+    pub el_events: Vec<Vec<ElEvent>>,
+    /// `upstream_frontier_series[i]` = node `i`'s `ReJump::upstream_frontier`
+    /// sampled once per driver tick, in order — the deep-gap re-jump trigger's
+    /// atomic, `fetch_max`ed by the frozen-tip probe from the served tip height. A
+    /// lying upstream inflates it past any real height; the SERIES lets a test see
+    /// it is non-decreasing and reaches the inflation, rather than trusting
+    /// `fetch_max`. Read only by the R-004 role test.
+    #[cfg(feature = "dpos-devnet-byzantine")]
+    pub upstream_frontier_series: Vec<Vec<u64>>,
+    /// `probe_calls[i]` = how many times node `i`'s frozen-tip probe asked the
+    /// upstream. Read only by the R-004 role test.
+    #[cfg(feature = "dpos-devnet-byzantine")]
+    pub probe_calls: Vec<u64>,
     /// `byz[i]` = what node `i`'s byzantine wrappers actually did — all zeros on
     /// an honest node and on a build without `dpos-devnet-byzantine`. The tamper's
     /// own witness: a role test asserts THIS before it asserts anything about how
@@ -775,6 +838,17 @@ impl PeerSetSink for TrackSink {
 struct NodeHandles {
     chain: FakeChain,
     halt: SafetyHalt,
+    /// Every committee read the node's steady-state re-jump made, in call order.
+    jump_committee_reads: JumpCommitteeReads,
+    /// Every steady-state re-jump call the node made, with its outcome variant.
+    jump_calls: JumpCalls,
+    /// `ReJump::upstream_frontier` — the deep-gap re-jump trigger's atomic (read by
+    /// the R-004 role test only).
+    #[cfg(feature = "dpos-devnet-byzantine")]
+    upstream_frontier: Arc<AtomicU64>,
+    /// Frozen-tip probe invocations (R-004 role test only).
+    #[cfg(feature = "dpos-devnet-byzantine")]
+    probe_calls: Arc<AtomicU64>,
     trace: Arc<Mutex<Vec<TraceEntry>>>,
     upstream: UpstreamCounters,
     /// `Beacon::Live`: the plane's artifact read.
@@ -880,6 +954,25 @@ async fn drive(
         }
     }
 
+    // Upstream-plane isolation (see `StandConfig::upstream_only_link`): confine the
+    // victim's frontier discovery to the one source, on the UPSTREAM plane only.
+    // Every upstream link touching `source` or `victim` is removed except the pair
+    // between them, so the resolver can only serve the victim's `get_latest` from
+    // the source. The consensus plane is left intact.
+    if let Some((source, victim)) = cfg.upstream_only_link {
+        for a in [source, victim] {
+            for b in 0..n {
+                let keep = (a == source && b == victim) || (a == victim && b == source);
+                if a != b && !keep {
+                    upstream_oracle
+                        .remove_link(pks[a].clone(), pks[b].clone())
+                        .await
+                        .expect("remove upstream link");
+                }
+            }
+        }
+    }
+
     // The stand's devp2p EL peer, shared by every node — see `ElNetwork`.
     let el_network = ElNetwork::default();
     let genesis_sealed = genesis_sealed();
@@ -929,9 +1022,18 @@ async fn drive(
     let t0 = ctx.current();
     let mut timed_out = false;
     let mut tracked_epoch = 0u64;
+    // Per-node samples of `ReJump::upstream_frontier`, one per driver tick — so
+    // "the frontier never lowers" is OBSERVED as a non-decreasing series, not
+    // inferred from `fetch_max` being the only writer (F8).
+    #[cfg(feature = "dpos-devnet-byzantine")]
+    let mut frontier_series: Vec<Vec<u64>> = vec![Vec::new(); n];
     let elapsed_now =
         |ctx: &deterministic::Context| ctx.current().duration_since(t0).unwrap_or_default();
     loop {
+        #[cfg(feature = "dpos-devnet-byzantine")]
+        for (i, node) in nodes.iter().enumerate() {
+            frontier_series[i].push(node.upstream_frontier.load(Ordering::SeqCst));
+        }
         let progress = Progress {
             heights: nodes.iter().map(|h| h.chain.tip()).collect(),
             halted: nodes.iter().map(|h| h.halt.is_engaged()).collect(),
@@ -1100,6 +1202,20 @@ async fn drive(
         .map(|node| node.observer.boundaries.lock().unwrap().clone())
         .collect();
     let staking_reads: Vec<StakingReads> = nodes.iter().map(|node| node.staking.reads()).collect();
+    let jump_committee_reads: Vec<Vec<(u64, B256)>> = nodes
+        .iter()
+        .map(|node| node.jump_committee_reads.lock().unwrap().clone())
+        .collect();
+    let jump_calls: Vec<Vec<JumpCall>> = nodes
+        .iter()
+        .map(|node| node.jump_calls.lock().unwrap().clone())
+        .collect();
+    let el_events: Vec<Vec<ElEvent>> = nodes.iter().map(|node| node.chain.el_events()).collect();
+    #[cfg(feature = "dpos-devnet-byzantine")]
+    let probe_calls: Vec<u64> = nodes
+        .iter()
+        .map(|node| node.probe_calls.load(Ordering::SeqCst))
+        .collect();
     #[cfg(feature = "dpos-devnet-byzantine")]
     let byz: Vec<ByzFacts> = nodes.iter().map(|node| node.byz.snapshot()).collect();
     let (tracked_sets, tracked_mismatches, tracked_forwarded) = {
@@ -1123,6 +1239,13 @@ async fn drive(
         tracked_mismatches,
         tracked_forwarded,
         staking_reads,
+        jump_calls,
+        jump_committee_reads,
+        el_events,
+        #[cfg(feature = "dpos-devnet-byzantine")]
+        upstream_frontier_series: frontier_series,
+        #[cfg(feature = "dpos-devnet-byzantine")]
+        probe_calls,
         #[cfg(feature = "dpos-devnet-byzantine")]
         byz,
         metrics,
@@ -1203,6 +1326,7 @@ pub(super) type Oracle = commonware_p2p::simulated::Oracle<PeerPubkey, determini
 /// values), and the `PlaneUpstreamHandle` that issues fetches on it.
 /// `marshal_slot` is the late-bound marshal the serve side reads; the caller
 /// fills it once the `OuterEngine` is built. `counters` sees both ends.
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn frontier_plane(
     ctx: &deterministic::Context,
     oracle: &Oracle,
@@ -1210,7 +1334,8 @@ pub(super) async fn frontier_plane(
     marshal_slot: Arc<OnceLock<MarshalMailbox>>,
     counters: UpstreamCounters,
     #[cfg(feature = "dpos-devnet-byzantine")] byz: ByzReport,
-    #[cfg(feature = "dpos-devnet-byzantine")] forge_seed_slot: bool,
+    #[cfg(feature = "dpos-devnet-byzantine")] mode: super::byzantine_roles::ForgeMode,
+    #[cfg(feature = "dpos-devnet-byzantine")] lying: Option<super::byzantine_roles::LyingCfg>,
 ) -> PlaneUpstreamHandle<deterministic::Context> {
     let (sender, receiver) = oracle
         .control(me.clone())
@@ -1219,10 +1344,10 @@ pub(super) async fn frontier_plane(
         .expect("frontier channel");
     let (handler, waiters) = new_bridge(marshal_slot);
     let handler = CountingHandler::new(handler, counters);
-    // The R-008 role wraps the SERVE side, so the victim's own consumer path is
-    // production's verbatim.
+    // The lying-upstream roles wrap the SERVE side, so the victim's own consumer
+    // path is production's verbatim.
     #[cfg(feature = "dpos-devnet-byzantine")]
-    let handler = super::byzantine_roles::ForgedSeedProducer::new(handler, byz, forge_seed_slot);
+    let handler = super::byzantine_roles::ForgedSeedProducer::new(handler, byz, mode, lying);
     let (engine, mailbox) = commonware_resolver::p2p::Engine::new(
         ctx.with_label("frontier_resolver"),
         commonware_resolver::p2p::Config {
@@ -1321,7 +1446,7 @@ async fn build_node(
     let plane_clock = PlaneClock::default();
     plane_clock.register(&ctx_i);
 
-    let chain = FakeChain::with_genesis_on(genesis_hash, el_network);
+    let chain = FakeChain::with_genesis_on(genesis_hash, el_network.clone());
     let divergent_at = match role {
         Role::DivergentResult { at } => Some(at),
         _ => None,
@@ -1432,102 +1557,25 @@ async fn build_node(
             #[cfg(feature = "dpos-devnet-byzantine")]
             byz.clone(),
             #[cfg(feature = "dpos-devnet-byzantine")]
-            matches!(role, Role::ForgedSeedUpstream),
+            {
+                use super::byzantine_roles::ForgeMode;
+                match role {
+                    Role::ForgedSeedUpstream => ForgeMode::SeedSlot,
+                    Role::InflatedProbe => ForgeMode::InflatedLatest,
+                    Role::LyingUpstream => ForgeMode::LyingLatest,
+                    Role::WrongHeightFinalized => ForgeMode::WrongHeightFinalized,
+                    _ => ForgeMode::Watch,
+                }
+            },
+            #[cfg(feature = "dpos-devnet-byzantine")]
+            matches!(role, Role::LyingUpstream).then(|| super::byzantine_roles::LyingCfg {
+                chain: chain.clone(),
+                el_network: el_network.clone(),
+            }),
         )
         .await,
         upstream_counters.clone(),
     );
-    // The executor's frozen-tip frontier probe, wired as `dpos.rs::launch`
-    // wires it for a plane validator (`get_latest` → height). The re-jump
-    // itself is NOT modelled (it drives reth EL sync): its gate is `u64::MAX`
-    // and the callback a counted no-op `Lagging`.
-    // The LIVE upstream frontier — production's `LiveFrontierTee::live_height`
-    // (`cert_inlet.rs:343-347`), advanced to the height of an upstream
-    // finalization this node has seen. One difference, stated because it is the
-    // stand's and not production's: production advances it ONLY past the cert
-    // inlet's BLS-verify gate (`cert_inlet.rs:896-898`) so a lying upstream
-    // cannot steer the committee read, while the stand has no inlet and tees it
-    // where the executor's frontier probe already asks — before any verify.
-    // Every upstream in this stand is an honest peer serving real certificates,
-    // so the two coincide here; a Byzantine-upstream role (Э3.3) has to move
-    // this behind a verify before it means anything.
-    let live_height = Arc::new(AtomicU64::new(0));
-    let re_jump = {
-        let probe: FrontierProbeFn = {
-            let up = upstream.clone();
-            let live = live_height.clone();
-            Arc::new(move || {
-                let up = up.clone();
-                let live = live.clone();
-                Box::pin(async move {
-                    let uf = up.get_latest().await?;
-                    live.fetch_max(uf.block.height, Ordering::Relaxed);
-                    Some(Height::new(uf.block.height))
-                })
-            })
-        };
-        let rejump_calls = upstream_counters.rejump_calls.clone();
-        // The steady-state re-jump, modelled on `cold_start_jump` over
-        // `RethElSync`: take the upstream tip and land at the pair
-        // `(tip.height − K, tip.result)` — the committee-attested EVM hash the
-        // ordering block carries (`cold_start_jump.rs:434-446`, `order_block.rs:124-128`) —
-        // and let the EL hold it. Forward-only, and `Lagging` inside the pre-K
-        // window, as production is.
-        //
-        // NOT modelled, and it matters: production AUTHENTICATES the landing
-        // before accepting it (`verify_jump_structural` + a 2f+1 BLS multisig
-        // against `committee[E]` read at the landing's own state) and re-asserts
-        // the L1 trust root through `ElSync::holds`. The stand trusts the served
-        // frontier outright, so this models the HONEST-upstream path only; a
-        // lying-upstream role (Э3.3) has to add the auth before it means
-        // anything.
-        let call: ReJumpFn = {
-            let up = upstream.clone();
-            let chain = chain.clone();
-            Arc::new(move |from: u64| {
-                let up = up.clone();
-                let chain = chain.clone();
-                let calls = rejump_calls.clone();
-                Box::pin(async move {
-                    calls.fetch_add(1, Ordering::SeqCst);
-                    let Some(uf) = up.get_latest().await else {
-                        return JumpOutcome::Lagging;
-                    };
-                    if uf.block.result == B256::ZERO {
-                        return JumpOutcome::Lagging; // inside the pre-K window
-                    }
-                    let landing = uf.block.height.saturating_sub(crate::order_block::K);
-                    if landing <= from {
-                        return JumpOutcome::Lagging; // forward-only
-                    }
-                    if !chain.land_jump(landing, uf.block.result) {
-                        // The peer cannot serve the attested landing — production's
-                        // `BadTarget`/`InvalidTarget` shape, non-fatal, retried.
-                        return JumpOutcome::Lagging;
-                    }
-                    JumpOutcome::Landed {
-                        landing,
-                        hash: uf.block.result,
-                        floor: landing.saturating_sub(crate::order_block::K),
-                    }
-                })
-            })
-        };
-        ReJump {
-            call,
-            upstream_frontier: Arc::new(AtomicU64::new(0)),
-            threshold: cfg.re_jump_threshold.unwrap_or(u64::MAX),
-            rotate: None,
-            probe: Some(probe),
-        }
-    };
-
-    // The beacon plane (step 4): `beacon::build` exactly as `node/src/dpos.rs::
-    // build_beacon_plane` calls it, over the consensus network's BEACON /
-    // BEACON_RESOLVER channels and the same four mux brokers, with the schedule
-    // standing in for the staking reads. Built BEFORE the `OuterBuilder`, which
-    // takes its randomness and adopts its agreement instances.
-    let (dkg_height_tx, dkg_height_rx) = mpsc::channel::<u64>(256);
     // The node's EL-FINALIZED height and the hash there. NOT `chain.tip()`:
     // that is the ORDERING-finalized cursor (`FakeChain::advance_finalized` is
     // called with `order.height`, `executor.rs:2971` → `:3498`), while what
@@ -1548,6 +1596,165 @@ async fn build_node(
         let fin = el_finalized.clone();
         Arc::new(move || chain.hash_at(fin()))
     };
+    // The executor's frozen-tip frontier probe, wired as `dpos.rs::launch`
+    // wires it for a plane validator (`get_latest` → height).
+    // The LIVE upstream frontier — production's `LiveFrontierTee::live_height`
+    // (`cert_inlet.rs:343-347`), advanced to the height of an upstream
+    // finalization this node has seen. One difference, stated because it is the
+    // stand's and not production's: production advances it ONLY past the cert
+    // inlet's BLS-verify gate (`cert_inlet.rs:896-898`) so a lying upstream
+    // cannot steer the committee read, while the stand has no inlet and tees it
+    // where the executor's frontier probe already asks — before any verify.
+    // Э3.3 added lying-upstream roles WITHOUT moving this: `live_height` is
+    // still teed before any verify, so a role's forged frontier reaches it. A
+    // stand-side `CertInlet` is what would put it behind the gate (PLAN 4.0(в)).
+    let live_height = Arc::new(AtomicU64::new(0));
+    // Every `committee[E]` read the jump made, with the executed hash it read AT
+    // — see `JumpCommitteeReads`. Surfaced as `Outcome::jump_committee_reads`.
+    let jump_committee_reads: JumpCommitteeReads = Arc::new(Mutex::new(Vec::new()));
+    // Every jump call, with the outcome VARIANT it returned — see `JumpCall`.
+    let jump_calls: JumpCalls = Arc::new(Mutex::new(Vec::new()));
+    // Production's `ReJump::upstream_frontier` (`executor.rs:509`): the inlet /
+    // frozen-tip probe `fetch_max`es the served tip height into it, and the
+    // re-jump trigger measures the gap against it. Held here so the stand can
+    // sample it over the run (a lying upstream inflates it past any real height).
+    let upstream_frontier = Arc::new(AtomicU64::new(0));
+    // How many times this node's frozen-tip probe actually ASKED the upstream
+    // (`FrontierProbeFn` invocations that ran `get_latest`). A healthy node whose
+    // tip advances never reaches the probe body (`executor.rs:1927-1930`); an
+    // inflated frontier makes every probe productive and drops the cadence to the
+    // fast burst, so the count climbs far past once-per-block.
+    let probe_calls = Arc::new(AtomicU64::new(0));
+    let re_jump = {
+        let probe: FrontierProbeFn = {
+            let up = upstream.clone();
+            let live = live_height.clone();
+            let probe_calls = probe_calls.clone();
+            Arc::new(move || {
+                let up = up.clone();
+                let live = live.clone();
+                let probe_calls = probe_calls.clone();
+                Box::pin(async move {
+                    probe_calls.fetch_add(1, Ordering::Relaxed);
+                    let uf = up.get_latest().await?;
+                    live.fetch_max(uf.block.height, Ordering::Relaxed);
+                    Some(Height::new(uf.block.height))
+                })
+            })
+        };
+        let rejump_calls = upstream_counters.rejump_calls.clone();
+        // The steady-state re-jump is the PRODUCTION
+        // `cold_start_jump_with_threshold`, called the way the node calls it
+        // (`consensus/src/dpos.rs:2492-2536`): the same forward-only need-gate,
+        // the same PRE-sync `verify_jump_structural`, the same POST-sync
+        // `verify_jump_authenticated` (a 2f+1 BLS multisig against `committee[E]`
+        // read at the LANDING's own executed state), the same `l1_checkpoint =
+        // None` on the validator path. Only the two seams below it are the
+        // stand's: `JumpElSync` for `RethElSync` (the EL peer is `ElNetwork`,
+        // not devp2p) and `JumpCommittees` for `RethCommitteeSource` (the
+        // committee comes out of `FakeStaking`'s contract state machine, read by
+        // executed hash). Nothing about the landing choice is re-stated here —
+        // the production function picks it.
+        //
+        // The threshold goes to BOTH the executor's arming gate and the jump's
+        // own need-gate, as production's `re_jump_threshold` does. At the stand
+        // default (`u64::MAX`) `Executor::maybe_re_jump` never arms the waiter
+        // (`executor.rs:2195-2203`), so the call — and the `anchor + threshold`
+        // it would overflow — is unreachable.
+        let threshold = cfg.re_jump_threshold.unwrap_or(u64::MAX);
+        let call: ReJumpFn = {
+            let up = upstream.clone();
+            let chain = chain.clone();
+            let staking = staking.clone();
+            let finalized_hash = finalized_hash.clone();
+            let jump_reads = jump_committee_reads.clone();
+            let calls_log = jump_calls.clone();
+            let ctx_jump = ctx_i.clone();
+            Arc::new(move |from: u64| {
+                // Tee'd fresh per call: the certificate the jump consumes is the
+                // one this wrapper sees, and nothing else reads through it.
+                let up = TeeingUpstream::new(up.clone());
+                let committees = JumpCommittees::new(
+                    staking.clone(),
+                    fluent_namespace(CHAIN_ID),
+                    finalized_hash.clone(),
+                    jump_reads.clone(),
+                );
+                let el = JumpElSync::new(chain.clone(), ctx_jump.clone(), DPOS_ACTIVATION_BLOCK);
+                let calls = rejump_calls.clone();
+                let calls_log = calls_log.clone();
+                // `verify_jump_authenticated` wants a `&mut (Clock +
+                // CryptoRngCore)`; a fresh clone per call, as production does.
+                let mut jump_ctx = ctx_jump.clone();
+                Box::pin(async move {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    let outcome = crate::cold_start_jump::cold_start_jump_with_threshold(
+                        from,
+                        &up,
+                        &committees,
+                        &el,
+                        // No L1 checkpoint on the validator path — the trustless
+                        // POST-sync committee read at the landing IS the anchor,
+                        // and `ElSync::holds` is therefore never called.
+                        None,
+                        DPOS_ACTIVATION_BLOCK,
+                        threshold,
+                        &mut jump_ctx,
+                    )
+                    .await;
+                    // The production return value, recorded verbatim — the
+                    // VARIANT as well as the landing, because a jump that ran and
+                    // was REFUSED is otherwise indistinguishable here from one
+                    // that landed (`ReJump::rotate` is `None`, so the executor's
+                    // rotation escape is a silent no-op).
+                    calls_log.lock().unwrap().push(JumpCall {
+                        from,
+                        outcome: match &outcome {
+                            JumpOutcome::Landed { .. } => "Landed",
+                            JumpOutcome::Lagging => "Lagging",
+                            JumpOutcome::Stalled(_) => "Stalled",
+                            JumpOutcome::BadTarget(_) => "BadTarget",
+                            JumpOutcome::InvalidTarget(_) => "InvalidTarget",
+                            JumpOutcome::StalledWithPeers(_) => "StalledWithPeers",
+                            JumpOutcome::AuthFailed(_) => "AuthFailed",
+                            JumpOutcome::L1Fork(_) => "L1Fork",
+                        },
+                        consumed: up.consumed(),
+                        landed: match &outcome {
+                            JumpOutcome::Landed { landing, hash, .. } => Some((*landing, *hash)),
+                            _ => None,
+                        },
+                        // The error text of a refusal, so a test can tell the
+                        // committee-BLS arm from the unreadable-committee arm.
+                        outcome_detail: match &outcome {
+                            JumpOutcome::Stalled(e)
+                            | JumpOutcome::BadTarget(e)
+                            | JumpOutcome::InvalidTarget(e)
+                            | JumpOutcome::StalledWithPeers(e)
+                            | JumpOutcome::AuthFailed(e)
+                            | JumpOutcome::L1Fork(e) => Some(format!("{e:#}")),
+                            JumpOutcome::Landed { .. } | JumpOutcome::Lagging => None,
+                        },
+                    });
+                    outcome
+                })
+            })
+        };
+        ReJump {
+            call,
+            upstream_frontier: upstream_frontier.clone(),
+            threshold,
+            rotate: None,
+            probe: Some(probe),
+        }
+    };
+
+    // The beacon plane (step 4): `beacon::build` exactly as `node/src/dpos.rs::
+    // build_beacon_plane` calls it, over the consensus network's BEACON /
+    // BEACON_RESOLVER channels and the same four mux brokers, with the schedule
+    // standing in for the staking reads. Built BEFORE the `OuterBuilder`, which
+    // takes its randomness and adopts its agreement instances.
+    let (dkg_height_tx, dkg_height_rx) = mpsc::channel::<u64>(256);
     // The state hash the COMMITTEE is read at — production's shared
     // `committee_read_hash` (`node/src/dpos.rs:1382-1404`): the read height is
     // `max(EL-finalized, live)`, and it falls back to the finalized hash when the
@@ -1710,7 +1917,7 @@ async fn build_node(
         provider: oracle.manager(),
         chain_id: CHAIN_ID,
         epoch_length_blocks: NonZeroU64::new(cfg.epoch_len).expect("epoch_len > 0"),
-        dpos_activation_block: 0,
+        dpos_activation_block: DPOS_ACTIVATION_BLOCK,
         signer_keypair: Some(bls[i].clone()),
         randomness,
         spawn_unblocked: Arc::new(Notify::new()),
@@ -1732,7 +1939,7 @@ async fn build_node(
         resolver_timeout: Duration::from_secs(2),
         resolver_fetch_retry: Duration::from_millis(100),
         genesis: genesis_block,
-        beacon_engine: FakeBeacon,
+        beacon_engine: FakeBeacon::new(chain.clone()),
         deriver,
         executed: chain.clone(),
         assembler: Arc::new(NoTxs),
@@ -1906,6 +2113,12 @@ async fn build_node(
     NodeHandles {
         chain,
         halt,
+        jump_committee_reads,
+        jump_calls,
+        #[cfg(feature = "dpos-devnet-byzantine")]
+        upstream_frontier,
+        #[cfg(feature = "dpos-devnet-byzantine")]
+        probe_calls,
         trace,
         upstream: upstream_counters,
         artifacts,

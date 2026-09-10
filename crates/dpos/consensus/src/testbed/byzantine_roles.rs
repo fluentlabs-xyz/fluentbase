@@ -1,8 +1,10 @@
-//! The stand's byzantine wrappers for [`Role::TwoReveals`](super::stand::Role) and
-//! [`Role::ForgedSeedUpstream`](super::stand::Role) — Э3.3, the register entries
-//! R-002 and R-008.
+//! The stand's byzantine wrappers for the frontier-serve and DKG roles —
+//! [`Role::TwoReveals`](super::stand::Role) (R-002), the σ-slot forger
+//! [`Role::ForgedSeedUpstream`](super::stand::Role) (R-008), and the two
+//! lying-`Latest` upstream roles [`Role::InflatedProbe`](super::stand::Role)
+//! (R-004) and [`Role::LyingUpstream`](super::stand::Role) (R-001 var Б).
 //!
-//! Both are WRAPPERS around a seam the honest node already has, and neither is
+//! All are WRAPPERS around a seam the honest node already has, and none is
 //! reachable without the `dpos-devnet-byzantine` feature. Nothing in production
 //! changes: a wrapper sits between the plane and the wire, so the code that has
 //! to notice the tampering is the same code a production node runs.
@@ -28,18 +30,26 @@
 //!   "this dealer withholds its seed partial", expressed at the one place the
 //!   partial is produced.
 //! * [`ForgedSeedProducer`] wraps the frontier plane's `Producer` half
-//!   (`stand::frontier_plane`, today `fakes::CountingHandler`) and swaps the σ
+//!   (`stand::frontier_plane`, today `fakes::CountingHandler`). Its
+//!   [`ForgeMode`] selects the tamper: [`ForgeMode::SeedSlot`] (R-008) swaps the σ
 //!   slot of the `Finalized{h}` certificates it serves inside a height window,
-//!   leaving the multisig half byte-identical. The σ it plants is a REAL σ of
-//!   another round of the same epoch, harvested from an earlier answer, so it is
-//!   a valid G1 point that cannot verify for the round it is planted into.
+//!   leaving the multisig half byte-identical (the σ it plants is a REAL σ of
+//!   another round, a valid G1 point that cannot verify for the round it is
+//!   planted into); [`ForgeMode::InflatedLatest`] (R-004) inflates the served
+//!   `Latest` tip height; [`ForgeMode::LyingLatest`] (R-001) replaces the served
+//!   `Latest` tip's `result`. Both `Latest` forgers re-point `proposal.payload`
+//!   so [`verify_jump_structural`](crate::cold_start_jump::verify_jump_structural)
+//!   still passes. [`ForgeMode::WrongHeightFinalized`] (R-009) answers a
+//!   `Finalized{h}` by-height pull with this node's own valid pair of height
+//!   `h − 1` — nothing mutated, the WRONG height sent. [`ForgeMode::Watch`] forges
+//!   nothing and only records what it relays.
 //!
 //! Every wrapper records what it did into a [`ByzReport`], and the tests assert
 //! the tampering took effect BEFORE they assert anything about the node's
 //! reaction — a green branch over a wrapper that swapped nothing would state
 //! nothing at all.
 
-use super::fakes::{ByzReport, CountingHandler};
+use super::fakes::{ByzReport, CountingHandler, ElNetwork, FakeChain};
 use crate::{
     beacon::{
         ceremony::info_for,
@@ -50,15 +60,17 @@ use crate::{
         verified_seed::VerifiedSeed,
         wire::BeaconMessage,
     },
+    cert_follow::UpstreamFinalized,
+    cold_start_jump::verify_jump_structural,
     digest::Digest,
     order_block::OrderBlock,
     plane_upstream::FrontierKey,
 };
-use alloy_primitives::keccak256;
+use alloy_primitives::{keccak256, B256};
 use bytes::Bytes;
 use commonware_codec::{Decode as _, Encode as _, Read as _, ReadExt as _};
 use commonware_consensus::{
-    simplex::types::Finalization,
+    simplex::types::{Finalization, Proposal},
     types::{Epoch, Round},
 };
 use commonware_cryptography::{
@@ -458,13 +470,92 @@ impl Randomness for WithholdingRandomness {
 }
 
 // ---------------------------------------------------------------------------
-// R-008 — the upstream that serves a forged σ slot
+// R-008 / R-004 / R-001 — the lying frontier-plane upstream
 // ---------------------------------------------------------------------------
 
 /// The heights whose served certificates get a forged σ slot. Chosen to cover
 /// the first block of the bootstrap epoch (`2 * epoch_len = 64`) and the six
 /// after it — the window a follower with no `PK_2` has to walk.
 pub(super) const FORGE_WINDOW: std::ops::RangeInclusive<u64> = 64..=70;
+
+/// The heights whose `Finalized{h}` by-height pulls a [`ForgeMode::WrongHeightFinalized`]
+/// role answers with the `h − 1` pair (R-009). Chosen to span the WHOLE catch-up gap of
+/// a validator dropped from the committee at the first boundary (`epoch_len = 5` in the
+/// test, run to 16): starving every by-height repair in the range, not a window inside
+/// it, is what lets the test observe "the gap never closes" rather than "some gaps do".
+/// Starts above the pre-drop heights the victim finalized on the consensus plane, so the
+/// substitution only ever touches the by-height repair path.
+pub(super) const WRONG_HEIGHT_WINDOW: std::ops::RangeInclusive<u64> = 6..=40;
+
+/// How much a [`ForgeMode::InflatedLatest`] adds to the served `Latest` tip
+/// height (R-004): far above any real chain height, so the re-jump the victim
+/// spawns FCUs reth toward the REAL result hash (servable), backfills the real
+/// prefix, then cannot resolve the inflated landing HEIGHT — production's
+/// `SyncFailure::Stalled` (`cold_start_jump.rs:603-611`), not the frozen-head
+/// `StalledWithPeers`.
+pub(super) const LATEST_INFLATION: u64 = 1_000_000;
+
+/// Where a [`ForgeMode::LyingLatest`] divergent branch forks (R-001 var Б): ABOVE
+/// the victim's rotation-boundary park (`3 * EPOCH_LEN - 1 = 95` in the test), so
+/// the victim's own canonical chain has no block there to conflict with and the
+/// walk finds its fork point at the shared honest prefix instead.
+pub(super) const LYING_DIVERGE_AT: u64 = 100;
+
+/// Everything the lying-upstream role ([`ForgeMode::LyingLatest`]) needs to seed a
+/// divergent branch into the shared devp2p peer network and point its served
+/// `Latest` at it. Only built for that role (`None` otherwise).
+#[derive(Clone)]
+pub(super) struct LyingCfg {
+    /// This node's OWN chain — read for the honest fork parent hash at
+    /// `LYING_DIVERGE_AT - 1` (this node is an honest committee member, so it holds
+    /// the honest chain canonically).
+    pub chain: FakeChain,
+    /// The shared devp2p peer network the divergent branch is published into.
+    pub el_network: ElNetwork,
+}
+
+/// The deterministic hash of the divergent branch's block at `height` — a hash the
+/// honest chain never produces (keccak of a tagged input), so it coexists with the
+/// honest hash at the same height in the hash-keyed [`ElNetwork`]. `pub(super)` so
+/// the R-001 test can recompute it to recognise the divergent prefix the victim
+/// landed (`Outcome::el_events`).
+pub(super) fn divergent_hash(height: u64) -> B256 {
+    keccak256([b"lying-upstream-div".as_slice(), &height.to_be_bytes()].concat())
+}
+
+/// What the frontier-plane `Producer` half of one node forges. `Role`-derived in
+/// `stand::build_node`; a wrapper on an honest node is [`ForgeMode::Watch`] and
+/// changes nothing on the wire.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum ForgeMode {
+    /// Not forging: WATCH what this node serves so a follower relaying a forgery
+    /// it accepted is observable ([`ByzFacts::served_seed_replays`]).
+    Watch,
+    /// R-008: replace the σ slot of the `Finalized{h}` certificates served inside
+    /// [`FORGE_WINDOW`], multisig half untouched.
+    SeedSlot,
+    /// R-004: inflate the `Latest` answer's `block.height` by [`LATEST_INFLATION`],
+    /// re-pointing `proposal.payload` to the new digest so
+    /// [`verify_jump_structural`] still passes; `result` unchanged.
+    InflatedLatest,
+    /// R-001 var Б: SEED a divergent branch into the shared [`ElNetwork`] (via
+    /// [`LyingCfg`] / `publish_branch`) and replace the `Latest` answer's
+    /// `block.result` with that branch's tip, re-pointing `proposal.payload` to the
+    /// new digest so [`verify_jump_structural`] still passes. The multisig half is
+    /// left as the REAL signature over the ORIGINAL payload, so the jump LANDS the
+    /// (now servable) branch and then FAILS `verify_jump_authenticated` — the moved
+    /// payload breaks the real multisig against any committee (§R-001 test doc).
+    LyingLatest,
+    /// R-009: answer a `Finalized{h}` pull (for `h` in [`WRONG_HEIGHT_WINDOW`]) with
+    /// this node's OWN valid pair of height `h − 1` instead of `h`. Nothing is
+    /// mutated — the served pair is a wholly real, self-consistent finalization, just
+    /// of the WRONG height. The bytes decode back to `h − 1`, so
+    /// `FrontierHandler::deliver` (which does not bind the requested key to the
+    /// delivered height) fans it to the `Finalized{h}` waiter and returns `true`;
+    /// the marshal then rejects `block.height() != h` silently and the gap at `h`
+    /// never closes.
+    WrongHeightFinalized,
+}
 
 #[derive(Default)]
 struct ForgeState {
@@ -483,17 +574,78 @@ pub(super) struct ForgedSeedProducer {
     inner: CountingHandler,
     state: Arc<Mutex<ForgeState>>,
     report: ByzReport,
-    active: bool,
+    mode: ForgeMode,
+    /// Present only for [`ForgeMode::LyingLatest`] (R-001 var Б).
+    lying: Option<LyingCfg>,
 }
 
 impl ForgedSeedProducer {
-    pub(super) fn new(inner: CountingHandler, report: ByzReport, active: bool) -> Self {
+    pub(super) fn new(
+        inner: CountingHandler,
+        report: ByzReport,
+        mode: ForgeMode,
+        lying: Option<LyingCfg>,
+    ) -> Self {
         Self {
             inner,
             state: Arc::new(Mutex::new(ForgeState::default())),
             report,
-            active,
+            mode,
+            lying,
         }
+    }
+
+    /// Re-serve a `Latest` answer with `block` mutated by `mutate` and the
+    /// certificate's `proposal.payload` re-pointed to the mutated block's digest,
+    /// so [`verify_jump_structural`] still passes. The multisig half is left
+    /// byte-identical (the REAL signature over the ORIGINAL payload). Runs the
+    /// tamper's self-check on the WIRE bytes before allowing the swap. `record`
+    /// writes the mode's [`ByzFacts`] fields off `(original_block, forged_block)`.
+    fn forge_latest(
+        &self,
+        bytes: &Bytes,
+        mutate: impl Fn(&mut OrderBlock),
+        record: impl Fn(&mut super::fakes::ByzFacts, &OrderBlock, &OrderBlock, bool),
+    ) -> Option<Vec<u8>> {
+        let cap = fluentbase_p2p::constants::MAX_COMMITTEE_SIZE as usize;
+        let (fin, block) = FrontierPair::decode_cfg(bytes.as_ref(), &(cap, ())).ok()?;
+        let mut forged_block = block.clone();
+        mutate(&mut forged_block);
+        if forged_block == block {
+            return None;
+        }
+        // Re-point the payload so the structural gate passes; keep round/parent and
+        // the whole (real) multisig certificate.
+        let forged = Finalization::<BlsScheme, Digest> {
+            proposal: Proposal {
+                round: fin.proposal.round,
+                parent: fin.proposal.parent,
+                payload: forged_block.digest(),
+            },
+            certificate: fin.certificate.clone(),
+        };
+        let wire = (forged, forged_block.clone()).encode().to_vec();
+
+        // Self-check on the BYTES that go out, decoded back the way the victim's
+        // `decode_frontier` will, BEFORE the swap is allowed.
+        let (back_fin, back_block) = FrontierPair::decode_cfg(wire.as_slice(), &(cap, ()))
+            .expect("the forged frontier pair must decode");
+        assert_ne!(
+            back_block, block,
+            "the Latest forge changed nothing on the served block"
+        );
+        let structural_ok = verify_jump_structural(&UpstreamFinalized {
+            finalization: back_fin,
+            block: back_block.clone(),
+        })
+        .is_ok();
+        assert!(
+            structural_ok,
+            "the forged Latest answer does not pass verify_jump_structural"
+        );
+        self.report
+            .with(|f| record(f, &block, &back_block, structural_ok));
+        Some(wire)
     }
 
     /// Re-serve `bytes` with the σ slot replaced, or `None` when there is nothing
@@ -562,6 +714,74 @@ impl ForgedSeedProducer {
 }
 
 impl ForgedSeedProducer {
+    /// R-004: inflate the served `Latest` tip height by [`LATEST_INFLATION`].
+    fn forge_inflated_latest(&self, bytes: &Bytes) -> Option<Vec<u8>> {
+        self.forge_latest(
+            bytes,
+            |b| b.height += LATEST_INFLATION,
+            |f, orig, forged, structural_ok| {
+                f.latest_inflated += 1;
+                f.inflate_from = Some(orig.height);
+                f.inflate_to = Some(forged.height);
+                f.inflate_delta_ok = f.latest_inflated == 1 || f.inflate_delta_ok;
+                f.inflate_structural_ok = f.latest_inflated == 1 || f.inflate_structural_ok;
+                f.inflate_delta_ok &= forged.height == orig.height + LATEST_INFLATION;
+                f.inflate_structural_ok &= structural_ok;
+            },
+        )
+    }
+
+    /// R-001 var Б: seed a divergent branch into the shared [`ElNetwork`] (forking
+    /// at [`LYING_DIVERGE_AT`], above the victim's park, and extending to the
+    /// served tip's landing height `H = block.height - K`) and replace the served
+    /// `Latest` tip's `result` with that branch's tip hash. The branch is now
+    /// SERVABLE, so the victim's re-jump can EL-sync onto it and reach
+    /// `verify_jump_authenticated` — which fails, because the multisig is the REAL
+    /// one over the ORIGINAL payload and the served proposal's payload was
+    /// re-pointed (F10). The real height is kept.
+    fn forge_lying_latest(&self, bytes: &Bytes) -> Option<Vec<u8>> {
+        let lying = self.lying.as_ref()?;
+        // The landing height the served tip claims: `block.height - K`.
+        let cap = fluentbase_p2p::constants::MAX_COMMITTEE_SIZE as usize;
+        let (_, block) = FrontierPair::decode_cfg(bytes.as_ref(), &(cap, ())).ok()?;
+        let landing = block.height.checked_sub(crate::order_block::K)?;
+        if landing < LYING_DIVERGE_AT {
+            // Too early: the fork point is not yet below the landing — nothing to
+            // diverge onto. Serve honest.
+            return None;
+        }
+        // The fork parent: this node's OWN honest hash at `LYING_DIVERGE_AT - 1`.
+        // It is already in `ElNetwork` (the honest majority published it), so the
+        // victim can walk the divergent branch down to it and then along the honest
+        // prefix to its own fork point.
+        let fork_parent = lying.chain.hash_at(LYING_DIVERGE_AT - 1)?;
+        // Publish (idempotently) the divergent branch `LYING_DIVERGE_AT ..= landing`.
+        let branch: Vec<(B256, u64, B256)> = (LYING_DIVERGE_AT..=landing)
+            .map(|h| {
+                let parent = if h == LYING_DIVERGE_AT {
+                    fork_parent
+                } else {
+                    divergent_hash(h - 1)
+                };
+                (divergent_hash(h), h, parent)
+            })
+            .collect();
+        lying.el_network.publish_branch(&branch);
+        self.forge_latest(
+            bytes,
+            |b| b.result = divergent_hash(landing),
+            |f, orig, forged, structural_ok| {
+                f.result_forged += 1;
+                f.forged_result_from = Some(orig.result);
+                f.forged_result_to = Some(forged.result);
+                f.result_differs = f.result_forged == 1 || f.result_differs;
+                f.result_structural_ok = f.result_forged == 1 || f.result_structural_ok;
+                f.result_differs &= forged.result != orig.result;
+                f.result_structural_ok &= structural_ok;
+            },
+        )
+    }
+
     /// The archive-poisoning witness. A σ is unique per `(round, PK)`
     /// (`beacon/seed.rs`), so serving the SAME σ under two different rounds is
     /// something an honest archive cannot do: it means this node stored a
@@ -583,6 +803,36 @@ impl ForgedSeedProducer {
             self.report.with(|f| f.served_seed_replays.push(height));
         }
     }
+
+    /// Record (and self-verify) one wrong-height substitution (R-009): the served pair
+    /// is a wholly real, self-consistent finalization (`payload == block.digest()`)
+    /// whose height is EXACTLY `requested - 1`. Both are asserted BEFORE the answer is
+    /// allowed out, so a green run cannot rest on a substitution that never took the
+    /// wrong-height shape.
+    fn record_wrong_height(&self, requested: u64, bytes: &Bytes) {
+        let cap = fluentbase_p2p::constants::MAX_COMMITTEE_SIZE as usize;
+        let (fin, block) = FrontierPair::decode_cfg(bytes.as_ref(), &(cap, ()))
+            .expect("the wrong-height pair must decode");
+        let served = block.height;
+        assert_eq!(
+            served,
+            requested - 1,
+            "the wrong-height role served height {served}, not requested-1 ({})",
+            requested - 1
+        );
+        let self_consistent = fin.proposal.payload == block.digest();
+        assert!(
+            self_consistent,
+            "the served wrong-height pair is not a real finalization (payload != digest)"
+        );
+        self.report.with(|f| {
+            f.wrong_height_served += 1;
+            f.wrong_height_pairs.push((requested, served));
+            f.wrong_height_valid = (f.wrong_height_served == 1 || f.wrong_height_valid)
+                && served == requested - 1
+                && self_consistent;
+        });
+    }
 }
 
 impl Producer for ForgedSeedProducer {
@@ -590,38 +840,85 @@ impl Producer for ForgedSeedProducer {
 
     async fn produce(&mut self, key: FrontierKey) -> cw_oneshot::Receiver<Bytes> {
         let rx = self.inner.produce(key).await;
-        let FrontierKey::Finalized { height } = key else {
-            return rx;
-        };
-        if !self.active {
-            // Not forging: WATCH what this node serves instead. That is the only
-            // way the stand can see a follower relaying a forgery it accepted.
-            let Ok(bytes) = rx.await else {
-                let (tx, rx) = cw_oneshot::channel::<Bytes>();
-                drop(tx);
-                return rx;
-            };
-            self.note_served(height, &bytes);
-            let (tx, rx) = cw_oneshot::channel::<Bytes>();
-            let _ = tx.send(bytes);
-            return rx;
-        }
-        if !FORGE_WINDOW.contains(&height) {
-            return rx;
-        }
         // `FrontierHandler::produce` fills the channel INLINE before returning it
-        // (`plane_upstream.rs`), so this await never parks; an archive miss shows
-        // up as a dropped sender, which is served on as "no data".
-        let Ok(bytes) = rx.await else {
-            let (tx, rx) = cw_oneshot::channel::<Bytes>();
-            drop(tx);
-            return rx;
-        };
-        let out = self.forge(height, &bytes).map(Bytes::from).unwrap_or(bytes);
-        let (tx, rx) = cw_oneshot::channel::<Bytes>();
-        let _ = tx.send(out);
-        rx
+        // (`plane_upstream.rs`), so awaiting `rx` never parks; an archive miss
+        // shows up as a dropped sender, re-served as "no data".
+        match (key, self.mode) {
+            // R-008: forge the σ slot of the in-window Finalized certs.
+            (FrontierKey::Finalized { height }, ForgeMode::SeedSlot) => {
+                if !FORGE_WINDOW.contains(&height) {
+                    return rx;
+                }
+                let Ok(bytes) = rx.await else {
+                    return dropped();
+                };
+                resolved(self.forge(height, &bytes).map(Bytes::from).unwrap_or(bytes))
+            }
+            // R-009: answer Finalized{h} with this node's OWN valid pair of h-1.
+            (FrontierKey::Finalized { height }, ForgeMode::WrongHeightFinalized) => {
+                if !WRONG_HEIGHT_WINDOW.contains(&height) || height == 0 {
+                    return rx; // out of window / h0: serve the honest h pair
+                }
+                // Discard the h answer we opened and serve this node's own real pair
+                // of h-1 instead — nothing is mutated, only the WRONG height is sent.
+                // The extra produce is benign under the deterministic runner (the
+                // source is ahead and holds both heights).
+                drop(rx);
+                let lower = FrontierKey::Finalized { height: height - 1 };
+                let Ok(bytes) = self.inner.produce(lower).await.await else {
+                    return dropped();
+                };
+                self.record_wrong_height(height, &bytes);
+                resolved(bytes)
+            }
+            // Every other mode WATCHES the Finalized answers it serves (the R-008
+            // archive-poisoning witness a non-forging follower keeps).
+            (FrontierKey::Finalized { height }, _) => {
+                let Ok(bytes) = rx.await else {
+                    return dropped();
+                };
+                self.note_served(height, &bytes);
+                resolved(bytes)
+            }
+            // R-004: inflate the served Latest tip height.
+            (FrontierKey::Latest, ForgeMode::InflatedLatest) => {
+                let Ok(bytes) = rx.await else {
+                    return dropped();
+                };
+                resolved(
+                    self.forge_inflated_latest(&bytes)
+                        .map(Bytes::from)
+                        .unwrap_or(bytes),
+                )
+            }
+            // R-001 var Б: replace the served Latest tip's result.
+            (FrontierKey::Latest, ForgeMode::LyingLatest) => {
+                let Ok(bytes) = rx.await else {
+                    return dropped();
+                };
+                resolved(
+                    self.forge_lying_latest(&bytes)
+                        .map(Bytes::from)
+                        .unwrap_or(bytes),
+                )
+            }
+            (FrontierKey::Latest, _) => rx,
+        }
     }
+}
+
+/// A oneshot receiver pre-filled with `bytes` (the serve side answers inline).
+fn resolved(bytes: Bytes) -> cw_oneshot::Receiver<Bytes> {
+    let (tx, rx) = cw_oneshot::channel::<Bytes>();
+    let _ = tx.send(bytes);
+    rx
+}
+
+/// A oneshot receiver whose sender was dropped — served on as "no data".
+fn dropped() -> cw_oneshot::Receiver<Bytes> {
+    let (tx, rx) = cw_oneshot::channel::<Bytes>();
+    drop(tx);
+    rx
 }
 
 impl Consumer for ForgedSeedProducer {

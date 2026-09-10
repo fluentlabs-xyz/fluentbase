@@ -40,11 +40,19 @@
 //! WITHOUT requiring an L1 checkpoint (it is the trustless default).
 //!
 //! The committee read is sound at the landing because committees are
-//! ahead-committed at epoch-(E-1)-start and the landing (`tip − K`, K=3) shares
-//! the tip's epoch (interval ≥ 32 ≫ K) — so `committee[E_tip]` is committed at
-//! the landing state. So a malicious far-ahead upstream cannot steer the EL onto
-//! an unagreed branch: a forged cert fails BLS against the genuine committee read
-//! at the synced state.
+//! AHEAD-COMMITTED: the pre-execution stage drains `commitEpochCommittee()` on
+//! every block while the target is within
+//! [`MAX_COMMITTEE_LOOKAHEAD_EPOCHS`](fluentbase_types::staking_protocol::MAX_COMMITTEE_LOOKAHEAD_EPOCHS)
+//! `= 2` of the current epoch, so the state at ANY block of epoch `e` already
+//! commits `committee[e + 2]`. The landing is `tip − K` (K=3), which is either the
+//! tip's own epoch or — when the jump fires at a tip that is an epoch-first block,
+//! which is exactly when the K-block window straddles a boundary — the PREVIOUS
+//! one; a landing one epoch behind the tip still holds `committee[E_tip]`, with a
+//! whole epoch of margin left. (Observed: the testbed's re-jump reads
+//! `committee[4]` at a landing in epoch 3 and `committee[5]` at a landing in
+//! epoch 4 — §15.a `the_rejump_runs_the_production_jump_and_authenticates_at_the_landing`.)
+//! So a malicious far-ahead upstream cannot steer the EL onto an unagreed branch:
+//! a forged cert fails BLS against the genuine committee read at the synced state.
 
 use crate::{
     application::BeaconEngineLike, cert_follow::UpstreamFinalized, cert_inlet::CommitteeSource,
@@ -208,7 +216,7 @@ const EL_SYNC_NO_PEERS_GRACE: Duration = Duration::from_secs(90);
 /// deliberately NON-fatal ([`JumpOutcome::StalledWithPeers`]): the divergence root
 /// cause is unknown and deterministic, so each re-jump re-wedges — the node stays
 /// OBSERVABLE (ERROR log + counter per attempt) and DEFERRED rather than silent.
-const EL_SYNC_STALL_ESCAPE: Duration = Duration::from_secs(300);
+pub(crate) const EL_SYNC_STALL_ESCAPE: Duration = Duration::from_secs(300);
 
 /// Which net tripped the EL-sync watchdog.
 #[derive(Debug, PartialEq, Eq)]
@@ -637,10 +645,14 @@ pub(crate) fn verify_jump_structural(latest: &UpstreamFinalized) -> eyre::Result
 /// state (`landing_hash`), and FAIL CLOSED on mismatch.
 ///
 /// This runs AFTER `sync_to` — once reth holds the landing block's state, the
-/// committee read is local and complete (committees are ahead-committed at
-/// epoch-(E-1)-start, and the landing `tip − K` shares the tip's epoch since
-/// interval ≥ 32 ≫ K=3, so `committee[E_tip]` is committed at the landing
-/// state). A pre-`sync_to` read at the stale resolved anchor was the
+/// committee read is local and complete. It is the AHEAD-COMMIT horizon that makes
+/// it so, not a same-epoch argument: the state at any block of epoch `e` commits
+/// every `committee[e']` with `e' <= e + MAX_COMMITTEE_LOOKAHEAD_EPOCHS` (`= 2`,
+/// `fluentbase_types::staking_protocol`), and the landing `tip − K` (K=3) is at
+/// worst ONE epoch behind the tip — it falls in the previous epoch precisely when
+/// the jump fires at an epoch-first-block tip, which is a case the testbed
+/// actually produces. So `committee[E_tip]` is committed at the landing state with
+/// an epoch of margin. A pre-`sync_to` read at the stale resolved anchor was the
 /// chicken-and-egg trap: `committee[far_epoch]` is NOT committed there, so the
 /// gate was structurally unreachable in the deep-catch-up case it exists to
 /// protect. Reading it here closes that hole WITHOUT requiring an L1 checkpoint —
