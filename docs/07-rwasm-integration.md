@@ -34,6 +34,12 @@ Fluentbase compilation config defines:
 
 System runtimes and user contracts intentionally compile with different constraints.
 
+Syscall fuel procedures (`crates/types/src/block_fuel.rs`) address the metered length parameter by
+its position among the import's parameters. rWasm 0.4.x read that position as a raw 32-bit stack
+depth; the fuel-alignment change that follows 0.5.0 counts it from the last parameter (`1` is the
+last one) and rejects out-of-range positions at compile time. Every metered Fluentbase syscall takes
+only `i32` parameters, so both rules resolve to the same slot and the table is valid under either.
+
 ---
 
 ## Execution contract
@@ -45,6 +51,10 @@ Fluentbase runtime executor owns:
 - `execute/resume/memory_read` bridge used by REVM interruption handler.
 
 This is the concrete runtime-host handshake point used in every interruption cycle.
+
+System runtimes are instantiated on Wasmtime through `WasmtimeExecutor::try_new`, so a hint that
+fails to link or instantiate is reported as an `IllegalOpcode` admission error instead of panicking
+the node.
 
 Structured system-runtime outcomes are decoded completely before the host applies their effects.
 Collection counts must fit the remaining encoded body before reservation or iteration; byte payloads
@@ -81,7 +91,8 @@ A dependency bump can silently change any of these.
 4. verify gas/fuel settlement remains deterministic,
 5. re-audit the invariant-violation halt paths on the rWASM↔REVM resume boundary
    (`crates/revm/src/executor.rs`: `execute_rwasm_resume`, `process_exec_result`,
-   `process_runtime_execution_outcome`; `crates/runtime/src/executor.rs`: `resume`,
+   `process_execution_result`, `process_runtime_execution_outcome`;
+   `crates/runtime/src/executor.rs`: `resume`,
    `memory_read`) — an upgrade that changes trap/interruption behavior may make these
    deterministic `UnknownError` halts reachable, and they must stay typed deterministic halts or
    block-execution errors, not panics. The default release profile unwinds while the reproducible

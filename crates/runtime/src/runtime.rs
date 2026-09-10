@@ -17,7 +17,7 @@ pub(crate) use contract_runtime::test_contract_module_with_memory;
 pub use contract_runtime::ContractRuntime;
 
 mod system_runtime;
-pub use system_runtime::SystemRuntime;
+pub use system_runtime::{validate_system_runtime, SystemRuntime};
 
 /// Represents the active execution mode.
 ///

@@ -13,7 +13,9 @@ use crate::{
     ExecutionResult, NextAction,
 };
 use fluentbase_evm::{types::instruction_result_from_exit_code, EthereumMetadata};
-use fluentbase_runtime::{default_runtime_executor, RuntimeExecutor};
+use fluentbase_runtime::{
+    default_runtime_executor, runtime::validate_system_runtime, RuntimeExecutor,
+};
 use fluentbase_sdk::{
     byteorder::{ByteOrder, LittleEndian, ReadBytesExt},
     bytes::Buf,
@@ -324,14 +326,20 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             }
 
             let gas_params = ctx.cfg().gas_params().clone();
-            let result = sstore_gas(&mut frame.interpreter.gas, &gas_params, |skip_cold| {
-                ctx.journal_mut().sstore_skip_cold_load(
-                    current_target_address,
-                    slot,
-                    new_value,
-                    skip_cold,
-                )
-            });
+            let eip8037_enabled = ctx.cfg().is_amsterdam_eip8037_enabled();
+            let result = sstore_gas(
+                &mut frame.interpreter.gas,
+                &gas_params,
+                eip8037_enabled,
+                |skip_cold| {
+                    ctx.journal_mut().sstore_skip_cold_load(
+                        current_target_address,
+                        slot,
+                        new_value,
+                        skip_cold,
+                    )
+                },
+            );
             finish_inspection!();
             match result {
                 Ok(()) => {}
@@ -734,6 +742,11 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                     .gas_params()
                     .selfdestruct_cost(should_charge_top_up, result.is_cold)
             );
+            // EIP-8037: state gas for the account the top-up creates, as the EVM SELFDESTRUCT
+            // charges it.
+            if ctx.cfg().is_amsterdam_eip8037_enabled() && should_charge_top_up {
+                charge_state_gas!(ctx.cfg().gas_params().new_account_state_gas());
+            }
             // Return success (no output payload).
             return_result!(Ok);
         }
@@ -1157,14 +1170,20 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             );
 
             let gas_params = ctx.cfg().gas_params().clone();
-            let result = sstore_gas(&mut frame.interpreter.gas, &gas_params, |skip_cold| {
-                ctx.journal_mut().sstore_skip_cold_load(
-                    account_owner_address,
-                    slot,
-                    new_value,
-                    skip_cold,
-                )
-            });
+            let eip8037_enabled = ctx.cfg().is_amsterdam_eip8037_enabled();
+            let result = sstore_gas(
+                &mut frame.interpreter.gas,
+                &gas_params,
+                eip8037_enabled,
+                |skip_cold| {
+                    ctx.journal_mut().sstore_skip_cold_load(
+                        account_owner_address,
+                        slot,
+                        new_value,
+                        skip_cold,
+                    )
+                },
+            );
             match result {
                 Ok(()) => {}
                 Err(SstoreGasError::OutOfFuel)
@@ -1262,6 +1281,15 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let Ok(rwasm_bytecode) = RwasmBytecode::new(rwasm_binary.clone()) else {
                 return_halt!(MalformedBuiltinParams);
             };
+            // Admission must be identical on both node flavours and complete before state writes.
+            // Validate the hint actually executed by system runtimes, including when this syscall
+            // is invoked directly by a replacement runtime-upgrade contract.
+            if is_execute_using_system_runtime(&target_address)
+                && validate_system_runtime(&rwasm_bytecode.module.hint_section, target_address)
+                    .is_err()
+            {
+                return_halt!(MalformedBuiltinParams);
+            }
             let bytecode = Bytecode::Rwasm(rwasm_bytecode.into());
             // Make sure an account is loaded
             _ = ctx.journal_mut().load_account_with_code(target_address)?;

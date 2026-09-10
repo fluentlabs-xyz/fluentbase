@@ -122,7 +122,7 @@ Primary attack surfaces:
   release workflows.
 - Node execution and integration code under `crates/node` and `bins/fluent`.
 - CI, release, Docker, benchmark, and artifact workflows under `.github/workflows`.
-- EVM state tests, fixtures, examples, and e2e harnesses under `evm-e2e`, `e2e`, and `examples`.
+- EVM state tests, fixtures, examples, and e2e harnesses under `e2e` and `examples`.
 
 Untrusted inputs include transaction calldata, deployed bytecode, rWasm modules, EVM state tests,
 guest memory offsets and lengths, syscall parameters, JSON fixtures, CLI arguments, environment

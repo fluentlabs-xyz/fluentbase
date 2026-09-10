@@ -219,6 +219,19 @@ impl EvmTestingContext {
         account.info.code.as_ref()
     }
 
+    pub fn warmup_bytecode(&mut self, address: Address) {
+        let bytecode = self.get_code(address).unwrap();
+        let rwasm_bytecode = match bytecode {
+            Bytecode::Rwasm(rwasm_bytecode) => rwasm_bytecode.clone(),
+            _ => unreachable!(),
+        };
+        default_runtime_executor().warmup(
+            rwasm_bytecode.module.clone(),
+            bytecode.hash_slow(),
+            address,
+        );
+    }
+
     pub fn add_balance(&mut self, address: Address, value: U256) {
         let account = self.db.load_account(address).unwrap();
         account.info.balance += value;

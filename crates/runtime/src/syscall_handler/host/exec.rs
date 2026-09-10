@@ -89,10 +89,6 @@ pub fn syscall_exec_continue(
 ) -> (u64, i64, i32) {
     // Continuation is gated until the root/STF resume ABI is fully defined.
     // Fail deterministically instead of panicking in enabled runtimes.
-    //
-    // Enabling this would execute by bare code hash, which the executor rejects: it keeps no
-    // module cache. The continuation must first resolve the bytecode for `code_hash` and pass
-    // `BytecodeOrHash::Bytecode`.
     (
         context.params.fuel_limit,
         0,

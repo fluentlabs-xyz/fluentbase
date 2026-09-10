@@ -67,18 +67,20 @@ jobs:
             features: std
             kind: workspace
             cache-key: root-e2e-std
+            # Doctests are not sharded across the matrix - one entry owns them.
+            doctests: true
 
           # ---------------------------
           # evm-e2e suite (good_coverage_tests)
           # ---------------------------
           - name: evm-e2e / std
-            manifest: ./evm-e2e/Cargo.toml
+            manifest: ./e2e/evm/Cargo.toml
             features: std
             kind: evm-e2e
             cache-key: evm-e2e-std
 
           - name: evm-e2e / std,wasmtime
-            manifest: ./evm-e2e/Cargo.toml
+            manifest: ./e2e/evm/Cargo.toml
             features: std,wasmtime
             kind: evm-e2e
             cache-key: evm-e2e-std-wasmtime
@@ -87,13 +89,13 @@ jobs:
           # evm-e2e suite (fixture)
           # ---------------------------
           - name: fixture / std
-            manifest: ./evm-e2e/Cargo.toml
+            manifest: ./e2e/evm/Cargo.toml
             features: std
             kind: fixture
             cache-key: fixture-std
 
           - name: fixture / std,wasmtime
-            manifest: ./evm-e2e/Cargo.toml
+            manifest: ./e2e/evm/Cargo.toml
             features: std,wasmtime
             kind: fixture
             cache-key: fixture-std-wasmtime
@@ -138,7 +140,7 @@ jobs:
 
       - name: Prefetch deps (evm-e2e)
         if: matrix.kind == 'evm-e2e'
-        working-directory: evm-e2e
+        working-directory: e2e/evm
         run: cargo fetch
 
       - name: Install nextest
@@ -146,7 +148,7 @@ jobs:
 
       - name: Sync ethereum tests (evm-e2e)
         if: matrix.kind == 'evm-e2e'
-        working-directory: evm-e2e
+        working-directory: e2e/evm
         run: make sync_tests
 
       - name: Run tests (workspace manifests)
@@ -160,6 +162,21 @@ jobs:
             --no-default-features \
             --features "${{ matrix.features }}" \
             --no-fail-fast \
+            --locked
+
+      # nextest does not run doctests, so a `compile_fail` doctest - the codec uses one to pin
+      # that a fixed-bytes type wider than bytes32 cannot be instantiated for the Solidity ABI -
+      # is not covered by the step above. Kept as its own step so a failure reads as "doctests".
+      - name: Run doctests (codec)
+        if: matrix.doctests
+        run: |
+          set -euxo pipefail
+          cargo test --doc \
+            --manifest-path=./Cargo.toml \
+            --package fluentbase-codec \
+            --release \
+            --no-default-features \
+            --features "${{ matrix.features }}" \
             --locked
 
       - name: Run ethereum tests (evm-e2e)

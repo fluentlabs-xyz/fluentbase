@@ -28,6 +28,8 @@ use revm::{bytecode::Bytecode, state::AccountInfo};
 #[cfg(test)]
 mod blockhash;
 #[cfg(test)]
+mod bootstrap_authority;
+#[cfg(test)]
 mod bridge;
 #[cfg(test)]
 mod builtins;
@@ -41,6 +43,8 @@ mod eip2935;
 mod eip7951;
 #[cfg(test)]
 mod erc2612;
+#[cfg(test)]
+mod events;
 #[cfg(test)]
 mod evm;
 #[cfg(test)]
@@ -67,8 +71,6 @@ mod eip7702;
 mod exec_input;
 #[cfg(test)]
 mod fee_manager;
-#[cfg(test)]
-mod oauth2;
 #[cfg(test)]
 mod oom;
 #[cfg(test)]

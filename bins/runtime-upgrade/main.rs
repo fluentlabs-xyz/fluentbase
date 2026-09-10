@@ -9,6 +9,7 @@ use ethers::{
     signers::{LocalWallet, Signer},
     types::{transaction::eip2718::TypedTransaction, NameOrAddress, TransactionRequest, U64},
 };
+use fluentbase_runtime::runtime::validate_system_runtime;
 use fluentbase_sdk::{
     bytes::BytesMut, codec::SolidityABI, crypto::crypto_keccak256, Address, Bytes, B256,
     PRECOMPILE_BIG_MODEXP, PRECOMPILE_BLAKE2F, PRECOMPILE_BLS12_381_G1_ADD,
@@ -16,10 +17,10 @@ use fluentbase_sdk::{
     PRECOMPILE_BLS12_381_MAP_G1, PRECOMPILE_BLS12_381_MAP_G2, PRECOMPILE_BLS12_381_PAIRING,
     PRECOMPILE_BN256_ADD, PRECOMPILE_BN256_MUL, PRECOMPILE_BN256_PAIR, PRECOMPILE_EIP2935,
     PRECOMPILE_EIP7951, PRECOMPILE_EVM_RUNTIME, PRECOMPILE_FEE_MANAGER, PRECOMPILE_IDENTITY,
-    PRECOMPILE_KZG_POINT_EVALUATION, PRECOMPILE_NITRO_VERIFIER, PRECOMPILE_OAUTH2_VERIFIER,
-    PRECOMPILE_RIPEMD160, PRECOMPILE_RUNTIME_UPGRADE, PRECOMPILE_SECP256K1_RECOVER,
-    PRECOMPILE_SHA256, PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, PRECOMPILE_WASM_RUNTIME,
-    PRECOMPILE_WEBAUTHN_VERIFIER, U256, UPDATE_GENESIS_PREFIX, WASM_MAX_CODE_SIZE,
+    PRECOMPILE_KZG_POINT_EVALUATION, PRECOMPILE_NITRO_VERIFIER, PRECOMPILE_RIPEMD160,
+    PRECOMPILE_RUNTIME_UPGRADE, PRECOMPILE_SECP256K1_RECOVER, PRECOMPILE_SHA256,
+    PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, PRECOMPILE_WASM_RUNTIME, PRECOMPILE_WEBAUTHN_VERIFIER,
+    U256, UPDATE_GENESIS_PREFIX, WASM_MAX_CODE_SIZE,
 };
 use reth_chainspec::{
     make_genesis_header, ChainHardforks, EthereumHardfork, ForkCondition, Hardfork,
@@ -263,7 +264,6 @@ fn contracts_to_upgrade() -> HashMap<&'static str, Address> {
             PRECOMPILE_KZG_POINT_EVALUATION,
         ),
         ("PRECOMPILE_NITRO_VERIFIER", PRECOMPILE_NITRO_VERIFIER),
-        ("PRECOMPILE_OAUTH2_VERIFIER", PRECOMPILE_OAUTH2_VERIFIER),
         ("PRECOMPILE_RIPEMD160", PRECOMPILE_RIPEMD160),
         ("PRECOMPILE_SECP256K1_RECOVER", PRECOMPILE_SECP256K1_RECOVER),
         ("PRECOMPILE_SHA256", PRECOMPILE_SHA256),
@@ -561,6 +561,11 @@ fn preflight_selected_modules(
         }
         if module.hint_section.len() >= WASM_MAX_CODE_SIZE {
             bail!("selected contract {} exceeds 1MiB", contract);
+        }
+        if fluentbase_sdk::is_execute_using_system_runtime(contract) {
+            validate_system_runtime(&module.hint_section, *contract).with_context(|| {
+                format!("selected contract {contract} fails system-runtime validation")
+            })?;
         }
     }
     Ok(())
@@ -1072,6 +1077,35 @@ mod tests {
             .expect_err("empty hint section must fail preflight");
 
         assert!(err.to_string().contains("empty Wasm hint section"));
+    }
+
+    #[test]
+    fn preflight_rejects_system_runtime_with_trapping_start() {
+        let wasm = wat::parse_str(
+            r#"(module (func $start unreachable) (start $start)
+            (func (export "main") (param i32 i32) (result i32) i32.const 0))"#,
+        )
+        .unwrap();
+        let module = rwasm::RwasmModuleBuilder::default()
+            .with_hint_section(&wasm)
+            .build();
+        let modules = HashMap::from([(PRECOMPILE_EVM_RUNTIME, module)]);
+        let err = preflight_selected_modules(&modules, &[PRECOMPILE_EVM_RUNTIME]).unwrap_err();
+        assert!(err.to_string().contains("fails system-runtime validation"));
+    }
+
+    #[test]
+    fn preflight_accepts_valid_system_runtime() {
+        let wasm = wat::parse_str(
+            r#"(module (memory (export "memory") 1)
+            (func (export "main") (param i32 i32) (result i32) i32.const 0))"#,
+        )
+        .unwrap();
+        let module = fluentbase_sdk::compile_rwasm_maybe_system(&PRECOMPILE_EVM_RUNTIME, &wasm)
+            .unwrap()
+            .rwasm_module;
+        let modules = HashMap::from([(PRECOMPILE_EVM_RUNTIME, module)]);
+        preflight_selected_modules(&modules, &[PRECOMPILE_EVM_RUNTIME]).unwrap();
     }
 
     #[test]

@@ -2,17 +2,19 @@
 members = [
     "bins/*",
     "crates/*",
-    "e2e",
+    "e2e/runtime",
 ]
 exclude = [
     "crates/svm-common",
     "crates/svm-shared",
     "crates/svm",
     "examples/svm",
-    # exclude revm e2e testing suite to let it be a separate crate
-    "evm-e2e",
+    # standalone suites under e2e/: own lockfile and target dir, driven only by their
+    # own `make` targets so that `cargo ... --workspace` never compiles them
+    # ethereum state tests and fixtures
+    "e2e/evm",
     # conformance corpus: thousands of generated cases, must not be compiled by CI
-    "codec-conformance",
+    "e2e/codec",
 ]
 resolver = "2"
 
@@ -109,7 +111,7 @@ fluentbase-types = { path = "./crates/types", default-features = false, version 
 #solana_rbpf = { path = "../rbpf", default-features = false }
 
 # rwasm
-rwasm = { version = "0.4.7", default-features = false }
+rwasm = { version = "0.5.0", default-features = false }
 
 # alloy
 alloy-primitives = { version = "1.5.6", default-features = false, features = ["map-foldhash", "sha3-keccak", "rlp"] }
@@ -146,6 +148,7 @@ num-derive = { version = "0.4" }
 num-traits = { version = "0.2", features = ["i128"], default-features = false }
 
 hashbrown = { version = "0.16.0", default-features = false, features = ["default-hasher", "inline-more"] }
+schnellru = { version = "0.2" }
 serde = { version = "1.0.203", default-features = false, features = ["derive", "rc"] }
 serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
 serde_bytes = { version = "0.11.15", default-features = false }

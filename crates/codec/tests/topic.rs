@@ -203,6 +203,40 @@ fn indexed_fixed_array_is_hashed_rather_than_inlined() {
     );
 }
 
+/// `[u8; N]` is `uint8[N]`, so an indexed one is hashed over one word per byte. It is not
+/// `bytesN`: that is a value type whose topic is the right-padded word itself, and the two never
+/// coincide. The router advertises `uint8[N]` for a `[u8; N]` field for exactly this reason.
+#[test]
+fn indexed_byte_arrays_are_hashed_as_uint8_arrays_not_as_bytes_n() {
+    let bytes = [1u8, 2, 3, 4];
+    assert!(matches!(
+        encode_indexed_topic(&bytes).unwrap(),
+        IndexedTopic::Preimage(_)
+    ));
+    assert_eq!(preimage(&bytes).len(), 4 * 32);
+    assert_eq!(
+        topic(&bytes),
+        expected::<sol_data::FixedArray<sol_data::Uint<8>, 4>>(&bytes)
+    );
+
+    let word = FixedBytes::<4>::new(bytes);
+    assert!(matches!(
+        encode_indexed_topic(&word).unwrap(),
+        IndexedTopic::Word(_)
+    ));
+    assert_eq!(topic(&word), expected::<sol_data::FixedBytes<4>>(&word));
+    assert_ne!(topic(&bytes), topic(&word));
+
+    let hash: [u8; 32] = core::array::from_fn(|i| i as u8);
+    assert_eq!(
+        topic(&hash),
+        expected::<sol_data::FixedArray<sol_data::Uint<8>, 32>>(&hash)
+    );
+    let word = B256::new(hash);
+    assert_eq!(topic(&word), expected::<sol_data::FixedBytes<32>>(&word));
+    assert_ne!(topic(&hash), topic(&word));
+}
+
 #[test]
 fn array_members_that_are_dynamic_are_padded_in_place() {
     let values = vec!["a".to_string(), "bc".to_string()];

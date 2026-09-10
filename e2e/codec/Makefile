@@ -31,7 +31,7 @@ fuzz: vectors
 
 .PHONY: mutants
 mutants:
-	cd .. && cargo mutants -p fluentbase-codec --test-tool=cargo
+	cd ../.. && cargo mutants -p fluentbase-codec --test-tool=cargo
 
 .PHONY: all
 all: test test-derive fuzz

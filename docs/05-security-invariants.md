@@ -80,6 +80,9 @@ Why it matters: envelope mis-handling can commit invalid side effects.
 
 - runtime-upgrade path must remain tightly scoped,
 - authority defaults/owner transitions must be explicit and reviewed,
+- the runtime-upgrade owner and the fee-manager owner must be distinct keys on a live network;
+  the compiled-in bootstrap defaults are launch-only (see `06-runtime-upgrade.md`, "Bootstrap
+  authorities"),
 - governance key handling is high-risk surface.
 
 Why it matters: upgrade authority compromise is full-system compromise.
@@ -90,7 +93,15 @@ Why it matters: upgrade authority compromise is full-system compromise.
 
 Non-system user contracts must not be able to surface internal fatal runtime-only classes as normal outputs.
 
-Why it matters: prevents exposing internal failure classes as user-controlled behavior.
+`UnexpectedFatalExecutionFailure` never crosses the rWASM↔REVM boundary. Whether a user contract
+emits it or a system runtime traps into it, `process_execution_result` turns it into a
+deterministic `UnknownError` halt that burns the frame's gas; a nested caller observes a failed
+call and continues. `InstructionResult::FatalExternalError` is reserved for context and database
+errors, which propagate as typed errors. REVM terminates the process on it, so no guest exit code
+may map to it.
+
+Why it matters: prevents exposing internal failure classes as user-controlled behavior, and keeps a
+sandboxed guest trap from becoming a node crash.
 
 ---
 
@@ -115,11 +126,10 @@ with `panic = "abort"`. Consensus behavior must not depend on which profile buil
   boundaries provide that safety.
 - Reserve panics for genuine programmer invariants that cannot be reached from transaction, block,
   runtime, or other externally influenced input.
-- Process-wide caches must survive a panic on another thread, and execution outcomes must not
-  depend on what a cache happens to hold. The runtime keeps no process-wide module cache: REVM
-  supplies the parsed module for every execution, and a hash-only execution is rejected with
-  `UnexpectedFatalExecutionFailure` on every node rather than resolved against node-local
-  residency.
+- Process-wide caches must survive a panic on another thread. The compiled-module cache recovers
+  from a poisoned lock by discarding its contents, and a hash-only module lookup that misses
+  returns `UnexpectedFatalExecutionFailure` instead of panicking, so one failed execution cannot
+  wedge every later one on a node that keeps running.
 
 Why it matters: the same deterministic input must not become a node-crash or chain-liveness vector,
 and panic-profile differences must not change consensus outcomes.

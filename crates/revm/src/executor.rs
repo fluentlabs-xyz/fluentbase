@@ -489,11 +489,16 @@ pub(crate) fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
         halted_frame,
         ..
     } = interruption_outcome;
+    let SystemInterruptionInputs {
+        call_id,
+        fuel16_ptr,
+        preloaded_slot_costs,
+        ..
+    } = inputs;
 
     // `result` is expected to exist if we got here; interruption plumbing guarantees it.
     // If the handler failed to fill it, halt the transaction deterministically instead of
     // panicking: with `panic = "abort"` a panic here would kill the node.
-    let call_id = inputs.call_id;
     let Some(result) = result else {
         warn!(
             call_id,
@@ -505,8 +510,6 @@ pub(crate) fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
             frame.interpreter.gas,
         ));
     };
-    let preloaded_slot_costs = inputs.preloaded_slot_costs.clone();
-
     // Convert REVM gas accounts into runtime fuel units.
     let fuel_consumed = result.gas.total_gas_spent().saturating_mul(FUEL_DENOM_RATE);
     let fuel_refunded = result
@@ -528,7 +531,7 @@ pub(crate) fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
 
     let effective_bytecode_address = frame.interpreter.input.effective_bytecode_address();
 
-    let outcome: Bytes = if is_execute_using_system_runtime(&effective_bytecode_address) {
+    let outcome: Vec<u8> = if is_execute_using_system_runtime(&effective_bytecode_address) {
         let outcome = RuntimeInterruptionOutcomeV1 {
             halted_frame,
             output: result.output,
@@ -536,23 +539,22 @@ pub(crate) fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
             fuel_refunded,
             exit_code,
         };
-        bincode::encode_to_vec(&outcome, bincode::config::legacy())
-            .unwrap()
-            .into()
+        bincode::encode_to_vec(&outcome, bincode::config::legacy()).unwrap()
     } else {
-        result.output
+        // `Bytes` hands its buffer back without copying when nothing else references it.
+        result.output.into()
     };
 
     // Resume inside the runtime.
     let mut runtime_context = RuntimeContext::default();
     let Ok((fuel_consumed, fuel_refunded, exit_code)) = syscall_resume_impl(
         &mut runtime_context,
-        inputs.call_id,
-        outcome.as_ref(),
+        call_id,
+        outcome,
         exit_code.into_i32(),
         fuel_consumed,
         fuel_refunded,
-        inputs.fuel16_ptr,
+        fuel16_ptr,
     ) else {
         // Note: this should never happen, because we always call resume here at 0 depth level, but
         //  it's the only error that can be triggered inside. Halt deterministically instead of
@@ -812,8 +814,9 @@ pub(crate) fn process_runtime_execution_outcome<CTX: ContextTr>(
 /// Handle exit codes that are produced by the system runtime boundary.
 ///
 /// For system runtime v2, the return data is a structured envelope that must be decoded and
-/// committed into the journal. For non-system contracts we also ensure fatal exit codes are
-/// not user-controllable.
+/// committed into the journal. For non-system contracts we also ensure system exit codes are
+/// not user-controllable. For every frame, a fatal exit code becomes a deterministic halt
+/// before it reaches REVM.
 fn process_execution_result<CTX: ContextTr, INSP: Inspector<CTX>>(
     frame: &mut RwasmFrame,
     ctx: &mut CTX,
@@ -837,19 +840,24 @@ fn process_execution_result<CTX: ContextTr, INSP: Inspector<CTX>>(
             ownable_account,
             preloaded_slot_costs.as_deref(),
         )?;
-    } else {
-        match exit_code {
-            // Do not allow fatal exit codes to be surfaced by non-system runtime contracts.
-            //
-            // Note: we intentionally do not expose an API for user code to produce these; callers
-            // will be punished for attempting it.
-            ExitCode::UnexpectedFatalExecutionFailure | ExitCode::MissingStorageSlot => {
-                exit_code = ExitCode::UnknownError;
-            }
+    } else if exit_code == ExitCode::MissingStorageSlot {
+        // Do not allow system exit codes to be surfaced by non-system runtime contracts.
+        //
+        // Note: we intentionally do not expose an API for user code to produce these; callers
+        // will be punished for attempting it.
+        exit_code = ExitCode::UnknownError;
+    }
 
-            // Default behavior: nothing special to do.
-            _ => {}
-        }
+    // `UnexpectedFatalExecutionFailure` reports a guest trap (`unreachable`, a memory or stack
+    // violation, ...) or a host fault whose output has already been discarded. The runtime has
+    // evicted the trapped instance and `process_runtime_execution_outcome` skipped the envelope,
+    // so the only thing left is to halt this frame deterministically and let the journal
+    // checkpoint revert its effects. The code must never be forwarded as
+    // `InstructionResult::FatalExternalError`: REVM reserves that result for context and
+    // database errors and terminates the process on it, which would turn a sandboxed guest trap
+    // into a node crash. This holds for system runtimes as much as for user contracts.
+    if exit_code.is_fatal_exit_code() {
+        exit_code = ExitCode::UnknownError;
     }
 
     Ok(process_halt(frame, ctx, inspector, exit_code, return_data))

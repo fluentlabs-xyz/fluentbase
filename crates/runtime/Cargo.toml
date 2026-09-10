@@ -13,7 +13,9 @@ categories.workspace = true
 [dependencies]
 # fluentbase
 fluentbase-types = { workspace = true }
-rwasm = { workspace = true }
+# Both node flavours validate system runtimes with both backends. The local `wasmtime`
+# feature still selects execution; it no longer selects the upgrade admission rules.
+rwasm = { workspace = true, features = ["wasmtime"] }
 
 # misc
 k256 = { version = "0.13.1", default-features = false, features = ["ecdsa"] }
@@ -26,6 +28,7 @@ sha2 = { workspace = true, default-features = false }
 num = "0.4.3"
 sp1-curves = { workspace = true }
 bytemuck = { workspace = true }
+schnellru = { workspace = true }
 metrics = { workspace = true, optional = true }
 amcl = { package = "snowbridge-amcl", version = "1.0.2", default-features = false, features = [
     "bls381",

@@ -201,19 +201,49 @@ impl<const N: usize, B: ByteOrder, const ALIGN: usize, const IS_STATIC: bool>
     }
 }
 
+/// Solidity-mode `bytesN`: one right-padded word.
+///
+/// The Solidity ABI has no fixed-bytes type wider than `bytes32`, so `N > 32` is rejected when
+/// this impl is instantiated: `HEADER_SIZE` asserts the width and every method reads it, which
+/// turns a wide `FixedBytes` bound for the Solidity ABI into a compile error instead of an inline
+/// blob no Solidity decoder can read. A wide value belongs in [`Bytes`] or, as `uint8[N]`, in a
+/// `[u8; N]`. [`CompactABI`](crate::CompactABI) is unaffected.
+///
+/// ```
+/// use fluentbase_codec::{bytes::BytesMut, SolidityABI};
+///
+/// let word = alloy_primitives::FixedBytes::<32>::repeat_byte(0xab);
+/// let mut buf = BytesMut::new();
+/// SolidityABI::encode(&word, &mut buf, 0).unwrap();
+/// assert_eq!(buf.len(), 32);
+/// ```
+///
+/// ```compile_fail
+/// use fluentbase_codec::{bytes::BytesMut, SolidityABI};
+///
+/// let wide = alloy_primitives::FixedBytes::<33>::repeat_byte(0xab);
+/// let mut buf = BytesMut::new();
+/// SolidityABI::encode(&wide, &mut buf, 0).unwrap();
+/// ```
 impl<const N: usize, B: ByteOrder, const ALIGN: usize, const IS_STATIC: bool>
     Encoder<B, ALIGN, true, IS_STATIC> for FixedBytes<N>
 {
     // One word in standard mode; the bare `N` bytes when ALIGN is 1, because packed encoding
     // concatenates short types without padding.
-    const HEADER_SIZE: usize = align_up::<ALIGN>(N);
+    const HEADER_SIZE: usize = {
+        assert!(
+            N <= 32,
+            "the Solidity ABI has no fixed-bytes type wider than bytes32; use `Bytes` or `[u8; N]`"
+        );
+        align_up::<ALIGN>(N)
+    };
     const IS_DYNAMIC: bool = false;
 
     /// Encode the fixed bytes into the buffer for Solidity mode.
     /// Writes the fixed bytes directly to the buffer at the given offset, zero-padding to the
     /// aligned width.
     fn encode(&self, buf: &mut BytesMut, offset: usize) -> Result<(), CodecError> {
-        let width = align_up::<ALIGN>(N);
+        let width = <Self as Encoder<B, ALIGN, true, IS_STATIC>>::HEADER_SIZE;
         let slice = get_aligned_slice::<B, ALIGN>(buf, offset, width);
         slice[..N].copy_from_slice(self.as_ref());
         // Zero-pad the rest
@@ -225,10 +255,18 @@ impl<const N: usize, B: ByteOrder, const ALIGN: usize, const IS_STATIC: bool>
     /// Reads the fixed bytes directly from the buffer at the given offset, assuming the value
     /// occupies its aligned width.
     fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
-        let width = align_up::<ALIGN>(N);
-        if buf.remaining() < offset + width {
+        let width = <Self as Encoder<B, ALIGN, true, IS_STATIC>>::HEADER_SIZE;
+        // `offset` comes from the caller, so the end of the field is checked arithmetic, or a
+        // wrapped sum would produce a bound small enough to pass. An overflow is its own error:
+        // there is no honest "expected" buffer size to report for it.
+        let end = offset.checked_add(width).ok_or_else(|| {
+            CodecError::Decoding(DecodingError::BufferOverflow {
+                msg: "Overflow occurred when calculating the end offset of FixedBytes".to_string(),
+            })
+        })?;
+        if buf.remaining() < end {
             return Err(CodecError::Decoding(DecodingError::BufferTooSmall {
-                expected: offset + width,
+                expected: end,
                 found: buf.remaining(),
                 msg: "Buffer too small to decode FixedBytes".to_string(),
             }));
@@ -246,7 +284,10 @@ impl<const N: usize, B: ByteOrder, const ALIGN: usize, const IS_STATIC: bool>
     /// Partially decode the fixed bytes from the buffer for Solidity mode.
     /// Returns the data offset and size without reading the actual data.
     fn partial_decode(_buf: &impl Buf, offset: usize) -> Result<(usize, usize), CodecError> {
-        Ok((offset, align_up::<ALIGN>(N)))
+        Ok((
+            offset,
+            <Self as Encoder<B, ALIGN, true, IS_STATIC>>::HEADER_SIZE,
+        ))
     }
 }
 

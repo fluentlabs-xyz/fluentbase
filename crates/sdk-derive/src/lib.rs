@@ -647,6 +647,13 @@ pub fn constructor(attr: TokenStream, input: TokenStream) -> TokenStream {
 ///
 /// Transfer { from, to, value }.emit(&mut sdk);
 /// ```
+///
+/// # Struct-typed fields
+///
+/// A field whose type is a `#[derive(Codec)]` struct of the same crate is expanded into its
+/// components in the event signature, exactly like a struct parameter of a `#[router]` method:
+/// `Filled { who: Address, order: Order }` signs as `Filled(address,(uint256,bool))`. A struct
+/// the crate does not define has no canonical signature and is a compile error.
 #[proc_macro_derive(Event, attributes(indexed, anonymous))]
 #[proc_macro_error]
 pub fn derive_event(input: TokenStream) -> TokenStream {

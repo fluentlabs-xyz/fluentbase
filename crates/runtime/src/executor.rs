@@ -1,13 +1,15 @@
 use crate::{
-    metrics::{self, RuntimeModeLabel, RuntimeTimer},
+    metrics::{self, RuntimeModeLabel, RuntimeStateLabel, RuntimeTimer},
+    module_factory::ModuleFactory,
     runtime::{ContractRuntime, ExecutionMode, SystemRuntime},
     RuntimeContext,
 };
 use fluentbase_types::{
     byteorder::{ByteOrder, LittleEndian},
-    import_linker_v1_preview, BytecodeOrHash, ExitCode, HashMap, MAX_IN_FLIGHT_MEMORY_BYTES,
+    import_linker_v1_preview, Address, BytecodeOrHash, ExitCode, HashMap, B256,
+    MAX_IN_FLIGHT_MEMORY_BYTES,
 };
-use rwasm::{ExecutionEngine, ImportLinker, StrategyDefinition, TrapCode};
+use rwasm::{ExecutionEngine, ImportLinker, RwasmModule, StrategyDefinition, TrapCode};
 use std::{cell::RefCell, mem::take, sync::Arc};
 
 /// Finalized outcome of a single runtime invocation.
@@ -72,11 +74,6 @@ impl RuntimeResult {
 pub trait RuntimeExecutor {
     /// Executes the entry function of the module determined by the current execution state.
     ///
-    /// `bytecode_or_hash` must carry the module. The runtime keeps no process-wide module cache
-    /// to resolve a bare hash against, so [`BytecodeOrHash::Hash`] is rejected with
-    /// `UnexpectedFatalExecutionFailure` and the whole fuel limit consumed, identically on every
-    /// node.
-    ///
     /// Returns either a finalized result.
     fn execute(&mut self, bytecode_or_hash: BytecodeOrHash, ctx: RuntimeContext)
         -> ExecutionResult;
@@ -87,7 +84,7 @@ pub trait RuntimeExecutor {
     fn resume(
         &mut self,
         call_id: u32,
-        return_data: &[u8],
+        return_data: Vec<u8>,
         fuel16_ptr: u32,
         fuel_consumed: u64,
         fuel_refunded: i64,
@@ -96,6 +93,9 @@ pub trait RuntimeExecutor {
 
     /// Drop a runtime we don't need to resume anymore
     fn forget_runtime(&mut self, call_id: u32);
+
+    /// Warm up the bytecode
+    fn warmup(&mut self, bytecode: RwasmModule, hash: B256, address: Address);
 
     /// Resets the per-transaction call identifier counter and clears recoverable runtimes.
     ///
@@ -129,7 +129,7 @@ impl RuntimeExecutor for ThreadLocalExecutor {
     fn resume(
         &mut self,
         call_id: u32,
-        return_data: &[u8],
+        return_data: Vec<u8>,
         fuel16_ptr: u32,
         fuel_consumed: u64,
         fuel_refunded: i64,
@@ -150,6 +150,11 @@ impl RuntimeExecutor for ThreadLocalExecutor {
     fn forget_runtime(&mut self, call_id: u32) {
         LOCAL_RUNTIME_EXECUTOR
             .with_borrow_mut(|runtime_executor| runtime_executor.forget_runtime(call_id))
+    }
+
+    fn warmup(&mut self, bytecode: RwasmModule, hash: B256, address: Address) {
+        LOCAL_RUNTIME_EXECUTOR
+            .with_borrow_mut(|runtime_executor| runtime_executor.warmup(bytecode, hash, address))
     }
 
     fn reset_call_id_counter(&mut self) {
@@ -175,8 +180,13 @@ pub fn default_runtime_executor() -> impl RuntimeExecutor {
 }
 
 pub struct RuntimeFactoryExecutor {
+    /// A module factory
+    pub module_factory: ModuleFactory,
     /// Suspended runtimes keyed by per-transaction call identifier.
-    pub recoverable_runtimes: HashMap<u32, ExecutionMode>,
+    ///
+    /// Boxed because every interruption cycle takes the runtime out of the map and puts it back
+    /// under a fresh identifier; moving a pointer keeps that from copying the whole store twice.
+    pub recoverable_runtimes: HashMap<u32, Box<ExecutionMode>>,
     /// An import linker
     pub import_linker: Arc<ImportLinker>,
     /// Monotonically increasing counter for assigning call identifiers.
@@ -191,6 +201,7 @@ pub struct RuntimeFactoryExecutor {
 impl RuntimeFactoryExecutor {
     pub fn new(import_linker: Arc<ImportLinker>) -> Self {
         Self {
+            module_factory: ModuleFactory::new(),
             recoverable_runtimes: HashMap::new(),
             import_linker,
             transaction_call_id_counter: 1,
@@ -216,7 +227,7 @@ impl RuntimeFactoryExecutor {
     pub fn try_remember_runtime(
         &mut self,
         runtime_result: RuntimeResult,
-        runtime: ExecutionMode,
+        runtime: Box<ExecutionMode>,
     ) -> ExecutionResult {
         let interruption = match runtime_result {
             RuntimeResult::Result(result) => {
@@ -341,41 +352,37 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
         ctx: RuntimeContext,
     ) -> ExecutionResult {
         let timer = RuntimeTimer::start();
-        let state = metrics::state_label(ctx.state);
+        let state = RuntimeStateLabel::from_state(ctx.state);
+        let system_runtime_params = match &bytecode_or_hash {
+            BytecodeOrHash::Bytecode { address, hash, .. } => {
+                fluentbase_types::is_execute_using_system_runtime(address)
+                    .then_some((*address, *hash))
+            }
+            BytecodeOrHash::Hash(_) => None,
+        };
+
         let fuel_limit_value = ctx.fuel_limit;
         let fuel_limit = Some(fuel_limit_value);
 
-        // The caller owns the module: REVM hands over the parsed rWASM bytecode of the account it
-        // executes. There is no process-wide module cache to resolve a bare hash against, and
-        // there must not be one, because what is resident would differ between nodes. A
-        // hash-only execution is therefore rejected as a host fault, identically everywhere.
-        let (module, system_runtime_params) = match bytecode_or_hash {
-            BytecodeOrHash::Bytecode {
-                bytecode,
-                hash,
-                address,
-            } => {
-                let system_runtime_params =
-                    fluentbase_types::is_execute_using_system_runtime(&address)
-                        .then_some((address, hash));
-                (bytecode, system_runtime_params)
-            }
-            BytecodeOrHash::Hash(_) => {
-                metrics::record_hash_only_execution_rejected();
-                let result = ExecutionResult {
-                    exit_code: ExitCode::UnexpectedFatalExecutionFailure.into_i32(),
-                    fuel_consumed: fuel_limit_value,
-                    fuel_refunded: 0,
-                    output: vec![],
-                    return_data: vec![],
-                };
-                metrics::record_execution(RuntimeModeLabel::Contract, state, &timer, &result);
-                return result;
-            }
+        // If we have a cached module, then use it, otherwise create a new one and cache.
+        //
+        // Only a hash-only lookup can miss: nothing warmed the module, or the LRU evicted it.
+        // That depends on this node's cache rather than on the input, so it must not become a
+        // contract revert that other nodes would not produce. Fail the frame as a host fault.
+        let Some(module) = self.module_factory.get_module_or_init(bytecode_or_hash) else {
+            let result = ExecutionResult {
+                exit_code: ExitCode::UnexpectedFatalExecutionFailure.into_i32(),
+                fuel_consumed: fuel_limit_value,
+                fuel_refunded: 0,
+                output: vec![],
+                return_data: vec![],
+            };
+            metrics::record_execution(RuntimeModeLabel::Contract, state, &timer, &result);
+            return result;
         };
 
         // If there is no cached store, then construct a new one (slow)
-        let mut exec_mode = if let Some((address, code_hash)) = system_runtime_params {
+        let mut exec_mode = Box::new(if let Some((address, code_hash)) = system_runtime_params {
             let consume_fuel = fluentbase_types::is_engine_metered_precompile(&address);
             let runtime = SystemRuntime::new(
                 module,
@@ -385,7 +392,25 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
                 ctx,
                 consume_fuel,
             );
-            ExecutionMode::System(runtime)
+            match runtime {
+                Ok(runtime) => ExecutionMode::System(runtime),
+                Err(trap_code) => {
+                    metrics::record_initialization_error(
+                        RuntimeModeLabel::System,
+                        state,
+                        trap_code,
+                    );
+                    let result = ExecutionResult {
+                        exit_code: ExitCode::MalformedBuiltinParams.into_i32(),
+                        fuel_consumed: fuel_limit_value,
+                        fuel_refunded: 0,
+                        output: vec![],
+                        return_data: vec![],
+                    };
+                    metrics::record_execution(RuntimeModeLabel::System, state, &timer, &result);
+                    return result;
+                }
+            }
         } else {
             let engine = ExecutionEngine::acquire_shared();
             // We always execute untrusted contracts with rWasm VM
@@ -412,7 +437,7 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
                 return result;
             }
             ExecutionMode::Contract(runtime.unwrap())
-        };
+        });
         let mode = runtime_mode_label(&exec_mode);
 
         // Bound the linear memory held simultaneously by every live frame of this transaction.
@@ -458,7 +483,7 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
     fn resume(
         &mut self,
         call_id: u32,
-        return_data: &[u8],
+        return_data: Vec<u8>,
         fuel16_ptr: u32,
         fuel_consumed: u64,
         fuel_refunded: i64,
@@ -480,9 +505,9 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
         metrics::set_recoverable_runtimes(self.recoverable_runtimes.len());
         let (mode, state) = runtime_labels(&runtime);
         let mut fuel_remaining = runtime.remaining_fuel();
-        let mut resume_inner = |runtime: &mut ExecutionMode| {
-            // Copy return data into return data
-            runtime.context_mut().execution_result.return_data = return_data.to_vec();
+        let mut resume_inner = |runtime: &mut ExecutionMode, return_data: Vec<u8>| {
+            // Hand the caller's buffer to the runtime as its return data
+            runtime.context_mut().execution_result.return_data = return_data;
             if fuel16_ptr > 0 {
                 let mut buffer = [0u8; 16];
                 LittleEndian::write_u64(&mut buffer[..8], fuel_consumed);
@@ -504,7 +529,7 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
             }
             result
         };
-        let mut result = resume_inner(&mut runtime);
+        let mut result = resume_inner(&mut runtime, return_data);
         let fuel_consumed = fuel_remaining
             .zip(runtime.remaining_fuel())
             .map(|(before, after)| {
@@ -529,6 +554,17 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
             metrics::record_forget_runtime(mode, state);
         }
         metrics::set_recoverable_runtimes(self.recoverable_runtimes.len());
+    }
+
+    fn warmup(&mut self, bytecode: RwasmModule, hash: B256, address: Address) {
+        // A bytecode-carrying lookup always yields a module; only hash-only lookups can miss.
+        let _ = self
+            .module_factory
+            .get_module_or_init(BytecodeOrHash::Bytecode {
+                bytecode,
+                hash,
+                address,
+            });
     }
 
     fn reset_call_id_counter(&mut self) {
@@ -562,10 +598,10 @@ fn runtime_mode_label(runtime: &ExecutionMode) -> RuntimeModeLabel {
     }
 }
 
-fn runtime_labels(runtime: &ExecutionMode) -> (RuntimeModeLabel, &'static str) {
+fn runtime_labels(runtime: &ExecutionMode) -> (RuntimeModeLabel, RuntimeStateLabel) {
     (
         runtime_mode_label(runtime),
-        metrics::state_label(runtime.context().state),
+        RuntimeStateLabel::from_state(runtime.context().state),
     )
 }
 
@@ -586,6 +622,32 @@ mod tests {
         CompilationConfig, ExecutionEngine, RwasmModule, RwasmModuleInner, StrategyDefinition,
         TrapCode, N_BYTES_PER_MEMORY_PAGE, N_DEFAULT_MAX_MEMORY_PAGES,
     };
+
+    #[test]
+    fn invalid_system_runtime_returns_error_without_panicking() {
+        let mut executor = RuntimeFactoryExecutor::new(import_linker_v1_preview());
+        let bytecode = rwasm::RwasmModuleBuilder::default()
+            .with_hint_section(b"invalid wasm")
+            .build();
+        for _ in 0..2 {
+            let result = executor.execute(
+                BytecodeOrHash::Bytecode {
+                    bytecode: bytecode.clone(),
+                    hash: B256::repeat_byte(0x91),
+                    address: fluentbase_types::PRECOMPILE_EVM_RUNTIME,
+                },
+                RuntimeContext::default().with_fuel_limit(10_000),
+            );
+            assert_eq!(
+                result.exit_code,
+                ExitCode::MalformedBuiltinParams.into_i32()
+            );
+            assert_eq!(result.fuel_consumed, 10_000);
+            assert_eq!(result.fuel_refunded, 0);
+            assert!(result.output.is_empty());
+            assert!(result.return_data.is_empty());
+        }
+    }
 
     #[test]
     fn call_id_overflow() {
@@ -612,7 +674,7 @@ mod tests {
         .unwrap();
         let runtime = ExecutionMode::Contract(strategy_runtime);
 
-        let result = executor.try_remember_runtime(interruption, runtime);
+        let result = executor.try_remember_runtime(interruption, Box::new(runtime));
 
         assert_eq!(result.exit_code, ExitCode::UnknownError.into_i32());
         assert_eq!(result.fuel_consumed, 100);
@@ -625,7 +687,7 @@ mod tests {
         let mut executor = RuntimeFactoryExecutor::new(import_linker_v1_preview());
 
         // No runtime was ever saved under this call_id; resume must fail cleanly, not panic.
-        let result = executor.resume(42, &[], 0, 100, 0, ExitCode::Ok.into_i32());
+        let result = executor.resume(42, vec![], 0, 100, 0, ExitCode::Ok.into_i32());
 
         assert_eq!(result.exit_code, ExitCode::UnknownError.into_i32());
         assert_eq!(result.fuel_consumed, 100);
@@ -635,24 +697,11 @@ mod tests {
     }
 
     #[test]
-    fn execute_by_hash_is_rejected_as_host_fault_regardless_of_history() {
+    fn execute_by_hash_without_cached_module_fails_as_host_fault() {
         let mut executor = RuntimeFactoryExecutor::new(import_linker_v1_preview());
-        let hash = B256::repeat_byte(0xD1);
-
-        // Running the module with its bytecode first must not make the bare hash resolvable:
-        // the outcome of a hash-only execution cannot depend on what this node ran before.
+        // Nothing ever warmed this hash, so the shared cache cannot serve it.
         let result = executor.execute(
-            BytecodeOrHash::Bytecode {
-                bytecode: test_contract_module_with_memory(1),
-                hash,
-                address: Address::ZERO,
-            },
-            RuntimeContext::default().with_fuel_limit(1_000_000),
-        );
-        assert_eq!(result.exit_code, ExitCode::Ok.into_i32());
-
-        let result = executor.execute(
-            BytecodeOrHash::Hash(hash),
+            BytecodeOrHash::Hash(B256::repeat_byte(0xD1)),
             RuntimeContext::default().with_fuel_limit(1_000),
         );
 
@@ -711,7 +760,7 @@ mod tests {
         for child_fuel in [100, u64::MAX] {
             let mut executor = RuntimeFactoryExecutor::new(import_linker_v1_preview());
             let call_id = interrupted_contract(&mut executor);
-            let result = executor.resume(call_id, &[], u32::MAX, child_fuel, 0, 0);
+            let result = executor.resume(call_id, vec![], u32::MAX, child_fuel, 0, 0);
 
             assert_eq!(result.exit_code, ExitCode::MemoryOutOfBounds.into_i32());
             assert_eq!(result.fuel_consumed, 0);
@@ -725,7 +774,7 @@ mod tests {
         for child_fuel in [0, 100] {
             let mut executor = RuntimeFactoryExecutor::new(import_linker_v1_preview());
             let call_id = interrupted_contract(&mut executor);
-            let result = executor.resume(call_id, &[], 64, child_fuel, 0, 0);
+            let result = executor.resume(call_id, vec![], 64, child_fuel, 0, 0);
 
             assert_eq!(result.exit_code, ExitCode::Ok.into_i32());
             assert!(executor.recoverable_runtimes.is_empty());
@@ -738,7 +787,7 @@ mod tests {
     fn resume_contract_rejects_excessive_child_fuel() {
         let mut executor = RuntimeFactoryExecutor::new(import_linker_v1_preview());
         let call_id = interrupted_contract(&mut executor);
-        let result = executor.resume(call_id, &[], 0, u64::MAX, 0, 0);
+        let result = executor.resume(call_id, vec![], 0, u64::MAX, 0, 0);
 
         assert_eq!(result.exit_code, ExitCode::OutOfFuel.into_i32());
         assert!(result.fuel_consumed <= 100_000);
@@ -769,13 +818,14 @@ mod tests {
                 Address::ZERO,
                 RuntimeContext::default().with_fuel_limit(100_000),
                 true,
-            );
+            )
+            .expect("system runtime must load");
             runtime.execute().unwrap();
             executor
                 .recoverable_runtimes
-                .insert(1, ExecutionMode::System(runtime));
+                .insert(1, Box::new(ExecutionMode::System(runtime)));
 
-            let result = executor.resume(1, &[], 0, child_fuel, 0, 0);
+            let result = executor.resume(1, vec![], 0, child_fuel, 0, 0);
 
             assert_eq!(result.exit_code, ExitCode::OutOfFuel.into_i32());
             assert!(result.fuel_consumed <= 100_000);
@@ -824,7 +874,9 @@ mod tests {
         // frames, not the size of the largest one.
         for (call_id, pages) in [(1u32, 3u32), (2, 5)] {
             let frame = suspended_frame_with_memory(&executor, pages);
-            executor.recoverable_runtimes.insert(call_id, frame);
+            executor
+                .recoverable_runtimes
+                .insert(call_id, Box::new(frame));
         }
 
         assert_eq!(
@@ -837,7 +889,7 @@ mod tests {
     fn in_flight_memory_ignores_frames_that_were_forgotten() {
         let mut executor = RuntimeFactoryExecutor::new(import_linker_v1_preview());
         let frame = suspended_frame_with_memory(&executor, 4);
-        executor.recoverable_runtimes.insert(7, frame);
+        executor.recoverable_runtimes.insert(7, Box::new(frame));
         assert_eq!(
             executor.in_flight_memory_bytes(),
             4 * N_BYTES_PER_MEMORY_PAGE as u64
@@ -853,7 +905,7 @@ mod tests {
         // Room for the four pages already suspended, but not for the frame about to be built.
         executor.max_in_flight_memory_bytes = 5 * N_BYTES_PER_MEMORY_PAGE as u64;
         let frame = suspended_frame_with_memory(&executor, 4);
-        executor.recoverable_runtimes.insert(1, frame);
+        executor.recoverable_runtimes.insert(1, Box::new(frame));
 
         let result = executor.execute(
             contract_bytecode_with_memory(3),
@@ -873,7 +925,7 @@ mod tests {
         let mut executor = RuntimeFactoryExecutor::new(import_linker_v1_preview());
         executor.max_in_flight_memory_bytes = 8 * N_BYTES_PER_MEMORY_PAGE as u64;
         let frame = suspended_frame_with_memory(&executor, 4);
-        executor.recoverable_runtimes.insert(1, frame);
+        executor.recoverable_runtimes.insert(1, Box::new(frame));
 
         let result = executor.execute(
             contract_bytecode_with_memory(3),
@@ -914,7 +966,9 @@ mod tests {
                 "frame {call_id} failed for another reason"
             );
             let frame = suspended_frame(executor, module.clone());
-            executor.recoverable_runtimes.insert(call_id, frame);
+            executor
+                .recoverable_runtimes
+                .insert(call_id, Box::new(frame));
             admitted += 1;
         }
         admitted
