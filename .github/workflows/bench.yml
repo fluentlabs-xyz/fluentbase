@@ -43,7 +43,7 @@ jobs:
           CRITERION_SAMPLE_SIZE: "20"
         run: |
           rustup target add wasm32-unknown-unknown
-          cd e2e && cargo bench | grep -v ignored | tee bench_output.txt
+          cd e2e/runtime && cargo bench | grep -v ignored | tee bench_output.txt
 
       - name: Upload full report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -58,7 +58,7 @@ jobs:
             echo "### Criterion results (vs baseline)"
             echo
             echo '```'
-            sed -n '1,200p' e2e/bench_output.txt
+            sed -n '1,200p' e2e/runtime/bench_output.txt
             echo '```'
             echo
             echo "_Heads-up_: runner perf is noisy; treat deltas as a smoke check."
