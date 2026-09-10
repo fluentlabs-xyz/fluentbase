@@ -135,7 +135,9 @@ pub enum ExitCode {
     UnknownExternalFunction = -2011,
 
     /* System Error Codes */
-    /// An unexpected fatal execution failure (node should panic or terminate the execution)
+    /// An unexpected fatal execution failure: a guest trap or a host fault whose output must be
+    /// discarded. The REVM boundary halts the frame deterministically; the code never surfaces
+    /// to REVM as a fatal error.
     UnexpectedFatalExecutionFailure = -3001,
     /// Missing storage slot
     MissingStorageSlot = -3002,

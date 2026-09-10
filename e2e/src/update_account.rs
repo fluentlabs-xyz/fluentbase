@@ -5,12 +5,12 @@ use fluentbase_codec::SolidityABI;
 use fluentbase_genesis::GENESIS_CONTRACTS_BY_ADDRESS;
 use fluentbase_sdk::{
     address, bytes, compile_rwasm_maybe_system, crypto::crypto_keccak256, Address, Bytes, B256,
-    DEFAULT_UPDATE_GENESIS_AUTH, PRECOMPILE_EVM_RUNTIME, PRECOMPILE_RIPEMD160,
+    DEFAULT_UPDATE_GENESIS_AUTH, PRECOMPILE_EVM_RUNTIME, PRECOMPILE_IDENTITY, PRECOMPILE_RIPEMD160,
     PRECOMPILE_RUNTIME_UPGRADE, PRECOMPILE_WEBAUTHN_VERIFIER, U256, UPDATE_GENESIS_PREFIX,
 };
-use fluentbase_testing::EvmTestingContext;
+use fluentbase_testing::{EvmTestingContext, TxResultExt};
 use hex_literal::hex;
-use revm::context::result::ExecutionResult;
+use revm::context::result::{ExecutionResult, HaltReason};
 
 sol! {
     event RuntimeUpgraded(
@@ -123,9 +123,6 @@ fn test_upgrade_solidity_contract_preserves_storage() {
 }
 
 #[test]
-#[should_panic(
-    expected = "Encountered unexpected internal return flag: FatalExternalError with instruction result: InterpreterResult { result: FatalExternalError, output: 0x, gas: Gas { tracker: GasTracker { gas_limit: 3000000, remaining: 0, reservoir: 0, state_gas_spent: 0, refunded: 0 }, memory: MemoryGas { words_num: 0, expansion_cost: 0 } } }"
-)]
 fn test_update_account_code_by_auth() {
     let mut ctx = EvmTestingContext::default().with_full_genesis();
 
@@ -208,6 +205,8 @@ fn test_update_account_code_by_auth() {
         &rwasm_bytecode_should_be
     );
 
+    // The upgraded runtime traps on entry. The trap stays inside the frame: the transaction halts
+    // deterministically and burns its gas instead of crashing the node.
     let result = ctx.call_evm_tx(
         DEPLOYER_ADDRESS,
         contract_address,
@@ -215,7 +214,39 @@ fn test_update_account_code_by_auth() {
         None,
         None,
     );
-    assert!(result.is_halt());
+    result
+        .expect_halt()
+        .expect_reason(HaltReason::UnknownError)
+        .expect_gas_used(3_000_000);
+}
+
+/// A system runtime that traps inside a nested call must halt only that frame. The caller runs in
+/// the EVM system runtime and is resumed after the interruption; it observes a failed call and
+/// finishes normally.
+#[test]
+fn test_system_runtime_trap_in_nested_call_halts_only_that_frame() {
+    const DEPLOYER_ADDRESS: Address = address!("0x7777777777777777777777777777777777777777");
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
+
+    // PUSH0 x4; PUSH20 <identity>; GAS; STATICCALL; PUSH0; MSTORE; PUSH1 0x20; PUSH0; RETURN
+    // Returns the STATICCALL success flag as a 32-byte word.
+    let mut runtime = vec![0x5f, 0x5f, 0x5f, 0x5f, 0x73];
+    runtime.extend_from_slice(PRECOMPILE_IDENTITY.as_slice());
+    runtime.extend_from_slice(&[0x5a, 0xfa, 0x5f, 0x52, 0x60, 0x20, 0x5f, 0xf3]);
+    let probe_address = deploy_evm_runtime(&mut ctx, DEPLOYER_ADDRESS, &runtime);
+
+    // The genesis identity precompile answers an empty call successfully.
+    ctx.call_evm_tx(DEPLOYER_ADDRESS, probe_address, Bytes::new(), None, None)
+        .expect_ok()
+        .expect_output(B256::with_last_byte(1));
+
+    upgrade_wasm_runtime(&mut ctx, PRECOMPILE_IDENTITY);
+
+    // Now the identity precompile traps on entry. The nested frame fails and the caller carries
+    // on; without containment the node would panic on the child's fatal result.
+    ctx.call_evm_tx(DEPLOYER_ADDRESS, probe_address, Bytes::new(), None, None)
+        .expect_ok()
+        .expect_output(B256::ZERO);
 }
 
 #[test]
@@ -387,14 +418,8 @@ fn decode_runtime_upgraded(logs: &[revm::primitives::Log]) -> RuntimeUpgraded {
         .expect("failed to decode RuntimeUpgraded")
 }
 
-/// Reads `EXTCODEHASH` the way an ordinary EVM caller would — through deployed EVM bytecode — so
-/// the precompile masking rules apply.
-fn evm_ext_code_hash(ctx: &mut EvmTestingContext, address: Address) -> B256 {
-    const DEPLOYER_ADDRESS: Address = address!("0x9999999999999999999999999999999999999999");
-    // PUSH20 <address>; EXTCODEHASH; PUSH0; MSTORE; PUSH1 0x20; PUSH0; RETURN
-    let mut runtime = vec![0x73u8];
-    runtime.extend_from_slice(address.as_slice());
-    runtime.extend_from_slice(&[0x3f, 0x5f, 0x52, 0x60, 0x20, 0x5f, 0xf3]);
+/// Deploys hand-assembled EVM runtime bytecode by wrapping it in init code that returns it.
+fn deploy_evm_runtime(ctx: &mut EvmTestingContext, deployer: Address, runtime: &[u8]) -> Address {
     let runtime_len = runtime.len() as u8;
     // Copy the runtime tail (12 bytes in) out of the init code and return it.
     let mut init_bytecode = vec![
@@ -411,9 +436,20 @@ fn evm_ext_code_hash(ctx: &mut EvmTestingContext, address: Address) -> B256 {
         0x00,
         0xf3,
     ];
-    init_bytecode.extend_from_slice(&runtime);
+    init_bytecode.extend_from_slice(runtime);
+    let (address, _) = ctx.deploy_evm_tx_with_gas(deployer, init_bytecode.into());
+    address
+}
 
-    let (probe_address, _) = ctx.deploy_evm_tx_with_gas(DEPLOYER_ADDRESS, init_bytecode.into());
+/// Reads `EXTCODEHASH` the way an ordinary EVM caller would — through deployed EVM bytecode — so
+/// the precompile masking rules apply.
+fn evm_ext_code_hash(ctx: &mut EvmTestingContext, address: Address) -> B256 {
+    const DEPLOYER_ADDRESS: Address = address!("0x9999999999999999999999999999999999999999");
+    // PUSH20 <address>; EXTCODEHASH; PUSH0; MSTORE; PUSH1 0x20; PUSH0; RETURN
+    let mut runtime = vec![0x73u8];
+    runtime.extend_from_slice(address.as_slice());
+    runtime.extend_from_slice(&[0x3f, 0x5f, 0x52, 0x60, 0x20, 0x5f, 0xf3]);
+    let probe_address = deploy_evm_runtime(ctx, DEPLOYER_ADDRESS, &runtime);
     let result = ctx.call_evm_tx(DEPLOYER_ADDRESS, probe_address, Bytes::new(), None, None);
     assert!(result.is_success(), "{result:?}");
     B256::from_slice(result.output().unwrap())

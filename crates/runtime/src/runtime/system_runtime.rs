@@ -188,9 +188,10 @@ impl SystemRuntime {
     /// will automatically decrement fuel as instructions execute.
     ///
     /// ## Error handling model
-    /// - If Wasmtime traps unexpectedly, we **do not propagate** the trap outward as fatal.
-    ///   Instead, we mark `UnexpectedFatalExecutionFailure` in `execution_result` and return `Ok(())`
-    ///   so the outer executor can treat it as a partially controlled failure.
+    /// - If the engine traps unexpectedly, we **do not propagate** the trap outward as fatal.
+    ///   Instead, we evict this instance, mark `UnexpectedFatalExecutionFailure` in
+    ///   `execution_result` and return `Ok(())`; the REVM boundary
+    ///   (`process_execution_result`) turns that code into a deterministic frame halt.
     /// - Normal completion is signaled by output where the first 4 bytes are LE `exit_code`.
     /// - Interruption is requested by returning `ExitCode::InterruptionCalled` in that header.
     pub fn execute(&mut self) -> Result<(), TrapCode> {

@@ -812,8 +812,9 @@ pub(crate) fn process_runtime_execution_outcome<CTX: ContextTr>(
 /// Handle exit codes that are produced by the system runtime boundary.
 ///
 /// For system runtime v2, the return data is a structured envelope that must be decoded and
-/// committed into the journal. For non-system contracts we also ensure fatal exit codes are
-/// not user-controllable.
+/// committed into the journal. For non-system contracts we also ensure system exit codes are
+/// not user-controllable. For every frame, a fatal exit code becomes a deterministic halt
+/// before it reaches REVM.
 fn process_execution_result<CTX: ContextTr, INSP: Inspector<CTX>>(
     frame: &mut RwasmFrame,
     ctx: &mut CTX,
@@ -837,19 +838,24 @@ fn process_execution_result<CTX: ContextTr, INSP: Inspector<CTX>>(
             ownable_account,
             preloaded_slot_costs.as_deref(),
         )?;
-    } else {
-        match exit_code {
-            // Do not allow fatal exit codes to be surfaced by non-system runtime contracts.
-            //
-            // Note: we intentionally do not expose an API for user code to produce these; callers
-            // will be punished for attempting it.
-            ExitCode::UnexpectedFatalExecutionFailure | ExitCode::MissingStorageSlot => {
-                exit_code = ExitCode::UnknownError;
-            }
+    } else if exit_code == ExitCode::MissingStorageSlot {
+        // Do not allow system exit codes to be surfaced by non-system runtime contracts.
+        //
+        // Note: we intentionally do not expose an API for user code to produce these; callers
+        // will be punished for attempting it.
+        exit_code = ExitCode::UnknownError;
+    }
 
-            // Default behavior: nothing special to do.
-            _ => {}
-        }
+    // `UnexpectedFatalExecutionFailure` reports a guest trap (`unreachable`, a memory or stack
+    // violation, ...) or a host fault whose output has already been discarded. The runtime has
+    // evicted the trapped instance and `process_runtime_execution_outcome` skipped the envelope,
+    // so the only thing left is to halt this frame deterministically and let the journal
+    // checkpoint revert its effects. The code must never be forwarded as
+    // `InstructionResult::FatalExternalError`: REVM reserves that result for context and
+    // database errors and terminates the process on it, which would turn a sandboxed guest trap
+    // into a node crash. This holds for system runtimes as much as for user contracts.
+    if exit_code.is_fatal_exit_code() {
+        exit_code = ExitCode::UnknownError;
     }
 
     Ok(process_halt(frame, ctx, inspector, exit_code, return_data))

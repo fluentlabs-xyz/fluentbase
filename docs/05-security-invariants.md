@@ -93,7 +93,15 @@ Why it matters: upgrade authority compromise is full-system compromise.
 
 Non-system user contracts must not be able to surface internal fatal runtime-only classes as normal outputs.
 
-Why it matters: prevents exposing internal failure classes as user-controlled behavior.
+`UnexpectedFatalExecutionFailure` never crosses the rWASM↔REVM boundary. Whether a user contract
+emits it or a system runtime traps into it, `process_execution_result` turns it into a
+deterministic `UnknownError` halt that burns the frame's gas; a nested caller observes a failed
+call and continues. `InstructionResult::FatalExternalError` is reserved for context and database
+errors, which propagate as typed errors. REVM terminates the process on it, so no guest exit code
+may map to it.
+
+Why it matters: prevents exposing internal failure classes as user-controlled behavior, and keeps a
+sandboxed guest trap from becoming a node crash.
 
 ---
 
