@@ -23,8 +23,7 @@ Core concepts
   wasmtime feature.
 - Syscall handler: Central dispatcher mapping SysFuncIdx to handlers for IO, hashing, curves, bigint, and control (exit,
   exec, resume, fuel).
-- ModuleFactory: Global, lazy-initialized cache keyed by code hash. Stores rWASM modules and, when enabled, compiled
-  Wasmtime modules. Provides warmup hooks.
+- ModuleFactory: Global, lazy-initialized cache of rWASM modules keyed by code hash. Provides warmup hooks.
 
 Execution flow
 
@@ -67,9 +66,10 @@ Resumable execution
 
 Module caching and warmup
 
-- ModuleFactory::get_module_or_init compiles/caches rWASM modules by code hash.
-- With the wasmtime feature, get_wasmtime_module_or_compile and warmup_wasmtime allow precompilation and warming the
-  caches to eliminate first-run latency.
+- ModuleFactory::get_module_or_init caches rWASM modules by code hash: supplied bytecode is inserted on first use, and
+  a hash-only lookup resolves only while that module is resident. RuntimeExecutor::warmup pre-populates the cache.
+- System runtimes are compiled once per thread and reused across calls (SystemRuntime::COMPILED_RUNTIMES), keyed by
+  code hash and compilation-config fingerprint.
 
 Feature flags
 

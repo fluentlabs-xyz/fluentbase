@@ -428,14 +428,10 @@ pub fn record_module_cache_reset() {
     metrics::counter!("fluentbase_module_cache_resets_total").increment(1);
 }
 
-/// Records a hash-only module lookup that found no cached module.
-pub fn record_module_cache_hash_miss(reason: &'static str) {
+/// Records a hash-only module lookup whose module was not resident.
+pub fn record_module_cache_hash_miss() {
     #[cfg(feature = "std")]
-    metrics::counter!(
-        "fluentbase_module_cache_hash_misses_total",
-        "reason" => reason,
-    )
-    .increment(1);
+    metrics::counter!("fluentbase_module_cache_hash_misses_total").increment(1);
 }
 
 #[cfg(feature = "std")]
