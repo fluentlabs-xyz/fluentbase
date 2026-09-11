@@ -18,7 +18,10 @@
 //! The per-epoch engine hands `Inline` to simplex directly, and `Inline`'s own
 //! `certify` keeps the availability gate.
 
-use crate::beacon::verified_seed::VerifiedSeed;
+use crate::beacon::{
+    surface::{BeaconEvent, EVENT_BUFFER},
+    verified_seed::VerifiedSeed,
+};
 use commonware_consensus::types::Round;
 use fluentbase_bls::{
     oracle::{SeedCheck, SeedOracle},
@@ -28,7 +31,7 @@ use std::{
     collections::{BTreeMap, HashMap},
     sync::{Arc, Mutex},
 };
-use tokio::sync::{mpsc, oneshot, Notify};
+use tokio::sync::{broadcast, mpsc, oneshot};
 use tracing::{error, warn};
 
 /// Bound on retained `round → seed` entries. A reader wants the seed for a round
@@ -46,12 +49,14 @@ pub(crate) const SEED_RETENTION: usize = 4096;
 /// than a bare alias so the [`SEED_RETENTION`] eviction is the ONLY insertion path:
 /// holders cannot lock the inner map and grow it unbounded.
 ///
-/// Every [`record`](SeedStore::record) fires the `notify` permit, which the
-/// executor awaits in a `select!` arm to re-run the eager finalized derive of a
-/// HELD tip whose own round's seed had not yet landed (the record-vs-delivery
-/// race, formerly closed by the `SpecNotarized` Poke). `notify_one` stores a
-/// permit even with no waiter, so a record that lands between the executor's
-/// miss lookup and its next await is NOT lost — no lost-notification window.
+/// Every [`record`](SeedStore::record) publishes [`BeaconEvent::SeedRecorded`]
+/// on the beacon's wake-up channel, which the executor awaits in a `select!`
+/// arm to re-run the eager finalized derive of a HELD tip whose own round's
+/// seed had not yet landed (the record-vs-delivery race, formerly closed by the
+/// `SpecNotarized` Poke). A `broadcast` buffers from the moment of
+/// subscription, so a record that lands between the executor's miss lookup and
+/// its next await is NOT lost — provided the consumer subscribed before its
+/// first read, which is the rule written on [`crate::beacon::Beacon::subscribe`].
 ///
 /// The map is RAM; [`crate::beacon::seed_journal`] is its durable mirror, and
 /// [`SeedStore::with_persistence`] is how the two are joined at startup. Reads
@@ -70,7 +75,6 @@ pub(crate) const SEED_RETENTION: usize = 4096;
 #[derive(Clone)]
 pub struct SeedStore {
     seeds: Arc<Mutex<BTreeMap<Round, BlsSignature>>>,
-    notify: Arc<Notify>,
     /// Durable sink. `None` ⇒ RAM-only, the pre-durability behaviour, which is
     /// what every test and any config without a journal partition gets.
     ///
@@ -86,13 +90,17 @@ pub struct SeedStore {
     /// here yet. Never read by [`lookup`](SeedStore::lookup) and never sent to
     /// the durable half — losing it on restart is correct, the node re-asks.
     quarantined: Arc<Mutex<BTreeMap<Round, BlsSignature>>>,
+    /// The beacon's wake-up publisher, fired on every [`Self::record`] — from
+    /// EVERY writer, which is why it lives here and not on the provider above:
+    /// the quarantine promoter records through this same door, and a wake-up
+    /// sourced from one caller would leave a promoted σ silently un-woken.
+    events: broadcast::Sender<BeaconEvent>,
     /// Per-ROUND wakeups for the by-round pull.
     ///
-    /// Deliberately NOT the `notify` above: that one is `notify_one` with a
-    /// documented waiter population of ONE (the executor's held-tip arm), and a
-    /// second consumer of it would both end its own wait on an unrelated round's
-    /// record and swallow the executor's wake. A oneshot per waiter ends only on
-    /// the round it asked about.
+    /// Deliberately NOT the `events` channel above: a consumer of that one ends
+    /// its wait on ANY round's record and would answer "not arrived" after a
+    /// wait that never happened. A oneshot per waiter ends only on the round it
+    /// asked about.
     waiters: Arc<Mutex<HashMap<Round, Vec<oneshot::Sender<()>>>>>,
     /// The highest round seen per epoch, EXEMPT from [`SEED_RETENTION`].
     ///
@@ -116,7 +124,7 @@ impl SeedStore {
     pub fn new() -> Self {
         Self {
             seeds: Arc::new(Mutex::new(BTreeMap::new())),
-            notify: Arc::new(Notify::new()),
+            events: broadcast::channel(EVENT_BUFFER).0,
             persist: None,
             quarantined: Arc::new(Mutex::new(BTreeMap::new())),
             waiters: Arc::new(Mutex::new(HashMap::new())),
@@ -153,7 +161,7 @@ impl SeedStore {
         let (tx, rx) = mpsc::unbounded_channel();
         let store = Self {
             seeds: Arc::new(Mutex::new(BTreeMap::new())),
-            notify: Arc::new(Notify::new()),
+            events: broadcast::channel(EVENT_BUFFER).0,
             persist: Some(tx),
             quarantined: Arc::new(Mutex::new(BTreeMap::new())),
             waiters: Arc::new(Mutex::new(HashMap::new())),
@@ -172,10 +180,10 @@ impl SeedStore {
 
     /// Record a witnessed seed, evicting the oldest entries past
     /// [`SEED_RETENTION`]. Idempotent: σ is unique per round, so a re-report
-    /// (peer cert after self-assembly, or replay) writes the same value. Fires
-    /// the `notify` permit unconditionally (even on an idempotent re-record —
-    /// harmless, the executor arm's eager derive is idempotent) so a held tip
-    /// waiting on a late seed record is woken.
+    /// (peer cert after self-assembly, or replay) writes the same value.
+    /// Publishes [`BeaconEvent::SeedRecorded`] unconditionally (even on an
+    /// idempotent re-record — harmless, the executor arm's eager derive is
+    /// idempotent) so a held tip waiting on a late seed record is woken.
     pub fn record(&self, verified: VerifiedSeed) {
         self.insert(verified, true);
     }
@@ -223,15 +231,15 @@ impl SeedStore {
                 let _ = tx.send(());
             }
         }
-        // Wake the executor's seed-notify arm (a HELD tip whose own round's seed
-        // just landed). `notify_one` stores a permit if no waiter is parked, so
-        // the wakeup survives a record that races the executor's miss→await.
-        self.notify.notify_one();
-        // Durable half, strictly AFTER the notify so the wakeup latency is
+        // Wake the executor's held-tip arm (a HELD tip whose own round's seed just
+        // landed). The broadcast is buffered from each consumer's subscription,
+        // which is why every consumer subscribes before its first read.
+        let _ = self.events.send(BeaconEvent::SeedRecorded);
+        // Durable half, strictly AFTER the wake-up so the wakeup latency is
         // unchanged, and strictly non-blocking so the reporter never parks.
         // Only on a fresh insert: a re-report writes the same bytes (the seed is
         // unique per round), so appending again would only grow the journal. The
-        // notify above stays unconditional, as its own comment requires.
+        // wake-up above stays unconditional, as its own comment requires.
         if fresh && persist {
             if let Some(tx) = self.persist.as_ref() {
                 if tx.send((round, seed)).is_err() {
@@ -402,13 +410,27 @@ impl SeedStore {
         }
     }
 
+    /// The wake-up publisher every consumer of this store subscribes to. The
+    /// beacon hands it out as its own — the seed class is the busiest of the
+    /// three and the only one written from inside a store.
+    pub fn events(&self) -> &broadcast::Sender<BeaconEvent> {
+        &self.events
+    }
+
     /// Drop waiters whose receiver is gone.
+    ///
+    /// TEST-ONLY today, and gated so the compiler says so. Its one caller was the
+    /// by-round pull that PLAN row 5.2 deletes together with `waiters` itself; the
+    /// dead-code lint was masked until now only because `for_seeds` was a `pub` fn
+    /// taking a `SeedStore` by value, which made every `pub` method of this type
+    /// externally reachable.
     ///
     /// A pull that timed out leaves its sender behind, and the round it asked
     /// about is by definition one nothing recorded — so without this the entry
     /// grows one closed sender per attempt, forever, exactly while the node is
     /// already in an incident. The artifact pull prunes its own waiter map for
     /// the same reason.
+    #[cfg(test)]
     fn prune_waiters(&self) {
         if let Ok(mut waiting) = self.waiters.lock() {
             waiting.retain(|_, senders| {
@@ -422,6 +444,7 @@ impl SeedStore {
     ///
     /// The receiver errors if the store is dropped, which the caller reads the
     /// same way as a timeout: it re-checks the map and answers from that.
+    #[cfg(test)]
     pub fn wait_for(&self, round: Round) -> oneshot::Receiver<()> {
         self.prune_waiters();
         let (tx, rx) = oneshot::channel();
@@ -433,13 +456,6 @@ impl SeedStore {
             Err(_) => drop(tx),
         }
         rx
-    }
-
-    /// A clone of the record-notifier, for the executor's `select!` arm.
-    /// `notified()` on the returned handle consumes any permit stored by a
-    /// [`record`](Self::record) that fired before the waiter parked.
-    pub fn notifier(&self) -> Arc<Notify> {
-        self.notify.clone()
     }
 }
 
@@ -535,16 +551,16 @@ mod tests {
         assert!(!map.contains_key(&round_at(0)), "oldest evicted");
     }
 
-    // LOST-WAKEUP ABSENCE (the Notify arm's correctness — the awaitable seed
+    // LOST-WAKEUP ABSENCE (the event arm's correctness — the awaitable seed
     // lookup that REPLACES the `SpecNotarized` Poke, family2_finalized_tier.md
-    // §2.2). Two records, two waiter orderings:
-    //   (1) record BEFORE the waiter is created → `notify_one` stores a permit →
-    //       a `notified()` created afterwards is IMMEDIATELY ready. This is the
-    //       load-bearing case: it closes the window between the executor's eager
-    //       MISS lookup and its next await — a seed record landing there is not
-    //       lost (the old Poke depended on the `SpecNotarized` mailbox ordering;
-    //       the permit makes the arm correct regardless of ordering).
-    //   (2) waiter parked BEFORE the record → woken by it.
+    // §2.2). Two records, two receiver orderings, both over a receiver taken
+    // BEFORE the first record, which is the rule the trait writes down:
+    //   (1) record while nobody is polling → the broadcast BUFFERS it → the next
+    //       `recv()` is IMMEDIATELY ready. This is the load-bearing case: it
+    //       closes the window between the executor's eager MISS lookup and its
+    //       next await — a seed record landing there is not lost (the old Poke
+    //       depended on the `SpecNotarized` mailbox ordering).
+    //   (2) receiver parked BEFORE the record → woken by it.
     #[test]
     fn seed_store_record_notifies_without_a_lost_wakeup() {
         use std::future::Future;
@@ -553,38 +569,46 @@ mod tests {
         let ns = seed_namespace(&fluent_namespace(20994));
         let (outcome, shares) = deal_committee(1, 5);
         let store = SeedStore::new();
-        let notifier = store.notifier();
+        let mut rx = store.events().subscribe();
         let waker = futures::task::noop_waker();
         let mut cx = Context::from_waker(&waker);
 
-        // (1) A permit stored by a record with no parked waiter is consumed by a
-        // waiter created AFTER the record — the no-lost-notification window.
+        // (1) A record that lands with nobody polling is buffered and read by the
+        // next `recv()` — the no-lost-notification window.
         let r0 = round_at(0);
         store.record(witness_for(&outcome, &shares, &ns, r0));
-        let f0 = notifier.notified();
-        futures::pin_mut!(f0);
-        assert!(
-            matches!(f0.as_mut().poll(&mut cx), Poll::Ready(())),
-            "a stored permit is consumed by a later-created waiter (no lost wakeup)"
-        );
+        {
+            let f0 = rx.recv();
+            futures::pin_mut!(f0);
+            assert!(
+                matches!(
+                    f0.as_mut().poll(&mut cx),
+                    Poll::Ready(Ok(BeaconEvent::SeedRecorded))
+                ),
+                "a buffered record is read by a later `recv()` (no lost wakeup)"
+            );
+        }
 
-        // (2) A waiter parked before the next record is woken by it.
-        let f1 = notifier.notified();
+        // (2) A receiver parked before the next record is woken by it.
+        let f1 = rx.recv();
         futures::pin_mut!(f1);
         assert!(
             f1.as_mut().poll(&mut cx).is_pending(),
-            "no permit yet ⇒ the fresh waiter parks"
+            "nothing buffered yet ⇒ the fresh receiver parks"
         );
         let r1 = round_at(1);
         store.record(witness_for(&outcome, &shares, &ns, r1));
         assert!(
-            matches!(f1.as_mut().poll(&mut cx), Poll::Ready(())),
-            "the parked waiter is woken by the record"
+            matches!(
+                f1.as_mut().poll(&mut cx),
+                Poll::Ready(Ok(BeaconEvent::SeedRecorded))
+            ),
+            "the parked receiver is woken by the record"
         );
     }
 
-    // The same two waiter orderings against a PERSISTING store. The durable sink
-    // sits after `notify_one` in `record`, so it must not change either verdict —
+    // The same two receiver orderings against a PERSISTING store. The durable sink
+    // sits after the event send in `record`, so it must not change either verdict —
     // if it ever did, the executor's eager-derive arm would silently lose the
     // record-vs-delivery race that this permit closes.
     #[test]
@@ -595,27 +619,35 @@ mod tests {
         let ns = seed_namespace(&fluent_namespace(20994));
         let (outcome, shares) = deal_committee(1, 5);
         let (store, mut rx) = SeedStore::with_persistence(Vec::new(), Vec::new());
-        let notifier = store.notifier();
+        let mut events = store.events().subscribe();
         let waker = futures::task::noop_waker();
         let mut cx = Context::from_waker(&waker);
 
         let r0 = round_at(0);
         store.record(witness_for(&outcome, &shares, &ns, r0));
-        let f0 = notifier.notified();
-        futures::pin_mut!(f0);
-        assert!(
-            matches!(f0.as_mut().poll(&mut cx), Poll::Ready(())),
-            "the permit still survives a record with no parked waiter"
-        );
+        {
+            let f0 = events.recv();
+            futures::pin_mut!(f0);
+            assert!(
+                matches!(
+                    f0.as_mut().poll(&mut cx),
+                    Poll::Ready(Ok(BeaconEvent::SeedRecorded))
+                ),
+                "the buffered event still survives a record with nobody polling"
+            );
+        }
 
-        let f1 = notifier.notified();
+        let f1 = events.recv();
         futures::pin_mut!(f1);
         assert!(f1.as_mut().poll(&mut cx).is_pending());
         let r1 = round_at(1);
         store.record(witness_for(&outcome, &shares, &ns, r1));
         assert!(
-            matches!(f1.as_mut().poll(&mut cx), Poll::Ready(())),
-            "the parked waiter is still woken by a persisting record"
+            matches!(
+                f1.as_mut().poll(&mut cx),
+                Poll::Ready(Ok(BeaconEvent::SeedRecorded))
+            ),
+            "the parked receiver is still woken by a persisting record"
         );
 
         assert_eq!(rx.try_recv().map(|(r, _)| r), Ok(r0));
@@ -706,11 +738,11 @@ mod tests {
         assert_eq!(store.lookup(r), Some(first), "the first value stands");
     }
 
-    // The pull's wakeup must end on ITS round and no other. The store's `notify`
-    // is `notify_one` with a documented waiter population of one (the executor's
-    // held-tip arm); a pull sharing it would be released by any unrelated record —
-    // usually instantly, since a permit is stored even with nobody parked — and
-    // would answer "not arrived" after a wait that never happened.
+    // The pull's wakeup must end on ITS round and no other. The store's event
+    // channel carries every round's record; a pull sharing it would be released by
+    // any unrelated record — usually instantly, since the broadcast buffers with
+    // nobody parked — and would answer "not arrived" after a wait that never
+    // happened.
     #[test]
     fn a_round_waiter_is_woken_by_its_own_round_and_not_by_another() {
         use std::{

@@ -15,67 +15,75 @@
 //!
 //! # The boundary
 //!
-//! Every submodule is `pub(crate)`, so the compiler enforces only half of this
-//! boundary: nothing OUTSIDE `fluentbase-consensus` can name a submodule, while a
-//! sibling file inside the crate still can. The other half is the rule that
-//! production code reaches the beacon only through the two re-export tiers below
-//! — so this list, not a grep for `beacon::`, is the module's front door.
+//! ONE trait, [`Beacon`], and ONE way to get an implementation of it: the two
+//! [`build`] constructors, each of which also hands back the [`Tasks`] the node
+//! has to supervise and drain. Every consumer holds `Arc<dyn Beacon>`.
 //!
-//! `pub use` — what leaves the crate: the [`Seed`] wire type with its
-//! `prev_randao` derivation, the two opaque key handles ([`BeaconKeys`],
-//! [`AgreedKeys`]), the plane facade ([`build`] and its config/result) and the
-//! follower facade ([`for_follower`] and its config/result).
+//! Every submodule below is PRIVATE, so the lists in this file are the whole of
+//! the module's front door and the compiler is what enforces it: a path like
+//! `beacon::certify::SeedStore` from any other file does not resolve. A grep for
+//! `beacon::` is no longer the way to audit the boundary — these three lists are.
 //!
-//! `pub(crate) use` — the front door for the rest of this crate, and no wider:
-//! the four items production code elsewhere in `fluentbase-consensus` genuinely
-//! needs ([`absent_unregistered`], [`frozen_dkg_qual`], [`CommitteeSource`],
-//! [`agreement_partition`]) but that no consumer of the crate should see.
+//! `pub use` — what leaves the module: the [`Beacon`] trait and its vocabulary
+//! ([`ShareProbe`], [`SignerVerdict`], [`WithheldReason`], [`PinEffort`],
+//! [`Observed`], [`ObservedCertificate`], [`BeaconEvent`], [`DataFault`]), the
+//! [`Seed`] wire type with its `prev_randao` derivation, the two constructors
+//! with their input and [`Tasks`] types, and the two supplies the node has to
+//! make from outside the module: the staking reads ([`CommitteeReads`]) and, for
+//! a follower, the one route it has to fetch an artifact over
+//! ([`ArtifactFetch`]).
 //!
-//! On neither list, and deliberately: how the epoch key is agreed, where the
-//! artifact is stored, how a share is derived and how a peer is served. Nothing
-//! above the beacon assembles them. The crate's own TESTS are the one standing
-//! exception — they reach submodule paths directly (`beacon::keys::…`,
-//! `beacon::surface::PlaneRandomness`, `beacon::surface::testing::…`) to build
-//! fixtures out of the real rungs, and widening the front door for them would put
-//! those internals in reach of production code too.
+//! Four of the vocabulary names — [`WithheldReason`], [`PinEffort`],
+//! [`Observed`], [`DataFault`] — are here because a signature above names them,
+//! not because anything outside reads them yet: the first two are fields of
+//! [`ShareProbe`]/`ensure_key`, and the last two are the return types of
+//! [`Beacon::observe_certificate`] and [`Beacon::faults`]. PLAN rows 5.1-5.2 give
+//! the last two their readers.
 //!
-//! The follower facade exists so that closing FLU-1167 did not have to open the
-//! module: a follower needs `verify_artifact_for_epoch` and the artifact types,
-//! both `pub(crate)`, so its provider is built INSIDE and the node hands in
-//! capabilities (a fetch closure, a committee source, a `DkgQualFor`) exactly as
-//! it already does for the plane.
+//! On NEITHER list, and deliberately: how the epoch key is agreed, where
+//! the artifact is stored, how a share is derived, how a peer is served, and the
+//! module-internal [`surface::Randomness`] trait the two PRODUCTION
+//! implementations still speak while the internals move
+//! (`.dpos-study/PLAN.md` rows 5.1-5.4). The testbed's own implementations do not
+//! speak it: they implement [`Beacon`] directly, so the trait is the one
+//! substitution seam and `Randomness` is `pub(super)`.
+//!
+//! The crate's own TESTS are the one standing exception, and they go through
+//! `testing` — one `#[cfg(test)]` door with everything they reach listed in it,
+//! rather than a submodule path each. NOT a doc link on purpose: this doc is
+//! compiled without `cfg(test)`, where the module it would point at is absent.
 
-pub(crate) mod actor;
-pub(crate) mod artifact;
-pub(crate) mod carry;
-pub(crate) mod ceremony;
-pub(crate) mod certify;
-pub(crate) mod confirmations;
-pub(crate) mod dkg_agree;
-pub(crate) mod dkg_engine;
-pub(crate) mod dkg_msg;
+mod actor;
+mod artifact;
+mod carry;
+mod ceremony;
+mod certify;
+mod confirmations;
+mod dkg_agree;
+mod dkg_engine;
+mod dkg_msg;
 /// Local single-process DKG oracle — used only by the beacon's own tests (the
 /// production path is the networked `actor`/`ceremony`). `#[cfg(test)]`-gated so
 /// it is not compiled into release builds.
 #[cfg(test)]
-pub(crate) mod dkg_oracle;
-pub(crate) mod dkg_transport;
-pub(crate) mod follower;
-pub(crate) mod key_journal;
-pub(crate) mod keys;
-pub(crate) mod log_resolver;
-pub(crate) mod log_store;
-pub(crate) mod metrics;
-pub(crate) mod oracle;
-pub(crate) mod outcome;
-pub(crate) mod plane;
-pub(crate) mod resolve;
-pub(crate) mod seed;
-pub(crate) mod seed_journal;
-pub(crate) mod share_state;
-pub(crate) mod surface;
-pub(crate) mod verified_seed;
-pub(crate) mod wire;
+mod dkg_oracle;
+mod dkg_transport;
+mod follower;
+mod key_journal;
+mod keys;
+mod log_resolver;
+mod log_store;
+mod metrics;
+mod oracle;
+mod outcome;
+mod plane;
+mod resolve;
+mod seed;
+mod seed_journal;
+mod share_state;
+mod surface;
+mod verified_seed;
+mod wire;
 
 // The one retention window every per-epoch map in this module ages out on. It
 // lives HERE, not in the module that happens to sweep on it: `share_state` needs
@@ -103,21 +111,61 @@ pub(crate) mod wire;
 /// per retained epoch. Under-retention is SAFE: a member that finds the logs evicted
 /// simply keeps fetching / stays a verify-only observer — it never adopts a wrong share
 /// (the recompute self-check gates that), so widening only trades disk for heal reach.
-pub(crate) const JOURNAL_RETENTION_EPOCHS: u64 = 1;
+// PRIVATE, not `pub(crate)`: every reader is a submodule of this one, and a child
+// module sees its parent's private items. Crate visibility widened the door by an
+// element nothing outside `beacon/` has ever named.
+const JOURNAL_RETENTION_EPOCHS: u64 = 1;
 
-pub use actor::CommitteePairFor;
-pub use follower::{for_follower, ArtifactFetch, FollowerBeacon, FollowerRandomnessConfig};
-pub use keys::{AgreedKeys, BeaconKeys};
-pub use plane::{build, ArtifactSource, Beacon, BeaconConfig};
+pub use follower::{build_follower, ArtifactFetch, FollowerInputs};
+pub use plane::{build, CommitteeReads, Tasks, ValidatorInputs};
 pub use seed::{constant_fallback_seed, prev_randao_from_seed, witness_fallback_seed, Seed};
 pub use surface::{
-    absent, for_keys, for_seeds, BeaconResolve, BeaconResolver, PinEffort, Randomness, ShareProbe,
+    Beacon, BeaconEvent, DataFault, Observed, ObservedCertificate, PinEffort, ShareProbe,
     SignerVerdict, WithheldReason,
 };
 
 // The crate-internal tier. Same front door, narrower audience — see the boundary
 // note above.
-pub(crate) use artifact::CommitteeSource;
-pub(crate) use carry::frozen_dkg_qual;
 pub(crate) use dkg_engine::agreement_partition;
 pub(crate) use surface::absent_unregistered;
+
+/// The crate's own TEST tier — the ONE door the crate's tests reach beacon
+/// internals through, now that the submodules are private.
+///
+/// It exists because the fixtures of `executor`, `epoch_manager`, `cert_inlet`,
+/// `dpos`, `application`, `slasher` and the testbed build their beacons out of
+/// the REAL rungs (a real [`certify::SeedStore`], a real [`keys::BeaconKeys`],
+/// the shipped [`surface::LiveBeacon`]) rather than out of stubs that agree with
+/// them today. Those tests live in the same FILES as the production code they
+/// cover, so a grep for `beacon::` cannot tell a test reach from a production
+/// one — but the compiler can, because everything below is `#[cfg(test)]`: a
+/// production line that reaches for any of it does not compile.
+///
+/// Additions here are a cost, not a convenience. Each one is an internal that
+/// the rows 5.1-5.4 now have to keep nameable while they move it.
+#[cfg(test)]
+pub(crate) mod testing {
+    pub(crate) use super::actor::DETERMINISTIC_BOOTSTRAP_EPOCH;
+    pub(crate) use super::artifact::{decode_artifact, ArtifactStore};
+    pub(crate) use super::carry::DkgQualFor;
+    pub(crate) use super::certify::SeedStore;
+    pub(crate) use super::keys::{AgreedKeyAt, AgreedKeys, BeaconKeys, KeySource, KeySources};
+    pub(crate) use super::metrics::BeaconMetrics;
+    pub(crate) use super::outcome::{encode_outcome, group_public_key, parse_outcome, DkgOutcome};
+    pub(crate) use super::surface::testing::Canned;
+    pub(crate) use super::surface::{
+        absent, for_seeds, BeaconResolve, DealtOracle, LiveBeacon, LiveBeaconConfig,
+        StaticRandomness,
+    };
+    pub(crate) use super::verified_seed::{PkOracle, VerifiedSeed};
+    /// The byzantine roles' tier: only `testbed::byzantine_roles` names these, so
+    /// they are gated as it is — an ungated re-export is an unused import in a
+    /// stand built without the feature.
+    #[cfg(feature = "dpos-devnet-byzantine")]
+    pub(crate) use super::{
+        actor::CommitteeFor,
+        ceremony::info_for,
+        dkg_msg::{DealerReveal, DkgBody, DkgMsg},
+        wire::BeaconMessage,
+    };
+}

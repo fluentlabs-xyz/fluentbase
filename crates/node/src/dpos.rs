@@ -32,9 +32,11 @@ use reth_chain_state::CanonicalInMemoryState;
 use reth_chainspec::EthChainSpec as _;
 use reth_ethereum_engine_primitives::EthEngineTypes;
 use reth_ethereum_primitives::{Block as RethBlock, EthPrimitives};
+use reth_evm::ConfigureEvm;
 use reth_network_api::PeersInfo;
 use reth_node_api::{FullNodeComponents, FullNodeTypes};
 use reth_node_builder::{rpc::RethRpcAddOns, FullNode, PayloadBuilderConfig};
+use reth_primitives_traits::Header;
 use reth_provider::providers::{BlockchainProvider, ProviderNodeTypes};
 use reth_storage_api::{
     BlockHashReader, BlockIdReader, BlockNumReader, BlockReader, HeaderProvider,
@@ -372,7 +374,7 @@ pub struct NodeStackCfg {
     /// Process-level, NOT per-overlay: the endpoint binds one socket and encodes
     /// the ONE registry the whole runtime shares, and both node classes own
     /// families in it (the follower is the sole owner of the
-    /// `dpos_follower_artifact_*` families, via `beacon::for_follower`). A copy
+    /// `dpos_follower_artifact_*` families, via `beacon::build_follower`). A copy
     /// per overlay payload would be two sources for one socket.
     pub metrics_port: Option<u16>,
 }
@@ -521,23 +523,32 @@ where
     // the drain cannot do anything but burn `SHUTDOWN_DRAIN_TIMEOUT` and warn —
     // and that warning's whole job is to mean "the disk is stuck".
     //
-    // BOTH journal senders now live inside ONE object — the `Arc<dyn Randomness>`
-    // that owns the seed store and the key store — and that changes what has to
-    // be arranged here, so the old two-case reasoning does not carry over
-    // unchanged.
+    // THREE writer senders now live inside ONE object — the `Arc<dyn Beacon>`,
+    // which owns the seed store, the key store AND the artifact store (the last
+    // one moved in with `LiveBeaconConfig.artifacts`). So the condition is no
+    // longer "the store clone died" but "EVERY `Arc<dyn Beacon>` clone died", and
+    // the four that exist in this process are:
     //
-    //  - Clones reachable from the aborted tasks (the consensus engine's, the
-    //    inlet's) are released by `supervise` above. Awaiting the drains BEFORE
-    //    that would deadlock. The mirror-image constraint now lives in
-    //    `beacon::build`: both writers are spawned there, outside any engine
+    //  - The consensus layer's, moved into the engine's config, and the cert
+    //    inlet's (`plane.shared.randomness.clone()` at the inlet spawn). Both are
+    //    reachable only from tasks `supervise` above aborts. Awaiting the drains
+    //    BEFORE that would deadlock. The mirror-image constraint lives in
+    //    `beacon::build`: all three writers are spawned there, outside any engine
     //    task's spawn lineage, so `engine.abort()` cannot kill the task it is
     //    supposed to be releasing — see
     //    `the_journal_writer_survives_the_engine_abort_only_outside_its_spawn_lineage`.
     //
+    //  - `launch`'s own local inside the consensus crate, which it drops when it
+    //    returns its `DposLayerHandle` — the validator handle carries no beacon
+    //    (`artifact_bytes: None`, `drain_on_shutdown: vec![]`).
+    //
     //  - The HOST's own clone is the one nothing aborts, and it is released one
     //    frame down, at the end of `launch_validator_overlay` — see the explicit
-    //    `drop(plane.shared)` there and why it is explicit. By the time this
-    //    function runs, no live `Arc<dyn Randomness>` is reachable.
+    //    `drop(plane.shared)` there and why it is explicit.
+    //
+    // The RPC artifact feed is deliberately NOT on that list: it holds a `Weak`
+    // (see where `artifact_bytes` is built in `build_beacon_plane`), because
+    // nothing aborts reth's module registry.
     let drains = std::mem::take(&mut engine.drain_on_shutdown);
     drain_shutdown_tasks(drains).await;
 
@@ -829,14 +840,12 @@ where
     // cancels the shared token (fail-closed-on-total-loss, Risk-3).
     let mut supervised: Vec<SupervisedHandle> = vec![
         ("network", plane.net_handle),
-        ("dkg", plane.dkg_handle),
+        // ONE entry for the whole beacon: which of its children died is in the
+        // line the beacon's own supervisor writes, and aborting this aborts them.
+        ("beacon", plane.beacon_supervised),
         ("poller", plane.poller_handle),
-        ("beacon_resolver", plane.beacon_resolver_handle),
         ("frontier_resolver", plane.frontier_resolver_handle),
         ("evidence", plane.evidence_handle),
-        ("agreement_launcher", plane.agreement_launcher_handle),
-        ("agreement_write_back", plane.write_back_handle),
-        ("seed_promoter", plane.seed_promoter_handle),
     ];
     for h in plane.mux_handles {
         supervised.push(("mux", h));
@@ -850,27 +859,13 @@ where
     // RPC feed dead with the node still passing liveness. See
     // [`DposLayerHandle::supervised`].
     supervised.append(&mut handle.supervised);
-    // A DRAIN handle, not a supervised one: it returns when the artifact store's
-    // last sender drops, which only happens at shutdown, and its last act is the
-    // fsync that makes the newest artifact survive the restart.
-    if let Some(writer) = plane.artifact_writer_handle {
-        handle
-            .drain_on_shutdown
-            .push(("artifact_store_writer", writer));
-    }
-    // The two journal writers now come off the BEACON, not off the layer: their
-    // stores moved into `beacon::build` with the randomness provider that owns
-    // them. Same drain class as the artifact store's.
-    if let Some(writer) = plane.key_writer_handle {
-        handle
-            .drain_on_shutdown
-            .push(("key_journal_writer", writer));
-    }
-    if let Some(writer) = plane.seed_writer_handle {
-        handle
-            .drain_on_shutdown
-            .push(("seed_journal_writer", writer));
-    }
+    // Every journal writer the beacon owns, behind ONE drain handle. A DRAIN
+    // handle and not a supervised one: it returns when the stores' last senders
+    // drop, which only happens at shutdown, and its last act is the fsync that
+    // makes the newest artifact and the newest journal tails survive the restart.
+    handle
+        .drain_on_shutdown
+        .push(("beacon", plane.beacon_drain));
 
     // Frontier-resolver keepalive: the always-on plane frontier resolver
     // (`FRONTIER_CHANNEL`) is a `commonware_resolver::p2p::Engine` whose event
@@ -893,16 +888,18 @@ where
             });
     supervised.push(("frontier_keepalive", keepalive_handle));
 
-    // THE HOST MUST NOT OUTLIVE ITS OWN PROVIDER CLONE. Both journal writers
-    // drain by observing their last sender drop, and both senders live inside the
-    // `Arc<dyn Randomness>` that `plane.shared` holds. Every OTHER clone dies
-    // with a task the supervisor aborts; this one is owned by a plain local, so
+    // THE HOST MUST NOT OUTLIVE ITS OWN PROVIDER CLONE. All THREE journal writers
+    // drain by observing their last sender drop, and all three senders live inside
+    // the `Arc<dyn Beacon>` that `plane.shared` holds — the seed store, the key
+    // store and, since the artifact store moved in with it, the artifact writer
+    // too. Every OTHER strong clone dies with a task the supervisor aborts (the
+    // RPC feed holds a `Weak` on purpose); this one is owned by a plain local, so
     // nothing aborts it. Explicit rather than left to scope exit: `plane` is
     // partially moved above, so "it drops at the end of the function" is a fact
     // about this function's body that the next edit can silently change — and the
-    // symptom would be two drains burning their timeout behind a warning that
+    // symptom would be three drains burning their timeout behind a warning that
     // says "the disk is stuck". That exact failure is what `91a2f1d9` fixed for
-    // one writer; there are two behind one handle now.
+    // one writer; there are three behind one handle now.
     drop(plane.shared);
 
     Ok((handle, supervised))
@@ -914,7 +911,7 @@ where
 /// registered on any context of this runtime — the p2p tracker
 /// `connected`/`tracked` gauges the overlay registers later (the smoke
 /// `smoke-peers` scrapes them), and on a follower the `dpos_follower_artifact_*`
-/// families `beacon::for_follower` registers.
+/// families `beacon::build_follower` registers.
 ///
 /// Called from [`run_node_stack`] BEFORE the overlay branch, for both node
 /// classes: it binds one socket, so it must run exactly once per process, and a
@@ -978,24 +975,17 @@ pub(crate) fn spawn_devnet_metrics(ctx: &Context, metrics_port: Option<u16>) {
 pub(crate) struct BeaconPlane {
     /// The single network's start handle — aborted ONLY at process shutdown.
     pub net_handle: Handle<()>,
-    /// The persistent `DkgActor` task — aborted ONLY at process shutdown.
-    pub dkg_handle: Handle<()>,
+    /// The beacon's own supervisor: the DKG actor, the beacon-log resolver
+    /// engine, the quarantine promoter, the agreement launcher, the agreement
+    /// write-back and the wake-up bridge, behind ONE handle. Resolving means one
+    /// of them died; aborting it aborts all of them.
+    pub beacon_supervised: Handle<()>,
     /// The finalized-height poller driving the plane's ET + `dkg_height` clock.
     /// The poller owns its own `dkg_height_tx` clone (feeding the LOCAL
     /// ordering-finalized height `fin + K`); the live-cert-frontier tee is
     /// re-homed onto the cert-inlet (`live_height` + `dkg_height_tx` below),
     /// fed only on an upstream-configured node.
     pub poller_handle: Handle<()>,
-    /// The DKG-log recovery resolver engine (`commonware_resolver::p2p`) on
-    /// BEACON_RESOLVER_CHANNEL — aborted ONLY at process shutdown (it serves peers'
-    /// log fetches and drives our own recovery fetches for the whole process).
-    pub beacon_resolver_handle: Handle<()>,
-    /// The quarantine promoter. It MUST be supervised rather than detached: it
-    /// holds a `SeedStore` clone and an `Arc<dyn Randomness>`, i.e. a sender for
-    /// each of the three journals, so a task nothing aborts keeps every
-    /// shutdown drain waiting out its timeout — the exact failure the explicit
-    /// `drop(plane.shared)` below exists to prevent.
-    pub seed_promoter_handle: Handle<()>,
     /// The plane-native `CertUpstream` frontier resolver engine
     /// (`commonware_resolver::p2p`) on FRONTIER_CHANNEL — aborted ONLY at process
     /// shutdown (it serves peers' tip/by-height fetches and drives this node's own
@@ -1018,24 +1008,17 @@ pub(crate) struct BeaconPlane {
     /// observers — aborted ONLY at process shutdown (they outlive every
     /// per-promotion signer engine).
     pub mux_handles: Vec<Handle<()>>,
-    /// The epoch-key agreement launcher: it turns the `DkgActor`'s dealing-closed
-    /// edge into a running agreement instance (sub-channel registrations + the
-    /// staking committee read + the spawn). Aborted ONLY at process shutdown.
-    pub agreement_launcher_handle: Handle<()>,
-    /// The durable artifact store's writer. A DRAIN handle, not a supervised one:
-    /// it returns when the store's last sender drops, which is shutdown.
-    pub artifact_writer_handle: Option<Handle<()>>,
-    /// The agreement write-back hop, armed inside `beacon::build` — the key store
-    /// it publishes into is created there now, so there is nothing left to arm
-    /// later. Supervised.
-    pub write_back_handle: Handle<()>,
-    /// The durable key journal's writer. A DRAIN handle, like the artifact
-    /// store's.
-    pub key_writer_handle: Option<Handle<()>>,
-    /// The durable seed journal's writer. A DRAIN handle, and the one whose
-    /// sender the CONSENSUS ENGINE holds — see the drain ordering in
-    /// `run_dpos_stack`.
-    pub seed_writer_handle: Option<Handle<()>>,
+    /// Every journal writer the beacon owns — the artifact store's, the key
+    /// journal's and the seed journal's — behind ONE drain handle. Resolving means
+    /// all of them have flushed and returned.
+    ///
+    /// A DRAIN handle, not a supervised one, and the distinction is the whole
+    /// reason the two lists never merge: a supervised handle resolving means "a
+    /// subsystem died, take the node down", this one means "the work owed is
+    /// done, shutdown may proceed". The senders it waits on live inside the
+    /// `Arc<dyn Beacon>`, which is why the explicit `drop(plane.shared)` below
+    /// has to happen first.
+    pub beacon_drain: Handle<()>,
     /// Supervisor handles of the agreement instances the launcher starts, for
     /// `epoch_manager` to adopt so they prune on the engine cutoff. Move-only, so
     /// it is handed over exactly once — into `launch_dpos_layer`.
@@ -1044,11 +1027,10 @@ pub(crate) struct BeaconPlane {
     /// the vote-backup forwarder, CLONED into the signer engine per promotion (the
     /// engine never re-builds any of these or re-binds the network).
     pub shared: SharedBeaconPlane,
-    /// Serve one held epoch-key artifact over `consensus_getEpochArtifact`. The
-    /// ONE thing the node may ask of the beacon's artifact store — `beacon::build`
-    /// keeps the store itself behind the facade, so this read closure is what
-    /// crosses instead.
-    pub artifact_bytes: fluentbase_consensus::beacon::ArtifactSource,
+    /// Serve one held epoch-key artifact over `consensus_getEpochArtifact`, as a
+    /// closure over `Beacon::artifact_bytes` — the artifact store itself stays
+    /// behind the beacon.
+    pub artifact_bytes: crate::consensus_rpc::state::ArtifactSource,
     /// The `committee_for` live-read cursor (`max(EL-finalized, live_height)`).
     /// Handed to an upstream-configured validator's cert-inlet so it tees the
     /// LIVE upstream cert frontier here — committee[E+1] then resolves at the
@@ -1097,6 +1079,36 @@ const MARSHAL_LABEL: &str = "marshal";
 /// still broadcasting into an agreement instance the rest of the committee has
 /// already torn down emits these by design, so the log has to be bounded rather
 /// than per-frame. `seen` is the calling loop's own tally — the limit is per task.
+/// The block NUMBERS a COMMITTEE read is taken at: `(primary, fallback)`, or
+/// `None` where this node cannot read state yet.
+///
+/// `max(EL-finalized, live cert cursor)`, falling back to the finalized height
+/// when reth has not imported the cursor block yet. With neither a finalized
+/// marker nor a live cursor the answer is `None`: `unwrap_or(0)` there would read
+/// the committee at genesis (`block_hash(0)`) → the wrong committee on a
+/// genesis-committed devnet during the startup race.
+fn committee_cursor(fin: Option<u64>, live: u64) -> Option<(u64, u64)> {
+    if fin.is_none() && live == 0 {
+        return None;
+    }
+    let fin = fin.unwrap_or(0);
+    Some((fin.max(live), fin))
+}
+
+/// The block numbers the `dkgQual` leg is read at — [`committee_cursor`] with the
+/// `fin.is_none()` window REMOVED rather than defaulted to genesis.
+///
+/// `committee[E]` is content-invariant, so a live-only cursor costs nothing if it
+/// is early. The qual bit feeds a WRITE-ONCE memo
+/// (`beacon::carry::frozen_dkg_qual`), so an answer read where `fin` is absent —
+/// i.e. at the genesis fallback — would freeze `false` for that epoch for the life
+/// of the process. Before a finalized marker exists the arbiter's honest answer is
+/// `None`, which both of its consumers already treat as "undecided, retry".
+fn qual_cursor(fin: Option<u64>, live: u64) -> Option<(u64, u64)> {
+    let fin = fin?;
+    Some((fin.max(live), fin))
+}
+
 fn record_route_miss(channel: &'static str, subchannel: u64, seen: &mut u64) {
     let kind = if epoch_from_subchannel(subchannel).is_some() {
         "unknown"
@@ -1375,172 +1387,126 @@ where
     // and the cursor is cert-finalized (no reorg), so reading at the executed-but-
     // not-yet-EL-finalized tip is sound and surfaces an ahead-committed committee[E]
     // K blocks sooner.
-    // Resolving the state hash the committee is read AT, shared by the single-epoch
-    // reader below and by the PAIR reader beside it. Factored out for one reason:
-    // the pair must resolve it ONCE for both epochs, and a second copy of this
-    // logic is how the two would drift apart.
-    let committee_read_hash = {
-        let provider = node.provider.clone();
-        let live_height = live_height.clone();
-        Arc::new(move || -> Option<alloy_primitives::B256> {
-            let fin = provider.finalized_block_number().ok().flatten();
-            let live = live_height.load(std::sync::atomic::Ordering::Relaxed);
-            // No finalized marker AND no live cursor yet ⇒ not readable.
-            // `unwrap_or(0)` here would read committee at genesis
-            // (`block_hash(0)`) → the wrong committee on a genesis-committed
-            // devnet during the startup race.
-            if fin.is_none() && live == 0 {
-                return None;
-            }
-            let fin = fin.unwrap_or(0);
-            let read_at = fin.max(live);
+    // EVERY staking read the beacon takes, behind ONE trait and ONE cursor.
+    //
+    // It used to be four independent closures plus a separate `dkgQual` state-hash
+    // resolver, and the cursor is why they are now one: `committee[E]` was read at
+    // `max(EL-finalized, live)` while `dkgQual[E]` was read at the finalized hash
+    // alone, so a node could see a committee it could not yet see the qual bit
+    // for. They are the two halves of one question, and Д-7 makes them one read
+    // (`.dpos-study/DECISIONS.md`). The bit is monotone and frozen once its
+    // epoch's committee is committed, so moving it onto the higher cursor can only
+    // surface a SET bit sooner, never change one that was already decided.
+    struct PlaneCommitteeReads<P, E> {
+        provider: P,
+        live_height: Arc<std::sync::atomic::AtomicU64>,
+        reader: RethStakingStateReader<P, E>,
+    }
+
+    impl<P, E> fluentbase_consensus::beacon::CommitteeReads for PlaneCommitteeReads<P, E>
+    where
+        P: BlockHashReader
+            + BlockNumReader
+            + StateProviderFactory
+            + HeaderProvider<Header = Header>
+            + Clone
+            + Send
+            + Sync
+            + 'static,
+        E: ConfigureEvm<Primitives = EthPrimitives> + Clone + Send + Sync + 'static,
+    {
+        /// `max(EL-finalized, live cursor)`. `committee[E]` is content-invariant
+        /// across any in-epoch executed hash and the live cursor is cert-finalized
+        /// (no reorg), so reading at the executed-but-not-yet-EL-finalized tip is
+        /// sound and surfaces an ahead-committed `committee[E]` K blocks sooner.
+        fn read_at(&self) -> Option<alloy_primitives::B256> {
+            let (primary, fallback) = committee_cursor(
+                self.provider.finalized_block_number().ok().flatten(),
+                self.live_height.load(std::sync::atomic::Ordering::Relaxed),
+            )?;
             // Fall back to the finalized hash if reth has not yet imported the
             // cursor block (the cert can land a beat before the EL-sync import).
-            provider
-                .block_hash(read_at)
+            self.provider
+                .block_hash(primary)
                 .ok()
                 .flatten()
-                .or_else(|| provider.block_hash(fin).ok().flatten())
-        }) as Arc<dyn Fn() -> Option<alloy_primitives::B256> + Send + Sync>
-    };
+                .or_else(|| self.provider.block_hash(fallback).ok().flatten())
+        }
 
-    // `committee[target−1]` and `committee[target]` at ONE state hash — the
-    // ceremony-start decision's input. See `CommitteePairFor` for what two
-    // independent reads cost.
-    let committee_pair_for: fluentbase_consensus::beacon::CommitteePairFor = {
-        let reader = RethStakingStateReader::new(
-            node.provider.clone(),
-            node.evm_config.clone(),
-            staking_config.clone(),
-        );
-        let read_hash = committee_read_hash.clone();
-        Arc::new(move |target: u64| {
-            let hash = read_hash()?;
-            let roster = |epoch: u64| -> Option<commonware_utils::ordered::Set<_>> {
-                let snap = reader.epoch_committee_snapshot(epoch, hash).ok()?;
-                if snap.validators.is_empty() {
-                    return None;
-                }
-                Some(commonware_utils::ordered::Set::from_iter_dedup(
-                    snap.validators.iter().map(|v| v.keys.peer_pubkey.clone()),
-                ))
-            };
-            Some((roster(target.checked_sub(1)?)?, roster(target)?))
-        })
-    };
-
-    let committee_for = {
-        let reader = RethStakingStateReader::new(
-            node.provider.clone(),
-            node.evm_config.clone(),
-            staking_config.clone(),
-        );
-        let provider = node.provider.clone();
-        let live_height = live_height.clone();
-        Arc::new(move |epoch: u64| {
-            let fin = provider.finalized_block_number().ok().flatten();
-            let live = live_height.load(std::sync::atomic::Ordering::Relaxed);
-            // No finalized marker AND no live cursor yet ⇒ not readable. `unwrap_or(0)`
-            // here would read committee at genesis (`block_hash(0)`) → the wrong
-            // committee on a genesis-committed devnet during the startup race.
-            if fin.is_none() && live == 0 {
-                return None;
-            }
-            let fin = fin.unwrap_or(0);
-            let read_at = fin.max(live);
-            // Fall back to the finalized hash if reth has not yet imported the
-            // cursor block (the cert can land a beat before the EL-sync import).
-            let hash = provider
-                .block_hash(read_at)
+        /// The SAME height as [`read_at`](Self::read_at), refused while this node
+        /// has no EL-finalized marker: see the trait for why the qual leg cannot
+        /// afford `read_at`'s genesis fallback.
+        fn qual_read_at(&self) -> Option<alloy_primitives::B256> {
+            let (primary, fallback) = qual_cursor(
+                self.provider.finalized_block_number().ok().flatten(),
+                self.live_height.load(std::sync::atomic::Ordering::Relaxed),
+            )?;
+            self.provider
+                .block_hash(primary)
                 .ok()
                 .flatten()
-                .or_else(|| provider.block_hash(fin).ok().flatten())?;
-            let snap = reader.epoch_committee_snapshot(epoch, hash).ok()?;
+                .or_else(|| self.provider.block_hash(fallback).ok().flatten())
+        }
+
+        fn committee(
+            &self,
+            epoch: u64,
+            at: alloy_primitives::B256,
+        ) -> Option<commonware_utils::ordered::Set<fluentbase_bls::PeerPubkey>> {
+            let snap = self.reader.epoch_committee_snapshot(epoch, at).ok()?;
             if snap.validators.is_empty() {
                 return None;
             }
             Some(commonware_utils::ordered::Set::from_iter_dedup(
                 snap.validators.iter().map(|v| v.keys.peer_pubkey.clone()),
             ))
-        })
-    };
+        }
 
-    // `committee[epoch]` with its BLS half — the SAME frozen on-chain committee
-    // `committee_for` reads, projected into the participant BiMap a certificate is
-    // verified under. One closure feeds both consumers that need it (the artifact
-    // seam's verification and the agreement instance's signer construction), so an
-    // instance and a peer checking its artifact can never disagree about who the
-    // committee is. Read at the same cursor as `committee_for` above and for the
-    // same reason: committee[E] is content-invariant across any in-epoch executed
-    // hash, and the live cursor is cert-finalized.
-    let committee_source = {
-        let reader = RethStakingStateReader::new(
-            node.provider.clone(),
-            node.evm_config.clone(),
-            staking_config.clone(),
-        );
-        let provider = node.provider.clone();
-        let live_height = live_height.clone();
-        Arc::new(move |epoch: u64| {
-            let fin = provider.finalized_block_number().ok().flatten();
-            let live = live_height.load(std::sync::atomic::Ordering::Relaxed);
-            if fin.is_none() && live == 0 {
-                return None;
-            }
-            let fin = fin.unwrap_or(0);
-            let hash = provider
-                .block_hash(fin.max(live))
-                .ok()
-                .flatten()
-                .or_else(|| provider.block_hash(fin).ok().flatten())?;
-            let snap = reader.epoch_committee_snapshot(epoch, hash).ok()?;
+        fn committee_bls(
+            &self,
+            epoch: u64,
+            at: alloy_primitives::B256,
+        ) -> Option<fluentbase_bls::scheme::EpochCommittee> {
+            let snap = self.reader.epoch_committee_snapshot(epoch, at).ok()?;
             if snap.validators.is_empty() {
                 return None;
             }
             fluentbase_consensus::scheme::epoch_committee_from_snapshot(&snap).ok()
-        })
-    };
+        }
 
-    // Under the 2-epoch committee warm-up the DKG ceremony roster IS the committed
-    // slot: `committee[target]` is frozen a full epoch before its DKG runs (at its
-    // `target−2` selection block), so the single `committee_for` closure above feeds
-    // both the verify/consensus paths AND the DkgActor (ceremony roster + the `next`
-    // side of `maybe_start`'s change-test + the AM5 idx→pubkey mapping). The former
-    // candidate/stash reader and the separate `active_committee_for` are gone; the
-    // DkgActor's default `active_committee_for = committee_for.clone()` covers the
-    // `cur` side of the change-test against the same committed slot.
-
-    // The raw on-chain `dkgQual[e]` reads behind the carry-forward arbiter: the
-    // chain's key epoch for E is the last set bit in (BOOTSTRAP, E]. FINALIZED hash
-    // only (same determinism discipline as the committee readers). This site
-    // supplies ONLY the reads — the freeze/memo rule that turns them into the
-    // arbiter lives at `beacon::carry::frozen_dkg_qual`, so the follower launch's
-    // own reader (`DposLayer::launch_follower`) cannot drift from it.
-    let dkg_qual_at = {
-        let provider = node.provider.clone();
-        Arc::new(move || {
-            let fin = provider.finalized_block_number().ok().flatten()?;
-            provider.block_hash(fin).ok().flatten()
-        })
-    };
-    let dkg_qual_probe = {
-        let reader = RethStakingStateReader::new(
-            node.provider.clone(),
-            node.evm_config.clone(),
-            staking_config.clone(),
-        );
-        Arc::new(move |epoch, at| {
-            let bit = reader.dkg_qual(epoch, at).ok()?;
+        fn dkg_qual(&self, epoch: u64, at: alloy_primitives::B256) -> Option<(bool, bool)> {
+            let bit = self.reader.dkg_qual(epoch, at).ok()?;
             // A SET bit is proof the commit happened, so the committee read is
-            // skipped for it — that is the only read this probe can save.
+            // skipped for it.
             let committed = bit
-                || reader
+                || self
+                    .reader
                     .epoch_committee_snapshot(epoch, at)
                     .map(|s| !s.validators.is_empty())
                     .unwrap_or(false);
             Some((bit, committed))
-        })
-    };
+        }
+    }
+
+    let committees: Arc<dyn fluentbase_consensus::beacon::CommitteeReads> =
+        Arc::new(PlaneCommitteeReads {
+            provider: node.provider.clone(),
+            live_height: live_height.clone(),
+            reader: RethStakingStateReader::new(
+                node.provider.clone(),
+                node.evm_config.clone(),
+                staking_config.clone(),
+            ),
+        });
+
+    // Under the 2-epoch committee warm-up the DKG ceremony roster IS the committed
+    // slot: `committee[target]` is frozen a full epoch before its DKG runs (at its
+    // `target−2` selection block), so the single `committee` read above feeds both
+    // the verify/consensus paths AND the DkgActor (ceremony roster + the `next`
+    // side of `maybe_start`'s change-test + the AM5 idx→pubkey mapping). The former
+    // candidate/stash reader and the separate `active_committee_for` are gone; the
+    // DkgActor's default `active_committee_for` covers the `cur` side of the
+    // change-test against the same committed slot.
 
     // EpochTransition-driven Oracle peer set + the `dkg_height` clock, both fed by a
     // persistent finalized-height poller (reth `finalized_block_number`) — a source
@@ -1584,12 +1550,18 @@ where
         .flatten()
         .unwrap_or(0);
     let et_arc = Arc::new(Mutex::new(epoch_transition));
-    // Fired ONCE by the poller the instant the ET freezes the geometry — the
-    // event the DkgActor's spawn wrapper awaits before it constructs the actor
-    // with plain `(activation, interval)`. Event-driven (not a poll/timer): the
-    // EpochTransition is the single in-plane geometry source, and the actor takes
-    // the value it already resolved instead of re-reading the chain itself.
-    let geometry_ready = Arc::new(tokio::sync::Notify::new());
+    // The plane's frozen `(dpos_activation, epoch_interval)`, published by the
+    // poller the instant the ET freezes it — the EpochTransition is the single
+    // in-plane geometry source, and the DkgActor takes it from here rather than
+    // re-reading the chain.
+    //
+    // A WATCH, where this used to be a one-shot `Notify` the actor's spawn wrapper
+    // awaited before reading `frozen_geometry()` once: a wake-up that raced the
+    // freeze read `None`, logged, and left the node with no `DkgActor` for the life
+    // of the process. A watch cannot lose the value — the actor waits for the first
+    // `Some` and starts then — and `None` is a named state on the beacon side
+    // (`WithheldReason::GeometryUnfrozen`) rather than a fatal read.
+    let (geometry_tx, geometry_rx) = tokio::sync::watch::channel(None);
 
     // Finalized-height poller, feeding TWO sinks off the SAME EL-finalized cursor:
     //   - `dkg_height` ← `fin + K` (ORDERING-finalized): the executor sets the
@@ -1617,7 +1589,7 @@ where
         let et = et_arc.clone();
         let dkg_tx = dkg_height_tx.clone();
         let plane_clock = plane_clock.clone();
-        let geometry_ready = geometry_ready.clone();
+        let geometry_tx = geometry_tx.clone();
         let tombstones = tombstones.clone();
         let tombstone_reader = RethStakingStateReader::new(
             node.provider.clone(),
@@ -1683,8 +1655,8 @@ where
                     // finalized cursor — anchoring to the now-readable finalized block
                     // and freezing the instant it is a readable, DPoS-scheduled block
                     // (`apply_at` is codeless-tolerant, so a too-early tick defers). The
-                    // instant it freezes, signal `geometry_ready` so the DkgActor's
-                    // spawn wrapper takes the frozen `(activation, interval)`. Once
+                    // instant it freezes, publish it on `geometry_tx` so the
+                    // DkgActor, parked on the first `Some`, starts. Once
                     // frozen, switch to the steady `on_finalized` boundary walk (which
                     // REQUIRES the freeze).
                     let frozen_before = { et.lock().await.frozen_geometry().is_some() };
@@ -1697,9 +1669,13 @@ where
                         // No `finalized_block_hash`-by-number on the provider here, so
                         // resolve the hash from the height we already have.
                         let out = et.lock().await.cold_start(hash, fin).await;
-                        // Freshly frozen on THIS tick ⇒ wake the DkgActor wrapper once.
-                        if et.lock().await.frozen_geometry().is_some() {
-                            geometry_ready.notify_one();
+                        // Freshly frozen on THIS tick ⇒ publish it. `send_replace`
+                        // rather than a one-shot signal: re-publishing the same
+                        // value on a later tick is a no-op for the receiver, and
+                        // there is no ordering to get wrong between the freeze and
+                        // the read.
+                        if let Some(frozen) = et.lock().await.frozen_geometry() {
+                            geometry_tx.send_replace(Some(frozen));
                         }
                         Some(out)
                     } else {
@@ -1933,16 +1909,16 @@ where
     // network, the mux brokers, the finalized-height poller and the three
     // staking-state closures — the dependencies that run the other way.
     //
-    // The actor is constructed AFTER the poller has frozen the geometry, so it takes
-    // plain `(activation, interval)` from the EpochTransition (the single in-plane
-    // source) and never re-reads the chain — no codeless/genesis-fallback race in
-    // this path. Height ticks accumulate in `dkg_height_rx` meanwhile (bounded
-    // buffer) and are drained by `on_height`'s monotone-max clamp once the actor
-    // runs; the first epoch boundary is one interval away (≫ the ~one-tick freeze
-    // latency), so no deal/seal is missed.
-    let beacon = fluentbase_consensus::beacon::build(
+    // The actor waits for the poller to publish a frozen `(activation, interval)`
+    // on `geometry_rx` and takes it from there — the EpochTransition stays the
+    // single in-plane source and the actor never re-reads the chain, so there is no
+    // codeless/genesis-fallback race in this path. Height ticks accumulate in
+    // `dkg_height_rx` meanwhile (bounded buffer) and are drained by `on_height`'s
+    // monotone-max clamp once the actor runs; the first epoch boundary is one
+    // interval away (≫ the ~one-tick freeze latency), so no deal/seal is missed.
+    let (beacon, beacon_tasks) = fluentbase_consensus::beacon::build(
         ctx,
-        fluentbase_consensus::beacon::BeaconConfig {
+        fluentbase_consensus::beacon::ValidatorInputs {
             chain_id,
             peer_keypair,
             bls_keypair,
@@ -1958,17 +1934,10 @@ where
             cert_mux: cert_mux.clone(),
             resolver_mux: resolver_mux.clone(),
             bodies_mux: broadcast_mux.clone(),
-            committee_for,
-            committee_pair_for,
-            committee_source,
-            dkg_qual_at,
-            dkg_qual_probe,
+            committees,
             heights: dkg_height_rx,
             plane_clock: plane_clock.clone(),
-            geometry: Box::pin(async move {
-                geometry_ready.notified().await;
-                et_arc.lock().await.frozen_geometry()
-            }),
+            geometry: geometry_rx,
             partition_prefix: String::new(),
         },
     )
@@ -1983,26 +1952,35 @@ where
         "always-on beacon plane built (one FluentP2P, persistent DkgActor; geometry frozen by the plane EpochTransition)"
     );
 
+    // WEAK, and that is a shutdown property rather than a style choice. This
+    // closure is handed to the RPC feed (`set_artifact_source`), which lives in
+    // reth's module registry for the whole process — nothing aborts it. A strong
+    // `Arc<dyn Beacon>` in it would keep the beacon alive past `drop(plane.shared)`
+    // and therefore keep the seed, key and artifact journals' SENDERS alive, so
+    // every drain writer would sit on a channel that never closes and the node
+    // would burn the full `SHUTDOWN_DRAIN_TIMEOUT` on every clean exit behind a
+    // warning whose whole job is to mean "the disk is stuck".
+    //
+    // A failed upgrade answers `None`, which is the right answer: the beacon is
+    // gone, so this node holds no artifact to serve.
+    let artifact_bytes: crate::consensus_rpc::state::ArtifactSource = {
+        let beacon = Arc::downgrade(&beacon);
+        Arc::new(move |epoch: u64| beacon.upgrade()?.artifact_bytes(epoch))
+    };
     Ok(BeaconPlane {
         net_handle,
-        dkg_handle: beacon.dkg_handle,
+        beacon_supervised: beacon_tasks.supervised,
+        beacon_drain: beacon_tasks.drain,
         poller_handle,
-        beacon_resolver_handle: beacon.resolver_handle,
-        seed_promoter_handle: beacon.seed_promoter_handle,
         frontier_resolver_handle,
         evidence_handle,
         evidence: evidence_bridge,
         plane_upstream,
         mux_handles,
-        agreement_launcher_handle: beacon.agreement_launcher_handle,
-        artifact_writer_handle: beacon.artifact_writer_handle,
-        write_back_handle: beacon.write_back_handle,
-        key_writer_handle: beacon.key_writer_handle,
-        seed_writer_handle: beacon.seed_writer_handle,
-        agreement_intake: beacon.agreement_intake,
+        agreement_intake: beacon_tasks.agreement_intake,
         shared: SharedBeaconPlane {
             oracle: handles.oracle,
-            randomness: beacon.randomness,
+            randomness: beacon,
             vote_mux,
             cert_mux,
             resolver_mux,
@@ -2013,7 +1991,7 @@ where
             plane_clock,
             dkg_height_tx: dkg_height_tx.clone(),
         },
-        artifact_bytes: beacon.artifact_bytes,
+        artifact_bytes,
         live_height,
         dkg_height_tx,
         marshal_slot,
@@ -2093,7 +2071,7 @@ pub(crate) async fn launch_dpos_layer<N, AddOns>(
     // into the feed beside `set_marshal` below, so a follower can obtain
     // `PK_epoch` from this validator over the SAME namespace it already takes
     // certificates from.
-    artifact_bytes: fluentbase_consensus::beacon::ArtifactSource,
+    artifact_bytes: crate::consensus_rpc::state::ArtifactSource,
     shutdown_token: CancellationToken,
 ) -> eyre::Result<DposLayerHandle>
 where
@@ -2514,6 +2492,48 @@ mod tests {
         FLUENT_DEVNET_CHAIN_ID, FLUENT_MAINNET_CHAIN_ID, FLUENT_TESTNET_CHAIN_ID,
     };
 
+    // The window the qual leg must not read in: a live cert cursor exists, an
+    // EL-finalized marker does not. The committee read is fine there (its value is
+    // content-invariant), but the qual bit feeds a WRITE-ONCE memo, and the
+    // committee cursor's `unwrap_or(0)` fallback resolves the GENESIS hash — where
+    // a genesis-committed devnet reads `committed = true, bit = false` and freezes
+    // "no re-mint at E" for the life of the process.
+    #[test]
+    fn the_qual_cursor_refuses_the_window_where_the_committee_cursor_falls_back_to_genesis() {
+        assert_eq!(
+            committee_cursor(None, 42),
+            Some((42, 0)),
+            "the committee still reads at the live cursor, falling back to genesis"
+        );
+        assert_eq!(
+            qual_cursor(None, 42),
+            None,
+            "the qual bit reads NOTHING without a finalized marker"
+        );
+        // Neither reads at all with no cursor of any kind.
+        assert_eq!(committee_cursor(None, 0), None);
+        assert_eq!(qual_cursor(None, 0), None);
+    }
+
+    // Once a marker exists the two legs are ONE cursor (Д-7): the same height and
+    // the same fallback, so a node can no longer see a committee it cannot yet see
+    // the qual bit for.
+    #[test]
+    fn with_a_finalized_marker_the_two_legs_read_at_one_cursor() {
+        for (fin, live) in [(7u64, 0u64), (7, 3), (7, 19), (0, 0), (0, 5)] {
+            assert_eq!(
+                committee_cursor(Some(fin), live),
+                qual_cursor(Some(fin), live),
+                "fin={fin} live={live}"
+            );
+        }
+        assert_eq!(
+            qual_cursor(Some(7), 19),
+            Some((19, 7)),
+            "max(fin, live) with the finalized height as the import fallback"
+        );
+    }
+
     fn cfg_with_plaintext_bls(path: &str) -> DposConfig {
         DposConfig {
             bls_key_path: Some(PathBuf::from(path)),
@@ -2565,67 +2585,96 @@ mod tests {
         );
     }
 
-    /// A drain writer leaves its loop when `recv()` returns `None`, and that
-    /// needs every sender gone — including the one the HOST still owns while it
-    /// awaits the drain. Since both journal senders moved inside the randomness
-    /// provider, the thing the host owns is an `Arc<dyn Randomness>`, and the
-    /// release is the `drop(plane.shared)` at the end of
-    /// `launch_validator_overlay`.
+    /// [`drain_shutdown_tasks`]'s contract, both directions: a drain writer leaves
+    /// its loop when `recv()` returns `None`, which needs EVERY sender gone —
+    /// including the one still reachable through a handle somebody holds.
     ///
-    /// The fixture therefore holds a PROVIDER clone, not a bare store: a test
-    /// written against the old shape would stay green while production leaked,
-    /// because the leak now travels through the `Arc` rather than through a
-    /// `BeaconKeys` field.
+    /// **WHAT THIS DOES NOT REACH, stated because it was once claimed.** It does
+    /// NOT pin the production ordering — that `drop(plane.shared)` in
+    /// `launch_validator_overlay` runs before `run_node_stack` awaits the drains.
+    /// That arrangement needs a whole reth node to exercise, and no unit test in
+    /// this file gets near it. Both halves of the fixture are stand-ins: the
+    /// beacon's writer task and its stores are private to the consensus crate.
     ///
-    /// Reds by leaving `writer_exited` false after `drain_shutdown_tasks` has
-    /// burnt the full `SHUTDOWN_DRAIN_TIMEOUT`.
+    /// Nor does it catch a beacon clone escaping into a LONG-LIVED registry, which
+    /// is the failure that actually happened: the RPC feed's artifact-source
+    /// closure held a strong `Arc<dyn Beacon>`, so no drop at the overlay could
+    /// release the senders and every clean shutdown burnt the full timeout. That
+    /// class is prevented structurally now — the closure holds a `Weak` — not by
+    /// this test.
+    ///
+    /// What it DOES pin: `drain_shutdown_tasks` waits (a still-held sender leaves
+    /// the writer parked and the drain unfinished) and returns once the last
+    /// sender is gone. The negative half is what stops the positive half from
+    /// passing on a fixture whose sender was never wired.
     ///
     /// Runs on the commonware `tokio` runtime, not the deterministic one, because
     /// that is what the node runs on and what gives `drain_shutdown_tasks` a real
-    /// timer to time out against.
+    /// timer.
     #[test]
-    fn dropping_the_host_provider_clone_releases_the_journal_writer() {
+    fn a_drain_finishes_only_once_the_last_sender_is_gone() {
         use commonware_runtime::{tokio::Runner as TokioRunner, Runner as _};
-        use fluentbase_consensus::beacon::BeaconKeys;
-        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::{
+            future::Future as _,
+            pin::Pin,
+            sync::atomic::{AtomicBool, Ordering},
+            task::{Context, Poll},
+        };
 
         TokioRunner::default().start(|ctx| async move {
-            let (persist, mut records) = mpsc::unbounded_channel();
+            let (persist, mut records) = mpsc::unbounded_channel::<()>();
             let writer_exited = Arc::new(AtomicBool::new(false));
+            let writer_ran = Arc::new(AtomicBool::new(false));
 
-            // `beacon::key_journal` is private to the consensus crate, so this
-            // stands in for `spawn_writer` with the one property under test: the
-            // loop it exits by.
             let exited = writer_exited.clone();
-            let writer = ctx
+            let ran = writer_ran.clone();
+            let mut writer = ctx
                 .with_label("key_journal_writer")
                 .spawn(move |_| async move {
-                    while records.recv().await.is_some() {}
+                    while records.recv().await.is_some() {
+                        ran.store(true, Ordering::SeqCst);
+                    }
                     exited.store(true, Ordering::SeqCst);
                 });
 
-            // The host's clone, in the shape production has it: the sender is
-            // reachable only THROUGH the provider.
-            let host_provider = fluentbase_consensus::beacon::for_keys(
-                BeaconKeys::with_persistence(Vec::new(), persist),
-                None,
-            );
-            let drains: Vec<DrainHandle> = vec![("key_journal_writer", writer)];
+            // One record, so "the writer ran" becomes an OBSERVED fact rather than
+            // an elapsed-time guess.
+            persist.send(()).expect("the writer is up");
+            // A held sender, in the shape production has it: reachable only
+            // THROUGH a handle somebody else owns.
+            let host_provider: Arc<dyn std::any::Any + Send + Sync> = Arc::new(persist);
 
-            // The premise, asserted rather than assumed: while the host still
-            // holds the provider the writer has NOT exited. Without this the test
-            // could pass on a fixture whose sender was never wired at all.
+            // NEGATIVE DIRECTION, and asserted against the HANDLE rather than a
+            // timer: a fixed sleep says only "not yet by then". Drive the runtime
+            // until the writer has demonstrably consumed the record, then poll its
+            // handle — still `Pending` is the claim, and a fixture whose sender was
+            // never wired (the writer never runs) or a writer that exits on an
+            // empty channel both fail here.
+            for _ in 0..1024 {
+                if writer_ran.load(Ordering::SeqCst) {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
             assert!(
-                !writer_exited.load(Ordering::SeqCst),
-                "premise: the writer is still parked on its channel"
+                writer_ran.load(Ordering::SeqCst),
+                "the writer task never ran; the negative half below would be vacuous"
             );
+            let waker = futures::task::noop_waker();
+            let mut cx = Context::from_waker(&waker);
+            assert!(
+                matches!(Pin::new(&mut writer).poll(&mut cx), Poll::Pending),
+                "a writer whose channel still has a live sender must stay parked"
+            );
+            assert!(!writer_exited.load(Ordering::SeqCst));
 
+            // POSITIVE DIRECTION.
             drop(host_provider);
-            drain_shutdown_tasks(drains).await;
-
+            drain_shutdown_tasks(vec![("key_journal_writer", writer)]).await;
             assert!(
                 writer_exited.load(Ordering::SeqCst),
-                "dropping the host's provider clone is what lets the writer resolve"
+                "dropping the last sender is what lets the writer resolve, and \
+                 `drain_shutdown_tasks` is what waits for it"
             );
         });
     }

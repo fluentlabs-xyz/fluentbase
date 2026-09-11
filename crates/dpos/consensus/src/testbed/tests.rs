@@ -9,7 +9,9 @@ use super::{
     },
 };
 use crate::beacon::{
-    artifact::decode_artifact, outcome::group_public_key, seed::prev_randao_from_seed, Seed,
+    prev_randao_from_seed,
+    testing::{decode_artifact, group_public_key},
+    Seed,
 };
 use alloy_primitives::B256;
 use commonware_codec::Encode as _;
@@ -1386,7 +1388,7 @@ fn three_boundaries_with_committee_rotation_keep_dkg_qual_honest() {
 /// at n=4 is the bare quorum 3 (`dkg_engine.rs`), and the agreement instance is
 /// a 4-seat simplex with 3 live seats — so the three dealers finalize, pin a
 /// THREE-log set and mint `PK_2`; the chain goes on with σ on the three. Node 3
-/// has no σ source at all (`absent::seed_for` is `None`, `mandatory_at(2)`
+/// has no σ source at all (`absent`'s `Beacon::seed` is `None`, `mandatory_at(2)`
 /// holds), so its executor parks at height 64 (`OwnRoundSeed::Missing`) — it
 /// stops at 63 without a halt.
 ///

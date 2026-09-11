@@ -3,7 +3,7 @@
 //! The reth-aligned recovery posture keeps a node UP and retrying (rather than
 //! `process::exit`-ing) wherever fork-safety permits; the gauge, not a crash, is
 //! then the operator's stuck signal. A [`SyncMetrics`] is created + registered
-//! ONCE per launch (mirrors [`crate::beacon::metrics::BeaconMetrics`]) against
+//! ONCE per launch (mirrors `beacon::metrics::BeaconMetrics`) against
 //! the launch context (commonware `Metrics`, scraped at `:19100` — NOT the
 //! `metrics::` macro recorder) and cloned into the cold-start + boundary-hook
 //! self-heal loops. Each metric is `Arc`-backed, so the struct is cheap to clone

@@ -15,12 +15,12 @@
 //! there is no cross-actor race on the speculative state.
 
 use crate::{
-    beacon::{seed::Seed, verified_seed::VerifiedSeed, Randomness},
+    beacon::{Beacon, ObservedCertificate, Seed},
     executor,
     executor::{Command, Notarized},
 };
 use commonware_consensus::{simplex::types::Activity, Reporter};
-use fluentbase_bls::{oracle::SeedCheck, Scheme as BlsScheme};
+use fluentbase_bls::Scheme as BlsScheme;
 use std::sync::Arc;
 use tracing::{error, Span};
 
@@ -31,17 +31,14 @@ type Digest = crate::digest::Digest;
 #[derive(Clone)]
 pub struct Mailbox {
     executor: executor::Mailbox,
-    /// The randomness provider this reporter HANDS the recovered seed to. The
-    /// notarization carries it; the beacon owns where it is kept.
-    randomness: Arc<dyn Randomness>,
+    /// The beacon this reporter HANDS the notarization to. The certificate
+    /// carries σ; the beacon owns the verdict and where the value is kept.
+    beacon: Arc<dyn Beacon>,
 }
 
 impl Mailbox {
-    pub fn new(executor: executor::Mailbox, randomness: Arc<dyn Randomness>) -> Self {
-        Self {
-            executor,
-            randomness,
-        }
+    pub fn new(executor: executor::Mailbox, beacon: Arc<dyn Beacon>) -> Self {
+        Self { executor, beacon }
     }
 }
 
@@ -72,49 +69,33 @@ impl Reporter for Mailbox {
         //     executor derives it from σ at ITS OWN round — exactly the round this
         //     line records, `Round(epoch(h), block.proposal_view)`.
         //  3. A miss there is not a wrong derive — the height is HELD
-        //     (`awaiting_seed`) until `record_seed` fires the seed edge. Deferring
-        //     this record would lose that race against the very next finalization,
-        //     turning a rare hold into a per-block one and putting the whole
-        //     execution pipeline one wake behind consensus.
+        //     (`awaiting_seed`) until the record fires the beacon's seed wake-up.
+        //     Deferring this record would lose that race against the very next
+        //     finalization, turning a rare hold into a per-block one and putting
+        //     the whole execution pipeline one wake behind consensus.
         //
         // WHAT IT DOES NOT PROTECT, checked rather than assumed: the old comment
         // also demanded this run BEFORE the executor send below. That half is not
         // load-bearing. The executor consults the store only on a spin-round
         // mismatch, and then for the CANONICAL round — a round recorded by an
-        // earlier report, not by this one (`executor.rs:2557`); when the rounds
+        // earlier report, not by this one (`Actor::spec_seed_for`, the
+        // `seed(canonical)` read on the re-canonicalisation arm); when the rounds
         // match it uses the seed carried in the command and reads nothing. Both
         // statements are synchronous anyway, so the order between them is
         // unobservable. Kept adjacent for readability, not for correctness.
         //
-        // The witness is minted here through the same oracle every other writer
-        // uses, even though this σ was recovered from partials this node already
-        // verified. A constructor that skipped the check for the local path
-        // would be the one door a later writer reaches for; one pairing per
-        // round is the cheaper half of that trade.
-        if let Some(s) = seed.as_ref() {
-            // Below `DETERMINISTIC_BOOTSTRAP_EPOCH` there is no oracle, and no
-            // threshold seed to record either.
-            if let Some(oracle) = self.randomness.oracle_for(s.target_round.epoch().get()) {
-                match VerifiedSeed::check(oracle.as_ref(), s.target_round, s.signature) {
-                    Ok(verified) => self.randomness.record_seed(verified),
-                    // `NoKey` is a statement about US: a share-holding member
-                    // normally holds its own epoch key, but there is a window
-                    // before `set_pk` where it does not. Hold the value rather
-                    // than drop it — this node produced it, and the promoter
-                    // will file it the moment the key lands.
-                    Err(SeedCheck::NoKey) => self
-                        .randomness
-                        .quarantine_seed(s.target_round, s.signature),
-                    Err(check) => {
-                        error!(
-                            round = ?s.target_round,
-                            ?check,
-                            "locally recovered seed did not verify under its own epoch key"
-                        );
-                    }
-                }
-            }
-        }
+        // The verdict is the BEACON's — including the fact that a σ this node
+        // recovered from partials it had already verified must still be checked
+        // through the epoch's own oracle. One pairing per round is the cheaper
+        // half of that trade against a constructor that skipped the check for the
+        // local path and became the one door a later writer reached for.
+        let _observed = self
+            .beacon
+            .observe_certificate(ObservedCertificate::Notarization(n.proposal.round, &n));
+        // PLAN row 5.2 wires the verdict: `Pending` becomes `ReplaySeed::Defer`
+        // on the crash-replay path and `Refused` an inlet data fault. Until then
+        // nobody reads it here — named rather than `_` so the three sites that
+        // owe 5.2 a reader are greppable.
         let msg = executor::Message {
             cause: Span::current(),
             command: Command::SpecNotarized(Box::new(Notarized {

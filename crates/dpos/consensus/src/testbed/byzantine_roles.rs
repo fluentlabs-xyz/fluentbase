@@ -22,7 +22,7 @@
 //!   log carries `DealerResult::TooManyReveals` (reveals `n` > `max_reveals` =
 //!   f); it is still a `check`-valid log of that dealer, which is all
 //!   `DkgCeremony::record_checked_log` looks at.
-//! * [`WithholdingRandomness`] wraps the plane's `Randomness` and rebuilds the
+//! * [`WithholdingRandomness`] wraps the plane's `Beacon` and rebuilds the
 //!   signer scheme over the epoch's VERIFY-ONLY oracle (`oracle_for`, whose
 //!   `BeaconOracle::me` is `None`). By `oracle.rs:172-189` such an oracle
 //!   answers `None` to `sign_partial`, and by `combined_scheme.rs:284-287` a
@@ -52,13 +52,9 @@
 use super::fakes::{ByzReport, CountingHandler, ElNetwork, FakeChain};
 use crate::{
     beacon::{
-        ceremony::info_for,
-        dkg_msg::{DealerReveal, DkgBody, DkgMsg},
-        keys::InvalidSeed,
-        seed::Seed,
-        surface::{PinEffort, Randomness, ShareProbe, SignerVerdict},
-        verified_seed::VerifiedSeed,
-        wire::BeaconMessage,
+        testing::{info_for, BeaconMessage, DealerReveal, DkgBody, DkgMsg},
+        Beacon, BeaconEvent, DataFault, Observed, ObservedCertificate, PinEffort, Seed, ShareProbe,
+        SignerVerdict,
     },
     cert_follow::UpstreamFinalized,
     cold_start_jump::verify_jump_structural,
@@ -95,7 +91,7 @@ use std::{
     sync::{Arc, Mutex},
     time::SystemTime,
 };
-use tokio::sync::Notify;
+use tokio::sync::{broadcast, mpsc};
 
 /// The seed of the SECOND dealer a [`TwoRevealSender`] runs. Fixed, so the whole
 /// role is deterministic under the stand's deterministic runner, and different
@@ -345,21 +341,21 @@ impl<S: Sender<PublicKey = PeerPubkey>> LimitedSender for TwoRevealSender<S> {
 // R-002, second link — the dealer that withholds its seed partial
 // ---------------------------------------------------------------------------
 
-/// The plane's `Randomness` with ONE operation changed: the signer scheme is
+/// The plane's [`Beacon`] with ONE operation changed: the signer scheme is
 /// rebuilt over the epoch's verify-only oracle, so this node produces no seed
 /// partial and therefore (`combined_scheme.rs:284-287`) casts no vote.
 pub(super) struct WithholdingRandomness {
-    inner: Arc<dyn Randomness>,
+    inner: Arc<dyn Beacon>,
     chain_id: u64,
     report: ByzReport,
 }
 
 impl WithholdingRandomness {
     pub(super) fn wrap(
-        inner: Arc<dyn Randomness>,
+        inner: Arc<dyn Beacon>,
         chain_id: u64,
         report: ByzReport,
-    ) -> Arc<dyn Randomness> {
+    ) -> Arc<dyn Beacon> {
         Arc::new(Self {
             inner,
             chain_id,
@@ -368,60 +364,65 @@ impl WithholdingRandomness {
     }
 }
 
-impl Randomness for WithholdingRandomness {
-    fn record_seed(&self, verified: VerifiedSeed) {
-        self.inner.record_seed(verified)
+impl Beacon for WithholdingRandomness {
+    fn seed(&self, round: Round) -> Option<Seed> {
+        self.inner.seed(round)
     }
-    fn quarantine_seed(&self, round: Round, seed: BlsSignature) {
-        self.inner.quarantine_seed(round, seed)
+
+    fn terminal_seed(&self, round: Round) -> Option<Seed> {
+        self.inner.terminal_seed(round)
     }
-    fn on_invalid_seed(&self, epoch: u64) -> InvalidSeed {
-        self.inner.on_invalid_seed(epoch)
-    }
-    fn seed_for(&self, round: Round) -> Option<Seed> {
-        self.inner.seed_for(round)
-    }
-    fn terminal_seed_at(&self, round: Round) -> Option<Seed> {
-        self.inner.terminal_seed_at(round)
-    }
-    fn seed_edge(&self) -> Arc<Notify> {
-        self.inner.seed_edge()
-    }
+
     fn mandatory_at(&self, epoch: u64) -> bool {
         self.inner.mandatory_at(epoch)
     }
-    fn share_probe(&self, epoch: Epoch) -> ShareProbe {
-        self.inner.share_probe(epoch)
+
+    fn can_participate(&self, epoch: Epoch) -> ShareProbe {
+        self.inner.can_participate(epoch)
     }
-    fn participation_edge(&self) -> Arc<Notify> {
-        self.inner.participation_edge()
-    }
+
     fn oracle_for(&self, epoch: u64) -> Option<Arc<dyn SeedOracle>> {
         self.inner.oracle_for(epoch)
     }
+
     fn ensure_key(&self, epoch: u64, effort: PinEffort) -> BoxFuture<'_, bool> {
         self.inner.ensure_key(epoch, effort)
     }
-    fn key_edge(&self) -> Arc<Notify> {
-        self.inner.key_edge()
+
+    fn observe_certificate(&self, cert: ObservedCertificate<'_>) -> Observed {
+        self.inner.observe_certificate(cert)
     }
+
+    fn artifact_bytes(&self, epoch: u64) -> Option<Vec<u8>> {
+        self.inner.artifact_bytes(epoch)
+    }
+
     fn observe_epoch(&self, reconciled: Epoch, entered_frontier: Epoch) {
         self.inner.observe_epoch(reconciled, entered_frontier)
     }
+
     fn observe_cert(&self, epoch: u64) {
         self.inner.observe_cert(epoch)
     }
 
-    /// The inner verdict is taken FIRST — it carries the plane's own side effects
-    /// (the gates, the counters, the key publication `signer_scheme`'s doc calls
+    fn subscribe(&self) -> broadcast::Receiver<BeaconEvent> {
+        self.inner.subscribe()
+    }
+
+    fn faults(&self) -> Option<mpsc::UnboundedReceiver<DataFault>> {
+        self.inner.faults()
+    }
+
+    /// The inner verdict is taken FIRST — it carries the beacon's own side
+    /// effects (the gates, the counters, the key publication `signer`'s doc calls
     /// a data dependency) — and only a `Signs` arm is rebuilt.
-    fn signer_scheme(
+    fn signer(
         &self,
         epoch: Epoch,
         snap: &ValidatorSetSnapshot,
         keypair: &ValidatorBlsKeypair,
     ) -> SignerVerdict {
-        let honest = match self.inner.signer_scheme(epoch, snap, keypair) {
+        let honest = match self.inner.signer(epoch, snap, keypair) {
             SignerVerdict::Signs(scheme) => scheme,
             other => return other,
         };

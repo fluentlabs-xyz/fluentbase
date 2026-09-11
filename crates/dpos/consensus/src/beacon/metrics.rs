@@ -48,6 +48,9 @@ pub struct BeaconMetrics {
     /// plane makes the nullify quorum unreachable during a stall, when there are no
     /// proposals to expose the bad share on the notarize path.
     pub engine_demoted_bad_share: Counter,
+    /// Participation withheld because the plane has not frozen its
+    /// `(dpos_activation, epoch_interval)` yet — no ceremony has been able to run.
+    pub engine_demoted_geometry_unfrozen: Counter,
     /// A consensus-pinned dealer-log index named a position outside the committed
     /// committee, and the ceremony skipped it. Nothing can ever satisfy such an entry
     /// (the resolver fetches per-DEALER), so before the skip it held `all_held=false`
@@ -209,6 +212,12 @@ impl BeaconMetrics {
             "Would-be signers demoted to verify-only because the locally-resolved PK_epoch \
              differs from the network-attested key.",
             self.engine_demoted_key_divergence.clone(),
+        );
+        ctx.register(
+            "epoch_engine_demoted_geometry_unfrozen_total",
+            "Would-be signers withheld because the beacon plane has not frozen its \
+             (dpos_activation, epoch_interval) yet, so no ceremony has run.",
+            self.engine_demoted_geometry_unfrozen.clone(),
         );
         ctx.register(
             "epoch_engine_demoted_bad_share_total",

@@ -8,6 +8,7 @@
 
 use super::{
     actor::CeremonyStore,
+    artifact::ArtifactStore,
     carry::DkgQualFor,
     keys::{pk_prefix, BeaconKeys, InvalidSeed, KeySource},
     metrics::BeaconMetrics,
@@ -15,13 +16,17 @@ use super::{
     seed::Seed,
     verified_seed::VerifiedSeed,
 };
-use commonware_consensus::types::{Epoch, Round, View};
+use crate::digest::Digest;
+use commonware_consensus::{
+    simplex::types::{Finalization, Notarization},
+    types::{Epoch, Round, View},
+};
 use commonware_cryptography::bls12381::primitives::{
     group::Share, sharing::Sharing, variant::MinSig,
 };
+#[cfg(test)]
 use commonware_runtime::Metrics;
 use commonware_utils::{ordered::Error as OrderedError, Participant};
-#[cfg(test)]
 use fluentbase_bls::oracle::SeedCheck;
 use fluentbase_bls::{
     beacon as beacon_bls, beacon::GroupPublic, keys::ValidatorBlsKeypair, oracle::SeedOracle,
@@ -29,9 +34,12 @@ use fluentbase_bls::{
 };
 use fluentbase_staking_reader::reader::ValidatorSetSnapshot;
 use futures::future::BoxFuture;
-use std::sync::{atomic::AtomicBool, Arc, Mutex};
-use tokio::sync::Notify;
-use tracing::{debug, info, warn};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex,
+};
+use tokio::sync::{broadcast, mpsc, watch};
+use tracing::{debug, error, info, warn};
 
 /// Per-epoch threshold material this node holds: the public polynomial, its
 /// share (`None` for a verifier-only node) and the seed namespace.
@@ -49,6 +57,11 @@ pub enum WithheldReason {
     NoUsableShare,
     KeyDivergence,
     BadShare,
+    /// The plane has not frozen `(dpos_activation, epoch_interval)` yet, so no
+    /// ceremony has been able to run. Distinct from [`Self::NoUsableShare`], which
+    /// it used to be reported as: that one says "the ceremony ran and this node
+    /// holds nothing from it", this one says "there has been no ceremony".
+    GeometryUnfrozen,
 }
 
 /// The cheap half of the participation question, answered where the share-gate
@@ -94,8 +107,372 @@ pub enum PinEffort {
     Thorough,
 }
 
-/// Everything the consensus core is allowed to know about randomness.
-pub trait Randomness: Send + Sync {
+/// The ONE door the consensus core and the node reach the beacon through.
+///
+/// A trait rather than a struct because the substitution seam is the point: the
+/// testbed swaps a node's beacon for a static or withholding one, and production
+/// has exactly one implementation. What is NOT on it is as load-bearing as what
+/// is — how the epoch key is agreed, where the artifact is stored, how a share is
+/// derived, how a peer is served, and every handle those need, all stay behind
+/// [`super::build`]'s [`Tasks`](super::Tasks).
+///
+/// The PRODUCTION implementations (`LiveBeacon`, `FollowerRandomness`) reach it
+/// through a blanket impl over [`Randomness`], the module-internal trait they
+/// still speak while the internals are moved epoch by epoch
+/// (`.dpos-study/PLAN.md` rows 5.1-5.4). The test implementations do NOT: they
+/// implement this trait directly, so `Randomness` is reachable from nowhere but
+/// `beacon/` and shrinks with the rows that delete it. The one rule they share is
+/// [`certificate_verdict`], which every `observe_certificate` routes through.
+pub trait Beacon: Send + Sync {
+    /// The verified seed in force at `round`, if this node has it.
+    ///
+    /// SYNC, and every caller depends on it: the executor's derive and the
+    /// crash-survivor replay both read it without an await. Answers ONLY for the
+    /// exact round asked — the terminal pin is an eviction rule inside the index,
+    /// never a substitute round.
+    fn seed(&self, round: Round) -> Option<Seed>;
+
+    /// σ of `round`, answered ONLY when `round` is this node's pinned terminal
+    /// round for its epoch — the boundary base of the NEXT epoch, which outlives
+    /// the round window [`Self::seed`] reads.
+    fn terminal_seed(&self, round: Round) -> Option<Seed>;
+
+    /// Is randomness mandatory at `epoch`? CONSENSUS-AGREED DATA, not a local
+    /// capability: every node of one network must answer identically or the
+    /// derive splits the network.
+    fn mandatory_at(&self, epoch: u64) -> bool;
+
+    /// Can this node participate at `epoch` at all?
+    ///
+    /// The CHEAP probe, and it keeps its own operation rather than folding into
+    /// [`Self::signer`]: it is asked on every reconcile edge, ahead of the
+    /// boundary-block read, and folding it in would make a shareless member pay a
+    /// full resolve plus a marshal read per edge.
+    fn can_participate(&self, epoch: Epoch) -> ShareProbe;
+
+    /// May this node sign at `epoch`, and with what scheme?
+    fn signer(
+        &self,
+        epoch: Epoch,
+        snap: &ValidatorSetSnapshot,
+        keypair: &ValidatorBlsKeypair,
+    ) -> SignerVerdict;
+
+    /// The beacon's threshold face for `epoch`, for a scheme that only VERIFIES.
+    /// SYNC: consulted inline from the simplex batcher.
+    fn oracle_for(&self, epoch: u64) -> Option<Arc<dyn SeedOracle>>;
+
+    /// Try to make `epoch`'s group key locally resolvable, and report whether it
+    /// now is. ACQUISITION, not verification — the key never leaves the beacon.
+    fn ensure_key(&self, epoch: u64, effort: PinEffort) -> BoxFuture<'_, bool>;
+
+    /// Take the σ a verified certificate carries and return the verdict HERE.
+    ///
+    /// One operation instead of the four the ingresses used to compose
+    /// (`oracle_for` + `VerifiedSeed::check` + `record_seed`/`quarantine_seed` +
+    /// `on_invalid_seed`): the verdict rule is the beacon's, and spreading it
+    /// over the callers is what let two ingresses judge the same σ differently.
+    fn observe_certificate(&self, cert: ObservedCertificate<'_>) -> Observed;
+
+    /// One held artifact's wire bytes, for `consensus_getEpochArtifact`.
+    ///
+    /// Safe to serve unauthenticated: the artifact is self-authenticating against
+    /// `committee[epoch]`, so handing one to anyone leaks nothing a staking read
+    /// would not.
+    fn artifact_bytes(&self, epoch: u64) -> Option<Vec<u8>>;
+
+    /// The core reconciled `reconciled` while its highest registered epoch is
+    /// `entered_frontier`.
+    ///
+    /// TRANSITIONAL: PLAN row 5.1 deletes this together with `keys.rs` and W3,
+    /// and row 5.2 deletes the quarantine window it also ages out. It survives
+    /// the boundary move because the retention it drives is still real.
+    fn observe_epoch(&self, reconciled: Epoch, entered_frontier: Epoch);
+
+    /// The cert-inlet ingested a verified certificate for `epoch`. Transitional
+    /// for the same reason as [`Self::observe_epoch`], and a SECOND observation
+    /// rather than a redundancy: the inlet prunes from its live-upstream
+    /// frontier, the epoch manager from its entered one.
+    fn observe_cert(&self, epoch: u64);
+
+    /// Wake-ups, not facts: on every one the consumer RE-READS what it needs
+    /// through the queries above.
+    ///
+    /// SUBSCRIBE BEFORE THE FIRST READ, not merely before the loop. A `broadcast`
+    /// buffers from the subscription onward and drops a send with no receiver,
+    /// where the `notify_one` permits this replaces were stored — so the ordering
+    /// that used to be free has to be arranged: subscribe, then read, then wait.
+    /// Every consumer already reads before it waits, because the wake-up carries
+    /// no value and a re-read is the only way to learn anything from it.
+    ///
+    /// `RecvError::Lagged` is a wake-up like any other: the consumer re-reads
+    /// state, which is all it would have done for each of the messages it missed.
+    fn subscribe(&self) -> broadcast::Receiver<BeaconEvent>;
+
+    /// The LATE `Refused` verdict — a σ admitted with no key, refused once the
+    /// key landed. A fact rather than a wake-up, so it may not be lost.
+    ///
+    /// At most one consumer: the first call takes the receiver, later calls get
+    /// `None`. Nothing sends until a receiver has been taken, so an unread
+    /// channel cannot grow.
+    fn faults(&self) -> Option<mpsc::UnboundedReceiver<DataFault>>;
+}
+
+/// The certificate an ingress hands to [`Beacon::observe_certificate`].
+///
+/// The two arms are NOT interchangeable, which is why this is an enum and not a
+/// bare `(Round, Option<BlsSignature>)` — but what separates them is the DOOR,
+/// not the σ's provenance, and the difference matters:
+///
+/// - [`Self::Finalization`] is the door that must not DROP a value it could
+///   re-check later, so a failure there consults key provenance
+///   (`on_invalid_seed`) and may quarantine.
+/// - [`Self::Notarization`] is the speculation door. Its σ never reaches the
+///   served map on a failure, and there is nothing later to re-check it against
+///   at this round, so a failure is logged and refused outright.
+///
+/// NOT a provenance claim, checked rather than assumed: commonware reports
+/// `Activity::Notarization` for a certificate RECEIVED FROM THE WIRE exactly as
+/// for one this node assembled. A wire certificate reaches
+/// `Message::Verified(Certificate::Notarization(..))`
+/// (`simplex/actors/voter/actor.rs:996-1007`), is stored by `handle_notarization`,
+/// and is then re-read out of state and reported by `try_broadcast_notarization`
+/// (`:500-531`); the journal replay path reports it too (`:745-755`), and
+/// `Round::broadcast_notarization` hands back whatever was stored regardless of
+/// how it got there (`voter/round.rs:438-447`, whose own test builds the
+/// certificate "entirely from remote votes"). The reported activity carries no
+/// provenance field, so no caller of this enum can supply one — which is why the
+/// arms are named after the doors and the verdict is justified by the door.
+pub enum ObservedCertificate<'a> {
+    /// The round's notarization, as the voter reported it (`spec_exec`).
+    Notarization(Round, &'a Notarization<BlsScheme, Digest>),
+    /// Ingested from a verified finalization (the cert inlet and the plane arm's
+    /// by-height pulls).
+    Finalization(Round, &'a Finalization<BlsScheme, Digest>),
+}
+
+/// What [`Beacon::observe_certificate`] did with the σ it was handed.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[must_use]
+pub enum Observed {
+    /// Verified under the epoch key and filed.
+    Recorded,
+    /// Held: the epoch key is not resolvable here yet. The same admission the
+    /// certificate itself just got.
+    Pending,
+    /// Verified-INVALID under a key whose provenance makes that an accusation.
+    Refused,
+    /// Nothing to do: the certificate carries no σ, or the epoch is not
+    /// beacon-active.
+    Inactive,
+}
+
+/// A σ that was admitted with no key and refused once the key landed.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub struct DataFault {
+    pub epoch: u64,
+    /// How many quarantined rounds of `epoch` failed the re-check.
+    pub refused: usize,
+}
+
+/// Which beacon state may have changed. A WAKE-UP: the variant names the class,
+/// never the value — the consumer re-reads the value through the queries.
+///
+/// No payload, and that is the point rather than an omission. Two of the three
+/// producers do not have one to give (`BeaconKeys` and the ceremony's
+/// participation edge both fire a bare `Notify` from tasks that do not name an
+/// epoch), and a consumer that acted on a payload instead of re-reading would be
+/// wrong the moment a `Lagged` collapsed two of them.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum BeaconEvent {
+    /// A σ was filed. Consumer: the executor's held-height release.
+    SeedRecorded,
+    /// A key landed that was not resolvable before. Consumer: the epoch manager's
+    /// repair sweep.
+    KeyAvailable,
+    /// This node's ability to participate may have changed, in EITHER direction.
+    /// Consumer: the epoch manager's reconcile arm.
+    ParticipationChanged,
+}
+
+/// A publisher nothing ever fires — for the implementations that produce no
+/// beacon state (`Absent`) or produce it without an edge (`StaticRandomness`
+/// deals on demand, so there is nothing to wake for). A consumer subscribing to
+/// it parks forever, exactly as the idle `Notify` it replaces did.
+pub(crate) fn idle_events() -> broadcast::Sender<BeaconEvent> {
+    broadcast::channel(1).0
+}
+
+/// Depth of the wake-up broadcast.
+///
+/// Generous next to the traffic — the busiest producer is one `SeedRecorded` per
+/// round, so ~1/s at the target block rate — because the cost of overflow is a
+/// `Lagged` and the cost of the buffer is three bytes a slot.
+pub(crate) const EVENT_BUFFER: usize = 64;
+
+/// The verdict rule of [`Beacon::observe_certificate`], in ONE body.
+///
+/// Every implementation of the trait routes here: the live plane through the
+/// blanket impl over [`Randomness`], and each test fixture from its own
+/// `observe_certificate`. The three sinks are closures rather than a second
+/// trait because that is all the rule needs from the implementation, and
+/// because a fixture whose sink is a no-op should say so at the call site
+/// instead of carrying an empty impl block. What must NOT be per-implementation
+/// is the rule itself — spreading it over the callers is what let two ingresses
+/// judge the same σ differently, and a fixture that judged it by a third rule
+/// would make the ingress tests about the fixture.
+pub(crate) fn certificate_verdict(
+    cert: ObservedCertificate<'_>,
+    oracle_for: impl FnOnce(u64) -> Option<Arc<dyn SeedOracle>>,
+    record: impl FnOnce(VerifiedSeed),
+    quarantine: impl FnOnce(Round, BlsSignature),
+    on_invalid: impl FnOnce(u64) -> InvalidSeed,
+) -> Observed {
+    // `speculation` names the DOOR, never the σ's provenance — see
+    // [`ObservedCertificate`] for why a notarization off the wire arrives here
+    // indistinguishable from one assembled locally.
+    let (round, seed, speculation) = match cert {
+        ObservedCertificate::Notarization(round, n) => (round, n.certificate.seed(), true),
+        ObservedCertificate::Finalization(round, f) => (round, f.certificate.seed(), false),
+    };
+    let Some(seed) = seed else {
+        return Observed::Inactive;
+    };
+    // No oracle below `DETERMINISTIC_BOOTSTRAP_EPOCH`: those epochs have no
+    // threshold seed to hold an opinion about.
+    let Some(oracle) = oracle_for(round.epoch().get()) else {
+        return Observed::Inactive;
+    };
+    match VerifiedSeed::check(oracle.as_ref(), round, seed) {
+        Ok(verified) => {
+            record(verified);
+            Observed::Recorded
+        }
+        // Not a fault: the epoch key is not resolvable HERE yet. A member
+        // normally holds its own epoch key, but there is a window before the
+        // key lands where it does not. Hold the value rather than drop it.
+        Err(SeedCheck::NoKey) => {
+            quarantine(round, seed);
+            Observed::Pending
+        }
+        Err(check @ SeedCheck::Invalid) if speculation => {
+            // The speculation door. Refused outright rather than quarantined:
+            // nothing later re-checks a notarization's σ at this round, so a held
+            // value would only accumulate. `check` is named in the line because it
+            // is the only field that would tell this apart from a THIRD failure
+            // class if one is ever added to `SeedCheck`. Text kept verbatim from
+            // `HEAD:spec_exec.rs:79-84` — the log line is greppable in soaks.
+            error!(
+                ?round,
+                ?check,
+                "locally recovered seed did not verify under its own epoch key"
+            );
+            Observed::Refused
+        }
+        // Off the wire, a failure means something about the NETWORK only when
+        // the key it failed against is attested — judged against a locally
+        // reconstructed one it means something about US, and dropping the
+        // value would leave nothing to re-check once the attested key arrives.
+        Err(SeedCheck::Invalid) => match on_invalid(round.epoch().get()) {
+            InvalidSeed::Quarantine => {
+                quarantine(round, seed);
+                Observed::Pending
+            }
+            InvalidSeed::RefuseLoud => {
+                error!(
+                    ?round,
+                    "certificate seed does not verify under its epoch key"
+                );
+                Observed::Refused
+            }
+            InvalidSeed::RefuseQuiet => Observed::Refused,
+        },
+        // Unreachable by construction, not by argument:
+        // [`VerifiedSeed::check`](crate::beacon::verified_seed::VerifiedSeed::check)
+        // maps `SeedCheck::Valid` onto `Ok` and only the other variants onto
+        // `Err` (`verified_seed.rs:48-51`), so this arm can be reached only by
+        // changing that function. It panics on BOTH certificate paths, which is
+        // the shape the finalization ingress already had.
+        Err(SeedCheck::Valid) => unreachable!("Valid is the Ok arm"),
+    }
+}
+
+impl<T> Beacon for T
+where
+    T: Randomness + ?Sized,
+{
+    fn seed(&self, round: Round) -> Option<Seed> {
+        Randomness::seed_for(self, round)
+    }
+
+    fn terminal_seed(&self, round: Round) -> Option<Seed> {
+        Randomness::terminal_seed_at(self, round)
+    }
+
+    fn mandatory_at(&self, epoch: u64) -> bool {
+        Randomness::mandatory_at(self, epoch)
+    }
+
+    fn can_participate(&self, epoch: Epoch) -> ShareProbe {
+        Randomness::share_probe(self, epoch)
+    }
+
+    fn signer(
+        &self,
+        epoch: Epoch,
+        snap: &ValidatorSetSnapshot,
+        keypair: &ValidatorBlsKeypair,
+    ) -> SignerVerdict {
+        Randomness::signer_scheme(self, epoch, snap, keypair)
+    }
+
+    fn oracle_for(&self, epoch: u64) -> Option<Arc<dyn SeedOracle>> {
+        Randomness::oracle_for(self, epoch)
+    }
+
+    fn ensure_key(&self, epoch: u64, effort: PinEffort) -> BoxFuture<'_, bool> {
+        Randomness::ensure_key(self, epoch, effort)
+    }
+
+    fn observe_certificate(&self, cert: ObservedCertificate<'_>) -> Observed {
+        certificate_verdict(
+            cert,
+            |epoch| Randomness::oracle_for(self, epoch),
+            |verified| self.record_seed(verified),
+            |round, seed| self.quarantine_seed(round, seed),
+            |epoch| self.on_invalid_seed(epoch),
+        )
+    }
+
+    fn artifact_bytes(&self, epoch: u64) -> Option<Vec<u8>> {
+        Randomness::artifact_bytes(self, epoch)
+    }
+
+    fn observe_epoch(&self, reconciled: Epoch, entered_frontier: Epoch) {
+        Randomness::observe_epoch(self, reconciled, entered_frontier)
+    }
+
+    fn observe_cert(&self, epoch: u64) {
+        Randomness::observe_cert(self, epoch)
+    }
+
+    fn subscribe(&self) -> broadcast::Receiver<BeaconEvent> {
+        Randomness::events(self).subscribe()
+    }
+
+    fn faults(&self) -> Option<mpsc::UnboundedReceiver<DataFault>> {
+        Randomness::faults(self)
+    }
+}
+
+/// The module-internal face the two PRODUCTION implementations still speak.
+///
+/// NOT the boundary — [`Beacon`] is, and it is blanket-implemented over this.
+/// `pub(super)` because `beacon/` is now the whole of its audience: the test
+/// implementations moved onto [`Beacon`] itself, so nothing outside this module
+/// names it and nothing outside it can. It shrinks with PLAN rows 5.1-5.4 rather
+/// than being a second boundary to maintain.
+pub(super) trait Randomness: Send + Sync {
     /// Hand over a seed that verified against its epoch key.
     ///
     /// The witness carries its own round, so there is no second argument to get
@@ -146,11 +523,16 @@ pub trait Randomness: Send + Sync {
     /// indistinguishable from the right one to whoever trusts it to name.
     fn terminal_seed_at(&self, round: Round) -> Option<Seed>;
 
-    /// Fires on every [`Self::record_seed`]. SINGLE CONSUMER: `notify_one` wakes
-    /// exactly one waiter, so a second consumer of this `Arc` silently swallows
-    /// wakes. Capture the `Arc` ONCE before the loop — the permit is
-    /// object-scoped, so re-deriving the handle per iteration loses fills.
-    fn seed_edge(&self) -> Arc<Notify>;
+    /// The wake-up publisher this implementation fires, and the ONE fan-out for
+    /// all three classes — see [`Beacon::subscribe`], which is what consumers
+    /// hold.
+    ///
+    /// A `broadcast` rather than the three `Notify` handles it replaces, and for
+    /// a reason the `Notify` shape could not give: `notify_one` wakes exactly ONE
+    /// waiter, so every consumer needed its own handle from every producer or it
+    /// silently swallowed another consumer's wake-up. Adding a second consumer of
+    /// any class is now a `subscribe()`, not a new fan-out on the producer.
+    fn events(&self) -> &broadcast::Sender<BeaconEvent>;
 
     /// Is randomness mandatory at `epoch`?
     ///
@@ -187,10 +569,6 @@ pub trait Randomness: Send + Sync {
         keypair: &ValidatorBlsKeypair,
     ) -> SignerVerdict;
 
-    /// Fires when this node's ability to participate may have changed. Single
-    /// consumer; same capture-once rule as [`Self::seed_edge`].
-    fn participation_edge(&self) -> Arc<Notify>;
-
     /// The beacon's threshold face for `epoch`, for a scheme that only VERIFIES.
     ///
     /// Sync, and it must stay so: the returned oracle is consulted inline from
@@ -215,10 +593,6 @@ pub trait Randomness: Send + Sync {
     /// the variant a vote path or a per-certificate path may call.
     fn ensure_key(&self, epoch: u64, effort: PinEffort) -> BoxFuture<'_, bool>;
 
-    /// Fires when a key landed that [`Self::ensure_key`] did not have before.
-    /// Single consumer; same capture-once rule as [`Self::seed_edge`].
-    fn key_edge(&self) -> Arc<Notify>;
-
     /// The core reconciled `reconciled` while its highest registered epoch is
     /// `entered_frontier`.
     fn observe_epoch(&self, reconciled: Epoch, entered_frontier: Epoch);
@@ -230,6 +604,19 @@ pub trait Randomness: Send + Sync {
     /// each is the right one for its caller. Collapsing them would make the
     /// implementation guess.
     fn observe_cert(&self, epoch: u64);
+
+    /// One held artifact's wire bytes. Defaults to "this provider holds no
+    /// artifact store" — the plane and the follower override it, every test
+    /// provider takes the default.
+    fn artifact_bytes(&self, _epoch: u64) -> Option<Vec<u8>> {
+        None
+    }
+
+    /// The late-`Refused` channel's receiver, at most once. Defaults to "this
+    /// provider never files a late verdict".
+    fn faults(&self) -> Option<mpsc::UnboundedReceiver<DataFault>> {
+        None
+    }
 }
 
 /// The total, permanently-negative provider.
@@ -240,7 +627,7 @@ pub trait Randomness: Send + Sync {
 ///
 /// It no longer describes `--cert-follow`: that class carries keys since FLU-1167
 /// and its own `SeedStore` since the follower seed store landed, so it runs
-/// `FollowerRandomness` (`crates/dpos/consensus/src/beacon/follower.rs:162`), not this.
+/// `FollowerRandomness` (`crates/dpos/consensus/src/beacon/follower.rs:394`), not this.
 /// What is left here is a struct-literal DEFAULT that no consumer observes —
 /// `FluentApp::new` and `CertInlet::new` both have `with_randomness` called on
 /// them before first use on every production path — plus the executor's test
@@ -249,7 +636,8 @@ pub trait Randomness: Send + Sync {
 /// Takes a metrics context because registration is context-scoped and commonware
 /// prefixes each family with the context's label path — a context-free
 /// constructor could not register anything.
-pub fn absent(ctx: &impl Metrics) -> Arc<dyn Randomness> {
+#[cfg(test)]
+pub(crate) fn absent(ctx: &impl Metrics) -> Arc<dyn Beacon> {
     let metrics = BeaconMetrics::default();
     metrics.register(ctx);
     absent_unregistered()
@@ -261,9 +649,9 @@ pub fn absent(ctx: &impl Metrics) -> Arc<dyn Randomness> {
 /// [`crate::application::FluentApp`] before its provider is attached. Splitting
 /// the registration out is what lets those exist without a metrics context and
 /// without silently claiming a second owner for a family.
-pub(crate) fn absent_unregistered() -> Arc<dyn Randomness> {
+pub(crate) fn absent_unregistered() -> Arc<dyn Beacon> {
     Arc::new(Absent {
-        idle: Arc::new(Notify::new()),
+        events: idle_events(),
     })
 }
 
@@ -297,19 +685,19 @@ pub(crate) struct StaticRandomness {
     /// derived from, and the surface's own operations do not carry a snapshot on
     /// every call.
     snap: ValidatorSetSnapshot,
-    idle: Arc<Notify>,
+    events: broadcast::Sender<BeaconEvent>,
 }
 
 #[cfg(test)]
 impl StaticRandomness {
-    pub(crate) fn build(chain_id: u64, snap: ValidatorSetSnapshot) -> Arc<dyn Randomness> {
+    pub(crate) fn build(chain_id: u64, snap: ValidatorSetSnapshot) -> Arc<dyn Beacon> {
         Arc::new(Self {
             chain_id,
             namespace: fluentbase_bls::beacon::seed_namespace(&fluentbase_bls::fluent_namespace(
                 chain_id,
             )),
             snap,
-            idle: Arc::new(Notify::new()),
+            events: idle_events(),
         })
     }
 
@@ -433,19 +821,18 @@ impl SeedOracle for DealtOracle {
 }
 
 #[cfg(test)]
-impl Randomness for StaticRandomness {
-    /// Nothing to record: σ is recomputable for any round, so there is no memo
-    /// that could go stale and none that has to be fed.
-    fn record_seed(&self, _verified: VerifiedSeed) {}
-
-    fn quarantine_seed(&self, _round: Round, _seed: BlsSignature) {}
-
-    /// No key store to judge provenance with, so a failure proves nothing.
-    fn on_invalid_seed(&self, _epoch: u64) -> InvalidSeed {
-        InvalidSeed::Quarantine
+impl Beacon for StaticRandomness {
+    fn subscribe(&self) -> broadcast::Receiver<BeaconEvent> {
+        self.events.subscribe()
     }
 
-    fn seed_for(&self, round: Round) -> Option<Seed> {
+    /// The network-wide agreed rule, compiled in exactly as the live beacon's
+    /// is. Answering a LOCAL capability here would split the derive.
+    fn mandatory_at(&self, epoch: u64) -> bool {
+        epoch >= super::actor::DETERMINISTIC_BOOTSTRAP_EPOCH
+    }
+
+    fn seed(&self, round: Round) -> Option<Seed> {
         Some(Seed {
             target_round: round,
             signature: self.sigma(round),
@@ -454,22 +841,43 @@ impl Randomness for StaticRandomness {
 
     /// No pin to keep: σ is recomputable for any round, so nothing here can age
     /// out of a window and the terminal round answers like every other one.
-    fn terminal_seed_at(&self, round: Round) -> Option<Seed> {
-        self.seed_for(round)
-    }
-
-    fn seed_edge(&self) -> Arc<Notify> {
-        // Never fires, and correctly so: a consumer waiting for "a seed landed"
-        // is waiting for something that was already true.
-        self.idle.clone()
+    fn terminal_seed(&self, round: Round) -> Option<Seed> {
+        self.seed(round)
     }
 
     /// Never withheld: this implementation cannot fail to hold a share.
-    fn share_probe(&self, _epoch: Epoch) -> ShareProbe {
+    fn can_participate(&self, _epoch: Epoch) -> ShareProbe {
         ShareProbe::Ready
     }
 
-    fn signer_scheme(
+    /// The shared verdict rule over an EMPTY sink: nothing to record, because σ
+    /// is recomputable for any round, so there is no memo that could go stale
+    /// and none that has to be fed; nothing to quarantine for the same reason;
+    /// and no key store to judge provenance with, so a failure proves nothing
+    /// and the value is held rather than accused.
+    fn observe_certificate(&self, cert: ObservedCertificate<'_>) -> Observed {
+        certificate_verdict(
+            cert,
+            |epoch| self.oracle_for(epoch),
+            |_verified| {},
+            |_round, _seed| {},
+            |_epoch| InvalidSeed::Quarantine,
+        )
+    }
+
+    /// No artifact store: this implementation derives its key and stores
+    /// nothing, so there is nothing to serve over `consensus_getEpochArtifact`.
+    fn artifact_bytes(&self, _epoch: u64) -> Option<Vec<u8>> {
+        None
+    }
+
+    /// Never files a late verdict: with no key store, no σ is ever admitted
+    /// pending a key that could later refuse it.
+    fn faults(&self) -> Option<mpsc::UnboundedReceiver<DataFault>> {
+        None
+    }
+
+    fn signer(
         &self,
         epoch: Epoch,
         snap: &ValidatorSetSnapshot,
@@ -496,7 +904,7 @@ impl Randomness for StaticRandomness {
             .and_then(|s| s.me())
         };
         let Some(seat) = seat else {
-            // Mirrors `PlaneRandomness`: a rotated-out node still verifies the
+            // Mirrors `LiveBeacon`: a rotated-out node still verifies the
             // epoch's seed slot. A fixture that handed `None` here would model
             // the defect instead of the contract.
             return SignerVerdict::RotatedKey(fluentbase_bls::scheme::build_verifier(
@@ -507,7 +915,7 @@ impl Randomness for StaticRandomness {
             ));
         };
         // UNCONDITIONAL, unlike this type's own `oracle_for` (which refuses below
-        // `DETERMINISTIC_BOOTSTRAP_EPOCH`) and unlike `PlaneRandomness`'s `Signs`
+        // `DETERMINISTIC_BOOTSTRAP_EPOCH`) and unlike `LiveBeacon`'s `Signs`
         // arm (which inherits that refusal through `material`). This fixture can
         // DERIVE material for any epoch, so nothing here fails closed for it.
         //
@@ -531,10 +939,6 @@ impl Randomness for StaticRandomness {
         }
     }
 
-    fn participation_edge(&self) -> Arc<Notify> {
-        self.idle.clone()
-    }
-
     fn oracle_for(&self, epoch: u64) -> Option<Arc<dyn SeedOracle>> {
         // The contract's pre-beacon refusal binds every implementation, not just
         // the one wired to a real plane — and being able to DERIVE a key for any
@@ -549,10 +953,6 @@ impl Randomness for StaticRandomness {
         Box::pin(async move { self.mandatory_at(epoch) })
     }
 
-    fn key_edge(&self) -> Arc<Notify> {
-        self.idle.clone()
-    }
-
     fn observe_epoch(&self, _reconciled: Epoch, _entered_frontier: Epoch) {}
 
     fn observe_cert(&self, _epoch: u64) {}
@@ -560,6 +960,7 @@ impl Randomness for StaticRandomness {
 
 /// An empty ceremony store, for the two entry points below: neither carries
 /// local DKG material, so their oracles answer from the key store alone.
+#[cfg(test)]
 fn keyless_ceremony() -> CeremonyStore {
     Arc::new(std::sync::RwLock::new(std::collections::BTreeMap::new()))
 }
@@ -567,6 +968,7 @@ fn keyless_ceremony() -> CeremonyStore {
 /// A `dkgQual` history with no bit set anywhere. Paired with
 /// [`keyless_ceremony`]: with no mint stored, the carry walk has nothing to
 /// find whatever it answers.
+#[cfg(test)]
 fn no_mint() -> DkgQualFor {
     Arc::new(|_| Some(false))
 }
@@ -574,12 +976,12 @@ fn no_mint() -> DkgQualFor {
 /// A provider over a seed store alone, for tests that exercise the executor's
 /// two seed operations against a REAL store rather than canned answers.
 ///
-/// Deliberately not `#[cfg(test)]`-gated the way [`testing::Canned`] is: it
-/// builds the same [`PlaneRandomness`] production uses, so a test written
-/// against it is testing the shipped `seed_for` / `seed_edge`, not a stub that
-/// happens to agree with them today.
-pub fn for_seeds(seeds: super::certify::SeedStore) -> Arc<dyn Randomness> {
-    PlaneRandomness::build(PlaneRandomnessConfig {
+/// It builds the same [`LiveBeacon`] production uses, so a test written against
+/// it is testing the shipped `seed` / `subscribe`, not a stub that happens to
+/// agree with them today.
+#[cfg(test)]
+pub(crate) fn for_seeds(seeds: super::certify::SeedStore) -> Arc<dyn Beacon> {
+    LiveBeacon::build(LiveBeaconConfig {
         seeds,
         keys: BeaconKeys::new(),
         resolver: Arc::new(|_| BeaconResolve::Absent),
@@ -587,28 +989,24 @@ pub fn for_seeds(seeds: super::certify::SeedStore) -> Arc<dyn Randomness> {
         dkg_qual: no_mint(),
         held: None,
         pull: None,
-        participation: Arc::new(Notify::new()),
         metrics: BeaconMetrics::default(),
         chain_id: 0,
+        artifacts: ArtifactStore::new(),
+        geometry: watch::channel(Some((0, 1))).1,
     })
 }
 
-/// A provider over a key store alone. **TEST ENTRY POINT.**
+/// A provider over a key store alone. **TEST ENTRY POINT**, and gated as one.
 ///
-/// Not `#[cfg(test)]`-gated for one reason: a test in the NODE crate needs it,
-/// and a cross-crate caller cannot see this crate's test items. That is the whole
-/// justification, and it is written down because the previous doc here read like a
-/// production contract — it opened "`keys` MUST be the layer's existing store,
-/// never a fresh one", which described the cert-inlet mount as it stood before the
-/// stores moved into `beacon::build`. That mount is gone: both inlets take the
-/// layer's own provider now, and this constructor has **no production caller**.
-/// A doc that still issues instructions for a vanished wiring is how someone
-/// reconnects a test seam as a production one.
-///
-/// Built on the same [`PlaneRandomness`] as everything else, so a test written
-/// against it exercises the shipped ladder rather than a stub.
-pub fn for_keys(keys: BeaconKeys, held: Option<super::keys::AgreedKeys>) -> Arc<dyn Randomness> {
-    PlaneRandomness::build(PlaneRandomnessConfig {
+/// It used to be ungated, for a test in the NODE crate that could not see this
+/// crate's test items. That is not a reason to keep a test seam on the production
+/// surface — the node-side test now builds its own store — and the doc that stood
+/// here still issued instructions for a wiring deleted when the stores moved into
+/// `build`. Built on the same [`LiveBeacon`] as everything else, so a test
+/// written against it exercises the shipped ladder rather than a stub.
+#[cfg(test)]
+pub(crate) fn for_keys(keys: BeaconKeys, held: Option<super::keys::AgreedKeys>) -> Arc<dyn Beacon> {
+    LiveBeacon::build(LiveBeaconConfig {
         seeds: super::certify::SeedStore::new(),
         keys,
         resolver: Arc::new(|_| BeaconResolve::Absent),
@@ -616,10 +1014,11 @@ pub fn for_keys(keys: BeaconKeys, held: Option<super::keys::AgreedKeys>) -> Arc<
         dkg_qual: no_mint(),
         held,
         pull: None,
-        participation: Arc::new(Notify::new()),
         metrics: BeaconMetrics::default(),
         // Reaches `build_signer` only, which an ingress path never calls.
         chain_id: 0,
+        artifacts: ArtifactStore::new(),
+        geometry: watch::channel(Some((0, 1))).1,
     })
 }
 
@@ -630,46 +1029,41 @@ pub fn for_keys(keys: BeaconKeys, held: Option<super::keys::AgreedKeys>) -> Arc<
 /// fills, on behalf of a ladder with no rungs. Removed rather than kept for
 /// symmetry, because the doc read as an instruction.
 struct Absent {
-    idle: Arc<Notify>,
+    events: broadcast::Sender<BeaconEvent>,
 }
 
-impl Randomness for Absent {
-    fn record_seed(&self, _verified: VerifiedSeed) {}
-
-    fn quarantine_seed(&self, _round: Round, _seed: BlsSignature) {}
-
-    /// No key store to judge provenance with, so a failure proves nothing.
-    fn on_invalid_seed(&self, _epoch: u64) -> InvalidSeed {
-        InvalidSeed::Quarantine
+impl Beacon for Absent {
+    fn subscribe(&self) -> broadcast::Receiver<BeaconEvent> {
+        self.events.subscribe()
     }
 
-    fn seed_for(&self, _round: Round) -> Option<Seed> {
+    /// The one operation this type answers TRUTHFULLY rather than negatively:
+    /// beacon-activity is network-wide agreed data — it decides whether a height
+    /// derives from σ or from `None` — so answering it negatively would split the
+    /// network rather than degrade this node.
+    fn mandatory_at(&self, epoch: u64) -> bool {
+        epoch >= super::actor::DETERMINISTIC_BOOTSTRAP_EPOCH
+    }
+
+    fn seed(&self, _round: Round) -> Option<Seed> {
         None
     }
 
-    fn terminal_seed_at(&self, _round: Round) -> Option<Seed> {
+    fn terminal_seed(&self, _round: Round) -> Option<Seed> {
         None
     }
 
-    fn seed_edge(&self) -> Arc<Notify> {
-        self.idle.clone()
-    }
-
-    fn share_probe(&self, _epoch: Epoch) -> ShareProbe {
+    fn can_participate(&self, _epoch: Epoch) -> ShareProbe {
         ShareProbe::Withheld(WithheldReason::NoUsableShare)
     }
 
-    fn signer_scheme(
+    fn signer(
         &self,
         _epoch: Epoch,
         _snap: &ValidatorSetSnapshot,
         _keypair: &ValidatorBlsKeypair,
     ) -> SignerVerdict {
         SignerVerdict::Withheld(WithheldReason::NoUsableShare)
-    }
-
-    fn participation_edge(&self) -> Arc<Notify> {
-        self.idle.clone()
     }
 
     /// No oracle at any epoch, permanently: with nothing to read, one would only
@@ -682,8 +1076,26 @@ impl Randomness for Absent {
         Box::pin(async { false })
     }
 
-    fn key_edge(&self) -> Arc<Notify> {
-        self.idle.clone()
+    /// `Inactive` at every epoch, and through the shared rule rather than beside
+    /// it: with no oracle anywhere, the rule's own second gate is what answers,
+    /// so this cannot drift from what the ingress does with a σ it holds no
+    /// opinion about. The sinks below it are unreachable for the same reason.
+    fn observe_certificate(&self, cert: ObservedCertificate<'_>) -> Observed {
+        certificate_verdict(
+            cert,
+            |_epoch| None,
+            |_verified| {},
+            |_round, _seed| {},
+            |_epoch| InvalidSeed::Quarantine,
+        )
+    }
+
+    fn artifact_bytes(&self, _epoch: u64) -> Option<Vec<u8>> {
+        None
+    }
+
+    fn faults(&self) -> Option<mpsc::UnboundedReceiver<DataFault>> {
+        None
     }
 
     fn observe_epoch(&self, _reconciled: Epoch, _entered_frontier: Epoch) {}
@@ -692,11 +1104,11 @@ impl Randomness for Absent {
     fn observe_cert(&self, _epoch: u64) {}
 }
 
-/// Test provider. One place for every migrated test to get a [`Randomness`],
+/// Test provider. One place for every migrated test to get a [`Beacon`],
 /// so call sites stop inventing a stub each.
 ///
 /// It is also the SPY: it records the `(epoch, effort)` of every
-/// [`Randomness::ensure_key`] call, which is what lets the repair sweep's tests
+/// [`Beacon::ensure_key`] call, which is what lets the repair sweep's tests
 /// assert which effort was spent rather than only that a key appeared.
 #[cfg(test)]
 pub(crate) mod testing {
@@ -704,15 +1116,14 @@ pub(crate) mod testing {
     use crate::beacon::{keys::KeySource, oracle::KeyOnlyOracle};
     use std::{collections::BTreeMap, sync::Mutex};
 
-    #[derive(Default)]
     pub(crate) struct Canned {
-        /// Canned `PK_epoch` values, reachable through [`Randomness::oracle_for`]
+        /// Canned `PK_epoch` values, reachable through [`Beacon::oracle_for`]
         /// exactly as a real one is: a plain store the oracle reads.
         keys: BeaconKeys,
         seeds: BTreeMap<Round, Seed>,
         bootstrap: u64,
         efforts: Mutex<Vec<(u64, PinEffort)>>,
-        idle: Arc<Notify>,
+        events: broadcast::Sender<BeaconEvent>,
         /// A real store, so a test can assert WHERE a captured σ landed —
         /// served or held — instead of only that the call happened.
         store: crate::beacon::certify::SeedStore,
@@ -724,9 +1135,13 @@ pub(crate) mod testing {
     impl Canned {
         pub(crate) fn new() -> Self {
             Self {
+                keys: BeaconKeys::new(),
+                seeds: BTreeMap::new(),
                 bootstrap: super::super::actor::DETERMINISTIC_BOOTSTRAP_EPOCH,
-                idle: Arc::new(Notify::new()),
-                ..Default::default()
+                efforts: Mutex::new(Vec::new()),
+                events: idle_events(),
+                store: crate::beacon::certify::SeedStore::new(),
+                seed_namespace: Vec::new(),
             }
         }
 
@@ -750,55 +1165,39 @@ pub(crate) mod testing {
         }
     }
 
-    impl Randomness for Canned {
-        fn record_seed(&self, verified: VerifiedSeed) {
-            self.store.record(verified);
+    impl Beacon for Canned {
+        fn subscribe(&self) -> broadcast::Receiver<BeaconEvent> {
+            self.events.subscribe()
         }
 
-        fn quarantine_seed(&self, round: Round, seed: BlsSignature) {
-            self.store.quarantine(round, seed);
-        }
-
-        fn on_invalid_seed(&self, epoch: u64) -> InvalidSeed {
-            self.keys.on_invalid_seed(epoch)
-        }
-
-        fn seed_for(&self, round: Round) -> Option<Seed> {
+        fn seed(&self, round: Round) -> Option<Seed> {
             self.seeds.get(&round).cloned()
         }
 
-        /// Reads the real `store` — the map [`Randomness::record_seed`] writes —
-        /// so a test that records a σ and asks for the pin gets it back.
-        fn terminal_seed_at(&self, round: Round) -> Option<Seed> {
+        /// Reads the real `store` — the map [`Beacon::observe_certificate`]
+        /// writes — so a test that records a σ and asks for the pin gets it back.
+        fn terminal_seed(&self, round: Round) -> Option<Seed> {
             self.store.terminal_at(round).map(|signature| Seed {
                 target_round: round,
                 signature,
             })
         }
 
-        fn seed_edge(&self) -> Arc<Notify> {
-            self.idle.clone()
-        }
-
         fn mandatory_at(&self, epoch: u64) -> bool {
             epoch >= self.bootstrap
         }
 
-        fn share_probe(&self, _epoch: Epoch) -> ShareProbe {
+        fn can_participate(&self, _epoch: Epoch) -> ShareProbe {
             ShareProbe::Withheld(WithheldReason::NoUsableShare)
         }
 
-        fn signer_scheme(
+        fn signer(
             &self,
             _epoch: Epoch,
             _snap: &ValidatorSetSnapshot,
             _keypair: &ValidatorBlsKeypair,
         ) -> SignerVerdict {
             SignerVerdict::Withheld(WithheldReason::NoUsableShare)
-        }
-
-        fn participation_edge(&self) -> Arc<Notify> {
-            self.idle.clone()
         }
 
         fn oracle_for(&self, epoch: u64) -> Option<Arc<dyn SeedOracle>> {
@@ -821,8 +1220,27 @@ pub(crate) mod testing {
             Box::pin(async move { known })
         }
 
-        fn key_edge(&self) -> Arc<Notify> {
-            self.idle.clone()
+        /// The shared verdict rule over the REAL stores this fixture carries: a
+        /// recorded σ lands in `store`'s served map, a held one in its quarantine,
+        /// and the provenance question goes to the same [`BeaconKeys`] the live
+        /// beacon asks. That is what lets an ingress test assert WHERE the σ went
+        /// rather than only that the call happened.
+        fn observe_certificate(&self, cert: ObservedCertificate<'_>) -> Observed {
+            certificate_verdict(
+                cert,
+                |epoch| self.oracle_for(epoch),
+                |verified| self.store.record(verified),
+                |round, seed| self.store.quarantine(round, seed),
+                |epoch| self.keys.on_invalid_seed(epoch),
+            )
+        }
+
+        fn artifact_bytes(&self, _epoch: u64) -> Option<Vec<u8>> {
+            None
+        }
+
+        fn faults(&self) -> Option<mpsc::UnboundedReceiver<DataFault>> {
+            None
         }
 
         fn observe_epoch(&self, _reconciled: Epoch, _entered_frontier: Epoch) {}
@@ -846,11 +1264,11 @@ mod tests {
             let r = absent(&ctx);
 
             assert_eq!(
-                r.share_probe(Epoch::new(9)),
+                r.can_participate(Epoch::new(9)),
                 ShareProbe::Withheld(WithheldReason::NoUsableShare)
             );
             assert!(r
-                .seed_for(Round::new(
+                .seed(Round::new(
                     Epoch::new(9),
                     commonware_consensus::types::View::new(1)
                 ))
@@ -993,8 +1411,8 @@ mod tests {
         (snap, member, outsider, material)
     }
 
-    fn provider_over(keys: BeaconKeys, material: BeaconKey) -> Arc<dyn Randomness> {
-        PlaneRandomness::build(PlaneRandomnessConfig {
+    fn provider_over(keys: BeaconKeys, material: BeaconKey) -> Arc<dyn Beacon> {
+        LiveBeacon::build(LiveBeaconConfig {
             seeds: super::super::certify::SeedStore::new(),
             keys,
             resolver: Arc::new(move |_| BeaconResolve::Key(material.clone())),
@@ -1002,9 +1420,10 @@ mod tests {
             dkg_qual: no_mint(),
             held: None,
             pull: None,
-            participation: Arc::new(Notify::new()),
             metrics: BeaconMetrics::default(),
             chain_id: 1,
+            artifacts: ArtifactStore::new(),
+            geometry: watch::channel(Some((0, 1))).1,
         })
     }
 
@@ -1029,7 +1448,7 @@ mod tests {
             keys.cached_only(epoch.get()).is_none(),
             "fixture precondition: nothing published yet"
         );
-        let verdict = randomness.signer_scheme(epoch, &snap, &member);
+        let verdict = randomness.signer(epoch, &snap, &member);
 
         assert!(
             matches!(verdict, SignerVerdict::Signs(_)),
@@ -1053,7 +1472,7 @@ mod tests {
         let randomness = provider_over(BeaconKeys::new(), material);
 
         assert!(matches!(
-            randomness.signer_scheme(epoch, &snap, &outsider),
+            randomness.signer(epoch, &snap, &outsider),
             SignerVerdict::RotatedKey(_)
         ));
     }
@@ -1091,8 +1510,7 @@ mod tests {
              owed here"
         );
 
-        let SignerVerdict::RotatedKey(scheme) = randomness.signer_scheme(epoch, &snap, &outsider)
-        else {
+        let SignerVerdict::RotatedKey(scheme) = randomness.signer(epoch, &snap, &outsider) else {
             panic!("a keypair outside the committee gets the RotatedKey verdict");
         };
         assert!(
@@ -1135,7 +1553,7 @@ mod tests {
         let randomness = provider_over(BeaconKeys::new(), tampered);
 
         assert!(matches!(
-            randomness.signer_scheme(epoch, &snap, &member),
+            randomness.signer(epoch, &snap, &member),
             SignerVerdict::Withheld(WithheldReason::BadShare)
         ));
     }
@@ -1162,9 +1580,7 @@ mod tests {
 
         // Propose: the leader has a seed for the round, with no one to receive it
         // from and nothing recorded.
-        let seed = r
-            .seed_for(round)
-            .expect("a static implementation always has σ");
+        let seed = r.seed(round).expect("a static implementation always has σ");
         assert_eq!(seed.target_round, round);
 
         // Verify: another node checks that seed under the key in force, and
@@ -1190,20 +1606,20 @@ mod tests {
             crate::beacon::verified_seed::VerifiedSeed::check(
                 oracle.as_ref(),
                 round,
-                r.seed_for(other).expect("σ").signature
+                r.seed(other).expect("σ").signature
             ),
             Err(fluentbase_bls::oracle::SeedCheck::Invalid)
         ));
 
         // Participation and scheme construction.
-        assert_eq!(r.share_probe(epoch), ShareProbe::Ready);
+        assert_eq!(r.can_participate(epoch), ShareProbe::Ready);
         assert!(matches!(
-            r.signer_scheme(epoch, &snap, &member),
+            r.signer(epoch, &snap, &member),
             SignerVerdict::Signs(_)
         ));
         assert!(
             matches!(
-                r.signer_scheme(epoch, &snap, &outsider),
+                r.signer(epoch, &snap, &outsider),
                 SignerVerdict::RotatedKey(_)
             ),
             "the rotated-out safety net is part of the contract, not of the beacon"
@@ -1269,7 +1685,7 @@ mod tests {
         );
         keys.set_pk(epoch.get(), theirs, KeySource::Agreed);
 
-        let r = PlaneRandomness::build(PlaneRandomnessConfig {
+        let r = LiveBeacon::build(LiveBeaconConfig {
             seeds: super::super::certify::SeedStore::new(),
             keys: keys.clone(),
             resolver: Arc::new(move |_| BeaconResolve::Key(material.clone())),
@@ -1277,14 +1693,15 @@ mod tests {
             dkg_qual: no_mint(),
             held: None,
             pull: None,
-            participation: Arc::new(Notify::new()),
             metrics: BeaconMetrics::default(),
             chain_id: 1,
+            artifacts: ArtifactStore::new(),
+            geometry: watch::channel(Some((0, 1))).1,
         });
 
         assert!(
             matches!(
-                r.signer_scheme(epoch, &snap, &member),
+                r.signer(epoch, &snap, &member),
                 SignerVerdict::Withheld(WithheldReason::KeyDivergence)
             ),
             "a node holding material that diverges from the agreed key must not sign with it"
@@ -1317,7 +1734,7 @@ mod tests {
         let (_snap, _member, _outsider, material) = signer_fixture(epoch);
         let mine = *material.0.public();
         let keys = BeaconKeys::new();
-        let r = PlaneRandomness::build(PlaneRandomnessConfig {
+        let r = LiveBeacon::build(LiveBeaconConfig {
             seeds: super::super::certify::SeedStore::new(),
             keys: keys.clone(),
             resolver: Arc::new(move |_| BeaconResolve::Key(material.clone())),
@@ -1325,14 +1742,15 @@ mod tests {
             dkg_qual: no_mint(),
             held: None,
             pull: None,
-            participation: Arc::new(Notify::new()),
             metrics: BeaconMetrics::default(),
             chain_id: 1,
+            artifacts: ArtifactStore::new(),
+            geometry: watch::channel(Some((0, 1))).1,
         });
 
         // Before the quorum speaks: this node participates.
         assert_eq!(
-            r.share_probe(epoch),
+            r.can_participate(epoch),
             ShareProbe::Ready,
             "premise: with no attested key the node participates — otherwise the \
              verdict below would not be caused by the divergence"
@@ -1352,11 +1770,11 @@ mod tests {
         keys.set_pk(epoch.get(), theirs, KeySource::Agreed);
 
         assert_eq!(
-            r.share_probe(epoch),
+            r.can_participate(epoch),
             ShareProbe::Withheld(WithheldReason::KeyDivergence)
         );
         assert_eq!(
-            r.share_probe(epoch),
+            r.can_participate(epoch),
             ShareProbe::Withheld(WithheldReason::KeyDivergence),
             "the verdict is stable — an engine aborted on it must not be re-spawned next edge"
         );
@@ -1381,7 +1799,7 @@ mod tests {
         let (snap, member, ..) = signer_fixture(epoch);
         // A provider whose resolver answers `Absent` — the state reached when the
         // material vanishes between the two samples.
-        let r = PlaneRandomness::build(PlaneRandomnessConfig {
+        let r = LiveBeacon::build(LiveBeaconConfig {
             seeds: super::super::certify::SeedStore::new(),
             keys: BeaconKeys::new(),
             resolver: Arc::new(|_| BeaconResolve::Absent),
@@ -1389,14 +1807,15 @@ mod tests {
             dkg_qual: no_mint(),
             held: None,
             pull: None,
-            participation: Arc::new(Notify::new()),
             metrics: BeaconMetrics::default(),
             chain_id: 1,
+            artifacts: ArtifactStore::new(),
+            geometry: watch::channel(Some((0, 1))).1,
         });
 
         assert!(
             matches!(
-                r.signer_scheme(epoch, &snap, &member),
+                r.signer(epoch, &snap, &member),
                 SignerVerdict::Withheld(WithheldReason::NoUsableShare)
             ),
             "a committee member with no DKG material must be withheld at a beacon-active epoch"
@@ -1410,7 +1829,7 @@ mod tests {
         let (pre_snap, pre_member, ..) = signer_fixture(pre);
         assert!(
             matches!(
-                r.signer_scheme(pre, &pre_snap, &pre_member),
+                r.signer(pre, &pre_snap, &pre_member),
                 SignerVerdict::Signs(_)
             ),
             "a pre-beacon epoch has a legitimate seedless signer — the refusal is about \
@@ -1564,8 +1983,8 @@ mod tests {
         runner.start(|_| async move {
             let canned = testing::Canned::new().with_pin(4, GroupPublic::zero());
 
-            assert!(canned.ensure_key(4, PinEffort::Local).await);
-            assert!(!canned.ensure_key(5, PinEffort::Thorough).await);
+            assert!(Beacon::ensure_key(&canned, 4, PinEffort::Local).await);
+            assert!(!Beacon::ensure_key(&canned, 5, PinEffort::Thorough).await);
 
             assert_eq!(
                 canned.efforts(),
@@ -1821,7 +2240,7 @@ fn own_key_publication(agreed: Option<GroupPublic>, resolved: GroupPublic) -> Ow
 /// that already implements it. Nothing is reimplemented here, so this phase
 /// cannot change behaviour; the bodies relocate in later phases, once this is
 /// their only caller.
-pub(crate) struct PlaneRandomness {
+pub(crate) struct LiveBeacon {
     seeds: super::certify::SeedStore,
     keys: BeaconKeys,
     resolver: BeaconResolver,
@@ -1833,18 +2252,33 @@ pub(crate) struct PlaneRandomness {
     dkg_qual: DkgQualFor,
     held: Option<super::keys::AgreedKeys>,
     pull: Option<super::keys::AgreedKeys>,
-    participation: Arc<Notify>,
     metrics: BeaconMetrics,
     chain_id: u64,
+    /// The per-epoch artifact store, for [`Beacon::artifact_bytes`] alone. Held
+    /// as the store and re-encoded per call rather than kept as bytes: serving is
+    /// a rare off-path request (a follower asks once per epoch it lacks), and a
+    /// second copy of every artifact in RAM to save it would be paid for on every
+    /// node forever.
+    artifacts: ArtifactStore,
+    /// The plane's frozen `(dpos_activation, epoch_interval)`, read ONLY to name
+    /// the [`WithheldReason::GeometryUnfrozen`] state. `None` ⇒ no ceremony has
+    /// been able to start yet, which is a reason worth a metric of its own rather
+    /// than the `NoUsableShare` it used to be indistinguishable from.
+    geometry: watch::Receiver<Option<(u64, u64)>>,
+    /// The late-verdict channel. `armed` gates the SEND, so an unread channel
+    /// cannot grow: nothing is queued until a consumer has taken the receiver.
+    faults_tx: mpsc::UnboundedSender<DataFault>,
+    faults_rx: Mutex<Option<mpsc::UnboundedReceiver<DataFault>>>,
+    faults_armed: AtomicBool,
 }
 
-/// Everything [`PlaneRandomness::build`] needs, in one value.
+/// Everything [`LiveBeacon::build`] needs, in one value.
 ///
 /// One field per handle the provider holds, named after it. A parameter object
 /// rather than nine positions: the four `Option`/`Arc` slots in the middle are
 /// type-compatible with each other, so a transposed pair compiles and only shows
 /// up as a provider that silently answers from the wrong rung.
-pub(crate) struct PlaneRandomnessConfig {
+pub(crate) struct LiveBeaconConfig {
     pub(crate) seeds: super::certify::SeedStore,
     pub(crate) keys: BeaconKeys,
     pub(crate) resolver: BeaconResolver,
@@ -1852,14 +2286,18 @@ pub(crate) struct PlaneRandomnessConfig {
     pub(crate) dkg_qual: DkgQualFor,
     pub(crate) held: Option<super::keys::AgreedKeys>,
     pub(crate) pull: Option<super::keys::AgreedKeys>,
-    pub(crate) participation: Arc<Notify>,
     pub(crate) metrics: BeaconMetrics,
     pub(crate) chain_id: u64,
+    pub(crate) artifacts: ArtifactStore,
+    pub(crate) geometry: watch::Receiver<Option<(u64, u64)>>,
 }
 
-impl PlaneRandomness {
-    pub(crate) fn build(cfg: PlaneRandomnessConfig) -> Arc<dyn Randomness> {
-        let PlaneRandomnessConfig {
+impl LiveBeacon {
+    /// Concrete on purpose: the plane needs the `Arc<LiveBeacon>` to hand the
+    /// promoter its late-verdict sink, and the `Arc<dyn Beacon>` every consumer
+    /// holds is one unsize-coercion away.
+    pub(crate) fn build(cfg: LiveBeaconConfig) -> Arc<Self> {
+        let LiveBeaconConfig {
             seeds,
             keys,
             resolver,
@@ -1867,10 +2305,12 @@ impl PlaneRandomness {
             dkg_qual,
             held,
             pull,
-            participation,
             metrics,
             chain_id,
+            artifacts,
+            geometry,
         } = cfg;
+        let (faults_tx, faults_rx) = mpsc::unbounded_channel();
         Arc::new(Self {
             seeds,
             keys,
@@ -1879,10 +2319,23 @@ impl PlaneRandomness {
             dkg_qual,
             held,
             pull,
-            participation,
             metrics,
             chain_id,
+            artifacts,
+            geometry,
+            faults_tx,
+            faults_rx: Mutex::new(Some(faults_rx)),
+            faults_armed: AtomicBool::new(false),
         })
+    }
+
+    /// File a late `Refused` verdict. Dropped on the floor until a consumer has
+    /// taken the receiver — see [`Beacon::faults`].
+    pub(crate) fn report_fault(&self, fault: DataFault) {
+        if !self.faults_armed.load(Ordering::Relaxed) {
+            return;
+        }
+        let _ = self.faults_tx.send(fault);
     }
 
     /// One resolve of this node's local DKG material for `epoch`.
@@ -1916,7 +2369,14 @@ impl PlaneRandomness {
     }
 }
 
-impl Randomness for PlaneRandomness {
+impl Randomness for LiveBeacon {
+    /// The store's, not one of this type's own: `SeedStore::record` is what fires
+    /// the seed class, and the promoter records through it too. The plane's bridge
+    /// sends the other two classes into this same publisher.
+    fn events(&self) -> &broadcast::Sender<BeaconEvent> {
+        self.seeds.events()
+    }
+
     fn record_seed(&self, verified: VerifiedSeed) {
         self.seeds.record(verified);
     }
@@ -1947,17 +2407,43 @@ impl Randomness for PlaneRandomness {
         })
     }
 
-    fn seed_edge(&self) -> Arc<Notify> {
-        self.seeds.notifier()
-    }
-
     fn share_probe(&self, epoch: Epoch) -> ShareProbe {
         // The CHEAP half of the promote decision: both checks below are store
         // reads, so this can sit ahead of the caller's boundary-block lookup and
         // spare a member that cannot participate a marshal read on every
         // participation edge.
+        //
         let material = self.material(epoch.get());
-        if self.mandatory_at(epoch.get()) && material.is_none() {
+        if Randomness::mandatory_at(self, epoch.get()) && material.is_none() {
+            // UNFROZEN GEOMETRY REFINES THIS ARM; it does not stand ahead of it.
+            //
+            // The reason matters and the verdict must not: `NoUsableShare` reads
+            // as "the ceremony ran and left me nothing", which is the wrong story
+            // when the plane has not frozen `(activation, interval)` and no
+            // ceremony could have run at all. So it is a second name for the SAME
+            // withholding, chosen only where the material is already absent.
+            //
+            // AHEAD OF THE MATERIAL READ IT WOULD CHANGE THE VERDICT, and that is
+            // not hypothetical: `share_state::load_all` fills the ceremony store
+            // from disk inside `build` (`beacon/plane.rs`), before this type
+            // exists and with no dependence on geometry, while the geometry watch
+            // starts `None` and is published only by the node's poller after a
+            // successful cold start (`node/src/dpos.rs`). A validator restarted
+            // mid-epoch with its share on disk therefore has `Key(..)` here while
+            // geometry is still `None` — and a `Withheld` at that moment does not
+            // self-heal: `reconcile_roles` soft-enters and returns without adding
+            // to `deferred_spawns`, so the `spawn_unblocked` edge stays gated off,
+            // and NOTHING publishes a participation wake-up when geometry thaws.
+            // The node would sit verify-only until the next epoch boundary.
+            //
+            // Reached only with the material absent, the recovery edge is the one
+            // that already exists: the ceremony that geometry unblocks fills the
+            // store and fires `share_notify`, which the plane's bridge turns into
+            // `ParticipationChanged`.
+            if self.geometry.borrow().is_none() {
+                self.metrics.engine_demoted_geometry_unfrozen.inc();
+                return ShareProbe::Withheld(WithheldReason::GeometryUnfrozen);
+            }
             self.metrics.engine_demoted_no_polynomial.inc();
             return ShareProbe::Withheld(WithheldReason::NoUsableShare);
         }
@@ -1989,7 +2475,19 @@ impl Randomness for PlaneRandomness {
         snap: &ValidatorSetSnapshot,
         keypair: &ValidatorBlsKeypair,
     ) -> SignerVerdict {
-        let material = self.material(epoch.get());
+        // THE `mandatory_at` GATE, STATED. Below `DETERMINISTIC_BOOTSTRAP_EPOCH`
+        // there is no key to resolve and a pure-multisig signer is LEGAL, so the
+        // material has to be `None` there — an oracle attached to a pre-beacon
+        // epoch refuses every legal seedless certificate of it.
+        //
+        // Today that `None` also arrives on its own, through
+        // `carry::chain_key_epoch_memoised`'s `Some(None)` arm making the share
+        // resolver answer `Absent`. Both roads lead here, which is why this gate
+        // can be added without changing a single verdict — and PLAN row 5.1
+        // deletes `carry.rs`, so the road that is left has to be the stated one.
+        let material = Randomness::mandatory_at(self, epoch.get())
+            .then(|| self.material(epoch.get()))
+            .flatten();
         // THE SHARE GATE, AGAIN — and it has to be here, not only in
         // `share_probe`. The two run over DIFFERENT samples: the probe answers
         // before the caller's boundary-block lookup, this runs after it, and the
@@ -2011,7 +2509,7 @@ impl Randomness for PlaneRandomness {
         // both the gate and the scheme, so this could not arise. Splitting the
         // operation is what created the second sample; the split's own comment
         // reasoned about the Absent→Key direction only.
-        if self.mandatory_at(epoch.get()) && material.is_none() {
+        if Randomness::mandatory_at(self, epoch.get()) && material.is_none() {
             self.metrics.engine_demoted_no_polynomial.inc();
             return SignerVerdict::Withheld(WithheldReason::NoUsableShare);
         }
@@ -2072,7 +2570,7 @@ impl Randomness for PlaneRandomness {
                 &namespace,
                 committee.bimap,
                 epoch.get(),
-                self.oracle_for(epoch.get()),
+                Randomness::oracle_for(self, epoch.get()),
             ));
         };
         // `material.is_some()` is what "this node holds a share for the epoch"
@@ -2107,10 +2605,6 @@ impl Randomness for PlaneRandomness {
         }
     }
 
-    fn participation_edge(&self) -> Arc<Notify> {
-        self.participation.clone()
-    }
-
     fn oracle_for(&self, epoch: u64) -> Option<Arc<dyn SeedOracle>> {
         // THE BEACON-ACTIVE RULE, enforced HERE so there is one door instead of
         // three. An oracle means "this epoch is beacon-active" to
@@ -2119,15 +2613,14 @@ impl Randomness for PlaneRandomness {
         // certificate there. The soft-enter path and the cert-inlet both take
         // their oracle from here, so refusing at the SOURCE makes the invariant
         // hold by construction for every caller.
-        self.mandatory_at(epoch)
-            .then(|| self.oracle_at(epoch, None))
+        Randomness::mandatory_at(self, epoch).then(|| self.oracle_at(epoch, None))
     }
 
     fn ensure_key(&self, epoch: u64, effort: PinEffort) -> BoxFuture<'_, bool> {
         Box::pin(async move {
             // Nothing to acquire below the bootstrap epoch: no key was ever
             // minted there, and `oracle_for` refuses to attach one anyway.
-            if !self.mandatory_at(epoch) {
+            if !Randomness::mandatory_at(self, epoch) {
                 return false;
             }
             let sources = super::keys::KeySources {
@@ -2173,10 +2666,6 @@ impl Randomness for PlaneRandomness {
         })
     }
 
-    fn key_edge(&self) -> Arc<Notify> {
-        self.keys.notifier()
-    }
-
     fn observe_epoch(&self, reconciled: Epoch, entered_frontier: Epoch) {
         w3_backfill(&self.keys, &self.resolver, reconciled);
         let oldest = entered_frontier
@@ -2198,5 +2687,19 @@ impl Randomness for PlaneRandomness {
         self.keys.retain_from(oldest);
         self.seeds.retain_quarantine_from(oldest);
         self.seeds.retain_terminal_from(oldest);
+    }
+
+    fn artifact_bytes(&self, epoch: u64) -> Option<Vec<u8>> {
+        self.artifacts
+            .get(epoch)
+            .map(|a| super::artifact::encode_artifact(&a))
+    }
+
+    fn faults(&self) -> Option<mpsc::UnboundedReceiver<DataFault>> {
+        let taken = self.faults_rx.lock().ok()?.take()?;
+        // Arm only once a consumer exists, so the queue can never grow behind a
+        // receiver nobody reads.
+        self.faults_armed.store(true, Ordering::Relaxed);
+        Some(taken)
     }
 }

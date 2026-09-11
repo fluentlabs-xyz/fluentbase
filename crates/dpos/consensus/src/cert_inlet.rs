@@ -15,24 +15,18 @@
 
 use crate::fault::{DeferReason, FaultClass};
 use crate::{
-    beacon::{keys::InvalidSeed, verified_seed::VerifiedSeed, PinEffort, Randomness},
+    beacon::{Beacon, ObservedCertificate, PinEffort},
     cert_follow::UpstreamFinalized,
     digest::Digest,
     scheme::epoch_committee_from_snapshot,
 };
 use alloy_consensus::Header;
 use alloy_primitives::B256;
-use commonware_consensus::{
-    simplex::types::{Activity, Finalization},
-    types::Round,
-};
+use commonware_consensus::simplex::types::Activity;
 use commonware_parallel::Sequential;
 use eyre::{ensure, eyre};
 use fluentbase_bls::{
-    fluent_namespace,
-    oracle::{SeedCheck, SeedOracle},
-    scheme::build_verifier,
-    Scheme as BlsScheme,
+    fluent_namespace, oracle::SeedOracle, scheme::build_verifier, Scheme as BlsScheme,
 };
 use fluentbase_staking_reader::{ReadError, RethStakingStateReader};
 use futures::future::BoxFuture;
@@ -48,7 +42,7 @@ use std::{
     collections::{btree_map::Entry, BTreeMap},
     sync::Arc,
 };
-use tracing::{error, warn};
+use tracing::warn;
 
 /// `{reason=...}` label set of the `dpos_cert_inlet_committee_read_deferred_total`
 /// counter. Inline-string reason values: [`DEFER_STATE_NOT_MATERIALIZED`],
@@ -140,7 +134,7 @@ pub type RotateUpstream = Arc<dyn Fn() -> BoxFuture<'static, ()> + Send + Sync>;
 /// can inject a canned committee.
 ///
 /// `oracle` is the beacon's threshold face for the epoch, from
-/// [`crate::beacon::Randomness::oracle_for`]: `Some` makes the built verifier
+/// [`crate::beacon::Beacon::oracle_for`]: `Some` makes the built verifier
 /// check the recovered seed slot and refuse a stripped one, `None` marks a
 /// pre-beacon epoch where a seedless certificate is legal. The verifier read
 /// itself is committee-only — the oracle comes from the caller, never from chain
@@ -325,12 +319,12 @@ impl MarshalSink for crate::MarshalMailbox {
 /// advances from each live upstream cert it ingests. Re-homed here from the
 /// (deleted) unified supervisor that used to feed them off the window stream.
 ///
-/// `live_height` is the [`crate::beacon::actor::CommitteeFor`] read cursor
+/// `live_height` is the `beacon::actor::CommitteeFor` read cursor
 /// (`committee_for` reads `committee[E]` at `max(EL-finalized, live_height)`):
 /// an upstream-configured validator/newcomer resolves the ahead-committed
 /// `committee[E+1]` at the LIVE upstream tip rather than its lagging
 /// EL-finalized state (the production-path "Option A" fix). `dkg_height` is the
-/// [`crate::beacon::actor::DkgActor`] deal clock: dealing at the live frontier
+/// `beacon::actor::DkgActor` deal clock: dealing at the live frontier
 /// lets a still-catching-up early-joiner deal its first epoch's DKG share before
 /// the deal deadline (the vrf-rotation early-join fix) instead of K blocks late.
 ///
@@ -409,12 +403,12 @@ pub struct CertInlet<C, E, M> {
     /// It replaced a PRIVATE carry-forward cursor that answered "what is `PK_E`"
     /// as "the greatest observed change-epoch ≤ E" — an UNBOUNDED walk forward
     /// from the last key it happened to see. The chain's own `dkgQual` record,
-    /// which [`crate::beacon::keys::AgreedKeys`] reads, is the one policy both
+    /// which `beacon::keys::AgreedKeys` reads, is the one policy both
     /// planes now use.
     ///
     /// A default-constructed store on an inlet nobody wired one into is a private
     /// empty one — the unit-test shape.
-    randomness: Arc<dyn Randomness>,
+    randomness: Arc<dyn Beacon>,
     /// commonware ctx (the `CryptoRngCore` source the cert `verify()` needs).
     ctx: E,
     /// DATA-fault upstream-rotation trigger. `Some` on an upstream-configured
@@ -540,7 +534,7 @@ where
 
     /// Attach the randomness provider. Builder-style because the provider is
     /// assembled at the launch site, after this inlet exists.
-    pub fn with_randomness(mut self, randomness: Arc<dyn Randomness>) -> Self {
+    pub fn with_randomness(mut self, randomness: Arc<dyn Beacon>) -> Self {
         self.randomness = randomness;
         self
     }
@@ -863,7 +857,11 @@ where
         // most one signature that verifies, and a round this node will not ask
         // for can only sit unused. This is a supply of BYTES for a round, never
         // a claim about WHICH round a block's witness names (§13 rule 28).
-        capture_certificate_seed(self.randomness.as_ref(), round, &uf.finalization);
+        let _observed = self
+            .randomness
+            .observe_certificate(ObservedCertificate::Finalization(round, &uf.finalization));
+        // PLAN row 5.2: the synchronous `Refused` becomes this inlet's data
+        // fault. Until then nobody reads the verdict here.
 
         // Verified: a clean ingest — reset the data-fault streak and end any
         // open defer WARN episodes (the next backfill / boundary-lag window
@@ -964,13 +962,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::beacon::keys::{AgreedKeys, BeaconKeys};
-    use crate::beacon::surface::PlaneRandomnessConfig;
     use crate::{
-        beacon::{
-            carry::DkgQualFor,
-            keys::AgreedKeyAt,
-            outcome::{encode_outcome, group_public_key, parse_outcome},
+        beacon::testing::{
+            encode_outcome, group_public_key, parse_outcome, AgreedKeyAt, AgreedKeys, BeaconKeys,
+            DkgQualFor, LiveBeaconConfig,
         },
         order_block::OrderBlock,
     };
@@ -1214,7 +1209,7 @@ mod tests {
         runtime.start(|ctx| async move {
             let c = committee(1);
             let (mut inlet, _marshal, _reads) = inlet(ctx, &c);
-            let spy = Arc::new(crate::beacon::surface::testing::Canned::new());
+            let spy = Arc::new(crate::beacon::testing::Canned::new());
             inlet = inlet.with_randomness(spy.clone());
 
             let block = sample_order(Digest(B256::repeat_byte(0xaa)), 65);
@@ -2013,7 +2008,7 @@ mod tests {
 
     impl BeaconFixture {
         fn oracle(&self, share: Option<Share>) -> Arc<dyn SeedOracle> {
-            Arc::new(crate::beacon::surface::DealtOracle {
+            Arc::new(crate::beacon::testing::DealtOracle {
                 sharing: self.sharing.clone(),
                 share,
                 namespace: self.seed_ns.clone(),
@@ -2118,10 +2113,13 @@ mod tests {
         let uf = certify_seeded(&bc, 5, &block);
         let round = uf.finalization.proposal.round;
 
-        let known = crate::beacon::surface::testing::Canned::new()
+        let known = crate::beacon::testing::Canned::new()
             .with_seed_namespace(bc.seed_ns.clone())
             .with_pin(5, *bc.sharing.public());
-        capture_certificate_seed(&known, round, &uf.finalization);
+        let _ = Beacon::observe_certificate(
+            &known,
+            ObservedCertificate::Finalization(round, &uf.finalization),
+        );
         assert!(
             known.store().lookup(round).is_some(),
             "a checked seed is served"
@@ -2136,9 +2134,11 @@ mod tests {
         let uf = certify_seeded(&bc, 5, &block);
         let round = uf.finalization.proposal.round;
 
-        let keyless = crate::beacon::surface::testing::Canned::new()
-            .with_seed_namespace(bc.seed_ns.clone());
-        capture_certificate_seed(&keyless, round, &uf.finalization);
+        let keyless = crate::beacon::testing::Canned::new().with_seed_namespace(bc.seed_ns.clone());
+        let _ = Beacon::observe_certificate(
+            &keyless,
+            ObservedCertificate::Finalization(round, &uf.finalization),
+        );
         assert_eq!(
             keyless.store().lookup(round),
             None,
@@ -2157,10 +2157,13 @@ mod tests {
 
         // The key of a DIFFERENT committee: the σ is a well-formed curve point
         // that verifies under nobody's key here.
-        let wrong = crate::beacon::surface::testing::Canned::new()
+        let wrong = crate::beacon::testing::Canned::new()
             .with_seed_namespace(bc.seed_ns.clone())
             .with_pin(5, *other.sharing.public());
-        capture_certificate_seed(&wrong, round, &uf.finalization);
+        let _ = Beacon::observe_certificate(
+            &wrong,
+            ObservedCertificate::Finalization(round, &uf.finalization),
+        );
         assert_eq!(wrong.store().lookup(round), None);
         assert!(
             wrong.store().quarantined_epochs().is_empty(),
@@ -2199,7 +2202,7 @@ mod tests {
         let uf = certify_seeded(&bc, 5, &block);
         let round = uf.finalization.proposal.round;
         let known = Arc::new(
-            crate::beacon::surface::testing::Canned::new()
+            crate::beacon::testing::Canned::new()
                 .with_seed_namespace(bc.seed_ns.clone())
                 .with_pin(5, *bc.sharing.public()),
         );
@@ -2332,18 +2335,22 @@ mod tests {
     /// A provider over canned ladder pieces. The tests keep building the REAL
     /// rungs (`canned_held` is an actual `AgreedKeys`), so what they pin is the
     /// ladder's behaviour, not a stubbed answer.
-    fn canned_randomness(keys: BeaconKeys, held: Option<AgreedKeys>) -> Arc<dyn Randomness> {
-        crate::beacon::surface::PlaneRandomness::build(PlaneRandomnessConfig {
-            seeds: crate::beacon::certify::SeedStore::new(),
+    fn canned_randomness(
+        keys: BeaconKeys,
+        held: Option<AgreedKeys>,
+    ) -> Arc<dyn crate::beacon::Beacon> {
+        crate::beacon::testing::LiveBeacon::build(LiveBeaconConfig {
+            seeds: crate::beacon::testing::SeedStore::new(),
             keys,
-            resolver: Arc::new(|_| crate::beacon::BeaconResolve::Absent),
+            resolver: Arc::new(|_| crate::beacon::testing::BeaconResolve::Absent),
             ceremony: Arc::new(std::sync::RwLock::new(std::collections::BTreeMap::new())),
             dkg_qual: Arc::new(|_| Some(false)),
             held,
             pull: None,
-            participation: Arc::new(tokio::sync::Notify::new()),
-            metrics: crate::beacon::metrics::BeaconMetrics::default(),
+            metrics: crate::beacon::testing::BeaconMetrics::default(),
             chain_id: CHAIN_ID,
+            artifacts: crate::beacon::testing::ArtifactStore::new(),
+            geometry: tokio::sync::watch::channel(Some((0, 1))).1,
         })
     }
 
@@ -2990,58 +2997,10 @@ impl Drop for InflightGuard<'_> {
     }
 }
 
-/// File the σ carried by a verified certificate into the seed store.
-///
-/// Shared by the two ingresses that admit certificates — the live-stream inlet
-/// above and the plane arm's by-height pulls — because there is no point AFTER
-/// the marshal's verification where σ is still visible: `Update::Tip` does not
-/// carry it, and the marshal collapses the oracle's `Valid`/`NoKey` answer into
-/// a bool before returning. So the capture point asks the oracle itself, which
-/// is the same gate the by-round transport needs regardless.
-///
-/// A pure FOLLOWER runs this too and KEEPS what it files: `FollowerRandomness`
-/// holds its own seed store, and the σ landing here is the only route by which a
-/// follower's executor can derive a beacon-active block's `prev_randao` — it
-/// forms no round and has no by-round transport to ask on.
-///
-/// Only ONE of the two doors prunes what it files: `observe_cert`, which carries
-/// the retention window, has its single production call site in `CertInlet::ingest`
-/// and none in `UpstreamResolver::spawn_finalized`. So a σ repaired through the
-/// gap door stays unpruned until the live stream next delivers a certificate —
-/// about a second later on a following node. A delay, not a leak.
-pub(crate) fn capture_certificate_seed(
-    randomness: &dyn Randomness,
-    round: Round,
-    finalization: &Finalization<BlsScheme, Digest>,
-) {
-    let Some(seed) = finalization.certificate.seed() else {
-        return;
-    };
-    // No oracle below `DETERMINISTIC_BOOTSTRAP_EPOCH`: those epochs have no
-    // threshold seed to hold an opinion about.
-    let Some(oracle) = randomness.oracle_for(round.epoch().get()) else {
-        return;
-    };
-    match VerifiedSeed::check(oracle.as_ref(), round, seed) {
-        Ok(verified) => randomness.record_seed(verified),
-        // Not a fault: the epoch key is not resolvable HERE yet. Hold it for the
-        // key to land — the same admission the certificate itself just got.
-        Err(SeedCheck::NoKey) => randomness.quarantine_seed(round, seed),
-        // A failure means something about the NETWORK only when the key it
-        // failed against is attested — judged against a locally reconstructed
-        // one it means something about US, and dropping the value would leave
-        // nothing to re-check once the attested key arrives.
-        Err(SeedCheck::Invalid) => match randomness.on_invalid_seed(round.epoch().get()) {
-            InvalidSeed::Quarantine => randomness.quarantine_seed(round, seed),
-            InvalidSeed::RefuseLoud => {
-                error!(?round, "certificate seed does not verify under its epoch key")
-            }
-            InvalidSeed::RefuseQuiet => {}
-        },
-        Err(SeedCheck::Valid) => unreachable!("Valid is the Ok arm"),
-    }
-}
-
+/// The follower's by-height backfill over the cert upstream: the SECOND door
+/// into [`crate::beacon::Beacon::observe_certificate`], beside the live-stream
+/// inlet above. Which σ each door files, and why only one of them prunes, is on
+/// [`Self::spawn_finalized`].
 pub struct UpstreamResolver<E, U> {
     ctx: E,
     upstream: U,
@@ -3057,7 +3016,7 @@ pub struct UpstreamResolver<E, U> {
     /// plane-native validator's epoch-E certificates actually come through — the
     /// live-stream inlet stands up only with WS upstreams configured — so
     /// capturing only there would leave the default configuration unserved.
-    randomness: std::sync::Arc<dyn Randomness>,
+    randomness: std::sync::Arc<dyn Beacon>,
 }
 
 impl<E, U> Clone for UpstreamResolver<E, U>
@@ -3085,7 +3044,7 @@ where
         ctx: E,
         upstream: U,
         handler: commonware_consensus::marshal::resolver::handler::Handler<Digest>,
-        randomness: std::sync::Arc<dyn Randomness>,
+        randomness: std::sync::Arc<dyn Beacon>,
     ) -> Self {
         Self {
             ctx,
@@ -3099,6 +3058,22 @@ where
     /// Spawn one by-height pull → deliver, deduped by height. The marshal
     /// re-requests on its next repair sweep if the upstream did not (yet) have
     /// the height, so a transient miss self-heals.
+    ///
+    /// This is where the SECOND door files σ, and why the door exists: there is no
+    /// point AFTER the marshal's verification where σ is still visible
+    /// (`Update::Tip` does not carry it, and the marshal collapses the oracle's
+    /// `Valid`/`NoKey` answer into a bool before returning), so the certificate
+    /// goes to the beacon at ingress — the same gate the by-round transport needs
+    /// regardless. A pure FOLLOWER runs this too and KEEPS what it files: its
+    /// beacon holds its own seed store, and the σ landing here is the only route
+    /// by which a follower's executor can derive a beacon-active block's
+    /// `prev_randao`.
+    ///
+    /// Only ONE of the two doors prunes what it files: `observe_cert`, which
+    /// carries the retention window, has its single production call site in
+    /// [`CertInlet::ingest`] and none here. So a σ repaired through the gap door
+    /// stays unpruned until the live stream next delivers a certificate — about a
+    /// second later on a following node. A delay, not a leak.
     fn spawn_finalized(&self, height: commonware_consensus::types::Height) {
         let h = height.get();
         if !self.inflight.lock().unwrap().insert(h) {
@@ -3151,7 +3126,12 @@ where
                         // `true` the multisig has been checked against
                         // `committee[epoch]`, so the round came from a quorum.
                         if handler.deliver(key, value).await {
-                            capture_certificate_seed(randomness.as_ref(), round, &captured);
+                            let _observed = randomness.observe_certificate(
+                                ObservedCertificate::Finalization(round, &captured),
+                            );
+                            // PLAN row 5.2: the synchronous `Refused` becomes this
+                            // resolver's data fault (rotate the upstream). Until
+                            // then nobody reads the verdict here.
                         }
                     }
                 }),

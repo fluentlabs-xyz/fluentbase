@@ -18,8 +18,8 @@
 //! - **The store** ([`BeaconKeys`]). Shaped on [`crate::beacon::certify::SeedStore`]:
 //!   a newtype so [`BeaconKeys::set_pk`] is the only insertion path, a synchronous
 //!   [`BeaconKeys::cached_only`] that never blocks and never does I/O (the vote
-//!   path calls it without an await), and an `Arc<Notify>` whose permit survives
-//!   having no waiter, handed out by [`BeaconKeys::notifier`].
+//!   path calls it without an await), and a per-consumer `Arc<Notify>` whose
+//!   permit survives having no waiter, handed out by [`BeaconKeys::subscribe`].
 //!
 //! - **The ladder** ([`BeaconKeys::get_pk`]). Its ORDER is load-bearing — see
 //!   each function's docs.
@@ -35,15 +35,10 @@
 //! silently swallow exactly that fill — reproducing the stuck-consumer bug this
 //! edge exists to close.
 //!
-//! `notify_one` (not `notify_waiters`) for the same reason
-//! [`crate::beacon::certify::SeedStore`] uses it: `notify_waiters` stores no
-//! permit and re-opens the lost-wakeup window. The waiter population on
-//! [`BeaconKeys::notifier`] is one — the epoch manager's reconcile arm — because
-//! a single `notify_one` shared by two waiters silently swallows wakes.
-//!
-//! The second consumer DID appear (the seed quarantine's promoter), and it took
-//! the remedy this paragraph prescribed rather than the shared handle:
-//! [`BeaconKeys::subscribe`] hands out a per-consumer notifier, and `set_pk`
+//! `notify_one` (not `notify_waiters`): `notify_waiters` stores no permit and
+//! re-opens the lost-wakeup window. A single `notify_one` shared by two waiters
+//! silently swallows wakes, so no handle is ever shared —
+//! [`BeaconKeys::subscribe`] hands out a notifier PER CONSUMER, and `set_pk`
 //! fires every one of them.
 
 use crate::beacon::carry::{chain_key_epoch_memoised, DkgQualFor};
@@ -152,9 +147,8 @@ pub fn pk_prefix(pk: &GroupPublic) -> String {
 #[derive(Clone)]
 pub struct BeaconKeys {
     map: Arc<RwLock<BTreeMap<u64, (GroupPublic, KeySource)>>>,
-    notify: Arc<Notify>,
-    /// One per [`Self::subscribe`] caller. See that method for why a second
-    /// consumer may not share `notify`.
+    /// One per [`Self::subscribe`] caller. See that method for why two consumers
+    /// may not share one handle.
     extra_notifiers: Arc<Mutex<Vec<Arc<Notify>>>>,
     /// Epochs whose seed-verification failure has already been reported. See
     /// [`Self::on_invalid_seed`].
@@ -180,7 +174,6 @@ impl BeaconKeys {
             extra_notifiers: Arc::new(Mutex::new(Vec::new())),
             reported_invalid_seed: Arc::new(Mutex::new(BTreeSet::new())),
             map: Arc::new(RwLock::new(BTreeMap::new())),
-            notify: Arc::new(Notify::new()),
             persist: None,
         }
     }
@@ -205,7 +198,6 @@ impl BeaconKeys {
             extra_notifiers: Arc::new(Mutex::new(Vec::new())),
             reported_invalid_seed: Arc::new(Mutex::new(BTreeSet::new())),
             map: Arc::new(RwLock::new(map)),
-            notify: Arc::new(Notify::new()),
             persist: Some(persist),
         }
     }
@@ -272,20 +264,19 @@ impl BeaconKeys {
     /// value-gate's input, [`Self::attested`]). Failures are never inserted (the
     /// callers only reach here with a resolved key).
     ///
-    /// Fires the `notify` permit UNCONDITIONALLY, including on an idempotent
-    /// re-record and on a write the conflict policy discarded: the waiter's job is
-    /// to re-run its own resolve, which is idempotent, and a conditional fire
-    /// would have to reason about which of the tiering branches can change a
-    /// reader's answer.
+    /// Fires every subscriber's permit UNCONDITIONALLY, including on an
+    /// idempotent re-record and on a write the conflict policy discarded: the
+    /// waiter's job is to re-run its own resolve, which is idempotent, and a
+    /// conditional fire would have to reason about which of the tiering branches
+    /// can change a reader's answer.
     pub fn set_pk(&self, epoch: u64, pk: GroupPublic, source: KeySource) {
         self.insert(epoch, pk, source);
-        self.notify.notify_one();
         if let Ok(extra) = self.extra_notifiers.lock() {
             for handle in extra.iter() {
                 handle.notify_one();
             }
         }
-        // Durable half, strictly AFTER the notify so wakeup latency is unchanged,
+        // Durable half, strictly AFTER the wakeups so their latency is unchanged,
         // and strictly non-blocking so no writer ever parks here.
         if let Some(tx) = self.persist.as_ref() {
             if tx.send((epoch, pk, source)).is_err() {
@@ -377,17 +368,7 @@ impl BeaconKeys {
         }
     }
 
-    /// A clone of the record-notifier, for a consumer's `select!` arm. Capture it
-    /// ONCE, before the loop — see the module docs. `notified()` on the returned
-    /// handle consumes any permit stored by a [`set_pk`](Self::set_pk) that fired
-    /// before the waiter parked, so a fill landing while nobody is parked is still
-    /// seen by the next waiter.
-    pub fn notifier(&self) -> Arc<Notify> {
-        self.notify.clone()
-    }
-
-    /// A notifier of this consumer's OWN, fired by every [`Self::set_pk`]
-    /// alongside the one [`Self::notifier`] hands out.
+    /// A notifier of this consumer's OWN, fired by every [`Self::set_pk`].
     ///
     /// The module header's rule, honoured rather than broken: `notify_one` wakes
     /// exactly one waiter, so two consumers sharing one `Arc` silently swallow
@@ -563,7 +544,7 @@ pub struct KeySources<'a> {
 ///
 /// `held`/`pull` are `None` where there is no artifact store to read or no route
 /// to fetch over. **A `--cert-follow` follower is no longer such a caller**
-/// (FLU-1167): [`crate::beacon::follower::for_follower`] gives it a RAM-only
+/// (FLU-1167): [`crate::beacon::follower::build_follower`] gives it a RAM-only
 /// artifact store of its own and a delivery route over its cert upstream — the
 /// one peer relationship it has — so rung 3 exists there, it is just not the
 /// plane's `BEACON_RESOLVER_CHANNEL` pull. It is the same [`AgreedKeys`] shape
@@ -1006,7 +987,7 @@ mod tests {
     #[tokio::test]
     async fn a_fill_landing_with_no_waiter_is_seen_by_the_next_waiter() {
         let store = BeaconKeys::new();
-        let notify = store.notifier();
+        let notify = store.subscribe();
         store.set_pk(1, pk(1), KeySource::LocalDkg);
         tokio::time::timeout(std::time::Duration::from_millis(200), notify.notified())
             .await
@@ -1016,7 +997,7 @@ mod tests {
     #[tokio::test]
     async fn an_idempotent_re_record_still_fires_the_permit() {
         let store = BeaconKeys::new();
-        let notify = store.notifier();
+        let notify = store.subscribe();
         store.set_pk(1, pk(1), KeySource::LocalDkg);
         // Bounded: a regression to `notify_waiters` (no stored permit) must make
         // this test FAIL, not hang the suite.

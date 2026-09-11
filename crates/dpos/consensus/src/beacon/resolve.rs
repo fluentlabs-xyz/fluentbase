@@ -10,7 +10,7 @@
 use super::{
     carry::{select_carry_scheme, CarryVerdict, DkgQualFor},
     keys::BeaconKeys,
-    BeaconResolve, BeaconResolver,
+    surface::{BeaconResolve, BeaconResolver},
 };
 use crate::beacon::actor::CeremonyStore;
 use fluentbase_bls::beacon::GroupPublic;
@@ -192,7 +192,7 @@ mod carry_arbitration_tests {
     /// `Absent` (undecided — retried on the next resolve edge).
     #[test]
     fn share_resolver_refuses_stale_carry_and_undecided_bits() {
-        use crate::beacon::BeaconResolve;
+        use crate::beacon::surface::BeaconResolve;
         let players = committee(0xC0, 4);
         let (outcome, share) = ceremony(&players);
         let pk = *crate::beacon::outcome::group_public_key(&outcome);
@@ -245,7 +245,7 @@ mod carry_arbitration_tests {
     #[test]
     fn divergent_carry_is_refused_against_the_attested_mint_key() {
         use crate::beacon::keys::KeySource;
-        use crate::beacon::BeaconResolve;
+        use crate::beacon::surface::BeaconResolve;
 
         let players = committee(0xC0, 4);
         let (outcome, share) = ceremony(&players);
@@ -303,7 +303,7 @@ mod carry_arbitration_tests {
     #[test]
     fn a_stable_committees_attested_mint_outlives_the_retention_window() {
         use crate::beacon::keys::KeySource;
-        use crate::beacon::BeaconResolve;
+        use crate::beacon::surface::BeaconResolve;
 
         let bootstrap = crate::beacon::actor::DETERMINISTIC_BOOTSTRAP_EPOCH;
         let players = committee(0xC0, 4);
@@ -366,7 +366,7 @@ mod carry_arbitration_tests {
     /// incumbent.
     #[test]
     fn declined_candidate_falls_back_to_committed_incumbent() {
-        use crate::beacon::BeaconResolve;
+        use crate::beacon::surface::BeaconResolve;
 
         let incumbent = committee(0xC0, 4);
         let candidate = committee(0xCA, 4);

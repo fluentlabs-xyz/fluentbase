@@ -115,13 +115,17 @@ pub(crate) fn chain_key_epoch_memoised(
     if epoch < DETERMINISTIC_BOOTSTRAP_EPOCH {
         // Seedless pre-beacon epochs — nothing to serve.
         //
-        // A SECOND CONSUMER DEPENDS ON THIS LINE, and not for its own answer:
-        // `PlaneRandomness::signer_scheme`'s `Signs` arm builds its oracle with
-        // `oracle_at`, bypassing the `mandatory_at` door in `oracle_for`, and is
-        // safe only because this `Some(None)` makes the share resolver answer
-        // `Absent` here — so `material` is `None` and no oracle is attached. An
-        // oracle on a pre-beacon epoch refuses every LEGAL seedless certificate
-        // of it, so if this refusal ever moves, that arm has to gain the gate.
+        // A SECOND CONSUMER USED TO DEPEND ON THIS LINE, and not for its own
+        // answer: `LiveBeacon::signer_scheme`'s `Signs` arm builds its oracle with
+        // `oracle_at`, bypassing the `mandatory_at` door in `oracle_for`, and was
+        // safe only because this `Some(None)` made the share resolver answer
+        // `Absent` here — so `material` was `None` and no oracle was attached. An
+        // oracle on a pre-beacon epoch refuses every LEGAL seedless certificate of
+        // it. That arm now STATES the gate itself (`surface.rs`, the
+        // `mandatory_at(epoch).then(|| self.material(..))` in `signer_scheme`), so
+        // the two roads lead to the same `None` and PLAN row 5.1 can delete this
+        // file without moving the verdict. The line stays a correct answer to its
+        // own question either way.
         return Some(None);
     }
     if let Some(hit) = memo.lock().ok().and_then(|m| m.get(&epoch).copied()) {

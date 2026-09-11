@@ -252,7 +252,7 @@ pub(crate) const ORACLE_DROP_REFUSED: &str = "dpos_epoch_scheme_oracle_drop_refu
 /// for the one method that could attach a seed pin to an epoch and therefore had
 /// to refuse doing so on a pre-beacon one. Nothing attaches anything to a
 /// registered scheme any more — the beacon-active decision is made once, at
-/// `Randomness::oracle_for`, before the scheme is ever built.
+/// `Beacon::oracle_for`, before the scheme is ever built.
 #[derive(Clone, Default)]
 pub struct EpochSchemeProvider {
     map: Arc<Mutex<BTreeMap<Epoch, Arc<BlsScheme>>>>,
@@ -306,7 +306,7 @@ impl EpochSchemeProvider {
     /// beacon-active and this branch cannot fire on it.
     ///
     /// Of the four producers that reach `register`, three take their oracle from
-    /// `Randomness::oracle_for`; the fourth, `cold_start_register`, hardcodes
+    /// `Beacon::oracle_for`; the fourth, `cold_start_register`, hardcodes
     /// `None` but only ever meets a VACANT slot (the provider is constructed fresh
     /// inside `OuterBuilder::build`, so even a demote→re-promote starts empty).
     /// The one remaining `None`-producing arm — `SignerVerdict::Signs` for a
@@ -533,7 +533,7 @@ pub struct OuterBuilder<B, P, BE, D, XC, A, R: slasher::StakingStateRead + Send 
     /// It replaced six separate beacon fields — the resolver, the share edge, the
     /// key map, the two agreement rungs and the verify context — none of which
     /// this layer can name any more.
-    pub randomness: std::sync::Arc<dyn crate::beacon::Randomness>,
+    pub randomness: std::sync::Arc<dyn crate::beacon::Beacon>,
     /// Edge-trigger the executor fires when it records a finalized block — the
     /// mid-epoch promotion trigger. Threaded to BOTH the executor (producer) and
     /// the manager (consumer).
@@ -747,7 +747,7 @@ where
     /// Held for one reason: the by-height resolver captures the σ of every
     /// certificate it pulls, and that resolver is built here rather than in
     /// `build`.
-    randomness: std::sync::Arc<dyn crate::beacon::Randomness>,
+    randomness: std::sync::Arc<dyn crate::beacon::Beacon>,
 }
 
 /// What the OuterEngine supervisor does when the FIRST subsystem handle resolves.
@@ -1178,7 +1178,7 @@ where
                         // The span registers the SAME verifier the per-epoch
                         // `soft_enter` path registers: multisig plus the epoch's
                         // beacon oracle, from the one door that decides
-                        // beacon-activeness (`Randomness::oracle_for` — `None`
+                        // beacon-activeness (`Beacon::oracle_for` — `None`
                         // below the bootstrap epoch, where a seedless certificate
                         // is legal). The span resolves no key and does not need
                         // to: the oracle reads `PK_epoch` live, so an epoch whose
@@ -1818,7 +1818,7 @@ mod supervisor_tests {
 #[cfg(test)]
 mod scheme_provider_tests {
     use super::EpochSchemeProvider;
-    use crate::beacon::actor::DETERMINISTIC_BOOTSTRAP_EPOCH;
+    use crate::beacon::testing::DETERMINISTIC_BOOTSTRAP_EPOCH;
 
     use commonware_codec::DecodeExt as _;
     use commonware_consensus::types::Epoch;

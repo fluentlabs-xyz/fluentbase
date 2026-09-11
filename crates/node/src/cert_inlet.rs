@@ -63,9 +63,9 @@ where
 ///
 /// There is no `walk` parameter and no epoch geometry here: the ladder's
 /// boundary-walk rung was deleted 2026-08-19 with the agreement plane, and pin
-/// resolution now lives entirely behind `randomness`.
+/// resolution now lives entirely behind the beacon.
 ///
-/// `randomness` is the layer's ONE provider, not a fresh one: joining it is what
+/// `beacon` is the layer's ONE beacon, not a fresh one: joining it is what
 /// lets a key the plane's DKG published reach this inlet's ladder, and a boundary
 /// key this inlet verified reach the plane's. The validator inlet needs that as
 /// much as the follower's does — its cache and the consensus plane's
@@ -84,7 +84,7 @@ pub(crate) fn spawn_cert_inlet<C>(
     committees: C,
     urls: Vec<String>,
     tee: LiveFrontierTee,
-    randomness: Arc<dyn fluentbase_consensus::beacon::Randomness>,
+    beacon: Arc<dyn fluentbase_consensus::beacon::Beacon>,
 ) -> Handle<()>
 where
     C: CommitteeSource,
@@ -110,7 +110,7 @@ where
         let mut inlet = CertInlet::new(marshal, committees, c)
             .with_tee(tee)
             .with_rotate(rotate)
-            .with_randomness(randomness)
+            .with_randomness(beacon)
             .with_connection_token(conn_gen);
         info!("cert-inlet SHADOW producer started");
         loop {

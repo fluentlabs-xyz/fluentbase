@@ -7470,7 +7470,7 @@ mod clock_tests {
             assert!(
                 matches!(
                     resolve(DETERMINISTIC_BOOTSTRAP_EPOCH),
-                    crate::beacon::BeaconResolve::Key(_)
+                    crate::beacon::surface::BeaconResolve::Key(_)
                 ),
                 "the E+1 share-gate must pass with no block of E+1 in existence"
             );

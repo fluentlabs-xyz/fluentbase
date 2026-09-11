@@ -51,15 +51,14 @@ enum ByHeightSource {
     Window(CertWindow),
 }
 
-/// Where `consensus_getEpochArtifact` reads from: a narrow READ CLOSURE over the
-/// beacon's artifact store, never the store itself. `beacon::build`'s contract is
-/// that the store does not cross back out to the node, so the beacon hands out
-/// this one capability instead — see [`fluentbase_consensus::beacon::ArtifactSource`].
+/// Where `consensus_getEpochArtifact` reads from: a narrow READ CLOSURE over
+/// `Beacon::artifact_bytes`, never the artifact store itself — the store does not
+/// cross back out of the beacon.
 ///
-/// A validator's comes off its beacon plane; a follower's off the store its own
-/// key-delivery rung fills, which is what lets a follower serve a tier-2 follower
-/// exactly as it already serves `getFinalization` out of its cert window.
-pub use fluentbase_consensus::beacon::ArtifactSource;
+/// A validator's closes over its own beacon; a follower's over the one built at
+/// its layer launch, which is what lets a follower serve a tier-2 follower exactly
+/// as it already serves `getFinalization` out of its cert window.
+pub use fluentbase_consensus::dpos::ArtifactSource;
 
 #[derive(Clone)]
 pub struct FeedStateHandle {

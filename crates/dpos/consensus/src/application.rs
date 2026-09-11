@@ -15,7 +15,7 @@
 //! provides `Relay` (inline.rs:471); `FluentApp` does not.
 
 use crate::{
-    beacon::seed::Seed,
+    beacon::Seed,
     digest::Digest,
     executor, extra_data,
     fault::EngineError,
@@ -254,7 +254,7 @@ pub struct FluentApp<XC, A> {
     /// The ONE randomness handle. Never `Option`: a node with no beacon
     /// material holds the permanently-negative provider, so the distinction the
     /// old `Option` encoded now lives inside the implementation.
-    randomness: Arc<dyn crate::beacon::Randomness>,
+    randomness: Arc<dyn crate::beacon::Beacon>,
     genesis: Arc<OrderBlock>,
     executor: executor::Mailbox,
     /// Observer for `Update::Block` finalizations — NOT a state-advancing
@@ -414,7 +414,7 @@ where
     /// Attach the randomness provider. Builder-style for the same reason
     /// `with_beacon` is: the provider is assembled at the launch site, after
     /// this app exists.
-    pub fn with_randomness(mut self, randomness: Arc<dyn crate::beacon::Randomness>) -> Self {
+    pub fn with_randomness(mut self, randomness: Arc<dyn crate::beacon::Beacon>) -> Self {
         self.randomness = randomness;
         self
     }
@@ -1202,9 +1202,9 @@ pub trait DerivedBlockBuilder: Send + Sync + 'static {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::beacon::{certify::SeedStore, keys::BeaconKeys, surface::PlaneRandomnessConfig};
-    use alloy_primitives::Address;
+    use crate::beacon::testing::{BeaconKeys, LiveBeaconConfig, SeedStore};
     use crate::slasher::Message;
+    use alloy_primitives::Address;
     use commonware_consensus::types::{Epoch, View};
     use commonware_cryptography::{ed25519::PrivateKey as Ed25519PrivateKey, Signer as _};
     use commonware_runtime::Runner as _;
@@ -1949,21 +1949,19 @@ mod tests {
     /// A provider over the SAME handles the app under test was given, so the
     /// propose and verify arms exercise the real resolution path rather than
     /// the permanently-negative default.
-    fn test_randomness(
-        seeds: SeedStore,
-        group_keys: BeaconKeys,
-    ) -> Arc<dyn crate::beacon::Randomness> {
-        crate::beacon::surface::PlaneRandomness::build(PlaneRandomnessConfig {
+    fn test_randomness(seeds: SeedStore, group_keys: BeaconKeys) -> Arc<dyn crate::beacon::Beacon> {
+        crate::beacon::testing::LiveBeacon::build(LiveBeaconConfig {
             seeds,
             keys: group_keys,
-            resolver: Arc::new(|_| crate::beacon::BeaconResolve::Absent),
+            resolver: Arc::new(|_| crate::beacon::testing::BeaconResolve::Absent),
             ceremony: Arc::new(std::sync::RwLock::new(std::collections::BTreeMap::new())),
             dkg_qual: Arc::new(|_| Some(false)),
             held: None,
             pull: None,
-            participation: Arc::new(tokio::sync::Notify::new()),
-            metrics: crate::beacon::metrics::BeaconMetrics::default(),
+            metrics: crate::beacon::testing::BeaconMetrics::default(),
             chain_id: TEST_CHAIN_ID,
+            artifacts: crate::beacon::testing::ArtifactStore::new(),
+            geometry: tokio::sync::watch::channel(Some((0, 1))).1,
         })
     }
 

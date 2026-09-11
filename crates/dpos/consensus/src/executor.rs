@@ -82,7 +82,7 @@ use std::{
     pin::Pin,
     time::{Duration, SystemTime},
 };
-use tokio::{select, sync::mpsc};
+use tokio::{select, sync::broadcast, sync::mpsc};
 use tracing::{debug, error, error_span, info, info_span, instrument, warn, Level, Span};
 
 /// Pacing of an execution-layer call (`fork_choice_updated`, `import_derived`).
@@ -131,7 +131,7 @@ pub enum Command {
 /// at execution time.
 pub struct Notarized {
     pub digest: crate::digest::Digest,
-    pub seed: Option<crate::beacon::seed::Seed>,
+    pub seed: Option<crate::beacon::Seed>,
 }
 
 /// Value stored per speculatively-executed height in [`Actor::spec_executed`]:
@@ -167,18 +167,58 @@ struct SpecExecuted {
 /// - `Delivery`: the attempt made when the block is delivered/held (the normal
 ///   record-lag closer). A miss here is the transient race and is counted
 ///   (`outcome="miss"`); a hit is `outcome="hit"`.
-/// - `Notified`: an event-driven re-attempt fired by the executor's seed-notify
-///   `select!` arm ([`SeedStore::notifier`]) when a block is still held and a
-///   seed was just recorded (the seed for its round may have JUST landed). A hit
-///   here is counted `outcome="recovered"` — the race fired and self-healed
-///   WITHOUT a further finalized delivery (the deadlock-breaker, since finality
-///   only advances via new blocks). A miss is a silent no-op. Replaces the
-///   former `SpecNotarized` Poke: the notify permit makes the re-attempt correct
-///   regardless of mailbox ordering, with no lost-notification window.
+/// - `Notified`: an event-driven re-attempt fired by the executor's wake-up
+///   `select!` arm ([`Beacon::subscribe`](crate::beacon::Beacon::subscribe)) when
+///   a block is still held and a seed was just recorded (the seed for its round
+///   may have JUST landed). A hit here is counted `outcome="recovered"` — the race
+///   fired and self-healed WITHOUT a further finalized delivery (the
+///   deadlock-breaker, since finality only advances via new blocks). A miss is a
+///   silent no-op.
+///
+///   WHAT MAKES THE RE-ATTEMPT CORRECT IS NO LONGER A STORED PERMIT. It used to
+///   be: the arm waited on a `notify_one`, which holds one permit even with no
+///   waiter parked, so a record racing the miss could not be lost. The stream is
+///   a `broadcast` now, and a broadcast DROPS a send that has no receiver — so the
+///   property rests entirely on `subscribe()` being taken before this actor's
+///   first seed read (`Actor::run`, ahead of the loop). Move that subscription
+///   into the loop, or behind an `awaiting_seed.is_some()` guard, and a σ landing
+///   in the window is gone for good: the held height never derives and the marshal
+///   ack is held forever.
 #[derive(Clone, Copy)]
 enum EagerTrigger {
     Delivery,
     Notified,
+}
+
+/// What the executor's wake-up arm does with one delivery of
+/// [`Beacon::subscribe`](crate::beacon::Beacon::subscribe).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SeedWake {
+    /// Re-run the eager finalized derive of the held tip.
+    Derive,
+    /// A wake-up for ANOTHER consumer: no derive, stay armed.
+    Ignore,
+    /// The beacon's sender is gone. A closed `broadcast` receiver returns
+    /// `Closed` IMMEDIATELY and forever, so an armed arm would spin without ever
+    /// awaiting while a tip is HELD. The arm disarms itself instead — the park
+    /// the `Notify` shape had for free, since it also held its own sender.
+    Disarm,
+}
+
+/// The wake-up arm's whole classification, out of line so it can be pinned by a
+/// test: the spin this closes is only observable through a live `select!`.
+fn classify_seed_wake(
+    event: &Result<crate::beacon::BeaconEvent, broadcast::error::RecvError>,
+) -> SeedWake {
+    match event {
+        // `Lagged` is a wake-up like any other: the re-check it triggers is
+        // idempotent, and the events carry no payload to lose.
+        Ok(crate::beacon::BeaconEvent::SeedRecorded)
+        | Err(broadcast::error::RecvError::Lagged(_)) => SeedWake::Derive,
+        Ok(crate::beacon::BeaconEvent::KeyAvailable)
+        | Ok(crate::beacon::BeaconEvent::ParticipationChanged) => SeedWake::Ignore,
+        Err(broadcast::error::RecvError::Closed) => SeedWake::Disarm,
+    }
 }
 
 /// A notarized speculative block PARKED (rather than dropped) because it arrived
@@ -196,7 +236,7 @@ enum EagerTrigger {
 #[derive(Clone)]
 struct ParkedSpec {
     digest: crate::digest::Digest,
-    seed: Option<crate::beacon::seed::Seed>,
+    seed: Option<crate::beacon::Seed>,
 }
 
 #[derive(Clone)]
@@ -561,7 +601,7 @@ struct Deferred {
     ack: Exact,
     /// The resolved σ for this block's own round, retained with the park so
     /// `repoke_deferred` is a plain "is `h + K`'s body here yet" retry.
-    seed: Option<crate::beacon::seed::Seed>,
+    seed: Option<crate::beacon::Seed>,
 }
 
 /// A finalized block HELD for σ of its own round — the executor's only hold, and
@@ -602,7 +642,7 @@ const SEED_HOLD_STALL_THRESHOLD: Duration = Duration::from_secs(60);
 /// What [`Actor::seed_at_own_round`] found for a height's own agreed round.
 enum OwnRoundSeed {
     /// The beacon is active in this height's epoch and σ is in the store.
-    Present(crate::beacon::seed::Seed),
+    Present(crate::beacon::Seed),
     /// The beacon is NOT mandatory in this height's epoch (or the epocher cannot
     /// name it): the agreed derivation is `None` and no σ can change that.
     Inactive,
@@ -699,15 +739,15 @@ pub struct Config<BE, D, XC, MarshalMailbox> {
     pub peers_for_finalization: PeersForFinalization,
     /// The randomness handle (cross-epoch singleton from `outer.rs`). The
     /// executor reads exactly three operations off it:
-    /// [`Randomness::mandatory_at`], the network-agreed "is the beacon active in
-    /// this epoch" that gates every seed lookup; [`Randomness::seed_for`], to
+    /// [`crate::beacon::Beacon::mandatory_at`], the network-agreed "is the beacon active in
+    /// this epoch" that gates every seed lookup; [`crate::beacon::Beacon::seed`], to
     /// re-canonicalise the SPECULATIVE seed round to the block's own
     /// `proposal_view` and to resolve the finalized derive's own round; and
-    /// [`Randomness::seed_edge`], to wake when a seed lands. A provider with no
+    /// [`crate::beacon::Beacon::subscribe`], to wake when a seed lands. A provider with no
     /// seeds degrades both to "skip speculation on a spin-round notarization"
     /// and "hold the tip until σ arrives" — never to speculating with a
     /// known-wrong seed.
-    pub randomness: std::sync::Arc<dyn crate::beacon::Randomness>,
+    pub randomness: std::sync::Arc<dyn crate::beacon::Beacon>,
     /// Cross-epoch block→epoch map (the same singleton threaded into marshal +
     /// `epoch_manager`, `outer.rs`). Used to form `h`'s own seed round
     /// `Round(epocher.containing(h).epoch(), h.proposal_view)` — a pure function
@@ -967,7 +1007,7 @@ pub struct Actor<E, BE, D, XC, MarshalMailbox> {
     /// See [`Config::randomness`]. Read by `spec_execute`'s §4.1 round
     /// re-canonicalisation AND by [`Self::seed_at_own_round`], the sole seed
     /// source of the finalized derive.
-    randomness: std::sync::Arc<dyn crate::beacon::Randomness>,
+    randomness: std::sync::Arc<dyn crate::beacon::Beacon>,
 
     /// See [`Config::epocher`]. Read ONLY by [`Self::seed_at_own_round`] to form
     /// `h`'s own agreed seed round.
@@ -1157,14 +1197,22 @@ where
     async fn run(mut self) {
         info_span!("start").in_scope(|| info!("executor starting"));
 
-        // The seed-record edge (piece D, family2_finalized_tier.md §2.2): the
-        // randomness provider fires it on every recorded round. Captured ONCE
-        // here, before the loop — the permit is object-scoped, so re-deriving the
-        // handle per iteration would lose fills — and held as a LOCAL so the
-        // arm's future never borrows `self`, which the arm's `&mut self` body
-        // needs. A provider with no seeds hands back an idle `Notify` nothing
-        // ever fires: the arm parks forever, exactly as the old `None` did.
-        let seed_notify = self.randomness.seed_edge();
+        // The beacon's wake-up stream (piece D, family2_finalized_tier.md §2.2).
+        // SUBSCRIBED HERE, before the loop and therefore before this actor's first
+        // seed read: a `broadcast` buffers from the subscription onward, so an
+        // event fired before it would be lost — and the first read below is what
+        // decides whether a height is HELD at all. Held as a LOCAL so the arm's
+        // future never borrows `self`, which the arm's `&mut self` body needs. A
+        // beacon with no seeds never publishes: the arm parks forever, exactly as
+        // the old `None` did.
+        let mut beacon_events = self.randomness.subscribe();
+        // Set when the beacon's sender is gone (`RecvError::Closed`). The arm's
+        // guard reads it, because a closed `broadcast` receiver returns `Closed`
+        // IMMEDIATELY and forever: left armed, the arm would spin without ever
+        // awaiting while a tip is HELD. The HEAD shape parked on a `Notify` whose
+        // sender it also held, so there was nothing to close; disarming keeps that
+        // behaviour (park forever) instead of a hot loop.
+        let mut beacon_events_closed = false;
 
         loop {
             // PRE-CLASS latch gate. `dispatch_fault` reads the latch only when a FAULT
@@ -1475,14 +1523,31 @@ where
                 // Gated on a tip being HELD and no predecessor parked / jump in
                 // flight (the same suppression `try_eager_finalized_derive`
                 // enforces internally — the guard just avoids a redundant wake).
-                // `notify_one` stores a permit even with no parked waiter, so a
-                // record that lands between the miss lookup and this await is not
-                // lost; a spurious wake (a permit from an unrelated round) is a
-                // harmless idempotent re-check (a miss re-holds). Fires the
-                // FINALIZED-tier derive, so a SafetyHalt-class error PROPAGATES.
-                _ = seed_notify.notified(), if self.awaiting_seed.is_some()
+                // The subscription is taken before this actor's first seed read,
+                // so a record that lands between the miss lookup and this await is
+                // buffered rather than lost; a spurious wake (an event for an
+                // unrelated round) is a harmless idempotent re-check (a miss
+                // re-holds). Fires the FINALIZED-tier derive, so a
+                // SafetyHalt-class error PROPAGATES.
+                event = beacon_events.recv(), if !beacon_events_closed
+                    && self.awaiting_seed.is_some()
                     && self.deferred.is_none()
                     && self.jump_done.is_none() => {
+                    match classify_seed_wake(&event) {
+                        SeedWake::Ignore => continue,
+                        SeedWake::Disarm => {
+                            // The beacon is gone. Disarm rather than re-poll: one
+                            // line, then this arm never runs again for the life of
+                            // the actor.
+                            beacon_events_closed = true;
+                            error!(
+                                "beacon wake-up channel closed; held tips will only \
+                                 derive on delivery from here on"
+                            );
+                            continue;
+                        }
+                        SeedWake::Derive => {}
+                    }
                     if let Err(fault) =
                         self.try_eager_finalized_derive(EagerTrigger::Notified).await
                     {
@@ -2562,7 +2627,7 @@ where
         &mut self,
         cause: Span,
         digest: crate::digest::Digest,
-        seed: Option<crate::beacon::seed::Seed>,
+        seed: Option<crate::beacon::Seed>,
     ) -> Result<(), Fault> {
         // A finalized block is deferred awaiting its h+K attested body
         // (guard #2 — a strict-order pause).
@@ -2632,7 +2697,7 @@ where
                     Some(s)
                 } else {
                     metrics::counter!("dpos_spec_seed_recanonicalized_total").increment(1);
-                    match self.randomness.seed_for(canonical) {
+                    match self.randomness.seed(canonical) {
                         Some(seed) => Some(seed),
                         None => {
                             debug!(
@@ -2844,10 +2909,10 @@ where
     /// DETECTOR, never a deadline: report a block that has sat in the seed hold
     /// longer than [`SEED_HOLD_STALL_THRESHOLD`] and change NOTHING about it.
     ///
-    /// The hold is bounded only if every `impl Randomness` a production node
-    /// class can be given actually supplies σ — a claim about `PlaneRandomness`
-    /// and `FollowerRandomness` that this crate asserts and that the executor
-    /// cannot verify from the inside. `FollowerRandomness::record_seed` was an
+    /// The hold is bounded only if every `impl Beacon` a production node class can
+    /// be given actually supplies σ — a claim about the two implementations behind
+    /// the boundary that this crate asserts and that the executor cannot verify
+    /// from the inside. The follower's own seed recording was once an
     /// empty no-op that satisfied its signature, compiled, and was invisible to
     /// every name-based search; this counter is what makes the NEXT such
     /// counter-example surface in the smoke harness instead of in a review
@@ -2920,7 +2985,7 @@ where
         let round = Round::new(info.epoch(), View::new(proposal_view));
         if !self.randomness.mandatory_at(round.epoch().get()) {
             // Looked up ONLY to count it: the value is never handed on.
-            if self.randomness.seed_for(round).is_some() {
+            if self.randomness.seed(round).is_some() {
                 metrics::counter!("dpos_executor_stray_seed_at_inactive_round_total").increment(1);
                 warn!(
                     height,
@@ -2931,7 +2996,7 @@ where
             }
             return OwnRoundSeed::Inactive;
         }
-        match self.randomness.seed_for(round) {
+        match self.randomness.seed(round) {
             Some(seed) => OwnRoundSeed::Present(seed),
             None => OwnRoundSeed::Missing,
         }
@@ -2960,7 +3025,7 @@ where
         cause: Span,
         order: OrderBlock,
         ack: Exact,
-        seed: Option<crate::beacon::seed::Seed>,
+        seed: Option<crate::beacon::Seed>,
     ) -> Result<DeriveOutcome, Fault> {
         // Parked in the slot so an `Err` exit (including every SafetyHalt path,
         // several of which surface through `?`) leaves the ack ALIVE for
@@ -3567,7 +3632,7 @@ where
     async fn derive_finalized_with_gap_fill(
         &mut self,
         delivered: OrderBlock,
-        mut delivered_seed: Option<crate::beacon::seed::Seed>,
+        mut delivered_seed: Option<crate::beacon::Seed>,
     ) -> Result<B256, Fault> {
         let target = delivered.height;
         let mut first_missing = target;
@@ -3876,8 +3941,8 @@ mod tests {
         /// are free functions with no fixture in hand: one `#[test]` runs per
         /// thread, so a round one test recorded can never answer another's
         /// lookup.
-        static FIXTURE_SEEDS: crate::beacon::certify::SeedStore =
-            crate::beacon::certify::SeedStore::new();
+        static FIXTURE_SEEDS: crate::beacon::testing::SeedStore =
+            crate::beacon::testing::SeedStore::new();
     }
 
     /// Record the canonical σ for a block proposed at `view` of epoch 0 — the
@@ -3921,7 +3986,9 @@ mod tests {
     /// The first beacon-ACTIVE epoch, and the one every σ-recording helper in
     /// this module keys on.
     fn active_epoch() -> commonware_consensus::types::Epoch {
-        commonware_consensus::types::Epoch::new(crate::beacon::actor::DETERMINISTIC_BOOTSTRAP_EPOCH)
+        commonware_consensus::types::Epoch::new(
+            crate::beacon::testing::DETERMINISTIC_BOOTSTRAP_EPOCH,
+        )
     }
 
     /// `Round(DETERMINISTIC_BOOTSTRAP_EPOCH, view)` — the round a height whose
@@ -3997,12 +4064,12 @@ mod tests {
     /// seal to DISTINCT executed hashes, mirroring the real chain. A `None`
     /// (no-beacon) seed leaves the digest untouched, so every existing seedless
     /// test seals byte-identically to before this fold existed.
-    fn seed_folded_discriminator(digest: Digest, seed: &Option<crate::beacon::seed::Seed>) -> B256 {
+    fn seed_folded_discriminator(digest: Digest, seed: &Option<crate::beacon::Seed>) -> B256 {
         match seed {
             Some(s) => alloy_primitives::keccak256(
                 [
                     digest.0.as_slice(),
-                    crate::beacon::seed::prev_randao_from_seed(s).as_slice(),
+                    crate::beacon::prev_randao_from_seed(s).as_slice(),
                 ]
                 .concat(),
             ),
@@ -4133,7 +4200,7 @@ mod tests {
         }
     }
 
-    type SeedsSeen = Arc<Mutex<Vec<(u64, Option<crate::beacon::seed::Seed>)>>>;
+    type SeedsSeen = Arc<Mutex<Vec<(u64, Option<crate::beacon::Seed>)>>>;
 
     #[derive(Clone)]
     struct FakeDeriver {
@@ -4165,7 +4232,7 @@ mod tests {
             &self,
             order: OrderBlock,
             parent_evm_hash: B256,
-            seed: Option<crate::beacon::seed::Seed>,
+            seed: Option<crate::beacon::Seed>,
         ) -> eyre::Result<RethExecBlock> {
             // Fold the seed into the sealed hash (prev_randao→mix_hash model)
             // BEFORE `seed` is moved into `seeds_seen`, so notarize-round vs
@@ -4484,7 +4551,7 @@ mod tests {
         /// `with_seed_store` — with a store of the test's own, or with an EMPTY
         /// one to pin a MISS. Note the DEFAULT epocher is beacon-INACTIVE, so
         /// the store is only consulted under [`beacon_active_epocher`].
-        randomness: std::sync::Arc<dyn crate::beacon::Randomness>,
+        randomness: std::sync::Arc<dyn crate::beacon::Beacon>,
         /// Block→epoch map handed to the built actor. Default: a single huge
         /// epoch so every test height maps to epoch 0 — below
         /// `DETERMINISTIC_BOOTSTRAP_EPOCH`, i.e. beacon-INACTIVE, where the
@@ -4534,7 +4601,9 @@ mod tests {
                 sync_metrics,
                 safety_halt,
                 fcu_heartbeat: Duration::from_secs(60),
-                randomness: crate::beacon::for_seeds(FIXTURE_SEEDS.with(|seeds| seeds.clone())),
+                randomness: crate::beacon::testing::for_seeds(
+                    FIXTURE_SEEDS.with(|seeds| seeds.clone()),
+                ),
                 epocher: crate::epocher::OriginEpocher::new(
                     0,
                     std::num::NonZeroU64::new(1 << 40).expect("nonzero"),
@@ -4560,8 +4629,8 @@ mod tests {
         /// Replace the default store with `store` — the test's own σ source, and
         /// (empty) the way to opt out of the default and pin a store MISS. Set
         /// BEFORE `build`.
-        fn with_seed_store(mut self, store: crate::beacon::certify::SeedStore) -> Self {
-            self.randomness = crate::beacon::for_seeds(store);
+        fn with_seed_store(mut self, store: crate::beacon::testing::SeedStore) -> Self {
+            self.randomness = crate::beacon::testing::for_seeds(store);
             self
         }
 
@@ -4686,7 +4755,7 @@ mod tests {
 
     /// A real recovered threshold seed for `round` (the executor passes it
     /// through verbatim; it never re-verifies, so any valid `Seed` suffices).
-    fn real_seed(round: commonware_consensus::types::Round) -> crate::beacon::seed::Seed {
+    fn real_seed(round: commonware_consensus::types::Round) -> crate::beacon::Seed {
         use commonware_cryptography::bls12381::{dkg::deal_anonymous, primitives::variant::MinSig};
         use commonware_utils::{test_rng, N3f1, NZU32};
         use fluentbase_bls::beacon::{recover_seed, seed_namespace, sign_seed_partial};
@@ -4698,7 +4767,7 @@ mod tests {
             .iter()
             .map(|s| sign_seed_partial(s, &ns, round))
             .collect();
-        crate::beacon::seed::Seed {
+        crate::beacon::Seed {
             target_round: round,
             signature: recover_seed::<N3f1>(&sharing, &partials).expect("recover seed"),
         }
@@ -4709,13 +4778,13 @@ mod tests {
     /// [`real_seed`] signed under.
     fn real_witness(
         round: commonware_consensus::types::Round,
-    ) -> crate::beacon::verified_seed::VerifiedSeed {
+    ) -> crate::beacon::testing::VerifiedSeed {
         use commonware_cryptography::bls12381::{dkg::deal_anonymous, primitives::variant::MinSig};
         use commonware_utils::{test_rng, N3f1, NZU32};
         use fluentbase_bls::beacon::seed_namespace;
         let mut rng = test_rng();
         let (sharing, _) = deal_anonymous::<MinSig, N3f1>(&mut rng, Default::default(), NZU32!(5));
-        crate::beacon::verified_seed::PkOracle::new(*sharing.public(), seed_namespace(b"fluent-test"))
+        crate::beacon::testing::PkOracle::new(*sharing.public(), seed_namespace(b"fluent-test"))
             .witness(round, real_seed(round).signature)
     }
 
@@ -6370,7 +6439,7 @@ mod tests {
         let runtime = deterministic::Runner::default();
         runtime.start(|ctx| async move {
             const ANCHOR: u64 = 100;
-            let store = crate::beacon::certify::SeedStore::new();
+            let store = crate::beacon::testing::SeedStore::new();
             let seeds: Vec<_> = (101..=104).map(|v| real_seed(active_round(v))).collect();
             for seed in &seeds {
                 store.record(real_witness(seed.target_round));
@@ -6434,7 +6503,7 @@ mod tests {
         let runtime = deterministic::Runner::default();
         runtime.start(|ctx| async move {
             const ANCHOR: u64 = 100;
-            let store = crate::beacon::certify::SeedStore::new();
+            let store = crate::beacon::testing::SeedStore::new();
             // σ for the DELIVERED height only — the prefix element at 101 has none.
             let delivered_seed = real_seed(active_round(102));
             store.record(real_witness(delivered_seed.target_round));
@@ -6499,7 +6568,7 @@ mod tests {
         let runtime = deterministic::Runner::default();
         runtime.start(|ctx| async move {
             const ANCHOR: u64 = 100;
-            let store = crate::beacon::certify::SeedStore::new();
+            let store = crate::beacon::testing::SeedStore::new();
             let prefix_seed = real_seed(active_round(101));
             let delivered_seed = real_seed(active_round(102));
             store.record(real_witness(delivered_seed.target_round));
@@ -6556,7 +6625,7 @@ mod tests {
         runtime.start(|ctx| async move {
             const ANCHOR: u64 = 100;
             // Default epocher ⇒ epoch 0 ⇒ beacon-INACTIVE; store deliberately empty.
-            let fx = Fixture::new(ANCHOR).with_seed_store(crate::beacon::certify::SeedStore::new());
+            let fx = Fixture::new(ANCHOR).with_seed_store(crate::beacon::testing::SeedStore::new());
             let (mut actor, _mailbox) = fx.build(ctx, ANCHOR, ANCHOR);
 
             let (ack, _w) = Exact::handle();
@@ -7050,7 +7119,7 @@ mod tests {
         runtime.start(|ctx| async move {
             const ANCHOR: u64 = 100;
             let h = ANCHOR + 1;
-            let store = crate::beacon::certify::SeedStore::new();
+            let store = crate::beacon::testing::SeedStore::new();
             let fx = Fixture::new(ANCHOR)
                 .with_seed_store(store.clone())
                 .with_epocher(beacon_active_epocher());
@@ -7113,7 +7182,7 @@ mod tests {
         runtime.start(|ctx| async move {
             const ANCHOR: u64 = 100;
             let seed = real_seed(active_round(ANCHOR + 1));
-            let store = crate::beacon::certify::SeedStore::new();
+            let store = crate::beacon::testing::SeedStore::new();
             store.record(real_witness(seed.target_round));
             let fx = Fixture::new(ANCHOR)
                 .with_seed_store(store)
@@ -7213,7 +7282,7 @@ mod tests {
                     .expect("nameable")
                     .epoch()
                     .get()
-                    < crate::beacon::actor::DETERMINISTIC_BOOTSTRAP_EPOCH,
+                    < crate::beacon::testing::DETERMINISTIC_BOOTSTRAP_EPOCH,
                 "premise: the block's own epoch is beacon-INACTIVE"
             );
             let (actor, mailbox) = fx.build(ctx, ANCHOR, ANCHOR);
@@ -7267,12 +7336,12 @@ mod tests {
             );
             assert_eq!(
                 epocher.containing(Height::new(EDGE)).unwrap().epoch(),
-                Epoch::new(crate::beacon::actor::DETERMINISTIC_BOOTSTRAP_EPOCH),
+                Epoch::new(crate::beacon::testing::DETERMINISTIC_BOOTSTRAP_EPOCH),
                 "test premise: that epoch is the bootstrap epoch — the first beacon-ACTIVE one"
             );
 
-            let store = crate::beacon::certify::SeedStore::new();
-            let e = Epoch::new(crate::beacon::actor::DETERMINISTIC_BOOTSTRAP_EPOCH);
+            let store = crate::beacon::testing::SeedStore::new();
+            let e = Epoch::new(crate::beacon::testing::DETERMINISTIC_BOOTSTRAP_EPOCH);
             let seed_edge = real_seed(Round::new(e, View::new(EDGE)));
             let seed_next = real_seed(Round::new(e, View::new(EDGE + 1)));
             store.record(real_witness(seed_edge.target_round));
@@ -7313,7 +7382,7 @@ mod tests {
     /// A `SpecNotarized` command carrying a real recovered seed (populates
     /// `spec_executed[h].seed_round` — reconciled against the round the
     /// finalized derive resolves).
-    fn spec_msg_seeded(order: &OrderBlock, seed: crate::beacon::seed::Seed) -> Message {
+    fn spec_msg_seeded(order: &OrderBlock, seed: crate::beacon::Seed) -> Message {
         Message {
             cause: Span::current(),
             command: Command::SpecNotarized(Box::new(Notarized {
@@ -7638,7 +7707,7 @@ mod tests {
             const ANCHOR: u64 = 100;
             // Beacon-ACTIVE epoch + an EMPTY store: the only way to hold a block.
             let fx = Fixture::new(ANCHOR)
-                .with_seed_store(crate::beacon::certify::SeedStore::new())
+                .with_seed_store(crate::beacon::testing::SeedStore::new())
                 .with_epocher(beacon_active_epocher());
             let (actor, mailbox) = fx.build(ctx.clone(), ANCHOR, ANCHOR);
             let handle = actor.start();
@@ -7680,7 +7749,7 @@ mod tests {
         let runtime = deterministic::Runner::default();
         runtime.start(|ctx| async move {
             const ANCHOR: u64 = 100;
-            let store = crate::beacon::certify::SeedStore::new();
+            let store = crate::beacon::testing::SeedStore::new();
             let fx = Fixture::new(ANCHOR)
                 .with_seed_store(store.clone())
                 .with_epocher(beacon_active_epocher());
@@ -7747,7 +7816,7 @@ mod tests {
             const ANCHOR: u64 = 100;
             const H: u64 = ANCHOR + 1;
             const V0: u64 = 40;
-            let store = crate::beacon::certify::SeedStore::new();
+            let store = crate::beacon::testing::SeedStore::new();
             let fx = Fixture::new(ANCHOR)
                 .with_seed_store(store.clone())
                 .with_epocher(beacon_active_epocher());
@@ -7802,7 +7871,7 @@ mod tests {
             const ANCHOR: u64 = 100;
             const H: u64 = ANCHOR + 1;
             const V0: u64 = 40;
-            let store = crate::beacon::certify::SeedStore::new();
+            let store = crate::beacon::testing::SeedStore::new();
             let fx = Fixture::new(ANCHOR)
                 .with_seed_store(store.clone())
                 .with_epocher(beacon_active_epocher());
@@ -8584,7 +8653,7 @@ mod tests {
         runtime.start(|ctx| async move {
             const ANCHOR: u64 = 100;
             let h = ANCHOR + 1;
-            let store = crate::beacon::certify::SeedStore::new();
+            let store = crate::beacon::testing::SeedStore::new();
             let seed = real_seed(active_round(h));
             store.record(real_witness(seed.target_round));
             let fx = Fixture::new(ANCHOR)
@@ -8670,7 +8739,7 @@ mod tests {
             // Store present but EMPTY — the opt-out from the fixture default, and
             // the only difference from the hit test is the missing round entry
             // (isolates the miss branch).
-            let store = crate::beacon::certify::SeedStore::new();
+            let store = crate::beacon::testing::SeedStore::new();
             let fx = Fixture::new(ANCHOR)
                 .with_seed_store(store)
                 .with_epocher(beacon_active_epocher());
@@ -8710,7 +8779,7 @@ mod tests {
         runtime.start(|ctx| async move {
             const ANCHOR: u64 = 100;
             let h = ANCHOR + 1;
-            let store = crate::beacon::certify::SeedStore::new();
+            let store = crate::beacon::testing::SeedStore::new();
             let seed = real_seed(active_round(h));
             store.record(real_witness(seed.target_round));
             let fx = Fixture::new(ANCHOR)
@@ -8774,7 +8843,7 @@ mod tests {
         runtime.start(|ctx| async move {
             const ANCHOR: u64 = 100;
             let h = ANCHOR + 1;
-            let store = crate::beacon::certify::SeedStore::new();
+            let store = crate::beacon::testing::SeedStore::new();
             let seed_h = real_seed(active_round(h));
             store.record(real_witness(seed_h.target_round));
             let fx = Fixture::new(ANCHOR)
@@ -8869,7 +8938,7 @@ mod tests {
             let e = epocher.containing(Height::new(H)).unwrap().epoch();
             assert_eq!(e, active_epoch());
 
-            let store = crate::beacon::certify::SeedStore::new();
+            let store = crate::beacon::testing::SeedStore::new();
             let seed = real_seed(Round::new(e, View::new(H)));
             store.record(real_witness(seed.target_round));
             let fx = Fixture::new(ANCHOR)
@@ -8920,7 +8989,7 @@ mod tests {
             );
             const ANCHOR: u64 = 22;
             const H: u64 = 23; // last block of epoch 2, the bootstrap epoch
-            let store = crate::beacon::certify::SeedStore::new();
+            let store = crate::beacon::testing::SeedStore::new();
             // SAME view, WRONG epoch (e+1 = 3): the only entry in the store.
             let wrong = real_seed(Round::new(Epoch::new(3), View::new(H)));
             store.record(real_witness(wrong.target_round));
@@ -8966,7 +9035,7 @@ mod tests {
             const ANCHOR: u64 = 100;
             let h = ANCHOR + 1;
             // Store starts EMPTY: the delivery-time eager derive must miss.
-            let store = crate::beacon::certify::SeedStore::new();
+            let store = crate::beacon::testing::SeedStore::new();
             let fx = Fixture::new(ANCHOR)
                 .with_seed_store(store.clone())
                 .with_epocher(beacon_active_epocher());
@@ -9031,7 +9100,7 @@ mod tests {
             let h = ANCHOR + 1;
             // EMPTY store: the opt-out from the fixture default, so both arms
             // below are reached with nothing recorded for h's round.
-            let store = crate::beacon::certify::SeedStore::new();
+            let store = crate::beacon::testing::SeedStore::new();
             let fx = Fixture::new(ANCHOR)
                 .with_seed_store(store)
                 .with_epocher(beacon_active_epocher());
@@ -10864,7 +10933,7 @@ mod tests {
             let (cb, calls) = recording_re_jump(Scripted::Lagging);
             let fx = Fixture::new(ANCHOR)
                 .with_re_jump(cb)
-                .with_seed_store(crate::beacon::certify::SeedStore::new())
+                .with_seed_store(crate::beacon::testing::SeedStore::new())
                 .with_epocher(beacon_active_epocher());
             let (actor, mailbox) = fx.build(ctx.clone(), ANCHOR, ANCHOR);
             let handle = actor.start();
@@ -10919,7 +10988,7 @@ mod tests {
             });
             let fx = Fixture::new(ANCHOR)
                 .with_re_jump(cb)
-                .with_seed_store(crate::beacon::certify::SeedStore::new())
+                .with_seed_store(crate::beacon::testing::SeedStore::new())
                 .with_epocher(beacon_active_epocher());
             let (actor, mailbox) = fx.build(ctx.clone(), ANCHOR, ANCHOR);
             let handle = actor.start();
@@ -11057,7 +11126,7 @@ mod tests {
             runtime.start(|ctx| async move {
                 const ANCHOR: u64 = 100;
                 let h = ANCHOR + 1;
-                let store = crate::beacon::certify::SeedStore::new();
+                let store = crate::beacon::testing::SeedStore::new();
                 let fx = Fixture::new(ANCHOR)
                     .with_seed_store(store.clone())
                     .with_epocher(beacon_active_epocher());
@@ -11161,7 +11230,7 @@ mod tests {
                 const ANCHOR: u64 = 100;
                 let h = ANCHOR + 1;
                 let fx = Fixture::new(ANCHOR)
-                    .with_seed_store(crate::beacon::certify::SeedStore::new())
+                    .with_seed_store(crate::beacon::testing::SeedStore::new())
                     .with_epocher(beacon_active_epocher())
                     .with_fcu_heartbeat(Duration::from_millis(20));
                 let (mut actor, mailbox) = fx.build(ctx.clone(), ANCHOR, ANCHOR);
@@ -11347,7 +11416,7 @@ mod tests {
             // and its ack is un-resolved and in the actor's hands when the latch
             // trips.
             let fx = Fixture::new(ANCHOR)
-                .with_seed_store(crate::beacon::certify::SeedStore::new())
+                .with_seed_store(crate::beacon::testing::SeedStore::new())
                 .with_epocher(beacon_active_epocher());
             let (actor, mailbox) = fx.build(ctx.clone(), ANCHOR, ANCHOR);
             let mut handle = actor.start();
@@ -11781,7 +11850,7 @@ mod tests {
                         // never hold. This is the only site driving a REAL
                         // marshal, and a σ at epoch 0 would model a state
                         // production cannot reach.
-                        randomness: crate::beacon::surface::absent_unregistered(),
+                        randomness: crate::beacon::absent_unregistered(),
                         epocher: crate::epocher::OriginEpocher::new(
                             0,
                             std::num::NonZeroU64::new(1 << 40).expect("nonzero"),
@@ -12206,5 +12275,60 @@ mod tests {
                 );
             });
         }
+    }
+
+    // The wake-up arm must not spin on a dead beacon. A `broadcast` receiver whose
+    // senders are all gone answers `Closed` IMMEDIATELY and FOREVER, so an arm that
+    // treated `Closed` like any other wake-up would re-poll without awaiting for as
+    // long as a tip is HELD — a hot loop in exactly the incident where the node is
+    // already degraded. The HEAD shape parked on a `Notify` whose sender the actor
+    // itself held, so the case could not arise; `Disarm` is what replaces that park.
+    #[tokio::test]
+    async fn a_closed_beacon_channel_disarms_the_wake_up_arm_instead_of_spinning() {
+        let (tx, mut rx) = tokio::sync::broadcast::channel(4);
+        tx.send(crate::beacon::BeaconEvent::SeedRecorded).unwrap();
+        assert_eq!(
+            classify_seed_wake(&rx.recv().await),
+            SeedWake::Derive,
+            "a live seed record still fires the eager derive"
+        );
+
+        drop(tx);
+        // The spin premise, asserted rather than assumed: with the sender gone the
+        // receiver is ready on every poll, twice in a row and without awaiting.
+        let first = rx.recv().await;
+        assert!(
+            matches!(first, Err(tokio::sync::broadcast::error::RecvError::Closed)),
+            "a dropped sender closes the receiver"
+        );
+        assert_eq!(classify_seed_wake(&first), SeedWake::Disarm);
+        let second = rx.recv().await;
+        assert!(
+            matches!(
+                second,
+                Err(tokio::sync::broadcast::error::RecvError::Closed)
+            ),
+            "and stays closed — this is why the arm has to disarm, not `continue`"
+        );
+        assert_eq!(classify_seed_wake(&second), SeedWake::Disarm);
+    }
+
+    // The other two classes are wake-ups for OTHER consumers of the same channel:
+    // no derive, and the arm stays armed.
+    #[test]
+    fn the_wake_up_arm_ignores_the_other_two_event_classes_and_derives_on_lagged() {
+        assert_eq!(
+            classify_seed_wake(&Ok(crate::beacon::BeaconEvent::KeyAvailable)),
+            SeedWake::Ignore
+        );
+        assert_eq!(
+            classify_seed_wake(&Ok(crate::beacon::BeaconEvent::ParticipationChanged)),
+            SeedWake::Ignore
+        );
+        assert_eq!(
+            classify_seed_wake(&Err(tokio::sync::broadcast::error::RecvError::Lagged(3))),
+            SeedWake::Derive,
+            "a dropped run of events is a wake-up like any other; the re-check is idempotent"
+        );
     }
 }

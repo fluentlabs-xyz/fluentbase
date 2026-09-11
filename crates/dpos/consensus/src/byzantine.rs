@@ -30,7 +30,7 @@
 
 // Only [`forge_outcome_same_committee`] speaks this type, and that is test-only.
 #[cfg(test)]
-use crate::beacon::outcome::DkgOutcome;
+use crate::beacon::testing::DkgOutcome;
 use crate::digest::Digest;
 use commonware_codec::{DecodeExt, Encode};
 use commonware_consensus::{

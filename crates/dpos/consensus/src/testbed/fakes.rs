@@ -4,7 +4,7 @@ use crate::{
     application::{
         BeaconEngineLike, DerivedBlockBuilder, ExecutedChain, FinalizedCursor, OrderingAssembler,
     },
-    beacon::seed::Seed,
+    beacon::Seed,
     cert_follow::{CertUpstream, UpstreamFinalized},
     cert_inlet::CommitteeSource,
     cold_start_jump::{ElSync, SyncFailure, EL_SYNC_STALL_ESCAPE},
@@ -723,7 +723,7 @@ impl DerivedBlockBuilder for FakeDeriver {
             Some(s) => keccak256(
                 [
                     digest.as_slice(),
-                    crate::beacon::seed::prev_randao_from_seed(s).as_slice(),
+                    crate::beacon::prev_randao_from_seed(s).as_slice(),
                 ]
                 .concat(),
             ),
@@ -956,8 +956,9 @@ impl FakeStaking {
     }
 
     /// `getDkgQual(epoch)` paired with "is `epoch`'s committee committed at
-    /// `at`" — the two legs `beacon::carry::DkgQualProbe` reads
-    /// (`carry.rs:181`). An uncommitted epoch reads its bit as the contract
+    /// `at`" — the two legs `beacon::CommitteeReads::dkg_qual` answers with, and
+    /// the beacon's own frozen reader is built over them (`carry.rs:185`). An
+    /// uncommitted epoch reads its bit as the contract
     /// map's default `false` over an empty committee, which is `(false, false)`.
     pub(super) fn dkg_qual(&self, epoch: u64, at: B256) -> Result<(bool, bool), ReadError> {
         let snap = self.epoch_committee_snapshot(epoch, at)?;
@@ -1474,7 +1475,7 @@ pub(super) struct ByzFacts {
     /// hash at the dealer's seat is a direct observation that the second log was
     /// recorded — not an inference from the share it ends up without.
     pub confirms_sent: Vec<SentConfirm>,
-    /// Signer schemes this node's `Randomness` wrapper rebuilt over the
+    /// Signer schemes this node's `Beacon` wrapper rebuilt over the
     /// verify-only oracle.
     pub schemes_withheld: u64,
     /// `(the honest scheme signs a probe subject, the withheld one does)` at the

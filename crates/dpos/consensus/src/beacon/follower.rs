@@ -37,15 +37,17 @@ use super::{
         decode_artifact, encode_artifact, verify_artifact_for_epoch, ArtifactError, ArtifactStore,
         CommitteeSource, PULL_MIN_INTERVAL,
     },
-    carry::DkgQualFor,
+    carry::{frozen_dkg_qual, DkgQualFor},
     certify::SeedStore,
     keys::{pk_prefix, AgreedKeyAt, AgreedKeys, BeaconKeys, InvalidSeed, KeySource, KeySources},
     metrics::BeaconMetrics,
     oracle::KeyOnlyOracle,
     outcome::group_public_key,
-    plane::ArtifactSource,
+    plane::{CommitteeReads, Tasks},
     seed::Seed,
-    surface::{PinEffort, Randomness, ShareProbe, SignerVerdict, WithheldReason},
+    surface::{
+        Beacon, BeaconEvent, PinEffort, Randomness, ShareProbe, SignerVerdict, WithheldReason,
+    },
     verified_seed::VerifiedSeed,
 };
 use commonware_consensus::types::{Epoch, Round};
@@ -62,7 +64,7 @@ use std::{
     sync::{Arc, Weak},
     time::SystemTime,
 };
-use tokio::sync::{mpsc, Notify};
+use tokio::sync::{broadcast, mpsc, Notify};
 use tracing::{info, warn};
 
 /// Depth of the want channel between [`Randomness::observe_cert`] and the fetch
@@ -70,6 +72,16 @@ use tracing::{info, warn};
 /// stays unresolved, so a full channel costs nothing: the drop is re-asked a
 /// second later, and dropping is what keeps `observe_cert` off the network.
 const WANT_MAILBOX: usize = 16;
+
+/// [`FollowerInputs`] with its staking reads already projected into the two
+/// closures the internals speak. Private: it exists so the body below is
+/// unchanged by the boundary move.
+struct ResolvedFollowerInputs {
+    chain_id: u64,
+    committees: CommitteeSource,
+    dkg_qual: DkgQualFor,
+    fetch: ArtifactFetch,
+}
 
 /// One artifact fetch over the follower's cert upstream, by MINTING epoch.
 ///
@@ -79,45 +91,82 @@ const WANT_MAILBOX: usize = 16;
 /// only invite a caller to treat one of them as a fault.
 pub type ArtifactFetch = Arc<dyn Fn(u64) -> BoxFuture<'static, Option<Vec<u8>>> + Send + Sync>;
 
-/// What [`for_follower`] needs that it cannot build itself. Every field is a
+/// What [`build_follower`] needs that it cannot build itself. Every field is a
 /// capability the node already holds; none of them is beacon state.
-pub struct FollowerRandomnessConfig {
+///
+/// `--cert-follow` has no keys, no muxes and no DKG, so this is not a narrowing
+/// of [`super::ValidatorInputs`] but a different set: what it does have is the
+/// artifact upstream, and the artifact half is all a follower's beacon does.
+///
+/// There is no `partition_prefix`: the follower is RAM-only by decision, and
+/// what a restart costs it is one fetch per epoch over a link it holds open
+/// anyway.
+pub struct FollowerInputs {
     pub chain_id: u64,
-    /// `committee[epoch]`, the SOLE authority a fetched artifact is checked
-    /// against. Read from this node's own chain state, never from the upstream.
-    pub committees: CommitteeSource,
-    /// Which epoch minted the key in force at a given epoch (the frozen `dkgQual`
-    /// record). A stable epoch runs no agreement and carries its predecessor's
-    /// key, so without this the fetch would ask for an artifact that was never
-    /// minted.
-    pub dkg_qual: DkgQualFor,
+    /// Every staking read the follower's beacon takes, on ONE cursor — the same
+    /// trait the validator plane is handed.
+    pub committees: Arc<dyn CommitteeReads>,
     /// The delivery route. See [`ArtifactFetch`].
     pub fetch: ArtifactFetch,
 }
 
-/// What the follower's launch site receives back.
-pub struct FollowerBeacon {
-    /// The consensus-facing surface, for the outer engine and the cert inlet.
-    /// ONE instance shared by both: `observe_cert` prunes the store `ensure_key`
-    /// reads, and a second provider would make the prune a no-op on a map
-    /// nothing else sees.
-    pub randomness: Arc<dyn Randomness>,
-    /// Serve a held artifact to a TIER-2 follower over
-    /// `consensus_getEpochArtifact`, exactly as this node already serves
-    /// `getFinalization` out of its bounded cert window.
-    pub artifact_bytes: ArtifactSource,
-    /// The fetch task. SUPERVISED: it parks rather than returning, so a clean
-    /// exit means it died, and a dead fetcher silently returns this node to
-    /// vote-only admission for the rest of the process.
-    pub fetch_handle: Handle<()>,
-}
-
-/// Build the follower's randomness.
+/// Build the follower's beacon.
 ///
 /// Registers the beacon metric families on `context` — a follower is the sole
-/// owner of them on its node class, the same job [`super::surface::absent`] did
-/// before it.
-pub fn for_follower<E>(context: &E, cfg: FollowerRandomnessConfig) -> FollowerBeacon
+/// owner of them on its node class.
+pub fn build_follower<E>(context: &E, cfg: FollowerInputs) -> (Arc<dyn Beacon>, Tasks)
+where
+    E: Clock + Metrics + Spawner + Clone + Send + 'static,
+{
+    let committee_source: CommitteeSource = {
+        let reads = cfg.committees.clone();
+        Arc::new(move |epoch: u64| reads.committee_bls(epoch, reads.read_at()?))
+    };
+    let dkg_qual_for = frozen_dkg_qual(
+        {
+            let reads = cfg.committees.clone();
+            Arc::new(move || reads.qual_read_at())
+        },
+        {
+            let reads = cfg.committees.clone();
+            Arc::new(move |epoch: u64, at| reads.dkg_qual(epoch, at))
+        },
+    );
+    let beacon = build_resolved(
+        context,
+        ResolvedFollowerInputs {
+            chain_id: cfg.chain_id,
+            committees: committee_source,
+            dkg_qual: dkg_qual_for,
+            fetch: cfg.fetch,
+        },
+    );
+    (
+        beacon.randomness,
+        Tasks {
+            supervised: beacon.fetch_handle,
+            // A follower opens no journal partition — RAM-only artifact store,
+            // RAM-only seed store — so there is nothing to flush at shutdown.
+            drain: context
+                .with_label("beacon_drain")
+                .spawn(move |_| async move {}),
+            // No agreement plane on this node class, so nothing ever arrives.
+            agreement_intake: mpsc::channel(1).1,
+        },
+    )
+}
+
+/// What [`build_resolved`] hands back. Private: the two halves leave through
+/// [`build_follower`]'s [`Tasks`], and the struct exists so this module's own
+/// tests can build the beacon over canned closures without going through
+/// [`CommitteeReads`].
+struct FollowerBeacon {
+    randomness: Arc<dyn Beacon>,
+    fetch_handle: Handle<()>,
+}
+
+/// The body, over the two closures the internals speak.
+fn build_resolved<E>(context: &E, cfg: ResolvedFollowerInputs) -> FollowerBeacon
 where
     E: Clock + Metrics + Spawner + Clone + Send + 'static,
 {
@@ -162,6 +211,7 @@ where
     // want, nothing re-issues it a second later.
     let key_edge = keys.subscribe();
     let randomness = Arc::new(FollowerRandomness {
+        artifacts: store.clone(),
         keys: keys.clone(),
         seed_namespace: seed_namespace(&fluent_namespace(cfg.chain_id)),
         held: held.clone(),
@@ -170,7 +220,6 @@ where
         // path opens no journal partition. What a restart loses is σ the next
         // certificate carries anyway.
         seeds: SeedStore::new(),
-        idle: Arc::new(Notify::new()),
         metrics,
     });
     let fetch_handle = {
@@ -185,7 +234,6 @@ where
 
     FollowerBeacon {
         randomness,
-        artifact_bytes: Arc::new(move |epoch: u64| store.get(epoch).map(|a| encode_artifact(&a))),
         fetch_handle,
     }
 }
@@ -298,9 +346,13 @@ async fn run_fetcher<E: Clock>(
                 None => break,
             },
             _ = key_edge.notified() => {
-                // Gone means the last `Randomness` handle dropped, i.e. shutdown.
+                // Gone means the last beacon handle dropped, i.e. shutdown.
                 let Some(randomness) = promoter.upgrade() else { break };
                 randomness.promote_quarantined();
+                // This task is the SOLE waiter on the key store's own notifier, so
+                // it is also the only place that can turn a key landing into the
+                // beacon's `KeyAvailable` wake-up.
+                let _ = randomness.seeds.events().send(BeaconEvent::KeyAvailable);
                 continue;
             }
         };
@@ -331,8 +383,8 @@ async fn run_fetcher<E: Clock>(
     }
     // PARK, never return: this handle is supervised, where a clean exit means "a
     // subsystem died, take the node down". The loop ends only when the last
-    // `Randomness` handle drops, which is shutdown, and that must not be the
-    // thing that cancels the node.
+    // beacon handle drops, which is shutdown, and that must not be the thing that
+    // cancels the node.
     std::future::pending::<()>().await;
 }
 
@@ -340,6 +392,11 @@ async fn run_fetcher<E: Clock>(
 /// answer, and REAL on the two it can — which key a certificate of an epoch must
 /// be checked against, and what σ the certificates it admitted carried.
 struct FollowerRandomness {
+    /// The RAM-only artifact store, for [`Beacon::artifact_bytes`] alone: this
+    /// node serves a held artifact to a TIER-2 follower over
+    /// `consensus_getEpochArtifact`, exactly as it already serves
+    /// `getFinalization` out of its bounded cert window.
+    artifacts: ArtifactStore,
     keys: BeaconKeys,
     /// The seed-signing domain an assembled σ is verified under. Held because
     /// the oracle needs it and a follower has no plane to ask.
@@ -353,7 +410,6 @@ struct FollowerRandomness {
     /// it: checked values in the served map, unchecked ones in the quarantine.
     /// RAM-only — see where it is built.
     seeds: SeedStore,
-    idle: Arc<Notify>,
     /// Handed to every [`KeyOnlyOracle`] this provider builds, so the keyless
     /// window is counted on the node class where it is most ordinary.
     metrics: BeaconMetrics,
@@ -378,7 +434,7 @@ impl FollowerRandomness {
     /// common case and the quarantine is where most of it first lands.
     fn promote_quarantined(&self) {
         for epoch in self.seeds.quarantined_epochs() {
-            let Some(oracle) = self.oracle_for(epoch) else {
+            let Some(oracle) = Randomness::oracle_for(self, epoch) else {
                 continue;
             };
             let (promoted, refused) = self.seeds.promote_epoch(epoch, oracle.as_ref());
@@ -393,6 +449,13 @@ impl FollowerRandomness {
 }
 
 impl Randomness for FollowerRandomness {
+    /// The store's, as on the validator plane: `SeedStore::record` fires the seed
+    /// class from every writer, and `run_fetcher` sends the key class into the
+    /// same publisher.
+    fn events(&self) -> &broadcast::Sender<BeaconEvent> {
+        self.seeds.events()
+    }
+
     /// A follower forms no round of its own, but it RECEIVES σ: every certificate
     /// it admits carries the round's seed, and its executor needs that seed to
     /// derive a beacon-active block's `prev_randao`.
@@ -426,10 +489,6 @@ impl Randomness for FollowerRandomness {
         })
     }
 
-    fn seed_edge(&self) -> Arc<Notify> {
-        self.seeds.notifier()
-    }
-
     /// Permanently withheld, and by TYPE rather than by state: a follower holds no
     /// share and runs nothing that could produce one. Obtaining `PK_epoch` changes
     /// the VERIFY side only — the group key is not a share.
@@ -446,10 +505,6 @@ impl Randomness for FollowerRandomness {
         SignerVerdict::Withheld(WithheldReason::NoUsableShare)
     }
 
-    fn participation_edge(&self) -> Arc<Notify> {
-        self.idle.clone()
-    }
-
     /// A KEY-ONLY oracle, and by type rather than by state: a follower runs no
     /// ceremony, so it can check an assembled σ against `PK_epoch` and can never
     /// sign, verify or recover a partial.
@@ -458,7 +513,7 @@ impl Randomness for FollowerRandomness {
         // enforces it: an oracle tells `verify_certificate` the epoch is
         // beacon-active, so one on a pre-beacon epoch rejects every LEGAL seedless
         // certificate there.
-        self.mandatory_at(epoch).then(|| {
+        Randomness::mandatory_at(self, epoch).then(|| {
             Arc::new(KeyOnlyOracle {
                 epoch,
                 keys: self.keys.clone(),
@@ -470,7 +525,7 @@ impl Randomness for FollowerRandomness {
 
     fn ensure_key(&self, epoch: u64, _effort: PinEffort) -> BoxFuture<'_, bool> {
         Box::pin(async move {
-            if !self.mandatory_at(epoch) {
+            if !Randomness::mandatory_at(self, epoch) {
                 return false;
             }
             // BOTH efforts answer identically, and the asymmetry is the point:
@@ -493,10 +548,6 @@ impl Randomness for FollowerRandomness {
         })
     }
 
-    fn key_edge(&self) -> Arc<Notify> {
-        self.keys.notifier()
-    }
-
     fn observe_epoch(&self, _reconciled: Epoch, entered_frontier: Epoch) {
         self.retain_from(
             entered_frontier
@@ -516,6 +567,9 @@ impl Randomness for FollowerRandomness {
         }
         self.retain_from(epoch.saturating_sub(crate::SCHEME_RETENTION_EPOCHS as u64));
     }
+    fn artifact_bytes(&self, epoch: u64) -> Option<Vec<u8>> {
+        self.artifacts.get(epoch).map(|a| encode_artifact(&a))
+    }
 }
 
 #[cfg(test)]
@@ -527,8 +581,8 @@ mod tests {
             dkg_agree::{AgreedArtifact, DkgProposal},
             outcome::DkgOutcome,
             surface::DealtOracle,
+            BeaconEvent, ObservedCertificate,
         },
-        cert_inlet::capture_certificate_seed,
         digest::Digest,
     };
     use alloy_primitives::{Address, B256};
@@ -776,9 +830,9 @@ mod tests {
         }
     }
 
-    fn config(c: &Committee, up: &Upstream) -> FollowerRandomnessConfig {
+    fn config(c: &Committee, up: &Upstream) -> ResolvedFollowerInputs {
         let committee = c.epoch_committee(TARGET);
-        FollowerRandomnessConfig {
+        ResolvedFollowerInputs {
             chain_id: CHAIN_ID,
             committees: Arc::new(move |epoch: u64| (epoch == TARGET).then(|| committee.clone())),
             // Only TARGET minted; every epoch above it carries TARGET's key.
@@ -822,7 +876,7 @@ mod tests {
 
             let up = Upstream::default();
             *up.served.lock().expect("served") = Some(bytes);
-            let fb = for_follower(&ctx, config(&c, &up));
+            let fb = build_resolved(&ctx, config(&c, &up));
 
             fb.randomness.observe_cert(TARGET);
             settle(&ctx, || up.calls.load(Ordering::SeqCst) > 0).await;
@@ -836,7 +890,7 @@ mod tests {
                 "a refused artifact must leave the epoch KEYLESS"
             );
             assert!(
-                (fb.artifact_bytes)(TARGET).is_none(),
+                fb.randomness.artifact_bytes(TARGET).is_none(),
                 "a refused artifact must not be stored, let alone re-served to a tier-2 follower"
             );
         });
@@ -856,14 +910,14 @@ mod tests {
 
             let up = Upstream::default();
             *up.served.lock().expect("served") = Some(genuine.encode().to_vec());
-            let fb = for_follower(&ctx, config(&c, &up));
+            let fb = build_resolved(&ctx, config(&c, &up));
 
             assert!(
                 !fb.randomness.ensure_key(TARGET, PinEffort::Local).await,
                 "nothing is held before the first delivery"
             );
             fb.randomness.observe_cert(TARGET);
-            settle(&ctx, || (fb.artifact_bytes)(TARGET).is_some()).await;
+            settle(&ctx, || fb.randomness.artifact_bytes(TARGET).is_some()).await;
 
             let after_adoption = up.calls.load(Ordering::SeqCst);
             assert_eq!(after_adoption, 1, "exactly one delivery");
@@ -873,7 +927,7 @@ mod tests {
             // wrong one.
             assert_eq!(
                 *crate::beacon::outcome::group_public_key(
-                    &decode_artifact(&(fb.artifact_bytes)(TARGET).expect("adopted"))
+                    &decode_artifact(&fb.randomness.artifact_bytes(TARGET).expect("adopted"))
                         .expect("decodes")
                         .0
                         .group_key
@@ -897,7 +951,7 @@ mod tests {
                 "ensure_key and observe_cert must not spend the network once the key is held"
             );
             assert!(
-                (fb.artifact_bytes)(TARGET).is_some(),
+                fb.randomness.artifact_bytes(TARGET).is_some(),
                 "the adopted artifact is servable to a tier-2 follower"
             );
         });
@@ -918,7 +972,7 @@ mod tests {
 
             let up = Upstream::default();
             *up.served.lock().expect("served") = Some(genuine.encode().to_vec());
-            let fb = for_follower(&ctx, config(&c, &up));
+            let fb = build_resolved(&ctx, config(&c, &up));
 
             up.forbidden.store(true, Ordering::SeqCst);
             fb.randomness.observe_cert(TARGET);
@@ -948,7 +1002,7 @@ mod tests {
         runner.start(|ctx| async move {
             let c = committee(1);
             let up = Upstream::default();
-            let fb = for_follower(&ctx, config(&c, &up));
+            let fb = build_resolved(&ctx, config(&c, &up));
 
             fb.randomness.observe_cert(TARGET);
             settle(&ctx, || up.calls.load(Ordering::SeqCst) > 0).await;
@@ -958,7 +1012,7 @@ mod tests {
                 !fb.randomness.ensure_key(TARGET, PinEffort::Local).await,
                 "no artifact means no key — never a wrong one"
             );
-            assert!((fb.artifact_bytes)(TARGET).is_none());
+            assert!(fb.randomness.artifact_bytes(TARGET).is_none());
 
             // The miss is not memoised: once the upstream has it, the very next
             // want adopts it. (The per-epoch throttle bounds HOW OFTEN, and it is
@@ -968,7 +1022,7 @@ mod tests {
             *up.served.lock().expect("served") = Some(genuine.encode().to_vec());
             ctx.sleep(PULL_MIN_INTERVAL).await;
             fb.randomness.observe_cert(TARGET);
-            settle(&ctx, || (fb.artifact_bytes)(TARGET).is_some()).await;
+            settle(&ctx, || fb.randomness.artifact_bytes(TARGET).is_some()).await;
             assert!(
                 fb.randomness.ensure_key(TARGET, PinEffort::Local).await,
                 "a miss must not be terminal"
@@ -992,10 +1046,10 @@ mod tests {
 
             let up = Upstream::default();
             *up.served.lock().expect("served") = Some(genuine.encode().to_vec());
-            let fb = for_follower(&ctx, config(&c, &up));
+            let fb = build_resolved(&ctx, config(&c, &up));
 
             fb.randomness.observe_cert(TARGET);
-            settle(&ctx, || (fb.artifact_bytes)(TARGET).is_some()).await;
+            settle(&ctx, || fb.randomness.artifact_bytes(TARGET).is_some()).await;
             assert!(fb.randomness.ensure_key(TARGET, PinEffort::Local).await);
 
             let cert = c.certify_seeded(TARGET, &outcome, &shares, Digest(B256::repeat_byte(0xcc)));
@@ -1005,21 +1059,23 @@ mod tests {
                 .seed()
                 .expect("a beacon-active certificate carries the round seed");
 
-            let edge = fb.randomness.seed_edge();
-            capture_certificate_seed(fb.randomness.as_ref(), round, &cert);
+            let mut edge = fb.randomness.subscribe();
+            let _ = fb
+                .randomness
+                .observe_certificate(ObservedCertificate::Finalization(round, &cert));
 
             assert_eq!(
-                fb.randomness.seed_for(round).map(|s| s.signature),
+                fb.randomness.seed(round).map(|s| s.signature),
                 Some(sigma),
                 "the σ the certificate carried is what a later derive reads back"
             );
             let woken = tokio::select! {
-                _ = edge.notified() => true,
+                event = edge.recv() => matches!(event, Ok(BeaconEvent::SeedRecorded)),
                 _ = ctx.sleep(Duration::from_millis(10)) => false,
             };
             assert!(
                 woken,
-                "a held tip waits on the seed edge; an unfired one parks it forever"
+                "a held tip waits on the seed wake-up; an unfired one parks it forever"
             );
         });
     }
@@ -1041,7 +1097,7 @@ mod tests {
             // Nothing served yet: the follower is keyless, which is where it
             // spends the opening of every epoch.
             let up = Upstream::default();
-            let fb = for_follower(&ctx, config(&c, &up));
+            let fb = build_resolved(&ctx, config(&c, &up));
 
             let cert = c.certify_seeded(TARGET, &outcome, &shares, Digest(B256::repeat_byte(0xcc)));
             let round = cert.proposal.round;
@@ -1049,19 +1105,21 @@ mod tests {
                 .certificate
                 .seed()
                 .expect("a beacon-active certificate carries the round seed");
-            capture_certificate_seed(fb.randomness.as_ref(), round, &cert);
+            let _ = fb
+                .randomness
+                .observe_certificate(ObservedCertificate::Finalization(round, &cert));
             assert!(
-                fb.randomness.seed_for(round).is_none(),
+                fb.randomness.seed(round).is_none(),
                 "an unchecked σ must never reach the served map"
             );
 
             *up.served.lock().expect("served") = Some(genuine.encode().to_vec());
             fb.randomness.observe_cert(TARGET);
-            settle(&ctx, || fb.randomness.seed_for(round).is_some()).await;
+            settle(&ctx, || fb.randomness.seed(round).is_some()).await;
             // Only a σ that was HELD can be served now: the capture above ran
             // once, and nothing re-delivers it.
             assert_eq!(
-                fb.randomness.seed_for(round).map(|s| s.signature),
+                fb.randomness.seed(round).map(|s| s.signature),
                 Some(sigma),
                 "the key landing must release what the keyless window held"
             );
@@ -1077,7 +1135,7 @@ mod tests {
         runner.start(|ctx| async move {
             let c = committee(1);
             let up = Upstream::default();
-            let fb = for_follower(&ctx, config(&c, &up));
+            let fb = build_resolved(&ctx, config(&c, &up));
             for epoch in 0..super::super::actor::DETERMINISTIC_BOOTSTRAP_EPOCH {
                 assert!(
                     fb.randomness.oracle_for(epoch).is_none(),

@@ -854,7 +854,7 @@ mod tests {
         let me = SchemeTrait::me(&probe).expect("signer carries a Participant index");
         let share = shares.iter().find(|sh| sh.index == me).unwrap().clone();
         let oracle: std::sync::Arc<dyn fluentbase_bls::oracle::SeedOracle> =
-            std::sync::Arc::new(crate::beacon::surface::DealtOracle {
+            std::sync::Arc::new(crate::beacon::testing::DealtOracle {
                 sharing,
                 share: Some(share),
                 namespace: seed_ns,

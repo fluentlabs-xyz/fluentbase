@@ -11,14 +11,18 @@ use super::{
         UpstreamCounters, UpstreamStats, DPOS_ACTIVATION_BLOCK,
     },
 };
+/// A read of one held epoch-key artifact's wire bytes, for the stand's serving
+/// side. It used to come out of `beacon::build`; the beacon answers it through
+/// `Beacon::artifact_bytes` now, and the stand closes over that.
+type ArtifactSource = Arc<dyn Fn(u64) -> Option<Vec<u8>> + Send + Sync>;
+
+#[cfg(feature = "dpos-devnet-byzantine")]
+use crate::beacon::testing::CommitteeFor;
 use crate::{
     beacon::{
         self,
-        actor::{CommitteeFor, CommitteePairFor},
-        carry::DkgQualProbe,
-        seed::Seed,
-        surface::StaticRandomness,
-        ArtifactSource, BeaconConfig, CommitteeSource,
+        testing::{absent, StaticRandomness},
+        CommitteeReads, Seed, ValidatorInputs,
     },
     cert_follow::CertUpstream as _,
     cold_start_jump::JumpOutcome,
@@ -851,7 +855,7 @@ struct NodeHandles {
     probe_calls: Arc<AtomicU64>,
     trace: Arc<Mutex<Vec<TraceEntry>>>,
     upstream: UpstreamCounters,
-    /// `Beacon::Live`: the plane's artifact read.
+    /// `Beacon::Live`: the beacon's artifact read.
     artifacts: Option<ArtifactSource>,
     observer: EtObserver,
     staking: FakeStaking,
@@ -1785,36 +1789,30 @@ async fn build_node(
             None,
             None,
         ),
-        (Beacon::Live, Role::AbsentBeacon) => (beacon::absent(&ctx_i), None, None),
+        (Beacon::Live, Role::AbsentBeacon) => (absent(&ctx_i), None, None),
         (Beacon::Live, _) => {
             let (bcs, bcr) = register(BEACON_CHANNEL).await;
             let (brs, brr) = register(BEACON_RESOLVER_CHANNEL).await;
-            let read_committee = {
+            #[cfg(feature = "dpos-devnet-byzantine")]
+            let roster = {
                 let staking = staking.clone();
                 let at = committee_read_hash.clone();
-                move |epoch: u64| -> Option<ValidatorSetSnapshot> {
-                    let snap = staking.epoch_committee_snapshot(epoch, at()?).ok()?;
-                    (!snap.validators.is_empty()).then_some(snap)
-                }
-            };
-            let roster = {
-                let read = read_committee.clone();
                 move |epoch: u64| -> Option<Set<PeerPubkey>> {
+                    let snap = staking.epoch_committee_snapshot(epoch, at()?).ok()?;
+                    if snap.validators.is_empty() {
+                        return None;
+                    }
                     Some(Set::from_iter_dedup(
-                        read(epoch)?
-                            .validators
-                            .iter()
-                            .map(|v| v.keys.peer_pubkey.clone()),
+                        snap.validators.iter().map(|v| v.keys.peer_pubkey.clone()),
                     ))
                 }
             };
+            // Only the two-reveal role still needs the roster as a closure: the
+            // beacon takes its committee reads through `CommitteeReads` now.
+            #[cfg(feature = "dpos-devnet-byzantine")]
             let committee_for: CommitteeFor = {
                 let roster = roster.clone();
                 Arc::new(roster)
-            };
-            let committee_pair_for: CommitteePairFor = {
-                let roster = roster.clone();
-                Arc::new(move |target| Some((roster(target.checked_sub(1)?)?, roster(target)?)))
             };
             // R-002: the BEACON_CHANNEL sender half, wrapped. `None` on every
             // honest node, and then the wrapper is a pure pass-through — the type
@@ -1844,21 +1842,75 @@ async fn build_node(
                     _ => None,
                 },
             );
-            let committee_source: CommitteeSource = {
-                let read = read_committee.clone();
-                Arc::new(move |epoch| epoch_committee_from_snapshot(&read(epoch)?).ok())
-            };
-            // `getDkgQual(epoch)` + "is the epoch committed", both read at the
-            // finalized state — the two legs of the production probe
-            // (`node/src/dpos.rs:1526-1543`), here answered by the contract
-            // state machine instead of by the schedule.
-            let dkg_qual_probe: DkgQualProbe = {
-                let staking = staking.clone();
-                Arc::new(move |epoch, at| staking.dkg_qual(epoch, at).ok())
-            };
-            let plane = beacon::build(
+            // Every staking read the beacon takes, on ONE cursor — the stand's
+            // stand-in for the node's `PlaneCommitteeReads`. `read_at` is
+            // production's `max(EL-finalized, live)` with the same fallback, and
+            // the `dkgQual` leg now rides it too rather than the finalized hash
+            // (Д-7).
+            struct StandCommitteeReads {
+                read_at: Arc<dyn Fn() -> Option<B256> + Send + Sync>,
+                snapshot_at: Arc<dyn Fn(u64, B256) -> Option<ValidatorSetSnapshot> + Send + Sync>,
+                staking: FakeStaking,
+            }
+
+            impl CommitteeReads for StandCommitteeReads {
+                fn read_at(&self) -> Option<B256> {
+                    (self.read_at)()
+                }
+
+                /// The stand cannot express production's extra guard on this
+                /// leg: its `el_finalized` is a HEIGHT that saturates to 0, not
+                /// an `Option`, so "no finalized marker" and "finalized at
+                /// genesis" are the same value here. The cursor is therefore the
+                /// committee one; what the guard protects (a write-once memo
+                /// frozen at the genesis fallback) is a node-side property and
+                /// is pinned by `node/src/dpos.rs`'s own cursor tests.
+                fn qual_read_at(&self) -> Option<B256> {
+                    (self.read_at)()
+                }
+
+                /// READS AT `at`, never at a cursor of its own. The obvious
+                /// shortcut — re-resolve `read_at()` inside — would make
+                /// `committee_pair`'s two halves land on two independent reads,
+                /// which is the exact straddle the provided method exists to make
+                /// unspellable. A stand that cannot express the defect cannot
+                /// witness the fix either.
+                fn committee(&self, epoch: u64, at: B256) -> Option<Set<PeerPubkey>> {
+                    Some(Set::from_iter_dedup(
+                        (self.snapshot_at)(epoch, at)?
+                            .validators
+                            .iter()
+                            .map(|v| v.keys.peer_pubkey.clone()),
+                    ))
+                }
+
+                fn committee_bls(
+                    &self,
+                    epoch: u64,
+                    at: B256,
+                ) -> Option<fluentbase_bls::scheme::EpochCommittee> {
+                    epoch_committee_from_snapshot(&(self.snapshot_at)(epoch, at)?).ok()
+                }
+
+                fn dkg_qual(&self, epoch: u64, at: B256) -> Option<(bool, bool)> {
+                    self.staking.dkg_qual(epoch, at).ok()
+                }
+            }
+
+            let committees: Arc<dyn CommitteeReads> = Arc::new(StandCommitteeReads {
+                read_at: committee_read_hash.clone(),
+                snapshot_at: {
+                    let staking = staking.clone();
+                    Arc::new(move |epoch: u64, at: B256| {
+                        let snap = staking.epoch_committee_snapshot(epoch, at).ok()?;
+                        (!snap.validators.is_empty()).then_some(snap)
+                    })
+                },
+                staking: staking.clone(),
+            });
+            let (beacon, beacon_tasks) = beacon::build(
                 &ctx_i,
-                BeaconConfig {
+                ValidatorInputs {
                     chain_id: CHAIN_ID,
                     peer_keypair: peers[i].clone(),
                     bls_keypair: bls[i].clone(),
@@ -1871,17 +1923,10 @@ async fn build_node(
                     cert_mux: cert_mux.clone(),
                     resolver_mux: res_mux.clone(),
                     bodies_mux: bcast_mux.clone(),
-                    committee_for,
-                    committee_pair_for,
-                    committee_source,
-                    dkg_qual_at: finalized_hash.clone(),
-                    dkg_qual_probe,
+                    committees,
                     heights: dkg_height_rx,
                     plane_clock: plane_clock.clone(),
-                    geometry: {
-                        let et = et.clone();
-                        Box::pin(async move { et.lock().await.frozen_geometry() })
-                    },
+                    geometry: tokio::sync::watch::channel(et.lock().await.frozen_geometry()).1,
                     partition_prefix: format!("node{i}-"),
                 },
             )
@@ -1894,18 +1939,22 @@ async fn build_node(
                 Role::TwoReveals {
                     withhold_partials: true,
                 } => super::byzantine_roles::WithholdingRandomness::wrap(
-                    plane.randomness,
+                    beacon,
                     CHAIN_ID,
                     byz.clone(),
                 ),
-                _ => plane.randomness,
+                _ => beacon,
             };
             #[cfg(not(feature = "dpos-devnet-byzantine"))]
-            let randomness = plane.randomness;
+            let randomness = beacon;
+            let artifacts: ArtifactSource = {
+                let beacon = randomness.clone();
+                Arc::new(move |epoch: u64| beacon.artifact_bytes(epoch))
+            };
             (
                 randomness,
-                Some(plane.artifact_bytes),
-                Some(plane.agreement_intake),
+                Some(artifacts),
+                Some(beacon_tasks.agreement_intake),
             )
         }
     };

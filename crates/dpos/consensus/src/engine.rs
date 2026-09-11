@@ -41,7 +41,7 @@ const FETCH_CONCURRENT: usize = 4;
 /// [`EpochEngine::new`]. It used to be wrapped for a beacon seed-verify at
 /// `certify`; the epoch key no longer rides a block, so there is nothing left to
 /// check there and `Inline`'s own availability gate stands alone
-/// ([`crate::beacon::certify`] records why).
+/// (`beacon::certify` records why).
 type AutomatonFor<E, XC, A> = Inline<E, BlsScheme, FluentApp<XC, A>, OrderBlock, OriginEpocher>;
 
 type ConsensusEngine<E, B, XC, A> = simplex::Engine<
@@ -90,7 +90,7 @@ pub struct EpochEngineConfig<B, XC, A> {
     /// cross-epoch finalization certificates (trailing-window pruned; see SCHEME_RETENTION_EPOCHS).
     pub register_scheme: Arc<dyn Fn(Epoch, BlsScheme) + Send + Sync>,
     /// The scheme this engine votes and verifies with, built by the randomness
-    /// subsystem and handed down whole ([`crate::beacon::Randomness::signer_scheme`]).
+    /// subsystem and handed down whole ([`crate::beacon::Beacon::signer`]).
     /// The engine no longer knows what a beacon key is: whether this scheme
     /// carries a seed partial, and whether it can sign at all, were decided
     /// above it.

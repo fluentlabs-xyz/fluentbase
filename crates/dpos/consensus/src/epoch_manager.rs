@@ -16,7 +16,7 @@ use crate::{
     application::{ExecutedChain, FluentApp, OrderingAssembler},
     beacon::agreement_partition,
     beacon::{constant_fallback_seed, witness_fallback_seed},
-    beacon::{PinEffort, Randomness, ShareProbe, SignerVerdict},
+    beacon::{Beacon, PinEffort, ShareProbe, SignerVerdict},
     dpos::VoteBackupItem,
     engine::{EpochEngine, EpochEngineConfig},
     epocher::OriginEpocher,
@@ -155,12 +155,12 @@ enum SeedlessBase {
 /// leader schedule: the deferring node re-poked would elect one leader while a
 /// node that answered `None` elects another, for the same epoch, from the same
 /// agreed block.
-fn boundary_base(randomness: &dyn Randomness, prev: Epoch, terminal_view: u64) -> BoundaryLookup {
+fn boundary_base(randomness: &dyn Beacon, prev: Epoch, terminal_view: u64) -> BoundaryLookup {
     if !randomness.mandatory_at(prev.get()) {
         return BoundaryLookup::Present { seed: None };
     }
     let round = Round::new(prev, View::new(terminal_view));
-    match randomness.terminal_seed_at(round) {
+    match randomness.terminal_seed(round) {
         Some(seed) => BoundaryLookup::Present {
             seed: Some(witness_fallback_seed(&seed)),
         },
@@ -192,7 +192,7 @@ fn seedless_base(lookup: &BoundaryLookup, snap: &ValidatorSetSnapshot) -> Option
 ///
 /// Split out of `BeaconMetrics` with every family name unchanged. They are facts
 /// about MEMBERSHIP and the `Inline::genesis` precondition, not about
-/// randomness — a [`Randomness`] implementation that computes the seed from a
+/// randomness — a `Beacon` implementation that computes the seed from a
 /// hash and runs no DKG still produces all four — so keeping them on the beacon
 /// struct would have forced the core to name a beacon type in order to count its
 /// own spawns.
@@ -377,6 +377,31 @@ async fn recv_agreement(
     }
 }
 
+/// The next beacon wake-up THIS actor acts on, with the seed class dropped
+/// inside the future.
+///
+/// The seed class fires about once a round and belongs to the executor. Answering
+/// it with a `continue` in the loop body would still cost a full turn of the
+/// manager's `select!` per round — both `Notify` edges are rebuilt each
+/// iteration — where the HEAD shape had no round-rate wake-up on this loop at
+/// all. Dropping it here keeps the single shared stream and leaves the loop on
+/// its own edges.
+///
+/// Cancel-safe in the way `select!` needs: the only messages it can consume and
+/// discard are the ones this actor would have discarded anyway, and
+/// `broadcast::Receiver::recv` is itself cancel-safe. `Lagged` and `Closed` are
+/// returned, not swallowed — either may be hiding a class this actor does act on.
+async fn next_reconcile_wake(
+    rx: &mut tokio::sync::broadcast::Receiver<crate::beacon::BeaconEvent>,
+) -> Result<crate::beacon::BeaconEvent, tokio::sync::broadcast::error::RecvError> {
+    loop {
+        match rx.recv().await {
+            Ok(crate::beacon::BeaconEvent::SeedRecorded) => continue,
+            other => return other,
+        }
+    }
+}
+
 /// The 3 plane-owned simplex broker handles a SIGNER engine registers per-epoch
 /// sub-channels against (vote/cert/resolver). Bundled into one struct so the
 /// manager threads a single `Option<Muxes>` instead of 3 positional handles —
@@ -426,7 +451,7 @@ where
     /// a COMPLETED handle as a caught panic: it drops the entry, bumps
     /// `engine_respawned` and spawns a replacement. An agreement instance is
     /// SUPPOSED to complete — it aborts itself the moment its own finalization
-    /// lands ([`crate::beacon::dkg_engine`]) — so an entry over there would be
+    /// lands (`beacon::dkg_engine`) — so an entry over there would be
     /// resurrected on every reconcile, for the life of the process. Here nothing
     /// polls it: a completed supervisor simply sits until `abort_below` drops it,
     /// and `abort()` on an already-completed handle is a no-op.
@@ -510,7 +535,7 @@ pub struct Config<B, XC, A> {
     /// The ONE randomness handle. Absorbs the beacon-shaped inputs this config
     /// used to carry one by one; a node with no beacon material holds the
     /// permanently-negative provider rather than a bundle of `None`s.
-    pub randomness: Arc<dyn Randomness>,
+    pub randomness: Arc<dyn Beacon>,
     /// Edge-trigger fired by the executor each time it records a finalized
     /// OrderBlock (i.e. the marshal now holds another finalized block). It is the
     /// MID-EPOCH promotion trigger (the cycle-2 fix): re-runs `reconcile_roles` for
@@ -663,14 +688,16 @@ where
         // Muxer tasks are NOT aborted here (they outlive this manager).
         // Cloned Arcs so the per-iteration `notified()` futures borrow the local
         // handles, not `self` (the arms below take `&mut self`).
-        let share_notify = self.cfg.randomness.participation_edge();
         let spawn_unblocked = self.cfg.spawn_unblocked.clone();
         let safety_halt = self.cfg.safety_halt.clone();
-        // Captured ONCE, before the loop — never per-iteration. A `Notify` permit
-        // is object-scoped, so re-arming `notified()` on THIS handle each
-        // iteration below cannot lose a fill; re-deriving the handle each
-        // iteration is what would (see `beacon::keys`).
-        let key_notify = self.cfg.randomness.key_edge();
+        // SUBSCRIBED ONCE, before the loop and therefore before this actor's first
+        // reconcile: a `broadcast` buffers from the subscription onward, so an
+        // event fired before it would be lost, and the reconcile below is what
+        // establishes the state a later wake-up asks this actor to re-derive.
+        // ONE stream for the two classes this actor cares about, where there used
+        // to be two `Notify` handles — the wake-up says only that something may
+        // have changed, and both arms answer it by re-reading.
+        let mut beacon_events = self.cfg.randomness.subscribe();
         // The repair sweep runs OFF this loop — see `spawn_repair_sweep`. Waking
         // it is a synchronous `send_replace`, so no arm below can be held by it.
         // Dropping this sender on the way out is what stops the task.
@@ -679,15 +706,15 @@ where
         // arms below take `&mut self`).
         let mut agreement_intake = self.agreement_intake.take();
         loop {
-            // Arm the edge wakeups BEFORE the select. The producers use `notify_one`
-            // (permit-storing), so even a signal that fires while no waiter is armed —
-            // between a reconcile and the next select — is held as a permit and
-            // consumed by the next `notified()` (no lost wakeup).
-            let share_n = share_notify.notified();
+            // Arm the edge wakeups BEFORE the select. The two `Notify` producers
+            // here use `notify_one` (permit-storing), so even a signal that fires
+            // while no waiter is armed — between a reconcile and the next select —
+            // is held as a permit and consumed by the next `notified()`. The
+            // beacon's two classes ride the buffered subscription taken above and
+            // are not re-armed per iteration.
             let spawn_n = spawn_unblocked.notified();
             let halt_n = safety_halt.engaged_edge();
-            let key_n = key_notify.notified();
-            tokio::pin!(share_n, spawn_n, halt_n, key_n);
+            tokio::pin!(spawn_n, halt_n);
             tokio::select! {
                 // Edge: the fork-safety latch was engaged (result divergence / EL
                 // Invalid / L1 fork). Abort every participating engine NOW so the node
@@ -761,15 +788,6 @@ where
                         }
                     }
                 }
-                // Edge: a DKG share landed — re-run reconcile so a member parked by
-                // the share-gate spawns now that its share is present (the running
-                // scheme is frozen at construction, so this is a respawn). Also
-                // clears the catch-up no-progress memo (a landed share can make a
-                // previously-unresolvable span read succeed — bug 15).
-                _ = &mut share_n => {
-                    self.catchup_no_progress = None;
-                    self.reconcile_live(muxes.as_ref()).await;
-                }
                 // Edge: the executor recorded a finalized block — the MID-EPOCH
                 // promotion trigger. A caught-up member promotes the instant its
                 // `Inline::genesis` precondition is met; gated on a pending parked
@@ -781,8 +799,21 @@ where
                         self.reconcile_live(muxes.as_ref()).await;
                     }
                 }
-                // Edge: a `PK_epoch` landed in the shared store. It has TWO
-                // consumers and until now only one of them was served.
+                // Edge: the beacon says something may have changed — a DKG share
+                // landed, or a `PK_epoch` did. ONE arm for both classes, where
+                // there used to be two: both answer the wake-up by re-reading the
+                // same state, and the only difference was that the share arm did
+                // not also poke the repair sweep. Poking it on a share landing is
+                // extra idempotent work on a task built to be poked, and it is the
+                // price of the merge being honest rather than two arms that must
+                // stay in step by hand.
+                //
+                // A landed share re-runs the reconcile so a member parked by the
+                // share-gate spawns now that its share is present (the running
+                // scheme is frozen at construction, so this is a respawn).
+                //
+                // A landed `PK_epoch` has TWO consumers and until this arm existed
+                // only one of them was served.
                 //
                 // BELOW the frontier: the repair sweep, for which this arm is the
                 // FAST path and not the load-bearing one — a below-frontier epoch
@@ -795,14 +826,14 @@ where
                 // frontier is the ACQUISITION: `reconcile_live` re-runs the ladder,
                 // and `soft_enter` does not short-circuit on a recorded
                 // `Role::Verifier`, so it will. A member that will PROMOTE gets that
-                // edge for free from `participation_edge`; a node that will NOT promote
+                // edge for free from the participation class; a node that will NOT promote
                 // (not a member of `committee[E]`, or a share heal that never
                 // completes) had no edge at all and stayed vote-only for the whole life
                 // of the epoch.
                 //
                 // This arm CANNOT be the only trigger for the sweep, and that is the
-                // whole reason the boundary arm also sweeps. It fires on a
-                // `BeaconKeys::record`, and every production writer of that store
+                // whole reason the boundary arm also sweeps. The key class fires on
+                // a `BeaconKeys` record, and every production writer of that store
                 // needs either this node's own DKG material or a change epoch's
                 // agreement artifact. A node with no DKG material on a committee that
                 // has not changed — the case that repair exists for — never fires it
@@ -813,7 +844,48 @@ where
                 // that arm is gated on a non-empty `deferred_spawns`, and a node
                 // demoted by the promote value-gate never enters that set. Same
                 // event, wrong gate.
-                _ = &mut key_n => {
+                //
+                // The SEED class is the third thing on this stream and does not
+                // belong to this actor: it fires ~1/s and its consumer is the
+                // executor's held-height release, so reconciling on it would put a
+                // staking read behind every round. Filtered INSIDE the future
+                // rather than by a `continue` in the body, so the round-rate class
+                // does not re-arm this `select!`'s edges once a round — the two
+                // `Notify` futures above are rebuilt per loop iteration, and the
+                // HEAD shape had no round-rate wake-up for this loop at all.
+                // Filtered, not subscribed away — one stream is what lets a class
+                // gain a second consumer without its producer growing a second
+                // fan-out.
+                event = next_reconcile_wake(&mut beacon_events) => {
+                    // The two classes are NOT the same edge, and merging their
+                    // effects is how one of them quietly acquires the other's:
+                    //
+                    // - PARTICIPATION: a landed share clears the catch-up
+                    //   no-progress memo — it can make a previously-unresolvable
+                    //   span read succeed (bug 15).
+                    // - KEY: wakes the repair sweep (below the frontier this arm is
+                    //   its fast path; at the frontier it owes the ACQUISITION).
+                    //
+                    // The share class ALSO wakes the sweep, which the HEAD share arm
+                    // did not: the sweep is idempotent and built to be woken, and
+                    // two arms that must agree by hand is what this merge removes.
+                    // It does NOT gain the memo clear in the other direction.
+                    match event {
+                        Ok(crate::beacon::BeaconEvent::ParticipationChanged) => {
+                            self.catchup_no_progress = None;
+                        }
+                        Ok(crate::beacon::BeaconEvent::KeyAvailable) => {}
+                        // `Lagged`/`Closed`: either class may have been dropped, so
+                        // both effects apply. Re-reading everything is all this
+                        // actor would have done for each message it missed.
+                        Err(_) => {
+                            self.catchup_no_progress = None;
+                        }
+                        // Filtered out by `next_reconcile_wake`.
+                        Ok(crate::beacon::BeaconEvent::SeedRecorded) => unreachable!(
+                            "the seed class never leaves next_reconcile_wake"
+                        ),
+                    }
                     sweep_wake.send_replace((
                         self.highest_observed_epoch,
                         self.highest_entered_epoch,
@@ -1068,7 +1140,7 @@ where
                 // its verdict is stable rather than transient: the attested tier
                 // appears once and is never downgraded, so this cannot flap an
                 // engine down and up.
-                if let ShareProbe::Withheld(reason) = self.cfg.randomness.share_probe(epoch) {
+                if let ShareProbe::Withheld(reason) = self.cfg.randomness.can_participate(epoch) {
                     warn!(
                         ?epoch,
                         ?reason,
@@ -1124,7 +1196,7 @@ where
                 // POSITION IS LOAD-BEARING: it sits BEFORE the boundary lookup
                 // below so a member that cannot participate returns without
                 // paying a marshal `get_block` on every participation edge.
-                if let ShareProbe::Withheld(reason) = self.cfg.randomness.share_probe(epoch) {
+                if let ShareProbe::Withheld(reason) = self.cfg.randomness.can_participate(epoch) {
                     self.soft_enter(epoch, &snap).await;
                     info!(
                         ?epoch,
@@ -1195,7 +1267,7 @@ where
                 let Some(keypair) = self.cfg.signer_keypair.clone() else {
                     unreachable!("Role::Signer requires is_member, which requires a signer keypair")
                 };
-                let scheme = match self.cfg.randomness.signer_scheme(epoch, &snap, &keypair) {
+                let scheme = match self.cfg.randomness.signer(epoch, &snap, &keypair) {
                     SignerVerdict::Signs(scheme) => scheme,
                     // Misconfiguration safety net, not a wedge path: this
                     // node's BLS key is not in the committee BiMap. Spawn
@@ -1276,7 +1348,8 @@ where
     /// bound SLEEPS until the epoch's next slot before it even issues the fetch
     /// (`PULL_MIN_INTERVAL` + `PULL_TIMEOUT`), once per epoch in a work list
     /// bounded only by [`SCHEME_RETENTION_EPOCHS`]. Awaited inline that is a
-    /// ~100 s section during which `share_n`, `spawn_unblocked` and `vote_backup`
+    /// ~100 s section during which the beacon wake-up arm, `spawn_unblocked` and
+    /// `vote_backup`
     /// do not run — the three arms that turn this node into a signer.
     ///
     /// Everything the sweep touches is a cross-epoch singleton this actor holds
@@ -1284,7 +1357,7 @@ where
     /// is the frontier, which rides the wake. A `watch` (not a `Notify`) because
     /// the frontier has to ride it and because its receiver is created ONCE here,
     /// before the task's loop — the baseline-at-subscribe hazard that rules
-    /// `watch` out in [`crate::beacon::keys`] needs a per-iteration `subscribe`,
+    /// `watch` out in `beacon::keys` needs a per-iteration `subscribe`,
     /// which this is not.
     fn spawn_repair_sweep(&self) -> (watch::Sender<(Epoch, Epoch)>, Handle<()>) {
         let (wake_tx, wake_rx) =
@@ -1530,12 +1603,12 @@ where
 /// is decided here any more — the scheme reads `PK_epoch` live through the oracle
 /// — so the sole caller had nothing left to do with the answer and discarded it.
 ///
-/// This call resolves NO key. It asks [`Randomness::oracle_for`] for the epoch's
+/// This call resolves NO key. It asks [`Beacon::oracle_for`] for the epoch's
 /// threshold face and hands it to the scheme, which reads `PK_epoch` live through
 /// it on every certificate. A key that is unresolvable at registration time
 /// therefore costs vote-only admission only until it lands — the scheme picks it
 /// up with no re-registration, and there is nothing to repair in the registry.
-/// Acquisition is the separate, off-path job of [`Randomness::ensure_key`], driven
+/// Acquisition is the separate, off-path job of [`Beacon::ensure_key`], driven
 /// for below-frontier epochs by [`repair_keyless_schemes`].
 ///
 /// A free fn over the pieces so registration is testable without standing up the
@@ -1543,7 +1616,7 @@ where
 /// mailbox). The caller keeps the role bookkeeping and the already-a-Signer
 /// guard, which are `Actor` state.
 async fn register_soft_entered(
-    randomness: &dyn Randomness,
+    randomness: &dyn Beacon,
     epoch: Epoch,
     snap: &ValidatorSetSnapshot,
     chain_id: u64,
@@ -1582,7 +1655,7 @@ type RepairHint = Arc<dyn Fn(Vec<Epoch>) -> BoxFuture<'static, ()> + Send + Sync
 async fn run_repair_sweep(
     mut wake: watch::Receiver<(Epoch, Epoch)>,
     provider: EpochSchemeProvider,
-    randomness: Arc<dyn Randomness>,
+    randomness: Arc<dyn Beacon>,
     hint: RepairHint,
 ) {
     let mut hinted = BTreeSet::new();
@@ -1624,7 +1697,7 @@ async fn run_repair_sweep(
 /// two writes in one task instead of ordering them across two.
 ///
 /// The live epoch is not left unrepaired by that: `reconcile_live` re-runs the
-/// whole ladder on every non-boundary edge — including the `key_edge` arm that
+/// whole ladder on every non-boundary edge — including the `KeyAvailable` arm that
 /// also wakes this sweep — and [`EpochSchemeProvider::register`] accepts an
 /// unpinned → pinned replacement, so the frontier's entry upgrades in the task
 /// that owns it.
@@ -1652,7 +1725,7 @@ async fn run_repair_sweep(
 /// That is what [`PinEffort::Thorough`] means here, and it is the whole reason
 /// this call site does not simply reuse the cheap effort the vote paths use.
 /// WHICH provenance it admits and which it refuses is stated once, inside
-/// [`Randomness::ensure_key`] — deliberately not restated here, because a rule
+/// [`Beacon::ensure_key`] — deliberately not restated here, because a rule
 /// written in two places is a rule that will be changed in one.
 /// `hinted` is the sweep's OWN memo of epochs it has already re-driven, and it
 /// has to exist now: the pin it used to apply was write-once, so `apply_pin`
@@ -1666,7 +1739,7 @@ async fn run_repair_sweep(
 /// [`crate::SCHEME_RETENTION_EPOCHS`] leaves it too.
 async fn repair_keyless_schemes(
     provider: &EpochSchemeProvider,
-    randomness: &dyn Randomness,
+    randomness: &dyn Beacon,
     hinted: &mut BTreeSet<Epoch>,
     observed: Epoch,
     entered: Epoch,
@@ -1846,10 +1919,10 @@ fn engine_handle_dead(handle: &mut Handle<()>) -> bool {
 mod tests {
     use super::*;
     use crate::{
-        beacon::actor::DETERMINISTIC_BOOTSTRAP_EPOCH,
-        beacon::keys::{AgreedKeys, BeaconKeys, KeySource, KeySources},
-        beacon::surface::PlaneRandomnessConfig,
-        beacon::BeaconResolve,
+        beacon::testing::BeaconResolve,
+        beacon::testing::LiveBeaconConfig,
+        beacon::testing::DETERMINISTIC_BOOTSTRAP_EPOCH,
+        beacon::testing::{AgreedKeys, BeaconKeys, KeySource, KeySources},
         outer::EpochSchemeProvider,
         scheme::epoch_committee_from_snapshot,
     };
@@ -1929,17 +2002,17 @@ mod tests {
         store: BeaconKeys,
         held: Option<AgreedKeys>,
         pull: Option<AgreedKeys>,
-    ) -> Arc<dyn Randomness> {
-        randomness_over_seeds(crate::beacon::certify::SeedStore::new(), store, held, pull)
+    ) -> Arc<dyn Beacon> {
+        randomness_over_seeds(crate::beacon::testing::SeedStore::new(), store, held, pull)
     }
 
     fn randomness_over_seeds(
-        seeds: crate::beacon::certify::SeedStore,
+        seeds: crate::beacon::testing::SeedStore,
         store: BeaconKeys,
         held: Option<AgreedKeys>,
         pull: Option<AgreedKeys>,
-    ) -> Arc<dyn Randomness> {
-        crate::beacon::surface::PlaneRandomness::build(PlaneRandomnessConfig {
+    ) -> Arc<dyn Beacon> {
+        crate::beacon::testing::LiveBeacon::build(LiveBeaconConfig {
             seeds,
             keys: store,
             resolver: Arc::new(|_| BeaconResolve::Absent),
@@ -1947,9 +2020,10 @@ mod tests {
             dkg_qual: Arc::new(|_| Some(false)),
             held,
             pull,
-            participation: Arc::new(tokio::sync::Notify::new()),
-            metrics: crate::beacon::metrics::BeaconMetrics::default(),
+            metrics: crate::beacon::testing::BeaconMetrics::default(),
             chain_id: 1,
+            artifacts: crate::beacon::testing::ArtifactStore::new(),
+            geometry: tokio::sync::watch::channel(Some((0, 1))).1,
         })
     }
 
@@ -2007,10 +2081,10 @@ mod tests {
     ///
     /// It takes the randomness handle for the same reason the span itself does:
     /// the scheme's verification strength comes from the oracle
-    /// [`Randomness::oracle_for`] attaches, and a fixture that hardcoded `None`
+    /// [`Beacon::oracle_for`] attaches, and a fixture that hardcoded `None`
     /// would build a scheme permanently pinned to vote-only admission — which is
     /// exactly the regression the sweep tests were green on.
-    fn register_verifier(provider: &EpochSchemeProvider, epoch: Epoch, r: &dyn Randomness) {
+    fn register_verifier(provider: &EpochSchemeProvider, epoch: Epoch, r: &dyn Beacon) {
         let (snap, _) = repair_fixture(epoch);
         let scheme =
             soft_enter_verifier(&snap, 1, r.oracle_for(epoch.get())).expect("valid committee");
@@ -2488,7 +2562,8 @@ mod tests {
     /// SLEEPS on its caller-side rate bound before it even issues the fetch — up
     /// to `SCHEME_RETENTION_EPOCHS` × (`PULL_MIN_INTERVAL` + `PULL_TIMEOUT`) of
     /// awaiting per sweep. Awaited on the epoch manager's `select!`, that is a
-    /// ~100 s window in which `share_n`, `spawn_unblocked` and `vote_backup` do
+    /// ~100 s window in which the beacon wake-up arm, `spawn_unblocked` and
+    /// `vote_backup` do
     /// not run — the three arms that turn this node into a signer.
     ///
     /// So the driver here is the manager's loop in miniature: a second arm with
@@ -2633,8 +2708,8 @@ mod tests {
 
     /// A store holding a real threshold σ for exactly `round`, so the boundary
     /// lookup reads the production `SeedStore` pin rather than a canned answer.
-    fn seeds_holding(round: SimplexRound) -> crate::beacon::certify::SeedStore {
-        use crate::beacon::verified_seed::PkOracle;
+    fn seeds_holding(round: SimplexRound) -> crate::beacon::testing::SeedStore {
+        use crate::beacon::testing::PkOracle;
         use fluentbase_bls::beacon::{recover_seed, seed_namespace, sign_seed_partial};
         let mut rng = test_rng();
         let (sharing, shares) =
@@ -2645,7 +2720,7 @@ mod tests {
             .map(|share| sign_seed_partial(share, &ns, round))
             .collect();
         let sigma = recover_seed::<N3f1>(&sharing, &partials).expect("the fixture recovers σ");
-        let store = crate::beacon::certify::SeedStore::new();
+        let store = crate::beacon::testing::SeedStore::new();
         store.record(PkOracle::new(*sharing.public(), ns).witness(round, sigma));
         store
     }
@@ -2671,7 +2746,7 @@ mod tests {
         let held = randomness_over_seeds(seeds.clone(), BeaconKeys::new(), None, None);
         let expected = witness_fallback_seed(
             &held
-                .terminal_seed_at(terminal)
+                .terminal_seed(terminal)
                 .expect("the fixture pinned this round"),
         );
         assert_eq!(
@@ -3200,5 +3275,54 @@ mod tests {
                 "the sweep must stay inside its band"
             );
         });
+    }
+
+    // The manager's loop must not turn once a round. The seed class fires at the
+    // block rate and belongs to the executor; this actor's `select!` rebuilds two
+    // `Notify` futures on every iteration, so answering it with a `continue` in
+    // the body would pay that per round where HEAD paid it never.
+    #[tokio::test]
+    async fn the_seed_class_never_leaves_the_reconcile_wake() {
+        let (tx, mut rx) = tokio::sync::broadcast::channel(8);
+        for _ in 0..3 {
+            tx.send(crate::beacon::BeaconEvent::SeedRecorded).unwrap();
+        }
+        tx.send(crate::beacon::BeaconEvent::KeyAvailable).unwrap();
+        assert_eq!(
+            next_reconcile_wake(&mut rx).await,
+            Ok(crate::beacon::BeaconEvent::KeyAvailable),
+            "three seed records are dropped inside the future, not by the loop"
+        );
+
+        tx.send(crate::beacon::BeaconEvent::SeedRecorded).unwrap();
+        tx.send(crate::beacon::BeaconEvent::ParticipationChanged)
+            .unwrap();
+        assert_eq!(
+            next_reconcile_wake(&mut rx).await,
+            Ok(crate::beacon::BeaconEvent::ParticipationChanged)
+        );
+
+        // A dead publisher is RETURNED, not swallowed: it may be hiding a class
+        // this actor acts on, and a swallowed `Closed` would park the arm inside
+        // a future that can never resolve.
+        drop(tx);
+        assert!(matches!(
+            next_reconcile_wake(&mut rx).await,
+            Err(tokio::sync::broadcast::error::RecvError::Closed)
+        ));
+    }
+
+    // An overflow is returned too — the run that was dropped may have held either
+    // class, so the arm has to apply both effects.
+    #[tokio::test]
+    async fn an_overflowed_stream_reaches_the_reconcile_arm() {
+        let (tx, mut rx) = tokio::sync::broadcast::channel(2);
+        for _ in 0..5 {
+            tx.send(crate::beacon::BeaconEvent::SeedRecorded).unwrap();
+        }
+        assert!(matches!(
+            next_reconcile_wake(&mut rx).await,
+            Err(tokio::sync::broadcast::error::RecvError::Lagged(_))
+        ));
     }
 }

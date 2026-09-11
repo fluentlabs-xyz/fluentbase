@@ -50,7 +50,7 @@ pub fn epoch_committee_from_snapshot(
 /// skips that epoch rather than panicking.
 ///
 /// `oracle` is the beacon's threshold face for `snap.epoch`, from
-/// [`crate::beacon::Randomness::oracle_for`]. `None` ⇒ a pre-beacon epoch, where
+/// [`crate::beacon::Beacon::oracle_for`]. `None` ⇒ a pre-beacon epoch, where
 /// a seedless certificate is LEGAL; `Some` ⇒ a beacon-active epoch, where the
 /// verifier checks the recovered seed and refuses a stripped one even while the
 /// key itself is still unresolved.

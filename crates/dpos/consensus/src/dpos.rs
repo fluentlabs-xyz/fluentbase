@@ -7,7 +7,7 @@ use crate::{
         derive_with_visibility_retry, BeaconEngineLike, DerivedBlock as _, DerivedBlockBuilder,
         ExecutedChain, OrderingAssembler,
     },
-    beacon::{Randomness, Seed},
+    beacon::{Beacon, Seed},
     cold_start_jump::ElSync as _,
     digest::Digest,
     epocher::OriginEpocher,
@@ -99,7 +99,7 @@ const PARKED_BOUNDARY_WARN_EVERY: u64 = 150;
 const MARSHAL_PARTITION_PREFIX: &str = "consensus_marshal";
 
 /// Partition for the durable `Round → σ` store behind the
-/// [`SeedStore`](crate::beacon::certify::SeedStore). Deliberately NOT under
+/// `beacon::certify::SeedStore`. Deliberately NOT under
 /// [`MARSHAL_PARTITION_PREFIX`]: this is a Fluent-side store beside the marshal's,
 /// not part of it, and it must stay independently prunable.
 ///
@@ -119,7 +119,7 @@ pub(crate) const SEED_JOURNAL_PARTITION: &str = "beacon-seed-ordinal";
 pub(crate) const KEY_JOURNAL_PARTITION: &str = "beacon-key-ordinal";
 
 /// Partition of the durable `epoch → agreement artifact` store
-/// ([`crate::beacon::artifact::ArtifactStore`]). Public because the store is
+/// (`beacon::artifact::ArtifactStore`). Public because the store is
 /// opened by the always-on beacon plane in the node crate, one process-wide
 /// instance — a second handle over this partition would be a dual-writer.
 pub const ARTIFACT_JOURNAL_PARTITION: &str = "beacon-artifact-metadata";
@@ -562,7 +562,7 @@ enum ReplaySeed {
 /// INACTIVE and is never unwrapped: the beacon cannot have been mandatory in an
 /// epoch that does not exist.
 fn replay_seed_source(
-    randomness: &dyn Randomness,
+    beacon: &dyn Beacon,
     epocher: &OriginEpocher,
     height: u64,
     proposal_view: u64,
@@ -572,9 +572,9 @@ fn replay_seed_source(
         return ReplaySeedSource::Inactive;
     };
     let round = Round::new(info.epoch(), View::new(proposal_view));
-    if !randomness.mandatory_at(round.epoch().get()) {
+    if !beacon.mandatory_at(round.epoch().get()) {
         // Read ONLY to count it: the value is never handed on.
-        if randomness.seed_for(round).is_some() {
+        if beacon.seed(round).is_some() {
             sync_metrics.crash_recover_stray_seed.inc();
             warn!(
                 height,
@@ -585,7 +585,7 @@ fn replay_seed_source(
         }
         return ReplaySeedSource::Inactive;
     }
-    match randomness.seed_for(round) {
+    match beacon.seed(round) {
         Some(seed) => ReplaySeedSource::Held(seed),
         None => ReplaySeedSource::Wanted(round),
     }
@@ -627,7 +627,7 @@ fn seed_from_cert(round: Round, finalization: &Finalization<BlsScheme, Digest>) 
 /// through to the upstream — or, failing that, to the caller's defer.
 #[allow(clippy::too_many_arguments)]
 async fn recover_replay_seed<A, U, C>(
-    randomness: &dyn Randomness,
+    beacon: &dyn Beacon,
     epocher: &OriginEpocher,
     certs: &A,
     upstream: Option<&U>,
@@ -644,7 +644,7 @@ where
     C: crate::cert_inlet::CommitteeSource,
 {
     let round = match replay_seed_source(
-        randomness,
+        beacon,
         epocher,
         order.height,
         order.proposal_view,
@@ -728,7 +728,7 @@ where
 /// fallback forks the restart away from the network.
 // A single-call pre-engine assembly step: each arg is a distinct reth/consensus
 // dependency (engine, provider, deriver, upstream, committee source, checkpoint,
-// randomness, epoch map), not a bundleable cluster — an args struct would only add
+// beacon, epoch map), not a bundleable cluster — an args struct would only add
 // indirection.
 #[allow(clippy::too_many_arguments)]
 async fn recover_finalized_tail_into_reth<Provider, BeaconEngine, D, U, C>(
@@ -741,7 +741,7 @@ async fn recover_finalized_tail_into_reth<Provider, BeaconEngine, D, U, C>(
     committees: &C,
     l1_checkpoint: Option<B256>,
     sync_metrics: &SyncMetrics,
-    randomness: &dyn Randomness,
+    beacon: &dyn Beacon,
     epocher: &OriginEpocher,
 ) -> eyre::Result<RecoverOutcome>
 where
@@ -829,7 +829,7 @@ where
         // instead of deriving with the digest fallback: the fork the old refusal
         // was really guarding against.
         let seed = match recover_replay_seed(
-            randomness,
+            beacon,
             epocher,
             &certs,
             upstream,
@@ -1069,7 +1069,7 @@ pub struct SharedBeaconPlane {
     pub oracle: fluentbase_p2p::OracleHandle,
     /// The consensus-facing randomness surface, built by `beacon::build`. The
     /// layer threads it and never opens it.
-    pub randomness: Arc<dyn crate::beacon::Randomness>,
+    pub randomness: Arc<dyn crate::beacon::Beacon>,
     /// The 5 plane-owned non-beacon channel broker handles (vote/cert/resolver are
     /// per-epoch register/deregister; broadcast/marshal register subchannel 0 once
     /// per promotion). Cloned per promotion; the Muxer tasks live in the plane.
@@ -1416,13 +1416,19 @@ pub struct DposLayerHandle {
     /// TIER-2 follower obtains `PK_epoch` from this node exactly as it obtains
     /// certificates from it.
     ///
-    /// `Some` on the FOLLOWER path only, and the asymmetry is not an oversight: a
-    /// follower's artifact store is created inside `beacon::for_follower`, below
-    /// this crate boundary, so this handle is the only way out. A validator's
-    /// store belongs to its always-on beacon plane, which the node builds itself
-    /// — it reads `Beacon::artifact_bytes` directly and never needs this field.
-    pub artifact_bytes: Option<crate::beacon::ArtifactSource>,
+    /// `Some` on the FOLLOWER path only, and the asymmetry is not an oversight:
+    /// the follower's beacon is built one frame below this crate boundary, so this
+    /// closure over its `Beacon::artifact_bytes` is the only way out. A validator
+    /// builds its own beacon and calls that method directly.
+    pub artifact_bytes: Option<ArtifactSource>,
 }
+
+/// One held epoch-key artifact's wire bytes, read out of a beacon.
+///
+/// A closure over [`Beacon::artifact_bytes`](crate::beacon::Beacon::artifact_bytes)
+/// rather than the method itself: the RPC feed stores one serving read and does
+/// not hold the beacon.
+pub type ArtifactSource = Arc<dyn Fn(u64) -> Option<Vec<u8>> + Send + Sync>;
 
 /// Read `committee[epoch]` for the follower's boundary trigger. `None` ⇒ not
 /// readable yet — no executed anchor, or the epoch's committee not committed at
@@ -3177,7 +3183,7 @@ impl DposLayer {
 
         let epoch_length_blocks =
             NonZeroU64::new(interval).ok_or_eyre("epoch_block_interval must be > 0")?;
-        // The beacon-owned families are registered by `beacon::for_follower`
+        // The beacon-owned families are registered by `beacon::build_follower`
         // below, which is this path's randomness provider — NOT here. A standalone
         // `BeaconMetrics::register` next to it would register every one of them
         // TWICE: `prometheus_client::Registry::register` neither deduplicates nor
@@ -3402,61 +3408,93 @@ impl DposLayer {
             })
         };
 
-        // FROZEN on-chain `dkgQual[e]` reader — which epoch MINTED the key in
-        // force at a given epoch. A stable committee runs no agreement at all, so
-        // an artifact for the epoch being verified does not exist; without this
-        // the key-delivery rung below would ask for one that was never minted and
-        // miss forever. The read itself needs nothing from the beacon plane a
-        // follower does not run: the same reth reader and the same finalized
-        // anchor its committee reads already use. The freeze/memo rule lives in
-        // `beacon::carry::frozen_dkg_qual` so this copy cannot drift from the
-        // validator's.
-        let follower_dkg_qual = {
-            let reader = RethStakingStateReader::new(
-                provider.clone(),
-                evm_config.clone(),
-                staking_config.clone(),
-            );
-            let provider = provider.clone();
-            crate::beacon::frozen_dkg_qual(
-                Arc::new(move || {
-                    let fin = provider.finalized_block_number().ok().flatten()?;
-                    provider.block_hash(fin).ok().flatten()
-                }),
-                Arc::new(move |epoch, at| {
-                    let bit = reader.dkg_qual(epoch, at).ok()?;
-                    // A SET bit is proof the commit happened, so the committee
-                    // read is skipped for it.
-                    let committed = bit
-                        || reader
-                            .epoch_committee_snapshot(epoch, at)
-                            .map(|s| !s.validators.is_empty())
-                            .unwrap_or(false);
-                    Some((bit, committed))
-                }),
-            )
-        };
-        // `committee[epoch]` with its BLS half — the SOLE authority a fetched
-        // artifact is checked against, read from THIS node's own chain state at
-        // the finalized anchor. A follower trusts its upstream for DELIVERY and
-        // for nothing else: an artifact that does not carry a quorum of this
-        // committee is rejected here exactly as a peer's would be on the plane.
-        let follower_committee_source: crate::beacon::CommitteeSource = {
-            let canonical = canonical_state.clone();
-            let reader = RethStakingStateReader::new(
-                provider.clone(),
-                evm_config.clone(),
-                staking_config.clone(),
-            );
-            Arc::new(move |epoch: u64| {
-                let at = canonical.get_finalized_num_hash()?.hash;
-                let snap = reader.epoch_committee_snapshot(epoch, at).ok()?;
+        // Every staking read the follower's beacon takes, on ONE cursor — the
+        // same `CommitteeReads` the validator plane is handed, so the two node
+        // classes cannot drift on the cursor or on the reads themselves. A
+        // follower reads at its own FINALIZED anchor: it has no live cert cursor
+        // to run ahead on, and the anchor is what its committee reads already use.
+        struct FollowerCommitteeReads<P, E> {
+            canonical: reth_chain_state::CanonicalInMemoryState,
+            reader: RethStakingStateReader<P, E>,
+        }
+
+        impl<P, E> crate::beacon::CommitteeReads for FollowerCommitteeReads<P, E>
+        where
+            P: StateProviderFactory
+                + HeaderProvider<Header = Header>
+                + Clone
+                + Send
+                + Sync
+                + 'static,
+            E: ConfigureEvm<Primitives = EthPrimitives> + Clone + Send + Sync + 'static,
+        {
+            fn read_at(&self) -> Option<B256> {
+                Some(self.canonical.get_finalized_num_hash()?.hash)
+            }
+
+            /// A follower has no live cert cursor, so the qual leg reads at the
+            /// same finalized anchor as everything else — and the guard the
+            /// trait asks for is already structural here: without a finalized
+            /// marker `get_finalized_num_hash` IS `None`, so there is no cursor
+            /// to fall back onto and no genesis hash to freeze a memo at.
+            fn qual_read_at(&self) -> Option<B256> {
+                self.read_at()
+            }
+
+            /// A follower runs no ceremony, so nothing asks it for the peer-set
+            /// projection of a committee.
+            fn committee(
+                &self,
+                _epoch: u64,
+                _at: B256,
+            ) -> Option<commonware_utils::ordered::Set<fluentbase_bls::PeerPubkey>> {
+                None
+            }
+
+            /// The SOLE authority a fetched artifact is checked against, read from
+            /// THIS node's own chain state. A follower trusts its upstream for
+            /// DELIVERY and for nothing else: an artifact that does not carry a
+            /// quorum of this committee is rejected here exactly as a peer's would
+            /// be on the plane.
+            fn committee_bls(
+                &self,
+                epoch: u64,
+                at: B256,
+            ) -> Option<fluentbase_bls::scheme::EpochCommittee> {
+                let snap = self.reader.epoch_committee_snapshot(epoch, at).ok()?;
                 if snap.validators.is_empty() {
                     return None;
                 }
                 crate::scheme::epoch_committee_from_snapshot(&snap).ok()
-            })
-        };
+            }
+
+            /// Which epoch MINTED the key in force at a given epoch. A stable
+            /// committee runs no agreement at all, so an artifact for the epoch
+            /// being verified does not exist; without this the key-delivery rung
+            /// would ask for one that was never minted and miss forever.
+            fn dkg_qual(&self, epoch: u64, at: B256) -> Option<(bool, bool)> {
+                let bit = self.reader.dkg_qual(epoch, at).ok()?;
+                // A SET bit is proof the commit happened, so the committee read is
+                // skipped for it.
+                let committed = bit
+                    || self
+                        .reader
+                        .epoch_committee_snapshot(epoch, at)
+                        .map(|s| !s.validators.is_empty())
+                        .unwrap_or(false);
+                Some((bit, committed))
+            }
+        }
+
+        let follower_committees: Arc<dyn crate::beacon::CommitteeReads> =
+            Arc::new(FollowerCommitteeReads {
+                canonical: canonical_state.clone(),
+                reader: RethStakingStateReader::new(
+                    provider.clone(),
+                    evm_config.clone(),
+                    staking_config.clone(),
+                ),
+            });
         // The ONE relationship a follower has. `None` (a test with no upstream)
         // leaves the rung permanently empty, which is exactly the pre-FLU-1167
         // behaviour: vote-only admission, never a fault.
@@ -3492,19 +3530,32 @@ impl DposLayer {
         // so the tail was already unreadable there; what is lost is the ability to
         // hand it back on a later switch BACK to validator, which is a restart
         // through this path either way.
-        let crate::beacon::FollowerBeacon {
-            randomness,
-            artifact_bytes,
-            fetch_handle: artifact_fetch_handle,
-        } = crate::beacon::for_follower(
+        let (randomness, beacon_tasks) = crate::beacon::build_follower(
             &ctx,
-            crate::beacon::FollowerRandomnessConfig {
+            crate::beacon::FollowerInputs {
                 chain_id,
-                committees: follower_committee_source,
-                dkg_qual: follower_dkg_qual,
+                committees: follower_committees,
                 fetch: artifact_fetch,
             },
         );
+        // WEAK for the same reason the validator's is: this closure is handed to
+        // the RPC feed, which outlives every task the supervisor aborts. A strong
+        // clone here would keep the beacon — and with it any journal sender it
+        // owns — alive past shutdown. A failed upgrade answers `None`, which is
+        // the right answer once the beacon is gone.
+        let artifact_bytes = {
+            let beacon = Arc::downgrade(&randomness);
+            Arc::new(move |epoch: u64| beacon.upgrade()?.artifact_bytes(epoch))
+                as std::sync::Arc<dyn Fn(u64) -> Option<Vec<u8>> + Send + Sync>
+        };
+        let artifact_fetch_handle = beacon_tasks.supervised;
+        // Held and drained like the validator's, not dropped here. `Tasks` is a
+        // contract — TWO handles the node owes the beacon — and today's follower
+        // drain is an empty task only because a follower opens no journal
+        // partition yet. Dropping it would make the day row 5.1 gives the
+        // follower a durable artifact store the day its writer goes undrained
+        // SILENTLY, with nothing at this call site to change.
+        let beacon_drain_handle = beacon_tasks.drain;
         let outer = OuterBuilder {
             me: me.clone(),
             // A follower runs no beacon plane, so it starts no agreement instance
@@ -3950,10 +4001,11 @@ impl DposLayer {
                 // with every liveness check still green.
                 ("follower_artifact_fetch", artifact_fetch_handle),
             ],
-            // A follower owns no journal: both were deleted with its key store
-            // (see where `randomness` is built above), so there is nothing to
-            // drain here.
-            drain_on_shutdown: vec![],
+            // The beacon's drain, registered exactly as the validator's is. A
+            // follower opens no journal partition today, so the handle behind it
+            // is an empty task that returns at once — the registration is what
+            // keeps the contract true when row 5.1 gives it one.
+            drain_on_shutdown: vec![("beacon", beacon_drain_handle)],
             artifact_bytes: Some(artifact_bytes),
         })
     }
@@ -4251,7 +4303,7 @@ mod visibility_retry_tests {
             &self,
             order: OrderBlock,
             parent_evm_hash: B256,
-            _seed: Option<crate::beacon::seed::Seed>,
+            _seed: Option<crate::beacon::Seed>,
         ) -> eyre::Result<SealedBlock<RethBlock>> {
             let n = self.calls.fetch_add(1, Ordering::SeqCst);
             if n < self.transient_failures {
@@ -4595,10 +4647,9 @@ mod crash_recover_tests {
 mod replay_seed_tests {
     use super::{replay_seed_source, ReplaySeedSource, SyncMetrics};
     use crate::{
-        beacon::{
-            actor::DETERMINISTIC_BOOTSTRAP_EPOCH, certify::SeedStore, surface::PlaneRandomness,
-            surface::PlaneRandomnessConfig, verified_seed::PkOracle, BeaconKeys, BeaconResolve,
-            Randomness,
+        beacon::testing::{
+            ArtifactStore, BeaconKeys, BeaconResolve, LiveBeacon, LiveBeaconConfig, PkOracle,
+            SeedStore, DETERMINISTIC_BOOTSTRAP_EPOCH,
         },
         epocher::OriginEpocher,
     };
@@ -4617,7 +4668,7 @@ mod replay_seed_tests {
 
     /// A production provider over a store holding a real threshold σ for each of
     /// `rounds` — the same shape a rehydrated seed journal leaves behind.
-    fn holding(rounds: &[Round]) -> Arc<dyn Randomness> {
+    fn holding(rounds: &[Round]) -> Arc<dyn crate::beacon::Beacon> {
         let mut rng = test_rng();
         let (sharing, shares) =
             deal_anonymous::<MinSig, N3f1>(&mut rng, Default::default(), NZU32!(5));
@@ -4631,7 +4682,7 @@ mod replay_seed_tests {
             let sigma = recover_seed::<N3f1>(&sharing, &partials).expect("the fixture recovers σ");
             seeds.record(PkOracle::new(*sharing.public(), ns.clone()).witness(round, sigma));
         }
-        PlaneRandomness::build(PlaneRandomnessConfig {
+        LiveBeacon::build(LiveBeaconConfig {
             seeds,
             keys: BeaconKeys::new(),
             resolver: Arc::new(|_| BeaconResolve::Absent),
@@ -4639,9 +4690,10 @@ mod replay_seed_tests {
             dkg_qual: Arc::new(|_| Some(false)),
             held: None,
             pull: None,
-            participation: Arc::new(tokio::sync::Notify::new()),
-            metrics: crate::beacon::metrics::BeaconMetrics::default(),
+            metrics: crate::beacon::testing::BeaconMetrics::default(),
             chain_id: 1,
+            artifacts: ArtifactStore::new(),
+            geometry: tokio::sync::watch::channel(Some((0, 1))).1,
         })
     }
 

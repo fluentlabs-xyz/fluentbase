@@ -43,9 +43,9 @@
 //!   consensus network and the same mux brokers, the live DKG, the epoch-key
 //!   agreement instances, the key / seed / artifact journals under a per-node
 //!   partition prefix, shares in a per-node directory under a real temp root.
-//!   The staking reads the plane needs (`committee_for`, `committee_pair_for`,
-//!   `committee_source`, the `dkgQual` bit) come from the schedule, with the
-//!   contract's rule `dkgQual[e] = committee[e] != committee[e-1]`.
+//!   The staking reads the plane needs are ONE `beacon::CommitteeReads` impl
+//!   (`read_at`, `committee`, `committee_bls`, `dkg_qual`) over the schedule,
+//!   with the contract's rule `dkgQual[e] = committee[e] != committee[e-1]`.
 //! * The upstream plane is REAL (step 3): every node runs the production
 //!   frontier resolver + `PlaneUpstreamHandle` over `FRONTIER_CHANNEL` on a
 //!   second simulated network, counted at both ends ([`fakes::UpstreamCounters`]),
@@ -71,9 +71,12 @@
 //! (`runtime/src/deterministic.rs:1157-1173`), so attribution comes from the
 //! typed per-node latch instead.
 //!
-//! Lives in the crate as a `#[cfg(test)]` module: `StaticRandomness` and the
-//! `Randomness` trait's error types are `pub(crate)`, so a separate crate cannot
-//! promote a node to `Signer`.
+//! Lives in the crate as a `#[cfg(test)]` module, and every beacon it mounts is
+//! an `Arc<dyn Beacon>` — the trait is the ONE substitution seam. The three
+//! modes (`StaticRandomness`, the live plane, `absent` for `Role::AbsentBeacon`)
+//! and the `WithholdingRandomness` wrapper all implement it directly, and they
+//! come through `beacon::testing`, which is `#[cfg(test)]`: a separate crate
+//! cannot reach any of them, so it cannot promote a node to `Signer`.
 
 /// The byzantine wrappers of Э3.3 (`Role::TwoReveals`, `Role::ForgedSeedUpstream`,
 /// `Role::InflatedProbe`, `Role::LyingUpstream`, `Role::WrongHeightFinalized`),
