@@ -628,10 +628,11 @@ pub(super) trait Randomness: Send + Sync {
 /// It no longer describes `--cert-follow`: that class carries keys since FLU-1167
 /// and its own `SeedStore` since the follower seed store landed, so it runs
 /// `FollowerRandomness` (`crates/dpos/consensus/src/beacon/follower.rs:394`), not this.
-/// What is left here is a struct-literal DEFAULT that no consumer observes —
-/// `FluentApp::new` and `CertInlet::new` both have `with_randomness` called on
-/// them before first use on every production path — plus the executor's test
-/// module. Do not read it as naming a live node class.
+/// What is left here is a struct-literal DEFAULT that no consumer observes:
+/// `CertInlet::new` has `with_randomness` called on it before first use on every
+/// production path, and `FluentApp` no longer carries a randomness handle at all
+/// (the field and its setter had no reader and were removed). Plus the
+/// executor's test module. Do not read it as naming a live node class.
 ///
 /// Takes a metrics context because registration is context-scoped and commonware
 /// prefixes each family with the context's label path — a context-free

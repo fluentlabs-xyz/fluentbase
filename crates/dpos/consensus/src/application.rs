@@ -272,10 +272,6 @@ pub fn step_gas_limit(parent: u64, target: u64) -> u64 {
 /// Generic over `XC` (local derived-chain view) and `A` (tx assembler).
 pub struct FluentApp<XC, A> {
     /// Per-epoch beacon-DKG verify/propose context (see [`BeaconVerify`]).
-    /// The ONE randomness handle. Never `Option`: a node with no beacon
-    /// material holds the permanently-negative provider, so the distinction the
-    /// old `Option` encoded now lives inside the implementation.
-    randomness: Arc<dyn crate::beacon::Beacon>,
     genesis: Arc<OrderBlock>,
     executor: executor::Mailbox,
     /// Observer for `Update::Block` finalizations — NOT a state-advancing
@@ -353,7 +349,6 @@ pub struct FluentApp<XC, A> {
 impl<XC: Clone, A> Clone for FluentApp<XC, A> {
     fn clone(&self) -> Self {
         Self {
-            randomness: self.randomness.clone(),
             committee_index: self.committee_index.clone(),
             genesis: self.genesis.clone(),
             executor: self.executor.clone(),
@@ -395,7 +390,6 @@ where
         tombstones: TombstoneSet,
     ) -> Self {
         Self {
-            randomness: crate::beacon::absent_unregistered(),
             committee_index: None,
             chain_id,
             charges,
@@ -429,14 +423,6 @@ where
     /// unwired and the plane keeps its other two.
     pub fn with_dkg_heights(mut self, dkg_height_tx: tokio::sync::mpsc::Sender<u64>) -> Self {
         self.dkg_height_tx = Some(dkg_height_tx);
-        self
-    }
-
-    /// Attach the randomness provider. Builder-style for the same reason
-    /// `with_beacon` is: the provider is assembled at the launch site, after
-    /// this app exists.
-    pub fn with_randomness(mut self, randomness: Arc<dyn crate::beacon::Beacon>) -> Self {
-        self.randomness = randomness;
         self
     }
 
@@ -1223,7 +1209,6 @@ pub trait DerivedBlockBuilder: Send + Sync + 'static {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::beacon::testing::{BeaconKeys, LiveBeaconConfig, SeedStore};
     use crate::slasher::Message;
     use alloy_primitives::Address;
     use commonware_consensus::types::{Epoch, View};
@@ -1237,10 +1222,6 @@ mod tests {
 
     /// The domain separator every test signature is produced and verified under.
     const TEST_CHAIN_ID: u64 = 20_994;
-
-    fn test_group_keys() -> BeaconKeys {
-        BeaconKeys::new()
-    }
 
     // The monotone finalized-execution cursor: tier-F resolves reth's canonical
     // hash at-or-below the cursor (no sibling can exist there) and `None` above
@@ -1523,11 +1504,12 @@ mod tests {
             .sum()
     }
 
-    /// A verify-side app over the given executed chain + key store.
-    fn witness_app<XC: ExecutedChain>(
-        executed: XC,
-        group_keys: BeaconKeys,
-    ) -> FluentApp<XC, NoTxs> {
+    /// A verify-side app over the given executed chain.
+    ///
+    /// It takes no randomness handle any more: `FluentApp` holds none. The seed
+    /// the verify path needs rides the certificate the executor resolves, and
+    /// the field this app used to carry had no reader at all.
+    fn witness_app<XC: ExecutedChain>(executed: XC) -> FluentApp<XC, NoTxs> {
         let (mailbox, _rx) = fresh_mailbox();
         FluentApp::new(
             sample_order(Digest(B256::ZERO), 0),
@@ -1541,7 +1523,6 @@ mod tests {
             None,
             TombstoneSet::default(),
         )
-        .with_randomness(test_randomness(SeedStore::new(), group_keys))
     }
 
     /// Tiny-timestamp `(parent, block)` pair for the verify-gate tests (the
@@ -1610,7 +1591,7 @@ mod tests {
     fn the_honest_common_path_verifies_true_with_zero_budget() {
         let (parent, block) = witness_pair(4, 9);
         let ctx = ctx_same_epoch(5, 9, &parent);
-        let app = witness_app(NoChain, test_group_keys());
+        let app = witness_app(NoChain);
         let (verdict, elapsed) = run_gate(app, ctx, block, parent);
         assert!(verdict);
         assert_eq!(elapsed, Duration::ZERO, "common path must not sleep");
@@ -1641,7 +1622,7 @@ mod tests {
         let (bimap, idx) = armed_committee();
         block.extra_data = extra_data::encode_production_record(idx, None).into();
         let ctx = ctx_same_epoch(5, 9, &parent);
-        let app = witness_app(NoChain, test_group_keys()).with_committee_index(bimap);
+        let app = witness_app(NoChain).with_committee_index(bimap);
         assert!(run_gate(app, ctx, block, parent).0);
     }
 
@@ -1698,7 +1679,7 @@ mod tests {
             if let Some(peer) = tombstoned {
                 tombstones.observe(&snapshot_tombstoning(peer, &bimap));
             }
-            let app = witness_app(NoChain, test_group_keys())
+            let app = witness_app(NoChain)
                 .with_committee_index(bimap)
                 .with_tombstones(tombstones);
             assert_eq!(
@@ -1729,7 +1710,7 @@ mod tests {
         let ctx = ctx_same_epoch(5, 9, &parent);
         assert!(
             run_gate(
-                witness_app(NoChain, test_group_keys())
+                witness_app(NoChain)
                     .with_committee_index(bimap.clone())
                     .with_tombstones(fresh.clone()),
                 ctx,
@@ -1748,7 +1729,7 @@ mod tests {
         let ctx = ctx_same_epoch(5, 9, &parent);
         assert!(
             !run_gate(
-                witness_app(NoChain, test_group_keys())
+                witness_app(NoChain)
                     .with_committee_index(bimap)
                     .with_tombstones(fresh),
                 ctx,
@@ -1776,7 +1757,7 @@ mod tests {
             let (parent, mut block) = witness_pair(4, 9);
             block.extra_data = field.into();
             let ctx = ctx_same_epoch(5, 9, &parent);
-            let app = witness_app(NoChain, test_group_keys()).with_committee_index(bimap.clone());
+            let app = witness_app(NoChain).with_committee_index(bimap.clone());
             assert!(
                 !run_gate(app, ctx, block, parent).0,
                 "an armed voter must reject a production record that is {label}"
@@ -1797,8 +1778,7 @@ mod tests {
             let (_, disjoint) = test_committee(4, 9);
             block.extra_data = extra_data::encode_production_record(0, None).into();
             let ctx = ctx_same_epoch(5, 9, &parent);
-            let app =
-                witness_app(NoChain, test_group_keys()).with_committee_index(Arc::new(disjoint));
+            let app = witness_app(NoChain).with_committee_index(Arc::new(disjoint));
             run_gate(app, ctx, block, parent).0
         });
         assert!(!verdict);
@@ -1819,7 +1799,7 @@ mod tests {
     fn a_block_lying_about_its_own_proposal_view_is_rejected() {
         let (parent, block) = witness_pair(4, 8 /* lies: certified view is 9 */);
         let ctx = ctx_same_epoch(5, 9, &parent);
-        let app = witness_app(NoChain, test_group_keys());
+        let app = witness_app(NoChain);
         assert!(!run_gate(app, ctx, block, parent).0);
     }
 
@@ -1879,7 +1859,7 @@ mod tests {
             hash: exec_hash,
         };
         let ctx = ctx_boundary(12, 3, &parent);
-        let app = witness_app(chain, test_group_keys());
+        let app = witness_app(chain);
         let (verdict, elapsed) = run_gate(app, ctx, block, parent);
         assert!(verdict, "a gate that resolves inside the budget votes true");
         assert_eq!(
@@ -1904,7 +1884,7 @@ mod tests {
                 hash: B256::ZERO,
             };
             let ctx = ctx_boundary(12, 3, &parent);
-            run_gate(witness_app(chain, test_group_keys()), ctx, block, parent)
+            run_gate(witness_app(chain), ctx, block, parent)
         });
         assert!(!verdict);
         assert_eq!(elapsed, VERIFY_EXEC_BUDGET, "the whole budget is spent");
@@ -1921,7 +1901,7 @@ mod tests {
     fn anchor_link_verifies_over_it() {
         let (parent, block) = witness_pair(0, 1);
         let ctx = ctx_boundary(0, 1, &parent);
-        let app = witness_app(NoChain, test_group_keys());
+        let app = witness_app(NoChain);
         assert!(run_gate(app, ctx, block, parent).0);
     }
 
@@ -1937,7 +1917,7 @@ mod tests {
             let (parent, block) = witness_pair(4, 9);
             let mut ctx = ctx_same_epoch(5, 9, &parent);
             ctx.parent.0 = View::new(5); // simplex says the parent certified at 5
-            let app = witness_app(NoChain, test_group_keys());
+            let app = witness_app(NoChain);
             run_gate(app, ctx, block, parent).0
         });
         assert!(!verdict);
@@ -1949,7 +1929,7 @@ mod tests {
 
     // propose side (§3)
 
-    fn propose_app(store: SeedStore, charges: Option<ChargeStore>) -> FluentApp<NoChain, NoTxs> {
+    fn propose_app(charges: Option<ChargeStore>) -> FluentApp<NoChain, NoTxs> {
         let (mailbox, _rx) = fresh_mailbox();
         FluentApp::new(
             sample_order(Digest(B256::ZERO), 0),
@@ -1964,26 +1944,6 @@ mod tests {
             TombstoneSet::default(),
         )
         .with_committee_index(propose_committee())
-        .with_randomness(test_randomness(store, test_group_keys()))
-    }
-
-    /// A provider over the SAME handles the app under test was given, so the
-    /// propose and verify arms exercise the real resolution path rather than
-    /// the permanently-negative default.
-    fn test_randomness(seeds: SeedStore, group_keys: BeaconKeys) -> Arc<dyn crate::beacon::Beacon> {
-        crate::beacon::testing::LiveBeacon::build(LiveBeaconConfig {
-            seeds,
-            keys: group_keys,
-            resolver: Arc::new(|_| crate::beacon::testing::BeaconResolve::Absent),
-            ceremony: Arc::new(std::sync::RwLock::new(std::collections::BTreeMap::new())),
-            dkg_qual: Arc::new(|_| Some(false)),
-            held: None,
-            pull: None,
-            metrics: crate::beacon::testing::BeaconMetrics::default(),
-            chain_id: TEST_CHAIN_ID,
-            artifacts: crate::beacon::testing::ArtifactStore::new(),
-            geometry: tokio::sync::watch::channel(Some((0, 1))).1,
-        })
     }
 
     fn tiny_parent(proposal_view: u64) -> OrderBlock {
@@ -2024,8 +1984,7 @@ mod tests {
     fn proposal_stamps_the_production_record_naming_its_proposer() {
         let runtime = commonware_runtime::deterministic::Runner::default();
         runtime.start(|rt| async move {
-            let store = SeedStore::new();
-            let app = propose_app(store, None);
+            let app = propose_app(None);
             let parent = tiny_parent(4);
             let ctx = propose_ctx(5, 9, (4, false), &parent);
             let block = app
@@ -2088,11 +2047,10 @@ mod tests {
         let (accused, charge) = sample_charge(5, 9);
         let runtime = commonware_runtime::deterministic::Runner::default();
         runtime.start(|rt| async move {
-            let store = SeedStore::new();
             let charges = ChargeStore::default();
             assert!(charges.hold(5, accused, charge));
 
-            let app = propose_app(store, Some(charges));
+            let app = propose_app(Some(charges));
             let parent = tiny_parent(4);
             let ctx = propose_ctx(5, 9, (4, false), &parent);
             let block = app
@@ -2144,7 +2102,6 @@ mod tests {
 
         let runtime = commonware_runtime::deterministic::Runner::default();
         runtime.start(|rt| async move {
-            let store = SeedStore::new();
             let charges = ChargeStore::default();
             assert!(charges.hold(5, accused, charge.clone()));
             assert!(charges.hold(5, later, charge));
@@ -2152,7 +2109,7 @@ mod tests {
             let tombstones = TombstoneSet::default();
             tombstones.observe(&snapshot_tombstoning(&settled, &committee));
 
-            let app = propose_app(store, Some(charges.clone())).with_tombstones(tombstones);
+            let app = propose_app(Some(charges.clone())).with_tombstones(tombstones);
             let parent = tiny_parent(4);
             let ctx = propose_ctx(5, 9, (4, false), &parent);
             let block = app
@@ -2260,10 +2217,9 @@ mod tests {
     fn a_leader_outside_its_own_committee_declines_to_propose() {
         let runtime = commonware_runtime::deterministic::Runner::default();
         runtime.start(|rt| async move {
-            let store = SeedStore::new();
             // A committee that does NOT contain the fixture leader (`from_seed(7)`).
             let (_outsiders, disjoint) = test_committee(3, 99);
-            let app = propose_app(store, None).with_committee_index(Arc::new(disjoint));
+            let app = propose_app(None).with_committee_index(Arc::new(disjoint));
             let parent = tiny_parent(4);
             let ctx = propose_ctx(5, 9, (4, false), &parent);
             assert!(app.build_proposal(&rt, &ctx, parent).await.is_none());
@@ -2278,8 +2234,7 @@ mod tests {
     fn proposal_self_attests_its_view_over_a_held_witness_round() {
         let runtime = commonware_runtime::deterministic::Runner::default();
         runtime.start(|rt| async move {
-            let store = SeedStore::new();
-            let app = propose_app(store, None);
+            let app = propose_app(None);
             let parent = tiny_parent(4);
             let ctx = propose_ctx(5, 9, (4, false), &parent);
             let block = app
