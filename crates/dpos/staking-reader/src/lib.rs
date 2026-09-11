@@ -42,4 +42,4 @@ pub mod reader;
 
 pub use epoch_transition::{EpochTransition, PeerSetSink, TransitionOutcome};
 pub use error::ReadError;
-pub use reader::{RethStakingStateReader, StakingStateRead};
+pub use reader::{classify_transient_provider_error, RethStakingStateReader, StakingStateRead};

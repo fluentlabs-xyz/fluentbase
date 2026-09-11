@@ -39,7 +39,16 @@ fn map_state_provider_err(e: ProviderError) -> ReadError {
 
 /// Classify a reth [`ProviderError`] observed at a read boundary into the transient
 /// taxonomy, or `None` for a genuine backend fault the caller maps to
-/// [`ReadError::Backend`]. Two transient shapes, both of which return NO committee so
+/// [`ReadError::Backend`].
+///
+/// `pub` because a reth read boundary is not only this crate's `eth_call` path: the
+/// committee module's read ANCHOR probes reth for the executed hash of a height
+/// (`fluentbase_consensus::executed_state_hash`) and hits exactly the same storage,
+/// so it has to reach the same verdict from the same table rather than re-deriving
+/// one. Family-5 holds either way — the string matching below stays HERE, in the
+/// error-owning layer, and the caller only asks this function.
+///
+/// Two transient shapes, both of which return NO committee so
 /// a consumer defers + retries rather than failing closed:
 /// - a clean state-miss (`StateForHashNotFound`) → [`ReadError::StateNotMaterialized`];
 /// - a torn STATIC-FILE read (persistence thread appending concurrently) →
@@ -49,7 +58,7 @@ fn map_state_provider_err(e: ProviderError) -> ReadError {
 ///   snapshot reads arrive as `ProviderError::Other(AnyError)` whose payload is
 ///   matched by the shared display constants (family-5: the string match lives HERE,
 ///   in the error-owning layer, never in consensus).
-fn classify_transient_provider_error(e: &ProviderError) -> Option<ReadError> {
+pub fn classify_transient_provider_error(e: &ProviderError) -> Option<ReadError> {
     match e {
         ProviderError::StateForHashNotFound(hash) => {
             Some(ReadError::StateNotMaterialized { hash: *hash })
