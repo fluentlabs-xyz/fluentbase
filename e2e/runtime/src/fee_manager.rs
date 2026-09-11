@@ -166,9 +166,10 @@ fn test_fee_manager_withdraw_authority_survives_rejected_zero_transfer() {
     assert!(!withdraw(&mut ctx, DEFAULT_FEE_MANAGER_AUTH, recipient));
     assert_eq!(ctx.get_balance(PRECOMPILE_FEE_MANAGER), amount);
 
-    // The real owner still can.
+    // The real owner still can, and the withdrawal drains the fee manager.
     assert!(withdraw(&mut ctx, governance, recipient));
     assert_eq!(ctx.get_balance(recipient), amount);
+    assert_eq!(ctx.get_balance(PRECOMPILE_FEE_MANAGER), U256::ZERO);
 }
 
 /// Renunciation stays the explicit fork-only exit and is not weakened by the zero-address guard.
@@ -221,10 +222,9 @@ fn test_fee_manager_withdraw() {
     );
     assert!(result.is_success());
 
-    let new_balance = ctx.get_balance(recipient);
-    assert_eq!(new_balance, amount);
-
-    // Note: The current implementation emits `FeeWithdrawn` and does not transfer; success indicates positive balance and correct auth.
+    // The whole balance moves: the recipient is credited and the fee manager is drained.
+    assert_eq!(ctx.get_balance(recipient), amount);
+    assert_eq!(ctx.get_balance(PRECOMPILE_FEE_MANAGER), U256::ZERO);
 }
 
 #[test]
