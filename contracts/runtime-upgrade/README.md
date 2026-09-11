@@ -14,6 +14,15 @@ The contract validates the submitted WASM bytes, compiles them to rWasm for `tar
 native runtime-upgrade syscall, then emits `RuntimeUpgraded(target, genesisHash, genesisVersion,
 codeHash)`.
 
+### `upgradeEvmTo(address target, uint256 genesisHash, string genesisVersion, bytes evmBytecode)`
+
+Owner-only direct upgrade path for system contracts written in Solidity.
+
+The contract rejects empty bytecode and bytecode above `EVM_MAX_CODE_SIZE`, installs the bytes for
+`target` through the native EVM runtime-upgrade syscall (which stores them as analyzed EVM
+metadata), then emits `RuntimeUpgraded(target, genesisHash, genesisVersion, codeHash)` with
+`codeHash = keccak256(evmBytecode)`.
+
 ### `planUpgrade(uint256 genesisHash, string genesisVersion, address[] targets, bytes32[] wasmHashes, address upgrador)`
 
 Owner-only planning path for release upgrades that should be executable by a delegated account.
@@ -48,6 +57,15 @@ release metadata, and every remaining target/hash pair are cleared, and `Upgrade
 genesisHash, upgrador, targets, wasmHashes)` is emitted describing exactly what was revoked. The
 event is skipped when no plan exists. If a transition reverts (zero address, non-owner caller), the
 plan is left untouched along with the rest of the state.
+
+## Published ABI
+
+`abi.json` is generated from the router by `scripts/generate-contract-abis.bash` (which runs
+`fluentbase-build --generate abi` for every contract). The `#[function_id("...")]` attributes on
+the router are the source of the selectors: `genesisHash` is pinned as `uint256`, so the
+published entries say `uint256` even though the Rust parameter is `B256`, and the generator
+refuses an entry whose selector differs from the router's. `test_published_abi_matches_router_selectors`
+pins the checked-in artifact to the compiled selectors.
 
 ## Trust Model
 

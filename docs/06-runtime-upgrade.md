@@ -18,6 +18,7 @@ It exists so chain operators can replace system runtime bytecode, but it must st
 Upgrade contract exposes:
 
 - `upgradeTo(...)`
+- `upgradeEvmTo(...)`
 - `planUpgrade(...)`
 - `upgradeToPlanned(...)`
 - `changeOwner(...)`
@@ -27,6 +28,9 @@ Upgrade contract exposes:
 Key behavior:
 - only owner can upgrade,
 - `upgradeTo(...)` emits `RuntimeUpgraded`,
+- `upgradeEvmTo(...)` is the same owner-only path for Solidity system contracts: it installs EVM
+  bytecode through the native EVM runtime-upgrade syscall and emits `RuntimeUpgraded` with the
+  keccak256 of the installed bytes,
 - `planUpgrade(...)` lets the owner pre-authorize a release batch as exact `(target, raw WASM
   hash)` pairs plus release metadata and an authorized upgrador,
 - `upgradeToPlanned(...)` can be called only by that upgrador and only for a stored target/hash
