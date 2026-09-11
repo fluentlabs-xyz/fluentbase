@@ -1,0 +1,75 @@
+# E4-ORCHESTRATOR — состояние оркестратора этапа Э4 (строки 4.1, 4.2, 4.3)
+
+Ветка `djadjka/dpos-reth-2.2-squashed`, стартовый HEAD `17a1e1ed` (2026-09-11). Оркестратор — Fable 5.1; исполнители/ревьюеры — Opus 5 через Agent (`model: opus`). Правила сессии (verbatim, переживают компакцию):
+
+- **Hard-stop** (единственные причины закончить с открытым этапом; каждый — в раздел «Hard-stop» со свидетельством): (1) ворота красные после двух проходов правки одной находки; (2) реализация невозможна без изменения решения в `DECISIONS.md` (П-1, П-4, П-5, Д-1, Д-2) — записать предложение и остановить строку; (3) находка ревью BLOCKER, подтверждённая мной по коду и не отвечённая проектом; (4) стенд-тест, доказавший неверность проекта на центральном пути.
+- **Коммиты**: разрешены в точках Ф8; Conventional Commits; БЕЗ трейлеров-атрибуций; `git add` по явным путям (никогда `-A`/`.`); `.dpos-study/` — `git add -f`; `.claude/` не трекается — в коммит не входит. Запрещены `git push/stash/checkout/restore/reset/clean/rebase`. `devnet/` не трогать (чужая незакоммиченная работа). Перед коммитом `git status --short | grep -v devnet/` — в индексе только файлы строки. Каждый коммит обязан собираться и проходить `cargo test -p fluentbase-consensus --lib --no-run`.
+- **Провенанс**: реляция агента — утверждение, не факт; «проверено» — только команда/файл, открытые мной; квитанция в «Квитанции» ДО действия по чужому утверждению.
+- **Ворота Ф3** (сам): `cargo test -p fluentbase-consensus --lib`; `… --features dpos-devnet-byzantine testbed::`; `cargo test -p fluentbase-node --lib`; `cargo test -p fluentbase-staking-reader` (если тронут); `cargo clippy -p fluentbase-consensus -p fluentbase-node --all-targets` (и с фичей); `cargo fmt --check`; `cargo doc -p fluentbase-consensus --no-deps 2>&1 | grep -c "unresolved link"` (9; рост — дефект).
+- **Базовые числа на старте (мои прогоны 2026-09-11 [KNOWN])**: consensus lib **645**/0 (задание называло 640 — +5 тестов `testbed::preconditions`, коммит `9cf7da5e`); стенд с фичей **40**/0 (32.3 с); node lib **59**/0; doc unresolved **9**. Файлы: scratchpad `gates/base-*.txt`.
+- Контур строки: Ф1 карта → Ф2 исполнение (Opus 5, свежий) → Ф3 ворота (сам) → Ф4 ревью (Opus 5, СВЕЖИЙ, только путь к журналу) → Ф5 квитанции (сам) → Ф6 третий проход (Opus 5, свежий) + Ф3 → Ф7 доки → Ф8 коммиты → Ф9 приёмка.
+
+## Текущее состояние
+
+- Строка: **4.1**, заход **А** (модуль `committee/` + фасад `CommitteeReads` + тесты модуля).
+- Фаза: **заход А закрыт кодом** (4 коммита `fcd3b2ba`, `751bce37`, `3f8bec8c`, `ef6e6265`); Ф7 доки `.claude/dpos_architecture/` (00, 06 §6.2b, 12, TOC) правлены; docs-коммит журналов — следующий.
+- Следующий шаг: `docs(dpos)` коммит (журналы A/REVIEW/ORCHESTRATOR/prompts, `git add -f`) → заход **Б1** по `E4-prompts/4.1-B1-impl-1.md` (Ф2) → Ф3 → Ф4 → Ф5 → Ф6 → далее Б2 (продюсеры схем, один ET, `CertInlet.schemes`, `latest_live`, стенд `FakeStaking` по ветке + 3 стенд-теста) → В (e2e-пин `commit_height`) → Ф7/Ф8/Ф9 строки 4.1.
+
+## Карта 4.1 (Ф1, собрана мной по коду 2026-09-11 [KNOWN])
+
+Разбиение: (А) модуль + фасад + тесты модуля + `ReadError::is_transient` + `WEIGHT_RING_EPOCHS` в общий крейт + `const_assert`; (Б) перевод носителей и удаления (16 носителей §2.1 проекта), `FakeStaking` по ветке хэша, три стенд-теста, e2e-пин `commit_height`.
+
+Якоря, открытые мной:
+- Трейт `beacon::CommitteeReads` — `beacon/plane.rs:108-148` (`read_at`, `committee`, `committee_bls`, `qual_read_at`, `dkg_qual`, provided `committee_pair`).
+- Три impl'а: `PlaneCommitteeReads` `node/dpos.rs:1400-1489` (курсоры `committee_cursor`/`qual_cursor` `:1090-1110`); `FollowerCommitteeReads` `consensus/dpos.rs:3416-3487`; `StandCommitteeReads` `testbed/stand.rs:1937-1998` (`committee_read_hash` `:1850-1866`).
+- Внетрейтовые держатели: `evidence_committee_for` `node/dpos.rs:1815-1863`; tombstone-поллер `node/dpos.rs:1722-1760` (`provider.block_hash(fin)`); follower span `consensus/dpos.rs:3225-3256`; `committee_at` `:3709-3715`; inlet-источник `:3809-3887`; watchdog `:2335-2408`; signer-ET `:2040-2053`; громкий отказ старта `:1997-2017`; slasher `resolve_committee` `slasher/actor.rs:720-747`; `CertInlet.schemes` `cert_inlet.rs:397,499,693,832,874`; `CommitteeSource::scheme_at_finalized_tip` `cert_inlet.rs:245-265`; `EpochSchemeProvider` `outer.rs:257-420` (`register` `:332-376`, `pop_first` `:373-375`), `cold_start_register` `outer.rs:1322`, `soft_enter_span` `outer.rs:1169-1199`; `engine.rs:225` регистрация из движка; `epoch_manager.rs`: `latest_live` `:511,:752,:1414`, `is_live_epoch` `:1031-1032`, `highest_observed_epoch` `:476`, `register_soft_entered` `:1332,:1618`.
+- Якорь модуля: `ordering_finalized` пишется `executor.rs:1149` (init), `:2441` (посадка), `:3291` (finalized derive); `FinalizedCursor` (`application.rs:151-175`) — тот же монотонный курсор, `advance_finalized` в `executor.rs:1085`, `:2451`, `:3566` — кандидат на источник высоты якоря (без геттера сегодня).
+- `executed_state_hash` — `executed.rs:49-58` (`Ok(None)` при `height > best`).
+- Константы: `SCHEME_RETENTION_EPOCHS = 8` `consensus/lib.rs:26`; `MAX_COMMITTEE_LOOKAHEAD_EPOCHS = 2` `crates/types/src/staking_protocol.rs:73`; `WEIGHT_RING_EPOCHS = 16` ТОЛЬКО в `contracts/staking/src/consts.rs:367` (в общем крейте нет) — для `const_assert` нужно перенести определение в `staking_protocol` и реэкспортировать в контракте (значение не меняется; форма как `consts.rs:441`).
+- `ReadError` — `staking-reader/src/error.rs:44-84`: `BlockNotFound`, `StateNotMaterialized`, `TransientStorage`, `CallReverted`, `AbiDecode`, `BlsKey`, `PeerKey`, `Backend` …; `is_transient()` нет.
+- `FakeStaking` — `testbed/fakes.rs:891-1060`: состав — чистая функция эпохи, `at` решает только «закоммичена ли» (`committed_at` `:963-972`), `weights` всегда `Some(vec![1; n])` (`:1036`), тумбстоуны не моделируются; `StakingReads{committed, uncommitted, unknown_state}` `:851-861`.
+- `commit_height(E) = start(E−2)`, для E ≤ 2 — блок 1 (PRECONDITIONS §7).
+
+## Агенты
+
+| id | роль | строка | промпт | результат | статус |
+|---|---|---|---|---|---|
+| A1 | исполнитель | 4.1 А | `E4-prompts/4.1-A-impl-1.md` | `history/E4-1-A.md` | завершён (реляция: lib 659/0, reader 60/0, контракт 175/0, 15 новых тестов, 10 Д-nn) |
+| R1 | ревьюер | 4.1 А | `E4-prompts/4.1-A-review-1.md` | `history/E4-1-A-REVIEW.md` | завершён (реляция: ворота = мои; 18 находок R-01…R-18) |
+| F1 | третий проход | 4.1 А | `E4-prompts/4.1-A-fix-1.md` | `history/E4-1-A.md` часть В | завершён (реляция: FIXED 17 · RECORDED 2 · REJECTED 0; +5 тестов; Д-11…Д-14) |
+
+## Квитанции
+
+- 2026-09-11 A1, ворота Ф3 (мои прогоны, `gates/a-*.txt`) [KNOWN]: consensus lib **659/0**; стенд с фичей **40/0**; node **59/0**; staking-reader **60/0**; контракт **175/0**; clippy — только чужая `large_enum_variant` (3 строки), с фичей 0; fmt 0; doc unresolved 9. Все совпадают с реляцией A1.
+- A1 §3 Д-7 (порядок «окно → readable» делает `NotReadable{commit_height}` достижимым только при E∈{1,2}, anchor==0): арифметику проверил сам — `committee()` `committee/store.rs` шаг 1 окно `hi = epoch(anchor)+2`, шаг 2 `commit_height(E)=start(E−2)` (`committee/mod.rs` `Geometry::commit_height`); `E ≤ epoch(anchor)+2 ⇒ start(E−2) ≤ anchor` — верно, ветка почти мертва; бэкфилл закрывает шаг 4 (`executed_hash` `Ok(None)` ⇒ `NotReadable`). Принято как отклонение формулировки §5.6, П-1 не меняет.
+- A1 §3 Д-2 (`Anchor` трейт + `RethAnchor` над `FinalizedCursor`): открыл `committee/store.rs` (`RethAnchor`, `impl Anchor`) и `application.rs` (`FinalizedCursor::height`); точки записи `executor.rs:1085/2451/3566` против `:1149/2441/3291` — сверил по grep ранее (карта Ф1), значения те же переменные (`last_consensus_finalized_height`, `landing_h`, `height`) — по диффу `application.rs`, сами строки executor'а в этой сессии открывал только :1180-1200, :3285-3300, :3560-3570. [LIKELY] для :1085/:1149 и :2441/:2451.
+- Ф5 по ревью R1 [KNOWN — по моему собственному чтению `committee/{mod,store,facade}.rs` до ревью]: R-01 (ретенция `pop_first` до 8 при окне 11 — `store.rs::install` цикл `while records.len() > SCHEME_RETENTION_EPOCHS`, `window()` даёт `lo = epoch−8, hi = epoch+2`) — подтверждаю, решение FIXED (ретенция по полу окна; Д-11, П-1 не меняет); R-02 (`is_transient()` false на `OutOfWindow` выше окна — `mod.rs` `impl CommitteeError::is_transient`, порядок шагов `store.rs::committee` 1→2) — подтверждаю; решение FIXED: направленная транзиентность (Д-12); R-03 (фасад берёт якорь вторым аргументом — `facade.rs` `CommitteeReadsFacade{inner, anchor}`) — подтверждаю; FIXED: `Committee::anchor_hash`. R-15 (`anchor_advanced` не на трейте) — по `store.rs` inherent-метод; FIXED. Остальные MINOR/NIT — решения в `4.1-A-fix-1.md`, сами якоря не открывал (R-05…R-14, R-16…R-18 — по реляции ревьюера, исполнитель F1 обязан назвать file:line в части В).
+- SERIOUS/BLOCKER в ревью нет ⇒ hard-stop (3) не рассматривается.
+- Ф6/F1 квитанции [KNOWN, открыл сам после прохода]: R-02 — `committee/mod.rs:213-219` `OutOfWindow{epoch,hi,..} => epoch > hi`; R-03/R-15/Д-13 — трейт `Committee` имеет `anchor_advanced` (`mod.rs:270`) и `anchor_hash` (`:281`), фасад `CommitteeReadsFacade::new(inner)` (`facade.rs:53`), `read_at` = `inner.anchor_hash()` (`:75`); R-01/Д-11 — `store.rs:125-128` `prune(state, lo)` (`retain epoch >= lo` для `records` и `reported`), зовётся из `anchor_advanced` (`:432-449`); метрики — `store.rs:22-43`. Остальные FIXED (R-05…R-14, R-16…R-18) — по реляции F1, якоря в части В журнала, сам не открывал.
+- Ф3 после третьего прохода (мои прогоны) [KNOWN]: consensus lib **664/0** (`gates/v-lib.txt`); стенд с фичей **40/0**; node **59/0**; staking-reader **60/0**; контракт **175/0**; clippy — 3 чужие строки (`large_enum_variant`), с фичей 0; fmt 0; doc 9. (Фоновый прогон был убит системой по памяти на стадии clippy; clippy/fmt/doc перепрогнаны в foreground.)
+- Ф8: компилируемость коммитов 1–3 по отдельности — реляция A1 (§6 журнала: убирал `committee/`, получал 645/60/13); сам проверяю состояние коммита 3 (`3f8bec8c`) во временном worktree (`cargo test --lib --no-run` + `cargo check` контракта) — результат ниже, когда придёт. Коммит 4 = дерево, ворота выше.
+- Счётчики текста перед docs-коммитом (E4-1-A.md / E4-1-A-REVIEW.md / E4-ORCHESTRATOR.md): строки с «…» 7 / 3 / 4 — все диапазоны (`R-01…R-18`, `Д-1…Д-10`) или цитаты §5.6, не обрывы; нечётные обратные кавычки 0 / 4 (перенос code-span через строку, `:93-94`, `:97-98`) / 0; `,,` 0; пустые `` `` `` 0; пустые `()` вне кода — счёт ненадёжен (спаны через перенос), выборочно — имена методов.
+- Моё наблюдение при чтении `store.rs::install`: ретенция `pop_first` до 8 записей при окне 11 эпох — эпоха в окне ниже 8 самых новых перечитывается заново (два staticcall), write-once защита на неё не действует. Передано ревьюеру как вопрос, не находка.
+
+## Коммиты
+
+| sha | строка | состав |
+|---|---|---|
+| `fcd3b2ba` | 4.1 А | `refactor(types)!: declare the weight-ring depth once and import it into the contract` — `crates/types/src/staking_protocol.rs`, `contracts/staking/src/consts.rs` |
+| `751bce37` | 4.1 А | `feat(staking-reader): classify read errors as transient or permanent by variant` — `crates/dpos/staking-reader/src/error.rs` |
+| `3f8bec8c` | 4.1 А | `feat(consensus): expose the finalized-execution cursor's height` — `crates/dpos/consensus/src/application.rs` |
+| `ef6e6265` | 4.1 А | `feat(consensus): read every epoch committee as one frozen value at one anchor` — `crates/dpos/consensus/src/committee/**`, `crates/dpos/consensus/src/lib.rs` |
+
+## Отклонения от проекта
+
+| Д-nn | что иначе | причина file:line | меняет ли П/Д |
+|---|---|---|---|
+| Д-1…Д-10 (А) | см. `history/E4-1-A.md` §3: трейт `Committee` вместо `CommitteeReads`; `Anchor` трейт; порт `EpochReads`; `weights: None`/дубликат BLS ⇒ `AbiDecode`; 4 `Mutex::unwrap`; порядок «окно → readable»; `commit_height(0)=0`; `is_transient(OutOfWindow)`; производные полями | там же | нет (ни одно не меняет П-1/Д-1) |
+| Д-11 (А, В) | ретенция карты по полу окна (≤ 11 записей), не `pop_first` до 8 | `committee/store.rs:125-128`; окно 11 > 8 — ревью R-01 | нет; §5.1 «одна ретенция через pop_first» — правка формулировки проекта |
+| Д-12 (А, В) | `OutOfWindow.is_transient()` направленная | `committee/mod.rs:213-219` — ревью R-02 | нет; §5.4 «OutOfWindow ⇒ Permanent у слэшера» верно только снизу |
+| Д-13 (А, В) | трейт `Committee` — 6 методов (`anchor_advanced`, `anchor_hash`) | `committee/mod.rs:270`, `:281` — ревью R-03/R-15 | нет |
+| Д-14 (А, В) | шестая метка `reason` (`weights_len`) | `committee/store.rs:35` | нет |
+
+## Hard-stop
+
+не наступил.
