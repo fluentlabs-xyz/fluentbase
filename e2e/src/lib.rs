@@ -58,6 +58,8 @@ mod router;
 #[cfg(test)]
 mod staking;
 #[cfg(test)]
+mod staking_commit;
+#[cfg(test)]
 mod staking_cost;
 #[cfg(test)]
 mod staking_reserve;
