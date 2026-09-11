@@ -2,8 +2,8 @@
 // Regenerate with: node gen_tests.js
 
 macro_rules! define_tests {
-    ($(fn $name:ident($path:literal);)*) => {
-        $(#[test] fn $name() { $crate::utils::run_evm_e2e_test($path); })*
+    ($($(#[$meta:meta])* fn $name:ident($path:literal);)*) => {
+        $($(#[$meta])* #[test] fn $name() { $crate::utils::run_evm_e2e_test($path); })*
     };
 }
 

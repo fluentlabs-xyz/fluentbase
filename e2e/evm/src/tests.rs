@@ -2,8 +2,8 @@
 // Regenerate with: node gen_tests.js
 
 macro_rules! define_tests {
-    ($(fn $name:ident($path:literal);)*) => {
-        $(#[test] fn $name() { $crate::utils::run_evm_e2e_test($path); })*
+    ($($(#[$meta:meta])* fn $name:ident($path:literal);)*) => {
+        $($(#[$meta])* #[test] fn $name() { $crate::utils::run_evm_e2e_test($path); })*
     };
 }
 
@@ -66,6 +66,7 @@ mod osaka {
         fn case_cancun_eip1153_tstore_tstore_reentrancy_tstore_reentrancy("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/cancun/eip1153_tstore/tstore_reentrancy/tstore_reentrancy.json");
         fn case_cancun_eip4844_blobs_blob_txs_blob_gas_subtraction_tx("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/cancun/eip4844_blobs/blob_txs/blob_gas_subtraction_tx.json");
         fn case_cancun_eip4844_blobs_blob_txs_blob_tx_attribute_calldata_opcodes("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/cancun/eip4844_blobs/blob_txs/blob_tx_attribute_calldata_opcodes.json");
+        #[ignore = "Blob transactions are unsupported by Fluent; the delegated runtime has no blob transaction context."]
         fn case_cancun_eip4844_blobs_blob_txs_blob_tx_attribute_gasprice_opcode("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/cancun/eip4844_blobs/blob_txs/blob_tx_attribute_gasprice_opcode.json");
         fn case_cancun_eip4844_blobs_blob_txs_blob_tx_attribute_opcodes("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/cancun/eip4844_blobs/blob_txs/blob_tx_attribute_opcodes.json");
         fn case_cancun_eip4844_blobs_blob_txs_blob_tx_attribute_value_opcode("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/cancun/eip4844_blobs/blob_txs/blob_tx_attribute_value_opcode.json");
@@ -76,6 +77,7 @@ mod osaka {
         fn case_cancun_eip4844_blobs_blob_txs_invalid_tx_max_fee_per_blob_gas_state("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/cancun/eip4844_blobs/blob_txs/invalid_tx_max_fee_per_blob_gas_state.json");
         fn case_cancun_eip4844_blobs_blob_txs_sufficient_balance_blob_tx("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/cancun/eip4844_blobs/blob_txs/sufficient_balance_blob_tx.json");
         fn case_cancun_eip4844_blobs_blobhash_opcode_blobhash_gas_cost("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/cancun/eip4844_blobs/blobhash_opcode/blobhash_gas_cost.json");
+        #[ignore = "Fluent has no blob transactions; BLOBHASH is zero in every execution context."]
         fn case_cancun_eip4844_blobs_blobhash_opcode_contexts_blobhash_opcode_contexts("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/cancun/eip4844_blobs/blobhash_opcode_contexts/blobhash_opcode_contexts.json");
         fn case_cancun_eip4844_blobs_blobhash_opcode_contexts_blobhash_opcode_contexts_tx_types("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/cancun/eip4844_blobs/blobhash_opcode_contexts/blobhash_opcode_contexts_tx_types.json");
         fn case_cancun_eip4844_blobs_point_evaluation_precompile_call_opcode_types("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/cancun/eip4844_blobs/point_evaluation_precompile/call_opcode_types.json");
@@ -122,6 +124,7 @@ mod osaka {
         fn case_constantinople_eip1052_extcodehash_extcodehash_extcodehash_created_and_deleted("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/constantinople/eip1052_extcodehash/extcodehash/extcodehash_created_and_deleted.json");
         fn case_constantinople_eip1052_extcodehash_extcodehash_extcodehash_created_and_deleted_recheck_outer("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/constantinople/eip1052_extcodehash/extcodehash/extcodehash_created_and_deleted_recheck_outer.json");
         fn case_constantinople_eip1052_extcodehash_extcodehash_extcodehash_dynamic_account_overwrite("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/constantinople/eip1052_extcodehash/extcodehash/extcodehash_dynamic_account_overwrite.json");
+        #[ignore = "Fluent precompiles are physical genesis contracts; account-existence expectations differ from Ethereum."]
         fn case_constantinople_eip1052_extcodehash_extcodehash_extcodehash_dynamic_argument("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/constantinople/eip1052_extcodehash/extcodehash/extcodehash_dynamic_argument.json");
         fn case_constantinople_eip1052_extcodehash_extcodehash_extcodehash_empty_account_variants("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/constantinople/eip1052_extcodehash/extcodehash/extcodehash_empty_account_variants.json");
         fn case_constantinople_eip1052_extcodehash_extcodehash_extcodehash_empty_contract_creation("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/constantinople/eip1052_extcodehash/extcodehash/extcodehash_empty_contract_creation.json");
@@ -207,6 +210,7 @@ mod osaka {
         fn case_osaka_eip7823_modexp_upper_bounds_eip_mainnet_modexp_over_boundary("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/osaka/eip7823_modexp_upper_bounds/eip_mainnet/modexp_over_boundary.json");
         fn case_osaka_eip7823_modexp_upper_bounds_modexp_upper_bounds_modexp_upper_bounds("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/osaka/eip7823_modexp_upper_bounds/modexp_upper_bounds/modexp_upper_bounds.json");
         fn case_osaka_eip7825_transaction_gas_limit_cap_eip_mainnet_tx_gas_limit_cap_at_maximum("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/osaka/eip7825_transaction_gas_limit_cap/eip_mainnet/tx_gas_limit_cap_at_maximum.json");
+        #[ignore = "Fluent deliberately has no Ethereum EIP-7825 transaction gas cap. Below-cap cases in this file still execute."]
         fn case_osaka_eip7825_transaction_gas_limit_cap_eip_mainnet_tx_gas_limit_cap_exceeded("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/osaka/eip7825_transaction_gas_limit_cap/eip_mainnet/tx_gas_limit_cap_exceeded.json");
         fn case_osaka_eip7825_transaction_gas_limit_cap_tx_gas_limit_maximum_gas_refund("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/osaka/eip7825_transaction_gas_limit_cap/tx_gas_limit/maximum_gas_refund.json");
         fn case_osaka_eip7825_transaction_gas_limit_cap_tx_gas_limit_transaction_gas_limit_cap("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/osaka/eip7825_transaction_gas_limit_cap/tx_gas_limit/transaction_gas_limit_cap.json");
@@ -214,6 +218,7 @@ mod osaka {
         fn case_osaka_eip7825_transaction_gas_limit_cap_tx_gas_limit_tx_gas_limit_cap_access_list_with_diff_keys("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/osaka/eip7825_transaction_gas_limit_cap/tx_gas_limit/tx_gas_limit_cap_access_list_with_diff_keys.json");
         fn case_osaka_eip7825_transaction_gas_limit_cap_tx_gas_limit_tx_gas_limit_cap_authorized_tx("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/osaka/eip7825_transaction_gas_limit_cap/tx_gas_limit/tx_gas_limit_cap_authorized_tx.json");
         fn case_osaka_eip7825_transaction_gas_limit_cap_tx_gas_limit_tx_gas_limit_cap_contract_creation("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/osaka/eip7825_transaction_gas_limit_cap/tx_gas_limit/tx_gas_limit_cap_contract_creation.json");
+        #[ignore = "These transactions have calldata above 128 KiB and exercise the Ethereum gas cap/floor; Fluent has a different cap policy and a quadratic calldata surcharge."]
         fn case_osaka_eip7825_transaction_gas_limit_cap_tx_gas_limit_tx_gas_limit_cap_full_calldata("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/osaka/eip7825_transaction_gas_limit_cap/tx_gas_limit/tx_gas_limit_cap_full_calldata.json");
         fn case_osaka_eip7825_transaction_gas_limit_cap_tx_gas_limit_tx_gas_limit_cap_subcall_context("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/osaka/eip7825_transaction_gas_limit_cap/tx_gas_limit/tx_gas_limit_cap_subcall_context.json");
         fn case_osaka_eip7883_modexp_gas_increase_eip_mainnet_modexp_different_base_lengths("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/osaka/eip7883_modexp_gas_increase/eip_mainnet/modexp_different_base_lengths.json");
@@ -724,9 +729,12 @@ mod osaka {
         fn case_ported_static_steip3860_limitmeterinitcode_create2_init_code_size_limit_create2_init_code_size_limit("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/ported_static/stEIP3860_limitmeterinitcode/create2_init_code_size_limit/create2_init_code_size_limit.json");
         fn case_ported_static_steip3860_limitmeterinitcode_create_init_code_size_limit_create_init_code_size_limit("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/ported_static/stEIP3860_limitmeterinitcode/create_init_code_size_limit/create_init_code_size_limit.json");
         fn case_ported_static_steip3860_limitmeterinitcode_creation_tx_init_code_size_limit_creation_tx_init_code_size_limit("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/ported_static/stEIP3860_limitmeterinitcode/creation_tx_init_code_size_limit/creation_tx_init_code_size_limit.json");
+        #[ignore = "Blob transactions are unsupported by Fluent; this is an Ethereum type-3 transaction admission case."]
         fn case_ported_static_steip4844_blobtransactions_create_blobhash_tx_create_blobhash_tx("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/ported_static/stEIP4844_blobtransactions/create_blobhash_tx/create_blobhash_tx.json");
         fn case_ported_static_steip4844_blobtransactions_empty_blobhash_list_empty_blobhash_list("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/ported_static/stEIP4844_blobtransactions/empty_blobhash_list/empty_blobhash_list.json");
+        #[ignore = "Fluent has no blob transactions and BLOBHASH always returns zero."]
         fn case_ported_static_steip4844_blobtransactions_opcode_blobh_bounds_opcode_blobh_bounds("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/ported_static/stEIP4844_blobtransactions/opcode_blobh_bounds/opcode_blobh_bounds.json");
+        #[ignore = "Fluent has no blob transactions and BLOBHASH always returns zero."]
         fn case_ported_static_steip4844_blobtransactions_opcode_blobhash_out_of_range_opcode_blobhash_out_of_range("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/ported_static/stEIP4844_blobtransactions/opcode_blobhash_out_of_range/opcode_blobhash_out_of_range.json");
         fn case_ported_static_steip4844_blobtransactions_wrong_blobhash_version_wrong_blobhash_version("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/ported_static/stEIP4844_blobtransactions/wrong_blobhash_version/wrong_blobhash_version.json");
         fn case_ported_static_steip5656_mcopy_mcopy_mcopy("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/ported_static/stEIP5656_MCOPY/mcopy/mcopy.json");
@@ -935,6 +943,7 @@ mod osaka {
         fn case_ported_static_stnonzerocallstest_non_zero_value_transaction_call_to_empty_paris_non_zero_value_transaction_call_to_empty_paris("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/ported_static/stNonZeroCallsTest/non_zero_value_transaction_call_to_empty_paris/non_zero_value_transaction_call_to_empty_paris.json");
         fn case_ported_static_stnonzerocallstest_non_zero_value_transaction_call_to_non_non_zero_balance_non_zero_value_transaction_call_to_non_non_zero_balance("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/ported_static/stNonZeroCallsTest/non_zero_value_transaction_call_to_non_non_zero_balance/non_zero_value_transaction_call_to_non_non_zero_balance.json");
         fn case_ported_static_stnonzerocallstest_non_zero_value_transaction_call_to_one_storage_key_paris_non_zero_value_transaction_call_to_one_storage_key_paris("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/ported_static/stNonZeroCallsTest/non_zero_value_transaction_call_to_one_storage_key_paris/non_zero_value_transaction_call_to_one_storage_key_paris.json");
+        #[ignore = "Physical Fluent precompile accounts change account-creation and call gas assumptions."]
         fn case_ported_static_stprecompiledcontracts_precomps_eip2929_cancun_precomps_eip2929_cancun("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/ported_static/stPreCompiledContracts/precomps_eip2929_cancun/precomps_eip2929_cancun.json");
         fn case_ported_static_stprecompiledcontracts_sec80_sec80("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/ported_static/stPreCompiledContracts/sec80/sec80.json");
         fn case_ported_static_stprecompiledcontracts2_call_ecrecover0_call_ecrecover0("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/ported_static/stPreCompiledContracts2/call_ecrecover0/call_ecrecover0.json");
@@ -2260,8 +2269,10 @@ mod osaka {
         fn case_prague_eip2537_bls_12_381_precompiles_bls12_pairing_call_types("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/prague/eip2537_bls_12_381_precompiles/bls12_pairing/call_types.json");
         fn case_prague_eip2537_bls_12_381_precompiles_bls12_pairing_gas("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/prague/eip2537_bls_12_381_precompiles/bls12_pairing/gas.json");
         fn case_prague_eip2537_bls_12_381_precompiles_bls12_pairing_invalid("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/prague/eip2537_bls_12_381_precompiles/bls12_pairing/invalid.json");
+        #[ignore = "This transaction exceeds 128 KiB; Fluent applies a quadratic calldata surcharge that Ethereum does not charge."]
         fn case_prague_eip2537_bls_12_381_precompiles_bls12_pairing_invalid_multi_inf("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/prague/eip2537_bls_12_381_precompiles/bls12_pairing/invalid_multi_inf.json");
         fn case_prague_eip2537_bls_12_381_precompiles_bls12_pairing_valid("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/prague/eip2537_bls_12_381_precompiles/bls12_pairing/valid.json");
+        #[ignore = "This transaction exceeds 128 KiB; Fluent applies a quadratic calldata surcharge that Ethereum does not charge."]
         fn case_prague_eip2537_bls_12_381_precompiles_bls12_pairing_valid_multi_inf("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/prague/eip2537_bls_12_381_precompiles/bls12_pairing/valid_multi_inf.json");
         fn case_prague_eip2537_bls_12_381_precompiles_bls12_variable_length_input_contracts_invalid_gas_g1msm("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/prague/eip2537_bls_12_381_precompiles/bls12_variable_length_input_contracts/invalid_gas_g1msm.json");
         fn case_prague_eip2537_bls_12_381_precompiles_bls12_variable_length_input_contracts_invalid_gas_g2msm("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/prague/eip2537_bls_12_381_precompiles/bls12_variable_length_input_contracts/invalid_gas_g2msm.json");
@@ -2329,7 +2340,9 @@ mod osaka {
         fn case_prague_eip7702_set_code_tx_set_code_txs_set_code_to_contract_creator("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/prague/eip7702_set_code_tx/set_code_txs/set_code_to_contract_creator.json");
         fn case_prague_eip7702_set_code_tx_set_code_txs_set_code_to_log("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/prague/eip7702_set_code_tx/set_code_txs/set_code_to_log.json");
         fn case_prague_eip7702_set_code_tx_set_code_txs_set_code_to_non_empty_storage_non_zero_nonce("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/prague/eip7702_set_code_tx/set_code_txs/set_code_to_non_empty_storage_non_zero_nonce.json");
+        #[ignore = "EIP-7702 targets a precompile: Ethereum treats its delegated code as empty, while Fluent resolves a physical genesis contract."]
         fn case_prague_eip7702_set_code_tx_set_code_txs_set_code_to_precompile("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/prague/eip7702_set_code_tx/set_code_txs/set_code_to_precompile.json");
+        #[ignore = "EIP-7702 targets a precompile: Ethereum treats its delegated code as empty, while Fluent resolves a physical genesis contract."]
         fn case_prague_eip7702_set_code_tx_set_code_txs_set_code_to_precompile_not_enough_gas_for_precompile_execution("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/prague/eip7702_set_code_tx/set_code_txs/set_code_to_precompile_not_enough_gas_for_precompile_execution.json");
         fn case_prague_eip7702_set_code_tx_set_code_txs_set_code_to_self_caller("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/prague/eip7702_set_code_tx/set_code_txs/set_code_to_self_caller.json");
         fn case_prague_eip7702_set_code_tx_set_code_txs_set_code_to_self_destruct("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/prague/eip7702_set_code_tx/set_code_txs/set_code_to_self_destruct.json");
@@ -2355,6 +2368,7 @@ mod osaka {
         fn case_prague_eip7702_set_code_tx_set_code_txs_2_pointer_reentry("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/prague/eip7702_set_code_tx/set_code_txs_2/pointer_reentry.json");
         fn case_prague_eip7702_set_code_tx_set_code_txs_2_pointer_reverts("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/prague/eip7702_set_code_tx/set_code_txs_2/pointer_reverts.json");
         fn case_prague_eip7702_set_code_tx_set_code_txs_2_pointer_to_pointer("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/prague/eip7702_set_code_tx/set_code_txs_2/pointer_to_pointer.json");
+        #[ignore = "EIP-7702 targets a precompile: Ethereum treats its delegated code as empty, while Fluent resolves a physical genesis contract."]
         fn case_prague_eip7702_set_code_tx_set_code_txs_2_pointer_to_precompile("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/prague/eip7702_set_code_tx/set_code_txs_2/pointer_to_precompile.json");
         fn case_prague_eip7702_set_code_tx_set_code_txs_2_pointer_to_static("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/prague/eip7702_set_code_tx/set_code_txs_2/pointer_to_static.json");
         fn case_prague_eip7702_set_code_tx_set_code_txs_2_pointer_to_static_reentry("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/prague/eip7702_set_code_tx/set_code_txs_2/pointer_to_static_reentry.json");

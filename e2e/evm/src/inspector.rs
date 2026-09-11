@@ -164,18 +164,18 @@ pub fn check_evm_trace(
     inspector2: &mut TraceInspector,
 ) -> Result<(), TestError> {
     let mut it1 = inspector1.events.iter_mut().filter(|e| match e {
-        InspectorEvent::Step(step) => match step.opcode {
+        InspectorEvent::Step(step) => matches!(
+            step.opcode,
             opcode::CALL
-            | opcode::STATICCALL
-            | opcode::CALLCODE
-            | opcode::DELEGATECALL
-            | opcode::CREATE
-            | opcode::CREATE2
-            | opcode::STOP
-            | opcode::RETURN
-            | opcode::REVERT => true,
-            _ => false,
-        },
+                | opcode::STATICCALL
+                | opcode::CALLCODE
+                | opcode::DELEGATECALL
+                | opcode::CREATE
+                | opcode::CREATE2
+                | opcode::STOP
+                | opcode::RETURN
+                | opcode::REVERT
+        ),
         _ => true,
     });
     let mut it2 = inspector2.events.iter_mut();

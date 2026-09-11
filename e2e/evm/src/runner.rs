@@ -2,15 +2,20 @@ use super::merkle_trie::{
     compute_test_roots, log_rlp_hash, state_merkle_trie_root, TestValidationResult,
 };
 use crate::{
+    exclusions::excluded_case_reason,
     inspector::TraceInspector,
-    state::{evm_cache_state, fill_tx_env, fluent_cache_state, prepare_env, GENESIS_CONTRACTS},
+    state::{
+        evm_cache_state, fill_tx_env, fluent_cache_state, prepare_env,
+        signed_transaction_sender_and_chain_id, GENESIS_CONTRACTS,
+    },
 };
 use fluentbase_revm::{RwasmBuilder, RwasmContext, RwasmEvm, RwasmPrecompiles};
-use fluentbase_sdk::Address;
+use fluentbase_sdk::{Address, PRECOMPILE_EVM_RUNTIME};
 use indicatif::{ProgressBar, ProgressDrawTarget};
 use revm::{
+    bytecode::Bytecode,
     context::{
-        result::{EVMError, ExecutionResult, HaltReason, InvalidTransaction},
+        result::{EVMError, ExecutionResult, HaltReason, InvalidTransaction, Output},
         ContextTr,
     },
     database::{bal::EvmDatabaseError, EmptyDB, InMemoryDB, State, StateBuilder},
@@ -76,6 +81,7 @@ pub enum TestErrorKind {
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct ExecutionStats {
     pub executed: usize,
+    pub rejected_before_execution: usize,
     pub skipped: usize,
 }
 
@@ -217,7 +223,10 @@ fn check_evm_execution<ERROR: Debug + ToString + Clone + PartialEq, INSP>(
                 (StackUnderflow | StackOverflow, StackOverflow) => {}
                 (
                     NotActivated | InvalidJump | OpcodeNotFound | InvalidFEOpcode,
-                    MalformedBuiltinParams,
+                    // The delegated EVM maps these to NotSupportedBytecode,
+                    // which the host exposes as OpcodeNotFound. Gas, output,
+                    // logs and state are still compared below.
+                    OpcodeNotFound | MalformedBuiltinParams,
                 ) => {}
                 _ => {
                     assert_eq!(reason1, reason2);
@@ -351,10 +360,7 @@ fn check_evm_execution<ERROR: Debug + ToString + Clone + PartialEq, INSP>(
             println!(
                 " - {}: {}",
                 hex::encode(log.address),
-                log.topics()
-                    .first()
-                    .map(|v| hex::encode(&v))
-                    .unwrap_or_default()
+                log.topics().first().map(hex::encode).unwrap_or_default()
             )
         }
         let logs2 = exec_result2.as_ref().map(|r| r.logs()).unwrap_or_default();
@@ -363,10 +369,7 @@ fn check_evm_execution<ERROR: Debug + ToString + Clone + PartialEq, INSP>(
             println!(
                 " - {}: {}",
                 hex::encode(log.address),
-                log.topics()
-                    .first()
-                    .map(|v| hex::encode(&v))
-                    .unwrap_or_default()
+                log.topics().first().map(hex::encode).unwrap_or_default()
             )
         }
         error_eq!(logs_root1, logs_root2, "EVM <> FLUENT logs root mismatch");
@@ -374,6 +377,32 @@ fn check_evm_execution<ERROR: Debug + ToString + Clone + PartialEq, INSP>(
 
     let exec_result1_res = exec_result1.as_ref().unwrap();
     let exec_result2_res = exec_result2.as_ref().unwrap();
+    error_eq!(
+        exec_result1_res.is_success(),
+        exec_result2_res.is_success(),
+        "EVM <> FLUENT success status mismatch"
+    );
+    error_eq!(
+        matches!(exec_result1_res, ExecutionResult::Revert { .. }),
+        matches!(exec_result2_res, ExecutionResult::Revert { .. }),
+        "EVM <> FLUENT revert status mismatch"
+    );
+    // Fluent returns deployed code through account metadata for successful
+    // CREATEs. Compare that code below; CALL and REVERT return bytes directly.
+    let is_create = matches!(
+        exec_result1_res,
+        ExecutionResult::Success {
+            output: Output::Create(..),
+            ..
+        }
+    );
+    if !is_create && exec_result1_res.output() != exec_result2_res.output() {
+        error_list.push(format!(
+            "EVM <> FLUENT output mismatch: {:?} <> {:?}",
+            exec_result1_res.output(),
+            exec_result2_res.output()
+        ));
+    }
     error_eq!(
         exec_result1_res.tx_gas_used(),
         exec_result2_res.tx_gas_used(),
@@ -446,15 +475,53 @@ fn check_evm_execution<ERROR: Debug + ToString + Clone + PartialEq, INSP>(
             if cfg!(feature = "debug-print") {
                 println!(" - code_hash: {}", hex::encode(a1.code_hash));
             }
-            // assert_eq!(
-            //     a1.code_hash, a2.code_hash,
-            //     "EVM <> FLUENT account code_hash mismatch",
-            // );
-            // assert_eq!(
-            //     a1.code.as_ref().map(|b| b.original_bytes()),
-            //     a2.code.as_ref().map(|b| b.original_bytes()),
-            //     "EVM <> FLUENT account code mismatch",
-            // );
+            let physical_precompile = GENESIS_CONTRACTS.with(|contracts| {
+                contracts
+                    .iter()
+                    .any(|(genesis_address, _, _)| genesis_address == address)
+            });
+            if !physical_precompile {
+                let native_code = a1
+                    .code
+                    .as_ref()
+                    .or_else(|| {
+                        evm.journaled_state
+                            .database
+                            .cache
+                            .contracts
+                            .get(&a1.code_hash)
+                    })
+                    .map(Bytecode::original_bytes)
+                    .unwrap_or_default();
+                let fluent_code = a2
+                    .code
+                    .as_ref()
+                    .or_else(|| {
+                        evm2.0
+                            .journaled_state
+                            .database
+                            .cache
+                            .contracts
+                            .get(&a2.code_hash)
+                    })
+                    .map(|code| match code {
+                        Bytecode::OwnableAccount(account)
+                            if account.owner_address == PRECOMPILE_EVM_RUNTIME =>
+                        {
+                            fluentbase_evm::EthereumMetadata::read_from_bytes(&account.metadata)
+                                .expect("invalid Fluent EVM metadata")
+                                .code_copy()
+                        }
+                        other => other.original_bytes(),
+                    })
+                    .unwrap_or_default();
+                error_eq!(
+                    native_code,
+                    fluent_code,
+                    "EVM <> FLUENT account ({}) code mismatch",
+                    address
+                );
+            }
             if cfg!(feature = "debug-print") {
                 println!(" - storage:");
             }
@@ -466,8 +533,8 @@ fn check_evm_execution<ERROR: Debug + ToString + Clone + PartialEq, INSP>(
                     if cfg!(feature = "debug-print") {
                         println!(
                             " - + slot ({}) => ({})",
-                            hex::encode(&slot.to_be_bytes::<32>()),
-                            hex::encode(&value1.to_be_bytes::<32>())
+                            hex::encode(slot.to_be_bytes::<32>()),
+                            hex::encode(value1.to_be_bytes::<32>())
                         );
                     }
                     // let storage_key = calc_storage_key(address, slot.as_le_bytes().as_ptr());
@@ -502,7 +569,7 @@ fn check_evm_execution<ERROR: Debug + ToString + Clone + PartialEq, INSP>(
                         *value1,
                         *value2,
                         "EVM <> FLUENT storage value ({}) mismatch",
-                        hex::encode(&slot.to_be_bytes::<32>()),
+                        hex::encode(slot.to_be_bytes::<32>()),
                     );
                 }
             }
@@ -540,13 +607,11 @@ fn check_evm_execution<ERROR: Debug + ToString + Clone + PartialEq, INSP>(
         }
     }
 
-    if error_list.len() > 0 {
-        assert!(
-            false,
-            "----------------------\n{}\n----------------------\n",
-            error_list.join("\n")
-        );
-    }
+    assert!(
+        error_list.is_empty(),
+        "Test {test_name}:\n----------------------\n{}\n----------------------\n",
+        error_list.join("\n")
+    );
 
     print_json_output(None);
 
@@ -751,19 +816,28 @@ pub fn execute_evm_test_suite(
     trace: bool,
     print_json_outcome: bool,
 ) -> Result<ExecutionStats, TestError> {
-    if skip_test(path) {
-        return Err(TestError {
-            name: path.display().to_string(),
-            kind: TestErrorKind::NoTransactionsExecuted { skipped: 0 },
-        });
-    }
-
     if cfg!(feature = "debug-print") {
         println!("Running test: {:?}", path);
     }
 
     let s = std::fs::read_to_string(path).unwrap();
-    let suite: TestSuite = serde_json::from_str(&s).map_err(|e| TestError {
+    let mut raw_suite: Value = serde_json::from_str(&s).map_err(|e| TestError {
+        name: path.to_string_lossy().into_owned(),
+        kind: e.into(),
+    })?;
+    // Modern signature-validation fixtures provide a sender and txbytes without
+    // a private key. The pinned TestUnit schema still requires secretKey; its
+    // value is unused when sender is present, and txbytes are validated below.
+    if let Some(units) = raw_suite.as_object_mut() {
+        for unit in units.values_mut() {
+            if let Some(transaction) = unit.get_mut("transaction").and_then(Value::as_object_mut) {
+                if transaction.contains_key("sender") && !transaction.contains_key("secretKey") {
+                    transaction.insert("secretKey".to_owned(), json!(B256::ZERO));
+                }
+            }
+        }
+    }
+    let suite: TestSuite = serde_json::from_value(raw_suite.clone()).map_err(|e| TestError {
         name: path.to_string_lossy().into_owned(),
         kind: e.into(),
     })?;
@@ -811,6 +885,16 @@ pub fn execute_evm_test_suite(
         }
 
         let (mut cfg_env, _, mut tx_env) = prepare_env(&unit, &name)?;
+        // The pinned upstream TransactionParts omits chainId. Preserve it from
+        // the fixture so invalid-chain transactions reach both engines intact.
+        if let Some(chain_id) = raw_suite[&name]["transaction"].get("chainId") {
+            let chain_id: U256 =
+                serde_json::from_value(chain_id.clone()).map_err(|e| TestError {
+                    name: name.clone(),
+                    kind: e.into(),
+                })?;
+            tx_env.chain_id = Some(chain_id.to());
+        }
 
         for (spec_name, tests) in &unit.post {
             // The delegated EVM and built-in precompiles execute Osaka semantics,
@@ -829,6 +913,65 @@ pub fn execute_evm_test_suite(
             let block_env = unit.block_env(&mut cfg_env);
 
             for (index, test) in tests.iter().enumerate() {
+                if let Some(reason) = excluded_case_reason(path, &name, test) {
+                    println!("excluded {name}: {reason}");
+                    stats.skipped += 1;
+                    continue;
+                }
+                if let Some(bytes) = &test.txbytes {
+                    match signed_transaction_sender_and_chain_id(bytes) {
+                        Ok((sender, chain_id)) => {
+                            if sender != tx_env.caller {
+                                return Err(TestError {
+                                    name: name.clone(),
+                                    kind: TestErrorKind::UnexpectedException {
+                                        expected_exception: None,
+                                        got_exception: Some(
+                                            "signed transaction sender differs from fixture sender"
+                                                .to_owned(),
+                                        ),
+                                    },
+                                });
+                            }
+                            tx_env.chain_id = chain_id;
+                        }
+                        Err(error) => {
+                            // Invalid signatures and malformed envelopes are admission
+                            // tests, not VM executions. Report their coverage separately.
+                            if test.expect_exception.is_none() {
+                                return Err(TestError {
+                                    name: name.clone(),
+                                    kind: TestErrorKind::UnexpectedException {
+                                        expected_exception: None,
+                                        got_exception: Some(error),
+                                    },
+                                });
+                            }
+                            let state_root = state_merkle_trie_root(evm_cache_state.trie_account());
+                            if state_root != test.hash {
+                                return Err(TestError {
+                                    name: name.clone(),
+                                    kind: TestErrorKind::StateRootMismatch {
+                                        got: state_root,
+                                        expected: test.hash,
+                                    },
+                                });
+                            }
+                            let logs_root = log_rlp_hash(&[]);
+                            if logs_root != test.logs {
+                                return Err(TestError {
+                                    name: name.clone(),
+                                    kind: TestErrorKind::LogsRootMismatch {
+                                        got: logs_root,
+                                        expected: test.logs,
+                                    },
+                                });
+                            }
+                            stats.rejected_before_execution += 1;
+                            continue;
+                        }
+                    }
+                }
                 if cfg!(feature = "debug-print") {
                     println!(
                         "\n\n\n\n\nRunning test with txdata: ({}) {}",
@@ -963,7 +1106,7 @@ pub fn execute_evm_test_suite(
             }
         }
     }
-    if stats.executed == 0 {
+    if stats.executed == 0 && stats.rejected_before_execution == 0 {
         return Err(TestError {
             name: path.display().to_string(),
             kind: TestErrorKind::NoTransactionsExecuted {
@@ -972,9 +1115,10 @@ pub fn execute_evm_test_suite(
         });
     }
     println!(
-        "{}: executed {} transactions, skipped {} post cases",
+        "{}: executed {} transactions, validated {} rejected envelopes, skipped {} post cases",
         path.display(),
         stats.executed,
+        stats.rejected_before_execution,
         stats.skipped
     );
     Ok(stats)

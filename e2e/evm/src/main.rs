@@ -1,3 +1,5 @@
+mod exclusions;
+#[cfg(test)]
 mod fixtures;
 mod inspector;
 pub mod merkle_trie;

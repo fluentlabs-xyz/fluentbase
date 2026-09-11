@@ -17,18 +17,23 @@ cargo nextest run --release --no-default-features --features std,wasmtime --lock
   --success-output final -E 'test(good_coverage_tests) | test(selection_tests) | test(state::tests)'
 ```
 
-CI covers 34 Osaka fixture families selected in `ci-tests.json`, containing 235
+The quick selection covers 34 Osaka fixture families in `ci-tests.json`, containing 235
 transaction cases. They use the upstream ports of the previous CI cases, including
 three separate CREATE-result cases and the current EXTCODEHASH, CODECOPY and ECADD
 equivalents. Upstream provides `create_large_result` only for Prague, so it has no
 Osaka registration.
-Every file must contain at least one eligible post case and execute transactions.
-Passing test output reports the executed and skipped counts.
+Every enabled file must check at least one eligible post case. Passing test output
+reports transactions submitted to both engines, malformed signed envelopes rejected
+before execution, and explicitly skipped cases separately. Envelope checks use Alloy's
+decoder and signature recovery and verify that the expected state and logs are unchanged.
 
 The complete registration contains 2,359 fixture files / 14,614 transaction cases
-for Osaka. Run it by omitting the `-E` filter. General Ethereum fixtures
-compare native execution against the upstream expected state/log roots, then compare
-Fluent execution against native execution. Fluent's historical transaction fixtures
+for Osaka. Run it by omitting the `-E` filter. CI runs the complete supported corpus
+on both the rWasm interpreter and Wasmtime. General Ethereum fixtures compare native
+execution against the upstream expected state/log roots, then compare Fluent's
+success/revert status, call/revert output, gas, logs, account balances/nonces, EVM code,
+and storage against native execution. EVM code is decoded from Fluent account metadata;
+physical genesis contracts have their own representation. Fluent's historical transaction fixtures
 remain separate and keep their existing checks. A passing CI subset is not a claim
 that the entire upstream corpus passes or that Fluent has no intentional differences
 from Ethereum.
@@ -44,16 +49,33 @@ rejects suites containing only earlier forks rather than reporting them as passe
 To update the corpus, edit the release URL, SHA256 and versioned directory in
 `ethereum-tests.json`, run `make sync_tests`, then `node gen_tests.js` to regenerate
 `src/tests.rs` and `src/short_tests.rs`. The generator rejects missing CI files,
-duplicate Rust names and files with no cases for their declared fork. Do not rewrite
+duplicate Rust names, stale exclusions, missing exclusion reasons, and files with no
+cases for their declared fork. Do not rewrite
 fork labels or expected results to make an old corpus appear current. Run both
 backends and review actual failures before changing the selection.
 
 `python3 sync_tests.py --archive /path/to/fixtures.tar.gz` accepts a pre-downloaded
-archive with the same mandatory checksum check. Python 3, Node.js and curl are the
+archive with the same mandatory checksum check. Python 3, Node.js 22 or newer and curl are the
 only additional fixture-management requirements; no fixture archive is committed.
 
 Fixture-tool regression checks:
 
 ```sh
 python3 -m unittest discover -s tests_tools -v
+node --test tests_tools/test_generator.mjs
 ```
+
+`excluded-tests.json` records the reason and source for each intentional protocol
+difference. Currently 772 of the 14,614 post cases are excluded: 14 entire fixture
+files are marked `#[ignore]`, and 11 mixed files retain their supported cases. The
+remaining 13,842 cases cover execution or transaction admission. Exclusions cover
+physical precompile account behavior (including delegation to precompiles), unsupported
+blob context, Fluent's calldata surcharge above 128 KiB, and Ethereum admission rules
+that Fluent deliberately omits (the EIP-7623 floor and EIP-7825 transaction gas cap).
+These are documented compatibility limits, not passing tests. No CI quick-selection
+file may be excluded, and stale paths or selectors fail generation.
+
+The fixture fixes also correct empty-bytecode interpreter setup and EIP-1559
+`GASPRICE` in `fluentbase-evm`. These change the delegated runtime contract: existing
+networks must rebuild and activate that runtime through the normal upgrade process.
+Running the tests or updating the node binary alone does not upgrade a deployed runtime.
