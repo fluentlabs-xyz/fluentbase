@@ -159,13 +159,12 @@ pub fn is_execute_using_system_runtime(address: &Address) -> bool {
     EXECUTE_USING_SYSTEM_RUNTIME_ADDRESSES.contains(address)
 }
 
-/// Addresses whose execution should be charged by the runtime.
+/// Addresses whose execution is metered by the engine.
 ///
-/// These contracts should be compiled with `consume_fuel=true` and
-/// `builtins_consume_fuel=true`.
-///
-/// P.S: Engine metered precompiles are temporarily disabled, will
-///  be re-enabled in the next releases
+/// These runtimes execute with `consume_fuel=true`, so every instruction is charged by the
+/// engine. They must not add static execution charges of their own, otherwise the same work is
+/// paid for twice (see `docs/04-gas-and-fuel.md`). Membership is consensus-critical: changing it
+/// changes gas for every historical call to the address.
 pub const ENGINE_METERED_PRECOMPILES: &[Address] = &[
     PRECOMPILE_NITRO_VERIFIER,
     PRECOMPILE_WASM_RUNTIME,

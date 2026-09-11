@@ -45,4 +45,4 @@ A future strict selector should accept expected nonce, PCR policy, public key, u
 
 ## Gas/Fuel
 
-The entrypoint charges a fixed manual fuel amount before parsing. This prevents oversized or malformed attestations from being free to execute.
+The verifier is an engine-metered system runtime: the execution engine charges every instruction it executes, so the cost scales with the attestation being verified. The entrypoint charges no additional static fuel, and input above `NITRO_MAX_INPUT_SIZE` is rejected before the payload is copied.

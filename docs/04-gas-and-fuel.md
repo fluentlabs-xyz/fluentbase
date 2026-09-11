@@ -64,10 +64,21 @@ These formulas are part of runtime ABI behavior, not optional heuristics.
 
 Not all system runtimes meter fuel the same way.
 
-- **self-metered**: runtime code charges fuel explicitly,
-- **engine-metered**: execution engine automatically meters configured precompiles.
+- **self-metered**: runtime code charges fuel explicitly (`_charge_fuel`, `sync_evm_gas`); the
+  engine does not meter its instructions,
+- **engine-metered**: the execution engine meters every instruction of the runtime. The set is
+  `ENGINE_METERED_PRECOMPILES`: Nitro verifier, OAuth2 verifier, WASM runtime, WebAuthn verifier
+  and Universal Token runtime.
 
-Universal Token runtime is currently in engine-metered set.
+Engine-metered runtimes must not add static execution charges on top of engine fuel. The engine
+already prices the work they do, so a flat or per-byte fee for the same execution charges it
+twice. The WASM runtime's per-byte deploy fee and the Nitro and WebAuthn flat verification fees
+were removed for that reason. Deposits are not execution pricing and stay: the Universal Token
+constructor charges the EVM code-deposit rate for the metadata it installs.
+
+Membership in the engine-metered set is a node-side rule keyed on the address, so changing it
+changes gas for every historical call to that address and is a fork-level change. Static charges
+live in the runtime bytecode and are changed by runtime upgrade.
 
 ---
 
