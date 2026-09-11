@@ -38,6 +38,7 @@ revm/e2e/tests
 evm-e2e/target
 contracts/target
 examples/target
+target-contract/
 
 genesis-*.json
 node_modules/
