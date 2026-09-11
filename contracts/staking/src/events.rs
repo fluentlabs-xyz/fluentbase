@@ -106,6 +106,28 @@ pub struct BlendReserveChanged {
     pub new_value: Address,
 }
 
+/// The declaring half of the two address timelocks.
+///
+/// These ride ordinary governance transactions, so unlike the close's events
+/// they DO reach a receipt and `eth_getLogs` shows them — which is the point of
+/// the scheme: the declaration is the window in which a rotation can still be
+/// noticed and answered before it lands.
+#[derive(Debug, Clone, PartialEq, Eq, Event)]
+pub struct SlashFundAddressDeclared {
+    #[indexed]
+    pub new_value: Address,
+    pub declared_at_epoch: u64,
+    pub effective_at_epoch: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Event)]
+pub struct BlendReserveDeclared {
+    #[indexed]
+    pub new_value: Address,
+    pub declared_at_epoch: u64,
+    pub effective_at_epoch: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Event)]
 pub struct MinVerdictDueBlocksChanged {
     pub prev_value: u32,

@@ -167,9 +167,32 @@ sol! {
     function setProductionLivenessDisabled(bool value) external;
     /// The per-epoch BLEND stipend; `0` is the OFF sentinel.
     function setBlendStipendPerEpoch(uint256 value) external;
-    /// The account the stipend is drawn from with `transferFrom`. The epoch close
-    /// prices an epoch off what this account holds AND has approved.
+    // The two ADDRESS setters are two-step: each call below DECLARES a value,
+    // and a matching `apply…` lands it once `ADDRESS_SETTER_TIMELOCK_EPOCHS`
+    // have passed. A compromised governance key can therefore point neither the
+    // seizure recipient nor the stipend source at itself inside one block. A
+    // second declaration overwrites the first and restarts the clock; the
+    // `…Changed` event fires on the APPLY, not on the declaration.
+    //
+    // `setBlendStipendPerEpoch` above is deliberately NOT in this scheme —
+    // decided 2026-09-04, `.dpos-study/DECISIONS.md` §3.
+
+    /// Declares a new account for the stipend to be drawn from with
+    /// `transferFrom`. The epoch close prices an epoch off what the CURRENT
+    /// account holds AND has approved; this one does not become current until
+    /// `applyBlendReserve`.
     function setBlendReserve(address value) external;
+    /// Lands the declared `blendReserve`. Reverts before the timelock elapses,
+    /// and reverts when nothing is declared.
+    function applyBlendReserve() external;
+    /// Lands the declared `slashFundAddress`. Same two refusals.
+    ///
+    /// Its DECLARING half, `setSlashFundAddress`, is not declared here: it has no
+    /// caller outside the contract crate, so under the scope rule above it keeps
+    /// its `derive_keccak256_id!` in `consts.rs`. The apply half is here because
+    /// it is new ABI and every new ABI point this work adds goes through one
+    /// `sol!` — see `.dpos-study/history/E1-CONTRACT-2.md` §3.
+    function applySlashFundAddress() external;
 
     // ---- views the node reads ----------------------------------------------
 
@@ -258,6 +281,15 @@ sol! {
     /// the value belongs to epoch `current + MAX_COMMITTEE_LOOKAHEAD_EPOCHS`.
     event EpochCommitteeCommitted(uint64 indexed epoch, address[] committee);
 
+    // The declaration half of the two address timelocks. These ride ordinary
+    // governance transactions, so unlike the six above they DO reach a receipt
+    // and `eth_getLogs` shows them — which is the point: a declaration is the
+    // window in which a rotation can still be noticed and answered.
+    event BlendReserveDeclared(
+        address indexed newValue, uint64 declaredAtEpoch, uint64 effectiveAtEpoch);
+    event SlashFundAddressDeclared(
+        address indexed newValue, uint64 declaredAtEpoch, uint64 effectiveAtEpoch);
+
     // ---- reverts the node classifies ---------------------------------------
 
     /// The equivocation replay guard. The slasher's pre-flight simulation
@@ -271,7 +303,7 @@ mod tests {
     use super::*;
     use alloy_sol_types::{SolCall, SolError, SolEvent};
 
-    /// The crate declares 24 calls; this pins the 15 of them that appear in the
+    /// The crate declares 26 calls; this pins the 17 of them that appear in the
     /// selector scan in `devnet/local-dpos-smoke/contracts/STAKING_ARTEFACT.md` —
     /// the scan of the deployed rWasm blob, an EXTERNAL witness: it is derived
     /// from neither declaration, it is what a live chain actually dispatches on,
@@ -373,6 +405,16 @@ mod tests {
                 0x32cc6f08,
             ),
             (
+                "applyBlendReserve()",
+                applyBlendReserveCall::SELECTOR,
+                0x47a9615b,
+            ),
+            (
+                "applySlashFundAddress()",
+                applySlashFundAddressCall::SELECTOR,
+                0x7bb69756,
+            ),
+            (
                 "AlreadySlashedForEquivocation(address)",
                 AlreadySlashedForEquivocation::SELECTOR,
                 0x8300031d,
@@ -386,7 +428,7 @@ mod tests {
         }
     }
 
-    /// The six event topic0s, pinned the same way. An event carries no selector
+    /// The eight event topic0s, pinned the same way. An event carries no selector
     /// into the blob scan, so the witness here is the contract's own derived
     /// `SELECTOR` constant read off `contracts/staking/src/events.rs` — and the
     /// contract asserts the other direction itself
@@ -425,6 +467,16 @@ mod tests {
                 "EpochCommitteeCommitted",
                 EpochCommitteeCommitted::SIGNATURE_HASH,
                 "015ffbf030c2f06f58cedc968ae2ec9df38a79be1a74f68686ca971ce1994a5d",
+            ),
+            (
+                "BlendReserveDeclared",
+                BlendReserveDeclared::SIGNATURE_HASH,
+                "77e01e0a4deae141a7693d3a8b04de45a59ef139760040a697144a8f804995be",
+            ),
+            (
+                "SlashFundAddressDeclared",
+                SlashFundAddressDeclared::SIGNATURE_HASH,
+                "8864604f373d82052fe0c00ab760b2f56b7211205a299d0b625af6f7faa497b5",
             ),
         ] {
             let want: B256 = pinned.parse().expect("pinned topic0 must be 32 hex bytes");

@@ -51,6 +51,21 @@ pub struct ChainConfigStorage {
     /// opposite of the intended default, so the seed is the only thing keeping
     /// the tier off on a new chain.
     production_liveness_disabled: StorageBool,
+    /// The two address timelocks: a declared value and the epoch it was declared
+    /// in, one pair per setter.
+    ///
+    /// APPENDED, never interleaved with the fields above — a field inserted
+    /// higher up shifts every slot below it, and nothing here is deployed only
+    /// because nets relaunch from a fresh genesis. Keeping new state at the end
+    /// keeps that true by construction.
+    ///
+    /// "Nothing declared" is the ZERO ADDRESS, not a zero epoch: both setters
+    /// refuse a zero address, so the sentinel cannot collide with a real
+    /// declaration, while epoch zero is a perfectly ordinary one to declare in.
+    pending_slash_fund_address: StorageAddress,
+    pending_slash_fund_epoch: StorageU64,
+    pending_blend_reserve: StorageAddress,
+    pending_blend_reserve_epoch: StorageU64,
 }
 
 /// Fixed-size validator metadata.

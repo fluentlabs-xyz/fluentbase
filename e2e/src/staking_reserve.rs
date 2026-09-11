@@ -115,6 +115,11 @@ const COMMITTEE: usize = 5;
 /// burn depends on how much work it has left to do.
 const PRODUCTION_COMMITTEES: [usize; 2] = [21, 51];
 const INTERVAL: u64 = 5;
+/// `ADDRESS_SETTER_TIMELOCK_EPOCHS` (`contracts/staking/src/consts.rs`): the
+/// notice period `setBlendReserve` declares into and `applyBlendReserve` lands
+/// after. Repeated here rather than shared because this is the only place
+/// outside the contract that has to wait it out.
+const TIMELOCK_EPOCHS: u64 = 7;
 /// Must be a multiple of `INTERVAL`, which the config validator enforces.
 const ACTIVATION: u64 = INTERVAL * 20;
 
@@ -431,6 +436,20 @@ impl Fixture {
         call(&mut self.context, GENESIS_GOVERNANCE, calldata);
     }
 
+    /// Rotates the BLEND reserve through its two-step timelock.
+    ///
+    /// `setBlendReserve` only DECLARES since 2026-09-11; the value lands when
+    /// `applyBlendReserve` is called `ADDRESS_SETTER_TIMELOCK_EPOCHS` later. Only
+    /// the block number has to move for that — neither call records a block — so
+    /// this jumps forward, applies, and puts the height back where the caller
+    /// left it.
+    fn rotate_reserve(&mut self, value: Address, at_epoch: u64) {
+        self.govern(staking_abi::setBlendReserveCall { value }.abi_encode());
+        set_block(&self.context, first_block(at_epoch + TIMELOCK_EPOCHS));
+        self.govern(staking_abi::applyBlendReserveCall {}.abi_encode());
+        set_block(&self.context, first_block(at_epoch));
+    }
+
     /// `min(balanceOf(reserve), allowance(reserve, staking))`, read off the token
     /// itself — the same two numbers `util.rs::reserve_available` reads.
     ///
@@ -728,7 +747,9 @@ fn a_refused_reserve_read_scores_zero_and_the_next_epoch_recovers(refusal: Refus
     );
 
     // --- epoch 1, after the reserve moves to an address the token answers for.
-    fixture.govern(staking_abi::setBlendReserveCall { value: OWNER }.abi_encode());
+    // The chain sits at the first block of epoch 1, which is where the rotation
+    // is declared and where it puts the height back.
+    fixture.rotate_reserve(OWNER, 1);
     fixture.finish_epoch(1);
     fixture.commit_committee();
     let recovered = fixture.record(first_block(2));
@@ -1010,7 +1031,7 @@ fn the_fuel_burning_read_against_the_production_system_call_budget() {
         a_refused_reserve_read_scores_zero_and_the_next_epoch_recovers(Refusal::BurnFuel);
     let honest = {
         let mut fixture = fixture(Refusal::Revert, COMMITTEE);
-        fixture.govern(staking_abi::setBlendReserveCall { value: OWNER }.abi_encode());
+        fixture.rotate_reserve(OWNER, 0);
         fixture.record(first_block(0));
         fixture.finish_epoch(0);
         fixture.record(first_block(1)).frame_gas
@@ -1036,7 +1057,7 @@ fn the_fuel_burning_read_against_the_production_system_call_budget() {
     committees.extend_from_slice(&PRODUCTION_COMMITTEES);
     for committee in committees {
         let mut honest = fixture(Refusal::Revert, committee);
-        honest.govern(staking_abi::setBlendReserveCall { value: OWNER }.abi_encode());
+        honest.rotate_reserve(OWNER, 0);
         honest.record(first_block(0));
         honest.finish_epoch(0);
         let honest_close = honest.record_within(first_block(1), budget);

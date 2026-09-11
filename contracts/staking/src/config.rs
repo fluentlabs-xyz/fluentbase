@@ -9,8 +9,8 @@ use crate::{
     storage::chain_config_storage,
     types::{AddressCommand, BoolCommand, InitializeCommand, U256Command, U32Command, U64Command},
     util::{
-        decode, ensure_governance, ensure_mutable, ensure_non_payable, next_epoch, revert,
-        revert_with, write_abi,
+        current_epoch, decode, ensure_governance, ensure_mutable, ensure_non_payable, next_epoch,
+        revert, revert_with, write_abi,
     },
 };
 use alloc::string::String;
@@ -320,21 +320,94 @@ pub fn get_slash_fund_address<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitC
     )
 }
 
+/// The epoch a declaration made now becomes applicable at.
+fn timelock_effective_epoch<SDK: SharedAPI>(sdk: &SDK) -> Result<(u64, u64), ExitCode> {
+    let declared_at = current_epoch(sdk)?;
+    let effective_at = declared_at
+        .checked_add(ADDRESS_SETTER_TIMELOCK_EPOCHS)
+        .ok_or(ExitCode::IntegerOverflow)?;
+    Ok((declared_at, effective_at))
+}
+
+/// Refuses unless `declared` names a real declaration whose term has elapsed.
+///
+/// The zero address is the "nothing declared" sentinel — both declaring setters
+/// refuse a zero, so it cannot collide with a real value, while epoch zero is an
+/// ordinary epoch to declare in and could not serve as one.
+fn ensure_timelock_elapsed<SDK: SharedAPI>(
+    sdk: &mut SDK,
+    declared: Address,
+    declared_at: u64,
+) -> Result<(), ExitCode> {
+    if declared.is_zero() {
+        return revert(sdk, ERR_NO_PENDING_CHANGE);
+    }
+    let current = current_epoch(sdk)?;
+    let effective_at = declared_at
+        .checked_add(ADDRESS_SETTER_TIMELOCK_EPOCHS)
+        .ok_or(ExitCode::IntegerOverflow)?;
+    if current < effective_at {
+        return revert_with(sdk, ERR_TIMELOCK_NOT_ELAPSED, &(current, effective_at));
+    }
+    Ok(())
+}
+
 /// Public handler `0xa79e7263` (`setSlashFundAddress`).
 ///
-/// Updates the configured slash fund address.
+/// DECLARES a new slash fund address. It does not become the slash fund until
+/// `applySlashFundAddress` lands it, `ADDRESS_SETTER_TIMELOCK_EPOCHS` later.
+///
+/// A second declaration overwrites the first and restarts the clock, so the
+/// notice period cannot be shortened by declaring twice.
 pub fn set_slash_fund_address<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), ExitCode> {
     ensure_governance_mutation(sdk)?;
     let value = decode::<AddressCommand>(input)?.value;
     if value.is_zero() {
         return zero_value(sdk, "slashFundAddress");
     }
-    let field = chain_config_storage().slash_fund_address_accessor();
+    let (declared_at, effective_at) = timelock_effective_epoch(sdk)?;
+    let config = chain_config_storage();
+    config
+        .pending_slash_fund_address_accessor()
+        .set_checked(sdk, value)?;
+    config
+        .pending_slash_fund_epoch_accessor()
+        .set_checked(sdk, declared_at)?;
+    events::SlashFundAddressDeclared {
+        new_value: value,
+        declared_at_epoch: declared_at,
+        effective_at_epoch: effective_at,
+    }
+    .emit(sdk)
+}
+
+/// Public handler `applySlashFundAddress()`.
+///
+/// Lands the declared slash fund address and clears the declaration. The
+/// `SlashFundAddressChanged` event fires HERE, because this is where the value
+/// changes.
+pub fn apply_slash_fund_address<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
+    ensure_governance_mutation(sdk)?;
+    let config = chain_config_storage();
+    let declared = config
+        .pending_slash_fund_address_accessor()
+        .get_checked(sdk)?;
+    let declared_at = config
+        .pending_slash_fund_epoch_accessor()
+        .get_checked(sdk)?;
+    ensure_timelock_elapsed(sdk, declared, declared_at)?;
+    let field = config.slash_fund_address_accessor();
     let previous = field.get_checked(sdk)?;
-    field.set_checked(sdk, value)?;
+    field.set_checked(sdk, declared)?;
+    config
+        .pending_slash_fund_address_accessor()
+        .set_checked(sdk, Address::ZERO)?;
+    config
+        .pending_slash_fund_epoch_accessor()
+        .set_checked(sdk, 0)?;
     events::SlashFundAddressChanged {
         prev_value: previous,
-        new_value: value,
+        new_value: declared,
     }
     .emit(sdk)
 }
@@ -681,27 +754,63 @@ pub fn get_blend_reserve<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> 
 
 /// Public handler `0x7899ae8f` (`setBlendReserve`).
 ///
-/// Rotates the address the epoch stipend is drawn from, under governance
-/// control.
+/// DECLARES a new address for the epoch stipend to be drawn from. It does not
+/// become the reserve until `applyBlendReserve` lands it,
+/// `ADDRESS_SETTER_TIMELOCK_EPOCHS` later; a second declaration overwrites the
+/// first and restarts the clock.
 ///
-/// The new address must ALREADY hold the pot and have approved this contract
-/// for it. There is no grace period: the first epoch to close after this call
-/// reads the new address, and an address that cannot cover the pot forfeits
-/// that epoch permanently. Rotating to an unfunded or unapproved holder burns
-/// every epoch until it is funded, the same way a fresh chain burns the epochs
-/// that run before its treasury approves.
+/// What the timelock does NOT change: when the rotation does land there is still
+/// no grace period. The first epoch to close after it reads the new address, and
+/// an address that cannot cover the pot forfeits that epoch permanently, so
+/// landing on an unfunded or unapproved holder burns every epoch until it is
+/// funded — the same way a fresh chain burns the epochs that run before its
+/// treasury approves. The notice period is time to fund the new holder, and it
+/// is worth using for that.
 pub fn set_blend_reserve<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result<(), ExitCode> {
     ensure_governance_mutation(sdk)?;
     let value = decode::<AddressCommand>(input)?.value;
     if value.is_zero() {
         return zero_value(sdk, "blendReserve");
     }
-    let field = chain_config_storage().blend_reserve_accessor();
+    let (declared_at, effective_at) = timelock_effective_epoch(sdk)?;
+    let config = chain_config_storage();
+    config
+        .pending_blend_reserve_accessor()
+        .set_checked(sdk, value)?;
+    config
+        .pending_blend_reserve_epoch_accessor()
+        .set_checked(sdk, declared_at)?;
+    events::BlendReserveDeclared {
+        new_value: value,
+        declared_at_epoch: declared_at,
+        effective_at_epoch: effective_at,
+    }
+    .emit(sdk)
+}
+
+/// Public handler `applyBlendReserve()`.
+///
+/// Lands the declared reserve and clears the declaration.
+pub fn apply_blend_reserve<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
+    ensure_governance_mutation(sdk)?;
+    let config = chain_config_storage();
+    let declared = config.pending_blend_reserve_accessor().get_checked(sdk)?;
+    let declared_at = config
+        .pending_blend_reserve_epoch_accessor()
+        .get_checked(sdk)?;
+    ensure_timelock_elapsed(sdk, declared, declared_at)?;
+    let field = config.blend_reserve_accessor();
     let previous = field.get_checked(sdk)?;
-    field.set_checked(sdk, value)?;
+    field.set_checked(sdk, declared)?;
+    config
+        .pending_blend_reserve_accessor()
+        .set_checked(sdk, Address::ZERO)?;
+    config
+        .pending_blend_reserve_epoch_accessor()
+        .set_checked(sdk, 0)?;
     events::BlendReserveChanged {
         prev_value: previous,
-        new_value: value,
+        new_value: declared,
     }
     .emit(sdk)
 }

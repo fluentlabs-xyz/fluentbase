@@ -66,6 +66,8 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
         SIG_SET_MIN_STAKING_AMOUNT => config::set_min_staking_amount(sdk, params),
         SIG_GET_BLEND_RESERVE => config::get_blend_reserve(sdk),
         SIG_SET_BLEND_RESERVE => config::set_blend_reserve(sdk, params),
+        SIG_APPLY_BLEND_RESERVE => config::apply_blend_reserve(sdk),
+        SIG_APPLY_SLASH_FUND_ADDRESS => config::apply_slash_fund_address(sdk),
         SIG_GET_MIN_VERDICT_DUE_BLOCKS => config::get_min_verdict_due_blocks(sdk),
         SIG_SET_MIN_VERDICT_DUE_BLOCKS => config::set_min_verdict_due_blocks(sdk, params),
         SIG_GET_EXCLUSION_BACKOFF_CAP => config::get_exclusion_backoff_cap(sdk),

@@ -123,6 +123,8 @@ pub const SIG_SET_MIN_STAKING_AMOUNT: u32 = derive_keccak256_id!("setMinStakingA
 pub const SIG_GET_BLEND_RESERVE: u32 = derive_keccak256_id!("getBlendReserve()");
 // 0x7899ae8f
 pub const SIG_SET_BLEND_RESERVE: u32 = sig::<abi::setBlendReserveCall>();
+pub const SIG_APPLY_BLEND_RESERVE: u32 = sig::<abi::applyBlendReserveCall>();
+pub const SIG_APPLY_SLASH_FUND_ADDRESS: u32 = sig::<abi::applySlashFundAddressCall>();
 // 0xee3ad0e7
 pub const SIG_GET_MIN_VERDICT_DUE_BLOCKS: u32 = derive_keccak256_id!("getMinVerdictDueBlocks()");
 // 0x4fae9dea
@@ -292,6 +294,11 @@ pub const ERR_EQUIVOCATION_SIGNATURE_INVALID: u32 =
 pub const ERR_EQUIVOCATION_KEY_NOT_REGISTERED: u32 =
     derive_keccak256_id!("EquivocationKeyNotRegistered()");
 pub const ERR_INVALID_EVIDENCE_ENCODING: u32 = derive_keccak256_id!("InvalidEvidenceEncoding()");
+/// An address timelock asked to land before its term elapsed: `(current epoch,
+/// the epoch it becomes effective at)`.
+pub const ERR_TIMELOCK_NOT_ELAPSED: u32 = derive_keccak256_id!("TimelockNotElapsed(uint64,uint64)");
+/// An address timelock asked to land with nothing declared.
+pub const ERR_NO_PENDING_CHANGE: u32 = derive_keccak256_id!("NoPendingChange()");
 pub const ERR_EVIDENCE_SIGNER_MISMATCH: u32 =
     derive_keccak256_id!("EvidenceSignerMismatch(uint32,uint32)");
 pub const ERR_EVIDENCE_ROUND_MISMATCH: u32 =
@@ -410,6 +417,26 @@ pub use staking_protocol::MIN_COMMITTEE_LENGTH;
 ///
 /// Not a default — see [`DEFAULT_EPOCH_BLOCK_INTERVAL`].
 pub const DEFAULT_UNDELEGATE_PERIOD: u64 = 7;
+
+/// Epochs a declared address setting waits before it can be applied.
+///
+/// The two address setters — `setSlashFundAddress` and `setBlendReserve` — name
+/// the seizure recipient and the stipend source, and a governance key that could
+/// move either in one block could point both at itself. Splitting each into
+/// declare-then-apply puts this many epochs of public notice between the two,
+/// during which the declaration is visible as an ordinary receipt log.
+///
+/// Epochs, not blocks and not seconds: this contract reads no clock
+/// (`block_timestamp()` appears nowhere in it) and every other deadline it keeps
+/// is in epochs, so a second unit would be a second thing to reason about. At the
+/// devnet interval of 200 blocks this is 1,400 blocks; at a production epoch it
+/// is a week of them. No derivation is recorded for exactly 7 — it is the figure
+/// the decision fixed (`.dpos-study/DECISIONS.md` §3, 2026-09-04).
+///
+/// `setBlendStipendPerEpoch` is deliberately NOT under it, decided at the same
+/// time and for a stated reason; do not extend the scheme to it without
+/// reopening that decision.
+pub const ADDRESS_SETTER_TIMELOCK_EPOCHS: u64 = 7;
 
 /// Epochs between a delegation being booked and it counting toward stake.
 ///

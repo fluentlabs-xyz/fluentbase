@@ -310,6 +310,42 @@ fn store_test_consensus_keys(
 /// Writes an epoch committee the way `commitEpochCommittee` does: a membership
 /// record keyed by the epoch that mints it, an index entry pointing at it, and
 /// the frozen leader weights in that epoch's ring frame.
+/// Declares an address setting and lands it once the timelock has elapsed.
+///
+/// Restores the block number afterwards, so a caller that was mid-scenario stays
+/// where it was. The recorder's cursor is untouched by either call, so the jump
+/// forward and back is invisible to everything except `current_epoch`.
+fn rotate_address_setting(harness: &mut Harness, declare: u32, apply: u32, value: Address) {
+    let here = harness.sdk.context().block_number();
+    harness.set_caller(GENESIS_GOVERNANCE);
+    assert_eq!(
+        harness
+            .call(encode_call(declare, &AddressCommand { value }))
+            .0,
+        ExitCode::Ok,
+        "the declaration must land"
+    );
+    let config = chain_config_storage();
+    let activation = config
+        .dpos_activation_block_accessor()
+        .get_checked(&harness.sdk)
+        .unwrap();
+    let interval = config
+        .epoch_block_interval_accessor()
+        .get_checked(&harness.sdk)
+        .unwrap();
+    let declared_at = crate::util::current_epoch(&harness.sdk).unwrap();
+    harness
+        .set_block_number(activation + (declared_at + ADDRESS_SETTER_TIMELOCK_EPOCHS) * interval);
+    harness.set_caller(GENESIS_GOVERNANCE);
+    assert_eq!(
+        harness.call(encode_empty_call(apply)).0,
+        ExitCode::Ok,
+        "and the apply must land once the term has elapsed"
+    );
+    harness.set_block_number(here);
+}
+
 fn commit_test_committee(sdk: &mut TestingContextImpl, epoch: u64, members: &[(Address, U256)]) {
     let consensus = consensus_storage();
     let record = consensus.committee_records_accessor().entry(epoch);
@@ -1266,6 +1302,8 @@ fn parameterized_custom_errors_use_solidity_abi() {
 fn derived_selectors_match_independent_hex_pins() {
     for (actual, pinned) in [
         (SIG_INITIALIZE, 0xfecaf0f1),
+        (SIG_APPLY_BLEND_RESERVE, 0x47a9615b),
+        (SIG_APPLY_SLASH_FUND_ADDRESS, 0x7bb69756),
         (SIG_CURRENT_EPOCH, 0x76671808),
         (SIG_NEXT_EPOCH, 0xaea0e78b),
         (SIG_GET_STAKING_TOKEN, 0x9f9106d1),
@@ -1398,6 +1436,24 @@ fn close_event_topics_match_the_shared_abi() {
             ),
             abi::EpochCommitteeCommitted::SIGNATURE_HASH,
             abi::EpochCommitteeCommitted::SIGNATURE,
+        ),
+        (
+            "BlendReserveDeclared",
+            (
+                events::BlendReserveDeclared::SIGNATURE,
+                events::BlendReserveDeclared::SELECTOR,
+            ),
+            abi::BlendReserveDeclared::SIGNATURE_HASH,
+            abi::BlendReserveDeclared::SIGNATURE,
+        ),
+        (
+            "SlashFundAddressDeclared",
+            (
+                events::SlashFundAddressDeclared::SIGNATURE,
+                events::SlashFundAddressDeclared::SELECTOR,
+            ),
+            abi::SlashFundAddressDeclared::SIGNATURE_HASH,
+            abi::SlashFundAddressDeclared::SIGNATURE,
         ),
     ] {
         let (our_sig, our_topic) = ours;
@@ -2106,17 +2162,23 @@ fn governance_updates_embedded_chain_configuration() {
             ExitCode::Ok
         );
     }
-    for (selector, value) in [
-        (SIG_SET_SLASH_FUND_ADDRESS, slash_fund),
-        (SIG_SET_BLEND_RESERVE, replacement_reserve),
+    // The two ADDRESS setters are two-step now: each declares, and a matching
+    // `apply` lands it seven epochs later.
+    for (declare, apply, value) in [
+        (
+            SIG_SET_SLASH_FUND_ADDRESS,
+            SIG_APPLY_SLASH_FUND_ADDRESS,
+            slash_fund,
+        ),
+        (
+            SIG_SET_BLEND_RESERVE,
+            SIG_APPLY_BLEND_RESERVE,
+            replacement_reserve,
+        ),
     ] {
-        assert_eq!(
-            harness
-                .call(encode_call(selector, &AddressCommand { value }))
-                .0,
-            ExitCode::Ok
-        );
+        rotate_address_setting(&mut harness, declare, apply, value);
     }
+    harness.set_caller(GENESIS_GOVERNANCE);
     assert_eq!(
         harness
             .call(encode_call(
@@ -7425,15 +7487,11 @@ fn a_system_verdict_tombstones_jails_and_sends_the_whole_seizure_to_the_fund() {
         harness.initialize(sponsor, vec![offender, bystander], vec![stake, stake], 500),
         ExitCode::Ok
     );
-    harness.set_caller(GENESIS_GOVERNANCE);
-    assert_eq!(
-        harness
-            .call(encode_call(
-                SIG_SET_SLASH_FUND_ADDRESS,
-                &AddressCommand { value: fund },
-            ))
-            .0,
-        ExitCode::Ok
+    rotate_address_setting(
+        &mut harness,
+        SIG_SET_SLASH_FUND_ADDRESS,
+        SIG_APPLY_SLASH_FUND_ADDRESS,
+        fund,
     );
     commit_test_committee(
         &mut harness.sdk,
@@ -11610,4 +11668,189 @@ fn materializing_the_same_snapshot_epoch_twice_adds_no_second_entry() {
         listed.as_slice(),
         "the entries that were already there are untouched"
     );
+}
+
+// The two address timelocks (K-1, `.dpos-study/DECISIONS.md` §3). The seizure
+// recipient and the stipend source are the two settings a compromised governance
+// key could point at itself, so each is split into declare-then-apply with seven
+// epochs between. Five properties, and the one control that makes them mean
+// something.
+#[test]
+fn the_address_setters_declare_now_and_land_seven_epochs_later() {
+    let owner = Address::with_last_byte(0xa0);
+    let interval = DEFAULT_EPOCH_BLOCK_INTERVAL;
+    let activation = interval;
+    let genesis_reserve = Address::with_last_byte(0xf2);
+    let first = Address::with_last_byte(0xc1);
+    let second = Address::with_last_byte(0xc2);
+    let epoch_block = |epoch: u64| activation + epoch * interval;
+
+    for (declare, apply, read, declared_topic, changed_topic) in [
+        (
+            SIG_SET_BLEND_RESERVE,
+            SIG_APPLY_BLEND_RESERVE,
+            SIG_GET_BLEND_RESERVE,
+            events::BlendReserveDeclared::SELECTOR,
+            events::BlendReserveChanged::SELECTOR,
+        ),
+        (
+            SIG_SET_SLASH_FUND_ADDRESS,
+            SIG_APPLY_SLASH_FUND_ADDRESS,
+            SIG_GET_SLASH_FUND_ADDRESS,
+            events::SlashFundAddressDeclared::SELECTOR,
+            events::SlashFundAddressChanged::SELECTOR,
+        ),
+    ] {
+        let mut harness = Harness::new(activation);
+        let mut command = harness.initialize_command(owner, Vec::new(), Vec::new(), 0);
+        command.dpos_activation_block = activation;
+        command.blend_reserve = genesis_reserve;
+        assert_eq!(harness.initialize_with(command), ExitCode::Ok);
+        harness.set_caller(GENESIS_GOVERNANCE);
+        let before = decode_output::<Address>(&harness.call(encode_empty_call(read)).1);
+
+        // 1. Applying with nothing declared is refused.
+        assert_revert_selector(
+            harness.call(encode_empty_call(apply)),
+            ERR_NO_PENDING_CHANGE,
+        );
+
+        // 2. The declaration emits, and changes nothing yet.
+        harness.sdk.take_logs();
+        assert_eq!(
+            harness
+                .call(encode_call(declare, &AddressCommand { value: first }))
+                .0,
+            ExitCode::Ok
+        );
+        let logs = harness.sdk.take_logs();
+        let (data, topics) = find_log(&logs, declared_topic, "declaration");
+        assert_eq!(
+            topics.get(1).copied(),
+            Some(first.into_word()),
+            "the declared address is indexed, so a watcher can filter on it"
+        );
+        assert_eq!(
+            decode_output::<(u64, u64)>(data),
+            (0, ADDRESS_SETTER_TIMELOCK_EPOCHS),
+            "declared at epoch 0, effective at 0 + the term"
+        );
+        assert!(
+            logs_of(&logs, changed_topic).is_empty(),
+            "a declaration is not a change and must not announce one"
+        );
+        assert_eq!(
+            decode_output::<Address>(&harness.call(encode_empty_call(read)).1),
+            before,
+            "and the live setting has not moved"
+        );
+
+        // 3. One epoch short of the term is refused, and the refusal names both
+        //    epochs so a caller can tell how long is left.
+        harness.set_block_number(epoch_block(ADDRESS_SETTER_TIMELOCK_EPOCHS - 1));
+        let refused = harness.call(encode_empty_call(apply));
+        assert_revert_selector(refused.clone(), ERR_TIMELOCK_NOT_ELAPSED);
+        assert_eq!(
+            decode_output::<(u64, u64)>(&refused.1[SIG_LEN_BYTES..]),
+            (
+                ADDRESS_SETTER_TIMELOCK_EPOCHS - 1,
+                ADDRESS_SETTER_TIMELOCK_EPOCHS
+            )
+        );
+        assert_eq!(
+            decode_output::<Address>(&harness.call(encode_empty_call(read)).1),
+            before
+        );
+
+        // 4. On the term's own epoch it lands, announces the CHANGE, and clears
+        //    the declaration behind it.
+        harness.set_block_number(epoch_block(ADDRESS_SETTER_TIMELOCK_EPOCHS));
+        harness.sdk.take_logs();
+        assert_eq!(harness.call(encode_empty_call(apply)).0, ExitCode::Ok);
+        let logs = harness.sdk.take_logs();
+        assert_eq!(
+            decode_output::<(Address, Address)>(&find_log(&logs, changed_topic, "change").0),
+            (before, first),
+            "the change event carries the value that moved, and moves it here"
+        );
+        assert_eq!(
+            decode_output::<Address>(&harness.call(encode_empty_call(read)).1),
+            first
+        );
+        assert_revert_selector(
+            harness.call(encode_empty_call(apply)),
+            ERR_NO_PENDING_CHANGE,
+        );
+
+        // 5. A second declaration overwrites the first and RESTARTS the clock:
+        //    the term cannot be shortened by declaring twice.
+        assert_eq!(
+            harness
+                .call(encode_call(declare, &AddressCommand { value: second }))
+                .0,
+            ExitCode::Ok
+        );
+        harness.set_block_number(epoch_block(2 * ADDRESS_SETTER_TIMELOCK_EPOCHS - 1));
+        assert_revert_selector(
+            harness.call(encode_empty_call(apply)),
+            ERR_TIMELOCK_NOT_ELAPSED,
+        );
+        assert_eq!(
+            decode_output::<Address>(&harness.call(encode_empty_call(read)).1),
+            first,
+            "and the setting still holds what the FIRST declaration landed"
+        );
+        harness.set_block_number(epoch_block(2 * ADDRESS_SETTER_TIMELOCK_EPOCHS));
+        assert_eq!(harness.call(encode_empty_call(apply)).0, ExitCode::Ok);
+        assert_eq!(
+            decode_output::<Address>(&harness.call(encode_empty_call(read)).1),
+            second
+        );
+    }
+}
+
+// Both halves of both timelocks are governance-only, and the declaring half still
+// refuses the zero address — which is what lets the zero address serve as the
+// "nothing declared" sentinel.
+#[test]
+fn the_address_timelocks_are_governance_only_on_both_halves() {
+    let owner = Address::with_last_byte(0xa0);
+    let outsider = Address::with_last_byte(0xb0);
+    let mut harness = Harness::new(1_000);
+    assert_eq!(
+        harness.initialize(owner, Vec::new(), Vec::new(), 0),
+        ExitCode::Ok
+    );
+
+    for (declare, apply) in [
+        (SIG_SET_BLEND_RESERVE, SIG_APPLY_BLEND_RESERVE),
+        (SIG_SET_SLASH_FUND_ADDRESS, SIG_APPLY_SLASH_FUND_ADDRESS),
+    ] {
+        harness.set_caller(outsider);
+        assert_revert_selector(
+            harness.call(encode_call(
+                declare,
+                &AddressCommand {
+                    value: Address::with_last_byte(0xee),
+                },
+            )),
+            ERR_ONLY_GOVERNANCE,
+        );
+        assert_revert_selector(harness.call(encode_empty_call(apply)), ERR_ONLY_GOVERNANCE);
+
+        harness.set_caller(GENESIS_GOVERNANCE);
+        let refused = harness.call(encode_call(
+            declare,
+            &AddressCommand {
+                value: Address::ZERO,
+            },
+        ));
+        assert_revert_selector(refused, ERR_ZERO_VALUE);
+        // Still nothing declared, which is the property the zero refusal buys:
+        // the sentinel cannot be reached by a legal declaration.
+        assert_revert_selector(
+            harness.call(encode_empty_call(apply)),
+            ERR_NO_PENDING_CHANGE,
+        );
+    }
 }
