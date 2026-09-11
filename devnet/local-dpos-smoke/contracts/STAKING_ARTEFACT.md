@@ -125,8 +125,12 @@ the zero address, so before this the ONLY writer that could clear the pending pa
 was the apply itself: a rotation declared and then abandoned stayed armed for the
 life of the chain, and a key stolen months later would land it in one block with
 the seven epochs of "public notice" long scrolled past. A declaration now expires
-`ADDRESS_SETTER_APPLY_WINDOW_EPOCHS` (7) after it becomes applicable, and
-governance can withdraw it outright.
+`ADDRESS_SETTER_APPLY_WINDOW_EPOCHS` after it becomes applicable, and
+governance can withdraw it outright. The number is deliberately NOT repeated here:
+since `8468aa82` both timelock constants have one declaration,
+`crates/types/src/staking_protocol.rs:111` and `:124`, and a prose copy in this
+file is a second spelling the compiler cannot see (corrected 2026-09-11,
+`.dpos-study/history/E1-CONTRACT-REVIEW.md` F-20).
 
 Storage: the two `pending_slash_fund_*` fields are REMOVED, which shifts the two
 `pending_blend_reserve_*` fields below them. Acceptable only because nothing is
@@ -329,7 +333,7 @@ in `.dpos-study/history/E1-CONTRACT-2.md` §3.
 
 | point | change |
 |---|---|
-| `applyBlendReserve()` `0x47a9615b` | NEW. `setBlendReserve` now only DECLARES; this lands the declaration once `ADDRESS_SETTER_TIMELOCK_EPOCHS` = 7 epochs have passed. Reverts `TimelockNotElapsed(uint64,uint64)` before the term and `NoPendingChange()` with nothing declared |
+| `applyBlendReserve()` `0x47a9615b` | NEW. `setBlendReserve` now only DECLARES; this lands the declaration once `ADDRESS_SETTER_TIMELOCK_EPOCHS` epochs have passed (the value is declared once, `crates/types/src/staking_protocol.rs:111`). Reverts `TimelockNotElapsed(uint64,uint64)` before the term and `NoPendingChange()` with nothing declared |
 | `applySlashFundAddress()` `0x7bb69756` | NEW, same scheme for `setSlashFundAddress` |
 | `claimValidatorFeeAtEpoch(address,uint64)` `0xadf2a79c` | REMOVED. Its twin `claimDelegatorFeeAtEpoch` went on 2026-09-08; a blob still carrying this one predates this build. `claimValidatorFee(address)` `0xff4794fc` remains and claims up to the current epoch |
 
