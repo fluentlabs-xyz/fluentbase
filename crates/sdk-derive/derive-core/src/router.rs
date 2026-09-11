@@ -619,6 +619,62 @@ mod b {
         assert_eq!(method.function_id(), [0xb6, 0xea, 0x7d, 0x04]);
     }
 
+    /// A `fallback` handler is a route the dispatcher can reach, but it has no selector arm
+    #[test]
+    fn test_fallback_receives_unmatched_selectors() {
+        let impl_block: syn::ItemImpl = parse_quote! {
+            impl<SDK: SharedAPI> App<SDK> {
+                pub fn get_value(&self) -> u32 {
+                    42
+                }
+
+                fn fallback(&self) {}
+            }
+        };
+
+        let router = process_router(quote! { mode = "solidity" }, impl_block.into_token_stream())
+            .expect("Failed to process router");
+
+        assert!(router.has_fallback());
+        assert_eq!(router.available_methods().len(), 1);
+        assert_eq!(
+            router.available_methods()[0].parsed_signature().rust_name(),
+            "get_value"
+        );
+
+        let generated = router
+            .generate()
+            .expect("Failed to generate router code")
+            .to_string()
+            .replace(' ', "");
+        assert!(generated.contains("_=>{self.fallback();}"));
+        assert!(generated.contains("ifinput_length<4{self.fallback();return;}"));
+        assert!(!generated.contains("unsupported method selector"));
+    }
+
+    /// Without a fallback, unknown selectors and short inputs still revert
+    #[test]
+    fn test_unknown_selectors_revert_without_fallback() {
+        let impl_block: syn::ItemImpl = parse_quote! {
+            impl<SDK: SharedAPI> App<SDK> {
+                pub fn get_value(&self) -> u32 {
+                    42
+                }
+            }
+        };
+
+        let router = process_router(quote! { mode = "solidity" }, impl_block.into_token_stream())
+            .expect("Failed to process router");
+
+        assert!(!router.has_fallback());
+        let generated = router
+            .generate()
+            .expect("Failed to generate router code")
+            .to_string();
+        assert!(generated.contains("unsupported method selector"));
+        assert!(generated.contains("insufficient input length for method selector"));
+    }
+
     #[test]
     fn test_trait_router_generation() {
         let impl_block: syn::ItemImpl = parse_quote! {

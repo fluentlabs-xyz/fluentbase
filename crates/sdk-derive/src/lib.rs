@@ -90,8 +90,9 @@ pub fn function_id(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// - **deploy**: Always excluded from routing, used for initialization ```rust,ignore fn
 ///   deploy(&self) { // Deployment logic, called only once } ```
 ///
-/// - **fallback**: Handles unmatched selectors ```rust,ignore fn fallback(&self) { // Called for
-///   unknown function selectors } ```
+/// - **fallback**: Handles unmatched selectors and inputs shorter than a selector; takes `&self`
+///   or `&mut self`, no parameters, no return value ```rust,ignore fn fallback(&self) { // Called
+///   for unknown function selectors } ```
 ///
 /// # Attributes
 ///

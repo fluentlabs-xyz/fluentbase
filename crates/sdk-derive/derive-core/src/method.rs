@@ -494,14 +494,30 @@ impl<'a, T: MethodLike> MethodCollector<'a, T> {
         has_only_self && has_no_return
     }
 
-    /// Handles fallback method validation
-    fn handle_fallback_method(&mut self, method_sig: &Signature, span: Span) {
-        if !self.validate_fallback_signature(method_sig) {
+    /// Validates the fallback signature, recording an error when it is malformed
+    fn validate_fallback_method(&mut self, method_sig: &Signature, span: Span) -> bool {
+        let is_valid = self.validate_fallback_signature(method_sig);
+        if !is_valid {
             self.add_error(
                 span,
                 format!("{} method must have signature 'fn {}(&self)' with no parameters and no return value",
                         FALLBACK_METHOD, FALLBACK_METHOD),
             );
+        }
+        is_valid
+    }
+
+    /// Registers the fallback handler of a router implementation
+    ///
+    /// The handler is kept as a route so the router sees it (`has_fallback`) and dispatches every
+    /// unmatched selector to it. It never gets a selector arm or a codec of its own: the router
+    /// filters it out of `available_methods`.
+    fn handle_fallback_method(&mut self, method: &T)
+    where
+        T: Clone,
+    {
+        if self.validate_fallback_method(method.sig(), method.sig().span()) {
+            self.handle_regular_method(method);
         }
     }
 
@@ -570,7 +586,10 @@ impl Visit<'_> for MethodCollector<'_, TraitItemFn> {
             }
             // Special methods with custom handling
             CONSTRUCTOR_METHOD => self.handle_constructor_method(method),
-            FALLBACK_METHOD => self.handle_fallback_method(&method.sig, method.sig.span()),
+            // A client never dispatches, so the fallback is validated but not registered
+            FALLBACK_METHOD => {
+                self.validate_fallback_method(&method.sig, method.sig.span());
+            }
             // Regular user-defined methods
             _ => self.handle_regular_method(method),
         }
@@ -603,7 +622,7 @@ impl Visit<'_> for MethodCollector<'_, ImplItemFn> {
                     self.handle_constructor_method(method);
                 }
             }
-            FALLBACK_METHOD => self.handle_fallback_method(&method.sig, method.sig.span()),
+            FALLBACK_METHOD => self.handle_fallback_method(method),
             // Regular user-defined methods
             _ => {
                 let is_public = self.is_trait_impl || matches!(method.vis, Visibility::Public(_));
@@ -689,6 +708,71 @@ mod tests {
             fn fallback()
         };
         assert!(!collector.validate_fallback_signature(&invalid_without_self));
+    }
+
+    /// A router implementation keeps its fallback as a route, so the dispatcher can reach it
+    #[test]
+    fn test_fallback_is_registered_for_router_impls() {
+        let resolver = StructResolver::default();
+        let mut collector =
+            MethodCollector::<ImplItemFn>::new_for_impl(Span::call_site(), false, &resolver);
+
+        let impl_block: syn::ItemImpl = parse_quote! {
+            impl<SDK: SharedAPI> App<SDK> {
+                pub fn get_value(&self) -> u32 {
+                    42
+                }
+
+                fn fallback(&self) {}
+            }
+        };
+        visit::visit_item_impl(&mut collector, &impl_block);
+
+        assert!(collector.errors.is_empty());
+        assert_eq!(collector.methods.len(), 2);
+        assert!(collector
+            .methods
+            .iter()
+            .any(|method| method.parsed_signature().is_fallback()));
+    }
+
+    /// A malformed fallback is reported instead of being registered
+    #[test]
+    fn test_malformed_fallback_is_rejected_for_router_impls() {
+        let resolver = StructResolver::default();
+        let mut collector =
+            MethodCollector::<ImplItemFn>::new_for_impl(Span::call_site(), false, &resolver);
+
+        let impl_block: syn::ItemImpl = parse_quote! {
+            impl<SDK: SharedAPI> App<SDK> {
+                fn fallback(&self, data: u64) -> bool {
+                    data > 10
+                }
+            }
+        };
+        visit::visit_item_impl(&mut collector, &impl_block);
+
+        assert_eq!(collector.errors.len(), 1);
+        assert!(collector.methods.is_empty());
+    }
+
+    /// A client trait validates the fallback but never turns it into a callable method
+    #[test]
+    fn test_fallback_is_not_registered_for_client_traits() {
+        let resolver = StructResolver::default();
+        let mut collector = MethodCollector::<TraitItemFn>::new(Span::call_site(), &resolver);
+
+        let trait_def: syn::ItemTrait = parse_quote! {
+            trait ClientAPI {
+                fn get_value(&self) -> u32;
+                fn fallback(&self);
+            }
+        };
+        visit::visit_item_trait(&mut collector, &trait_def);
+
+        assert!(collector.errors.is_empty());
+        assert_eq!(collector.methods.len(), 1);
+        assert!(!collector.methods[0].parsed_signature().is_fallback());
     }
 
     #[test]

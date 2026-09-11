@@ -42,3 +42,29 @@ fn test_client_solidity() {
     let msg: String = SolidityABI::decode(msg_b, 0).unwrap();
     assert_eq!(msg, "Hello World");
 }
+
+/// A selector the example router does not know is dispatched to its `fallback`, which echoes the
+/// calldata; before the fallback was registered the call reverted on "unsupported method selector".
+#[test]
+fn test_router_fallback_receives_unknown_selector() {
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
+    const DEPLOYER_ADDRESS: Address = address!("1231238908230948230948209348203984029834");
+    ctx.add_balance(DEPLOYER_ADDRESS, U256::from(10e18));
+
+    let contract_address = ctx.deploy_evm_tx(
+        DEPLOYER_ADDRESS,
+        FLUENTBASE_EXAMPLES_ROUTER_SOLIDITY.wasm_bytecode.into(),
+    );
+
+    for input in [&hex!("deadbeef0102030405")[..], &hex!("0102")[..]] {
+        let result = ctx.call_evm_tx(
+            DEPLOYER_ADDRESS,
+            contract_address,
+            input.to_vec().into(),
+            None,
+            None,
+        );
+        assert!(result.is_success(), "fallback call failed: {result:?}");
+        assert_eq!(result.output().unwrap().as_ref(), input);
+    }
+}

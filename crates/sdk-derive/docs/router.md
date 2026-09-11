@@ -133,7 +133,9 @@ pub fn constructor(&mut self, owner: Address, initial_supply: U256) {
 
 The `fallback` method handles unmatched function selectors:
 
-- **Signature**: Must be `fn fallback(&self)` with no parameters or return
+- **Signature**: Must be `fn fallback(&self)` or `fn fallback(&mut self)`, with no parameters
+  and no return value
+- **Short inputs**: Calls shorter than a 4-byte selector are routed to the fallback as well
 - **Optional**: Contract reverts on unknown selectors if not defined
 
 ## Notes & Best Practices
