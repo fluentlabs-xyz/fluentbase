@@ -11572,6 +11572,182 @@ fn initialize_refuses_every_malformed_chain_configuration() {
     assert_eq!(harness.initialize_with(command), ExitCode::Ok);
 }
 
+// `initializer::validate` runs before the chain-configuration check and before
+// a single field is written, and its three gates have no second reader that
+// would catch them: the owner and the commission are re-checked only inside
+// `set_validator`, which a genesis with no validators never calls, and the
+// fifth array is checked nowhere else at all — a `zip` silently truncates to
+// the shortest leg, so a genesis one peer key short would install a smaller
+// validator set than it declared and report success.
+#[test]
+fn initialize_refuses_a_malformed_genesis_command() {
+    let owner = Address::with_last_byte(0xa0);
+    let validator = Address::with_last_byte(0x01);
+    let stake = DEFAULT_MIN_VALIDATOR_STAKE;
+
+    type Mangle = fn(&mut InitializeCommand);
+    let cases: [(&str, Mangle, u32); 3] = [
+        (
+            // With no validators to register, `set_validator`'s own zero-owner
+            // refusal is out of reach and this gate is the only one left.
+            "a zero stake owner and nobody to register",
+            |c: &mut InitializeCommand| {
+                c.initial_stake_owner = Address::ZERO;
+                clear_genesis_validators(c);
+            },
+            ERR_ZERO_OWNER,
+        ),
+        (
+            "a commission rate over the ceiling and nobody to register",
+            |c: &mut InitializeCommand| {
+                c.commission_rate = COMMISSION_RATE_MAX + 1;
+                clear_genesis_validators(c);
+            },
+            ERR_BAD_COMMISSION_RATE,
+        ),
+        (
+            "one peer key short of the validators declared",
+            |c: &mut InitializeCommand| {
+                c.peer_pubkeys.pop();
+            },
+            ERR_MALFORMED_INPUT_LENGTH,
+        ),
+    ];
+
+    for (name, mangle, expected) in cases {
+        let mut harness = Harness::new(1_000);
+        harness.set_caller(GENESIS_GOVERNANCE);
+        let mut command = harness.initialize_command(owner, vec![validator], vec![stake], 0);
+        mangle(&mut command);
+        assert_revert_selector(
+            harness.call(encode_args_call(SIG_INITIALIZE, &command)),
+            expected,
+        );
+        assert!(
+            !initializer_storage()
+                .initialized_accessor()
+                .get_checked(&harness.sdk)
+                .unwrap(),
+            "{name}: a refused genesis must leave the contract uninitialized"
+        );
+    }
+}
+
+/// Empties all five per-validator legs together, which is the only way to keep
+/// the arity check satisfied while removing every validator.
+fn clear_genesis_validators(command: &mut InitializeCommand) {
+    command.validators.clear();
+    command.initial_stakes.clear();
+    command.bls_pubkeys_uncompressed.clear();
+    command.bls_pops_uncompressed.clear();
+    command.peer_pubkeys.clear();
+}
+
+// The genesis stake total is summed before anything is written, and the sum is
+// checked rather than saturated. Saturating it would hand `pull_initial_stakes`
+// a number nobody declared — the sponsor would be billed `U256::MAX` for the
+// stakes actually recorded — so the overflow has to be the answer, not a clamp.
+#[test]
+fn an_overflowing_genesis_stake_total_is_an_overflow_and_not_a_clamp() {
+    let owner = Address::with_last_byte(0xa0);
+    let half = U256::MAX / U256::from(2) + U256::from(1);
+    let mut harness = Harness::new(1_000);
+    harness.set_caller(GENESIS_GOVERNANCE);
+    let command = harness.initialize_command(
+        owner,
+        vec![Address::with_last_byte(0x01), Address::with_last_byte(0x02)],
+        vec![half, half],
+        0,
+    );
+    assert_eq!(
+        harness.call(encode_args_call(SIG_INITIALIZE, &command)).0,
+        ExitCode::IntegerOverflow,
+        "the sum overflows, and that is the failure — not the precision refusal \
+         the clamped value would have run into two steps later"
+    );
+    assert!(!initializer_storage()
+        .initialized_accessor()
+        .get_checked(&harness.sdk)
+        .unwrap());
+}
+
+// A genesis that declares no stake must not touch the staking token at all. The
+// amount would be zero, but "transfer zero" is not the same request as "do not
+// call": an ERC-20 is a third party's code, several of them revert on a zero
+// amount, and this call sits inside the one transaction that installs the chain.
+#[test]
+fn a_genesis_with_no_stake_never_calls_the_staking_token() {
+    let owner = Address::with_last_byte(0xa0);
+    let mut harness = Harness::new(1_000);
+    // The token's book is held by somebody else, so a pull naming `owner` as the
+    // source is refused — the call is visible whether or not it would succeed.
+    let funding = install_stipend_token(
+        &harness.sdk,
+        Address::with_last_byte(0xc0),
+        U256::MAX,
+        U256::MAX,
+        U256::ZERO,
+    );
+
+    harness.set_caller(GENESIS_GOVERNANCE);
+    let mut command = harness.initialize_command(owner, vec![], vec![], 0);
+    clear_genesis_validators(&mut command);
+    assert_eq!(harness.initialize_with(command), ExitCode::Ok);
+    assert!(
+        funding.borrow().pulls.is_empty(),
+        "a zero total is not a zero-valued transfer, it is no transfer"
+    );
+}
+
+// The activation block and the epoch interval are one grid, and the setter that
+// moves the interval is the half that can break it on a chain that is already
+// configured. An activation left off the grid shifts every epoch boundary the
+// node derives away from the one the contract derives.
+#[test]
+fn the_interval_setter_refuses_a_value_the_activation_block_is_not_on() {
+    let owner = Address::with_last_byte(0xa0);
+    let mut harness = Harness::new(1_000);
+    assert_eq!(
+        harness.initialize(
+            owner,
+            vec![Address::with_last_byte(0x01)],
+            vec![DEFAULT_MIN_VALIDATOR_STAKE],
+            0
+        ),
+        ExitCode::Ok
+    );
+    // Activation is the initializing block, 1_000. The setter refuses outright
+    // once DPoS is running, so the chain has to still be short of it.
+    harness.set_block_number(900);
+    harness.set_caller(GENESIS_GOVERNANCE);
+
+    assert_revert_selector(
+        harness.call(encode_call(
+            SIG_SET_EPOCH_BLOCK_INTERVAL,
+            &U32Command { value: 300 },
+        )),
+        ERR_UNALIGNED_ACTIVATION_BLOCK,
+    );
+    assert_eq!(
+        chain_config_storage()
+            .epoch_block_interval_accessor()
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        DEFAULT_EPOCH_BLOCK_INTERVAL,
+    );
+
+    // The control: a divisor of the same activation block is accepted.
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_SET_EPOCH_BLOCK_INTERVAL,
+                &U32Command { value: 100 },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+}
+
 // The same gap on the setter side. Eight governance setters refused a value that
 // no test named, so dropping each refusal left the suite green — and unlike a
 // genesis these land on a running chain.
