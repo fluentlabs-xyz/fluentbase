@@ -127,3 +127,109 @@ pub enum ReadError {
     #[error("ChainConfig.getEpochBlockInterval() returned 0 — epoch division undefined")]
     ZeroEpochInterval,
 }
+
+impl ReadError {
+    /// Whether re-issuing the SAME read against the SAME block can legitimately
+    /// answer differently later.
+    ///
+    /// Exactly three variants say yes, and all three are "reth has not put the
+    /// bytes where this read looks *yet*", not "the chain says so":
+    ///
+    /// * [`Self::StateNotMaterialized`] — the header exists, the executed state
+    ///   does not; a pipeline backfill or a re-execution unwind re-materializes
+    ///   it on its own.
+    /// * [`Self::TransientStorage`] — a torn static-file read observed while the
+    ///   persistence thread appends a segment; the append settles sub-second.
+    /// * [`Self::BlockNotFound`] — no header at that hash on this node yet; the
+    ///   block can still arrive.
+    ///
+    /// Everything else is permanent BY CLASS, not by exhaustion: a revert, a
+    /// decode failure, a committee that is out of order / duplicated / below the
+    /// floor, a keyless member, an oversized peer set, a zero epoch interval and
+    /// a [`Self::Backend`] fault are all statements the chain (or this node's
+    /// storage) will repeat verbatim on every retry. A consumer that treats one
+    /// of them as transient turns a fail-loud contract disagreement into an
+    /// invisible retry loop, which is why this is a predicate on the error type
+    /// rather than a judgement each call site re-derives.
+    ///
+    /// Deliberately written as an exhaustive `match` rather than a `matches!`
+    /// with a `_` arm: a new variant must be classified here, not silently
+    /// inherit "permanent".
+    pub fn is_transient(&self) -> bool {
+        match self {
+            Self::StateNotMaterialized { .. }
+            | Self::TransientStorage(_)
+            | Self::BlockNotFound(_) => true,
+            Self::CallReverted(_)
+            | Self::AbiDecode(_)
+            | Self::BlsKey(_)
+            | Self::PeerKey
+            | Self::CommitteeMemberKeyless { .. }
+            | Self::PeerSetTooLarge { .. }
+            | Self::CommitteeOutOfOrder { .. }
+            | Self::CommitteeDuplicatePeerKey { .. }
+            | Self::CommitteeTooSmall { .. }
+            | Self::Backend(_)
+            | Self::ZeroEpochInterval => false,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_primitives::Address;
+
+    #[test]
+    fn only_the_three_not_here_yet_reads_are_transient() {
+        // One variant per class, both ways round: the three "reth has not put
+        // the bytes there yet" shapes retry, and one representative of every
+        // permanent class (revert, decode, key, on-chain invariant, config,
+        // backend) does not.
+        for transient in [
+            ReadError::StateNotMaterialized { hash: B256::ZERO },
+            ReadError::TransientStorage(TORN_RANGE_DISPLAY.into()),
+            ReadError::BlockNotFound(B256::ZERO),
+        ] {
+            assert!(transient.is_transient(), "{transient} must be retryable");
+        }
+
+        for permanent in [
+            ReadError::CallReverted("execution reverted".into()),
+            ReadError::AbiDecode("committee/stakes length mismatch".into()),
+            ReadError::BlsKey("subgroup check".into()),
+            ReadError::PeerKey,
+            ReadError::CommitteeMemberKeyless {
+                epoch: 7,
+                validator: Address::ZERO,
+            },
+            ReadError::PeerSetTooLarge {
+                epoch: 7,
+                size: 99,
+                max: 51,
+            },
+            ReadError::CommitteeOutOfOrder {
+                epoch: 7,
+                position: 2,
+                validator: Address::ZERO,
+            },
+            ReadError::CommitteeDuplicatePeerKey {
+                epoch: 7,
+                position: 2,
+                validator: Address::ZERO,
+            },
+            ReadError::CommitteeTooSmall {
+                epoch: 7,
+                size: 3,
+                min: 4,
+            },
+            ReadError::Backend("no state found".into()),
+            ReadError::ZeroEpochInterval,
+        ] {
+            assert!(
+                !permanent.is_transient(),
+                "{permanent} must NOT be retryable"
+            );
+        }
+    }
+}
