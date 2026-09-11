@@ -285,7 +285,7 @@ fn wire_layout(ty: &str) -> Option<WireLayout> {
             let is_valid = if is_fixed_bytes {
                 (1..=32).contains(&width)
             } else {
-                width % 8 == 0 && (8..=256).contains(&width)
+                width.is_multiple_of(8) && (8..=256).contains(&width)
             };
             is_valid.then_some(WireLayout::Word)
         }
