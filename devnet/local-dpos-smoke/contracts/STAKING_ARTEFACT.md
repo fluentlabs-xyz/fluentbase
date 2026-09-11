@@ -91,7 +91,147 @@ Eleven more joined it on 2026-09-08 (task 1.5):
 `MAX_MIN_VERDICT_DUE_BLOCKS` `0x9b9a11ba`. A blob carrying any of them predates
 the dead-surface removal.
 
-## This build — 2026-09-09 (Э2.1 + Э2.2, the shared-declaration crates)
+## This build — 2026-09-11 (Э1.3 timelock + Э1.7 `claimValidatorFeeAtEpoch` removed)
+
+Rebuilt for two ABI changes made in one session and built ONCE after both, so
+this section covers them together. The intermediate blob — timelock in, the
+removal not yet — was never produced and has no record here; the commit that
+introduced the timelock therefore carries no blob of its own, which is recorded
+in `.dpos-study/history/E1-CONTRACT-2.md` §3.
+
+**Two selectors ADDED, one REMOVED.**
+
+| point | change |
+|---|---|
+| `applyBlendReserve()` `0x47a9615b` | NEW. `setBlendReserve` now only DECLARES; this lands the declaration once `ADDRESS_SETTER_TIMELOCK_EPOCHS` = 7 epochs have passed. Reverts `TimelockNotElapsed(uint64,uint64)` before the term and `NoPendingChange()` with nothing declared |
+| `applySlashFundAddress()` `0x7bb69756` | NEW, same scheme for `setSlashFundAddress` |
+| `claimValidatorFeeAtEpoch(address,uint64)` `0xadf2a79c` | REMOVED. Its twin `claimDelegatorFeeAtEpoch` went on 2026-09-08; a blob still carrying this one predates this build. `claimValidatorFee(address)` `0xff4794fc` remains and claims up to the current epoch |
+
+Two events joined the declaration as well — `BlendReserveDeclared(address,uint64,uint64)`
+topic0 `0x77e01e0a4deae141a7693d3a8b04de45a59ef139760040a697144a8f804995be` and
+`SlashFundAddressDeclared(address,uint64,uint64)` topic0
+`0x8864604f373d82052fe0c00ab760b2f56b7211205a299d0b625af6f7faa497b5`, both indexed
+on the address. They ride ordinary governance transactions, so unlike the six
+close events they DO reach a receipt.
+
+**A node built against an older blob breaks in two directions.** It can no longer
+move `blendReserve` or `slashFundAddress` at all — its `setBlendReserve` now only
+declares, and it has no selector for the apply — and any caller still issuing
+`claimValidatorFeeAtEpoch` gets `UnknownMethod()`. Both are ABI-breaking; nothing
+is deployed, and nets relaunch from a fresh genesis.
+
+Storage: four fields APPENDED to `ChainConfigStorage` (`pending_slash_fund_address`,
+`pending_slash_fund_epoch`, `pending_blend_reserve`, `pending_blend_reserve_epoch`).
+Appended, so no existing slot moved.
+
+- repository HEAD at build time: `b237a81e`, working tree DIRTY. The dirty
+  contract files at build time were `src/consts.rs`, `src/lib.rs`, `src/staking.rs`,
+  `src/tests.rs`, `src/types.rs` — the `claimValidatorFeeAtEpoch` removal, which
+  the following commit records. Also dirty and NOT part of this artefact: another
+  session's work under `crates/dpos/` and `crates/node/`, and
+  `.dpos-study/history/E4-ORCHESTRATOR.md`.
+- SHA-256 of every source file in `contracts/staking/src` as built. Reproduce
+  with, from `contracts/staking`: `find src -name '*.rs' | sort | xargs sha256sum`
+
+      a710d7e5c7cbd7cbe84e4594b0840ad5992e68a3d4b7a24812f22222d6a444f4  src/bls.rs
+      981ef0758cfa5f010be2b6355ec443c16ebaf0dcbd9b06b17bf594b80b5d4251  src/config.rs      *
+      c8e3ab9e5eaee4a28da6d4cd512cbb247e35d566c849221a83dda56c117ae6da  src/consensus.rs   *
+      5176d9aa68bbcc12b813bc64fc3edd427bbfb65ee646f14ed457b297582955fb  src/consts.rs      *
+      78088bf195a248bb1f4f2a84b8803f3f29d7addb5bc98a8aa6eebf58377f87cb  src/events.rs      *
+      3f69dfe02d27be45e6b723e3f128b7049d74abe5c1b6dafac82b5af47d8b5576  src/evidence.rs
+      5f587627e81d7f38e52cfd974bf6c234de84f93925dd174f946b974dfac0987b  src/initializer.rs
+      3f89c0ab5d54f076d40d463e41245ebc88c4eafc72f29af12514b0281b42f105  src/lib.rs         *
+      46e17a0600efaba7d52f0b57f68f1fe75985c3a5f38d47fe7d6a92fc0bdba1a8  src/liveness.rs
+      d106df9221d023e14adbec93ad329685208556ea0d1eb3946b4fde6bcad9b90f  src/math.rs
+      406e05a7d741d1de884b1b360ac3512c1e539ea9ff6504f001a438a544246654  src/staking.rs     *
+      e0cfcd5a6f37e85a6887bc566e48999138626f6451d2a7a82c49af59e22ffb5e  src/storage.rs     *
+      97a33b4e8a5b83768476102953b8006ae39e0a0efbbccddab558d16af6619c9b  src/tests.rs       *
+      2fee9b56c3365c7d86305bbebfc435484c7dfc1ead99bff32c1f4c233189b257  src/types.rs       *
+      a76fa8763d1e7e9279b488295d53e02476990890806ff9b77e8ce77a02433327  src/util.rs
+
+  Nine starred files carry this session's whole contract-side delta — П1 through
+  П7, not only the two ABI changes; `src/tests.rs` is `#[cfg(test)]` and enters no
+  artefact. The blob also depends on three inputs OUTSIDE this directory that no
+  digest here covers: `crates/types/src/staking_protocol.rs`,
+  `crates/staking-abi/src/lib.rs` (which this build DOES move — two calls and two
+  events), and `contracts/staking/Cargo.toml`.
+- `fluentbase_contracts_staking.wasm` — 405,682 bytes (was 401,778, +3,904)
+  `53ce602934dfe0d18958a0322685de3c1bbc5a4bc36926b7afee9778b55a2f43`
+- `fluentbase_contracts_staking.rwasm` — 2,800,125 bytes (was 2,775,337, +24,788)
+  `620b79bb98ae6d169b1b3c5ab031fdd0f327065a9e12d3f1c2fb5f8493cd2b05`
+- Built with `cargo clean -p fluentbase-contracts` first, per the trap recorded
+  under the 2026-09-08 (first) section. NOTE: on this tree that package id does
+  not resolve (`did not match any packages`) and the clean was a no-op; the build
+  was a fresh one anyway, because `CARGO_TARGET_DIR` was a directory this session
+  created and `contracts/staking/src` had moved in every earlier step.
+
+### Selector scan of this blob
+
+Run from this directory; all three groups must hold. Two names joined the
+`must_be_1` group and one moved from it to `must_be_0`.
+
+    python3 - <<'EOF'
+    import pathlib
+    b = pathlib.Path("fluentbase_contracts_staking.rwasm").read_bytes()
+    must_be_1 = {"recordProduction":0x1752910e, "commitEpochCommittee":0xe505b249,
+                 "slashEquivocation":0xdc6fb3f2, "producedAt":0x91c7d453,
+                 "initialize":0xfecaf0f1, "getValidators":0xb7ab4db5,
+                 "isValidatorActive":0x42ad55ac, "getValidatorStatus":0xa310624f,
+                 "getEpochRewards":0x54c3e84b, "getDelegatorFee":0x52b7bea2,
+                 "claimDelegatorFee":0x426594b1,
+                 "redelegateDelegatorFee":0x8ecb3fc9, "getRegistryWithKeys":0xd96cbd7b,
+                 "getValidatorFee":0x457179fd,
+                 "nextEpochToCommit":0xc06a82de,
+                 "getEpochCommitteeWithStakes":0xa4d160c1, "getDkgQual":0x2660899f,
+                 "getEpochBlockInterval":0x346c90a8, "getDposActivationBlock":0xa2a50528,
+                 "getActiveValidatorsLength":0x32cc6f08, "getUndelegatePeriod":0x5e7b72ad,
+                 "slashEquivocationNotarize":0xe28d2f63,
+                 "slashEquivocationFinalize":0xadd07a3e,
+                 "slashEquivocationNullifyFinalize":0xa10827e9,
+                 # added 2026-09-11 with the address timelocks
+                 "applyBlendReserve":0x47a9615b,
+                 "applySlashFundAddress":0x7bb69756}
+    must_be_0 = {"changeValidatorOwner":0x0052c9e1, "getPendingValidatorFee":0xc6fb9065,
+                 "getPendingDelegatorFee":0xc2fd58fc, "claimDelegatorFeeAtEpoch":0xfe38ebef,
+                 "calcAvailableForRedelegateAmount":0x5ef9e8c6,
+                 "getValidatorsWithKeys":0xd41c52eb, "MAX_ACTIVE_VALIDATORS":0x5d887462,
+                 "MAX_BLEND_STIPEND_PER_EPOCH":0x2bc2fec4,
+                 "DEFAULT_MIN_VERDICT_DUE_BLOCKS":0x6fd3afb7,
+                 "DEFAULT_EXCLUSION_BACKOFF_CAP":0xd4c30c1a,
+                 "MAX_MIN_VERDICT_DUE_BLOCKS":0x9b9a11ba,
+                 "getValidatorsWithKeysAt":0x7cfba9f3, "committeeSelectionEpoch":0x8bd070e4,
+                 "getActiveValidatorsLengthAt":0xd9b083ba, "settleEpochStipend":0xa631344a,
+                 "settleEpochStipendFrom":0x92d321ab, "getBlsVerifier":0xc6b904ad,
+                 "setBlsVerifier":0x466ae541, "commitEpochBeaconKey":0x6ece9cb1,
+                 "getEpochBeaconKey":0xc9adaf5c,
+                 # moved here 2026-09-11
+                 "claimValidatorFeeAtEpoch":0xadf2a79c}
+    for n,s in must_be_1.items(): assert b.count(s.to_bytes(4,"little"))==1, n
+    for n,s in must_be_0.items(): assert b.count(s.to_bytes(4,"little"))==0, n
+    print("selector scan OK")
+    EOF
+
+Run against the blob recorded above: **`selector scan OK`**.
+`selectors_match_the_deployed_artefact_scan` (`crates/staking-abi`) pins the same
+two new hex values from the other side, and `event_topics_are_pinned` beside it
+pins the two new topic0s; the contract asserts the same topics back through
+`close_event_topics_match_the_shared_abi`.
+
+### Tests
+
+- `cargo test` in `contracts/staking`: **190 passed, 0 failed**; **191** with
+  `--features devnet-views`. `cargo clippy --all-targets -- -D warnings` and
+  `cargo fmt --check`: clean. The baseline this session started from was 175/176.
+- `cargo test -p fluentbase-node --lib`: **57 passed, 0 failed**.
+  `cargo test -p fluentbase-staking-reader`: **58 passed, 0 failed** (plus one
+  ignored doc-test binary).
+- `python3 devnet/local-dpos-smoke/scripts/xp/agreement_check.py`:
+  **15 checks, 0 disagree, 0 unread**. G3 now counts **26** shared declarations,
+  up from 24.
+- `cargo test -p fluentbase-e2e --release staking`: see the journal
+  `.dpos-study/history/E1-CONTRACT-2.md` §2 П7 for the run and its result.
+
+## Previous build — 2026-09-09 (Э2.1 + Э2.2, the shared-declaration crates)
 
 Rebuilt because the contract now takes its selectors and its protocol limits from
 two crates it shares with the node (`.dpos-study/PLAN.md` Э2.1 / Э2.2), instead
@@ -234,7 +374,7 @@ chain state:
 
 | entry point | what changed |
 |---|---|
-| `claimValidatorFee(address)`, `claimValidatorFeeAtEpoch(address,uint64)` | revert `ValidatorTombstoned(address)` for a tombstoned validator instead of paying |
+| `claimValidatorFee(address)`, `claimValidatorFeeAtEpoch(address,uint64)` | revert `ValidatorTombstoned(address)` for a tombstoned validator instead of paying — the second of the two was REMOVED on 2026-09-11, see the top section |
 | `getValidatorFee(address)` | answers zero for one, so the view agrees with the claim |
 | `getDelegatorFee(address,address)`, `claimDelegatorFee(address)` | epoch E's reward is divided by the stake held at E−2, not at E, and charged `min(rate[E−2], rate[E])` |
 

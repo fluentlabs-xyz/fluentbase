@@ -159,9 +159,6 @@ pub const SIG_RECORD_PRODUCTION: u32 = sig::<abi::recordProductionCall>();
 pub const SIG_GET_VALIDATOR_FEE: u32 = derive_keccak256_id!("getValidatorFee(address)");
 // 0xff4794fc
 pub const SIG_CLAIM_VALIDATOR_FEE: u32 = sig::<abi::claimValidatorFeeCall>();
-// 0xadf2a79c
-pub const SIG_CLAIM_VALIDATOR_FEE_AT_EPOCH: u32 =
-    derive_keccak256_id!("claimValidatorFeeAtEpoch(address,uint64)");
 // 0x52b7bea2
 pub const SIG_GET_DELEGATOR_FEE: u32 = derive_keccak256_id!("getDelegatorFee(address,address)");
 // 0x426594b1
@@ -249,7 +246,6 @@ pub const ERR_BLEND_STIPEND_PER_EPOCH_TOO_HIGH: u32 =
     derive_keccak256_id!("BlendStipendPerEpochTooHigh(uint256,uint256)");
 pub const ERR_MIN_VERDICT_DUE_BLOCKS_TOO_HIGH: u32 =
     derive_keccak256_id!("MinVerdictDueBlocksTooHigh(uint32,uint32)");
-pub const ERR_INVALID_CLAIM_EPOCH: u32 = derive_keccak256_id!("InvalidClaimEpoch()");
 pub const ERR_CONSENSUS_KEYS_ALREADY_SET: u32 =
     derive_keccak256_id!("ConsensusKeysAlreadySet(address)");
 pub const ERR_PEER_PUBKEY_ALREADY_IN_USE: u32 =

@@ -63,12 +63,6 @@ pub struct ValidatorBlockCommand {
 }
 
 #[derive(Default, Debug, Codec)]
-pub struct ValidatorEpochCommand {
-    pub validator: Address,
-    pub before_epoch: u64,
-}
-
-#[derive(Default, Debug, Codec)]
 pub struct RegisterValidatorCommand {
     pub validator: Address,
     pub commission_rate: u16,

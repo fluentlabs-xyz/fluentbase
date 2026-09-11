@@ -12,7 +12,7 @@ use crate::{
         AddressAmountCommand, AddressCommand, AddressU16Command, BoolCommand, ConsensusKeys,
         EpochSignerCommand, EquivocationCommand, InitializeCommand, RecordProductionCommand,
         RegisterValidatorCommand, U256Command, U32Command, U64Command, ValidatorBlockCommand,
-        ValidatorDelegatorCommand, ValidatorEpochCommand,
+        ValidatorDelegatorCommand,
     },
 };
 use fluentbase_sdk::{
@@ -1331,7 +1331,6 @@ fn derived_selectors_match_independent_hex_pins() {
         (SIG_GET_BLEND_RESERVE, 0x37dff538),
         (SIG_SET_BLEND_RESERVE, 0x7899ae8f),
         (SIG_GET_VALIDATOR_FEE, 0x457179fd),
-        (SIG_CLAIM_VALIDATOR_FEE_AT_EPOCH, 0xadf2a79c),
         (SIG_GET_DELEGATOR_FEE, 0x52b7bea2),
         (SIG_GET_DELEGATOR_PRINCIPAL, 0xa789083d),
         (SIG_WITHDRAW_DELEGATOR_PRINCIPAL, 0xe75f359c),
@@ -5687,16 +5686,6 @@ fn reward_claims_are_bounded_to_one_thousand_epochs() {
             .get_checked(&harness.sdk)
             .unwrap(),
         MAX_EPOCHS_PER_CLAIM
-    );
-    assert_revert_selector(
-        harness.call(encode_call(
-            SIG_CLAIM_VALIDATOR_FEE_AT_EPOCH,
-            &ValidatorEpochCommand {
-                validator,
-                before_epoch: MAX_EPOCHS_PER_CLAIM + 2,
-            },
-        )),
-        ERR_INVALID_CLAIM_EPOCH,
     );
 }
 
@@ -10433,19 +10422,19 @@ fn a_commission_rise_misses_two_epochs_while_a_cut_lands_on_the_next() {
                 .0,
             ExitCode::Ok
         );
-        harness.set_block_number(1_000 + DEFAULT_EPOCH_BLOCK_INTERVAL * 7);
-
+        // One epoch at a time. `claimValidatorFeeAtEpoch` used to carry the
+        // window as an argument; with it deleted the window is the block the
+        // claim runs at, and `claimValidatorFee` walks up to the current epoch —
+        // which is the same walk, driven from the clock instead of from calldata.
         for (index, rate) in expected.into_iter().enumerate() {
             let epoch = 3 + index as u64;
+            harness.set_block_number(1_000 + DEFAULT_EPOCH_BLOCK_INTERVAL * (epoch + 1));
             let paid = reserve_pulls_during(&mut harness, |harness| {
                 assert_eq!(
                     harness
                         .call(encode_call(
-                            SIG_CLAIM_VALIDATOR_FEE_AT_EPOCH,
-                            &ValidatorEpochCommand {
-                                validator,
-                                before_epoch: epoch + 1,
-                            },
+                            SIG_CLAIM_VALIDATOR_FEE,
+                            &AddressCommand { value: validator },
                         ))
                         .0,
                     ExitCode::Ok

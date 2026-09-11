@@ -108,7 +108,6 @@ pub fn main_entry<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
         SIG_UNDELEGATE => staking::undelegate(sdk, params),
         SIG_GET_VALIDATOR_FEE => staking::get_validator_fee(sdk, params),
         SIG_CLAIM_VALIDATOR_FEE => staking::claim_validator_fee(sdk, params),
-        SIG_CLAIM_VALIDATOR_FEE_AT_EPOCH => staking::claim_validator_fee_at_epoch(sdk, params),
         SIG_GET_DELEGATOR_FEE => staking::get_delegator_fee(sdk, params),
         SIG_CLAIM_DELEGATOR_FEE => staking::claim_delegator_fee(sdk, params),
         SIG_GET_DELEGATOR_PRINCIPAL => staking::get_delegator_principal(sdk, params),

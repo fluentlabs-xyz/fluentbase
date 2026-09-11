@@ -7,7 +7,7 @@ use crate::{
     storage::{chain_config_storage, consensus_storage, staking_storage, ValidatorSnapshotStorage},
     types::{
         AddressAmountCommand, AddressCommand, AddressU16Command, RegisterValidatorCommand,
-        U64Command, ValidatorBlockCommand, ValidatorDelegatorCommand, ValidatorEpochCommand,
+        U64Command, ValidatorBlockCommand, ValidatorDelegatorCommand,
     },
     util::{
         current_epoch, current_epoch_at_block, decode, decode_args, ensure_governance,
@@ -1796,23 +1796,6 @@ pub fn claim_validator_fee<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Resul
     ensure_initialized(sdk)?;
     let validator = decode::<AddressCommand>(input)?.value;
     claim_validator_before(sdk, validator, current_epoch(sdk)?)
-}
-
-/// Public handler `0xadf2a79c` (`claimValidatorFeeAtEpoch`).
-///
-/// Claims validator-owner rewards through the requested epoch.
-pub fn claim_validator_fee_at_epoch<SDK: SharedAPI>(
-    sdk: &mut SDK,
-    input: &[u8],
-) -> Result<(), ExitCode> {
-    ensure_non_payable(sdk)?;
-    ensure_mutable(sdk)?;
-    ensure_initialized(sdk)?;
-    let command = decode::<ValidatorEpochCommand>(input)?;
-    if command.before_epoch > current_epoch(sdk)? {
-        return revert(sdk, ERR_INVALID_CLAIM_EPOCH);
-    }
-    claim_validator_before(sdk, command.validator, command.before_epoch)
 }
 
 /// Public handler `0x52b7bea2` (`getDelegatorFee`).
