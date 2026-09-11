@@ -1775,3 +1775,91 @@ mod eip8037_state_gas_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod static_call_frame_tests {
+    use super::*;
+    use fluentbase_sdk::{
+        syscall::{SYSCALL_ID_CALL, SYSCALL_ID_CALL_CODE},
+        FUEL_DENOM_RATE,
+    };
+    use revm::{
+        handler::system_interruption::SystemInterruptionInputs,
+        interpreter::{CallScheme, CallValue, FrameInput},
+    };
+
+    const CONTRACT: Address = address!("2222222222222222222222222222222222222222");
+    const CALLEE: Address = address!("3333333333333333333333333333333333333333");
+    const GAS_LIMIT: u64 = 1_000_000;
+
+    /// Raises a CALL-family syscall from a frame executing `CONTRACT` and returns what the host
+    /// decided to do next.
+    fn execute_call_syscall(code_hash: B256, is_static: bool, value: U256) -> NextAction {
+        let mut ctx: RwasmContext<InMemoryDB> =
+            RwasmContext::new(InMemoryDB::default(), RwasmSpecId::PRAGUE);
+        ctx.cfg = CfgEnv::new_with_spec(RwasmSpecId::PRAGUE);
+        ctx.block = BlockEnv::default();
+        ctx.tx = TxEnv::default();
+
+        let mut frame = RwasmFrame::default();
+        frame.interpreter.input.target_address = CONTRACT;
+        frame.interpreter.runtime_flag.is_static = is_static;
+        frame.interpreter.gas = Gas::new(GAS_LIMIT);
+
+        let mut input = vec![0u8; 52];
+        input[0..20].copy_from_slice(CALLEE.as_slice());
+        input[20..52].copy_from_slice(&value.to_le_bytes::<32>());
+        let mr = ForwardInputMemoryReader(input.into());
+
+        let interruption_inputs = SystemInterruptionInputs {
+            call_id: 0,
+            code_hash,
+            input: 0..mr.0.len(),
+            fuel_limit: GAS_LIMIT * FUEL_DENOM_RATE,
+            state: STATE_MAIN,
+            fuel16_ptr: 0,
+            gas: Gas::new(GAS_LIMIT),
+            preloaded_slot_costs: None,
+        };
+        execute_rwasm_interruption::<_, NoOpInspector>(
+            &mut frame,
+            None,
+            &mut ctx,
+            interruption_inputs,
+            mr,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn call_code_with_value_inside_static_frame_opens_a_frame() {
+        // CALLCODE moves the value from the caller to itself, so EIP-214 does not forbid it inside
+        // a static context the way it forbids CALL with value.
+        let NextAction::NewFrame(FrameInput::Call(inputs)) =
+            execute_call_syscall(SYSCALL_ID_CALL_CODE, true, U256::ONE)
+        else {
+            panic!("CALLCODE with value must open a call frame inside a static context");
+        };
+        assert_eq!(inputs.scheme, CallScheme::CallCode);
+        assert!(
+            inputs.is_static,
+            "the static flag must propagate into the callee frame"
+        );
+        assert_eq!(inputs.value, CallValue::Transfer(U256::ONE));
+        assert_eq!(inputs.target_address, CONTRACT);
+        assert_eq!(inputs.caller, CONTRACT);
+        assert_eq!(inputs.bytecode_address, CALLEE);
+    }
+
+    #[test]
+    fn call_with_value_inside_static_frame_halts() {
+        let NextAction::Return(result) = execute_call_syscall(SYSCALL_ID_CALL, true, U256::ONE)
+        else {
+            panic!("CALL with value must halt inside a static context");
+        };
+        assert_eq!(
+            result.result,
+            InstructionResult::StateChangeDuringStaticCall
+        );
+    }
+}
