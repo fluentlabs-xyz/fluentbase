@@ -168,6 +168,27 @@ impl FinalizedCursor {
     pub fn advance(&self, height: u64) {
         self.cursor.fetch_max(height, Ordering::Release);
     }
+
+    /// The cursor itself — the highest height known
+    /// finalized-without-a-possible-sibling.
+    ///
+    /// Added for [`crate::committee`], which takes this height as its read
+    /// ANCHOR rather than keeping a second ordering-finalized cursor of its own.
+    /// The two are the same number: every site that raises the executor's
+    /// `ordering_finalized` raises this cursor with the SAME value in the same
+    /// arm — the `init` seed (`executor.rs:1085` / `:1149`, both
+    /// `last_consensus_finalized_height`), the re-jump landing (`:2441` /
+    /// `:2451`, both `landing_h`) and the finalized derive (`:3291` / `:3566`,
+    /// both `height` inside one `try_derive`). Where the two can differ is
+    /// strictly inside that last body: `ordering_finalized` is raised at `:3291`
+    /// and the cursor only at `:3566`, so between them — and on the fault arms
+    /// that return in between, all of which take the executor down — this cursor
+    /// LAGS by at most one derive. Lagging is the safe direction for an anchor:
+    /// it reads a committee at a strictly older finalized height, never at a
+    /// height the node has not finalized.
+    pub fn height(&self) -> u64 {
+        self.cursor.load(Ordering::Acquire)
+    }
 }
 
 /// Ordering-assembly: pick txs for height N against executed state plus the
