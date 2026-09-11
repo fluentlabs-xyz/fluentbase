@@ -163,6 +163,8 @@ Important notes:
 
 - Releases should only be created from the `main` branch
 - Pushing a version tag (e.g., `v1.2.3`) to the `main` branch will automatically trigger the publish workflow
+- The publish workflow can also be dispatched by hand. It is a dry run by default; switching `dry_run`
+  off publishes for real and is accepted only on the canonical stable tag ref
 - Ensure all changes are merged to `main` before creating a release
 
 1. **Switch to main and update**
