@@ -82,6 +82,8 @@ jobs:
     permissions:
       contents: read
       packages: read
+      # `gh attestation verify` reads the builder image's provenance attestation.
+      attestations: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
@@ -148,6 +150,33 @@ jobs:
           done
           echo "Builder image is unavailable: $IMAGE"
           exit 1
+
+      - name: Verify builder image provenance
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        # The digest above is whatever the registry served for a mutable tag. Before anything is
+        # compiled inside the image, require a provenance attestation signed by this repository's
+        # build-docker workflow for exactly that digest, built from the commit being released.
+        # A substituted image, or one built from another commit, fails here.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE_DIGEST: ${{ steps.build_image.outputs.digest }}
+          RELEASE_COMMIT: ${{ github.sha }}
+          SIGNER_WORKFLOW: ${{ github.repository }}/.github/workflows/build-docker.yml
+        run: |
+          set -euo pipefail
+          gh attestation verify "oci://${IMAGE_DIGEST}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --signer-workflow "${SIGNER_WORKFLOW}" \
+            --format json > /tmp/builder-attestation.json
+          built_from="$(jq -r '
+            [.[] | .verificationResult.statement.predicate.buildDefinition.resolvedDependencies[]?
+                   | .digest.gitCommit // empty] | first // ""
+          ' /tmp/builder-attestation.json)"
+          if [[ "$built_from" != "$RELEASE_COMMIT" ]]; then
+            echo "Builder image ${IMAGE_DIGEST} was attested for commit '${built_from}', not the release commit ${RELEASE_COMMIT}" >&2
+            exit 1
+          fi
+          echo "Builder image ${IMAGE_DIGEST} attested by ${SIGNER_WORKFLOW} at ${RELEASE_COMMIT}"
 
       - name: Install wasm32 target
         run: rustup target add wasm32-unknown-unknown

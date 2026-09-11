@@ -262,7 +262,7 @@ fluentbase
 ├── docs/         how execution actually works, for contributors and auditors
 ├── flips/        Fluent Improvement Proposals
 ├── audits/       internal and external security audit reports
-├── docker/       node, build, cross and reproducible Dockerfiles
+├── docker/       node, build and cross Dockerfiles
 └── scripts/      genesis reproduction, ABI generation, contract verification
 ```
 
@@ -341,8 +341,10 @@ Versions follow `<stage>.<major>.<minor>`.
 - **minor** covers everything that leaves genesis untouched: SDK fixes, docs, tooling.
 
 Tagged stable releases publish the SDK crates to crates.io, ship signed genesis assets and node
-binaries on GitHub Releases, and build a multi-arch Docker image. The
-[`reproducible`](docker/Dockerfile.reproducible) build lets anyone rebuild the node bit-for-bit.
+binaries on GitHub Releases, and build a multi-arch Docker image. Genesis is compiled inside the
+[`fluentbase-build`](docker/Dockerfile.build) image, whose digest the release pipeline verifies
+against a provenance attestation from `build-docker.yml` before building, and the release
+workflow builds it twice and compares the hashes.
 
 ---
 

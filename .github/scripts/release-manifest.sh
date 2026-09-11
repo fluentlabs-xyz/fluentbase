@@ -181,6 +181,7 @@ verify_manifest() {
 import hashlib
 import json
 import pathlib
+import re
 import sys
 
 manifest = pathlib.Path(sys.argv[1])
@@ -206,8 +207,15 @@ check_file(data["sbom"], "sbom")
 
 if not data.get("source", {}).get("commit"):
     errors.append("source commit is missing")
-if data.get("builder", {}).get("image") and not data.get("builder", {}).get("digest"):
+builder_digest = data.get("builder", {}).get("digest") or ""
+if data.get("builder", {}).get("image") and not builder_digest:
     errors.append("builder image is set but digest/id is missing")
+if data.get("builder", {}).get("image") and builder_digest and not re.fullmatch(
+    r"[^@\s]+@sha256:[0-9a-f]{64}|sha256:[0-9a-f]{64}", builder_digest
+):
+    errors.append(
+        "builder digest %r is not a registry manifest digest (name@sha256:<64 hex>)" % builder_digest
+    )
 if not data.get("toolchain", {}).get("rustc"):
     errors.append("rustc version is missing")
 
