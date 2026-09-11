@@ -101,4 +101,3 @@ debug-print = [
     # "rwasm/debug-print",
 ]
 wasmtime = ["fluentbase-runtime/wasmtime", "rwasm/wasmtime"]
-eip1559-full-compatibility = []

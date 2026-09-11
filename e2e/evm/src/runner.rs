@@ -16,7 +16,7 @@ use revm::{
     bytecode::Bytecode,
     context::{
         result::{EVMError, ExecutionResult, HaltReason, InvalidTransaction, Output},
-        ContextTr,
+        BlockEnv, ContextTr, Transaction, TxEnv,
     },
     database::{bal::EvmDatabaseError, EmptyDB, InMemoryDB, State, StateBuilder},
     handler::{EthPrecompiles, MainnetContext},
@@ -76,6 +76,40 @@ pub enum TestErrorKind {
     Panic,
     #[error("missing account {address}")]
     MissingAccount { address: Address },
+    #[error("coinbase credit mismatch for {coinbase}: got {got}, expected {expected}")]
+    CoinbaseCreditMismatch {
+        coinbase: Address,
+        got: U256,
+        expected: U256,
+    },
+}
+
+/// What the block beneficiary must hold after a fixture transaction.
+///
+/// Fixtures drop the fee manager (the coinbase on every Fluent network) from their partial
+/// state, so its credit was never asserted. It is computed here instead: the beneficiary
+/// receives `gas_used * effective_gas_price` in full, the chain's rule (no EIP-1559 burn).
+#[derive(Clone, Copy, Debug)]
+struct CoinbaseExpectation {
+    coinbase: Address,
+    pre_balance: U256,
+    effective_gas_price: u128,
+}
+
+impl CoinbaseExpectation {
+    /// `None` when the beneficiary also sends or receives the transaction, because then its
+    /// balance moves for reasons other than the fee credit.
+    fn for_transaction(pre_balance: U256, block_env: &BlockEnv, tx_env: &TxEnv) -> Option<Self> {
+        let coinbase = block_env.beneficiary;
+        if tx_env.caller == coinbase || tx_env.kind.to() == Some(&coinbase) {
+            return None;
+        }
+        Some(Self {
+            coinbase,
+            pre_balance,
+            effective_gas_price: tx_env.effective_gas_price(block_env.basefee as u128),
+        })
+    }
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -716,6 +750,7 @@ fn check_fluent_execution(
     >,
     db: &mut State<EmptyDB>,
     spec: SpecId,
+    coinbase: Option<CoinbaseExpectation>,
     print_json_outcome: bool,
 ) -> Result<(), TestErrorKind> {
     let validation = compute_test_roots(exec_result, db);
@@ -793,6 +828,29 @@ fn check_fluent_execution(
         for (sk, sv) in &account_should_be.storage {
             let actual_value = db.storage(*k, *sk).unwrap();
             assert_eq!(actual_value, *sv);
+        }
+    }
+
+    // Validate the fee credit of the block beneficiary. A fixture that lists the coinbase in its
+    // expected state already pins the exact balance above.
+    if let (Ok(result), Some(expectation)) = (exec_result, coinbase) {
+        if !test.state.contains_key(&expectation.coinbase) {
+            let expected = expectation.pre_balance
+                + U256::from(result.gas_used()) * U256::from(expectation.effective_gas_price);
+            let got = db
+                .load_cache_account(expectation.coinbase)
+                .ok()
+                .and_then(|account| account.account.as_ref().map(|plain| plain.info.balance))
+                .unwrap_or_default();
+            if got != expected {
+                let error = TestErrorKind::CoinbaseCreditMismatch {
+                    coinbase: expectation.coinbase,
+                    got,
+                    expected,
+                };
+                print_json(Some(&error));
+                return Err(error);
+            }
         }
     }
 
@@ -1016,7 +1074,8 @@ pub fn execute_evm_test_suite(
                     let mut evm2 = RwasmContext::new(fluent_state, spec_id)
                         .with_cfg(cfg_env.clone())
                         .with_block(block_env.clone())
-                        .build_rwasm_with_inspector(TraceInspector::new());
+                        .build_rwasm_with_inspector(TraceInspector::new())
+                        .with_base_fee_burn(true);
                     evm2.0.cfg.legacy_bytecode_enabled = false;
                     let result_fluent = evm2.inspect_tx_commit(tx_env.clone());
                     if cfg!(feature = "debug-print") {
@@ -1062,7 +1121,8 @@ pub fn execute_evm_test_suite(
                     let mut evm2 = RwasmContext::new(fluent_state, spec_id)
                         .with_cfg(cfg_env.clone())
                         .with_block(block_env.clone())
-                        .build_rwasm();
+                        .build_rwasm()
+                        .with_base_fee_burn(true);
                     evm2.0.cfg.legacy_bytecode_enabled = false;
                     let start = Instant::now();
                     let result_fluent = evm2.transact_commit(tx_env.clone());
@@ -1221,6 +1281,13 @@ pub fn execute_fluent_test_suite(
                 }
                 fill_tx_env(&mut tx_env, &unit.transaction, &test);
                 tx_env.chain_id = Some(cfg_env.chain_id);
+                let coinbase_pre_balance = unit
+                    .pre
+                    .get(&block_env.beneficiary)
+                    .map(|account| account.balance)
+                    .unwrap_or_default();
+                let coinbase =
+                    CoinbaseExpectation::for_transaction(coinbase_pre_balance, &block_env, &tx_env);
 
                 let cache = cache_state.clone();
                 // cache.set_state_clear_flag(spec_id.is_enabled_in(SpecId::SPURIOUS_DRAGON));
@@ -1246,6 +1313,7 @@ pub fn execute_fluent_test_suite(
                         &result_fluent,
                         evm.0.db_mut(),
                         spec_id,
+                        coinbase,
                         print_json_outcome,
                     );
                     output
@@ -1267,6 +1335,7 @@ pub fn execute_fluent_test_suite(
                         &result,
                         evm.0.db_mut(),
                         spec_id,
+                        coinbase,
                         print_json_outcome,
                     );
                     if cfg!(feature = "debug-print") {

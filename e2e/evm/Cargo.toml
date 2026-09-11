@@ -11,7 +11,7 @@ fluentbase-runtime = { path = "../../crates/runtime" }
 fluentbase-evm = { path = "../../crates/evm" }
 fluentbase-sdk = { path = "../../crates/sdk" }
 fluentbase-genesis = { path = "../../crates/genesis", default-features = false }
-fluentbase-revm = { path = "../../crates/revm", features = ["eip1559-full-compatibility"] }
+fluentbase-revm = { path = "../../crates/revm" }
 
 revm = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "v107-patched", default-features = false, features = ["std", "serde-json", "serde"] }
 revm-statetest-types = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "v107-patched", default-features = false }
