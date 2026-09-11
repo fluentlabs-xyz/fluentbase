@@ -177,35 +177,12 @@ pub(crate) fn store_consensus_keys<SDK: SharedAPI>(
     if !keys.peer_pubkey_accessor().get_checked(sdk)?.is_zero() {
         return revert_with(sdk, ERR_CONSENSUS_KEYS_ALREADY_SET, &validator);
     }
-    // Duplicates the check `verify_consensus_keys` already made, and is
-    // UNREACHABLE today: nothing runs between the two that could claim the key.
-    // It used to be reachable — the verifier was an external contract and could
-    // reenter — and that reason left with the external call. Kept as a
-    // belt-and-braces guard on the write itself rather than deleted, because it
-    // is the last thing standing between a future caller that skips
-    // `verify_consensus_keys` and a silently overwritten owner. No test reaches
-    // it, and none can.
-    if !consensus
-        .peer_pubkey_owner_accessor()
-        .entry(verified.peer_pubkey)
-        .get_checked(sdk)?
-        .is_zero()
-    {
-        return revert_with(sdk, ERR_PEER_PUBKEY_ALREADY_IN_USE, &verified.peer_pubkey);
-    }
-    // Same as the peer-key recheck above: duplicated, unreachable, kept.
-    if !consensus
-        .bls_pubkey_owner_accessor()
-        .entry(verified.bls_pubkey_hash)
-        .get_checked(sdk)?
-        .is_zero()
-    {
-        return revert_with(
-            sdk,
-            ERR_BLS_PUBKEY_ALREADY_IN_USE,
-            &verified.bls_pubkey_hash,
-        );
-    }
+    // The peer-key and BLS-key uniqueness rechecks that used to stand here are
+    // gone. They duplicated `verify_consensus_keys`, which every caller runs
+    // immediately before this, and they were unreachable: they were written when
+    // the verifier was an external contract that could reenter between the two,
+    // and that reason left with the external call. Both errors are still raised
+    // — by `verify_consensus_keys`, which is where the uniqueness is decided.
     let parts = keys.bls_pubkey_accessor();
     for (index, part) in verified.bls_pubkey.into_iter().enumerate() {
         parts.at(index).set_checked(sdk, part)?;
@@ -244,15 +221,10 @@ pub fn get_consensus_keys<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result
 fn write_validators_with_keys<SDK: SharedAPI>(
     sdk: &mut SDK,
     validators: Vec<Address>,
-    visible_at: Option<u64>,
 ) -> Result<(), ExitCode> {
     let mut keys = Vec::with_capacity(validators.len());
     for validator in &validators {
-        let mut value = read_consensus_keys(sdk, *validator)?;
-        if visible_at.is_some_and(|epoch| value.activation_epoch > epoch) {
-            value = ConsensusKeys::default();
-        }
-        keys.push(value);
+        keys.push(read_consensus_keys(sdk, *validator)?);
     }
     write_returns(sdk, &(validators, keys))
 }
@@ -269,7 +241,7 @@ pub fn get_registry_with_keys<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitC
     for index in 0..len {
         validators.push(active.at(index).get_checked(sdk)?);
     }
-    write_validators_with_keys(sdk, validators, None)
+    write_validators_with_keys(sdk, validators)
 }
 
 /// Public handler `0xc06a82de` (`nextEpochToCommit`).
@@ -358,34 +330,20 @@ fn write_ring<SDK: SharedAPI>(
     epoch: u64,
     members: &[CommitteeMember],
 ) -> Result<(), ExitCode> {
-    let mut compacted = Vec::with_capacity(members.len());
-    for member in members {
-        compacted.push(math::compact_balance(member.weight).ok_or(ExitCode::IntegerOverflow)?);
-    }
-    write_ring_compact(sdk, epoch, &compacted)
-}
-
-/// The store half of [`write_ring`], over weights that are already compacted.
-///
-/// Split out for a second caller that is now gone — the committee carry-over,
-/// which re-stamped the previous epoch's already-`uint112` frame and so had
-/// nothing to compact. [`write_ring`] is the only caller left; the split is kept
-/// because the two halves are a compaction pass and a store pass, and folding
-/// them back would put the `IntegerOverflow` of the first inside the second.
-fn write_ring_compact<SDK: SharedAPI>(
-    sdk: &mut SDK,
-    epoch: u64,
-    weights: &[math::U112],
-) -> Result<(), ExitCode> {
     // See `ERR_COMMITTEE_EXCEEDS_WEIGHT_RING`: an assertion of the cap held two
     // layers up, kept local because overrunning the frame corrupts the NEXT
-    // epoch's weights silently.
-    if weights.len() > PAIRS_MAX * 2 {
+    // epoch's weights silently. Checked before the compaction pass, so an
+    // over-long committee is named as one rather than as an overflow.
+    if members.len() > PAIRS_MAX * 2 {
         return revert_with(
             sdk,
             ERR_COMMITTEE_EXCEEDS_WEIGHT_RING,
-            &(U256::from(weights.len()), U256::from(PAIRS_MAX * 2)),
+            &(U256::from(members.len()), U256::from(PAIRS_MAX * 2)),
         );
+    }
+    let mut weights = Vec::with_capacity(members.len());
+    for member in members {
+        weights.push(math::compact_balance(member.weight).ok_or(ExitCode::IntegerOverflow)?);
     }
     let ring = consensus_storage().weight_ring_accessor();
     let base = ring_base(epoch);
@@ -505,6 +463,17 @@ pub(crate) fn selected_committee_at<SDK: SharedAPI>(
     let mut candidates = Vec::with_capacity(active_len as usize);
     for index in 0..active_len {
         let validator = active.at(index).get_checked(sdk)?;
+        // The `STATUS_ACTIVE` term is an ASSERTION of an invariant, not a live
+        // filter, and it is kept as one rather than removed. Only ACTIVE
+        // validators enter `active_validators` (`staking.rs`) and every
+        // transition out of ACTIVE calls `remove_active`, so no mutation of this
+        // term can be caught by a test that goes through the API — measured, not
+        // assumed: removing it leaves the whole suite green (R1.5a, and again
+        // this session). What it still catches is a write straight to storage
+        // that leaves a non-ACTIVE validator in the list; `eligible_population_at_least`
+        // carries the same term for exactly that state and HAS a test for it, so
+        // dropping it here alone would make the two disagree about who is
+        // eligible.
         if validator_status(sdk, validator)? != STATUS_ACTIVE
             || !selection_visible_at(sdk, validator, epoch)?
         {

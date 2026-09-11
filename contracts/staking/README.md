@@ -111,9 +111,12 @@ validator-creation call; there is no separate key-registration phase.
   peer key, which is the order the consensus index space uses — `recordProduction` credits the member
   at the carried leader index. Producing that order rather than checking a supplied one removes the
   only way the two could have disagreed.
-- Every revert reachable inside a system call stops the chain. These calls run before any transaction
-  in the block, and the node treats a non-success result as a block-execution error, so there is no
-  retry and no transaction can repair the state afterwards. A committee below `MIN_COMMITTEE_LENGTH`
+- A revert inside a system call stops the chain — with ONE exception the node makes deliberately.
+  These calls run before any transaction in the block and the node treats a non-success result as a
+  block-execution error, so for `recordProduction` and `commitEpochCommittee` there is no retry and
+  no transaction can repair the state afterwards. `slashEquivocation` is the exception: the node
+  logs its revert and does not commit its state, trading a lost slash for a running chain, because
+  a slash has a second route that can still land it. A committee below `MIN_COMMITTEE_LENGTH`
   is therefore an assertion of an assumption — that the chain always has that many eligible
   validators — not a condition the contract expects to meet. That assumption is reachable by
   ordinary permissionless action: one owner withdrawing their own self-stake, or one equivocation
@@ -158,8 +161,13 @@ longer be verified by any live committee, and this is the only way it still land
 with `AlreadySlashedForEquivocation(address)`.
 
 The seizure has a single recipient: the configured slash fund, or `EQUIVOCATION_BURN_SINK` when none is set.
-A recipient that refuses the transfer does not roll the slash back — the tombstone, the jail and the
-active-set removal are already written, and the recipient is not chosen by whoever submitted the slash.
+A recipient that refuses the transfer **reverts the whole penalty**: the tombstone, the jail, the active-set
+removal and the selection-invisibility stamp roll back with the payout, and the charge can be brought again
+once the recipient accepts. The alternative — swallowing the refusal — left the bond on this contract with no
+path off it and reported a seizure of nothing, which is half a penalty with the missing half unrecoverable.
+The cost is that a fund which refuses makes equivocation unslashable while it refuses; that is survivable
+because the node soft-folds a revert of the system-call route (below) rather than halting, and the default
+recipient is a burn sink that refuses nothing.
 
 ## Solidity parity
 
@@ -188,12 +196,18 @@ bytes are unchanged.
 
 ## Source Layout
 
+- `lib.rs`: the selector dispatcher, and the whole list of public entry points.
 - `initializer.rs`: atomic one-shot initialization.
 - `config.rs`: chain configuration initialization, getters, setters, and dependencies.
 - `staking.rs`: epoch reads, validator administration, delegation, and rewards.
 - `consensus.rs`: consensus keys, epoch committees, and equivocation handling.
+- `evidence.rs`: the equivocation evidence wire format and its decoder.
+- `bls.rs`: the inlined BLS12-381 verifier over the EIP-2537 precompiles.
 - `liveness.rs`: the block-production recorder and the epoch close.
 - `storage.rs`: separate ERC-7201 roots and epoch snapshots.
+- `consts.rs`: selectors, error ids, protocol limits, defaults.
+- `events.rs`, `types.rs`, `math.rs`, `util.rs`: event shapes, command structs, pure arithmetic,
+  and the ABI/ERC-20/guard helpers.
 
 ## Block-production liveness
 
