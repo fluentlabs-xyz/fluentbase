@@ -6,6 +6,10 @@ use fluentbase_sdk::{Bytes, SharedContextInputV1};
 use fluentbase_testing::TestingContextImpl;
 use x509_cert::certificate::Certificate;
 
+/// Gas budget handed to the native test context. The runtime is engine-metered, so the native
+/// harness (which has no engine) must observe no fuel charged by the contract itself.
+const TEST_GAS_LIMIT: u64 = 1_250_000;
+
 /// Test for full attestation document verification.
 ///
 /// This test verifies a complete attestation document validation flow.
@@ -36,12 +40,13 @@ fn test_nitro_attestation_verification() {
     let mut sdk = TestingContextImpl::default()
         .with_shared_context_input(shared_ctx)
         .with_input(data.clone())
-        .with_gas_limit(NITRO_VERIFY_GAS);
+        .with_gas_limit(TEST_GAS_LIMIT);
 
     main_entry(&mut sdk).unwrap();
     assert_eq!(
         sdk.consumed_fuel(),
-        NITRO_VERIFY_GAS * fluentbase_sdk::FUEL_DENOM_RATE
+        0,
+        "engine-metered runtime must not charge static fuel"
     );
     _ = sdk.take_output();
 }
@@ -72,12 +77,13 @@ fn test_nitro_attestation_stf_keygen() {
     let mut sdk = TestingContextImpl::default()
         .with_shared_context_input(shared_ctx)
         .with_input(data.clone())
-        .with_gas_limit(NITRO_VERIFY_GAS);
+        .with_gas_limit(TEST_GAS_LIMIT);
 
     main_entry(&mut sdk).unwrap();
     assert_eq!(
         sdk.consumed_fuel(),
-        NITRO_VERIFY_GAS * fluentbase_sdk::FUEL_DENOM_RATE
+        0,
+        "engine-metered runtime must not charge static fuel"
     );
     _ = sdk.take_output();
 }
@@ -113,18 +119,14 @@ fn bench_nitro_fuel_estimate() {
             let mut sdk = TestingContextImpl::default()
                 .with_shared_context_input(shared_ctx.clone())
                 .with_input(data.to_vec())
-                .with_gas_limit(NITRO_VERIFY_GAS);
+                .with_gas_limit(TEST_GAS_LIMIT);
 
             main_entry(&mut sdk).unwrap();
-            assert_eq!(
-                sdk.consumed_fuel(),
-                NITRO_VERIFY_GAS * fluentbase_sdk::FUEL_DENOM_RATE
-            );
+            assert_eq!(sdk.consumed_fuel(), 0);
         }
 
         println!(
-            "nitro {name}: gas={NITRO_VERIFY_GAS}, fuel={}, iterations={iterations}, elapsed={:?}",
-            NITRO_VERIFY_GAS * fluentbase_sdk::FUEL_DENOM_RATE,
+            "nitro {name}: iterations={iterations}, elapsed={:?}",
             started.elapsed()
         );
     }
@@ -134,13 +136,14 @@ fn bench_nitro_fuel_estimate() {
 fn oversized_input_is_rejected_before_copying_full_payload() {
     let mut sdk = TestingContextImpl::default()
         .with_input(Bytes::from(vec![0u8; NITRO_MAX_INPUT_SIZE as usize + 1]))
-        .with_gas_limit(NITRO_VERIFY_GAS);
+        .with_gas_limit(TEST_GAS_LIMIT);
 
     let err = main_entry(&mut sdk).unwrap_err();
     assert_eq!(err, ExitCode::MalformedBuiltinParams);
     assert_eq!(
         sdk.consumed_fuel(),
-        NITRO_VERIFY_GAS * fluentbase_sdk::FUEL_DENOM_RATE
+        0,
+        "engine-metered runtime must not charge static fuel"
     );
     assert!(sdk.take_output().is_empty());
 }
