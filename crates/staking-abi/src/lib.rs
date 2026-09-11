@@ -177,11 +177,11 @@ sol! {
     // TWO governance setters are deliberately NOT in this scheme.
     // `setBlendStipendPerEpoch` above: decided 2026-09-04,
     // `.dpos-study/DECISIONS.md` §3. `setSlashFundAddress`: it names where a
-    // seizure goes rather than a pot a stolen key can drain, and the contract
-    // reverts a whole slash when that recipient refuses — so rotating it is the
-    // repair path, and a timelock on it would buy a week of unslashable
-    // equivocation for very little. It keeps its `derive_keccak256_id!` in the
-    // contract's `consts.rs`, having no caller outside that crate.
+    // seizure goes rather than a pot a stolen key can drain, and a seizure the
+    // recipient refuses is BURNED rather than reverted (`52714f62`), so a week
+    // of timelock would buy a week of seizures burned instead of banked for very
+    // little. It keeps its `derive_keccak256_id!` in the contract's `consts.rs`,
+    // having no caller outside that crate.
 
     /// Declares a new account for the stipend to be drawn from with
     /// `transferFrom`. The epoch close prices an epoch off what the CURRENT
@@ -189,8 +189,19 @@ sol! {
     /// `applyBlendReserve`.
     function setBlendReserve(address value) external;
     /// Lands the declared `blendReserve`. Reverts before the timelock elapses
-    /// (`TimelockNotElapsed`), after the window closes (`TimelockExpired`), and
-    /// when nothing is declared (`NoPendingChange`).
+    /// (`TimelockNotElapsed(uint64,uint64)`), after the window closes
+    /// (`TimelockExpired(uint64,uint64)`), and when nothing is declared
+    /// (`NoPendingChange()`).
+    ///
+    /// Those three names are PROSE here, not declarations. None of them is an
+    /// `error` in this crate — `AlreadySlashedForEquivocation` is the only one,
+    /// because it is the only revert anything outside the contract decodes — so
+    /// the header's "a rename on either side is a compile error on the other"
+    /// does not cover them. Their one declaration is
+    /// `contracts/staking/src/consts.rs:296`, `:302`, `:299`, and a rename there
+    /// would silently make this comment wrong. Declaring them here to fix that
+    /// would break the crate's own scope rule (nobody outside the contract
+    /// encodes or decodes them); naming the anchor is the honest half.
     function applyBlendReserve() external;
     /// Withdraws an outstanding declaration without landing it.
     function cancelBlendReserve() external;
