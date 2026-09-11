@@ -391,6 +391,11 @@ pub struct MethodCollector<'a, T: MethodLike> {
     pub methods: Vec<ParsedMethod<T>>,
     /// Constructor method
     pub constructor: Option<ParsedMethod<T>>,
+    /// Fallback handler of a router implementation
+    ///
+    /// Kept apart from `methods`: it has no selector arm, so it must not occupy a selector in
+    /// the collision check either.
+    pub fallback: Option<ParsedMethod<T>>,
     /// Source span for error reporting
     pub span: Span,
     /// Collection of errors encountered during parsing
@@ -409,6 +414,7 @@ impl<'a, T: MethodLike> MethodCollector<'a, T> {
         Self {
             methods: Vec::new(),
             constructor: None,
+            fallback: None,
             span,
             errors: Vec::new(),
             selectors: HashSet::new(),
@@ -422,6 +428,7 @@ impl<'a, T: MethodLike> MethodCollector<'a, T> {
         Self {
             methods: Vec::new(),
             constructor: None,
+            fallback: None,
             span,
             errors: Vec::new(),
             selectors: HashSet::new(),
@@ -517,15 +524,27 @@ impl<'a, T: MethodLike> MethodCollector<'a, T> {
 
     /// Registers the fallback handler of a router implementation
     ///
-    /// The handler is kept as a route so the router sees it (`has_fallback`) and dispatches every
-    /// unmatched selector to it. It never gets a selector arm or a codec of its own: the router
-    /// filters it out of `available_methods`.
+    /// The handler is stored on its own so the router dispatches every unmatched selector to it.
+    /// It never gets a selector arm or a codec, and it takes no selector away from the regular
+    /// routes: a method pinned to `fallback()` can coexist with it.
     fn handle_fallback_method(&mut self, method: &T)
     where
         T: Clone,
     {
-        if self.validate_fallback_method(method.sig(), method.sig().span()) {
-            self.handle_regular_method(method);
+        let span = method.sig().span();
+        if !self.validate_fallback_method(method.sig(), span) {
+            return;
+        }
+        if self.fallback.is_some() {
+            self.add_error(
+                span,
+                format!("Multiple {FALLBACK_METHOD} methods defined. Only one is allowed"),
+            );
+            return;
+        }
+        match ParsedMethod::from_ref(method, self.resolver) {
+            Ok(parsed_method) => self.fallback = Some(parsed_method),
+            Err(err) => self.add_error(span, format!("Failed to parse fallback method: {err}")),
         }
     }
 
@@ -737,11 +756,35 @@ mod tests {
         visit::visit_item_impl(&mut collector, &impl_block);
 
         assert!(collector.errors.is_empty());
-        assert_eq!(collector.methods.len(), 2);
+        assert_eq!(collector.methods.len(), 1);
+        assert!(!collector.methods[0].parsed_signature().is_fallback());
         assert!(collector
-            .methods
-            .iter()
-            .any(|method| method.parsed_signature().is_fallback()));
+            .fallback
+            .as_ref()
+            .is_some_and(|method| method.parsed_signature().is_fallback()));
+        // The fallback has no selector arm, so it reserves no selector either.
+        assert_eq!(collector.selectors.len(), 1);
+        assert!(collector.validate_selectors().is_ok());
+    }
+
+    /// Only one fallback can be defined
+    #[test]
+    fn test_second_fallback_is_rejected_for_router_impls() {
+        let resolver = StructResolver::default();
+        let mut collector =
+            MethodCollector::<ImplItemFn>::new_for_impl(Span::call_site(), false, &resolver);
+
+        let impl_block: syn::ItemImpl = parse_quote! {
+            impl<SDK: SharedAPI> App<SDK> {
+                fn fallback(&self) {}
+
+                fn fallback(&mut self) {}
+            }
+        };
+        visit::visit_item_impl(&mut collector, &impl_block);
+
+        assert_eq!(collector.errors.len(), 1);
+        assert!(collector.fallback.is_some());
     }
 
     /// A malformed fallback is reported instead of being registered
@@ -762,6 +805,7 @@ mod tests {
 
         assert_eq!(collector.errors.len(), 1);
         assert!(collector.methods.is_empty());
+        assert!(collector.fallback.is_none());
     }
 
     /// A client trait validates the fallback but never turns it into a callable method
@@ -781,6 +825,7 @@ mod tests {
         assert!(collector.errors.is_empty());
         assert_eq!(collector.methods.len(), 1);
         assert!(!collector.methods[0].parsed_signature().is_fallback());
+        assert!(collector.fallback.is_none());
     }
 
     #[test]

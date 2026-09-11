@@ -28,6 +28,8 @@ pub struct Router {
     routes: Vec<ParsedMethod<ImplItemFn>>,
     /// Constructor method if defined
     constructor: Option<ParsedMethod<ImplItemFn>>,
+    /// Fallback handler if defined; never a route, it owns no selector
+    fallback: Option<ParsedMethod<ImplItemFn>>,
     /// Indicates whether this is a trait implementation
     is_trait_impl: bool,
 }
@@ -84,7 +86,10 @@ impl Router {
             return Err(error);
         }
 
-        if collector.methods.is_empty() && collector.constructor.is_none() {
+        if collector.methods.is_empty()
+            && collector.constructor.is_none()
+            && collector.fallback.is_none()
+        {
             let help = if is_trait_impl {
                 "For trait implementations, make sure the trait contains method declarations"
             } else {
@@ -119,6 +124,7 @@ impl Router {
             impl_block,
             routes: collector.methods,
             constructor: collector.constructor,
+            fallback: collector.fallback,
             is_trait_impl,
         })
     }
@@ -138,12 +144,14 @@ impl Router {
         &self.routes
     }
 
-    /// Returns all available method routes excluding fallback.
+    /// Returns all available method routes; the fallback is not one of them.
     pub fn available_methods(&self) -> Vec<&ParsedMethod<ImplItemFn>> {
-        self.routes
-            .iter()
-            .filter(|route| route.parsed_signature().rust_name() != "fallback")
-            .collect()
+        self.routes.iter().collect()
+    }
+
+    /// Returns the fallback handler if present.
+    pub fn fallback(&self) -> Option<&ParsedMethod<ImplItemFn>> {
+        self.fallback.as_ref()
     }
 
     /// Checks if the router is based on a trait implementation.
@@ -153,9 +161,7 @@ impl Router {
 
     /// Checks if the router has a fallback handler.
     pub fn has_fallback(&self) -> bool {
-        self.routes
-            .iter()
-            .any(|r| r.parsed_signature().is_fallback())
+        self.fallback.is_some()
     }
 
     /// Checks if the router has a constructor.
@@ -681,6 +687,45 @@ mod b {
         assert!(generated.contains("_=>{self.fallback();}"));
         assert!(generated.contains("ifinput_length<4{self.fallback();return;}"));
         assert!(!generated.contains("unsupported method selector"));
+    }
+
+    /// The fallback owns no selector, so a route pinned to `fallback()` can coexist with it
+    #[test]
+    fn test_fallback_does_not_reserve_a_selector() {
+        let impl_block: syn::ItemImpl = parse_quote! {
+            impl<SDK: SharedAPI> App<SDK> {
+                #[function_id("fallback()")]
+                pub fn catch_all(&self) {}
+
+                fn fallback(&self) {}
+            }
+        };
+
+        let router = process_router(quote! { mode = "solidity" }, impl_block.into_token_stream())
+            .expect("a route pinned to fallback() must not collide with the fallback");
+
+        assert!(router.has_fallback());
+        let routes = router.available_methods();
+        assert_eq!(routes.len(), 1);
+        assert_eq!(routes[0].signature(), "fallback()");
+        assert_eq!(routes[0].parsed_signature().rust_name(), "catch_all");
+    }
+
+    /// A router may consist of a fallback alone
+    #[test]
+    fn test_fallback_only_router_is_accepted() {
+        let impl_block: syn::ItemImpl = parse_quote! {
+            impl<SDK: SharedAPI> App<SDK> {
+                fn fallback(&self) {}
+            }
+        };
+
+        let router = process_router(quote! { mode = "solidity" }, impl_block.into_token_stream())
+            .expect("a fallback-only router should be accepted");
+
+        assert!(router.has_fallback());
+        assert!(router.available_methods().is_empty());
+        router.generate().expect("Failed to generate router code");
     }
 
     /// Without a fallback, unknown selectors and short inputs still revert
