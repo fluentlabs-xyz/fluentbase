@@ -10432,3 +10432,216 @@ fn the_ladder_reset_also_lands_on_the_member_failing_that_same_epoch() {
          would have bought"
     );
 }
+
+// K-18: a view that reaches the epoch formula before `initialize` divided by a
+// zero `epochBlockInterval` and came back `IntegerDivisionByZero` — an exit code
+// that names the arithmetic and not the state. Two views do that, and only two:
+// `getValidators` (through `selected_validators`) and
+// `getValidatorDelegatedStakeAt` (through `current_epoch_at_block`).
+//
+// The second half is the part worth having: every OTHER ungated read surface is
+// enumerated here and asserted to answer normally on an uninitialized contract.
+// That is what makes "this view needs no gate" a measurement rather than a
+// reading of the code. `isValidatorActive` belongs to the second group by
+// short-circuit, not by construction — it reaches `selected_validators` only
+// after `validator_status == STATUS_ACTIVE`, which no address satisfies before
+// `initialize`.
+#[test]
+fn the_two_views_that_reach_the_epoch_formula_refuse_an_uninitialized_contract() {
+    let subject = Address::with_last_byte(0x01);
+
+    let mut harness = Harness::new(1_000);
+    assert_revert_selector(
+        harness.call(encode_empty_call(SIG_GET_VALIDATORS)),
+        ERR_NOT_INITIALIZED,
+    );
+    assert_revert_selector(
+        harness.call(encode_call(
+            SIG_GET_VALIDATOR_DELEGATED_STAKE_AT,
+            &ValidatorBlockCommand {
+                validator: subject,
+                block_number: U256::from(10),
+            },
+        )),
+        ERR_NOT_INITIALIZED,
+    );
+
+    for (name, call) in [
+        (
+            "isValidator",
+            encode_call(SIG_IS_VALIDATOR, &AddressCommand { value: subject }),
+        ),
+        (
+            "isValidatorActive",
+            encode_call(SIG_IS_VALIDATOR_ACTIVE, &AddressCommand { value: subject }),
+        ),
+        (
+            "getValidatorStatus",
+            encode_call(SIG_GET_VALIDATOR_STATUS, &AddressCommand { value: subject }),
+        ),
+        (
+            "getValidatorByOwner",
+            encode_call(
+                SIG_GET_VALIDATOR_BY_OWNER,
+                &AddressCommand { value: subject },
+            ),
+        ),
+        (
+            "getValidatorDelegation",
+            encode_call(
+                SIG_GET_VALIDATOR_DELEGATION,
+                &ValidatorDelegatorCommand {
+                    validator: subject,
+                    delegator: subject,
+                },
+            ),
+        ),
+        ("getStakingToken", encode_empty_call(SIG_GET_STAKING_TOKEN)),
+        (
+            "getActiveValidatorsLength",
+            encode_empty_call(SIG_GET_ACTIVE_VALIDATORS_LENGTH),
+        ),
+        (
+            "getEpochBlockInterval",
+            encode_empty_call(SIG_GET_EPOCH_BLOCK_INTERVAL),
+        ),
+        (
+            "getDposActivationBlock",
+            encode_empty_call(SIG_GET_DPOS_ACTIVATION_BLOCK),
+        ),
+        (
+            "getUndelegatePeriod",
+            encode_empty_call(SIG_GET_UNDELEGATE_PERIOD),
+        ),
+        (
+            "getMinValidatorStakeAmount",
+            encode_empty_call(SIG_GET_MIN_VALIDATOR_STAKE_AMOUNT),
+        ),
+        (
+            "getMinStakingAmount",
+            encode_empty_call(SIG_GET_MIN_STAKING_AMOUNT),
+        ),
+        (
+            "getSlashFundAddress",
+            encode_empty_call(SIG_GET_SLASH_FUND_ADDRESS),
+        ),
+        (
+            "getBlendStipendPerEpoch",
+            encode_empty_call(SIG_GET_BLEND_STIPEND_PER_EPOCH),
+        ),
+        ("getBlendReserve", encode_empty_call(SIG_GET_BLEND_RESERVE)),
+        (
+            "getMinVerdictDueBlocks",
+            encode_empty_call(SIG_GET_MIN_VERDICT_DUE_BLOCKS),
+        ),
+        (
+            "getExclusionBackoffCap",
+            encode_empty_call(SIG_GET_EXCLUSION_BACKOFF_CAP),
+        ),
+        (
+            "getProductionLivenessDisabled",
+            encode_empty_call(SIG_GET_PRODUCTION_LIVENESS_DISABLED),
+        ),
+    ] {
+        let mut harness = Harness::new(1_000);
+        assert_eq!(
+            harness.call(call).0,
+            ExitCode::Ok,
+            "{name} answers an uninitialized contract without reaching any \
+             arithmetic, so it carries no gate"
+        );
+    }
+}
+
+// Every mutating entry point in `config.rs` reaches `ensure_initialized` through
+// `ensure_governance` (`util.rs:60`), so K-18's setter half needs no separate
+// gate. Asserted, not read off the call chain: each of the twelve is issued FROM
+// `GENESIS_GOVERNANCE` on an uninitialized contract, where the governance check
+// itself would pass and only the initialization check can refuse.
+#[test]
+fn every_config_setter_refuses_an_uninitialized_contract_before_it_checks_anything_else() {
+    for (name, call) in [
+        (
+            "setSlashFundAddress",
+            encode_call(
+                SIG_SET_SLASH_FUND_ADDRESS,
+                &AddressCommand {
+                    value: Address::ZERO,
+                },
+            ),
+        ),
+        (
+            "setBlendReserve",
+            encode_call(
+                SIG_SET_BLEND_RESERVE,
+                &AddressCommand {
+                    value: Address::ZERO,
+                },
+            ),
+        ),
+        (
+            "setBlendStipendPerEpoch",
+            encode_call(
+                SIG_SET_BLEND_STIPEND_PER_EPOCH,
+                &U256Command {
+                    value: MAX_BLEND_STIPEND_PER_EPOCH + U256::from(1),
+                },
+            ),
+        ),
+        (
+            "setActiveValidatorsLength",
+            encode_call(SIG_SET_ACTIVE_VALIDATORS_LENGTH, &U32Command { value: 0 }),
+        ),
+        (
+            "setEpochBlockInterval",
+            encode_call(SIG_SET_EPOCH_BLOCK_INTERVAL, &U32Command { value: 0 }),
+        ),
+        (
+            "setDposActivationBlock",
+            encode_call(SIG_SET_DPOS_ACTIVATION_BLOCK, &U64Command { value: 7 }),
+        ),
+        (
+            "setUndelegatePeriod",
+            encode_call(SIG_SET_UNDELEGATE_PERIOD, &U32Command { value: 0 }),
+        ),
+        (
+            "setMinValidatorStakeAmount",
+            encode_call(
+                SIG_SET_MIN_VALIDATOR_STAKE_AMOUNT,
+                &U256Command { value: U256::ZERO },
+            ),
+        ),
+        (
+            "setMinStakingAmount",
+            encode_call(
+                SIG_SET_MIN_STAKING_AMOUNT,
+                &U256Command { value: U256::ZERO },
+            ),
+        ),
+        (
+            "setMinVerdictDueBlocks",
+            encode_call(SIG_SET_MIN_VERDICT_DUE_BLOCKS, &U32Command { value: 0 }),
+        ),
+        (
+            "setExclusionBackoffCap",
+            encode_call(SIG_SET_EXCLUSION_BACKOFF_CAP, &U32Command { value: 0 }),
+        ),
+        (
+            "setProductionLivenessDisabled",
+            encode_call(
+                SIG_SET_PRODUCTION_LIVENESS_DISABLED,
+                &BoolCommand { value: true },
+            ),
+        ),
+    ] {
+        let mut harness = Harness::new(1_000);
+        harness.set_caller(GENESIS_GOVERNANCE);
+        let result = harness.call(call);
+        assert_eq!(result.0, ExitCode::Panic, "{name} must revert");
+        assert_eq!(
+            &result.1[..SIG_LEN_BYTES],
+            &ERR_NOT_INITIALIZED.to_be_bytes(),
+            "{name} must refuse on initialization, ahead of its own validation"
+        );
+    }
+}

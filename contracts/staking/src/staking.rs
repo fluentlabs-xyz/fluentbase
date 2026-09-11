@@ -891,7 +891,13 @@ pub fn get_validator_by_owner<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Re
 /// Public handler `0xb7ab4db5` (`getValidators`).
 ///
 /// Returns the currently selected validators.
+///
+/// Gated on initialization because the selection reads the current epoch, and
+/// the epoch formula divides by `epochBlockInterval` — zero until `initialize`
+/// writes it. Without the gate this view answers `IntegerDivisionByZero`, which
+/// names the arithmetic rather than the state (K-18).
 pub fn get_validators<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
+    ensure_initialized(sdk)?;
     ensure_non_payable(sdk)?;
     write_abi(sdk, &selected_validators(sdk)?)
 }
@@ -1024,6 +1030,7 @@ pub fn get_validator_delegated_stake_at<SDK: SharedAPI>(
     sdk: &mut SDK,
     input: &[u8],
 ) -> Result<(), ExitCode> {
+    ensure_initialized(sdk)?;
     ensure_non_payable(sdk)?;
     let command: ValidatorBlockCommand = decode(input)?;
     if command.block_number > U256::from(u64::MAX) {
