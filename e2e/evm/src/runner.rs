@@ -5,7 +5,7 @@ use crate::{
     inspector::TraceInspector,
     state::{evm_cache_state, fill_tx_env, fluent_cache_state, prepare_env, GENESIS_CONTRACTS},
 };
-use fluentbase_revm::{RwasmBuilder, RwasmContext, RwasmEvm};
+use fluentbase_revm::{RwasmBuilder, RwasmContext, RwasmEvm, RwasmPrecompiles};
 use fluentbase_sdk::Address;
 use indicatif::{ProgressBar, ProgressDrawTarget};
 use revm::{
@@ -14,7 +14,7 @@ use revm::{
         ContextTr,
     },
     database::{bal::EvmDatabaseError, EmptyDB, InMemoryDB, State, StateBuilder},
-    handler::MainnetContext,
+    handler::{EthPrecompiles, MainnetContext},
     interpreter::InstructionResult,
     primitives::{hardfork::SpecId, Bytes, B256, U256},
     state::AccountInfo,
@@ -651,13 +651,28 @@ fn check_fluent_execution(
         return Err(error);
     }
 
+    match exec_result {
+        Ok(result) => println!(
+            "Execution result: gas_used={} success={} logs={} output_len={}",
+            result.gas_used(),
+            result.is_success(),
+            result.logs().len(),
+            result.output().map(|o| o.len()).unwrap_or(0)
+        ),
+        Err(err) => println!("Execution result: error={err:?}"),
+    }
     for (k, account_should_be) in &test.state {
         println!("Checking account: {k}");
         let actual_account = db
             .load_cache_account(*k)
             .map_err(|_| TestErrorKind::MissingAccount { address: *k })?;
         let actual_account = actual_account.account.clone().unwrap().info;
-        assert_eq!(actual_account.balance, account_should_be.balance);
+        assert_eq!(
+            actual_account.balance,
+            account_should_be.balance,
+            "balance mismatch for {k}: diff (actual - expected) = {}",
+            actual_account.balance.abs_diff(account_should_be.balance)
+        );
         if let Some(code) = actual_account.code.as_ref() {
             assert_eq!(code.original_bytes(), account_should_be.code);
         } else {
@@ -916,6 +931,22 @@ pub fn resolve_externalized_bytecodes(v: &mut Value, base_dir: &Path) {
     }
 }
 
+/// The precompile provider the node installs for block execution.
+///
+/// `crates/node/src/evm.rs` wraps `RwasmPrecompiles::precompiles()` (an empty set: Fluent
+/// precompiles are genesis rWASM contracts) in reth's `PrecompilesMap`, whose warm-address list is
+/// that same empty set. On chain no precompile address is therefore pre-warmed at transaction
+/// start, and the first call to one pays the cold account-access cost. The library default,
+/// `RwasmPrecompiles::warm_addresses`, pre-warms the canonical EIP-2929 list instead, which
+/// under-charges such a call by 2500 gas against canonical receipts. Fixtures replay real
+/// transactions, so they must use the node's semantics.
+fn node_precompiles(spec_id: SpecId) -> EthPrecompiles {
+    EthPrecompiles {
+        precompiles: RwasmPrecompiles::new_with_spec(spec_id).precompiles(),
+        spec: spec_id,
+    }
+}
+
 pub fn execute_fluent_test_suite(
     path: &Path,
     elapsed: &Arc<Mutex<Duration>>,
@@ -987,7 +1018,8 @@ pub fn execute_fluent_test_suite(
                     let mut evm = RwasmContext::new(state, spec_id)
                         .with_cfg(cfg_env.clone())
                         .with_block(block_env.clone())
-                        .build_rwasm_with_inspector(TraceInspector::new());
+                        .build_rwasm_with_inspector(TraceInspector::new())
+                        .with_precompiles(node_precompiles(spec_id));
                     evm.0.cfg.legacy_bytecode_enabled = false;
                     let result_fluent = evm.inspect_tx_commit(tx_env.clone());
                     *elapsed.lock().unwrap() += start.elapsed();
@@ -1005,7 +1037,8 @@ pub fn execute_fluent_test_suite(
                     let mut evm = RwasmContext::new(state, spec_id)
                         .with_cfg(cfg_env.clone())
                         .with_block(block_env.clone())
-                        .build_rwasm();
+                        .build_rwasm()
+                        .with_precompiles(node_precompiles(spec_id));
                     evm.0.cfg.legacy_bytecode_enabled = false;
                     let timer = Instant::now();
                     let result = evm.transact_commit(tx_env.clone());

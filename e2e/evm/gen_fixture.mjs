@@ -183,6 +183,7 @@ async function main() {
     ]);
 
     const tracePre = preStateTrace ?? {};
+    const tracePreDiff = diffTrace?.pre ?? {};
     const tracePost = diffTrace?.post ?? {};
 
     const preState = {};
@@ -198,6 +199,18 @@ async function main() {
     const postState = {};
     for (const addr of allTouched) {
         postState[addr] = mergeAccounts(tracePre[addr], tracePost[addr]);
+    }
+
+    // diffMode omits storage slots whose new value is zero from `post`, so a slot listed in the
+    // diff `pre` but missing from `post` was cleared by the transaction; without this the merge
+    // above would keep its pre-transaction value as the expected post value.
+    for (const [addr, acc] of Object.entries(tracePreDiff)) {
+        const postStorage = tracePost[addr]?.storage ?? {};
+        for (const slot of Object.keys(acc?.storage ?? {})) {
+            if (!(slot in postStorage) && postState[addr]) {
+                postState[addr].storage[slot] = "0x0000000000000000000000000000000000000000000000000000000000000000";
+            }
+        }
     }
 
     // Remove fee manager (it's bytecode is not executed unless runtime upgrade)
