@@ -1,27 +1,33 @@
-<div align="center">
+<p align="center">
+  <img src="assets/logo.png" alt="Fluent" width="440">
+</p>
 
-# Fluentbase
+<p align="center">
+  <strong>One runtime. Every VM. A single provable state transition.</strong>
+</p>
 
-**One runtime. Every VM. A single provable state transition.**
+<p align="center">
+  <a href="https://github.com/fluentlabs-xyz/fluentbase/actions/workflows/ci.yml"><img src="https://github.com/fluentlabs-xyz/fluentbase/actions/workflows/ci.yml/badge.svg" alt="Test"></a>
+  <a href="https://github.com/fluentlabs-xyz/fluentbase/actions/workflows/clippy.yml"><img src="https://github.com/fluentlabs-xyz/fluentbase/actions/workflows/clippy.yml/badge.svg" alt="Clippy"></a>
+  <a href="https://codecov.io/github/fluentlabs-xyz/fluentbase"><img src="https://codecov.io/github/fluentlabs-xyz/fluentbase/graph/badge.svg?token=FCA43Y60LW" alt="codecov"></a>
+  <a href="https://crates.io/crates/fluentbase-sdk"><img src="https://img.shields.io/crates/v/fluentbase-sdk.svg?label=fluentbase-sdk" alt="crates.io"></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License: Apache-2.0"></a>
+</p>
 
-Fluentbase is the execution stack behind [Fluent](https://fluent.xyz), the blended L2.
-EVM, WASM and SVM contracts compile down to **rWasm IR**, run in one deterministic runtime,
-share one account space, and are proven by one ZK circuit.
+<p align="center">
+  Fluentbase is the execution stack behind <a href="https://fluent.xyz">Fluent</a>, the blended L2.
+  EVM, WASM and SVM contracts compile down to <strong>rWasm IR</strong>, run in one deterministic runtime,
+  share one account space, and are proven by one ZK circuit.
+</p>
 
-[![Test](https://github.com/fluentlabs-xyz/fluentbase/actions/workflows/ci.yml/badge.svg)](https://github.com/fluentlabs-xyz/fluentbase/actions/workflows/ci.yml)
-[![Clippy](https://github.com/fluentlabs-xyz/fluentbase/actions/workflows/clippy.yml/badge.svg)](https://github.com/fluentlabs-xyz/fluentbase/actions/workflows/clippy.yml)
-[![codecov](https://codecov.io/github/fluentlabs-xyz/fluentbase/graph/badge.svg?token=FCA43Y60LW)](https://codecov.io/github/fluentlabs-xyz/fluentbase)
-[![crates.io](https://img.shields.io/crates/v/fluentbase-sdk.svg?label=fluentbase-sdk)](https://crates.io/crates/fluentbase-sdk)
-[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
-
-[Quick start](#quick-start) ·
-[Write a contract](#write-a-contract) ·
-[Run a node](#run-a-node) ·
-[Architecture](#how-it-works) ·
-[Repository map](#repository-map) ·
-[Docs](#documentation)
-
-</div>
+<p align="center">
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#write-a-contract">Write a contract</a> ·
+  <a href="#run-a-node">Run a node</a> ·
+  <a href="#how-it-works">Architecture</a> ·
+  <a href="#repository-map">Repository map</a> ·
+  <a href="#documentation">Docs</a>
+</p>
 
 ---
 
