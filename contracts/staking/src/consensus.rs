@@ -831,14 +831,24 @@ pub(crate) fn seize_self_stake<SDK: SharedAPI>(
     } else {
         configured_fund
     };
-    // The seizure must never revert on a payout. The tombstone, the jail and the
-    // active-set removal are already written and would roll back with it, so a
-    // token that refuses the recipient could otherwise make equivocation
-    // unslashable — and the default recipient is a burn sink no caller chooses.
-    // A refused transfer leaves the stake here; the amount reported below is
-    // what actually moved.
+    // A refused payout REVERTS the whole seizure, and with it the tombstone, the
+    // jail and the active-set removal that were written above. The alternative
+    // this replaces swallowed the refusal, emitted `seized = 0` and left the
+    // stake sitting on this contract with no path off it — a silent, permanent
+    // loss that no view reported and no later call could undo. Rolling back
+    // keeps the two halves of the penalty together: either the validator is
+    // tombstoned AND its bond moved, or the charge did not land and can be
+    // brought again once the recipient accepts.
+    //
+    // What this costs: a token that refuses the configured fund makes
+    // equivocation unslashable for as long as it refuses. That is survivable
+    // where the swallowed version was not — the node soft-folds a revert from
+    // `slashEquivocation` (warn, state uncommitted, `node/src/evm.rs`), so the
+    // chain keeps producing and governance can point `slashFundAddress`
+    // somewhere that accepts; the default recipient is a burn sink, which
+    // refuses nothing.
     if !try_transfer(sdk, recipient, seized)? {
-        seized = U256::ZERO;
+        return revert(sdk, ERR_STAKING_TOKEN_CALL_FAILED);
     }
     events::EquivocationStakeSeized {
         validator,
