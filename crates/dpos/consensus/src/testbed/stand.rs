@@ -1553,11 +1553,13 @@ async fn build_node(
     );
     let (hook_tx, mut hook_rx) = mpsc::unbounded_channel::<OrderBlock>();
 
-    // The production epoch state machine. `bridge_tx` is built FIRST so the
-    // transition is wired at construction, and the forwarder that turns
-    // `(u64, snapshot)` into the `OuterEngine`'s `(Epoch, snapshot)` is spawned
-    // after the engine exists — the shape of `consensus/src/dpos.rs:2025-2041`
-    // and its `bridge_rx` drain at `:2739-2749`.
+    // The production epoch state machine — ONE per node, as in production. `bridge_tx`
+    // is built FIRST so the transition is wired at construction, and the forwarder that
+    // turns `(u64, snapshot)` into the `OuterEngine`'s `(Epoch, snapshot)` is spawned
+    // after the engine exists — the shape of the node crate's plane
+    // (`node/src/dpos.rs`, `mpsc::channel(64)` + `EpochTransition::new` with
+    // `Some(bridge_tx)`) and of the `epoch_bridge` drain at
+    // `consensus/src/dpos.rs:2648-2660`.
     let (bridge_tx, mut bridge_rx) = mpsc::channel::<(u64, ValidatorSetSnapshot)>(64);
     let observer = EtObserver::default();
     let et = Arc::new(tokio::sync::Mutex::new(EpochTransition::new(
@@ -1578,9 +1580,10 @@ async fn build_node(
 
     // Cold start, at the anchor this node's execution layer persisted: genesis
     // on a fresh chain, the finalized `(height, hash)` on a replay — production
-    // reads exactly that pair out of reth and hands it over
-    // (`consensus/src/dpos.rs:2044-2047`). The EPOCH is not supplied: `cold_start`
-    // freezes the geometry from the state at `hash` and derives it.
+    // resolves exactly that pair (post-jump) and cold-starts the one transition with
+    // it, ONCE, in `DposLayer::launch` (`consensus/src/dpos.rs:2100-2105`). The EPOCH
+    // is not supplied: `cold_start` freezes the geometry from the state at `hash` and
+    // derives it.
     let (cold_number, cold_hash) = cfg.resume_from.unwrap_or((0, genesis_hash));
     chain.note_hash(cold_number, cold_hash);
     let cold_outcome = {
@@ -2094,15 +2097,17 @@ async fn build_node(
         });
     }
 
-    // The boundary feeder: every ORDERING-finalized block reaches
-    // `on_finalized`, which is where production drives this instance from —
-    // `boundary_hook` → `enter_boundary(block.height)` → `on_finalized(number)`
-    // (`consensus/src/dpos.rs:2291-2294`, `:2202`). NOT the executor side: the
-    // EL-finalized cursor (`FakeChain::advance_finalized`) is what the OTHER
-    // production transition consumes, the beacon plane's peer-set tracker
-    // (`node/src/dpos.rs:1695`), and this one's `read_height_for` subtracts K
-    // from its input, so feeding it an already-lagged height would read K blocks
-    // too low.
+    // The boundary feeder: every ORDERING-finalized block reaches `on_finalized`,
+    // which is the ONLY boundary driver production has — `boundary_hook` →
+    // `enter_boundary(block.height)` → `on_finalized(number)`
+    // (`consensus/src/dpos.rs:2345-2348`, `:2209`, `:2256`). NOT the executor side:
+    // the EL-finalized cursor (`FakeChain::advance_finalized`) is what the beacon
+    // plane's poller reads, and since the merge that poller takes only the epoch
+    // GEOMETRY and the FIRST peer-set registration off it (`node/src/dpos.rs`,
+    // `freeze_geometry` + `track_peers`) — it drives no
+    // boundary, because a coalesced watch skips them. Feeding this instance that
+    // cursor would also read K blocks too low: `read_height_for` subtracts K from
+    // its input, which is an ordering height by contract.
     let trace = Arc::new(Mutex::new(Vec::<TraceEntry>::new()));
     {
         let (trace, et_feed, steps, geometry) = (

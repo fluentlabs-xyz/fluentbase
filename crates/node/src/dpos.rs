@@ -759,6 +759,7 @@ where
         plane.finalized_cursor.clone(),
         plane.committee.clone(),
         plane.artifact_bytes,
+        plane.epoch_transition,
         shutdown_token,
     )
     .await?;
@@ -937,7 +938,7 @@ pub(crate) fn spawn_devnet_metrics(ctx: &Context, metrics_port: Option<u16>) {
 /// `MuxHandle`s per promotion; only its consensus engine is aborted on a phase
 /// switch — the plane's network/broker/DkgActor handles survive until process
 /// shutdown.
-pub(crate) struct BeaconPlane {
+pub(crate) struct BeaconPlane<Provider, EvmConfig> {
     /// The single network's start handle — aborted ONLY at process shutdown.
     pub net_handle: Handle<()>,
     /// The beacon's own supervisor: the DKG actor, the beacon-log resolver
@@ -1026,6 +1027,15 @@ pub(crate) struct BeaconPlane {
     /// `OnceLock` — set exactly once, read-only thereafter (no lock on the read
     /// path).
     pub marshal_slot: Arc<std::sync::OnceLock<fluentbase_consensus::MarshalMailbox>>,
+    /// THE process's `EpochTransition` and the receiving half of the boundary bridge
+    /// it was built with. Built HERE — before the engine — because the geometry it
+    /// freezes is what the `DkgActor` and the committee module read, and handed DOWN
+    /// to the layer launch, which owns the two things only it has: the per-block
+    /// delivery driver and the executor's read-floor seam. The plane keeps the cold
+    /// start (its poller runs it until the geometry freezes) and nothing else: a
+    /// coalescing watch may not drive epoch boundaries, because boundary detection is
+    /// pointwise and a coalesced step skips them outright.
+    pub epoch_transition: fluentbase_consensus::dpos::PlaneEpochTransition<Provider, EvmConfig>,
 }
 
 /// A frame the muxer could not route: the RAW wire sub-channel id and the message.
@@ -1122,7 +1132,7 @@ pub(crate) async fn build_beacon_plane<N, AddOns>(
     cfg: &DposConfig,
     share_seal_key: Option<fluentbase_bls::ShareSealKey>,
     bls_keypair: fluentbase_bls::keys::ValidatorBlsKeypair,
-) -> eyre::Result<BeaconPlane>
+) -> eyre::Result<BeaconPlane<<N as FullNodeTypes>::Provider, <N as FullNodeComponents>::Evm>>
 where
     N: FullNodeComponents<
         Types: reth_node_api::NodeTypes<
@@ -1333,11 +1343,15 @@ where
     // DkgActor's default `active_committee_for` covers the `cur` side of the
     // change-test against the same committed slot.
 
-    // EpochTransition-driven Oracle peer set + the `dkg_height` clock, both fed by a
-    // persistent finalized-height poller (reth `finalized_block_number`) — a source
-    // that exists in BOTH the follower and signer phases, unlike the per-engine
-    // boundary hook. cold_start tracks the initial committee's peer set so the node
-    // is connected on BEACON_CHANNEL from block 1 of its follower phase.
+    // The `dkg_height` clock and the epoch-geometry freeze, both fed by a persistent
+    // finalized-height poller (reth `finalized_block_number`) — a source that exists
+    // in BOTH the follower and signer phases, unlike the per-engine boundary hook.
+    // The Oracle peer set is NOT fed from here any more: `oracle.track` has exactly
+    // one production caller (`EpochTransition::track_and_trigger`), reached from the
+    // bootstrap the layer's cold start owns and from the boundary walk the delivery
+    // hook drives. The poller cannot have either without becoming a second
+    // bootstrapper on the wrong height scale.
+    //
     // Committee members observed slashed for equivocation. Created here, filled by
     // the finalized-height poller below (the sole writer) and published on
     // `SharedBeaconPlane` so every promoted engine's `FluentApp` reads the writer's
@@ -1352,11 +1366,23 @@ where
         staking_config.clone(),
     );
     let provider_for_et = node.provider.clone();
+    // Boundary bridge, built HERE so the transition carries its sender from
+    // construction: the receiving half rides down to the layer launch, where
+    // `OuterEngine::boundary_sender()` exists and the `epoch_bridge` forwarder drains
+    // it. 64 slots, as the layer's own channel was — the cold start queues the
+    // starting epoch on it long before the forwarder exists, and the buffer is what
+    // holds it until then.
+    let (bridge_tx, bridge_rx) =
+        mpsc::channel::<(u64, fluentbase_staking_reader::reader::ValidatorSetSnapshot)>(64);
+    // THE process's `EpochTransition` — one instance, one `last_tracked_epoch`, one
+    // `anchor_height`, one `oracle.track` per epoch. Built here because the geometry it
+    // freezes is the plane's single in-plane epoch-geometry source (the `DkgActor` and
+    // the committee module both read it) and that has to exist before the engine.
     let epoch_transition = EpochTransition::new(
         et_reader,
         handles.oracle.clone(),
         fluentbase_p2p::constants::MAX_REGISTRY_PEER_SET as usize,
-        None,
+        Some(bridge_tx),
         Arc::new(move |n| fluentbase_consensus::executed_state_hash(&provider_for_et, n)),
         fluentbase_consensus::K,
     );
@@ -1428,19 +1454,29 @@ where
         fluentbase_consensus::CommitteeReadsFacade::new(committee.clone()),
     );
 
-    // Finalized-height poller, feeding TWO sinks off the SAME EL-finalized cursor:
-    //   - `dkg_height` ← `fin + K` (ORDERING-finalized): the executor sets the
-    //     EL-finalized height = `result_final_height(tip, floor) = ordering_finalized
-    //     − K` (`order_block.rs::result_final_height`, `K = fluentbase_consensus::K`),
-    //     so `fin + K` is the ordering-finalized height that produced `fin`. The
-    //     DkgActor's seal deadline + `epoch_start` geometry are ORDERING-chain
-    //     quantities; feeding it the raw EL-finalized `fin` would silently shorten
-    //     the `DKG_MARGIN_BLOCKS` window by K (the epoch-2 boundary wedge). For every
-    //     epoch ≥ 1 the cold-start floor clamp is inactive, so `fin + K` == the
-    //     ordering tip exactly.
-    //   - `et.on_finalized(fin)` ← raw EL-finalized `fin`: the peer-set tracker's
-    //     `read_height_for(n) = n − K` contract assumes a finalized input; do NOT
-    //     shift it.
+    // Finalized-height poller. It feeds the `dkg_height` clock `fin + K`
+    // (ORDERING-finalized): the executor sets the EL-finalized height =
+    // `result_final_height(tip, floor) = ordering_finalized − K`
+    // (`order_block.rs::result_final_height`, `K = fluentbase_consensus::K`), so
+    // `fin + K` is the ordering-finalized height that produced `fin`. The DkgActor's
+    // seal deadline + `epoch_start` geometry are ORDERING-chain quantities; feeding it
+    // the raw EL-finalized `fin` would silently shorten the `DKG_MARGIN_BLOCKS` window
+    // by K (the epoch-2 boundary wedge). For every epoch ≥ 1 the cold-start floor
+    // clamp is inactive, so `fin + K` == the ordering tip exactly.
+    //
+    // It also drives the transition's GEOMETRY FREEZE until it takes — and nothing
+    // after that, and nothing else ever: the epoch bootstrap (the starting epoch on
+    // the bridge, the read floor) belongs to the layer's cold start, which owns an
+    // ordering-scale post-jump anchor. It may not drive boundaries: `borrow_and_update` below takes
+    // the newest finalized height and drops the ones in between, while boundary
+    // detection is pointwise (`is_epoch_boundary(number)`), so a coalesced step over a
+    // terminal height loses the epoch enter outright — no track, no bridge trigger, and
+    // not even a parked boundary, since the park replays a boundary that WAS detected
+    // (`staking-reader`'s `a_coalesced_driver_skips_the_boundary_a_stepping_one_enters`).
+    // The driver that cannot skip is the layer's delivery hook, which fires on every
+    // ordering-finalized block, and it owns the one transition. Nothing is lost here:
+    // every boundary this poller could have seen the hook sees, one height at a time
+    // and in the ordering scale the transition's `read_height_for` expects.
     //
     // The clock pair is REGISTERED here, where the registry is, but neither gauge
     // is written here any more: the `DkgActor` publishes the DKG half off the
@@ -1485,6 +1521,14 @@ where
                 // lower than the one it runs on.
                 let mut finalized_rx = provider.canonical_state().subscribe_finalized_block();
                 let mut sent = cs_fin_num;
+                // Publish-once latch for the frozen geometry. Separate from "did I
+                // freeze it", because the freeze has two possible authors and the
+                // publication has exactly one.
+                let mut geometry_published = false;
+                // Track-once latch for the FIRST peer set (see the block below). One
+                // success is the whole contract: from there the epoch machine owns
+                // every later registration, at the boundaries.
+                let mut peers_tracked = false;
                 let _ = dkg_tx.try_send(cs_fin_num + fluentbase_consensus::K);
                 loop {
                     // Bound out of the `match` scrutinee so the watch guard is
@@ -1521,30 +1565,58 @@ where
                             plane_clock.note_height_drop();
                         }
                     }
-                    // Bootstrap drive (event-driven on THIS existing poll, no second
-                    // timer): until the geometry is frozen, `cold_start` off the LIVE
-                    // finalized cursor — anchoring to the now-readable finalized block
-                    // and freezing the instant it is a readable, DPoS-scheduled block
-                    // (`apply_at` is codeless-tolerant, so a too-early tick defers). The
-                    // instant it freezes, publish it on `geometry_tx` so the
-                    // DkgActor, parked on the first `Some`, starts. Once
-                    // frozen, switch to the steady `on_finalized` boundary walk (which
-                    // REQUIRES the freeze).
-                    let frozen_before = { et.lock().await.frozen_geometry().is_some() };
-                    let outcome = if frozen_before {
-                        // Drive the boundary detection; errors here are non-fatal to the
-                        // beacon plane (the engine's own ET is the authoritative boundary
-                        // path) — log and keep the peer set tracking.
-                        Some(et.lock().await.on_finalized(fin).await)
-                    } else if let Ok(Some(hash)) = provider.block_hash(fin) {
-                        // No `finalized_block_hash`-by-number on the provider here, so
-                        // resolve the hash from the height we already have.
-                        let out = et.lock().await.cold_start(hash, fin).await;
-                        // Freshly frozen on THIS tick ⇒ publish it. `send_replace`
-                        // rather than a one-shot signal: re-publishing the same
-                        // value on a later tick is a no-op for the receiver, and
-                        // there is no ordering to get wrong between the freeze and
-                        // the read.
+                    // Geometry drive (event-driven on THIS existing poll, no second
+                    // timer): until the geometry is frozen, resolve it off the LIVE
+                    // finalized cursor — freezing the instant that cursor names a
+                    // readable, DPoS-scheduled block (`freeze_geometry` is
+                    // codeless-tolerant, so a too-early tick defers and the next
+                    // finalized change re-attempts at a fresh height).
+                    //
+                    // The transition owes this poller exactly two things — the frozen
+                    // GEOMETRY here and the FIRST peer-set registration below — plus
+                    // the tombstone read further down, which goes to the reader, not to
+                    // the transition. It deliberately does not `cold_start` and does
+                    // not drive boundaries: the cold start picks the starting epoch
+                    // (the one value the epoch manager ever learns, over the bridge) and
+                    // the write-once bootstrap gate hands it to whoever calls first,
+                    // while this cursor is the EL-finalized height — `K` below the
+                    // ordering chain, and far below a re-jump landing. The one
+                    // bootstrapper is the layer, on its post-jump ordering anchor
+                    // (`consensus/src/dpos.rs` `DposLayer::launch`), and it also raises
+                    // the read floor there. `staking-reader`'s
+                    // `an_el_scale_bootstrap_in_the_k_window_after_a_boundary_loses_the_epoch`
+                    // is what that costs when the EL-scale caller wins.
+                    if !geometry_published {
+                        let frozen_before = { et.lock().await.frozen_geometry().is_some() };
+                        if !frozen_before {
+                            // No `finalized_block_hash`-by-number on the provider here,
+                            // so resolve the hash from the height we already have. When
+                            // the body behind the freshly-finalized marker is not
+                            // readable yet, fall through: the tombstone read below is
+                            // guarded the same way and degrades to a no-op.
+                            if let Ok(Some(hash)) = provider.block_hash(fin) {
+                                if let Err(e) = et.lock().await.freeze_geometry(hash) {
+                                    warn!(
+                                        finalized = fin,
+                                        error = ?e,
+                                        "beacon plane: ET freeze_geometry failed"
+                                    );
+                                }
+                            }
+                        }
+                        // Publish on the FACT of the freeze, never on "I was the one who
+                        // froze it". The layer's cold start freezes the same instance
+                        // through the same path and can get there first (it takes its
+                        // anchor from the archive / a jump landing, not from this watch),
+                        // and a publication nested inside this poller's own freeze branch
+                        // would then never run: the DkgActor parks forever on the first
+                        // `Some` (`consensus/src/beacon/plane.rs`), no DKG, no share, and
+                        // the share gate demotes the node to verify-only for the life of
+                        // the process — with nothing above `debug` anywhere.
+                        //
+                        // `send_replace` rather than a one-shot signal: the receiver
+                        // reads the newest value, so there is no ordering to get wrong
+                        // between the freeze and the read.
                         if let Some(frozen) = et.lock().await.frozen_geometry() {
                             geometry_tx.send_replace(Some(frozen));
                             // The store reads the watch on every call, so it is
@@ -1555,19 +1627,65 @@ where
                             // takes no height, so it cannot publish one the
                             // anchor does not).
                             committee_wake.anchor_advanced();
+                            geometry_published = true;
                         }
-                        Some(out)
-                    } else {
-                        // The body behind the freshly-finalized marker is not readable
-                        // yet. This used to `continue` into the next 500 ms poll; with
-                        // no sleep left in the loop that would spin, so fall through
-                        // instead — the tombstone read below is guarded by the same
-                        // `block_hash` and degrades to a no-op, and the next finalized
-                        // change re-attempts the cold start at a fresh height.
-                        None
-                    };
-                    if let Some(Err(e)) = outcome {
-                        warn!(finalized = fin, error = ?e, "beacon plane: ET on_finalized/cold_start failed");
+                    }
+
+                    // THE FIRST peer-set registration — and the only one this
+                    // process can get before its consensus layer exists.
+                    //
+                    // `DposLayer::launch` runs its cold-start jump loop
+                    // (`consensus/src/dpos.rs:1845-1893`) BEFORE it cold-starts the
+                    // transition (`:2108-2113`), and an empty-archive validator whose
+                    // EL is past epoch 0 cannot leave that loop until a PLANE peer
+                    // serves it a frontier. The frontier resolver dials only peers the
+                    // Oracle is tracking (`peer_provider: handles.oracle`, the
+                    // `commonware_resolver::p2p::Engine` built below this task), and
+                    // commonware dials only PRIMARY — i.e. tracked — peers. So the
+                    // registration has to happen HERE: this task is spawned inside
+                    // `build_beacon_plane`, which the caller awaits BEFORE
+                    // `launch_dpos_layer`, and the jump loop waits on `EL_SYNC_TICK`
+                    // (2s) between attempts, so a tick of this poller lands inside it.
+                    //
+                    // `track_peers` is NOT a bootstrap: it moves no bootstrap state,
+                    // so the layer's `cold_start` still takes the write-once branch and
+                    // still picks the starting epoch off its own post-jump ORDERING
+                    // anchor. Re-registering the same epoch index there is a no-op at
+                    // the Oracle (a `track` for an already-registered index is
+                    // ignored), and a higher one is the ordinary advance.
+                    //
+                    // STATE-GATED like the tombstone read below, and for the same
+                    // reason: the committee snapshot is an EVM read, so the cursor must
+                    // be a hash whose state this node has EXECUTED, not merely a header
+                    // it has imported.
+                    if !peers_tracked {
+                        if let Some(at) =
+                            fluentbase_consensus::executed_state_hash(&provider, fin)
+                                .ok()
+                                .flatten()
+                        {
+                            match et.lock().await.track_peers(at, fin).await {
+                                Ok(Some(epoch)) => {
+                                    info!(
+                                        epoch,
+                                        finalized = fin,
+                                        "beacon plane: peer set tracked — the plane can dial \
+                                         before the layer launches"
+                                    );
+                                    peers_tracked = true;
+                                }
+                                // Geometry not frozen yet, or `committee[epoch]` not
+                                // readable at this height: retry on the next finalized
+                                // change, exactly as the freeze above does.
+                                Ok(None) => {}
+                                Err(e) => warn!(
+                                    finalized = fin,
+                                    error = ?e,
+                                    "beacon plane: ET track_peers failed; retrying on the \
+                                     next finalized change"
+                                ),
+                            }
+                        }
                     }
 
                     // Tombstone watch — event-driven on THIS existing poll, no
@@ -1853,6 +1971,10 @@ where
         live_height,
         dkg_height_tx,
         marshal_slot,
+        epoch_transition: fluentbase_consensus::dpos::PlaneEpochTransition {
+            transition: et_arc,
+            bridge_rx,
+        },
     })
 }
 
@@ -1936,6 +2058,14 @@ pub(crate) async fn launch_dpos_layer<N, AddOns>(
     // `PK_epoch` from this validator over the SAME namespace it already takes
     // certificates from.
     artifact_bytes: crate::consensus_rpc::state::ArtifactSource,
+    // THE process's `EpochTransition` (built by the plane, before the engine) and the
+    // receiving half of its boundary bridge. This launch supplies the per-block
+    // delivery driver and the executor's read-floor seam; it builds no transition of
+    // its own, so a validator runs exactly one.
+    epoch_transition: fluentbase_consensus::dpos::PlaneEpochTransition<
+        <N as FullNodeTypes>::Provider,
+        <N as FullNodeComponents>::Evm,
+    >,
     shutdown_token: CancellationToken,
 ) -> eyre::Result<DposLayerHandle>
 where
@@ -2167,7 +2297,7 @@ where
     };
 
     let mut handle: DposLayerHandle =
-        DposLayer::launch(ctx, reth, layer_cfg, shutdown_token).await?;
+        DposLayer::launch(ctx, reth, layer_cfg, epoch_transition, shutdown_token).await?;
     if let Some(task) = cert_feed_task {
         handle.supervised.push(("cert_feed", task));
     }

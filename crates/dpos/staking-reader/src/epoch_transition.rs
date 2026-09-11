@@ -260,15 +260,13 @@ where
     }
 
     /// The frozen `(dposActivationBlock, epochBlockInterval)` once a readable,
-    /// DPoS-scheduled anchor has been applied; `None` until then. This is the
+    /// DPoS-scheduled anchor has been resolved; `None` until then. This is the
     /// SINGLE in-plane source of the immutable epoch geometry: the beacon-plane
-    /// poller drives `cold_start`/`on_finalized` here (which freezes the geometry,
-    /// codeless-tolerant — see [`Self::apply_at`]), and the `DkgActor` reads its
-    /// activation/interval from the SAME resolution rather than re-reading the
-    /// chain itself. `Some(_)` also doubles as the bootstrap signal the poller
-    /// uses to switch from `cold_start` to the steady `on_finalized` boundary walk
-    /// (which REQUIRES the freeze), distinct from a plain `Intra` no-op (which can
-    /// also mean "already tracked").
+    /// poller drives [`Self::freeze_geometry`] here until it answers `Some`, and the
+    /// `DkgActor` reads its activation/interval from the SAME resolution rather than
+    /// re-reading the chain itself. `Some(_)` is also the poller's stop condition —
+    /// and its PUBLISH condition, whichever caller did the freezing: the layer's
+    /// cold start (which freezes through the same path) may get there first.
     pub fn frozen_geometry(&self) -> Option<(u64, u64)> {
         Some((self.frozen_activation?, self.frozen_interval?))
     }
@@ -307,15 +305,17 @@ where
     /// Monotone because the value states a fact that only moves forward; accepting a
     /// lower one would re-open the pruned window the raise just closed.
     ///
-    /// The monotonicity is a property of HOW THIS SEAM IS WIRED, not of the type:
-    /// [`Self::cold_start`] is the other writer and it assigns `anchor_height`
-    /// unconditionally, so it can also lower it. What holds is that the instance the
-    /// seam is wired to — the consensus-plane one — is cold-started exactly once, at
-    /// construction, before the executor that publishes the raise exists
-    /// (`consensus/dpos.rs:2162`). Wiring it instead to a repeatedly cold-started
-    /// instance — the beacon-plane transition is cold-started on EVERY 500 ms poller
-    /// tick until the geometry freezes (`node/src/dpos.rs:1298-1315`) — would let a
-    /// later `cold_start` drop the floor back into the pruned window and defeat the
+    /// The monotonicity is a property of the TYPE, not of the wiring. Both writers of
+    /// `anchor_height` reach ONE instance: [`Self::cold_start`] (the layer, once, at
+    /// the anchor its cold-start discriminator resolved) and this setter (the
+    /// executor, on every later landing). Today's call order happens to be fixed —
+    /// the layer cold-starts before the executor exists — but that is a fact about
+    /// one wiring, and stating the guarantee as "the wiring has a single cold-start
+    /// caller" is exactly how the previous version of this doc was left describing a
+    /// wiring that had changed under it. So `cold_start` takes the same `max`: it is
+    /// not a "the history starts here" assignment but the same forward-only fact
+    /// stated from a different source, and an unconditional assignment in either
+    /// writer would let it drop the floor back into the pruned window and defeat the
     /// guarantee this setter exists to give.
     pub fn raise_anchor_height(&mut self, height: u64) {
         self.anchor_height = Some(self.anchor_height.map_or(height, |a| a.max(height)));
@@ -411,6 +411,13 @@ where
                 // leaves the delivery path as the only parker, and it delivers in
                 // height order — one boundary at a time.
                 //
+                // `cold_start` is not a third producer either, and that is structural
+                // rather than lucky: it is called once, by the layer, while
+                // `last_tracked_epoch` is still `None` (the plane freezes the geometry
+                // through `freeze_geometry`, which writes none of the bootstrap
+                // state), so it takes the bootstrap branch — which CLEARS the slot and
+                // has no park site — and never the boundary branch below, which does.
+                //
                 // The earlier justification here — `interval > MAX_PENDING_ACKS +
                 // result_lag` — was an argument about tip-delivery timing that
                 // never bound a boundary chosen an epoch below the tip. If this
@@ -433,31 +440,25 @@ where
         Ok(merge_replay_outcome(replay_advance, outcome))
     }
 
-    /// The pre-deferred `on_finalized` body: epoch geometry freeze +
-    /// cold-start bootstrap (incl. boundary-resume E+1) + boundary branch,
-    /// reading committee state at the RESOLVED executed hash `at`.
-    async fn apply_at(&mut self, number: u64, at: B256) -> Result<TransitionOutcome, ReadError> {
-        // Deferred bootstrap: until DPoS is actually a scheduled, deployed chain at
-        // `at`, the ChainConfig staticcalls below revert (codeless account) or read
-        // the `0` unscheduled sentinel. On a cold-restart into `--dpos` the anchor
-        // can momentarily be the genesis fallback (reth has not yet surfaced its
-        // persisted finalized marker), so freezing here would FATALLY mis-read the
-        // geometry. `scheduled_dpos_activation` folds both the codeless and the `0`
-        // cases to `None`; on `None` we return a benign no-op and leave the geometry
-        // UNFROZEN — the beacon-plane poller re-`cold_start`s each tick off the live
-        // finalized cursor (an existing event, NOT a new timer) and freezes the
-        // instant a readable, DPoS-scheduled finalized block exists, at which point
-        // `frozen_geometry()` becomes `Some(_)` (consumed by the poller's branch and
-        // the DkgActor). The resolved activation is reused for the freeze below so
-        // this adds no extra read.
+    /// Resolve the epoch geometry at `at` and FREEZE it — the whole geometry half of
+    /// [`Self::apply_at`], and nothing else.
+    ///
+    /// `Ok(None)` = DPoS is not a scheduled, deployed chain at `at` yet: until then the
+    /// ChainConfig staticcalls revert (codeless account) or read the `0` unscheduled
+    /// sentinel. On a cold restart into `--dpos` the anchor can momentarily be the
+    /// genesis fallback (reth has not yet surfaced its persisted finalized marker), so
+    /// freezing there would FATALLY mis-read the geometry;
+    /// `scheduled_dpos_activation` folds both the codeless and the `0` cases to `None`
+    /// and the caller stays unfrozen and retries at a later height.
+    fn resolve_and_freeze(&mut self, at: B256) -> Result<Option<(u64, u64)>, ReadError> {
         let Some(scheduled_activation) = self.reader.scheduled_dpos_activation(at)? else {
-            return Ok(TransitionOutcome::Intra);
+            return Ok(None);
         };
         // `epochBlockInterval` is treated as FIXED after genesis: the consensus
         // `FixedEpocher` is frozen at startup, so acting on a live governance
         // change here would diverge the two epoch authorities (a boundary-synced
         // live re-interval is a separate, deferred task). Freeze on the first
-        // finalized block; log + ignore any later on-chain change.
+        // readable block; log + ignore any later on-chain change.
         let observed = self.reader.epoch_block_interval(at)?;
         if observed == 0 {
             return Err(ReadError::ZeroEpochInterval);
@@ -467,16 +468,52 @@ where
             observed,
             "epochBlockInterval (consensus FixedEpocher is frozen)",
         );
-        // Freeze the relative-epoch origin on the first finalized block, mirroring
-        // the interval freeze (consensus OriginEpocher is frozen at startup). Reuse
-        // the value already resolved by `scheduled_dpos_activation` — the `0`-fold
-        // never reaches here (it returned `None` above), so this is the raw
-        // activation height (unscheduled `0` is impossible past the gate).
+        // Freeze the relative-epoch origin alongside the interval (consensus
+        // OriginEpocher is frozen at startup too). Reuse the value already resolved
+        // by `scheduled_dpos_activation` — the `0`-fold never reaches here (it
+        // returned `None` above), so this is the raw activation height (unscheduled
+        // `0` is impossible past the gate).
         let activation = freeze_or_warn(
             &mut self.frozen_activation,
             scheduled_activation,
             "dposActivationBlock (consensus OriginEpocher is frozen)",
         );
+        Ok(Some((activation, interval)))
+    }
+
+    /// Freeze the epoch geometry and DO NOTHING ELSE — the beacon plane's only
+    /// business with this instance.
+    ///
+    /// `Ok(true)` = this call froze it; `Ok(false)` = it was already frozen (by this
+    /// caller on an earlier tick, or by the layer's cold start) or DPoS is not
+    /// scheduled at `at` yet, so the caller retries at a later height. Idempotent.
+    ///
+    /// It deliberately does NOT bootstrap the epoch, `track`, fire the bridge, raise
+    /// the read floor or park a boundary: those are the BOOTSTRAP, and the bootstrap
+    /// branch of [`Self::apply_at`] is write-once (`last_tracked_epoch.is_none()`), so
+    /// a second caller reaching it would decide the starting epoch by winning a race.
+    /// The plane's cursor is the EL-finalized height, `result_lag` BELOW the ordering
+    /// chain and far below a re-jump landing, so the epoch it would pick is the wrong
+    /// one (`an_el_scale_bootstrap_in_the_k_window_after_a_boundary_loses_the_epoch`).
+    /// The one bootstrapper is [`Self::cold_start`], called by the layer once its
+    /// ordering-scale anchor exists.
+    pub fn freeze_geometry(&mut self, at: B256) -> Result<bool, ReadError> {
+        if self.frozen_geometry().is_some() {
+            return Ok(false);
+        }
+        Ok(self.resolve_and_freeze(at)?.is_some())
+    }
+
+    /// The pre-deferred `on_finalized` body: epoch geometry freeze +
+    /// cold-start bootstrap (incl. boundary-resume E+1) + boundary branch,
+    /// reading committee state at the RESOLVED executed hash `at`.
+    async fn apply_at(&mut self, number: u64, at: B256) -> Result<TransitionOutcome, ReadError> {
+        // Deferred bootstrap: on an anchor where DPoS is not a scheduled, deployed
+        // chain yet, return a benign no-op and leave the geometry UNFROZEN — see
+        // [`Self::resolve_and_freeze`] for why that state exists and how it clears.
+        let Some((activation, interval)) = self.resolve_and_freeze(at)? else {
+            return Ok(TransitionOutcome::Intra);
+        };
         // The interval is non-zero (checked above), so the shared epoch function
         // cannot answer `None` here.
         let epoch_e =
@@ -600,24 +637,27 @@ where
         Ok(TransitionOutcome::Intra)
     }
 
-    /// Persist + size-check + prune the frozen committee, feed the peer set to the
-    /// sink, and fire the boundary trigger — advancing `last_tracked_epoch` only on
-    /// a successful `try_send`. Extracted so both the cold-start bootstrap and the
-    /// boundary branch share identical (idempotent) side effects.
+    /// THE peer set for `epoch`, assembled once and in one place: the Active
+    /// validator REGISTRY ∪ the frozen committee ∪ `committee[epoch + 1]` (tier-2:
+    /// every activated validator — ejected, upcoming, the sequencer — keeps
+    /// consensus-plane connectivity; the committee union covers the
+    /// mid-epoch-jailed member that already left the registry but is still in the
+    /// frozen committee; the incoming-committee union is what the epoch-key
+    /// agreement plane needs, see below). The schemes and the bridge continue to
+    /// consume the COMMITTEE snapshot only.
     ///
-    /// The tracked peer set is the Active validator REGISTRY ∪ the frozen
-    /// committee ∪ `committee[epoch + 1]` (tier-2: every activated validator —
-    /// ejected, upcoming, the sequencer — keeps consensus-plane connectivity;
-    /// the committee union covers the mid-epoch-jailed member that already left
-    /// the registry but is still in the frozen committee; the incoming-committee
-    /// union is what the epoch-key agreement plane needs, see below). The schemes
-    /// and the bridge continue to consume the COMMITTEE snapshot only.
-    async fn track_and_trigger(
-        &mut self,
+    /// A FUNCTION rather than two copies of the formula because it now has two
+    /// callers on two different clocks — [`Self::track_and_trigger`] at a boundary
+    /// and [`Self::track_peers`] before the layer exists — and a peer set that
+    /// differed between them would partition the plane in exactly the window where
+    /// nothing is watching. The size guard rides along for the same reason: it is
+    /// part of what "the tracked set" means, not of either caller.
+    fn assemble_tracked_peers(
+        &self,
         epoch: u64,
-        snap: crate::reader::ValidatorSetSnapshot,
+        snap: &crate::reader::ValidatorSetSnapshot,
         at: B256,
-    ) -> Result<TriggerResult, ReadError> {
+    ) -> Result<Vec<PeerPubkey>, ReadError> {
         let mut tracked = self.reader.active_registry_peers(at)?;
         tracked.extend(snap.validators.iter().map(|v| v.keys.peer_pubkey.clone()));
         // The epoch-key agreement instance for `epoch + 1` runs DURING `epoch`, and
@@ -652,6 +692,77 @@ where
             ),
         }
         check_peer_set_size(epoch, tracked.len(), self.max_peer_set_size)?; // typed, not panic
+        Ok(tracked)
+    }
+
+    /// Register the peer set for the epoch `number` falls in, and DO NOTHING ELSE —
+    /// the beacon plane's second and last piece of business with this instance.
+    ///
+    /// `Ok(Some(epoch))` = that epoch's set went to the sink; `Ok(None)` = the
+    /// geometry is not frozen yet, or `committee[epoch]` reads empty at `at`, so the
+    /// caller retries at a later height. The epoch is chosen by the SAME rule the
+    /// bootstrap branch of [`Self::apply_at`] uses (on a boundary height the network
+    /// is already in `E + 1`), so an early registration never names the committee the
+    /// chain has just left.
+    ///
+    /// WHY it exists, and why it is not the bootstrap: an empty-archive validator
+    /// parks in `DposLayer::launch`'s cold-start jump loop
+    /// (`consensus/src/dpos.rs:1845-1893`) until a PLANE peer serves it a frontier,
+    /// and the frontier resolver only talks to peers the Oracle is tracking
+    /// (`node/src/dpos.rs:1723-1730`). [`Self::cold_start`] — the one bootstrapper,
+    /// and the only other path to a `track` — runs AFTER that loop
+    /// (`consensus/src/dpos.rs:2108-2113`), so without this door the node would have
+    /// no peers at the moment it needs them and would never leave the loop. It
+    /// therefore touches NONE of the bootstrap state (`last_tracked_epoch`,
+    /// `anchor_height`, `pending_boundary`, the bridge): the bootstrap branch is
+    /// write-once and picking the starting epoch off the plane's EL-scale cursor is
+    /// the defect `an_el_scale_bootstrap_in_the_k_window_after_a_boundary_loses_the_epoch`
+    /// pins. The later bootstrap re-registering the same index is harmless — commonware
+    /// ignores a `track` for an index already registered, and requires the index to
+    /// grow (`.claude/COMMONWARE_INTERNALS.md:363`).
+    ///
+    /// TEMPORARY BRIDGE. Design step 4.3 (`E4-CORE-DESIGN.md:534-548`) moves peer-set
+    /// registration out of the epoch machine entirely, to a
+    /// `track(E, TrackedPeers { primary: C[E−1] ∪ C[E] ∪ C[E+1], secondary: registry })`
+    /// owned by its own module. When that lands, this method and the `track` inside
+    /// [`Self::track_and_trigger`] are replaced by that one call site, and
+    /// [`Self::assemble_tracked_peers`] goes with them.
+    pub async fn track_peers(&mut self, at: B256, number: u64) -> Result<Option<u64>, ReadError> {
+        // `None` until the geometry freezes — the plane's cursor must not be what
+        // fixes it either, so there is no freeze attempt here.
+        let Some(epoch_e) = self.epoch_at(number) else {
+            return Ok(None);
+        };
+        let epoch = if self.is_epoch_boundary_frozen(number) == Some(true) {
+            epoch_e + 1
+        } else {
+            epoch_e
+        };
+        let snap = self.reader.epoch_committee_snapshot(epoch, at)?;
+        if snap.validators.is_empty() {
+            // A missed commit or a state-visibility lag: tracking an empty set would
+            // REPLACE the peer set commonware holds, so skip and retry.
+            return Ok(None);
+        }
+        let tracked = self.assemble_tracked_peers(epoch, &snap, at)?;
+        self.sink.track(epoch, Set::from_iter_dedup(tracked)).await;
+        Ok(Some(epoch))
+    }
+
+    /// Persist + size-check + prune the frozen committee, feed the peer set to the
+    /// sink, and fire the boundary trigger — advancing `last_tracked_epoch` only on
+    /// a successful `try_send`. Extracted so both the cold-start bootstrap and the
+    /// boundary branch share identical (idempotent) side effects.
+    ///
+    /// The set itself is [`Self::assemble_tracked_peers`]'s, shared verbatim with the
+    /// plane's pre-engine [`Self::track_peers`].
+    async fn track_and_trigger(
+        &mut self,
+        epoch: u64,
+        snap: crate::reader::ValidatorSetSnapshot,
+        at: B256,
+    ) -> Result<TriggerResult, ReadError> {
+        let tracked = self.assemble_tracked_peers(epoch, &snap, at)?;
         self.sink.track(epoch, Set::from_iter_dedup(tracked)).await; // one-shot
 
         // Gate `last_tracked_epoch` advance on `try_send` success. A
@@ -684,14 +795,24 @@ where
     /// Cold start: freeze the epoch geometry and read the **current
     /// finalized** committee at the EXPLICIT anchor hash `head` (the anchor
     /// is executed by construction — the one height where no `executed_hash`
-    /// resolution is needed), apply once. Also pins the read-height floor for
+    /// resolution is needed), apply once. Also raises the read-height floor for
     /// every later `on_finalized`. MUST run before `on_finalized`.
+    ///
+    /// THE bootstrapper: this is the only caller that may pick the starting epoch, and
+    /// the layer is the only caller of it — on an ORDERING-scale, post-jump anchor.
+    /// The beacon plane freezes the geometry through [`Self::freeze_geometry`] instead,
+    /// which touches none of the bootstrap state, so `last_tracked_epoch` is still
+    /// `None` when this runs and the bootstrap branch of [`Self::apply_at`] is the one
+    /// it takes.
+    ///
+    /// The floor is RAISED, not assigned — see [`Self::raise_anchor_height`] for why
+    /// monotonicity has to be a property of the type rather than of that call order.
     pub async fn cold_start(
         &mut self,
         head: B256,
         head_number: u64,
     ) -> Result<TransitionOutcome, ReadError> {
-        self.anchor_height = Some(head_number);
+        self.raise_anchor_height(head_number);
         self.apply_at(head_number, head).await
     }
 }
@@ -2270,6 +2391,427 @@ mod tests {
                 reads.iter().all(|h| *h == boundary - 3),
                 "a near-tip delivery must still read at number − K, got {reads:?}"
             );
+        });
+    }
+
+    /// The floor is monotone against BOTH of its writers, not just
+    /// [`EpochTransition::raise_anchor_height`]. The ONE transition a validator runs is
+    /// cold-started by the beacon-plane poller (off the EL-finalized cursor, which can
+    /// sit far below a re-jump landing) and raised by the executor's landing, so a cold
+    /// start arriving after a raise must not drop the floor back into the window the
+    /// landing closed — the property the old doc could only claim by pointing at a
+    /// wiring that had exactly one cold-start caller.
+    #[test]
+    fn cold_start_after_a_raise_does_not_lower_the_floor() {
+        deterministic::Runner::default().start(|_ctx| async move {
+            let h = B256::repeat_byte(0x55);
+            let mut et = et(
+                MockReader {
+                    committee: 3,
+                    interval: 100,
+                },
+                RecordingSink::default(),
+                64,
+                None,
+                h,
+            );
+            et.cold_start(h, 500).await.unwrap();
+            assert_eq!(et.anchor_height, Some(500), "cold start pins the anchor");
+            et.raise_anchor_height(999_997);
+            et.cold_start(h, 400).await.unwrap();
+            assert_eq!(
+                et.anchor_height,
+                Some(999_997),
+                "a later cold start must not lower the floor a landing raised"
+            );
+            et.cold_start(h, 1_000_000).await.unwrap();
+            assert_eq!(
+                et.anchor_height,
+                Some(1_000_000),
+                "a cold start ABOVE the floor still moves it forward"
+            );
+        });
+    }
+
+    /// Boundary detection is POINTWISE — `is_epoch_boundary(number)` is true only for
+    /// the terminal height of an epoch — so a driver that COALESCES (takes the newest
+    /// height and drops the ones in between) loses the epoch enter outright: no track,
+    /// no bridge trigger, and not even a parked boundary to replay, because the park
+    /// remembers an already-detected boundary and never finds a skipped one. A driver
+    /// that steps every finalized height enters it. This is what decides which driver
+    /// may own the single transition: the per-block delivery hook, never a watch poller.
+    #[test]
+    fn a_coalesced_driver_skips_the_boundary_a_stepping_one_enters() {
+        deterministic::Runner::default().start(|_ctx| async move {
+            let h = B256::repeat_byte(0x33);
+            // interval 100, activation 0 ⇒ epoch 1 terminates at 199.
+            let coalesced_sink = RecordingSink::default();
+            let (coalesced_tx, mut coalesced_rx) = tokio::sync::mpsc::channel(64);
+            let mut coalesced = et(
+                MockReader {
+                    committee: 3,
+                    interval: 100,
+                },
+                coalesced_sink.clone(),
+                64,
+                Some(coalesced_tx),
+                h,
+            );
+            coalesced.cold_start(h, 150).await.unwrap();
+            // One coalesced delivery from mid-epoch-1 to mid-epoch-2, over 199.
+            assert_eq!(
+                coalesced.on_finalized(203).await.unwrap(),
+                TransitionOutcome::Intra
+            );
+
+            let stepping_sink = RecordingSink::default();
+            let (stepping_tx, mut stepping_rx) = tokio::sync::mpsc::channel(64);
+            let mut stepping = et(
+                MockReader {
+                    committee: 3,
+                    interval: 100,
+                },
+                stepping_sink.clone(),
+                64,
+                Some(stepping_tx),
+                h,
+            );
+            stepping.cold_start(h, 150).await.unwrap();
+            for number in 151..=203 {
+                stepping.on_finalized(number).await.unwrap();
+            }
+
+            let epochs = |sink: &RecordingSink| -> Vec<u64> {
+                sink.0.lock().unwrap().iter().map(|(e, _)| *e).collect()
+            };
+            let drain = |rx: &mut tokio::sync::mpsc::Receiver<(
+                u64,
+                crate::reader::ValidatorSetSnapshot,
+            )>|
+             -> Vec<u64> {
+                let mut out = vec![];
+                while let Ok((epoch, _)) = rx.try_recv() {
+                    out.push(epoch);
+                }
+                out
+            };
+
+            assert_eq!(
+                epochs(&coalesced_sink),
+                vec![1],
+                "the coalesced driver tracked only the cold-start epoch — 2 is lost"
+            );
+            assert_eq!(
+                drain(&mut coalesced_rx),
+                vec![1],
+                "and the bridge saw no trigger for epoch 2, i.e. the engine never enters it"
+            );
+            assert_eq!(
+                coalesced.last_tracked_epoch,
+                Some(1),
+                "the skipped boundary left the write-once guard where the cold start put it"
+            );
+            assert_eq!(
+                coalesced.pending_boundary(),
+                None,
+                "and nothing is parked: the park replays a DETECTED boundary, it cannot \
+                 find a skipped one"
+            );
+
+            assert_eq!(
+                epochs(&stepping_sink),
+                vec![1, 2],
+                "the stepping driver lands on 199 and enters epoch 2"
+            );
+            assert_eq!(drain(&mut stepping_rx), vec![1, 2]);
+            assert_eq!(stepping.last_tracked_epoch, Some(2));
+        });
+    }
+
+    /// The plane poller needs the GEOMETRY and nothing else, so the entry point it
+    /// calls must freeze exactly that: no epoch bootstrap, no `track`, no bridge
+    /// trigger, no read floor, no park. Those belong to the ONE bootstrapper (the
+    /// layer's cold start, on an ordering-scale anchor); a poller that reached them
+    /// would be the second one, and the bootstrap branch is write-once.
+    #[test]
+    fn freeze_geometry_freezes_the_geometry_and_nothing_else() {
+        deterministic::Runner::default().start(|_ctx| async move {
+            let h = B256::repeat_byte(0x71);
+            let sink = RecordingSink::default();
+            let (bridge_tx, mut bridge_rx) = tokio::sync::mpsc::channel(8);
+            let mut et = et(
+                MockReader {
+                    committee: 3,
+                    interval: 100,
+                },
+                sink.clone(),
+                64,
+                Some(bridge_tx),
+                h,
+            );
+            assert_eq!(et.frozen_geometry(), None);
+            assert!(
+                et.freeze_geometry(h).unwrap(),
+                "the first call reports that IT froze the geometry"
+            );
+            assert_eq!(et.frozen_geometry(), Some((0, 100)));
+            assert_eq!(
+                et.last_tracked_epoch, None,
+                "the write-once bootstrap gate is untouched — the layer still owns it"
+            );
+            assert_eq!(
+                et.anchor_height, None,
+                "the read floor is untouched — the landing and the layer own it"
+            );
+            assert_eq!(et.pending_boundary(), None, "nothing is parked");
+            assert!(sink.0.lock().unwrap().is_empty(), "no peer set was tracked");
+            assert!(
+                bridge_rx.try_recv().is_err(),
+                "no epoch reached the bridge, so the epoch manager learned nothing"
+            );
+
+            assert!(
+                !et.freeze_geometry(h).unwrap(),
+                "a second call is a no-op and says so"
+            );
+            assert_eq!(et.frozen_geometry(), Some((0, 100)));
+            assert_eq!(et.last_tracked_epoch, None);
+            assert_eq!(et.anchor_height, None);
+        });
+    }
+
+    /// WHICH HEIGHT the one transition is bootstrapped from decides which epoch the
+    /// engine ever enters, so there may be exactly ONE bootstrapper and it has to be
+    /// the layer's — the only caller holding an ORDERING-scale anchor.
+    ///
+    /// The bootstrap branch is write-once (`last_tracked_epoch.is_none()`) and the
+    /// bridge is the only edge by which the epoch manager learns a new epoch. The
+    /// beacon plane's cursor is the EL-finalized height, `result_lag` BELOW the
+    /// ordering chain, so a bootstrap taken there inside the K-wide window after a
+    /// boundary picks `E − 1` while the layer's anchor picks `E`. The delivery hook
+    /// then starts at `anchor + 1`, ABOVE the terminal that would have entered `E` —
+    /// so the EL-scale bootstrap does not merely delay `E`, it loses it until the
+    /// NEXT boundary.
+    #[test]
+    fn an_el_scale_bootstrap_in_the_k_window_after_a_boundary_loses_the_epoch() {
+        deterministic::Runner::default().start(|_ctx| async move {
+            let h = B256::repeat_byte(0x2B);
+            // interval 100, activation 0 ⇒ epoch 1 terminates at 199; the ordering
+            // anchor 201 sits in epoch 2, and the EL cursor is 201 − K(3) = 198,
+            // still in epoch 1.
+            let el_sink = RecordingSink::default();
+            let (el_tx, mut el_rx) = tokio::sync::mpsc::channel(64);
+            let mut el_scale = et(
+                MockReader {
+                    committee: 3,
+                    interval: 100,
+                },
+                el_sink.clone(),
+                64,
+                Some(el_tx),
+                h,
+            );
+            el_scale.cold_start(h, 198).await.unwrap();
+
+            let ordering_sink = RecordingSink::default();
+            let (ordering_tx, mut ordering_rx) = tokio::sync::mpsc::channel(64);
+            let mut ordering = et(
+                MockReader {
+                    committee: 3,
+                    interval: 100,
+                },
+                ordering_sink.clone(),
+                64,
+                Some(ordering_tx),
+                h,
+            );
+            ordering.cold_start(h, 201).await.unwrap();
+
+            // The delivery hook fires from the block ABOVE the ordering anchor, so
+            // the terminal 199 is never delivered to either instance.
+            for number in 202..=298 {
+                el_scale.on_finalized(number).await.unwrap();
+                ordering.on_finalized(number).await.unwrap();
+            }
+
+            let epochs = |sink: &RecordingSink| -> Vec<u64> {
+                sink.0.lock().unwrap().iter().map(|(e, _)| *e).collect()
+            };
+            let drain = |rx: &mut tokio::sync::mpsc::Receiver<(
+                u64,
+                crate::reader::ValidatorSetSnapshot,
+            )>|
+             -> Vec<u64> {
+                let mut out = vec![];
+                while let Ok((epoch, _)) = rx.try_recv() {
+                    out.push(epoch);
+                }
+                out
+            };
+
+            assert_eq!(
+                epochs(&el_sink),
+                vec![1],
+                "the EL-scale bootstrap entered the PREVIOUS epoch"
+            );
+            assert_eq!(
+                drain(&mut el_rx),
+                vec![1],
+                "and that is the only epoch the bridge — the one edge into the epoch \
+                 manager — ever carried"
+            );
+            assert_eq!(el_scale.last_tracked_epoch, Some(1));
+            assert_eq!(
+                epochs(&ordering_sink),
+                vec![2],
+                "the ordering-scale bootstrap entered the epoch the node is actually in"
+            );
+            assert_eq!(drain(&mut ordering_rx), vec![2]);
+            assert_eq!(ordering.last_tracked_epoch, Some(2));
+
+            // The next boundary proves the loss is PERMANENT, not a delay: the
+            // write-once gate `last_tracked_epoch < Some(next)` happily takes 3.
+            assert_eq!(
+                el_scale.on_finalized(299).await.unwrap(),
+                TransitionOutcome::EpochAdvanced(3)
+            );
+            assert_eq!(
+                epochs(&el_sink),
+                vec![1, 3],
+                "epoch 2 is lost forever — the walk resumes at 3"
+            );
+            assert_eq!(
+                ordering.on_finalized(299).await.unwrap(),
+                TransitionOutcome::EpochAdvanced(3)
+            );
+            assert_eq!(
+                epochs(&ordering_sink),
+                vec![2, 3],
+                "the ordering-scale walk is contiguous"
+            );
+        });
+    }
+
+    /// The peer set has to be registered BEFORE the layer's cold-start jump, not
+    /// after it: an empty-archive validator parks in
+    /// `DposLayer::launch`'s jump loop (`consensus/src/dpos.rs:1845-1893`) until a
+    /// PLANE peer serves it a frontier, and the frontier resolver only talks to
+    /// peers the Oracle is tracking (`node/src/dpos.rs:1723-1730`). The layer's
+    /// `cold_start` — the one bootstrapper — runs AFTER that loop
+    /// (`consensus/src/dpos.rs:2108-2113`), so the only `track` reachable from it
+    /// comes too late. `track_peers` is the beacon plane's door to the peer set,
+    /// and it must open it WITHOUT bootstrapping: the bootstrap branch is
+    /// write-once and belongs to the layer.
+    #[test]
+    fn track_peers_registers_the_peer_set_without_bootstrapping() {
+        deterministic::Runner::default().start(|_ctx| async move {
+            let h = B256::repeat_byte(0x4D);
+            let reader = || RegistryReader {
+                inner: MockReader {
+                    committee: 3,
+                    interval: 100,
+                },
+                registry: vec![
+                    validator(900_001).keys.peer_pubkey,
+                    validator(900_002).keys.peer_pubkey,
+                ],
+            };
+            let sink = KeySink::default();
+            let (bridge_tx, mut bridge_rx) = tokio::sync::mpsc::channel(8);
+            let mut et = EpochTransition::new(
+                reader(),
+                sink.clone(),
+                64,
+                Some(bridge_tx),
+                std::sync::Arc::new(move |_n| Ok(Some(h))),
+                3,
+            );
+
+            // Before the freeze there is no epoch to name, so the call is a no-op
+            // the caller can retry — NOT a freeze of its own (the plane's cursor
+            // must never be what fixes the geometry's read height either).
+            assert_eq!(
+                et.track_peers(h, 250).await.unwrap(),
+                None,
+                "an unfrozen geometry has no epoch to track, and the call does not \
+                 invent one"
+            );
+            assert_eq!(et.frozen_geometry(), None, "and it did not freeze anything");
+            assert!(sink.0.lock().unwrap().is_empty(), "no peer set was tracked");
+
+            assert!(et.freeze_geometry(h).unwrap());
+            assert_eq!(
+                et.track_peers(h, 250).await.unwrap(),
+                Some(2),
+                "height 250 over (activation 0, interval 100) is epoch 2"
+            );
+
+            // The whole point of a separate door: none of the bootstrap state moves,
+            // so the layer's cold start still takes the write-once branch and still
+            // picks the starting epoch off its own ordering anchor.
+            assert_eq!(
+                et.last_tracked_epoch, None,
+                "the write-once bootstrap gate is untouched — the layer still owns it"
+            );
+            assert_eq!(
+                et.anchor_height, None,
+                "the read floor is untouched — the landing and the layer own it"
+            );
+            assert_eq!(et.pending_boundary(), None, "nothing is parked");
+            assert!(
+                bridge_rx.try_recv().is_err(),
+                "no epoch reached the bridge, so the epoch manager learned nothing"
+            );
+
+            let outcome = et.cold_start(h, 250).await.unwrap();
+            assert_eq!(
+                outcome,
+                TransitionOutcome::EpochAdvanced(2),
+                "the layer's bootstrap runs afterwards exactly as if the plane had \
+                 never touched the instance"
+            );
+            assert_eq!(et.last_tracked_epoch, Some(2));
+
+            // ONE formula, not two: the set the plane registered early and the set
+            // the bootstrap registers are the same object, so a later change to the
+            // union cannot drift the two apart. (The repeat is harmless at the
+            // Oracle: a `track` of an index already registered is ignored,
+            // `.claude/COMMONWARE_INTERNALS.md:363`.)
+            let log = sink.0.lock().unwrap();
+            assert_eq!(log.len(), 2, "one early track, one bootstrap track");
+            assert_eq!(log[0].0, 2);
+            assert_eq!(log[1].0, 2);
+            assert_eq!(
+                log[0].1, log[1].1,
+                "the pre-jump track and the bootstrap track register the SAME set"
+            );
+            assert_eq!(
+                log[0].1.len(),
+                8,
+                "registry(2) union committee[2](3) union committee[3](3)"
+            );
+            drop(log);
+
+            // On a boundary height the epoch is E+1 — the same choice the bootstrap
+            // branch makes, so the early track never registers the committee the
+            // network has already left.
+            let boundary_sink = KeySink::default();
+            let mut boundary_et = EpochTransition::new(
+                reader(),
+                boundary_sink.clone(),
+                64,
+                None,
+                std::sync::Arc::new(move |_n| Ok(Some(h))),
+                3,
+            );
+            assert!(boundary_et.freeze_geometry(h).unwrap());
+            assert_eq!(
+                boundary_et.track_peers(h, 199).await.unwrap(),
+                Some(2),
+                "199 terminates epoch 1, and a finalized terminal means the network \
+                 is already in 2"
+            );
+            assert_eq!(boundary_et.last_tracked_epoch, None);
         });
     }
 }

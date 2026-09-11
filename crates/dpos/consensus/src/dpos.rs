@@ -11,7 +11,6 @@ use crate::{
     cold_start_jump::ElSync as _,
     digest::Digest,
     epocher::OriginEpocher,
-    executed::executed_state_hash,
     order_block::{anchor_order_block, OrderBlock, K},
     slasher::actor::SlasherTxSink,
     sync_metrics::{SyncMetrics, SyncReason},
@@ -34,7 +33,7 @@ use commonware_storage::{
 use commonware_utils::sequence::U64;
 use eyre::{ensure, eyre, OptionExt as _, WrapErr as _};
 use fluentbase_bls::{keys::ValidatorBlsKeypair, PeerPubkey, Scheme as BlsScheme};
-use fluentbase_p2p::NoopBlocker;
+use fluentbase_p2p::{NoopBlocker, OracleHandle};
 use fluentbase_staking_reader::{
     reader::StakingReaderConfig, EpochTransition, RethStakingStateReader, TransitionOutcome,
 };
@@ -1053,6 +1052,34 @@ impl<T> ResettableForward<T> {
     }
 }
 
+/// The ONE [`EpochTransition`] a validator process runs, handed DOWN from the node
+/// crate's always-on plane (where it is built, before the engine, so the geometry it
+/// freezes is available to the `DkgActor` and the committee module) together with the
+/// receiving half of the boundary bridge it was constructed with.
+///
+/// It is one instance and not two because two had two `last_tracked_epoch`s, two
+/// `anchor_height`s and two `oracle.track` calls per epoch, driven from two different
+/// heights: the engine's delivery hook fires on every ordering-finalized block, while
+/// the plane's poller reads a COALESCED reth watch — and boundary detection is
+/// pointwise, so the poller's driver skips boundaries outright (proved in
+/// `staking-reader`'s `a_coalesced_driver_skips_the_boundary_a_stepping_one_enters`).
+/// The surviving driver is therefore the delivery hook; the plane keeps only the
+/// GEOMETRY FREEZE (`EpochTransition::freeze_geometry`), which writes none of the
+/// bootstrap state — so the cold start below is the process's ONE bootstrapper, and
+/// the starting epoch is chosen on the ordering scale instead of by a race.
+///
+/// Both halves travel together because they are one object: `bridge_rx` can only be
+/// drained where `OuterEngine::boundary_sender()` exists, which is after `build`.
+pub struct PlaneEpochTransition<Provider, EvmConfig> {
+    /// The instance itself. `Arc<Mutex<_>>` because the delivery hook, the
+    /// executor's read-floor seam and the plane poller all call into it.
+    pub transition:
+        Arc<Mutex<EpochTransition<RethStakingStateReader<Provider, EvmConfig>, OracleHandle>>>,
+    /// Receiving half of the transition's `boundary_tx`. Drained by the
+    /// `epoch_bridge` forwarder into `OuterEngine::boundary_sender()`.
+    pub bridge_rx: mpsc::Receiver<(u64, fluentbase_staking_reader::reader::ValidatorSetSnapshot)>,
+}
+
 /// The persistent beacon/DKG plane handed DOWN from the node crate's always-on
 /// component into each per-promotion signer engine. The node crate owns the single
 /// `FluentP2P` (beacon halves + `DkgActor` consume their channel there; the 5
@@ -1517,9 +1544,16 @@ async fn enter_finalized_epoch(
 pub struct DposLayer;
 
 impl DposLayer {
-    /// Launch the DPoS layer end-to-end: build 03 reader+cache+EpochTransition,
-    /// 05 p2p network, 04 OuterEngine; perform cold-start; spawn forwarder
-    /// + outer + network; return their `Handle<()>`s for the host to supervise.
+    /// Launch the DPoS layer end-to-end: build the 03 reader, the 05 p2p network and
+    /// the 04 OuterEngine; cold-start the plane's transition at this node's own
+    /// (post-jump) anchor; spawn forwarder + outer + network; return their
+    /// `Handle<()>`s for the host to supervise.
+    ///
+    /// The [`EpochTransition`] is NOT built here: it arrives as
+    /// [`PlaneEpochTransition`] from the always-on plane, which built it before this
+    /// launch so the geometry it freezes was already available to the `DkgActor` and
+    /// the committee module. This layer supplies the two things only it has — the
+    /// per-block delivery driver (`boundary_hook`) and the executor's read-floor seam.
     ///
     /// Caller (the host adapter at `crates/node/src/dpos.rs`) is responsible
     /// for the `select!` supervisor over `shutdown` + the two returned
@@ -1530,6 +1564,7 @@ impl DposLayer {
         ctx: Context,
         reth: RethHandle<Provider, EvmConfig, BeaconEngine>,
         cfg: DposLayerConfig<D, XC, A, U>,
+        epoch_transition: PlaneEpochTransition<Provider, EvmConfig>,
         shutdown: CancellationToken,
     ) -> eyre::Result<DposLayerHandle>
     where
@@ -2041,31 +2076,38 @@ impl DposLayer {
         // `listen`, rebuilds a `Muxer`, or consumes a raw channel half — so a
         // demote→re-promote within one process re-clones cleanly (no network rebuild).
 
-        // Bridge channel: boundary triggers from EpochTransition queue here;
-        // a forwarder task (spawned after build) drains bridge_rx →
-        // outer_boundary_tx. Built BEFORE EpochTransition so boundary_tx is
-        // wired at construction — eliminates the post-build
-        // set_boundary_sender race window.
-        let (bridge_tx, mut bridge_rx) =
-            mpsc::channel::<(u64, fluentbase_staking_reader::reader::ValidatorSetSnapshot)>(64);
+        // THE process's `EpochTransition`, built by the always-on plane with the
+        // sending half of this bridge already wired in, and its receiving half. The
+        // forwarder below (spawned after `build`, where `boundary_sender()` exists)
+        // drains `bridge_rx` → `outer_boundary_tx`. There is no second instance and no
+        // second `oracle.track` per epoch: the plane's poller no longer drives
+        // boundaries at all, this layer's per-block delivery hook does.
+        let PlaneEpochTransition {
+            transition: et_arc,
+            mut bridge_rx,
+        } = epoch_transition;
 
-        // Wire staking-reader ↔ p2p: EpochTransition consumes the (shared) Oracle as
-        // PeerSetSink. The persistent plane's own EpochTransition also tracks this
-        // Oracle's peer set so connectivity persists across the follower phase; both
-        // compute the identical `active_registry_peers ∪ committee[E+1]` union, so a
-        // double `track` of the same (epoch, set) is idempotent.
-        let provider_for_et = provider.clone();
-        let mut epoch_transition = EpochTransition::new(
-            reader,
-            oracle.clone(),
-            fluentbase_p2p::constants::MAX_REGISTRY_PEER_SET as usize,
-            Some(bridge_tx.clone()),
-            Arc::new(move |n| executed_state_hash(&provider_for_et, n)),
-            K,
-        );
-
-        // Cold-start: read current finalized committee, track once.
-        epoch_transition
+        // Cold-start at THIS node's anchor — the one the cold-start discriminator
+        // resolved, i.e. AFTER a jump landed, which is strictly at or above the
+        // EL-finalized height the plane poller reads. This is the process's ONE
+        // bootstrap, and it is here rather than in the poller because only here is the
+        // anchor an ORDERING height on the far side of the jump: it picks the starting
+        // epoch (the single value the epoch manager ever learns, over the bridge) and
+        // sets the read floor to the landing (`cold_start` raises, never lowers — see
+        // `raise_anchor_height`).
+        //
+        // The plane's poller has already done the other two things this call also
+        // does: it froze the geometry (through the same path, so whichever ran first
+        // the other is a no-op) and it registered a FIRST peer set
+        // (`EpochTransition::track_peers`, `crates/node/src/dpos.rs`). That
+        // registration is why the jump loop above could finish at all — the frontier
+        // resolver dials only tracked peers — and it is NOT a bootstrap: it moves no
+        // bootstrap state, so the branch this call takes is still the write-once one.
+        // Re-registering its epoch index here is ignored by the Oracle; a higher one
+        // is the ordinary advance.
+        et_arc
+            .lock()
+            .await
             .cold_start(latest_finalized_hash, latest_finalized)
             .await
             .wrap_err("epoch_transition cold_start failed")?;
@@ -2107,10 +2149,6 @@ impl DposLayer {
         // preserved). Every node computes the identical artifact, so Simplex
         // `set_genesis(digest)` matches view 1's parent on all nodes.
         let genesis_block = anchor_order_block(&genesis_sealed)?;
-
-        // Move EpochTransition into Arc<Mutex<_>> so the boundary_hook
-        // closure can call back into it from any thread.
-        let et_arc = Arc::new(Mutex::new(epoch_transition));
 
         // Boundary hook: fires for every `Update::Block`. Spawns
         // fire-and-forget via `ctx.spawn` (NOT `tokio::spawn`, which would
