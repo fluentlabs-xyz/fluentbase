@@ -201,6 +201,66 @@ ABI не затронут: селекторы те же, сигнатуры те
 
 **sha:** `548f10bd` (код), docs — следующим коммитом.
 
+### П3 (1.6, K-22). Отказ фонда ревёртит слэш
+
+**Что было.** `consensus.rs` (`seize_self_stake`, хвост): `if !try_transfer(sdk,
+recipient, seized)? { seized = U256::ZERO; }`, затем `EquivocationStakeSeized` с нулём.
+Тумбстоун, тюрьма, удаление из активного набора и штамп невидимости отбора записаны
+выше и оставались записанными. Комментарий над этим местом объявлял правило «платёж не
+должен ревёртить» и обосновывал его: иначе отказавший токен сделает эквивокацию
+неслэшируемой.
+
+**Решение владельца** — ревёрт при отказе фонда, не учёт замороженного. Записано в
+`DECISIONS.md` §3 «K-22: ревёрт при отказе фонда — принято 2026-09-11».
+
+**Что сделано.** `return revert(sdk, ERR_STAKING_TOKEN_CALL_FAILED);` вместо обнуления.
+Ошибка выбрана из существующих: конфискация двигает именно staking-токен. Комментарий
+переписан — он утверждал противоположную политику, а поверх неё лежит цена, которую
+теперь платит контракт, и она названа в коде.
+
+**Почему цена переживаема** — проверено, не предположено: `crates/node/src/evm.rs:1184-1190`
+на ветке `ExecutionResult::Revert` для `slashEquivocation` пишет `tracing::warn!` и НЕ
+коммитит состояние (комментарий выше, `:1155-1162`, объясняет выбор: fail-loud «convert
+a lost slash into a stalled chain»). То есть ревёрт системного вызова слэша не
+останавливает цепь — он теряет слэш. Три маршрута по уликам
+(`slashEquivocationNotarize/Finalize/NullifyFinalize`) — обычные транзакции от EOA
+слэшера, там ревёрт просто проваливает транзакцию.
+
+**Файлы.** `src/consensus.rs`, `src/tests.rs`.
+
+**Тесты.**
+
+- `a_fund_that_refuses_the_seizure_reverts_the_whole_slash` — заменил
+  `a_slash_survives_a_fund_that_refuses_the_seizure`, который пинил старую политику
+  (`seized = 0`, тумбстоун стоит) и стал красным от правки прод-кода. **Был ли красным
+  до правки: да** — прогнан против восстановленного обнуления:
+  `test result: FAILED. 177 passed; 1 failed`, упал ровно он.
+- Заглушка **сама проверяет, что отказала**: `record_transfers_refusing`
+  (`tests.rs:6440-6476`) записывает КАЖДУЮ попытку `transfer` в `transfers`, поэтому
+  обе отказные ноги утверждают, что платёж был предъявлен на полную сумму
+  (`&[(EQUIVOCATION_BURN_SINK, stake)]`), а не что его не было. Сверх этого добавлена
+  контрольная нога: та же фикстура, тот же вызов, пустой список отказа — слэш проходит,
+  тумбстоун встаёт, событие сообщает `stake`. Заглушка, тихо переставшая отказывать, не
+  может покрасить отказные ноги зелёным при живой контрольной.
+- Откат проверяется по четырём записям отдельно (тумбстоун, статус `STATUS_ACTIVE`,
+  длина очереди делегации, `selection_visible_at`), плюс отсутствие события
+  `EquivocationStakeSeized`. Откат в юнит-тесте не фикция: `Harness::call`
+  (`tests.rs:186-197`) снимает `dump_storage()` до вызова и делает `restore_storage`
+  на любом не-`Ok` выходе.
+
+**Ворота после П3, verbatim:**
+
+    cargo test                         → test result: ok. 178 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+    cargo test --features devnet-views → test result: ok. 179 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+    cargo clippy --all-targets -- -D warnings → Finished `dev` profile [optimized] target(s) in 2.76s
+    cargo fmt --check                  → чисто
+
+ABI не затронут. Потребителей события `EquivocationStakeSeized` вне контракта нет
+(`grep` по `e2e/src/`, `crates/dpos/`, `crates/node/`, `devnet/local-dpos-smoke/dpos_harness/`
+— пусто), так что общие ворота эта правка не задевает.
+
+**sha:** `3c4560db` (код), docs — следующим коммитом.
+
 ## §3 Отклонения Д-nn
 
 ### Д-01 (П1). Три способа, которыми правка задела существующие тесты
