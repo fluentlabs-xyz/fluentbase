@@ -1779,6 +1779,7 @@ mod eip8037_state_gas_tests {
 #[cfg(test)]
 mod static_call_frame_tests {
     use super::*;
+    use crate::syscall::CALL_INPUT_HARD_CAP;
     use fluentbase_sdk::{
         syscall::{SYSCALL_ID_CALL, SYSCALL_ID_CALL_CODE},
         FUEL_DENOM_RATE,
@@ -1795,6 +1796,17 @@ mod static_call_frame_tests {
     /// Raises a CALL-family syscall from a frame executing `CONTRACT` and returns what the host
     /// decided to do next.
     fn execute_call_syscall(code_hash: B256, is_static: bool, value: U256) -> NextAction {
+        execute_call_syscall_with_input_len(code_hash, is_static, value, None)
+    }
+
+    /// Like [`execute_call_syscall`], with the syscall's input range stretched to `input_len`
+    /// bytes while the guest memory behind it stays 52 bytes long.
+    fn execute_call_syscall_with_input_len(
+        code_hash: B256,
+        is_static: bool,
+        value: U256,
+        input_len: Option<usize>,
+    ) -> NextAction {
         let mut ctx: RwasmContext<InMemoryDB> =
             RwasmContext::new(InMemoryDB::default(), RwasmSpecId::PRAGUE);
         ctx.cfg = CfgEnv::new_with_spec(RwasmSpecId::PRAGUE);
@@ -1814,7 +1826,7 @@ mod static_call_frame_tests {
         let interruption_inputs = SystemInterruptionInputs {
             call_id: 0,
             code_hash,
-            input: 0..mr.0.len(),
+            input: 0..input_len.unwrap_or(mr.0.len()),
             fuel_limit: GAS_LIMIT * FUEL_DENOM_RATE,
             state: STATE_MAIN,
             fuel16_ptr: 0,
@@ -1849,6 +1861,33 @@ mod static_call_frame_tests {
         assert_eq!(inputs.target_address, CONTRACT);
         assert_eq!(inputs.caller, CONTRACT);
         assert_eq!(inputs.bytecode_address, CALLEE);
+    }
+
+    /// An input range above the hard cap halts before any of it is read; a range at the cap
+    /// passes the length check and reaches the memory read, which the 52-byte guest memory
+    /// behind the range cannot satisfy.
+    #[test]
+    fn call_input_above_hard_cap_halts_before_reading() {
+        for code_hash in [SYSCALL_ID_CALL, SYSCALL_ID_CALL_CODE] {
+            let NextAction::Return(result) = execute_call_syscall_with_input_len(
+                code_hash,
+                false,
+                U256::ZERO,
+                Some(CALL_INPUT_HARD_CAP + 1),
+            ) else {
+                panic!("an input above the hard cap must halt");
+            };
+            assert_eq!(result.result, InstructionResult::MalformedBuiltinParams);
+        }
+        let NextAction::Return(result) = execute_call_syscall_with_input_len(
+            SYSCALL_ID_CALL,
+            false,
+            U256::ZERO,
+            Some(CALL_INPUT_HARD_CAP),
+        ) else {
+            panic!("an input at the hard cap must reach the memory read and fail there");
+        };
+        assert_eq!(result.result, InstructionResult::MemoryOutOfBounds);
     }
 
     #[test]
