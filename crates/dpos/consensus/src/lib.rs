@@ -36,6 +36,7 @@ pub mod byzantine;
 pub mod cert_follow;
 pub mod cert_inlet;
 pub mod cold_start_jump;
+pub mod committee;
 pub mod digest;
 pub mod dpos;
 pub mod engine;
@@ -76,6 +77,10 @@ pub use cert_inlet::{
 };
 pub use cold_start_jump::{
     assert_l1_checkpoint, cold_start_jump, ElSync, RethElSync, JUMP_THRESHOLD,
+};
+pub use committee::{
+    Anchor, Committee, CommitteeError, CommitteeReadsFacade, CommitteeRecord, CommitteeStore,
+    EpochReads, Geometry, Member, RethAnchor,
 };
 pub use digest::Digest;
 pub use dpos::{
