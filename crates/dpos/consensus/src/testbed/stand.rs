@@ -5,10 +5,10 @@ use super::fakes::{ByzFacts, ByzReport};
 use super::{
     capture::{self, Captured, Sink},
     fakes::{
-        genesis_sealed, CountingHandler, CountingUpstream, ElEvent, ElNetwork, FakeBeacon,
+        genesis_sealed, BodyTap, CountingHandler, CountingUpstream, ElEvent, ElNetwork, FakeBeacon,
         FakeChain, FakeDeriver, FakeStaking, JumpCall, JumpCalls, JumpCommitteeReads,
-        JumpCommittees, JumpElSync, Members, NoSink, NoTxs, StakingReads, TeeingUpstream,
-        UpstreamCounters, UpstreamStats, DPOS_ACTIVATION_BLOCK,
+        JumpCommittees, JumpElSync, Members, NoSink, NoTxs, StakingReads, TapReceiver,
+        TeeingUpstream, UpstreamCounters, UpstreamStats, DPOS_ACTIVATION_BLOCK,
     },
 };
 /// A read of one held epoch-key artifact's wire bytes, for the stand's serving
@@ -19,6 +19,7 @@ type ArtifactSource = Arc<dyn Fn(u64) -> Option<Vec<u8>> + Send + Sync>;
 #[cfg(feature = "dpos-devnet-byzantine")]
 use crate::beacon::testing::CommitteeFor;
 use crate::{
+    application::ExecutedChain as _,
     beacon::{
         self,
         testing::{absent, StaticRandomness},
@@ -139,6 +140,13 @@ pub(super) struct StandConfig {
     /// deterministically served by the liar (the resolver otherwise picks any
     /// tracked, linked peer). `None` = the default all-to-all upstream mesh.
     pub upstream_only_link: Option<(usize, usize)>,
+    /// After the run, ask every node's marshal for the `(finalization, block)`
+    /// pair at every height up to the highest tip — the exact two local reads
+    /// `handle_produce` answers a peer's `Finalized{h}` from (CW
+    /// `marshal/core/actor.rs:808-818`, and `plane_upstream::serve`). Off by
+    /// default: the scan is a few hundred mailbox round-trips per node, and it
+    /// adds yields to the collection phase.
+    pub archive_scan: bool,
 }
 
 /// The randomness surface every node runs.
@@ -213,6 +221,7 @@ impl StandConfig {
             resume_from: None,
             re_jump_threshold: None,
             upstream_only_link: None,
+            archive_scan: false,
         }
     }
 
@@ -346,6 +355,14 @@ pub(super) struct TraceEntry {
     pub hash: Option<B256>,
 }
 
+/// What one node's marshal archives hold at a height, as the by-height serve
+/// path reads them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct ArchiveEntry {
+    pub finalization: bool,
+    pub block: bool,
+}
+
 /// What the driver's predicate sees.
 pub(super) struct Progress {
     /// Tier-F (finalized-executed) tip per node.
@@ -458,6 +475,29 @@ pub(super) struct Outcome {
     /// the other nodes reacted.
     #[cfg(feature = "dpos-devnet-byzantine")]
     pub byz: Vec<ByzFacts>,
+    /// `head_gap_series[i]` = `best − ordering_finalized` of node `i`, sampled
+    /// once per driver tick: the canonical (speculative) head of its EL minus
+    /// the height its executor last finalized-executed. The width of the band
+    /// a committee anchor at `ordering_finalized` gives up against a cursor at
+    /// the executed head. A measurement, never an assertion. The tick is
+    /// coarser than the speculative lead, so the event-driven histograms below
+    /// are the ones that see it.
+    pub head_gap_series: Vec<Vec<u64>>,
+    /// `head_gap_on_fcu[i]` = `gap → count` over every FCU that moved node
+    /// `i`'s canonical chain (`FakeChain::head_gap_on_fcu`).
+    pub head_gap_on_fcu: Vec<BTreeMap<u64, u64>>,
+    /// `head_gap_on_landing[i]` = the same over every jump landing.
+    pub head_gap_on_landing: Vec<BTreeMap<u64, u64>>,
+    /// `archive[i][h]` = whether node `i`'s marshal holds a finalization
+    /// certificate and a finalized block at height `h` at the end of the run,
+    /// for every `h` up to the highest tip — read through the marshal mailbox's
+    /// `get_finalization` / `get_block(height)`, the same two archive reads
+    /// `handle_produce` serves a peer's `Finalized{h}` from. Empty unless
+    /// `StandConfig::archive_scan`.
+    pub archive: Vec<BTreeMap<u64, ArchiveEntry>>,
+    /// `bodies[i]` = distinct payloads node `i` received on the broadcast
+    /// channel, by `(mux sub-channel, sender)` — see [`fakes::BodyTap`].
+    pub bodies: Vec<BTreeMap<(u64, PeerPubkey), usize>>,
     /// The runner's Prometheus text at the end of the run (every node's
     /// families under its `node{i}_` label).
     pub metrics: String,
@@ -859,6 +899,9 @@ struct NodeHandles {
     artifacts: Option<ArtifactSource>,
     observer: EtObserver,
     staking: FakeStaking,
+    /// The node's marshal, for the post-run archive scan.
+    marshal: Arc<OnceLock<MarshalMailbox>>,
+    bodies: BodyTap,
     #[cfg(feature = "dpos-devnet-byzantine")]
     byz: ByzReport,
 }
@@ -1031,12 +1074,16 @@ async fn drive(
     // inferred from `fetch_max` being the only writer (F8).
     #[cfg(feature = "dpos-devnet-byzantine")]
     let mut frontier_series: Vec<Vec<u64>> = vec![Vec::new(); n];
+    let mut head_gap_series: Vec<Vec<u64>> = vec![Vec::new(); n];
     let elapsed_now =
         |ctx: &deterministic::Context| ctx.current().duration_since(t0).unwrap_or_default();
     loop {
         #[cfg(feature = "dpos-devnet-byzantine")]
         for (i, node) in nodes.iter().enumerate() {
             frontier_series[i].push(node.upstream_frontier.load(Ordering::SeqCst));
+        }
+        for (i, node) in nodes.iter().enumerate() {
+            head_gap_series[i].push(node.chain.executed_tip().saturating_sub(node.chain.tip()));
         }
         let progress = Progress {
             heights: nodes.iter().map(|h| h.chain.tip()).collect(),
@@ -1226,6 +1273,35 @@ async fn drive(
         let t = tracked.lock().unwrap();
         (t.per_node.clone(), t.mismatches, t.forwarded)
     };
+    let bodies: Vec<BTreeMap<(u64, PeerPubkey), usize>> =
+        nodes.iter().map(|node| node.bodies.snapshot()).collect();
+    let head_gap_on_fcu = nodes
+        .iter()
+        .map(|node| node.chain.head_gap_on_fcu())
+        .collect();
+    let head_gap_on_landing = nodes
+        .iter()
+        .map(|node| node.chain.head_gap_on_landing())
+        .collect();
+    let mut archive: Vec<BTreeMap<u64, ArchiveEntry>> = vec![BTreeMap::new(); n];
+    if cfg.archive_scan {
+        let top = heights.iter().copied().max().unwrap_or(0);
+        for (i, node) in nodes.iter().enumerate() {
+            let marshal = node.marshal.get().expect("marshal slot filled at build");
+            for h in 1..=top {
+                let height = Height::new(h);
+                let finalization = marshal.get_finalization(height).await.is_some();
+                let block = marshal.get_block(height).await.is_some();
+                archive[i].insert(
+                    h,
+                    ArchiveEntry {
+                        finalization,
+                        block,
+                    },
+                );
+            }
+        }
+    }
     let metrics = ctx.encode();
     Outcome {
         heights,
@@ -1252,6 +1328,11 @@ async fn drive(
         probe_calls,
         #[cfg(feature = "dpos-devnet-byzantine")]
         byz,
+        head_gap_series,
+        head_gap_on_fcu,
+        head_gap_on_landing,
+        archive,
+        bodies,
         metrics,
         logs,
         simulator_ack_drops,
@@ -1401,11 +1482,17 @@ async fn build_node(
         let control = oracle.control(me.clone());
         async move { control.register(channel, QUOTA).await.expect("channel") }
     };
+    let bodies = BodyTap::default();
     let (vs, vr) = register(VOTE_CHANNEL).await;
     let (cs, cr) = register(CERT_CHANNEL).await;
     let (rs, rr) = register(RESOLVER_CHANNEL).await;
     let (bs, br) = register(BROADCAST_CHANNEL).await;
     let (ms, mr) = register(MARSHAL_CHANNEL).await;
+    let vr = TapReceiver::new(vr, None);
+    let cr = TapReceiver::new(cr, None);
+    let rr = TapReceiver::new(rr, None);
+    let br = TapReceiver::new(br, Some(bodies.clone()));
+    let mr = TapReceiver::new(mr, None);
     let (mux_vote, vote_handle, mut vote_backup_rx) =
         Muxer::builder(ctx_i.with_label("vote_mux"), vs, vr, MUX_MAILBOX)
             .with_backup()
@@ -2173,6 +2260,8 @@ async fn build_node(
         artifacts,
         observer,
         staking,
+        marshal: marshal_slot,
+        bodies,
         #[cfg(feature = "dpos-devnet-byzantine")]
         byz,
     }

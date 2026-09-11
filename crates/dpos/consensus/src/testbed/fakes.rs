@@ -21,6 +21,7 @@ use alloy_rpc_types_engine::{
 };
 use bytes::Bytes;
 use commonware_consensus::types::Height;
+use commonware_p2p::{utils::mux, Message, Receiver};
 use commonware_resolver::{p2p::Producer, Consumer};
 use commonware_runtime::{deterministic, Clock as _};
 use commonware_utils::channel::oneshot as cw_oneshot;
@@ -36,7 +37,7 @@ use fluentbase_types::staking_protocol::{epoch_at_block, MAX_COMMITTEE_LOOKAHEAD
 use reth_ethereum_primitives::TransactionSigned;
 use reth_primitives_traits::SealedBlock;
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc, Mutex,
@@ -346,6 +347,16 @@ pub(super) struct FakeChain {
     /// "the guard read `h` BEFORE `h` was canonical": that is an ordering claim,
     /// and no absent log line can carry it.
     el_events: Arc<Mutex<Vec<ElEvent>>>,
+    /// `best − ordering_finalized` (canonical tip minus the tier-F tip) right
+    /// after every FCU that moved the canonical chain, as a histogram `gap →
+    /// count`. Event-driven rather than sampled: the speculative lead lives for
+    /// one notarize→finalize round trip, shorter than any driver tick.
+    head_gap_on_fcu: Arc<Mutex<BTreeMap<u64, u64>>>,
+    /// The same gap right after every jump landing — the EL was carried to the
+    /// landing while the tier-F tip is still the pre-jump one, until
+    /// `reseed_forward` advances it. Kept apart from the FCU histogram because it
+    /// is the jump window, not speculation.
+    head_gap_on_landing: Arc<Mutex<BTreeMap<u64, u64>>>,
 }
 
 impl FakeChain {
@@ -446,7 +457,23 @@ impl FakeChain {
                 .rev()
                 .map(|(h, x)| ElEvent::Canonicalized(h, x)),
         );
+        self.note_head_gap(&self.head_gap_on_fcu);
         true
+    }
+
+    fn note_head_gap(&self, hist: &Mutex<BTreeMap<u64, u64>>) {
+        let gap = self.executed_tip().saturating_sub(self.tip());
+        *hist.lock().unwrap().entry(gap).or_default() += 1;
+    }
+
+    /// `gap → how many FCUs left the canonical tip that far above the tier-F tip`.
+    pub(super) fn head_gap_on_fcu(&self) -> BTreeMap<u64, u64> {
+        self.head_gap_on_fcu.lock().unwrap().clone()
+    }
+
+    /// The same, per jump landing.
+    pub(super) fn head_gap_on_landing(&self) -> BTreeMap<u64, u64> {
+        self.head_gap_on_landing.lock().unwrap().clone()
     }
 
     /// Make `hash` canonical at `height` outright: the genesis anchor, and the
@@ -547,6 +574,7 @@ impl FakeChain {
         for (h, x) in segment.into_iter().rev() {
             self.land_canonical(h, x);
         }
+        self.note_head_gap(&self.head_gap_on_landing);
         JumpLanding::Landed
     }
 
@@ -1600,5 +1628,70 @@ impl Consumer for CountingHandler {
 
     async fn failed(&mut self, key: FrontierKey, failure: ()) {
         self.inner.failed(key, failure).await
+    }
+}
+
+/// Distinct payloads one node's `BROADCAST_CHANNEL` receiver saw, keyed by
+/// `(mux sub-channel, sender)` — what the buffered body engine's per-sender
+/// deque would have to hold to keep every body of one sub-channel resident. The
+/// DKG agreement instances take the sub-channels at and above
+/// `DKG_SUBCHANNEL_BASE`; the per-epoch `OrderBlock` bodies ride the epoch's own
+/// number. Payloads are keyed by their keccak, so a re-broadcast of the same
+/// body (a `Plan::Forward`) counts once, as it does in the engine's deque.
+#[derive(Clone, Debug, Default)]
+pub(super) struct BodyTap(Arc<Mutex<BodiesBySender>>);
+
+/// `(sub-channel, sender) → the keccaks of the distinct payloads seen`.
+type BodiesBySender = BTreeMap<(u64, PeerPubkey), BTreeSet<B256>>;
+
+impl BodyTap {
+    fn record(&self, subchannel: u64, sender: PeerPubkey, payload: &[u8]) {
+        self.0
+            .lock()
+            .unwrap()
+            .entry((subchannel, sender))
+            .or_default()
+            .insert(keccak256(payload));
+    }
+
+    /// `(sub-channel, sender) → distinct bodies`.
+    pub(super) fn snapshot(&self) -> BTreeMap<(u64, PeerPubkey), usize> {
+        self.0
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(k, v)| (k.clone(), v.len()))
+            .collect()
+    }
+}
+
+/// A `Receiver` that hands every frame through unchanged and, when it carries a
+/// [`BodyTap`], records the frame's sub-channel and payload first. Every one of
+/// a node's five plane channels is wrapped in it (the mux brokers share one
+/// receiver type), and only the broadcast channel's carries a tap.
+#[derive(Debug)]
+pub(super) struct TapReceiver<R> {
+    inner: R,
+    tap: Option<BodyTap>,
+}
+
+impl<R> TapReceiver<R> {
+    pub(super) fn new(inner: R, tap: Option<BodyTap>) -> Self {
+        Self { inner, tap }
+    }
+}
+
+impl<R: Receiver<PublicKey = PeerPubkey>> Receiver for TapReceiver<R> {
+    type Error = R::Error;
+    type PublicKey = PeerPubkey;
+
+    async fn recv(&mut self) -> Result<Message<PeerPubkey>, R::Error> {
+        let (sender, buf) = self.inner.recv().await?;
+        if let Some(tap) = &self.tap {
+            if let Ok((subchannel, payload)) = mux::parse(buf.clone()) {
+                tap.record(subchannel, sender.clone(), payload.as_ref());
+            }
+        }
+        Ok((sender, buf))
     }
 }

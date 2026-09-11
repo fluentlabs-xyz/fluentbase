@@ -92,9 +92,10 @@ pub trait CertUpstream: Clone + Send + Sync + 'static {
     fn get_latest(&self) -> impl Future<Output = Option<UpstreamFinalized>> + Send;
 
     /// Fetch the agreed epoch-key artifact minted at `epoch`, as the wire bytes
-    /// `beacon::decode_artifact` reads. `None` covers every negative alike: the
-    /// upstream holds none, it is too old to know the method, or the link is
-    /// down — all three mean "stay unpinned and ask again", never a data fault.
+    /// the beacon's [`crate::beacon::ArtifactFetch`] hands in. `None` covers
+    /// every negative alike: the upstream holds none, it is too old to know the
+    /// method, or the link is down — all three mean "stay unpinned and ask
+    /// again", never a data fault.
     ///
     /// **Default `None`, and that is correct for the plane.** A plane-registered
     /// node pulls artifacts over `BEACON_RESOLVER_CHANNEL` from its committee
@@ -104,7 +105,7 @@ pub trait CertUpstream: Clone + Send + Sync + 'static {
     ///
     /// The answer is NOT trusted. It is checked against `committee[epoch]` read
     /// from the caller's own chain state before anything is kept — see
-    /// `beacon::for_follower`.
+    /// [`crate::beacon::build_follower`].
     fn get_epoch_artifact(&self, _epoch: u64) -> impl Future<Output = Option<Vec<u8>>> + Send {
         std::future::ready(None)
     }

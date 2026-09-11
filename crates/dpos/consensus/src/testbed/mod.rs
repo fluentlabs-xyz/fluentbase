@@ -86,5 +86,6 @@
 mod byzantine_roles;
 mod capture;
 mod fakes;
+mod preconditions;
 mod stand;
 mod tests;

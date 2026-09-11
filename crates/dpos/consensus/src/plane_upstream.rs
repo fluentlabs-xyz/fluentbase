@@ -183,7 +183,8 @@ fn decode_frontier(value: &[u8]) -> Option<UpstreamFinalized> {
 
 /// Bridges the resolver engine's `Producer` (serve local tip) + `Consumer` (resolve
 /// awaiting client calls) to the shared [`Waiters`] map + the late-bound marshal.
-/// Cloned into the engine for both roles, like `beacon::log_resolver::LogHandler`.
+/// Cloned into the engine for both roles, like the beacon's dealer-log resolver
+/// handler.
 #[derive(Clone)]
 pub struct FrontierHandler {
     waiters: Waiters,

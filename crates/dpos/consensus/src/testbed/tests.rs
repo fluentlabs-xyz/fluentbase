@@ -609,6 +609,7 @@ fn a_node_outside_the_tracked_peer_set_keeps_following_through_the_upstream_plan
         out.upstream
     );
     assert_eq!(u3.rejump_calls, 0, "the re-jump gate is u64::MAX: {u3:?}");
+    eprintln!("(Д4/4c) gap on fcu={:?}", out.head_gap_on_fcu);
     eprintln!(
         "(4c) heights={:?} upstream={:?} virtual={:?} real={:?}",
         out.heights, out.upstream, out.virtual_elapsed, out.real_elapsed
@@ -680,6 +681,7 @@ fn a_two_two_partition_stalls_finalization_and_heals_into_one_chain() {
     assert_eq!(out.diverged, None);
     assert!(out.halted.is_empty(), "{:?}", out.halted);
     out.assert_lockstep_except(&[]);
+    eprintln!("(Д4/5) gap on fcu={:?}", out.head_gap_on_fcu);
     eprintln!(
         "(5) heights={:?} cut={:?}@{:?} heal={:?}@{:?} virtual={:?} real={:?}",
         out.heights,
@@ -1218,6 +1220,7 @@ fn four_nodes_agree_the_epoch_key_and_carry_the_seed_across_the_boundary() {
     for h in 2 * EPOCH_LEN..=min {
         seed_agreed_at(&out, &all, h, 2, &pk);
     }
+    eprintln!("(Д5/B1) bodies={:?}", out.bodies);
     eprintln!(
         "(B1) heights={:?} artifact_bytes={} dealers={} σ@64={:?} virtual={:?} real={:?} warns={:?}",
         out.heights,
@@ -1449,6 +1452,7 @@ fn one_absent_dealer_does_not_stop_the_key() {
         2 * EPOCH_LEN - 1,
         "node 3 (no σ source) is expected to park at the bootstrap boundary"
     );
+    eprintln!("(Д5/B3) bodies={:?}", out.bodies);
     eprintln!(
         "(B3) heights={:?} dealers={} virtual={:?} real={:?} warns={:?}",
         out.heights,
