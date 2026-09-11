@@ -314,12 +314,18 @@ fn test_cant_upgrade_from_incorrect_address() {
     let result = ctx.call_evm_tx(
         address!("0x1111111111111111111111111111111111111111"),
         PRECOMPILE_RUNTIME_UPGRADE,
-        upgrade_input.into(),
+        bytes_input.into(),
         None,
         None,
     );
     println!("{:?}", result);
     assert!(!result.is_success());
+    // The call must be rejected by the owner check, not by a malformed selector.
+    let output = result.output().cloned().unwrap_or_default();
+    assert!(
+        String::from_utf8_lossy(&output).contains("incorrect caller"),
+        "unexpected revert reason: {output:?}"
+    );
 }
 
 /// A canonical EVM precompile that Fluent implements as rWasm in state. EVM-facing code queries for
