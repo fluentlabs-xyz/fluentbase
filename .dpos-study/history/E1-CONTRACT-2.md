@@ -560,6 +560,124 @@ hex-литерал переписан пословно и рядом стоит 
 
 **sha:** `9d4fa617`.
 
+### П6 (1.3). Таймлок на двух адресных сеттерах
+
+**Схема.** `setSlashFundAddress` и `setBlendReserve` больше не записывают значение —
+они его ЗАЯВЛЯЮТ. Пара `(адрес, эпоха заявки)` ложится в хранилище, летит событие
+заявки. Новые `applySlashFundAddress()` / `applyBlendReserve()` переносят заявленное
+в живое поле, если `epoch_now >= declared + ADDRESS_SETTER_TIMELOCK_EPOCHS` (7);
+иначе ревёрт. Существующее `…Changed` теперь летит на ПРИМЕНЕНИИ — там, где значение
+меняется. Повторная заявка перезаписывает пару и сбрасывает срок.
+
+**Единица — эпохи, и это проверено, а не унаследовано.** `grep -rn 'block_timestamp'
+contracts/staking/src` — пусто; эпоха текущего блока берётся `util::current_epoch`,
+тем же вызовом, каким её берёт `apply_production_exclusion` (`staking.rs:296`).
+
+**Сентинел «ничего не заявлено» — НУЛЕВОЙ АДРЕС, не нулевая эпоха.** Оба заявляющих
+сеттера отказывают нулевому адресу (`ERR_ZERO_VALUE`, было и до правки), поэтому
+сентинел недостижим законной заявкой; эпоха 0 — обычная эпоха для заявки и сентинелом
+служить не может. Тест `the_address_timelocks_are_governance_only_on_both_halves`
+гоняет именно это: отказ нулю, а сразу за ним — «применить» отвечает
+`ERR_NO_PENDING_CHANGE`.
+
+**Хранилище.** Четыре поля ДОПИСАНЫ в конец `ChainConfigStorage`
+(`pending_slash_fund_address`, `pending_slash_fund_epoch`, `pending_blend_reserve`,
+`pending_blend_reserve_epoch`). Дописаны, а не вставлены: поле, вставленное выше,
+сдвигает все слоты ниже.
+
+**ABI.** Два селектора (`applyBlendReserve()` `0x47a9615b`,
+`applySlashFundAddress()` `0x7bb69756`) и два события (`BlendReserveDeclared`,
+`SlashFundAddressDeclared`, оба indexed по адресу) — в общий `sol!`; `consts.rs`
+выводит селекторы через `sig::`, строк-литералов не заведено. `setSlashFundAddress`
+оставлен в `consts.rs` — см. §3 Д-09.
+
+**Тесты.** `the_address_setters_declare_now_and_land_seven_epochs_later` — все пять
+требуемых свойств, по обоим сеттерам: применение раньше срока ревёртит (и ревёрт
+называет обе эпохи), ровно на 7-й проходит, заявка эмитит событие и НЕ трогает живое
+значение, применение без заявки ревёртит, повторная заявка сдвигает срок. Плюс
+контроль: между этими шагами вьюха читается и сверяется.
+`the_address_timelocks_are_governance_only_on_both_halves` — обе половины обоих
+сеттеров под governance, и отказ нулю. **Были ли красными до правки: вопрос не
+применим — оба теста описывают механизм, которого до этой правки не существовало
+(ни одного отложенного применения в контракте не было).** Что их держит — мутации;
+не ставил, см. §7.
+
+**Правки вне контракта, вынужденные ABI.** `e2e/src/staking_reserve.rs` ротирует
+резерв в трёх местах; добавлен `Fixture::rotate_reserve(value, at_epoch)` — заявить,
+прыгнуть на 7 эпох вперёд по номеру блока, применить, вернуть высоту. Прыжок
+безопасен: ни один из двух вызовов не пишет `last_processed_block`. Плюс два теста
+контракта, которые ставили фонд/резерв напрямую, переведены на помощник
+`rotate_address_setting`.
+
+**Приёмка 1.3, которую я НЕ трогал, и почему её формулировка в задании неверна.**
+`devnet/local-dpos-smoke/dpos_harness/tests/test_prod_substrate.py:981` — это
+юнит-тест ФОРМАТТЕРА вердикта (`gov_wait_verdict`), а `"setBlendReserve"` в нём —
+произвольная строка-описание, передаваемая как `desc=`. Никакого вызова
+`setBlendReserve` через governance харнесс не делает: `grep -rn 'setBlendReserve'
+devnet/` даёт ровно эти две строки и ничего больше. То есть открытой приёмки
+«харнесс prod-кейса ждёт двухшагового пути» не существует — записал это в `PLAN.md`
+строкой 1.3 как проверенный факт, а не как открытый пункт.
+
+**Ворота после П6 (контракт), verbatim:**
+
+    cargo test                         → test result: ok. 190 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+    cargo test --features devnet-views → test result: ok. 191 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+    cargo clippy --all-targets -- -D warnings → Finished `dev` profile [optimized] target(s) in 2.42s
+    cargo fmt --check                  → чисто
+
+**sha:** `b237a81e` (без блоба — см. §3 Д-10).
+
+### П7 (R5.2). `claimValidatorFeeAtEpoch` удалён
+
+**Что удалено.** Хендлер (`staking.rs`), `SIG_CLAIM_VALIDATOR_FEE_AT_EPOCH`
+(`consts.rs`), строка диспетчера (`lib.rs`), `ValidatorEpochCommand` (`types.rs`) —
+он был её единственным декодером — и `ERR_INVALID_CLAIM_EPOCH` (`consts.rs`),
+поднимавшийся только им. Проверено grep'ом после удаления: ни одного вхождения не
+осталось. В общем `sol!` его не было (нет вызывающих вне крейта), так что там ничего
+не двигалось.
+
+**Кого ломает вне контракта.** Никого: `grep -rn 'claimValidatorFeeAtEpoch'
+crates/ e2e/ bins/ devnet/` до правки давал только `STAKING_ARTEFACT.md` (три
+селекторных скана и одна строка прозы) и сам контракт.
+
+**Тесты.** Два использовали его.
+`a_commission_rise_misses_two_epochs_while_a_cut_lands_on_the_next` брал окно
+аргументом, чтобы предъявлять по одной эпохе; теперь шагает НОМЕРОМ БЛОКА и зовёт
+`claimValidatorFee`, который идёт до текущей эпохи — тот же обход, только окно
+берётся с часов. `reward_claims_are_bounded_to_one_thousand_epochs` терял
+утверждение про окно за пределами текущей эпохи — оно ушло вместе с хендлером, о
+котором было.
+
+**Ворота после П7, verbatim:**
+
+    cargo test                              → test result: ok. 190 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+    cargo test --features devnet-views      → test result: ok. 191 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+    cargo clippy --all-targets -- -D warnings → Finished `dev` profile [optimized] target(s) in 2.19s
+    cargo fmt --check                       → чисто
+
+**Общие ворота (после П6 и П7 вместе, на собранном блобе), verbatim:**
+
+    cargo test -p fluentbase-node --lib        → test result: ok. 57 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 56.82s
+    cargo test -p fluentbase-staking-reader    → test result: ok. 58 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+                                                 (и ещё один бинарь: 0 passed; 0 failed; 1 ignored)
+    cargo test -p fluentbase-e2e --release staking → test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 118 filtered out; finished in 35.15s
+    python3 devnet/local-dpos-smoke/scripts/xp/agreement_check.py → === 15 checks, 0 disagree, 0 unread ===
+    селекторный скан .rwasm                    → selector scan OK
+
+`cargo test -p fluentbase-genesis-bootstrap` прогнан после П1 (8/0); после П6/П7 не
+перезапускался — записано в §7 как слабое место.
+
+**Блоб.** Собран один раз после обоих пунктов:
+`cargo build --release -p fluentbase-genesis --features devnet-views`, копии руками
+в `devnet/local-dpos-smoke/contracts/`. wasm 405 682 Б
+(`53ce6029…`), rwasm 2 800 125 Б (`620b79bb…`), обе выросли — +3 904 и +24 788.
+Новая датированная секция `STAKING_ARTEFACT.md` написана целиком по её же правилу:
+HEAD на момент сборки (`b237a81e`), список грязных файлов, SHA-256 каждого исходника,
+размеры, дайджесты, обновлённый селекторный скан с двумя новыми в `must_be_1` и
+`claimValidatorFeeAtEpoch`, переехавшим в `must_be_0`.
+
+**sha:** `0b9daeac` (код + блоб + артефакт).
+
 ## §3 Отклонения Д-nn
 
 ### Д-01 (П1). Три способа, которыми правка задела существующие тесты
@@ -608,6 +726,28 @@ hex-литерал переписан пословно и рядом стоит 
 зелёные — измерено в П4в), и который ловит запись мимо API. Решение `DECISIONS.md`
 это не меняет; W6 в части этого пункта считаю закрытым документированием, а не
 удалением.
+
+### Д-09 (П6). `setSlashFundAddress` не переехал в общий `sol!`
+
+Задание говорит «два новых селектора и два события в общий `sol!`» — ровно это и
+сделано. Но заявляющая половина `applySlashFundAddress` — `setSlashFundAddress` — в
+общем крейте не была и не переехала: правило объёма самого крейта
+(`crates/staking-abi/src/lib.rs`, шапка) — «в общий `sol!` идёт хендлер, который
+кодирует БОЛЕЕ ОДНОГО места вне `contracts/staking`», а у `setSlashFundAddress`
+таких мест ноль (`grep` по `crates/ bins/ e2e/ devnet/` — только сам контракт).
+Перенос ради симметрии расширил бы крейт против его собственного правила. Асимметрия
+(apply в крейте, set — нет) названа в доке крейта прямо, со ссылкой сюда. Решение
+`DECISIONS.md` это не меняет.
+
+### Д-10 (П6, П7). Коммит таймлока без блоба
+
+Задание разрешает одну секцию `STAKING_ARTEFACT.md` на П6+П7, если блоб собран один
+раз после обоих — «тогда П6 коммитится без блоба, и это записано в §3». Так и
+сделано: `b237a81e` (таймлок) не несёт блоба, блоб собран после удаления
+`claimValidatorFeeAtEpoch` и лежит в коммите П7 вместе с единственной новой секцией
+артефакта. Промежуточного блоба (таймлок есть, удаления ещё нет) не существовало и в
+`STAKING_ARTEFACT.md` он не описан — там это сказано прямо, чтобы дыра в датах
+читалась как решение, а не как пропуск. Решение `DECISIONS.md` это не меняет.
 
 ### Д-04 (П4б). Премиса пункта про M53 неверна по замеру
 
