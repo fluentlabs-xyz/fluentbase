@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: "Dry run only (verify without publishing)"
+        description: "Dry run only (verify without publishing). Switch off only to re-run the publish of a canonical stable tag ref."
         required: false
-        default: false
+        default: true
         type: boolean
 
 env:
@@ -19,7 +19,9 @@ env:
 jobs:
   publish:
     name: Publish to crates.io
-    if: ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) || (github.ref_type == 'tag' && !contains(github.ref_name, '-')) }}
+    # Every manual run enters the job so that a misdirected real publish fails
+    # visibly in the tag check below instead of being skipped silently.
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref_type == 'tag' && !contains(github.ref_name, '-')) }}
     runs-on: ubuntu-latest
 
     steps:
@@ -38,22 +40,29 @@ jobs:
 
       - name: Verify canonical release tag
         # crates.io publishing is irreversible, so only the exact canonical
-        # stable tag v<workspace-version> may publish. A workflow_dispatch dry
-        # run from a non-tag ref has no tag to validate and publishes nothing.
+        # stable tag v<workspace-version> may publish - whether the run comes
+        # from a tag push or from a manual run with `dry_run` switched off. A
+        # dry run publishes nothing and therefore has nothing to validate.
+        env:
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run == true }}
         run: |
-          if [[ "${GITHUB_REF_TYPE}" != "tag" ]]; then
-            echo "Not a tag ref; skipping tag validation (dry run only)"
+          if [[ "${DRY_RUN}" == "true" ]]; then
+            echo "Dry run: nothing will be published, skipping tag validation"
             exit 0
+          fi
+          if [[ "${GITHUB_REF_TYPE}" != "tag" ]]; then
+            echo "crates.io publishing requires a canonical stable release tag ref (got ${GITHUB_REF_TYPE} ${GITHUB_REF_NAME})" >&2
+            exit 1
           fi
           channel="$(./.github/scripts/check-release-tag.sh "${GITHUB_REF_NAME}")"
           echo "$channel"
-          if [[ "${GITHUB_EVENT_NAME}" != "workflow_dispatch" && "$channel" != "channel=stable" ]]; then
+          if [[ "$channel" != "channel=stable" ]]; then
             echo "crates.io publishing requires the canonical stable release tag" >&2
             exit 1
           fi
 
       - name: Publish to crates.io
-        if: ${{ github.event_name != 'workflow_dispatch' || !inputs.dry_run }}
+        if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.dry_run == false) }}
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |

@@ -99,6 +99,23 @@ mod tests {
 
     type StrictCallParams = (Bytes, bool, B256, Bytes, WebAuthnAuth, U256, U256);
 
+    /// The published ABI must select exactly the entrypoints this contract dispatches on.
+    #[test]
+    fn test_published_abi_matches_dispatched_selectors() {
+        let abi = alloy_json_abi::JsonAbi::from_json_str(include_str!("../abi.json"))
+            .expect("abi.json must parse");
+        let selector = |name: &str| {
+            let functions = abi
+                .function(name)
+                .unwrap_or_else(|| panic!("{name} is not published"));
+            assert_eq!(functions.len(), 1, "{name} must be published once");
+            functions[0].selector().0
+        };
+        assert_eq!(selector("verify"), VERIFY_SELECTOR);
+        assert_eq!(selector("verifyStrict"), VERIFY_STRICT_SELECTOR);
+        assert_eq!(abi.functions().count(), 2);
+    }
+
     fn valid_call_params(
         require_user_verification: bool,
     ) -> (Bytes, bool, WebAuthnAuth, U256, U256) {

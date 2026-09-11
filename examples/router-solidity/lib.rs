@@ -21,6 +21,7 @@ pub trait RouterAPI {
     fn custom_greeting(&self, message: String) -> String;
     fn byte_array(&self, data: [u8; 32]) -> [u8; 32];
     fn fixed_bytes(&self, data: FixedBytes<32>) -> FixedBytes<32>;
+    fn fallback(&mut self);
 }
 
 #[router(mode = "solidity")]
@@ -45,6 +46,13 @@ impl<SDK: SharedAPI> RouterAPI for App<SDK> {
     #[function_id("fixedBytes(bytes32)", validate(true))]
     fn fixed_bytes(&self, data: FixedBytes<32>) -> FixedBytes<32> {
         data
+    }
+
+    // Unknown selectors, and inputs shorter than a selector, land here instead of reverting.
+    // This example echoes the raw calldata so callers can see the router forwarded it.
+    fn fallback(&mut self) {
+        let input = self.sdk.bytes_input();
+        self.sdk.write(input);
     }
 }
 
@@ -148,5 +156,27 @@ mod tests {
         let encoded_output = &sdk.take_output();
         let output = FixedBytesReturn::decode(&encoded_output.as_slice()).unwrap();
         assert_eq!(output.0 .0, data);
+    }
+
+    /// A selector the router does not know reaches `fallback`, which echoes the calldata
+    #[test]
+    fn test_fallback_receives_unknown_selector() {
+        let input = hex::decode("deadbeef0102030405").unwrap();
+        let sdk = TestingContextImpl::default().with_input(input.clone());
+        let mut router = App::new(sdk.clone());
+        router.deploy();
+        router.main();
+        assert_eq!(sdk.take_output(), input);
+    }
+
+    /// An input shorter than a selector takes the same path
+    #[test]
+    fn test_fallback_receives_short_input() {
+        let input = vec![0x01, 0x02];
+        let sdk = TestingContextImpl::default().with_input(input.clone());
+        let mut router = App::new(sdk.clone());
+        router.deploy();
+        router.main();
+        assert_eq!(sdk.take_output(), input);
     }
 }

@@ -93,11 +93,6 @@
         "type": "bytes"
       },
       {
-        "internalType": "uint256",
-        "name": "origin_index",
-        "type": "uint256"
-      },
-      {
         "components": [
           {
             "internalType": "bytes",

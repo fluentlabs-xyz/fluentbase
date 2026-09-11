@@ -87,11 +87,23 @@ pub fn function_id(_attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// # Special Methods
 ///
-/// - **deploy**: Always excluded from routing, used for initialization ```rust,ignore fn
-///   deploy(&self) { // Deployment logic, called only once } ```
+/// - **deploy**: Always excluded from routing, used for initialization.
 ///
-/// - **fallback**: Handles unmatched selectors ```rust,ignore fn fallback(&self) { // Called for
-///   unknown function selectors } ```
+/// ```rust,ignore
+/// fn deploy(&self) {
+///     // Deployment logic, called only once.
+/// }
+/// ```
+///
+/// - **fallback**: Handles unmatched selectors and inputs shorter than a selector; takes `&self`
+///   or `&mut self`, no parameters, and no return value. A `&self` fallback is `view` and rejects
+///   calls that carry value; `&mut self` (or `#[state_mutability("payable")]`) accepts them.
+///
+/// ```rust,ignore
+/// fn fallback(&self) {
+///     // Called for unknown function selectors.
+/// }
+/// ```
 ///
 /// # Attributes
 ///

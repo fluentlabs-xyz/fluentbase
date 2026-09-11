@@ -2084,6 +2084,7 @@ dependencies = [
 name = "fluentbase-contracts-runtime-upgrade"
 version = "0.1.0"
 dependencies = [
+ "alloy-json-abi",
  "alloy-sol-types",
  "fluentbase-build",
  "fluentbase-sdk",
@@ -2119,6 +2120,7 @@ dependencies = [
 name = "fluentbase-contracts-webauthn"
 version = "0.1.0"
 dependencies = [
+ "alloy-json-abi",
  "base64",
  "fluentbase-sdk",
  "fluentbase-testing",

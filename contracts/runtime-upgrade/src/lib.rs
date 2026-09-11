@@ -29,13 +29,6 @@ struct RuntimeUpgraded {
 }
 
 #[derive(Event)]
-struct ContractRecompiled {
-    #[indexed]
-    target_address: Address,
-    code_hash: B256,
-}
-
-#[derive(Event)]
 struct UpgradePlanned {
     #[indexed]
     genesis_hash: B256,
@@ -88,9 +81,6 @@ trait RuntimeUpgradeTr {
         genesis_version: String,
         evm_bytecode: Bytes,
     );
-
-    /// Recompile already deployed WASM runtime smart contract
-    fn recompile(&mut self, target_address: Address);
 
     /// Plan a bulk runtime upgrade as exact target/hash pairs.
     ///
@@ -165,37 +155,6 @@ impl<SDK: SharedAPI> RuntimeUpgradeTr for App<SDK> {
             target_address,
             genesis_hash,
             genesis_version,
-            code_hash,
-        }
-        .emit(&mut self.sdk)
-        .unwrap();
-    }
-
-    #[function_id("recompile(address)")]
-    fn recompile(&mut self, target_address: Address) {
-        _ = self.only_owner();
-
-        let Ok(code_size) = self.sdk.code_size(&target_address).ok() else {
-            panic!("runtime-upgrade: can't obtain code size");
-        };
-        if code_size == 0 {
-            panic!("runtime-upgrade: empty target bytecode");
-        }
-
-        let Ok(wasm_bytecode) = self
-            .sdk
-            .code_copy(&target_address, 0, code_size as u64)
-            .ok()
-        else {
-            panic!("runtime-upgrade: can't load target bytecode");
-        };
-        if wasm_bytecode.len() != code_size as usize {
-            panic!("runtime-upgrade: incomplete target bytecode");
-        }
-
-        let code_hash = self.compile_and_install(target_address, wasm_bytecode);
-        ContractRecompiled {
-            target_address,
             code_hash,
         }
         .emit(&mut self.sdk)

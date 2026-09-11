@@ -49,7 +49,7 @@ find "$REPO_ROOT/contracts" -mindepth 2 -maxdepth 2 -name Cargo.toml | sort | wh
     printf '[]\n' >"${tmp_dir}/abi.json"
   fi
 
-  ABI_INPUT="${tmp_dir}/abi.json" ABI_OUTPUT="$abi_path" python3 - <<'PY'
+  ABI_INPUT="${tmp_dir}/abi.json" ABI_OUTPUT="$abi_path" CONTRACT_NAME="$contract_name" python3 - <<'PY'
 import json
 import os
 
@@ -59,7 +59,17 @@ with open(os.environ["ABI_INPUT"], encoding="utf-8") as abi_file:
 if not isinstance(abi, list):
     raise SystemExit("generated ABI must be a JSON array")
 
-with open(os.environ["ABI_OUTPUT"], "w", encoding="utf-8") as abi_file:
+# A contract without a `#[router]` (a hand-rolled entrypoint such as webauthn) generates nothing;
+# its published ABI is maintained by hand and must not be replaced with an empty array.
+output_path = os.environ["ABI_OUTPUT"]
+if not abi and os.path.exists(output_path):
+    with open(output_path, encoding="utf-8") as existing_file:
+        existing = json.load(existing_file)
+    if existing:
+        print(f"contracts/{os.environ['CONTRACT_NAME']}: no router found, keeping the hand-maintained ABI")
+        raise SystemExit(0)
+
+with open(output_path, "w", encoding="utf-8") as abi_file:
     json.dump(abi, abi_file, indent=2)
     abi_file.write("\n")
 PY

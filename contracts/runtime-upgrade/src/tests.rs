@@ -185,20 +185,6 @@ fn test_upgrade_to_encoding() {
 }
 
 #[test]
-fn test_recompile_encoding() {
-    let target = address!("2222222222222222222222222222222222222222");
-
-    let call = RecompileCall::new((target,));
-    let encoded = call.encode();
-
-    assert!(encoded.len() >= 4);
-    println!("Encoded call data: {}", hex::encode(&encoded));
-
-    let decoded = RecompileCall::decode(&&encoded[4..]).expect("failed to decode");
-    assert_eq!(decoded.0 .0, target, "target_address mismatch");
-}
-
-#[test]
 fn test_upgrade_evm_to_encoding() {
     let target = address!("2222222222222222222222222222222222222222");
     let genesis_hash = B256::from([0xab; 32]);
@@ -292,17 +278,44 @@ fn test_upgrade_to_planned_encoding() {
     assert_eq!(decoded.0 .1, wasm_bytecode, "wasm_bytecode mismatch");
 }
 
+/// The published ABI must select exactly the methods the router dispatches on: the router pins
+/// `uint256` for the genesis hash, so the artifact has to say `uint256` too, whatever the Rust
+/// parameter type is.
 #[test]
-fn test_upgrade_and_recompile_event_signatures_are_distinct() {
+fn test_published_abi_matches_router_selectors() {
+    let abi = alloy_json_abi::JsonAbi::from_json_str(include_str!("../abi.json"))
+        .expect("abi.json must parse");
+
+    let mut published: Vec<(String, [u8; 4])> = abi
+        .functions()
+        .map(|function| (function.name.clone(), function.selector().0))
+        .collect();
+    published.sort();
+
+    let mut expected: Vec<(String, [u8; 4])> = [
+        ("upgradeTo", UpgradeToCall::SELECTOR),
+        ("upgradeEvmTo", UpgradeEvmToCall::SELECTOR),
+        ("planUpgrade", PlanUpgradeCall::SELECTOR),
+        ("upgradeToPlanned", UpgradeToPlannedCall::SELECTOR),
+        ("changeOwner", ChangeOwnerCall::SELECTOR),
+        ("owner", OwnerCall::SELECTOR),
+        ("renounceOwnership", RenounceOwnershipCall::SELECTOR),
+    ]
+    .into_iter()
+    .map(|(name, selector)| (name.to_string(), selector))
+    .collect();
+    expected.sort();
+
+    assert_eq!(published, expected);
+    assert!(abi.constructor.is_none());
+}
+
+#[test]
+fn test_runtime_upgraded_event_signature() {
     assert_eq!(
         RuntimeUpgraded::SIGNATURE,
         "RuntimeUpgraded(address,bytes32,string,bytes32)"
     );
-    assert_eq!(
-        ContractRecompiled::SIGNATURE,
-        "ContractRecompiled(address,bytes32)"
-    );
-    assert_ne!(RuntimeUpgraded::SELECTOR, ContractRecompiled::SELECTOR);
 }
 
 #[test]

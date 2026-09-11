@@ -28,6 +28,8 @@ pub struct Router {
     routes: Vec<ParsedMethod<ImplItemFn>>,
     /// Constructor method if defined
     constructor: Option<ParsedMethod<ImplItemFn>>,
+    /// Fallback handler if defined; never a route, it owns no selector
+    fallback: Option<ParsedMethod<ImplItemFn>>,
     /// Indicates whether this is a trait implementation
     is_trait_impl: bool,
 }
@@ -84,7 +86,10 @@ impl Router {
             return Err(error);
         }
 
-        if collector.methods.is_empty() && collector.constructor.is_none() {
+        if collector.methods.is_empty()
+            && collector.constructor.is_none()
+            && collector.fallback.is_none()
+        {
             let help = if is_trait_impl {
                 "For trait implementations, make sure the trait contains method declarations"
             } else {
@@ -119,6 +124,7 @@ impl Router {
             impl_block,
             routes: collector.methods,
             constructor: collector.constructor,
+            fallback: collector.fallback,
             is_trait_impl,
         })
     }
@@ -138,12 +144,14 @@ impl Router {
         &self.routes
     }
 
-    /// Returns all available method routes excluding fallback.
+    /// Returns all available method routes; the fallback is not one of them.
     pub fn available_methods(&self) -> Vec<&ParsedMethod<ImplItemFn>> {
-        self.routes
-            .iter()
-            .filter(|route| route.parsed_signature().rust_name() != "fallback")
-            .collect()
+        self.routes.iter().collect()
+    }
+
+    /// Returns the fallback handler if present.
+    pub fn fallback(&self) -> Option<&ParsedMethod<ImplItemFn>> {
+        self.fallback.as_ref()
     }
 
     /// Checks if the router is based on a trait implementation.
@@ -153,9 +161,7 @@ impl Router {
 
     /// Checks if the router has a fallback handler.
     pub fn has_fallback(&self) -> bool {
-        self.routes
-            .iter()
-            .any(|r| r.parsed_signature().is_fallback())
+        self.fallback.is_some()
     }
 
     /// Checks if the router has a constructor.
@@ -326,11 +332,28 @@ impl Router {
         })
     }
 
+    /// The guard a handler's mutability calls for: anything but `payable` rejects a call that
+    /// carries value before the handler runs.
+    fn value_guard(handler: &ParsedMethod<ImplItemFn>, what: &str) -> TokenStream2 {
+        if handler.state_mutability().allows_value() {
+            return quote! {};
+        }
+        let message = format!("nonpayable {what} cannot receive value");
+        quote! {
+            use fluentbase_sdk::ContextReader as _;
+            if !self.sdk.context().contract_value().is_zero() {
+                panic!(#message);
+            }
+        }
+    }
+
     /// Generates input validation logic.
     fn generate_input_validation(&self) -> TokenStream2 {
-        if self.has_fallback() {
+        if let Some(fallback) = self.fallback() {
+            let value_guard = Self::value_guard(fallback, "fallback");
             quote! {
                 if input_length < 4 {
+                    #value_guard
                     self.fallback();
                     return;
                 }
@@ -374,16 +397,7 @@ impl Router {
         let param_count = params.len();
         let return_type_count = route.parsed_signature().return_type().len();
 
-        let value_guard = if route.state_mutability().allows_value() {
-            quote! {}
-        } else {
-            quote! {
-                use fluentbase_sdk::ContextReader as _;
-                if !self.sdk.context().contract_value().is_zero() {
-                    panic!("nonpayable method cannot receive value");
-                }
-            }
-        };
+        let value_guard = Self::value_guard(route, "method");
 
         // Generate parameter handling based on parameter count
         let param_handling = match param_count {
@@ -459,9 +473,11 @@ impl Router {
 
     /// Generates the fallback handler match arm.
     fn generate_fallback_arm(&self) -> TokenStream2 {
-        if self.has_fallback() {
+        if let Some(fallback) = self.fallback() {
+            let value_guard = Self::value_guard(fallback, "fallback");
             quote! {
                 _ => {
+                    #value_guard
                     self.fallback();
                 }
             }
@@ -617,6 +633,200 @@ mod b {
         let method = router.available_methods()[0];
         assert_eq!(method.signature(), "setA((uint256,bool))");
         assert_eq!(method.function_id(), [0xb6, 0xea, 0x7d, 0x04]);
+    }
+
+    /// The published ABI of a method with a pinned selector hashes to that selector
+    #[test]
+    fn test_pinned_selector_is_what_the_abi_publishes() {
+        let impl_block: syn::ItemImpl = parse_quote! {
+            impl<SDK: SharedAPI> App<SDK> {
+                #[function_id("upgradeTo(address,uint256,string,bytes)")]
+                pub fn upgrade_to(
+                    &mut self,
+                    target_address: Address,
+                    genesis_hash: B256,
+                    genesis_version: String,
+                    wasm_bytecode: Bytes,
+                ) {
+                }
+            }
+        };
+
+        let router = process_router(quote! { mode = "solidity" }, impl_block.into_token_stream())
+            .expect("Failed to process router");
+
+        let method = router.available_methods()[0];
+        let abi = method
+            .function_abi()
+            .expect("a pinned leaf retype keeps the ABI");
+        assert_eq!(abi.signature().unwrap(), method.signature());
+        assert_eq!(abi.function_id().unwrap(), method.function_id());
+        assert_eq!(method.function_id(), [0x28, 0x8f, 0xb3, 0xb8]);
+        assert_eq!(abi.inputs[1].name, "genesis_hash");
+        assert_eq!(abi.inputs[1].ty, "uint256");
+    }
+
+    /// A `fallback` handler is a route the dispatcher can reach, but it has no selector arm
+    #[test]
+    fn test_fallback_receives_unmatched_selectors() {
+        let impl_block: syn::ItemImpl = parse_quote! {
+            impl<SDK: SharedAPI> App<SDK> {
+                pub fn get_value(&self) -> u32 {
+                    42
+                }
+
+                fn fallback(&self) {}
+            }
+        };
+
+        let router = process_router(quote! { mode = "solidity" }, impl_block.into_token_stream())
+            .expect("Failed to process router");
+
+        assert!(router.has_fallback());
+        assert_eq!(router.available_methods().len(), 1);
+        assert_eq!(
+            router.available_methods()[0].parsed_signature().rust_name(),
+            "get_value"
+        );
+
+        let generated = router
+            .generate()
+            .expect("Failed to generate router code")
+            .to_string()
+            .replace(' ', "");
+        // Both dispatch paths end in the handler; the guard in front of it is covered separately.
+        assert!(generated.contains("self.fallback();}"));
+        assert!(generated.contains("self.fallback();return;}"));
+        assert!(!generated.contains("unsupported method selector"));
+        assert!(!generated.contains("insufficient input length"));
+    }
+
+    /// A fallback that is not payable rejects value on both dispatch paths, like any route
+    #[test]
+    fn test_non_payable_fallback_rejects_value() {
+        let impl_block: syn::ItemImpl = parse_quote! {
+            impl<SDK: SharedAPI> App<SDK> {
+                pub fn get_value(&self) -> u32 {
+                    42
+                }
+
+                fn fallback(&self) {}
+            }
+        };
+
+        let router = process_router(quote! { mode = "solidity" }, impl_block.into_token_stream())
+            .expect("Failed to process router");
+        let generated = router
+            .generate()
+            .expect("Failed to generate router code")
+            .to_string()
+            .replace(' ', "");
+
+        assert_eq!(
+            generated
+                .matches("nonpayablefallbackcannotreceivevalue")
+                .count(),
+            2
+        );
+        // The guard runs before the handler on the short-input path and on the unknown-selector
+        // path alike.
+        assert_eq!(
+            generated
+                .matches("panic!(\"nonpayablefallbackcannotreceivevalue\");}self.fallback();")
+                .count(),
+            2
+        );
+    }
+
+    /// A payable fallback (`&mut self`, or annotated payable) accepts value-bearing calls
+    #[test]
+    fn test_payable_fallback_accepts_value() {
+        for impl_block in [
+            parse_quote! {
+                impl<SDK: SharedAPI> App<SDK> {
+                    fn fallback(&mut self) {}
+                }
+            },
+            parse_quote! {
+                impl<SDK: SharedAPI> App<SDK> {
+                    #[state_mutability("payable")]
+                    fn fallback(&self) {}
+                }
+            },
+        ] {
+            let impl_block: syn::ItemImpl = impl_block;
+            let router =
+                process_router(quote! { mode = "solidity" }, impl_block.into_token_stream())
+                    .expect("Failed to process router");
+            let generated = router
+                .generate()
+                .expect("Failed to generate router code")
+                .to_string();
+            assert!(!generated.contains("nonpayable fallback"));
+            assert!(!generated.contains("state_mutability"));
+        }
+    }
+
+    /// The fallback owns no selector, so a route pinned to `fallback()` can coexist with it
+    #[test]
+    fn test_fallback_does_not_reserve_a_selector() {
+        let impl_block: syn::ItemImpl = parse_quote! {
+            impl<SDK: SharedAPI> App<SDK> {
+                #[function_id("fallback()")]
+                pub fn catch_all(&self) {}
+
+                fn fallback(&self) {}
+            }
+        };
+
+        let router = process_router(quote! { mode = "solidity" }, impl_block.into_token_stream())
+            .expect("a route pinned to fallback() must not collide with the fallback");
+
+        assert!(router.has_fallback());
+        let routes = router.available_methods();
+        assert_eq!(routes.len(), 1);
+        assert_eq!(routes[0].signature(), "fallback()");
+        assert_eq!(routes[0].parsed_signature().rust_name(), "catch_all");
+    }
+
+    /// A router may consist of a fallback alone
+    #[test]
+    fn test_fallback_only_router_is_accepted() {
+        let impl_block: syn::ItemImpl = parse_quote! {
+            impl<SDK: SharedAPI> App<SDK> {
+                fn fallback(&self) {}
+            }
+        };
+
+        let router = process_router(quote! { mode = "solidity" }, impl_block.into_token_stream())
+            .expect("a fallback-only router should be accepted");
+
+        assert!(router.has_fallback());
+        assert!(router.available_methods().is_empty());
+        router.generate().expect("Failed to generate router code");
+    }
+
+    /// Without a fallback, unknown selectors and short inputs still revert
+    #[test]
+    fn test_unknown_selectors_revert_without_fallback() {
+        let impl_block: syn::ItemImpl = parse_quote! {
+            impl<SDK: SharedAPI> App<SDK> {
+                pub fn get_value(&self) -> u32 {
+                    42
+                }
+            }
+        };
+
+        let router = process_router(quote! { mode = "solidity" }, impl_block.into_token_stream())
+            .expect("Failed to process router");
+
+        assert!(!router.has_fallback());
+        let generated = router
+            .generate()
+            .expect("Failed to generate router code")
+            .to_string();
+        assert!(generated.contains("unsupported method selector"));
+        assert!(generated.contains("insufficient input length for method selector"));
     }
 
     #[test]
