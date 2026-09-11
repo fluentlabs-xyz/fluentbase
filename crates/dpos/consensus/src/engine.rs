@@ -73,11 +73,17 @@ pub struct EpochEngineConfig<B, XC, A> {
     pub blocker: B,
     pub snapshot: ValidatorSetSnapshot,
     pub epoch: Epoch,
-    /// Base for the leader elector's seedless arm: the witness seed of the E-1
-    /// terminal block, resolved by the epoch manager's boundary lookup
-    /// (`epoch_manager::Actor::boundary_lookup`), else the constant derivation
-    /// where no witness can exist.
-    pub fallback_seed: [u8; 32],
+    /// The leader lottery, built by the reconciler from the epoch's FROZEN
+    /// committee record before this engine exists (E4-10).
+    ///
+    /// Handed down built rather than derived here, for the same reason
+    /// [`Self::scheme`] is: the weights it needs are non-optional only in the
+    /// committee module's record, and deriving it here would mean a spawn that
+    /// has already raised this epoch's scheme to the signer half can still
+    /// discover it has no leader schedule. Its seedless-arm base is the witness
+    /// seed of the E-1 terminal block, or the constant derivation where no
+    /// witness can exist — resolved by `epoch_manager::Actor::boundary_lookup`.
+    pub elector: WeightedVrf,
     /// Single cross-epoch `OriginEpocher` instance threaded from
     /// [`crate::outer::OuterBuilder::build`] (no per-epoch re-construction;
     /// marshal and engine share the same instance). `origin = dposActivationBlock`.
@@ -85,10 +91,6 @@ pub struct EpochEngineConfig<B, XC, A> {
     pub app: FluentApp<XC, A>,
     pub timeouts: ConsensusTimeouts,
     pub mailbox_size: usize,
-    /// Callback that registers this epoch's [`BlsScheme`] in
-    /// [`crate::outer::EpochSchemeProvider`] so marshal can verify
-    /// cross-epoch finalization certificates (trailing-window pruned; see SCHEME_RETENTION_EPOCHS).
-    pub register_scheme: Arc<dyn Fn(Epoch, BlsScheme) + Send + Sync>,
     /// The scheme this engine votes and verifies with, built by the randomness
     /// subsystem and handed down whole ([`crate::beacon::Beacon::signer`]).
     /// The engine no longer knows what a beacon key is: whether this scheme
@@ -222,15 +224,14 @@ where
         // verdict would put a committee type back on the randomness surface.
         let scheme = cfg.scheme;
 
-        (cfg.register_scheme)(cfg.epoch, scheme.clone());
-
         // DEVNET/TEST-ONLY: a byzantine equivocator swaps the honest simplex engine
         // for a vote-channel double-signer ([`crate::byzantine::VoteEquivocator`]).
         // Only a SIGNING member can equivocate (otherwise its scheme can't sign a
         // vote); a non-signing flagged node falls through to the honest engine.
-        // The scheme is still registered above so peers can verify its equivocating
-        // votes' signatures (the slasher needs the attributable vote half). We skip
-        // building the simplex engine entirely on this path.
+        // The scheme is already in the committee module's map (the reconciler
+        // raised it there before this spawn) so peers can verify its equivocating
+        // votes' signatures — the slasher needs the attributable vote half. We
+        // skip building the simplex engine entirely on this path.
         #[cfg(feature = "dpos-devnet-byzantine")]
         if matches!(
             cfg.byzantine,
@@ -285,7 +286,7 @@ where
             context.with_label("simplex"),
             simplex::Config {
                 scheme,
-                elector: WeightedVrf::try_new(&cfg.snapshot, cfg.fallback_seed)?,
+                elector: cfg.elector,
                 blocker: cfg.blocker,
                 automaton: automaton.clone(),
                 relay: automaton,

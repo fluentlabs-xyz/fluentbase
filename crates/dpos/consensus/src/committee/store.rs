@@ -2,11 +2,12 @@
 //! producer.
 
 use super::{
-    Anchor, Committee, CommitteeError, CommitteeRecord, EpochReads, Geometry, GeometryRx, Member,
+    Anchor, Committee, CommitteeError, CommitteeRecord, EpochReads, EpochVerifier, Geometry,
+    GeometryRx, Member,
 };
 use alloy_primitives::B256;
 use commonware_utils::TryFromIterator as _;
-use fluentbase_bls::PeerPubkey;
+use fluentbase_bls::{PeerPubkey, Scheme as BlsScheme};
 use fluentbase_staking_reader::{reader::ValidatorSetSnapshot, ReadError};
 use fluentbase_types::staking_protocol::MAX_COMMITTEE_LOOKAHEAD_EPOCHS;
 use std::{
@@ -44,15 +45,25 @@ pub(crate) const REASON_READ_ERROR: &str = "read_error";
 /// The anchor's own state probe faulted at a materialized height.
 pub(crate) const REASON_ANCHOR_FAULT: &str = "anchor_fault";
 
-/// One epoch's slot in the store's single map.
+/// Ticks once per [`Committee::upgrade_scheme`] refused for replacing a
+/// beacon-active scheme with an oracle-less one. Its normal value is zero: a
+/// non-zero rate means some path is upgrading a beacon-active epoch without an
+/// oracle, and the epoch would have returned to vote-only certificate admission
+/// without the guard.
+pub(crate) const ORACLE_DROP_REFUSED: &str = "dpos_epoch_scheme_oracle_drop_refused_total";
+
+/// One epoch's slot in the store's single map: the frozen record and the
+/// certificate scheme built from it.
 ///
-/// A struct with one field rather than a bare `Arc<CommitteeRecord>` on
-/// purpose: the record and the epoch's `BlsScheme` are one lifetime with one
-/// retention, and the next step makes `EpochSchemeProvider` a VIEW on this map
-/// by adding a `scheme` field here. Adding a field is then a local change; a
-/// second map beside this one would be the two-authorities defect again.
+/// ONE slot and not two maps, because the two have one lifetime and one
+/// retention — an epoch the window has dropped must not keep a scheme the
+/// marshal would still verify under, and a scheme must not exist for an epoch
+/// whose committee this node never read. `scheme` is `None` only while the
+/// [`EpochVerifier`] cannot build one yet (the beacon is younger than the
+/// store); it is filled by the first [`Committee::scheme`] after that.
 struct EpochEntry {
     record: Arc<CommitteeRecord>,
+    scheme: Option<Arc<BlsScheme>>,
 }
 
 /// Everything the store mutates, behind one lock.
@@ -86,6 +97,8 @@ pub struct CommitteeStore<R> {
     reads: R,
     anchor: Arc<dyn Anchor>,
     geometry: GeometryRx,
+    /// The ONE producer of a verify-only scheme — see [`EpochVerifier`].
+    verifier: EpochVerifier,
     state: Mutex<State>,
     /// Highest readable epoch, published as a wake-up. See
     /// [`CommitteeStore::anchor_advanced`].
@@ -105,7 +118,17 @@ impl<R: EpochReads> CommitteeStore<R> {
     /// anchors on — i.e. a second cursor — or the node to block its startup on
     /// a chain read. Until the first `Some`, every read answers
     /// [`CommitteeError::NotReadable`] with `ready_at: 0` and touches nothing.
-    pub fn new(reads: R, anchor: Arc<dyn Anchor>, geometry: GeometryRx) -> Self {
+    /// `verifier` is the ONE producer of a verify-only scheme (see
+    /// [`EpochVerifier`]): it runs on the record this store just installed, so
+    /// no caller can register a scheme for an epoch whose committee the module
+    /// has not read, and no epoch can end up with a scheme over a committee
+    /// other than the one in its record.
+    pub fn new(
+        reads: R,
+        anchor: Arc<dyn Anchor>,
+        geometry: GeometryRx,
+        verifier: EpochVerifier,
+    ) -> Self {
         let seed = match Self::geometry_of(&geometry) {
             Some(g) => g.epoch_of(anchor.height()) + MAX_COMMITTEE_LOOKAHEAD_EPOCHS,
             None => 0,
@@ -114,6 +137,7 @@ impl<R: EpochReads> CommitteeStore<R> {
             reads,
             anchor,
             geometry,
+            verifier,
             state: Mutex::new(State::default()),
             readable: tokio::sync::watch::Sender::new(seed),
         }
@@ -298,6 +322,14 @@ impl<R: EpochReads> CommitteeStore<R> {
         lo: u64,
     ) -> Result<Arc<CommitteeRecord>, CommitteeError> {
         let record = Arc::new(record);
+        // The epoch's verify-only scheme, built BEFORE the lock and stored in
+        // the same slot as the record: there is no observable moment where an
+        // epoch has a committee here but no scheme, and no other producer that
+        // could put a different committee's scheme in that slot. Outside the
+        // lock because the verifier asks the beacon for the epoch's oracle, and
+        // holding the map across another subsystem's read is what the `State`
+        // doc forbids.
+        let scheme = (self.verifier)(&record).map(Arc::new);
         let mut state = self.state.lock().unwrap();
         if let Some(entry) = state.records.get(&epoch) {
             let existing = entry.record.clone();
@@ -331,9 +363,31 @@ impl<R: EpochReads> CommitteeStore<R> {
             epoch,
             EpochEntry {
                 record: record.clone(),
+                scheme,
             },
         );
         Ok(record)
+    }
+
+    /// The scheme slot of an epoch already in the map, filling it if the
+    /// verifier could not answer at install time. Called with no lock held.
+    fn resolve_scheme(&self, epoch: u64) -> Option<Arc<BlsScheme>> {
+        let record = {
+            let state = self.state.lock().unwrap();
+            let entry = state.records.get(&epoch)?;
+            if let Some(scheme) = &entry.scheme {
+                return Some(scheme.clone());
+            }
+            entry.record.clone()
+        };
+        // The install-time verifier answered `None` — the beacon did not exist
+        // yet. Retry it here rather than remembering the absence: the SAME one
+        // producer, run later, so the epoch is not pinned to "no scheme" for the
+        // life of the process by the order in which the plane was built.
+        let built = Arc::new((self.verifier)(&record)?);
+        let mut state = self.state.lock().unwrap();
+        let entry = state.records.get_mut(&epoch)?;
+        Some(entry.scheme.get_or_insert(built).clone())
     }
 }
 
@@ -460,6 +514,88 @@ impl<R: EpochReads> Committee for CommitteeStore<R> {
         Ok(self.committee(epoch)?.participants.position(peer).is_some())
     }
 
+    fn scheme(&self, epoch: u64) -> Option<Arc<BlsScheme>> {
+        // Reading the committee is what PRODUCES the scheme, so ask for it
+        // first. Everything expensive about that is already gated: an epoch
+        // outside the window or below its commit height costs no EVM call at
+        // all, and a hit is a map lookup.
+        self.committee(epoch).ok()?;
+        self.resolve_scheme(epoch)
+    }
+
+    fn upgrade_scheme(&self, epoch: u64, scheme: BlsScheme) -> bool {
+        use commonware_cryptography::certificate::Scheme as _;
+        let mut state = self.state.lock().unwrap();
+        let Some(entry) = state.records.get_mut(&epoch) else {
+            // No record ⇒ no committee this node has read ⇒ nothing to raise
+            // the strength OF. Unreachable from the one caller (the engine
+            // spawn reads the record to build the scheme in the first place),
+            // and loud rather than silent because reaching it would mean a
+            // scheme was built from something other than the module's record.
+            error!(
+                epoch,
+                "refused a scheme upgrade for an epoch with no committee record — the scheme \
+                 was derived from something this module did not read"
+            );
+            return false;
+        };
+        if entry.record.participants != *scheme.participants() {
+            error!(
+                epoch,
+                "refused a scheme upgrade whose committee is not this epoch's — preserving the \
+                 entry built from the record"
+            );
+            return false;
+        }
+        let Some(existing) = &entry.scheme else {
+            entry.scheme = Some(Arc::new(scheme));
+            return true;
+        };
+        if existing.me().is_some() && scheme.me().is_none() {
+            error!(
+                epoch,
+                "refused a signer→verifier scheme downgrade — an engine's own scheme is never \
+                 weakened underneath it"
+            );
+            return false;
+        }
+        if existing.is_beacon_active() && !scheme.is_beacon_active() {
+            drop(state);
+            metrics::counter!(ORACLE_DROP_REFUSED).increment(1);
+            error!(
+                epoch,
+                "refused a scheme upgrade that DROPS the beacon oracle — the replacement admits \
+                 a cleared seed slot where the entry it would replace refuses one (upgrades are \
+                 monotone in verification strength)"
+            );
+            return false;
+        }
+        entry.scheme = Some(Arc::new(scheme));
+        true
+    }
+
+    fn verifier_epochs(&self) -> Vec<u64> {
+        use commonware_cryptography::certificate::Scheme as _;
+        self.state
+            .lock()
+            .unwrap()
+            .records
+            .iter()
+            .filter(|(_, e)| e.scheme.as_ref().is_some_and(|s| s.me().is_none()))
+            .map(|(epoch, _)| *epoch)
+            .collect()
+    }
+
+    fn latest_scheme(&self) -> Option<Arc<BlsScheme>> {
+        self.state
+            .lock()
+            .unwrap()
+            .records
+            .values()
+            .rev()
+            .find_map(|e| e.scheme.clone())
+    }
+
     fn subscribe(&self) -> tokio::sync::watch::Receiver<u64> {
         self.readable.subscribe()
     }
@@ -479,14 +615,28 @@ impl<R: EpochReads> Committee for CommitteeStore<R> {
             Self::prune(&mut state, lo);
         }
 
+        // ALWAYS a notification, not only when the VALUE grew. The value is a
+        // hint — the highest epoch this node could read — but the two things a
+        // parked consumer is waiting for are not both epoch-shaped: an epoch
+        // below its commit height opens when the anchor passes that height (the
+        // value moves), while an epoch whose anchor height is not EXECUTED yet
+        // opens when execution catches up at the SAME height, and the value does
+        // not move at all. Publishing only on growth left the second class with
+        // no wake-up, which is a park with no retry — the exact defect
+        // `subscribe` exists to remove.
+        //
+        // The rate is the anchor's own: one per finalized derive, the edge the
+        // executor already fires `spawn_unblocked` on.
+        //
+        // The VALUE is still monotone, and that is kept by hand rather than by
+        // the publish condition: the anchor is monotone in production but the
+        // store recomputes the ceiling from it on every advance, so a hint that
+        // went backwards would be a hint a consumer could act on wrongly. `max`
+        // costs nothing and makes the two properties independent.
         let highest = self.highest_readable(&geometry);
         self.readable.send_if_modified(|current| {
-            if highest > *current {
-                *current = highest;
-                true
-            } else {
-                false
-            }
+            *current = (*current).max(highest);
+            true
         });
     }
 

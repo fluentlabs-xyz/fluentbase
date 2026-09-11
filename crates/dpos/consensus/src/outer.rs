@@ -14,6 +14,7 @@ use crate::{
     application::{
         BeaconEngineLike, DerivedBlockBuilder, ExecutedChain, FluentApp, OrderingAssembler,
     },
+    committee::Committee,
     digest::Digest,
     dpos::VoteBackupItem,
     epoch_manager,
@@ -21,7 +22,6 @@ use crate::{
     executor,
     feed_sink::FeedSink,
     order_block::OrderBlock,
-    scheme::soft_enter_verifier,
     slasher,
     timeouts::ConsensusTimeouts,
     REPLAY_BUFFER, WRITE_BUFFER,
@@ -192,13 +192,6 @@ where
     }
 }
 
-/// Bulk catch-up committee reader threaded from `dpos.rs` into [`OuterBuilder`]:
-/// given an inclusive epoch span `[from, to]`, returns the contiguous on-chain
-/// committee prefix `(epoch, snap)` read at the result-final state. See
-/// [`OuterBuilder::soft_enter_committees`].
-pub type SoftEnterCommittees =
-    Arc<dyn Fn(Epoch, Epoch) -> BoxFuture<'static, Vec<(u64, ValidatorSetSnapshot)>> + Send + Sync>;
-use crate::SCHEME_RETENTION_EPOCHS;
 use commonware_parallel::Sequential;
 use commonware_runtime::{
     buffer::paged::CacheRef, spawn_cell, BufferPooler, Clock, ContextCell, Handle, Metrics,
@@ -207,11 +200,8 @@ use commonware_runtime::{
 use commonware_storage::archive::{immutable, Archive as _, Identifier};
 use commonware_utils::{NZUsize, NZU16, NZU64};
 use fluentbase_bls::{keys::ValidatorBlsKeypair, PeerPubkey, Scheme as BlsScheme};
-use fluentbase_staking_reader::reader::ValidatorSetSnapshot;
-use futures::future::BoxFuture;
 use rand_core::CryptoRngCore;
 use std::{
-    collections::BTreeMap,
     num::{NonZeroU64, NonZeroUsize},
     sync::{Arc, Mutex},
     time::Duration,
@@ -235,178 +225,44 @@ const FREEZER_TABLE_RESIZE_CHUNK_SIZE: u32 = 1 << 16;
 const FREEZER_VALUE_TARGET_SIZE: u64 = 1 << 30;
 const FREEZER_VALUE_COMPRESSION: Option<u8> = Some(3);
 
-// EpochSchemeProvider — minimal per-epoch BlsScheme registry; pruned to the
-// trailing [`crate::SCHEME_RETENTION_EPOCHS`] (a validator keeps one process
-// alive across months — unbounded growth is no longer hypothetical).
-
-/// Ticks once per re-registration refused for replacing a beacon-active scheme
-/// with an oracle-less one (see [`EpochSchemeProvider::register`]). Successor to
-/// `dpos_epoch_scheme_pin_drop_refused_total`, under a new name because what is
-/// refused is now the loss of the ORACLE rather than the loss of a copied pin;
-/// the reading is the same. Its normal value is zero: a non-zero rate means some
-/// path is re-registering a beacon-active epoch without an oracle, and the epoch
-/// would have returned to vote-only certificate admission without the guard.
-pub(crate) const ORACLE_DROP_REFUSED: &str = "dpos_epoch_scheme_oracle_drop_refused_total";
-
-/// A plain per-epoch registry. It used to also carry a `mandatory_at` predicate,
-/// for the one method that could attach a seed pin to an epoch and therefore had
-/// to refuse doing so on a pre-beacon one. Nothing attaches anything to a
-/// registered scheme any more — the beacon-active decision is made once, at
-/// `Beacon::oracle_for`, before the scheme is ever built.
-#[derive(Clone, Default)]
+/// A VIEW on the committee module's single map — the marshal's
+/// [`CertProvider`], the executor's finalization-refetch peer source and the
+/// repair sweep's work list, all answered from the one place an epoch's scheme
+/// lives.
+///
+/// It used to BE the registry: its own `BTreeMap<Epoch, Arc<BlsScheme>>`, its
+/// own count-based retention, and four producers writing into it from four
+/// different cursors. Every one of those is gone. The map is
+/// [`crate::committee::Committee`]'s, the retention is the read window, and the
+/// producers are two — the module's own verifier at install, and
+/// [`Committee::upgrade_scheme`] for the signer half. What is left here is a
+/// name and three projections, kept as a type so the marshal's `CertProvider`
+/// bound and the metric names it is known by do not have to move too.
+#[derive(Clone)]
 pub struct EpochSchemeProvider {
-    map: Arc<Mutex<BTreeMap<Epoch, Arc<BlsScheme>>>>,
+    committee: Arc<dyn Committee>,
 }
 
 impl EpochSchemeProvider {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Register a [`BlsScheme`] for `epoch`.
-    ///
-    /// Insert-or-equal with a verifier→signer direction guard.
-    /// The only legitimate same-epoch re-registration path is the
-    /// cold-start sequence in `dpos.rs` (`cold_start_register`), where a verifier-mode scheme
-    /// is registered first (so marshal can verify cross-epoch certs
-    /// before any `EpochEngine` for this epoch exists) and the engine
-    /// later overwrites it with a signer-mode scheme. Three outcomes:
-    ///
-    /// 1. **Vacant slot** → insert. Normal path for every new epoch.
-    /// 2. **Same committee, verifier → signer** → overwrite.
-    /// 3. **Different committee, OR signer → verifier downgrade, OR a
-    ///    beacon-active entry replaced by an oracle-less scheme** → refuse + log
-    ///    error. Either a bug, a malicious caller, or an accidental late
-    ///    `cold_start_register` after the engine started.
-    ///
-    /// Committee equality goes through the upstream
-    /// [`commonware_cryptography::certificate::Scheme::participants`]
-    /// accessor (returns `&Set<PeerPubkey>`); direction via
-    /// [`commonware_cryptography::certificate::Scheme::me`] (`Some(idx)` when
-    /// signer, `None` when verifier).
-    ///
-    /// **Registration is MONOTONE in verification strength.** That invariant
-    /// predates the oracle — it was written for the cert-seed pin, whose loss
-    /// neither accessor above could see — and it survives the pin because the
-    /// oracle is invisible in exactly the same way. `oracle: Some` and
-    /// `oracle: None` over one committee verify DIFFERENTLY: the beacon-active
-    /// scheme refuses a certificate whose seed slot was cleared, the oracle-less
-    /// one admits it, and the attestation arm flips with it. So a same-committee
-    /// verifier→verifier re-register can still silently return a secured epoch to
-    /// vote-only admission, and [`fluentbase_bls::Scheme::is_beacon_active`] is
-    /// the accessor that makes it visible.
-    ///
-    /// **NO PRODUCER REACHES THIS REFUSAL TODAY, AND THAT IS THE POINT — DO NOT
-    /// READ IT AS LOAD-BEARING.** The path that motivated it was a validator
-    /// rotated out of `committee[E]` without a restart, where
-    /// `SignerVerdict::RotatedKey` returned an oracle-less verifier over the
-    /// epoch soft-enter had already registered a beacon-active one for. That path
-    /// was CLOSED at the producer: `signer_scheme`'s seat-probe-miss arm now
-    /// builds with `oracle_for(epoch)`, so at a beacon-active epoch both sides are
-    /// beacon-active and this branch cannot fire on it.
-    ///
-    /// Of the four producers that reach `register`, three take their oracle from
-    /// `Beacon::oracle_for`; the fourth, `cold_start_register`, hardcodes
-    /// `None` but only ever meets a VACANT slot (the provider is constructed fresh
-    /// inside `OuterBuilder::build`, so even a demote→re-promote starts empty).
-    /// The one remaining `None`-producing arm — `SignerVerdict::Signs` for a
-    /// member holding no material — is intercepted upstream by the share-gate,
-    /// which routes a share-less member to `soft_enter` without ever spawning an
-    /// engine.
-    ///
-    /// So this is DEFENCE IN DEPTH against a producer that does not yet exist,
-    /// kept because the property it protects is invisible to `participants()` and
-    /// `me()` and because the loss it prevents is silent (no forgery follows — a
-    /// stripped-seed certificate still needs a genuine multisig quorum — which is
-    /// exactly why nothing else would notice). What would make it live again: a
-    /// new registration path that hardcodes `None` the way `cold_start_register`
-    /// does and can meet an occupied slot, or a beacon-active `Signs`-without-
-    /// material path the share-gate stops intercepting. Note that it CANNOT save
-    /// a producer that is wrong on FIRST insert — all three refusals here sit
-    /// under `Entry::Occupied`.
-    ///
-    /// The refusal covering a verifier→SIGNER replacement that drops the oracle is
-    /// deliberate rather than incidental: the entry here is what the MARSHAL
-    /// verifies certificates with, and an engine keeps its own scheme instance
-    /// regardless, so keeping the stronger verifier costs the engine nothing.
-    pub fn register(&self, epoch: Epoch, scheme: BlsScheme) {
-        use commonware_cryptography::certificate::Scheme as _;
-        let mut map = self.map.lock().unwrap();
-        match map.entry(epoch) {
-            std::collections::btree_map::Entry::Vacant(v) => {
-                v.insert(Arc::new(scheme));
-            }
-            std::collections::btree_map::Entry::Occupied(mut o) => {
-                let existing = o.get();
-                if existing.participants() != scheme.participants() {
-                    tracing::error!(
-                        ?epoch,
-                        "EpochSchemeProvider::register rejected re-register with \
-                         different committee — preserving existing entry"
-                    );
-                    return;
-                }
-                let existing_is_signer = existing.me().is_some();
-                let new_is_signer = scheme.me().is_some();
-                if existing_is_signer && !new_is_signer {
-                    tracing::error!(
-                        ?epoch,
-                        "EpochSchemeProvider::register refused signer→verifier \
-                         downgrade — preserving existing entry (cold-start \
-                         transition is verifier→signer only)"
-                    );
-                    return;
-                }
-                if existing.is_beacon_active() && !scheme.is_beacon_active() {
-                    metrics::counter!(ORACLE_DROP_REFUSED).increment(1);
-                    tracing::error!(
-                        ?epoch,
-                        "EpochSchemeProvider::register refused a replacement that \
-                         DROPS the beacon oracle — preserving existing entry \
-                         (registration is monotone in verification strength)"
-                    );
-                    return;
-                }
-                o.insert(Arc::new(scheme));
-            }
-        }
-        while map.len() > SCHEME_RETENTION_EPOCHS {
-            map.pop_first();
-        }
+    pub fn new(committee: Arc<dyn Committee>) -> Self {
+        Self { committee }
     }
 
     /// Registered epochs whose scheme is VERIFY-ONLY — the repair sweep's
-    /// candidate list.
-    ///
-    /// This registry, not a shadow set in the epoch manager, is the authority on
-    /// what is registered. Two properties follow from that and neither is
-    /// available to a shadow: the list is bounded by [`SCHEME_RETENTION_EPOCHS`]
-    /// as a structural fact (the prune above is by COUNT), and it covers every
-    /// registration path — `soft_enter`, the bulk catch-up span, and
-    /// `cold_start_register` — rather than only the one that happened to also
-    /// write the shadow.
-    ///
-    /// Signer registrations are excluded: a signer's engine resolves its own
-    /// epoch key through the promote gates, which have a value-gate this sweep
-    /// does not.
+    /// candidate list. See [`Committee::verifier_epochs`].
     pub fn verifier_epochs(&self) -> Vec<Epoch> {
-        use commonware_cryptography::certificate::Scheme as _;
-        self.map
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|(_, s)| s.me().is_none())
-            .map(|(epoch, _)| *epoch)
+        self.committee
+            .verifier_epochs()
+            .into_iter()
+            .map(Epoch::new)
             .collect()
     }
-}
 
-impl EpochSchemeProvider {
     /// The scheme for the highest known epoch (the current committee). Its
     /// `participants()` are the peers to target for a finalization re-fetch on
     /// catch-up — they are connected and hold the durable finalizations.
     pub fn latest_scheme(&self) -> Option<Arc<BlsScheme>> {
-        self.map.lock().unwrap().values().next_back().cloned()
+        self.committee.latest_scheme()
     }
 }
 
@@ -415,7 +271,7 @@ impl CertProvider for EpochSchemeProvider {
     type Scheme = BlsScheme;
 
     fn scoped(&self, scope: Epoch) -> Option<Arc<BlsScheme>> {
-        self.map.lock().unwrap().get(&scope).cloned()
+        self.committee.scheme(scope.get())
     }
 }
 
@@ -543,18 +399,6 @@ pub struct OuterBuilder<B, P, BE, D, XC, A> {
     /// node (follower or validator-with-upstream); `None` for a plain validator
     /// and in tests.
     pub re_jump: Option<executor::ReJump>,
-    /// Bulk catch-up committee reader (built in `dpos.rs` over `et_arc` + the
-    /// reth finalized-tip source). Given an inclusive epoch span `[from, to]`, it
-    /// loads the node's current finalized tip, reads each committee from
-    /// [`fluentbase_staking_reader::EpochTransition::soft_enter_span`] at the
-    /// result-final state, and returns the contiguous on-chain prefix of
-    /// `(epoch, snap)` it could read. `build` wraps this into the
-    /// [`epoch_manager::Config::soft_enter_span`] closure that also builds +
-    /// registers the verify-only scheme for each (via [`soft_enter_verifier`] +
-    /// `register_scheme`), keeping `register_scheme` + `chain_id` on the
-    /// consensus side where they live. `None` ⇒ no catch-up span (tests / nodes
-    /// without an `EpochTransition`); the manager then never pre-registers.
-    pub soft_enter_committees: SoftEnterCommittees,
     /// Membership / `Inline::genesis` counters (cross-launch singleton from
     /// `dpos.rs::launch`, already registered there). Core-owned on BOTH node
     /// classes.
@@ -732,8 +576,7 @@ where
     executor: ExecutorActor<E, BE, D, XC>,
     epoch_manager: epoch_manager::Actor<E, B, XC, A>,
     slasher: slasher::Actor<E>,
-    boundary_tx: mpsc::Sender<(Epoch, ValidatorSetSnapshot)>,
-    scheme_provider: EpochSchemeProvider,
+    boundary_tx: mpsc::Sender<Epoch>,
     me: PublicKey,
     blocker: B,
     provider: P,
@@ -860,7 +703,7 @@ where
         // key store, the seed store, both resolvers and the two agreement rungs
         // are created inside `beacon::build` and never cross back out.
         let randomness = self.randomness;
-        let scheme_provider = EpochSchemeProvider::new();
+        let scheme_provider = EpochSchemeProvider::new(self.committee.clone());
         let epocher = OriginEpocher::new(self.dpos_activation_block, self.epoch_length_blocks);
 
         // Which epoch-boundary heights the floor about to be applied would bury, and
@@ -1156,55 +999,6 @@ where
         };
         let marshal_reporter_app = app.clone();
 
-        let scheme_provider_for_cb = scheme_provider.clone();
-        let register_scheme: Arc<dyn Fn(Epoch, BlsScheme) + Send + Sync> =
-            Arc::new(move |epoch, scheme| scheme_provider_for_cb.register(epoch, scheme));
-
-        // Bulk catch-up soft-enter span: wrap the node-side committee reader with
-        // the verify-only scheme construction + registration (kept here so
-        // `register_scheme` + `chain_id` stay on the consensus side). For each
-        // `(epoch, snap)` in the contiguous on-chain prefix the reader returns,
-        // build + register the verify-only scheme and return the highest
-        // registered epoch (= the marshal hint target). The reader already
-        // truncates at the first missed/unreadable committee, so the result is a
-        // contiguous prefix; if it returns nothing, hold at `from − 1`.
-        let chain_id = self.chain_id;
-        let register_for_span = register_scheme.clone();
-        let read_committees = self.soft_enter_committees;
-        let randomness_for_span = randomness.clone();
-        let soft_enter_span: Arc<dyn Fn(Epoch, Epoch) -> BoxFuture<'static, Epoch> + Send + Sync> =
-            Arc::new(move |from: Epoch, to: Epoch| {
-                let read = read_committees.clone();
-                let register = register_for_span.clone();
-                let randomness = randomness_for_span.clone();
-                Box::pin(async move {
-                    let committees = read(from, to).await;
-                    let mut registered = Epoch::new(from.get().saturating_sub(1));
-                    for (epoch, snap) in committees {
-                        // The span registers the SAME verifier the per-epoch
-                        // `soft_enter` path registers: multisig plus the epoch's
-                        // beacon oracle, from the one door that decides
-                        // beacon-activeness (`Beacon::oracle_for` — `None`
-                        // below the bootstrap epoch, where a seedless certificate
-                        // is legal). The span resolves no key and does not need
-                        // to: the oracle reads `PK_epoch` live, so an epoch whose
-                        // key has not landed yet is admitted on its multisig half
-                        // alone and starts checking seeds the moment the key
-                        // arrives — with no re-registration and nothing for the
-                        // repair sweep to fix in the registry. Handing `None` here
-                        // instead would pin the epoch to vote-only admission for
-                        // the life of the process, because there is no longer any
-                        // step that attaches strength to an already-built scheme.
-                        let oracle = randomness.oracle_for(epoch);
-                        if let Some(scheme) = soft_enter_verifier(&snap, chain_id, oracle) {
-                            register(Epoch::new(epoch), scheme);
-                            registered = Epoch::new(epoch);
-                        }
-                    }
-                    registered
-                })
-            });
-
         // Slasher — built before EpochManager so its mailbox can be threaded
         // into `epoch_manager::Config` as the second arm of the simplex
         // `Reporters` multiplex.
@@ -1260,9 +1054,8 @@ where
                 spec_exec_mailbox,
                 epoch_metrics: self.epoch_metrics,
                 page_cache,
-                register_scheme,
+                committee: self.committee.clone(),
                 scheme_pins: scheme_provider.clone(),
-                soft_enter_span,
                 partition_prefix: self.engine_partition_prefix,
                 #[cfg(feature = "dpos-devnet-byzantine")]
                 byzantine: self.byzantine,
@@ -1287,7 +1080,6 @@ where
             epoch_manager,
             slasher,
             boundary_tx,
-            scheme_provider,
             me: self.me,
             blocker: self.blocker,
             provider: self.provider,
@@ -1311,7 +1103,12 @@ where
     A: OrderingAssembler,
 {
     /// Sender held by 03's `EpochTransition` to fire boundary triggers.
-    pub fn boundary_sender(&self) -> mpsc::Sender<(Epoch, ValidatorSetSnapshot)> {
+    ///
+    /// The EPOCH and nothing else: the committee that epoch's reconcile needs is
+    /// read from the committee module, at this node's own anchor, so a snapshot
+    /// riding this channel would be a second copy of a value the module already
+    /// froze — and a second copy is a value two nodes can disagree on.
+    pub fn boundary_sender(&self) -> mpsc::Sender<Epoch> {
         self.boundary_tx.clone()
     }
 
@@ -1320,11 +1117,6 @@ where
     /// so its feed actor can answer `get_finalization`+`get_block` by height.
     pub fn marshal_mailbox(&self) -> MarshalMailbox {
         self.cert_mailbox.clone()
-    }
-
-    /// Cold-start: register the initial (pre-finalization) scheme.
-    pub fn cold_start_register(&self, epoch: Epoch, scheme: BlsScheme) {
-        self.scheme_provider.register(epoch, scheme);
     }
 
     /// Broker-handle start. Threads the 5 plane-owned `MuxHandle`s + this
@@ -1816,184 +1608,6 @@ mod supervisor_tests {
             supervisor_action(&SafetyHalt::default()),
             SupervisorAction::AbortAll
         );
-    }
-}
-
-#[cfg(test)]
-mod scheme_provider_tests {
-    use super::EpochSchemeProvider;
-    use crate::beacon::testing::DETERMINISTIC_BOOTSTRAP_EPOCH;
-
-    use commonware_codec::DecodeExt as _;
-    use commonware_consensus::types::Epoch;
-    use commonware_consensus::types::Round;
-    use commonware_cryptography::{ed25519::PrivateKey as Ed25519PrivateKey, Signer as _};
-    use commonware_math::algebra::Random as _;
-    use commonware_utils::Participant;
-    use commonware_utils::{ordered::BiMap, TryCollect as _};
-    use fluentbase_bls::{
-        fluent_namespace,
-        keys::ValidatorBlsKeypair,
-        oracle::{SeedCheck, SeedOracle},
-        scheme::{build_signer, build_verifier},
-        BlsPubkey, BlsSignature, PeerPubkey, Scheme as BlsScheme,
-    };
-    use rand_08::rngs::StdRng;
-    use rand_core::SeedableRng as _;
-    use std::sync::Arc;
-
-    /// The narrowest thing that satisfies [`SeedOracle`]. The registry only ever
-    /// asks whether an oracle is THERE, so nothing here needs to answer.
-    #[derive(Debug)]
-    struct StubOracle;
-
-    impl SeedOracle for StubOracle {
-        fn sign_partial(&self, _round: Round) -> Option<BlsSignature> {
-            None
-        }
-        fn verify_partial(&self, _round: Round, _index: Participant, _v: &BlsSignature) -> bool {
-            false
-        }
-        fn recover(
-            &self,
-            _partials: &[(Participant, BlsSignature)],
-            _threshold: u32,
-        ) -> Option<BlsSignature> {
-            None
-        }
-        fn verify_seed(&self, _round: Round, _seed: &BlsSignature) -> SeedCheck {
-            SeedCheck::NoKey
-        }
-    }
-
-    fn committee(seed: u64) -> BiMap<PeerPubkey, BlsPubkey> {
-        let mut rng = StdRng::seed_from_u64(seed);
-        let bimap = (0..4)
-            .map(|_| {
-                let peer = Ed25519PrivateKey::random(&mut rng).public_key();
-                let bls = ValidatorBlsKeypair::generate(&mut rng);
-                (
-                    peer,
-                    BlsPubkey::decode(bls.public_bytes().as_slice()).unwrap(),
-                )
-            })
-            .try_collect()
-            .unwrap();
-        bimap
-    }
-
-    /// A committee plus a SIGNER scheme over it. Separate from [`committee`]
-    /// because a signer needs a keypair the committee actually contains, and
-    /// that fixture discards them.
-    fn committee_with_signer(seed: u64, epoch: u64) -> (BiMap<PeerPubkey, BlsPubkey>, BlsScheme) {
-        let mut rng = StdRng::seed_from_u64(seed);
-        let mut keypairs = Vec::new();
-        let bimap: BiMap<PeerPubkey, BlsPubkey> = (0..4)
-            .map(|_| {
-                let peer = Ed25519PrivateKey::random(&mut rng).public_key();
-                let bls = ValidatorBlsKeypair::generate(&mut rng);
-                let pk = BlsPubkey::decode(bls.public_bytes().as_slice()).unwrap();
-                keypairs.push(bls);
-                (peer, pk)
-            })
-            .try_collect()
-            .unwrap();
-        let signer = build_signer(
-            &fluent_namespace(1),
-            bimap.clone(),
-            &keypairs[0],
-            epoch,
-            None,
-        )
-        .expect("keypair is a committee member");
-        (bimap, signer)
-    }
-
-    fn verifier(bimap: &BiMap<PeerPubkey, BlsPubkey>, epoch: u64) -> BlsScheme {
-        build_verifier(&fluent_namespace(1), bimap.clone(), epoch, None)
-    }
-
-    /// The two guards `register` still carries after the seed pin left the
-    /// scheme. Nothing else covers them: they used to be asserted only as a side
-    /// effect of the pin-monotonicity tests, whose subject is gone.
-    #[test]
-    fn register_refuses_a_signer_to_verifier_downgrade_but_accepts_the_upgrade() {
-        use commonware_cryptography::certificate::{Provider as _, Scheme as _};
-        let epoch = Epoch::new(DETERMINISTIC_BOOTSTRAP_EPOCH + 4);
-        let (bimap, signer) = committee_with_signer(0x5164, epoch.get());
-        let is_signer =
-            |p: &EpochSchemeProvider| p.scoped(epoch).expect("registered").me().is_some();
-
-        // verifier → signer lands: the cold-start transition this ordering exists
-        // for.
-        let provider = EpochSchemeProvider::new();
-        provider.register(epoch, verifier(&bimap, epoch.get()));
-        assert!(!is_signer(&provider));
-        provider.register(epoch, signer);
-        assert!(is_signer(&provider));
-
-        // signer → verifier is refused: an engine's own scheme is never replaced
-        // by a weaker one underneath it.
-        provider.register(epoch, verifier(&bimap, epoch.get()));
-        assert!(is_signer(&provider));
-
-        // A different committee is refused outright, in either direction.
-        let other = committee(0x5165);
-        provider.register(epoch, verifier(&other, epoch.get()));
-        assert!(is_signer(&provider));
-    }
-
-    /// Registration is MONOTONE in verification strength, and the oracle is the
-    /// only strength neither `participants()` nor `me()` can see.
-    ///
-    /// THIS TESTS A GUARD NO PRODUCER REACHES TODAY, deliberately. The path that
-    /// motivated it — a validator rotated out of `committee[E]` without a
-    /// restart, whose `SignerVerdict::RotatedKey` replaced soft-enter's
-    /// beacon-active verifier with an oracle-less one over the same committee —
-    /// was closed at the producer (`signer_scheme` now passes `oracle_for`), and
-    /// `register`'s own docs say why nothing else gets here either. The guard is
-    /// defence in depth, so its test is written against the REGISTRY CONTRACT
-    /// rather than against any caller: a `Some → None` replacement is refused, a
-    /// `None → Some` upgrade lands.
-    ///
-    /// Reds if the oracle-drop refusal is removed, or if it is widened into a
-    /// blanket freeze that also blocks the upgrade.
-    #[test]
-    fn register_refuses_a_replacement_that_drops_the_beacon_oracle() {
-        use commonware_cryptography::certificate::Provider as _;
-        let epoch = Epoch::new(DETERMINISTIC_BOOTSTRAP_EPOCH + 4);
-        let bimap = committee(0x0A0C);
-        let beacon_active = || {
-            build_verifier(
-                &fluent_namespace(1),
-                bimap.clone(),
-                epoch.get(),
-                Some(Arc::new(StubOracle)),
-            )
-        };
-        let is_beacon_active =
-            |p: &EpochSchemeProvider| p.scoped(epoch).expect("registered").is_beacon_active();
-
-        let provider = EpochSchemeProvider::new();
-        provider.register(epoch, beacon_active());
-        assert!(is_beacon_active(&provider));
-
-        // The RotatedKey shape: same committee, same direction, no oracle.
-        provider.register(epoch, verifier(&bimap, epoch.get()));
-        assert!(
-            is_beacon_active(&provider),
-            "the oracle-less replacement must be refused — it admits a cleared \
-             seed slot where the entry it would replace refuses one"
-        );
-
-        // And the UPGRADE still lands: a cold-start entry registered before any
-        // oracle existed is replaced by the beacon-active one at the first
-        // soft-enter. Monotone means one-way, not frozen.
-        let cold_start = EpochSchemeProvider::new();
-        cold_start.register(epoch, verifier(&bimap, epoch.get()));
-        assert!(!is_beacon_active(&cold_start));
-        cold_start.register(epoch, beacon_active());
-        assert!(is_beacon_active(&cold_start));
     }
 }
 

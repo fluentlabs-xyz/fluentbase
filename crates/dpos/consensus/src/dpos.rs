@@ -13,11 +13,10 @@ use crate::{
     epocher::OriginEpocher,
     executed::executed_state_hash,
     order_block::{anchor_order_block, OrderBlock, K},
-    scheme::epoch_committee_from_snapshot,
     slasher::actor::SlasherTxSink,
     sync_metrics::{SyncMetrics, SyncReason},
     timeouts::ConsensusTimeouts,
-    OuterBuilder, SoftEnterCommittees,
+    OuterBuilder,
 };
 use alloy_consensus::Header;
 use alloy_primitives::{Address, B256};
@@ -34,14 +33,10 @@ use commonware_storage::{
 };
 use commonware_utils::sequence::U64;
 use eyre::{ensure, eyre, OptionExt as _, WrapErr as _};
-use fluentbase_bls::{
-    fluent_namespace, keys::ValidatorBlsKeypair, scheme::build_verifier, PeerPubkey,
-    Scheme as BlsScheme,
-};
+use fluentbase_bls::{keys::ValidatorBlsKeypair, PeerPubkey, Scheme as BlsScheme};
 use fluentbase_p2p::NoopBlocker;
 use fluentbase_staking_reader::{
-    reader::{StakingReaderConfig, ValidatorSetSnapshot},
-    EpochTransition, RethStakingStateReader, TransitionOutcome,
+    reader::StakingReaderConfig, EpochTransition, RethStakingStateReader, TransitionOutcome,
 };
 use prometheus_client::metrics::{counter::Counter, family::Family, gauge::Gauge};
 use reth_ethereum_primitives::{Block as RethBlock, EthPrimitives};
@@ -55,7 +50,7 @@ use std::{
     num::NonZeroU64,
     sync::{
         atomic::{AtomicU32, Ordering},
-        Arc, Mutex as StdMutex,
+        Arc,
     },
     time::Duration,
 };
@@ -1436,20 +1431,20 @@ pub struct DposLayerHandle {
 /// not hold the beacon.
 pub type ArtifactSource = Arc<dyn Fn(u64) -> Option<Vec<u8>> + Send + Sync>;
 
-/// Read `committee[epoch]` for the follower's boundary trigger. `None` ⇒ not
-/// readable yet — no executed anchor, or the epoch's committee not committed at
+/// Whether `committee[epoch]` is readable for the follower's boundary trigger —
+/// the module's own answer, which is also what REGISTERS the epoch's scheme.
+/// `false` ⇒ not readable yet — no executed anchor, or the epoch's committee not committed at
 /// it — which the trigger treats as "retry on the next finalized block", never as
 /// an empty committee.
-type FollowerCommitteeAt = Arc<dyn Fn(u64) -> Option<ValidatorSetSnapshot> + Send + Sync>;
+type FollowerCommitteeAt = Arc<dyn Fn(u64) -> bool + Send + Sync>;
 
-/// Hand one `(epoch, snapshot)` to the epoch manager's boundary receiver.
-/// `false` ⇒ the receiver is gone (the manager exited); the trigger stops.
-type FollowerBoundaryDeliver = Arc<
-    dyn Fn(Epoch, ValidatorSetSnapshot) -> futures::future::BoxFuture<'static, bool> + Send + Sync,
->;
+/// Hand one epoch to the epoch manager's boundary receiver. `false` ⇒ the
+/// receiver is gone (the manager exited); the trigger stops.
+type FollowerBoundaryDeliver =
+    Arc<dyn Fn(Epoch) -> futures::future::BoxFuture<'static, bool> + Send + Sync>;
 
-/// One step of the follower's epoch-boundary trigger: deliver `(epoch, snapshot)`
-/// for the epoch the finalized stream has entered, at most once per epoch.
+/// One step of the follower's epoch-boundary trigger: deliver the epoch the
+/// finalized stream has entered, at most once per epoch.
 /// Returns whether the trigger should keep running.
 ///
 /// A validator gets its boundary deliveries from `EpochTransition`, which rides
@@ -1508,10 +1503,10 @@ async fn enter_finalized_epoch(
     if *last_delivered >= Some(epoch) {
         return true;
     }
-    let Some(snap) = committee_at(epoch) else {
+    if !committee_at(epoch) {
         return true;
-    };
-    if !deliver(Epoch::new(epoch), snap).await {
+    }
+    if !deliver(Epoch::new(epoch)).await {
         return false;
     }
     *last_delivered = Some(epoch);
@@ -1726,13 +1721,6 @@ impl DposLayer {
                             staking_config.clone(),
                         ),
                         chain_id,
-                        {
-                            let p = provider.clone();
-                            Arc::new(move || {
-                                let n = p.finalized_block_number().ok()??;
-                                p.block_hash(n).ok().flatten()
-                            })
-                        },
                     );
                     match recover_finalized_tail_into_reth(
                         &ctx,
@@ -1807,13 +1795,6 @@ impl DposLayer {
                         staking_config.clone(),
                     ),
                     chain_id,
-                    {
-                        let p = provider.clone();
-                        Arc::new(move || {
-                            let n = p.finalized_block_number().ok()??;
-                            p.block_hash(n).ok().flatten()
-                        })
-                    },
                 );
                 let el = crate::cold_start_jump::RethElSync::new(
                     ctx.clone(),
@@ -1989,27 +1970,68 @@ impl DposLayer {
             "DPoS startup config"
         );
 
-        // Pre-cold-start reads: snapshot for initial scheme registration BEFORE
-        // the reader is moved into EpochTransition.
-        let initial_snapshot =
-            reader.epoch_committee_snapshot(initial_epoch_u64, latest_finalized_hash)?;
-        if initial_snapshot.validators.is_empty() {
-            eyre::bail!(
-                "Staking contract returned empty committee for epoch {initial_epoch_u64} \
-                 (read at finalized block {latest_finalized}). \
-                 `commitEpochCommittee` is a system call the block producer issues \
-                 from pre-execution and is SYSTEM_CALLER-only, so there is no \
-                 operator command that fixes this. What resolves it is on-chain \
-                 state plus block production: `getDposActivationBlock()` must be \
-                 scheduled, the registry must hold at least {min} activated \
-                 validators with consensus keys (below that the FIRST commit, at \
-                 epoch 0, reverts ERR_COMMITTEE_TOO_SMALL — a later epoch carries \
-                 the previous committee forward instead, but epoch 0 has none to \
-                 carry), and the producer must then \
-                 have advanced far enough for the commit to land and finalize. \
-                 Relaunch once the committee is readable at the finalized block.",
-                min = fluentbase_staking_reader::reader::MIN_COMMITTEE_LENGTH,
-            );
+        // The cold-start committee, read through the MODULE — which is also
+        // what registers it: the record and this epoch's verify-only scheme land
+        // in the same map slot, so the marshal can verify certificates of the
+        // starting epoch before any boundary fires. This replaced a direct
+        // `epoch_committee_snapshot` here plus an `OuterEngine::cold_start_register`
+        // after `build`; between them they were a second producer of an epoch's
+        // scheme, and the one that hardcoded `oracle: None`.
+        //
+        // A refusal is routed by the module's own verdict, and the two arms are
+        // the two different facts the old direct read could not tell apart.
+        //
+        // PERMANENT (`is_transient() == false`: the contract answered something
+        // no committed epoch can answer, or the epoch is below the read window)
+        // is a statement about the CHAIN, and it stays the loud startup refusal
+        // §5.1 prescribes — the operator message in full, and the process does
+        // not come up pretending to follow a chain whose committee it cannot
+        // read.
+        //
+        // TRANSIENT is a statement about THIS PROCESS, not the chain. The
+        // module's anchor is this node's ordering-finalized cursor (floored by
+        // reth's own finalized tag) and its geometry is frozen by the beacon
+        // plane's `EpochTransition`; both are seeded by tasks that run
+        // CONCURRENTLY with this launch, so a `NotReadable` at this instant says
+        // "this process has not finished standing up". The retry is not a hope:
+        // `epoch_transition::cold_start` below queues THIS epoch on the bridge
+        // (`staking-reader/src/epoch_transition.rs` `track_and_trigger`, the
+        // `boundary_tx.try_send`), the forwarder hands it to the manager's
+        // `boundary_rx`, and a reconcile that finds the committee still
+        // unreadable parks the epoch in `deferred_reconciles`, which the
+        // module's own wake-up drains.
+        match committee.committee(initial_epoch_u64) {
+            Ok(record) => info!(
+                epoch = initial_epoch_u64,
+                members = record.members.len(),
+                "cold-start committee read through the committee module"
+            ),
+            Err(e) if !e.is_transient() => {
+                return Err(eyre!(
+                    "committee[{initial_epoch_u64}] is REFUSED PERMANENTLY at this node's \
+                     committee anchor (read at finalized block {latest_finalized}): {e}. \
+                     `commitEpochCommittee` is a system call the block producer issues from \
+                     pre-execution and is SYSTEM_CALLER-only, so there is no operator command \
+                     that fixes this. What resolves it is on-chain state plus block \
+                     production: `getDposActivationBlock()` must be scheduled, the registry \
+                     must hold at least {} activated validators with consensus keys (below \
+                     that the FIRST commit, at epoch 0, reverts ERR_COMMITTEE_TOO_SMALL — a \
+                     later epoch carries the previous committee forward instead, but epoch 0 \
+                     has none to carry), and the producer must then have advanced far enough \
+                     for the commit to land and finalize. No retry can change this answer.",
+                    fluentbase_staking_reader::reader::MIN_COMMITTEE_LENGTH,
+                ));
+            }
+            Err(e) => warn!(
+                epoch = initial_epoch_u64,
+                error = %e,
+                "no committee for the cold-start epoch at this node's anchor YET (read at \
+                 finalized block {latest_finalized}) — a retryable miss, i.e. a statement \
+                 about this process's startup order and not about the chain. The cold start \
+                 below queues this epoch on the boundary bridge and the committee module's \
+                 wake-up re-runs its reconcile; until one succeeds this node registers no \
+                 epoch and enters none."
+            ),
         }
 
         // The single `FluentP2P` is built ONCE per process by the node crate's
@@ -2331,38 +2353,6 @@ impl DposLayer {
         // `dkgQual`-bit arbitration (`beacon::carry`); refusal ⇒ the epoch_manager
         // share-gate demotes to verify-only, the recompute-heal re-promotes.
 
-        // Bulk catch-up committee reader for the EpochManager span soft-enter:
-        // load the node's CURRENT finalized tip (re-read every call — a catch-up
-        // node's tip advances as the gap closes) and read the contiguous on-chain
-        // committee prefix for the requested span via EpochTransition's
-        // side-effect-free `soft_enter_span` (committees resolve at the
-        // result-final state, anchor − K). Returns `(epoch, snap)` pairs; the
-        // consensus side (outer.rs) builds + registers the verify-only scheme.
-        // Finalized tip from `canonical_state.get_finalized_num_hash()` — NOT
-        // `chain_info().best_number`, which is frozen during pipeline backfill on
-        // a deeply-behind node (see MEMORY reth-sync-progress note).
-        let et_for_span = et_arc.clone();
-        let canonical_for_span = canonical_state.clone();
-        let soft_enter_committees: SoftEnterCommittees = Arc::new(move |from: Epoch, to: Epoch| {
-            let et = et_for_span.clone();
-            let canonical = canonical_for_span.clone();
-            Box::pin(async move {
-                let anchor = canonical.get_finalized_num_hash().map_or(0, |nh| nh.number);
-                let collected = StdMutex::new(Vec::new());
-                let record = |epoch: u64, snap: ValidatorSetSnapshot| {
-                    collected
-                        .lock()
-                        .expect("soft-enter span collector")
-                        .push((epoch, snap));
-                };
-                et.lock()
-                    .await
-                    .soft_enter_span(from.get(), to.get(), anchor, &record)
-                    .await;
-                collected.into_inner().expect("soft-enter span collector")
-            })
-        });
-
         // Steady-state self-healing re-jump (finding #6): the executor's reaction
         // to its own `Update::Tip` event. The cold-start `cold_start_jump` above
         // runs ONCE pre-engine; this closure is its steady-state TWIN — same
@@ -2418,13 +2408,6 @@ impl DposLayer {
                     let committees = crate::cert_inlet::RethCommitteeSource::new(
                         RethStakingStateReader::new(provider.clone(), evm_config, staking_config),
                         chain_id,
-                        {
-                            let p = provider.clone();
-                            Arc::new(move || {
-                                let n = p.finalized_block_number().ok()??;
-                                p.block_hash(n).ok().flatten()
-                            })
-                        },
                     );
                     let el = crate::cold_start_jump::RethElSync::new(
                         jump_ctx.clone(),
@@ -2507,13 +2490,6 @@ impl DposLayer {
                                 staking_config,
                             ),
                             chain_id,
-                            {
-                                let p = provider.clone();
-                                Arc::new(move || {
-                                    let n = p.finalized_block_number().ok()??;
-                                    p.block_hash(n).ok().flatten()
-                                })
-                            },
                         );
                         crate::cert_follow::fetch_verified_boundary(
                             &up,
@@ -2560,7 +2536,6 @@ impl DposLayer {
             randomness: randomness.clone(),
             spawn_unblocked,
             re_jump,
-            soft_enter_committees,
             epoch_metrics: epoch_metrics.clone(),
             executor_metrics: executor_metrics.clone(),
             sync_metrics: sync_metrics.clone(),
@@ -2624,21 +2599,12 @@ impl DposLayer {
         .build(ctx.with_label("outer_engine"))
         .await?;
 
-        // Register the initial epoch's BlsScheme so marshal can verify
-        // certificates from this epoch before any boundary fires.
-        let namespace = fluent_namespace(chain_id);
-        let initial_committee = epoch_committee_from_snapshot(&initial_snapshot)
-            .map_err(|e| eyre!("initial snapshot has non-unique participants: {e:?}"))?;
-        // Cold-start register: `oracle = None` ⇒ vote-only cert verify, the
-        // accepted residual window at launch. It is replaced by an oracle-bearing
-        // verifier as soon as a boundary block flows through the inlet cursor or
-        // the soft-enter walk, both of which take their oracle from the plane.
-        let initial_scheme =
-            build_verifier(&namespace, initial_committee.bimap, initial_epoch_u64, None);
-        outer.cold_start_register(Epoch::new(initial_epoch_u64), initial_scheme);
-
-        // Bridge forwarder: drains (u64, snap) queued by EpochTransition
-        // and converts to (Epoch, snap) for OuterEngine's boundary receiver.
+        // Bridge forwarder: drains the `(u64, snapshot)` the transition queues and
+        // hands the OuterEngine's boundary receiver the EPOCH alone. The snapshot
+        // is dropped HERE rather than never produced, because the transition's own
+        // trigger type belongs to `staking-reader`; what matters is that no
+        // consumer downstream of this line sees a committee that did not come from
+        // the committee module.
         let outer_boundary_tx = outer.boundary_sender();
         let shutdown_for_forwarder = shutdown.clone();
         // SUPERVISED, not detached: the `shutdown.cancel()` below is the ERROR
@@ -2650,8 +2616,8 @@ impl DposLayer {
         // ANY resolution (panic → `Err(Error::Exited)`, or the clean-exit warn)
         // as fatal — so the deliberate fail-fast holds for both paths.
         let epoch_bridge_handle = ctx.with_label("epoch_bridge").spawn(move |_| async move {
-            while let Some((u64_ep, snap)) = bridge_rx.recv().await {
-                if let Err(e) = outer_boundary_tx.send((Epoch::new(u64_ep), snap)).await {
+            while let Some((u64_ep, _snap)) = bridge_rx.recv().await {
+                if let Err(e) = outer_boundary_tx.send(Epoch::new(u64_ep)).await {
                     error!(
                         epoch = u64_ep,
                         error = %e,
@@ -3008,13 +2974,6 @@ impl DposLayer {
                     staking_config.clone(),
                 ),
                 chain_id,
-                {
-                    let p = provider.clone();
-                    Arc::new(move || {
-                        let n = p.finalized_block_number().ok()??;
-                        p.block_hash(n).ok().flatten()
-                    })
-                },
             );
             let el = mk_el_sync(activation);
             let mut jump_ctx = ctx.clone();
@@ -3125,6 +3084,13 @@ impl DposLayer {
         // wake-up to publish (`Committee::subscribe`'s second event) — the store
         // is answering from its first call, and the only wake-up left is the
         // executor's anchor advance.
+        //
+        // The verify-only scheme of every epoch is built HERE too, by the one
+        // producer the store owns: `beacon_slot` is filled the moment
+        // `beacon::build_follower` returns (below), and until then the store
+        // answers "no scheme yet" and retries — the build order makes a value
+        // impossible, because the beacon is constructed FROM this store's facade.
+        let beacon_slot: crate::committee::BeaconSlot = Arc::new(std::sync::OnceLock::new());
         let committee: Arc<dyn crate::committee::Committee> =
             Arc::new(crate::committee::CommitteeStore::new(
                 RethStakingStateReader::new(
@@ -3137,48 +3103,8 @@ impl DposLayer {
                     provider.clone(),
                 )),
                 tokio::sync::watch::Sender::new(Some((activation, interval))).subscribe(),
+                crate::committee::epoch_verifier(chain_id, beacon_slot.clone()),
             ));
-
-        // Bulk catch-up span reader: a follower soft-enters every live epoch but
-        // never spawns an engine, so this is still used to register verify-only
-        // schemes for the marshal across a gap. Read committees at the current
-        // finalized tip via a per-call EpochTransition-free reader.
-        let canonical_for_span = canonical_state.clone();
-        let provider_for_span = provider.clone();
-        let evm_for_span = evm_config.clone();
-        let staking_for_span = staking_config.clone();
-        let soft_enter_committees: SoftEnterCommittees = Arc::new(move |from: Epoch, to: Epoch| {
-            let canonical = canonical_for_span.clone();
-            let reader = RethStakingStateReader::new(
-                provider_for_span.clone(),
-                evm_for_span.clone(),
-                staking_for_span.clone(),
-            );
-            Box::pin(async move {
-                // Read each committee at the current finalized hash. That is safe on
-                // TWO counts and only the first was true before 2026-07-31: the
-                // committee array and the one-shot keys are frozen storage, and the
-                // per-member leader weight is now frozen too (`leaderStakes[epoch]`,
-                // stamped at commit). This path would survive either way — it feeds
-                // verify-only scheme registration and reads keys, never stakes — but
-                // the blanket "content-invariant" claim it used to make was false for
-                // the stakes leg, and that is exactly the claim a future reader would
-                // trust on a path where it DOES matter. Truncate at the first
-                // missed/unreadable committee → a contiguous prefix.
-                let at_hash = canonical
-                    .get_finalized_num_hash()
-                    .map(|nh| nh.hash)
-                    .unwrap_or_default();
-                let mut out = Vec::new();
-                for e in from.get()..=to.get() {
-                    match reader.epoch_committee_snapshot(e, at_hash) {
-                        Ok(snap) if !snap.validators.is_empty() => out.push((e, snap)),
-                        _ => break,
-                    }
-                }
-                out
-            })
-        });
 
         // Steady-state self-healing re-jump (finding #6): the follower's executor
         // reaction to its own `Update::Tip` event — the steady-state twin of the
@@ -3222,13 +3148,6 @@ impl DposLayer {
                     let committees = crate::cert_inlet::RethCommitteeSource::new(
                         RethStakingStateReader::new(provider.clone(), evm_config, staking_config),
                         chain_id,
-                        {
-                            let p = provider.clone();
-                            Arc::new(move || {
-                                let n = p.finalized_block_number().ok()??;
-                                p.block_hash(n).ok().flatten()
-                            })
-                        },
                     );
                     let el = crate::cold_start_jump::RethElSync::new(
                         jump_ctx.clone(),
@@ -3294,13 +3213,6 @@ impl DposLayer {
                                 staking_config,
                             ),
                             chain_id,
-                            {
-                                let p = provider.clone();
-                                Arc::new(move || {
-                                    let n = p.finalized_block_number().ok()??;
-                                    p.block_hash(n).ok().flatten()
-                                })
-                            },
                         );
                         crate::cert_follow::fetch_verified_boundary(
                             &up,
@@ -3385,6 +3297,11 @@ impl DposLayer {
                 fetch: artifact_fetch,
             },
         );
+        // The committee module's scheme producer can build now: every epoch it
+        // reads from here on gets its verify-only scheme with THIS beacon's
+        // oracle, and the handful of epochs it may have read before this line
+        // pick theirs up on the next `Committee::scheme`.
+        crate::committee::fill_beacon_slot(&beacon_slot, &randomness);
         // WEAK for the same reason the validator's is: this closure is handed to
         // the RPC feed, which outlives every task the supervisor aborts. A strong
         // clone here would keep the beacon — and with it any journal sender it
@@ -3432,7 +3349,6 @@ impl DposLayer {
             randomness: randomness.clone(),
             spawn_unblocked: Arc::new(tokio::sync::Notify::new()),
             re_jump,
-            soft_enter_committees,
             epoch_metrics: epoch_metrics.clone(),
             executor_metrics: executor_metrics.clone(),
             sync_metrics: sync_metrics.clone(),
@@ -3504,32 +3420,43 @@ impl DposLayer {
         .build(ctx.with_label("outer_engine"))
         .await?;
 
-        // Register the initial epoch's verify-only scheme so the marshal can
-        // verify the inlet's certs from cold-start (before any boundary fires).
-        let committees_src = crate::cert_inlet::RethCommitteeSource::new(
-            RethStakingStateReader::new(
-                provider.clone(),
-                evm_config.clone(),
-                staking_config.clone(),
+        // The starting epoch's verify-only scheme, taken the way every other
+        // epoch's is: by READING its committee through the module, which installs
+        // the record and the scheme in one slot. The `RethCommitteeSource` +
+        // `finalized_hash` closure that used to build a scheme here — and the
+        // `cold_start_register` that put it in a second map with `oracle: None` —
+        // are gone with the second map.
+        //
+        // The two arms are the validator path's, for the validator path's
+        // reasons: a PERMANENT refusal is a fact about the chain and stays the
+        // loud startup refusal, while a retryable miss is this process's startup
+        // order. The follower's retry is its own boundary trigger rather than an
+        // `EpochTransition`: `enter_finalized_epoch` below leaves the epoch
+        // unconsumed while `committee_at` answers `false` and re-delivers it on
+        // the next finalized block, and once delivered a reconcile that still
+        // cannot read parks it in the manager's `deferred_reconciles`.
+        match committee.committee(initial_epoch_u64) {
+            Ok(record) => info!(
+                epoch = initial_epoch_u64,
+                members = record.members.len(),
+                "follower cold-start committee read through the committee module"
             ),
-            chain_id,
-            {
-                let p = provider.clone();
-                Arc::new(move || {
-                    let n = p.finalized_block_number().ok()??;
-                    p.block_hash(n).ok().flatten()
-                })
-            },
-        );
-        // Follower cold-start register: `oracle = None` at launch (vote-only; the
-        // accepted residual, upgraded via the inlet cursor).
-        if let Ok(scheme) = crate::cert_inlet::CommitteeSource::scheme_at(
-            &committees_src,
-            initial_epoch_u64,
-            anchor_hash,
-            None,
-        ) {
-            outer.cold_start_register(Epoch::new(initial_epoch_u64), scheme);
+            Err(e) if !e.is_transient() => {
+                return Err(eyre!(
+                    "committee[{initial_epoch_u64}] is REFUSED PERMANENTLY at this follower's \
+                     committee anchor: {e}. This is a statement about chain state — the \
+                     contract answered something no committed epoch can answer, or the epoch \
+                     is below the module's read window — and no retry can change it; the node \
+                     would follow certificates it can never verify."
+                ));
+            }
+            Err(e) => warn!(
+                epoch = initial_epoch_u64,
+                error = %e,
+                "follower cold-start committee not readable at this node's anchor YET — a \
+                 retryable miss; certificates of this epoch are deferred until the boundary \
+                 trigger re-delivers it"
+            ),
         }
 
         // The follower's boundary trigger, consumer half — the twin of the
@@ -3546,49 +3473,18 @@ impl DposLayer {
         // the epoch unconsumed and the next finalized block retries.
         let follower_boundary_tx = outer.boundary_sender();
         let follower_boundary_handle = {
-            // From the MODULE's record, not a second `epoch_committee_snapshot`
-            // at a cursor of this closure's own. The boundary channel still
-            // carries a `ValidatorSetSnapshot` (its consumers are rewritten in
-            // the epoch-scheme step), so the record is projected back into one.
-            //
-            // `tombstoned` is the one leg the record does not carry and cannot:
-            // it is read LIVE at the snapshot's own block precisely so a
-            // mid-epoch verdict reaches the committee it names, which is why it
-            // is not part of a frozen value. Projecting `false` loses nothing
-            // here — no consumer of this channel reads it (the epoch manager
-            // uses the snapshot for the verify-only scheme and the seedless
-            // base, `epoch_manager.rs:1057`, `:1621`, `beacon/seed.rs:93`), and
-            // the reaction that DOES use the flag is the plane's `TombstoneSet`
-            // poller, which a follower does not run at all.
+            // The module's own readability answer, and the one call that
+            // REGISTERS the epoch: reading `committee[E]` installs the record and
+            // its verify-only scheme in one slot, which is what the manager's
+            // reconcile then finds. The `ValidatorSetSnapshot` this closure used
+            // to project is gone with the channel that carried it — the manager
+            // re-reads the record itself.
             let committee = committee.clone();
-            let committee_at: FollowerCommitteeAt = Arc::new(move |epoch: u64| {
-                let record = committee.committee(epoch).ok()?;
-                Some(ValidatorSetSnapshot {
-                    block_hash: record.snapshot.1,
-                    block_number: record.snapshot.0,
-                    epoch: record.epoch,
-                    validators: record
-                        .members
-                        .iter()
-                        .map(|m| fluentbase_staking_reader::reader::ValidatorWithKeys {
-                            address: m.address,
-                            keys: fluentbase_staking_reader::reader::ConsensusKeys {
-                                peer_pubkey: m.peer.clone(),
-                                bls_pubkey: m.bls,
-                                // Not in the record either, and for the same
-                                // reason as `tombstoned`: nothing in the core
-                                // reads it (only test fixtures construct one).
-                                activation_epoch: 0,
-                            },
-                            tombstoned: false,
-                        })
-                        .collect(),
-                    weights: Some(record.weights.clone()),
-                })
-            });
-            let deliver: FollowerBoundaryDeliver = Arc::new(move |epoch, snap| {
+            let committee_at: FollowerCommitteeAt =
+                Arc::new(move |epoch: u64| committee.scheme(epoch).is_some());
+            let deliver: FollowerBoundaryDeliver = Arc::new(move |epoch| {
                 let tx = follower_boundary_tx.clone();
-                Box::pin(async move { tx.send((epoch, snap)).await.is_ok() })
+                Box::pin(async move { tx.send(epoch).await.is_ok() })
                     as futures::future::BoxFuture<'static, bool>
             });
             let wake = follower_finalized_wake.clone();
@@ -3679,85 +3575,13 @@ impl DposLayer {
              rather than already held by the cached scheme.",
             carry_forward_verify_failed.clone(),
         );
-        let inlet_committees = crate::cert_inlet::RethCommitteeSource::new(
-            RethStakingStateReader::new(
-                provider.clone(),
-                evm_config.clone(),
-                staking_config.clone(),
-            ),
-            chain_id,
-            {
-                let p = provider.clone();
-                let live_frontier = live_frontier.clone();
-                let deferred = committee_read_deferred.clone();
-                // Once-per-episode rate limit for the probe-fault `error!` below;
-                // cleared on the next fault-free probe round.
-                let probe_fault_logged = std::sync::atomic::AtomicBool::new(false);
-                Arc::new(move || {
-                    let fin = p.finalized_block_number().ok().flatten();
-                    let live = live_frontier.load(std::sync::atomic::Ordering::Relaxed);
-                    // No finalized marker AND no live cursor yet ⇒ not readable
-                    // (a `unwrap_or(0)` would misread committee at genesis).
-                    if fin.is_none() && live == 0 {
-                        return None;
-                    }
-                    let fin = fin.unwrap_or(0);
-                    let read_at = fin.max(live);
-                    // Gate the committee-read anchor on reth's MATERIALIZED head via
-                    // the shared `executed_state_hash` probe (executed.rs): a
-                    // `block_hash` alone is a HEADER probe that resolves `Some` for a
-                    // height whose state is NOT yet materialized (pipeline backfill
-                    // writes headers ahead of state), so feeding it drives the
-                    // committee read at an un-executed hash → StateForHashNotFound.
-                    // `read_at` above `best_block_number()` → `Ok(None)` here, and we
-                    // fall back to the finalized hash (`fin` is materialized once best
-                    // catches it; while best still trails fin — deep backfill — that
-                    // read is `Ok(None)` too and the inlet defers SILENTLY). A probe
-                    // `Err` is DIFFERENT: a `block_hash` miss at a MATERIALIZED height
-                    // (executed.rs deliberately surfaces it as header-index
-                    // inconsistency/corruption). The follower never-crash posture still
-                    // DEFERS (the fallback may resolve; a `None` return can never
-                    // select a WRONG committee), but LOUDLY: `error!` once per episode
-                    // + a distinct `reason="probe_inconsistency"` counter tick — NOT
-                    // folded into the silent above-best park. NB: best_block_number,
-                    // NOT last_block_number, is correct for state-read anchoring (it
-                    // trails during backfill — the deliberate defer signal).
-                    let (resolved, probe_err) = match executed_state_hash(&p, read_at) {
-                        Ok(Some(h)) => (Some(h), None),
-                        Ok(None) => match executed_state_hash(&p, fin) {
-                            Ok(h) => (h, None),
-                            Err(e) => (None, Some(e)),
-                        },
-                        Err(e) => (executed_state_hash(&p, fin).ok().flatten(), Some(e)),
-                    };
-                    match probe_err {
-                        Some(e) => {
-                            deferred
-                                .get_or_create(&crate::cert_inlet::CommitteeReadDeferLabels {
-                                    reason: crate::cert_inlet::DEFER_PROBE_INCONSISTENCY,
-                                })
-                                .inc();
-                            if !probe_fault_logged.swap(true, std::sync::atomic::Ordering::Relaxed)
-                            {
-                                error!(
-                                    error = %e,
-                                    read_at,
-                                    fin,
-                                    "cert-inlet committee-read anchor probe failed at a \
-                                     materialized height (header-index inconsistency); deferring \
-                                     committee reads DEGRADED-LOUD, not fatal (rate-limited; \
-                                     dpos_cert_inlet_committee_read_deferred_total ticks per read)"
-                                );
-                            }
-                        }
-                        None => {
-                            probe_fault_logged.store(false, std::sync::atomic::Ordering::Relaxed);
-                        }
-                    }
-                    resolved
-                })
-            },
-        );
+        // The inlet verifies with the module's own scheme for the cert's epoch —
+        // the same map the boundary trigger above registers into and the same one
+        // the marshal verifies with. Its private `RethCommitteeSource` over a
+        // `max(EL-finalized, live)` cursor with a three-branch executed-state
+        // probe is gone; so is the `probe_inconsistency` defer it produced, which
+        // was a fault of that closure and not of the chain.
+        let inlet_committee = committee.clone();
         let shutdown_for_inlet = shutdown.clone();
         // The SAME provider the epoch manager holds, not a second one over a
         // private store — and on this path that is now load-bearing twice over.
@@ -3807,7 +3631,7 @@ impl DposLayer {
             // drop the receiver and each `try_send` is a benign Closed.
             let (dkg_tx, dkg_rx) = tokio::sync::mpsc::channel::<u64>(1);
             drop(dkg_rx);
-            let mut inlet = crate::cert_inlet::CertInlet::new(inlet_marshal, inlet_committees, c)
+            let mut inlet = crate::cert_inlet::CertInlet::new(inlet_marshal, inlet_committee, c)
                 .with_epoch_math(activation, interval)
                 .with_committee_read_deferred_metric(committee_read_deferred)
                 .with_carry_forward_fail_metric(carry_forward_verify_failed)
@@ -3842,12 +3666,11 @@ impl DposLayer {
             info!("cert-inlet follower producer started");
             loop {
                 match finalized_rx.recv().await {
-                    Some(uf) => {
-                        if let Err(e) = inlet.ingest(uf).await {
-                            error!(error = ?e, "cert-inlet fatal (committee read); fail-closed");
-                            break;
-                        }
-                    }
+                    // INFALLIBLE by type — see `CertInlet::ingest` and the
+                    // validator-side twin in `node/src/cert_inlet.rs`. The
+                    // fail-closed exit below is TOTAL upstream loss, which is a
+                    // different fact and the only one left.
+                    Some(uf) => inlet.ingest(uf).await,
                     None => {
                         error!(
                             "cert-inlet WS stream closed (all upstreams dead); exiting fail-closed"
@@ -4777,13 +4600,6 @@ mod refetch_hole_tests {
         ) -> eyre::Result<BlsScheme> {
             Ok(self.0.clone())
         }
-        fn scheme_at_finalized_tip(
-            &self,
-            _epoch: u64,
-            _oracle: Option<std::sync::Arc<dyn SeedOracle>>,
-        ) -> eyre::Result<Option<BlsScheme>> {
-            Ok(Some(self.0.clone()))
-        }
     }
 
     // WITH an upstream serving a committee-signed cert, a below-floor hole is
@@ -4900,23 +4716,11 @@ mod refetch_hole_tests {
 #[cfg(test)]
 mod follower_boundary_tests {
     use super::{enter_finalized_epoch, FollowerBoundaryDeliver, FollowerCommitteeAt};
-    use alloy_primitives::B256;
     use commonware_consensus::types::Epoch;
-    use fluentbase_staking_reader::reader::ValidatorSetSnapshot;
     use std::sync::{Arc, Mutex};
 
     const ACTIVATION: u64 = 100;
     const INTERVAL: u64 = 10;
-
-    fn snapshot(epoch: u64) -> ValidatorSetSnapshot {
-        ValidatorSetSnapshot {
-            block_hash: B256::repeat_byte(0x33),
-            block_number: 7,
-            epoch,
-            validators: Vec::new(),
-            weights: None,
-        }
-    }
 
     /// Records what reached the epoch manager, and lets a test make the committee
     /// read or the delivery fail on demand.
@@ -4937,11 +4741,10 @@ mod follower_boundary_tests {
             receiver_alive: Mutex::new(alive),
         });
         let for_read = rec.clone();
-        let committee_at: FollowerCommitteeAt = Arc::new(move |epoch| {
-            (*for_read.committee_readable.lock().unwrap()).then(|| snapshot(epoch))
-        });
+        let committee_at: FollowerCommitteeAt =
+            Arc::new(move |_epoch| *for_read.committee_readable.lock().unwrap());
         let for_deliver = rec.clone();
-        let deliver: FollowerBoundaryDeliver = Arc::new(move |epoch: Epoch, _snap| {
+        let deliver: FollowerBoundaryDeliver = Arc::new(move |epoch: Epoch| {
             let rec = for_deliver.clone();
             Box::pin(async move {
                 if !*rec.receiver_alive.lock().unwrap() {

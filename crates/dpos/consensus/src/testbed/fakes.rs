@@ -1158,29 +1158,25 @@ impl<U: CertUpstream> CertUpstream for TeeingUpstream<U> {
 
 /// The jump's committee read over [`FakeStaking`], BY EXECUTED HASH — the stand's
 /// [`RethCommitteeSource`](crate::cert_inlet::RethCommitteeSource). Built exactly
-/// as the node's steady-state re-jump builds it (`consensus/src/dpos.rs:2503-2513`):
-/// a state reader plus the chain namespace plus a finalized-tip hash closure.
-/// `verify_jump_authenticated` calls `scheme_at(epoch, landing_hash, None)`, so
-/// the committee comes out of the CONTRACT STATE MACHINE at the landing — never
-/// out of the stand's schedule.
+/// as the node's steady-state re-jump builds it (`consensus/src/dpos.rs`): a
+/// state reader plus the chain namespace. `verify_jump_authenticated` calls
+/// `scheme_at(epoch, landing_hash, None)`, so the committee comes out of the
+/// CONTRACT STATE MACHINE at the landing — never out of the stand's schedule.
+///
+/// The finalized-tip hash closure it used to carry is gone with
+/// `CommitteeSource::scheme_at_finalized_tip`: every committee read that is NOT
+/// at an arbitrary jump hash goes through the committee module now.
 pub(super) struct JumpCommittees {
     staking: FakeStaking,
     namespace: Vec<u8>,
-    finalized_hash: Arc<dyn Fn() -> Option<B256> + Send + Sync>,
     reads: JumpCommitteeReads,
 }
 
 impl JumpCommittees {
-    pub(super) fn new(
-        staking: FakeStaking,
-        namespace: Vec<u8>,
-        finalized_hash: Arc<dyn Fn() -> Option<B256> + Send + Sync>,
-        reads: JumpCommitteeReads,
-    ) -> Self {
+    pub(super) fn new(staking: FakeStaking, namespace: Vec<u8>, reads: JumpCommitteeReads) -> Self {
         Self {
             staking,
             namespace,
-            finalized_hash,
             reads,
         }
     }
@@ -1216,21 +1212,6 @@ impl CommitteeSource for JumpCommittees {
     ) -> eyre::Result<BlsScheme> {
         self.reads.lock().unwrap().push((epoch, at_hash));
         self.build_at(epoch, at_hash, oracle)
-    }
-
-    fn scheme_at_finalized_tip(
-        &self,
-        epoch: u64,
-        oracle: Option<Arc<dyn SeedOracle>>,
-    ) -> eyre::Result<Option<BlsScheme>> {
-        let Some(hash) = (self.finalized_hash)() else {
-            return Ok(None);
-        };
-        let snap = self.staking.epoch_committee_snapshot(epoch, hash)?;
-        if snap.validators.is_empty() {
-            return Ok(None);
-        }
-        Ok(Some(self.build_at(epoch, hash, oracle)?))
     }
 }
 

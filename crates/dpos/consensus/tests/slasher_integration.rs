@@ -332,6 +332,9 @@ fn stub_committee(
         reader,
         Arc::new(anchor),
         tokio::sync::watch::Sender::new(Some((0, EPOCH_INTERVAL))).subscribe(),
+        // No scheme producer: the slasher reads records, never schemes, and a
+        // verifier here would only be a surface nothing in this test exercises.
+        Arc::new(|_| None),
     ))
 }
 

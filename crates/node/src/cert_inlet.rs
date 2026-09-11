@@ -15,42 +15,13 @@
 //! (A NON-validator follower uses the consensus crate's `launch_follower`
 //! near-planeless path, which spawns its own inlet.)
 
-use alloy_consensus::Header;
-use alloy_primitives::B256;
 use commonware_runtime::{tokio::Context, Handle, Metrics as _, Spawner as _};
 use fluentbase_consensus::{
-    cert_inlet::LiveFrontierTee, CertInlet, CertUpstream as _, CommitteeSource, MarshalMailbox,
-    RethCommitteeSource, RotateUpstream,
+    cert_inlet::LiveFrontierTee, CertInlet, CertUpstream as _, Committee, MarshalMailbox,
+    RotateUpstream,
 };
-use fluentbase_staking_reader::reader::{RethStakingStateReader, StakingReaderConfig};
-use reth_ethereum_primitives::EthPrimitives;
-use reth_evm::ConfigureEvm;
-use reth_storage_api::{HeaderProvider, StateProviderFactory};
 use std::sync::Arc;
 use tracing::{error, info};
-
-/// Build the validator-path inlet's [`CommitteeSource`] over the node's own reth
-/// state. Collapses onto the consensus crate's `pub`
-/// [`fluentbase_consensus::RethCommitteeSource`] (the follower path already uses
-/// it) — the node only owns the reth-typed `RethStakingStateReader` construction.
-pub(crate) fn committee_source<Provider, EvmConfig>(
-    provider: Provider,
-    evm_config: EvmConfig,
-    staking_config: StakingReaderConfig,
-    chain_id: u64,
-    finalized_hash: Arc<dyn Fn() -> Option<B256> + Send + Sync>,
-) -> RethCommitteeSource<Provider, EvmConfig>
-where
-    Provider:
-        StateProviderFactory + HeaderProvider<Header = Header> + Clone + Send + Sync + 'static,
-    EvmConfig: ConfigureEvm<Primitives = EthPrimitives> + Clone + Send + Sync + 'static,
-{
-    RethCommitteeSource::new(
-        RethStakingStateReader::new(provider, evm_config, staking_config),
-        chain_id,
-        finalized_hash,
-    )
-}
 
 /// Spawn the cert-inlet shadow task: subscribe to the upstream WS, feed every
 /// live `(Finalization, OrderBlock)` through [`CertInlet::ingest`] into the same
@@ -65,30 +36,30 @@ where
 /// boundary-walk rung was deleted 2026-08-19 with the agreement plane, and pin
 /// resolution now lives entirely behind the beacon.
 ///
+/// `committee` is the layer's ONE committee module — the same map the marshal
+/// verifies with and the epoch manager reconciles against. The inlet used to
+/// carry a `CommitteeSource` of its own over a `block_hash(finalized)` closure
+/// and cache the schemes it built in a private `{prev, cur}` map: a second
+/// authority on `committee[E]`, on a second cursor, with a second retention.
+///
 /// `beacon` is the layer's ONE beacon, not a fresh one: joining it is what
 /// lets a key the plane's DKG published reach this inlet's ladder, and a boundary
-/// key this inlet verified reach the plane's. The validator inlet needs that as
-/// much as the follower's does — its cache and the consensus plane's
-/// `EpochSchemeProvider` sit on disjoint ingress paths, so a pin the plane holds
-/// never reaches this cache otherwise. A private provider would also make this
-/// inlet's `observe_cert` prune a store nothing else reads.
+/// key this inlet verified reach the plane's. A private provider would also make
+/// this inlet's `observe_cert` prune a store nothing else reads.
 ///
 /// Fail-closed-on-TOTAL-loss (Risk-3): a single bad cert is skipped inside
-/// `ingest` (WARN + `Ok`), but if the WS `finalized_rx` closes (every upstream
+/// `ingest` (WARN + skip; it cannot fail), but if the WS `finalized_rx` closes (every upstream
 /// URL dead) the loop breaks → the returned `Handle` resolves → the supervisor
 /// `select!` arm fires fatal (cancels the shutdown token). A live-but-bad stream
 /// stalls the marshal naturally; only total stream loss is the loud exit.
-pub(crate) fn spawn_cert_inlet<C>(
+pub(crate) fn spawn_cert_inlet(
     ctx: Context,
     marshal: MarshalMailbox,
-    committees: C,
+    committee: Arc<dyn Committee>,
     urls: Vec<String>,
     tee: LiveFrontierTee,
     beacon: Arc<dyn fluentbase_consensus::beacon::Beacon>,
-) -> Handle<()>
-where
-    C: CommitteeSource,
-{
+) -> Handle<()> {
     ctx.with_label("cert_inlet").spawn(move |c| async move {
         let (ws_actor, upstream_handle, mut finalized_rx, conn_gen) =
             crate::cert_follow::upstream::init(c.clone(), urls);
@@ -107,7 +78,7 @@ where
         // connection-generation token scopes the data-fault streak to the LIVE
         // connection (#7) so a connection-level auto-rotation does not carry one
         // upstream's faults into the next URL's rotation budget.
-        let mut inlet = CertInlet::new(marshal, committees, c)
+        let mut inlet = CertInlet::new(marshal, committee, c)
             .with_tee(tee)
             .with_rotate(rotate)
             .with_randomness(beacon)
@@ -116,12 +87,13 @@ where
         loop {
             tokio::select! {
                 uf = finalized_rx.recv() => match uf {
-                    Some(uf) => {
-                        if let Err(e) = inlet.ingest(uf).await {
-                            error!(error = ?e, "cert-inlet fatal (committee read)");
-                            break;
-                        }
-                    }
+                    // INFALLIBLE by type: every outcome of one cert is a skip
+                    // (see `CertInlet::ingest`). The `if let Err(e) = … { error!;
+                    // break }` that stood here died with the inlet's own
+                    // committee source — the committee module reports the
+                    // permanent read class itself and defers the retryable one —
+                    // and the branch could no longer be reached at all.
+                    Some(uf) => inlet.ingest(uf).await,
                     None => {
                         error!("cert-inlet WS stream closed (all upstreams dead); exiting fatal");
                         break;

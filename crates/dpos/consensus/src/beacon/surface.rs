@@ -1481,14 +1481,16 @@ mod tests {
     /// A ROTATED-OUT NODE STILL JUDGES THE EPOCH'S SEED SLOT, and this is a
     /// producer obligation that no downstream guard can cover for.
     ///
-    /// `EpochSchemeProvider::register`'s three refusals all live under
-    /// `Entry::Occupied`; a vacant slot is inserted unconditionally. On a clean
-    /// live-epoch path — `share_probe` `Ready`, the boundary block present, so
-    /// neither of `reconcile_roles`' early exits soft-enters — this verdict's
-    /// scheme is the epoch's FIRST registration. Land an oracle-less one there
-    /// and it stays for the whole retention window, admitting every epoch-E
-    /// certificate whose seed slot was cleared, while `repair_keyless_schemes`
-    /// resolves the key and reports the epoch as upgraded.
+    /// `Committee::upgrade_scheme`'s three refusals all need an OCCUPIED scheme
+    /// slot; an empty one is filled unconditionally. The committee module fills
+    /// it with its own beacon-active verifier the moment the epoch is read, so
+    /// today an oracle-less verdict here would be REFUSED rather than landed —
+    /// but that is a property of the module's install ordering, not of this
+    /// producer, and the producer is what this test pins. Land an oracle-less
+    /// scheme in an empty slot and it stays for the whole window, admitting every
+    /// epoch-E certificate whose seed slot was cleared while
+    /// `repair_keyless_schemes` resolves the key and reports the epoch as
+    /// upgraded.
     ///
     /// The earlier "exact parity with today's `beacon: None`" reasoning held only
     /// for the attestation arm. On the certificate arm the pre-FLU-1202 scheme
@@ -1499,6 +1501,7 @@ mod tests {
     /// Reds if the `RotatedKey` arm goes back to `None`.
     #[test]
     fn a_rotated_out_node_still_verifies_the_epochs_seed_slot() {
+        use crate::committee::Committee as _;
         use crate::outer::EpochSchemeProvider;
         use commonware_cryptography::certificate::Provider as _;
 
@@ -1520,16 +1523,17 @@ mod tests {
         );
 
         // The vacant-slot path, spelled out because it is the reason the
-        // assertion above cannot be moved into the registry: nothing here checks
+        // assertion above cannot be moved into the map: nothing there checks
         // anything, so whatever the producer emitted is what the epoch gets.
-        let provider = EpochSchemeProvider::new();
-        provider.register(epoch, scheme);
+        let module = crate::committee::testing::SchemeCommittee::new(|_| None);
+        assert!(module.upgrade_scheme(epoch.get(), scheme));
+        let provider = EpochSchemeProvider::new(module);
         assert!(
             provider
                 .scoped(epoch)
                 .expect("registered")
                 .is_beacon_active(),
-            "a vacant slot is inserted unconditionally — the registry cannot \
+            "an empty scheme slot is filled unconditionally — the map cannot \
              tell that this epoch is beacon-active, so the producer must be \
              right on first insert"
         );
@@ -2558,15 +2562,14 @@ impl Randomness for LiveBeacon {
             // verify-only because there is no share, but still checking the seed
             // slot of every certificate of the epoch.
             //
-            // This is a PRODUCER obligation and cannot be delegated to
-            // `EpochSchemeProvider::register`. That guard only runs on an
-            // occupied slot, and on a clean live-epoch path — `share_probe`
-            // `Ready`, boundary block present, so neither early exit soft-enters
-            // — this verdict's scheme is the epoch's FIRST registration. A
-            // vacant-slot insert is unconditional, nothing upgrades it
-            // afterwards, and the epoch would admit every cleared-seed
-            // certificate for the whole retention window while the repair sweep
-            // reported it as upgraded.
+            // This is a PRODUCER obligation and is not delegated to
+            // `Committee::upgrade_scheme`. That guard only runs on an occupied
+            // scheme slot; an empty one is filled unconditionally. The committee
+            // module happens to fill every slot with its own beacon-active
+            // verifier before an engine can ever ask for one, so an oracle-less
+            // verdict would be refused there today — but a refusal keeps the
+            // WEAKER-free entry by accident of ordering, not because this
+            // producer was allowed to be wrong.
             return SignerVerdict::RotatedKey(fluentbase_bls::scheme::build_verifier(
                 &namespace,
                 committee.bimap,

@@ -31,6 +31,13 @@
 //!   next tip) from "not here" (a window predicate, refused without touching
 //!   the EVM) from "the read failed", and only the last carries a retry
 //!   decision — [`fluentbase_staking_reader::ReadError::is_transient`].
+//! * **One scheme.** The epoch's [`BlsScheme`] — what the marshal verifies its
+//!   certificates with — lives in the SAME map slot as the record, built by
+//!   the ONE [`EpochVerifier`] the store was constructed with, at the moment
+//!   the record is installed. There is no second `epoch → scheme` table and no
+//!   second producer: [`Committee::upgrade_scheme`] is the only other writer
+//!   and it can only raise an entry's strength (verifier → signer), never
+//!   create one for an epoch whose committee this node has not read.
 //!
 //! ## Why the weights are NOT an `Option`
 //!
@@ -63,7 +70,7 @@
 //! `Member::activation_epoch`. No consumer in the core reads it.
 
 use alloy_primitives::{Address, B256};
-use fluentbase_bls::{scheme::EpochCommittee, BlsPubkey, PeerPubkey};
+use fluentbase_bls::{scheme::EpochCommittee, BlsPubkey, PeerPubkey, Scheme as BlsScheme};
 use fluentbase_staking_reader::{reader::ValidatorSetSnapshot, ReadError};
 use fluentbase_types::staking_protocol::{
     epoch_at_block, MAX_COMMITTEE_LOOKAHEAD_EPOCHS, WEIGHT_RING_EPOCHS,
@@ -145,6 +152,48 @@ impl CommitteeRecord {
     /// at height 100 and the same record read at height 140 are the same
     /// answer. `participants` and `bls` are functions of `members`, so
     /// comparing `members` covers them.
+    /// The record as the [`ValidatorSetSnapshot`] the surfaces this module does
+    /// not own still speak — `Beacon::signer(epoch, &ValidatorSetSnapshot, ..)`,
+    /// `Beacon::oracle_for`'s seedless base, [`crate::weighted_vrf::WeightedVrf`]
+    /// and the per-epoch engine's committee index.
+    ///
+    /// A PROJECTION, not a second authority: every leg comes from this record,
+    /// so two nodes holding the same record project the same snapshot. The two
+    /// legs a record cannot carry are filled with the value that means "not
+    /// stated here":
+    ///
+    /// * `tombstoned: false` — the flag is deliberately outside the frozen
+    ///   record (see the module docs) and NO consumer of this projection reads
+    ///   it; the reaction that does read it is the plane's `TombstoneSet`
+    ///   poller, which takes its own live snapshot.
+    /// * `activation_epoch: 0` — nothing in the core reads it either.
+    ///
+    /// `weights` is always `Some` here, which is the whole point of the window
+    /// invariant: the elector built from this projection can never fall back to
+    /// a uniform lottery.
+    pub fn snapshot_view(&self) -> ValidatorSetSnapshot {
+        use fluentbase_staking_reader::reader::{ConsensusKeys, ValidatorWithKeys};
+        ValidatorSetSnapshot {
+            block_hash: self.snapshot.1,
+            block_number: self.snapshot.0,
+            epoch: self.epoch,
+            validators: self
+                .members
+                .iter()
+                .map(|m| ValidatorWithKeys {
+                    address: m.address,
+                    keys: ConsensusKeys {
+                        peer_pubkey: m.peer.clone(),
+                        bls_pubkey: m.bls,
+                        activation_epoch: 0,
+                    },
+                    tombstoned: false,
+                })
+                .collect(),
+            weights: Some(self.weights.clone()),
+        }
+    }
+
     pub fn same_value(&self, other: &Self) -> bool {
         self.epoch == other.epoch
             && self.members == other.members
@@ -244,12 +293,65 @@ pub trait Committee: Send + Sync {
     /// liveness layer that owns the flag.
     fn is_member(&self, epoch: u64, peer: &PeerPubkey) -> Result<bool, CommitteeError>;
 
+    /// The epoch's certificate scheme, from the SAME map slot as its record.
+    ///
+    /// Reading the committee is what produces it, so this asks for the record
+    /// first: a hit is a map lookup, a miss inside the window costs the two
+    /// staticcalls the record costs and nothing more, and an epoch outside the
+    /// window or not committed yet answers `None` without touching the EVM.
+    /// That is the whole reason there is no separate registry to pre-fill — an
+    /// epoch has a scheme exactly when this node can read its committee.
+    ///
+    /// `None` also covers "the verifier could not build one yet" (see
+    /// [`EpochVerifier`]); the caller's contract is the same in both cases —
+    /// defer and ask again.
+    fn scheme(&self, epoch: u64) -> Option<std::sync::Arc<BlsScheme>>;
+
+    /// Replace the epoch's scheme with a STRONGER one — the signer half an
+    /// engine spawn needs, and the only write to a scheme slot that is not
+    /// [`EpochVerifier`].
+    ///
+    /// Monotone in verification strength, with the same three refusals the
+    /// per-epoch registry carried before the map absorbed it:
+    ///
+    /// 1. a committee that is not this epoch's — structurally impossible now
+    ///    (the record IS the committee), so it is a loud refusal rather than a
+    ///    branch anything reaches;
+    /// 2. a signer replaced by a verifier — an engine's own scheme is never
+    ///    weakened underneath it;
+    /// 3. a beacon-active entry replaced by an oracle-less one — invisible to
+    ///    `participants()` and `me()`, and silent if it lands: the epoch quietly
+    ///    returns to vote-only certificate admission.
+    ///
+    /// Returns whether the scheme is now installed, so a caller that must not
+    /// spawn an engine over a refused scheme can see the refusal.
+    fn upgrade_scheme(&self, epoch: u64, scheme: BlsScheme) -> bool;
+
+    /// Epochs holding a VERIFY-ONLY scheme — the repair sweep's candidate list.
+    ///
+    /// This map, not a shadow set in the epoch manager, is the authority on what
+    /// is registered: it is bounded by the read window as a structural fact and
+    /// it covers every path that made a record, not only the one that also wrote
+    /// a shadow. Signer entries are excluded — a signer's engine resolves its
+    /// own epoch key through the promote gates, which have a value-gate this
+    /// sweep does not.
+    fn verifier_epochs(&self) -> Vec<u64>;
+
+    /// The scheme of the highest epoch this node holds one for. Its
+    /// `participants()` are the peers to target for a finalization re-fetch on
+    /// catch-up — they are connected and hold the durable finalizations.
+    fn latest_scheme(&self) -> Option<std::sync::Arc<BlsScheme>>;
+
     /// A wake-up carrying the highest epoch this node can now read:
     /// `epoch(anchor) + MAX_COMMITTEE_LOOKAHEAD_EPOCHS`.
     ///
     /// The VALUE is a hint; the EVENT is the contract. A consumer parked on a
     /// [`CommitteeError::NotReadable`] wakes here and re-asks, instead of
-    /// polling on a timer.
+    /// polling on a timer. It fires on EVERY anchor advance, not only on the
+    /// ones that raise the value: an epoch can be unreadable because its commit
+    /// height is above the anchor (the value moves when that changes) OR because
+    /// the anchor's own height is not executed yet (it does not), and a wake-up
+    /// keyed on the value would serve only the first.
     ///
     /// TWO events produce it, because there are two ways an epoch becomes
     /// readable: the ANCHOR moved (the executor's three call sites) and the
@@ -328,6 +430,90 @@ pub trait Anchor: Send + Sync {
 /// plain value is only the "not frozen yet" state, which the store answers as
 /// [`CommitteeError::NotReadable`] without touching the EVM.
 pub type GeometryRx = tokio::sync::watch::Receiver<Option<(u64, u64)>>;
+
+/// The ONE producer of an epoch's verify-only [`BlsScheme`]: the record the
+/// module just installed, plus the two things that are not in it — the chain
+/// namespace and the epoch's beacon oracle
+/// ([`crate::beacon::Beacon::oracle_for`]).
+///
+/// A closure rather than a method on the store because the beacon is built
+/// AFTER the store on both node classes (the beacon consumes
+/// [`CommitteeReadsFacade`], which is a view on the store), so the store cannot
+/// hold an `Arc<dyn Beacon>` at construction. The closure answers `None` for
+/// exactly that window — "no scheme can be built yet" — and the store retries
+/// it on the next [`Committee::scheme`] instead of caching the absence, so a
+/// record installed before the beacon existed never pins its epoch to a
+/// vote-only verifier for the life of the process.
+///
+/// `None` is otherwise unreachable: the record's BLS projection was already
+/// built and validated by the store, so there is nothing left for the verifier
+/// construction to reject.
+pub type EpochVerifier = Arc<dyn Fn(&CommitteeRecord) -> Option<BlsScheme> + Send + Sync>;
+
+/// The beacon handle an [`EpochVerifier`] needs, filled once the beacon exists.
+///
+/// A slot rather than a value because of a hard build order on BOTH node
+/// classes: the beacon is constructed FROM this module (it takes
+/// [`CommitteeReadsFacade`]), so the store is necessarily older than the beacon
+/// that answers `oracle_for`. Filling the slot is the last step of standing the
+/// beacon up; until then every verifier call answers `None` and the store
+/// retries rather than caching a scheme with no oracle.
+///
+/// WEAK, and that is a correctness property rather than hygiene: the beacon
+/// holds this module (through [`CommitteeReadsFacade`]) and this slot would hold
+/// the beacon, so a strong handle closes a reference CYCLE — the store, the
+/// beacon and every journal sender the beacon owns would outlive the shutdown
+/// that drops them, and the deterministic runtime refuses to exit while it can
+/// still see them. A failed upgrade answers `None`, which is the right answer
+/// once the beacon is gone: nothing is left to verify certificates for.
+pub type BeaconSlot = Arc<std::sync::OnceLock<std::sync::Weak<dyn crate::beacon::Beacon>>>;
+
+/// Fill the [`BeaconSlot`], once — and say so LOUDLY if it is ever filled twice.
+///
+/// The second `set` is not a lost write: it is a slot still holding the FIRST
+/// beacon's handle, which after an in-process rebuild is a DEAD `Weak`. Every
+/// later epoch would then get `upgrade() == None` from [`epoch_verifier`], i.e.
+/// no scheme at all — not a vote-only one — and the marshal would quietly stop
+/// verifying certificates of every new epoch while the node looked healthy.
+///
+/// Unreachable today: `run_node_stack` branches on `is_validator` exactly once
+/// per process and the beacon plane is documented as built ONCE, so neither
+/// `launch` nor `launch_follower` runs twice. It is a sentry for the in-process
+/// follower→signer switch that is the stated target, where rebuilding the beacon
+/// would be the natural thing to do and this failure would be silent.
+pub fn fill_beacon_slot(slot: &BeaconSlot, beacon: &Arc<dyn crate::beacon::Beacon>) {
+    if slot.set(Arc::downgrade(beacon)).is_err() {
+        tracing::error!(
+            "beacon rebuilt in-process; committee module keeps the FIRST beacon — every later \
+             epoch would get no scheme"
+        );
+    }
+}
+
+/// The ONE verify-only scheme producer, as a closure over the two things the
+/// record does not carry: the chain namespace and the epoch's beacon oracle.
+///
+/// This is exactly what the four deleted producers each built by hand —
+/// `soft_enter`, the bulk catch-up span, `cold_start_register` and the engine's
+/// own registration. Three of them asked [`crate::beacon::Beacon::oracle_for`]
+/// for the oracle; the fourth hardcoded `None`, which pinned its epoch to
+/// vote-only certificate admission for the life of the process. There is one
+/// now, and it cannot hardcode anything.
+pub fn epoch_verifier(chain_id: u64, beacon: BeaconSlot) -> EpochVerifier {
+    let namespace = fluentbase_bls::fluent_namespace(chain_id);
+    Arc::new(move |record: &CommitteeRecord| {
+        // `None` while the beacon is younger than this store — the store asks
+        // again rather than remembering the absence — and `None` again once it is
+        // gone, at shutdown.
+        let beacon = beacon.get()?.upgrade()?;
+        Some(fluentbase_bls::scheme::build_verifier(
+            &namespace,
+            record.bls.bimap.clone(),
+            record.epoch,
+            beacon.oracle_for(record.epoch),
+        ))
+    })
+}
 
 /// The frozen `(activation_block, epoch_block_interval)` pair, and the epoch
 /// arithmetic over it.
@@ -437,5 +623,123 @@ where
 
     fn dkg_qual(&self, epoch: u64, at: B256) -> Result<bool, ReadError> {
         fluentbase_staking_reader::RethStakingStateReader::dkg_qual(self, epoch, at)
+    }
+}
+
+/// Test doubles shared by the consumers of this module.
+#[cfg(test)]
+pub(crate) mod testing {
+    use super::{BlsScheme, Committee, CommitteeError, CommitteeRecord, PeerPubkey};
+    use alloy_primitives::B256;
+    use std::{
+        collections::BTreeMap,
+        sync::{Arc, Mutex},
+    };
+
+    /// A [`Committee`] that is ONLY the scheme half of the map — a closure
+    /// answering "what is `committee[E]`'s scheme", memoised exactly the way
+    /// [`super::CommitteeStore`] memoises a record.
+    ///
+    /// The memoisation is the point, not a convenience: a consumer of this trait
+    /// sees ONE production-shaped fact — an epoch is read at most once and its
+    /// answer never changes afterwards — so a test counting reads counts what the
+    /// real store would make it count. `None` is NOT memoised, for the same
+    /// reason the store does not cache a failure: it means "not readable at this
+    /// anchor yet", and the next call must be free to succeed.
+    ///
+    /// `committee()` answers [`CommitteeError::NotReadable`] by default: the
+    /// double holds no records, and most consumers of it want only the scheme.
+    /// [`SchemeCommittee::with_records`] gives it the record half as well, for
+    /// the consumers that distinguish "this node cannot read `committee[E]`"
+    /// from "the record is here but no scheme could be built from it" —
+    /// `register_span` is the one that must.
+    pub(crate) struct SchemeCommittee {
+        answer: Box<dyn Fn(u64) -> Option<BlsScheme> + Send + Sync>,
+        records: Box<dyn Fn(u64) -> Option<CommitteeRecord> + Send + Sync>,
+        entries: Mutex<BTreeMap<u64, Arc<BlsScheme>>>,
+    }
+
+    impl SchemeCommittee {
+        pub(crate) fn new(
+            answer: impl Fn(u64) -> Option<BlsScheme> + Send + Sync + 'static,
+        ) -> Arc<Self> {
+            Self::with_records(answer, |_| None)
+        }
+
+        /// The same double with a record half. `records` answering `None` is
+        /// [`CommitteeError::NotReadable`] — the epoch is not readable at this
+        /// node's anchor — which is the ONE fact a caller is entitled to stop a
+        /// contiguous walk on.
+        pub(crate) fn with_records(
+            answer: impl Fn(u64) -> Option<BlsScheme> + Send + Sync + 'static,
+            records: impl Fn(u64) -> Option<CommitteeRecord> + Send + Sync + 'static,
+        ) -> Arc<Self> {
+            Arc::new(Self {
+                answer: Box::new(answer),
+                records: Box::new(records),
+                entries: Mutex::new(BTreeMap::new()),
+            })
+        }
+    }
+
+    impl Committee for SchemeCommittee {
+        fn committee(&self, epoch: u64) -> Result<Arc<CommitteeRecord>, CommitteeError> {
+            (self.records)(epoch)
+                .map(Arc::new)
+                .ok_or(CommitteeError::NotReadable { epoch, ready_at: 0 })
+        }
+
+        fn changed(&self, epoch: u64) -> Result<bool, CommitteeError> {
+            Err(CommitteeError::NotReadable { epoch, ready_at: 0 })
+        }
+
+        fn is_member(&self, epoch: u64, _peer: &PeerPubkey) -> Result<bool, CommitteeError> {
+            Err(CommitteeError::NotReadable { epoch, ready_at: 0 })
+        }
+
+        fn scheme(&self, epoch: u64) -> Option<Arc<BlsScheme>> {
+            if let Some(scheme) = self.entries.lock().unwrap().get(&epoch) {
+                return Some(scheme.clone());
+            }
+            let built = Arc::new((self.answer)(epoch)?);
+            Some(
+                self.entries
+                    .lock()
+                    .unwrap()
+                    .entry(epoch)
+                    .or_insert(built)
+                    .clone(),
+            )
+        }
+
+        fn upgrade_scheme(&self, epoch: u64, scheme: BlsScheme) -> bool {
+            self.entries.lock().unwrap().insert(epoch, Arc::new(scheme));
+            true
+        }
+
+        fn verifier_epochs(&self) -> Vec<u64> {
+            use commonware_cryptography::certificate::Scheme as _;
+            self.entries
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(_, s)| s.me().is_none())
+                .map(|(epoch, _)| *epoch)
+                .collect()
+        }
+
+        fn latest_scheme(&self) -> Option<Arc<BlsScheme>> {
+            self.entries.lock().unwrap().values().next_back().cloned()
+        }
+
+        fn subscribe(&self) -> tokio::sync::watch::Receiver<u64> {
+            tokio::sync::watch::Sender::new(0).subscribe()
+        }
+
+        fn anchor_advanced(&self) {}
+
+        fn anchor_hash(&self) -> Option<B256> {
+            None
+        }
     }
 }

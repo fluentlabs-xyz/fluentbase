@@ -11833,8 +11833,11 @@ mod tests {
                 .await;
                 let blocks =
                     crate::outer::init_finalized_blocks_archive(&ctx, "halt-liveness").await;
-                let provider = crate::outer::EpochSchemeProvider::new();
-                provider.register(Epoch::new(0), c.verifier.clone());
+                let module = crate::committee::testing::SchemeCommittee::new({
+                    let verifier = c.verifier.clone();
+                    move |_| Some(verifier.clone())
+                });
+                let provider = crate::outer::EpochSchemeProvider::new(module);
                 let (marshal_actor, marshal_mailbox, last_processed) = MarshalActor::init(
                     ctx.with_label("marshal"),
                     finalizations,
@@ -12003,8 +12006,11 @@ mod tests {
                 .await;
                 let blocks =
                     crate::outer::init_finalized_blocks_archive(&ctx, "seed-below-floor").await;
-                let provider = crate::outer::EpochSchemeProvider::new();
-                provider.register(Epoch::new(0), c.verifier.clone());
+                let module = crate::committee::testing::SchemeCommittee::new({
+                    let verifier = c.verifier.clone();
+                    move |_| Some(verifier.clone())
+                });
+                let provider = crate::outer::EpochSchemeProvider::new(module);
                 let (marshal_actor, mut marshal, _last) = MarshalActor::init(
                     ctx.with_label("marshal"),
                     finalizations,

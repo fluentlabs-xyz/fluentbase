@@ -82,8 +82,8 @@ pub use cold_start_jump::{
 // (a `GeometryRx`), the type has no user outside `committee/` — re-exporting it
 // would be public surface nobody can reach through.
 pub use committee::{
-    Anchor, Committee, CommitteeError, CommitteeReadsFacade, CommitteeRecord, CommitteeStore,
-    EpochReads, GeometryRx, Member, RethAnchor,
+    epoch_verifier, Anchor, BeaconSlot, Committee, CommitteeError, CommitteeReadsFacade,
+    CommitteeRecord, CommitteeStore, EpochReads, EpochVerifier, GeometryRx, Member, RethAnchor,
 };
 pub use digest::Digest;
 pub use dpos::{
@@ -98,7 +98,7 @@ pub use feed_sink::FeedSink;
 pub use order_block::{
     anchor_order_block, result_final_height, result_target, OrderBlock, ResultTarget, K,
 };
-pub use outer::{MarshalMailbox, OuterBuilder, OuterEngine, SoftEnterCommittees};
+pub use outer::{MarshalMailbox, OuterBuilder, OuterEngine};
 pub use plane_upstream::{FrontierKey, PlaneUpstreamHandle};
 pub use timeouts::ConsensusTimeouts;
 

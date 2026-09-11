@@ -1,7 +1,7 @@
 //! Per-epoch consensus engine lifecycle.
 //!
 //! Owns the active-epochs map and an event-driven boundary trigger
-//! (`mpsc::Receiver<(Epoch, snap)>`) fed by
+//! (`mpsc::Receiver<Epoch>`) fed by
 //! [`fluentbase_staking_reader::EpochTransition`]. The vote/cert/resolver Muxers
 //! are NOT owned here — they live in the always-on plane (node crate); this manager
 //! receives their `MuxHandle`s + the vote backup forwarder per promotion and
@@ -17,14 +17,15 @@ use crate::{
     beacon::agreement_partition,
     beacon::{constant_fallback_seed, witness_fallback_seed},
     beacon::{Beacon, PinEffort, ShareProbe, SignerVerdict},
+    committee::Committee,
     dpos::VoteBackupItem,
     engine::{EpochEngine, EpochEngineConfig},
     epocher::OriginEpocher,
     order_block::OrderBlock,
     outer::{EpochSchemeProvider, SharedMux},
-    scheme::soft_enter_verifier,
     slasher::Mailbox as SlasherMailbox,
     timeouts::ConsensusTimeouts,
+    weighted_vrf::WeightedVrf,
     SCHEME_RETENTION_EPOCHS,
 };
 use commonware_consensus::{
@@ -51,7 +52,7 @@ use std::{
     task::{Context, Poll},
 };
 use tokio::sync::{mpsc, watch, Notify};
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 /// The per-epoch validator role — a pure function of current state, NOT the
 /// emergent product of a boundary-coupled transition zoo. A committee member
@@ -460,7 +461,7 @@ where
     /// branch parks forever and the map stays empty; the beacon plane holds the
     /// sending half and posts a handle per instance it starts.
     agreement_intake: Option<mpsc::Receiver<(Epoch, Handle<()>)>>,
-    boundary_rx: mpsc::Receiver<(Epoch, ValidatorSetSnapshot)>,
+    boundary_rx: mpsc::Receiver<Epoch>,
     /// Highest epoch we have entered (full or soft) — i.e. the highest epoch
     /// whose committee scheme is registered, so the marshal can verify its
     /// certs. Drives the catch-up hint target. Monotonic; never decremented by
@@ -505,10 +506,43 @@ where
     /// epoch spawns the instant the boundary block lands. Never panics (defer, never
     /// `unreachable!`).
     deferred_spawns: BTreeSet<Epoch>,
-    /// The most-recent boundary delivery `(epoch, snapshot)`. The non-boundary
-    /// edges (share / spawn_unblocked / vote_backup) carry no snapshot, so they
-    /// reconcile the CURRENT live epoch from this cache.
-    latest_live: Option<(Epoch, ValidatorSetSnapshot)>,
+    /// Epochs whose [`Self::reconcile_roles`] returned having decided NOTHING,
+    /// because `committee[E]` was not readable at this node's anchor when the
+    /// edge that carried the epoch arrived.
+    ///
+    /// A SECOND parked set beside `deferred_spawns`, and it has to be separate
+    /// because the two are parked at opposite ends of the same function: a
+    /// deferred SPAWN has already run the whole reconcile (the bookkeeping, the
+    /// frontier, `soft_enter`) and is waiting for one marshal block, while an
+    /// epoch here has run NONE of it — the read is the first statement of the
+    /// function (see the early return) and nothing is written before it.
+    ///
+    /// It exists because that early return has no other retry. Every other edge
+    /// of the `select!` is gated on something a not-yet-readable epoch does not
+    /// produce, and the module's own wake-up went through
+    /// [`Self::reconcile_live`], which reconciles `latest_live` ONLY while it is
+    /// still the live frontier — so a boundary for an epoch below a corroborated
+    /// frontier (a raised `highest_observed_epoch`, R-003) got no retry at all
+    /// and its scheme was never registered. Draining this set on the wake-up is
+    /// that retry, and it deliberately skips the `is_live_epoch` gate: the gate
+    /// guards against re-running a reconcile that ALREADY ran over a stale epoch
+    /// (the downgrade churn `reconcile_live` documents), which is not the state
+    /// an epoch in here is in.
+    ///
+    /// Only a RETRYABLE miss is remembered
+    /// ([`crate::committee::CommitteeError::is_transient`]), which is also what
+    /// bounds the set: an epoch below the read window can never be read again,
+    /// so keeping it would be a permanent entry no wake-up can ever clear.
+    deferred_reconciles: BTreeSet<Epoch>,
+    /// The most-recent boundary delivery. The non-boundary edges (share /
+    /// spawn_unblocked / vote_backup / the module's own wake-up) carry no epoch,
+    /// so they reconcile the CURRENT live epoch from this.
+    ///
+    /// An EPOCH and no longer `(epoch, snapshot)`: the committee is re-read from
+    /// [`Config::committee`], which is write-once inside its window, so caching a
+    /// snapshot beside the epoch would have been a second copy of a frozen value
+    /// — the defect class the module exists to close, restated as a field.
+    latest_live: Option<Epoch>,
     /// Last `(highest_entered, highest_observed)` pair for which
     /// [`pipeline_catchup_span`] ran and registered nothing new (bug 15).
     /// Identical re-attempts are suppressed until an edge (share landed /
@@ -571,27 +605,21 @@ pub struct Config<B, XC, A> {
     pub epoch_metrics: EpochEngineMetrics,
     /// Cross-epoch singleton from [`crate::outer::OuterEngine`].
     pub page_cache: CacheRef,
-    /// Callback into [`crate::outer::EpochSchemeProvider`] so marshal can verify
-    /// cross-epoch finalization certificates (trailing-window pruned; see SCHEME_RETENTION_EPOCHS).
-    pub register_scheme: Arc<dyn Fn(Epoch, BlsScheme) + Send + Sync>,
-    /// The same [`crate::outer::EpochSchemeProvider`] `register_scheme` writes
-    /// into, held directly because the repair sweep has to READ it: which epochs
-    /// are registered unpinned is a question only the registry can answer, and
-    /// the answer covers registration paths the epoch manager never sees (the
-    /// bulk catch-up span, `cold_start_register`).
+    /// EVERY per-epoch committee this manager needs, and the ONE place an
+    /// epoch's scheme is produced.
+    ///
+    /// It replaced three inputs at once: the `(epoch, snapshot)` the boundary
+    /// channel used to carry, the `register_scheme` callback into a second map,
+    /// and the bulk catch-up `soft_enter_span` closure that read committees at a
+    /// cursor of its own. Reading `committee[E]` through this handle IS the
+    /// registration — the module builds the epoch's verify-only scheme in the
+    /// same map slot as the record — so "soft-enter" is a read and the catch-up
+    /// span is a loop of reads.
+    pub committee: Arc<dyn Committee>,
+    /// The repair sweep's view on that same map: which epochs hold a verify-only
+    /// scheme is a question only the map can answer, and the answer covers every
+    /// read that made a record — not only the ones this manager drove.
     pub scheme_pins: EpochSchemeProvider,
-    /// Bulk catch-up soft-enter: register a verify-only scheme for EVERY epoch in
-    /// the inclusive span `[from, to]`, reading each committee from the CURRENT
-    /// finalized state (at the result-final read height — see
-    /// [`fluentbase_staking_reader::EpochTransition::soft_enter_span`]). Returns
-    /// the HIGHEST epoch actually registered (a missed/unreadable committee
-    /// truncates the contiguous on-chain prefix). Called ONCE per backup-vote
-    /// hint from [`Actor::handle_msg_for_unregistered_epoch`] to pre-register a
-    /// whole gap in one step (instead of one boundary per finalized round-trip),
-    /// so the marshal hint can target the frontier directly. Built in
-    /// [`crate::outer::OuterBuilder::build`] over `register_scheme` + `chain_id`
-    /// + the node-side committee reader threaded from `dpos.rs`.
-    pub soft_enter_span: Arc<dyn Fn(Epoch, Epoch) -> BoxFuture<'static, Epoch> + Send + Sync>,
     /// Prefix of every per-epoch journal partition this manager opens or sweeps:
     /// the ordering engines' `{prefix}consensus_epoch_{E}`
     /// ([`crate::engine::engine_partition`]) and the adopted agreement instances'
@@ -617,10 +645,7 @@ where
 {
     /// Construct the actor + return the bounded `boundary_tx` sender (held by
     /// 03's `EpochTransition`).
-    pub fn new(
-        context: E,
-        cfg: Config<B, XC, A>,
-    ) -> (Self, mpsc::Sender<(Epoch, ValidatorSetSnapshot)>) {
+    pub fn new(context: E, cfg: Config<B, XC, A>) -> (Self, mpsc::Sender<Epoch>) {
         let (boundary_tx, boundary_rx) = mpsc::channel(BOUNDARY_BUFFER);
         let actor = Self {
             context: ContextCell::new(context),
@@ -635,6 +660,7 @@ where
             committee_size: 0,
             roles: BTreeMap::new(),
             deferred_spawns: BTreeSet::new(),
+            deferred_reconciles: BTreeSet::new(),
             latest_live: None,
             catchup_no_progress: None,
             cfg,
@@ -698,6 +724,16 @@ where
         // to be two `Notify` handles — the wake-up says only that something may
         // have changed, and both arms answer it by re-reading.
         let mut beacon_events = self.cfg.randomness.subscribe();
+        // The committee module's own wake-up, and the ONLY retry a reconcile
+        // parked on `NotReadable` has. `reconcile_roles` now reads `committee[E]`
+        // itself, so a boundary that arrives before this node's anchor can see the
+        // epoch returns having decided nothing — and every other edge here is
+        // gated on something that a not-yet-readable epoch does not produce
+        // (`spawn_unblocked` needs a parked spawn, `vote_backup` needs a frontier
+        // move, the beacon stream needs a share or a key). Subscribed ONCE, before
+        // the loop, so a wake-up fired between the first read and the first
+        // `changed()` is held by the watch's own "seen" marker rather than lost.
+        let mut committee_readable = self.cfg.committee.subscribe();
         // The repair sweep runs OFF this loop — see `spawn_repair_sweep`. Waking
         // it is a synchronous `send_replace`, so no arm below can be held by it.
         // Dropping this sender on the way out is what stops the task.
@@ -746,11 +782,11 @@ where
                 }
                 recv = self.boundary_rx.recv() => {
                     match recv {
-                        Some((epoch, snap)) => {
-                            // The only edge carrying a fresh snapshot — cache it for the
+                        Some(epoch) => {
+                            // The only edge carrying a fresh epoch — cache it for the
                             // non-boundary edges, then reconcile (folds enter + prune_old).
-                            self.latest_live = Some((epoch, snap.clone()));
-                            self.reconcile_roles(epoch, snap, muxes.as_ref()).await;
+                            self.latest_live = Some(epoch);
+                            self.reconcile_roles(epoch, muxes.as_ref()).await;
                             // AFTER the reconcile, so the frontier the sweep runs
                             // under already includes this boundary's epoch and it
                             // cannot pin under the engine just spawned for it.
@@ -786,6 +822,24 @@ where
                             info!("vote backup channel closed, epoch_manager exiting");
                             break;
                         }
+                    }
+                }
+                // Edge: the committee module can read higher than it could — its
+                // anchor advanced, or the geometry froze. The consumer contract is
+                // "wake and re-ask", so re-run the live epoch's reconcile: if it
+                // was parked on an unreadable committee it now proceeds, and if it
+                // was not, `reconcile_roles` is idempotent.
+                _ = committee_readable.changed() => {
+                    let live_is_current = self
+                        .latest_live
+                        .is_some_and(|epoch| self.is_live_epoch(epoch));
+                    let targets = committee_wake_targets(
+                        &mut self.deferred_reconciles,
+                        self.latest_live,
+                        live_is_current,
+                    );
+                    for epoch in targets {
+                        self.reconcile_roles(epoch, muxes.as_ref()).await;
                     }
                 }
                 // Edge: the executor recorded a finalized block — the MID-EPOCH
@@ -1006,7 +1060,7 @@ where
             self.highest_observed_epoch,
             their_epoch,
             &self.cfg.epocher,
-            self.cfg.soft_enter_span.as_ref(),
+            self.cfg.committee.as_ref(),
             hint,
             &mut self.catchup_no_progress,
         )
@@ -1038,15 +1092,49 @@ where
     /// additionally needs a usable DKG share (share-gate) and the
     /// `Inline::genesis(E)` precondition before its engine spawns. Idempotent — safe
     /// to call repeatedly for the same `(epoch, snap)` on any edge.
-    async fn reconcile_roles<HS, HR>(
-        &mut self,
-        epoch: Epoch,
-        snap: ValidatorSetSnapshot,
-        muxes: Option<&Muxes<HS, HR>>,
-    ) where
+    async fn reconcile_roles<HS, HR>(&mut self, epoch: Epoch, muxes: Option<&Muxes<HS, HR>>)
+    where
         HS: Sender<PublicKey = PublicKey>,
         HR: Receiver<PublicKey = PublicKey>,
     {
+        // The epoch's committee, as ONE frozen value read at this node's own
+        // anchor. It arrives HERE rather than riding the boundary channel: every
+        // edge below (share / spawn_unblocked / vote_backup / the module's own
+        // wake-up) carries an epoch and nothing else, and a snapshot handed in by
+        // whoever fired the edge would be a second authority on a value the
+        // module already froze.
+        //
+        // NOT READABLE is a deferral, never a decision: the anchor only moves up,
+        // and the module's wake-up (`Committee::subscribe`, the arm in `run`)
+        // re-runs this reconcile the moment a higher anchor makes the epoch
+        // readable. Nothing below it may run on a guess about the committee, so
+        // the whole reconcile — bookkeeping included — waits for the value.
+        let record = match self.cfg.committee.committee(epoch.get()) {
+            Ok(record) => {
+                // This epoch is being reconciled now, so it is no longer owed
+                // one. Unconditional: the entry is only ever a debt, so removing
+                // one that was never taken on is a no-op.
+                self.deferred_reconciles.remove(&epoch);
+                record
+            }
+            Err(e) => {
+                // Remember the epoch so the module's own wake-up re-runs THIS
+                // reconcile — `deferred_reconciles` says why nothing else will.
+                // Only a retryable miss: a permanent refusal (an epoch the
+                // window has dropped, a contract fork) is a debt no wake-up can
+                // ever settle, and parking it would leave an entry the set can
+                // never lose.
+                if e.is_transient() {
+                    self.deferred_reconciles.insert(epoch);
+                }
+                debug!(
+                    ?epoch,
+                    %e,
+                    "reconcile deferred — committee[E] not readable at this node's anchor yet"
+                );
+                return;
+            }
+        };
         // Boundary bookkeeping (idempotent; monotone). Committee size is keyed on
         // the HIGHEST-ENTERED epoch (follows validator-set growth and shrink) — it
         // feeds the f+1 corroboration threshold. Reaching an epoch RESOLVES it:
@@ -1054,7 +1142,7 @@ where
         // pins don't permanently mute honest senders.
         self.highest_entered_epoch = self.highest_entered_epoch.max(epoch);
         if epoch == self.highest_entered_epoch {
-            self.committee_size = snap.validators.len();
+            self.committee_size = record.members.len();
         }
         // Tell the randomness subsystem where the core stands. It owns what that
         // means: the previous-epoch key warm-up (W3) and the retention of its own
@@ -1088,7 +1176,7 @@ where
         // Nothing about the registered scheme decides that; `repair_keyless_schemes`
         // is what drives the acquisition for below-frontier epochs.
         if !self.is_live_epoch(epoch) {
-            self.soft_enter(epoch, &snap).await;
+            self.soft_enter(epoch).await;
             self.deferred_spawns.remove(&epoch);
             info!(?epoch, "epoch soft-entered (scheme only, catch-up)");
             return;
@@ -1105,10 +1193,7 @@ where
         // aborted any running engine; this keeps future reconciles from re-spawning.
         let is_member = !self.cfg.safety_halt.is_engaged()
             && self.cfg.signer_keypair.is_some()
-            && snap
-                .validators
-                .iter()
-                .any(|v| v.keys.peer_pubkey == self.cfg.me);
+            && record.participants.position(&self.cfg.me).is_some();
 
         // Already a running signer for the live epoch — keep it, UNLESS its handle
         // has completed. The committee is frozen per epoch, so membership cannot
@@ -1151,7 +1236,7 @@ where
                         handle.abort();
                     }
                     self.roles.insert(epoch, Role::Verifier);
-                    self.soft_enter(epoch, &snap).await;
+                    self.soft_enter(epoch).await;
                     return;
                 }
                 return;
@@ -1179,7 +1264,7 @@ where
                 if self.cfg.signer_keypair.is_some() && !is_member {
                     self.cfg.epoch_metrics.engine_demoted_rotated_out.inc();
                 }
-                self.soft_enter(epoch, &snap).await;
+                self.soft_enter(epoch).await;
             }
             Role::Signer => {
                 // Share-gate: a beacon-active member that cannot participate must
@@ -1197,7 +1282,7 @@ where
                 // below so a member that cannot participate returns without
                 // paying a marshal `get_block` on every participation edge.
                 if let ShareProbe::Withheld(reason) = self.cfg.randomness.can_participate(epoch) {
-                    self.soft_enter(epoch, &snap).await;
+                    self.soft_enter(epoch).await;
                     info!(
                         ?epoch,
                         ?reason,
@@ -1212,11 +1297,18 @@ where
                 // may still be backfilling it — DEFER, never panic; the executor's
                 // `spawn_unblocked` edge (or the next boundary) re-pokes. Register
                 // verify-only meanwhile so the marshal verifies this epoch's certs.
+                // The record as the snapshot the surfaces this crate does not
+                // own still speak (`Beacon::signer`, the seedless base, the
+                // engine's committee index). A PROJECTION of the one frozen
+                // record, built here and used by all three, so they cannot be
+                // handed three different committees for one epoch.
+                let snap = record.snapshot_view();
+
                 let lookup = self.boundary_lookup(epoch).await;
                 let fallback_seed = match seedless_base(&lookup, &snap) {
                     None => {
                         self.deferred_spawns.insert(epoch);
-                        self.soft_enter(epoch, &snap).await;
+                        self.soft_enter(epoch).await;
                         self.cfg.epoch_metrics.engine_spawn_deferred.inc();
                         let boundary = epoch
                             .get()
@@ -1247,6 +1339,28 @@ where
                     Some(SeedlessBase::Constant(base)) => {
                         self.cfg.epoch_metrics.fallback_seed_constant.inc();
                         base
+                    }
+                };
+
+                // The leader lottery, derived from the frozen record BEFORE
+                // anything is registered or spawned (E4-10). Its weights are
+                // non-optional by the module's window invariant, so the only way
+                // this fails is a length disagreement the module would already
+                // have refused — but a spawn that raised this epoch's scheme to
+                // the signer half and THEN discovered it has no leader schedule
+                // would leave the epoch half-entered, and that ordering is what
+                // the hoist removes.
+                let elector = match WeightedVrf::try_new(&snap, fallback_seed) {
+                    Ok(elector) => elector,
+                    Err(e) => {
+                        error!(
+                            ?epoch,
+                            %e,
+                            "skipping epoch spawn — no leader schedule can be derived from the \
+                             frozen committee record"
+                        );
+                        self.soft_enter(epoch).await;
+                        return;
                     }
                 };
 
@@ -1284,7 +1398,7 @@ where
                     }
                     SignerVerdict::Withheld(reason) => {
                         info!(?epoch, ?reason, "withheld from signing — verify-only");
-                        self.soft_enter(epoch, &snap).await;
+                        self.soft_enter(epoch).await;
                         return;
                     }
                     // Today's behaviour when the engine's own decode failed:
@@ -1298,10 +1412,24 @@ where
                         return;
                     }
                 };
-                if self
-                    .spawn_engine(epoch, snap, scheme, fallback_seed, muxes)
-                    .await
+                // The scheme the marshal verifies this epoch with, raised from
+                // the module's own verify-only entry to this node's signer half
+                // — the ONE upgrade path, and the only writer of a scheme slot
+                // besides the module's verifier. A refusal is defence in depth
+                // (it preserves the STRONGER entry), not a spawn gate: the
+                // engine holds its own instance either way.
+                if !self
+                    .cfg
+                    .committee
+                    .upgrade_scheme(epoch.get(), scheme.clone())
                 {
+                    warn!(
+                        ?epoch,
+                        "the committee module refused this epoch's signer scheme — the marshal \
+                         keeps the entry it already holds"
+                    );
+                }
+                if self.spawn_engine(epoch, snap, scheme, elector, muxes).await {
                     self.roles.insert(epoch, Role::Signer);
                     self.deferred_spawns.remove(&epoch);
                     // Stable greppable token for the production-path smoke
@@ -1324,19 +1452,22 @@ where
     /// refuses (`signer→verifier downgrade`) and which would desync `self.roles`
     /// from the provider. This is the one site that READS `self.roles`, making it
     /// the diff source of truth the field doc promises.
-    async fn soft_enter(&mut self, epoch: Epoch, snap: &ValidatorSetSnapshot) {
+    async fn soft_enter(&mut self, epoch: Epoch) {
         if self.active_epochs.contains_key(&epoch) || self.roles.get(&epoch) == Some(&Role::Signer)
         {
             return;
         }
-        register_soft_entered(
-            self.cfg.randomness.as_ref(),
-            epoch,
-            snap,
-            self.cfg.chain_id,
-            self.cfg.register_scheme.as_ref(),
-        )
-        .await;
+        // READING the committee is the registration: the module builds this
+        // epoch's verify-only scheme in the same map slot as the record, bound
+        // to the epoch's beacon oracle from the one door that decides
+        // beacon-activeness. There is nothing to hand it and nothing to hand
+        // back — a `None` here means the epoch is not readable at this anchor
+        // yet, which the module's wake-up retries.
+        let registered = self.cfg.committee.scheme(epoch.get()).is_some();
+        debug!(
+            ?epoch,
+            registered, "soft-enter: verify-only scheme taken from the committee module"
+        );
         self.roles.insert(epoch, Role::Verifier);
     }
 
@@ -1405,17 +1536,17 @@ where
     /// `reconcile_roles` on it would soft-enter a verify-only scheme over an epoch
     /// registered as `Signer` → `EpochSchemeProvider` downgrade-refusal churn +
     /// `roles`↔provider divergence. The next BOUNDARY delivery refreshes
-    /// `latest_live` to the new frontier and reconciles it there (with its snapshot).
+    /// `latest_live` to the new frontier and reconciles it there.
     async fn reconcile_live<HS, HR>(&mut self, muxes: Option<&Muxes<HS, HR>>)
     where
         HS: Sender<PublicKey = PublicKey>,
         HR: Receiver<PublicKey = PublicKey>,
     {
-        if let Some((epoch, snap)) = self.latest_live.clone() {
+        if let Some(epoch) = self.latest_live {
             if !self.is_live_epoch(epoch) {
                 return;
             }
-            self.reconcile_roles(epoch, snap, muxes).await;
+            self.reconcile_roles(epoch, muxes).await;
         }
     }
 
@@ -1504,7 +1635,7 @@ where
         epoch: Epoch,
         snap: ValidatorSetSnapshot,
         scheme: BlsScheme,
-        fallback_seed: [u8; 32],
+        elector: WeightedVrf,
         muxes: Option<&Muxes<HS, HR>>,
     ) -> bool
     where
@@ -1533,12 +1664,11 @@ where
                 blocker: self.cfg.blocker.clone(),
                 snapshot: snap,
                 epoch,
-                fallback_seed,
+                elector,
                 epocher: self.cfg.epocher.clone(),
                 app: self.cfg.app.clone(),
                 timeouts: self.cfg.timeouts,
                 mailbox_size: self.cfg.mailbox_size,
-                register_scheme: self.cfg.register_scheme.clone(),
                 scheme,
                 partition_prefix: self.cfg.partition_prefix.clone(),
                 #[cfg(feature = "dpos-devnet-byzantine")]
@@ -1592,44 +1722,6 @@ where
         self.active_epochs.insert(epoch, handle);
         info!(?epoch, "epoch entered (signer)");
         true
-    }
-}
-
-/// Register the verify-only scheme for `epoch`, bound to that epoch's beacon
-/// oracle.
-///
-/// Returns nothing, and that is the honest signature: it used to report whether
-/// the epoch's key had been pinned, which was a fact the caller acted on. Nothing
-/// is decided here any more — the scheme reads `PK_epoch` live through the oracle
-/// — so the sole caller had nothing left to do with the answer and discarded it.
-///
-/// This call resolves NO key. It asks [`Beacon::oracle_for`] for the epoch's
-/// threshold face and hands it to the scheme, which reads `PK_epoch` live through
-/// it on every certificate. A key that is unresolvable at registration time
-/// therefore costs vote-only admission only until it lands — the scheme picks it
-/// up with no re-registration, and there is nothing to repair in the registry.
-/// Acquisition is the separate, off-path job of [`Beacon::ensure_key`], driven
-/// for below-frontier epochs by [`repair_keyless_schemes`].
-///
-/// A free fn over the pieces so registration is testable without standing up the
-/// full generic `Actor` (which needs a live marshal, a slasher and a spec-exec
-/// mailbox). The caller keeps the role bookkeeping and the already-a-Signer
-/// guard, which are `Actor` state.
-async fn register_soft_entered(
-    randomness: &dyn Beacon,
-    epoch: Epoch,
-    snap: &ValidatorSetSnapshot,
-    chain_id: u64,
-    register: &(dyn Fn(Epoch, BlsScheme) + Send + Sync),
-) {
-    let oracle = randomness.oracle_for(epoch.get());
-    debug!(
-        ?epoch,
-        beacon_active = oracle.is_some(),
-        "soft-enter: registering verify-only scheme"
-    );
-    if let Some(scheme) = soft_enter_verifier(snap, chain_id, oracle) {
-        register(epoch, scheme);
     }
 }
 
@@ -1817,6 +1909,93 @@ fn corroborate_frontier(
     }
 }
 
+/// The epochs ONE committee wake-up must reconcile, in order, and the set of
+/// owed reconciles it clears by doing so.
+///
+/// Two groups, and the order between them is the point. FIRST every epoch whose
+/// reconcile deferred on an unreadable committee
+/// ([`Actor::deferred_reconciles`]) — UNGATED, because such an epoch has not run
+/// its first reconcile at all: no bookkeeping, no `soft_enter`, no registered
+/// scheme, so the downgrade churn the live gate exists to prevent cannot be what
+/// this would cause. THEN the live epoch, gated exactly as
+/// [`Actor::reconcile_live`] gates it, because that one HAS run and re-running it
+/// over a frontier that has moved past it is the churn.
+///
+/// The deferred set is DRAINED rather than filtered: `reconcile_roles` re-enters
+/// the epoch itself if the committee is still unreadable, so the set after this
+/// call describes the reads that failed on THIS wake-up and not the ones that
+/// failed on an earlier one.
+///
+/// Extracted as a free fn over the two state pieces for the reason
+/// `pipeline_catchup_span` is: an `Actor` cannot be constructed in a unit test
+/// (`Config::marshal_mailbox` is `marshal::core::Mailbox`, whose constructor is
+/// `pub(crate)` upstream), so the ordering invariant would otherwise be
+/// unobservable outside the stand.
+fn committee_wake_targets(
+    deferred: &mut BTreeSet<Epoch>,
+    latest_live: Option<Epoch>,
+    live_is_current: bool,
+) -> Vec<Epoch> {
+    let mut targets: Vec<Epoch> = Vec::new();
+    targets.extend(std::mem::take(deferred));
+    if let Some(epoch) = latest_live {
+        if live_is_current && !targets.contains(&epoch) {
+            targets.push(epoch);
+        }
+    }
+    targets
+}
+
+/// Read `committee[e]` for every `e` in the inclusive span, stopping at the
+/// first epoch whose RECORD this node cannot read, and return the highest epoch
+/// registered (or `from − 1` when none is).
+///
+/// Reading IS registering: the module builds the epoch's verify-only scheme in
+/// the same map slot as the record, so there is no second step and no callback
+/// to thread. Stopping at the first unreadable RECORD is the on-chain fact the
+/// old bulk reader encoded too — the commit cursor is a contiguous prefix, so
+/// nothing above a gap is committed yet — and it covers the module's own two
+/// refusals for free: an epoch above the read window (`OutOfWindow`) and one
+/// whose commit height the anchor has not reached (`NotReadable`) both stop the
+/// walk instead of paying an EVM call per epoch above it.
+///
+/// The break is on the RECORD and not on `scheme()`, because `scheme()` returns
+/// one `None` for two different facts: "this node cannot read `committee[e]`",
+/// which is the contiguous-prefix statement the walk is entitled to stop on,
+/// and "the record is here but the verifier could not build a scheme from it
+/// yet" (the beacon slot is still empty — see [`crate::committee::EpochVerifier`]),
+/// which says nothing at all about the epochs above. The bulk reader this
+/// replaced kept walking on the second (`HEAD:outer.rs` span closure: a failed
+/// `soft_enter_verifier` skipped its epoch and the loop went on), and collapsing
+/// the two would have made a build failure look like the end of the committed
+/// prefix. Such an epoch does not advance the frontier either — its scheme is
+/// not registered — so the next span re-reads it, which is exactly what the
+/// module's own retry of the producer does underneath.
+fn register_span(committee: &dyn Committee, from: Epoch, to: Epoch) -> Epoch {
+    let mut registered = Epoch::new(from.get().saturating_sub(1));
+    for epoch in from.get()..=to.get() {
+        if let Err(e) = committee.committee(epoch) {
+            debug!(
+                epoch,
+                %e,
+                "catch-up span stops here — committee[E] is not readable at this node's anchor"
+            );
+            break;
+        }
+        if committee.scheme(epoch).is_none() {
+            warn!(
+                epoch,
+                "committee[E] is readable but its certificate scheme could not be built yet \
+                 (the beacon is younger than the store); the span walks past it and the \
+                 frontier stays below it until the producer's own retry fills the slot"
+            );
+            continue;
+        }
+        registered = Epoch::new(epoch);
+    }
+    registered
+}
+
 /// The catch-up span pipeline: PRE-REGISTER a bounded span of verify-only
 /// schemes ahead of the entered tip in ONE step, then hint the marshal toward
 /// the registered frontier's boundary so its gap-repair walks the whole span at
@@ -1829,8 +2008,10 @@ fn corroborate_frontier(
 /// - span = `[entered+1 .. min(highest_observed_epoch, entered+CATCHUP_SPAN_CAP)]`
 ///   (bounded; `CATCHUP_SPAN_CAP < SCHEME_RETENTION_EPOCHS` so the provider never
 ///   evicts the span's low end before the walk reaches it);
-/// - `soft_enter_span(from, to)` registers the contiguous on-chain prefix and
-///   returns the highest epoch actually registered;
+/// - the span is registered by READING `committee[e]` for each `e` in it — the
+///   module builds the epoch's verify-only scheme in the same slot as the
+///   record — and stops at the first epoch it cannot read, so what is registered
+///   is the contiguous prefix the on-chain commit cursor allows;
 /// - `*highest_entered_epoch` advances to that frontier so a repeat backup vote
 ///   does not re-register the same span and the hint stays monotone;
 /// - `hint(boundary)` targets `epocher.last(registered_to)`.
@@ -1839,7 +2020,7 @@ async fn pipeline_catchup_span(
     highest_observed_epoch: Epoch,
     their_epoch: Epoch,
     epocher: &OriginEpocher,
-    soft_enter_span: &(dyn Fn(Epoch, Epoch) -> BoxFuture<'static, Epoch> + Send + Sync),
+    committee: &dyn Committee,
     hint: impl FnOnce(Height) -> BoxFuture<'static, ()>,
     no_progress: &mut Option<(Epoch, Epoch)>,
 ) {
@@ -1861,7 +2042,7 @@ async fn pipeline_catchup_span(
     let span_from = Epoch::new(entered + 1);
     let span_top = highest_observed_epoch.min(Epoch::new(entered + CATCHUP_SPAN_CAP));
     let registered_to = if span_top >= span_from {
-        soft_enter_span(span_from, span_top).await
+        register_span(committee, span_from, span_top)
     } else {
         *highest_entered_epoch
     };
@@ -2084,11 +2265,29 @@ mod tests {
     /// [`Beacon::oracle_for`] attaches, and a fixture that hardcoded `None`
     /// would build a scheme permanently pinned to vote-only admission — which is
     /// exactly the regression the sweep tests were green on.
-    fn register_verifier(provider: &EpochSchemeProvider, epoch: Epoch, r: &dyn Beacon) {
+    fn register_verifier(committee: &dyn Committee, epoch: Epoch, r: &dyn Beacon) {
         let (snap, _) = repair_fixture(epoch);
-        let scheme =
-            soft_enter_verifier(&snap, 1, r.oracle_for(epoch.get())).expect("valid committee");
-        provider.register(epoch, scheme);
+        let bimap = epoch_committee_from_snapshot(&snap)
+            .expect("valid committee")
+            .bimap;
+        let scheme = fluentbase_bls::scheme::build_verifier(
+            &fluentbase_bls::fluent_namespace(1),
+            bimap,
+            epoch.get(),
+            r.oracle_for(epoch.get()),
+        );
+        assert!(
+            committee.upgrade_scheme(epoch.get(), scheme),
+            "the fixture module accepts every upgrade"
+        );
+    }
+
+    /// A committee module holding only what the sweep reads — the scheme map.
+    /// It stands in for the production store the same way the sweep sees it: the
+    /// work list IS `verifier_epochs()`, and an epoch is on it because something
+    /// read its committee.
+    fn sweep_committee() -> Arc<crate::committee::testing::SchemeCommittee> {
+        crate::committee::testing::SchemeCommittee::new(|_| None)
     }
 
     /// A finalization certificate over `epoch`'s committee whose multisig half is
@@ -2161,8 +2360,9 @@ mod tests {
         let epoch = Epoch::new(DETERMINISTIC_BOOTSTRAP_EPOCH + 3);
         let store = BeaconKeys::new();
         let r = randomness_over(store.clone(), None, None);
-        let provider = EpochSchemeProvider::new();
-        register_verifier(&provider, epoch, r.as_ref());
+        let module = sweep_committee();
+        let provider = EpochSchemeProvider::new(module.clone());
+        register_verifier(module.as_ref(), epoch, r.as_ref());
         assert!(
             provider.verifier_epochs().contains(&epoch),
             "a soft-entered epoch is on the sweep's work list"
@@ -2213,8 +2413,9 @@ mod tests {
         let epoch = Epoch::new(DETERMINISTIC_BOOTSTRAP_EPOCH + 3);
         let store = BeaconKeys::new();
         let r = randomness_over(store.clone(), None, None);
-        let provider = EpochSchemeProvider::new();
-        register_verifier(&provider, epoch, r.as_ref());
+        let module = sweep_committee();
+        let provider = EpochSchemeProvider::new(module.clone());
+        register_verifier(module.as_ref(), epoch, r.as_ref());
 
         let scheme = provider.scoped(epoch).expect("registered");
         assert!(
@@ -2274,7 +2475,8 @@ mod tests {
     #[tokio::test]
     async fn a_sweep_over_held_keys_spends_no_network_and_hints_once() {
         let epoch = Epoch::new(5);
-        let provider = EpochSchemeProvider::new();
+        let module = sweep_committee();
+        let provider = EpochSchemeProvider::new(module.clone());
         // "Nothing to repair" now means the KEY STORE holds the epoch's key, not
         // that the scheme carries a pin.
         let store = BeaconKeys::new();
@@ -2287,7 +2489,7 @@ mod tests {
             Arc::new(|_| Some(true)),
         );
         let r = randomness_over(store, Some(exploding), None);
-        register_verifier(&provider, epoch, r.as_ref());
+        register_verifier(module.as_ref(), epoch, r.as_ref());
         let mut hinted = BTreeSet::new();
 
         assert_eq!(
@@ -2327,12 +2529,13 @@ mod tests {
     #[tokio::test]
     async fn the_sweep_repairs_every_unpinned_epoch_not_just_the_newest() {
         let (older, newer) = (Epoch::new(5), Epoch::new(6));
-        let provider = EpochSchemeProvider::new();
+        let module = sweep_committee();
+        let provider = EpochSchemeProvider::new(module.clone());
         let store = BeaconKeys::new();
         store.set_pk(older.get(), some_group_key(), KeySource::Agreed);
         let r = randomness_over(store.clone(), None, None);
-        register_verifier(&provider, older, r.as_ref());
-        register_verifier(&provider, newer, r.as_ref());
+        register_verifier(module.as_ref(), older, r.as_ref());
+        register_verifier(module.as_ref(), newer, r.as_ref());
 
         let upgraded = repair_keyless_schemes(
             &provider,
@@ -2357,11 +2560,12 @@ mod tests {
     async fn the_sweep_never_pins_below_the_bootstrap_epoch() {
         use commonware_cryptography::certificate::Provider as _;
         let pre_beacon = Epoch::new(DETERMINISTIC_BOOTSTRAP_EPOCH - 1);
-        let provider = EpochSchemeProvider::new();
+        let module = sweep_committee();
+        let provider = EpochSchemeProvider::new(module.clone());
         let store = BeaconKeys::new();
         store.set_pk(pre_beacon.get(), some_group_key(), KeySource::Agreed);
         let r = randomness_over(store.clone(), None, None);
-        register_verifier(&provider, pre_beacon, r.as_ref());
+        register_verifier(module.as_ref(), pre_beacon, r.as_ref());
         assert!(
             !provider
                 .scoped(pre_beacon)
@@ -2405,8 +2609,9 @@ mod tests {
             None,
         )
         .expect("keypair is a committee member");
-        let provider = EpochSchemeProvider::new();
-        provider.register(epoch, signer);
+        let module = sweep_committee();
+        let provider = EpochSchemeProvider::new(module.clone());
+        assert!(module.upgrade_scheme(epoch.get(), signer));
 
         let store = BeaconKeys::new();
         store.set_pk(epoch.get(), some_group_key(), KeySource::Agreed);
@@ -2433,11 +2638,12 @@ mod tests {
     #[tokio::test]
     async fn a_span_registered_epoch_is_repairable() {
         let epoch = Epoch::new(5);
-        let provider = EpochSchemeProvider::new();
+        let module = sweep_committee();
+        let provider = EpochSchemeProvider::new(module.clone());
         let store = BeaconKeys::new();
         store.set_pk(epoch.get(), some_group_key(), KeySource::Agreed);
         let r = randomness_over(store.clone(), None, None);
-        register_verifier(&provider, epoch, r.as_ref());
+        register_verifier(module.as_ref(), epoch, r.as_ref());
 
         let upgraded = repair_keyless_schemes(
             &provider,
@@ -2461,12 +2667,13 @@ mod tests {
     #[tokio::test]
     async fn the_sweep_reaches_below_an_entered_epoch_with_no_corroborated_frontier() {
         let epoch = Epoch::new(5);
-        let provider = EpochSchemeProvider::new();
+        let module = sweep_committee();
+        let provider = EpochSchemeProvider::new(module.clone());
         let store = BeaconKeys::new();
         store.set_pk(epoch.get(), some_group_key(), KeySource::Agreed);
 
         let r = randomness_over(store.clone(), None, None);
-        register_verifier(&provider, epoch, r.as_ref());
+        register_verifier(module.as_ref(), epoch, r.as_ref());
         let never_corroborated = Epoch::new(0);
         assert!(
             repair_keyless_schemes(
@@ -2507,12 +2714,13 @@ mod tests {
     #[tokio::test]
     async fn a_repaired_epoch_re_drives_its_finalization_hint_exactly_once() {
         let epoch = Epoch::new(5);
-        let provider = EpochSchemeProvider::new();
+        let module = sweep_committee();
+        let provider = EpochSchemeProvider::new(module.clone());
         let store = BeaconKeys::new();
         store.set_pk(epoch.get(), some_group_key(), KeySource::Agreed);
 
         let r = randomness_over(store.clone(), None, None);
-        register_verifier(&provider, epoch, r.as_ref());
+        register_verifier(module.as_ref(), epoch, r.as_ref());
         let mut hinted = BTreeSet::new();
         let sweep = async |hinted: &mut BTreeSet<Epoch>| {
             repair_keyless_schemes(&provider, r.as_ref(), hinted, Epoch::new(7), Epoch::new(0))
@@ -2538,13 +2746,14 @@ mod tests {
     #[tokio::test]
     async fn the_sweep_refuses_a_locally_derived_store_key() {
         let (local, carried) = (Epoch::new(5), Epoch::new(6));
-        let provider = EpochSchemeProvider::new();
+        let module = sweep_committee();
+        let provider = EpochSchemeProvider::new(module.clone());
         let store = BeaconKeys::new();
         store.set_pk(local.get(), some_group_key(), KeySource::LocalDkg);
         store.set_pk(carried.get(), some_other_group_key(), KeySource::Carried);
         let r = randomness_over(store.clone(), None, None);
-        register_verifier(&provider, local, r.as_ref());
-        register_verifier(&provider, carried, r.as_ref());
+        register_verifier(module.as_ref(), local, r.as_ref());
+        register_verifier(module.as_ref(), carried, r.as_ref());
 
         let upgraded = repair_keyless_schemes(
             &provider,
@@ -2579,9 +2788,10 @@ mod tests {
     async fn a_parked_sweep_does_not_hold_its_driver() {
         const OTHER_ARM_EVENTS: usize = 8;
         let epoch = Epoch::new(5);
-        let provider = EpochSchemeProvider::new();
+        let module = sweep_committee();
+        let provider = EpochSchemeProvider::new(module.clone());
         register_verifier(
-            &provider,
+            module.as_ref(),
             epoch,
             randomness_over(BeaconKeys::new(), None, None).as_ref(),
         );
@@ -2954,15 +3164,82 @@ mod tests {
         );
     }
 
-    /// Records every `(from, to)` span the catch-up pipeline soft-enters and
-    /// returns `to` (the whole span registered).
-    fn recording_span(
-        log: std::sync::Arc<std::sync::Mutex<Vec<(u64, u64)>>>,
-    ) -> Arc<dyn Fn(Epoch, Epoch) -> BoxFuture<'static, Epoch> + Send + Sync> {
-        Arc::new(move |from: Epoch, to: Epoch| {
-            log.lock().unwrap().push((from.get(), to.get()));
-            Box::pin(async move { to }) as BoxFuture<'static, Epoch>
+    /// One epoch's RECORD, as the module would have installed it — the fixture
+    /// committee with the weights the window invariant guarantees.
+    fn record_fixture(epoch: u64) -> Option<crate::committee::CommitteeRecord> {
+        use commonware_utils::TryFromIterator as _;
+        let (snap, _) = repair_fixture(Epoch::new(epoch));
+        let bls = epoch_committee_from_snapshot(&snap).ok()?;
+        let members: Vec<crate::committee::Member> = snap
+            .validators
+            .iter()
+            .map(|v| crate::committee::Member {
+                address: v.address,
+                peer: v.keys.peer_pubkey.clone(),
+                bls: v.keys.bls_pubkey,
+            })
+            .collect();
+        let participants =
+            commonware_utils::ordered::Set::try_from_iter(members.iter().map(|m| m.peer.clone()))
+                .ok()?;
+        Some(crate::committee::CommitteeRecord {
+            epoch,
+            weights: vec![1u128; members.len()],
+            members,
+            changed: false,
+            snapshot: (snap.block_number, snap.block_hash),
+            participants,
+            bls,
         })
+    }
+
+    /// A committee module that answers EVERY epoch and logs the ones the
+    /// catch-up pipeline asked for, in order.
+    ///
+    /// The span is no longer a callback taking `(from, to)` — reading
+    /// `committee[e]` IS the registration — so what a test can observe is the
+    /// epochs the walk actually read. That is strictly more than the old
+    /// `(from, to)` pair: a pipeline that hinted the right frontier without
+    /// registering the epochs under it would have passed the pair assertion.
+    ///
+    /// The log hangs off the RECORD half, because that is the read the walk
+    /// stops on (`register_span`): a double that logged only the scheme half
+    /// would count the epochs that produced a scheme rather than the epochs the
+    /// walk asked about, and those are the same number only while every record
+    /// yields one.
+    fn recording_span(
+        log: std::sync::Arc<std::sync::Mutex<Vec<u64>>>,
+    ) -> Arc<crate::committee::testing::SchemeCommittee> {
+        crate::committee::testing::SchemeCommittee::with_records(
+            move |epoch| {
+                let (snap, _) = repair_fixture(Epoch::new(epoch));
+                Some(fluentbase_bls::scheme::build_verifier(
+                    &fluentbase_bls::fluent_namespace(1),
+                    epoch_committee_from_snapshot(&snap).ok()?.bimap,
+                    epoch,
+                    None,
+                ))
+            },
+            move |epoch| {
+                log.lock().unwrap().push(epoch);
+                record_fixture(epoch)
+            },
+        )
+    }
+
+    /// The same, but nothing is readable — the unresolvable-committee span. Each
+    /// attempt reads exactly the first epoch of the span and stops there, so the
+    /// log LENGTH counts attempts.
+    fn unreadable_span(
+        log: std::sync::Arc<std::sync::Mutex<Vec<u64>>>,
+    ) -> Arc<crate::committee::testing::SchemeCommittee> {
+        crate::committee::testing::SchemeCommittee::with_records(
+            |_| None,
+            move |epoch| {
+                log.lock().unwrap().push(epoch);
+                None
+            },
+        )
     }
 
     // A DEEP gap (entered 0, observed frontier 3) must be pipelined in ONE hint:
@@ -2986,7 +3263,7 @@ mod tests {
         };
 
         // Deep gap: entered 0, observed frontier 3.
-        let spans = std::sync::Arc::new(StdMutex::new(Vec::<(u64, u64)>::new()));
+        let spans = std::sync::Arc::new(StdMutex::new(Vec::<u64>::new()));
         let hints = std::sync::Arc::new(StdMutex::new(Vec::<Height>::new()));
         let soft = recording_span(spans.clone());
         let mut entered = Epoch::new(0);
@@ -3002,8 +3279,9 @@ mod tests {
         ));
         assert_eq!(
             *spans.lock().unwrap(),
-            vec![(1, 3)],
-            "deep gap pipelined in ONE span call, not three serialized hops"
+            vec![1, 2, 3],
+            "deep gap pipelined in ONE walk over the whole span, not three \
+             serialized one-boundary hops"
         );
         assert_eq!(
             *hints.lock().unwrap(),
@@ -3028,14 +3306,14 @@ mod tests {
         ));
         assert_eq!(
             spans.lock().unwrap().len(),
-            1,
-            "a repeat vote at the entered frontier must NOT re-register the span"
+            3,
+            "a repeat vote at the entered frontier must NOT re-walk the span"
         );
         assert_eq!(hints.lock().unwrap().len(), 1, "no second hint");
 
         // CAP variant: a 20-deep observed frontier caps the span at
         // (1, CATCHUP_SPAN_CAP) and hints last(CAP).
-        let spans = std::sync::Arc::new(StdMutex::new(Vec::<(u64, u64)>::new()));
+        let spans = std::sync::Arc::new(StdMutex::new(Vec::<u64>::new()));
         let hints = std::sync::Arc::new(StdMutex::new(Vec::<Height>::new()));
         let soft = recording_span(spans.clone());
         let mut entered = Epoch::new(0);
@@ -3050,7 +3328,7 @@ mod tests {
         ));
         assert_eq!(
             *spans.lock().unwrap(),
-            vec![(1, CATCHUP_SPAN_CAP)],
+            (1..=CATCHUP_SPAN_CAP).collect::<Vec<_>>(),
             "span capped at CATCHUP_SPAN_CAP, not the full 20-deep frontier"
         );
         assert_eq!(
@@ -3069,15 +3347,11 @@ mod tests {
         use std::sync::Mutex as StdMutex;
 
         let epocher = OriginEpocher::new(0, 32u64.try_into().unwrap());
-        let calls = std::sync::Arc::new(StdMutex::new(Vec::<(u64, u64)>::new()));
-        // Span callback that registers nothing: returns `from-1` (== entered).
-        let no_progress_span: Arc<dyn Fn(Epoch, Epoch) -> BoxFuture<'static, Epoch> + Send + Sync> = {
-            let calls = calls.clone();
-            Arc::new(move |from: Epoch, to: Epoch| {
-                calls.lock().unwrap().push((from.get(), to.get()));
-                Box::pin(async move { Epoch::new(from.get() - 1) }) as BoxFuture<'static, Epoch>
-            })
-        };
+        let calls = std::sync::Arc::new(StdMutex::new(Vec::<u64>::new()));
+        // A module that registers nothing: the walk stops at the first epoch, so
+        // the walk's result is `from - 1` (== entered) and the log grows by
+        // exactly one entry per ATTEMPT.
+        let no_progress_span = unreadable_span(calls.clone());
         let noop_hint = |_b: Height| Box::pin(async move {}) as BoxFuture<'static, ()>;
 
         let mut entered = Epoch::new(0);
@@ -3310,6 +3584,92 @@ mod tests {
             next_reconcile_wake(&mut rx).await,
             Err(tokio::sync::broadcast::error::RecvError::Closed)
         ));
+    }
+
+    /// `register_span` stops on an unreadable RECORD and NOT on an unbuildable
+    /// SCHEME, because `Committee::scheme` returns one `None` for both and only
+    /// the first says anything about the epochs above.
+    ///
+    /// Reds if the walk goes back to breaking on `scheme()`: an epoch whose
+    /// record is readable but whose verifier could not build yet (the beacon is
+    /// younger than the store) would then end the walk, and the contiguous
+    /// committed prefix above it would go unregistered until some later edge
+    /// happened to re-run the span.
+    #[test]
+    fn a_span_walks_past_an_epoch_whose_scheme_cannot_be_built_yet() {
+        let read = std::sync::Arc::new(std::sync::Mutex::new(Vec::<u64>::new()));
+        let committee = {
+            let read = read.clone();
+            crate::committee::testing::SchemeCommittee::with_records(
+                // Every record is readable; NO scheme can be built from any of
+                // them — the `EpochVerifier`'s beacon slot is still empty.
+                |_| None,
+                move |epoch| {
+                    read.lock().unwrap().push(epoch);
+                    record_fixture(epoch)
+                },
+            )
+        };
+
+        let registered = register_span(committee.as_ref(), Epoch::new(1), Epoch::new(3));
+        assert_eq!(
+            *read.lock().unwrap(),
+            vec![1, 2, 3],
+            "an unbuildable scheme must not end the walk — the committed prefix above it is \
+             still committed"
+        );
+        assert_eq!(
+            registered,
+            Epoch::new(0),
+            "and none of them is REGISTERED: the frontier stays below an epoch whose scheme \
+             the map does not hold, so the next span re-reads it"
+        );
+    }
+
+    /// The committee wake-up owes TWO groups, and the deferred one is the group
+    /// that has no other retry.
+    ///
+    /// Reds if the drain is dropped: an epoch whose reconcile deferred on an
+    /// unreadable committee is BELOW a corroborated frontier in the case that
+    /// matters (R-003 raises `highest_observed_epoch` from the backup channel
+    /// while the boundary for a lower epoch is still being read), so the live
+    /// gate refuses it and `reconcile_live` — the wake-up's only consumer before
+    /// this — reconciles nothing at all. Its scheme is then never registered and
+    /// the marshal never verifies that epoch's certificates.
+    #[test]
+    fn a_committee_wake_up_reconciles_every_deferred_epoch_past_the_live_gate() {
+        // Below the frontier: the live gate is FALSE, which is exactly the state
+        // in which the old wake-up did nothing.
+        let mut deferred = BTreeSet::from([Epoch::new(7), Epoch::new(9)]);
+        assert_eq!(
+            committee_wake_targets(&mut deferred, Some(Epoch::new(7)), false),
+            vec![Epoch::new(7), Epoch::new(9)],
+            "a deferred epoch is reconciled on the wake-up whatever the live gate says"
+        );
+        assert!(
+            deferred.is_empty(),
+            "the set is drained, so what it holds afterwards is what THIS wake-up failed to \
+             read — `reconcile_roles` re-enters the epoch itself"
+        );
+
+        // At the frontier the live epoch is reconciled too — and exactly once,
+        // even when it is also the epoch that deferred.
+        let mut deferred = BTreeSet::from([Epoch::new(9)]);
+        assert_eq!(
+            committee_wake_targets(&mut deferred, Some(Epoch::new(9)), true),
+            vec![Epoch::new(9)],
+            "the live epoch must not be reconciled twice by one wake-up"
+        );
+
+        // Nothing deferred and no live epoch yet (before the first boundary):
+        // the wake-up is a no-op, as it was.
+        let mut deferred = BTreeSet::new();
+        assert!(committee_wake_targets(&mut deferred, None, true).is_empty());
+        assert_eq!(
+            committee_wake_targets(&mut deferred, Some(Epoch::new(4)), false),
+            Vec::<Epoch>::new(),
+            "a live epoch the frontier has passed is still gated out"
+        );
     }
 
     // An overflow is returned too — the run that was dropped may have held either

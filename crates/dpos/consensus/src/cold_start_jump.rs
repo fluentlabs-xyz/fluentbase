@@ -1260,15 +1260,6 @@ mod tests {
             }
             Ok(self.verifier.clone())
         }
-        // The cold-start jump never reads at the finalized tip — it always has a
-        // specific `at_hash`; satisfy the trait with a canned verifier.
-        fn scheme_at_finalized_tip(
-            &self,
-            _epoch: u64,
-            _oracle: Option<Arc<dyn SeedOracle>>,
-        ) -> eyre::Result<Option<BlsScheme>> {
-            Ok(Some(self.verifier.clone()))
-        }
     }
 
     #[derive(Clone, Default)]

@@ -730,43 +730,7 @@ where
     // `ctx`/`cert_feed`. `None` when no upstream URLs are configured.
     let inlet_setup = cert_inlet
         .as_ref()
-        .map(|inlet| {
-            let chain_id = node.chain_spec().chain_id();
-            let staking_config =
-                fluentbase_staking_reader::reader::StakingReaderConfig::from_json_path(
-                    &cfg.staking_config_path,
-                )
-                .wrap_err_with(|| {
-                    format!(
-                        "cert-inlet: failed loading staking config from {}",
-                        cfg.staking_config_path.display()
-                    )
-                })?;
-            // Committees are epoch-frozen and content-invariant across any
-            // in-epoch executed hash, so the inlet reads committee[E] at the
-            // node's CURRENT FINALIZED tip — a guaranteed-committed block where
-            // committee[E] is committed (ahead-committed at epoch-(E-1)-start),
-            // with a bounded retry while the executor (which the inlet feeds)
-            // drains the queue that far.
-            let finalized_hash: std::sync::Arc<
-                dyn Fn() -> Option<alloy_primitives::B256> + Send + Sync,
-            > = {
-                let p = node.provider.clone();
-                std::sync::Arc::new(move || {
-                    let n = p.finalized_block_number().ok()??;
-                    p.block_hash(n).ok().flatten()
-                })
-            };
-            let committees = crate::cert_inlet::committee_source(
-                node.provider.clone(),
-                node.evm_config.clone(),
-                staking_config,
-                chain_id,
-                finalized_hash,
-            );
-            eyre::Ok((committees, ctx.clone(), inlet.urls.clone()))
-        })
-        .transpose()?;
+        .map(|inlet| (ctx.clone(), inlet.urls.clone()));
 
     // Always-on beacon plane (one FluentP2P + 5 persistent Muxers + persistent
     // DkgActor + shared store), built ONCE — the engine CLONES the shared plane.
@@ -812,11 +776,11 @@ where
     // tees anything into a committee-read cursor: this node reads every committee
     // through the module, at its own ordering-finalized anchor, and `live_height`
     // is write-only on this path until 4.2 removes it.
-    let inlet_handle = inlet_setup.map(|(committees, inlet_ctx, urls)| {
+    let inlet_handle = inlet_setup.map(|(inlet_ctx, urls)| {
         crate::cert_inlet::spawn_cert_inlet(
             inlet_ctx,
             handle.cert_mailbox.clone(),
-            committees,
+            plane.committee.clone(),
             urls,
             fluentbase_consensus::cert_inlet::LiveFrontierTee {
                 live_height: plane.live_height.clone(),
@@ -1437,6 +1401,13 @@ where
     // The four closures and the `PlaneCommitteeReads` cursor
     // (`max(EL-finalized, live)` over a HEADER probe) are gone; what the beacon,
     // the evidence gate and the slasher see is one map with one retention.
+    //
+    // The verify-only scheme of every epoch is built by the store too, from the
+    // record it just installed — the ONE producer, where there used to be four.
+    // `beacon_slot` is filled the moment `beacon::build` returns below; it has to
+    // be a slot rather than a value because the beacon is constructed FROM this
+    // store (it takes the facade), so a value is impossible by build order.
+    let beacon_slot: fluentbase_consensus::BeaconSlot = Arc::new(std::sync::OnceLock::new());
     let committee: Arc<dyn fluentbase_consensus::Committee> =
         Arc::new(fluentbase_consensus::CommitteeStore::new(
             RethStakingStateReader::new(
@@ -1449,6 +1420,7 @@ where
                 node.provider.clone(),
             )),
             geometry_rx.clone(),
+            fluentbase_consensus::epoch_verifier(chain_id, beacon_slot.clone()),
         ));
     // The beacon still speaks `CommitteeReads`; the facade is that surface
     // answered from the module, holding no cursor of its own.
@@ -1820,6 +1792,12 @@ where
         },
     )
     .await?;
+
+    // The committee module's scheme producer can build now: every epoch it reads
+    // from here on gets its verify-only scheme bound to THIS beacon's oracle, and
+    // the few epochs it may have read before this line pick theirs up on the next
+    // `Committee::scheme`.
+    let _ = beacon_slot.set(Arc::downgrade(&beacon));
 
     // The `dkgQual[e]` bit is now set DETERMINISTICALLY by the contract at
     // `commitEpochCommittee` (= committee[e] != committee[e−1]); there is no

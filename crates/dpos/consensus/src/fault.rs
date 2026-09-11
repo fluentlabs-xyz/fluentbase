@@ -15,7 +15,7 @@
 //! Classification happens exactly where the concrete error type exists (the
 //! node-side deriver/importer/staking-reader — see [`EngineError`],
 //! `crate::application::BeaconEngineLike`, `fluentbase-node`'s
-//! `classify_derive_fault`, `cert_inlet::committee_read_fault`), and is carried
+//! `classify_derive_fault`), and is carried
 //! as a typed verdict, never as a display string re-parsed in consensus code.
 
 use crate::sync_metrics::SyncReason;

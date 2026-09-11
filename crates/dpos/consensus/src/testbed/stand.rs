@@ -34,7 +34,6 @@ use crate::{
     order_block::{anchor_order_block, OrderBlock},
     outer::{MarshalMailbox, OuterBuilder},
     plane_upstream::{new_bridge, PlaneUpstreamHandle},
-    scheme::epoch_committee_from_snapshot,
     slasher::TombstoneSet,
     sync_metrics::{PlaneClock, SafetyHalt, SyncMetrics},
     timeouts::ConsensusTimeouts,
@@ -53,9 +52,7 @@ use commonware_runtime::{
     deterministic, Clock as _, Metrics as _, Quota, Runner as _, Spawner as _,
 };
 use commonware_utils::{ordered::Set, NZUsize};
-use fluentbase_bls::{
-    fluent_namespace, keys::ValidatorBlsKeypair, scheme::build_verifier, BlsPubkey, PeerPubkey,
-};
+use fluentbase_bls::{fluent_namespace, keys::ValidatorBlsKeypair, BlsPubkey, PeerPubkey};
 use fluentbase_p2p::{
     constants::{
         BEACON_CHANNEL, BEACON_RESOLVER_CHANNEL, BROADCAST_CHANNEL, CERT_CHANNEL,
@@ -67,7 +64,7 @@ use fluentbase_p2p::{
 use fluentbase_staking_reader::{
     epoch_transition::{PeerSetSink, TransitionOutcome, PENDING_RETRY_BACKOFF},
     reader::ValidatorSetSnapshot,
-    EpochTransition, StakingStateRead as _,
+    EpochTransition,
 };
 use fluentbase_types::staking_protocol::epoch_at_block;
 use rand_08::{rngs::StdRng, SeedableRng as _};
@@ -1597,35 +1594,6 @@ async fn build_node(
         outcome: cold_outcome.map_err(|e| format!("{e:?}")),
     });
 
-    // The catch-up committee reader, through the state machine's own
-    // side-effect-free span walk over the node's finalized tip — the shape of
-    // `consensus/src/dpos.rs:2431-2449`.
-    let soft_enter = {
-        let et = et.clone();
-        let chain = chain.clone();
-        Arc::new(move |from: Epoch, to: Epoch| {
-            let et = et.clone();
-            let chain = chain.clone();
-            Box::pin(async move {
-                // The EL-finalized height, as production passes it
-                // (`consensus/src/dpos.rs:2435` reads `get_finalized_num_hash`);
-                // `soft_enter_span` subtracts `result_lag` again on top.
-                let anchor = chain.tip().saturating_sub(crate::order_block::K);
-                let collected = Mutex::new(Vec::new());
-                let record = |epoch: u64, snap: ValidatorSetSnapshot| {
-                    collected
-                        .lock()
-                        .expect("span collector")
-                        .push((epoch, snap));
-                };
-                et.lock()
-                    .await
-                    .soft_enter_span(from.get(), to.get(), anchor, &record)
-                    .await;
-                collected.into_inner().expect("span collector")
-            }) as futures::future::BoxFuture<'static, _>
-        })
-    };
     let engine_partition_prefix = if cfg.shared_engine_partitions {
         String::new()
     } else {
@@ -1667,38 +1635,25 @@ async fn build_node(
         .await,
         upstream_counters.clone(),
     );
-    // The node's EL-FINALIZED height and the hash there. NOT `chain.tip()`:
-    // that is the ORDERING-finalized cursor (`FakeChain::advance_finalized` is
-    // called with `order.height`, `executor.rs:2971` → `:3498`), while what
-    // production's `finalized_block_number()` answers is reth's engine-API
-    // `finalized` tag, which the executor sets to the result-final height
-    // `ordering_finalized − K` (`executor.rs:3261-3272`, `update_finalized`
-    // `:248-252`). The two are K blocks apart and the stand models both, because
-    // production still reads at both: the committee module anchors on the
-    // ORDERING cursor (`StandAnchor` below, `chain.tip()`), while the sites that
-    // have not moved onto the module read the EL tag.
-    let el_finalized = {
-        let chain = chain.clone();
-        move || chain.tip().saturating_sub(crate::order_block::K)
-    };
-    // ONE consumer left: the jump's committee source (`JumpCommittees` below),
-    // the stand's twin of production's `RethCommitteeSource`, which resolves its
-    // read hash from `finalized_block_number()` (`node/src/dpos.rs`, the inlet's
-    // `finalized_hash` closure). The `dkgQual` and committee reads that used to
-    // take this cursor — and the teed one beside it — go through the committee
-    // module now.
-    let finalized_hash = {
-        let chain = chain.clone();
-        let fin = el_finalized.clone();
-        Arc::new(move || chain.hash_at(fin()))
-    };
+    // The stand no longer models reth's EL-`finalized` tag at all, and that is a
+    // consequence rather than a simplification: every committee read in the
+    // process now anchors on the ORDERING-finalized cursor (`StandAnchor` below,
+    // `chain.tip()`), and the one read that does not — the jump's — takes its
+    // hash as an explicit argument. The `el_finalized`/`finalized_hash` pair that
+    // stood here had exactly one consumer left after the previous step and none
+    // after this one.
+    //
+    // What is NOT modelled as a result: production's `RethAnchor` floors its
+    // height with reth's persisted tag, so a node whose consensus cursor is
+    // unseeded still reads at the height it durably finalized. The stand's anchor
+    // is the cursor alone. Pinned by `committee::tests` instead (§7).
     // The executor's frozen-tip frontier probe, wired as `dpos.rs::launch`
     // wires it for a plane validator (`get_latest` → height).
     // The LIVE upstream frontier — production's `LiveFrontierTee::live_height`
-    // (`cert_inlet.rs:343-347`), advanced to the height of an upstream
+    // (`cert_inlet.rs:277`), advanced to the height of an upstream
     // finalization this node has seen. One difference, stated because it is the
     // stand's and not production's: production advances it ONLY past the cert
-    // inlet's BLS-verify gate (`cert_inlet.rs:896-898`) so a lying upstream
+    // inlet's BLS-verify gate (`cert_inlet.rs:737-739`) so a lying upstream
     // cannot steer the committee read, while the stand has no inlet and tees it
     // where the executor's frontier probe already asks — before any verify.
     // Э3.3 added lying-upstream roles WITHOUT moving this: `live_height` is
@@ -1762,7 +1717,6 @@ async fn build_node(
             let up = upstream.clone();
             let chain = chain.clone();
             let staking = staking.clone();
-            let finalized_hash = finalized_hash.clone();
             let jump_reads = jump_committee_reads.clone();
             let calls_log = jump_calls.clone();
             let ctx_jump = ctx_i.clone();
@@ -1773,7 +1727,6 @@ async fn build_node(
                 let committees = JumpCommittees::new(
                     staking.clone(),
                     fluent_namespace(CHAIN_ID),
-                    finalized_hash.clone(),
                     jump_reads.clone(),
                 );
                 let el = JumpElSync::new(chain.clone(), ctx_jump.clone(), DPOS_ACTIVATION_BLOCK);
@@ -1886,6 +1839,11 @@ async fn build_node(
     // resolves evidence through it, and the executor wakes it on every
     // `advance_finalized`. The `max(EL-finalized, live)` cursor the stand used
     // to keep beside it is gone with the production one it modelled.
+    // The module's ONE scheme producer, wired as production wires it: the beacon
+    // slot is filled the moment this node's beacon exists (below), and until then
+    // the store answers "no scheme yet" and retries — the same build order the
+    // node has, because the beacon is constructed from this store's facade.
+    let beacon_slot: crate::committee::BeaconSlot = Arc::new(OnceLock::new());
     let committee: Arc<dyn crate::committee::Committee> =
         Arc::new(crate::committee::CommitteeStore::new(
             staking.clone(),
@@ -1894,6 +1852,7 @@ async fn build_node(
             }),
             tokio::sync::watch::Sender::new(Some((DPOS_ACTIVATION_BLOCK, cfg.epoch_len)))
                 .subscribe(),
+            crate::committee::epoch_verifier(CHAIN_ID, beacon_slot.clone()),
         ));
 
     let (randomness, artifacts, agreement_intake) = match (cfg.beacon, role) {
@@ -2007,6 +1966,9 @@ async fn build_node(
         }
     };
     let dkg_height_tx = matches!(cfg.beacon, Beacon::Live).then_some(dkg_height_tx);
+    // The committee module's verifier can build now — every epoch it reads from
+    // here on gets its scheme bound to THIS node's beacon oracle.
+    crate::committee::fill_beacon_slot(&beacon_slot, &randomness);
 
     let outer = OuterBuilder {
         me: me.clone(),
@@ -2019,7 +1981,6 @@ async fn build_node(
         randomness,
         spawn_unblocked: Arc::new(Notify::new()),
         re_jump: Some(re_jump),
-        soft_enter_committees: soft_enter,
         epoch_metrics,
         executor_metrics,
         sync_metrics,
@@ -2073,40 +2034,49 @@ async fn build_node(
         .set(outer.marshal_mailbox())
         .unwrap_or_else(|_| panic!("marshal slot filled twice"));
 
-    // Cold-start register: the verify-only scheme for the epoch the transition
-    // entered, so the marshal can check certificates before the first boundary
-    // (`consensus/src/dpos.rs:2713-2724` registers `initial_epoch`, not 0).
-    // FAIL-LOUD, as production is: an unfrozen geometry, an unreadable committee
-    // or an empty one at the anchor all `bail!` there
-    // (`consensus/src/dpos.rs:1992-2011`, `:2716-2724`). Degrading to "register
-    // epoch 0, or nothing" would hide exactly the class of failure the
-    // cold-start tests are about.
+    // Cold start: the epoch the transition entered is READ through the committee
+    // module, which is also what registers its verify-only scheme so the marshal
+    // can check certificates before the first boundary. Production does exactly
+    // this (`consensus/src/dpos.rs`, the cold-start committee read), and it is the
+    // whole of what `OuterEngine::cold_start_register` used to do from a second
+    // map with `oracle: None`.
+    //
+    // TWO assertions, at the two points where each is the strongest one that is
+    // true, because the module's anchor here is this node's ordering-finalized
+    // cursor and at BUILD time that is still 0 — the executor has not derived
+    // anything, so a node resuming mid-chain legitimately cannot read its own
+    // cold-start epoch yet, exactly as production cannot before its plane has
+    // finished starting.
+    //
+    // HERE: never a PERMANENT refusal. An impossible committee at the cold-start
+    // epoch is a chain fact, and production now bails on it
+    // (`consensus/src/dpos.rs`, both the validator and the follower cold start),
+    // so the stand dies on it too.
+    //
+    // BELOW, inside the boundary feeder: the read must actually SUCCEED with a
+    // non-empty committee the moment the anchor is no longer 0 — the assertion
+    // the pre-module stand made against the staking fake directly
+    // (`HEAD:testbed/stand.rs`: `expect("the cold-start committee reads at the
+    // anchor")` + `assert!(!snap.validators.is_empty())`). It moved rather than
+    // weakened: the committee is read through the FACADE, at the anchor, at the
+    // first height where the anchor can answer.
     let initial_epoch = et
         .lock()
         .await
         .epoch_at(cold_number)
         .expect("geometry frozen by cold_start, so the anchor has an epoch");
-    let snap = staking
-        .epoch_committee_snapshot(initial_epoch, cold_hash)
-        .expect("the cold-start committee reads at the anchor");
-    assert!(
-        !snap.validators.is_empty(),
-        "empty committee for the cold-start epoch {initial_epoch} at the anchor"
-    );
-    let committee = epoch_committee_from_snapshot(&snap).expect("unique committee");
-    outer.cold_start_register(
-        Epoch::new(initial_epoch),
-        build_verifier(
-            &fluent_namespace(CHAIN_ID),
-            committee.bimap,
-            initial_epoch,
-            None,
-        ),
-    );
+    if let Err(e) = committee.committee(initial_epoch) {
+        assert!(
+            e.is_transient(),
+            "the cold-start epoch {initial_epoch} was refused PERMANENTLY at the anchor: {e}"
+        );
+    }
 
-    // Bridge forwarder: `(u64, snapshot)` from the transition to the engine's
-    // `(Epoch, snapshot)` boundary receiver — `consensus/src/dpos.rs:2739-2749`.
-    // It also records what the transition delivered and at which state hash.
+    // Bridge forwarder: the transition's `(u64, snapshot)` becomes the engine's
+    // boundary EPOCH — `consensus/src/dpos.rs`, where the snapshot is dropped for
+    // the same reason: the manager re-reads the committee from the module. The
+    // snapshot is still RECORDED here, because what the transition read and where
+    // is exactly what the stand's epoch-machinery assertions observe.
     {
         let boundary_tx = outer.boundary_sender();
         let boundaries = observer.boundaries.clone();
@@ -2117,7 +2087,7 @@ async fn build_node(
                     block_hash: snap.block_hash,
                     block_number: snap.block_number,
                 });
-                if boundary_tx.send((Epoch::new(epoch), snap)).await.is_err() {
+                if boundary_tx.send(Epoch::new(epoch)).await.is_err() {
                     return;
                 }
             }
@@ -2141,12 +2111,38 @@ async fn build_node(
             observer.steps.clone(),
             observer.geometry.clone(),
         );
+        // The cold-start committee assertion, armed for the first height at which
+        // the anchor can answer it: `chain.tip()` IS `StandAnchor::height()`, so
+        // `tip >= cold_number` is exactly "the anchor has reached the height the
+        // cold start was taken at". At that anchor every gate of the module is
+        // satisfied by construction — `commit_height(initial_epoch) <=
+        // cold_number <= tip`, the window floor `epoch(tip) - 8` is at or below
+        // `initial_epoch` on the FIRST crossing, and the tier-F tip's state is
+        // executed — so anything other than a non-empty record is a real defect
+        // and not a race.
+        let (cold_chain, cold_committee) = (chain.clone(), committee.clone());
+        let mut cold_start_asserted = false;
         let repoking = Arc::new(AtomicBool::new(false));
         let ctx_repoke = ctx_i.with_label("boundary_repoke");
         ctx_i
             .with_label("boundary_feed")
             .spawn(move |_| async move {
                 while let Some(block) = hook_rx.recv().await {
+                    if !cold_start_asserted && cold_chain.tip() >= cold_number {
+                        cold_start_asserted = true;
+                        let record = cold_committee.committee(initial_epoch).unwrap_or_else(|e| {
+                            panic!(
+                                "the cold-start committee must read at the anchor: \
+                                     committee[{initial_epoch}] at tip {} — {e}",
+                                cold_chain.tip()
+                            )
+                        });
+                        assert!(
+                            !record.members.is_empty(),
+                            "empty committee for the cold-start epoch {initial_epoch} at the \
+                             anchor"
+                        );
+                    }
                     trace.lock().unwrap().push(TraceEntry {
                         height: block.height,
                         view: block.proposal_view,

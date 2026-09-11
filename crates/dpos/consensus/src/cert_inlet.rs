@@ -13,7 +13,6 @@
 //! ([`crate::dpos::DposLayer::launch_follower`]) and a SECOND producer (next to
 //! the local BFT engine) on an upstream-configured validator.
 
-use crate::fault::{DeferReason, FaultClass};
 use crate::{
     beacon::{Beacon, ObservedCertificate, PinEffort},
     cert_follow::UpstreamFinalized,
@@ -28,7 +27,7 @@ use eyre::{ensure, eyre};
 use fluentbase_bls::{
     fluent_namespace, oracle::SeedOracle, scheme::build_verifier, Scheme as BlsScheme,
 };
-use fluentbase_staking_reader::{ReadError, RethStakingStateReader};
+use fluentbase_staking_reader::RethStakingStateReader;
 use futures::future::BoxFuture;
 use prometheus_client::{
     encoding::EncodeLabelSet,
@@ -38,62 +37,39 @@ use rand_core::CryptoRngCore;
 use reth_ethereum_primitives::EthPrimitives;
 use reth_evm::ConfigureEvm;
 use reth_storage_api::{HeaderProvider, StateProviderFactory};
-use std::{
-    collections::{btree_map::Entry, BTreeMap},
-    sync::Arc,
-};
+use std::sync::Arc;
 use tracing::warn;
 
 /// `{reason=...}` label set of the `dpos_cert_inlet_committee_read_deferred_total`
-/// counter. Inline-string reason values: [`DEFER_STATE_NOT_MATERIALIZED`],
-/// [`DEFER_COMMITTEE_NOT_COMMITTED`] (both ingest-side), and
-/// [`DEFER_PROBE_INCONSISTENCY`] (the follower `finalized_hash` closure's
-/// degraded-loud probe fault, `dpos.rs`).
+/// counter. ONE reason value is left — [`DEFER_COMMITTEE_NOT_COMMITTED`], the
+/// inlet's single defer. The other two named a cursor this inlet no longer owns,
+/// and the committee module answers both — but NOT with the same verdict, which
+/// is the whole reason the module types its errors:
+///
+/// * `state_not_materialized` was this inlet's own executed-state probe missing.
+///   In the module that is a `NotReadable` park (`committee/store.rs`, the
+///   `Ok(None)` arm of step 4): no counter, no log, retried on the next wake-up.
+/// * `probe_inconsistency` was the follower `finalized_hash` closure's
+///   header-index fault, and it is PERMANENT, not transient: `Ok(None)` at a
+///   materialized height is [`fluentbase_staking_reader::ReadError::Backend`]
+///   (`executed.rs`, the `Ok(None)` arm of `executed_state_hash`), whose
+///   `is_transient()` is `false`, so the module prints its once-per-epoch
+///   `error!` and ticks
+///   `dpos_committee_read_permanent_total{reason="anchor_fault"}`. The inlet
+///   sees the same `None` it sees for a park, and that is correct here — it
+///   skips the cert either way — but the CLASS is not lost, it is reported one
+///   layer down.
+///
+/// The LABEL SET stays a set so the series keeps its shape.
 #[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
 pub struct CommitteeReadDeferLabels {
     pub reason: &'static str,
 }
 
-/// The `reason` value for a defer caused by reth's pipeline-backfill state-miss.
-pub const DEFER_STATE_NOT_MATERIALIZED: &str = "state_not_materialized";
-
 /// The `reason` value for the committee-not-yet-committed defer (the executor has
 /// not drained to epoch-(E-1)-start yet, or a deep backfill keeps the follower
 /// `finalized_hash` closure returning `None`).
 pub const DEFER_COMMITTEE_NOT_COMMITTED: &str = "committee_not_committed";
-
-/// The `reason` value for a follower `finalized_hash`-closure probe fault
-/// (`executed_state_hash` `Err` — a `block_hash` miss at a MATERIALIZED height,
-/// i.e. header-index inconsistency). The follower never-crash posture defers
-/// instead of failing closed, but LOUDLY: `error!` once per episode + this tick.
-pub const DEFER_PROBE_INCONSISTENCY: &str = "probe_inconsistency";
-
-/// Map a committee-read failure into the family-5 fault taxonomy. THREE deferrable
-/// shapes — all of which return NO committee, so none can ever select a WRONG one and
-/// fail-closing on any would kill a node that is merely catching up:
-/// - [`ReadError::StateNotMaterialized`] — reth transiently dropped executed state
-///   at/below the finalized hash during pipeline backfill;
-/// - [`ReadError::TransientStorage`] — a torn static-file read (persistence thread
-///   appending concurrently), which settles sub-second;
-/// - [`ReadError::BlockNotFound`] — a COMMITTED finalized hash whose header is
-///   transiently invisible during an unwind; a genuine permanent miss just keeps
-///   deferring (stalls-not-kills).
-///
-/// All three map to [`FaultClass::Defer`]`(StateNotMaterialized)` (the existing defer
-/// reason / metric series — there is no new `DeferReason` for these transient read
-/// shapes). Every OTHER read error (corrupt committee, abi/revert) is
-/// [`FaultClass::Corruption`] and stays fatal. Typed downcast at the boundary — NO
-/// string match in consensus code (family 5 invariant 3).
-fn committee_read_fault(err: &eyre::Report) -> FaultClass {
-    match err.downcast_ref::<ReadError>() {
-        Some(
-            ReadError::StateNotMaterialized { .. }
-            | ReadError::TransientStorage(_)
-            | ReadError::BlockNotFound(_),
-        ) => FaultClass::Defer(DeferReason::StateNotMaterialized),
-        _ => FaultClass::Corruption,
-    }
-}
 
 /// Consecutive DATA faults — an upstream serving cryptographically-unverifiable
 /// certs over a HEALTHY connection — before the inlet rotates to the next
@@ -104,8 +80,8 @@ fn committee_read_fault(err: &eyre::Report) -> FaultClass {
 /// `payload != digest` structural mismatch. Connection-level failures rotate
 /// inside the transport actor on their own; this counter is the ONLY signal a
 /// data fault can never surface to that layer (the connection is fine; the
-/// PAYLOAD is bad). The benign committee-lag skip (`scheme_at_finalized_tip`
-/// returning `Ok(None)`) is NOT a data fault — it is transient boundary lag and
+/// PAYLOAD is bad). The benign committee-lag skip (the committee module having
+/// no record for the epoch yet) is NOT a data fault — it is transient boundary lag and
 /// rotating away from a healthy upstream over it would be a churn footgun — so
 /// it never increments the counter. Any successful verify/ingest resets it to 0.
 ///
@@ -129,9 +105,18 @@ pub const CERT_VOTE_ONLY_ADMISSIONS: &str = "dpos_cert_vote_only_admissions_tota
 /// parameters; the non-upstream / test inlets default it to `None`.
 pub type RotateUpstream = Arc<dyn Fn() -> BoxFuture<'static, ()> + Send + Sync>;
 
-/// Source of a per-epoch BLS verifier for the inlet — the on-chain committee
-/// read ([`RethCommitteeSource::scheme_at`]). Kept as a trait so the unit test
-/// can inject a canned committee.
+/// Source of a per-epoch BLS verifier AT A SPECIFIC EXECUTED HASH — the
+/// cold-start jump's committee read. Kept as a trait so the unit test can inject
+/// a canned committee.
+///
+/// It used to have a second method, `scheme_at_finalized_tip`, and that method
+/// was the cert-inlet's hot path: its own committee read, at its own cursor,
+/// into its own `{prev, cur}` scheme cache. Both are gone — the inlet takes the
+/// epoch's scheme from [`crate::committee::Committee`], the one map where a
+/// record and its scheme live together — so what is left here is the ONE read
+/// the module cannot answer: a committee at an ARBITRARY hash, which is what
+/// authenticating a jump target means (the landing is not in the module's window
+/// and is not this node's anchor).
 ///
 /// `oracle` is the beacon's threshold face for the epoch, from
 /// [`crate::beacon::Beacon::oracle_for`]: `Some` makes the built verifier
@@ -150,24 +135,6 @@ pub trait CommitteeSource: Send + Sync + 'static {
         at_hash: B256,
         oracle: Option<Arc<dyn SeedOracle>>,
     ) -> eyre::Result<BlsScheme>;
-
-    /// Read `committee[epoch]` at the node's CURRENT FINALIZED (committed) tip.
-    /// This is the inlet's hot-path read: a committee read MUST use a
-    /// guaranteed-committed block, and the finalized tip is exactly that.
-    /// Committees are epoch-frozen + content-invariant across any in-epoch
-    /// executed hash (MEMORY `epoch-frozen-committee`), so once the finalized
-    /// tip passes epoch-(E-1)-start the read is valid.
-    ///
-    /// `Ok(None)` ⇒ `committee[epoch]` is NOT yet committed at the finalized tip
-    /// (transient — the executor, which the inlet feeds, has not drained the
-    /// queue that far; the caller SKIPS this cert non-fatally and a later cert of
-    /// the same epoch re-triggers the read). `Ok(Some)` ⇒ the verifier. `Err` ⇒ a
-    /// real read error (fatal).
-    fn scheme_at_finalized_tip(
-        &self,
-        epoch: u64,
-        oracle: Option<Arc<dyn SeedOracle>>,
-    ) -> eyre::Result<Option<BlsScheme>>;
 }
 
 /// [`CommitteeSource`] over a node's own reth state: committee snapshot at the
@@ -177,11 +144,6 @@ pub trait CommitteeSource: Send + Sync + 'static {
 pub struct RethCommitteeSource<Provider, EvmConfig> {
     reader: RethStakingStateReader<Provider, EvmConfig>,
     namespace: Vec<u8>,
-    /// The node's current finalized (committed) tip hash, or `None` while no
-    /// block is finalized yet. A closure (not a Provider bound) so the
-    /// finalized-tip read does not thread new generics through the source —
-    /// built at construction from the local provider clone.
-    finalized_hash: Arc<dyn Fn() -> Option<B256> + Send + Sync>,
 }
 
 impl<Provider, EvmConfig> RethCommitteeSource<Provider, EvmConfig>
@@ -190,15 +152,10 @@ where
         StateProviderFactory + HeaderProvider<Header = Header> + Clone + Send + Sync + 'static,
     EvmConfig: ConfigureEvm<Primitives = EthPrimitives> + Clone + Send + Sync + 'static,
 {
-    pub fn new(
-        reader: RethStakingStateReader<Provider, EvmConfig>,
-        chain_id: u64,
-        finalized_hash: Arc<dyn Fn() -> Option<B256> + Send + Sync>,
-    ) -> Self {
+    pub fn new(reader: RethStakingStateReader<Provider, EvmConfig>, chain_id: u64) -> Self {
         Self {
             reader,
             namespace: fluent_namespace(chain_id),
-            finalized_hash,
         }
     }
 
@@ -239,30 +196,6 @@ where
         oracle: Option<Arc<dyn SeedOracle>>,
     ) -> eyre::Result<BlsScheme> {
         self.build_at(epoch, at_hash, oracle)
-    }
-
-    fn scheme_at_finalized_tip(
-        &self,
-        epoch: u64,
-        oracle: Option<Arc<dyn SeedOracle>>,
-    ) -> eyre::Result<Option<BlsScheme>> {
-        let Some(hash) = (self.finalized_hash)() else {
-            return Ok(None);
-        };
-        let snap = self.reader.epoch_committee_snapshot(epoch, hash)?;
-        if snap.validators.is_empty() {
-            // committee[E] not yet committed at the finalized tip (the executor
-            // has not drained the queue to epoch-(E-1)-start) — transient, retry.
-            return Ok(None);
-        }
-        let committee = epoch_committee_from_snapshot(&snap)
-            .map_err(|e| eyre!("epoch {epoch} committee has non-unique participants: {e:?}"))?;
-        Ok(Some(build_verifier(
-            &self.namespace,
-            committee.bimap,
-            epoch,
-            oracle,
-        )))
     }
 }
 
@@ -363,24 +296,22 @@ pub struct LiveFrontierTee {
     pub plane_clock: crate::sync_metrics::PlaneClock,
 }
 
-/// A cached per-epoch verifier.
-///
-/// It used to carry a `pinned` flag beside the scheme, because a scheme built
-/// while `PK_E` was unresolvable stayed that way and had to be REBUILT once the
-/// key arrived. The scheme reads its key live through the oracle now, so a cached
-/// entry can never be the stale one and the flag has no subject.
-struct CachedScheme {
-    scheme: BlsScheme,
-}
-
 /// One of two producers into the singleton marshal (the other is the local BFT
 /// engine). BLS-verifies each upstream cert against the on-chain committee,
 /// makes the body local via [`MarshalSink::verify_block`], then reports the cert.
 /// The executor (the sole reth writer) then drives reth identically to a
 /// locally-finalized cert.
-pub struct CertInlet<C, E, M> {
+pub struct CertInlet<E, M> {
     marshal: M,
-    committees: C,
+    /// EVERY per-epoch scheme this inlet verifies with, from the ONE map that
+    /// holds a committee record and its scheme in the same slot.
+    ///
+    /// It replaced a `CommitteeSource` generic plus a private `{prev, cur}`
+    /// cache plus a cursor closure of its own — a second authority on "what is
+    /// `committee[E]`" sitting beside the module, on a different anchor, with a
+    /// different retention. Nothing here can be stale: an entry is write-once
+    /// inside the module's window, and outside it there is no entry at all.
+    committee: Arc<dyn crate::committee::Committee>,
     /// The live-frontier tee — see [`LiveFrontierTee`]. `Some` on a
     /// validator-with-upstream (the production-path / early-join fix) AND on a
     /// follower (its frontier-aware committee read, with a no-op dkg clock);
@@ -395,9 +326,6 @@ pub struct CertInlet<C, E, M> {
     /// AFTER the verify gate), so the served window can never expose an
     /// unverified cert.
     window_tx: Option<tokio::sync::mpsc::UnboundedSender<UpstreamFinalized>>,
-    /// Per-epoch verifier cache, pruned to {prev, cur} on registration. An entry
-    /// holds no key material and cannot go stale — see [`CachedScheme`].
-    schemes: BTreeMap<u64, CachedScheme>,
     /// The node's SHARED beacon-key store (see [`BeaconKeys`]) — the same handle
     /// `FluentApp` and `epoch_manager` hold on a validator. The inlet reads it as
     /// the store rung of [`BeaconKeys::get_pk`]'s ladder, and the ladder's own
@@ -471,21 +399,15 @@ pub struct CertInlet<C, E, M> {
     /// Default (unregistered) on inlets not wired via
     /// [`Self::with_carry_forward_fail_metric`].
     carry_forward_verify_failed: Counter,
-    /// Rate-limits the state-not-materialized WARN to once per episode: set on
-    /// entry to a backfill state-miss, cleared on the next clean verified ingest,
-    /// so a multi-cert backfill window logs once instead of per cert.
-    state_not_materialized_warned: bool,
-    /// Same once-per-episode rate limit for the committee-not-yet-committed WARN:
-    /// during a deep backfill (`fin > best` ⇒ the follower `finalized_hash`
-    /// closure returns `None` ⇒ that branch fires per cert, ~1/s for minutes)
-    /// the un-limited warn used to spam; log once per episode, cleared on the
-    /// next clean verified ingest.
+    /// Once-per-episode rate limit for the committee-not-readable WARN: during a
+    /// deep backfill the module answers `NotReadable` for every cert, ~1/s for
+    /// minutes, so the un-limited warn used to spam. Cleared on the next clean
+    /// verified ingest.
     committee_not_committed_warned: bool,
 }
 
-impl<C, E, M> CertInlet<C, E, M>
+impl<E, M> CertInlet<E, M>
 where
-    C: CommitteeSource,
     E: CryptoRngCore + Send,
     M: MarshalSink,
 {
@@ -493,13 +415,12 @@ where
     /// committee (no `verify:false` mode exists in v1 — the standalone bare
     /// `--cert-upstream` trust relay is the separate `launch_consensus_node`
     /// path, not an inlet).
-    pub fn new(marshal: M, committees: C, ctx: E) -> Self {
+    pub fn new(marshal: M, committee: Arc<dyn crate::committee::Committee>, ctx: E) -> Self {
         Self {
             marshal,
-            committees,
+            committee,
             tee: None,
             window_tx: None,
-            schemes: BTreeMap::new(),
             randomness: crate::beacon::absent_unregistered(),
             ctx,
             rotate: None,
@@ -509,7 +430,6 @@ where
             epoch_bind: None,
             committee_read_deferred: Family::default(),
             carry_forward_verify_failed: Counter::default(),
-            state_not_materialized_warned: false,
             committee_not_committed_warned: false,
         }
     }
@@ -598,10 +518,20 @@ where
 
     /// BLS-verify one upstream cert, then drive the marshal with it.
     ///
-    /// On verify-FAIL: WARN + skip + return `Ok` (NOT `Err` — Risk-3: a single
-    /// bad upstream cert must not halt the inlet; the marshal stalls naturally
-    /// at the gap until a good cert arrives).
-    pub async fn ingest(&mut self, uf: UpstreamFinalized) -> eyre::Result<()> {
+    /// INFALLIBLE, and that is the contract rather than an accident of the
+    /// current body. Every outcome a cert can have here is a skip: a malformed
+    /// or cross-epoch cert, a verify failure, an epoch whose committee this node
+    /// cannot read yet. Risk-3 is why — a single bad upstream cert must not halt
+    /// the inlet; the marshal stalls naturally at the gap until a good cert
+    /// arrives. The `eyre::Result<()>` this used to return carried exactly one
+    /// `Err`, the committee source's read fault, and that class now belongs to
+    /// the committee module, which can tell "I cannot read this yet" from "the
+    /// contract answered something impossible" where an `eyre::Report` could
+    /// not: it reports the permanent one itself (`error!` +
+    /// `dpos_committee_read_permanent_total`) and defers the other. Keeping the
+    /// return type would have kept two call-site branches that can never be
+    /// taken.
+    pub async fn ingest(&mut self, uf: UpstreamFinalized) {
         // Per-CONNECTION fault scoping (#7): if the WS actor (re)connected since
         // the last cert — its own connect/subscribe-failure auto-rotation, which
         // the inlet has no other way to observe — the data-fault streak belongs
@@ -643,7 +573,7 @@ where
                      skipping (malformed/cross-epoch)"
                 );
                 self.record_data_fault().await;
-                return Ok(());
+                return;
             }
         }
         // Advance the executor's steady-state re-jump frontier off EVERY
@@ -669,7 +599,7 @@ where
             // DATA FAULT: a structural mismatch (the served body does not match
             // the cert) over a healthy connection — count it toward rotation.
             self.record_data_fault().await;
-            return Ok(());
+            return;
         }
         // ACQUISITION, and it is load-bearing rather than bookkeeping. The scheme's
         // oracle answers `verify_seed` from the SYNC key-store probe alone, and the
@@ -688,129 +618,48 @@ where
         // round-trip onto the vote path, where a missing key costs a vote-only
         // admission and a stall costs a missed view.
         let key_known = self.randomness.ensure_key(epoch, PinEffort::Local).await;
-        // A cached entry is now rebuilt ONLY on a cache miss or after a verify-fail
-        // eviction. The pin-upgrade rebuild is gone with the pin: a scheme reads
-        // its epoch key live through the oracle, so a key that resolves after the
-        // scheme was built is picked up by the next certificate with no rebuild at
-        // all — which is the staleness class this whole change deletes.
-        let cached: &CachedScheme = match self.schemes.entry(epoch) {
-            Entry::Occupied(o) => o.into_mut(),
-            slot => {
-                // Read committee[E] at the node's CURRENT FINALIZED tip — a
-                // GUARANTEED-committed block where committee[E] is committed
-                // (ahead-committed at epoch-(E-1)-start). If it is not yet
-                // readable there, the executor (which THIS inlet feeds the
-                // already-`report()`ed certs) has not drained that far yet.
-                //
-                // NON-BLOCKING + NON-FATAL by design: `ingest` runs in the
-                // SINGLE task that drains the cert source AND feeds the
-                // executor that advances the finalized tip. Block-sleeping
-                // here would stop draining and starve the very executor we
-                // wait on (producer↔consumer cycle); returning `Err` would
-                // shut the whole node down on a transient lag. Instead SKIP
-                // this first-of-epoch cert (a REBUILD keeps its cached scheme
-                // instead — see the defer arms) and keep draining — the executor
-                // catches up in the background, and the NEXT cert of this
-                // epoch re-reads committee[E] (now committed) and ingests
-                // normally. The marshal stalls naturally at the gap until
-                // then, exactly as for any skipped cert (Risk-3).
-                //
-                // The read `Err` splits two ways: a `StateNotMaterialized`
-                // (reth transiently dropped executed state at/below the
-                // finalized hash during pipeline backfill) is ALSO transient —
-                // it defers exactly like the not-yet-committed branch (a
-                // state-miss returns NO committee, so it can never select a
-                // WRONG one; fail-closing here would kill a node that is merely
-                // catching up). Every OTHER `Err` (corrupt committee, abi/revert)
-                // STAYS fatal.
-                match self
-                    .committees
-                    .scheme_at_finalized_tip(epoch, self.randomness.oracle_for(epoch))
-                {
-                    Ok(Some(s)) => {
-                        let fresh = CachedScheme { scheme: s };
-                        match slot {
-                            Entry::Occupied(mut o) => {
-                                o.insert(fresh);
-                                o.into_mut()
-                            }
-                            Entry::Vacant(v) => v.insert(fresh),
-                        }
-                    }
-                    Ok(None) => {
-                        // Count every deferred cert (this is the PRIMARY defer
-                        // regime during a deep backfill — `fin > best` makes the
-                        // follower closure return `None`, landing here per cert);
-                        // warn once per episode (cleared on the next clean ingest).
-                        self.committee_read_deferred
-                            .get_or_create(&CommitteeReadDeferLabels {
-                                reason: DEFER_COMMITTEE_NOT_COMMITTED,
-                            })
-                            .inc();
-                        if !self.committee_not_committed_warned {
-                            self.committee_not_committed_warned = true;
-                            warn!(
-                                height = uf.block.height,
-                                epoch,
-                                "cert-inlet: committee[E] not yet committed at the finalized tip; \
-                                 deferring certs until the executor catches up (rate-limited; \
-                                 dpos_cert_inlet_committee_read_deferred_total ticks per cert)"
-                            );
-                        }
-                        // NOT a data fault: committee-not-yet-committed is
-                        // transient boundary lag, NOT an unverifiable cert
-                        // (#4). It must not count toward rotation — rotating
-                        // away from a HEALTHY upstream over normal lag would be
-                        // a churn footgun. Leave `consecutive_faults` untouched
-                        // (neither increment nor reset).
-                        match slot {
-                            // A failed REBUILD must not cost the cert: keep
-                            // verifying under the scheme already cached. Skipping
-                            // instead would be a fresh wedge — the read is anchored
-                            // on a tip only the executor THIS inlet feeds can
-                            // advance, so deferring every cert of an epoch that was
-                            // ingesting fine freezes both sides of that cycle.
-                            Entry::Occupied(o) => o.into_mut(),
-                            Entry::Vacant(_) => return Ok(()),
-                        }
-                    }
-                    // Family-5 taxonomy: `Defer(StateNotMaterialized)` skips the
-                    // cert non-blockingly; any other class is `Corruption` and
-                    // stays fatal (the `_` arm below).
-                    Err(e)
-                        if committee_read_fault(&e)
-                            == FaultClass::Defer(DeferReason::StateNotMaterialized) =>
-                    {
-                        // TRANSIENT reth pipeline-backfill state-miss — defer like
-                        // Ok(None), never fatal. Count every deferred cert; warn
-                        // once per episode (cleared on the next clean ingest).
-                        self.committee_read_deferred
-                            .get_or_create(&CommitteeReadDeferLabels {
-                                reason: DEFER_STATE_NOT_MATERIALIZED,
-                            })
-                            .inc();
-                        if !self.state_not_materialized_warned {
-                            self.state_not_materialized_warned = true;
-                            warn!(
-                                height = uf.block.height,
-                                epoch,
-                                "cert-inlet: committee read hit a reth pipeline-backfill \
-                                 state-miss (state not yet materialized); deferring certs until \
-                                 reth re-materializes (rate-limited; \
-                                 dpos_cert_inlet_committee_read_deferred_total ticks per cert)"
-                            );
-                        }
-                        // Same posture as the not-committed defer: NOT a data
-                        // fault, leave `consecutive_faults` untouched, and a
-                        // failed pin upgrade keeps the cached scheme.
-                        match slot {
-                            Entry::Occupied(o) => o.into_mut(),
-                            Entry::Vacant(_) => return Ok(()),
-                        }
-                    }
-                    Err(e) => return Err(e),
-                }
+        // The epoch's scheme, from the committee module's map. This used to be
+        // the inlet's OWN committee read at its OWN cursor into its OWN
+        // `{prev, cur}` cache, with three outcomes (ready / not committed yet /
+        // fatal) and a rebuild-on-miss dance. The module has already collapsed
+        // all of that: the record is write-once inside its window, the scheme
+        // lives in the same slot, and reading is what produces both.
+        //
+        // `None` is the ONE deferral, and it is the same non-fatal skip the
+        // "committee[E] not committed at the finalized tip" arm always was:
+        // `ingest` runs in the SINGLE task that drains the cert source AND feeds
+        // the executor that advances the anchor the module reads at, so blocking
+        // or failing here would starve the very progress it waits on. Skip this
+        // cert, keep draining, and let a later cert of the same epoch find the
+        // record.
+        //
+        // There is NO fatal arm left. The corrupt-read class the old `Err`
+        // carried has not disappeared — the module reports it, counts it under
+        // `dpos_committee_read_permanent_total` and logs it once — but it no
+        // longer kills a follower that is merely reading a state it does not
+        // have yet, because the module can tell those two apart and a
+        // `eyre::Result` from a committee source could not.
+        let Some(scheme) = self.committee.scheme(epoch) else {
+            self.committee_read_deferred
+                .get_or_create(&CommitteeReadDeferLabels {
+                    reason: DEFER_COMMITTEE_NOT_COMMITTED,
+                })
+                .inc();
+            if !self.committee_not_committed_warned {
+                self.committee_not_committed_warned = true;
+                warn!(
+                    height = uf.block.height,
+                    epoch,
+                    "cert-inlet: no committee[E] at this node's committee anchor yet; deferring \
+                     certs until it is readable (rate-limited; \
+                     dpos_cert_inlet_committee_read_deferred_total ticks per cert)"
+                );
             }
+            // NOT a data fault: an unreadable committee is this node's own lag,
+            // not an unverifiable certificate (#4). Rotating away from a HEALTHY
+            // upstream over it would be a churn footgun, so `consecutive_faults`
+            // is left untouched — neither incremented nor reset.
+            return;
         };
         // The only direct witness that an epoch is being admitted WITHOUT its seed
         // checked: the multisig quorum is verified, the seed slot is not because
@@ -821,18 +670,18 @@ where
         if !key_known && self.randomness.mandatory_at(epoch) {
             metrics::counter!(CERT_VOTE_ONLY_ADMISSIONS).increment(1);
         }
-        if !uf
-            .finalization
-            .verify(&mut self.ctx, &cached.scheme, &Sequential)
-        {
+        if !uf.finalization.verify(&mut self.ctx, &scheme, &Sequential) {
             warn!(
                 height = uf.block.height,
                 epoch, "cert-inlet: BLS verify FAILED; skipping (marshal stalls naturally)"
             );
-            // Evict the just-failed scheme so a stale committee read never sticks
-            // in the cache: the next epoch-E cert re-enters the Vacant path and
-            // re-reads `committee[E]`.
-            self.schemes.remove(&epoch);
+            // Nothing to evict. The eviction that stood here existed because the
+            // inlet's own cache could hold a scheme built from a committee read
+            // at a cursor that had since moved; a module entry cannot be that —
+            // it is write-once inside the window and it leaves the map only with
+            // the window. A verify failure is therefore a statement about the
+            // CERTIFICATE, and re-reading the committee could only produce the
+            // same record.
             // Regime split: a failure while the epoch's key WAS resolvable points
             // at a key carried forward from the wrong mint rather than at a forged
             // upstream — count it separately so dashboards can tell the two apart.
@@ -846,7 +695,7 @@ where
             // serving bad payload over a healthy connection. Count it toward
             // rotation (the connection-level failover can NEVER detect this).
             self.record_data_fault().await;
-            return Ok(());
+            return;
         }
         // The certificate is verified and its seed slot rode along inside that
         // verification whenever the key was resolvable. Capture σ HERE rather
@@ -870,22 +719,13 @@ where
         // open defer WARN episodes (the next backfill / boundary-lag window
         // warns afresh).
         self.consecutive_faults = 0;
-        self.state_not_materialized_warned = false;
         self.committee_not_committed_warned = false;
-        // Retain {prev, cur} only.
-        let keep_from = epoch.saturating_sub(1);
-        self.schemes.retain(|e, _| *e >= keep_from);
-        // Same trailing window `epoch_manager` uses, keyed on the CERT's epoch. Both
-        // prune, on different clocks: an inlet running far ahead of
-        // the manager during a deep catch-up can drop an entry the manager's
-        // `soft_enter` would have read for a catch-up epoch. That is a vote-only
-        // degrade — the same residual the bulk catch-up span already takes, and the
-        // artifact rung still answers where this node holds one — never a wrong
-        // pin. Every reader that must not miss reads at the inlet's own frontier
-        // and so never in the pruned tail: the vote path's `group_public_for`, the
-        // promote value-gate and the W3 backfill ask for the LIVE epoch or
-        // `live − 1`, and the carry-divergence tripwires ask for the MINT, which
-        // `retain_from` exempts from the window at any age.
+        // No scheme retention of its own any more: the inlet holds no map, and
+        // the one it now reads is retained by the committee module's own read
+        // window. The prune that stood here kept `{prev, cur}` on the inlet's
+        // clock, which during a deep catch-up could drop an entry the epoch
+        // manager was still soft-entering against — two retentions over one
+        // question. The beacon's key store keeps its own, below.
         self.randomness.observe_cert(epoch);
         // Re-homed live-frontier tee: advance the beacon-plane cursors off the
         // VERIFIED live upstream tip (skipped/tampered certs above never reach
@@ -932,7 +772,6 @@ where
                 self.marshal.report_finalization(uf.finalization).await;
             }
         }
-        Ok(())
     }
 
     /// Record one DATA fault (BLS-verify failure / structural mismatch against a
@@ -1109,91 +948,38 @@ mod tests {
         }
     }
 
-    /// Canned committee verifier with a read-counter so a test can assert the
-    /// finalized-tip read was (or was not) consulted.
-    /// One committee, readable at every epoch — the verifier is built for the
-    /// epoch actually asked about, because a scheme refuses a foreign one.
-    struct CannedCommittees {
-        bimap: BiMap<PeerPubkey, BlsPubkey>,
-        reads: Arc<Mutex<Vec<u64>>>,
-    }
-
-    impl CannedCommittees {
-        fn at(&self, epoch: u64) -> BlsScheme {
-            build_verifier(&fluent_namespace(CHAIN_ID), self.bimap.clone(), epoch, None)
-        }
-    }
-
-    impl CommitteeSource for CannedCommittees {
-        fn scheme_at(
-            &self,
-            epoch: u64,
-            _at_hash: B256,
-            _oracle: Option<Arc<dyn SeedOracle>>,
-        ) -> eyre::Result<BlsScheme> {
-            Ok(self.at(epoch))
-        }
-        fn scheme_at_finalized_tip(
-            &self,
-            epoch: u64,
-            _oracle: Option<Arc<dyn SeedOracle>>,
-        ) -> eyre::Result<Option<BlsScheme>> {
-            self.reads.lock().unwrap().push(epoch);
-            Ok(Some(self.at(epoch)))
-        }
-    }
-
-    type TestInlet = CertInlet<CannedCommittees, deterministic::Context, FakeMarshal>;
-    /// Recorded `epoch` finalized-tip committee reads the canned source observed.
+    /// Recorded `epoch` committee reads the canned module observed.
+    type TestInlet = CertInlet<deterministic::Context, FakeMarshal>;
     type SchemeReads = Arc<Mutex<Vec<u64>>>;
 
+    /// One committee, readable at every epoch — the verifier is built for the
+    /// epoch actually asked about, because a scheme refuses a foreign one. The
+    /// module memoises it exactly as the production store does, so `reads` counts
+    /// what the real one would make it count.
     fn inlet(ctx: deterministic::Context, c: &Committee) -> (TestInlet, FakeMarshal, SchemeReads) {
         let marshal = FakeMarshal::default();
-        let reads = Arc::new(Mutex::new(Vec::new()));
-        let inlet = CertInlet::new(
-            marshal.clone(),
-            CannedCommittees {
-                bimap: c.bimap.clone(),
-                reads: reads.clone(),
-            },
-            ctx,
-        );
+        let reads: SchemeReads = Arc::new(Mutex::new(Vec::new()));
+        let bimap = c.bimap.clone();
+        let recorded = reads.clone();
+        let committee = crate::committee::testing::SchemeCommittee::new(move |epoch| {
+            recorded.lock().unwrap().push(epoch);
+            Some(build_verifier(
+                &fluent_namespace(CHAIN_ID),
+                bimap.clone(),
+                epoch,
+                None,
+            ))
+        });
+        let inlet = CertInlet::new(marshal.clone(), committee, ctx);
         (inlet, marshal, reads)
     }
 
-    /// The guard the whole rung split exists for: the cert-inlet resolves
-    /// `PK_epoch` on the VOTE path, against a ~1 s verify budget, and must never
-    /// be handed the network rung, whose budget is seconds. A missing pin costs a
-    /// vote-only admission; a stall costs the view.
-    ///
-
-    #[test]
-    fn committee_read_fault_defers_transient_and_blocknotfound_else_corruption() {
-        let defer = FaultClass::Defer(DeferReason::StateNotMaterialized);
-        // All three transient read shapes DEFER (they return no committee, so none can
-        // select a WRONG one; fail-closing would kill a merely-catching-up node).
-        assert_eq!(
-            committee_read_fault(&eyre::Report::new(ReadError::TransientStorage(
-                "torn".into()
-            ))),
-            defer,
-        );
-        assert_eq!(
-            committee_read_fault(&eyre::Report::new(ReadError::BlockNotFound(B256::ZERO))),
-            defer,
-        );
-        assert_eq!(
-            committee_read_fault(&eyre::Report::new(ReadError::StateNotMaterialized {
-                hash: B256::ZERO,
-            })),
-            defer,
-        );
-        // A semantic/corrupt read (revert) stays fatal Corruption.
-        assert_eq!(
-            committee_read_fault(&eyre::Report::new(ReadError::CallReverted("boom".into()))),
-            FaultClass::Corruption,
-        );
-    }
+    // `committee_read_fault_defers_transient_and_blocknotfound_else_corruption`
+    // stood here. Its subject — the inlet's own mapping of a committee-read error
+    // into the family-5 fault taxonomy — went with the read: the inlet makes none.
+    // The same split now lives in `CommitteeError::is_transient`, over a typed
+    // error rather than an `eyre::Report` downcast, and is pinned by the module's
+    // own tests plus `tests/slasher_integration.rs`.
 
     /// Reds the moment cert ingress starts spending the NETWORK rung.
     ///
@@ -1216,7 +1002,7 @@ mod tests {
             inlet = inlet.with_randomness(spy.clone());
 
             let block = sample_order(Digest(B256::repeat_byte(0xaa)), 65);
-            inlet.ingest(certify(&c, 0, &block)).await.expect("ok");
+            inlet.ingest(certify(&c, 0, &block)).await;
 
             let efforts = spy.efforts();
             assert!(
@@ -1238,7 +1024,7 @@ mod tests {
             let c = committee(1);
             let (mut inlet, marshal, reads) = inlet(ctx, &c);
             let block = sample_order(Digest(B256::repeat_byte(0xaa)), 65);
-            inlet.ingest(certify(&c, 0, &block)).await.expect("ok");
+            inlet.ingest(certify(&c, 0, &block)).await;
             assert_eq!(
                 *marshal.calls.lock().unwrap(),
                 vec!["verified", "report"],
@@ -1264,10 +1050,7 @@ mod tests {
             let block = sample_order(Digest(B256::repeat_byte(0xaa)), 65);
             // The cert is itself BLS-valid for epoch 2, but height 65 ∈ epoch 1 ⇒
             // the bind fails and the cert is dropped before verification.
-            inlet
-                .ingest(certify(&c, 2, &block))
-                .await
-                .expect("ok (non-fatal skip)");
+            inlet.ingest(certify(&c, 2, &block)).await;
             assert!(
                 marshal.calls.lock().unwrap().is_empty(),
                 "cross-epoch cert drives the marshal with ZERO calls"
@@ -1290,7 +1073,7 @@ mod tests {
             // activation=0, interval=64 ⇒ epoch_of(65) == 1; cert epoch 1 matches.
             let mut inlet = inlet.with_epoch_math(0, 64);
             let block = sample_order(Digest(B256::repeat_byte(0xaa)), 65);
-            inlet.ingest(certify(&c, 1, &block)).await.expect("ok");
+            inlet.ingest(certify(&c, 1, &block)).await;
             assert_eq!(
                 *marshal.calls.lock().unwrap(),
                 vec!["verified", "report"],
@@ -1306,49 +1089,6 @@ mod tests {
     /// closure does after the boundary-wedge fix (read committee at `max(EL-
     /// finalized, live-frontier)` instead of the lagging finalized tip alone). The
     /// inlet's tee advances `live_frontier`, so a verified cert moves the cursor.
-    struct FrontierCommittees {
-        bimap: BiMap<PeerPubkey, BlsPubkey>,
-        finalized: Arc<std::sync::atomic::AtomicU64>,
-        live_frontier: Arc<std::sync::atomic::AtomicU64>,
-        /// `committee[E]` for `E >= 1` is committed only at a tip `>=` this height.
-        committed_from: u64,
-    }
-
-    impl FrontierCommittees {
-        fn at(&self, epoch: u64) -> BlsScheme {
-            build_verifier(&fluent_namespace(CHAIN_ID), self.bimap.clone(), epoch, None)
-        }
-    }
-
-    impl CommitteeSource for FrontierCommittees {
-        fn scheme_at(
-            &self,
-            epoch: u64,
-            _at_hash: B256,
-            _oracle: Option<Arc<dyn SeedOracle>>,
-        ) -> eyre::Result<BlsScheme> {
-            Ok(self.at(epoch))
-        }
-        fn scheme_at_finalized_tip(
-            &self,
-            epoch: u64,
-            _oracle: Option<Arc<dyn SeedOracle>>,
-        ) -> eyre::Result<Option<BlsScheme>> {
-            let tip = self
-                .finalized
-                .load(std::sync::atomic::Ordering::Relaxed)
-                .max(
-                    self.live_frontier
-                        .load(std::sync::atomic::Ordering::Relaxed),
-                );
-            if epoch == 0 || tip >= self.committed_from {
-                Ok(Some(self.at(epoch)))
-            } else {
-                Ok(None)
-            }
-        }
-    }
-
     /// Drive a follower across the epoch-0→1 boundary: ingest the epoch-0 cert at
     /// the last block of epoch 0 (height 95) then the epoch-1 boundary cert (height
     /// 96), against a finalized tip frozen at 69 where `committee[1]` is committed
@@ -1363,13 +1103,30 @@ mod tests {
         let marshal = FakeMarshal::default();
         let finalized = Arc::new(std::sync::atomic::AtomicU64::new(69));
         let live_frontier = Arc::new(std::sync::atomic::AtomicU64::new(0));
-        let committees = FrontierCommittees {
-            bimap: c.bimap.clone(),
-            finalized,
-            live_frontier: live_frontier.clone(),
-            committed_from: 70,
+        let committee = {
+            let bimap = c.bimap.clone();
+            let live = live_frontier.clone();
+            let fin = finalized.clone();
+            crate::committee::testing::SchemeCommittee::new(move |epoch| {
+                // The stand-in for what the module's anchor does on a follower:
+                // `committee[E]` for `E >= 1` is only readable once the node's own
+                // cursor — here `max(EL-finalized, live frontier)` — reaches the
+                // height that commits it. Epoch 0 (the cold-start epoch) always is.
+                let cursor = fin
+                    .load(std::sync::atomic::Ordering::Relaxed)
+                    .max(live.load(std::sync::atomic::Ordering::Relaxed));
+                if epoch >= 1 && cursor < 70 {
+                    return None;
+                }
+                Some(build_verifier(
+                    &fluent_namespace(CHAIN_ID),
+                    bimap.clone(),
+                    epoch,
+                    None,
+                ))
+            })
         };
-        let mut inlet = CertInlet::new(marshal.clone(), committees, ctx);
+        let mut inlet = CertInlet::new(marshal.clone(), committee, ctx);
         if wire_tee {
             // Dropped receiver ⇒ the DkgActor clock is a benign no-op (the follower
             // has no beacon plane); only `live_height` matters here.
@@ -1387,16 +1144,14 @@ mod tests {
                 0,
                 &sample_order(Digest(B256::repeat_byte(0xaa)), 95),
             ))
-            .await
-            .expect("epoch-0 cert ok");
+            .await;
         inlet
             .ingest(certify(
                 c,
                 1,
                 &sample_order(Digest(B256::repeat_byte(0xbb)), 96),
             ))
-            .await
-            .expect("boundary cert ok (non-fatal even when deferred)");
+            .await;
         let calls = marshal.calls.lock().unwrap().clone();
         calls
     }
@@ -1441,15 +1196,18 @@ mod tests {
             let c = committee(1);
             let marshal = FakeMarshal::default();
             let live_frontier = Arc::new(std::sync::atomic::AtomicU64::new(95));
-            let committees = FrontierCommittees {
-                bimap: c.bimap.clone(),
-                finalized: Arc::new(std::sync::atomic::AtomicU64::new(69)),
-                live_frontier: live_frontier.clone(),
-                committed_from: 200,
+            // Committed at NEITHER anchor: the module never answers for epoch 1.
+            let committee_module = {
+                let bimap = c.bimap.clone();
+                crate::committee::testing::SchemeCommittee::new(move |epoch| {
+                    (epoch == 0).then(|| {
+                        build_verifier(&fluent_namespace(CHAIN_ID), bimap.clone(), epoch, None)
+                    })
+                })
             };
             let (dkg_tx, _dkg_rx) = tokio::sync::mpsc::channel::<u64>(1);
             let upstream_frontier = Arc::new(std::sync::atomic::AtomicU64::new(0));
-            let mut inlet = CertInlet::new(marshal.clone(), committees, ctx).with_tee(
+            let mut inlet = CertInlet::new(marshal.clone(), committee_module, ctx).with_tee(
                 super::LiveFrontierTee {
                     live_height: live_frontier,
                     upstream_frontier: upstream_frontier.clone(),
@@ -1460,7 +1218,7 @@ mod tests {
             inlet
                 .ingest(certify(&c, 1, &sample_order(Digest(B256::repeat_byte(0xbb)), 96)))
                 .await
-                .expect("deferred cert is non-fatal Ok");
+                ;
             assert!(
                 marshal.calls.lock().unwrap().is_empty(),
                 "an uncommitted-at-both-anchors boundary cert drives the marshal with ZERO calls"
@@ -1487,10 +1245,7 @@ mod tests {
             let (mut inlet, marshal, _) = inlet(ctx, &ours);
             let block = sample_order(Digest(B256::repeat_byte(0xaa)), 65);
             // Cert is a valid quorum of `theirs`, but our verifier rejects it.
-            inlet
-                .ingest(certify(&theirs, 0, &block))
-                .await
-                .expect("Ok, not Err");
+            inlet.ingest(certify(&theirs, 0, &block)).await;
             assert!(
                 marshal.calls.lock().unwrap().is_empty(),
                 "wrong-sig cert must drive ZERO marshal calls"
@@ -1510,7 +1265,7 @@ mod tests {
             let mut uf = certify(&c, 0, &signed);
             // Swap in a different body the cert does NOT sign.
             uf.block = sample_order(Digest(B256::repeat_byte(0xab)), 65);
-            inlet.ingest(uf).await.expect("Ok, not Err");
+            inlet.ingest(uf).await;
             assert!(
                 marshal.calls.lock().unwrap().is_empty(),
                 "tampered body must drive ZERO marshal calls"
@@ -1518,26 +1273,10 @@ mod tests {
         });
     }
 
-    /// A committee source whose finalized-tip read is NOT yet committed
-    /// (`Ok(None)`) — models the executor lagging behind the inlet on the first
-    /// cert of a new epoch.
-    struct UnreadyCommittees;
-    impl CommitteeSource for UnreadyCommittees {
-        fn scheme_at(
-            &self,
-            _epoch: u64,
-            _at_hash: B256,
-            _oracle: Option<Arc<dyn SeedOracle>>,
-        ) -> eyre::Result<BlsScheme> {
-            unreachable!("hot path uses scheme_at_finalized_tip")
-        }
-        fn scheme_at_finalized_tip(
-            &self,
-            _epoch: u64,
-            _oracle: Option<Arc<dyn SeedOracle>>,
-        ) -> eyre::Result<Option<BlsScheme>> {
-            Ok(None)
-        }
+    /// A committee module that has no record for the epoch yet — the executor
+    /// lagging behind the inlet on the first cert of a new epoch.
+    fn unready_committee() -> Arc<crate::committee::testing::SchemeCommittee> {
+        crate::committee::testing::SchemeCommittee::new(|_| None)
     }
 
     #[test]
@@ -1552,13 +1291,10 @@ mod tests {
             let c = committee(1);
             let marshal = FakeMarshal::default();
             let metric: Family<CommitteeReadDeferLabels, Counter> = Family::default();
-            let mut inlet = CertInlet::new(marshal.clone(), UnreadyCommittees, ctx)
+            let mut inlet = CertInlet::new(marshal.clone(), unready_committee(), ctx)
                 .with_committee_read_deferred_metric(metric.clone());
             let block = sample_order(Digest(B256::repeat_byte(0xaa)), 65);
-            inlet
-                .ingest(certify(&c, 0, &block))
-                .await
-                .expect("an unreadable committee must be Ok (non-fatal), not Err");
+            inlet.ingest(certify(&c, 0, &block)).await;
             assert!(
                 marshal.calls.lock().unwrap().is_empty(),
                 "a deferred cert must drive ZERO marshal calls"
@@ -1576,116 +1312,21 @@ mod tests {
         });
     }
 
-    /// A committee source whose finalized-tip read fails with a TRANSIENT reth
-    /// pipeline-backfill state-miss (`ReadError::StateNotMaterialized`),
-    /// propagated through a REAL `?` on a `Result<_, ReadError>` — the exact
-    /// wire `RethCommitteeSource::scheme_at_finalized_tip` uses
-    /// (`self.reader.epoch_committee_snapshot(..)?`). Integration-shaped on
-    /// purpose: if that path ever gains a `.context()` / `eyre!("…: {e}")`
-    /// re-wrap, the ingest `downcast_ref::<ReadError>()` stops matching and the
-    /// defer test below breaks — instead of silently restoring fatal-on-transient.
-    struct StateMissCommittees;
-    impl CommitteeSource for StateMissCommittees {
-        fn scheme_at(
-            &self,
-            _epoch: u64,
-            _at_hash: B256,
-            _oracle: Option<Arc<dyn SeedOracle>>,
-        ) -> eyre::Result<BlsScheme> {
-            unreachable!("hot path uses scheme_at_finalized_tip")
-        }
-        fn scheme_at_finalized_tip(
-            &self,
-            _epoch: u64,
-            _oracle: Option<Arc<dyn SeedOracle>>,
-        ) -> eyre::Result<Option<BlsScheme>> {
-            // Mirrors `epoch_committee_snapshot(..)?`: a typed ReadError read
-            // result, `?`-converted into eyre::Report by the SAME From impl.
-            let snap: Result<Option<BlsScheme>, ReadError> = Err(ReadError::StateNotMaterialized {
-                hash: B256::repeat_byte(0x9),
-            });
-            Ok(snap?)
-        }
-    }
-
-    /// A committee source whose finalized-tip read fails with a NON-transient
-    /// backend error (corrupt committee state) — must stay FATAL.
-    struct CorruptCommittees;
-    impl CommitteeSource for CorruptCommittees {
-        fn scheme_at(
-            &self,
-            _epoch: u64,
-            _at_hash: B256,
-            _oracle: Option<Arc<dyn SeedOracle>>,
-        ) -> eyre::Result<BlsScheme> {
-            unreachable!("hot path uses scheme_at_finalized_tip")
-        }
-        fn scheme_at_finalized_tip(
-            &self,
-            _epoch: u64,
-            _oracle: Option<Arc<dyn SeedOracle>>,
-        ) -> eyre::Result<Option<BlsScheme>> {
-            Err(eyre::Report::new(ReadError::Backend(
-                "corrupt committee read".into(),
-            )))
-        }
-    }
-
-    #[test]
-    fn state_not_materialized_defers_non_fatally_and_ticks_counter() {
-        // The reth pipeline-backfill fail-open: a committee read hitting a
-        // TRANSIENT state-miss defers exactly like the not-yet-committed branch
-        // (Ok, drive NOTHING) — NOT fatal — and ticks the deferred counter.
-        let runtime = deterministic::Runner::default();
-        runtime.start(|ctx| async move {
-            let c = committee(1);
-            let marshal = FakeMarshal::default();
-            let metric: Family<CommitteeReadDeferLabels, Counter> = Family::default();
-            let mut inlet = CertInlet::new(marshal.clone(), StateMissCommittees, ctx)
-                .with_committee_read_deferred_metric(metric.clone());
-            let block = sample_order(Digest(B256::repeat_byte(0xaa)), 65);
-            inlet
-                .ingest(certify(&c, 0, &block))
-                .await
-                .expect("a transient reth state-miss must defer (Ok), not fail closed");
-            assert!(
-                marshal.calls.lock().unwrap().is_empty(),
-                "a state-miss deferred cert must drive ZERO marshal calls"
-            );
-            assert_eq!(
-                metric
-                    .get_or_create(&CommitteeReadDeferLabels {
-                        reason: DEFER_STATE_NOT_MATERIALIZED,
-                    })
-                    .get(),
-                1,
-                "the state-not-materialized defer ticks the counter once per cert"
-            );
-        });
-    }
-
-    #[test]
-    fn corrupt_committee_read_stays_fatal() {
-        // A NON-transient committee read error (not StateNotMaterialized) still
-        // propagates as `Err` from ingest — the inlet loop then fails closed, the
-        // unchanged posture for genuine committee-state corruption.
-        let runtime = deterministic::Runner::default();
-        runtime.start(|ctx| async move {
-            let c = committee(1);
-            let marshal = FakeMarshal::default();
-            let mut inlet = CertInlet::new(marshal, CorruptCommittees, ctx);
-            let block = sample_order(Digest(B256::repeat_byte(0xaa)), 65);
-            let err = inlet
-                .ingest(certify(&c, 0, &block))
-                .await
-                .expect_err("a non-transient committee read error must stay fatal");
-            assert!(
-                err.downcast_ref::<ReadError>()
-                    .is_some_and(|e| matches!(e, ReadError::Backend(_))),
-                "the fatal error is the backend read error, propagated verbatim"
-            );
-        });
-    }
+    // Two tests stood here and both lost their subject in this step:
+    // `state_not_materialized_defers_non_fatally_and_ticks_counter` and
+    // `corrupt_committee_read_stays_fatal`. They asserted the inlet's OWN
+    // committee-read taxonomy — a transient reth state-miss defers, a corrupt
+    // read is fatal — over a `CommitteeSource` that returned `eyre::Result`. The
+    // inlet no longer reads a committee: it asks the committee module for the
+    // epoch's scheme, and the module owns both verdicts. The transient half is
+    // `CommitteeError::NotReadable`, pinned by
+    // `committee::tests::{a_height_below_the_commit_is_refused_without_a_read, …}`;
+    // the permanent half is `Read(permanent)` with its own `error!` and
+    // `dpos_committee_read_permanent_total`, pinned by the module's own
+    // permanent-read tests. What is left on THIS side is the single defer the
+    // test above asserts — a cert whose epoch has no scheme yet drives the marshal
+    // zero times, non-fatally, and ticks the counter. Re-adding an inlet-side
+    // fatal arm would be re-adding the second committee authority.
 
     #[test]
     fn consecutive_data_faults_rotate_once_lag_does_not_success_resets() {
@@ -1714,7 +1355,7 @@ mod tests {
             // MAX_UPSTREAM_FAULTS-1 wrong-committee certs: a data fault each, but
             // below the threshold ⇒ no rotation yet.
             for _ in 0..MAX_UPSTREAM_FAULTS - 1 {
-                inlet.ingest(certify(&theirs, 0, &block)).await.expect("Ok");
+                inlet.ingest(certify(&theirs, 0, &block)).await;
             }
             assert_eq!(
                 rotations.load(std::sync::atomic::Ordering::Relaxed),
@@ -1722,7 +1363,7 @@ mod tests {
                 "below threshold: no rotation"
             );
             // The Nth consecutive data fault ⇒ exactly one rotation, streak reset.
-            inlet.ingest(certify(&theirs, 0, &block)).await.expect("Ok");
+            inlet.ingest(certify(&theirs, 0, &block)).await;
             assert_eq!(
                 rotations.load(std::sync::atomic::Ordering::Relaxed),
                 1,
@@ -1731,7 +1372,7 @@ mod tests {
 
             // After the reset, a fresh streak must climb from zero again — a
             // single more fault does NOT immediately re-rotate.
-            inlet.ingest(certify(&theirs, 0, &block)).await.expect("Ok");
+            inlet.ingest(certify(&theirs, 0, &block)).await;
             assert_eq!(
                 rotations.load(std::sync::atomic::Ordering::Relaxed),
                 1,
@@ -1740,9 +1381,9 @@ mod tests {
 
             // A SUCCESS resets the streak: 2 faults, then a good cert, then 2 more
             // faults must NOT reach the threshold (no further rotation).
-            inlet.ingest(certify(&theirs, 0, &block)).await.expect("Ok"); // streak now 2
-            inlet.ingest(certify(&ours, 0, &block)).await.expect("Ok"); // success ⇒ reset
-            inlet.ingest(certify(&theirs, 0, &block)).await.expect("Ok"); // streak 1
+            inlet.ingest(certify(&theirs, 0, &block)).await; // streak now 2
+            inlet.ingest(certify(&ours, 0, &block)).await; // success ⇒ reset
+            inlet.ingest(certify(&theirs, 0, &block)).await; // streak 1
             assert_eq!(
                 rotations.load(std::sync::atomic::Ordering::Relaxed),
                 1,
@@ -1784,7 +1425,7 @@ mod tests {
 
             // Upstream A serves MAX_UPSTREAM_FAULTS-1 bad certs (below threshold).
             for _ in 0..MAX_UPSTREAM_FAULTS - 1 {
-                inlet.ingest(certify(&theirs, 0, &block)).await.expect("Ok");
+                inlet.ingest(certify(&theirs, 0, &block)).await;
             }
             assert_eq!(
                 rotations.load(std::sync::atomic::Ordering::Relaxed),
@@ -1797,7 +1438,7 @@ mod tests {
             // scoping this is B's FIRST fault — below threshold, NO rotation. If
             // A's streak had bled in, this Nth total fault would have rotated.
             conn_gen.fetch_add(1, std::sync::atomic::Ordering::Release);
-            inlet.ingest(certify(&theirs, 0, &block)).await.expect("Ok");
+            inlet.ingest(certify(&theirs, 0, &block)).await;
             assert_eq!(
                 rotations.load(std::sync::atomic::Ordering::Relaxed),
                 0,
@@ -1808,7 +1449,7 @@ mod tests {
             // B continues serving faults from a reset streak: it now takes the
             // full MAX_UPSTREAM_FAULTS B-only faults to rotate (already 1 above).
             for _ in 0..MAX_UPSTREAM_FAULTS - 1 {
-                inlet.ingest(certify(&theirs, 0, &block)).await.expect("Ok");
+                inlet.ingest(certify(&theirs, 0, &block)).await;
             }
             assert_eq!(
                 rotations.load(std::sync::atomic::Ordering::Relaxed),
@@ -1838,10 +1479,10 @@ mod tests {
                 })
             };
             let marshal = FakeMarshal::default();
-            let mut inlet = CertInlet::new(marshal, UnreadyCommittees, ctx).with_rotate(rotate);
+            let mut inlet = CertInlet::new(marshal, unready_committee(), ctx).with_rotate(rotate);
             let block = sample_order(Digest(B256::repeat_byte(0xaa)), 65);
             for _ in 0..MAX_UPSTREAM_FAULTS * 3 {
-                inlet.ingest(certify(&c, 0, &block)).await.expect("Ok");
+                inlet.ingest(certify(&c, 0, &block)).await;
             }
             assert_eq!(
                 rotations.load(std::sync::atomic::Ordering::Relaxed),
@@ -1864,7 +1505,7 @@ mod tests {
             let (window_tx, mut window_rx) = tokio::sync::mpsc::unbounded_channel();
             let mut inlet = inlet.with_window(window_tx);
             let block = sample_order(Digest(B256::repeat_byte(0xaa)), 65);
-            inlet.ingest(certify(&c, 0, &block)).await.expect("ok");
+            inlet.ingest(certify(&c, 0, &block)).await;
             assert_eq!(
                 *marshal.calls.lock().unwrap(),
                 vec!["verified", "report"],
@@ -1881,7 +1522,7 @@ mod tests {
 
             // A wrong-committee cert: NO marshal call, NO window emit.
             let theirs = committee(2);
-            inlet.ingest(certify(&theirs, 0, &block)).await.expect("Ok");
+            inlet.ingest(certify(&theirs, 0, &block)).await;
             assert!(
                 window_rx.try_recv().is_err(),
                 "a rejected cert must NOT enter the serving window"
@@ -1909,7 +1550,7 @@ mod tests {
             });
 
             let block = sample_order(Digest(B256::repeat_byte(0xaa)), 65);
-            inlet.ingest(certify(&c, 0, &block)).await.expect("ok");
+            inlet.ingest(certify(&c, 0, &block)).await;
             assert_eq!(
                 live_height.load(std::sync::atomic::Ordering::Relaxed),
                 65,
@@ -1924,10 +1565,7 @@ mod tests {
             // A wrong-committee cert at a higher height must NOT advance either.
             let theirs = committee(2);
             let higher = sample_order(Digest(B256::repeat_byte(0xbb)), 99);
-            inlet
-                .ingest(certify(&theirs, 0, &higher))
-                .await
-                .expect("Ok");
+            inlet.ingest(certify(&theirs, 0, &higher)).await;
             assert_eq!(
                 live_height.load(std::sync::atomic::Ordering::Relaxed),
                 65,
@@ -1940,7 +1578,7 @@ mod tests {
 
             // `fetch_max` is monotone — a lower verified height does not rewind.
             live_height.store(200, std::sync::atomic::Ordering::Relaxed);
-            inlet.ingest(certify(&c, 0, &block)).await.expect("ok");
+            inlet.ingest(certify(&c, 0, &block)).await;
             assert_eq!(
                 live_height.load(std::sync::atomic::Ordering::Relaxed),
                 200,
@@ -2280,59 +1918,49 @@ mod tests {
     /// pin-resolution trail a beacon-aware test asserts against.
     type PinReads = Arc<Mutex<Vec<(u64, bool)>>>;
 
-    struct BeaconAwareCommittees {
-        namespace: Vec<u8>,
-        bimap: BiMap<PeerPubkey, BlsPubkey>,
-        reads: PinReads,
-    }
+    type BeaconInlet = CertInlet<deterministic::Context, FakeMarshal>;
 
-    impl CommitteeSource for BeaconAwareCommittees {
-        fn scheme_at(
-            &self,
-            epoch: u64,
-            _at_hash: B256,
-            oracle: Option<Arc<dyn SeedOracle>>,
-        ) -> eyre::Result<BlsScheme> {
-            Ok(build_verifier(
-                &self.namespace,
-                self.bimap.clone(),
-                epoch,
-                oracle,
-            ))
-        }
-        fn scheme_at_finalized_tip(
-            &self,
-            epoch: u64,
-            oracle: Option<Arc<dyn SeedOracle>>,
-        ) -> eyre::Result<Option<BlsScheme>> {
-            self.reads.lock().unwrap().push((epoch, oracle.is_some()));
-            Ok(Some(build_verifier(
-                &self.namespace,
-                self.bimap.clone(),
-                epoch,
-                oracle,
-            )))
-        }
-    }
-
-    type BeaconInlet = CertInlet<BeaconAwareCommittees, deterministic::Context, FakeMarshal>;
-
+    /// A committee module wired the way production wires one: the scheme is built
+    /// by ONE verifier over the epoch's record plus `Beacon::oracle_for(epoch)`,
+    /// from a beacon handle that arrives AFTER the module (the production build
+    /// order — the beacon is constructed from the module's own facade). The test
+    /// fills the slot with the same provider it hands the inlet, so what the
+    /// scheme is bound to and what the inlet resolves keys through are one object.
     fn beacon_inlet(
         ctx: deterministic::Context,
         bc: &BeaconFixture,
         marshal: FakeMarshal,
-    ) -> (BeaconInlet, PinReads) {
-        let reads = Arc::new(Mutex::new(Vec::new()));
-        let inlet = CertInlet::new(
-            marshal,
-            BeaconAwareCommittees {
-                namespace: bc.namespace.clone(),
-                bimap: bc.bimap.clone(),
-                reads: reads.clone(),
-            },
-            ctx,
-        );
-        (inlet, reads)
+    ) -> (BeaconInlet, PinReads, crate::committee::BeaconSlot) {
+        let reads: PinReads = Arc::new(Mutex::new(Vec::new()));
+        let slot: crate::committee::BeaconSlot = Arc::new(std::sync::OnceLock::new());
+        let namespace = bc.namespace.clone();
+        let bimap = bc.bimap.clone();
+        let recorded = reads.clone();
+        let beacon = slot.clone();
+        let committee = crate::committee::testing::SchemeCommittee::new(move |epoch| {
+            // Unset ⇒ the inlet's own default provider, which is what a test that
+            // never wires one gets on the other side too.
+            let oracle = beacon
+                .get()
+                .and_then(std::sync::Weak::upgrade)
+                .unwrap_or_else(crate::beacon::absent_unregistered)
+                .oracle_for(epoch);
+            recorded.lock().unwrap().push((epoch, oracle.is_some()));
+            Some(build_verifier(&namespace, bimap.clone(), epoch, oracle))
+        });
+        let inlet = CertInlet::new(marshal, committee, ctx);
+        (inlet, reads, slot)
+    }
+
+    /// Hand the SAME provider to the inlet and to the committee module's
+    /// verifier, as the production wiring does.
+    fn with_beacon(
+        inlet: BeaconInlet,
+        slot: &crate::committee::BeaconSlot,
+        randomness: Arc<dyn Beacon>,
+    ) -> BeaconInlet {
+        let _ = slot.set(Arc::downgrade(&randomness));
+        inlet.with_randomness(randomness)
     }
 
     /// A provider over canned ladder pieces. The tests keep building the REAL
@@ -2409,16 +2037,18 @@ mod tests {
             let bc = beacon_committee(1);
             let pk = fixture_key(&bc);
             let marshal = FakeMarshal::default();
-            let (inlet, _reads) = beacon_inlet(ctx, &bc, marshal.clone());
+            let (inlet, _reads, slot) = beacon_inlet(ctx, &bc, marshal.clone());
             let (rotations, rotate) = count_rotations();
             let (window_tx, mut window_rx) = tokio::sync::mpsc::unbounded_channel();
-            let mut inlet = inlet
-                .with_rotate(rotate)
-                .with_window(window_tx)
-                .with_randomness(canned_randomness(
-                    BeaconKeys::new(),
-                    Some(canned_held(move |e| (e == 2).then_some(pk), &[2])),
-                ));
+            let randomness = canned_randomness(
+                BeaconKeys::new(),
+                Some(canned_held(move |e| (e == 2).then_some(pk), &[2])),
+            );
+            let mut inlet = with_beacon(
+                inlet.with_rotate(rotate).with_window(window_tx),
+                &slot,
+                randomness,
+            );
 
             let boundary = certify_seeded(&bc, 2, &beacon_order(64));
             // A valid seed for a foreign round (9, 999) — stands in for a tampered
@@ -2428,11 +2058,10 @@ mod tests {
                 .certificate
                 .seed;
 
-            inlet.ingest(boundary).await.expect("boundary ok");
+            inlet.ingest(boundary).await;
             inlet
                 .ingest(certify_seeded(&bc, 2, &beacon_order(65)))
-                .await
-                .expect("genuine later cert ok");
+                .await;
             assert_eq!(
                 *marshal.calls.lock().unwrap(),
                 vec!["verified", "report", "verified", "report"],
@@ -2445,10 +2074,7 @@ mod tests {
             for h in 66..=68u64 {
                 let mut t = certify_seeded(&bc, 2, &beacon_order(h));
                 t.finalization.certificate.seed = wrong;
-                inlet
-                    .ingest(t)
-                    .await
-                    .expect("tampered cert is a non-fatal skip");
+                inlet.ingest(t).await;
             }
             assert_eq!(
                 *marshal.calls.lock().unwrap(),
@@ -2493,12 +2119,16 @@ mod tests {
             let bc = beacon_committee(2);
             let pk2 = fixture_key(&bc);
             let marshal = FakeMarshal::default();
-            let (inlet, reads) = beacon_inlet(ctx, &bc, marshal.clone());
+            let (inlet, reads, slot) = beacon_inlet(ctx, &bc, marshal.clone());
             let keys = BeaconKeys::new();
-            let mut inlet = inlet.with_randomness(canned_randomness(
-                keys.clone(),
-                Some(canned_held(move |e| (e == 2).then_some(pk2), &[2])),
-            ));
+            let mut inlet = with_beacon(
+                inlet,
+                &slot,
+                canned_randomness(
+                    keys.clone(),
+                    Some(canned_held(move |e| (e == 2).then_some(pk2), &[2])),
+                ),
+            );
 
             let wrong = certify_seeded(&bc, 9, &beacon_order(999))
                 .finalization
@@ -2507,8 +2137,7 @@ mod tests {
 
             inlet
                 .ingest(certify_seeded(&bc, 2, &beacon_order(64)))
-                .await
-                .expect("minting epoch ok");
+                .await;
             assert_eq!(
                 keys.cached_only(2),
                 Some(pk2),
@@ -2522,12 +2151,10 @@ mod tests {
 
             inlet
                 .ingest(certify_seeded(&bc, 3, &beacon_order(200)))
-                .await
-                .expect("carry-forward epoch-3 cert ok");
+                .await;
             inlet
                 .ingest(certify_seeded(&bc, 5, &beacon_order(400)))
-                .await
-                .expect("carry-forward epoch-5 cert ok");
+                .await;
 
             assert_eq!(
                 *reads.lock().unwrap(),
@@ -2545,10 +2172,7 @@ mod tests {
             // — proving the resolved pin is genuinely PK_epoch, not None.
             let mut t = certify_seeded(&bc, 5, &beacon_order(401));
             t.finalization.certificate.seed = wrong;
-            inlet
-                .ingest(t)
-                .await
-                .expect("tampered epoch-5 cert non-fatal");
+            inlet.ingest(t).await;
             assert_eq!(
                 marshal.calls.lock().unwrap().len(),
                 6,
@@ -2571,11 +2195,15 @@ mod tests {
             let bc = beacon_committee(3);
             let pk = fixture_key(&bc);
             let marshal = FakeMarshal::default();
-            let (inlet, reads) = beacon_inlet(ctx, &bc, marshal.clone());
-            let mut inlet = inlet.with_randomness(canned_randomness(
-                BeaconKeys::new(),
-                Some(canned_held(move |e| (e == 2).then_some(pk), &[2])),
-            ));
+            let (inlet, reads, slot) = beacon_inlet(ctx, &bc, marshal.clone());
+            let mut inlet = with_beacon(
+                inlet,
+                &slot,
+                canned_randomness(
+                    BeaconKeys::new(),
+                    Some(canned_held(move |e| (e == 2).then_some(pk), &[2])),
+                ),
+            );
 
             let wrong = certify_seeded(&bc, 9, &beacon_order(999))
                 .finalization
@@ -2584,15 +2212,14 @@ mod tests {
 
             inlet
                 .ingest(certify_seeded(&bc, 2, &beacon_order(64)))
-                .await
-                .expect("minting epoch ok");
+                .await;
 
             // A pre-beacon epoch-1 cert with a tampered seed: epoch 1 predates the
             // bootstrap mint, so it resolves no key, verifies vote-only and drives
             // the marshal.
             let mut pre = certify_seeded(&bc, 1, &beacon_order(30));
             pre.finalization.certificate.seed = wrong;
-            inlet.ingest(pre).await.expect("pre-beacon cert ok");
+            inlet.ingest(pre).await;
 
             assert_eq!(
                 *reads.lock().unwrap(),
@@ -2685,15 +2312,15 @@ mod tests {
 
             // WITHOUT the source: no key for epoch 3, so vote-only admission.
             let marshal = FakeMarshal::default();
-            let (mut inlet, _reads) = beacon_inlet(ctx.clone(), &f1, marshal.clone());
+            // No provider wired on purpose: the inlet AND the module's verifier
+            // both fall back to the default absent one.
+            let (mut inlet, _reads, _slot) = beacon_inlet(ctx.clone(), &f1, marshal.clone());
             inlet
                 .ingest(certify_seeded(&f1, 2, &beacon_order(64)))
-                .await
-                .expect("epoch-2 mint ok");
+                .await;
             inlet
                 .ingest(certify_seeded(&f2, 3, &beacon_order(129)))
-                .await
-                .expect("unpinned epoch-3 cert is admitted vote-only");
+                .await;
             assert_eq!(
                 *marshal.calls.lock().unwrap(),
                 vec!["verified", "report", "verified", "report"],
@@ -2704,21 +2331,23 @@ mod tests {
             // WITH a source resolving PK_3 for epoch 3 (its artifact, arrived
             // late): the same sequence verifies end-to-end.
             let marshal = FakeMarshal::default();
-            let (inlet, _reads) = beacon_inlet(ctx, &f1, marshal.clone());
-            let mut inlet = inlet.with_randomness(canned_randomness(
-                BeaconKeys::new(),
-                Some(canned_held(move |e| (e == 3).then_some(pk3), &[3])),
-            ));
+            let (inlet, _reads, slot) = beacon_inlet(ctx, &f1, marshal.clone());
+            let mut inlet = with_beacon(
+                inlet,
+                &slot,
+                canned_randomness(
+                    BeaconKeys::new(),
+                    Some(canned_held(move |e| (e == 3).then_some(pk3), &[3])),
+                ),
+            );
             inlet
                 .ingest(certify_seeded(&f2, 3, &beacon_order(129)))
-                .await
-                .expect("re-pinned epoch-3 cert ok");
+                .await;
             // The cache entry is now pinned, so the next epoch-2 cert rides it
             // without re-consulting the source, and verifies too.
             inlet
                 .ingest(certify_seeded(&f2, 3, &beacon_order(130)))
-                .await
-                .expect("subsequent epoch-3 cert ok");
+                .await;
             assert_eq!(
                 *marshal.calls.lock().unwrap(),
                 vec!["verified", "report", "verified", "report"],
@@ -2754,17 +2383,17 @@ mod tests {
             );
 
             let marshal = FakeMarshal::default();
-            let (inlet, reads) = beacon_inlet(ctx, &f1, marshal.clone());
-            let mut inlet = inlet.with_randomness(canned_randomness(BeaconKeys::new(), Some(held)));
+            let (inlet, reads, slot) = beacon_inlet(ctx, &f1, marshal.clone());
+            let mut inlet = with_beacon(inlet, &slot, canned_randomness(BeaconKeys::new(), Some(held)));
 
             inlet
                 .ingest(certify_seeded(&f2, 2, &beacon_order(129)))
                 .await
-                .expect("unpinned epoch-2 cert is admitted vote-only");
+                ;
             inlet
                 .ingest(certify_seeded(&f2, 2, &beacon_order(130)))
                 .await
-                .expect("still unpinned, still admitted");
+                ;
             assert_eq!(
                 *reads.lock().unwrap(),
                 vec![(2, true)],
@@ -2776,7 +2405,7 @@ mod tests {
             inlet
                 .ingest(certify_seeded(&f2, 2, &beacon_order(131)))
                 .await
-                .expect("the newly-resolvable key needs no rebuild");
+                ;
             assert_eq!(
                 *reads.lock().unwrap(),
                 vec![(2, true)],
@@ -2800,7 +2429,7 @@ mod tests {
             inlet
                 .ingest(tampered)
                 .await
-                .expect("tampered cert is a non-fatal skip");
+                ;
             assert_eq!(
                 marshal.calls.lock().unwrap().len(),
                 6,
@@ -2836,17 +2465,19 @@ mod tests {
             );
 
             let marshal = FakeMarshal::default();
-            let (inlet, reads) = beacon_inlet(ctx, &f1, marshal.clone());
-            let mut inlet = inlet.with_randomness(canned_randomness(BeaconKeys::new(), Some(held)));
+            let (inlet, reads, slot) = beacon_inlet(ctx, &f1, marshal.clone());
+            let mut inlet = with_beacon(
+                inlet,
+                &slot,
+                canned_randomness(BeaconKeys::new(), Some(held)),
+            );
 
             inlet
                 .ingest(certify_seeded(&f2, 2, &beacon_order(129)))
-                .await
-                .expect("epoch-2 cert pins off the artifact rung");
+                .await;
             inlet
                 .ingest(certify_seeded(&f2, 2, &beacon_order(130)))
-                .await
-                .expect("a second ingest of an epoch whose key is already held");
+                .await;
             assert_eq!(
                 consults.load(std::sync::atomic::Ordering::Relaxed),
                 1,
@@ -2865,10 +2496,7 @@ mod tests {
                 .seed;
             let mut tampered = certify_seeded(&f2, 2, &beacon_order(131));
             tampered.finalization.certificate.seed = wrong;
-            inlet
-                .ingest(tampered)
-                .await
-                .expect("tampered cert is a non-fatal skip");
+            inlet.ingest(tampered).await;
             assert_eq!(
                 marshal.calls.lock().unwrap().len(),
                 4,

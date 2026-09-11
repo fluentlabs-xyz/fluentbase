@@ -266,8 +266,31 @@ fn frozen_geometry_rx() -> crate::committee::GeometryRx {
     tokio::sync::watch::Sender::new(Some((0, INTERVAL))).subscribe()
 }
 
+/// The module's one scheme producer, as a fixture: a verify-only scheme over
+/// the record's own BLS projection, bound to no oracle (this module's tests are
+/// about the map, not about beacon-activeness — the two tests that ARE about
+/// verification strength build their own).
+fn test_verifier() -> EpochVerifier {
+    Arc::new(|record: &CommitteeRecord| {
+        Some(fluentbase_bls::scheme::build_verifier(
+            &fluentbase_bls::fluent_namespace(CHAIN_ID),
+            record.bls.bimap.clone(),
+            record.epoch,
+            None,
+        ))
+    })
+}
+
+/// The chain id every scheme in these tests is namespaced under.
+const CHAIN_ID: u64 = 1;
+
 fn new_store(anchor: Arc<FakeAnchor>, reads: FakeReads) -> Arc<CommitteeStore<FakeReads>> {
-    Arc::new(CommitteeStore::new(reads, anchor, frozen_geometry_rx()))
+    Arc::new(CommitteeStore::new(
+        reads,
+        anchor,
+        frozen_geometry_rx(),
+        test_verifier(),
+    ))
 }
 
 // --------------------------------------------------------- 0. no geometry yet
@@ -285,6 +308,7 @@ fn without_a_frozen_geometry_every_epoch_is_not_readable_without_a_single_read()
         FakeReads::new(four_members(), BTreeMap::from([(hash(7), 400u64)])),
         anchor,
         rx,
+        test_verifier(),
     ));
 
     match store.committee(5) {
@@ -789,9 +813,31 @@ fn the_wake_up_carries_the_highest_readable_epoch_as_the_anchor_grows() {
     assert!(rx.has_changed().unwrap(), "the wake-up fired");
     assert_eq!(*rx.borrow_and_update(), 5, "epoch(anchor) + 2");
 
-    // Monotone: an anchor that did not move publishes nothing.
+    // The EVENT fires on every advance, including one that does not move the
+    // value — and that is the contract, not an accident. A consumer can be parked
+    // for two different reasons: the epoch's commit height is above the anchor
+    // (the value moves when that changes) or the anchor's own height is not
+    // EXECUTED yet (it never does). Publishing only on growth left the second
+    // class with no retry at all: a restarted node whose cursor is already at its
+    // finalized height but whose state is still materialising would wait for an
+    // epoch boundary that its own stalled reconcile is what prevents.
     store.anchor_advanced();
-    assert!(!rx.has_changed().unwrap());
+    assert!(
+        rx.has_changed().unwrap(),
+        "an advance that does not raise the ceiling is still a wake-up"
+    );
+    assert_eq!(
+        *rx.borrow_and_update(),
+        5,
+        "and the VALUE is still monotone — the hint never goes backwards"
+    );
+
+    // Monotone in the value, proved against a LOWER anchor rather than an equal
+    // one: `highest_readable` is recomputed from the anchor on every advance, so
+    // a value that could regress would regress here.
+    anchor.advance(geometry().start(1), hash(13));
+    store.anchor_advanced();
+    assert!(*rx.borrow_and_update() >= 5, "the hint never decreases");
 }
 
 // ------------------------------------------------- 12. membership + the facade
@@ -1159,6 +1205,7 @@ fn a_persisted_finalized_tag_anchors_the_window_before_the_cursor_is_seeded() {
         FakeReads::new(four_members(), BTreeMap::from([(at, TAG)])),
         anchor.clone(),
         frozen_geometry_rx(),
+        test_verifier(),
     );
     // The WINDOW is the tag's, which is the observable that matters: every
     // consumer's refusal is a function of it.
@@ -1198,4 +1245,255 @@ fn an_execution_layer_with_no_finalized_tag_leaves_the_cursor_alone() {
     assert_eq!(anchor.height(), 0);
     cursor.advance(64);
     assert_eq!(anchor.height(), 64);
+}
+
+// ------------------------------------------------- 14. the scheme in the slot
+
+/// The narrowest thing that satisfies [`SeedOracle`]. The map only ever asks
+/// whether an oracle is THERE, so nothing here needs to answer.
+#[derive(Debug)]
+struct StubOracle;
+
+impl fluentbase_bls::oracle::SeedOracle for StubOracle {
+    fn sign_partial(
+        &self,
+        _round: commonware_consensus::types::Round,
+    ) -> Option<fluentbase_bls::BlsSignature> {
+        None
+    }
+    fn verify_partial(
+        &self,
+        _round: commonware_consensus::types::Round,
+        _index: commonware_utils::Participant,
+        _v: &fluentbase_bls::BlsSignature,
+    ) -> bool {
+        false
+    }
+    fn recover(
+        &self,
+        _partials: &[(commonware_utils::Participant, fluentbase_bls::BlsSignature)],
+        _threshold: u32,
+    ) -> Option<fluentbase_bls::BlsSignature> {
+        None
+    }
+    fn verify_seed(
+        &self,
+        _round: commonware_consensus::types::Round,
+        _seed: &fluentbase_bls::BlsSignature,
+    ) -> fluentbase_bls::oracle::SeedCheck {
+        fluentbase_bls::oracle::SeedCheck::NoKey
+    }
+}
+
+/// `n` validators in CONTRACT ORDER, WITH the keypairs that produced them —
+/// [`validators`] discards those, and a signer scheme needs one the committee
+/// actually contains.
+fn validators_with_keys(n: usize) -> (Vec<ValidatorWithKeys>, Vec<ValidatorBlsKeypair>) {
+    let mut rng = StdRng::seed_from_u64(0x5164);
+    let mut pairs: Vec<(ValidatorWithKeys, ValidatorBlsKeypair)> = (0..n)
+        .map(|i| {
+            let peer = Ed25519PrivateKey::random(&mut rng).public_key();
+            let bls = ValidatorBlsKeypair::generate(&mut rng);
+            (
+                ValidatorWithKeys {
+                    address: alloy_primitives::Address::with_last_byte(i as u8 + 1),
+                    keys: ConsensusKeys {
+                        bls_pubkey: BlsPubkey::decode(bls.public_bytes().as_slice()).unwrap(),
+                        peer_pubkey: peer,
+                        activation_epoch: 0,
+                    },
+                    tombstoned: false,
+                },
+                bls,
+            )
+        })
+        .collect();
+    pairs.sort_by(|a, b| a.0.keys.peer_pubkey.cmp(&b.0.keys.peer_pubkey));
+    pairs.into_iter().unzip()
+}
+
+/// A store whose records are the given committee and whose ONE producer builds
+/// a verify-only scheme with (or without) an oracle, so a test can set up each
+/// of the three refusals from the outside.
+fn store_over(
+    members: Vec<ValidatorWithKeys>,
+    beacon_active: bool,
+) -> Arc<CommitteeStore<FakeReads>> {
+    let at = hash(31);
+    let anchor = FakeAnchor::at(325, at);
+    let mut reads = FakeReads::new(
+        Box::new(|_, _, _| Answer::Committee(vec![0, 1, 2, 3])),
+        BTreeMap::from([(at, 325u64)]),
+    );
+    reads.validators = members;
+    Arc::new(CommitteeStore::new(
+        reads,
+        anchor,
+        frozen_geometry_rx(),
+        Arc::new(move |record: &CommitteeRecord| {
+            Some(fluentbase_bls::scheme::build_verifier(
+                &fluentbase_bls::fluent_namespace(CHAIN_ID),
+                record.bls.bimap.clone(),
+                record.epoch,
+                beacon_active
+                    .then(|| Arc::new(StubOracle) as Arc<dyn fluentbase_bls::oracle::SeedOracle>),
+            ))
+        }),
+    ))
+}
+
+/// The direction guard, moved here with the map it guards. It used to live on
+/// `EpochSchemeProvider::register`; the per-epoch registry is gone and its three
+/// refusals are [`Committee::upgrade_scheme`]'s.
+///
+/// Reds if a signer can be replaced by a verifier, or if the verifier→signer
+/// upgrade — the whole reason the method exists — stops landing.
+#[test]
+fn a_scheme_upgrade_refuses_a_signer_to_verifier_downgrade_but_accepts_the_upgrade() {
+    use commonware_cryptography::certificate::Scheme as _;
+    const EPOCH: u64 = 10;
+    let (members, keypairs) = validators_with_keys(6);
+    let store = store_over(members, false);
+    let ns = fluentbase_bls::fluent_namespace(CHAIN_ID);
+
+    let record = store.committee(EPOCH).expect("in the window");
+    let bimap = record.bls.bimap.clone();
+    // `Answer::Committee(vec![0,1,2,3])` takes member slots 0..3, so slot 0's
+    // keypair is in this committee.
+    let signer =
+        fluentbase_bls::scheme::build_signer(&ns, bimap.clone(), &keypairs[0], EPOCH, None)
+            .expect("keypair is a committee member");
+    let verifier = || fluentbase_bls::scheme::build_verifier(&ns, bimap.clone(), EPOCH, None);
+    let is_signer = || store.scheme(EPOCH).expect("installed").me().is_some();
+
+    // The module installed a verify-only scheme WITH the record — nothing had to
+    // register it — and the signer half lands on top of it.
+    assert!(!is_signer(), "the module's own entry is verify-only");
+    assert!(store.upgrade_scheme(EPOCH, signer));
+    assert!(is_signer());
+
+    // signer → verifier is refused: an engine's own scheme is never replaced by a
+    // weaker one underneath it.
+    assert!(!store.upgrade_scheme(EPOCH, verifier()));
+    assert!(is_signer());
+
+    // A different committee is refused outright. It is structurally impossible
+    // now — the record IS the committee — which is exactly why the refusal is a
+    // loud one rather than a branch that can be reasoned away.
+    let (other_members, _) = validators_with_keys(5);
+    let other = EpochCommittee::from_pairs(
+        EPOCH,
+        other_members
+            .iter()
+            .take(4)
+            .map(|v| (v.keys.peer_pubkey.clone(), v.keys.bls_pubkey)),
+    )
+    .expect("unique keys")
+    .bimap;
+    assert!(!store.upgrade_scheme(
+        EPOCH,
+        fluentbase_bls::scheme::build_verifier(&ns, other, EPOCH, None)
+    ));
+    assert!(is_signer());
+}
+
+/// Upgrades are MONOTONE in verification strength, and the oracle is the only
+/// strength neither `participants()` nor `me()` can see: `oracle: Some` and
+/// `oracle: None` over one committee verify DIFFERENTLY — the beacon-active
+/// scheme refuses a certificate whose seed slot was cleared, the oracle-less one
+/// admits it.
+///
+/// Reds if the oracle-drop refusal is removed, or if it is widened into a
+/// blanket freeze that also blocks the upgrade.
+#[test]
+fn a_scheme_upgrade_refuses_a_replacement_that_drops_the_beacon_oracle() {
+    const EPOCH: u64 = 10;
+    let (members, _) = validators_with_keys(6);
+    let ns = fluentbase_bls::fluent_namespace(CHAIN_ID);
+
+    // The module's producer built a BEACON-ACTIVE entry.
+    let store = store_over(members.clone(), true);
+    let record = store.committee(EPOCH).expect("in the window");
+    let bimap = record.bls.bimap.clone();
+    assert!(store.scheme(EPOCH).expect("installed").is_beacon_active());
+
+    // The `RotatedKey` shape: same committee, same direction, no oracle.
+    assert!(!store.upgrade_scheme(
+        EPOCH,
+        fluentbase_bls::scheme::build_verifier(&ns, bimap.clone(), EPOCH, None)
+    ));
+    assert!(
+        store.scheme(EPOCH).expect("installed").is_beacon_active(),
+        "the oracle-less replacement must be refused — it admits a cleared seed \
+         slot where the entry it would replace refuses one"
+    );
+
+    // And the UPGRADE still lands: an entry built before any oracle existed is
+    // replaced by the beacon-active one. Monotone means one-way, not frozen.
+    let cold = store_over(members, false);
+    let cold_record = cold.committee(EPOCH).expect("in the window");
+    assert!(!cold.scheme(EPOCH).expect("installed").is_beacon_active());
+    assert!(cold.upgrade_scheme(
+        EPOCH,
+        fluentbase_bls::scheme::build_verifier(
+            &ns,
+            cold_record.bls.bimap.clone(),
+            EPOCH,
+            Some(Arc::new(StubOracle)),
+        )
+    ));
+    assert!(cold.scheme(EPOCH).expect("installed").is_beacon_active());
+}
+
+/// The FOURTH refusal, and the only one this map did not inherit from the
+/// registry it replaced: `upgrade_scheme` cannot CREATE an entry.
+///
+/// It is what makes "a scheme exists exactly when this node read the committee
+/// it verifies under" structural rather than a convention the one caller happens
+/// to follow. Reds if the no-record arm starts installing, which would let a
+/// scheme built from something the module never read sit in the map — the
+/// second-authority defect, re-entering through the one writer that is not the
+/// module's own verifier.
+#[test]
+fn a_scheme_upgrade_refuses_an_epoch_with_no_committee_record() {
+    const READ: u64 = 10;
+    const UNREAD: u64 = 11;
+    let (members, _) = validators_with_keys(6);
+    let store = store_over(members, false);
+    let ns = fluentbase_bls::fluent_namespace(CHAIN_ID);
+
+    // One epoch read, so the map is non-empty and the refusal below cannot be
+    // confused with "this store answers nothing".
+    let bimap = store
+        .committee(READ)
+        .expect("in the window")
+        .bls
+        .bimap
+        .clone();
+    assert_eq!(store.cached_epochs(), vec![READ]);
+
+    // `UNREAD` is INSIDE the read window — `epoch(anchor) = 10`, so the window is
+    // `[2, 12]` — and would be readable on demand. The refusal is therefore about
+    // the absence of a RECORD, not about the epoch being out of reach.
+    assert!(
+        !store.upgrade_scheme(
+            UNREAD,
+            fluentbase_bls::scheme::build_verifier(&ns, bimap, UNREAD, None)
+        ),
+        "a scheme for an epoch whose committee this node never read must be refused"
+    );
+    assert_eq!(
+        store.cached_epochs(),
+        vec![READ],
+        "the refused upgrade must not have created an entry"
+    );
+    assert!(
+        store.scheme(UNREAD).is_some(),
+        "and the epoch is still readable the ONE way it can be — by reading its committee"
+    );
+    assert_eq!(
+        store.cached_epochs(),
+        vec![READ, UNREAD],
+        "which is the only thing that ever puts an epoch in this map"
+    );
 }
