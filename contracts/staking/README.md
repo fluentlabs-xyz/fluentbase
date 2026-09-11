@@ -39,10 +39,11 @@ rebuild. The base genesis builder embeds staking but does not install governance
 production network genesis must provide the governance deployment or equivalent authority there before privileged
 staking operations are needed.
 
-The liveness-slashing and BLEND-reserve dependencies are observable and independently rotatable by governance. Every
-initial assignment and later rotation emits its previous and new address. Epoch interval, DPoS activation, and
-undelegation-period changes are rejected after a non-zero activation has passed; activation zero remains the explicit
-unarmed/non-DPoS state used by the Solidity contract.
+The slash fund and the BLEND reserve are observable and independently rotatable by governance; the staking token is not
+rotatable at all — it is written once at initialization and has no setter. Every initial assignment and later rotation
+emits its previous and new address. Epoch interval, DPoS activation, and undelegation-period changes are rejected after a
+non-zero activation has passed; activation zero remains the explicit unarmed/non-DPoS state used by the Solidity
+contract.
 
 Registered validator identities are permanent. Governance may disable and reactivate validators, but disabling never
 deletes their records, consensus-key state, ownership mappings, or stake history.
@@ -75,7 +76,8 @@ validator-creation call; there is no separate key-registration phase.
 - Equivocation evidence does not expire. The offender is resolved from the signing key, which is recorded permanently,
   so a report stays valid for as long as there is stake to seize.
 - Equivocation seizure consumes both active and pending self-principal.
-- Claims and committee pruning are bounded per call.
+- Claims are bounded per call: a walk covers `MAX_EPOCHS_PER_CLAIM` epochs and is resumed by another call. Nothing is
+  pruned — committee records, consensus keys and snapshots are all kept for good, deliberately.
 - BLEND transfers accept ERC-20 tokens that return `true` or no data; explicit `false` reverts.
 - The epoch stipend is flat pro-rata over the committee's frozen leader weights and consults no liveness verdict. The
   only exclusions are a permanent equivocation tombstone and a zero frozen weight.
@@ -100,8 +102,10 @@ validator-creation call; there is no separate key-registration phase.
 - `getEpochRewards` reports what an epoch was ACCRUED, which is what is owed. Nothing records what has been claimed
   against it.
 - Equivocation tombstones are permanent and prevent key reuse.
-- Compressed BLS public keys are stored as three fixed `bytes32` words. Validator creation rejects any verifier output
-  that is not exactly 96 bytes, avoiding dynamic-bytes metadata and making malformed stored key lengths unrepresentable.
+- Compressed BLS public keys are stored as three fixed `bytes32` words. The compression is inline and returns a fixed
+  96-byte array, so a stored key of the wrong length is unrepresentable by type rather than refused by a check; what
+  validator creation checks at the door is the 256-byte uncompressed key it is handed. No dynamic-bytes metadata is
+  stored either way.
 - Committee selection drops the ineligible FIRST and ranks by stake afterwards. Eligible means all
   three of: status Active, selection-visible (no running production exclusion), and holding a
   consensus key active by the selection epoch. The order matters the other way round: filtering
