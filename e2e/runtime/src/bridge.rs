@@ -227,6 +227,133 @@ fn test_receive_message_revert_restores_bridge_balance() {
 }
 
 #[test]
+fn test_receive_message_overflowing_value_is_a_failed_transaction() {
+    // A `receiveMessage` whose `value` cannot be credited to the bridge without overflowing its
+    // balance used to surface as `EVMError::Custom`, which the block executor treats as fatal:
+    // the payload builder produced empty blocks while the transaction sat in the pool. It must be
+    // an ordinary failed transaction instead, and the bridge balance must not move.
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
+
+    let mut bytecode = Vec::new();
+    bytecode.push(opcode::PUSH0);
+    bytecode.push(opcode::PUSH0);
+    bytecode.push(opcode::REVERT);
+    ctx.add_evm_contract(PRECOMPILE_ROLLUP_BRIDGE, bytecode);
+
+    ctx.add_balance(PRECOMPILE_ROLLUP_BRIDGE, BRIDGE_PREFUND);
+    let old_balance = ctx.get_balance(PRECOMPILE_ROLLUP_BRIDGE);
+    assert_eq!(old_balance, BRIDGE_PREFUND);
+
+    let receive_message_input = receiveMessageCall {
+        from: Address::repeat_byte(0x01),
+        to: Address::repeat_byte(0x01),
+        value: U256::MAX,
+        chainId: U256::ONE,
+        blockNumber: U256::ZERO,
+        messageNonce: U256::ZERO,
+        message: Bytes::new(),
+    }
+    .abi_encode();
+    let result = ctx.call_evm_tx(
+        Address::repeat_byte(0x01),
+        PRECOMPILE_ROLLUP_BRIDGE,
+        receive_message_input.into(),
+        None,
+        None,
+    );
+    assert!(!result.is_success(), "unexpected result: {result:?}");
+    assert_eq!(ctx.get_balance(PRECOMPILE_ROLLUP_BRIDGE), old_balance);
+
+    let receive_failed_message_input = receiveFailedMessageCall {
+        from: Address::repeat_byte(0x01),
+        to: Address::repeat_byte(0x01),
+        value: U256::MAX,
+        chainId: U256::ONE,
+        blockNumber: U256::ZERO,
+        messageNonce: U256::ZERO,
+        message: Bytes::new(),
+    }
+    .abi_encode();
+    let result = ctx.call_evm_tx(
+        Address::repeat_byte(0x01),
+        PRECOMPILE_ROLLUP_BRIDGE,
+        receive_failed_message_input.into(),
+        None,
+        None,
+    );
+    assert!(!result.is_success(), "unexpected result: {result:?}");
+    assert_eq!(ctx.get_balance(PRECOMPILE_ROLLUP_BRIDGE), old_balance);
+}
+
+#[test]
+fn test_receive_message_overflowing_value_halts_when_log_marks_unsuccessful_call() {
+    // The shape the real bridge produces for an uncreditable value: the relayer path runs, the
+    // payout call fails, and the contract emits `ReceivedMessage(successfulCall = false)`. The
+    // post-hook then has to burn a value that was never minted, and fails the frame instead of
+    // the block.
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
+
+    let log_data = ReceivedMessage {
+        messageHash: B256::ZERO,
+        successfulCall: false,
+        returnData: Bytes::new(),
+    }
+    .encode_data();
+
+    let mut bytecode = Vec::new();
+    const LOG_DATA_OFFSET: usize = 6 + 2 + 32 + 3 + 1;
+    bytecode.push(opcode::PUSH1);
+    bytecode.push(u8::try_from(log_data.len()).unwrap());
+    bytecode.push(opcode::PUSH1);
+    bytecode.push(u8::try_from(LOG_DATA_OFFSET).unwrap());
+    bytecode.push(opcode::PUSH0);
+    bytecode.push(opcode::CODECOPY);
+    bytecode.push(opcode::PUSH32);
+    bytecode.extend_from_slice(ReceivedMessage::SIGNATURE_HASH.as_slice());
+    bytecode.push(opcode::PUSH1);
+    bytecode.push(u8::try_from(log_data.len()).unwrap());
+    bytecode.push(opcode::PUSH0);
+    bytecode.push(opcode::LOG1);
+    bytecode.push(opcode::STOP);
+    assert_eq!(bytecode.len(), LOG_DATA_OFFSET);
+    bytecode.extend(log_data);
+    ctx.add_evm_contract(PRECOMPILE_ROLLUP_BRIDGE, bytecode);
+
+    ctx.add_balance(PRECOMPILE_ROLLUP_BRIDGE, BRIDGE_PREFUND);
+    let old_balance = ctx.get_balance(PRECOMPILE_ROLLUP_BRIDGE);
+    assert_eq!(old_balance, BRIDGE_PREFUND);
+
+    let input = receiveMessageCall {
+        from: Address::repeat_byte(0x01),
+        to: Address::repeat_byte(0x01),
+        value: U256::MAX,
+        chainId: U256::ONE,
+        blockNumber: U256::ZERO,
+        messageNonce: U256::ZERO,
+        message: Bytes::new(),
+    }
+    .abi_encode();
+    let result = ctx.call_evm_tx(
+        Address::repeat_byte(0x01),
+        PRECOMPILE_ROLLUP_BRIDGE,
+        input.into(),
+        None,
+        None,
+    );
+    assert!(
+        matches!(
+            result,
+            ExecutionResult::Halt {
+                reason: RwasmHaltReason::MalformedBuiltinParams,
+                ..
+            }
+        ),
+        "unexpected result: {result:?}"
+    );
+    assert_eq!(ctx.get_balance(PRECOMPILE_ROLLUP_BRIDGE), old_balance);
+}
+
+#[test]
 fn test_send_message_burns_balance_on_successful_valid_log() {
     let mut ctx = EvmTestingContext::default().with_full_genesis();
 

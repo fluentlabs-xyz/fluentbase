@@ -174,6 +174,13 @@ EVM / consensus (`crates/evm`, `crates/revm`):
 - Gas arithmetic without checked/saturating ops; memory-expansion cost overflow.
 - Any divergence from canonical EVM semantics, or dependence on map-iteration order, is a consensus
   split.
+- **Per-transaction conditions escaping as fatal errors.** A hook or handler that returns
+  `ContextError::Custom` (or any `EVMError` other than `InvalidTransaction`) for a condition that
+  attacker-controlled calldata can trigger: the block executor reports it as an internal failure,
+  the payload builder falls back to an empty block, and the transaction stays in the pool — one
+  transaction stops the sequencer from including any. Such a condition must fail the frame or the
+  transaction deterministically (the bridge pre-hook skips an overflowing credit; the post-hook
+  replaces the frame result).
 
 Build / CI (`crates/build`, `.github/workflows`):
 
@@ -262,3 +269,4 @@ AI coding agents working in this repository must:
 | --- | --- |
 | 2026-05-28 | Initial repository-specific security policy. |
 | 2026-06-10 | Added Auditor's Checklist (known vulnerability classes); paired with AGENTS.md Security Audit Mode. |
+| 2026-09-11 | Checklist: per-transaction conditions escaping as fatal EVM errors (bridge pre-hook overflow). |

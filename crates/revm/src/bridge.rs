@@ -84,16 +84,20 @@ pub(crate) fn apply_bridge_pre_invocation_hook<CTX: ContextTr>(
             .load_account_with_code_mut(PRECOMPILE_ROLLUP_BRIDGE)?
             .data;
 
+        // A credit that would overflow the bridge balance is a property of this one call, not of
+        // the node: the calldata is attacker-controlled and any account can send it. Returning an
+        // error here would surface as `EVMError::Custom`, which the block executor treats as a
+        // fatal (non-transaction) failure and the payload builder answers with an empty block.
+        // Skip the mint instead and let the frame run: the bridge contract cannot pay out a value
+        // it never received, so the call reverts (or the post-hook fails the burn), and the frame
+        // checkpoint discards the rest.
         if !bridge_account.incr_balance(message_value) {
             let bridge_balance = bridge_account.balance();
             warn!(
                 %bridge_balance,
                 value = %message_value,
-                "Failed to increase bridge balance on receive/receiveFailed message"
+                "Skipping bridge balance credit on receive/receiveFailed message: overflow"
             );
-            return Err(ContextError::Custom(
-                "bridge pre-hook: failed to increase bridge balance".to_string(),
-            ));
         }
     }
 
@@ -561,7 +565,7 @@ mod tests {
     }
 
     #[test]
-    fn pre_hook_fails_on_balance_overflow() {
+    fn pre_hook_skips_mint_on_balance_overflow() {
         let mut ctx = new_ctx();
         set_bridge_balance(&mut ctx, U256::MAX);
 
@@ -571,10 +575,36 @@ mod tests {
             U256::ZERO,
         );
 
-        let err = apply_bridge_pre_invocation_hook(&inputs, &mut ctx).unwrap_err();
+        // An overflowing credit must never escape as a context error: that is a fatal EVM error
+        // for the block executor, not a failed transaction.
+        apply_bridge_pre_invocation_hook(&inputs, &mut ctx).unwrap();
 
-        assert!(matches!(err, ContextError::Custom(_)));
         assert_eq!(bridge_balance(&mut ctx), U256::MAX);
+    }
+
+    #[test]
+    fn pre_hook_skips_mint_on_max_value_with_funded_bridge() {
+        // The reachable shape: any caller, `value = U256::MAX`, bridge holding at least 1 wei.
+        let mut ctx = new_ctx();
+        set_bridge_balance(&mut ctx, U256::from(1));
+
+        let inputs = make_call_inputs(
+            PRECOMPILE_ROLLUP_BRIDGE,
+            receive_message_input(U256::MAX),
+            U256::ZERO,
+        );
+        apply_bridge_pre_invocation_hook(&inputs, &mut ctx).unwrap();
+
+        assert_eq!(bridge_balance(&mut ctx), U256::from(1));
+
+        let inputs = make_call_inputs(
+            PRECOMPILE_ROLLUP_BRIDGE,
+            receive_failed_message_input(U256::MAX),
+            U256::ZERO,
+        );
+        apply_bridge_pre_invocation_hook(&inputs, &mut ctx).unwrap();
+
+        assert_eq!(bridge_balance(&mut ctx), U256::from(1));
     }
 
     #[test]
