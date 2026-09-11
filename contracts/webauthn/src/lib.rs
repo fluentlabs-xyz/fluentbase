@@ -20,18 +20,16 @@ const VERIFY_SELECTOR: [u8; 4] = [0x94, 0x51, 0x6d, 0xde];
 /// keccak256("verifyStrict(bytes,bool,bytes32,bytes,(bytes,bytes,uint256,uint256,bytes32,bytes32),uint256,uint256)")
 const VERIFY_STRICT_SELECTOR: [u8; 4] = [0x42, 0x52, 0x0f, 0xdd];
 
-/// Estimated verification cost, in EVM gas units.
-const WEBAUTHN_VERIFY_GAS: u64 = 22_000;
-
 /// WebAuthn verification contract for blockchain authentication.
 ///
 /// Based on reference implementations:
 /// - Solady: https://github.com/vectorized/solady/blob/main/src/utils/WebAuthn.sol
 /// - Daimo: https://github.com/daimo-eth/p256-verifier/blob/master/src/WebAuthn.sol
 /// - Coinbase: https://github.com/base-org/webauthn-sol/blob/main/src/WebAuthn.sol
+///
+/// This runtime is engine-metered (`ENGINE_METERED_PRECOMPILES`): the execution engine charges
+/// every instruction of the verification, so no static fee is charged on top of that.
 pub fn main_entry<SDK: SystemAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
-    sdk.sync_evm_gas(WEBAUTHN_VERIFY_GAS)?;
-
     if sdk.input_size() < 4 {
         return Err(ExitCode::MalformedBuiltinParams);
     }
@@ -92,9 +90,7 @@ system_entrypoint!(main_entry);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fluentbase_sdk::{
-        codec::bytes::BytesMut, crypto::crypto_sha256, Bytes, ContractContextV1, FUEL_DENOM_RATE,
-    };
+    use fluentbase_sdk::{codec::bytes::BytesMut, crypto::crypto_sha256, Bytes, ContractContextV1};
     use fluentbase_testing::TestingContextImpl;
     use p256::{
         ecdsa::{signature::SignerMut, SigningKey, VerifyingKey},
@@ -226,13 +222,17 @@ mod tests {
             Bytes::copy_from_slice(client_data_json.as_bytes()),
         ));
 
-        let (output, _) = exec(&encode_strict_call(&params), WEBAUTHN_VERIFY_GAS).unwrap();
+        let (output, _) = exec(&encode_strict_call(&params), TEST_GAS_LIMIT).unwrap();
         output
     }
 
     fn valid_call_input(require_user_verification: bool) -> Vec<u8> {
         encode_call(&valid_call_params(require_user_verification))
     }
+
+    /// Gas budget handed to the native test context. The runtime is engine-metered, so the
+    /// native harness (which has no engine) must observe no fuel charged by the contract itself.
+    const TEST_GAS_LIMIT: u64 = 22_000;
 
     fn exec(input: &[u8], gas_limit: u64) -> Result<(Vec<u8>, u64), ExitCode> {
         let mut sdk = TestingContextImpl::default()
@@ -247,18 +247,24 @@ mod tests {
     }
 
     #[test]
-    fn valid_signature_returns_true_and_charges_fuel() {
-        let (output, fuel) = exec(&valid_call_input(true), WEBAUTHN_VERIFY_GAS).unwrap();
+    fn valid_signature_returns_true_without_static_charge() {
+        let (output, fuel) = exec(&valid_call_input(true), TEST_GAS_LIMIT).unwrap();
         assert_eq!(output, B256::with_last_byte(1)[..]);
-        assert_eq!(fuel, WEBAUTHN_VERIFY_GAS * FUEL_DENOM_RATE);
+        assert_eq!(
+            fuel, 0,
+            "engine-metered runtime must not charge static fuel"
+        );
     }
 
     #[test]
-    fn strict_valid_signature_returns_true_and_charges_fuel() {
+    fn strict_valid_signature_returns_true_without_static_charge() {
         let (input, _) = valid_strict_call_input(true);
-        let (output, fuel) = exec(&input, WEBAUTHN_VERIFY_GAS).unwrap();
+        let (output, fuel) = exec(&input, TEST_GAS_LIMIT).unwrap();
         assert_eq!(output, B256::with_last_byte(1)[..]);
-        assert_eq!(fuel, WEBAUTHN_VERIFY_GAS * FUEL_DENOM_RATE);
+        assert_eq!(
+            fuel, 0,
+            "engine-metered runtime must not charge static fuel"
+        );
     }
 
     #[test]
@@ -266,9 +272,12 @@ mod tests {
         let (_, mut params) = valid_strict_call_input(true);
         params.2 = B256::with_last_byte(1);
 
-        let (output, fuel) = exec(&encode_strict_call(&params), WEBAUTHN_VERIFY_GAS).unwrap();
+        let (output, fuel) = exec(&encode_strict_call(&params), TEST_GAS_LIMIT).unwrap();
         assert_eq!(output, B256::default()[..]);
-        assert_eq!(fuel, WEBAUTHN_VERIFY_GAS * FUEL_DENOM_RATE);
+        assert_eq!(
+            fuel, 0,
+            "engine-metered runtime must not charge static fuel"
+        );
     }
 
     #[test]
@@ -276,9 +285,12 @@ mod tests {
         let (_, mut params) = valid_strict_call_input(true);
         params.3 = Bytes::copy_from_slice(b"https://example.com");
 
-        let (output, fuel) = exec(&encode_strict_call(&params), WEBAUTHN_VERIFY_GAS).unwrap();
+        let (output, fuel) = exec(&encode_strict_call(&params), TEST_GAS_LIMIT).unwrap();
         assert_eq!(output, B256::default()[..]);
-        assert_eq!(fuel, WEBAUTHN_VERIFY_GAS * FUEL_DENOM_RATE);
+        assert_eq!(
+            fuel, 0,
+            "engine-metered runtime must not charge static fuel"
+        );
     }
 
     #[test]
@@ -374,24 +386,21 @@ mod tests {
         authenticator_data[webauthn::AUTH_DATA_FLAGS_INDEX] = webauthn::AUTH_DATA_FLAGS_UP;
         params.2.authenticator_data = Bytes::copy_from_slice(&authenticator_data);
 
-        let (output, fuel) = exec(&encode_call(&params), WEBAUTHN_VERIFY_GAS).unwrap();
+        let (output, fuel) = exec(&encode_call(&params), TEST_GAS_LIMIT).unwrap();
         assert_eq!(output, B256::default()[..]);
-        assert_eq!(fuel, WEBAUTHN_VERIFY_GAS * FUEL_DENOM_RATE);
+        assert_eq!(
+            fuel, 0,
+            "engine-metered runtime must not charge static fuel"
+        );
     }
 
     #[test]
-    fn malformed_selector_is_rejected_after_fuel_charge() {
+    fn malformed_selector_is_rejected() {
         let mut input = valid_call_input(true);
         input[0] ^= 0xff;
 
-        let err = exec(&input, WEBAUTHN_VERIFY_GAS).unwrap_err();
+        let err = exec(&input, TEST_GAS_LIMIT).unwrap_err();
         assert_eq!(err, ExitCode::MalformedBuiltinParams);
-    }
-
-    #[test]
-    fn insufficient_fuel_fails_before_verification() {
-        let err = exec(&valid_call_input(true), WEBAUTHN_VERIFY_GAS - 1).unwrap_err();
-        assert_eq!(err, ExitCode::OutOfFuel);
     }
 
     #[test]
@@ -407,12 +416,11 @@ mod tests {
             let started = std::time::Instant::now();
             let iterations = 100u32;
             for _ in 0..iterations {
-                let (_, fuel) = exec(&input, WEBAUTHN_VERIFY_GAS).unwrap();
-                assert_eq!(fuel, WEBAUTHN_VERIFY_GAS * FUEL_DENOM_RATE);
+                let (_, fuel) = exec(&input, TEST_GAS_LIMIT).unwrap();
+                assert_eq!(fuel, 0);
             }
             println!(
-                "webauthn {name}: gas={WEBAUTHN_VERIFY_GAS}, fuel={}, iterations={iterations}, elapsed={:?}",
-                WEBAUTHN_VERIFY_GAS * FUEL_DENOM_RATE,
+                "webauthn {name}: iterations={iterations}, elapsed={:?}",
                 started.elapsed()
             );
         }
