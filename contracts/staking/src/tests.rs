@@ -414,6 +414,15 @@ struct StipendFunding {
     /// than the reserve's. Kept apart from `pulls` because the whole point of
     /// the split is that these two are different money.
     transfers: Vec<(Address, U256)>,
+    /// What the token says THIS CONTRACT holds — the second book (F-3).
+    ///
+    /// Until this existed the stub kept only the reserve's ledger: `transfer`
+    /// always succeeded and a `transferFrom` into `GENESIS_STAKING` credited
+    /// nothing, so "the deposit comes out of the contract's balance" was
+    /// asserted against a balance that was infinite and never moved. It is
+    /// seeded by the caller, because the deposits a fixture makes before the
+    /// stub is installed are invisible from inside it.
+    contract_balance: U256,
 }
 
 /// The 96-byte zcash key that a `byte`-filled 256-byte EIP-2537 G2 really
@@ -687,6 +696,7 @@ fn install_stipend_token(
     source: Address,
     balance: U256,
     allowance: U256,
+    contract_balance: U256,
 ) -> Rc<RefCell<StipendFunding>> {
     let funding = Rc::new(RefCell::new(StipendFunding {
         source,
@@ -695,6 +705,7 @@ fn install_stipend_token(
         reports_failure: false,
         pulls: Vec::new(),
         transfers: Vec::new(),
+        contract_balance,
     }));
     let state = funding.clone();
     sdk.set_call_handler(move |address, _value, input, _fuel_limit| {
@@ -722,6 +733,8 @@ fn install_stipend_token(
                     SolidityABI::<(Address,)>::decode(&&input[SIG_LEN_BYTES..], 0).unwrap();
                 if holder == funding.source {
                     funding.balance
+                } else if holder == GENESIS_STAKING {
+                    funding.contract_balance
                 } else {
                     U256::ZERO
                 }
@@ -737,9 +750,11 @@ fn install_stipend_token(
             return SyscallResult::new(encode_mock_return(&value), 0, 0, ExitCode::Ok);
         }
         if selector == SIG_ERC20_TRANSFER {
-            // The contract paying out of its own balance. The reserve's two
+            // The contract paying out of its OWN balance. The reserve's two
             // numbers say nothing about it — deposits are not the stipend — so
-            // this succeeds however dry the reserve is.
+            // this is settled against the second book and succeeds however dry
+            // the reserve is, and fails however full the reserve is once the
+            // contract's own balance runs out.
             let (recipient, amount) =
                 SolidityABI::<(Address, U256)>::decode(&&input[SIG_LEN_BYTES..], 0).unwrap();
             let mut funding = state.borrow_mut();
@@ -747,6 +762,10 @@ fn install_stipend_token(
             if funding.reports_failure {
                 return SyscallResult::new(encode_mock_return(&false), 0, 0, ExitCode::Ok);
             }
+            if amount > funding.contract_balance {
+                return SyscallResult::new(Bytes::new(), 0, 0, ExitCode::Panic);
+            }
+            funding.contract_balance -= amount;
             return SyscallResult::new(encode_mock_return(&true), 0, 0, ExitCode::Ok);
         }
         if selector != SIG_ERC20_TRANSFER_FROM {
@@ -764,6 +783,13 @@ fn install_stipend_token(
         }
         funding.balance -= amount;
         funding.allowance -= amount;
+        // A pull INTO this contract is a deposit: it leaves the source's book
+        // and lands in the contract's. A pull to anybody else — the stipend
+        // paid straight from the reserve to a claimant — passes through and
+        // credits the contract nothing.
+        if recipient == GENESIS_STAKING {
+            funding.contract_balance += amount;
+        }
         SyscallResult::new(encode_mock_return(&true), 0, 0, ExitCode::Ok)
     });
     funding
@@ -808,7 +834,7 @@ fn stipend_test_sdk_at_rate(
     // reserve to decide whether it can price the epoch at all, so a fixture that
     // installed the token afterwards would accrue epoch 0 against the permissive
     // default mock and quietly ignore the two numbers it was handed.
-    let funding = install_stipend_token(&harness.sdk, source, balance, allowance);
+    let funding = install_stipend_token(&harness.sdk, source, balance, allowance, U256::ZERO);
     // Accrues epoch 0. Nothing settles it — the reserve pays each claim
     // directly, so there is no second act between the close and the claim.
     record_test_production(&mut harness.sdk, 0, DEFAULT_EPOCH_BLOCK_INTERVAL as u32);
@@ -3654,8 +3680,13 @@ fn a_committee_with_only_zero_weights_assigns_its_epoch_nothing() {
         .blend_stipend_per_epoch_accessor()
         .set_checked(&mut harness.sdk, U256::from(100))
         .unwrap();
-    let funding =
-        install_stipend_token(&harness.sdk, reserve, U256::from(1_000), U256::from(1_000));
+    let funding = install_stipend_token(
+        &harness.sdk,
+        reserve,
+        U256::from(1_000),
+        U256::from(1_000),
+        U256::ZERO,
+    );
     record_test_production(&mut harness.sdk, 0, DEFAULT_EPOCH_BLOCK_INTERVAL as u32);
 
     assert_eq!(
@@ -3702,6 +3733,7 @@ fn an_epoch_with_a_committee_but_no_recorded_block_draws_no_pot() {
         reserve,
         pot * U256::from(10),
         pot * U256::from(10),
+        U256::ZERO,
     );
     // Everything the accrual needs is in place except the work: this is the same
     // fixture as a funded close, seeded with a zero block count.
@@ -4832,7 +4864,13 @@ fn stipend_pays_the_frozen_weights_not_the_stake_at_close_time() {
         .blend_stipend_per_epoch_accessor()
         .set_checked(&mut harness.sdk, U256::from(100))
         .unwrap();
-    install_stipend_token(&harness.sdk, reserve, U256::from(100), U256::from(100));
+    install_stipend_token(
+        &harness.sdk,
+        reserve,
+        U256::from(100),
+        U256::from(100),
+        U256::ZERO,
+    );
     // Accrues epoch 2 — the close is where the split happens now.
     record_test_production(&mut harness.sdk, 2, DEFAULT_EPOCH_BLOCK_INTERVAL as u32);
 
@@ -5044,7 +5082,13 @@ fn tombstoned_committee_member_earns_no_stipend_share() {
         .blend_stipend_per_epoch_accessor()
         .set_checked(&mut harness.sdk, U256::from(100))
         .unwrap();
-    install_stipend_token(&harness.sdk, reserve, U256::from(100), U256::from(100));
+    install_stipend_token(
+        &harness.sdk,
+        reserve,
+        U256::from(100),
+        U256::from(100),
+        U256::ZERO,
+    );
     record_test_production(&mut harness.sdk, 0, DEFAULT_EPOCH_BLOCK_INTERVAL as u32);
 
     assert_eq!(epoch_reward(&harness.sdk, validator_a, 0), U256::ZERO);
@@ -5124,6 +5168,104 @@ fn a_permissionless_owner_claim_pays_the_owner_off_the_reserve() {
     );
 }
 
+// The other half of the same split, driven from the failure side. The reserve is
+// full and approved; this contract's own balance is one wei short of the deposit.
+// The withdrawal must fail, because the deposit is not the reserve's money and no
+// amount of reserve can stand in for it.
+//
+// F-3: the stub had no contract-side book at all, so a `transfer` succeeded
+// however dry this contract was and this test could not have been written. It is
+// the assertion that distinguishes "the principal is paid with `transfer`" from
+// "the principal is paid from the contract's balance" — the mutation that swaps
+// `safe_transfer` for a pull off the reserve (M53) passes the first and fails
+// this.
+#[test]
+fn a_deposit_the_contract_cannot_cover_is_not_paid_out_of_the_reserve() {
+    let owner = Address::with_last_byte(0xa0);
+    let validator = Address::with_last_byte(0x01);
+    let delegator = Address::with_last_byte(0x02);
+    let reserve = Address::with_last_byte(0xc0);
+    let stake = DEFAULT_MIN_VALIDATOR_STAKE;
+    let activation_block = 1_000;
+    let mut harness = Harness::new(activation_block);
+    harness.set_caller(owner);
+    let mut command = harness.initialize_command(owner, vec![validator], vec![stake], 0);
+    command.blend_reserve = reserve;
+    assert_eq!(harness.initialize_with(command), ExitCode::Ok);
+    staking::delegate_to(&mut harness.sdk, delegator, validator, stake, false).unwrap();
+    harness.set_block_number(activation_block + DEFAULT_EPOCH_BLOCK_INTERVAL * WARMUP_DELAY);
+    staking::undelegate_from(&mut harness.sdk, delegator, validator, stake).unwrap();
+
+    // A reserve that could cover the deposit many times over, and a contract
+    // balance that is one wei short of it.
+    let funding = install_stipend_token(
+        &harness.sdk,
+        reserve,
+        stake * U256::from(100),
+        stake * U256::from(100),
+        stake - U256::from(1),
+    );
+
+    harness.set_caller(delegator);
+    let maturity_epoch = WARMUP_DELAY + 1 + DEFAULT_UNDELEGATE_PERIOD;
+    harness.set_block_number(activation_block + DEFAULT_EPOCH_BLOCK_INTERVAL * maturity_epoch);
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_WITHDRAW_DELEGATOR_PRINCIPAL,
+                &AddressCommand { value: validator },
+            ))
+            .0,
+        ExitCode::Panic,
+        "a deposit this contract cannot cover must fail, not be pulled off the \
+         reserve instead"
+    );
+    assert_eq!(
+        funding.borrow().transfers,
+        vec![(delegator, stake)],
+        "the payment was attempted against this contract's own balance — the \
+         stub refused it, which is what this test is measuring"
+    );
+    assert!(
+        funding.borrow().pulls.is_empty(),
+        "and the reserve was never asked, full though it is"
+    );
+    assert_eq!(
+        funding.borrow().balance,
+        stake * U256::from(100),
+        "the reserve is untouched"
+    );
+    assert_eq!(
+        staking_storage()
+            .validator_delegations_accessor()
+            .entry(validator)
+            .entry(delegator)
+            .pending_undelegated_accessor()
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        stake,
+        "and the deposit is still booked to the delegator, so the failed \
+         withdrawal can be retried"
+    );
+
+    // The control: the same call, once the contract can cover it.
+    funding.borrow_mut().contract_balance = stake;
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_WITHDRAW_DELEGATOR_PRINCIPAL,
+                &AddressCommand { value: validator },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+    assert_eq!(funding.borrow().contract_balance, U256::ZERO);
+    assert!(
+        funding.borrow().pulls.is_empty(),
+        "and it still never asked the reserve"
+    );
+}
+
 // The reward and the principal are two claims over two cursors and two sources,
 // and neither can hold the other up. The reward is pulled off the BLEND reserve;
 // the principal comes out of this contract, where the delegation put it.
@@ -5170,7 +5312,20 @@ fn a_reward_and_a_matured_principal_claim_are_independent() {
     // A reserve that holds nothing and has approved nothing: every `transferFrom`
     // off it fails. Deposits held by this contract go out as a plain `transfer`
     // and are unaffected.
-    let funding = install_stipend_token(&harness.sdk, reserve, U256::ZERO, U256::ZERO);
+    //
+    // The contract's own opening balance is the two deposits the fixture already
+    // made — the genesis self-stake and the delegation, both pulled before this
+    // stub replaced the handler, so neither is visible from inside it. Naming it
+    // is what makes the `transfer` below settle against a real book instead of
+    // succeeding unconditionally (F-3).
+    let contract_opening = stake * U256::from(2);
+    let funding = install_stipend_token(
+        &harness.sdk,
+        reserve,
+        U256::ZERO,
+        U256::ZERO,
+        contract_opening,
+    );
 
     harness.set_caller(delegator);
     let maturity_epoch = WARMUP_DELAY + 1 + DEFAULT_UNDELEGATE_PERIOD;
@@ -5221,6 +5376,12 @@ fn a_reward_and_a_matured_principal_claim_are_independent() {
         funding.borrow().transfers.is_empty(),
         "the reward did not come out of the contract's own balance"
     );
+    assert_eq!(
+        funding.borrow().contract_balance,
+        contract_opening,
+        "and the contract's balance is untouched — the reward went reserve to \
+         delegator without passing through here"
+    );
     // Up to the CURRENT epoch, not to a settlement frontier — there is no longer
     // a global cursor deciding which epochs are payable, so the walk stops where
     // the ledger stops. Only `WARMUP_DELAY` carried a credit, which is why the
@@ -5268,6 +5429,12 @@ fn a_reward_and_a_matured_principal_claim_are_independent() {
         funding.borrow().transfers,
         vec![(delegator, stake)],
         "the deposit goes out of this contract's own balance"
+    );
+    assert_eq!(
+        funding.borrow().contract_balance,
+        contract_opening - stake,
+        "and that balance is what it came out of — the token debited this \
+         contract by exactly the deposit"
     );
     assert_eq!(
         funding.borrow().pulls.len(),
@@ -9331,7 +9498,13 @@ fn epochs_that_close_before_the_treasury_approves_burn_for_good() {
     }
 
     // Funded a hundred times over, approved for nothing.
-    let funding = install_stipend_token(&harness.sdk, reserve, pot * U256::from(100), U256::ZERO);
+    let funding = install_stipend_token(
+        &harness.sdk,
+        reserve,
+        pot * U256::from(100),
+        U256::ZERO,
+        U256::ZERO,
+    );
 
     assert_eq!(close_epoch_via_record(&mut harness, 0), ExitCode::Ok);
     for member in &members {
@@ -9398,6 +9571,7 @@ fn an_approval_over_an_empty_reserve_covers_nothing() {
         reserve,
         pot / U256::from(4),
         pot * U256::from(100),
+        U256::ZERO,
     );
 
     assert_eq!(close_epoch_via_record(&mut harness, 0), ExitCode::Ok);
@@ -9452,6 +9626,7 @@ fn the_close_asks_the_reserve_about_itself_and_not_about_the_contract() {
         reserve,
         pot * U256::from(10),
         pot * U256::from(10),
+        U256::ZERO,
     );
 
     assert_eq!(close_epoch_via_record(&mut harness, 0), ExitCode::Ok);
@@ -9628,7 +9803,7 @@ fn redelegation_takes_the_reward_and_leaves_the_withdrawal_queue_alone() {
         )
         .unwrap();
 
-    let funding = install_stipend_token(&harness.sdk, reserve, reward, reward);
+    let funding = install_stipend_token(&harness.sdk, reserve, reward, reward, U256::ZERO);
     harness.set_caller(delegator);
     let maturity_epoch = WARMUP_DELAY + 1 + DEFAULT_UNDELEGATE_PERIOD;
     harness.set_block_number(activation_block + DEFAULT_EPOCH_BLOCK_INTERVAL * maturity_epoch);
@@ -10449,6 +10624,7 @@ fn the_accrual_path_credits_an_epoch_that_is_still_divided_two_epochs_back() {
         reserve,
         pot * U256::from(10),
         pot * U256::from(10),
+        U256::ZERO,
     );
     record_test_production(&mut harness.sdk, 4, DEFAULT_EPOCH_BLOCK_INTERVAL as u32);
     assert_eq!(epoch_reward(&harness.sdk, validator, 4), pot);
