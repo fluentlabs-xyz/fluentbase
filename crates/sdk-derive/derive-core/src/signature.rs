@@ -1,3 +1,4 @@
+use crate::utils::naming::solidity_function_name;
 use crate::{
     abi::{
         constructor::ConstructorABI, error::ABIError, function::FunctionABI,
@@ -5,7 +6,6 @@ use crate::{
     },
     method::CONSTRUCTOR_METHOD,
 };
-use convert_case::{Case, Casing};
 use quote::ToTokens;
 use std::ops::Deref;
 use syn::{spanned::Spanned, FnArg, ReturnType, Signature};
@@ -33,9 +33,10 @@ impl ParsedSignature {
         self.0.ident.to_string()
     }
 
-    /// Returns the function name in Solidity style (camelCase)
+    /// Returns the function name in Solidity style (camelCase, or verbatim for a name that
+    /// already carries uppercase letters; see [`solidity_function_name`])
     pub fn sol_name(&self) -> String {
-        self.rust_name().to_case(Case::Camel)
+        solidity_function_name(&self.rust_name())
     }
 
     /// Returns the function's input arguments as a vector of (name, type) pairs
