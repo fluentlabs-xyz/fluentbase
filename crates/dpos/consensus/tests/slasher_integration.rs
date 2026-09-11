@@ -58,6 +58,9 @@ const C_MAIN: u64 = 20_994;
 const COMMITTEE_N: usize = 4;
 const OFFENDER: usize = 0;
 const EPOCH: u64 = 7;
+/// The stub chain's `epochBlockInterval`, used both by the reader stub and by
+/// the committee module's epoch arithmetic over [`StubAnchor`].
+const EPOCH_INTERVAL: u64 = 100;
 const VIEW: u64 = 42;
 
 fn committee(seed: u64) -> (Vec<ValidatorBlsKeypair>, BiMap<PeerPubkey, BlsPubkey>) {
@@ -196,6 +199,142 @@ struct StubReader {
     empty: bool,
 }
 
+/// A reth provider whose `block_hash` read TEARS — the shape a static-file
+/// segment being appended concurrently produces (`DatabaseError::Decode`), which
+/// the error-owning layer classifies as `TransientStorage`.
+///
+/// The production probe (`fluentbase_consensus::executed_state_hash`) is run
+/// over it verbatim rather than hand-rolling a `ReadError`: the class the
+/// slasher routes on is decided INSIDE that probe, so a stub that picked the
+/// variant itself would assert the test's own opinion instead of the seam.
+struct TornProvider;
+
+impl reth_storage_api::BlockHashReader for TornProvider {
+    fn block_hash(
+        &self,
+        _number: u64,
+    ) -> reth_storage_api::errors::provider::ProviderResult<Option<B256>> {
+        Err(reth_storage_api::errors::provider::ProviderError::Database(
+            reth_storage_api::errors::db::DatabaseError::Decode,
+        ))
+    }
+    fn canonical_hashes_range(
+        &self,
+        _start: u64,
+        _end: u64,
+    ) -> reth_storage_api::errors::provider::ProviderResult<Vec<B256>> {
+        Ok(vec![])
+    }
+}
+
+impl reth_storage_api::BlockNumReader for TornProvider {
+    fn chain_info(
+        &self,
+    ) -> reth_storage_api::errors::provider::ProviderResult<reth_chainspec::ChainInfo> {
+        Ok(reth_chainspec::ChainInfo::default())
+    }
+    fn best_block_number(&self) -> reth_storage_api::errors::provider::ProviderResult<u64> {
+        // Everything the anchor asks for is materialized, so the tear above is
+        // reached instead of the above-best park.
+        Ok(u64::MAX)
+    }
+    fn last_block_number(&self) -> reth_storage_api::errors::provider::ProviderResult<u64> {
+        Ok(u64::MAX)
+    }
+    fn block_number(
+        &self,
+        _hash: B256,
+    ) -> reth_storage_api::errors::provider::ProviderResult<Option<u64>> {
+        Ok(None)
+    }
+}
+
+/// The anchor the committee module reads at. [`StubAnchor::healthy`] is a fixed,
+/// already-executed height in `EPOCH`, so the window
+/// `[epoch(anchor) − 8, epoch(anchor) + 2]` admits both `EPOCH` and the
+/// `EPOCH + 1` the boundary turn reports at, and both are past their commit
+/// heights.
+///
+/// Both legs are movable by the test, because the slasher's whole
+/// transient/permanent routing is a function of them and nothing else: the
+/// window side comes from the HEIGHT, and the anchor-fault class from the
+/// PROBE. Moving the height DOWN is a deliberate divergence from production
+/// (the real cursor is monotone) — it is how a test proves that a charge
+/// already refused for good is not revived by an anchor that later admits its
+/// epoch.
+#[derive(Clone)]
+struct StubAnchor {
+    height: Arc<std::sync::atomic::AtomicU64>,
+    torn: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl StubAnchor {
+    fn at_epoch(epoch: u64) -> Self {
+        Self {
+            height: Arc::new(std::sync::atomic::AtomicU64::new(epoch * EPOCH_INTERVAL)),
+            torn: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        }
+    }
+
+    fn healthy() -> Self {
+        Self::at_epoch(EPOCH)
+    }
+
+    fn set_epoch(&self, epoch: u64) {
+        self.height
+            .store(epoch * EPOCH_INTERVAL, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// The persistence thread starts appending under the probe.
+    fn tear(&self) {
+        self.torn.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// The append settles.
+    fn heal(&self) {
+        self.torn.store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+impl fluentbase_consensus::Anchor for StubAnchor {
+    fn height(&self) -> u64 {
+        self.height.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    fn executed_hash(&self, height: u64) -> Result<Option<B256>, ReadError> {
+        if self.torn.load(std::sync::atomic::Ordering::SeqCst) {
+            return fluentbase_consensus::executed_state_hash(&TornProvider, height);
+        }
+        Ok(Some(B256::ZERO))
+    }
+}
+
+impl fluentbase_consensus::EpochReads for StubReader {
+    fn epoch_committee_snapshot(
+        &self,
+        epoch: u64,
+        at: B256,
+    ) -> Result<ValidatorSetSnapshot, ReadError> {
+        StakingStateRead::epoch_committee_snapshot(self, epoch, at)
+    }
+
+    fn dkg_qual(&self, _epoch: u64, _at: B256) -> Result<bool, ReadError> {
+        Ok(false)
+    }
+}
+
+/// The committee module over the stub, as the node builds it over reth.
+fn stub_committee(
+    reader: StubReader,
+    anchor: StubAnchor,
+) -> Arc<dyn fluentbase_consensus::Committee> {
+    Arc::new(fluentbase_consensus::CommitteeStore::new(
+        reader,
+        Arc::new(anchor),
+        tokio::sync::watch::Sender::new(Some((0, EPOCH_INTERVAL))).subscribe(),
+    ))
+}
+
 impl StakingStateRead for StubReader {
     fn epoch_committee_snapshot(
         &self,
@@ -217,7 +356,7 @@ impl StakingStateRead for StubReader {
         }
     }
     fn epoch_block_interval(&self, _at: B256) -> Result<u64, ReadError> {
-        Ok(100)
+        Ok(EPOCH_INTERVAL)
     }
     fn dpos_activation_block(&self, _at: B256) -> Result<u64, ReadError> {
         Ok(0)
@@ -365,6 +504,48 @@ async fn spawn_actor_with_evidence(
     slasher::ChargeStore,
     commonware_runtime::Handle<()>,
 ) {
+    spawn_actor(
+        ctx,
+        reader,
+        sink_outcome,
+        partition,
+        evidence,
+        StubAnchor::healthy(),
+    )
+    .await
+}
+
+/// As [`spawn_actor_with_stubs`], but with the committee module's read ANCHOR in
+/// the case's hands — the only input that decides how the slasher routes an
+/// unresolvable epoch.
+async fn spawn_actor_with_anchor(
+    ctx: commonware_runtime::deterministic::Context,
+    reader: StubReader,
+    sink_outcome: SubmitOutcomeKind,
+    partition: &str,
+    anchor: StubAnchor,
+) -> (
+    slasher::Mailbox,
+    Arc<TokioMutex<Vec<RecordedCall>>>,
+    slasher::ChargeStore,
+    commonware_runtime::Handle<()>,
+) {
+    spawn_actor(ctx, reader, sink_outcome, partition, None, anchor).await
+}
+
+async fn spawn_actor(
+    ctx: commonware_runtime::deterministic::Context,
+    reader: StubReader,
+    sink_outcome: SubmitOutcomeKind,
+    partition: &str,
+    evidence: Option<slasher::EvidenceBridge>,
+    anchor: StubAnchor,
+) -> (
+    slasher::Mailbox,
+    Arc<TokioMutex<Vec<RecordedCall>>>,
+    slasher::ChargeStore,
+    commonware_runtime::Handle<()>,
+) {
     use commonware_runtime::Metrics as _;
     let staking_address = Address::repeat_byte(0xEE);
     let sink_calls = Arc::new(TokioMutex::new(Vec::<RecordedCall>::new()));
@@ -382,15 +563,13 @@ async fn spawn_actor_with_evidence(
     // The slasher pre-submit verify is ALWAYS vote-only now (bug 4), rebuilding a
     // `VoteScheme::verifier` from the recovered committee — no scheme provider.
 
-    let latest: slasher::actor::LatestFinalizedHash = Arc::new(|| Some(B256::ZERO));
     // No proposer here, so nothing drains what the actor holds for a block —
     // the epoch boundary is the only thing that empties it.
     let charges = slasher::ChargeStore::default();
     let cfg = slasher::actor::Config {
         staking_address,
         chain_id: C_MAIN,
-        reader,
-        latest_finalized_hash: latest,
+        committee: stub_committee(reader, anchor),
         sink,
         wal_writer,
         wal_reader,
@@ -721,9 +900,14 @@ fn a_gossiped_vote_inside_the_window_still_assembles_a_charge() {
 // There is no second source for a committee any more. This case used to assert
 // that an empty on-chain read fell through to the durable cache and still
 // submitted; the cache is gone, because it could only ever be consulted in a
-// state where it had nothing to give. An empty read now means the epoch was
-// never committed, which is permanent — so the evidence is dropped, not
-// submitted.
+// state where it had nothing to give.
+//
+// An empty read is now TRANSIENT, not permanent (R-027): the contract only ever
+// skips a commit together with halting the chain, so "empty" is "this anchor
+// cannot see it yet" and treating it as unrecoverable threw real evidence away
+// during catch-up. What the case asserts is unchanged and is the part that
+// matters — an epoch that never resolves puts NOTHING on the wire; the retry
+// budget bounds the attempts instead of the first answer doing it.
 #[test]
 fn slasher_drops_evidence_for_an_uncommitted_epoch() {
     let runtime = commonware_runtime::deterministic::Runner::default();
@@ -751,6 +935,184 @@ fn slasher_drops_evidence_for_an_uncommitted_epoch() {
         assert!(
             !wait_for_sink_calls(&calls, 1).await,
             "an epoch that was never committed cannot be resolved, so nothing is submitted"
+        );
+
+        drop(mb);
+        handle.abort();
+    });
+}
+
+/// Let the producer's retry backoff fire.
+///
+/// `settle()` alone cannot do it: yielding keeps a task runnable, so the
+/// deterministic runtime's virtual clock never moves and a sleeping retry never
+/// wakes. Sleeping HERE is what empties the run queue. The duration is longer
+/// than the producer's backoff and the rounds are more than the one retry these
+/// cases need, so a green result is not a race won.
+async fn let_the_retry_fire(ctx: &commonware_runtime::deterministic::Context) {
+    use commonware_runtime::Clock as _;
+    for _ in 0..4 {
+        ctx.sleep(std::time::Duration::from_secs(3)).await;
+        settle().await;
+    }
+}
+
+/// A torn static-file read under the committee module's ANCHOR probe costs the
+/// evidence a retry, not its life.
+///
+/// The probe reads the same reth storage the staking `eth_call` does, so the
+/// persistence thread appending a segment can tear it. That is a sub-second
+/// condition; simplex reports a conflict exactly once and there is no replay, so
+/// classifying it as permanent means one disk hiccup on a cache miss silently
+/// destroys a slashing charge.
+#[test]
+fn a_torn_anchor_probe_costs_the_evidence_a_retry_not_its_life() {
+    let runtime = commonware_runtime::deterministic::Runner::default();
+    runtime.start(|ctx| async move {
+        let (_kps, bimap) = committee(1);
+        let reader = StubReader {
+            snapshot: snapshot_from_bimap(&bimap),
+            empty: false,
+        };
+        let anchor = StubAnchor::healthy();
+        // The epoch is in the window and committed — the ONLY thing wrong is the
+        // storage read under the anchor.
+        anchor.tear();
+
+        let (ev, _kps_unused, _bimap_d) = build_consensus_digest_conflicting_notarize();
+        let (mailbox, calls, charges, handle) = spawn_actor_with_anchor(
+            ctx.clone(),
+            reader,
+            SubmitOutcomeKind::Mined,
+            "slasher_torn_anchor",
+            anchor.clone(),
+        )
+        .await;
+
+        use commonware_consensus::Reporter as _;
+        let mut mb = mailbox;
+        mb.report(Activity::ConflictingNotarize(ev)).await;
+        settle().await;
+        assert!(
+            charges.next_charge(EPOCH, |_| false).is_none(),
+            "with the probe torn the committee does not resolve, so no charge is held yet"
+        );
+
+        // The append settles, and the epoch turn takes the block route away.
+        anchor.heal();
+        mb.report(offender_notarize(EPOCH + 1, 1, 0x11)).await;
+        let_the_retry_fire(&ctx).await;
+
+        assert!(
+            wait_for_sink_calls(&calls, 1).await,
+            "the retry must find the healed probe and submit — a transient storage fault \
+             may not be the end of an equivocation charge"
+        );
+
+        drop(mb);
+        handle.abort();
+    });
+}
+
+/// An epoch ABOVE the read window is an anchor that has not caught up, so the
+/// charge is retried and lands once it does.
+#[test]
+fn an_epoch_above_the_window_is_retried_until_the_anchor_reaches_it() {
+    let runtime = commonware_runtime::deterministic::Runner::default();
+    runtime.start(|ctx| async move {
+        let (_kps, bimap) = committee(1);
+        let reader = StubReader {
+            snapshot: snapshot_from_bimap(&bimap),
+            empty: false,
+        };
+        // Window `[0, 2]`: `EPOCH` is above it, which is what a node whose
+        // executor cursor is still behind sees.
+        let anchor = StubAnchor::at_epoch(0);
+
+        let (ev, _kps_unused, _bimap_d) = build_consensus_digest_conflicting_notarize();
+        let (mailbox, calls, charges, handle) = spawn_actor_with_anchor(
+            ctx.clone(),
+            reader,
+            SubmitOutcomeKind::Mined,
+            "slasher_window_above",
+            anchor.clone(),
+        )
+        .await;
+
+        use commonware_consensus::Reporter as _;
+        let mut mb = mailbox;
+        mb.report(Activity::ConflictingNotarize(ev)).await;
+        settle().await;
+        assert!(
+            charges.next_charge(EPOCH, |_| false).is_none(),
+            "an epoch above the window resolves to nothing yet"
+        );
+
+        // The anchor catches up and the epoch enters the window.
+        anchor.set_epoch(EPOCH);
+        mb.report(offender_notarize(EPOCH + 1, 1, 0x11)).await;
+        let_the_retry_fire(&ctx).await;
+
+        assert!(
+            wait_for_sink_calls(&calls, 1).await,
+            "an epoch the anchor had not reached yet must be retried, not refused for good"
+        );
+
+        drop(mb);
+        handle.abort();
+    });
+}
+
+/// An epoch BELOW the read window is one the contract's weight ring has
+/// overwritten: no anchor will ever bring it back, so the charge is dropped at
+/// the first answer — and NOT revived by an anchor that later admits the epoch.
+///
+/// The pair with the case above is the point: the same stub, the same sequence,
+/// the opposite side of the window, the opposite observable outcome. Either one
+/// alone would also pass under a predicate that ignored the side.
+#[test]
+fn an_epoch_below_the_window_is_dropped_for_good() {
+    let runtime = commonware_runtime::deterministic::Runner::default();
+    runtime.start(|ctx| async move {
+        let (_kps, bimap) = committee(1);
+        let reader = StubReader {
+            snapshot: snapshot_from_bimap(&bimap),
+            empty: false,
+        };
+        // Window floor `epoch(anchor) − 8` sits one epoch ABOVE `EPOCH`.
+        let anchor =
+            StubAnchor::at_epoch(EPOCH + fluentbase_consensus::SCHEME_RETENTION_EPOCHS as u64 + 1);
+
+        let (ev, _kps_unused, _bimap_d) = build_consensus_digest_conflicting_notarize();
+        let (mailbox, calls, charges, handle) = spawn_actor_with_anchor(
+            ctx.clone(),
+            reader,
+            SubmitOutcomeKind::Mined,
+            "slasher_window_below",
+            anchor.clone(),
+        )
+        .await;
+
+        use commonware_consensus::Reporter as _;
+        let mut mb = mailbox;
+        mb.report(Activity::ConflictingNotarize(ev)).await;
+        settle().await;
+
+        // Everything the retry would have needed, handed over AFTER the answer:
+        // if the refusal had been transient this is exactly what would make the
+        // next attempt succeed.
+        anchor.set_epoch(EPOCH);
+        mb.report(offender_notarize(EPOCH + 1, 1, 0x11)).await;
+        let_the_retry_fire(&ctx).await;
+
+        assert!(
+            charges.next_charge(EPOCH, |_| false).is_none(),
+            "an epoch below the window never becomes a held charge"
+        );
+        assert!(
+            !wait_for_sink_calls(&calls, 1).await,
+            "a charge refused below the window is dropped at the first answer — an anchor \
+             that later admits the epoch must not resurrect it"
         );
 
         drop(mb);

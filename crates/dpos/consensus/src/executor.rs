@@ -526,6 +526,23 @@ pub type FrontierProbeFn =
 /// the very entry this unblocks.
 pub type BoundaryReadFloorFn = std::sync::Arc<dyn Fn(u64) -> BoxFuture<'static, ()> + Send + Sync>;
 
+/// The committee module's "my anchor moved" wake-up, erased to the ONE verb the
+/// executor owes it.
+///
+/// The module reads every epoch committee at `executed_state_hash(anchor)`
+/// where `anchor` is this node's ordering-finalized cursor — the very cursor
+/// this actor raises. Nothing else in the process knows when that happens, so
+/// the executor tells it, STRICTLY AFTER each of the three
+/// `ExecutedChain::advance_finalized` calls (init seed, jump landing, finalized
+/// derive). Calling before merely loses one wake-up, which the next one makes
+/// good; not calling at all leaves every consumer parked on
+/// `CommitteeError::NotReadable` until some other read happens to succeed.
+///
+/// A one-verb handle rather than the `Arc<dyn Committee>` itself, deliberately:
+/// the executor must not grow a committee read of its own beside the two tiers
+/// it already reconciles.
+pub type AnchorAdvancedFn = std::sync::Arc<dyn Fn() + Send + Sync>;
+
 /// The steady-state re-jump callback bundled with the signal its trigger reads.
 #[derive(Clone)]
 pub struct ReJump {
@@ -754,6 +771,10 @@ pub struct Config<BE, D, XC, MarshalMailbox> {
     /// of AGREED data, so every honest node resolves the identical σ and a wrong
     /// epoch can only MISS, never yield a wrong seed.
     pub epocher: crate::epocher::OriginEpocher,
+    /// The committee module's anchor wake-up — see [`AnchorAdvancedFn`]. Called
+    /// at the three sites that raise the finalized-execution cursor, and
+    /// nowhere else.
+    pub anchor_advanced: AnchorAdvancedFn,
     /// The executor's own counters (cross-launch singleton from
     /// `dpos.rs::launch`, already registered there): `seed_active` /
     /// `digest_fallback`, one increment per derived block.
@@ -1013,6 +1034,10 @@ pub struct Actor<E, BE, D, XC, MarshalMailbox> {
     /// `h`'s own agreed seed round.
     epocher: crate::epocher::OriginEpocher,
 
+    /// See [`Config::anchor_advanced`]. Called from the three sites that raise
+    /// the finalized-execution cursor, immediately after each one.
+    anchor_advanced: AnchorAdvancedFn,
+
     /// The `Exact` ack of the block currently inside [`Self::try_derive`], moved
     /// into this slot at entry and taken back at every non-`Err` exit (the
     /// `NeedAttestation` parks and the final `acknowledge()`). On an `Err` exit the ack
@@ -1083,6 +1108,11 @@ where
         // (`spec_head`, :827), which is allowed to lead.
         cfg.executed
             .advance_finalized(cfg.last_consensus_finalized_height.get());
+        // The committee module anchors on the cursor just seeded — tell it, so
+        // the first reads of this process are taken at the restart anchor rather
+        // than at height 0. STRICTLY AFTER the seed above (see
+        // [`AnchorAdvancedFn`]).
+        (cfg.anchor_advanced)();
 
         let pending_finalizations_gauge = Gauge::<i64>::default();
         context.register(
@@ -1116,6 +1146,7 @@ where
             re_jump: cfg.re_jump,
             randomness: cfg.randomness,
             epocher: cfg.epocher,
+            anchor_advanced: cfg.anchor_advanced,
             rejump_fault_streak: 0,
             jump_done: OptionFuture::default(),
             jump_handle: None,
@@ -2449,6 +2480,9 @@ where
         // provider miss there returns None ⇒ propose-skip, never a wrong hash).
         // Mirrors the `init` seed (monotone).
         self.executed.advance_finalized(landing_h);
+        // The anchor just moved by a whole jump; the committee module re-reads
+        // its own height and republishes its readable ceiling.
+        (self.anchor_advanced)();
         // STALE-SPEC FIX: the speculative tip / map are stale across a deep jump
         // (their heights are far below the landing). Raise `spec_head` to the
         // landing and drop spec entries at/below it so the next notarization
@@ -3564,6 +3598,11 @@ where
         // the shared executed store, not the per-epoch engine, so it survives
         // engine restarts within the process.
         self.executed.advance_finalized(height);
+        // Every finalized derive moves the committee module's anchor by one
+        // block. This is the steady-state wake-up: a consumer parked on
+        // `NotReadable` for an epoch whose commit height has just been passed
+        // learns it here and nowhere else.
+        (self.anchor_advanced)();
 
         if new != self.last_canonicalized {
             self.has_advanced_since_init = true;
@@ -4740,6 +4779,12 @@ mod tests {
                     re_jump: self.re_jump.lock().unwrap().clone(),
                     randomness: self.randomness.clone(),
                     epocher: self.epocher.clone(),
+                    // No committee module in these fixtures — the wake-up has
+                    // nothing to wake. Counting the calls is not this file's
+                    // property to assert: what the module needs is that they sit
+                    // after `advance_finalized`, which is a property of THIS
+                    // file's source and is read there.
+                    anchor_advanced: std::sync::Arc::new(|| {}),
                 },
             )
         }
@@ -11855,6 +11900,7 @@ mod tests {
                             0,
                             std::num::NonZeroU64::new(1 << 40).expect("nonzero"),
                         ),
+                        anchor_advanced: std::sync::Arc::new(|| {}),
                     },
                 );
                 let _executor_handle = executor.start();

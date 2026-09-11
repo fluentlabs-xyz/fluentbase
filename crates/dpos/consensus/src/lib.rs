@@ -78,9 +78,12 @@ pub use cert_inlet::{
 pub use cold_start_jump::{
     assert_l1_checkpoint, cold_start_jump, ElSync, RethElSync, JUMP_THRESHOLD,
 };
+// `Geometry` is deliberately NOT here: since the store took its geometry lazily
+// (a `GeometryRx`), the type has no user outside `committee/` — re-exporting it
+// would be public surface nobody can reach through.
 pub use committee::{
     Anchor, Committee, CommitteeError, CommitteeReadsFacade, CommitteeRecord, CommitteeStore,
-    EpochReads, Geometry, Member, RethAnchor,
+    EpochReads, GeometryRx, Member, RethAnchor,
 };
 pub use digest::Digest;
 pub use dpos::{

@@ -1,7 +1,9 @@
 //! [`CommitteeStore`] — the production [`Committee`]: one map, one anchor, one
 //! producer.
 
-use super::{Anchor, Committee, CommitteeError, CommitteeRecord, EpochReads, Geometry, Member};
+use super::{
+    Anchor, Committee, CommitteeError, CommitteeRecord, EpochReads, Geometry, GeometryRx, Member,
+};
 use alloy_primitives::B256;
 use commonware_utils::TryFromIterator as _;
 use fluentbase_bls::PeerPubkey;
@@ -83,7 +85,7 @@ struct State {
 pub struct CommitteeStore<R> {
     reads: R,
     anchor: Arc<dyn Anchor>,
-    geometry: Geometry,
+    geometry: GeometryRx,
     state: Mutex<State>,
     /// Highest readable epoch, published as a wake-up. See
     /// [`CommitteeStore::anchor_advanced`].
@@ -91,24 +93,45 @@ pub struct CommitteeStore<R> {
 }
 
 impl<R: EpochReads> CommitteeStore<R> {
-    /// `geometry` is the FROZEN `(activation, interval)` pair — in production
-    /// `EpochTransition::frozen_geometry()`.
-    pub fn new(reads: R, anchor: Arc<dyn Anchor>, geometry: Geometry) -> Self {
-        let readable = tokio::sync::watch::Sender::new(
-            geometry.epoch_of(anchor.height()) + MAX_COMMITTEE_LOOKAHEAD_EPOCHS,
-        );
+    /// `geometry` carries the FROZEN `(activation, interval)` pair once its
+    /// single in-process source has frozen it — in production the beacon
+    /// plane's `EpochTransition::frozen_geometry()`, republished on a watch.
+    ///
+    /// LAZY rather than by value, and that is a wiring fact rather than a
+    /// preference: the store is built where the anchor is (before the plane's
+    /// poller has seen a finalized block), while the geometry is frozen by the
+    /// first readable, DPoS-scheduled block that poller reaches. Taking it by
+    /// value would have forced the store to be built later than the cursor it
+    /// anchors on — i.e. a second cursor — or the node to block its startup on
+    /// a chain read. Until the first `Some`, every read answers
+    /// [`CommitteeError::NotReadable`] with `ready_at: 0` and touches nothing.
+    pub fn new(reads: R, anchor: Arc<dyn Anchor>, geometry: GeometryRx) -> Self {
+        let seed = match Self::geometry_of(&geometry) {
+            Some(g) => g.epoch_of(anchor.height()) + MAX_COMMITTEE_LOOKAHEAD_EPOCHS,
+            None => 0,
+        };
         Self {
             reads,
             anchor,
             geometry,
             state: Mutex::new(State::default()),
-            readable,
+            readable: tokio::sync::watch::Sender::new(seed),
         }
     }
 
+    fn geometry_of(rx: &GeometryRx) -> Option<Geometry> {
+        let (activation, interval) = (*rx.borrow())?;
+        Geometry::new(activation, interval)
+    }
+
+    /// The frozen geometry, or `None` while the plane has not frozen one yet.
+    fn geometry(&self) -> Option<Geometry> {
+        Self::geometry_of(&self.geometry)
+    }
+
     /// `epoch(anchor) + MAX_COMMITTEE_LOOKAHEAD_EPOCHS` — the top of the window.
-    fn highest_readable(&self) -> u64 {
-        self.geometry.epoch_of(self.anchor.height()) + MAX_COMMITTEE_LOOKAHEAD_EPOCHS
+    fn highest_readable(&self, geometry: &Geometry) -> u64 {
+        geometry.epoch_of(self.anchor.height()) + MAX_COMMITTEE_LOOKAHEAD_EPOCHS
     }
 
     /// Drop what the window no longer admits. Called with the lock held.
@@ -128,8 +151,8 @@ impl<R: EpochReads> CommitteeStore<R> {
     }
 
     /// `[lo, hi]`, inclusive both ends.
-    fn window(&self, anchor_height: u64) -> (u64, u64) {
-        let anchor_epoch = self.geometry.epoch_of(anchor_height);
+    fn window(geometry: &Geometry, anchor_height: u64) -> (u64, u64) {
+        let anchor_epoch = geometry.epoch_of(anchor_height);
         (
             anchor_epoch.saturating_sub(SCHEME_RETENTION_EPOCHS as u64),
             anchor_epoch.saturating_add(MAX_COMMITTEE_LOOKAHEAD_EPOCHS),
@@ -272,9 +295,9 @@ impl<R: EpochReads> CommitteeStore<R> {
         &self,
         epoch: u64,
         record: CommitteeRecord,
+        lo: u64,
     ) -> Result<Arc<CommitteeRecord>, CommitteeError> {
         let record = Arc::new(record);
-        let lo = self.window(self.anchor.height()).0;
         let mut state = self.state.lock().unwrap();
         if let Some(entry) = state.records.get(&epoch) {
             let existing = entry.record.clone();
@@ -299,9 +322,10 @@ impl<R: EpochReads> CommitteeStore<R> {
             ))));
         }
         // Prune BEFORE the insert, so what this call returns is what the map
-        // holds: the record just read was inside the window when it was read,
-        // and an anchor that jumped past it mid-read drops it on the next
-        // advance rather than on the way out of here.
+        // holds: the record just read was inside the window when it was read —
+        // `lo` is the floor THAT read was gated on, not a fresher one — and an
+        // anchor that jumped past it mid-read drops it on the next advance
+        // rather than on the way out of here.
         Self::prune(&mut state, lo);
         state.records.insert(
             epoch,
@@ -342,11 +366,21 @@ impl<R: EpochReads> Committee for CommitteeStore<R> {
     fn committee(&self, epoch: u64) -> Result<Arc<CommitteeRecord>, CommitteeError> {
         let anchor_height = self.anchor.height();
 
+        // 0. GEOMETRY. Without `(activation, interval)` there is no epoch
+        //    arithmetic at all — no window, no commit height — so there is
+        //    nothing this node could read and no EVM call it could justify.
+        //    `ready_at: 0` says so honestly: the retry is gated on the plane
+        //    freezing the geometry, not on any height.
+        let Some(geometry) = self.geometry() else {
+            metrics::counter!(NOT_READABLE).increment(1);
+            return Err(CommitteeError::NotReadable { epoch, ready_at: 0 });
+        };
+
         // 1. WINDOW — a predicate on the request. No EVM, no lock, no anchor
         //    hash: an epoch outside the window is refused whatever the chain
         //    says, which is what makes a p2p frame naming an arbitrary epoch
         //    free to reject.
-        let (lo, hi) = self.window(anchor_height);
+        let (lo, hi) = Self::window(&geometry, anchor_height);
         if epoch < lo || epoch > hi {
             let side = if epoch > hi { "above" } else { "below" };
             metrics::counter!(OUT_OF_WINDOW, "side" => side).increment(1);
@@ -356,7 +390,7 @@ impl<R: EpochReads> Committee for CommitteeStore<R> {
         // 2. READABLE — is the epoch committed in a state this anchor covers?
         //    Also no EVM: on backfill, and in the first blocks after a start,
         //    the answer is arithmetic.
-        let ready_at = self.geometry.commit_height(epoch);
+        let ready_at = geometry.commit_height(epoch);
         if anchor_height < ready_at {
             metrics::counter!(NOT_READABLE).increment(1);
             return Err(CommitteeError::NotReadable { epoch, ready_at });
@@ -372,9 +406,10 @@ impl<R: EpochReads> Committee for CommitteeStore<R> {
         }
 
         // 4. ANCHOR HASH. `Ok(None)` is "the height is not executed yet" — a
-        //    park, not a fault. `Err` is a miss at a materialized height, which
-        //    `executed_state_hash` documents as a real header-index fault and
-        //    therefore permanent.
+        //    park, not a fault. `Err` is a fault at a materialized height, and
+        //    `failed` routes it by its own class: a header-index miss is
+        //    permanent (`Backend`), a torn static-file read of the same storage
+        //    is transient and costs this epoch one retry, not the epoch itself.
         let at = match self.anchor.executed_hash(anchor_height) {
             Ok(Some(hash)) => hash,
             Ok(None) => {
@@ -411,7 +446,7 @@ impl<R: EpochReads> Committee for CommitteeStore<R> {
 
         // 6. BUILD + INSTALL.
         let record = self.build(epoch, snap, changed)?;
-        self.install(epoch, record)
+        self.install(epoch, record, lo)
     }
 
     fn changed(&self, epoch: u64) -> Result<bool, CommitteeError> {
@@ -430,14 +465,21 @@ impl<R: EpochReads> Committee for CommitteeStore<R> {
     }
 
     fn anchor_advanced(&self) {
+        // No geometry yet ⇒ no window to prune to and no readable epoch to
+        // publish. Nothing is lost: the map is empty (every read so far
+        // answered `NotReadable` before touching it) and the next advance after
+        // the freeze publishes the real value.
+        let Some(geometry) = self.geometry() else {
+            return;
+        };
         let anchor_height = self.anchor.height();
-        let (lo, _) = self.window(anchor_height);
+        let (lo, _) = Self::window(&geometry, anchor_height);
         {
             let mut state = self.state.lock().unwrap();
             Self::prune(&mut state, lo);
         }
 
-        let highest = self.highest_readable();
+        let highest = self.highest_readable(&geometry);
         self.readable.send_if_modified(|current| {
             if highest > *current {
                 *current = highest;
@@ -456,8 +498,9 @@ impl<R: EpochReads> Committee for CommitteeStore<R> {
     }
 }
 
-/// The production [`Anchor`]: the executor's ordering-finalized cursor for the
-/// height, reth's materialized-state probe for the hash.
+/// The production [`Anchor`]: the executor's ordering-finalized cursor and
+/// reth's own finalized tag for the height, reth's materialized-state probe for
+/// the hash.
 ///
 /// SOURCE (a) of the two the design offered, and the reason is that it is not a
 /// source at all — it is the cursor the executor already keeps. Every site that
@@ -468,6 +511,33 @@ impl<R: EpochReads> Committee for CommitteeStore<R> {
 /// disagree with the one the rest of the executor acts on. See
 /// [`FinalizedCursor::height`](crate::FinalizedCursor::height) for the one
 /// window where the two differ and why lagging is the safe direction.
+///
+/// ## Why the reth tag is taken as a FLOOR
+///
+/// The cursor is a PROCESS quantity: it is born at zero and seeded inside
+/// `OuterBuilder::build`, from the marshal's durable acked cursor
+/// (`outer.rs` → `executor.rs` `Actor::init`). Reth's `finalized` tag is the
+/// same node's DURABLE one: this node's executor set it, from certified data,
+/// at `result_final_height(ordering_finalized, floor) = ordering_finalized − K`
+/// (`executor.rs` `update_finalized`, the result tier), and reth carries it
+/// across a restart. So on a fresh consensus datadir beside an already-synced
+/// reth — a follower after a cold-start jump, a node whose consensus store was
+/// wiped, any process between its plane being built and `build` running — the
+/// cursor says 0 while the node demonstrably finalized height N. Anchoring on
+/// the cursor alone makes the window `[0, 2]` there and every mid-chain epoch
+/// unreadable until the first finalized derive.
+///
+/// `max` of the two is therefore the height, and it is safe in both directions:
+/// the tag is `ordering_finalized − K` of a height THIS node finalized, so it
+/// can never name a height the node has not finalized (the property
+/// [`FinalizedCursor::height`](crate::FinalizedCursor::height) is chosen for),
+/// and it can never exceed the cursor once the cursor is seeded. It is also
+/// monotone — reth's tag only moves forward — so the window never shrinks.
+/// `None` (no tag yet: a genuinely fresh EL) reads as 0 and changes nothing.
+///
+/// The cursor itself is NOT touched: it is the executor's Tier-F cursor, and
+/// raising it from an EL tag would let a committee read move the tier the
+/// result gate samples.
 #[derive(Clone, Debug)]
 pub struct RethAnchor<P> {
     cursor: crate::FinalizedCursor,
@@ -482,10 +552,16 @@ impl<P> RethAnchor<P> {
 
 impl<P> Anchor for RethAnchor<P>
 where
-    P: reth_storage_api::BlockHashReader + reth_storage_api::BlockNumReader + Send + Sync,
+    P: reth_storage_api::BlockHashReader + reth_storage_api::BlockIdReader + Send + Sync,
 {
     fn height(&self) -> u64 {
-        self.cursor.height()
+        let tag = self
+            .provider
+            .finalized_block_number()
+            .ok()
+            .flatten()
+            .unwrap_or(0);
+        self.cursor.height().max(tag)
     }
 
     fn executed_hash(&self, height: u64) -> Result<Option<B256>, ReadError> {

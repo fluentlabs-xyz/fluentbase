@@ -518,7 +518,7 @@ type ExecutorActor<E, BE, D, XC> = executor::Actor<E, BE, D, XC, MarshalMailbox>
 /// hands it reth handles + genesis + cold-start EL state; `build`
 /// constructs marshal → executor → FluentApp → epoch_manager in
 /// dependency order.
-pub struct OuterBuilder<B, P, BE, D, XC, A, R: slasher::StakingStateRead + Send + Sync + 'static> {
+pub struct OuterBuilder<B, P, BE, D, XC, A> {
     // Identity / shared
     pub me: PublicKey,
     pub blocker: B,
@@ -662,10 +662,12 @@ pub struct OuterBuilder<B, P, BE, D, XC, A, R: slasher::StakingStateRead + Send 
 
     /// `Staking.sol` predeploy address (`StakingReaderConfig.staking_address`).
     pub slasher_staking_address: alloy_primitives::Address,
-    /// Dedicated reader instance for slasher (NOT shared with ET).
-    pub slasher_reader: R,
-    /// Latest finalized hash provider (closure wrapping `node.provider`).
-    pub slasher_latest_finalized_hash: slasher::actor::LatestFinalizedHash,
+    /// Every per-epoch committee read this engine makes: the slasher's evidence
+    /// resolve, and the executor's "the anchor moved" wake-up. ONE handle, and
+    /// the same one the beacon plane's `CommitteeReads` facade views — the
+    /// slasher used to carry its own reader plus its own finalized-hash closure,
+    /// which is a second cursor over the same contract array.
+    pub committee: Arc<dyn crate::committee::Committee>,
     /// TxPool transport (signer + pool + provider wrapper from dpos.rs).
     pub slasher_sink: std::sync::Arc<dyn slasher::actor::SlasherTxSink>,
     /// WAL storage partition name. The actual `queue::shared` handles
@@ -699,7 +701,7 @@ pub struct OuterBuilder<B, P, BE, D, XC, A, R: slasher::StakingStateRead + Send 
 
 /// The global-singleton consensus driver wrapping a per-epoch
 /// [`epoch_manager::Actor`].
-pub struct OuterEngine<E, B, P, BE, D, XC, A, R>
+pub struct OuterEngine<E, B, P, BE, D, XC, A>
 where
     E: BufferPooler + Clock + CryptoRngCore + Spawner + Storage + Metrics + RNetwork,
     B: Blocker<PublicKey = PublicKey> + Clone,
@@ -708,7 +710,6 @@ where
     D: DerivedBlockBuilder,
     XC: ExecutedChain,
     A: OrderingAssembler,
-    R: slasher::StakingStateRead + Send + Sync + 'static,
 {
     context: ContextCell<E>,
     buffered: buffered::Engine<E, PublicKey, OrderBlock, P>,
@@ -730,7 +731,7 @@ where
     feed: Option<FeedSink>,
     executor: ExecutorActor<E, BE, D, XC>,
     epoch_manager: epoch_manager::Actor<E, B, XC, A>,
-    slasher: slasher::Actor<E, R>,
+    slasher: slasher::Actor<E>,
     boundary_tx: mpsc::Sender<(Epoch, ValidatorSetSnapshot)>,
     scheme_provider: EpochSchemeProvider,
     me: PublicKey,
@@ -790,7 +791,7 @@ fn supervisor_action(safety_halt: &crate::sync_metrics::SafetyHalt) -> Superviso
     }
 }
 
-impl<B, P, BE, D, XC, A, R> OuterBuilder<B, P, BE, D, XC, A, R>
+impl<B, P, BE, D, XC, A> OuterBuilder<B, P, BE, D, XC, A>
 where
     B: Blocker<PublicKey = PublicKey> + Clone,
     P: PeerProvider<PublicKey = PublicKey> + Clone,
@@ -798,13 +799,12 @@ where
     D: DerivedBlockBuilder,
     XC: ExecutedChain,
     A: OrderingAssembler,
-    R: slasher::StakingStateRead + Send + Sync + 'static,
 {
     /// Construct the engine in dependency order:
     /// `buffered + archives + scheme_provider → marshal → executor →
     /// FluentApp → epoch_manager`.
     ///
-    pub async fn build<E>(self, context: E) -> eyre::Result<OuterEngine<E, B, P, BE, D, XC, A, R>>
+    pub async fn build<E>(self, context: E) -> eyre::Result<OuterEngine<E, B, P, BE, D, XC, A>>
     where
         E: BufferPooler + Clock + CryptoRngCore + Spawner + Storage + Metrics + RNetwork,
     {
@@ -1110,6 +1110,13 @@ where
                 re_jump: self.re_jump,
                 randomness: randomness.clone(),
                 epocher: epocher.clone(),
+                // The committee module's anchor wake-up. Erased to one verb here
+                // rather than handing the executor the module itself, so the
+                // executor gains no committee read of its own.
+                anchor_advanced: {
+                    let committee = self.committee.clone();
+                    Arc::new(move || committee.anchor_advanced())
+                },
             },
         );
 
@@ -1147,7 +1154,6 @@ where
             Some(tx) => app.with_dkg_heights(tx),
             None => app,
         };
-        let app = app.with_randomness(randomness.clone());
         let marshal_reporter_app = app.clone();
 
         let scheme_provider_for_cb = scheme_provider.clone();
@@ -1218,8 +1224,7 @@ where
             slasher::Config {
                 staking_address: self.slasher_staking_address,
                 chain_id: self.chain_id,
-                reader: self.slasher_reader,
-                latest_finalized_hash: self.slasher_latest_finalized_hash,
+                committee: self.committee.clone(),
                 // TxPool transport (signer + pool + provider).
                 sink: self.slasher_sink,
                 // Durable WAL split between producer/consumer tasks.
@@ -1295,7 +1300,7 @@ where
     }
 }
 
-impl<E, B, P, BE, D, XC, A, R> OuterEngine<E, B, P, BE, D, XC, A, R>
+impl<E, B, P, BE, D, XC, A> OuterEngine<E, B, P, BE, D, XC, A>
 where
     E: BufferPooler + Clock + CryptoRngCore + Spawner + Storage + Metrics + RNetwork,
     B: Blocker<PublicKey = PublicKey> + Clone,
@@ -1304,7 +1309,6 @@ where
     D: DerivedBlockBuilder,
     XC: ExecutedChain,
     A: OrderingAssembler,
-    R: slasher::StakingStateRead + Send + Sync + 'static,
 {
     /// Sender held by 03's `EpochTransition` to fire boundary triggers.
     pub fn boundary_sender(&self) -> mpsc::Sender<(Epoch, ValidatorSetSnapshot)> {

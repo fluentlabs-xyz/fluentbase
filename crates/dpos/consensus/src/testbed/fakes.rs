@@ -1009,6 +1009,28 @@ impl FakeStaking {
     }
 }
 
+/// The two staticcalls the committee module makes, over the same fake.
+///
+/// A separate impl from [`StakingStateRead`] because the module's port is
+/// deliberately narrower — the two reads it issues and nothing else — and
+/// because `dkg_qual` is not on `StakingStateRead` at all. The inherent
+/// `FakeStaking::dkg_qual` answers the `(bit, committed)` pair the beacon's
+/// trait wants; the module derives "committed" from having a record at all, so
+/// only the bit crosses.
+impl crate::committee::EpochReads for FakeStaking {
+    fn epoch_committee_snapshot(
+        &self,
+        epoch: u64,
+        at: B256,
+    ) -> Result<ValidatorSetSnapshot, ReadError> {
+        StakingStateRead::epoch_committee_snapshot(self, epoch, at)
+    }
+
+    fn dkg_qual(&self, epoch: u64, at: B256) -> Result<bool, ReadError> {
+        FakeStaking::dkg_qual(self, epoch, at).map(|(bit, _committed)| bit)
+    }
+}
+
 impl StakingStateRead for FakeStaking {
     fn epoch_committee_snapshot(
         &self,

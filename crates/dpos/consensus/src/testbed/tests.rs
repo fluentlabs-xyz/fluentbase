@@ -3,7 +3,7 @@
 //! recorded in `.dpos-study/history/E3-2-STAND-1.md` §3.
 
 use super::{
-    fakes::{ElEvent, UpstreamCounters},
+    fakes::{ElEvent, UpstreamCounters, DPOS_ACTIVATION_BLOCK},
     stand::{
         Committees, Divergence, Outcome, PeerSet, Progress, Role, Stand, StandConfig, CHAIN_ID,
     },
@@ -19,7 +19,7 @@ use fluentbase_bls::{
     beacon::{seed_namespace, verify_seed, GroupPublic},
     fluent_namespace,
 };
-use fluentbase_staking_reader::epoch_transition::TransitionOutcome;
+use fluentbase_staking_reader::{epoch_transition::TransitionOutcome, reader::epoch_at_block};
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 /// (A) One node, nobody to serve it: `PlaneUpstreamHandle::get_latest` on the
@@ -1837,7 +1837,13 @@ fn the_epoch_transition_walks_the_boundaries_from_the_fake_state() {
 /// failing to mint `PK_2` because of the refusal.
 #[test]
 fn a_committee_not_yet_committed_is_not_read_early() {
-    let out = Stand::new(StandConfig::live(4, 1)).run_until(reached(72), Duration::from_secs(200));
+    let cfg = StandConfig::live(4, 1);
+    // The SAME geometry the stand hands the committee module (`stand.rs`, the
+    // `CommitteeStore` watch): reading it off the config rather than restating
+    // `0` and `EPOCH_LEN` here is what keeps the epoch bound below honest if a
+    // future case shifts the activation or the epoch length.
+    let epoch_len = cfg.epoch_len;
+    let out = Stand::new(cfg).run_until(reached(72), Duration::from_secs(200));
     assert!(!out.timed_out, "heights {:?}", out.heights);
     assert!(out.errors().is_empty(), "{:?}", out.errors());
     for i in 0..4 {
@@ -1852,10 +1858,27 @@ fn a_committee_not_yet_committed_is_not_read_early() {
             "node {i} never got the 'not committed yet' answer for epoch 1 at \
              the genesis state: {reads:?}"
         );
-        assert!(
-            reads.committed.values().sum::<u64>() > 50,
-            "node {i} barely read the staking state at all: {reads:?}"
-        );
+        // NON-VACUITY, by COVERAGE rather than by count. The bound used to be
+        // `sum > 50`, which is what a run of this length costs when every
+        // consumer issues its own `epoch_committee_snapshot` on every tick; the
+        // committee module answers each epoch from ONE frozen record, so the
+        // same run now costs ~17 reads (measured: `{0: 5, 1: 4, 2: 5, 3: 3}`)
+        // and a threshold in the tens would be asserting the defect rather than
+        // the property. What the bound was protecting is that the assertions
+        // above are not vacuously true over an empty read log, so it says that
+        // directly: every epoch this run passed through was actually read.
+        let passed = epoch_at_block(
+            *out.heights.iter().max().expect("heights"),
+            DPOS_ACTIVATION_BLOCK,
+            epoch_len,
+        )
+        .expect("non-zero epoch length");
+        for epoch in 0..=passed {
+            assert!(
+                reads.committed.get(&epoch).copied().unwrap_or(0) >= 1,
+                "node {i} never read committee[{epoch}] the run passed through: {reads:?}"
+            );
+        }
     }
     // And the refusal did not stop the bootstrap mint.
     let all = [0, 1, 2, 3];

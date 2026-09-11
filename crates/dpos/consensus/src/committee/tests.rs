@@ -256,8 +256,74 @@ fn four_members() -> Plan {
     Box::new(|_, _, _| Answer::Committee(vec![0, 1, 2, 3]))
 }
 
+/// A watch already carrying the frozen pair — the state the store spends its
+/// whole life in once the plane has frozen the geometry. The sender is leaked
+/// into the receiver by `watch::channel` semantics only while it lives, so it
+/// is kept alive by the returned receiver's own channel (a `Sender` dropped
+/// here would make `borrow()` still read the last value, which is all the store
+/// ever does).
+fn frozen_geometry_rx() -> crate::committee::GeometryRx {
+    tokio::sync::watch::Sender::new(Some((0, INTERVAL))).subscribe()
+}
+
 fn new_store(anchor: Arc<FakeAnchor>, reads: FakeReads) -> Arc<CommitteeStore<FakeReads>> {
-    Arc::new(CommitteeStore::new(reads, anchor, geometry()))
+    Arc::new(CommitteeStore::new(reads, anchor, frozen_geometry_rx()))
+}
+
+// --------------------------------------------------------- 0. no geometry yet
+
+#[test]
+fn without_a_frozen_geometry_every_epoch_is_not_readable_without_a_single_read() {
+    // The startup state of a real node: the store is built beside the anchor,
+    // BEFORE the beacon plane's EpochTransition has reached a readable,
+    // DPoS-scheduled block and frozen `(activation, interval)`. With no epoch
+    // arithmetic there is no window and no commit height, so there is nothing
+    // to read and nothing to ask the EVM.
+    let (tx, rx) = tokio::sync::watch::channel(None);
+    let anchor = FakeAnchor::at(400, hash(7));
+    let store = Arc::new(CommitteeStore::new(
+        FakeReads::new(four_members(), BTreeMap::from([(hash(7), 400u64)])),
+        anchor,
+        rx,
+    ));
+
+    match store.committee(5) {
+        Err(CommitteeError::NotReadable { epoch, ready_at }) => {
+            assert_eq!(
+                (epoch, ready_at),
+                (5, 0),
+                "no height can make this readable"
+            );
+        }
+        other => panic!("expected NotReadable while the geometry is unfrozen, got {other:?}"),
+    }
+    assert_eq!(
+        store.reads().calls(),
+        Calls::default(),
+        "an unfrozen geometry must not cost a staticcall"
+    );
+    // The wake-up is seeded at 0 rather than at a bogus epoch, and an advance
+    // taken before the freeze publishes nothing (there is nothing to publish).
+    let mut readable = store.subscribe();
+    assert_eq!(*readable.borrow_and_update(), 0);
+    store.anchor_advanced();
+    assert!(
+        !readable.has_changed().expect("sender alive"),
+        "no geometry, no readable epoch"
+    );
+
+    // The freeze lands and the SAME store starts answering — no rebuild, no
+    // second cursor.
+    tx.send_replace(Some((0, INTERVAL)));
+    store
+        .committee(5)
+        .expect("readable once the geometry is frozen");
+    store.anchor_advanced();
+    assert_eq!(
+        *readable.borrow_and_update(),
+        geometry().epoch_of(400) + 2,
+        "the first advance after the freeze publishes the real ceiling"
+    );
 }
 
 // ------------------------------------------------------------------- 1. gate
@@ -752,7 +818,6 @@ fn membership_and_the_facade_answer_from_the_same_record() {
     let facade = CommitteeReadsFacade::new(store.clone() as Arc<dyn Committee>);
 
     assert_eq!(facade.read_at(), Some(at), "read_at IS the module's anchor");
-    assert_eq!(facade.qual_read_at(), facade.read_at());
     assert_eq!(
         facade.committee(10, B256::ZERO),
         Some(record.participants.clone())
@@ -992,4 +1057,145 @@ fn the_facade_folds_every_committee_error_to_none() {
         assert!(facade.committee_bls(epoch, B256::ZERO).is_none());
         assert_eq!(facade.dkg_qual(epoch, B256::ZERO), None);
     }
+}
+
+// ------------------------------------------------- 19. the production anchor
+
+/// A reth provider carrying a persisted `finalized` tag — the one number a
+/// restarted node knows before its consensus layer has re-derived anything.
+struct TaggedProvider {
+    /// `finalized_block_number()`: reth's own tag, `None` on a genuinely fresh
+    /// execution layer.
+    tag: Option<u64>,
+    /// `best_block_number()`: the materialized head.
+    best: u64,
+    /// What `block_hash` resolves to at any height at or below `best`.
+    hash: B256,
+}
+
+impl reth_storage_api::BlockHashReader for TaggedProvider {
+    fn block_hash(
+        &self,
+        _number: u64,
+    ) -> reth_storage_api::errors::provider::ProviderResult<Option<B256>> {
+        Ok(Some(self.hash))
+    }
+    fn canonical_hashes_range(
+        &self,
+        _start: u64,
+        _end: u64,
+    ) -> reth_storage_api::errors::provider::ProviderResult<Vec<B256>> {
+        Ok(vec![])
+    }
+}
+
+impl reth_storage_api::BlockNumReader for TaggedProvider {
+    fn chain_info(
+        &self,
+    ) -> reth_storage_api::errors::provider::ProviderResult<reth_chainspec::ChainInfo> {
+        Ok(reth_chainspec::ChainInfo::default())
+    }
+    fn best_block_number(&self) -> reth_storage_api::errors::provider::ProviderResult<u64> {
+        Ok(self.best)
+    }
+    fn last_block_number(&self) -> reth_storage_api::errors::provider::ProviderResult<u64> {
+        Ok(self.best)
+    }
+    fn block_number(
+        &self,
+        _hash: B256,
+    ) -> reth_storage_api::errors::provider::ProviderResult<Option<u64>> {
+        Ok(None)
+    }
+}
+
+impl reth_storage_api::BlockIdReader for TaggedProvider {
+    fn pending_block_num_hash(
+        &self,
+    ) -> reth_storage_api::errors::provider::ProviderResult<Option<alloy_eips::BlockNumHash>> {
+        Ok(None)
+    }
+    fn safe_block_num_hash(
+        &self,
+    ) -> reth_storage_api::errors::provider::ProviderResult<Option<alloy_eips::BlockNumHash>> {
+        Ok(None)
+    }
+    fn finalized_block_num_hash(
+        &self,
+    ) -> reth_storage_api::errors::provider::ProviderResult<Option<alloy_eips::BlockNumHash>> {
+        Ok(self
+            .tag
+            .map(|number| alloy_eips::BlockNumHash::new(number, self.hash)))
+    }
+}
+
+#[test]
+fn a_persisted_finalized_tag_anchors_the_window_before_the_cursor_is_seeded() {
+    // The startup state this exists for: reth carries a finalized tag from an
+    // earlier run (or from the cold-start jump that just landed), while the
+    // `FinalizedCursor` — a PROCESS quantity, seeded inside
+    // `OuterBuilder::build` — is still zero. Anchoring on the cursor alone puts
+    // the window at `[0, 2]` and blinds the node to every epoch of the chain it
+    // is demonstrably following.
+    const TAG: u64 = 400;
+    let tag_epoch = geometry().epoch_of(TAG);
+    let at = hash(19);
+    let cursor = crate::FinalizedCursor::default();
+    let anchor = Arc::new(RethAnchor::new(
+        cursor.clone(),
+        TaggedProvider {
+            tag: Some(TAG),
+            best: TAG,
+            hash: at,
+        },
+    ));
+    assert_eq!(
+        anchor.height(),
+        TAG,
+        "an unseeded cursor must not hide a height this node has finalized"
+    );
+
+    let store = CommitteeStore::new(
+        FakeReads::new(four_members(), BTreeMap::from([(at, TAG)])),
+        anchor.clone(),
+        frozen_geometry_rx(),
+    );
+    // The WINDOW is the tag's, which is the observable that matters: every
+    // consumer's refusal is a function of it.
+    match store.committee(9_999).expect_err("far above any window") {
+        CommitteeError::OutOfWindow { lo, hi, .. } => assert_eq!(
+            (lo, hi),
+            (tag_epoch - SCHEME_RETENTION_EPOCHS as u64, tag_epoch + 2),
+            "the window is anchored on the tag's epoch, not on epoch 0"
+        ),
+        other => panic!("expected OutOfWindow, got {other:?}"),
+    }
+    store
+        .committee(tag_epoch)
+        .expect("the epoch the tag sits in is readable at the tag's own state");
+
+    // And the tag is a FLOOR, not a replacement: once the executor seeds and
+    // raises the cursor past it, the cursor is the anchor again.
+    cursor.advance(TAG + 3 * INTERVAL);
+    assert_eq!(anchor.height(), TAG + 3 * INTERVAL);
+}
+
+#[test]
+fn an_execution_layer_with_no_finalized_tag_leaves_the_cursor_alone() {
+    // The other startup: a genuinely fresh node, no tag at all. `None` reads as
+    // 0 and the anchor is exactly the cursor — the floor adds nothing and, in
+    // particular, does not invent a height.
+    let at = hash(21);
+    let cursor = crate::FinalizedCursor::default();
+    let anchor = RethAnchor::new(
+        cursor.clone(),
+        TaggedProvider {
+            tag: None,
+            best: 0,
+            hash: at,
+        },
+    );
+    assert_eq!(anchor.height(), 0);
+    cursor.advance(64);
+    assert_eq!(anchor.height(), 64);
 }

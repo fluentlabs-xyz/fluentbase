@@ -125,7 +125,7 @@ where
     let dkg_qual_for = frozen_dkg_qual(
         {
             let reads = cfg.committees.clone();
-            Arc::new(move || reads.qual_read_at())
+            Arc::new(move || reads.read_at())
         },
         {
             let reads = cfg.committees.clone();

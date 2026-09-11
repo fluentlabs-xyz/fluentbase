@@ -5,26 +5,14 @@
 //! projections, the follower's, and the stand's in the same change. It is a
 //! pure view: it holds no map, no cursor and no policy of its own.
 //!
-//! Two things about it are deliberate and temporary.
-//!
-//! * The `at: B256` parameter is IGNORED. The trait resolves a cursor once per
-//!   compound read and passes it down so the two halves of
-//!   [`beacon::CommitteeReads::committee_pair`] cannot straddle a block. The
-//!   module makes that unspellable a stronger way — the record is write-once
-//!   and its value does not depend on which in-window anchor read it — so the
-//!   parameter has nothing left to decide. It disappears with the trait's shape
-//!   in the beacon-boundary step, not here.
-//! * [`beacon::CommitteeReads::qual_read_at`] is the IDENTITY of
-//!   [`beacon::CommitteeReads::read_at`]. The separate qual cursor existed for
-//!   one window — no EL-finalized marker and a live cert cursor — where
-//!   `read_at` fell back to the genesis hash and the write-once memo in
-//!   `beacon::carry` would have frozen `false` for that epoch for the life of
-//!   the process. The module has no such window: below `commit_height(E)` it
-//!   answers `NotReadable` without reading anything at all, and at or above it
-//!   the bit is final, because the contract writes it in the same
-//!   `commit_epoch_committee` call that writes the committee
-//!   (`contracts/staking/src/consensus.rs:632-635`). The method leaves the
-//!   trait in the same step the `at` parameter does.
+//! One thing about it is deliberate and temporary: the `at: B256` parameter is
+//! IGNORED. The trait resolves a cursor once per
+//! compound read and passes it down so the two halves of
+//! [`beacon::CommitteeReads::committee_pair`] cannot straddle a block. The
+//! module makes that unspellable a stronger way — the record is write-once and
+//! its value does not depend on which in-window anchor read it — so the
+//! parameter has nothing left to decide. It disappears with the trait's shape
+//! in the beacon-boundary step, not here.
 //!
 //! Every method answers `None` on ANY [`CommitteeError`] — the trait has no
 //! room for a reason, and all three of its consumers already treat `None` as
@@ -73,12 +61,6 @@ impl beacon::CommitteeReads for CommitteeReadsFacade {
     /// by a header probe.
     fn read_at(&self) -> Option<B256> {
         self.inner.anchor_hash()
-    }
-
-    /// Identity of [`read_at`](beacon::CommitteeReads::read_at). See the module
-    /// docs for why the second cursor has nothing left to protect.
-    fn qual_read_at(&self) -> Option<B256> {
-        self.read_at()
     }
 
     /// `at` is ignored — the record is write-once and anchor-independent inside

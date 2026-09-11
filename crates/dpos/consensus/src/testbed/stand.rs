@@ -1673,15 +1673,20 @@ async fn build_node(
     // production's `finalized_block_number()` answers is reth's engine-API
     // `finalized` tag, which the executor sets to the result-final height
     // `ordering_finalized − K` (`executor.rs:3261-3272`, `update_finalized`
-    // `:248-252`). Reading at the ordering cursor would sit K blocks HIGHER than
-    // production and could make an epoch readable up to K blocks early.
+    // `:248-252`). The two are K blocks apart and the stand models both, because
+    // production still reads at both: the committee module anchors on the
+    // ORDERING cursor (`StandAnchor` below, `chain.tip()`), while the sites that
+    // have not moved onto the module read the EL tag.
     let el_finalized = {
         let chain = chain.clone();
         move || chain.tip().saturating_sub(crate::order_block::K)
     };
-    // Two consumers, and production keeps them apart on purpose: the `dkgQual`
-    // reads take THIS one (`node/src/dpos.rs:1519-1524` — `finalized_block_number`
-    // only, no live cursor), while the committee reads take the teed cursor below.
+    // ONE consumer left: the jump's committee source (`JumpCommittees` below),
+    // the stand's twin of production's `RethCommitteeSource`, which resolves its
+    // read hash from `finalized_block_number()` (`node/src/dpos.rs`, the inlet's
+    // `finalized_hash` closure). The `dkgQual` and committee reads that used to
+    // take this cursor — and the teed one beside it — go through the committee
+    // module now.
     let finalized_hash = {
         let chain = chain.clone();
         let fin = el_finalized.clone();
@@ -1846,30 +1851,51 @@ async fn build_node(
     // standing in for the staking reads. Built BEFORE the `OuterBuilder`, which
     // takes its randomness and adopts its agreement instances.
     let (dkg_height_tx, dkg_height_rx) = mpsc::channel::<u64>(256);
-    // The state hash the COMMITTEE is read at — production's shared
-    // `committee_read_hash` (`node/src/dpos.rs:1382-1404`): the read height is
-    // `max(EL-finalized, live)`, and it falls back to the finalized hash when the
-    // node has not imported the block at `read_at` yet ("the cert can land a
-    // beat before the EL-sync import", `:1397-1398`). The stand's chain has no
-    // header/state split, so "not imported" is simply "no executed hash there"
-    // and the fallback is the same branch.
-    let committee_read_hash = {
-        let chain = chain.clone();
-        let live = live_height.clone();
-        let el_fin = el_finalized.clone();
-        Arc::new(move || -> Option<B256> {
-            let fin = el_fin();
-            let live = live.load(Ordering::Relaxed);
-            // Production's startup guard: with neither a finalized marker nor a
-            // live cursor the committee is NOT readable, because `unwrap_or(0)`
-            // there would read it at genesis (`node/src/dpos.rs:1391-1394`).
-            if fin == 0 && live == 0 && chain.tip() == 0 {
-                return None;
-            }
-            let read_at = fin.max(live);
-            chain.hash_at(read_at).or_else(|| chain.hash_at(fin))
-        })
-    };
+    // The committee module's read anchor, the stand's twin of production's
+    // `RethAnchor`: the HEIGHT is this node's ordering-finalized tip (which is
+    // what `FakeChain::advance_finalized` moves, `executor.rs` calling it with
+    // `order.height`), and the HASH is that chain's tier-F hash there.
+    //
+    // Production reads at `executed_state_hash(ordering_finalized)`, and so does
+    // this: [`FakeChain::executed_state_hash`] IS that probe over the fake chain
+    // — `Ok(None)` strictly above the executed head (the park), `Ok(Some)` at a
+    // materialized height, `Err` for a materialized height with no hash. Taking
+    // the probe rather than a bare `hash_at` costs nothing in VALUE (the anchor
+    // reads at the tier-F tip, where tier-F and tier-S agree) and keeps the
+    // `Err` arm — the input of the anchor-fault branch — reachable from the
+    // stand at all, instead of being a shape only the unit tests can produce.
+    struct StandAnchor {
+        chain: FakeChain,
+    }
+
+    impl crate::committee::Anchor for StandAnchor {
+        fn height(&self) -> u64 {
+            self.chain.tip()
+        }
+
+        fn executed_hash(
+            &self,
+            height: u64,
+        ) -> Result<Option<B256>, fluentbase_staking_reader::ReadError> {
+            self.chain.executed_state_hash(height)
+        }
+    }
+
+    // ONE committee module per stand node, exactly as production builds one per
+    // process: the beacon's `CommitteeReads` is a facade over it, the slasher
+    // resolves evidence through it, and the executor wakes it on every
+    // `advance_finalized`. The `max(EL-finalized, live)` cursor the stand used
+    // to keep beside it is gone with the production one it modelled.
+    let committee: Arc<dyn crate::committee::Committee> =
+        Arc::new(crate::committee::CommitteeStore::new(
+            staking.clone(),
+            Arc::new(StandAnchor {
+                chain: chain.clone(),
+            }),
+            tokio::sync::watch::Sender::new(Some((DPOS_ACTIVATION_BLOCK, cfg.epoch_len)))
+                .subscribe(),
+        ));
+
     let (randomness, artifacts, agreement_intake) = match (cfg.beacon, role) {
         (Beacon::Static, _) => (
             StaticRandomness::build(CHAIN_ID, staking.all_validators_snapshot()),
@@ -1882,16 +1908,9 @@ async fn build_node(
             let (brs, brr) = register(BEACON_RESOLVER_CHANNEL).await;
             #[cfg(feature = "dpos-devnet-byzantine")]
             let roster = {
-                let staking = staking.clone();
-                let at = committee_read_hash.clone();
+                let committee = committee.clone();
                 move |epoch: u64| -> Option<Set<PeerPubkey>> {
-                    let snap = staking.epoch_committee_snapshot(epoch, at()?).ok()?;
-                    if snap.validators.is_empty() {
-                        return None;
-                    }
-                    Some(Set::from_iter_dedup(
-                        snap.validators.iter().map(|v| v.keys.peer_pubkey.clone()),
-                    ))
+                    Some(committee.committee(epoch).ok()?.participants.clone())
                 }
             };
             // Only the two-reveal role still needs the roster as a closure: the
@@ -1929,72 +1948,14 @@ async fn build_node(
                     _ => None,
                 },
             );
-            // Every staking read the beacon takes, on ONE cursor — the stand's
-            // stand-in for the node's `PlaneCommitteeReads`. `read_at` is
-            // production's `max(EL-finalized, live)` with the same fallback, and
-            // the `dkgQual` leg now rides it too rather than the finalized hash
-            // (Д-7).
-            struct StandCommitteeReads {
-                read_at: Arc<dyn Fn() -> Option<B256> + Send + Sync>,
-                snapshot_at: Arc<dyn Fn(u64, B256) -> Option<ValidatorSetSnapshot> + Send + Sync>,
-                staking: FakeStaking,
-            }
-
-            impl CommitteeReads for StandCommitteeReads {
-                fn read_at(&self) -> Option<B256> {
-                    (self.read_at)()
-                }
-
-                /// The stand cannot express production's extra guard on this
-                /// leg: its `el_finalized` is a HEIGHT that saturates to 0, not
-                /// an `Option`, so "no finalized marker" and "finalized at
-                /// genesis" are the same value here. The cursor is therefore the
-                /// committee one; what the guard protects (a write-once memo
-                /// frozen at the genesis fallback) is a node-side property and
-                /// is pinned by `node/src/dpos.rs`'s own cursor tests.
-                fn qual_read_at(&self) -> Option<B256> {
-                    (self.read_at)()
-                }
-
-                /// READS AT `at`, never at a cursor of its own. The obvious
-                /// shortcut — re-resolve `read_at()` inside — would make
-                /// `committee_pair`'s two halves land on two independent reads,
-                /// which is the exact straddle the provided method exists to make
-                /// unspellable. A stand that cannot express the defect cannot
-                /// witness the fix either.
-                fn committee(&self, epoch: u64, at: B256) -> Option<Set<PeerPubkey>> {
-                    Some(Set::from_iter_dedup(
-                        (self.snapshot_at)(epoch, at)?
-                            .validators
-                            .iter()
-                            .map(|v| v.keys.peer_pubkey.clone()),
-                    ))
-                }
-
-                fn committee_bls(
-                    &self,
-                    epoch: u64,
-                    at: B256,
-                ) -> Option<fluentbase_bls::scheme::EpochCommittee> {
-                    epoch_committee_from_snapshot(&(self.snapshot_at)(epoch, at)?).ok()
-                }
-
-                fn dkg_qual(&self, epoch: u64, at: B256) -> Option<(bool, bool)> {
-                    self.staking.dkg_qual(epoch, at).ok()
-                }
-            }
-
-            let committees: Arc<dyn CommitteeReads> = Arc::new(StandCommitteeReads {
-                read_at: committee_read_hash.clone(),
-                snapshot_at: {
-                    let staking = staking.clone();
-                    Arc::new(move |epoch: u64, at: B256| {
-                        let snap = staking.epoch_committee_snapshot(epoch, at).ok()?;
-                        (!snap.validators.is_empty()).then_some(snap)
-                    })
-                },
-                staking: staking.clone(),
-            });
+            // Every staking read the beacon takes, answered from the committee
+            // module — the stand's stand-in for the node's facade, and the SAME
+            // type production uses. `StandCommitteeReads` and the
+            // `max(EL-finalized, live)` cursor behind it are gone: the module
+            // reads at this node's ordering-finalized tip and at nothing else.
+            let committees: Arc<dyn CommitteeReads> = Arc::new(
+                crate::committee::CommitteeReadsFacade::new(committee.clone()),
+            );
             let (beacon, beacon_tasks) = beacon::build(
                 &ctx_i,
                 ValidatorInputs {
@@ -2095,8 +2056,7 @@ async fn build_node(
         fcu_pace: Duration::ZERO,
         canonical_state: reth_chain_state::CanonicalInMemoryState::empty(),
         slasher_staking_address: Address::ZERO,
-        slasher_reader: staking.clone(),
-        slasher_latest_finalized_hash: finalized_hash.clone(),
+        committee: committee.clone(),
         slasher_sink: Arc::new(NoSink),
         slasher_wal_partition: format!("node{i}-slasher-wal"),
         slasher_evidence: None,

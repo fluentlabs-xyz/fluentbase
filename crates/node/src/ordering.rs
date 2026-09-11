@@ -26,10 +26,20 @@ pub struct ProviderExecutedChain<P> {
 }
 
 impl<P> ProviderExecutedChain<P> {
-    pub fn new(provider: P) -> Self {
+    /// Over a cursor the caller already holds.
+    ///
+    /// The ONLY constructor, and that is the point: the committee module
+    /// anchors its reads on this same
+    /// [`FinalizedCursor`](fluentbase_consensus::FinalizedCursor) — an
+    /// ordering-finalized height is exactly what its reads must be taken at —
+    /// so the cursor is created once, beside the store, and handed in here.
+    /// A `new(provider)` that minted its own would have given the node two
+    /// ordering-finalized cursors: the one the executor advances and the one
+    /// the committee reads at, agreeing only by luck.
+    pub fn with_cursor(provider: P, finalized: FinalizedCursor) -> Self {
         Self {
             provider,
-            finalized: FinalizedCursor::default(),
+            finalized,
         }
     }
 }

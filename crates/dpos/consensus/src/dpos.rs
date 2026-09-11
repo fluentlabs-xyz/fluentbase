@@ -920,6 +920,12 @@ where
 pub struct DposLayerConfig<D, XC, A, U> {
     pub bls_keypair: ValidatorBlsKeypair,
     pub peer_keypair: commonware_cryptography::ed25519::PrivateKey,
+    /// Every per-epoch committee read the layer makes, as one frozen record per
+    /// epoch at one anchor. Built in the node crate beside the ordering-finalized
+    /// cursor it anchors on (`build_beacon_plane`) and the SAME `Arc` the
+    /// beacon's `CommitteeReads` facade views, so the consensus layer and the
+    /// beacon plane cannot hold two versions of one epoch's committee.
+    pub committee: Arc<dyn crate::committee::Committee>,
     pub slasher_sink: Arc<dyn SlasherTxSink>,
     /// Evidence-channel bridge to the node's gossip task, which owns both p2p
     /// halves of `EVIDENCE_CHANNEL` ([`crate::slasher::gossip`]).
@@ -1552,6 +1558,7 @@ impl DposLayer {
         let DposLayerConfig {
             bls_keypair,
             peer_keypair,
+            committee,
             slasher_sink,
             evidence,
             staking_config,
@@ -1618,17 +1625,6 @@ impl DposLayer {
         // Build the staking-reader layer: reader + cache + EpochTransition.
         let staking_address = staking_config.staking_address;
         let reader = RethStakingStateReader::new(
-            provider.clone(),
-            evm_config.clone(),
-            staking_config.clone(),
-        );
-
-        // Dedicated reader instance for the slasher (NOT shared with ET).
-        // `RethStakingStateReader` is not `Clone`; ctor args are
-        // already cloned at the call sites. Each instance lazy-inits its own
-        // `OnceLock` epoch-geometry cache on first call —
-        // negligible (~2 extra reads at startup).
-        let reader_for_slasher = RethStakingStateReader::new(
             provider.clone(),
             evm_config.clone(),
             staking_config.clone(),
@@ -2325,97 +2321,10 @@ impl DposLayer {
         // `<datadir>/beacon/` happened ONCE at the plane's startup — not here.
         //
 
-        // Isolation-window watchdog: a non-committee `--dpos` node has ZERO
-        // consensus-plane connectivity (the tracked peer set == the on-chain
-        // committee) yet otherwise looks alive — the silent-verifier trap.
-        // Surface it: when finalized makes no progress across two ticks AND
-        // this key is not in the current committee, say so loudly. Expected
-        // for a not-yet-committee validator without --dpos.follower-upstream;
-        // anything else means registration/delegation needs checking.
-        {
-            let wd_reader = RethStakingStateReader::new(
-                provider.clone(),
-                evm_config.clone(),
-                staking_config.clone(),
-            );
-            let wd_provider = provider.clone();
-            let wd_me = me.clone();
-            let wd_interval = interval;
-            let wd_activation = dpos_activation_block;
-            drop(
-                ctx.with_label("committee_watchdog")
-                    .spawn(move |c| async move {
-                        let mut prev_fin = 0u64;
-                        let mut stagnant = 0u32;
-                        let mut cached: Option<(u64, B256, Option<bool>)> = None;
-                        loop {
-                            c.sleep(Duration::from_secs(60)).await;
-                            let Ok(Some(fin)) = wd_provider.finalized_block_number() else {
-                                continue;
-                            };
-                            if fin > prev_fin {
-                                prev_fin = fin;
-                                stagnant = 0;
-                                continue;
-                            }
-                            stagnant += 1;
-                            if stagnant < 2 {
-                                continue;
-                            }
-                            let Ok(Some(hash)) = wd_provider.block_hash(fin) else {
-                                continue;
-                            };
-                            let Some(epoch) = fluentbase_staking_reader::reader::epoch_at_block(
-                                fin,
-                                wd_activation,
-                                wd_interval,
-                            ) else {
-                                continue;
-                            };
-                            // The snapshot is a deterministic state read — while
-                            // finalized is stagnant its inputs cannot change, so a
-                            // wedged verifier re-warns from cache instead of re-running
-                            // the committee EVM read every tick for hours.
-                            let in_committee = match cached {
-                                Some((c_fin, c_hash, verdict))
-                                    if (c_fin, c_hash) == (fin, hash) =>
-                                {
-                                    verdict
-                                }
-                                _ => {
-                                    let verdict = wd_reader
-                                        .epoch_committee_snapshot(epoch, hash)
-                                        .ok()
-                                        .map(|s| {
-                                            s.validators.iter().any(|v| v.keys.peer_pubkey == wd_me)
-                                        });
-                                    cached = Some((fin, hash, verdict));
-                                    verdict
-                                }
-                            };
-                            if in_committee == Some(false) {
-                                warn!(
-                                    finalized = fin,
-                                    epoch,
-                                    "no finalized progress and this key is NOT in the current \
-                             committee — run unified mode (--dpos.follower-upstream) to \
-                             follow meanwhile; otherwise check registration/delegation"
-                                );
-                            }
-                        }
-                    }),
-            );
-        }
-
-        // Slasher wiring — `latest_finalized_hash` closure over the reth
-        // provider. The TxPool transport sink arrives pre-built via
-        // `cfg.slasher_sink` (host-side construction).
-        let provider_for_finalized = provider.clone();
-        let slasher_latest_finalized_hash: Arc<dyn Fn() -> Option<B256> + Send + Sync> =
-            Arc::new(move || {
-                let n = provider_for_finalized.finalized_block_number().ok()??;
-                provider_for_finalized.block_hash(n).ok().flatten()
-            });
+        // Slasher wiring: the committee module resolves every evidence epoch —
+        // no dedicated reader and no finalized-hash closure of its own. The
+        // TxPool transport sink arrives pre-built via `cfg.slasher_sink`
+        // (host-side construction).
 
         // Per-epoch threshold beacon resolver for the combined consensus scheme —
         // see `beacon_share_resolver`: carry-forward under the frozen on-chain
@@ -2698,8 +2607,7 @@ impl DposLayer {
             canonical_state: canonical_state.clone(),
 
             slasher_staking_address: staking_address,
-            slasher_reader: reader_for_slasher,
-            slasher_latest_finalized_hash,
+            committee: committee.clone(),
             slasher_sink,
             slasher_wal_partition: "slasher-wal".into(),
             slasher_evidence: Some(evidence),
@@ -2840,6 +2748,12 @@ pub struct FollowerLayerConfig<D, XC, A, U> {
     pub deriver: D,
     /// Local derived-chain view (node-built over the reth provider).
     pub executed: XC,
+    /// The SAME ordering-finalized cursor [`Self::executed`] was built over —
+    /// see `crate::ordering::ProviderExecutedChain::with_cursor` in the node
+    /// crate. The committee module built below anchors its reads on it, so a
+    /// follower reads every committee at the height its own executor has
+    /// finalized and at no other.
+    pub finalized_cursor: crate::FinalizedCursor,
     /// Pool-backed ordering assembly (node-built — pool trait bounds live there).
     /// A follower never proposes, so this is never exercised; the OuterBuilder
     /// requires it at the type level.
@@ -2953,6 +2867,7 @@ impl DposLayer {
             l1_checkpoint_hash,
             deriver,
             executed,
+            finalized_cursor,
             assembler,
             target_gas_limit,
             feed,
@@ -3199,20 +3114,30 @@ impl DposLayer {
         let executor_metrics = crate::executor::ExecutorMetrics::default();
         executor_metrics.register(&ctx);
 
-        // Slasher reader + fallback are required by the OuterBuilder type but the
-        // slasher is never STARTED on a follower (`run_follower` drops the unstarted
-        // actor) — a non-signer never submits slashing.
-        let slasher_reader = RethStakingStateReader::new(
-            provider.clone(),
-            evm_config.clone(),
-            staking_config.clone(),
-        );
-        let provider_for_finalized = provider.clone();
-        let slasher_latest_finalized_hash: Arc<dyn Fn() -> Option<B256> + Send + Sync> =
-            Arc::new(move || {
-                let n = provider_for_finalized.finalized_block_number().ok()??;
-                provider_for_finalized.block_hash(n).ok().flatten()
-            });
+        // EVERY per-epoch committee read this follower makes, as ONE frozen
+        // record per epoch at ONE anchor — the same module the validator plane
+        // runs, over this node's own executor cursor. A follower's geometry is
+        // known HERE (it was read off the chain at the cold-start anchor above),
+        // so the watch is created already frozen; the validator's arrives later
+        // from its beacon plane, which is why the store takes a watch at all.
+        // Consequence, stated because the validator path has to do the opposite:
+        // there is NO unfrozen window on this path and therefore no freeze
+        // wake-up to publish (`Committee::subscribe`'s second event) — the store
+        // is answering from its first call, and the only wake-up left is the
+        // executor's anchor advance.
+        let committee: Arc<dyn crate::committee::Committee> =
+            Arc::new(crate::committee::CommitteeStore::new(
+                RethStakingStateReader::new(
+                    provider.clone(),
+                    evm_config.clone(),
+                    staking_config.clone(),
+                ),
+                Arc::new(crate::committee::RethAnchor::new(
+                    finalized_cursor,
+                    provider.clone(),
+                )),
+                tokio::sync::watch::Sender::new(Some((activation, interval))).subscribe(),
+            ));
 
         // Bulk catch-up span reader: a follower soft-enters every live epoch but
         // never spawns an engine, so this is still used to register verify-only
@@ -3408,93 +3333,15 @@ impl DposLayer {
             })
         };
 
-        // Every staking read the follower's beacon takes, on ONE cursor — the
-        // same `CommitteeReads` the validator plane is handed, so the two node
-        // classes cannot drift on the cursor or on the reads themselves. A
-        // follower reads at its own FINALIZED anchor: it has no live cert cursor
-        // to run ahead on, and the anchor is what its committee reads already use.
-        struct FollowerCommitteeReads<P, E> {
-            canonical: reth_chain_state::CanonicalInMemoryState,
-            reader: RethStakingStateReader<P, E>,
-        }
-
-        impl<P, E> crate::beacon::CommitteeReads for FollowerCommitteeReads<P, E>
-        where
-            P: StateProviderFactory
-                + HeaderProvider<Header = Header>
-                + Clone
-                + Send
-                + Sync
-                + 'static,
-            E: ConfigureEvm<Primitives = EthPrimitives> + Clone + Send + Sync + 'static,
-        {
-            fn read_at(&self) -> Option<B256> {
-                Some(self.canonical.get_finalized_num_hash()?.hash)
-            }
-
-            /// A follower has no live cert cursor, so the qual leg reads at the
-            /// same finalized anchor as everything else — and the guard the
-            /// trait asks for is already structural here: without a finalized
-            /// marker `get_finalized_num_hash` IS `None`, so there is no cursor
-            /// to fall back onto and no genesis hash to freeze a memo at.
-            fn qual_read_at(&self) -> Option<B256> {
-                self.read_at()
-            }
-
-            /// A follower runs no ceremony, so nothing asks it for the peer-set
-            /// projection of a committee.
-            fn committee(
-                &self,
-                _epoch: u64,
-                _at: B256,
-            ) -> Option<commonware_utils::ordered::Set<fluentbase_bls::PeerPubkey>> {
-                None
-            }
-
-            /// The SOLE authority a fetched artifact is checked against, read from
-            /// THIS node's own chain state. A follower trusts its upstream for
-            /// DELIVERY and for nothing else: an artifact that does not carry a
-            /// quorum of this committee is rejected here exactly as a peer's would
-            /// be on the plane.
-            fn committee_bls(
-                &self,
-                epoch: u64,
-                at: B256,
-            ) -> Option<fluentbase_bls::scheme::EpochCommittee> {
-                let snap = self.reader.epoch_committee_snapshot(epoch, at).ok()?;
-                if snap.validators.is_empty() {
-                    return None;
-                }
-                crate::scheme::epoch_committee_from_snapshot(&snap).ok()
-            }
-
-            /// Which epoch MINTED the key in force at a given epoch. A stable
-            /// committee runs no agreement at all, so an artifact for the epoch
-            /// being verified does not exist; without this the key-delivery rung
-            /// would ask for one that was never minted and miss forever.
-            fn dkg_qual(&self, epoch: u64, at: B256) -> Option<(bool, bool)> {
-                let bit = self.reader.dkg_qual(epoch, at).ok()?;
-                // A SET bit is proof the commit happened, so the committee read is
-                // skipped for it.
-                let committed = bit
-                    || self
-                        .reader
-                        .epoch_committee_snapshot(epoch, at)
-                        .map(|s| !s.validators.is_empty())
-                        .unwrap_or(false);
-                Some((bit, committed))
-            }
-        }
-
-        let follower_committees: Arc<dyn crate::beacon::CommitteeReads> =
-            Arc::new(FollowerCommitteeReads {
-                canonical: canonical_state.clone(),
-                reader: RethStakingStateReader::new(
-                    provider.clone(),
-                    evm_config.clone(),
-                    staking_config.clone(),
-                ),
-            });
+        // Every staking read the follower's beacon takes, answered from the
+        // committee module — the SAME type the validator plane is handed, so the
+        // two node classes cannot drift on the cursor or on the reads. The
+        // follower's own `CommitteeReads` implementation is gone with it, and
+        // with it the `committee() => None` hole it carried: a follower runs no
+        // ceremony, but the module has no reason to withhold the roster.
+        let follower_committees: Arc<dyn crate::beacon::CommitteeReads> = Arc::new(
+            crate::committee::CommitteeReadsFacade::new(committee.clone()),
+        );
         // The ONE relationship a follower has. `None` (a test with no upstream)
         // leaves the rung permanently empty, which is exactly the pre-FLU-1167
         // behaviour: vote-only admission, never a fault.
@@ -3639,8 +3486,7 @@ impl DposLayer {
             canonical_state: canonical_state.clone(),
 
             slasher_staking_address: staking_config.staking_address,
-            slasher_reader,
-            slasher_latest_finalized_hash,
+            committee: committee.clone(),
             slasher_sink: Arc::new(NoopSlasherSink),
             slasher_wal_partition: "slasher-wal".into(),
             // A follower runs no slasher (built, never started) and registers
@@ -3700,18 +3546,45 @@ impl DposLayer {
         // the epoch unconsumed and the next finalized block retries.
         let follower_boundary_tx = outer.boundary_sender();
         let follower_boundary_handle = {
-            let canonical = canonical_state.clone();
-            let reader = RethStakingStateReader::new(
-                provider.clone(),
-                evm_config.clone(),
-                staking_config.clone(),
-            );
+            // From the MODULE's record, not a second `epoch_committee_snapshot`
+            // at a cursor of this closure's own. The boundary channel still
+            // carries a `ValidatorSetSnapshot` (its consumers are rewritten in
+            // the epoch-scheme step), so the record is projected back into one.
+            //
+            // `tombstoned` is the one leg the record does not carry and cannot:
+            // it is read LIVE at the snapshot's own block precisely so a
+            // mid-epoch verdict reaches the committee it names, which is why it
+            // is not part of a frozen value. Projecting `false` loses nothing
+            // here — no consumer of this channel reads it (the epoch manager
+            // uses the snapshot for the verify-only scheme and the seedless
+            // base, `epoch_manager.rs:1057`, `:1621`, `beacon/seed.rs:93`), and
+            // the reaction that DOES use the flag is the plane's `TombstoneSet`
+            // poller, which a follower does not run at all.
+            let committee = committee.clone();
             let committee_at: FollowerCommitteeAt = Arc::new(move |epoch: u64| {
-                let at = canonical.get_finalized_num_hash()?.hash;
-                match reader.epoch_committee_snapshot(epoch, at) {
-                    Ok(snap) if !snap.validators.is_empty() => Some(snap),
-                    _ => None,
-                }
+                let record = committee.committee(epoch).ok()?;
+                Some(ValidatorSetSnapshot {
+                    block_hash: record.snapshot.1,
+                    block_number: record.snapshot.0,
+                    epoch: record.epoch,
+                    validators: record
+                        .members
+                        .iter()
+                        .map(|m| fluentbase_staking_reader::reader::ValidatorWithKeys {
+                            address: m.address,
+                            keys: fluentbase_staking_reader::reader::ConsensusKeys {
+                                peer_pubkey: m.peer.clone(),
+                                bls_pubkey: m.bls,
+                                // Not in the record either, and for the same
+                                // reason as `tombstoned`: nothing in the core
+                                // reads it (only test fixtures construct one).
+                                activation_epoch: 0,
+                            },
+                            tombstoned: false,
+                        })
+                        .collect(),
+                    weights: Some(record.weights.clone()),
+                })
             });
             let deliver: FollowerBoundaryDeliver = Arc::new(move |epoch, snap| {
                 let tx = follower_boundary_tx.clone();

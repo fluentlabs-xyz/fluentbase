@@ -120,7 +120,15 @@ where
     // DPOS_ARCHITECTURE §8.11), matching the committee.
     let deriver =
         crate::derive::RethBlockDeriver::new(node.provider.clone(), node.evm_config.clone());
-    let executed = crate::ordering::ProviderExecutedChain::new(node.provider.clone());
+    // THE follower's ordering-finalized cursor, created here because two things
+    // need the SAME one: the executed-chain view the executor advances, and the
+    // committee module's read anchor (built inside `launch_follower`, which is
+    // where the epoch geometry is known). One cursor, handed to both.
+    let finalized_cursor = fluentbase_consensus::FinalizedCursor::default();
+    let executed = crate::ordering::ProviderExecutedChain::with_cursor(
+        node.provider.clone(),
+        finalized_cursor.clone(),
+    );
     let assembler = std::sync::Arc::new(crate::ordering::PoolAssembler::new(
         node.pool.clone(),
         executed.clone(),
@@ -224,6 +232,7 @@ where
         l1_checkpoint_hash,
         deriver,
         executed,
+        finalized_cursor,
         assembler,
         target_gas_limit,
         feed: None,

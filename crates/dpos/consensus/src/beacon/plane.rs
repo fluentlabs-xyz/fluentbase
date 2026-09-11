@@ -105,9 +105,21 @@ const EDGE_MAILBOX: usize = 16;
 /// provided method over two [`Self::committee`] calls at one hash, and a
 /// validator that rotates its consensus key between two independent reads can no
 /// longer make the node see a committee change the contract did not.
+///
+/// There is no second cursor for the `dkgQual` leg any more. `qual_read_at`
+/// existed for ONE window — a live cert cursor with no EL-finalized marker,
+/// where `read_at` fell back to the GENESIS hash and the write-once memo in
+/// [`super::carry::frozen_dkg_qual`] would have frozen `false` for that epoch
+/// for the life of the process. The single implementation of this trait is now
+/// [`crate::committee::CommitteeReadsFacade`], whose anchor is
+/// `executed_state_hash(ordering_finalized)` and which has no genesis fallback
+/// at all: below `commit_height(E)` the module answers "not readable" without
+/// reading anything, and at or above it the bit is final, because the contract
+/// writes it in the same `commit_epoch_committee` call that writes the
+/// committee (`contracts/staking/src/consensus.rs:632-635`).
 pub trait CommitteeReads: Send + Sync {
-    /// The state hash every read below is taken at, or `None` where this node
-    /// cannot read state yet (no finalized marker AND no live cursor).
+    /// The state hash every read below is taken at — including the `dkgQual`
+    /// leg — or `None` where this node cannot read state yet.
     fn read_at(&self) -> Option<B256>;
 
     /// `committee[epoch]` as the ordered peer set at `at` — the ceremony roster
@@ -117,21 +129,6 @@ pub trait CommitteeReads: Send + Sync {
     /// The SAME frozen committee with its BLS half, projected into the participant
     /// BiMap a certificate is verified under.
     fn committee_bls(&self, epoch: u64, at: B256) -> Option<EpochCommittee>;
-
-    /// The cursor the `dkgQual` leg is read at — [`Self::read_at`]'s HEIGHT, and
-    /// a SEPARATE method because the two legs do not answer `None` at the same
-    /// moment.
-    ///
-    /// `committee[E]` is content-invariant, so reading it at a live-only cursor
-    /// costs nothing if the guess is early. The qual bit is not: it feeds
-    /// [`super::carry::frozen_dkg_qual`], whose memo is WRITE-ONCE. An answer
-    /// taken where this node has no EL-finalized marker at all — and therefore
-    /// where `read_at`'s fallback would resolve the GENESIS hash — would freeze
-    /// `false` for that epoch for the life of the process. So this leg reads
-    /// nothing until a finalized marker exists; before then the arbiter's honest
-    /// answer is `None` (undecided, retry), which is what both of its consumers
-    /// already handle.
-    fn qual_read_at(&self) -> Option<B256>;
 
     /// One raw on-chain `(dkgQual[epoch], committee[epoch] is committed)` read at
     /// `at`. The freeze/memo rule that turns it into the carry-forward arbiter is
@@ -601,7 +598,7 @@ where
     let dkg_qual_for = frozen_dkg_qual(
         {
             let reads = committees.clone();
-            Arc::new(move || reads.qual_read_at())
+            Arc::new(move || reads.read_at())
         },
         {
             let reads = committees.clone();

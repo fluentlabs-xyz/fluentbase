@@ -319,21 +319,24 @@ impl MarshalSink for crate::MarshalMailbox {
 /// advances from each live upstream cert it ingests. Re-homed here from the
 /// (deleted) unified supervisor that used to feed them off the window stream.
 ///
-/// `live_height` is the `beacon::actor::CommitteeFor` read cursor
-/// (`committee_for` reads `committee[E]` at `max(EL-finalized, live_height)`):
-/// an upstream-configured validator/newcomer resolves the ahead-committed
+/// `live_height` is a committee-read cursor for the FOLLOWER only: its inlet's
+/// own committee source reads `committee[E]` at `max(EL-finalized, live_height)`
+/// (`dpos.rs`, `inlet_committees`), so a follower resolves the ahead-committed
 /// `committee[E+1]` at the LIVE upstream tip rather than its lagging
-/// EL-finalized state (the production-path "Option A" fix). `dkg_height` is the
-/// `beacon::actor::DkgActor` deal clock: dealing at the live frontier
-/// lets a still-catching-up early-joiner deal its first epoch's DKG share before
-/// the deal deadline (the vrf-rotation early-join fix) instead of K blocks late.
+/// EL-finalized state (the boundary-wedge fix). On the VALIDATOR path it no
+/// longer steers any committee read: the beacon plane takes every committee
+/// through the committee module, at this node's own ordering-finalized anchor,
+/// and the atomic is write-only there until 4.2 removes it together with
+/// `upstream_frontier`. `dkg_height` is the `beacon::actor::DkgActor` deal
+/// clock: dealing at the live frontier lets a still-catching-up early-joiner
+/// deal its first epoch's DKG share before the deal deadline (the vrf-rotation
+/// early-join fix) instead of K blocks late.
 ///
 /// A validator-with-upstream wires BOTH cursors (it owns the beacon plane). A
-/// FOLLOWER also wires the tee — but only for `live_height` (its frontier-aware
-/// committee read: `committee[E]` at `max(EL-finalized, live_height)`, the
-/// boundary-wedge fix), with a NO-OP `dkg_height_tx` (the receiver is dropped —
-/// the follower has no beacon plane). A no-upstream validator has no inlet at all
-/// → both cursors stay finalized-driven, unchanged.
+/// FOLLOWER also wires the tee — but only for `live_height`, with a NO-OP
+/// `dkg_height_tx` (the receiver is dropped — the follower has no beacon plane).
+/// A no-upstream validator has no inlet at all → both cursors stay
+/// finalized-driven, unchanged.
 pub struct LiveFrontierTee {
     /// `committee_for` read cursor, advanced monotonically (`fetch_max`) — ONLY
     /// off VERIFIED certs (a trusted frontier; it must never be steerable by an

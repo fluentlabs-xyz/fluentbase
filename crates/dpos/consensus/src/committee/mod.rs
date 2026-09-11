@@ -250,6 +250,14 @@ pub trait Committee: Send + Sync {
     /// The VALUE is a hint; the EVENT is the contract. A consumer parked on a
     /// [`CommitteeError::NotReadable`] wakes here and re-asks, instead of
     /// polling on a timer.
+    ///
+    /// TWO events produce it, because there are two ways an epoch becomes
+    /// readable: the ANCHOR moved (the executor's three call sites) and the
+    /// GEOMETRY was frozen (the beacon plane's poller, the one and only
+    /// publisher of `(activation, interval)`). Before the freeze every epoch is
+    /// [`CommitteeError::NotReadable`] with `ready_at: 0` — no height can fix
+    /// it — so the freeze is exactly as much of a wake-up as an anchor advance,
+    /// and its publisher owes the same [`Committee::anchor_advanced`] call.
     fn subscribe(&self) -> tokio::sync::watch::Receiver<u64>;
 
     /// Tell the implementation its anchor moved: re-read the anchor, publish
@@ -262,6 +270,12 @@ pub trait Committee: Send + Sync {
     /// three that raise the cursor — `executor.rs` init, jump landing and the
     /// finalized derive — and each must call STRICTLY AFTER raising it; calling
     /// before merely loses one wake-up, which the next one makes good.
+    ///
+    /// A FOURTH caller, for the other event of [`Self::subscribe`]: whoever
+    /// freezes the geometry calls it right after publishing the frozen pair. It
+    /// takes no height there either — the freeze is what made the anchor's
+    /// height mean something, so re-reading the anchor is exactly the right
+    /// thing to do.
     ///
     /// Takes NO height: an implementation reads the height back from its own
     /// anchor, so it can never publish a height the anchor does not hold. Any
@@ -292,18 +306,31 @@ pub trait Anchor: Send + Sync {
     fn height(&self) -> u64;
 
     /// [`crate::executed_state_hash`] at `height`: `Ok(None)` above the
-    /// materialized head (the state is not there yet — park), `Err` for a miss
-    /// at a materialized height (a real header-index fault, never a park).
+    /// materialized head (the state is not there yet — park), `Err` for a fault
+    /// at a materialized height (never a park).
+    ///
+    /// The `Err` is not one class: a header-index miss is permanent, while a
+    /// torn static-file read of the same storage is transient and carries that
+    /// verdict in its [`ReadError`]. The store routes on the verdict rather than
+    /// on the fact of the `Err`, because a disk hiccup on a cache miss must not
+    /// refuse an epoch for good.
     fn executed_hash(&self, height: u64) -> Result<Option<B256>, ReadError>;
 }
 
+/// How the frozen geometry reaches the store: the `(activation, interval)`
+/// watch the beacon plane publishes the instant its `EpochTransition` freezes
+/// one (`crates/node/src/dpos.rs`, `geometry_tx`), `None` until then.
+///
+/// A watch of a frozen pair rather than a live chain read: the value is frozen
+/// ONCE per process by its single source, and re-reading the chain per call
+/// would let a mid-flight governance change silently re-slice every epoch
+/// boundary this module has already answered on. What the watch adds over a
+/// plain value is only the "not frozen yet" state, which the store answers as
+/// [`CommitteeError::NotReadable`] without touching the EVM.
+pub type GeometryRx = tokio::sync::watch::Receiver<Option<(u64, u64)>>;
+
 /// The frozen `(activation_block, epoch_block_interval)` pair, and the epoch
 /// arithmetic over it.
-///
-/// A value type rather than a live read: the geometry is frozen once per
-/// process by `EpochTransition` and re-reading it per call would let a
-/// mid-flight governance change silently re-slice every epoch boundary this
-/// module has already answered on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Geometry {
     activation: u64,

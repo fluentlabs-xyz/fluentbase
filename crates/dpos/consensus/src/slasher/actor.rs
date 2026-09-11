@@ -28,7 +28,6 @@ use super::evidence::{
 };
 use crate::{
     digest::Digest,
-    scheme::epoch_committee_from_snapshot,
     slasher::{
         gossip::{encode_batch, verify_vote, EvidenceBatch, EvidenceBridge},
         ingress::{Envelope, Mailbox, Message, Provenance},
@@ -48,7 +47,6 @@ use commonware_runtime::{spawn_cell, Clock, ContextCell, Handle, Metrics, Spawne
 use commonware_storage::queue::shared as wal_queue;
 use fluentbase_bls::{fluent_namespace, EpochCommittee, Scheme as BlsScheme, VoteScheme};
 use fluentbase_p2p::constants::MAX_COMMITTEE_SIZE;
-use fluentbase_staking_reader::reader::ValidatorSetSnapshot;
 use rand_core::OsRng;
 use std::{
     collections::{btree_map::Entry, BTreeMap, HashSet},
@@ -72,16 +70,6 @@ pub use fluentbase_staking_abi::{
     slashEquivocationFinalizeCall, slashEquivocationNotarizeCall,
     slashEquivocationNullifyFinalizeCall,
 };
-
-// The slasher consumes `StakingStateRead` re-exported from
-// `fluentbase-staking-reader`. The blanket impl on
-// `RethStakingStateReader<P, E>` in
-// `crates/staking-reader/src/epoch_transition.rs` provides the production impl.
-use fluentbase_staking_reader::StakingStateRead;
-
-/// Closure returning the latest finalized block hash (or `None` if not yet
-/// known). Threaded in from `dpos.rs`, wraps the reth provider.
-pub type LatestFinalizedHash = Arc<dyn Fn() -> Option<B256> + Send + Sync>;
 
 /// Backoff between producer retries of a transient `handle` failure.
 const SLASHER_RETRY_BACKOFF: std::time::Duration = std::time::Duration::from_secs(2);
@@ -155,9 +143,8 @@ pub enum SubmitOutcome {
 /// constructed by the outer layer (via [`init_wal_queue`]) — they cannot
 /// be built inside `Actor::init` because `init` is a synchronous function
 /// and `queue::shared::init` is async.
-pub struct Config<R, E>
+pub struct Config<E>
 where
-    R: StakingStateRead + Send + Sync + 'static,
     E: Clock + Metrics + Spawner + Storage + Send + 'static,
 {
     /// Staking predeploy address.
@@ -166,10 +153,9 @@ where
     /// an evidence epoch whose scheme the provider has pruned but whose
     /// committee is still on chain (§14).
     pub chain_id: u64,
-    /// Reader for committee resolution (dedicated instance, NOT shared with ET).
-    pub reader: R,
-    /// Latest finalized hash provider (used as `at` block for snapshot lookup).
-    pub latest_finalized_hash: LatestFinalizedHash,
+    /// Committee resolution — the node's ONE committee module, not a reader and
+    /// a cursor of this actor's own.
+    pub committee: Arc<dyn crate::committee::Committee>,
     /// TxPool transport. Production impl wraps signer + pool + provider.
     pub sink: Arc<dyn SlasherTxSink>,
     /// WAL writer half. Producer (`handle`) enqueues
@@ -548,17 +534,15 @@ fn accused_index(signer_idx: u32) -> Result<u8, HandleError> {
 }
 
 /// **** Actor не лучшее название, очень просто в них потеряться если их несколько п о проекту
-pub struct Actor<E, R>
+pub struct Actor<E>
 where
     E: Clock + Metrics + Spawner + Storage + Send + 'static,
-    R: StakingStateRead + Send + Sync + 'static,
 {
     context: ContextCell<E>,
     mailbox_rx: mpsc::UnboundedReceiver<Envelope>,
     staking_address: Address,
     chain_id: u64,
-    reader: R,
-    latest_finalized_hash: LatestFinalizedHash,
+    committee: Arc<dyn crate::committee::Committee>,
     sink: Arc<dyn SlasherTxSink>,
     wal_writer: wal_queue::Writer<E, Vec<u8>>,
     /// WAL reader; consumer side. `Option` so it can be moved into the
@@ -580,12 +564,11 @@ where
     evidence: Option<EvidenceBridge>,
 }
 
-impl<E, R> Actor<E, R>
+impl<E> Actor<E>
 where
     E: Clock + Metrics + Spawner + Storage + Send + Sync + 'static,
-    R: StakingStateRead + Send + Sync + 'static,
 {
-    pub fn init(context: E, cfg: Config<R, E>) -> (Self, Mailbox) {
+    pub fn init(context: E, cfg: Config<E>) -> (Self, Mailbox) {
         let (tx, rx) = mpsc::unbounded_channel();
         let mailbox = Mailbox::new(tx);
         // Late-bind the inbound direction: the node's evidence task was spawned
@@ -609,8 +592,7 @@ where
             mailbox_rx: rx,
             staking_address: cfg.staking_address,
             chain_id: cfg.chain_id,
-            reader: cfg.reader,
-            latest_finalized_hash: cfg.latest_finalized_hash,
+            committee: cfg.committee,
             sink: cfg.sink,
             wal_writer: cfg.wal_writer,
             wal_reader: Some(cfg.wal_reader),
@@ -705,45 +687,41 @@ where
         info!("slasher producer exiting");
     }
 
-    /// Resolve an epoch's committee on-chain at the latest finalized block. The
-    /// snapshot is returned alongside the typed committee because victim
-    /// resolution needs the validator addresses the BiMap does not carry.
+    /// Resolve an epoch's committee through the committee module.
     ///
-    /// There is no second source. This used to fall back to a durable local
-    /// cache when the on-chain array read empty, because the contract pruned old
-    /// committees. It does not any more, so an empty array means the epoch was
-    /// never committed — and the cache could not have answered that either: it
-    /// was written from a FINALIZED snapshot, so a hit implied this node's
-    /// finalized head was already at or past the commit, at which head the
-    /// on-chain read is not empty. Finalized heads never move backwards, so the
-    /// fallback could not change an outcome in any reachable state.
+    /// The WHOLE record is returned, not just the BiMap, because victim
+    /// resolution needs the validator ADDRESSES the BiMap does not carry — the
+    /// record's `members` are the contract array verbatim, which is exactly what
+    /// the snapshot used to supply.
+    ///
+    /// There is no second source and no cursor of this actor's own: the module
+    /// reads at the node's ordering-finalized anchor, holds the record
+    /// write-once, and answers every epoch inside its window from that one map.
+    /// The mapping onto the actor's two outcomes is the §5.4 rule:
+    ///
+    /// * `NotReadable` ⇒ TRANSIENT. Includes the empty-committee answer, which
+    ///   used to be reported PERMANENT here (R-027). An epoch reads empty while
+    ///   this node's anchor has not reached its commit, so calling it
+    ///   unrecoverable threw away real evidence during catch-up; the contract
+    ///   only ever skips a commit together with halting the chain.
+    /// * `OutOfWindow` ⇒ its own predicate decides. ABOVE the window is an
+    ///   anchor that has not caught up — transient. BELOW it the contract's
+    ///   weight ring has wrapped and no anchor will ever bring the epoch back:
+    ///   permanent, which is what ends the eternal spin of a stale charge.
+    /// * `Read` ⇒ the reader's own transient/permanent split.
     async fn resolve_committee(
         &self,
         epoch: u64,
-    ) -> Result<(ValidatorSetSnapshot, EpochCommittee), HandleError> {
-        // No finalized hash yet (startup) is transient — the next finalization
-        // supplies one and the buffered Activity retries.
-        let head = (self.latest_finalized_hash)()
-            .ok_or_else(|| HandleError::transient("no latest finalized hash available"))?;
-        let snap = match self.reader.epoch_committee_snapshot(epoch, head) {
-            Ok(s) if !s.validators.is_empty() => s,
-            Ok(_) => {
-                return Err(HandleError::permanent(format!(
-                    "epoch {epoch} evidence: no committee was ever committed for that epoch; \
-                     this evidence is unrecoverable"
-                )))
+    ) -> Result<Arc<crate::committee::CommitteeRecord>, HandleError> {
+        self.committee.committee(epoch).map_err(|e| {
+            if e.is_transient() {
+                HandleError::transient(format!("epoch {epoch} committee not resolvable yet: {e}"))
+            } else {
+                HandleError::permanent(format!(
+                    "epoch {epoch} evidence: committee unresolvable for good: {e}"
+                ))
             }
-            // An on-chain read error (RPC / state lookup) is transient.
-            Err(e) => {
-                return Err(HandleError::transient(format!(
-                    "committee read failed: {e:?}"
-                )))
-            }
-        };
-        let committee = epoch_committee_from_snapshot(&snap).map_err(|e| {
-            HandleError::permanent(format!("epoch_committee_from_snapshot failed: {e:?}"))
-        })?;
-        Ok((snap, committee))
+        })
     }
 
     /// Broadcast the votes this node personally received for a round that has
@@ -759,8 +737,8 @@ where
         let Some(bridge) = self.evidence.as_ref() else {
             return;
         };
-        let committee = match self.resolve_committee(epoch).await {
-            Ok((_, committee)) => committee,
+        let record = match self.resolve_committee(epoch).await {
+            Ok(record) => record,
             Err(HandleError::Transient(e) | HandleError::Permanent(e)) => {
                 debug!(
                     ?e,
@@ -770,7 +748,7 @@ where
             }
         };
         let vote_scheme =
-            VoteScheme::verifier(&fluent_namespace(self.chain_id), committee.bimap.clone());
+            VoteScheme::verifier(&fluent_namespace(self.chain_id), record.bls.bimap.clone());
         // Nothing here has been verified yet — simplex reports votes before its
         // batcher checks them — and a bogus signature spread under an honest
         // validator's name is exactly what this channel must not carry.
@@ -803,8 +781,8 @@ where
         if self.charges.contains(epoch, accused) {
             return Ok(());
         }
-        let (snap, committee) = self.resolve_committee(epoch).await?;
-        verify_charge(&charge, &committee, self.chain_id).map_err(|e| {
+        let record = self.resolve_committee(epoch).await?;
+        verify_charge(&charge, &record.bls, self.chain_id).map_err(|e| {
             HandleError::permanent(format!("charge failed vote-only verify: {e:?}"))
         })?;
         // [`VoteStore`] keeps one epoch of grace, so a half arriving just after
@@ -813,7 +791,7 @@ where
         // strand it forever, the drain for its epoch having already run. The
         // grace exists for exactly this pair; send it the only way still open.
         if epoch < self.epoch_cursor.get() {
-            return self.enqueue_fallback(&charge, &snap, &committee).await;
+            return self.enqueue_fallback(&charge, &record).await;
         }
         self.hold_verified_charge(epoch, accused, charge);
         Ok(())
@@ -831,7 +809,7 @@ where
         for (key, charge) in self.charges.stale(epoch) {
             let (charged_epoch, accused) = key;
             let outcome = match self.resolve_committee(charged_epoch).await {
-                Ok((snap, committee)) => self.enqueue_fallback(&charge, &snap, &committee).await,
+                Ok(record) => self.enqueue_fallback(&charge, &record).await,
                 Err(e) => Err(e),
             };
             match outcome {
@@ -866,9 +844,9 @@ where
     async fn enqueue_fallback(
         &mut self,
         charge: &Message,
-        snap: &ValidatorSetSnapshot,
-        committee: &EpochCommittee,
+        record: &crate::committee::CommitteeRecord,
     ) -> Result<(), HandleError> {
+        let committee = &record.bls;
         let kind = SlashKind::from_activity(charge)
             .ok_or_else(|| HandleError::permanent("charge is not a slashable variant"))?;
         let args: SlashCallArgs = match (kind, charge) {
@@ -901,13 +879,13 @@ where
         let signer_peer = committee.bimap.get(signer_idx as usize).ok_or_else(|| {
             HandleError::permanent(format!("signer_idx {signer_idx} not in BiMap"))
         })?;
-        let victim = snap
-            .validators
+        let victim = record
+            .members
             .iter()
-            .find(|v| &v.keys.peer_pubkey == signer_peer)
+            .find(|m| &m.peer == signer_peer)
             .ok_or_else(|| {
                 HandleError::permanent(format!(
-                    "BiMap-resolved peer pubkey not in snapshot — \
+                    "BiMap-resolved peer pubkey not in the committee record — \
                      contract / BiMap ordering divergence; signer_idx={signer_idx}"
                 ))
             })?

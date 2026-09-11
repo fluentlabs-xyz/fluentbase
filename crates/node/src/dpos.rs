@@ -32,11 +32,9 @@ use reth_chain_state::CanonicalInMemoryState;
 use reth_chainspec::EthChainSpec as _;
 use reth_ethereum_engine_primitives::EthEngineTypes;
 use reth_ethereum_primitives::{Block as RethBlock, EthPrimitives};
-use reth_evm::ConfigureEvm;
 use reth_network_api::PeersInfo;
 use reth_node_api::{FullNodeComponents, FullNodeTypes};
 use reth_node_builder::{rpc::RethRpcAddOns, FullNode, PayloadBuilderConfig};
-use reth_primitives_traits::Header;
 use reth_provider::providers::{BlockchainProvider, ProviderNodeTypes};
 use reth_storage_api::{
     BlockHashReader, BlockIdReader, BlockNumReader, BlockReader, HeaderProvider,
@@ -794,6 +792,8 @@ where
         plane.evidence.clone(),
         upstream_frontier.clone(),
         plane.agreement_intake,
+        plane.finalized_cursor.clone(),
+        plane.committee.clone(),
         plane.artifact_bytes,
         shutdown_token,
     )
@@ -806,11 +806,12 @@ where
 
     // Spawn the cert-inlet against the SAME marshal the local engine drives
     // (`handle.cert_mailbox`). `None` when no upstreams are configured. The inlet
-    // also tees the LIVE upstream cert frontier into the beacon plane's
-    // `committee_for` read cursor + DkgActor deal clock (re-homed from the
-    // deleted unified supervisor) — so a still-catching-up validator resolves
-    // committee[E+1] and deals its DKG share at the live tip, not its lagging
-    // EL-finalized state.
+    // tees the LIVE upstream cert frontier into the DkgActor deal clock (re-homed
+    // from the deleted unified supervisor) — so a still-catching-up validator
+    // deals its DKG share at the live tip rather than K blocks late. It no longer
+    // tees anything into a committee-read cursor: this node reads every committee
+    // through the module, at its own ordering-finalized anchor, and `live_height`
+    // is write-only on this path until 4.2 removes it.
     let inlet_handle = inlet_setup.map(|(committees, inlet_ctx, urls)| {
         crate::cert_inlet::spawn_cert_inlet(
             inlet_ctx,
@@ -1031,12 +1032,21 @@ pub(crate) struct BeaconPlane {
     /// closure over `Beacon::artifact_bytes` — the artifact store itself stays
     /// behind the beacon.
     pub artifact_bytes: crate::consensus_rpc::state::ArtifactSource,
-    /// The `committee_for` live-read cursor (`max(EL-finalized, live_height)`).
-    /// Handed to an upstream-configured validator's cert-inlet so it tees the
-    /// LIVE upstream cert frontier here — committee[E+1] then resolves at the
-    /// live tip, not this node's lagging EL-finalized state (the production-path
-    /// "Option A" fix). Stays `0` on a no-upstream validator (no inlet to feed
-    /// it; its executor IS the tip).
+    /// THE node's ordering-finalized cursor, created with the plane because the
+    /// committee module anchors on it. `launch_dpos_layer` builds its
+    /// [`ProviderExecutedChain`](crate::ordering::ProviderExecutedChain) over
+    /// this same cursor, so the executor advances exactly the height the
+    /// committee reads at — one cursor, not two.
+    pub finalized_cursor: fluentbase_consensus::FinalizedCursor,
+    /// Every per-epoch committee read in the process, as one frozen record per
+    /// epoch at one anchor. Cloned into the layer launch (the slasher, and the
+    /// executor's "the anchor moved" wake-up) and already backing the beacon's
+    /// `CommitteeReads` facade above.
+    pub committee: Arc<dyn fluentbase_consensus::Committee>,
+    /// The cert-inlet's live upstream frontier tee. Written only by an
+    /// upstream-configured validator's inlet and read by nothing on this path
+    /// any more — the committee module reads at the ordering-finalized anchor.
+    /// Removed with `upstream_frontier` in the frontier step.
     pub live_height: Arc<std::sync::atomic::AtomicU64>,
     /// The DkgActor deal clock. The inlet ALSO tees the live frontier here so a
     /// still-catching-up early-joiner deals its first epoch's DKG share at the
@@ -1079,36 +1089,6 @@ const MARSHAL_LABEL: &str = "marshal";
 /// still broadcasting into an agreement instance the rest of the committee has
 /// already torn down emits these by design, so the log has to be bounded rather
 /// than per-frame. `seen` is the calling loop's own tally — the limit is per task.
-/// The block NUMBERS a COMMITTEE read is taken at: `(primary, fallback)`, or
-/// `None` where this node cannot read state yet.
-///
-/// `max(EL-finalized, live cert cursor)`, falling back to the finalized height
-/// when reth has not imported the cursor block yet. With neither a finalized
-/// marker nor a live cursor the answer is `None`: `unwrap_or(0)` there would read
-/// the committee at genesis (`block_hash(0)`) → the wrong committee on a
-/// genesis-committed devnet during the startup race.
-fn committee_cursor(fin: Option<u64>, live: u64) -> Option<(u64, u64)> {
-    if fin.is_none() && live == 0 {
-        return None;
-    }
-    let fin = fin.unwrap_or(0);
-    Some((fin.max(live), fin))
-}
-
-/// The block numbers the `dkgQual` leg is read at — [`committee_cursor`] with the
-/// `fin.is_none()` window REMOVED rather than defaulted to genesis.
-///
-/// `committee[E]` is content-invariant, so a live-only cursor costs nothing if it
-/// is early. The qual bit feeds a WRITE-ONCE memo
-/// (`beacon::carry::frozen_dkg_qual`), so an answer read where `fin` is absent —
-/// i.e. at the genesis fallback — would freeze `false` for that epoch for the life
-/// of the process. Before a finalized marker exists the arbiter's honest answer is
-/// `None`, which both of its consumers already treat as "undecided, retry".
-fn qual_cursor(fin: Option<u64>, live: u64) -> Option<(u64, u64)> {
-    let fin = fin?;
-    Some((fin.max(live), fin))
-}
-
 fn record_route_miss(channel: &'static str, subchannel: u64, seen: &mut u64) {
     let kind = if epoch_from_subchannel(subchannel).is_some() {
         "unknown"
@@ -1372,132 +1352,13 @@ where
     // them. Reloaded ONCE, inside the beacon build.
     let beacon_dir = node.data_dir.data_dir().join("beacon");
 
-    // Live cursor (consensus-finalized ≈ EL-finalized + K) for catch-up reads.
-    // The cert-inlet (on upstream-configured nodes) tees the live upstream cert
-    // frontier here so a still-catching-up newcomer resolves committee[E] — and
-    // therefore deals its first epoch's DKG share — at the live tip rather than
-    // its lagging EL-finalized state (the early-join wedge: committee[E] is
-    // ahead-committed during epoch E-1, but a lagging EL-finalized read returns it
-    // too late, after the deal deadline). Stays 0 on a plain --dpos validator (its
-    // executor IS the tip), so committee reads fall back to EL-finalized unchanged.
+    // Live cursor (consensus-finalized ≈ EL-finalized + K). The cert-inlet (on
+    // upstream-configured nodes) tees the live upstream cert frontier here. It is
+    // NO LONGER a committee-read cursor: the committee module reads at this
+    // node's own ordering-finalized anchor and at nothing else, so this atomic is
+    // now write-only on this path — kept because the inlet still writes it and
+    // 4.2 removes it together with `upstream_frontier`.
     let live_height = Arc::new(std::sync::atomic::AtomicU64::new(0));
-    // On-chain committee resolver (deal/carry-forward set), shared by the DkgActor
-    // and the per-engine verify gate. Reads committee[E] at max(EL-finalized, live
-    // cursor) — committee[E] is content-invariant across any in-epoch executed hash
-    // and the cursor is cert-finalized (no reorg), so reading at the executed-but-
-    // not-yet-EL-finalized tip is sound and surfaces an ahead-committed committee[E]
-    // K blocks sooner.
-    // EVERY staking read the beacon takes, behind ONE trait and ONE cursor.
-    //
-    // It used to be four independent closures plus a separate `dkgQual` state-hash
-    // resolver, and the cursor is why they are now one: `committee[E]` was read at
-    // `max(EL-finalized, live)` while `dkgQual[E]` was read at the finalized hash
-    // alone, so a node could see a committee it could not yet see the qual bit
-    // for. They are the two halves of one question, and Д-7 makes them one read
-    // (`.dpos-study/DECISIONS.md`). The bit is monotone and frozen once its
-    // epoch's committee is committed, so moving it onto the higher cursor can only
-    // surface a SET bit sooner, never change one that was already decided.
-    struct PlaneCommitteeReads<P, E> {
-        provider: P,
-        live_height: Arc<std::sync::atomic::AtomicU64>,
-        reader: RethStakingStateReader<P, E>,
-    }
-
-    impl<P, E> fluentbase_consensus::beacon::CommitteeReads for PlaneCommitteeReads<P, E>
-    where
-        P: BlockHashReader
-            + BlockNumReader
-            + StateProviderFactory
-            + HeaderProvider<Header = Header>
-            + Clone
-            + Send
-            + Sync
-            + 'static,
-        E: ConfigureEvm<Primitives = EthPrimitives> + Clone + Send + Sync + 'static,
-    {
-        /// `max(EL-finalized, live cursor)`. `committee[E]` is content-invariant
-        /// across any in-epoch executed hash and the live cursor is cert-finalized
-        /// (no reorg), so reading at the executed-but-not-yet-EL-finalized tip is
-        /// sound and surfaces an ahead-committed `committee[E]` K blocks sooner.
-        fn read_at(&self) -> Option<alloy_primitives::B256> {
-            let (primary, fallback) = committee_cursor(
-                self.provider.finalized_block_number().ok().flatten(),
-                self.live_height.load(std::sync::atomic::Ordering::Relaxed),
-            )?;
-            // Fall back to the finalized hash if reth has not yet imported the
-            // cursor block (the cert can land a beat before the EL-sync import).
-            self.provider
-                .block_hash(primary)
-                .ok()
-                .flatten()
-                .or_else(|| self.provider.block_hash(fallback).ok().flatten())
-        }
-
-        /// The SAME height as [`read_at`](Self::read_at), refused while this node
-        /// has no EL-finalized marker: see the trait for why the qual leg cannot
-        /// afford `read_at`'s genesis fallback.
-        fn qual_read_at(&self) -> Option<alloy_primitives::B256> {
-            let (primary, fallback) = qual_cursor(
-                self.provider.finalized_block_number().ok().flatten(),
-                self.live_height.load(std::sync::atomic::Ordering::Relaxed),
-            )?;
-            self.provider
-                .block_hash(primary)
-                .ok()
-                .flatten()
-                .or_else(|| self.provider.block_hash(fallback).ok().flatten())
-        }
-
-        fn committee(
-            &self,
-            epoch: u64,
-            at: alloy_primitives::B256,
-        ) -> Option<commonware_utils::ordered::Set<fluentbase_bls::PeerPubkey>> {
-            let snap = self.reader.epoch_committee_snapshot(epoch, at).ok()?;
-            if snap.validators.is_empty() {
-                return None;
-            }
-            Some(commonware_utils::ordered::Set::from_iter_dedup(
-                snap.validators.iter().map(|v| v.keys.peer_pubkey.clone()),
-            ))
-        }
-
-        fn committee_bls(
-            &self,
-            epoch: u64,
-            at: alloy_primitives::B256,
-        ) -> Option<fluentbase_bls::scheme::EpochCommittee> {
-            let snap = self.reader.epoch_committee_snapshot(epoch, at).ok()?;
-            if snap.validators.is_empty() {
-                return None;
-            }
-            fluentbase_consensus::scheme::epoch_committee_from_snapshot(&snap).ok()
-        }
-
-        fn dkg_qual(&self, epoch: u64, at: alloy_primitives::B256) -> Option<(bool, bool)> {
-            let bit = self.reader.dkg_qual(epoch, at).ok()?;
-            // A SET bit is proof the commit happened, so the committee read is
-            // skipped for it.
-            let committed = bit
-                || self
-                    .reader
-                    .epoch_committee_snapshot(epoch, at)
-                    .map(|s| !s.validators.is_empty())
-                    .unwrap_or(false);
-            Some((bit, committed))
-        }
-    }
-
-    let committees: Arc<dyn fluentbase_consensus::beacon::CommitteeReads> =
-        Arc::new(PlaneCommitteeReads {
-            provider: node.provider.clone(),
-            live_height: live_height.clone(),
-            reader: RethStakingStateReader::new(
-                node.provider.clone(),
-                node.evm_config.clone(),
-                staking_config.clone(),
-            ),
-        });
 
     // Under the 2-epoch committee warm-up the DKG ceremony roster IS the committed
     // slot: `committee[target]` is frozen a full epoch before its DKG runs (at its
@@ -1563,6 +1424,38 @@ where
     // (`WithheldReason::GeometryUnfrozen`) rather than a fatal read.
     let (geometry_tx, geometry_rx) = tokio::sync::watch::channel(None);
 
+    // THE node's ordering-finalized cursor, created ONCE and here — before both
+    // of the things that need it. The executor advances it (through
+    // `ProviderExecutedChain`, built with this very cursor in
+    // `launch_dpos_layer`) and the committee module anchors every staking read
+    // on it. A second cursor is the defect `crate::ordering::
+    // ProviderExecutedChain::with_cursor` exists to make unspellable.
+    let finalized_cursor = fluentbase_consensus::FinalizedCursor::default();
+
+    // EVERY per-epoch committee read this process makes, as ONE frozen value
+    // per epoch, read at ONE anchor: `executed_state_hash(ordering_finalized)`.
+    // The four closures and the `PlaneCommitteeReads` cursor
+    // (`max(EL-finalized, live)` over a HEADER probe) are gone; what the beacon,
+    // the evidence gate and the slasher see is one map with one retention.
+    let committee: Arc<dyn fluentbase_consensus::Committee> =
+        Arc::new(fluentbase_consensus::CommitteeStore::new(
+            RethStakingStateReader::new(
+                node.provider.clone(),
+                node.evm_config.clone(),
+                staking_config.clone(),
+            ),
+            Arc::new(fluentbase_consensus::RethAnchor::new(
+                finalized_cursor.clone(),
+                node.provider.clone(),
+            )),
+            geometry_rx.clone(),
+        ));
+    // The beacon still speaks `CommitteeReads`; the facade is that surface
+    // answered from the module, holding no cursor of its own.
+    let committees: Arc<dyn fluentbase_consensus::beacon::CommitteeReads> = Arc::new(
+        fluentbase_consensus::CommitteeReadsFacade::new(committee.clone()),
+    );
+
     // Finalized-height poller, feeding TWO sinks off the SAME EL-finalized cursor:
     //   - `dkg_height` ← `fin + K` (ORDERING-finalized): the executor sets the
     //     EL-finalized height = `result_final_height(tip, floor) = ordering_finalized
@@ -1590,6 +1483,12 @@ where
         let dkg_tx = dkg_height_tx.clone();
         let plane_clock = plane_clock.clone();
         let geometry_tx = geometry_tx.clone();
+        // The committee module, for ONE call: the freeze below is the second of
+        // the two events `Committee::subscribe` promises (the other being the
+        // anchor advance the executor drives). Before it every epoch answers
+        // `NotReadable { ready_at: 0 }`, so a consumer parked on the watch would
+        // sleep through the moment the whole window became readable.
+        let committee_wake = committee.clone();
         let tombstones = tombstones.clone();
         let tombstone_reader = RethStakingStateReader::new(
             node.provider.clone(),
@@ -1676,6 +1575,14 @@ where
                         // the read.
                         if let Some(frozen) = et.lock().await.frozen_geometry() {
                             geometry_tx.send_replace(Some(frozen));
+                            // The store reads the watch on every call, so it is
+                            // answering already — but nobody parked on its
+                            // wake-up knows that, and the next anchor advance is
+                            // a finalized derive away. Publish the ceiling now,
+                            // from the anchor the store already holds (the call
+                            // takes no height, so it cannot publish one the
+                            // anchor does not).
+                            committee_wake.anchor_advanced();
                         }
                         Some(out)
                     } else {
@@ -1717,8 +1624,19 @@ where
                     // Here the verdict is on chain and permanent, so the ban is
                     // proportionate; the delta from `observe` is what keeps it to
                     // one call per peer instead of one per tick.
+                    //
+                    // STATE-GATED: the snapshot is an EVM read, so the cursor
+                    // has to be a hash whose STATE this node has executed, not
+                    // merely a header it has imported. `block_hash(fin)`
+                    // answered a header on a backfilling node and the read then
+                    // failed with `StateNotMaterialized` every tick;
+                    // `executed_state_hash` answers `Ok(None)` there and the
+                    // poller simply skips the tick.
                     let epoch = et.lock().await.epoch_at(fin);
-                    if let (Some(epoch), Ok(Some(hash))) = (epoch, provider.block_hash(fin)) {
+                    let tombstone_at = fluentbase_consensus::executed_state_hash(&provider, fin)
+                        .ok()
+                        .flatten();
+                    if let (Some(epoch), Some(hash)) = (epoch, tombstone_at) {
                         match tombstone_reader.epoch_committee_snapshot(epoch, hash) {
                             Ok(snap) => {
                                 for peer in tombstones.observe(&snap) {
@@ -1813,53 +1731,13 @@ where
     // itself because the p2p sender lives in this crate.
     let (evidence_bridge, mut evidence_rx) = fluentbase_consensus::slasher::EvidenceBridge::new();
     let evidence_committee_for: fluentbase_consensus::slasher::EvidenceCommitteeFor = {
-        let reader = RethStakingStateReader::new(
-            node.provider.clone(),
-            node.evm_config.clone(),
-            staking_config.clone(),
-        );
-        let provider = node.provider.clone();
-        let live_height = live_height.clone();
-        // Committees are epoch-frozen, so a resolved one is cacheable outright.
-        // One slot is enough: forwarded votes concern live rounds, and an epoch
-        // turn simply replaces the entry.
-        let memo: Arc<std::sync::Mutex<Option<(u64, fluentbase_bls::EpochCommittee)>>> =
-            Arc::new(std::sync::Mutex::new(None));
-        Arc::new(move |epoch: u64| {
-            let cached = memo.lock().ok().and_then(|memo| {
-                memo.as_ref()
-                    .filter(|(cached, _)| *cached == epoch)
-                    .map(|(_, committee)| committee.clone())
-            });
-            if cached.is_some() {
-                return cached;
-            }
-            // Same read cursor as `committee_for` above: committee[E] is
-            // content-invariant across any in-epoch executed hash and the live
-            // cursor is cert-finalized, so reading at the executed-but-not-yet-
-            // EL-finalized tip is sound and surfaces it sooner.
-            let fin = provider.finalized_block_number().ok().flatten();
-            let live = live_height.load(std::sync::atomic::Ordering::Relaxed);
-            if fin.is_none() && live == 0 {
-                return None;
-            }
-            let fin = fin.unwrap_or(0);
-            let hash = provider
-                .block_hash(fin.max(live))
-                .ok()
-                .flatten()
-                .or_else(|| provider.block_hash(fin).ok().flatten())?;
-            let snap = reader.epoch_committee_snapshot(epoch, hash).ok()?;
-            if snap.validators.is_empty() {
-                return None;
-            }
-            let committee =
-                fluentbase_consensus::scheme::epoch_committee_from_snapshot(&snap).ok()?;
-            if let Ok(mut memo) = memo.lock() {
-                *memo = Some((epoch, committee.clone()));
-            }
-            Some(committee)
-        })
+        // Through the module, with no memo of its own: the module's map IS the
+        // cache (one record per epoch, write-once, retained for the whole read
+        // window), so the one-slot memo this closure used to keep was a second
+        // authoritative copy of one epoch's committee — the defect class the
+        // module exists to close — and a strictly worse cache besides.
+        let committee = committee.clone();
+        Arc::new(move |epoch: u64| committee.committee(epoch).ok().map(|r| r.bls.clone()))
     };
     let evidence_handle = {
         let bridge = evidence_bridge.clone();
@@ -1992,6 +1870,8 @@ where
             dkg_height_tx: dkg_height_tx.clone(),
         },
         artifact_bytes,
+        finalized_cursor,
+        committee,
         live_height,
         dkg_height_tx,
         marshal_slot,
@@ -2067,6 +1947,12 @@ pub(crate) async fn launch_dpos_layer<N, AddOns>(
     evidence: fluentbase_consensus::slasher::EvidenceBridge,
     upstream_frontier: std::sync::Arc<std::sync::atomic::AtomicU64>,
     agreement_intake: mpsc::Receiver<(commonware_consensus::types::Epoch, Handle<()>)>,
+    // The plane's ONE ordering-finalized cursor and the committee module built
+    // over it. The executed-chain view below is constructed with this cursor
+    // rather than minting its own, which is what makes "the executor advances
+    // the height the committee reads at" a type-level fact.
+    finalized_cursor: fluentbase_consensus::FinalizedCursor,
+    committee: std::sync::Arc<dyn fluentbase_consensus::Committee>,
     // The beacon plane's serving read for `consensus_getEpochArtifact` — wired
     // into the feed beside `set_marshal` below, so a follower can obtain
     // `PK_epoch` from this validator over the SAME namespace it already takes
@@ -2157,7 +2043,7 @@ where
     // seed (no on-chain PK_E read — that layer is gone, DPOS_ARCHITECTURE §8.11).
     let deriver =
         crate::derive::RethBlockDeriver::new(node.provider.clone(), node.evm_config.clone());
-    let executed = ProviderExecutedChain::new(node.provider.clone());
+    let executed = ProviderExecutedChain::with_cursor(node.provider.clone(), finalized_cursor);
     let assembler = Arc::new(PoolAssembler::new(node.pool.clone(), executed.clone()));
     // Gas-limit target = the operator's `--builder.gaslimit` (the canonical reth
     // knob — the SAME source the payload builder reads via `gas_limit_for`),
@@ -2239,6 +2125,11 @@ where
     let layer_cfg = DposLayerConfig {
         bls_keypair,
         peer_keypair,
+        // Every per-epoch committee read the consensus layer makes — the
+        // slasher's evidence resolve today, and the executor's
+        // "the anchor moved" wake-up. The SAME `Arc` the beacon plane's facade
+        // is built over, so the two node-side planes cannot drift.
+        committee,
         slasher_sink,
         evidence,
         staking_config,
@@ -2491,48 +2382,6 @@ mod tests {
     use crate::chainspec::{
         FLUENT_DEVNET_CHAIN_ID, FLUENT_MAINNET_CHAIN_ID, FLUENT_TESTNET_CHAIN_ID,
     };
-
-    // The window the qual leg must not read in: a live cert cursor exists, an
-    // EL-finalized marker does not. The committee read is fine there (its value is
-    // content-invariant), but the qual bit feeds a WRITE-ONCE memo, and the
-    // committee cursor's `unwrap_or(0)` fallback resolves the GENESIS hash — where
-    // a genesis-committed devnet reads `committed = true, bit = false` and freezes
-    // "no re-mint at E" for the life of the process.
-    #[test]
-    fn the_qual_cursor_refuses_the_window_where_the_committee_cursor_falls_back_to_genesis() {
-        assert_eq!(
-            committee_cursor(None, 42),
-            Some((42, 0)),
-            "the committee still reads at the live cursor, falling back to genesis"
-        );
-        assert_eq!(
-            qual_cursor(None, 42),
-            None,
-            "the qual bit reads NOTHING without a finalized marker"
-        );
-        // Neither reads at all with no cursor of any kind.
-        assert_eq!(committee_cursor(None, 0), None);
-        assert_eq!(qual_cursor(None, 0), None);
-    }
-
-    // Once a marker exists the two legs are ONE cursor (Д-7): the same height and
-    // the same fallback, so a node can no longer see a committee it cannot yet see
-    // the qual bit for.
-    #[test]
-    fn with_a_finalized_marker_the_two_legs_read_at_one_cursor() {
-        for (fin, live) in [(7u64, 0u64), (7, 3), (7, 19), (0, 0), (0, 5)] {
-            assert_eq!(
-                committee_cursor(Some(fin), live),
-                qual_cursor(Some(fin), live),
-                "fin={fin} live={live}"
-            );
-        }
-        assert_eq!(
-            qual_cursor(Some(7), 19),
-            Some((19, 7)),
-            "max(fin, live) with the finalized height as the import fallback"
-        );
-    }
 
     fn cfg_with_plaintext_bls(path: &str) -> DposConfig {
         DposConfig {
