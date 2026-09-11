@@ -47,7 +47,7 @@ Thin wrappers around `revm-precompile` or the SDK's crypto syscalls that mirror 
 - `eip2935` — the EIP-2935 ring buffer of recent block hashes.
 - `fee-manager` — collects protocol fees. The owner can withdraw the balance, transfer ownership or renounce it.
 - `runtime-upgrade` — privileged contract that replaces runtime and system contract bytecode on a live chain
-  (`upgradeTo`, `recompile`, `planUpgrade` and friends). Its README documents the authorization model.
+  (`upgradeTo`, `planUpgrade` and friends). Its README documents the authorization model.
 - `nitro` — AWS Nitro Enclaves attestation document verifier.
 - `webauthn` — WebAuthn assertion verification over P-256.
 - `create2-factory` — the deterministic deployment proxy. Not a Rust crate: it holds the Yul source and the EVM

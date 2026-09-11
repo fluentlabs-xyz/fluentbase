@@ -185,20 +185,6 @@ fn test_upgrade_to_encoding() {
 }
 
 #[test]
-fn test_recompile_encoding() {
-    let target = address!("2222222222222222222222222222222222222222");
-
-    let call = RecompileCall::new((target,));
-    let encoded = call.encode();
-
-    assert!(encoded.len() >= 4);
-    println!("Encoded call data: {}", hex::encode(&encoded));
-
-    let decoded = RecompileCall::decode(&&encoded[4..]).expect("failed to decode");
-    assert_eq!(decoded.0 .0, target, "target_address mismatch");
-}
-
-#[test]
 fn test_upgrade_evm_to_encoding() {
     let target = address!("2222222222222222222222222222222222222222");
     let genesis_hash = B256::from([0xab; 32]);
@@ -293,16 +279,11 @@ fn test_upgrade_to_planned_encoding() {
 }
 
 #[test]
-fn test_upgrade_and_recompile_event_signatures_are_distinct() {
+fn test_runtime_upgraded_event_signature() {
     assert_eq!(
         RuntimeUpgraded::SIGNATURE,
         "RuntimeUpgraded(address,bytes32,string,bytes32)"
     );
-    assert_eq!(
-        ContractRecompiled::SIGNATURE,
-        "ContractRecompiled(address,bytes32)"
-    );
-    assert_ne!(RuntimeUpgraded::SELECTOR, ContractRecompiled::SELECTOR);
 }
 
 #[test]

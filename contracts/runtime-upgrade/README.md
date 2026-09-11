@@ -14,14 +14,6 @@ The contract validates the submitted WASM bytes, compiles them to rWasm for `tar
 native runtime-upgrade syscall, then emits `RuntimeUpgraded(target, genesisHash, genesisVersion,
 codeHash)`.
 
-### `recompile(address target)`
-
-Owner-only maintenance path for already deployed WASM bytecode.
-
-The contract reads bytecode from `target` with `code_size`/`code_copy`, requires the loaded length
-to match the reported size, recompiles the bytecode through the same install path as `upgradeTo`,
-and emits `ContractRecompiled(target, codeHash)`.
-
 ### `planUpgrade(uint256 genesisHash, string genesisVersion, address[] targets, bytes32[] wasmHashes, address upgrador)`
 
 Owner-only planning path for release upgrades that should be executable by a delegated account.
@@ -59,7 +51,7 @@ plan is left untouched along with the rest of the state.
 
 ## Trust Model
 
-- `owner` can perform direct upgrades, recompile existing targets, and replace the current plan.
+- `owner` can perform direct upgrades and replace the current plan.
 - `upgrador` can execute only owner-approved target/hash pairs from the current plan.
 - Delegated upgrade authority never outlives the owner that granted it. A plan is scoped to its
   creating owner, so ownership rotation is sufficient for compromise response and renunciation

@@ -9,7 +9,7 @@ It exists so chain operators can replace system runtime bytecode, but it must st
 2. Input wasm is validated and compiled to rWasm.
 3. Contract invokes native upgrade syscall with target address + serialized rWasm module.
 4. Host side verifies caller path and installs new code at target.
-5. Upgrade emits target/genesis refs/code hash; recompile emits target/code hash.
+5. Upgrade emits target/genesis refs/code hash.
 
 ---
 
@@ -18,7 +18,6 @@ It exists so chain operators can replace system runtime bytecode, but it must st
 Upgrade contract exposes:
 
 - `upgradeTo(...)`
-- `recompile(...)`
 - `planUpgrade(...)`
 - `upgradeToPlanned(...)`
 - `changeOwner(...)`
@@ -27,10 +26,7 @@ Upgrade contract exposes:
 
 Key behavior:
 - only owner can upgrade,
-- `recompile(address)` loads the target account bytecode with `code_size`/`code_copy`, requires it to be
-  original WASM bytes, recompiles it to rWasm, and then uses the same upgrade syscall path as
-  `upgradeTo(...)`,
-- `upgradeTo(...)` emits `RuntimeUpgraded`, while `recompile(...)` emits `ContractRecompiled`,
+- `upgradeTo(...)` emits `RuntimeUpgraded`,
 - `planUpgrade(...)` lets the owner pre-authorize a release batch as exact `(target, raw WASM
   hash)` pairs plus release metadata and an authorized upgrador,
 - `upgradeToPlanned(...)` can be called only by that upgrador and only for a stored target/hash
