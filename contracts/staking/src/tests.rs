@@ -431,6 +431,39 @@ fn compressed_key_of(byte: u8) -> Vec<u8> {
     key
 }
 
+/// A 256-byte EIP-2537 G2 whose two `x` halves carry DIFFERENT bytes.
+///
+/// `x.c0` is filled with `c0` and `x.c1` with `c1`; both `y` halves take `c0`,
+/// which is what decides the sign bit. The 16-byte padding EIP-2537 puts ahead
+/// of each field element stays zero, as it is on a real point.
+///
+/// F-1 (`history/E1-8-TESTS.md`): a fixture filled with ONE byte across all 256
+/// makes both halves of `x` equal, and the EIP-2537 ↔ zcash half swap then moves
+/// no byte at all. Every test that means to pin the compressed key as an
+/// identity takes its key from here instead.
+fn g2_uncompressed_of_halves(c0: u8, c1: u8) -> Vec<u8> {
+    let mut point = vec![0u8; BLS_PUBKEY_UNCOMPRESSED_LENGTH];
+    point[16..64].fill(c0);
+    point[80..128].fill(c1);
+    point[144..192].fill(c0);
+    point[208..256].fill(c0);
+    point
+}
+
+/// The 96-byte zcash key `g2_uncompressed_of_halves(c0, c1)` compresses to.
+///
+/// `c1` leads, because zcash orders `x.c1` first; the leading byte also carries
+/// the compression flag and the y-sign, and `c0` fills the `y` halves, so `c0`
+/// is what the sign assertion is about.
+fn compressed_key_of_halves(c0: u8, c1: u8) -> Vec<u8> {
+    assert!(c0 > 0x0d, "y fill byte {c0:#04x} is not above (p-1)/2");
+    let half = BLS_PUBKEY_LENGTH / 2;
+    let mut key = vec![c1; BLS_PUBKEY_LENGTH];
+    key[half..].fill(c0);
+    key[0] = c1 | 0x80 | 0x20;
+    key
+}
+
 /// A 128-byte EIP-2537 G1 whose UNCHECKED compression is exactly `compressed`.
 ///
 /// Not a curve point, and it does not need to be: the premise of
@@ -902,7 +935,14 @@ fn register_validator_cast_calldata_registers_consensus_keys_atomically() {
 
     // cast calldata
     // "registerValidator(address,uint16,uint256,bytes,bytes,bytes32)"
-    // 0x...01 0 1000000000000000000 0x{11 * 256} 0x{22 * 128} 0x...01
+    // 0x...01 0 1000000000000000000 <g2> 0x{22 * 128} 0x...01
+    //
+    // `<g2>` is `g2_uncompressed_of_halves(0x11, 0x33)` written out: zero
+    // padding words, `x.c0` and both `y` halves `0x11`, `x.c1` `0x33`. It used
+    // to be `0x{11 * 256}`, one colour across all eight words, and a key like
+    // that compresses to the same 96 bytes whichever way round the halves go
+    // (F-1) — so this test read as a pin on the stored identity while pinning
+    // only the byte.
     let calldata = hex!(
         "8d6067ed
          0000000000000000000000000000000000000000000000000000000000000001
@@ -912,19 +952,24 @@ fn register_validator_cast_calldata_registers_consensus_keys_atomically() {
          00000000000000000000000000000000000000000000000000000000000001e0
          0000000000000000000000000000000000000000000000000000000000000001
          0000000000000000000000000000000000000000000000000000000000000100
+         0000000000000000000000000000000011111111111111111111111111111111
          1111111111111111111111111111111111111111111111111111111111111111
+         0000000000000000000000000000000033333333333333333333333333333333
+         3333333333333333333333333333333333333333333333333333333333333333
+         0000000000000000000000000000000011111111111111111111111111111111
          1111111111111111111111111111111111111111111111111111111111111111
-         1111111111111111111111111111111111111111111111111111111111111111
-         1111111111111111111111111111111111111111111111111111111111111111
-         1111111111111111111111111111111111111111111111111111111111111111
-         1111111111111111111111111111111111111111111111111111111111111111
-         1111111111111111111111111111111111111111111111111111111111111111
+         0000000000000000000000000000000011111111111111111111111111111111
          1111111111111111111111111111111111111111111111111111111111111111
          0000000000000000000000000000000000000000000000000000000000000080
          2222222222222222222222222222222222222222222222222222222222222222
          2222222222222222222222222222222222222222222222222222222222222222
          2222222222222222222222222222222222222222222222222222222222222222
          2222222222222222222222222222222222222222222222222222222222222222"
+    );
+    assert_eq!(
+        &calldata[4 + 7 * 32..4 + 15 * 32],
+        g2_uncompressed_of_halves(0x11, 0x33).as_slice(),
+        "the hand-written G2 words and the fixture helper must be the same point"
     );
     harness.sdk.take_logs();
     assert_eq!(harness.call(calldata), (ExitCode::Ok, Vec::new()));
@@ -948,7 +993,7 @@ fn register_validator_cast_calldata_registers_consensus_keys_atomically() {
         .entry(validator);
     assert_eq!(
         consensus::read_bls_pubkey(&harness.sdk, validator).unwrap(),
-        Bytes::from(compressed_key_of(0x11))
+        Bytes::from(compressed_key_of_halves(0x11, 0x33))
     );
     assert_eq!(
         stored
@@ -1112,10 +1157,13 @@ fn get_consensus_keys_matches_dynamic_struct_return_vectors() {
     let validator = Address::with_last_byte(0x01);
     let mut harness = Harness::new(1_000);
     harness.set_caller(owner);
-    assert_eq!(
-        harness.initialize(owner, vec![validator], vec![DEFAULT_MIN_VALIDATOR_STAKE], 0),
-        ExitCode::Ok
-    );
+    // A two-colour key, so that the round trip through storage and back out of
+    // the encoder pins the half order and not just the byte (F-1).
+    harness.set_caller(GENESIS_GOVERNANCE);
+    let mut command =
+        harness.initialize_command(owner, vec![validator], vec![DEFAULT_MIN_VALIDATOR_STAKE], 0);
+    command.bls_pubkeys_uncompressed = vec![Bytes::from(g2_uncompressed_of_halves(0x11, 0x33))];
+    assert_eq!(harness.initialize_with(command), ExitCode::Ok);
 
     let (status, empty_output) = harness.call(encode_call(
         SIG_GET_CONSENSUS_KEYS,
@@ -1137,7 +1185,7 @@ fn get_consensus_keys_matches_dynamic_struct_return_vectors() {
     assert_eq!(
         decode_output::<ConsensusKeys>(&nonempty_output),
         ConsensusKeys {
-            bls_pubkey: Bytes::from(compressed_key_of(0x11)),
+            bls_pubkey: Bytes::from(compressed_key_of_halves(0x11, 0x33)),
             peer_pubkey: B256::with_last_byte(1),
             activation_epoch: 0,
         }
@@ -1155,7 +1203,7 @@ fn get_consensus_keys_matches_dynamic_struct_return_vectors() {
         (
             vec![validator],
             vec![ConsensusKeys {
-                bls_pubkey: Bytes::from(compressed_key_of(0x11)),
+                bls_pubkey: Bytes::from(compressed_key_of_halves(0x11, 0x33)),
                 peer_pubkey: B256::with_last_byte(1),
                 activation_epoch: 0,
             }],
@@ -2342,10 +2390,7 @@ fn register_validator_verifies_and_stores_consensus_keys_in_one_call() {
                     validator,
                     commission_rate: 500,
                     initial_stake: DEFAULT_MIN_VALIDATOR_STAKE,
-                    bls_pubkey_uncompressed: Bytes::from(vec![
-                        0x11;
-                        BLS_PUBKEY_UNCOMPRESSED_LENGTH
-                    ]),
+                    bls_pubkey_uncompressed: Bytes::from(g2_uncompressed_of_halves(0x11, 0x33)),
                     bls_pop_uncompressed: Bytes::from(vec![0x22; BLS_POP_UNCOMPRESSED_LENGTH]),
                     peer_pubkey,
                 },
@@ -2365,7 +2410,7 @@ fn register_validator_verifies_and_stores_consensus_keys_in_one_call() {
     );
     assert_eq!(
         consensus::read_bls_pubkey(&harness.sdk, validator).unwrap(),
-        Bytes::from(compressed_key_of(0x11))
+        Bytes::from(compressed_key_of_halves(0x11, 0x33))
     );
     let keys = consensus_storage()
         .consensus_keys_accessor()
@@ -2385,7 +2430,7 @@ fn register_validator_verifies_and_stores_consensus_keys_in_one_call() {
     assert_eq!(
         consensus_storage()
             .bls_pubkey_owner_accessor()
-            .entry(keccak256(compressed_key_of(0x11)))
+            .entry(keccak256(compressed_key_of_halves(0x11, 0x33)))
             .get_checked(&harness.sdk)
             .unwrap(),
         validator
