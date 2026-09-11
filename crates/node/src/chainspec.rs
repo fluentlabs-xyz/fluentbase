@@ -4,7 +4,7 @@ use fluentbase_genesis::local_genesis_from_file;
 use fluentbase_release_verify::ReleaseAsset;
 use reth_chainspec::{
     make_genesis_header, BaseFeeParams, BaseFeeParamsKind, Chain, ChainHardforks, ChainSpec,
-    EthereumHardfork, ForkCondition, Hardfork, DEV_HARDFORKS,
+    EthereumHardfork, EthereumHardforks, ForkCondition, Hardfork, DEV_HARDFORKS,
 };
 use reth_cli::chainspec::{parse_genesis, ChainSpecParser};
 use reth_primitives_traits::SealedHeader;
@@ -224,6 +224,62 @@ pub(crate) fn chain_value_parser(s: &str) -> eyre::Result<Arc<ChainSpec>, eyre::
         "fluent-devnet" => FLUENT_DEVNET.clone(),
         "fluent-testnet" => FLUENT_TESTNET.clone(),
         "fluent-mainnet" => FLUENT_MAINNET.clone(),
-        _ => Arc::new(parse_genesis(s)?.into()),
+        _ => {
+            let spec: ChainSpec = parse_genesis(s)?.into();
+            // reth activates Paris from a genesis file only through `terminalTotalDifficulty`.
+            // Without Paris the block environment carries no `prevrandao`, which the pre-block
+            // system calls and every delegated runtime need, so a validator started from such
+            // a file would fail on its first payload. Refuse the file up front instead.
+            if !spec.is_paris_active_at_block(0) {
+                eyre::bail!(
+                    "the genesis file does not activate Paris at block 0: every Fluent chain \
+                     starts post-merge, set `config.terminalTotalDifficulty` (0 for a chain \
+                     that has no pre-merge history)"
+                );
+            }
+            Arc::new(spec)
+        }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::chain_value_parser;
+    use alloy_genesis::{ChainConfig, Genesis};
+    use reth_chainspec::EthereumHardforks;
+    use reth_revm::primitives::U256;
+
+    /// A genesis file in the shape `crates/genesis/build.rs` writes, with the merge field under test
+    fn genesis_json(terminal_total_difficulty: Option<U256>) -> String {
+        let genesis = Genesis {
+            config: ChainConfig {
+                chain_id: 1337,
+                merge_netsplit_block: Some(0),
+                shanghai_time: Some(0),
+                cancun_time: Some(0),
+                prague_time: Some(0),
+                osaka_time: Some(0),
+                terminal_total_difficulty,
+                terminal_total_difficulty_passed: terminal_total_difficulty.is_some(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        serde_json::to_string(&genesis).unwrap()
+    }
+
+    #[test]
+    fn genesis_file_without_terminal_total_difficulty_is_refused() {
+        let err = chain_value_parser(&genesis_json(None)).unwrap_err();
+        assert!(
+            err.to_string().contains("terminalTotalDifficulty"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn genesis_file_with_terminal_total_difficulty_activates_paris() {
+        let spec = chain_value_parser(&genesis_json(Some(U256::ZERO))).unwrap();
+        assert!(spec.is_paris_active_at_block(0));
+    }
 }
