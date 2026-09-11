@@ -396,11 +396,11 @@ pub const WEIGHT_RING_SLOTS: usize = WEIGHT_RING_EPOCHS as usize * PAIRS_MAX;
 ///
 /// The one way to break the assumption by configuration rather than by
 /// circumstance is a committee cap below this floor, since the cap truncates the
-/// selection. `setActiveValidatorsLength` refuses it — that is the unrecoverable
-/// direction, because it lands on a running chain and the commit it breaks is a
-/// pre-execution system call. `initialize` does not: a genesis with too small a
-/// cap simply never leaves block zero, which is loud, immediate, and fixed by
-/// relaunching.
+/// selection. Both places that set the cap refuse it:
+/// `setActiveValidatorsLength` because it lands on a running chain and the
+/// commit it breaks is a pre-execution system call, and `initialize` because a
+/// genesis with too small a cap never leaves block zero and nothing else would
+/// say which value was wrong.
 ///
 /// The node asserts the same floor when it decodes a committee, so the number is
 /// shared rather than mirrored.

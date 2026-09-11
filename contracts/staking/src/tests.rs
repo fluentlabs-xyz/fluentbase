@@ -3548,6 +3548,44 @@ fn the_cap_setter_refuses_a_value_below_the_committee_floor() {
     );
 }
 
+// The same floor at the other place that sets the cap. A genesis below it
+// produces a chain whose very first `commitEpochCommittee` reverts on a
+// pre-execution system call, so it never leaves block zero — and without this
+// gate nothing says which of the sixteen arguments was wrong.
+#[test]
+fn initialize_refuses_a_committee_cap_below_the_floor() {
+    let owner = Address::with_last_byte(0xa0);
+    let validator = Address::with_last_byte(0x01);
+
+    let mut harness = Harness::new(1_000);
+    harness.set_caller(GENESIS_GOVERNANCE);
+    let mut command =
+        harness.initialize_command(owner, vec![validator], vec![DEFAULT_MIN_VALIDATOR_STAKE], 0);
+    command.active_validators_length = MIN_COMMITTEE_LENGTH as u32 - 1;
+    assert_revert_selector(
+        harness.call(encode_args_call(SIG_INITIALIZE, &command)),
+        ERR_ACTIVE_VALIDATORS_LENGTH_BELOW_COMMITTEE_FLOOR,
+    );
+
+    let mut harness = Harness::new(1_000);
+    harness.set_caller(GENESIS_GOVERNANCE);
+    let mut command =
+        harness.initialize_command(owner, vec![validator], vec![DEFAULT_MIN_VALIDATOR_STAKE], 0);
+    command.active_validators_length = MIN_COMMITTEE_LENGTH as u32;
+    assert_eq!(
+        harness.initialize_with(command),
+        ExitCode::Ok,
+        "the floor itself is legal at genesis too"
+    );
+    assert_eq!(
+        chain_config_storage()
+            .active_validators_length_accessor()
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        MIN_COMMITTEE_LENGTH as u64
+    );
+}
+
 // A committee every member of which carries a zero frozen weight is committable:
 // selection applies no stake floor, by design. The close then assigns nobody
 // anything, so the epoch's pot is simply never owed.
@@ -7607,7 +7645,7 @@ fn exclusion_release_skips_tombstoned_and_non_active_validators() {
         vec![DEFAULT_MIN_VALIDATOR_STAKE * U256::from(4); 7],
         0,
     );
-    command.active_validators_length = 1;
+    command.active_validators_length = MIN_COMMITTEE_LENGTH as u32;
     assert_eq!(harness.initialize_with(command), ExitCode::Ok);
 
     for validator in [tombstoned, demoted, healthy] {
@@ -7908,8 +7946,21 @@ fn liveness_harness(stakes: &[U256], cap: u32) -> (Harness, Vec<Address>) {
         .collect();
     let mut harness = Harness::new(1_000);
     let mut command = harness.initialize_command(owner, members.clone(), stakes.to_vec(), 0);
-    command.active_validators_length = cap;
+    // Both places that set the cap now refuse a value below the committee floor,
+    // so a sub-floor cap is written straight to storage. That is not a shortcut
+    // around a gate this tier has to pass: a cap below the floor never produced a
+    // committable committee either, and every caller below that asks for one also
+    // seats its committee with `commit_test_committee` rather than through
+    // `commitEpochCommittee`. What the cap governs here is the width of the
+    // selection these tests judge, nothing else.
+    command.active_validators_length = cap.max(MIN_COMMITTEE_LENGTH as u32);
     assert_eq!(harness.initialize_with(command), ExitCode::Ok);
+    if cap < MIN_COMMITTEE_LENGTH as u32 {
+        chain_config_storage()
+            .active_validators_length_accessor()
+            .set_checked(&mut harness.sdk, cap as u64)
+            .unwrap();
+    }
     harness.set_caller(GENESIS_GOVERNANCE);
     assert_eq!(
         harness
@@ -8536,7 +8587,7 @@ fn the_verdict_floor_is_a_stake_share_at_the_production_epoch_length() {
         0,
     );
     command.epoch_block_interval = interval;
-    command.active_validators_length = 2;
+    command.active_validators_length = MIN_COMMITTEE_LENGTH as u32;
     assert_eq!(harness.initialize_with(command), ExitCode::Ok);
     harness.set_caller(GENESIS_GOVERNANCE);
     assert_eq!(

@@ -135,13 +135,24 @@ fn validate_initialization<SDK: SharedAPI>(
     if command.staking_token.is_zero() {
         return revert(sdk, ERR_ZERO_STAKING_TOKEN);
     }
-    // Deliberately only the zero check here, not the committee floor the setter
-    // enforces. A genesis whose cap is below the floor cannot commit a committee
-    // and the chain never leaves block zero — loud, immediate, and fixed by
-    // editing the genesis and relaunching. The setter's mistake is the
-    // unrecoverable one, because it lands on a chain that is already running.
-    if command.active_validators_length == 0
-        || command.active_validators_length as u64 > MAX_COMMITTEE_SIZE
+    // The same floor the setter enforces, for the same reason: the cap truncates
+    // the selection, so a cap below `MIN_COMMITTEE_LENGTH` makes every
+    // `commitEpochCommittee` derive fewer members than the floor and revert on a
+    // pre-execution system call. At genesis that stops the chain at block zero
+    // rather than mid-run, but it stops it either way, and refusing the cap here
+    // is the only place a genesis can still be told which value was wrong. The
+    // zero case is subsumed: zero is below the floor.
+    if (command.active_validators_length as usize) < MIN_COMMITTEE_LENGTH {
+        return revert_with(
+            sdk,
+            ERR_ACTIVE_VALIDATORS_LENGTH_BELOW_COMMITTEE_FLOOR,
+            &(
+                command.active_validators_length,
+                MIN_COMMITTEE_LENGTH as u32,
+            ),
+        );
+    }
+    if command.active_validators_length as u64 > MAX_COMMITTEE_SIZE
         || command.epoch_block_interval == 0
         || command.undelegate_period == 0
         || command.min_validator_stake_amount.is_zero()
