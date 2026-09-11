@@ -1,7 +1,5 @@
 use crate::metrics;
-use fluentbase_types::{
-    BytecodeOrHash, CompilationBackend, CompilationConfigFingerprint, CompiledModuleCacheKey, B256,
-};
+use fluentbase_types::{BytecodeOrHash, B256};
 use rwasm::RwasmModule;
 use schnellru::{Limiter, LruMap};
 use std::{
@@ -32,9 +30,15 @@ impl ModuleFactory {
         }
     }
 
-    /// Returns a cached module for the given bytecode or compiles and caches it on first use.
+    /// Returns the cached module for `bytecode_or_hash`, inserting a supplied module on first use.
     ///
-    /// Returns `None` only for a hash-only lookup whose module is not cached, either because
+    /// The cache is keyed by code hash alone. A cached module is the parsed form of the rWASM
+    /// bytes that hash commits to, so one hash names one module at every address; the address
+    /// only decides which runtime the executor wraps the module in. Keying by hash keeps a
+    /// hash-only lookup a plain table read and leaves no secondary index whose size could
+    /// outlive residency.
+    ///
+    /// Returns `None` only for a hash-only lookup whose module is not resident, either because
     /// nothing warmed it up or because the LRU evicted it. That is a node-local condition, not a
     /// property of the input, so the caller must fail the execution as a host fault rather than
     /// as a contract revert. Nothing in here panics: this lock is shared by every execution
@@ -42,39 +46,15 @@ impl ModuleFactory {
     pub fn get_module_or_init(&mut self, bytecode_or_hash: BytecodeOrHash) -> Option<RwasmModule> {
         let mut ctx = self.lock_cache();
         let code_hash = bytecode_or_hash.code_hash();
-        let module_key = match &bytecode_or_hash {
-            BytecodeOrHash::Bytecode { address, .. } => {
-                CompiledModuleCacheKey::new(code_hash, runtime_cache_fingerprint(*address))
-            }
-            BytecodeOrHash::Hash(_hash) => {
-                // Hash-only lookups are only valid after an earlier bytecode warmup. Keep this
-                // deterministic by resolving through the explicit code-hash index.
-                let Some(module_key) = ctx.module_keys_by_code_hash.get(&code_hash).copied() else {
-                    metrics::record_module_cache_hash_miss("never_warmed");
-                    return None;
-                };
-                module_key
-            }
-        };
-
-        if let Some(entry) = ctx.cached_modules.get(&module_key) {
+        if let Some(entry) = ctx.cached_modules.get(&code_hash) {
             return Some(entry.clone());
         }
-
-        let rwasm_module = match bytecode_or_hash {
-            BytecodeOrHash::Bytecode { bytecode, .. } => bytecode,
-            BytecodeOrHash::Hash(_hash) => {
-                // The index outlived the module: the LRU evicted it. Drop the stale index entry
-                // so the next bytecode-carrying call re-warms it cleanly.
-                ctx.module_keys_by_code_hash.remove(&code_hash);
-                metrics::record_module_cache_hash_miss("evicted");
-                return None;
-            }
+        let BytecodeOrHash::Bytecode { bytecode, .. } = bytecode_or_hash else {
+            metrics::record_module_cache_hash_miss();
+            return None;
         };
-
-        ctx.module_keys_by_code_hash.insert(code_hash, module_key);
-        ctx.cached_modules.insert(module_key, rwasm_module.clone());
-        Some(rwasm_module)
+        ctx.cached_modules.insert(code_hash, bytecode.clone());
+        Some(bytecode)
     }
 
     /// Locks the cache, recovering from a poisoned lock by discarding the cached contents.
@@ -97,22 +77,20 @@ impl ModuleFactory {
 }
 
 struct ModuleFactoryInner {
-    pub cached_modules:
-        LruMap<CompiledModuleCacheKey, RwasmModule, ModuleMemoryLimiter<RwasmModule>>,
-    pub module_keys_by_code_hash: std::collections::HashMap<B256, CompiledModuleCacheKey>,
+    pub cached_modules: LruMap<B256, RwasmModule, ModuleMemoryLimiter<RwasmModule>>,
 }
 
 /// Maximum memory for module cache: 1 GB
 ///
 /// This limits only the estimated size of cached module content,
 /// not the hash table overhead (which is negligible for typical workloads).
+/// The table is the only structure keyed by code hash, so nothing beside it can outgrow it.
 pub const CACHED_MODULES_SIZE_LIMIT: usize = 1024 * 1024 * 1024;
 
 impl ModuleFactoryInner {
     fn with_size_limit(max_bytes: usize) -> Self {
         Self {
             cached_modules: LruMap::new(ModuleMemoryLimiter::<RwasmModule>::new(max_bytes)),
-            module_keys_by_code_hash: std::collections::HashMap::new(),
         }
     }
 }
@@ -121,40 +99,6 @@ impl Default for ModuleFactoryInner {
     fn default() -> Self {
         Self::with_size_limit(CACHED_MODULES_SIZE_LIMIT)
     }
-}
-
-/// Cache-key fingerprint of the compilation policy applied to a contract executed at `address`.
-///
-/// This runs on every frame, so it must stay allocation-free. The fingerprint covers only the
-/// policy flags and the address ([`CompilationConfigFingerprint::from_config`]); the import
-/// linker and the state router the real compilation config carries do not take part in it, so
-/// they are deliberately left out here. Building them would allocate a full import table per
-/// lookup, which was a fifth of the host-side cost of an EVM call.
-fn runtime_cache_fingerprint(address: fluentbase_types::Address) -> CompilationConfigFingerprint {
-    CompilationConfigFingerprint::from_config(
-        &runtime_cache_policy(address),
-        CompilationBackend::Rwasm,
-        address,
-    )
-}
-
-/// Compilation policy flags for a contract executed at `address`, mirroring the SDK defaults
-/// without the import linker and the state router (see [`runtime_cache_fingerprint`]).
-fn runtime_cache_policy(address: fluentbase_types::Address) -> rwasm::CompilationConfig {
-    let is_system_runtime = fluentbase_types::is_execute_using_system_runtime(&address);
-    let should_charge_fuel = false;
-
-    rwasm::CompilationConfig::default()
-        .with_allow_malformed_entrypoint_func_type(is_system_runtime)
-        .with_consume_fuel(should_charge_fuel)
-        .with_consume_fuel_for_bulk_ops(!is_system_runtime)
-        .with_consume_fuel_for_params_and_locals(!is_system_runtime)
-        .with_builtins_consume_fuel(should_charge_fuel)
-        .with_max_allowed_memory_pages(if is_system_runtime {
-            rwasm::N_MAX_ALLOWED_MEMORY_PAGES
-        } else {
-            rwasm::N_DEFAULT_MAX_MEMORY_PAGES
-        })
 }
 
 /// Trait for estimating heap-allocated memory size of cached values.
@@ -229,8 +173,8 @@ impl<V> ModuleMemoryLimiter<V> {
     }
 }
 
-impl<V: SizeEstimator> Limiter<CompiledModuleCacheKey, V> for ModuleMemoryLimiter<V> {
-    type KeyToInsert<'a> = CompiledModuleCacheKey;
+impl<V: SizeEstimator> Limiter<B256, V> for ModuleMemoryLimiter<V> {
+    type KeyToInsert<'a> = B256;
     type LinkType = u32;
 
     /// Checks if eviction is needed after an insert or replacement.
@@ -249,7 +193,7 @@ impl<V: SizeEstimator> Limiter<CompiledModuleCacheKey, V> for ModuleMemoryLimite
         _length: usize,
         key: Self::KeyToInsert<'_>,
         value: V,
-    ) -> Option<(CompiledModuleCacheKey, V)> {
+    ) -> Option<(B256, V)> {
         let size = value.estimate_size();
 
         if size == 0 || size > self.max_bytes {
@@ -271,7 +215,7 @@ impl<V: SizeEstimator> Limiter<CompiledModuleCacheKey, V> for ModuleMemoryLimite
     fn on_replace(
         &mut self,
         _length: usize,
-        _old_key: &mut CompiledModuleCacheKey,
+        _old_key: &mut B256,
         _new_key: Self::KeyToInsert<'_>,
         old_value: &mut V,
         new_value: &mut V,
@@ -292,7 +236,7 @@ impl<V: SizeEstimator> Limiter<CompiledModuleCacheKey, V> for ModuleMemoryLimite
     }
 
     /// Updates size tracking after an entry is removed.
-    fn on_removed(&mut self, _key: &mut CompiledModuleCacheKey, value: &mut V) {
+    fn on_removed(&mut self, _key: &mut B256, value: &mut V) {
         let size = value.estimate_size();
         self.current_bytes = self.current_bytes.saturating_sub(size);
     }
@@ -342,63 +286,12 @@ mod tests {
     /// Fixed seed for deterministic hash table behavior.
     const TEST_SEED: [u64; 4] = [1, 2, 3, 4];
 
-    fn cache_key(id: u16) -> CompiledModuleCacheKey {
-        cache_key_with_address_byte(key(id), id as u8)
+    /// Cache key for a module with id `id`: the code hash itself.
+    fn cache_key(id: u16) -> B256 {
+        key(id)
     }
 
-    fn cache_key_with_address_byte(code_hash: B256, address_byte: u8) -> CompiledModuleCacheKey {
-        CompiledModuleCacheKey::new(
-            code_hash,
-            runtime_cache_fingerprint(fluentbase_types::Address::repeat_byte(address_byte)),
-        )
-    }
-
-    /// The full compilation config the SDK applies to a contract at `address`, including the
-    /// parts the fingerprint must ignore: the import linker and the state router.
-    fn full_runtime_config(address: fluentbase_types::Address) -> rwasm::CompilationConfig {
-        runtime_cache_policy(address)
-            .with_state_router(rwasm::StateRouterConfig {
-                states: Box::new([
-                    ("deploy".into(), fluentbase_types::STATE_DEPLOY),
-                    ("main".into(), fluentbase_types::STATE_MAIN),
-                ]),
-                opcode: Some(rwasm::Opcode::Call(
-                    fluentbase_types::SysFuncIdx::STATE as u32,
-                )),
-            })
-            .with_import_linker(fluentbase_types::import_linker_v1_preview())
-    }
-
-    #[test]
-    fn fingerprint_matches_the_full_compilation_config() {
-        for address in [
-            fluentbase_types::Address::repeat_byte(0x11),
-            fluentbase_types::PRECOMPILE_EVM_RUNTIME,
-            fluentbase_types::PRECOMPILE_WASM_RUNTIME,
-        ] {
-            let expected = CompilationConfigFingerprint::from_config(
-                &full_runtime_config(address),
-                CompilationBackend::Rwasm,
-                address,
-            );
-            assert_eq!(runtime_cache_fingerprint(address), expected, "{address}");
-        }
-    }
-
-    #[test]
-    fn system_and_user_policies_produce_distinct_fingerprints() {
-        let user = runtime_cache_fingerprint(fluentbase_types::Address::repeat_byte(0x11));
-        let system = runtime_cache_fingerprint(fluentbase_types::PRECOMPILE_EVM_RUNTIME);
-        assert!(!user.allow_malformed_entrypoint_func_type);
-        assert!(system.allow_malformed_entrypoint_func_type);
-        assert_eq!(user.max_allowed_memory_pages, rwasm::N_DEFAULT_MAX_MEMORY_PAGES);
-        assert_eq!(system.max_allowed_memory_pages, rwasm::N_MAX_ALLOWED_MEMORY_PAGES);
-        assert_ne!(user.stable_bytes(), system.stable_bytes());
-    }
-
-    fn new_cache(
-        max_bytes: usize,
-    ) -> LruMap<CompiledModuleCacheKey, RwasmModule, ModuleMemoryLimiter<RwasmModule>> {
+    fn new_cache(max_bytes: usize) -> LruMap<B256, RwasmModule, ModuleMemoryLimiter<RwasmModule>> {
         LruMap::with_seed(ModuleMemoryLimiter::new(max_bytes), TEST_SEED)
     }
 
@@ -413,22 +306,6 @@ mod tests {
         assert_eq!(cache.len(), 1);
         assert_eq!(cache.limiter().current_bytes(), 100);
         assert!(cache.get(&cache_key(1)).is_some());
-    }
-
-    #[test]
-    fn identical_code_hash_with_different_fingerprints_uses_distinct_entries() {
-        let mut cache = new_cache(1000);
-        let code_hash = key(42);
-        let key_a = cache_key_with_address_byte(code_hash, 0xaa);
-        let key_b = cache_key_with_address_byte(code_hash, 0xbb);
-
-        cache.insert(key_a, module(100));
-        cache.insert(key_b, module(100));
-
-        assert_ne!(key_a.config_fingerprint, key_b.config_fingerprint);
-        assert_eq!(cache.len(), 2);
-        assert!(cache.get(&key_a).is_some());
-        assert!(cache.get(&key_b).is_some());
     }
 
     #[test]
@@ -667,7 +544,7 @@ mod tests {
     }
 
     #[test]
-    fn hash_lookup_after_eviction_misses_and_drops_stale_index_entry() {
+    fn hash_lookup_after_eviction_misses_until_rewarmed() {
         // Room for a single module: warming the second evicts the first.
         let mut factory = ModuleFactory::isolated(100);
         factory.get_module_or_init(bytecode(1, 100));
@@ -676,21 +553,56 @@ mod tests {
         assert!(factory
             .get_module_or_init(BytecodeOrHash::Hash(key(1)))
             .is_none());
-        assert!(
-            !factory
-                .inner
-                .lock()
-                .unwrap()
-                .module_keys_by_code_hash
-                .contains_key(&key(1)),
-            "stale index entry must be dropped"
-        );
+        assert!(factory
+            .get_module_or_init(BytecodeOrHash::Hash(key(2)))
+            .is_some());
 
         // Re-warming with bytecode restores the hash path.
         factory.get_module_or_init(bytecode(1, 100));
         assert!(factory
             .get_module_or_init(BytecodeOrHash::Hash(key(1)))
             .is_some());
+    }
+
+    /// One code hash names one parsed module wherever it is deployed, so a second address does
+    /// not get a second entry and a hash-only lookup needs no address to find it.
+    #[test]
+    fn same_code_hash_at_two_addresses_shares_one_entry() {
+        let mut factory = ModuleFactory::isolated(1000);
+        let code_hash = key(42);
+
+        for address_byte in [0xaa, 0xbb] {
+            let cached = factory
+                .get_module_or_init(BytecodeOrHash::Bytecode {
+                    bytecode: module(100),
+                    hash: code_hash,
+                    address: fluentbase_types::Address::repeat_byte(address_byte),
+                })
+                .unwrap();
+            assert_eq!(cached.hint_section.len(), 100);
+        }
+
+        let ctx = factory.inner.lock().unwrap();
+        assert_eq!(ctx.cached_modules.len(), 1);
+        assert_eq!(ctx.cached_modules.limiter().current_bytes(), 100);
+        drop(ctx);
+        assert!(factory
+            .get_module_or_init(BytecodeOrHash::Hash(code_hash))
+            .is_some());
+    }
+
+    /// FLU-1310: the cache's footprint must follow residency, not the number of distinct code
+    /// hashes the process has ever executed.
+    #[test]
+    fn cache_footprint_follows_residency_under_deployment_churn() {
+        let mut factory = ModuleFactory::isolated(500);
+
+        for id in 0..1000u16 {
+            factory.get_module_or_init(bytecode(id, 100));
+            let ctx = factory.inner.lock().unwrap();
+            assert!(ctx.cached_modules.len() <= 5, "deployment {id}");
+            assert!(ctx.cached_modules.limiter().current_bytes() <= 500);
+        }
     }
 
     #[test]
