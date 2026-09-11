@@ -1,202 +1,237 @@
 # Examples
 
-========
+Example contracts written with the Fluentbase SDK. Each example is its own crate in a small Cargo workspace that is
+separate from the root workspace. Every crate compiles to a WASM contract for the Fluent network and also builds as a
+normal Rust crate on the host, so its unit tests run without a node.
 
-In this repository, we provide examples of running apps on the Fluent network.
-All these apps are developed using the Fluentbase SDK and can be proven with our circuits (coming soon).
+The root build embeds the examples as well: the build script of `crates/contracts` compiles every member of this
+workspace to `wasm32-unknown-unknown` and exposes the bytes as `fluentbase_contracts::FLUENTBASE_EXAMPLES_<NAME>`,
+which the runtime tests and benchmarks in `e2e/runtime` execute.
 
-To initialize, build, and deploy these examples, you can use the [gblend CLI](https://github.com/fluentlabs-xyz/gblend).
+---
 
-By the way, we also have a Makefile for building examples, so you can use it as well.
+## Layout
 
-## Creating a new app
+- `greeting` — the minimal contract: `entrypoint!` with a single `main_entry` that writes to the output.
+- `abi-solidity` — decoding and encoding Solidity ABI values by hand with `SolidityABI`.
+- `balance` — reading an account balance through `SharedAPI`.
+- `checkmate` — using an external `no_std` crate (the `shakmaty` chess engine) inside a contract.
+- `client-solidity` — `#[client(mode = "solidity")]`: typed clients for cross-contract calls.
+- `constructor-params` — a `deploy` entry that reads constructor input and persists it in storage.
+- `erc20` — a complete ERC-20 token: `#[router]`, `#[derive(Event)]`, `#[constructor]` and typed storage.
+- `json` — parsing JSON input with `serde_json_core`.
+- `keccak`, `sha256` — hashing through the SDK's crypto syscalls.
+- `memory-oom` — allocating the maximum allowed memory; exercises the runtime's out-of-memory path.
+- `panic` — what a `panic!` inside a contract looks like to the caller.
+- `router-solidity` — `#[router(mode = "solidity")]` with explicit `#[function_id]` selectors and ABI validation.
+- `rwasm` — compiling a WASM module into rWasm from inside a contract.
+- `secp256k1` — signature verification with the `libsecp256k1` crate.
+- `simple-storage` — storage reads and writes with `solidity_storage!`.
+- `storage` — an ERC-20 built on `solidity_storage!`; the source is currently commented out.
+- `storage-usage` — typed storage: `StorageMap`, `StorageVec`, `StorageString`, nested maps and custom slots.
+- `tiny-keccak` — running a third-party hashing crate. Prefer the SDK's `crypto_keccak256` in real contracts.
+- `unwiped-output` — output written before a later syscall is kept.
+- `svm` — Solana programs for the SVM runtime. Excluded from the workspace while SVM is unstable (see the root
+  README).
 
-### From scratch
+---
 
-To create your own repository with example, create an empty crate and add fluentbase SDK dependency.
-
-```bash
-cargo new hello_world --lib
-```
-
-Now put the following code into `src/lib.rs` file.
-
-```rust
-#![no_std]
-extern crate alloc;
-// this line is required to enable Fluentbase panic handlers and allocators
-extern crate fluentbase_sdk;
-
-use fluentbase_sdk::{SysPlatformSDK, SDK};
-
-#[no_mangle]
-extern "C" fn deploy() {}
-
-#[no_mangle]
-extern "C" fn main() {
-    let str = "Hello, World";
-    SDK::sys_write(str.as_bytes());
-}
-```
-
-As you can see, there are two functions that must be exported with exact names:
-
-- `deploy` - this function is called before creating app (similar to Solidity's constructor)
-- `main` - this one is getting called on each contract interaction
-
-To add Fluentbase SDK dependency add the following dep in your `Cargo.toml` file:
-
-```toml
-[dependencies]
-fluentbase-sdk = { git = "https://github.com/fluentlabs-xyz/fluentbase", default-features = false }
-```
-
-If you don't want to use EVM features then just disable `evm` feature flag.
-
-Additionally add these lines into your `Cargo.toml` file:
-
-```toml
-[profile.release]
-panic = "abort"
-lto = true
-opt-level = 'z'
-strip = true
-```
-
-### Using templates (with gblend)
-
-## Choose template
-
-The `gblend init` command helps you bootstrap new projects using templates:
-
-### List Templates
-
-```bash
-# List all available templates
-gblend init rust -l
-```
-
-### Creating New Project
-
-```bash
-# Initialize project from template
-gblend init rust -t greeting -p ./greeting
-```
-
-> [!NOTE]
-> Replace `greeting` with any template name and `./greeting` with your desired project path.
-
-### Post-Initialization Steps
-
-After project creation, you'll want to:
-
-1. Review the generated code in `lib.rs`
-2. [Build your project](#build)
-3. [Deploy your contract](#deploy)
-
-> [!TIP]
-> Templates provide a quick start with working examples and proper project structure. They're the recommended way to
-> begin new Fluent Network projects.
-
-## Build
-
-The `gblend build` command compiles your smart contracts for deployment:
-
-### Build Basic Usage
-
-```bash
-# Build project in release mode with .wat file generation
-gblend build rust -r --wat
-```
-
-### Build Options
-
-- Use `-r, --release` for optimized release builds
-- Add `--wat` to generate WebAssembly text format
-- Specify custom path with `-p, --path`
-
-### Using Makefiles
-
-The repository uses a two-level Makefile structure:
-
-1. Root Makefile for building all examples:
-
-```bash
-# Build all examples
-make all
-
-# Build specific example
-make greeting
-make keccak256
-```
-
-2. Each example has its own Makefile with WASM compilation settings
-
-### Project Structure
-
-For simplicity, all examples are stored inside one crate and managed through Cargo features.
-
-> [!NOTE]
-> When adding new examples, remember to update both `Cargo.toml` and `Makefile` with your new features.
+## Building
 
 ### Prerequisites
-
-Install the required WebAssembly target:
 
 ```bash
 rustup target add wasm32-unknown-unknown
 ```
 
-> [!NOTE]
-> Your compiled WASM binary will be located at `target/wasm32-unknown-unknown/release/<name>.wasm`
+The toolchain version is pinned in the root `rust-toolchain.toml`.
 
-> [!TIP]
-> Use `wasm2wat` tool to inspect the WebAssembly text format of your compiled binary:
->
-> ```bash
-> wasm2wat target/wasm32-unknown-unknown/release/hello_world.wasm
-> ```
+### Build an example
 
-The next step is to [deploy your contract](#deploy).
-
-## Deploy
-
-The `gblend deploy` command provides several options for deploying your application:
-
-### Network Selection
-
-- Use `--local` for deploying to a local network
-- Use `--dev` for deploying to the development network
-- Specify a custom RPC endpoint with `--rpc <URL>` and `--chain-id <CHAIN_ID>` for other networks
-
-### Authentication
-
-You can provide your private key in several ways:
-
-1. Command line: `--private-key <KEY>`
-2. Environment variable: `DEPLOY_PRIVATE_KEY`
-3. Environment file: Create `.env` file with `DEPLOY_PRIVATE_KEY=<your-key>`
-
-### Deploy Basic Usage
+From this directory:
 
 ```bash
-# Deploy to local network
-gblend deploy --local path/to/contract.wasm
-
-# Deploy to devnet
-gblend deploy --dev path/to/contract.wasm
-
-# Deploy with custom RPC
-gblend deploy --rpc https://your-node.network --chain-id 1234 path/to/contract.wasm
+cargo build -p fluentbase-examples-greeting --release --target wasm32-unknown-unknown --no-default-features
 ```
 
-> [!TIP]
-> Using environment files is recommended for managing private keys securely. Create a `.env` file in your project root:
+The artifact lands in `target/contracts/wasm32-unknown-unknown/release/fluentbase_examples_greeting.wasm` at the
+repository root (`.cargo/config.toml` points the target directory there). `--no-default-features` switches off the
+`std` feature, which exists only for host-side tests.
+
+`make build` at the repository root compiles every example the same way as part of the contracts build.
+
+> Tip: `wasm2wat` from [wabt](https://github.com/WebAssembly/wabt) prints the text form of a compiled contract, which
+> is a quick way to check its imports and exports:
 >
-> ```
-> DEPLOY_PRIVATE_KEY=0x...
+> ```bash
+> wasm2wat target/contracts/wasm32-unknown-unknown/release/fluentbase_examples_greeting.wasm
 > ```
 
-> [!NOTE]
-> Additional parameters like `gas-limit`, `gas-price`, and `confirmations` can also be configured through environment
-> variables or command line flags.
+---
+
+## Testing
+
+Unit tests run on the host against `fluentbase_testing::TestingContextImpl`, an in-memory implementation of the SDK:
+
+```bash
+cargo test -p fluentbase-examples-greeting # one example
+cargo test --workspace                     # all examples
+```
+
+`make test` at the repository root runs the same suites with `cargo nextest` in release mode, and `make clippy` lints
+this workspace with `-D warnings`; CI does both.
+
+---
+
+## Creating a new app
+
+### Cargo.toml
+
+Create a library crate and depend on the published SDK; that is all the contract itself needs. Unit tests additionally
+need `fluentbase-testing`, which is not on crates.io, so pull it from the repository. It brings the SDK and the runtime
+from the same checkout, so patch the registry SDK to that source as well and only one copy of the crate ends up in the
+build:
+
+```toml
+[package]
+name = "hello-world"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+fluentbase-sdk = { version = "1.4.2", default-features = false }
+
+[dev-dependencies]
+fluentbase-testing = { git = "https://github.com/fluentlabs-xyz/fluentbase", branch = "devel" }
+
+[features]
+default = ["std"]
+std = ["fluentbase-sdk/std", "fluentbase-testing/std"]
+
+[profile.release]
+panic = "abort"
+lto = "fat"
+opt-level = 3
+strip = true
+codegen-units = 1
+
+[patch.crates-io]
+fluentbase-sdk = { git = "https://github.com/fluentlabs-xyz/fluentbase", branch = "devel" }
+```
+
+> Note: use the default branch rather than a release tag for the git dependencies. The workspace references the
+> `revm-rwasm` fork by branch, so an older tag can fall out of step with it; `v1.4.2` already no longer builds on the
+> host against the current fork.
+
+### Function entrypoint
+
+The simplest contract is a function that receives the SDK and writes to the output. `entrypoint!` expands into the
+`main` and `deploy` exports the runtime calls, plus the panic handler and allocator a `no_std` WASM binary needs:
+
+```rust
+#![cfg_attr(target_arch = "wasm32", no_std, no_main)]
+extern crate alloc;
+extern crate fluentbase_sdk;
+
+use fluentbase_sdk::{entrypoint, SharedAPI};
+
+pub fn main_entry(mut sdk: impl SharedAPI) {
+    sdk.write("Hello, World".as_bytes());
+}
+
+entrypoint!(main_entry);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fluentbase_testing::TestingContextImpl;
+
+    #[test]
+    fn test_contract_works() {
+        let sdk = TestingContextImpl::default();
+        main_entry(sdk.clone());
+        assert_eq!(&sdk.take_output(), "Hello, World".as_bytes());
+    }
+}
+```
+
+- `main` runs on every call to the contract.
+- `deploy` runs once when the contract is created, like a Solidity constructor. Pass a second function to
+  `entrypoint!(main_entry, deploy_entry)` to handle it; see `constructor-params`.
+
+### Solidity-compatible router
+
+For a contract with several methods, describe them as a trait and let `#[router(mode = "solidity")]` generate the
+selector dispatch and ABI codec. `#[derive(Contract)]` provides the `new` constructor and `basic_entrypoint!` wires
+`deploy` and `main` to the struct:
+
+```rust
+#![cfg_attr(not(feature = "std"), no_std, no_main)]
+extern crate alloc;
+extern crate fluentbase_sdk;
+
+use alloc::string::String;
+use fluentbase_sdk::{
+    basic_entrypoint,
+    derive::{router, Contract},
+    SharedAPI,
+};
+
+#[derive(Contract)]
+struct App<SDK> {
+    sdk: SDK,
+}
+
+pub trait RouterAPI {
+    fn greeting(&self, message: String) -> String;
+}
+
+#[router(mode = "solidity")]
+impl<SDK: SharedAPI> RouterAPI for App<SDK> {
+    #[function_id("greeting(string)")]
+    fn greeting(&self, message: String) -> String {
+        message
+    }
+}
+
+impl<SDK: SharedAPI> App<SDK> {
+    pub fn deploy(&self) {
+        // any custom deployment logic here
+    }
+}
+
+basic_entrypoint!(App);
+```
+
+`router-solidity` shows the full version with selector validation and tests that compare the generated calldata
+against `alloy-sol-types`, and `erc20` adds events, a constructor and typed storage on top.
+
+### Build and test
+
+```bash
+cargo test
+cargo build --release --target wasm32-unknown-unknown --no-default-features
+```
+
+The contract is at `target/wasm32-unknown-unknown/release/hello_world.wasm`.
+
+---
+
+## Deploying
+
+[gblend](https://github.com/fluentlabs-xyz/gblend) is the CLI for Fluent applications. It is a fork of Foundry's
+`forge` that understands WASM contracts, so it scaffolds, builds, deploys and verifies both Rust and Solidity code:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/fluentlabs-xyz/gblend/refs/tags/latest/gblendup/install | bash
+gblendup
+
+gblend init my-project          # scaffold a blended Rust + Solidity project
+gblend build                    # compile everything in it
+gblend create my_contract.wasm --wasm --rpc-url https://rpc.testnet.fluent.xyz --private-key $PRIVATE_KEY --broadcast
+```
+
+The full set of commands, templates and verification flags is documented at https://docs.fluent.xyz/gblend/usage.
