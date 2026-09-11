@@ -7,7 +7,7 @@ use bincode::{
 };
 use bitvec::vec::BitVec;
 use fluentbase_sdk::{Bytes, B256};
-use revm_bytecode::{legacy::analyze_legacy, JumpTable};
+use revm_bytecode::{Bytecode, JumpTable};
 
 /// A legacy bytecode
 #[derive(Debug)]
@@ -36,14 +36,16 @@ impl Default for AnalyzedBytecode {
 }
 
 impl AnalyzedBytecode {
-    /// Analyze legacy bytecode, compute jump table, and keep orthe iginal length and hash.
+    /// Analyze legacy bytecode, preserving its original length and hash.
     pub fn new(bytecode: Bytes, hash: B256) -> Self {
         let len = bytecode.len() as u64;
-        let (jump_table, bytecode) = analyze_legacy(bytecode);
+        // The public constructor handles empty code with a padded STOP. Calling
+        // analyze_legacy directly leaves it empty, which new_analyzed rejects.
+        let analyzed = Bytecode::new_legacy(bytecode);
         Self {
-            bytecode,
+            bytecode: analyzed.bytecode().clone(),
             len,
-            jump_table,
+            jump_table: analyzed.legacy_jump_table().unwrap().clone(),
             hash,
         }
     }
@@ -113,7 +115,24 @@ impl AnalyzedBytecode {
 #[cfg(test)]
 mod tests {
     use crate::bytecode::AnalyzedBytecode;
-    use fluentbase_sdk::{hex, B256};
+    use fluentbase_sdk::{hex, Bytes, SharedContextInputV1, B256};
+
+    #[test]
+    fn empty_bytecode_can_initialize_the_interpreter() {
+        let analyzed = AnalyzedBytecode::new(Bytes::new(), B256::ZERO);
+        let vm = crate::evm::EthVM::new(SharedContextInputV1::default(), Bytes::new(), analyzed);
+        assert!(vm.interpreter.bytecode.original_byte_slice().is_empty());
+    }
+
+    #[test]
+    fn historical_unpadded_empty_metadata_can_initialize_the_interpreter() {
+        let analyzed = AnalyzedBytecode {
+            bytecode: Bytes::new(),
+            ..Default::default()
+        };
+        let vm = crate::evm::EthVM::new(SharedContextInputV1::default(), Bytes::new(), analyzed);
+        assert!(vm.interpreter.bytecode.original_byte_slice().is_empty());
+    }
 
     #[test]
     fn test_analyzed_bytecode_encoding() {

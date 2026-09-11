@@ -1,16 +1,33 @@
 use super::utils::recover_address;
 use crate::runner::{TestError, TestErrorKind};
+use alloy_consensus::{transaction::SignerRecoverable, Transaction, TxEnvelope};
+use alloy_eips::eip2718::Decodable2718;
 use fluentbase_genesis::GENESIS_CONTRACTS_BY_ADDRESS;
 use fluentbase_sdk::{Address, PRECOMPILE_EVM_RUNTIME};
 use revm::{
     bytecode::Bytecode,
-    context::{BlockEnv, CfgEnv, TransactTo, TransactionType::Eip1559, TxEnv},
+    context::{either::Either, BlockEnv, CfgEnv, TransactTo, TransactionType, TxEnv},
     database::CacheState,
     primitives::{keccak256, B256, U256},
     state::AccountInfo,
 };
 use revm_statetest_types::{Test, TestUnit, TransactionParts};
 use std::{sync::Arc, time::Instant};
+
+/// State tests can include invalid signed envelopes that cannot reach an EVM.
+/// Apply the same Alloy decoding and low-S signature recovery used by admission,
+/// rather than trusting the fixture's sender or ignoring its raw transaction.
+pub(crate) fn signed_transaction_sender_and_chain_id(
+    bytes: &[u8],
+) -> Result<(Address, Option<u64>), String> {
+    let mut remaining = bytes;
+    let tx = TxEnvelope::decode_2718(&mut remaining).map_err(|error| error.to_string())?;
+    if !remaining.is_empty() {
+        return Err("trailing bytes after signed transaction".to_owned());
+    }
+    let sender = tx.recover_signer().map_err(|error| error.to_string())?;
+    Ok((sender, tx.chain_id()))
+}
 
 thread_local! {
     pub static GENESIS_CONTRACTS: Arc<Vec<(Address, B256, Bytecode)>> = {
@@ -70,6 +87,16 @@ pub(crate) fn fluent_cache_state(unit: &TestUnit) -> CacheState {
         let evm_code_hash = keccak256(&info.code);
         // write EVM code hash state
         if !info.code.is_empty() {
+            let code = Bytecode::new_raw(info.code.clone());
+            // Delegation designators belong to the host's EIP-7702 account model.
+            // Wrapping one as EVM runtime metadata hides it from authorization
+            // processing and incorrectly makes a delegated sender a contract.
+            if code.is_eip7702() {
+                acc_info.code_hash = evm_code_hash;
+                acc_info.code = Some(code);
+                cache_state.insert_account_with_storage(*address, acc_info, info.storage.clone());
+                continue;
+            }
             // set account info bytecode to the proxy loader
             let mut metadata = vec![];
             metadata.extend_from_slice(evm_code_hash.as_slice());
@@ -90,14 +117,14 @@ pub(crate) fn fluent_cache_state(unit: &TestUnit) -> CacheState {
 
 pub(crate) fn prepare_env(
     unit: &TestUnit,
-    name: &String,
+    name: &str,
 ) -> Result<(CfgEnv, BlockEnv, TxEnv), TestError> {
     let mut cfg_env = CfgEnv::default();
     let mut block_env = BlockEnv::default();
     let mut tx_env = TxEnv::default();
 
     // for mainnet
-    cfg_env.chain_id = 1;
+    cfg_env.chain_id = unit.env.current_chain_id.map(|id| id.to()).unwrap_or(1);
 
     // block env
     block_env.number = unit.env.current_number.to();
@@ -115,7 +142,7 @@ pub(crate) fn prepare_env(
         address
     } else {
         recover_address(unit.transaction.secret_key.as_slice()).ok_or_else(|| TestError {
-            name: name.clone(),
+            name: name.to_owned(),
             kind: TestErrorKind::UnknownPrivateKey(unit.transaction.secret_key),
         })?
     };
@@ -165,6 +192,87 @@ pub(crate) fn fill_tx_env(tx_env: &mut TxEnv, transaction: &TransactionParts, te
         None => TransactTo::Create,
     };
 
-    tx_env.tx_type = Eip1559 as u8;
+    // Preserve the fixture's transaction type, including malformed blob/set-code
+    // creations: those must be rejected by the engines, not skipped by the harness.
+    tx_env.tx_type = transaction.tx_type(test.indexes.data).unwrap_or_else(|| {
+        if transaction.max_fee_per_blob_gas.is_some() {
+            TransactionType::Eip4844
+        } else {
+            TransactionType::Eip7702
+        }
+    }) as u8;
+    tx_env.authorization_list = transaction
+        .authorization_list
+        .clone()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|authorization| Either::Left(authorization.into()))
+        .collect();
     tx_env.nonce = transaction.nonce.to();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn signed_envelopes_recover_sender_and_chain_id_and_reject_trailing_bytes() {
+        // Official low_gas_limit fixture, case g2; signature made by upstream.
+        let bytes = hex::decode("02f86601018203e88203e88261a894779c79e3bfba76b7b777511e4d055730ac3871218000c080a06a34bd91ad6014bc165a2b354ca8c1a50b633d400a86069d350bbc016c0fa9a3a05edb1a7b7c68694671fa5e387f8189ba2e1c4d0c4a4629d0ac440c5636ac1b02").unwrap();
+        assert_eq!(
+            signed_transaction_sender_and_chain_id(&bytes).unwrap(),
+            (
+                "0x57bd80ea46be74523e9060337ed2dc017f1cbf2c"
+                    .parse()
+                    .unwrap(),
+                Some(1)
+            )
+        );
+        let mut trailing = bytes.clone();
+        trailing.push(0);
+        assert!(signed_transaction_sender_and_chain_id(&trailing).is_err());
+        assert!(signed_transaction_sender_and_chain_id(&[]).is_err());
+        // A zero S scalar is not a valid signature, even with a valid envelope.
+        let mut zero_s = bytes;
+        let start = zero_s.len() - 32;
+        zero_s[start..].fill(0);
+        assert!(signed_transaction_sender_and_chain_id(&zero_s).is_err());
+    }
+
+    #[test]
+    fn fixture_transaction_types_reach_engine_validation() {
+        let base = json!({
+            "data": ["0x"], "gasLimit": ["0x100000"], "gasPrice": "0x0a",
+            "nonce": "0x00", "value": ["0x00"], "secretKey": B256::ZERO
+        });
+        let test: Test = serde_json::from_value(json!({
+            "hash": B256::ZERO, "logs": B256::ZERO,
+            "indexes": {"data": 0, "gas": 0, "value": 0}
+        }))
+        .unwrap();
+        // All use CREATE, including the invalid blob/set-code transactions.
+        // Both execution engines must receive those invalid types and reject them.
+        for (fields, expected_type) in [
+            (json!({}), TransactionType::Legacy),
+            (json!({"accessLists": [[]]}), TransactionType::Eip2930),
+            (json!({"maxFeePerGas": "0x0a"}), TransactionType::Eip1559),
+            (
+                json!({"maxFeePerBlobGas": "0x01"}),
+                TransactionType::Eip4844,
+            ),
+            (json!({"authorizationList": []}), TransactionType::Eip7702),
+        ] {
+            let mut value = base.clone();
+            value
+                .as_object_mut()
+                .unwrap()
+                .extend(fields.as_object().unwrap().clone());
+            let transaction: TransactionParts = serde_json::from_value(value).unwrap();
+            let mut env = TxEnv::default();
+            fill_tx_env(&mut env, &transaction, &test);
+            assert_eq!(env.tx_type, expected_type as u8);
+            assert_eq!(env.kind, TransactTo::Create);
+        }
+    }
 }

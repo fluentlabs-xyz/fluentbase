@@ -1,183 +1,121 @@
-// Rust Test Module Generator
-//
-// This script finds all JSON files in tests/GeneralStateTests, groups them by subdirectory,
-// and generates Rust modules with snake_case function wrappers for each test file.
-//
-// Usage: node gen_tests.js > ./src/tests.rs
+// Generate current Ethereum state-test registrations. Run after `make sync_tests`.
+// `node gen_tests.js --check` verifies the registrations without changing files.
+import fs from 'node:fs';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
 
-const fs = require('fs');
-const path = require('path');
-
-// Base directory with all test cases
-const BASE_DIR = 'tests/GeneralStateTests';
-
-// Convert a string to snake_case for Rust compatibility
-function toSnakeCase(str) {
-    // Basic transformations for snake_case
-    let result = str
-        .replace(/([A-Z]+)/g, '_$1')         // Insert _ before uppercase letters
-        .replace(/[-.\s]/g, '_')             // Replace special characters with _
-        .replace(/_+/g, '_')                 // Collapse multiple _ into one
-        .replace(/^_+|_+$/g, '')             // Remove _ at the start/end
-        .replaceAll('+', '_plus_')           // Replace + and ^ for readability
-        .replaceAll('^', '_pow_')
-        .toLowerCase();
-
-    // If a result doesn't start with a latin letter, prepend "_"
-    if (!/^[a-zA-Z]/.test(result)) {
-        result = '_' + result;
+const root = path.dirname(fileURLToPath(import.meta.url));
+const config = JSON.parse(fs.readFileSync(path.join(root, 'ethereum-tests.json')));
+const selection = JSON.parse(fs.readFileSync(path.join(root, 'ci-tests.json')));
+const exclusions = new Map();
+for (const entry of JSON.parse(fs.readFileSync(path.join(root, 'excluded-tests.json')))) {
+    const key = `${entry.fork}/${entry.path}`;
+    if (!config.forks.includes(entry.fork) || typeof entry.path !== 'string' ||
+        typeof entry.reason !== 'string' || !entry.reason.trim() ||
+        typeof entry.source !== 'string' || !entry.source.trim()) {
+        throw new Error(`Exclusions require a supported fork, path, reason and source: ${key}`);
     }
-
-    // List of Rust reserved keywords
-    const rustKeywords = new Set([
-        "as", "break", "const", "continue", "crate", "else", "enum", "extern", "false", "fn",
-        "for", "if", "impl", "in", "let", "loop", "match", "mod", "move", "mut", "pub", "ref",
-        "return", "self", "Self", "static", "struct", "super", "trait", "true", "type", "unsafe",
-        "use", "where", "while", "async", "await", "dyn", "abstract", "become", "box", "do",
-        "final", "macro", "override", "priv", "try", "typeof", "unsized", "virtual", "yield"
-    ]);
-    // If a result matches a Rust keyword, prepend "_"
-    if (rustKeywords.has(result)) {
-        result = '_' + result;
-    }
-    return result;
-}
-
-// Recursively finds all .json files under the given directory
-function findJsonFiles(dir) {
-    let files = [];
-    for (const entry of fs.readdirSync(dir, {withFileTypes: true})) {
-        const fullPath = path.join(dir, entry.name);
-        if (entry.isDirectory()) {
-            // Recurse into subdirectories
-            files = files.concat(findJsonFiles(fullPath));
-        } else if (entry.isFile() && entry.name.endsWith('.json')) {
-            files.push(fullPath);
+    for (const field of ['cases', 'exceptions']) {
+        if (entry[field] !== undefined && (!Array.isArray(entry[field]) || !entry[field].length ||
+            entry[field].some(value => typeof value !== 'string' || !value))) {
+            throw new Error(`Invalid ${field} selector: ${key}`);
         }
     }
-    return files;
+    if (exclusions.has(key)) throw new Error(`Duplicate exclusion: ${key}`);
+    exclusions.set(key, entry);
 }
-
-// Collect all JSON test files
-const files = findJsonFiles(BASE_DIR);
-
-// These tests can't pass because of Fluent architecture (but it's not critical)
-const disabledTests = new Set([
-    // These tests can't pass because of Fluent precompiled addresses (0x01... are physical contracts)
-    'ext_code_hash_dynamic_argument',
-    'random_statetest650',
-    'precomps_eip2929_cancun',
-    'self_destruct',
-
-    // We don't support BLOBS, that's why we disable these tests
-    'blobhash_list_bounds10',
-    'blobhash_list_bounds3',
-    'blobhash_list_bounds4',
-    'blobhash_list_bounds5',
-    'blobhash_list_bounds6',
-    'blobhash_list_bounds7',
-    'blobhash_list_bounds8',
-    'blobhash_list_bounds9',
-    'create_blobhash_tx',
-    'empty_blobhash_list',
-    'opcode_blobh_bounds',
-    'opcode_blobhash_out_of_range',
-    'wrong_blobhash_version',
-    'blob_gas_subtraction_tx',
-    'blob_tx_attribute_calldata_opcodes',
-    'blob_tx_attribute_gasprice_opcode',
-    'blob_tx_attribute_opcodes',
-    'blob_tx_attribute_value_opcode',
-    'blob_type_tx_pre_fork',
-    'blobhash_gas_cost',
-    'call_opcode_types',
-    'external_vectors',
-    'insufficient_balance_blob_tx',
-    'invalid_blob_hash_versioning_single_tx',
-    'invalid_inputs',
-    'invalid_normal_gas',
-    'invalid_tx_blob_count',
-    'invalid_tx_max_fee_per_blob_gas_state',
-    'point_evaluation_precompile_gas_usage',
-    'precompile_before_fork',
-    'sufficient_balance_blob_tx',
-    'tx_entry_point',
-    'valid_inputs',
-
-    // These tests don't pass in an official testing suite (TODO: Why?)
-    'create2collision_storage_paris',
-    'dynamic_account_overwrite_empty_paris',
-    'init_collision_paris',
-    'revert_in_create_in_init_create2_paris',
-    'revert_in_create_in_init_paris',
-
-    // These tests can't pass it passes `gas_limit=9214364837600013754` into STATICCALL, but in Fluent
-    // we pass gas though fuel by multiplying to `FUEL_DENOM_RATE` and it causes u64 overflow.
-    // Since these tests are supposed to fail in the end, it charges an incorrect amount of fuel penalty:
-    // - EVM: 9070390387012513441 gas
-    // - FLUENT: 18446744073709551615 gas
-    //  Technically, it's not possible to have enough ETH to pass 2^59 gas limit, so we can safely ignore them.
-    'static_loop_calls_depth_then_revert2',
-    'static_loop_calls_depth_then_revert3',
-
-    // These tests can't pass because of EIP-7951 enabled.
-    // EIP-7951 is a smart contract for secp256r1 signature verification that exists at
-    // address 0x0000000000000000000000000000000000000100.
-    // Since we store compiled EIP-7951 binary inside the genesis state, it also affects
-    // some gas spending if we transfer to an empty or non-empty account.
-    // Technically, it's not possible to reproduce these tests in a production environment,
-    // so we can safely disable them.
-    'failed_tx_xcf416c53_paris',
-    'precompile_absence',
-]);
-
-// Group tests by subdirectory (module name)
-const modules = {};
-
-files.forEach((filePath) => {
-    // Get a relative path and split into components
-    const relPath = path.relative(BASE_DIR, filePath);
-    const parts = relPath.split(path.sep);
-    if (parts.length < 2) return; // Expect at least a subdirectory and filename
-
-    // The last element is filename, rest is the subdirectory path
-    let [filename] = parts.splice(parts.length - 1, 1);
-    const modName = toSnakeCase(parts.join('_'));
-    const funcName = toSnakeCase(filename.replace(/\.json$/i, ''));
-    // Use '/' for Rust compatibility in paths
-    const testPath = path.join(BASE_DIR, parts.join('/'), filename).replace(/\\/g, '/');
-    if (!modules[modName]) modules[modName] = [];
-    if (disabledTests.has(funcName)) {
-        modules[modName].push(`        // fn ${funcName}("${testPath}");`);
-    } else {
-        modules[modName].push(`        fn ${funcName}("${testPath}");`);
-    }
-});
-
-// Print Rust macro header
-console.log(`\
-// This file is generated by gen_tests.js
-// Do not edit manually!
-// To generate a file, run "node gen_tests.js > src/tests.rs"
+const unmatchedExclusions = new Set(exclusions.keys());
+const base = path.join(root, config.directory, 'state_tests');
+const header = `// Generated by gen_tests.js from ${config.release}; do not edit manually.
+// Regenerate with: node gen_tests.js
 
 macro_rules! define_tests {
-    (
-        $( fn $test_name:ident($test_path:literal); )*
-    ) => {
-        $(
-            #[test]
-            fn $test_name() {
-                $crate::utils::run_e2e_test($test_path)
-            }
-        )*
+    ($($(#[$meta:meta])* fn $name:ident($path:literal);)*) => {
+        $($(#[$meta])* #[test] fn $name() { $crate::utils::run_evm_e2e_test($path); })*
     };
 }
-`);
+`;
 
-// Print all Rust modules with test wrappers
-for (const [modName, fnLines] of Object.entries(modules)) {
-    console.log(`mod ${modName} {`);
-    console.log(`    define_tests! {`);
-    fnLines.forEach(fnLine => console.log(fnLine));
-    console.log(`    }\n}\n`);
+function jsonFiles(directory) {
+    return fs.readdirSync(directory, {withFileTypes: true}).flatMap(entry => {
+        const target = path.join(directory, entry.name);
+        if (entry.isDirectory()) return jsonFiles(target);
+        return entry.isFile() && entry.name.endsWith('.json') ? [target] : [];
+    }).sort();
 }
+
+function identifier(value) {
+    return `case_${value.replace(/[^A-Za-z0-9]/g, '_').toLowerCase()}`;
+}
+
+function excluded(entry, name, post) {
+    return entry && (!entry.cases || entry.cases.includes(name)) &&
+        (!entry.exceptions || (post.expectException || '').split('|').some(value => entry.exceptions.includes(value)));
+}
+
+let full = header;
+let ci = header + '\nmod good_coverage_tests {\n';
+let total = 0;
+let ciTotal = 0;
+let excludedCases = 0;
+let ignoredFiles = 0;
+for (const fork of config.forks) {
+    const selected = new Set(selection.filter(entry => entry.forks.includes(fork)).map(entry => entry.path));
+    const directory = path.join(base, `for_${fork.toLowerCase()}`);
+    const found = new Set();
+    const names = new Set();
+    full += `\nmod ${fork.toLowerCase()} {\n    define_tests! {\n`;
+    ci += `    mod ${fork.toLowerCase()} {\n        define_tests! {\n`;
+    for (const file of jsonFiles(directory)) {
+        const relative = path.relative(directory, file).split(path.sep).join('/');
+        const name = identifier(relative.replace(/\.json$/, ''));
+        if (names.has(name)) throw new Error(`Duplicate Rust test identifier: ${name}`);
+        names.add(name);
+        const suite = JSON.parse(fs.readFileSync(file));
+        const cases = Object.values(suite).reduce((sum, unit) => sum + (unit.post?.[fork]?.length ?? 0), 0);
+        if (!cases) throw new Error(`No ${fork} transactions in ${relative}`);
+        const testPath = path.relative(root, file).split(path.sep).join('/');
+        const line = `fn ${name}(${JSON.stringify(testPath)});`;
+        const exclusionKey = `${fork}/${relative}`;
+        const exclusion = exclusions.get(exclusionKey);
+        if (exclusion) {
+            if (selected.has(relative)) throw new Error(`CI fixture is excluded: ${relative}`);
+            const excludedCount = Object.entries(suite).reduce((sum, [name, unit]) =>
+                sum + (unit.post?.[fork] || []).filter(post => excluded(exclusion, name, post)).length, 0);
+            if (!excludedCount) throw new Error(`Stale exclusion selector: ${exclusionKey}`);
+            if (exclusion.cases && exclusion.cases.some(name => !(name in suite))) {
+                throw new Error(`Stale excluded case: ${exclusionKey}`);
+            }
+            unmatchedExclusions.delete(exclusionKey);
+            if (excludedCount === cases) {
+                full += `        #[ignore = ${JSON.stringify(exclusion.reason)}]\n`;
+                ignoredFiles += 1;
+            }
+            excludedCases += excludedCount;
+        }
+        full += `        ${line}\n`;
+        total += cases;
+        if (selected.has(relative)) {
+            ci += `            ${line}\n`;
+            found.add(relative);
+            ciTotal += cases;
+        }
+    }
+    for (const required of selected) {
+        if (!found.has(required)) throw new Error(`Missing CI fixture for ${fork}: ${required}`);
+    }
+    full += '    }\n}\n';
+    ci += '        }\n    }\n';
+}
+ci += '}\n';
+if (!total || !ciTotal) throw new Error('The fixture selection contains no transactions');
+if (unmatchedExclusions.size) throw new Error(`Stale exclusions: ${[...unmatchedExclusions].join(', ')}`);
+for (const [filename, output] of [['tests.rs', full], ['short_tests.rs', ci]]) {
+    const target = path.join(root, 'src', filename);
+    if (process.argv.includes('--check')) {
+        if (fs.readFileSync(target, 'utf8') !== output) throw new Error(`${filename} is stale; run node gen_tests.js`);
+    } else {
+        fs.writeFileSync(target, output);
+    }
+}
+console.log(`${config.release}: ${total} registered transaction cases; ${excludedCases} explicitly excluded (${ignoredFiles} whole files, ${exclusions.size - ignoredFiles} partial files); ${ciTotal} in CI (${selection.length} fixture families)`);

@@ -91,7 +91,14 @@ impl<'a, SDK: SystemAPI> Host for HostWrapperImpl<'a, SDK> {
     }
 
     fn effective_gas_price(&self) -> U256 {
-        self.sdk.context().tx_gas_price()
+        let context = self.sdk.context();
+        let max_fee = context.tx_gas_price();
+        match context.tx_gas_priority_fee() {
+            Some(priority_fee) => {
+                max_fee.min(context.block_base_fee().saturating_add(priority_fee))
+            }
+            None => max_fee,
+        }
     }
 
     fn caller(&self) -> Address {

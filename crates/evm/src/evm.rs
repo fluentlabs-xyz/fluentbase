@@ -68,14 +68,18 @@ impl EthVM {
         let is_static = context_input.contract_is_static();
         let gas_limit = context_input.contract_gas_limit();
         // Initialize EVM bytecode and interpreter
-        let bytecode = ExtBytecode::new_with_hash(
+        // Older metadata may contain unpadded empty code. Empty EVM code is a
+        // successful STOP, including self-calls while a constructor is running.
+        let bytecode = if analyzed_bytecode.len == 0 {
+            Bytecode::default()
+        } else {
             Bytecode::new_analyzed(
                 analyzed_bytecode.bytecode,
                 analyzed_bytecode.len as usize,
                 analyzed_bytecode.jump_table,
-            ),
-            analyzed_bytecode.hash,
-        );
+            )
+        };
+        let bytecode = ExtBytecode::new_with_hash(bytecode, analyzed_bytecode.hash);
         let gas = Gas::new(gas_limit);
         let interpreter = Interpreter {
             bytecode,

@@ -5,7 +5,10 @@ edition = "2021"
 resolver = "2"
 
 [dependencies]
+alloy-consensus = { version = "=2.0.4", default-features = false, features = ["std", "k256"] }
+alloy-eips = { version = "=2.0.4", default-features = false }
 fluentbase-runtime = { path = "../../crates/runtime" }
+fluentbase-evm = { path = "../../crates/evm" }
 fluentbase-sdk = { path = "../../crates/sdk" }
 fluentbase-genesis = { path = "../../crates/genesis", default-features = false }
 fluentbase-revm = { path = "../../crates/revm", features = ["eip1559-full-compatibility"] }

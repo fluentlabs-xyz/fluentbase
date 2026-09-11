@@ -1,0 +1,191 @@
+[
+  {
+    "fork": "Osaka",
+    "path": "constantinople/eip1052_extcodehash/extcodehash/extcodehash_dynamic_argument.json",
+    "reason": "Fluent precompiles are physical genesis contracts; account-existence expectations differ from Ethereum.",
+    "source": "gen_tests.js at 3aca5cf6c, disabledTests: physical precompile accounts"
+  },
+  {
+    "fork": "Osaka",
+    "path": "ported_static/stPreCompiledContracts/precomps_eip2929_cancun/precomps_eip2929_cancun.json",
+    "reason": "Physical Fluent precompile accounts change account-creation and call gas assumptions.",
+    "source": "gen_tests.js at 3aca5cf6c, disabledTests: physical precompile accounts"
+  },
+  {
+    "fork": "Osaka",
+    "path": "cancun/eip4844_blobs/blob_txs/blob_tx_attribute_gasprice_opcode.json",
+    "reason": "Blob transactions are unsupported by Fluent; the delegated runtime has no blob transaction context.",
+    "source": "gen_tests.js at 3aca5cf6c, disabledTests: blobs unsupported; crates/evm/src/host.rs"
+  },
+  {
+    "fork": "Osaka",
+    "path": "ported_static/stEIP4844_blobtransactions/create_blobhash_tx/create_blobhash_tx.json",
+    "reason": "Blob transactions are unsupported by Fluent; this is an Ethereum type-3 transaction admission case.",
+    "source": "gen_tests.js at 3aca5cf6c, disabledTests: blobs unsupported; crates/evm/src/host.rs"
+  },
+  {
+    "fork": "Osaka",
+    "path": "ported_static/stEIP4844_blobtransactions/opcode_blobh_bounds/opcode_blobh_bounds.json",
+    "reason": "Fluent has no blob transactions and BLOBHASH always returns zero.",
+    "source": "gen_tests.js at 3aca5cf6c, disabledTests: blobs unsupported; crates/evm/src/host.rs"
+  },
+  {
+    "fork": "Osaka",
+    "path": "ported_static/stEIP4844_blobtransactions/opcode_blobhash_out_of_range/opcode_blobhash_out_of_range.json",
+    "reason": "Fluent has no blob transactions and BLOBHASH always returns zero.",
+    "source": "gen_tests.js at 3aca5cf6c, disabledTests: blobs unsupported; crates/evm/src/host.rs"
+  },
+  {
+    "fork": "Osaka",
+    "path": "cancun/eip4844_blobs/blobhash_opcode_contexts/blobhash_opcode_contexts.json",
+    "reason": "Fluent has no blob transactions; BLOBHASH is zero in every execution context.",
+    "source": "crates/evm/src/host.rs: blob_hash; continuation of the historical blob exclusion"
+  },
+  {
+    "fork": "Osaka",
+    "path": "prague/eip2537_bls_12_381_precompiles/bls12_pairing/invalid_multi_inf.json",
+    "reason": "This transaction exceeds 128 KiB; Fluent applies a quadratic calldata surcharge that Ethereum does not charge.",
+    "source": "crates/types/src/block_fuel.rs: calldata_quadratic_surcharge; crates/revm/src/handler.rs: validate_initial_tx_gas"
+  },
+  {
+    "fork": "Osaka",
+    "path": "prague/eip2537_bls_12_381_precompiles/bls12_pairing/valid_multi_inf.json",
+    "reason": "This transaction exceeds 128 KiB; Fluent applies a quadratic calldata surcharge that Ethereum does not charge.",
+    "source": "crates/types/src/block_fuel.rs: calldata_quadratic_surcharge; crates/revm/src/handler.rs: validate_initial_tx_gas"
+  },
+  {
+    "fork": "Osaka",
+    "path": "berlin/eip2930_access_list/tx_intrinsic_gas/tx_intrinsic_gas.json",
+    "reason": "Fluent does not enforce the Ethereum EIP-7623 transaction-admission floor. Other cases in this file still execute.",
+    "source": "revm-rwasm 57e1bbd: crates/handler/src/validation.rs, validate_initial_tx_gas gates the floor on legacy_bytecode_enabled",
+    "exceptions": [
+      "TransactionException.INTRINSIC_GAS_BELOW_FLOOR_GAS_COST"
+    ]
+  },
+  {
+    "fork": "Osaka",
+    "path": "ported_static/stEIP1559/low_gas_limit/low_gas_limit.json",
+    "reason": "This case has 21009 gas for one zero calldata byte: above intrinsic gas (21004), below the Ethereum EIP-7623 floor (21010). Fluent omits the admission floor. Other cases still execute.",
+    "source": "revm-rwasm 57e1bbd: crates/handler/src/validation.rs, validate_initial_tx_gas gates the floor on legacy_bytecode_enabled",
+    "cases": [
+      "tests/ported_static/stEIP1559/test_low_gas_limit.py::test_low_gas_limit[fork_Osaka-state_test--g3]"
+    ]
+  },
+  {
+    "fork": "Osaka",
+    "path": "prague/eip7623_increase_calldata_cost/transaction_validity/transaction_validity_type_0.json",
+    "reason": "Fluent does not enforce the Ethereum EIP-7623 transaction-admission floor. Other cases in this file still execute.",
+    "source": "revm-rwasm 57e1bbd: crates/handler/src/validation.rs, validate_initial_tx_gas gates the floor on legacy_bytecode_enabled",
+    "exceptions": [
+      "TransactionException.INTRINSIC_GAS_BELOW_FLOOR_GAS_COST"
+    ]
+  },
+  {
+    "fork": "Osaka",
+    "path": "prague/eip7623_increase_calldata_cost/transaction_validity/transaction_validity_type_1_type_2.json",
+    "reason": "Fluent does not enforce the Ethereum EIP-7623 transaction-admission floor. Other cases in this file still execute.",
+    "source": "revm-rwasm 57e1bbd: crates/handler/src/validation.rs, validate_initial_tx_gas gates the floor on legacy_bytecode_enabled",
+    "exceptions": [
+      "TransactionException.INTRINSIC_GAS_BELOW_FLOOR_GAS_COST"
+    ]
+  },
+  {
+    "fork": "Osaka",
+    "path": "prague/eip7623_increase_calldata_cost/transaction_validity/transaction_validity_type_3.json",
+    "reason": "Fluent does not enforce the Ethereum EIP-7623 transaction-admission floor. Other cases in this file still execute.",
+    "source": "revm-rwasm 57e1bbd: crates/handler/src/validation.rs, validate_initial_tx_gas gates the floor on legacy_bytecode_enabled",
+    "exceptions": [
+      "TransactionException.INTRINSIC_GAS_BELOW_FLOOR_GAS_COST"
+    ]
+  },
+  {
+    "fork": "Osaka",
+    "path": "prague/eip7623_increase_calldata_cost/transaction_validity/transaction_validity_type_4.json",
+    "reason": "Fluent does not enforce the Ethereum EIP-7623 transaction-admission floor. Other cases in this file still execute.",
+    "source": "revm-rwasm 57e1bbd: crates/handler/src/validation.rs, validate_initial_tx_gas gates the floor on legacy_bytecode_enabled",
+    "exceptions": [
+      "TransactionException.INTRINSIC_GAS_BELOW_FLOOR_GAS_COST"
+    ]
+  },
+  {
+    "fork": "Osaka",
+    "path": "osaka/eip7825_transaction_gas_limit_cap/eip_mainnet/tx_gas_limit_cap_exceeded.json",
+    "reason": "Fluent deliberately has no Ethereum EIP-7825 transaction gas cap. Below-cap cases in this file still execute.",
+    "source": "revm-rwasm 57e1bbd: crates/context/src/cfg.rs, tx_gas_limit_cap",
+    "exceptions": [
+      "TransactionException.GAS_LIMIT_EXCEEDS_MAXIMUM"
+    ]
+  },
+  {
+    "fork": "Osaka",
+    "path": "osaka/eip7825_transaction_gas_limit_cap/tx_gas_limit/transaction_gas_limit_cap.json",
+    "reason": "Fluent deliberately has no Ethereum EIP-7825 transaction gas cap. Below-cap cases in this file still execute.",
+    "source": "revm-rwasm 57e1bbd: crates/context/src/cfg.rs, tx_gas_limit_cap",
+    "exceptions": [
+      "TransactionException.GAS_LIMIT_EXCEEDS_MAXIMUM"
+    ]
+  },
+  {
+    "fork": "Osaka",
+    "path": "osaka/eip7825_transaction_gas_limit_cap/tx_gas_limit/tx_gas_limit_cap_access_list_with_diff_addr.json",
+    "reason": "Fluent deliberately has no Ethereum EIP-7825 transaction gas cap. Below-cap cases in this file still execute.",
+    "source": "revm-rwasm 57e1bbd: crates/context/src/cfg.rs, tx_gas_limit_cap",
+    "exceptions": [
+      "TransactionException.GAS_LIMIT_EXCEEDS_MAXIMUM"
+    ]
+  },
+  {
+    "fork": "Osaka",
+    "path": "osaka/eip7825_transaction_gas_limit_cap/tx_gas_limit/tx_gas_limit_cap_access_list_with_diff_keys.json",
+    "reason": "Fluent deliberately has no Ethereum EIP-7825 transaction gas cap. Below-cap cases in this file still execute.",
+    "source": "revm-rwasm 57e1bbd: crates/context/src/cfg.rs, tx_gas_limit_cap",
+    "exceptions": [
+      "TransactionException.GAS_LIMIT_EXCEEDS_MAXIMUM"
+    ]
+  },
+  {
+    "fork": "Osaka",
+    "path": "osaka/eip7825_transaction_gas_limit_cap/tx_gas_limit/tx_gas_limit_cap_authorized_tx.json",
+    "reason": "Fluent deliberately has no Ethereum EIP-7825 transaction gas cap. Below-cap cases in this file still execute.",
+    "source": "revm-rwasm 57e1bbd: crates/context/src/cfg.rs, tx_gas_limit_cap",
+    "exceptions": [
+      "TransactionException.GAS_LIMIT_EXCEEDS_MAXIMUM"
+    ]
+  },
+  {
+    "fork": "Osaka",
+    "path": "osaka/eip7825_transaction_gas_limit_cap/tx_gas_limit/tx_gas_limit_cap_full_calldata.json",
+    "reason": "These transactions have calldata above 128 KiB and exercise the Ethereum gas cap/floor; Fluent has a different cap policy and a quadratic calldata surcharge.",
+    "source": "crates/types/src/block_fuel.rs; revm-rwasm 57e1bbd: crates/context/src/cfg.rs, tx_gas_limit_cap"
+  },
+  {
+    "fork": "Osaka",
+    "path": "prague/eip7702_set_code_tx/set_code_txs_2/pointer_to_precompile.json",
+    "reason": "EIP-7702 targets a precompile: Ethereum treats its delegated code as empty, while Fluent resolves a physical genesis contract.",
+    "source": "Historical physical-precompile exclusion; crates/revm/src/evm.rs: frame_init; crates/revm/src/executor.rs: ownable account resolution"
+  },
+  {
+    "fork": "Osaka",
+    "path": "prague/eip7702_set_code_tx/set_code_txs/set_code_to_precompile.json",
+    "reason": "EIP-7702 targets a precompile: Ethereum treats its delegated code as empty, while Fluent resolves a physical genesis contract.",
+    "source": "Historical physical-precompile exclusion; crates/revm/src/evm.rs: frame_init; crates/revm/src/executor.rs: ownable account resolution"
+  },
+  {
+    "fork": "Osaka",
+    "path": "prague/eip7702_set_code_tx/set_code_txs/set_code_to_precompile_not_enough_gas_for_precompile_execution.json",
+    "reason": "EIP-7702 targets a precompile: Ethereum treats its delegated code as empty, while Fluent resolves a physical genesis contract.",
+    "source": "Historical physical-precompile exclusion; crates/revm/src/evm.rs: frame_init; crates/revm/src/executor.rs: ownable account resolution"
+  },
+  {
+    "fork": "Osaka",
+    "path": "prague/eip7702_set_code_tx/calls/delegate_call_targets.json",
+    "reason": "Delegating to the identity precompile executes its physical Fluent contract instead of Ethereum empty delegated code. Other call targets still execute.",
+    "source": "Historical physical-precompile exclusion; crates/revm/src/evm.rs: frame_init",
+    "cases": [
+      "tests/prague/eip7702_set_code_tx/test_calls.py::test_delegate_call_targets[fork_Osaka-state_test-call_from_initcode_False-sender_delegated_False-delegate_True-target_account_type_IDENTITY_PRECOMPILE]",
+      "tests/prague/eip7702_set_code_tx/test_calls.py::test_delegate_call_targets[fork_Osaka-state_test-call_from_initcode_False-sender_delegated_True-delegate_True-target_account_type_IDENTITY_PRECOMPILE]",
+      "tests/prague/eip7702_set_code_tx/test_calls.py::test_delegate_call_targets[fork_Osaka-state_test-call_from_initcode_True-sender_delegated_False-delegate_True-target_account_type_IDENTITY_PRECOMPILE]",
+      "tests/prague/eip7702_set_code_tx/test_calls.py::test_delegate_call_targets[fork_Osaka-state_test-call_from_initcode_True-sender_delegated_True-delegate_True-target_account_type_IDENTITY_PRECOMPILE]"
+    ]
+  }
+]
