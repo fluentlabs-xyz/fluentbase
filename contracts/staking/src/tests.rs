@@ -9109,6 +9109,319 @@ fn stamps_are_bounded_per_close_and_by_the_concurrent_budget() {
     assert_eq!(pending_exclusion_set(&harness.sdk).len(), 3);
 }
 
+// The close belongs to the boundary and nowhere else. Running it on every block
+// would price and judge an epoch that is still being produced: the counters are
+// short of the interval all the way through, so every mid-epoch block would
+// report the epoch it is inside as partial and forfeit its verdicts before the
+// epoch had a chance to be complete.
+#[test]
+fn a_block_inside_an_epoch_closes_nothing() {
+    let (mut harness, members) = liveness_harness(&[DEFAULT_MIN_VALIDATOR_STAKE; 4], 4);
+    equal_weight_committee(&mut harness.sdk, 0, &members);
+    harness.sdk.take_logs();
+
+    // Activation is 1_000 and the interval 200, so epoch 0 runs to 1_199 and
+    // none of these three blocks crosses a boundary.
+    for block in [1_000u64, 1_001, 1_002] {
+        assert_eq!(record_production(&mut harness, block, 0), ExitCode::Ok);
+    }
+
+    let logs = harness.sdk.take_logs();
+    assert!(
+        logs_of(&logs, events::PartialEpoch::SELECTOR).is_empty(),
+        "an epoch still being produced is not a short epoch"
+    );
+    assert!(
+        logs_of(&logs, events::ProductionVerdictFailed::SELECTOR).is_empty(),
+        "nobody is judged before the epoch they were judged on has ended"
+    );
+    assert_eq!(
+        production_liveness_storage()
+            .blocks_in_epoch_accessor()
+            .entry(0)
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        3,
+        "the three blocks are counted, which is the whole of what a mid-epoch block does"
+    );
+}
+
+// `readmit_at_epoch == 0` is the sentinel for "carries no stamp", not for "a
+// term that expired at epoch zero". The two are one field, so a release leg that
+// compared only against `current` would read every unstamped entry as due and
+// release it — restoring selection visibility for a validator whose exclusion
+// was never issued.
+//
+// The state is written past the API deliberately: `stamp` writes the deadline
+// and the queue entry together, so the contract's own paths never produce a
+// queued validator with a zero deadline. What is under test is the belt, and a
+// belt can only be tested from the state it exists to survive.
+#[test]
+fn a_queued_validator_with_no_deadline_is_never_released() {
+    let (mut harness, members) = liveness_harness(&[DEFAULT_MIN_VALIDATOR_STAKE; 4], 4);
+    equal_weight_committee(&mut harness.sdk, 0, &members);
+    equal_weight_committee(&mut harness.sdk, 1, &members);
+    production_liveness_storage()
+        .pending_exclusions_accessor()
+        .push_checked(&mut harness.sdk, members[3])
+        .unwrap();
+    assert_eq!(production_record(&harness.sdk, members[3]).1, 0);
+    harness.sdk.take_logs();
+
+    seed_epoch_production(&mut harness.sdk, 0, &[50, 50, 50, 49], 199);
+    assert_eq!(close_epoch_via_record(&mut harness, 0), ExitCode::Ok);
+
+    assert!(
+        logs_of(
+            &harness.sdk.take_logs(),
+            events::ProductionExclusionReleased::SELECTOR
+        )
+        .is_empty(),
+        "a validator that was never excluded cannot be released"
+    );
+    assert_eq!(
+        pending_exclusion_set(&harness.sdk),
+        vec![members[3]],
+        "and the entry stays queued rather than being swap-popped away"
+    );
+}
+
+// A validator already serving an exclusion that fails again is not a NEW
+// failure. Counting it as one hands the correlation guard a second vote from
+// the same fault: `f` validators already answered, failing again as they will,
+// would push the count past `f` every close and shield every genuinely new
+// failer behind an amnesty the environment never earned.
+#[test]
+fn a_validator_already_serving_an_exclusion_is_not_a_new_failure() {
+    let (mut harness, members) =
+        liveness_harness(&[DEFAULT_MIN_VALIDATOR_STAKE * U256::from(2); 7], 2);
+    set_min_verdict_due_blocks(&mut harness, 10);
+    for epoch in 1..4 {
+        equal_weight_committee(&mut harness.sdk, epoch, &members);
+    }
+    // A ladder deep enough that the exclusion stamped at the close of epoch 1 is
+    // still outstanding at the close of epoch 3.
+    production_liveness_storage()
+        .validators_accessor()
+        .entry(members[6])
+        .kick_count_accessor()
+        .set_checked(&mut harness.sdk, 4)
+        .unwrap();
+
+    seed_epoch_production(&mut harness.sdk, 1, &[34, 33, 33, 33, 33, 34, 0], 200);
+    assert_eq!(close_epoch_via_record(&mut harness, 1), ExitCode::Ok);
+    assert_eq!(pending_exclusion_set(&harness.sdk), vec![members[6]]);
+    assert_eq!(production_record(&harness.sdk, members[6]).1, 2 + 5);
+
+    // An epoch in which nobody fails, so at epoch 3 the excluded member's last
+    // failure is no longer the previous epoch — the newness test has only the
+    // outstanding stamp left to refuse it on.
+    seed_epoch_production(&mut harness.sdk, 2, &[29, 29, 29, 29, 28, 28, 28], 200);
+    assert_eq!(close_epoch_via_record(&mut harness, 2), ExitCode::Ok);
+    assert_eq!(pending_exclusion_set(&harness.sdk), vec![members[6]]);
+
+    seed_epoch_production(&mut harness.sdk, 3, &[50, 50, 50, 50, 0, 0, 0], 200);
+    harness.sdk.take_logs();
+    assert_eq!(close_epoch_via_record(&mut harness, 3), ExitCode::Ok);
+
+    let logs = harness.sdk.take_logs();
+    assert_eq!(
+        logs_of(&logs, events::ProductionVerdictFailed::SELECTOR).len(),
+        3,
+        "all three failed, the excluded one included"
+    );
+    assert!(
+        logs_of(&logs, events::CorrelatedFailureEpoch::SELECTOR).is_empty(),
+        "two new failures against a tolerance of two is not a correlated epoch"
+    );
+    assert_eq!(
+        pending_exclusion_set(&harness.sdk).len(),
+        2,
+        "so the close still answers one of the two new failers"
+    );
+}
+
+// The stamp order is kick-count descending, then address ascending — and both
+// terms are load-bearing only because neither coincides with the order the
+// committee record happens to be in. Every other fixture in this file seats
+// members in address order, where "first index" and "lowest address" are the
+// same pick and a dropped comparison reads as correct; this one seats them
+// permuted so the three orders disagree.
+#[test]
+fn the_stamp_takes_the_deepest_ladder_and_breaks_ties_on_the_address() {
+    // Returns the queue the close produced, in the order the stamps were issued.
+    fn stamped(seating: &[u8], failed: &[usize], ladders: &[(u8, u32)]) -> Vec<Address> {
+        let (mut harness, _) =
+            liveness_harness(&[DEFAULT_MIN_VALIDATOR_STAKE * U256::from(2); 7], 2);
+        set_min_verdict_due_blocks(&mut harness, 10);
+        let seated: Vec<Address> = seating
+            .iter()
+            .map(|b| Address::with_last_byte(*b))
+            .collect();
+        equal_weight_committee(&mut harness.sdk, 1, &seated);
+        for (byte, kicks) in ladders {
+            production_liveness_storage()
+                .validators_accessor()
+                .entry(Address::with_last_byte(*byte))
+                .kick_count_accessor()
+                .set_checked(&mut harness.sdk, *kicks)
+                .unwrap();
+        }
+        let mut produced = [40u32; 7];
+        for index in failed {
+            produced[*index] = 0;
+        }
+        seed_epoch_production(&mut harness.sdk, 1, &produced, 200);
+        assert_eq!(close_epoch_via_record(&mut harness, 1), ExitCode::Ok);
+        pending_exclusion_set(&harness.sdk)
+    }
+
+    // Equal ladders, so the address decides. `0x01` sits at index 2 and `0x03`
+    // at index 0: taking the record's order would stamp `0x03` first.
+    assert_eq!(
+        stamped(&[0x03, 0x02, 0x01, 0x04, 0x05, 0x06, 0x07], &[0, 2], &[]),
+        vec![Address::with_last_byte(0x01), Address::with_last_byte(0x03)],
+        "equal ladders are broken on the address, not on the seat"
+    );
+
+    // Unequal ladders, and the deeper one carries the HIGHER address as well as
+    // the higher seat, so only the kick-count term can put it first.
+    assert_eq!(
+        stamped(
+            &[0x03, 0x02, 0x01, 0x04, 0x05, 0x06, 0x07],
+            &[2, 4],
+            &[(0x05, 5)]
+        ),
+        vec![Address::with_last_byte(0x05), Address::with_last_byte(0x01)],
+        "a deeper ladder outranks a lower address"
+    );
+}
+
+// A stamp the staking side refuses must leave nothing behind. The refusal is
+// not an error — it is the population floor holding — so the close carries on;
+// but if the ladder were advanced anyway, the validator would pay a longer
+// exclusion next time for an exclusion it never served, and the queue would
+// hold a slot of the `<= f` budget against a validator that is still selectable.
+#[test]
+fn a_refused_exclusion_leaves_the_ladder_and_the_queue_untouched() {
+    // Exactly four Active validators, so `apply_production_exclusion` finds the
+    // eligible population one short of the floor it requires and refuses.
+    let (mut harness, members) =
+        liveness_harness(&[DEFAULT_MIN_VALIDATOR_STAKE * U256::from(2); 4], 4);
+    set_min_verdict_due_blocks(&mut harness, 10);
+    equal_weight_committee(&mut harness.sdk, 1, &members);
+
+    seed_epoch_production(&mut harness.sdk, 1, &[67, 67, 66, 0], 200);
+    harness.sdk.take_logs();
+    assert_eq!(close_epoch_via_record(&mut harness, 1), ExitCode::Ok);
+
+    let logs = harness.sdk.take_logs();
+    assert_eq!(
+        logs_of(&logs, events::ProductionVerdictFailed::SELECTOR).len(),
+        1,
+        "the verdict is reached — it is only the exclusion that is refused"
+    );
+    assert!(
+        logs_of(&logs, events::ProductionExclusionApplied::SELECTOR).is_empty(),
+        "and the refusal is silent, so no exclusion is announced"
+    );
+    let (last_failed_p1, readmit, kicks) = production_record(&harness.sdk, members[3]);
+    assert_eq!(last_failed_p1, 2, "the failure itself is still recorded");
+    assert_eq!(readmit, 0, "but no term was set");
+    assert_eq!(kicks, 0, "and the ladder did not advance");
+    assert!(pending_exclusion_set(&harness.sdk).is_empty());
+}
+
+// The ladder climbs without bound; the exclusion it buys does not. Governance
+// lowers the cap to bound the longest exclusion the tier can impose, and the
+// saturation is the only thing that makes the setting mean anything — the
+// episode count itself is never reset by an exclusion being served.
+#[test]
+fn the_backoff_cap_bounds_the_exclusion_a_deep_ladder_buys() {
+    let (mut harness, members) =
+        liveness_harness(&[DEFAULT_MIN_VALIDATOR_STAKE * U256::from(2); 7], 2);
+    set_min_verdict_due_blocks(&mut harness, 10);
+    harness.set_caller(GENESIS_GOVERNANCE);
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_SET_EXCLUSION_BACKOFF_CAP,
+                &U32Command { value: 1 },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+    harness.set_caller(SYSTEM_CALLER);
+    equal_weight_committee(&mut harness.sdk, 1, &members);
+    production_liveness_storage()
+        .validators_accessor()
+        .entry(members[6])
+        .kick_count_accessor()
+        .set_checked(&mut harness.sdk, 4)
+        .unwrap();
+
+    seed_epoch_production(&mut harness.sdk, 1, &[34, 33, 33, 33, 33, 34, 0], 200);
+    assert_eq!(close_epoch_via_record(&mut harness, 1), ExitCode::Ok);
+
+    let (_, readmit, kicks) = production_record(&harness.sdk, members[6]);
+    assert_eq!(
+        kicks, 5,
+        "the ladder counts the episode whatever the cap is"
+    );
+    assert_eq!(
+        readmit,
+        2 + 1,
+        "but the term is the cap, not the fifth rung: the close ran at epoch 2"
+    );
+}
+
+// An epoch whose frozen weights are all zero is unjudgeable, and the guard that
+// says so has to stand ABOVE the per-member walk rather than fall out of it. A
+// zero total makes every member's due zero, and a due of zero clears the
+// confidence floor by equality — so without the guard the walk runs to
+// completion, finds nobody failing, and on its way there retires the backoff
+// ladder of every member whose last failure is old enough. An epoch that judged
+// nobody would be handing out clean-run credit.
+#[test]
+fn an_epoch_with_no_frozen_weight_at_all_judges_nobody_and_credits_nobody() {
+    let (mut harness, members) = liveness_harness(&[DEFAULT_MIN_VALIDATOR_STAKE; 4], 4);
+    let seating: Vec<(Address, U256)> = members.iter().map(|m| (*m, U256::ZERO)).collect();
+    commit_test_committee(&mut harness.sdk, 31, &seating);
+    for member in &members {
+        let record = production_liveness_storage()
+            .validators_accessor()
+            .entry(*member);
+        record
+            .kick_count_accessor()
+            .set_checked(&mut harness.sdk, 3)
+            .unwrap();
+        // Failed at epoch 0, so by epoch 31 the run is long past
+        // `KICK_LADDER_RESET_EPOCHS` and the retire arm would fire if reached.
+        record
+            .last_failed_epoch_p1_accessor()
+            .set_checked(&mut harness.sdk, 1)
+            .unwrap();
+    }
+
+    seed_epoch_production(&mut harness.sdk, 31, &[50, 50, 50, 50], 200);
+    harness.sdk.take_logs();
+    assert_eq!(close_epoch_via_record(&mut harness, 31), ExitCode::Ok);
+
+    let logs = harness.sdk.take_logs();
+    assert!(
+        logs_of(&logs, events::PartialEpoch::SELECTOR).is_empty(),
+        "the epoch is complete — it is the weights that are absent, not the blocks"
+    );
+    assert!(logs_of(&logs, events::ProductionVerdictFailed::SELECTOR).is_empty());
+    for member in &members {
+        assert_eq!(
+            production_record(&harness.sdk, *member),
+            (1, 0, 3),
+            "no verdict, no term, and the ladder exactly as it was"
+        );
+    }
+}
+
 // The kill switch stops the tier punishing; it does not stop the clock. Gating
 // the release leg on it would freeze the stamp while `current` ran past
 // `readmit_at_epoch`, silently lengthening the exclusion — and `activate_validator`
