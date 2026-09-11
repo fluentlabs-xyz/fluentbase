@@ -476,9 +476,6 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let value = U256::from_le_slice(&input[20..52]);
             let has_transfer = !value.is_zero();
             debug_syscall!("CALL_CODE", "to={:?} value={:?}", target_address, value);
-            if is_static && has_transfer {
-                return_halt!(StateChangeDuringStaticCall);
-            }
             charge_regular_gas!(gas::WARM_STORAGE_READ_COST);
             if has_transfer {
                 charge_regular_gas!(ctx.gas_params().transfer_value_cost());
@@ -498,7 +495,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             );
             charge_regular_gas!(gas_limit);
             // Add a call stipend if there is a value to be transferred.
-            if !value.is_zero() {
+            if has_transfer {
                 gas_limit = gas_limit.saturating_add(ctx.cfg().gas_params().call_stipend());
             }
             inspect!(
