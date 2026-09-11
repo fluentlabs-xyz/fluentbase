@@ -897,8 +897,8 @@ pub fn get_validator_by_owner<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Re
 /// writes it. Without the gate this view answers `IntegerDivisionByZero`, which
 /// names the arithmetic rather than the state (K-18).
 pub fn get_validators<SDK: SharedAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
-    ensure_initialized(sdk)?;
     ensure_non_payable(sdk)?;
+    ensure_initialized(sdk)?;
     write_abi(sdk, &selected_validators(sdk)?)
 }
 
@@ -1030,8 +1030,8 @@ pub fn get_validator_delegated_stake_at<SDK: SharedAPI>(
     sdk: &mut SDK,
     input: &[u8],
 ) -> Result<(), ExitCode> {
-    ensure_initialized(sdk)?;
     ensure_non_payable(sdk)?;
+    ensure_initialized(sdk)?;
     let command: ValidatorBlockCommand = decode(input)?;
     if command.block_number > U256::from(u64::MAX) {
         return Err(ExitCode::IntegerOverflow);

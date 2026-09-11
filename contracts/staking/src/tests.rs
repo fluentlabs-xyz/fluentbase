@@ -2035,6 +2035,37 @@ fn handlers_refuse_value_and_refuse_to_mutate_inside_a_static_frame() {
         "and must refuse a static frame"
     );
     harness.sdk.context_mut().is_static = false;
+
+    // "First in every handler" is a claim about ORDER, and the only place it is
+    // observable is where a second guard would also refuse. The two views that
+    // carry `ensure_initialized` (K-18) held it in the opposite order until
+    // 2026-09-11 and answered `NotInitialized` to a payable call on an
+    // uninitialized contract — a contract revert where every other handler gives
+    // the SDK's bare exit code.
+    let subject = Address::with_last_byte(0x01);
+    for (name, calldata) in [
+        ("getValidators", encode_empty_call(SIG_GET_VALIDATORS)),
+        (
+            "getValidatorDelegatedStakeAt",
+            encode_call(
+                SIG_GET_VALIDATOR_DELEGATED_STAKE_AT,
+                &ValidatorBlockCommand {
+                    validator: subject,
+                    block_number: U256::from(10),
+                },
+            ),
+        ),
+    ] {
+        let mut fresh = Harness::new(1_000);
+        // The control: without value the initialization guard is what answers.
+        assert_revert_selector(fresh.call(calldata.clone()), ERR_NOT_INITIALIZED);
+        fresh.sdk.context_mut().value = U256::from(1);
+        assert_eq!(
+            fresh.call(calldata),
+            (ExitCode::Panic, Vec::new()),
+            "{name} must refuse the value before it looks at the state"
+        );
+    }
 }
 
 #[test]
@@ -11323,6 +11354,14 @@ fn the_ladder_reset_also_lands_on_the_member_failing_that_same_epoch() {
 // short-circuit, not by construction — it reaches `selected_validators` only
 // after `validator_status == STATUS_ACTIVE`, which no address satisfies before
 // `initialize`.
+//
+// The enumeration is COMPLETE and has to stay that way, which is what it lost
+// once already: `getPendingBlendReserve` arrived in `0f283a82` and was not added
+// here, so for a day the comment above claimed a measurement it no longer made.
+// Walking the dispatcher gives 24 entry points that never reach
+// `ensure_initialized` — `initialize` itself and 23 reads. Nineteen are below
+// unconditionally and the four `devnet-views` reads join them under the same
+// feature the dispatcher gates them with, which is all 23.
 #[test]
 fn the_two_views_that_reach_the_epoch_formula_refuse_an_uninitialized_contract() {
     let subject = Address::with_last_byte(0x01);
@@ -11343,7 +11382,8 @@ fn the_two_views_that_reach_the_epoch_formula_refuse_an_uninitialized_contract()
         ERR_NOT_INITIALIZED,
     );
 
-    for (name, call) in [
+    #[allow(unused_mut)]
+    let mut surfaces = vec![
         (
             "isValidator",
             encode_call(SIG_IS_VALIDATOR, &AddressCommand { value: subject }),
@@ -11419,7 +11459,34 @@ fn the_two_views_that_reach_the_epoch_formula_refuse_an_uninitialized_contract()
             "getProductionLivenessDisabled",
             encode_empty_call(SIG_GET_PRODUCTION_LIVENESS_DISABLED),
         ),
-    ] {
+        (
+            "getPendingBlendReserve",
+            encode_empty_call(SIG_GET_PENDING_BLEND_RESERVE),
+        ),
+    ];
+    #[cfg(feature = "devnet-views")]
+    surfaces.extend([
+        (
+            "blocksInEpoch",
+            encode_call(SIG_BLOCKS_IN_EPOCH, &U64Command { value: 4 }),
+        ),
+        (
+            "producedAt",
+            encode_call(
+                SIG_PRODUCED_AT,
+                &EpochSignerCommand {
+                    epoch: 4,
+                    signer_idx: 0,
+                },
+            ),
+        ),
+        ("pendingExclusions", encode_empty_call(SIG_PENDING_EXCLUSIONS)),
+        (
+            "lastProcessedBlock",
+            encode_empty_call(SIG_LAST_PROCESSED_BLOCK),
+        ),
+    ]);
+    for (name, call) in surfaces {
         let mut harness = Harness::new(1_000);
         assert_eq!(
             harness.call(call).0,
