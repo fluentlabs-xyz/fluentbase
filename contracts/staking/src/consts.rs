@@ -364,7 +364,10 @@ pub use staking_protocol::MAX_COMMITTEE_SIZE;
 /// At 16 that is 13 epochs, roughly 1.12 M consecutive unrecorded blocks at an
 /// 86,400-block epoch. The conclusion outlived both of its stated reasons, which
 /// is recorded rather than tidied away.
-pub const WEIGHT_RING_EPOCHS: u64 = 16;
+///
+/// The node's committee module pins its read window against this number, so it
+/// is declared once, shared, and imported here under the shared name.
+pub use staking_protocol::WEIGHT_RING_EPOCHS;
 
 /// Ring pair-slots one epoch occupies: two members' weights and their shared
 /// epoch stamp pack into one 32-byte slot (`14 + 14 + 4`).

@@ -72,6 +72,27 @@ pub const BALANCE_COMPACT_PRECISION_U256: U256 =
 /// contract's is a revert on a fail-loud system call, i.e. a halted chain.
 pub const MAX_COMMITTEE_LOOKAHEAD_EPOCHS: u64 = 2;
 
+/// Epochs the contract's frozen-weight ring holds before a frame is reused.
+///
+/// `commitEpochCommittee` stamps each committed epoch's leader weights into
+/// slot `epoch mod` this number; past the wrap the contract answers an EMPTY
+/// `stakes` leg, which the reader decodes as
+/// `ValidatorSetSnapshot::weights = None`. Membership and keys are retained
+/// forever — only the weights expire — so the two legs have genuinely
+/// different lifetimes.
+///
+/// Shared rather than contract-local because the NODE pins an invariant
+/// against it: the committee module reads an epoch only inside
+/// `[epoch(anchor) − SCHEME_RETENTION_EPOCHS, epoch(anchor) +
+/// MAX_COMMITTEE_LOOKAHEAD_EPOCHS]`, and it is
+/// `WEIGHT_RING_EPOCHS − MAX_COMMITTEE_LOOKAHEAD_EPOCHS >
+/// SCHEME_RETENTION_EPOCHS` that makes the weights of every epoch in that
+/// window still present, hence `CommitteeRecord::weights` non-optional. That
+/// inequality is a `const _: () = assert!(…)` on the node side, so shrinking
+/// the ring here is a compile error there rather than a run-time `None` the
+/// leader elector would have to invent a uniform lottery for.
+pub const WEIGHT_RING_EPOCHS: u64 = 16;
+
 /// Compressed BLS12-381 G2 public key (MinSig), in bytes.
 pub const BLS_PUBKEY_LENGTH: usize = 96;
 /// Compressed BLS12-381 G1 signature (MinSig), in bytes.
