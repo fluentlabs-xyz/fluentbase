@@ -139,6 +139,55 @@ impl FunctionABI {
         }
     }
 
+    /// Makes the entry hash to a pinned signature
+    ///
+    /// A `#[function_id("name(type,...)")]` attribute is the interface the router dispatches on,
+    /// whatever the Rust parameter types derive to. The published entry has to say the same thing,
+    /// otherwise callers encoding from the artifact never reach the method. The entry takes the
+    /// pinned name, and every leaf parameter whose derived type differs takes the pinned type at
+    /// its position. Tuples cannot be mapped onto a different pinned type, and a different number
+    /// of parameters cannot be mapped at all; both are errors.
+    pub fn retype_from_signature(&mut self, signature: &str) -> Result<(), ABIError> {
+        let (name, params) = signature
+            .strip_suffix(')')
+            .and_then(|head| head.split_once('('))
+            .ok_or_else(|| {
+                ABIError::TypeConversion(format!(
+                    "pinned signature `{signature}` is not of the form name(type,...)"
+                ))
+            })?;
+        let pinned_types = split_top_level_types(params);
+
+        if pinned_types.len() != self.inputs.len() {
+            return Err(ABIError::TypeConversion(format!(
+                "pinned signature `{signature}` has {} parameters, but `{}` takes {}",
+                pinned_types.len(),
+                self.name,
+                self.inputs.len()
+            )));
+        }
+
+        for (input, pinned_type) in self.inputs.iter_mut().zip(pinned_types) {
+            let derived_type = input.get_canonical_type()?;
+            if derived_type == pinned_type {
+                continue;
+            }
+            if input.components.is_some() || pinned_type.starts_with('(') {
+                return Err(ABIError::TypeConversion(format!(
+                    "parameter `{}` derives to `{derived_type}`, but the pinned signature says \
+                     `{pinned_type}`; a tuple parameter cannot be retyped, so the pinned \
+                     signature has to spell out the same components",
+                    input.name
+                )));
+            }
+            input.internal_type = pinned_type.clone();
+            input.ty = pinned_type;
+        }
+        self.name = name.to_string();
+
+        Ok(())
+    }
+
     /// Returns canonical function signature for Solidity ABI
     /// Format: fnName(type1,type2,...)
     pub fn signature(&self) -> Result<String, ABIError> {
@@ -180,10 +229,106 @@ impl FunctionABI {
     }
 }
 
+/// Splits the parameter list of a canonical signature on the commas outside tuples
+fn split_top_level_types(params: &str) -> Vec<String> {
+    let mut types = Vec::new();
+    let mut depth = 0usize;
+    let mut current = String::new();
+    for ch in params.chars() {
+        match ch {
+            '(' => {
+                depth += 1;
+                current.push(ch);
+            }
+            ')' => {
+                depth = depth.saturating_sub(1);
+                current.push(ch);
+            }
+            ',' if depth == 0 => types.push(core::mem::take(&mut current)),
+            _ => current.push(ch),
+        }
+    }
+    if !current.is_empty() {
+        types.push(current);
+    }
+    types
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use syn::parse_quote;
+
+    /// A pinned signature retypes the leaf parameters whose derived type differs
+    #[test]
+    fn test_pinned_signature_retypes_leaf_parameters() {
+        let sig: Signature = parse_quote! {
+            fn upgrade_to(target_address: Address, genesis_hash: B256, genesis_version: String, wasm_bytecode: Bytes)
+        };
+        let mut abi = FunctionABI::from_signature(&sig).unwrap();
+        assert_eq!(
+            abi.signature().unwrap(),
+            "upgradeTo(address,bytes32,string,bytes)"
+        );
+
+        abi.retype_from_signature("upgradeTo(address,uint256,string,bytes)")
+            .unwrap();
+
+        assert_eq!(abi.inputs[1].name, "genesis_hash");
+        assert_eq!(abi.inputs[1].ty, "uint256");
+        assert_eq!(abi.inputs[1].internal_type, "uint256");
+        assert_eq!(abi.inputs[0].ty, "address");
+        assert_eq!(
+            abi.signature().unwrap(),
+            "upgradeTo(address,uint256,string,bytes)"
+        );
+        // keccak256("upgradeTo(address,uint256,string,bytes)")[..4]
+        assert_eq!(abi.function_id().unwrap(), [0x28, 0x8f, 0xb3, 0xb8]);
+    }
+
+    /// The entry takes the pinned name, so the artifact describes what callers actually send
+    #[test]
+    fn test_pinned_signature_renames_the_entry() {
+        let sig: Signature = parse_quote! {
+            fn first_method(to: Address, amount: U256) -> bool
+        };
+        let mut abi = FunctionABI::from_signature(&sig).unwrap();
+
+        abi.retype_from_signature("transfer(address,uint256)")
+            .unwrap();
+
+        assert_eq!(abi.name, "transfer");
+        assert_eq!(abi.function_id().unwrap(), [0xa9, 0x05, 0x9c, 0xbb]);
+    }
+
+    /// Tuples keep their components: a pinned signature spelling them the same way is accepted
+    #[test]
+    fn test_pinned_signature_keeps_matching_tuples() {
+        let sig: Signature = parse_quote! {
+            fn set(config: (U256, bool), owner: Address)
+        };
+        let mut abi = FunctionABI::from_signature(&sig).unwrap();
+
+        abi.retype_from_signature("set((uint256,bool),bytes32)")
+            .unwrap();
+
+        assert_eq!(abi.signature().unwrap(), "set((uint256,bool),bytes32)");
+    }
+
+    /// A tuple that disagrees with the pinned signature, or a different arity, cannot be mapped
+    #[test]
+    fn test_pinned_signature_rejects_tuple_retypes_and_arity_changes() {
+        let sig: Signature = parse_quote! {
+            fn set(config: (U256, bool), owner: Address)
+        };
+        let mut abi = FunctionABI::from_signature(&sig).unwrap();
+        assert!(abi
+            .retype_from_signature("set((uint256,uint256),address)")
+            .is_err());
+        assert!(abi.retype_from_signature("set(uint256,address)").is_err());
+        assert!(abi.retype_from_signature("set((uint256,bool))").is_err());
+        assert!(abi.retype_from_signature("set").is_err());
+    }
 
     #[test]
     fn test_basic_function_abi() {

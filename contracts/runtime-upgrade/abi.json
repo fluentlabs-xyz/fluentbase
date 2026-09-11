@@ -7,9 +7,9 @@
         "type": "address"
       },
       {
-        "internalType": "bytes32",
+        "internalType": "uint256",
         "name": "genesis_hash",
-        "type": "bytes32"
+        "type": "uint256"
       },
       {
         "internalType": "string",
@@ -24,7 +24,7 @@
     ],
     "name": "upgradeTo",
     "outputs": [],
-    "stateMutability": "nonpayable",
+    "stateMutability": "payable",
     "type": "function"
   },
   {
@@ -33,19 +33,34 @@
         "internalType": "address",
         "name": "target_address",
         "type": "address"
+      },
+      {
+        "internalType": "uint256",
+        "name": "genesis_hash",
+        "type": "uint256"
+      },
+      {
+        "internalType": "string",
+        "name": "genesis_version",
+        "type": "string"
+      },
+      {
+        "internalType": "bytes",
+        "name": "evm_bytecode",
+        "type": "bytes"
       }
     ],
-    "name": "recompile",
+    "name": "upgradeEvmTo",
     "outputs": [],
-    "stateMutability": "nonpayable",
+    "stateMutability": "payable",
     "type": "function"
   },
   {
     "inputs": [
       {
-        "internalType": "bytes32",
+        "internalType": "uint256",
         "name": "genesis_hash",
-        "type": "bytes32"
+        "type": "uint256"
       },
       {
         "internalType": "string",
@@ -70,7 +85,7 @@
     ],
     "name": "planUpgrade",
     "outputs": [],
-    "stateMutability": "nonpayable",
+    "stateMutability": "payable",
     "type": "function"
   },
   {
@@ -88,7 +103,7 @@
     ],
     "name": "upgradeToPlanned",
     "outputs": [],
-    "stateMutability": "nonpayable",
+    "stateMutability": "payable",
     "type": "function"
   },
   {
@@ -101,7 +116,7 @@
     ],
     "name": "changeOwner",
     "outputs": [],
-    "stateMutability": "nonpayable",
+    "stateMutability": "payable",
     "type": "function"
   },
   {
@@ -114,14 +129,14 @@
         "type": "address"
       }
     ],
-    "stateMutability": "nonpayable",
+    "stateMutability": "payable",
     "type": "function"
   },
   {
     "inputs": [],
     "name": "renounceOwnership",
     "outputs": [],
-    "stateMutability": "nonpayable",
+    "stateMutability": "payable",
     "type": "function"
   }
 ]

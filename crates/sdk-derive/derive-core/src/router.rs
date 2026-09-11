@@ -619,6 +619,37 @@ mod b {
         assert_eq!(method.function_id(), [0xb6, 0xea, 0x7d, 0x04]);
     }
 
+    /// The published ABI of a method with a pinned selector hashes to that selector
+    #[test]
+    fn test_pinned_selector_is_what_the_abi_publishes() {
+        let impl_block: syn::ItemImpl = parse_quote! {
+            impl<SDK: SharedAPI> App<SDK> {
+                #[function_id("upgradeTo(address,uint256,string,bytes)")]
+                pub fn upgrade_to(
+                    &mut self,
+                    target_address: Address,
+                    genesis_hash: B256,
+                    genesis_version: String,
+                    wasm_bytecode: Bytes,
+                ) {
+                }
+            }
+        };
+
+        let router = process_router(quote! { mode = "solidity" }, impl_block.into_token_stream())
+            .expect("Failed to process router");
+
+        let method = router.available_methods()[0];
+        let abi = method
+            .function_abi()
+            .expect("a pinned leaf retype keeps the ABI");
+        assert_eq!(abi.signature().unwrap(), method.signature());
+        assert_eq!(abi.function_id().unwrap(), method.function_id());
+        assert_eq!(method.function_id(), [0x28, 0x8f, 0xb3, 0xb8]);
+        assert_eq!(abi.inputs[1].name, "genesis_hash");
+        assert_eq!(abi.inputs[1].ty, "uint256");
+    }
+
     /// A `fallback` handler is a route the dispatcher can reach, but it has no selector arm
     #[test]
     fn test_fallback_receives_unmatched_selectors() {

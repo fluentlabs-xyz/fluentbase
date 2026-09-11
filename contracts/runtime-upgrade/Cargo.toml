@@ -10,6 +10,8 @@ fluentbase-sdk = { workspace = true }
 fluentbase-testing = { workspace = true }
 # Independent Solidity ABI decoder used to validate emitted event log data.
 alloy-sol-types = { workspace = true }
+# Independent reader of the published `abi.json`, to pin it to the router's selectors.
+alloy-json-abi = { workspace = true }
 
 [build-dependencies]
 fluentbase-build = { workspace = true }
