@@ -5719,6 +5719,7 @@ dependencies = [
  "fluentbase-sdk",
  "fluentbase-staking-abi",
  "fluentbase-testing",
+ "fluentbase-types",
  "hex",
  "hex-literal",
  "paste",

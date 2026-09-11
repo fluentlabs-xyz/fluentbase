@@ -428,13 +428,6 @@ pub const DEFAULT_UNDELEGATE_PERIOD: u64 = 7;
 /// declaration is visible as an ordinary receipt log and queryable through
 /// `getPendingBlendReserve`.
 ///
-/// Epochs, not blocks and not seconds: this contract reads no clock
-/// (`block_timestamp()` appears nowhere in it) and every other deadline it keeps
-/// is in epochs, so a second unit would be a second thing to reason about. At the
-/// devnet interval of 200 blocks this is 1,400 blocks; at a production epoch it
-/// is a week of them. No derivation is recorded for exactly 7 — it is the figure
-/// the decision fixed (`.dpos-study/DECISIONS.md` §3, 2026-09-04).
-///
 /// TWO setters are deliberately NOT under it, each for its own reason.
 /// `setBlendStipendPerEpoch`: decided 2026-09-04, and reopening it means
 /// reopening that decision. `setSlashFundAddress`: it names where a seizure GOES
@@ -442,19 +435,10 @@ pub const DEFAULT_UNDELEGATE_PERIOD: u64 = 7;
 /// the cost is not, because `seize_self_stake` reverts the whole penalty on a
 /// refused transfer and rotating the address is the only repair. A timelock
 /// there buys a week of unslashable equivocation for very little.
-pub const ADDRESS_SETTER_TIMELOCK_EPOCHS: u64 = 7;
-
-/// Epochs a declaration stays applicable AFTER its term elapses.
 ///
-/// Without a window a declaration never expires, and the scheme inverts: a
-/// rotation declared and abandoned sits armed for the life of the chain, and a
-/// key stolen months later lands it in one block with the notice period long
-/// scrolled past. Past this the declaration must be made again, which puts the
-/// notice back in front of the change.
-///
-/// Equal to the term, and that IS the derivation: governance gets as long to act
-/// on a declaration as it had to wait for it. Nothing else fixes the number.
-pub const ADDRESS_SETTER_APPLY_WINDOW_EPOCHS: u64 = 7;
+/// The e2e stand has to sit the notice out to observe a rotation, so both
+/// numbers are declared once and imported here under the shared names.
+pub use staking_protocol::{ADDRESS_SETTER_APPLY_WINDOW_EPOCHS, ADDRESS_SETTER_TIMELOCK_EPOCHS};
 
 /// Epochs between a delegation being booked and it counting toward stake.
 ///

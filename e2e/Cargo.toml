@@ -15,6 +15,7 @@ fluentbase-genesis = { workspace = true }
 fluentbase-runtime = { workspace = true }
 fluentbase-sdk = { workspace = true }
 fluentbase-testing = { workspace = true }
+fluentbase-types = { workspace = true }
 #fluentbase-svm = { workspace = true }
 #fluentbase-svm-common = { workspace = true }
 #fluentbase-svm-shared = { workspace = true }

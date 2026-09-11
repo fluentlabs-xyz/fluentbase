@@ -37,6 +37,11 @@ use fluentbase_sdk::{
 // error here rather than a revert against the real blob.
 use fluentbase_staking_abi as staking_abi;
 use fluentbase_testing::EvmTestingContext;
+// The notice period `setBlendReserve` declares into and `applyBlendReserve`
+// lands after. This file is the only place outside the contract that has to
+// wait it out, and it used to carry its own `7`; the number is declared once
+// now, so a change to the term moves this stand with it.
+use fluentbase_types::staking_protocol::ADDRESS_SETTER_TIMELOCK_EPOCHS;
 
 const SYSTEM_CALLER: Address = address!("0xfffffffffffffffffffffffffffffffffffffffe");
 const OWNER: Address = Address::repeat_byte(0x11);
@@ -115,11 +120,6 @@ const COMMITTEE: usize = 5;
 /// burn depends on how much work it has left to do.
 const PRODUCTION_COMMITTEES: [usize; 2] = [21, 51];
 const INTERVAL: u64 = 5;
-/// `ADDRESS_SETTER_TIMELOCK_EPOCHS` (`contracts/staking/src/consts.rs`): the
-/// notice period `setBlendReserve` declares into and `applyBlendReserve` lands
-/// after. Repeated here rather than shared because this is the only place
-/// outside the contract that has to wait it out.
-const TIMELOCK_EPOCHS: u64 = 7;
 /// Must be a multiple of `INTERVAL`, which the config validator enforces.
 const ACTIVATION: u64 = INTERVAL * 20;
 
@@ -445,7 +445,10 @@ impl Fixture {
     /// left it.
     fn rotate_reserve(&mut self, value: Address, at_epoch: u64) {
         self.govern(staking_abi::setBlendReserveCall { value }.abi_encode());
-        set_block(&self.context, first_block(at_epoch + TIMELOCK_EPOCHS));
+        set_block(
+            &self.context,
+            first_block(at_epoch + ADDRESS_SETTER_TIMELOCK_EPOCHS),
+        );
         self.govern(staking_abi::applyBlendReserveCall {}.abi_encode());
         set_block(&self.context, first_block(at_epoch));
     }

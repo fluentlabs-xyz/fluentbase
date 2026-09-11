@@ -93,6 +93,36 @@ pub const MAX_COMMITTEE_LOOKAHEAD_EPOCHS: u64 = 2;
 /// leader elector would have to invent a uniform lottery for.
 pub const WEIGHT_RING_EPOCHS: u64 = 16;
 
+/// Notice period a governance address rotation must serve, in epochs.
+///
+/// Epochs, not blocks and not seconds: the contract reads no clock
+/// (`block_timestamp()` appears nowhere in it) and every other deadline it
+/// keeps is in epochs. At the devnet interval of 200 blocks this is 1,400
+/// blocks; at a production epoch it is a week of them. No derivation is
+/// recorded for exactly 7 — it is the figure the decision fixed
+/// (`.dpos-study/DECISIONS.md` §3, 2026-09-04).
+///
+/// Shared rather than contract-local because it is a WAIT that something
+/// outside the contract has to sit through: the e2e stand rotates the BLEND
+/// reserve by declaring, jumping the chain this many epochs, and applying, and
+/// it had its own copy of the number until this declaration existed. A copy
+/// that drifts does not fail to compile — it fails as a rotation that looks
+/// stuck.
+pub const ADDRESS_SETTER_TIMELOCK_EPOCHS: u64 = 7;
+
+/// Epochs a declaration stays applicable AFTER its term elapses.
+///
+/// Without a window a declaration never expires and the scheme inverts: a
+/// rotation declared and abandoned sits armed for the life of the chain, and a
+/// key stolen months later lands it in one block with the notice period long
+/// scrolled past. Past this the declaration must be made again, which puts the
+/// notice back in front of the change.
+///
+/// Equal to [`ADDRESS_SETTER_TIMELOCK_EPOCHS`], and that IS the derivation:
+/// governance gets as long to act on a declaration as it had to wait for it.
+/// Nothing else fixes the number.
+pub const ADDRESS_SETTER_APPLY_WINDOW_EPOCHS: u64 = 7;
+
 /// Compressed BLS12-381 G2 public key (MinSig), in bytes.
 pub const BLS_PUBKEY_LENGTH: usize = 96;
 /// Compressed BLS12-381 G1 signature (MinSig), in bytes.
