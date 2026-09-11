@@ -163,6 +163,29 @@ seed the same empty warm set, which is what the `e2e/evm` fixture runner does.
 
 ---
 
+## Ethereum compatibility: the base fee is not burned
+
+[EIP-1559](https://eips.ethereum.org/EIPS/eip-1559) burns the base fee and credits the block
+beneficiary with the priority fee alone. Fluent credits the beneficiary with the full effective gas
+price, `gas_used × effective_gas_price` (`RwasmHandler::reward_beneficiary` in
+`crates/revm/src/handler.rs`), and the beneficiary is always the fee manager
+(`PRECOMPILE_FEE_MANAGER`, enforced by `FluentConsensus`), where the fees accumulate for withdrawal.
+This has been the rule on mainnet since genesis; canonical state roots reflect it, so changing it
+is a fork.
+
+Two things are deliberately different from the chain rule and must stay contained:
+
+- The Ethereum state-test comparison in `e2e/evm` runs the rWASM side with the burn switched on
+  per EVM instance (`RwasmEvm::with_base_fee_burn(true)`) so the corpus' expected roots hold. It is
+  an instance option, not a build feature, so the fixture replays in the same binary use the chain
+  rule and assert the fee manager's credit for every replayed transaction.
+- The unmerged branch `fix/testnet-block-validation` encodes a testnet-only burn window below
+  block 21,845,842 for history produced before the current rule. Testnet history below the
+  21,300,000 fork is served from a snapshot; whether `devel` re-executes blocks 21,300,000 to
+  21,845,842 cleanly under the current rule is tracked in FLU-1395.
+
+---
+
 ## Operational invariants
 
 - never allocate large host buffers before validating/bounding lengths,
