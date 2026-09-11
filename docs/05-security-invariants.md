@@ -110,7 +110,13 @@ sandboxed guest trap from becoming a node crash.
 Bridge hooks rely on expected event/data shape and ordering.
 Any ABI or flow change must update hook logic in sync.
 
-Why it matters: mismatch can mint/burn/settle wrong amounts.
+Hooks fail the frame or the transaction, never the block. A condition that any caller can trigger
+from calldata (an overflowing balance credit, a missing or malformed event) is a per-transaction
+failure: the pre-hook skips the credit and lets the frame run, the post-hook replaces the frame
+result. A `ContextError` returned from a hook is a fatal executor error: the payload builder falls
+back to an empty block and the transaction stays in the pool, so one transaction halts inclusion.
+
+Why it matters: mismatch can mint/burn/settle wrong amounts; a fatal error stops the sequencer.
 
 ---
 
