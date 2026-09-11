@@ -146,7 +146,8 @@ impl FunctionABI {
     /// otherwise callers encoding from the artifact never reach the method. The entry takes the
     /// pinned name, and every leaf parameter whose derived type differs takes the pinned type at
     /// its position. Tuples cannot be mapped onto a different pinned type, and a different number
-    /// of parameters cannot be mapped at all; both are errors.
+    /// of parameters cannot be mapped at all; both are errors, and on an error the entry is left
+    /// exactly as it was derived.
     pub fn retype_from_signature(&mut self, signature: &str) -> Result<(), ABIError> {
         let (name, params) = signature
             .strip_suffix(')')
@@ -167,7 +168,8 @@ impl FunctionABI {
             )));
         }
 
-        for (input, pinned_type) in self.inputs.iter_mut().zip(pinned_types) {
+        let mut inputs = self.inputs.clone();
+        for (input, pinned_type) in inputs.iter_mut().zip(pinned_types) {
             let derived_type = input.get_canonical_type()?;
             if derived_type == pinned_type {
                 continue;
@@ -183,6 +185,8 @@ impl FunctionABI {
             input.internal_type = pinned_type.clone();
             input.ty = pinned_type;
         }
+
+        self.inputs = inputs;
         self.name = name.to_string();
 
         Ok(())
@@ -315,19 +319,23 @@ mod tests {
         assert_eq!(abi.signature().unwrap(), "set((uint256,bool),bytes32)");
     }
 
-    /// A tuple that disagrees with the pinned signature, or a different arity, cannot be mapped
+    /// A tuple that disagrees with the pinned signature, or a different arity, cannot be mapped,
+    /// and a failed mapping leaves the derived entry untouched
     #[test]
     fn test_pinned_signature_rejects_tuple_retypes_and_arity_changes() {
         let sig: Signature = parse_quote! {
             fn set(config: (U256, bool), owner: Address)
         };
         let mut abi = FunctionABI::from_signature(&sig).unwrap();
+        let derived = abi.clone();
+
         assert!(abi
-            .retype_from_signature("set((uint256,uint256),address)")
+            .retype_from_signature("renamed((uint256,uint256),bytes32)")
             .is_err());
         assert!(abi.retype_from_signature("set(uint256,address)").is_err());
         assert!(abi.retype_from_signature("set((uint256,bool))").is_err());
         assert!(abi.retype_from_signature("set").is_err());
+        assert_eq!(abi, derived);
     }
 
     #[test]

@@ -480,9 +480,10 @@ fn module_qualified_struct_selectors_agree_with_the_router() {
     );
 }
 
-/// A custom selector that no longer matches the published ABI stops the build
+/// A pinned selector the ABI can reproduce is what gets published: the entry takes the pinned
+/// name and leaf types, so callers encoding from the artifact reach the router
 #[test]
-fn selector_that_diverges_from_the_abi_fails_the_build() {
+fn pinned_selector_the_abi_can_reproduce_is_published() {
     let (_temp, project) = duplicate_names_project(&["a", "b"]);
     fs::write(
         project.join("src").join("lib.rs"),
@@ -493,11 +494,38 @@ fn selector_that_diverges_from_the_abi_fails_the_build() {
     )
     .expect("rewrite lib.rs");
 
+    assert_selectors_agree(
+        &project,
+        &[("set_a", "renameMe((uint256,bool))", "0x410cd56e")],
+    );
+    let abi = generate_abi(&project).expect("generate ABI");
+    assert!(
+        abi.iter().all(|entry| entry["name"] != "setA"),
+        "the derived name must not be published next to the pinned one"
+    );
+}
+
+/// A custom selector the published ABI cannot reproduce stops the build
+#[test]
+fn selector_that_diverges_from_the_abi_fails_the_build() {
+    let (_temp, project) = duplicate_names_project(&["a", "b"]);
+    fs::write(
+        project.join("src").join("lib.rs"),
+        DUPLICATE_NAMES_ROOT.replace(
+            "    pub fn set_a(",
+            "    #[function_id(\"setA((uint256,uint256))\")]\n    pub fn set_a(",
+        ),
+    )
+    .expect("rewrite lib.rs");
+
     let error = format!(
         "{:#}",
         generate_abi(&project).expect_err("a router selector the ABI cannot reproduce should fail")
     );
-    assert!(error.contains("0x410cd56e"), "unexpected error: {error}");
+    assert!(
+        error.contains("setA((uint256,uint256))"),
+        "unexpected error: {error}"
+    );
     assert!(error.contains("ABI migration"), "unexpected error: {error}");
 }
 

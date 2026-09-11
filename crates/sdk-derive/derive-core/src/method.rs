@@ -158,15 +158,17 @@ impl<T: MethodLike> ParsedMethod<T> {
         if let Some((attr, _)) = &attr {
             if !attr.is_validation_enabled() {
                 let function_id = attr.function_id_bytes()?;
-                let abi = sig.function_abi_with(resolver).ok().and_then(|mut abi| {
+                let abi = sig.function_abi_with(resolver).ok().map(|mut abi| {
                     abi.state_mutability = state_mutability;
                     // The pinned signature is the interface the router dispatches on, so the
-                    // published entry has to hash to it. One that cannot be mapped onto the
-                    // derived parameters leaves nothing to publish.
+                    // published entry has to hash to it. Leaf parameters are mapped onto it
+                    // here; a signature that cannot be mapped leaves the derived entry as is,
+                    // and the artifact generator rejects the selector mismatch with the full
+                    // explanation instead of publishing it.
                     if let Some(pinned_signature) = attr.signature() {
-                        abi.retype_from_signature(&pinned_signature).ok()?;
+                        let _ = abi.retype_from_signature(&pinned_signature);
                     }
-                    Some(abi)
+                    abi
                 });
                 let signature = attr
                     .signature()
