@@ -33,7 +33,9 @@ use fluentbase_staking_reader::{
     reader::{ConsensusKeys, ValidatorSetSnapshot, ValidatorWithKeys},
     ReadError, StakingStateRead,
 };
-use fluentbase_types::staking_protocol::{epoch_at_block, MAX_COMMITTEE_LOOKAHEAD_EPOCHS};
+use fluentbase_types::staking_protocol::{
+    epoch_at_block, MAX_COMMITTEE_LOOKAHEAD_EPOCHS, WEIGHT_RING_EPOCHS,
+};
 use reth_ethereum_primitives::TransactionSigned;
 use reth_primitives_traits::SealedBlock;
 use std::{
@@ -843,6 +845,43 @@ impl OrderingAssembler for NoTxs {
 /// answer, not this closure's.
 pub(super) type Members = Arc<dyn Fn(u64) -> Option<Vec<usize>> + Send + Sync>;
 
+/// Which branch of the READING node's own execution layer a state hash sits on,
+/// at the moment of the read.
+///
+/// The distinction the epoch-pure `Members` closure cannot express: the contract
+/// is a state machine over a CHAIN, and two chains that share a height can hold
+/// two different committees there. `Canonical` is `provider.block_hash(h) == at`
+/// (tier-S — the `canonical` map of [`FakeChain`]);
+/// `Speculative` is every other hash the node's tree knows at `h` — a
+/// derived-but-not-yet-canonical block, a reorged-out sibling, or the
+/// tree-only marker a replayed node is handed
+/// ([`FakeChain::note_hash`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Branch {
+    Canonical,
+    Speculative,
+}
+
+/// `(epoch, state hash, height of that hash, which branch it is on) → member
+/// node indices`, or `None` for an epoch with no committee on that branch.
+///
+/// The BRANCHING form of [`Members`]: where that closure is a pure function of
+/// the epoch — so "two nodes at different heights read the same committee" is
+/// true of any caller, correct or not — this one lets the stand hand a
+/// DIFFERENT committee to a read taken off the canonical chain. That is what
+/// makes the cross-node equality of a committee record a property of the
+/// READING code instead of a tautology of the fake.
+pub(super) type BranchCommittees =
+    Arc<dyn Fn(u64, &B256, u64, Branch) -> Option<Vec<usize>> + Send + Sync>;
+
+/// One node (by index) tombstoned from `height` on, as the contract's LIVE
+/// equivocation flag: `getEpochCommitteeWithStakes` reads `tombstoned` at the
+/// call's own block rather than at the epoch commit
+/// (`crates/staking-abi/src/lib.rs:204-214`,
+/// `crates/dpos/staking-reader/src/reader.rs` — the `tombstoned` leg), which is
+/// what lets a mid-epoch verdict reach the committee it names.
+pub(super) type Tombstones = Arc<Vec<(usize, u64)>>;
+
 /// How many staking reads answered "committed" and how many answered "not
 /// committed yet", per epoch — the observation the not-yet-committed tests
 /// assert on. Counted inside [`FakeStaking`], so it says what the plane and the
@@ -858,6 +897,34 @@ pub(super) struct StakingReads {
     /// Reads at a hash this chain never sealed (production: a state read at an
     /// unknown block).
     pub unknown_state: u64,
+    /// `epoch -> reads taken at a hash this node's canonical chain did NOT hold
+    /// at that height` ([`Branch::Speculative`]).
+    ///
+    /// Counted whatever the committee schedule is, because it is a property of
+    /// the CALLER and not of the fake: a consumer that resolves its own block
+    /// hash off a speculative cursor shows up here even when every branch
+    /// answers the same committee.
+    ///
+    /// One stand artifact belongs here rather than in a test: a REPLAYED node
+    /// (`StandConfig::resume_from`) is handed its persisted finalized marker
+    /// through [`FakeChain::note_hash`], which is deliberately TREE-ONLY, so
+    /// the cold-start read at that marker is counted `Speculative`.
+    pub speculative: BTreeMap<u64, u64>,
+    /// `epoch -> reads that answered a non-empty committee with NO frozen
+    /// weights` — the contract's "my weight ring has wrapped past this epoch"
+    /// answer (`stakes` empty beside a non-empty `addrs`).
+    pub weights_none: BTreeMap<u64, u64>,
+    /// `epoch -> reads that answered at least one TOMBSTONED member`.
+    pub tombstoned_seen: BTreeMap<u64, u64>,
+    /// `epoch -> snapshot calls made through the COMMITTEE MODULE'S port`
+    /// ([`crate::committee::EpochReads`]) alone.
+    ///
+    /// Separate from [`Self::committed`] because that counter cannot answer
+    /// "one snapshot per epoch": it also counts the `EpochTransition`'s own
+    /// reads and the two extra snapshots this fake's [`FakeStaking::dkg_qual`]
+    /// issues to compute the bit. This one counts exactly what the module
+    /// asked.
+    pub module_snapshot: BTreeMap<u64, u64>,
 }
 
 /// The staking contract as a STATE MACHINE OVER EXECUTED HEIGHT.
@@ -885,12 +952,37 @@ pub(super) struct StakingReads {
 /// (`contracts/staking/src/consensus.rs:598`, `staking-abi/src/lib.rs:110`), so
 /// it is readable exactly when the committee is.
 ///
-/// NOT modelled (step 5b): `recordProduction`, penalties, tombstones, registry
-/// mutation. The registry is a fixed set.
+/// * **Frozen weights come out of a RING.** The contract keeps them in
+///   [`WEIGHT_RING_EPOCHS`] frames and answers an empty `stakes` leg beside a
+///   non-empty `addrs` once a frame has been reused
+///   (`crates/staking-abi/src/lib.rs:204-214`), which the reader decodes as
+///   `weights: None`. A frame is reused at `E + WEIGHT_RING_EPOCHS`, and the
+///   newest epoch committed at height `h` is `epoch(h) +
+///   MAX_COMMITTEE_LOOKAHEAD_EPOCHS`, so an epoch answers `None` exactly while
+///   `epoch + WEIGHT_RING_EPOCHS <= epoch(h) + MAX_COMMITTEE_LOOKAHEAD_EPOCHS`
+///   — 14 epochs below the reading height, far outside the committee module's
+///   own window (`committee/mod.rs::WINDOW_FITS_THE_WEIGHT_RING`). A stand can
+///   therefore never reach that arm by running long enough, which is why
+///   [`FakeStaking::weights_none_for`] exists as a separate switch.
+///
+/// NOT modelled (step 5b): `recordProduction`, penalties, registry mutation.
+/// The registry is a fixed set.
 #[derive(Clone)]
 pub(super) struct FakeStaking {
     chain: FakeChain,
     members: Members,
+    /// The branching committee schedule, if the stand set one — see
+    /// [`BranchCommittees`]. `None` keeps [`Self::members`] as the whole answer,
+    /// which is what every test written before it assumes.
+    by_branch: Option<BranchCommittees>,
+    /// The one epoch for which this contract answers `weights: None` DESPITE the
+    /// ring still holding its frame — "the contract answered something no
+    /// committed epoch can answer". A switch and not a schedule: the module
+    /// refuses such an epoch permanently, so a second one would only be a second
+    /// copy of the same refusal.
+    weights_none_for: Option<u64>,
+    /// Nodes tombstoned from a height on — see [`Tombstones`].
+    tombstoned: Tombstones,
     /// Every stand node as the contract would hold it, indexed by node number.
     validators: Arc<Vec<ValidatorWithKeys>>,
     /// `getRegistryWithKeys()` — height-invariant here (no registry mutation).
@@ -925,11 +1017,30 @@ impl FakeStaking {
         Self {
             chain,
             members,
+            by_branch: None,
+            weights_none_for: None,
+            tombstoned: Arc::new(Vec::new()),
             validators: Arc::new(validators),
             registry: Arc::new(registry),
             epoch_len,
             reads: Arc::new(Mutex::new(StakingReads::default())),
         }
+    }
+
+    /// The three step-5b knobs, applied after [`Self::new`] rather than passed
+    /// through it: the constructor already takes six arguments, and three more
+    /// positional ones would be three more things a caller can transpose.
+    /// Every one of them defaults to the pre-step behaviour.
+    pub(super) fn with_schedule(
+        mut self,
+        by_branch: Option<BranchCommittees>,
+        weights_none_for: Option<u64>,
+        tombstoned: Tombstones,
+    ) -> Self {
+        self.by_branch = by_branch;
+        self.weights_none_for = weights_none_for;
+        self.tombstoned = tombstoned;
+        self
     }
 
     pub(super) fn reads(&self) -> StakingReads {
@@ -956,7 +1067,7 @@ impl FakeStaking {
         if height == 0 {
             return epoch == 0;
         }
-        match epoch_at_block(height, 0, self.epoch_len) {
+        match epoch_at_block(height, DPOS_ACTIVATION_BLOCK, self.epoch_len) {
             Some(current) => epoch <= current + MAX_COMMITTEE_LOOKAHEAD_EPOCHS,
             None => false,
         }
@@ -969,18 +1080,71 @@ impl FakeStaking {
         })
     }
 
-    /// The committee the contract would hold for `epoch`, peer-key ASCENDING as
-    /// `commitEpochCommittee` sorts it (`contracts/staking/src/consensus.rs:596`).
-    fn committee(&self, epoch: u64) -> Option<Vec<ValidatorWithKeys>> {
-        let mut members: Vec<ValidatorWithKeys> = (self.members)(epoch)?
+    /// Which branch of THIS node's execution layer `at` sits on at `height` —
+    /// see [`Branch`]. The comparison is against the canonical map, which is the
+    /// only tier `provider.block_hash(n)` can see.
+    fn branch_of(&self, at: B256, height: u64) -> Branch {
+        match self.chain.spec_hash_at(height) {
+            Some(canonical) if canonical == at => Branch::Canonical,
+            _ => Branch::Speculative,
+        }
+    }
+
+    /// The committee the contract would hold for `epoch` IN THE STATE AT `at`,
+    /// peer-key ASCENDING as `commitEpochCommittee` sorts it
+    /// (`contracts/staking/src/consensus.rs:564`).
+    ///
+    /// `tombstoned` is applied LAST and from the read HEIGHT, not from the
+    /// epoch: the contract reads that flag live at the call's own block while
+    /// the membership beside it is frozen, so a member tombstoned at height `h`
+    /// is flagged in every read at or above `h` of every epoch it sits in.
+    fn committee(
+        &self,
+        epoch: u64,
+        at: B256,
+        height: u64,
+        branch: Branch,
+    ) -> Option<Vec<ValidatorWithKeys>> {
+        let indices = match &self.by_branch {
+            Some(by_branch) => by_branch(epoch, &at, height, branch)?,
+            None => (self.members)(epoch)?,
+        };
+        let mut members: Vec<ValidatorWithKeys> = indices
             .into_iter()
-            .map(|i| self.validators[i].clone())
+            .map(|i| {
+                let mut validator = self.validators[i].clone();
+                validator.tombstoned = self
+                    .tombstoned
+                    .iter()
+                    .any(|(node, from)| *node == i && height >= *from);
+                validator
+            })
             .collect();
         if members.is_empty() {
             return None;
         }
         members.sort_unstable_by(|a, b| a.keys.peer_pubkey.cmp(&b.keys.peer_pubkey));
         Some(members)
+    }
+
+    /// The frozen leader weights the contract answers for `epoch` at `height`,
+    /// or `None` for its "the ring has wrapped past this epoch" answer — see the
+    /// ring paragraph on [`FakeStaking`]. An EMPTY committee takes neither arm:
+    /// the reader's equal-length branch answers `Some(vec![])` there
+    /// (`reader.rs:667-680`), which is what an uncommitted epoch looks like.
+    fn weights_at(&self, epoch: u64, height: u64, members: usize) -> Option<Vec<u128>> {
+        if members == 0 {
+            return Some(Vec::new());
+        }
+        if self.weights_none_for == Some(epoch) {
+            return None;
+        }
+        let current = epoch_at_block(height, DPOS_ACTIVATION_BLOCK, self.epoch_len)?;
+        let newest_committed = current.saturating_add(MAX_COMMITTEE_LOOKAHEAD_EPOCHS);
+        if epoch.saturating_add(WEIGHT_RING_EPOCHS) <= newest_committed {
+            return None;
+        }
+        Some(vec![1u128; members])
     }
 
     /// `getDkgQual(epoch)` paired with "is `epoch`'s committee committed at
@@ -1023,6 +1187,17 @@ impl crate::committee::EpochReads for FakeStaking {
         epoch: u64,
         at: B256,
     ) -> Result<ValidatorSetSnapshot, ReadError> {
+        // Counted HERE and not inside the shared body: this port is the
+        // module's alone, so `StakingReads::module_snapshot` says how many
+        // snapshot calls the MODULE made, which is the countable form of "one
+        // snapshot per epoch, whatever asked".
+        *self
+            .reads
+            .lock()
+            .unwrap()
+            .module_snapshot
+            .entry(epoch)
+            .or_default() += 1;
         StakingStateRead::epoch_committee_snapshot(self, epoch, at)
     }
 
@@ -1038,24 +1213,34 @@ impl StakingStateRead for FakeStaking {
         at: B256,
     ) -> Result<ValidatorSetSnapshot, ReadError> {
         let height = self.height_at(at)?;
+        let branch = self.branch_of(at, height);
         let validators = self
             .committed_at(epoch, height)
-            .then(|| self.committee(epoch))
+            .then(|| self.committee(epoch, at, height, branch))
             .flatten();
-        let mut reads = self.reads.lock().unwrap();
-        let counter = if validators.is_some() {
-            &mut reads.committed
-        } else {
-            &mut reads.uncommitted
-        };
-        *counter.entry(epoch).or_default() += 1;
-        drop(reads);
         // An uncommitted / missed-commit epoch is `Ok` with `validators: []`
         // and `weights: Some(vec![])` — the empty `stakes` leg beside an empty
         // `addrs` takes the equal-length arm (`reader.rs:667-680`), NOT the
         // `weights: None` "ring has wrapped" arm.
         let validators = validators.unwrap_or_default();
-        let weights = Some(vec![1u128; validators.len()]);
+        let weights = self.weights_at(epoch, height, validators.len());
+        let mut reads = self.reads.lock().unwrap();
+        let counter = if validators.is_empty() {
+            &mut reads.uncommitted
+        } else {
+            &mut reads.committed
+        };
+        *counter.entry(epoch).or_default() += 1;
+        if branch == Branch::Speculative {
+            *reads.speculative.entry(epoch).or_default() += 1;
+        }
+        if weights.is_none() {
+            *reads.weights_none.entry(epoch).or_default() += 1;
+        }
+        if validators.iter().any(|v| v.tombstoned) {
+            *reads.tombstoned_seen.entry(epoch).or_default() += 1;
+        }
+        drop(reads);
         Ok(ValidatorSetSnapshot {
             block_hash: at,
             block_number: height,

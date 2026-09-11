@@ -85,6 +85,7 @@
 #[cfg(feature = "dpos-devnet-byzantine")]
 mod byzantine_roles;
 mod capture;
+mod committee_tests;
 mod fakes;
 mod preconditions;
 mod stand;

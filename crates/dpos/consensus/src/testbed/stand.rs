@@ -5,10 +5,10 @@ use super::fakes::{ByzFacts, ByzReport};
 use super::{
     capture::{self, Captured, Sink},
     fakes::{
-        genesis_sealed, BodyTap, CountingHandler, CountingUpstream, ElEvent, ElNetwork, FakeBeacon,
-        FakeChain, FakeDeriver, FakeStaking, JumpCall, JumpCalls, JumpCommitteeReads,
-        JumpCommittees, JumpElSync, Members, NoSink, NoTxs, StakingReads, TapReceiver,
-        TeeingUpstream, UpstreamCounters, UpstreamStats, DPOS_ACTIVATION_BLOCK,
+        genesis_sealed, BodyTap, BranchCommittees, CountingHandler, CountingUpstream, ElEvent,
+        ElNetwork, FakeBeacon, FakeChain, FakeDeriver, FakeStaking, JumpCall, JumpCalls,
+        JumpCommitteeReads, JumpCommittees, JumpElSync, Members, NoSink, NoTxs, StakingReads,
+        TapReceiver, TeeingUpstream, UpstreamCounters, UpstreamStats, DPOS_ACTIVATION_BLOCK,
     },
 };
 /// A read of one held epoch-key artifact's wire bytes, for the stand's serving
@@ -66,7 +66,8 @@ use fluentbase_staking_reader::{
     reader::ValidatorSetSnapshot,
     EpochTransition,
 };
-use fluentbase_types::staking_protocol::epoch_at_block;
+use fluentbase_types::staking_protocol::{epoch_at_block, MAX_COMMITTEE_LOOKAHEAD_EPOCHS};
+use metrics_util::debugging::{DebugValue, Snapshotter};
 use rand_08::{rngs::StdRng, SeedableRng as _};
 use std::{
     collections::BTreeMap,
@@ -97,6 +98,33 @@ pub(super) struct StandConfig {
     pub loss: f64,
     /// `epoch → member indices`. `None` past the schedule (no committee).
     pub committees: Committees,
+    /// The BRANCHING committee schedule — see [`BranchCommittees`]. `None` (the
+    /// default) leaves [`Self::committees`] as the whole answer, which is what
+    /// every test written before step 5b assumes; `Some` OVERRIDES it, and the
+    /// closure is then the only thing that decides membership.
+    pub committees_by_branch: Option<BranchCommittees>,
+    /// One epoch for which the fake contract answers `weights: None` even
+    /// though its ring frame is intact — "the contract answered something no
+    /// committed epoch can answer". `None` = never.
+    pub weights_none_for: Option<u64>,
+    /// `(node, from height)` pairs the fake contract reports TOMBSTONED from
+    /// that height on, in every epoch that node sits in — the contract's live
+    /// equivocation flag, read at the call's own block.
+    pub tombstoned: Vec<(usize, u64)>,
+    /// A snapshotter over the `metrics::counter!` recorder the CALLER installed
+    /// around this run, drained by the stand itself immediately before the
+    /// collect phase and left in [`Outcome::metrics_before_collect`].
+    ///
+    /// Why the stand and not the test: the collect phase calls the production
+    /// `Committee::committee` once per node per epoch (see
+    /// [`Outcome::committee_records`]), and those calls INCREMENT the same
+    /// counters. A test that drains after `run_until` returns therefore reads
+    /// "the run plus a post-run poll", and an assertion meant to say "the run
+    /// really asked" is satisfied by the poll alone. There is no seam outside
+    /// `run_until` that is earlier than collect, so the snapshot has to be taken
+    /// from inside. `None` (the default) leaves the field empty and changes
+    /// nothing.
+    pub metrics_snapshotter: Option<Snapshotter>,
     /// Step-B witness knob: `true` leaves every node's per-epoch journals on the
     /// unprefixed production names (`consensus_epoch_{E}`), so the N nodes
     /// share them on the one in-memory `Storage`.
@@ -211,6 +239,10 @@ impl StandConfig {
             latency: Duration::from_millis(10),
             loss: 0.0,
             committees: Committees::All,
+            committees_by_branch: None,
+            weights_none_for: None,
+            tombstoned: Vec::new(),
+            metrics_snapshotter: None,
             shared_engine_partitions: false,
             peer_set: PeerSet::AllNodes,
             beacon: Beacon::Static,
@@ -352,6 +384,88 @@ pub(super) struct TraceEntry {
     pub hash: Option<B256>,
 }
 
+/// One epoch's committee record as the module froze it, reduced to the legs
+/// [`crate::committee::CommitteeRecord::same_value`] compares — everything the
+/// contract froze and nothing about WHERE it was read.
+///
+/// `members` is the peer half in CONTRACT ORDER (the consensus index space),
+/// not the sorted projection: two nodes that agree on the set but not on the
+/// order hold two different committees as far as `leaderIndex` is concerned.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct CommitteeFacts {
+    pub members: Vec<PeerPubkey>,
+    pub weights: Vec<u128>,
+    pub changed: bool,
+    /// `(height, executed hash)` this node read the record AT — the DIAGNOSTIC
+    /// leg, and the one a cross-node equality assertion must NOT include. Two
+    /// nodes at different heights hold the same record with different anchors,
+    /// which is the whole property; it is carried so a test can assert the
+    /// anchors really DID differ instead of assuming it.
+    pub anchor: (u64, B256),
+}
+
+/// Why the module refused an epoch, in the two terms a consumer routes on.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct CommitteeRefusal {
+    pub error: String,
+    pub transient: bool,
+}
+
+/// One `metrics::counter!` family instance as the debugging recorder holds it:
+/// name, labels, value.
+pub(super) type CounterSample = (String, Vec<(String, String)>, u64);
+
+/// Every counter the recorder holds right now, taken ONCE.
+///
+/// `Snapshotter::snapshot` RESETS every counter it reads
+/// (`metrics-util-0.20.4/src/debugging.rs:109`, `c.swap(0, …)`), so a second
+/// call answers zero for everything the first one took. Draining into a `Vec`
+/// and querying that is the only shape in which more than one family can be
+/// asserted about the same window — and the reset is also what makes the
+/// stand's pre-collect drain ([`StandConfig::metrics_snapshotter`]) SPLIT the
+/// run from the post-run poll instead of shadowing it: whatever the stand takes
+/// is gone from the caller's own later drain.
+pub(super) fn drain_counters(snap: &Snapshotter) -> Vec<CounterSample> {
+    snap.snapshot()
+        .into_vec()
+        .into_iter()
+        .filter_map(|(k, .., v)| {
+            let key = k.key();
+            let DebugValue::Counter(value) = v else {
+                return None;
+            };
+            Some((
+                key.name().to_string(),
+                key.labels()
+                    .map(|l| (l.key().to_string(), l.value().to_string()))
+                    .collect(),
+                value,
+            ))
+        })
+        .collect()
+}
+
+/// The total of one counter family in `drained`, optionally restricted to one
+/// label pair.
+///
+/// PROCESS-WIDE, not per node: `metrics::counter!` carries no node label, and
+/// the stand's N nodes share one recorder (the deterministic runner is single
+/// threaded, which is what makes a thread-local recorder see the whole run at
+/// all). Every assertion on it is therefore a sum over the nodes.
+pub(super) fn counter_of(
+    drained: &[CounterSample],
+    name: &str,
+    label: Option<(&str, &str)>,
+) -> u64 {
+    drained
+        .iter()
+        .filter(|(n, labels, _)| {
+            n == name && label.is_none_or(|(lk, lv)| labels.iter().any(|(k, v)| k == lk && v == lv))
+        })
+        .map(|(.., v)| *v)
+        .sum()
+}
+
 /// What one node's marshal archives hold at a height, as the by-height serve
 /// path reads them.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -436,6 +550,37 @@ pub(super) struct Outcome {
     /// `staking_reads[i]` = what node `i` ASKED the fake staking state, split by
     /// whether the epoch was committed at the read height.
     pub staking_reads: Vec<StakingReads>,
+    /// `committee_records[i][e]` = what node `i`'s committee module answers for
+    /// epoch `e`, for every epoch the run passed through plus the two-epoch
+    /// lookahead — the frozen record's VALUE legs, or the `Display` of the
+    /// refusal with whether it is transient.
+    ///
+    /// Read through the `Committee` trait at the END of the run, and therefore
+    /// AFTER [`Self::staking_reads`] is snapshotted: an epoch the node already
+    /// read is a map hit that costs no call, and an epoch it never read is a
+    /// fresh read whose cost must not land in the read counters the tests
+    /// assert on. The legs are exactly [`crate::committee::CommitteeRecord`]'s
+    /// write-once ones — `snapshot` is deliberately absent, because two nodes
+    /// holding the same record at different anchors differ there and only there
+    /// (`committee/mod.rs::CommitteeRecord::same_value`).
+    pub committee_records: Vec<BTreeMap<u64, Result<CommitteeFacts, CommitteeRefusal>>>,
+    /// `committee_verifier_epochs[i]` = the epochs node `i`'s module holds a
+    /// VERIFY-ONLY scheme for, at the end of the run. A map lookup, no read.
+    pub committee_verifier_epochs: Vec<Vec<u64>>,
+    /// `committees[i]` = node `i`'s own committee module, held past the end of
+    /// the run so a test can ask it the questions the two maps above do not
+    /// answer — chiefly [`crate::committee::Committee::scheme`], which covers
+    /// the SIGNER schemes [`Self::committee_verifier_epochs`] deliberately
+    /// omits (`committee/store.rs:577-587` filters on `me().is_none()`). It is
+    /// the same `Arc` the node ran on, not a second module.
+    pub committees: Vec<Arc<dyn crate::committee::Committee>>,
+    /// Every `metrics::counter!` value the run produced, drained BEFORE the
+    /// collect phase — empty unless [`StandConfig::metrics_snapshotter`] was
+    /// set. This is the counter set an assertion about what the RUN asked must
+    /// read: the caller's own drain after `run_until` returns sees only what
+    /// the collect phase added on top (and is therefore the way to measure that
+    /// contribution).
+    pub metrics_before_collect: Vec<CounterSample>,
     /// `jump_calls[i]` = every steady-state re-jump call node `i` made, in call
     /// order, with the `JumpOutcome` VARIANT the production function returned,
     /// the certificate it consumed and the landing it chose. A refused jump is
@@ -896,6 +1041,8 @@ struct NodeHandles {
     artifacts: Option<ArtifactSource>,
     observer: EtObserver,
     staking: FakeStaking,
+    /// The node's ONE committee module, for the post-run record scan.
+    committee: Arc<dyn crate::committee::Committee>,
     /// The node's marshal, for the post-run archive scan.
     marshal: Arc<OnceLock<MarshalMailbox>>,
     bodies: BodyTap,
@@ -1299,6 +1446,48 @@ async fn drive(
             }
         }
     }
+    // The run's `metrics::counter!` values, taken HERE — after `staking_reads`
+    // and `logs`, and before the committee scan below, which is the only
+    // producer of counter increments that is not the run. Draining resets the
+    // recorder, so the caller's own drain afterwards holds exactly the scan's
+    // contribution.
+    let metrics_before_collect = match &cfg.metrics_snapshotter {
+        Some(snap) => drain_counters(snap),
+        None => Vec::new(),
+    };
+    // The committee module's own answer per node, LAST — after
+    // `staking_reads` above, so a record this run never asked for is read here
+    // without landing in the counters the tests assert on. Two epochs past the
+    // highest tip is the module's own lookahead ceiling; above that every node
+    // answers `OutOfWindow` and the entry says so.
+    let committee_records: Vec<BTreeMap<u64, Result<CommitteeFacts, CommitteeRefusal>>> = nodes
+        .iter()
+        .map(|node| {
+            (0..=max_epoch + MAX_COMMITTEE_LOOKAHEAD_EPOCHS)
+                .map(|e| {
+                    let answer = match node.committee.committee(e) {
+                        Ok(record) => Ok(CommitteeFacts {
+                            members: record.members.iter().map(|m| m.peer.clone()).collect(),
+                            weights: record.weights.clone(),
+                            changed: record.changed,
+                            anchor: record.snapshot,
+                        }),
+                        Err(error) => Err(CommitteeRefusal {
+                            transient: error.is_transient(),
+                            error: error.to_string(),
+                        }),
+                    };
+                    (e, answer)
+                })
+                .collect()
+        })
+        .collect();
+    let committee_verifier_epochs: Vec<Vec<u64>> = nodes
+        .iter()
+        .map(|node| node.committee.verifier_epochs())
+        .collect();
+    let committees: Vec<Arc<dyn crate::committee::Committee>> =
+        nodes.iter().map(|node| node.committee.clone()).collect();
     let metrics = ctx.encode();
     Outcome {
         heights,
@@ -1316,6 +1505,10 @@ async fn drive(
         tracked_mismatches,
         tracked_forwarded,
         staking_reads,
+        committee_records,
+        committee_verifier_epochs,
+        committees,
+        metrics_before_collect,
         jump_calls,
         jump_committee_reads,
         el_events,
@@ -1550,6 +1743,11 @@ async fn build_node(
         bls_pubkeys,
         registry,
         cfg.epoch_len,
+    )
+    .with_schedule(
+        cfg.committees_by_branch.clone(),
+        cfg.weights_none_for,
+        Arc::new(cfg.tombstoned.clone()),
     );
     let (hook_tx, mut hook_rx) = mpsc::unbounded_channel::<OrderBlock>();
 
@@ -2221,6 +2419,7 @@ async fn build_node(
         artifacts,
         observer,
         staking,
+        committee,
         marshal: marshal_slot,
         bodies,
         #[cfg(feature = "dpos-devnet-byzantine")]
