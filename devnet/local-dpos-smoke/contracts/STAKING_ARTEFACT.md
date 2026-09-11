@@ -91,7 +91,94 @@ Eleven more joined it on 2026-09-08 (task 1.5):
 `MAX_MIN_VERDICT_DUE_BLOCKS` `0x9b9a11ba`. A blob carrying any of them predates
 the dead-surface removal.
 
-## This build — 2026-09-11 (Э1.3 timelock + Э1.7 `claimValidatorFeeAtEpoch` removed)
+## This build — 2026-09-11 (Э1.6 / K-13, the strict static-argument decode)
+
+Rebuilt a second time the same day, for a change that moves NO ABI point: the
+selector scan below is byte-identical to the section under it and re-run against
+the new blob. What changed is what the module ACCEPTS as calldata for an existing
+selector.
+
+`SolidityABI::decode` accepts a buffer longer than the type it decodes and
+silently truncates an integer word to the declared width. Measured on the previous
+blob's sources before the fix: 32 bytes of tail after a well-formed
+`isValidator(address)` decoded and dispatched, and `setActiveValidatorsLength(uint32)`
+handed a word with bit 32 set and low bytes `7` wrote a cap of 7 — its
+`MAX_COMMITTEE_SIZE` ceiling never saw the number the caller sent. A SHORT buffer
+was already refused.
+
+`util::decode` — the static-argument path, which is every handler except
+`initialize` and the three evidence routes — now round-trips: it re-encodes what
+it decoded and refuses anything that does not reproduce the input bytes. One test
+catches both holes, because a tail changes the length and a truncated integer
+changes the high bytes of its word. `ExitCode::MalformedBuiltinParams` either way,
+the same code a short buffer already produced.
+
+**The SDK decoder was NOT changed**, deliberately: three consumers outside this
+contract decode through it, and one of them (`crates/sdk/src/universal_token/storage.rs`)
+identifies two versioned storage payloads by trying both and taking the one that
+parses, which is exactly the behaviour strictness would remove. The list is in
+`.dpos-study/history/E1-CONTRACT-2.md` §6.
+
+**What a caller has to get right that it did not before**: calldata must be
+exactly the declared arguments, with no padding and no over-wide words. Every
+caller in this repository already encodes canonically — the node through
+`SolCall::abi_encode`, the stands through the same, the Python harness through
+`cast` — and all of them pass. A caller that padded would now revert.
+
+`initialize` and `slashEquivocation{Notarize,Finalize,NullifyFinalize}` are NOT
+covered: they take dynamic tuples, whose legal encodings differ in offset layout,
+so byte equality would refuse correct calldata. Those two holes stay open and are
+recorded as open.
+
+- repository HEAD at build time: `39b11300`, working tree DIRTY — the K-13 change
+  itself (`src/util.rs`, `src/tests.rs`), which the following commit records.
+  Also dirty and NOT part of this artefact: another session's work under
+  `crates/dpos/` and `crates/node/`, and `.dpos-study/history/E4-ORCHESTRATOR.md`.
+- SHA-256 of every source file in `contracts/staking/src` as built:
+
+      a710d7e5c7cbd7cbe84e4594b0840ad5992e68a3d4b7a24812f22222d6a444f4  src/bls.rs
+      981ef0758cfa5f010be2b6355ec443c16ebaf0dcbd9b06b17bf594b80b5d4251  src/config.rs
+      c8e3ab9e5eaee4a28da6d4cd512cbb247e35d566c849221a83dda56c117ae6da  src/consensus.rs
+      5176d9aa68bbcc12b813bc64fc3edd427bbfb65ee646f14ed457b297582955fb  src/consts.rs
+      78088bf195a248bb1f4f2a84b8803f3f29d7addb5bc98a8aa6eebf58377f87cb  src/events.rs
+      3f69dfe02d27be45e6b723e3f128b7049d74abe5c1b6dafac82b5af47d8b5576  src/evidence.rs
+      5f587627e81d7f38e52cfd974bf6c234de84f93925dd174f946b974dfac0987b  src/initializer.rs
+      3f89c0ab5d54f076d40d463e41245ebc88c4eafc72f29af12514b0281b42f105  src/lib.rs
+      46e17a0600efaba7d52f0b57f68f1fe75985c3a5f38d47fe7d6a92fc0bdba1a8  src/liveness.rs
+      d106df9221d023e14adbec93ad329685208556ea0d1eb3946b4fde6bcad9b90f  src/math.rs
+      406e05a7d741d1de884b1b360ac3512c1e539ea9ff6504f001a438a544246654  src/staking.rs
+      e0cfcd5a6f37e85a6887bc566e48999138626f6451d2a7a82c49af59e22ffb5e  src/storage.rs
+      25f3fa7c5f062ae5828b7c6894d64ba4fb2b6a8bcae9756d31fdacdd43382462  src/tests.rs
+      2fee9b56c3365c7d86305bbebfc435484c7dfc1ead99bff32c1f4c233189b257  src/types.rs
+      3a0741742c10177a606fbc0b3b78c8a2209b2d6658a4bd0a1db6662c0e35d276  src/util.rs
+
+  Only `src/util.rs` (and `src/tests.rs`, which enters no artefact) differs from
+  the section below.
+- `fluentbase_contracts_staking.wasm` — 409,431 bytes (was 405,682, +3,749)
+  `da3137f0a367106e93f409e0c06a28b807da0d300efe9e323742f072c4adc7d6`
+- `fluentbase_contracts_staking.rwasm` — 2,815,430 bytes (was 2,800,125, +15,305)
+  `df7605b694b437b6bcf6d794675b477cb5177c015fe0bb474ad8aa030e2089b6`
+  The growth is the re-encode pass the round trip adds, instantiated once per
+  static command type the dispatcher decodes.
+
+### Selector scan of this blob
+
+Unchanged from the section below — K-13 moves no selector — and re-run against the
+new blob. Result: **`selector scan OK`**.
+
+### Tests
+
+- `cargo test` in `contracts/staking`: **191 passed, 0 failed**; **192** with
+  `--features devnet-views`. `cargo clippy --all-targets -- -D warnings` and
+  `cargo fmt --check`: clean.
+- `cargo test -p fluentbase-node --lib`: **57 passed, 0 failed**.
+  `cargo test -p fluentbase-staking-reader`: **58 passed, 0 failed**.
+  `cargo test -p fluentbase-e2e --release staking`: **13 passed, 0 failed**.
+  `agreement_check.py`: **15 checks, 0 disagree, 0 unread**.
+  Every one of those issues calldata against this blob, which is what says the
+  strictness refuses no caller in this repository.
+
+## Previous build — 2026-09-11 (Э1.3 timelock + Э1.7 `claimValidatorFeeAtEpoch` removed)
 
 Rebuilt for two ABI changes made in one session and built ONCE after both, so
 this section covers them together. The intermediate blob — timelock in, the

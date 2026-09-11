@@ -84,17 +84,60 @@ pub(crate) fn current_epoch_at_block<SDK: SharedAPI>(
     math::epoch_at_block(block_number, activation, interval).ok_or(ExitCode::IntegerDivisionByZero)
 }
 
+/// Decode a STATIC argument tuple, and refuse anything the declaration does not
+/// account for.
+///
+/// K-13: `SolidityABI::decode` accepts a buffer that is LONGER than the type it
+/// decodes, and it silently truncates an integer word to the declared width.
+/// Measured on this contract before this wrapper existed: 32 bytes of tail after
+/// a well-formed `isValidator(address)` decoded and dispatched happily, and
+/// `setActiveValidatorsLength(uint32)` handed a word carrying bit 32 set and the
+/// low bytes `7` wrote a cap of 7 — its `MAX_COMMITTEE_SIZE` ceiling never saw
+/// the number the caller actually sent. A short buffer was already refused.
+///
+/// The check is a ROUND TRIP rather than a length comparison, because one test
+/// catches both: re-encoding the decoded value reproduces the canonical bytes,
+/// so a tail makes the lengths differ and a truncated integer makes the high
+/// bytes of its word differ. It needs no per-field knowledge, which is what a
+/// width check would need and what this layer does not have.
+///
+/// Only static types. A dynamic tuple has legal encodings that differ in their
+/// offset layout, so byte equality would refuse calldata that is correct — see
+/// [`decode_args`], which is the dynamic path and is deliberately left as it was.
+///
+/// This is the CONTRACT side of K-13 and not a fix to the decoder. Making
+/// `SolidityABI::decode` itself strict would reach three other consumers, one of
+/// which decodes two versioned storage payloads by trying both and taking the one
+/// that parses — see the journal `.dpos-study/history/E1-CONTRACT-2.md` §6.
 pub(crate) fn decode<T>(input: &[u8]) -> Result<T, ExitCode>
 where
     T: Encoder<BE, 32, true, false>,
 {
-    SolidityABI::<T>::decode(&input, 0).map_err(|_| ExitCode::MalformedBuiltinParams)
+    let value: T =
+        SolidityABI::<T>::decode(&input, 0).map_err(|_| ExitCode::MalformedBuiltinParams)?;
+    if !<T as Encoder<BE, 32, true, false>>::IS_DYNAMIC {
+        let mut canonical = BytesMut::new();
+        SolidityABI::<T>::encode(&value, &mut canonical, 0)
+            .map_err(|_| ExitCode::MalformedBuiltinParams)?;
+        if canonical.as_ref() != input {
+            return Err(ExitCode::MalformedBuiltinParams);
+        }
+    }
+    Ok(value)
 }
 
 /// Decode a Solidity function's parameter tuple.
 ///
 /// Dynamic function arguments omit the outer tuple offset used when a
 /// dynamic Rust struct is encoded as a standalone ABI value.
+///
+/// NOT round-trip checked, unlike [`decode`]: every caller of this one passes a
+/// dynamic tuple, and a dynamic tuple has legal encodings that differ in their
+/// offset layout, so byte equality would refuse correct calldata. The tail and
+/// the truncated-integer holes K-13 names therefore remain open on this path —
+/// `initialize` and the three evidence routes. Both are bounded by what those
+/// handlers then check: `initialize` validates every scalar it decodes and is
+/// one-shot, and the evidence routes verify a BLS signature over the bytes.
 pub(crate) fn decode_args<T>(input: &[u8]) -> Result<T, ExitCode>
 where
     T: FunctionArgs<BE, 32, true, false>,

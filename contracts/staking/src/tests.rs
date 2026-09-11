@@ -11843,3 +11843,104 @@ fn the_address_timelocks_are_governance_only_on_both_halves() {
         );
     }
 }
+
+// K-13. `SolidityABI::decode` accepts a buffer longer than the type it decodes
+// and silently truncates an integer word to the declared width; a SHORT buffer
+// it already refused. Both accepted forms are refused on the static path now,
+// and the test drives what each one would have let through rather than only the
+// exit code.
+#[test]
+fn a_static_argument_tuple_refuses_a_tail_and_a_too_wide_integer() {
+    let owner = Address::with_last_byte(0xa0);
+    let subject = Address::with_last_byte(0x01);
+    let mut harness = Harness::new(1_000);
+    assert_eq!(
+        harness.initialize(owner, Vec::new(), Vec::new(), 0),
+        ExitCode::Ok
+    );
+
+    // --- an extra word nobody declared.
+    let clean = encode_call(SIG_IS_VALIDATOR, &AddressCommand { value: subject });
+    assert_eq!(
+        harness.call(clean.clone()),
+        (ExitCode::Ok, {
+            let mut expected = vec![0u8; 32];
+            expected[31] = 0;
+            expected
+        }),
+        "the control: the canonical calldata answers"
+    );
+    let mut padded = clean.clone();
+    padded.extend_from_slice(&[0xaa; 32]);
+    assert_eq!(
+        harness.call(padded).0,
+        ExitCode::MalformedBuiltinParams,
+        "a tail past the declared arguments is refused, not ignored"
+    );
+
+    // A tail of ZEROES is refused too. It is the same defect and the easier one
+    // to wave through, because it decodes to the same value.
+    let mut zero_padded = clean.clone();
+    zero_padded.extend_from_slice(&[0u8; 32]);
+    assert_eq!(
+        harness.call(zero_padded).0,
+        ExitCode::MalformedBuiltinParams,
+        "and a tail of zeroes is still a tail"
+    );
+
+    // A short buffer was already refused, and still is.
+    let mut truncated = clean;
+    truncated.pop();
+    assert_eq!(harness.call(truncated).0, ExitCode::MalformedBuiltinParams);
+
+    // --- an integer word wider than the argument it is decoded into.
+    //
+    // The cap setter is the one to drive it through: it carries a ceiling, so a
+    // silently truncated word does not merely land a wrong number, it lands one
+    // the ceiling was never shown.
+    harness.set_caller(GENESIS_GOVERNANCE);
+    let cap_before = chain_config_storage()
+        .active_validators_length_accessor()
+        .get_checked(&harness.sdk)
+        .unwrap();
+    let mut wide = SIG_SET_ACTIVE_VALIDATORS_LENGTH.to_be_bytes().to_vec();
+    let mut word = [0u8; 32];
+    // 2^32 + MIN_COMMITTEE_LENGTH: the low four bytes are a legal cap, and the
+    // bit above them is what the declaration has no room for.
+    word[27] = 0x01;
+    word[28..].copy_from_slice(&(MIN_COMMITTEE_LENGTH as u32).to_be_bytes());
+    wide.extend_from_slice(&word);
+    assert_eq!(
+        harness.call(wide).0,
+        ExitCode::MalformedBuiltinParams,
+        "a word carrying bits above the declared width is refused"
+    );
+    assert_eq!(
+        chain_config_storage()
+            .active_validators_length_accessor()
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        cap_before,
+        "and nothing was written: before this the low bytes landed as the cap"
+    );
+
+    // The control: the same low bytes, with the high word clean, DO land.
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_SET_ACTIVE_VALIDATORS_LENGTH,
+                &U32Command {
+                    value: MIN_COMMITTEE_LENGTH as u32,
+                },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+    assert_eq!(
+        chain_config_storage()
+            .active_validators_length_accessor()
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        MIN_COMMITTEE_LENGTH as u64
+    );
+}
