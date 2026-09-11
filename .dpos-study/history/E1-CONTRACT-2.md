@@ -261,6 +261,112 @@ ABI не затронут. Потребителей события `Equivocation
 
 **sha:** `3c4560db` (код), docs — следующим коммитом.
 
+### П4 (1.8 остаток). Только тесты
+
+#### П4 (а). F-1 — одноцветные фикстуры трёх тестов личности
+
+**Что было.** `compressed_key_of(byte)` (`tests.rs:427-432`) и фикстуры трёх тестов
+брали ОДИН байт на все 256 байт EIP-2537 G2. По `bls.rs:315-329` `x.c0` — байты
+`[16..64]`, `x.c1` — `[80..128]`, и `compress_g2_unchecked` кладёт в вывод сначала
+`x_c1`, потом `x_c0`. При одинаковом заполнении перестановка половин не двигает ни
+байта.
+
+**Что сделано.** Два помощника рядом с `compressed_key_of`:
+`g2_uncompressed_of_halves(c0, c1)` — 256-байтная точка с нулевыми паддингами,
+`x.c0 = c0`, `x.c1 = c1`, обе половины `y` = `c0`; и `compressed_key_of_halves(c0, c1)`
+— её 96-байтный эталон (`c1` впереди, флаг сжатия и знак в первом байте). Три теста
+переведены на `(0x11, 0x33)`. У `register_validator_cast_calldata_registers_consensus_keys_atomically`
+hex-литерал переписан пословно и рядом стоит утверждение
+`&calldata[4 + 7*32 .. 4 + 15*32] == g2_uncompressed_of_halves(0x11, 0x33)`, чтобы
+литерал и помощник не разъехались.
+
+**Мутация M65** (`bls.rs`, `out[..FP_LENGTH] = x_c0; out[FP_LENGTH..] = x_c1` — перестановка
+отменена), прогон после правки:
+
+    test tests::g2_compression_swaps_the_halves_and_reads_the_sign_from_c1 ... FAILED
+    test tests::get_consensus_keys_matches_dynamic_struct_return_vectors ... FAILED
+    test tests::register_validator_cast_calldata_registers_consensus_keys_atomically ... FAILED
+    test tests::register_validator_verifies_and_stores_consensus_keys_in_one_call ... FAILED
+    test tests::the_y_sign_bit_is_strictly_above_half_the_field ... FAILED
+    test result: FAILED. 173 passed; 5 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+Пять, а не два — ровно то, что требовалось показать. **Были ли красными до правки:**
+три названных теста были ЗЕЛЁНЫМИ при M65 (`history/E1-8-TESTS.md` F-1, замер 09-08;
+в этой сессии M65 до правки фикстур не перепрогонялся — перепрогон после правки
+показывает пять, и состав пяти включает те два, что F-1 называет единственными
+красными).
+
+**Ворота после П4(а), verbatim:**
+
+    cargo test                         → test result: ok. 178 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+    cargo test --features devnet-views → test result: ok. 179 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+    cargo clippy --all-targets -- -D warnings → Finished `dev` profile [optimized] target(s) in 1.53s
+    cargo fmt --check                  → чисто
+
+**sha:** `79152ea2`.
+
+#### П4 (б). F-3 — вторая книга в `install_stipend_token`
+
+**Что было.** Заглушка вела только книгу резерва: `transfer` возвращал `true` без
+единой проверки, `transferFrom` в пользу `GENESIS_STAKING` ничего не зачислял,
+`balanceOf(GENESIS_STAKING)` отвечал нулём. Утверждение «депозит выходит из баланса
+контракта» проверялось против баланса бесконечного и неподвижного.
+
+**Что сделано.** Поле `contract_balance` в `StipendFunding`; `transferFrom` в адрес
+контракта зачисляет, в чужой адрес — проходит мимо; `transfer` списывает и падает
+(`ExitCode::Panic`), когда не хватает; `balanceOf(GENESIS_STAKING)` отвечает второй
+книгой. Начальный остаток — пятый аргумент `install_stipend_token` на всех
+одиннадцати вызовах: депозиты, сделанные фикстурой ДО подмены обработчика, изнутри
+заглушки не видны, и назвать их может только вызывающий.
+
+**Тесты.**
+
+- `a_reward_and_a_matured_principal_claim_are_independent` — существующий, усилен:
+  называет свой начальный остаток (`stake * 2` — генезисный самостейк и делегация) и
+  утверждает баланс контракта дважды: не тронут после претензии на награду, уменьшен
+  ровно на депозит после вывода.
+- `a_deposit_the_contract_cannot_cover_is_not_paid_out_of_the_reserve` — новый:
+  резерв полон и одобрен, у контракта на один wei меньше депозита; вывод обязан
+  провалиться, резерв — не быть спрошенным, депозит — остаться забронированным за
+  вкладчиком; затем контрольная нога, где контракт может покрыть, и вывод проходит.
+  Против старой заглушки этот тест не «зелёный», а невыразимый: `transfer` там не мог
+  отказать.
+
+**Чем это измерено — и чем НЕ измерено.** Требование пункта было показать, что два
+теста краснеют при M53 ПОСЛЕ правки заглушки и были зелёными ДО. Премиса неверна по
+замеру, и `history/E1-8-TESTS.md` F-3 говорит то же самое своими словами («`M53` …
+красная, то есть ИСТОЧНИК запинен, а достаточность — нет»). M53 (платить принципал с
+резерва вместо `safe_transfer`) — прогон в этой сессии:
+
+| стенд | M53 |
+|---|---|
+| заглушка с обеими книгами + новые тесты | КРАСНАЯ, 3 теста: `a_deposit_the_contract_cannot_cover_is_not_paid_out_of_the_reserve`, `a_reward_and_a_matured_principal_claim_are_independent`, `the_delegator_views_report_the_reward_and_the_deposit_apart` |
+| заглушка с обезвреженной второй книгой + те же тесты | КРАСНАЯ, те же 3 |
+
+То есть M53 ловится записью `pulls`/`transfers`, которая была и до правки, и правка
+заглушки на неё не влияет.
+
+Достаточность измеряет другая мутация — назову её **M53b**: `safe_transfer`
+(`util.rs:204-207`) проглатывает неуспешный статус (`return Ok(())` вместо
+`Err(result.status)`). Прогон:
+
+| стенд | M53b |
+|---|---|
+| ВСЕ тесты дерева на `79152ea2` + старая заглушка | **ЗЕЛЁНАЯ**: `test result: ok. 178 passed; 0 failed` |
+| заглушка с обеими книгами + новые тесты | **КРАСНАЯ**, 1 тест: `a_deposit_the_contract_cannot_cover_is_not_paid_out_of_the_reserve` |
+
+Это и есть то, что покупает правка заглушки: до неё ни один тест в дереве не замечал,
+что контракт платит принципал переводом, который не прошёл.
+
+**Ворота после П4(б), verbatim:**
+
+    cargo test                         → test result: ok. 179 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+    cargo test --features devnet-views → test result: ok. 180 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+    cargo clippy --all-targets -- -D warnings → Finished `dev` profile [optimized] target(s) in 1.88s
+    cargo fmt --check                  → чисто
+
+**sha:** `52c84f6d`.
+
 ## §3 Отклонения Д-nn
 
 ### Д-01 (П1). Три способа, которыми правка задела существующие тесты
@@ -296,7 +402,15 @@ ABI не затронут. Потребителей события `Equivocation
 
 ## §4 Мутации
 
-_Заполняется в П4._
+Форма — как `history/E1-8-TESTS.md` §2. «До» и «после» относятся к состоянию тестов
+этой сессии, а не к 09-08.
+
+| M | что снято | до правки тестов | упавшие тесты | после правки |
+|---|---|---|---|---|
+| M-A | util.rs ensure_governance: drop the ensure_initialized call | — (проверка не снималась 09-08) | — | КРАСНАЯ (1): `every_config_setter_refuses_an_uninitialized_contract_before_it_checks_anything_else` |
+| M65 | bls.rs compress_g2_unchecked: undo the EIP-2537↔zcash half swap | КРАСНАЯ (2) по замеру 09-08 (`E1-8-TESTS.md` F-1) | `g2_compression_swaps_the_halves_and_reads_the_sign_from_c1`, `the_y_sign_bit_is_strictly_above_half_the_field` | КРАСНАЯ (5): те же два + `get_consensus_keys_matches_dynamic_struct_return_vectors`, `register_validator_cast_calldata_registers_consensus_keys_atomically`, `register_validator_verifies_and_stores_consensus_keys_in_one_call` |
+| M53 | staking.rs withdraw_delegator_principal_before: pay the principal off the reserve | КРАСНАЯ (3) | `a_deposit_the_contract_cannot_cover_is_not_paid_out_of_the_reserve`, `a_reward_and_a_matured_principal_claim_are_independent`, `the_delegator_views_report_the_reward_and_the_deposit_apart` | КРАСНАЯ (3), те же — правка заглушки на эту мутацию не влияет |
+| M53b | util.rs safe_transfer: swallow a failed transfer status | **ЗЕЛЁНАЯ** (178/0 на `79152ea2`) | — | КРАСНАЯ (1): `a_deposit_the_contract_cannot_cover_is_not_paid_out_of_the_reserve` |
 
 ## §5 Оставлено как есть
 
