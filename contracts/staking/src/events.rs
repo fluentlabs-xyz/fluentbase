@@ -106,26 +106,29 @@ pub struct BlendReserveChanged {
     pub new_value: Address,
 }
 
-/// The declaring half of the two address timelocks.
+/// The declaring half of the blend-reserve timelock.
 ///
 /// These ride ordinary governance transactions, so unlike the close's events
 /// they DO reach a receipt and `eth_getLogs` shows them — which is the point of
 /// the scheme: the declaration is the window in which a rotation can still be
 /// noticed and answered before it lands.
 #[derive(Debug, Clone, PartialEq, Eq, Event)]
-pub struct SlashFundAddressDeclared {
+pub struct BlendReserveDeclared {
     #[indexed]
     pub new_value: Address,
     pub declared_at_epoch: u64,
     pub effective_at_epoch: u64,
 }
 
+/// A declaration withdrawn without being applied.
+///
+/// Announced for the same reason the declaration is: the pending value is state
+/// an observer is expected to be watching, and its disappearance is as much a
+/// governance action as its arrival.
 #[derive(Debug, Clone, PartialEq, Eq, Event)]
-pub struct BlendReserveDeclared {
+pub struct BlendReserveDeclarationCancelled {
     #[indexed]
-    pub new_value: Address,
-    pub declared_at_epoch: u64,
-    pub effective_at_epoch: u64,
+    pub cancelled_value: Address,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Event)]

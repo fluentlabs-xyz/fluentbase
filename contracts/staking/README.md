@@ -135,6 +135,15 @@ validator-creation call; there is no separate key-registration phase.
   drawn from those weights.
 - A seizure has one recipient — the configured slash fund, or the burn sink when none is set. Nobody
   is paid for reporting, so no submitter of a slash can profit from copying another's evidence.
+- **The two address setters are not symmetric, and the asymmetry is the point.** `setBlendReserve` names the
+  account the stipend is PULLED FROM, which a stolen governance key could point at itself, so it is two-step:
+  `setBlendReserve` declares, `applyBlendReserve` lands it after seven epochs and before the window closes
+  seven epochs later, `cancelBlendReserve` withdraws it, and `getPendingBlendReserve` shows what is armed. The
+  expiry and the withdrawal exist because a declaration that could neither lapse nor be taken back would sit
+  armed for the life of the chain, and a key stolen long afterwards would land it in one block with the notice
+  period long past. `setSlashFundAddress` names where a seizure GOES, which a stolen key cannot drain, and it
+  is the repair path a refused seizure depends on — so it stays immediate. `setBlendStipendPerEpoch` is
+  immediate too, decided separately.
 - A validator's `owner` is its immutable administrative, validator-fee, self-stake, and slashing identity.
   There is no ABI point that changes it.
 
@@ -165,9 +174,14 @@ A recipient that refuses the transfer **reverts the whole penalty**: the tombsto
 removal and the selection-invisibility stamp roll back with the payout, and the charge can be brought again
 once the recipient accepts. The alternative — swallowing the refusal — left the bond on this contract with no
 path off it and reported a seizure of nothing, which is half a penalty with the missing half unrecoverable.
-The cost is that a fund which refuses makes equivocation unslashable while it refuses; that is survivable
-because the node soft-folds a revert of the system-call route (below) rather than halting, and the default
-recipient is a burn sink that refuses nothing.
+
+The cost is that a fund which refuses makes equivocation unslashable *while it refuses*, and the whole repair
+is `setSlashFundAddress`. That is why that setter is the one address setter with NO timelock: it was given one
+on 2026-09-11 and exempted again the same day, because seven epochs of notice on the repair path is seven
+epochs of an offender keeping its seat, its bond and its rewards. Nor can the fund fall back to the burn sink
+— the sink is reached only when the stored address is zero and the setter refuses a zero — so an immediate
+rotation is the only exit. Survivable because the node soft-folds a revert of the system-call route (below)
+rather than halting, and because the rotation lands in one block.
 
 ## Solidity parity
 

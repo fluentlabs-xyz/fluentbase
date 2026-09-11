@@ -157,6 +157,22 @@ where
     Ok(())
 }
 
+/// Encode a Solidity function's return tuple without an outer tuple offset.
+///
+/// Beside [`write_abi`] rather than inside `consensus.rs`, where it used to live:
+/// it is an ABI helper with no consensus in it, and `config.rs` needs it too.
+pub(crate) fn write_returns<SDK, T>(sdk: &mut SDK, value: &T) -> Result<(), ExitCode>
+where
+    SDK: SharedAPI,
+    T: FunctionArgs<BE, 32, true, false>,
+{
+    let mut output = BytesMut::new();
+    SolidityABI::<T>::encode_function_args(value, &mut output)
+        .map_err(|_| ExitCode::MalformedBuiltinParams)?;
+    sdk.write(output.freeze());
+    Ok(())
+}
+
 fn erc20_transfer_from_input(
     from: Address,
     to: Address,
@@ -262,13 +278,18 @@ pub(crate) fn safe_transfer<SDK: SharedAPI>(
 
 /// Attempts an ERC-20 transfer and reports whether the tokens moved.
 ///
-/// A refusal is a value here, not a revert: a caller whose earlier effects must
-/// survive a hostile or misconfigured recipient decides for itself what to do
-/// with the failure. Both refusal vectors count — a reverting call and the
-/// `false` a plain ERC-20 returns — because either one reaching `?` would undo
-/// the caller. Unlike `safe_transfer` this never forwards the callee's revert
-/// data into the output buffer: the caller goes on to return `Ok`, and that
-/// buffer is the transaction's return value.
+/// A refusal is a VALUE here, not a revert — but that is about who decides, not
+/// about what gets decided. The only caller today (`seize_self_stake`) turns
+/// every refusal into `ERR_STAKING_TOKEN_CALL_FAILED` and rolls its whole
+/// penalty back, which is the opposite of what this function's earlier doc
+/// promised and is deliberate (K-22). What this still buys is that the CALLER
+/// chooses: all three refusal vectors — a reverting call, the `false` a plain
+/// ERC-20 returns, and a return this cannot decode — arrive here as `false`
+/// rather than as a `?` that would unwind before the caller saw them.
+///
+/// Unlike `safe_transfer` this never forwards the callee's revert data into the
+/// output buffer, so a caller that DOES revert writes its own error selector
+/// into a buffer the callee has not already claimed.
 pub(crate) fn try_transfer<SDK: SharedAPI>(
     sdk: &mut SDK,
     recipient: Address,
@@ -284,9 +305,9 @@ pub(crate) fn try_transfer<SDK: SharedAPI>(
         return Ok(false);
     }
     // A malformed return counts as a refusal, not an error — the opposite of
-    // `safe_transfer`, and chosen rather than inherited. This caller must not
-    // revert, so garbage from the token reads as "the tokens did not move" and
-    // folds like any other refusal.
+    // `safe_transfer`, and chosen rather than inherited. Garbage from the token
+    // reads as "the tokens did not move" and folds like any other refusal, so
+    // the caller sees one outcome to decide about instead of three.
     Ok(result.data.is_empty() || SolidityABI::<bool>::decode(&result.data, 0).unwrap_or(false))
 }
 

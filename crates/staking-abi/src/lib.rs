@@ -167,32 +167,37 @@ sol! {
     function setProductionLivenessDisabled(bool value) external;
     /// The per-epoch BLEND stipend; `0` is the OFF sentinel.
     function setBlendStipendPerEpoch(uint256 value) external;
-    // The two ADDRESS setters are two-step: each call below DECLARES a value,
-    // and a matching `apply…` lands it once `ADDRESS_SETTER_TIMELOCK_EPOCHS`
-    // have passed. A compromised governance key can therefore point neither the
-    // seizure recipient nor the stipend source at itself inside one block. A
-    // second declaration overwrites the first and restarts the clock; the
-    // `…Changed` event fires on the APPLY, not on the declaration.
+    // `setBlendReserve` is TWO-STEP: it DECLARES, and `applyBlendReserve` lands
+    // the declaration once `ADDRESS_SETTER_TIMELOCK_EPOCHS` have passed and
+    // before `+ ADDRESS_SETTER_APPLY_WINDOW_EPOCHS` closes the window. A second
+    // declaration overwrites the first and restarts the clock;
+    // `cancelBlendReserve` withdraws one without landing it; the `…Changed`
+    // event fires on the APPLY, not on the declaration.
     //
-    // `setBlendStipendPerEpoch` above is deliberately NOT in this scheme —
-    // decided 2026-09-04, `.dpos-study/DECISIONS.md` §3.
+    // TWO governance setters are deliberately NOT in this scheme.
+    // `setBlendStipendPerEpoch` above: decided 2026-09-04,
+    // `.dpos-study/DECISIONS.md` §3. `setSlashFundAddress`: it names where a
+    // seizure goes rather than a pot a stolen key can drain, and the contract
+    // reverts a whole slash when that recipient refuses — so rotating it is the
+    // repair path, and a timelock on it would buy a week of unslashable
+    // equivocation for very little. It keeps its `derive_keccak256_id!` in the
+    // contract's `consts.rs`, having no caller outside that crate.
 
     /// Declares a new account for the stipend to be drawn from with
     /// `transferFrom`. The epoch close prices an epoch off what the CURRENT
     /// account holds AND has approved; this one does not become current until
     /// `applyBlendReserve`.
     function setBlendReserve(address value) external;
-    /// Lands the declared `blendReserve`. Reverts before the timelock elapses,
-    /// and reverts when nothing is declared.
+    /// Lands the declared `blendReserve`. Reverts before the timelock elapses
+    /// (`TimelockNotElapsed`), after the window closes (`TimelockExpired`), and
+    /// when nothing is declared (`NoPendingChange`).
     function applyBlendReserve() external;
-    /// Lands the declared `slashFundAddress`. Same two refusals.
-    ///
-    /// Its DECLARING half, `setSlashFundAddress`, is not declared here: it has no
-    /// caller outside the contract crate, so under the scope rule above it keeps
-    /// its `derive_keccak256_id!` in `consts.rs`. The apply half is here because
-    /// it is new ABI and every new ABI point this work adds goes through one
-    /// `sol!` — see `.dpos-study/history/E1-CONTRACT-2.md` §3.
-    function applySlashFundAddress() external;
+    /// Withdraws an outstanding declaration without landing it.
+    function cancelBlendReserve() external;
+    /// The outstanding declaration, or four zeroes when there is none. Without it
+    /// an armed rotation is discoverable only by replaying the declaration log.
+    function getPendingBlendReserve() external view returns (
+        address value, uint64 declaredAtEpoch, uint64 effectiveAtEpoch, uint64 expiresAtEpoch);
 
     // ---- views the node reads ----------------------------------------------
 
@@ -281,14 +286,14 @@ sol! {
     /// the value belongs to epoch `current + MAX_COMMITTEE_LOOKAHEAD_EPOCHS`.
     event EpochCommitteeCommitted(uint64 indexed epoch, address[] committee);
 
-    // The declaration half of the two address timelocks. These ride ordinary
-    // governance transactions, so unlike the six above they DO reach a receipt
-    // and `eth_getLogs` shows them — which is the point: a declaration is the
-    // window in which a rotation can still be noticed and answered.
+    // The blend-reserve timelock's own events. These ride ordinary governance
+    // transactions, so unlike the six above they DO reach a receipt and
+    // `eth_getLogs` shows them — which is the point: a declaration is the window
+    // in which a rotation can still be noticed and answered, and a cancellation
+    // is the other half of that story.
     event BlendReserveDeclared(
         address indexed newValue, uint64 declaredAtEpoch, uint64 effectiveAtEpoch);
-    event SlashFundAddressDeclared(
-        address indexed newValue, uint64 declaredAtEpoch, uint64 effectiveAtEpoch);
+    event BlendReserveDeclarationCancelled(address indexed cancelledValue);
 
     // ---- reverts the node classifies ---------------------------------------
 
@@ -303,7 +308,7 @@ mod tests {
     use super::*;
     use alloy_sol_types::{SolCall, SolError, SolEvent};
 
-    /// The crate declares 26 calls; this pins the 17 of them that appear in the
+    /// The crate declares 27 calls; this pins the 18 of them that appear in the
     /// selector scan in `devnet/local-dpos-smoke/contracts/STAKING_ARTEFACT.md` —
     /// the scan of the deployed rWasm blob, an EXTERNAL witness: it is derived
     /// from neither declaration, it is what a live chain actually dispatches on,
@@ -410,9 +415,14 @@ mod tests {
                 0x47a9615b,
             ),
             (
-                "applySlashFundAddress()",
-                applySlashFundAddressCall::SELECTOR,
-                0x7bb69756,
+                "cancelBlendReserve()",
+                cancelBlendReserveCall::SELECTOR,
+                0xf75e5549,
+            ),
+            (
+                "getPendingBlendReserve()",
+                getPendingBlendReserveCall::SELECTOR,
+                0x135dd16d,
             ),
             (
                 "AlreadySlashedForEquivocation(address)",
@@ -474,9 +484,9 @@ mod tests {
                 "77e01e0a4deae141a7693d3a8b04de45a59ef139760040a697144a8f804995be",
             ),
             (
-                "SlashFundAddressDeclared",
-                SlashFundAddressDeclared::SIGNATURE_HASH,
-                "8864604f373d82052fe0c00ab760b2f56b7211205a299d0b625af6f7faa497b5",
+                "BlendReserveDeclarationCancelled",
+                BlendReserveDeclarationCancelled::SIGNATURE_HASH,
+                "39bfbe6a046ac7af9b5b7b16db42a19234d09ecae260471c58af10e9c97f4d22",
             ),
         ] {
             let want: B256 = pinned.parse().expect("pinned topic0 must be 32 hex bytes");

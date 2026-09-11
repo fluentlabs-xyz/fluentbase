@@ -124,7 +124,8 @@ pub const SIG_GET_BLEND_RESERVE: u32 = derive_keccak256_id!("getBlendReserve()")
 // 0x7899ae8f
 pub const SIG_SET_BLEND_RESERVE: u32 = sig::<abi::setBlendReserveCall>();
 pub const SIG_APPLY_BLEND_RESERVE: u32 = sig::<abi::applyBlendReserveCall>();
-pub const SIG_APPLY_SLASH_FUND_ADDRESS: u32 = sig::<abi::applySlashFundAddressCall>();
+pub const SIG_CANCEL_BLEND_RESERVE: u32 = sig::<abi::cancelBlendReserveCall>();
+pub const SIG_GET_PENDING_BLEND_RESERVE: u32 = sig::<abi::getPendingBlendReserveCall>();
 // 0xee3ad0e7
 pub const SIG_GET_MIN_VERDICT_DUE_BLOCKS: u32 = derive_keccak256_id!("getMinVerdictDueBlocks()");
 // 0x4fae9dea
@@ -293,8 +294,12 @@ pub const ERR_INVALID_EVIDENCE_ENCODING: u32 = derive_keccak256_id!("InvalidEvid
 /// An address timelock asked to land before its term elapsed: `(current epoch,
 /// the epoch it becomes effective at)`.
 pub const ERR_TIMELOCK_NOT_ELAPSED: u32 = derive_keccak256_id!("TimelockNotElapsed(uint64,uint64)");
-/// An address timelock asked to land with nothing declared.
+/// An address timelock asked to land with nothing declared, or a cancel with
+/// nothing to cancel.
 pub const ERR_NO_PENDING_CHANGE: u32 = derive_keccak256_id!("NoPendingChange()");
+/// A declaration asked to land after its window closed: `(current epoch, the
+/// epoch it stopped being applicable at)`.
+pub const ERR_TIMELOCK_EXPIRED: u32 = derive_keccak256_id!("TimelockExpired(uint64,uint64)");
 pub const ERR_EVIDENCE_SIGNER_MISMATCH: u32 =
     derive_keccak256_id!("EvidenceSignerMismatch(uint32,uint32)");
 pub const ERR_EVIDENCE_ROUND_MISMATCH: u32 =
@@ -414,13 +419,14 @@ pub use staking_protocol::MIN_COMMITTEE_LENGTH;
 /// Not a default — see [`DEFAULT_EPOCH_BLOCK_INTERVAL`].
 pub const DEFAULT_UNDELEGATE_PERIOD: u64 = 7;
 
-/// Epochs a declared address setting waits before it can be applied.
+/// Epochs a declared `blendReserve` waits before it can be applied.
 ///
-/// The two address setters — `setSlashFundAddress` and `setBlendReserve` — name
-/// the seizure recipient and the stipend source, and a governance key that could
-/// move either in one block could point both at itself. Splitting each into
-/// declare-then-apply puts this many epochs of public notice between the two,
-/// during which the declaration is visible as an ordinary receipt log.
+/// `setBlendReserve` names the account the epoch stipend is PULLED FROM, so a
+/// governance key that could move it in one block could point it at itself and
+/// drain what the treasury has approved. Splitting it into declare-then-apply
+/// puts this many epochs of public notice in between, during which the
+/// declaration is visible as an ordinary receipt log and queryable through
+/// `getPendingBlendReserve`.
 ///
 /// Epochs, not blocks and not seconds: this contract reads no clock
 /// (`block_timestamp()` appears nowhere in it) and every other deadline it keeps
@@ -429,10 +435,26 @@ pub const DEFAULT_UNDELEGATE_PERIOD: u64 = 7;
 /// is a week of them. No derivation is recorded for exactly 7 — it is the figure
 /// the decision fixed (`.dpos-study/DECISIONS.md` §3, 2026-09-04).
 ///
-/// `setBlendStipendPerEpoch` is deliberately NOT under it, decided at the same
-/// time and for a stated reason; do not extend the scheme to it without
-/// reopening that decision.
+/// TWO setters are deliberately NOT under it, each for its own reason.
+/// `setBlendStipendPerEpoch`: decided 2026-09-04, and reopening it means
+/// reopening that decision. `setSlashFundAddress`: it names where a seizure GOES
+/// rather than a pot a stolen key can drain, so the protection is thin — while
+/// the cost is not, because `seize_self_stake` reverts the whole penalty on a
+/// refused transfer and rotating the address is the only repair. A timelock
+/// there buys a week of unslashable equivocation for very little.
 pub const ADDRESS_SETTER_TIMELOCK_EPOCHS: u64 = 7;
+
+/// Epochs a declaration stays applicable AFTER its term elapses.
+///
+/// Without a window a declaration never expires, and the scheme inverts: a
+/// rotation declared and abandoned sits armed for the life of the chain, and a
+/// key stolen months later lands it in one block with the notice period long
+/// scrolled past. Past this the declaration must be made again, which puts the
+/// notice back in front of the change.
+///
+/// Equal to the term, and that IS the derivation: governance gets as long to act
+/// on a declaration as it had to wait for it. Nothing else fixes the number.
+pub const ADDRESS_SETTER_APPLY_WINDOW_EPOCHS: u64 = 7;
 
 /// Epochs between a delegation being booked and it counting toward stake.
 ///

@@ -51,19 +51,22 @@ pub struct ChainConfigStorage {
     /// opposite of the intended default, so the seed is the only thing keeping
     /// the tier off on a new chain.
     production_liveness_disabled: StorageBool,
-    /// The two address timelocks: a declared value and the epoch it was declared
-    /// in, one pair per setter.
+    /// The blend-reserve timelock: a declared value and the epoch it was declared
+    /// in.
     ///
     /// APPENDED, never interleaved with the fields above — a field inserted
     /// higher up shifts every slot below it, and nothing here is deployed only
     /// because nets relaunch from a fresh genesis. Keeping new state at the end
     /// keeps that true by construction.
     ///
-    /// "Nothing declared" is the ZERO ADDRESS, not a zero epoch: both setters
-    /// refuse a zero address, so the sentinel cannot collide with a real
+    /// "Nothing declared" is the ZERO ADDRESS, not a zero epoch: the setter
+    /// refuses a zero address, so the sentinel cannot collide with a real
     /// declaration, while epoch zero is a perfectly ordinary one to declare in.
-    pending_slash_fund_address: StorageAddress,
-    pending_slash_fund_epoch: StorageU64,
+    /// `cancelBlendReserve` and the apply are the two writers that restore it.
+    ///
+    /// `slashFundAddress` had a matching pair here for part of one day. It was
+    /// removed with its timelock: that setter is the repair path a refused
+    /// seizure depends on, so it cannot be made to wait (`config.rs`).
     pending_blend_reserve: StorageAddress,
     pending_blend_reserve_epoch: StorageU64,
 }

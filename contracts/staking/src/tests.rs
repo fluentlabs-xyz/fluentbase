@@ -310,11 +310,13 @@ fn store_test_consensus_keys(
 /// Writes an epoch committee the way `commitEpochCommittee` does: a membership
 /// record keyed by the epoch that mints it, an index entry pointing at it, and
 /// the frozen leader weights in that epoch's ring frame.
-/// Declares an address setting and lands it once the timelock has elapsed.
+/// Declares the blend reserve and lands it once the timelock has elapsed.
 ///
 /// Restores the block number afterwards, so a caller that was mid-scenario stays
 /// where it was. The recorder's cursor is untouched by either call, so the jump
 /// forward and back is invisible to everything except `current_epoch`.
+///
+/// Only the reserve needs this. `setSlashFundAddress` is immediate.
 fn rotate_address_setting(harness: &mut Harness, declare: u32, apply: u32, value: Address) {
     let here = harness.sdk.context().block_number();
     harness.set_caller(GENESIS_GOVERNANCE);
@@ -1303,7 +1305,8 @@ fn derived_selectors_match_independent_hex_pins() {
     for (actual, pinned) in [
         (SIG_INITIALIZE, 0xfecaf0f1),
         (SIG_APPLY_BLEND_RESERVE, 0x47a9615b),
-        (SIG_APPLY_SLASH_FUND_ADDRESS, 0x7bb69756),
+        (SIG_CANCEL_BLEND_RESERVE, 0xf75e5549),
+        (SIG_GET_PENDING_BLEND_RESERVE, 0x135dd16d),
         (SIG_CURRENT_EPOCH, 0x76671808),
         (SIG_NEXT_EPOCH, 0xaea0e78b),
         (SIG_GET_STAKING_TOKEN, 0x9f9106d1),
@@ -1446,13 +1449,13 @@ fn close_event_topics_match_the_shared_abi() {
             abi::BlendReserveDeclared::SIGNATURE,
         ),
         (
-            "SlashFundAddressDeclared",
+            "BlendReserveDeclarationCancelled",
             (
-                events::SlashFundAddressDeclared::SIGNATURE,
-                events::SlashFundAddressDeclared::SELECTOR,
+                events::BlendReserveDeclarationCancelled::SIGNATURE,
+                events::BlendReserveDeclarationCancelled::SELECTOR,
             ),
-            abi::SlashFundAddressDeclared::SIGNATURE_HASH,
-            abi::SlashFundAddressDeclared::SIGNATURE,
+            abi::BlendReserveDeclarationCancelled::SIGNATURE_HASH,
+            abi::BlendReserveDeclarationCancelled::SIGNATURE,
         ),
     ] {
         let (our_sig, our_topic) = ours;
@@ -2161,23 +2164,25 @@ fn governance_updates_embedded_chain_configuration() {
             ExitCode::Ok
         );
     }
-    // The two ADDRESS setters are two-step now: each declares, and a matching
-    // `apply` lands it seven epochs later.
-    for (declare, apply, value) in [
-        (
-            SIG_SET_SLASH_FUND_ADDRESS,
-            SIG_APPLY_SLASH_FUND_ADDRESS,
-            slash_fund,
-        ),
-        (
-            SIG_SET_BLEND_RESERVE,
-            SIG_APPLY_BLEND_RESERVE,
-            replacement_reserve,
-        ),
-    ] {
-        rotate_address_setting(&mut harness, declare, apply, value);
-    }
+    // The reserve is two-step — declare, then apply seven epochs later. The
+    // slash fund is immediate, deliberately: rotating it is the repair path a
+    // refused seizure depends on.
+    rotate_address_setting(
+        &mut harness,
+        SIG_SET_BLEND_RESERVE,
+        SIG_APPLY_BLEND_RESERVE,
+        replacement_reserve,
+    );
     harness.set_caller(GENESIS_GOVERNANCE);
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_SET_SLASH_FUND_ADDRESS,
+                &AddressCommand { value: slash_fund },
+            ))
+            .0,
+        ExitCode::Ok
+    );
     assert_eq!(
         harness
             .call(encode_call(
@@ -7476,11 +7481,15 @@ fn a_system_verdict_tombstones_jails_and_sends_the_whole_seizure_to_the_fund() {
         harness.initialize(sponsor, vec![offender, bystander], vec![stake, stake], 500),
         ExitCode::Ok
     );
-    rotate_address_setting(
-        &mut harness,
-        SIG_SET_SLASH_FUND_ADDRESS,
-        SIG_APPLY_SLASH_FUND_ADDRESS,
-        fund,
+    harness.set_caller(GENESIS_GOVERNANCE);
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_SET_SLASH_FUND_ADDRESS,
+                &AddressCommand { value: fund },
+            ))
+            .0,
+        ExitCode::Ok
     );
     commit_test_committee(
         &mut harness.sdk,
@@ -11659,13 +11668,17 @@ fn materializing_the_same_snapshot_epoch_twice_adds_no_second_entry() {
     );
 }
 
-// The two address timelocks (K-1, `.dpos-study/DECISIONS.md` §3). The seizure
-// recipient and the stipend source are the two settings a compromised governance
-// key could point at itself, so each is split into declare-then-apply with seven
-// epochs between. Five properties, and the one control that makes them mean
-// something.
+// The blend-reserve timelock (K-1, `.dpos-study/DECISIONS.md` §3). The stipend
+// source is the setting a stolen governance key could point at itself, so it is
+// split into declare-then-apply with seven epochs between. Five properties, and
+// the controls that make them mean something.
+//
+// `setSlashFundAddress` is NOT here: it was timelocked for part of 2026-09-11 and
+// exempted the same day, because rotating it is the repair path a refused seizure
+// depends on. `the_slash_fund_rotates_immediately_because_a_refused_seizure_needs_it`
+// below pins that.
 #[test]
-fn the_address_setters_declare_now_and_land_seven_epochs_later() {
+fn the_reserve_setter_declares_now_and_lands_seven_epochs_later() {
     let owner = Address::with_last_byte(0xa0);
     let interval = DEFAULT_EPOCH_BLOCK_INTERVAL;
     let activation = interval;
@@ -11674,135 +11687,357 @@ fn the_address_setters_declare_now_and_land_seven_epochs_later() {
     let second = Address::with_last_byte(0xc2);
     let epoch_block = |epoch: u64| activation + epoch * interval;
 
-    for (declare, apply, read, declared_topic, changed_topic) in [
-        (
-            SIG_SET_BLEND_RESERVE,
-            SIG_APPLY_BLEND_RESERVE,
-            SIG_GET_BLEND_RESERVE,
-            events::BlendReserveDeclared::SELECTOR,
-            events::BlendReserveChanged::SELECTOR,
+    let mut harness = Harness::new(activation);
+    let mut command = harness.initialize_command(owner, Vec::new(), Vec::new(), 0);
+    command.dpos_activation_block = activation;
+    command.blend_reserve = genesis_reserve;
+    assert_eq!(harness.initialize_with(command), ExitCode::Ok);
+    harness.set_caller(GENESIS_GOVERNANCE);
+
+    // 1. Applying with nothing declared is refused, and so is cancelling.
+    assert_revert_selector(
+        harness.call(encode_empty_call(SIG_APPLY_BLEND_RESERVE)),
+        ERR_NO_PENDING_CHANGE,
+    );
+    assert_revert_selector(
+        harness.call(encode_empty_call(SIG_CANCEL_BLEND_RESERVE)),
+        ERR_NO_PENDING_CHANGE,
+    );
+    assert_eq!(
+        decode_returns::<(Address, u64, u64, u64)>(
+            &harness
+                .call(encode_empty_call(SIG_GET_PENDING_BLEND_RESERVE))
+                .1
+        ),
+        (Address::ZERO, 0, 0, 0),
+        "and the view says so rather than quoting a stale pair"
+    );
+
+    // 2. The declaration emits, is queryable, and changes nothing yet.
+    harness.sdk.take_logs();
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_SET_BLEND_RESERVE,
+                &AddressCommand { value: first },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+    let logs = harness.sdk.take_logs();
+    let (data, topics) = find_log(&logs, events::BlendReserveDeclared::SELECTOR, "declaration");
+    assert_eq!(
+        topics.get(1).copied(),
+        Some(first.into_word()),
+        "the declared address is indexed, so a watcher can filter on it"
+    );
+    assert_eq!(
+        decode_output::<(u64, u64)>(data),
+        (0, ADDRESS_SETTER_TIMELOCK_EPOCHS),
+        "declared at epoch 0, effective at 0 + the term"
+    );
+    assert!(
+        logs_of(&logs, events::BlendReserveChanged::SELECTOR).is_empty(),
+        "a declaration is not a change and must not announce one"
+    );
+    assert_eq!(
+        decode_output::<Address>(&harness.call(encode_empty_call(SIG_GET_BLEND_RESERVE)).1),
+        genesis_reserve,
+        "and the live setting has not moved"
+    );
+    assert_eq!(
+        decode_returns::<(Address, u64, u64, u64)>(
+            &harness
+                .call(encode_empty_call(SIG_GET_PENDING_BLEND_RESERVE))
+                .1
         ),
         (
-            SIG_SET_SLASH_FUND_ADDRESS,
-            SIG_APPLY_SLASH_FUND_ADDRESS,
-            SIG_GET_SLASH_FUND_ADDRESS,
-            events::SlashFundAddressDeclared::SELECTOR,
-            events::SlashFundAddressChanged::SELECTOR,
+            first,
+            0,
+            ADDRESS_SETTER_TIMELOCK_EPOCHS,
+            ADDRESS_SETTER_TIMELOCK_EPOCHS + ADDRESS_SETTER_APPLY_WINDOW_EPOCHS
         ),
-    ] {
+        "the pending pair is readable without replaying the log"
+    );
+
+    // 3. One epoch short of the term is refused, and the refusal names both
+    //    epochs so a caller can tell how long is left.
+    harness.set_block_number(epoch_block(ADDRESS_SETTER_TIMELOCK_EPOCHS - 1));
+    let refused = harness.call(encode_empty_call(SIG_APPLY_BLEND_RESERVE));
+    assert_revert_selector(refused.clone(), ERR_TIMELOCK_NOT_ELAPSED);
+    assert_eq!(
+        decode_output::<(u64, u64)>(&refused.1[SIG_LEN_BYTES..]),
+        (
+            ADDRESS_SETTER_TIMELOCK_EPOCHS - 1,
+            ADDRESS_SETTER_TIMELOCK_EPOCHS
+        )
+    );
+
+    // 4. On the term's own epoch it lands, announces the CHANGE, and clears the
+    //    declaration behind it.
+    harness.set_block_number(epoch_block(ADDRESS_SETTER_TIMELOCK_EPOCHS));
+    harness.sdk.take_logs();
+    assert_eq!(
+        harness.call(encode_empty_call(SIG_APPLY_BLEND_RESERVE)).0,
+        ExitCode::Ok
+    );
+    let logs = harness.sdk.take_logs();
+    assert_eq!(
+        decode_output::<(Address, Address)>(
+            &find_log(&logs, events::BlendReserveChanged::SELECTOR, "change").0
+        ),
+        (genesis_reserve, first),
+        "the change event carries the value that moved, and moves it here"
+    );
+    assert_eq!(
+        decode_output::<Address>(&harness.call(encode_empty_call(SIG_GET_BLEND_RESERVE)).1),
+        first
+    );
+    assert_revert_selector(
+        harness.call(encode_empty_call(SIG_APPLY_BLEND_RESERVE)),
+        ERR_NO_PENDING_CHANGE,
+    );
+
+    // 5. A second declaration overwrites the first and RESTARTS the clock: the
+    //    term cannot be shortened by declaring twice.
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_SET_BLEND_RESERVE,
+                &AddressCommand { value: second },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+    harness.set_block_number(epoch_block(2 * ADDRESS_SETTER_TIMELOCK_EPOCHS - 1));
+    assert_revert_selector(
+        harness.call(encode_empty_call(SIG_APPLY_BLEND_RESERVE)),
+        ERR_TIMELOCK_NOT_ELAPSED,
+    );
+    assert_eq!(
+        decode_output::<Address>(&harness.call(encode_empty_call(SIG_GET_BLEND_RESERVE)).1),
+        first,
+        "and the setting still holds what the FIRST declaration landed"
+    );
+    harness.set_block_number(epoch_block(2 * ADDRESS_SETTER_TIMELOCK_EPOCHS));
+    assert_eq!(
+        harness.call(encode_empty_call(SIG_APPLY_BLEND_RESERVE)).0,
+        ExitCode::Ok
+    );
+    assert_eq!(
+        decode_output::<Address>(&harness.call(encode_empty_call(SIG_GET_BLEND_RESERVE)).1),
+        second
+    );
+}
+
+// A declaration that is neither landed nor withdrawn used to sit armed for the
+// life of the chain: the setter refuses the zero address, so the ONLY writer that
+// could clear the pending pair was the apply itself. That inverts the scheme — a
+// rotation declared and forgotten is a loaded gun for a key stolen months later,
+// with the seven epochs of "public notice" long scrolled past.
+//
+// Two answers, and this drives both: the declaration EXPIRES, and governance can
+// withdraw it.
+#[test]
+fn an_abandoned_declaration_expires_and_can_be_withdrawn() {
+    let owner = Address::with_last_byte(0xa0);
+    let interval = DEFAULT_EPOCH_BLOCK_INTERVAL;
+    let activation = interval;
+    let genesis_reserve = Address::with_last_byte(0xf2);
+    let intruder = Address::with_last_byte(0xee);
+    let epoch_block = |epoch: u64| activation + epoch * interval;
+    let last_legal = ADDRESS_SETTER_TIMELOCK_EPOCHS + ADDRESS_SETTER_APPLY_WINDOW_EPOCHS - 1;
+
+    let fixture = |block: u64| {
         let mut harness = Harness::new(activation);
         let mut command = harness.initialize_command(owner, Vec::new(), Vec::new(), 0);
         command.dpos_activation_block = activation;
         command.blend_reserve = genesis_reserve;
         assert_eq!(harness.initialize_with(command), ExitCode::Ok);
         harness.set_caller(GENESIS_GOVERNANCE);
-        let before = decode_output::<Address>(&harness.call(encode_empty_call(read)).1);
-
-        // 1. Applying with nothing declared is refused.
-        assert_revert_selector(
-            harness.call(encode_empty_call(apply)),
-            ERR_NO_PENDING_CHANGE,
-        );
-
-        // 2. The declaration emits, and changes nothing yet.
-        harness.sdk.take_logs();
         assert_eq!(
             harness
-                .call(encode_call(declare, &AddressCommand { value: first }))
+                .call(encode_call(
+                    SIG_SET_BLEND_RESERVE,
+                    &AddressCommand { value: intruder },
+                ))
                 .0,
             ExitCode::Ok
         );
-        let logs = harness.sdk.take_logs();
-        let (data, topics) = find_log(&logs, declared_topic, "declaration");
-        assert_eq!(
-            topics.get(1).copied(),
-            Some(first.into_word()),
-            "the declared address is indexed, so a watcher can filter on it"
-        );
-        assert_eq!(
-            decode_output::<(u64, u64)>(data),
-            (0, ADDRESS_SETTER_TIMELOCK_EPOCHS),
-            "declared at epoch 0, effective at 0 + the term"
-        );
-        assert!(
-            logs_of(&logs, changed_topic).is_empty(),
-            "a declaration is not a change and must not announce one"
-        );
-        assert_eq!(
-            decode_output::<Address>(&harness.call(encode_empty_call(read)).1),
-            before,
-            "and the live setting has not moved"
-        );
+        harness.set_block_number(block);
+        harness
+    };
 
-        // 3. One epoch short of the term is refused, and the refusal names both
-        //    epochs so a caller can tell how long is left.
-        harness.set_block_number(epoch_block(ADDRESS_SETTER_TIMELOCK_EPOCHS - 1));
-        let refused = harness.call(encode_empty_call(apply));
-        assert_revert_selector(refused.clone(), ERR_TIMELOCK_NOT_ELAPSED);
-        assert_eq!(
-            decode_output::<(u64, u64)>(&refused.1[SIG_LEN_BYTES..]),
-            (
-                ADDRESS_SETTER_TIMELOCK_EPOCHS - 1,
-                ADDRESS_SETTER_TIMELOCK_EPOCHS
-            )
-        );
-        assert_eq!(
-            decode_output::<Address>(&harness.call(encode_empty_call(read)).1),
-            before
-        );
+    // The last epoch inside the window still lands — the control, without which
+    // "expired" could not be told from "never worked".
+    let mut harness = fixture(epoch_block(last_legal));
+    assert_eq!(
+        harness.call(encode_empty_call(SIG_APPLY_BLEND_RESERVE)).0,
+        ExitCode::Ok
+    );
+    assert_eq!(
+        decode_output::<Address>(&harness.call(encode_empty_call(SIG_GET_BLEND_RESERVE)).1),
+        intruder
+    );
 
-        // 4. On the term's own epoch it lands, announces the CHANGE, and clears
-        //    the declaration behind it.
-        harness.set_block_number(epoch_block(ADDRESS_SETTER_TIMELOCK_EPOCHS));
-        harness.sdk.take_logs();
-        assert_eq!(harness.call(encode_empty_call(apply)).0, ExitCode::Ok);
-        let logs = harness.sdk.take_logs();
-        assert_eq!(
-            decode_output::<(Address, Address)>(&find_log(&logs, changed_topic, "change").0),
-            (before, first),
-            "the change event carries the value that moved, and moves it here"
-        );
-        assert_eq!(
-            decode_output::<Address>(&harness.call(encode_empty_call(read)).1),
-            first
-        );
-        assert_revert_selector(
-            harness.call(encode_empty_call(apply)),
-            ERR_NO_PENDING_CHANGE,
-        );
+    // One epoch later it does not, and the refusal names the epoch it stopped
+    // being applicable at.
+    let mut harness = fixture(epoch_block(last_legal + 1));
+    let refused = harness.call(encode_empty_call(SIG_APPLY_BLEND_RESERVE));
+    assert_revert_selector(refused.clone(), ERR_TIMELOCK_EXPIRED);
+    assert_eq!(
+        decode_output::<(u64, u64)>(&refused.1[SIG_LEN_BYTES..]),
+        (last_legal + 1, last_legal + 1)
+    );
+    assert_eq!(
+        decode_output::<Address>(&harness.call(encode_empty_call(SIG_GET_BLEND_RESERVE)).1),
+        genesis_reserve,
+        "the stolen-key path is closed: the abandoned declaration cannot land"
+    );
+    // Far past it, too — expiry is a window and not an off-by-one.
+    let mut harness = fixture(epoch_block(last_legal + 500));
+    assert_revert_selector(
+        harness.call(encode_empty_call(SIG_APPLY_BLEND_RESERVE)),
+        ERR_TIMELOCK_EXPIRED,
+    );
 
-        // 5. A second declaration overwrites the first and RESTARTS the clock:
-        //    the term cannot be shortened by declaring twice.
-        assert_eq!(
-            harness
-                .call(encode_call(declare, &AddressCommand { value: second }))
-                .0,
-            ExitCode::Ok
-        );
-        harness.set_block_number(epoch_block(2 * ADDRESS_SETTER_TIMELOCK_EPOCHS - 1));
-        assert_revert_selector(
-            harness.call(encode_empty_call(apply)),
-            ERR_TIMELOCK_NOT_ELAPSED,
-        );
-        assert_eq!(
-            decode_output::<Address>(&harness.call(encode_empty_call(read)).1),
-            first,
-            "and the setting still holds what the FIRST declaration landed"
-        );
-        harness.set_block_number(epoch_block(2 * ADDRESS_SETTER_TIMELOCK_EPOCHS));
-        assert_eq!(harness.call(encode_empty_call(apply)).0, ExitCode::Ok);
-        assert_eq!(
-            decode_output::<Address>(&harness.call(encode_empty_call(read)).1),
-            second
-        );
-    }
+    // And governance need not wait it out: the declaration can be withdrawn,
+    // which is the only way back to "nothing pending" — the setter refuses the
+    // zero address, so it cannot be reached by declaring one.
+    let mut harness = fixture(activation);
+    harness.sdk.take_logs();
+    assert_eq!(
+        harness.call(encode_empty_call(SIG_CANCEL_BLEND_RESERVE)).0,
+        ExitCode::Ok
+    );
+    let logs = harness.sdk.take_logs();
+    let (_, topics) = find_log(
+        &logs,
+        events::BlendReserveDeclarationCancelled::SELECTOR,
+        "cancellation",
+    );
+    assert_eq!(
+        topics.get(1).copied(),
+        Some(intruder.into_word()),
+        "the withdrawal names what it withdrew"
+    );
+    assert_eq!(
+        decode_returns::<(Address, u64, u64, u64)>(
+            &harness
+                .call(encode_empty_call(SIG_GET_PENDING_BLEND_RESERVE))
+                .1
+        ),
+        (Address::ZERO, 0, 0, 0)
+    );
+    harness.set_block_number(epoch_block(ADDRESS_SETTER_TIMELOCK_EPOCHS));
+    assert_revert_selector(
+        harness.call(encode_empty_call(SIG_APPLY_BLEND_RESERVE)),
+        ERR_NO_PENDING_CHANGE,
+    );
+    assert_eq!(
+        decode_output::<Address>(&harness.call(encode_empty_call(SIG_GET_BLEND_RESERVE)).1),
+        genesis_reserve
+    );
 }
 
-// Both halves of both timelocks are governance-only, and the declaring half still
-// refuses the zero address — which is what lets the zero address serve as the
-// "nothing declared" sentinel.
+// The slash fund rotates in ONE call, and that is load-bearing rather than an
+// oversight. `seize_self_stake` reverts the whole penalty when the recipient
+// refuses the transfer, so a token that blacklists the configured fund makes
+// equivocation unslashable until the address moves. Behind a seven-epoch
+// timelock that is a week of an offender keeping its seat, its bond and its
+// rewards. It cannot fall back to the burn sink either: that is reached only when
+// the STORED address is zero, and the setter refuses a zero.
+//
+// This test drives the whole loop — blacklist, slash refused, rotate, slash
+// lands — because the property is the INTERACTION of two commits, and neither
+// alone shows it.
 #[test]
-fn the_address_timelocks_are_governance_only_on_both_halves() {
+fn the_slash_fund_rotates_immediately_because_a_refused_seizure_needs_it() {
+    let sponsor = Address::with_last_byte(0xa0);
+    let offender = Address::with_last_byte(0x01);
+    let bystander = Address::with_last_byte(0x02);
+    let blacklisted = Address::with_last_byte(0xc1);
+    let accepting = Address::with_last_byte(0xc2);
+    let stake = DEFAULT_MIN_VALIDATOR_STAKE * U256::from(4);
+
+    let mut harness = Harness::new(1_000);
+    assert_eq!(
+        harness.initialize(sponsor, vec![offender, bystander], vec![stake, stake], 500),
+        ExitCode::Ok
+    );
+    harness.set_caller(GENESIS_GOVERNANCE);
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_SET_SLASH_FUND_ADDRESS,
+                &AddressCommand { value: blacklisted },
+            ))
+            .0,
+        ExitCode::Ok,
+        "the fund is set in one call, with no declaration step"
+    );
+    let transfers = record_transfers_refusing(&harness, vec![blacklisted], false);
+
+    let command = equivocation_report(&mut harness.sdk, &NOTARIZE_ROUTE, 0x11);
+    assert_revert_selector(
+        slash_with_evidence(&mut harness, &NOTARIZE_ROUTE, &command),
+        ERR_STAKING_TOKEN_CALL_FAILED,
+    );
+    assert!(
+        !consensus_storage()
+            .tombstoned_accessor()
+            .entry(offender)
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        "a blacklisted fund makes equivocation unslashable while it is configured"
+    );
+
+    // The repair, in the same block: no declaration, no waiting.
+    harness.set_caller(GENESIS_GOVERNANCE);
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_SET_SLASH_FUND_ADDRESS,
+                &AddressCommand { value: accepting },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+    assert_eq!(
+        decode_output::<Address>(
+            &harness
+                .call(encode_empty_call(SIG_GET_SLASH_FUND_ADDRESS))
+                .1
+        ),
+        accepting,
+        "the rotation is live immediately — this is what the revert depends on"
+    );
+
+    let command = equivocation_report(&mut harness.sdk, &NOTARIZE_ROUTE, 0x11);
+    assert_eq!(
+        slash_with_evidence(&mut harness, &NOTARIZE_ROUTE, &command).0,
+        ExitCode::Ok,
+        "and the same charge now lands"
+    );
+    assert!(consensus_storage()
+        .tombstoned_accessor()
+        .entry(offender)
+        .get_checked(&harness.sdk)
+        .unwrap());
+    assert_eq!(
+        transfers.borrow().as_slice(),
+        &[(blacklisted, stake), (accepting, stake)],
+        "both payouts were attempted, and only the second was accepted"
+    );
+}
+
+// Every mutating half of the reserve timelock is governance-only, and the
+// declaring half still refuses the zero address — which is what lets the zero
+// address serve as the "nothing declared" sentinel. The view is not gated,
+// deliberately: it is a read, and the whole point of it is that anyone watching
+// the chain can see an armed rotation.
+#[test]
+fn the_reserve_timelock_is_governance_only_on_every_mutating_half() {
     let owner = Address::with_last_byte(0xa0);
     let outsider = Address::with_last_byte(0xb0);
     let mut harness = Harness::new(1_000);
@@ -11811,36 +12046,133 @@ fn the_address_timelocks_are_governance_only_on_both_halves() {
         ExitCode::Ok
     );
 
-    for (declare, apply) in [
-        (SIG_SET_BLEND_RESERVE, SIG_APPLY_BLEND_RESERVE),
-        (SIG_SET_SLASH_FUND_ADDRESS, SIG_APPLY_SLASH_FUND_ADDRESS),
-    ] {
-        harness.set_caller(outsider);
+    harness.set_caller(outsider);
+    assert_revert_selector(
+        harness.call(encode_call(
+            SIG_SET_BLEND_RESERVE,
+            &AddressCommand {
+                value: Address::with_last_byte(0xee),
+            },
+        )),
+        ERR_ONLY_GOVERNANCE,
+    );
+    for selector in [SIG_APPLY_BLEND_RESERVE, SIG_CANCEL_BLEND_RESERVE] {
         assert_revert_selector(
-            harness.call(encode_call(
-                declare,
-                &AddressCommand {
-                    value: Address::with_last_byte(0xee),
-                },
-            )),
+            harness.call(encode_empty_call(selector)),
             ERR_ONLY_GOVERNANCE,
         );
-        assert_revert_selector(harness.call(encode_empty_call(apply)), ERR_ONLY_GOVERNANCE);
+    }
+    assert_eq!(
+        harness
+            .call(encode_empty_call(SIG_GET_PENDING_BLEND_RESERVE))
+            .0,
+        ExitCode::Ok,
+        "the view is open to anyone: an armed rotation is meant to be visible"
+    );
 
-        harness.set_caller(GENESIS_GOVERNANCE);
-        let refused = harness.call(encode_call(
-            declare,
+    harness.set_caller(GENESIS_GOVERNANCE);
+    assert_revert_selector(
+        harness.call(encode_call(
+            SIG_SET_BLEND_RESERVE,
             &AddressCommand {
                 value: Address::ZERO,
             },
-        ));
-        assert_revert_selector(refused, ERR_ZERO_VALUE);
-        // Still nothing declared, which is the property the zero refusal buys:
-        // the sentinel cannot be reached by a legal declaration.
-        assert_revert_selector(
-            harness.call(encode_empty_call(apply)),
-            ERR_NO_PENDING_CHANGE,
-        );
+        )),
+        ERR_ZERO_VALUE,
+    );
+    // Still nothing declared, which is the property the zero refusal buys: the
+    // sentinel cannot be reached by a legal declaration.
+    assert_revert_selector(
+        harness.call(encode_empty_call(SIG_APPLY_BLEND_RESERVE)),
+        ERR_NO_PENDING_CHANGE,
+    );
+}
+
+// The timelock is worth nothing before DPoS activates, and this pins the bound
+// rather than pretending it away.
+//
+// `epoch_at_block` saturates below the activation block, so every pre-activation
+// block is epoch 0; and `setEpochBlockInterval` / `setDposActivationBlock` stay
+// open while the chain is unarmed. Governance can therefore declare at epoch 0,
+// shrink the interval, pull the activation block forward, and manufacture epoch 7
+// a handful of blocks later.
+//
+// Accepted rather than fixed. Before activation nothing is staked, nothing is
+// earning, and governance sets the reserve directly at `initialize` anyway — the
+// timelock's threat model is a compromised key on a RUNNING chain, and
+// `ensure_dpos_not_active` closes the geometry setters the moment the chain is
+// one. The test exists so that a change which makes this reach past activation
+// is a failure rather than a surprise.
+#[test]
+fn the_timelock_is_not_a_bound_before_dpos_activates() {
+    let owner = Address::with_last_byte(0xa0);
+    let target = Address::with_last_byte(0xc1);
+    let mut harness = Harness::new(50);
+    let mut command = harness.initialize_command(owner, Vec::new(), Vec::new(), 0);
+    command.epoch_block_interval = 200;
+    command.dpos_activation_block = 1_000;
+    command.min_undelegate_blocks = U256::ZERO;
+    assert_eq!(harness.initialize_with(command), ExitCode::Ok);
+    harness.set_caller(GENESIS_GOVERNANCE);
+
+    assert_eq!(
+        decode_output::<u64>(&harness.call(encode_empty_call(SIG_CURRENT_EPOCH)).1),
+        0,
+        "every pre-activation block is epoch 0"
+    );
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_SET_BLEND_RESERVE,
+                &AddressCommand { value: target },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+    // Declared at epoch 0, so it needs epoch 7 — and epoch 7 can be manufactured.
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_SET_EPOCH_BLOCK_INTERVAL,
+                &U32Command { value: 1 }
+            ))
+            .0,
+        ExitCode::Ok
+    );
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_SET_DPOS_ACTIVATION_BLOCK,
+                &U64Command { value: 51 }
+            ))
+            .0,
+        ExitCode::Ok
+    );
+    harness.set_block_number(51 + ADDRESS_SETTER_TIMELOCK_EPOCHS);
+    assert_eq!(
+        harness.call(encode_empty_call(SIG_APPLY_BLEND_RESERVE)).0,
+        ExitCode::Ok,
+        "eight blocks of notice instead of seven epochs — the pre-activation bound"
+    );
+    assert_eq!(
+        decode_output::<Address>(&harness.call(encode_empty_call(SIG_GET_BLEND_RESERVE)).1),
+        target
+    );
+
+    // And the moment the chain IS active, the geometry setters shut, so the same
+    // trick cannot be replayed.
+    for (name, calldata) in [
+        (
+            "setEpochBlockInterval",
+            encode_call(SIG_SET_EPOCH_BLOCK_INTERVAL, &U32Command { value: 2 }),
+        ),
+        (
+            "setDposActivationBlock",
+            encode_call(SIG_SET_DPOS_ACTIVATION_BLOCK, &U64Command { value: 1_000 }),
+        ),
+    ] {
+        assert_revert_selector(harness.call(calldata), ERR_DPOS_ALREADY_ACTIVE);
+        let _ = name;
     }
 }
 

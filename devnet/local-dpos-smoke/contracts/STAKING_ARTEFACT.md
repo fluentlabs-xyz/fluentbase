@@ -91,7 +91,146 @@ Eleven more joined it on 2026-09-08 (task 1.5):
 `MAX_MIN_VERDICT_DUE_BLOCKS` `0x9b9a11ba`. A blob carrying any of them predates
 the dead-surface removal.
 
-## This build — 2026-09-11 (Э1.6 / K-13, the strict static-argument decode)
+## This build — 2026-09-11 (counter-review: the slash fund leaves the timelock, the reserve's declaration gains a cancel and an expiry)
+
+A fresh-context counter-review of the day's work found that two commits of the
+SAME session contradicted each other, and this build is the answer. **Three ABI
+points move.**
+
+| point | change |
+|---|---|
+| `applySlashFundAddress()` `0x7bb69756` | REMOVED. `setSlashFundAddress(address)` `0xa79e7263` is IMMEDIATE again, as it was before this morning |
+| `cancelBlendReserve()` `0xf75e5549` | NEW. Withdraws an outstanding reserve declaration without landing it |
+| `getPendingBlendReserve()` `0x135dd16d` | NEW. `(address, declaredAtEpoch, effectiveAtEpoch, expiresAtEpoch)`, four zeroes when nothing is armed |
+
+Events: `SlashFundAddressDeclared` is GONE with the setter's timelock;
+`BlendReserveDeclarationCancelled(address indexed cancelledValue)` topic0
+`0x39bfbe6a046ac7af9b5b7b16db42a19234d09ecae260471c58af10e9c97f4d22` is new.
+`applyBlendReserve()` now also reverts `TimelockExpired(uint64,uint64)`.
+
+**Why the slash fund leaves the timelock.** `3c4560db` made a refused seizure
+revert the whole penalty, and justified the cost with "governance can point
+`slashFundAddress` somewhere that accepts". `b237a81e`, committed after it the
+same day, put that setter behind seven epochs — so the repair path the revert
+depends on became a week long, during which no equivocator can be punished and
+the offender keeps its seat, its bond and its rewards. It could not fall back to
+the burn sink either: `seize_self_stake` reaches `EQUIVOCATION_BURN_SINK` only
+when the STORED address is zero, and the setter refuses a zero. The timelock
+bought little there — the address is where a seizure GOES, not a pot a stolen key
+can drain — and cost a great deal, so it is gone from that setter and kept on the
+reserve, which a stolen key genuinely can point at itself.
+
+**Why the reserve's declaration gains a cancel and an expiry.** The setter refuses
+the zero address, so before this the ONLY writer that could clear the pending pair
+was the apply itself: a rotation declared and then abandoned stayed armed for the
+life of the chain, and a key stolen months later would land it in one block with
+the seven epochs of "public notice" long scrolled past. A declaration now expires
+`ADDRESS_SETTER_APPLY_WINDOW_EPOCHS` (7) after it becomes applicable, and
+governance can withdraw it outright.
+
+Storage: the two `pending_slash_fund_*` fields are REMOVED, which shifts the two
+`pending_blend_reserve_*` fields below them. Acceptable only because nothing is
+deployed and nets relaunch from a fresh genesis — the same licence every earlier
+slot move in this file took.
+
+- repository HEAD at build time: `3a4a0fde`, working tree DIRTY — the change
+  itself (`config.rs`, `consensus.rs`, `consts.rs`, `events.rs`, `lib.rs`,
+  `storage.rs`, `util.rs`, `README.md`, `tests.rs`, and `crates/staking-abi`),
+  which the following commit records. Also dirty and NOT part of this artefact:
+  another session's work under `crates/dpos/` and `crates/node/`.
+- SHA-256 of every source file in `contracts/staking/src` as built:
+
+      a710d7e5c7cbd7cbe84e4594b0840ad5992e68a3d4b7a24812f22222d6a444f4  src/bls.rs
+      85497ef22472159fc13e90b9d8e7bab06376fc4d188e2df0719e98643de70072  src/config.rs
+      5401b8a8aec80b721cfb24d4546fb6286e50b9cfd849c84bc8e9f512fa48b1d6  src/consensus.rs
+      ad3053f53947b3d13e4b43d12be222f657268cb6858907c36a8a42ec49f5cb3d  src/consts.rs
+      19f6caa299e31de016ad22d3a58730ee5912fb6eda3688695034f8a99bc995fd  src/events.rs
+      3f69dfe02d27be45e6b723e3f128b7049d74abe5c1b6dafac82b5af47d8b5576  src/evidence.rs
+      5f587627e81d7f38e52cfd974bf6c234de84f93925dd174f946b974dfac0987b  src/initializer.rs
+      937bb5b694dd8ea32abe73806da144894c79a12d01b706094785e1b6d422d09f  src/lib.rs
+      46e17a0600efaba7d52f0b57f68f1fe75985c3a5f38d47fe7d6a92fc0bdba1a8  src/liveness.rs
+      d106df9221d023e14adbec93ad329685208556ea0d1eb3946b4fde6bcad9b90f  src/math.rs
+      406e05a7d741d1de884b1b360ac3512c1e539ea9ff6504f001a438a544246654  src/staking.rs
+      83b3b3580d55ea1a45c145319fecd117dc7fb9b90714f0e7f438b9aa7e2d991a  src/storage.rs
+      37fe5920b91cc7d5b1cd5d99d6d551e1774f0727735bf1cdda23cd543a8910f4  src/tests.rs
+      2fee9b56c3365c7d86305bbebfc435484c7dfc1ead99bff32c1f4c233189b257  src/types.rs
+      656e87caf27dcf86c13f0afc8ce3e6d0757fefcb28474baf691c5730c1876c51  src/util.rs
+
+  `src/staking.rs` and the four unstarred files are unchanged from the section
+  below; `src/consensus.rs` moved for `write_returns` leaving it for `util.rs` and
+  for two doc-comment corrections, not for any behaviour.
+- `fluentbase_contracts_staking.wasm` — 410,748 bytes (was 409,431, +1,317)
+  `6caa4f7cad769a327d47819ad1de521eef2a8b2be7c5e854899613a55745e55a`
+- `fluentbase_contracts_staking.rwasm` — 2,825,599 bytes (was 2,815,430, +10,169)
+  `4040ef115ec722ac018669e93e331c7bdf03702ce6d35b7804dfc0471709b9be`
+
+### Selector scan of this blob
+
+Three moves from the section below: `applySlashFundAddress` leaves `must_be_1` for
+`must_be_0`, and `cancelBlendReserve` / `getPendingBlendReserve` join `must_be_1`.
+`setSlashFundAddress` `0xa79e7263` is added to `must_be_1` explicitly — it was
+never listed, and a blob that lost it would now be a blob that lost the repair
+path.
+
+    python3 - <<'EOF'
+    import pathlib
+    b = pathlib.Path("fluentbase_contracts_staking.rwasm").read_bytes()
+    must_be_1 = {"recordProduction":0x1752910e, "commitEpochCommittee":0xe505b249,
+                 "slashEquivocation":0xdc6fb3f2, "producedAt":0x91c7d453,
+                 "initialize":0xfecaf0f1, "getValidators":0xb7ab4db5,
+                 "isValidatorActive":0x42ad55ac, "getValidatorStatus":0xa310624f,
+                 "getEpochRewards":0x54c3e84b, "getDelegatorFee":0x52b7bea2,
+                 "claimDelegatorFee":0x426594b1,
+                 "redelegateDelegatorFee":0x8ecb3fc9, "getRegistryWithKeys":0xd96cbd7b,
+                 "getValidatorFee":0x457179fd, "nextEpochToCommit":0xc06a82de,
+                 "getEpochCommitteeWithStakes":0xa4d160c1, "getDkgQual":0x2660899f,
+                 "getEpochBlockInterval":0x346c90a8, "getDposActivationBlock":0xa2a50528,
+                 "getActiveValidatorsLength":0x32cc6f08, "getUndelegatePeriod":0x5e7b72ad,
+                 "slashEquivocationNotarize":0xe28d2f63,
+                 "slashEquivocationFinalize":0xadd07a3e,
+                 "slashEquivocationNullifyFinalize":0xa10827e9,
+                 "applyBlendReserve":0x47a9615b,
+                 # added by the counter-review pass
+                 "cancelBlendReserve":0xf75e5549,
+                 "getPendingBlendReserve":0x135dd16d,
+                 "setSlashFundAddress":0xa79e7263}
+    must_be_0 = {"changeValidatorOwner":0x0052c9e1, "getPendingValidatorFee":0xc6fb9065,
+                 "getPendingDelegatorFee":0xc2fd58fc, "claimDelegatorFeeAtEpoch":0xfe38ebef,
+                 "calcAvailableForRedelegateAmount":0x5ef9e8c6,
+                 "getValidatorsWithKeys":0xd41c52eb, "MAX_ACTIVE_VALIDATORS":0x5d887462,
+                 "MAX_BLEND_STIPEND_PER_EPOCH":0x2bc2fec4,
+                 "DEFAULT_MIN_VERDICT_DUE_BLOCKS":0x6fd3afb7,
+                 "DEFAULT_EXCLUSION_BACKOFF_CAP":0xd4c30c1a,
+                 "MAX_MIN_VERDICT_DUE_BLOCKS":0x9b9a11ba,
+                 "getValidatorsWithKeysAt":0x7cfba9f3, "committeeSelectionEpoch":0x8bd070e4,
+                 "getActiveValidatorsLengthAt":0xd9b083ba, "settleEpochStipend":0xa631344a,
+                 "settleEpochStipendFrom":0x92d321ab, "getBlsVerifier":0xc6b904ad,
+                 "setBlsVerifier":0x466ae541, "commitEpochBeaconKey":0x6ece9cb1,
+                 "getEpochBeaconKey":0xc9adaf5c, "claimValidatorFeeAtEpoch":0xadf2a79c,
+                 # the timelock this setter carried for part of one day
+                 "applySlashFundAddress":0x7bb69756}
+    for n,s in must_be_1.items(): assert b.count(s.to_bytes(4,"little"))==1, n
+    for n,s in must_be_0.items(): assert b.count(s.to_bytes(4,"little"))==0, n
+    print("selector scan OK")
+    EOF
+
+Run against the blob recorded above: **`selector scan OK`**. The two new
+selectors and the new topic0 were recomputed with `cast sig` / `cast keccak`
+independently of `alloy`, and only then pinned on both sides.
+
+### Tests
+
+- `cargo test` in `contracts/staking`: **194 passed, 0 failed**; **195** with
+  `--features devnet-views`. clippy `--all-targets -- -D warnings` and
+  `cargo fmt --check`: clean.
+- `cargo test -p fluentbase-staking-abi`: **2 passed, 0 failed**.
+- `cargo test -p fluentbase-node --lib`: **57 passed, 0 failed**.
+  `cargo test -p fluentbase-staking-reader`: **60 passed, 0 failed** (58 earlier
+  today; the two extra are another session's committed work, not this change).
+  `cargo test -p fluentbase-e2e --release staking`: **13 passed, 0 failed**.
+  `agreement_check.py`: **15 checks, 0 disagree, 0 unread**.
+
+## Previous build — 2026-09-11 (Э1.6 / K-13, the strict static-argument decode)
 
 Rebuilt a second time the same day, for a change that moves NO ABI point: the
 selector scan below is byte-identical to the section under it and re-run against

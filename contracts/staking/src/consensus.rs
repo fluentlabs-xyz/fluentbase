@@ -14,31 +14,15 @@ use crate::{
     types::{AddressCommand, ConsensusKeys, EpochSignerCommand, EquivocationCommand, U64Command},
     util::{
         current_epoch, decode, decode_args, ensure_initialized, ensure_mutable, ensure_non_payable,
-        next_epoch, revert, revert_with, try_transfer, write_abi,
+        next_epoch, revert, revert_with, try_transfer, write_abi, write_returns,
     },
 };
 use alloc::vec::Vec;
 use fluentbase_sdk::{
-    byteorder::BE,
-    bytes::BytesMut,
-    codec::{FunctionArgs, SolidityABI},
     keccak256, Address, Bytes, ContextReader, ExitCode, SharedAPI, Uint, B256, U256,
 };
 
 const BLS_POP_DST: &[u8] = b"BLS_POP_BLS12381G1_XMD:SHA-256_SSWU_RO_POP_";
-
-/// Encode a Solidity function's return tuple without an outer tuple offset.
-fn write_returns<SDK, T>(sdk: &mut SDK, value: &T) -> Result<(), ExitCode>
-where
-    SDK: SharedAPI,
-    T: FunctionArgs<BE, 32, true, false>,
-{
-    let mut output = BytesMut::new();
-    SolidityABI::<T>::encode_function_args(value, &mut output)
-        .map_err(|_| ExitCode::MalformedBuiltinParams)?;
-    sdk.write(output.freeze());
-    Ok(())
-}
 
 fn read_consensus_keys<SDK: SharedAPI>(
     sdk: &SDK,
@@ -166,6 +150,21 @@ pub(crate) fn verify_consensus_keys<SDK: SharedAPI>(
 }
 
 /// Stores already-verified keys atomically with validator creation.
+///
+/// **Caller contract: run `verify_consensus_keys` on these exact bytes
+/// immediately before, with nothing between that could claim a key.** Both
+/// callers do (`initializer.rs`, `staking.rs`), and the `set_validator` that sits
+/// between them in each touches neither owner map — `staking.rs` never names
+/// them.
+///
+/// Written down because the two rechecks that used to enforce it here were
+/// removed on 2026-09-11 as unreachable duplicates, and the only local witness
+/// went with them. The writes below are unconditional, and `peer_pubkey_owner` /
+/// `bls_pubkey_owner` are WRITE-ONCE by assumption alone. `slash_from_evidence`
+/// resolves an equivocator's identity through `bls_pubkey_owner` precisely
+/// because nothing releases it, so a third caller that skipped the verification
+/// would not merely corrupt a registration — it would send a later slash to the
+/// wrong validator.
 pub(crate) fn store_consensus_keys<SDK: SharedAPI>(
     sdk: &mut SDK,
     validator: Address,
@@ -894,6 +893,13 @@ pub fn slash_equivocation<SDK: SharedAPI>(sdk: &mut SDK, input: &[u8]) -> Result
     // charge, and the epoch-boundary fallback transaction may land beside a
     // block-borne one. Reverting would let a system caller turn that race into a
     // failed pre-execution call.
+    //
+    // Not a rule about this handler, which DOES have a reachable revert further
+    // down — a refused seizure rolls the whole penalty back (K-22), and the node
+    // absorbs it with a warn and an uncommitted state. The difference is what the
+    // two mean: a refused payout is a condition an operator repairs by rotating
+    // the fund, while a duplicate charge is two honest proposers agreeing and has
+    // nothing to repair.
     if consensus_storage()
         .tombstoned_accessor()
         .entry(validator)
