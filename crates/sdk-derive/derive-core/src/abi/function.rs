@@ -145,9 +145,10 @@ impl FunctionABI {
     /// whatever the Rust parameter types derive to. The published entry has to say the same thing,
     /// otherwise callers encoding from the artifact never reach the method. The entry takes the
     /// pinned name, and every leaf parameter whose derived type differs takes the pinned type at
-    /// its position. Tuples cannot be mapped onto a different pinned type, and a different number
-    /// of parameters cannot be mapped at all; both are errors, and on an error the entry is left
-    /// exactly as it was derived.
+    /// its position, provided both are encoded the same way (a single word, dynamic bytes, or
+    /// arrays of those). A substitution that changes the calldata layout, a tuple mapped onto a
+    /// different pinned type, and a different number of parameters cannot be mapped; all are
+    /// errors, and on an error the entry is left exactly as it was derived.
     pub fn retype_from_signature(&mut self, signature: &str) -> Result<(), ABIError> {
         let (name, params) = signature
             .strip_suffix(')')
@@ -179,6 +180,15 @@ impl FunctionABI {
                     "parameter `{}` derives to `{derived_type}`, but the pinned signature says \
                      `{pinned_type}`; a tuple parameter cannot be retyped, so the pinned \
                      signature has to spell out the same components",
+                    input.name
+                )));
+            }
+            let derived_layout = wire_layout(&derived_type);
+            if derived_layout.is_none() || derived_layout != wire_layout(&pinned_type) {
+                return Err(ABIError::TypeConversion(format!(
+                    "parameter `{}` derives to `{derived_type}`, but the pinned signature says \
+                     `{pinned_type}`, which is encoded differently; only a type with the same \
+                     calldata layout can stand in for another",
                     input.name
                 )));
             }
@@ -230,6 +240,55 @@ impl FunctionABI {
 
     pub fn from_json_value(value: serde_json::Value) -> Result<Self, serde_json::Error> {
         serde_json::from_value(value)
+    }
+}
+
+/// How a canonical leaf type is laid out in calldata
+///
+/// Two types with the same layout are encoded identically, so one can stand in for the other in a
+/// published signature without changing what the generated codec decodes.
+#[derive(Debug, PartialEq, Eq)]
+enum WireLayout {
+    /// One 32-byte word: integers, `address`, `bool`, `bytesN`
+    Word,
+    /// Offset, length and padded data: `bytes` and `string`
+    DynamicBytes,
+    /// Offset, length and the elements of the inner layout
+    Array(Box<WireLayout>),
+    /// A fixed number of elements of the inner layout, inline
+    FixedArray(usize, Box<WireLayout>),
+}
+
+fn wire_layout(ty: &str) -> Option<WireLayout> {
+    if let Some(inner) = ty.strip_suffix("[]") {
+        return wire_layout(inner).map(|inner| WireLayout::Array(Box::new(inner)));
+    }
+    if let Some(inner) = ty.strip_suffix(']') {
+        let (inner, length) = inner.rsplit_once('[')?;
+        let length = length.parse().ok()?;
+        return wire_layout(inner).map(|inner| WireLayout::FixedArray(length, Box::new(inner)));
+    }
+    match ty {
+        "bytes" | "string" => Some(WireLayout::DynamicBytes),
+        "address" | "bool" => Some(WireLayout::Word),
+        _ => {
+            let (is_fixed_bytes, width) = if let Some(width) = ty.strip_prefix("bytes") {
+                (true, width)
+            } else if let Some(width) = ty.strip_prefix("uint") {
+                (false, width)
+            } else if let Some(width) = ty.strip_prefix("int") {
+                (false, width)
+            } else {
+                return None;
+            };
+            let width: usize = width.parse().ok()?;
+            let is_valid = if is_fixed_bytes {
+                (1..=32).contains(&width)
+            } else {
+                width % 8 == 0 && (8..=256).contains(&width)
+            };
+            is_valid.then_some(WireLayout::Word)
+        }
     }
 }
 
@@ -317,6 +376,43 @@ mod tests {
             .unwrap();
 
         assert_eq!(abi.signature().unwrap(), "set((uint256,bool),bytes32)");
+    }
+
+    /// Only a type encoded the same way can stand in for the derived one: a pinned `bytes32`
+    /// for a `[u8; 32]` (`uint8[32]`, 32 words) would publish calldata the codec cannot decode
+    #[test]
+    fn test_pinned_signature_keeps_the_calldata_layout() {
+        let sig: Signature = parse_quote! {
+            fn store(root: [u8; 32], data: Bytes, ids: Vec<U256>, pair: [U256; 2], flag: bool)
+        };
+        let mut abi = FunctionABI::from_signature(&sig).unwrap();
+        let derived = abi.clone();
+        assert_eq!(
+            abi.signature().unwrap(),
+            "store(uint8[32],bytes,uint256[],uint256[2],bool)"
+        );
+
+        for rejected in [
+            "store(bytes32,bytes,uint256[],uint256[2],bool)",
+            "store(uint8[32],bytes32,uint256[],uint256[2],bool)",
+            "store(uint8[32],bytes,uint256,uint256[2],bool)",
+            "store(uint8[32],bytes,uint256[],uint256[3],bool)",
+            "store(uint8[32],bytes,uint256[],uint256[2],bytes)",
+            "store(uint8[32],bytes,uint256[],uint256[2],uint7)",
+        ] {
+            assert!(
+                abi.retype_from_signature(rejected).is_err(),
+                "{rejected} changes the calldata layout"
+            );
+            assert_eq!(abi, derived);
+        }
+
+        abi.retype_from_signature("store(bytes1[32],string,bytes32[],int256[2],uint8)")
+            .unwrap();
+        assert_eq!(
+            abi.signature().unwrap(),
+            "store(bytes1[32],string,bytes32[],int256[2],uint8)"
+        );
     }
 
     /// A tuple that disagrees with the pinned signature, or a different arity, cannot be mapped,
