@@ -1,0 +1,206 @@
+[
+  {
+    "path": "byzantium/eip196_ec_add_mul/ecadd/valid.json",
+    "forks": [
+      "Osaka"
+    ]
+  },
+  {
+    "path": "cancun/eip1153_tstore/tstorage_create_contexts/contract_creation.json",
+    "forks": [
+      "Osaka"
+    ]
+  },
+  {
+    "path": "constantinople/eip1052_extcodehash/extcodehash/codecopy_zero_in_create2.json",
+    "forks": [
+      "Osaka"
+    ]
+  },
+  {
+    "path": "constantinople/eip1052_extcodehash/extcodehash/extcodehash_call_to_selfdestruct.json",
+    "forks": [
+      "Osaka"
+    ]
+  },
+  {
+    "path": "frontier/opcodes/call_and_callcode_gas_calculation/value_transfer_gas_calculation.json",
+    "forks": [
+      "Osaka"
+    ]
+  },
+  {
+    "path": "frontier/opcodes/extcodecopy/extcodecopy_bounds.json",
+    "forks": [
+      "Osaka"
+    ]
+  },
+  {
+    "path": "ported_static/stCodeCopyTest/ext_code_copy_tests_paris/ext_code_copy_tests_paris.json",
+    "forks": [
+      "Osaka"
+    ]
+  },
+  {
+    "path": "ported_static/stCreate2/create2_suicide/create2_suicide.json",
+    "forks": [
+      "Osaka"
+    ]
+  },
+  {
+    "path": "ported_static/stCreate2/create2collision_selfdestructed/create2collision_selfdestructed.json",
+    "forks": [
+      "Osaka"
+    ]
+  },
+  {
+    "path": "ported_static/stCreateTest/create2_call_data/create2_call_data.json",
+    "forks": [
+      "Osaka"
+    ]
+  },
+  {
+    "path": "ported_static/stCreateTest/create_address_warm_after_fail/create_address_warm_after_fail.json",
+    "forks": [
+      "Osaka"
+    ]
+  },
+  {
+    "path": "ported_static/stCreateTest/create_fail_result/create_fail_result.json",
+    "forks": [
+      "Osaka"
+    ]
+  },
+  {
+    "path": "ported_static/stCreateTest/create_results/create_results_with_call.json",
+    "forks": [
+      "Osaka"
+    ]
+  },
+  {
+    "path": "ported_static/stCreateTest/create_results/create_results_without_call.json",
+    "forks": [
+      "Osaka"
+    ]
+  },
+  {
+    "path": "ported_static/stCreateTest/create_results/returndatacopy_after_successful_create_aborts.json",
+    "forks": [
+      "Osaka"
+    ]
+  },
+  {
+    "path": "ported_static/stEIP1153_transientStorage/14_revert_after_nested_staticcall/14_revert_after_nested_staticcall.json",
+    "forks": [
+      "Osaka"
+    ]
+  },
+  {
+    "path": "ported_static/stEIP3651_warmcoinbase/coinbase_warm_account_call_gas/coinbase_warm_account_call_gas.json",
+    "forks": [
+      "Osaka"
+    ]
+  },
+  {
+    "path": "ported_static/stEIP3651_warmcoinbase/coinbase_warm_account_call_gas_fail/coinbase_warm_account_call_gas_fail.json",
+    "forks": [
+      "Osaka"
+    ]
+  },
+  {
+    "path": "ported_static/stEIP3855_push0/push0/push0.json",
+    "forks": [
+      "Osaka"
+    ]
+  },
+  {
+    "path": "ported_static/stEIP3860_limitmeterinitcode/create_init_code_size_limit/create_init_code_size_limit.json",
+    "forks": [
+      "Osaka"
+    ]
+  },
+  {
+    "path": "ported_static/stInitCodeTest/call_contract_to_create_contract_and_call_it_oog/call_contract_to_create_contract_and_call_it_oog.json",
+    "forks": [
+      "Osaka"
+    ]
+  },
+  {
+    "path": "ported_static/stInitCodeTest/call_contract_to_create_contract_oog_bonus_gas/call_contract_to_create_contract_oog_bonus_gas.json",
+    "forks": [
+      "Osaka"
+    ]
+  },
+  {
+    "path": "ported_static/stInitCodeTest/transaction_create_auto_suicide_contract/transaction_create_auto_suicide_contract.json",
+    "forks": [
+      "Osaka"
+    ]
+  },
+  {
+    "path": "ported_static/stPreCompiledContracts2/call_ecrecover0_no_gas/call_ecrecover0_no_gas.json",
+    "forks": [
+      "Osaka"
+    ]
+  },
+  {
+    "path": "ported_static/stPreCompiledContracts2/call_ecrecover1/call_ecrecover1.json",
+    "forks": [
+      "Osaka"
+    ]
+  },
+  {
+    "path": "ported_static/stPreCompiledContracts2/modexp_0_0_0_20500/modexp_0_0_0_20500.json",
+    "forks": [
+      "Osaka"
+    ]
+  },
+  {
+    "path": "ported_static/stRefundTest/refund_tx_to_suicide_oog/refund_tx_to_suicide_oog.json",
+    "forks": [
+      "Osaka"
+    ]
+  },
+  {
+    "path": "ported_static/stReturnDataTest/call_outsize_then_create_successful_then_returndatasize/call_outsize_then_create_successful_then_returndatasize.json",
+    "forks": [
+      "Osaka"
+    ]
+  },
+  {
+    "path": "ported_static/stReturnDataTest/call_then_create_successful_then_returndatasize/call_then_create_successful_then_returndatasize.json",
+    "forks": [
+      "Osaka"
+    ]
+  },
+  {
+    "path": "ported_static/stReturnDataTest/revert_ret_data_size/revert_ret_data_size.json",
+    "forks": [
+      "Osaka"
+    ]
+  },
+  {
+    "path": "ported_static/stSStoreTest/sstore_call_to_self_sub_refund_below_zero/sstore_call_to_self_sub_refund_below_zero.json",
+    "forks": [
+      "Osaka"
+    ]
+  },
+  {
+    "path": "ported_static/stSStoreTest/sstore_change_from_external_call_in_init_code/sstore_change_from_external_call_in_init_code.json",
+    "forks": [
+      "Osaka"
+    ]
+  },
+  {
+    "path": "ported_static/stSStoreTest/sstore_gas/sstore_gas.json",
+    "forks": [
+      "Osaka"
+    ]
+  },
+  {
+    "path": "ported_static/stSpecialTest/selfdestruct_eip2929/selfdestruct_eip2929.json",
+    "forks": [
+      "Osaka"
+    ]
+  }
+]

@@ -57,6 +57,7 @@ impl Cmd {
 fn main() {
     let cmd = Cmd::from_args();
     if let Err(e) = cmd.run() {
-        println!("{}", e)
+        eprintln!("{e}");
+        std::process::exit(1);
     }
 }

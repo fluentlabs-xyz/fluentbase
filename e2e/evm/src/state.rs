@@ -4,7 +4,7 @@ use fluentbase_genesis::GENESIS_CONTRACTS_BY_ADDRESS;
 use fluentbase_sdk::{Address, PRECOMPILE_EVM_RUNTIME};
 use revm::{
     bytecode::Bytecode,
-    context::{BlockEnv, CfgEnv, TransactTo, TransactionType::Eip1559, TxEnv},
+    context::{either::Either, BlockEnv, CfgEnv, TransactTo, TransactionType, TxEnv},
     database::CacheState,
     primitives::{keccak256, B256, U256},
     state::AccountInfo,
@@ -90,7 +90,7 @@ pub(crate) fn fluent_cache_state(unit: &TestUnit) -> CacheState {
 
 pub(crate) fn prepare_env(
     unit: &TestUnit,
-    name: &String,
+    name: &str,
 ) -> Result<(CfgEnv, BlockEnv, TxEnv), TestError> {
     let mut cfg_env = CfgEnv::default();
     let mut block_env = BlockEnv::default();
@@ -115,7 +115,7 @@ pub(crate) fn prepare_env(
         address
     } else {
         recover_address(unit.transaction.secret_key.as_slice()).ok_or_else(|| TestError {
-            name: name.clone(),
+            name: name.to_owned(),
             kind: TestErrorKind::UnknownPrivateKey(unit.transaction.secret_key),
         })?
     };
@@ -165,6 +165,63 @@ pub(crate) fn fill_tx_env(tx_env: &mut TxEnv, transaction: &TransactionParts, te
         None => TransactTo::Create,
     };
 
-    tx_env.tx_type = Eip1559 as u8;
+    // Preserve the fixture's transaction type, including malformed blob/set-code
+    // creations: those must be rejected by the engines, not skipped by the harness.
+    tx_env.tx_type = transaction.tx_type(test.indexes.data).unwrap_or_else(|| {
+        if transaction.max_fee_per_blob_gas.is_some() {
+            TransactionType::Eip4844
+        } else {
+            TransactionType::Eip7702
+        }
+    }) as u8;
+    tx_env.authorization_list = transaction
+        .authorization_list
+        .clone()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|authorization| Either::Left(authorization.into()))
+        .collect();
     tx_env.nonce = transaction.nonce.to();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn fixture_transaction_types_reach_engine_validation() {
+        let base = json!({
+            "data": ["0x"], "gasLimit": ["0x100000"], "gasPrice": "0x0a",
+            "nonce": "0x00", "value": ["0x00"], "secretKey": B256::ZERO
+        });
+        let test: Test = serde_json::from_value(json!({
+            "hash": B256::ZERO, "logs": B256::ZERO,
+            "indexes": {"data": 0, "gas": 0, "value": 0}
+        }))
+        .unwrap();
+        // All use CREATE, including the invalid blob/set-code transactions.
+        // Both execution engines must receive those invalid types and reject them.
+        for (fields, expected_type) in [
+            (json!({}), TransactionType::Legacy),
+            (json!({"accessLists": [[]]}), TransactionType::Eip2930),
+            (json!({"maxFeePerGas": "0x0a"}), TransactionType::Eip1559),
+            (
+                json!({"maxFeePerBlobGas": "0x01"}),
+                TransactionType::Eip4844,
+            ),
+            (json!({"authorizationList": []}), TransactionType::Eip7702),
+        ] {
+            let mut value = base.clone();
+            value
+                .as_object_mut()
+                .unwrap()
+                .extend(fields.as_object().unwrap().clone());
+            let transaction: TransactionParts = serde_json::from_value(value).unwrap();
+            let mut env = TxEnv::default();
+            fill_tx_env(&mut env, &transaction, &test);
+            assert_eq!(env.tx_type, expected_type as u8);
+            assert_eq!(env.kind, TransactTo::Create);
+        }
+    }
 }

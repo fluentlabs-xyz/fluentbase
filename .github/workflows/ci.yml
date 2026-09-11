@@ -109,7 +109,7 @@ jobs:
       - name: Install clang and build tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang libclang-dev pkg-config
+          sudo apt-get install -y clang libclang-dev pkg-config python3 nodejs curl
 
       - name: Speed up git fetches
         run: git config --global net.git-fetch-with-cli true
@@ -141,7 +141,7 @@ jobs:
       - name: Prefetch deps (evm-e2e)
         if: matrix.kind == 'evm-e2e'
         working-directory: e2e/evm
-        run: cargo fetch
+        run: cargo fetch --locked
 
       - name: Install nextest
         run: cargo install cargo-nextest@0.9.130 --locked
@@ -149,7 +149,10 @@ jobs:
       - name: Sync ethereum tests (evm-e2e)
         if: matrix.kind == 'evm-e2e'
         working-directory: e2e/evm
-        run: make sync_tests
+        run: |
+          make sync_tests
+          node gen_tests.js --check
+          python3 -m unittest discover -s tests_tools -v
 
       - name: Run tests (workspace manifests)
         if: matrix.kind == 'workspace'
@@ -190,7 +193,9 @@ jobs:
             --features "${{ matrix.features }}" \
             --package evm-e2e \
             --bin evm-e2e \
-            tests::good_coverage_tests
+            --locked \
+            --success-output final \
+            -E 'test(good_coverage_tests) | test(selection_tests) | test(state::tests)'
 
       - name: Run ethereum tests (fixture)
         if: matrix.kind == 'fixture'

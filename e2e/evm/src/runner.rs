@@ -45,6 +45,10 @@ pub struct TestError {
 
 #[derive(Debug, Error)]
 pub enum TestErrorKind {
+    #[error("no transactions executed (skipped {skipped} post cases); this differential suite requires Osaka fixtures to match the deployed EVM runtime")]
+    NoTransactionsExecuted { skipped: usize },
+    #[error("unsupported fixture fork: {0}")]
+    UnsupportedFork(String),
     #[error("logs root mismatch: got {got}, expected {expected}")]
     LogsRootMismatch { got: B256, expected: B256 },
     #[error("state root mismatch: got {got}, expected {expected}")]
@@ -67,6 +71,40 @@ pub enum TestErrorKind {
     Panic,
     #[error("missing account {address}")]
     MissingAccount { address: Address },
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct ExecutionStats {
+    pub executed: usize,
+    pub skipped: usize,
+}
+
+fn eligible_post_cases(suite: &TestSuite, path: &Path) -> Result<ExecutionStats, TestError> {
+    let mut stats = ExecutionStats::default();
+    let mut eligible = 0;
+    for unit in suite.0.values() {
+        for (spec, tests) in &unit.post {
+            match spec {
+                SpecName::Osaka => eligible += tests.len(),
+                SpecName::Unknown | SpecName::Amsterdam => {
+                    return Err(TestError {
+                        name: path.display().to_string(),
+                        kind: TestErrorKind::UnsupportedFork(format!("{spec:?}")),
+                    });
+                }
+                _ => stats.skipped += tests.len(),
+            }
+        }
+    }
+    if eligible == 0 {
+        return Err(TestError {
+            name: path.display().to_string(),
+            kind: TestErrorKind::NoTransactionsExecuted {
+                skipped: stats.skipped,
+            },
+        });
+    }
+    Ok(stats)
 }
 
 pub fn find_all_json_tests(path: &Path) -> Vec<PathBuf> {
@@ -135,8 +173,14 @@ fn check_evm_execution<ERROR: Debug + ToString + Clone + PartialEq, INSP>(
     evm2: &mut RwasmEvm<RwasmContext<State<InMemoryDB>>, INSP>,
     print_json_outcome: bool,
 ) -> Result<(), TestError> {
-    if !exec_result1.is_err() && exec_result2.is_err() {
-        exec_result2.as_ref().unwrap();
+    if exec_result1.is_err() != exec_result2.is_err() {
+        return Err(TestError {
+            name: test_name.to_string(),
+            kind: TestErrorKind::UnexpectedException {
+                expected_exception: exec_result1.as_ref().err().map(ToString::to_string),
+                got_exception: exec_result2.as_ref().err().map(ToString::to_string),
+            },
+        });
     }
 
     if cfg!(feature = "debug-print") {
@@ -371,11 +415,13 @@ fn check_evm_execution<ERROR: Debug + ToString + Clone + PartialEq, INSP>(
         let v2 = evm2.0.journaled_state.database.cache.accounts.get(address);
         if let Some(a1) = v1.account.as_ref().map(|v| &v.info) {
             let a2 = v2
-                .expect("missing FLUENT account")
+                .unwrap_or_else(|| panic!("missing FLUENT account {address}: native={v1:?}"))
                 .account
                 .as_ref()
                 .map(|v| &v.info)
-                .expect("missing FLUENT account");
+                .unwrap_or_else(|| {
+                    panic!("missing FLUENT account {address}: native={v1:?}, fluent={v2:?}")
+                });
             if cfg!(feature = "debug-print") {
                 println!(" - status: {:?}", v1.status);
             }
@@ -654,7 +700,7 @@ fn check_fluent_execution(
     match exec_result {
         Ok(result) => println!(
             "Execution result: gas_used={} success={} logs={} output_len={}",
-            result.gas_used(),
+            result.tx_gas_used(),
             result.is_success(),
             result.logs().len(),
             result.output().map(|o| o.len()).unwrap_or(0)
@@ -704,9 +750,12 @@ pub fn execute_evm_test_suite(
     elapsed: &Arc<Mutex<Duration>>,
     trace: bool,
     print_json_outcome: bool,
-) -> Result<(), TestError> {
+) -> Result<ExecutionStats, TestError> {
     if skip_test(path) {
-        return Ok(());
+        return Err(TestError {
+            name: path.display().to_string(),
+            kind: TestErrorKind::NoTransactionsExecuted { skipped: 0 },
+        });
     }
 
     if cfg!(feature = "debug-print") {
@@ -718,6 +767,7 @@ pub fn execute_evm_test_suite(
         name: path.to_string_lossy().into_owned(),
         kind: e.into(),
     })?;
+    let mut stats = eligible_post_cases(&suite, path)?;
 
     let selected_test_cases = Vec::new();
     for (name, unit) in suite.0 {
@@ -760,18 +810,25 @@ pub fn execute_evm_test_suite(
             println!("loaded genesis accounts in: {:?}", start.elapsed());
         }
 
-        let (mut cfg_env, block_env, mut tx_env) = prepare_env(&unit, &name)?;
+        let (mut cfg_env, _, mut tx_env) = prepare_env(&unit, &name)?;
 
-        for (spec_name, tests) in unit.post {
-            // Fluent is post-PRAGUE only
-            if spec_name.lt(&SpecName::Prague) {
+        for (spec_name, tests) in &unit.post {
+            // The delegated EVM and built-in precompiles execute Osaka semantics,
+            // independently of the host chain's hardfork schedule.
+            if *spec_name != SpecName::Osaka {
                 continue;
             }
 
             let spec_id = spec_name.to_spec_id();
-            cfg_env.spec = spec_id;
+            cfg_env.set_spec_and_mainnet_gas_params(spec_id);
+            cfg_env.set_max_blobs_per_tx(if spec_id.is_enabled_in(SpecId::OSAKA) {
+                6
+            } else {
+                9
+            });
+            let block_env = unit.block_env(&mut cfg_env);
 
-            for (index, test) in tests.into_iter().enumerate() {
+            for (index, test) in tests.iter().enumerate() {
                 if cfg!(feature = "debug-print") {
                     println!(
                         "\n\n\n\n\nRunning test with txdata: ({}) {}",
@@ -779,7 +836,7 @@ pub fn execute_evm_test_suite(
                         hex::encode(test.txbytes.clone().unwrap_or_default().as_ref())
                     );
                 }
-                fill_tx_env(&mut tx_env, &unit.transaction, &test);
+                fill_tx_env(&mut tx_env, &unit.transaction, test);
 
                 let evm_cache = evm_cache_state.clone();
                 // evm_cache.set_state_clear_flag(spec_id.is_enabled_in(SpecId::SPURIOUS_DRAGON));
@@ -829,7 +886,7 @@ pub fn execute_evm_test_suite(
                         print!("\n\ncomparing EVM<>RWASM state... ");
                     }
                     let output = check_evm_execution(
-                        &test,
+                        test,
                         unit.out.as_ref(),
                         &name,
                         &result_native,
@@ -876,7 +933,7 @@ pub fn execute_evm_test_suite(
                         print!("\n\ncomparing EVM<>RWASM state... ");
                     }
                     let output = check_evm_execution(
-                        &test,
+                        test,
                         unit.out.as_ref(),
                         &name,
                         &result_native,
@@ -891,6 +948,7 @@ pub fn execute_evm_test_suite(
                     output
                 };
 
+                stats.executed += 1;
                 let Err(e) = output else {
                     continue;
                 };
@@ -905,7 +963,21 @@ pub fn execute_evm_test_suite(
             }
         }
     }
-    Ok(())
+    if stats.executed == 0 {
+        return Err(TestError {
+            name: path.display().to_string(),
+            kind: TestErrorKind::NoTransactionsExecuted {
+                skipped: stats.skipped,
+            },
+        });
+    }
+    println!(
+        "{}: executed {} transactions, skipped {} post cases",
+        path.display(),
+        stats.executed,
+        stats.skipped
+    );
+    Ok(stats)
 }
 
 pub fn resolve_externalized_bytecodes(v: &mut Value, base_dir: &Path) {
@@ -1083,6 +1155,12 @@ pub fn run(
     mut print_outcome: bool,
     keep_going: bool,
 ) -> Result<(), TestError> {
+    if test_files.is_empty() {
+        return Err(TestError {
+            name: "fixture selection".to_string(),
+            kind: TestErrorKind::NoTransactionsExecuted { skipped: 0 },
+        });
+    }
     // trace implies print_outcome
     if trace {
         print_outcome = true;
@@ -1183,5 +1261,93 @@ pub fn run(
             }
         }
         Err(thread_errors.swap_remove(0))
+    }
+}
+
+#[cfg(test)]
+mod selection_tests {
+    use super::*;
+
+    fn execute_selection(suite: Value) -> Result<ExecutionStats, TestError> {
+        static NEXT_FILE: AtomicUsize = AtomicUsize::new(0);
+        let path = std::env::temp_dir().join(format!(
+            "fluentbase-state-selection-{}-{}.json",
+            std::process::id(),
+            NEXT_FILE.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::write(&path, serde_json::to_vec(&suite).unwrap()).unwrap();
+        let elapsed = Arc::new(Mutex::new(Duration::ZERO));
+        let result = execute_evm_test_suite(&path, &elapsed, false, false);
+        fs::remove_file(path).unwrap();
+        result
+    }
+
+    fn fixture_for_fork(fork: &str) -> Value {
+        let mut suite = json!({
+            "selection_regression": {
+                "env": {
+                    "currentCoinbase": "0x0000000000000000000000000000000000000000",
+                    "currentGasLimit": "0x100000", "currentNumber": "0x01",
+                    "currentTimestamp": "0x01"
+                },
+                "pre": {},
+                "transaction": {
+                    "data": ["0x"], "gasLimit": ["0x5208"], "gasPrice": "0x01",
+                    "nonce": "0x00", "value": ["0x00"], "secretKey": B256::ZERO
+                },
+                "post": {}
+            }
+        });
+        suite["selection_regression"]["post"][fork] = json!([{
+            "hash": B256::ZERO, "logs": B256::ZERO,
+            "indexes": {"data": 0, "gas": 0, "value": 0}
+        }]);
+        suite
+    }
+
+    #[test]
+    fn empty_suite_fails_instead_of_passing() {
+        assert!(matches!(
+            execute_selection(json!({})).unwrap_err().kind,
+            TestErrorKind::NoTransactionsExecuted { skipped: 0 }
+        ));
+    }
+
+    #[test]
+    fn pre_prague_only_suite_fails_instead_of_passing() {
+        assert!(matches!(
+            execute_selection(fixture_for_fork("Cancun"))
+                .unwrap_err()
+                .kind,
+            TestErrorKind::NoTransactionsExecuted { skipped: 1 }
+        ));
+    }
+
+    #[test]
+    fn prague_only_suite_does_not_compare_different_runtime_rules() {
+        assert!(matches!(
+            execute_selection(fixture_for_fork("Prague"))
+                .unwrap_err()
+                .kind,
+            TestErrorKind::NoTransactionsExecuted { skipped: 1 }
+        ));
+    }
+
+    #[test]
+    fn unknown_fork_fails_before_execution() {
+        assert!(matches!(
+            execute_selection(fixture_for_fork("UnrecognizedFork"))
+                .unwrap_err()
+                .kind,
+            TestErrorKind::UnsupportedFork(_)
+        ));
+    }
+
+    #[test]
+    fn empty_file_selection_fails_instead_of_passing() {
+        assert!(matches!(
+            run(Vec::new(), true, false, false, false).unwrap_err().kind,
+            TestErrorKind::NoTransactionsExecuted { skipped: 0 }
+        ));
     }
 }
