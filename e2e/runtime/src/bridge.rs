@@ -12,6 +12,10 @@ use revm::{
     context::result::{ExecutionResult, Output},
 };
 
+/// Balance the bridge starts with in the tests that assert it stays unchanged. Without it those
+/// assertions compare an empty account to itself and hold even if the hook stops accounting.
+const BRIDGE_PREFUND: U256 = U256::from_limbs([1_000_000_000, 0, 0, 0]);
+
 sol! {
     event ReceivedMessage(bytes32 messageHash, bool successfulCall, bytes returnData);
 
@@ -135,7 +139,9 @@ fn test_failed_send_message_does_not_burn_bridge_balance() {
         message: Bytes::new(),
     }
     .abi_encode();
+    ctx.add_balance(PRECOMPILE_ROLLUP_BRIDGE, BRIDGE_PREFUND);
     let old_balance = ctx.get_balance(PRECOMPILE_ROLLUP_BRIDGE);
+    assert_eq!(old_balance, BRIDGE_PREFUND);
     let result = ctx.call_evm_tx(
         Address::repeat_byte(0x01),
         PRECOMPILE_ROLLUP_BRIDGE,
@@ -167,7 +173,9 @@ fn test_bridge_transaction_fails_on_zero_topics_emitted() {
         message: Bytes::new(),
     }
     .abi_encode();
+    ctx.add_balance(PRECOMPILE_ROLLUP_BRIDGE, BRIDGE_PREFUND);
     let old_balance = ctx.get_balance(PRECOMPILE_ROLLUP_BRIDGE);
+    assert_eq!(old_balance, BRIDGE_PREFUND);
     let result = ctx.call_evm_tx(
         Address::repeat_byte(0x01),
         PRECOMPILE_ROLLUP_BRIDGE,
@@ -202,7 +210,9 @@ fn test_receive_message_revert_restores_bridge_balance() {
         message: Bytes::new(),
     }
     .abi_encode();
+    ctx.add_balance(PRECOMPILE_ROLLUP_BRIDGE, BRIDGE_PREFUND);
     let old_balance = ctx.get_balance(PRECOMPILE_ROLLUP_BRIDGE);
+    assert_eq!(old_balance, BRIDGE_PREFUND);
     let result = ctx.call_evm_tx(
         Address::repeat_byte(0x01),
         PRECOMPILE_ROLLUP_BRIDGE,
@@ -383,7 +393,9 @@ fn test_send_message_fails_on_value_mismatch() {
 
     ctx.add_evm_contract(PRECOMPILE_ROLLUP_BRIDGE, bytecode);
 
+    ctx.add_balance(PRECOMPILE_ROLLUP_BRIDGE, BRIDGE_PREFUND);
     let old_balance = ctx.get_balance(PRECOMPILE_ROLLUP_BRIDGE);
+    assert_eq!(old_balance, BRIDGE_PREFUND);
     let input = sendMessageCall {
         to: Address::repeat_byte(0x02),
         message: Bytes::new(),
@@ -409,7 +421,9 @@ fn test_send_message_fails_when_no_matching_log_emitted() {
 
     ctx.add_evm_contract(PRECOMPILE_ROLLUP_BRIDGE, vec![opcode::STOP]);
 
+    ctx.add_balance(PRECOMPILE_ROLLUP_BRIDGE, BRIDGE_PREFUND);
     let old_balance = ctx.get_balance(PRECOMPILE_ROLLUP_BRIDGE);
+    assert_eq!(old_balance, BRIDGE_PREFUND);
     let input = sendMessageCall {
         to: Address::repeat_byte(0x02),
         message: Bytes::new(),
@@ -435,7 +449,9 @@ fn test_receive_message_fails_when_success_log_missing() {
 
     ctx.add_evm_contract(PRECOMPILE_ROLLUP_BRIDGE, vec![opcode::STOP]);
 
+    ctx.add_balance(PRECOMPILE_ROLLUP_BRIDGE, BRIDGE_PREFUND);
     let old_balance = ctx.get_balance(PRECOMPILE_ROLLUP_BRIDGE);
+    assert_eq!(old_balance, BRIDGE_PREFUND);
     let input = receiveMessageCall {
         from: Address::repeat_byte(0x01),
         to: Address::repeat_byte(0x01),
@@ -491,7 +507,9 @@ fn test_receive_message_burns_balance_when_log_marks_unsuccessful_call() {
 
     ctx.add_evm_contract(PRECOMPILE_ROLLUP_BRIDGE, bytecode);
 
+    ctx.add_balance(PRECOMPILE_ROLLUP_BRIDGE, BRIDGE_PREFUND);
     let old_balance = ctx.get_balance(PRECOMPILE_ROLLUP_BRIDGE);
+    assert_eq!(old_balance, BRIDGE_PREFUND);
     let input = receiveMessageCall {
         from: Address::repeat_byte(0x01),
         to: Address::repeat_byte(0x01),
@@ -659,7 +677,9 @@ fn test_receive_failed_message_unsuccessful_log_restores_balance() {
 
     ctx.add_evm_contract(PRECOMPILE_ROLLUP_BRIDGE, bytecode);
 
+    ctx.add_balance(PRECOMPILE_ROLLUP_BRIDGE, BRIDGE_PREFUND);
     let old_balance = ctx.get_balance(PRECOMPILE_ROLLUP_BRIDGE);
+    assert_eq!(old_balance, BRIDGE_PREFUND);
     let input = receiveFailedMessageCall {
         from: Address::repeat_byte(0x01),
         to: Address::repeat_byte(0x01),
@@ -715,7 +735,9 @@ fn test_receive_failed_message_unsuccessful_retried_failed_log_restores_balance(
 
     ctx.add_evm_contract(PRECOMPILE_ROLLUP_BRIDGE, bytecode);
 
+    ctx.add_balance(PRECOMPILE_ROLLUP_BRIDGE, BRIDGE_PREFUND);
     let old_balance = ctx.get_balance(PRECOMPILE_ROLLUP_BRIDGE);
+    assert_eq!(old_balance, BRIDGE_PREFUND);
     let input = receiveFailedMessageCall {
         from: Address::repeat_byte(0x01),
         to: Address::repeat_byte(0x01),
@@ -750,7 +772,9 @@ fn test_receive_failed_message_revert_restores_bridge_balance() {
     bytecode.push(opcode::REVERT);
     ctx.add_evm_contract(PRECOMPILE_ROLLUP_BRIDGE, bytecode);
 
+    ctx.add_balance(PRECOMPILE_ROLLUP_BRIDGE, BRIDGE_PREFUND);
     let old_balance = ctx.get_balance(PRECOMPILE_ROLLUP_BRIDGE);
+    assert_eq!(old_balance, BRIDGE_PREFUND);
     let input = receiveFailedMessageCall {
         from: Address::repeat_byte(0x01),
         to: Address::repeat_byte(0x01),
@@ -781,7 +805,9 @@ fn test_receive_failed_message_fails_when_success_log_missing() {
 
     ctx.add_evm_contract(PRECOMPILE_ROLLUP_BRIDGE, vec![opcode::STOP]);
 
+    ctx.add_balance(PRECOMPILE_ROLLUP_BRIDGE, BRIDGE_PREFUND);
     let old_balance = ctx.get_balance(PRECOMPILE_ROLLUP_BRIDGE);
+    assert_eq!(old_balance, BRIDGE_PREFUND);
     let input = receiveFailedMessageCall {
         from: Address::repeat_byte(0x01),
         to: Address::repeat_byte(0x01),
