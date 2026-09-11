@@ -1,6 +1,6 @@
 # PLAN — план работ по crates/dpos и стейкинг-контракту (индекс)
 
-Состояние на 2026-09-09. Это индекс, не хранилище: у каждой работы одна строка статуса; разборы — в журналах `history/` (`E0-LOG`, `E1-CLOSEOUT`, `E1-REFLECTION`, `E1-8-TESTS`, `E2-ABI`); решения — в `DECISIONS.md`; статусы находок — в `REGISTER.md`; стенд — в `EXPERIMENTS.md`; обозначения — в `GLOSSARY.md`. Что даёт `git log`, код и `.claude/dpos_architecture/`, здесь не повторяется.
+Состояние на 2026-09-11. Это индекс, не хранилище: у каждой работы одна строка статуса; разборы — в журналах `history/` (`E0-LOG`, `E1-CLOSEOUT`, `E1-REFLECTION`, `E1-8-TESTS`, `E2-ABI`); решения — в `DECISIONS.md`; статусы находок — в `REGISTER.md`; стенд — в `EXPERIMENTS.md`; обозначения — в `GLOSSARY.md`. Что даёт `git log`, код и `.claude/dpos_architecture/`, здесь не повторяется.
 
 Условия, под которые написан план (09-04, в силе): код нигде не задеплоен; совместимость не нужна ни обратная, ни между версиями узла; форматы провода, диска, ABI и хранилища контракта меняются свободно; сеть можно пересоздавать с генезиса; работает один человек. Оценки трудоёмкости — из исходных документов с пометкой источника; это прикидки (VERIFY-REDESIGN: сумма REDESIGN занижена на ~1,5 недели, П-8 стоит на непроверенной готовности in-process reth).
 
@@ -28,7 +28,9 @@
 **Ворота** (дата замера, источник):
 | Ворота | Результат | Дата / источник |
 |---|---|---|
-| `cargo test` из `contracts/staking` | 175/0; 176/0 с `--features devnet-views` | 09-09, `history/E2-ABI.md` §9 |
+| `cargo test` из `contracts/staking` | **210/0; 211/0** с `--features devnet-views` на `e43d2aa5`; `clippy --all-targets -- -D warnings` и `fmt --check` чисто (175/176 было 09-09; 194/195 после сессии 2, 207/208 после сессии 3, +3 за сессию 4) | 09-11, `history/E1-CONTRACT-4.md` §1 |
+| `cargo test -p fluentbase-staking-abi` | 2/0 | 09-11, `history/E1-CONTRACT-4.md` §1 |
+| `cargo test -p fluentbase-types` | 13/0 | 09-11, `history/E1-CONTRACT-4.md` §1 |
 | `cargo test -p fluentbase-node` | 57/0 (59 до удаления двух селекторных тестов-копий; 4.1 Б1: −2 теста курсоров, 57/0 подтверждено на `189695dc`) | 09-11, `history/E4-ORCHESTRATOR.md` (ворота Б3) |
 | `cargo test -p fluentbase-staking-reader` | 63/0 на `189695dc` (было 59: 4.1 А +1 `is_transient`, Б2 −2 `soft_enter_span`, Б2′ +5 ET) | 09-11, `history/E4-ORCHESTRATOR.md` |
 | `cargo test -p fluentbase-consensus` | lib **671**/0 на `189695dc` (645 на старте Э4 → +26 за строку 4.1); `slasher_integration` 16/0; с `--features dpos-devnet-byzantine` стенд **43/0** (40 + 3 `committee_tests`; без фичи 35/0); clippy — одна чужая `large_enum_variant` в `node/dpos.rs`, с фичей та же; `cargo doc --no-deps` unresolved 8 (было 9) | 09-11, `history/E4-ORCHESTRATOR.md` (ворота Б3) |

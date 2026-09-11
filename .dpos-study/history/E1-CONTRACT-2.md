@@ -28,15 +28,23 @@
 | П6 (1.3) таймлок | сделан | `b237a81e` (блоб — в П7) | `39b11300` |
 | П7 (R5.2) `claimValidatorFeeAtEpoch` | сделан | `0b9daeac` (с блобом) | `39b11300` |
 | П8 (1.6, K-13) строгая калдата | сделан, ветвь обёртки | `9cd156db` (с блобом) | этот коммит |
+| П9 (контр-ревью) таймлок пересмотрен | сделан, не пункт задания | `0f283a82` (с блобом) | `a03181de` |
+
+Строка П9 дописана 2026-09-11 по `E1-CONTRACT-REVIEW.md` F-4: §0 был остановлен на
+П8 и не переписан после последнего коммита сессии, поэтому ответы 1, 2 и 3 ниже
+описывали не сессию, а её середину. Числа в ответах 2 и 3 исправлены там же.
 
 **2. Ворота.** Контракт ДО (verbatim, прогон мой на `89046c93`):
 `test result: ok. 175 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s`;
 с `--features devnet-views` — `176 passed; 0 failed`; clippy
 ``Finished `dev` profile [optimized] target(s) in 7.62s`` без warning'ов; `fmt --check` чисто.
-ПОСЛЕ:
+ПОСЛЕ П8:
 `test result: ok. 191 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s`;
 `192 passed; 0 failed` с фичей; clippy
 ``Finished `dev` profile [optimized] target(s) in 3.53s``; `fmt --check` чисто.
+ПОСЛЕ П9, то есть итог СЕССИИ (verbatim в §2 П9, `:993-1005` до этой правки):
+`test result: ok. 194 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s`;
+`195 passed; 0 failed` с фичей; clippy и `fmt --check` чисто.
 Общие ворота после П6/П7 и, повторно, после П8 — одинаковы:
 `cargo test -p fluentbase-node --lib` → `57 passed; 0 failed`;
 `cargo test -p fluentbase-staking-reader` → `58 passed; 0 failed`;
@@ -46,10 +54,17 @@
 наблюдались — фильтр `staking` их не берёт.
 
 **3. Число тестов.** До: 175 без фичи / 176 с фичей (177 атрибутов `#[test]`, из них
-два взаимно исключающих по фиче — §1). После: 191 / 192. Чистый прирост 16.
-**Удалённых как избыточные — НОЛЬ.** Один тест заменён, а не удалён:
+два взаимно исключающих по фиче — §1). После П8: 191 / 192. После П9, то есть итог
+сессии: 194 / 195, чистый прирост 19.
+**Удалённых как избыточные — НОЛЬ.** Заменены, а не удалены, ТРИ теста — один в П3 и
+два в П9:
 `a_slash_survives_a_fund_that_refuses_the_seizure` пинил политику, которую П3
-перевернул, и его место занял `a_fund_that_refuses_the_seizure_reverts_the_whole_slash`.
+перевернул, и его место занял `a_fund_that_refuses_the_seizure_reverts_the_whole_slash`;
+`the_address_setters_declare_now_and_land_seven_epochs_later` →
+`the_reserve_setter_declares_now_and_lands_seven_epochs_later` и
+`the_address_timelocks_are_governance_only_on_both_halves` →
+`the_reserve_timelock_is_governance_only_on_every_mutating_half`, оба потому, что П9
+вывел `setSlashFundAddress` из-под таймлока и «оба адреса» перестали быть предметом.
 Одно утверждение исчезло вместе с хендлером, о котором было (окно за пределами
 текущей эпохи, П7). Пар мутаций, показывающих избыточность ТЕСТА, я не строил, потому
 что ни одного теста не удалял.
@@ -72,7 +87,10 @@ universal-token (`crates/sdk/src/universal_token/command.rs`), два чтени
 сверяет пере-кодированные байты со входом. `decode_args` (динамический путь,
 `initialize` и три маршрута улик) сознательно не ужесточён.
 
-**6. Отклонений Д-nn — десять** (Д-01…Д-10). Ратификации владельцем просят два:
+**6. Отклонений Д-nn — десять** (Д-01…Д-10). Записями Д-nn не оформлены решения
+владельца по находкам 1 и 2 контр-ревью — они лежат в §2 П9 как решения, а не как
+отклонения (дописано 2026-09-11, `E1-CONTRACT-REVIEW.md` F-4). Ратификации владельцем
+просят два:
 
 - **Д-08** — `STATUS_ACTIVE` оставлен и задокументирован, а не удалён, хотя W6
   числит его среди вестигий. Причина по коду: тот же терм нагружен в
@@ -335,6 +353,22 @@ a lost slash into a stalled chain»). То есть ревёрт системн�
 останавливает цепь — он теряет слэш. Три маршрута по уликам
 (`slashEquivocationNotarize/Finalize/NullifyFinalize`) — обычные транзакции от EOA
 слэшера, там ревёрт просто проваливает транзакцию.
+
+**Поправка 2026-09-11 (`E1-CONTRACT-REVIEW.md` F-23, прочитано по коду обеих сторон).**
+Последняя фраза неверна. Транзакции слэшера в этом дереве идут через предсимуляцию, и
+любой ревёрт кроме `AlreadySlashedForEquivocation` становится `Sim::Rejected` →
+`SubmitOutcome::Failed` (`crates/node/src/slasher_sink.rs:235-244`, `:281`), а
+`run_consumer` на `Failed` НЕ акает запись WAL и логирует `error!` с текстом «A
+simulated revert here is a deterministic bug (calldata/EIP-2537 encoding) — alert;
+retrying the same bytes won't help» (`crates/dpos/consensus/src/slasher/actor.rs:1050-1057`).
+`ERR_STAKING_TOKEN_CALL_FAILED` — не баг кодирования, и повтор тех же байт как раз
+поможет, как только получатель примет. То есть «проваливает транзакцию» стоило бы
+читать как «оставляет незакрываемую запись WAL, переигрываемую на каждом рестарте, под
+алертом с неверной причиной». Плюс второй стык, которого нет ни в одной строке этого
+журнала: `ChargeStore::next_charge` выбрасывает заряд только по `tombstoned(accused)`
+(`actor.rs:208-229`), значит ненаказуемый эквивокатор занимает единственный слот «один
+заряд на блок» своей эпохи навсегда. Оба стыка и есть причина, по которой K-22
+пересмотрена 2026-09-11 на burn-fallback (`52714f62`, `DECISIONS.md` §3).
 
 **Файлы.** `src/consensus.rs`, `src/tests.rs`.
 
