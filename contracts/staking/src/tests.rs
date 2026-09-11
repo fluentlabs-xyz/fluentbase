@@ -4,9 +4,9 @@ use crate::{
     consts::{STATUS_ACTIVE, STATUS_JAIL, STATUS_PENDING},
     storage::{
         chain_config_storage, consensus_storage, initializer_storage, production_liveness_storage,
-        staking_storage, ConsensusKeysStorage, DelegationOpStorage, EpochIndexStorage,
-        ProductionValidatorStorage, UndelegationOpStorage, ValidatorSnapshotStorage,
-        ValidatorStorage, WeightPairStorage,
+        staking_storage, ChainConfigStorage, ConsensusKeysStorage, DelegationOpStorage,
+        EpochIndexStorage, ProductionValidatorStorage, UndelegationOpStorage,
+        ValidatorSnapshotStorage, ValidatorStorage, WeightPairStorage,
     },
     types::{
         AddressAmountCommand, AddressCommand, AddressU16Command, BoolCommand, ConsensusKeys,
@@ -111,6 +111,148 @@ fn compact_storage_matches_solidity_struct_layouts() {
     assert_eq!(production.readmit_at_epoch_accessor().offset(), 16);
     assert_eq!(production.kick_count_accessor().slot(), slot);
     assert_eq!(production.kick_count_accessor().offset(), 12);
+}
+
+/// W7. `ChainConfigStorage` is the ONE `#[derive(Storage)]` struct the 09-11
+/// range moved — `b237a81e` appended four fields, `0f283a82` removed two of them
+/// — and it was the one struct `compact_storage_matches_solidity_struct_layouts`
+/// did not pin. The discipline that keeps the rest safe ("APPENDED, never
+/// interleaved") lived only in a doc comment, and a doc comment does not go red.
+///
+/// Every field is here, slot and offset, as a NUMBER. A field inserted anywhere
+/// but the end relocates every field below it and fails this; a field appended
+/// at the end fails only the `SLOTS` and `BYTES` lines, which is the signal that
+/// the list needs a new entry rather than that something moved.
+///
+/// The offsets are the SDK's packing, counted down from the high end of the
+/// word: `staking_token` at 12 leaves its 20 bytes at 12..32, and
+/// `active_validators_length` packs into the 8 bytes at 4..12 of the same slot.
+#[test]
+fn the_chain_config_layout_is_pinned_field_by_field() {
+    assert_eq!(ChainConfigStorage::SLOTS, 9);
+    assert_eq!(<ChainConfigStorage as StorageLayout>::BYTES, 257);
+
+    let base = U256::from(7);
+    let config = ChainConfigStorage::new(base, 0);
+    let at = |slot: u64| base + U256::from(slot);
+
+    for (name, accessor_slot, accessor_offset, slot, offset) in [
+        (
+            "staking_token",
+            config.staking_token_accessor().slot(),
+            config.staking_token_accessor().offset(),
+            0u64,
+            12u8,
+        ),
+        (
+            "active_validators_length",
+            config.active_validators_length_accessor().slot(),
+            config.active_validators_length_accessor().offset(),
+            0,
+            4,
+        ),
+        (
+            "epoch_block_interval",
+            config.epoch_block_interval_accessor().slot(),
+            config.epoch_block_interval_accessor().offset(),
+            1,
+            24,
+        ),
+        (
+            "undelegate_period",
+            config.undelegate_period_accessor().slot(),
+            config.undelegate_period_accessor().offset(),
+            1,
+            16,
+        ),
+        (
+            "dpos_activation_block",
+            config.dpos_activation_block_accessor().slot(),
+            config.dpos_activation_block_accessor().offset(),
+            1,
+            8,
+        ),
+        (
+            "min_validator_stake_amount",
+            config.min_validator_stake_amount_accessor().slot(),
+            config.min_validator_stake_amount_accessor().offset(),
+            2,
+            0,
+        ),
+        (
+            "min_staking_amount",
+            config.min_staking_amount_accessor().slot(),
+            config.min_staking_amount_accessor().offset(),
+            3,
+            0,
+        ),
+        (
+            "slash_fund_address",
+            config.slash_fund_address_accessor().slot(),
+            config.slash_fund_address_accessor().offset(),
+            4,
+            12,
+        ),
+        (
+            "blend_stipend_per_epoch",
+            config.blend_stipend_per_epoch_accessor().slot(),
+            config.blend_stipend_per_epoch_accessor().offset(),
+            5,
+            0,
+        ),
+        (
+            "min_undelegate_blocks",
+            config.min_undelegate_blocks_accessor().slot(),
+            config.min_undelegate_blocks_accessor().offset(),
+            6,
+            0,
+        ),
+        (
+            "blend_reserve",
+            config.blend_reserve_accessor().slot(),
+            config.blend_reserve_accessor().offset(),
+            7,
+            12,
+        ),
+        (
+            "min_verdict_due_blocks",
+            config.min_verdict_due_blocks_accessor().slot(),
+            config.min_verdict_due_blocks_accessor().offset(),
+            7,
+            8,
+        ),
+        (
+            "exclusion_backoff_cap",
+            config.exclusion_backoff_cap_accessor().slot(),
+            config.exclusion_backoff_cap_accessor().offset(),
+            7,
+            4,
+        ),
+        (
+            "production_liveness_disabled",
+            config.production_liveness_disabled_accessor().slot(),
+            config.production_liveness_disabled_accessor().offset(),
+            7,
+            3,
+        ),
+        (
+            "pending_blend_reserve",
+            config.pending_blend_reserve_accessor().slot(),
+            config.pending_blend_reserve_accessor().offset(),
+            8,
+            12,
+        ),
+        (
+            "pending_blend_reserve_epoch",
+            config.pending_blend_reserve_epoch_accessor().slot(),
+            config.pending_blend_reserve_epoch_accessor().offset(),
+            8,
+            4,
+        ),
+    ] {
+        assert_eq!(accessor_slot, at(slot), "{name} moved slot");
+        assert_eq!(accessor_offset, offset, "{name} moved within its slot");
+    }
 }
 
 #[test]
@@ -11480,7 +11622,10 @@ fn the_two_views_that_reach_the_epoch_formula_refuse_an_uninitialized_contract()
                 },
             ),
         ),
-        ("pendingExclusions", encode_empty_call(SIG_PENDING_EXCLUSIONS)),
+        (
+            "pendingExclusions",
+            encode_empty_call(SIG_PENDING_EXCLUSIONS),
+        ),
         (
             "lastProcessedBlock",
             encode_empty_call(SIG_LAST_PROCESSED_BLOCK),
@@ -12939,6 +13084,86 @@ fn the_timelock_is_not_a_bound_before_dpos_activates() {
     ] {
         assert_revert_selector(harness.call(calldata), ERR_DPOS_ALREADY_ACTIVE);
         let _ = name;
+    }
+}
+
+// K-13's third hole, which neither the journal nor the module doc named: the
+// dispatcher splits calldata into a selector and `params`, and the 24 handlers
+// that take no arguments were never handed `params` at all. `util::decode` can
+// only refuse a tail on a handler that reaches it, so `getStakingToken()`
+// followed by arbitrary rubbish was accepted exactly as the bare selector was.
+//
+// All 24 are driven, not a representative one: the check lives in the
+// dispatcher arm, so a handler that loses its wrapper loses it alone. Each is
+// asserted twice — the tail refused, and the same call WITHOUT the tail
+// answering something other than `MalformedBuiltinParams`, which is what makes
+// the first assertion about the tail rather than about the call.
+#[test]
+fn an_argument_less_handler_refuses_a_tail() {
+    let owner = Address::with_last_byte(0xa0);
+    let validator = Address::with_last_byte(0x01);
+    let mut harness = Harness::new(1_000);
+    assert_eq!(
+        harness.initialize(owner, vec![validator], vec![DEFAULT_MIN_VALIDATOR_STAKE], 0),
+        ExitCode::Ok
+    );
+    harness.set_caller(GENESIS_GOVERNANCE);
+
+    #[allow(unused_mut)]
+    let mut selectors = vec![
+        SIG_GET_STAKING_TOKEN,
+        SIG_GET_ACTIVE_VALIDATORS_LENGTH,
+        SIG_GET_EPOCH_BLOCK_INTERVAL,
+        SIG_GET_DPOS_ACTIVATION_BLOCK,
+        SIG_GET_UNDELEGATE_PERIOD,
+        SIG_GET_MIN_VALIDATOR_STAKE_AMOUNT,
+        SIG_GET_MIN_STAKING_AMOUNT,
+        SIG_GET_SLASH_FUND_ADDRESS,
+        SIG_GET_BLEND_STIPEND_PER_EPOCH,
+        SIG_GET_BLEND_RESERVE,
+        SIG_APPLY_BLEND_RESERVE,
+        SIG_CANCEL_BLEND_RESERVE,
+        SIG_GET_PENDING_BLEND_RESERVE,
+        SIG_GET_MIN_VERDICT_DUE_BLOCKS,
+        SIG_GET_EXCLUSION_BACKOFF_CAP,
+        SIG_GET_PRODUCTION_LIVENESS_DISABLED,
+        SIG_CURRENT_EPOCH,
+        SIG_NEXT_EPOCH,
+        SIG_GET_VALIDATORS,
+        SIG_GET_REGISTRY_WITH_KEYS,
+        SIG_NEXT_EPOCH_TO_COMMIT,
+        SIG_COMMIT_EPOCH_COMMITTEE,
+    ];
+    #[cfg(feature = "devnet-views")]
+    selectors.extend([SIG_PENDING_EXCLUSIONS, SIG_LAST_PROCESSED_BLOCK]);
+    assert_eq!(
+        selectors.len(),
+        if cfg!(feature = "devnet-views") {
+            24
+        } else {
+            22
+        },
+        "every argument-less arm of the dispatcher is driven here"
+    );
+
+    for selector in selectors {
+        assert_ne!(
+            harness.call(encode_empty_call(selector)).0,
+            ExitCode::MalformedBuiltinParams,
+            "the control for 0x{selector:08x}: the bare selector is well-formed \
+             calldata, whatever the handler then decides"
+        );
+        for tail in [vec![0x00u8], vec![0xaa; 32], vec![0u8; 32]] {
+            let mut padded = encode_empty_call(selector);
+            padded.extend_from_slice(&tail);
+            assert_eq!(
+                harness.call(padded).0,
+                ExitCode::MalformedBuiltinParams,
+                "0x{selector:08x} takes no arguments and must refuse {} byte(s) \
+                 of them",
+                tail.len()
+            );
+        }
     }
 }
 

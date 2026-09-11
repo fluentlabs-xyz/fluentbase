@@ -126,6 +126,31 @@ where
     Ok(value)
 }
 
+/// The argument-less half of K-13: a handler that decodes nothing must still
+/// refuse calldata that carries something.
+///
+/// [`decode`] can only refuse a tail on a handler that reaches it, and the
+/// dispatcher hands `params` to the handlers that take arguments only. The 24
+/// that take none never saw those bytes, so `getStakingToken()` followed by
+/// arbitrary rubbish was accepted exactly as if the rubbish were not there. That
+/// is the same defect as a tail on a static tuple and it answers the same way —
+/// `MalformedBuiltinParams`, not a contract revert, because nothing about the
+/// call was decodable enough to name an error for.
+///
+/// It is the DISPATCHER and not the handlers that checks, because a handler that
+/// takes no arguments has no parameter to prove it looked. Wrapping the arm is
+/// what makes the check impossible to write and then forget inside a body.
+pub(crate) fn no_args<SDK, F>(sdk: &mut SDK, params: &[u8], handler: F) -> Result<(), ExitCode>
+where
+    SDK: SharedAPI,
+    F: FnOnce(&mut SDK) -> Result<(), ExitCode>,
+{
+    if !params.is_empty() {
+        return Err(ExitCode::MalformedBuiltinParams);
+    }
+    handler(sdk)
+}
+
 /// Decode a Solidity function's parameter tuple.
 ///
 /// Dynamic function arguments omit the outer tuple offset used when a
