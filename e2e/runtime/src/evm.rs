@@ -653,21 +653,27 @@ fn extcodecopy_bytecode(callee: Address, memory_offset: U256, len: U256) -> Vec<
     bytecode
 }
 
-/// A call opcode with the given output range. `CALL`/`CALLCODE` also take a (zero) value argument.
-fn call_bytecode(op: u8, callee: Address, out_offset: U256, out_len: U256) -> Vec<u8> {
+/// The argument pushes and the call opcode itself; `CALL`/`CALLCODE` also take `value`.
+fn call_args(op: u8, callee: Address, value: U256, out_offset: U256, out_len: U256) -> Vec<u8> {
     let mut bytecode = Vec::new();
     push_u256(&mut bytecode, out_len);
     push_u256(&mut bytecode, out_offset);
     bytecode.push(opcode::PUSH0); // args length
     bytecode.push(opcode::PUSH0); // args offset
     if op == opcode::CALL || op == opcode::CALLCODE {
-        bytecode.push(opcode::PUSH0); // value
+        push_u256(&mut bytecode, value);
     }
     bytecode.push(opcode::PUSH20);
     bytecode.extend_from_slice(callee.as_slice());
     bytecode.push(opcode::PUSH2); // forwarded gas
     bytecode.extend_from_slice(&[0xff, 0xff]);
     bytecode.push(op);
+    bytecode
+}
+
+/// A call opcode with the given output range and no value, followed by `STOP`.
+fn call_bytecode(op: u8, callee: Address, out_offset: U256, out_len: U256) -> Vec<u8> {
+    let mut bytecode = call_args(op, callee, U256::ZERO, out_offset, out_len);
     bytecode.push(opcode::STOP);
     bytecode
 }
@@ -785,4 +791,85 @@ fn test_nonzero_length_call_output_rejects_unrepresentable_offset() {
             "opcode {op:#04x} must reject an unrepresentable output length"
         );
     }
+}
+
+/// A `CALL`/`CALLCODE` forwarding `value` to `callee`; returns the call's success flag as a word.
+fn value_call_bytecode(op: u8, callee: Address, value: U256) -> Vec<u8> {
+    let mut bytecode = call_args(op, callee, value, U256::ZERO, U256::ZERO);
+    bytecode.push(opcode::PUSH0);
+    bytecode.push(opcode::MSTORE);
+    bytecode.extend_from_slice(&[opcode::PUSH1, 32]);
+    bytecode.push(opcode::PUSH0);
+    bytecode.push(opcode::RETURN);
+    bytecode
+}
+
+/// A `STATICCALL` into `callee`; returns the callee's 32-byte output followed by the static
+/// call's own success flag.
+fn staticcall_bytecode(callee: Address) -> Vec<u8> {
+    let mut bytecode = call_args(
+        opcode::STATICCALL,
+        callee,
+        U256::ZERO,
+        U256::ZERO,
+        U256::from(32),
+    );
+    bytecode.extend_from_slice(&[opcode::PUSH1, 32]);
+    bytecode.push(opcode::MSTORE);
+    bytecode.extend_from_slice(&[opcode::PUSH1, 64]);
+    bytecode.push(opcode::PUSH0);
+    bytecode.push(opcode::RETURN);
+    bytecode
+}
+
+/// Runs `op` with a one-wei value from inside a `STATICCALL` frame and returns the inner call's
+/// success flag together with the static call's own success flag.
+fn run_value_call_inside_staticcall(op: u8) -> (U256, U256) {
+    const CALLER_ADDRESS: Address = Address::repeat_byte(0x11);
+    const OUTER_ADDRESS: Address = Address::repeat_byte(0x22);
+    const INNER_ADDRESS: Address = Address::repeat_byte(0x33);
+    const TARGET_ADDRESS: Address = Address::repeat_byte(0x44);
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
+    ctx.add_evm_contract(TARGET_ADDRESS, [opcode::STOP]);
+    ctx.add_evm_contract(
+        INNER_ADDRESS,
+        value_call_bytecode(op, TARGET_ADDRESS, U256::ONE),
+    );
+    ctx.add_evm_contract(OUTER_ADDRESS, staticcall_bytecode(INNER_ADDRESS));
+    ctx.add_balance(INNER_ADDRESS, U256::ONE);
+    let result = ctx.call_evm_tx(
+        CALLER_ADDRESS,
+        OUTER_ADDRESS,
+        Bytes::new(),
+        Some(1_000_000),
+        None,
+    );
+    assert!(result.is_success(), "{result:?}");
+    let output = result.output().unwrap();
+    assert_eq!(output.len(), 64);
+    (
+        U256::from_be_slice(&output[..32]),
+        U256::from_be_slice(&output[32..]),
+    )
+}
+
+#[test]
+fn test_callcode_with_value_is_allowed_inside_staticcall() {
+    // CALLCODE only moves the value from the calling account to itself, so EIP-214 does not
+    // forbid it inside a static context the way it forbids CALL with value.
+    assert_eq!(
+        run_value_call_inside_staticcall(opcode::CALLCODE),
+        (U256::ONE, U256::ONE),
+        "CALLCODE with value must succeed inside a static call"
+    );
+}
+
+#[test]
+fn test_call_with_value_is_rejected_inside_staticcall() {
+    // The inner frame halts on the CALL, so the STATICCALL fails and its output stays zeroed.
+    assert_eq!(
+        run_value_call_inside_staticcall(opcode::CALL),
+        (U256::ZERO, U256::ZERO),
+        "CALL with value must still fail inside a static call"
+    );
 }
