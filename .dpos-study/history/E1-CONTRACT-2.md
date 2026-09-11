@@ -111,6 +111,96 @@ out; finished in 222.66s` (плюс `emit_pop_vectors` 0/0/2 ignored и doc-те
 (`git ls-files .claude/dpos_architecture/` — ноль файлов). Правка живёт на диске;
 `-f` в этой сессии разрешён только для `.dpos-study/`.
 
+### П2 (1.6, K-18). `ensure_initialized` на точках входа без гейта
+
+**Перечень всех внешних точек входа `config.rs` по диспетчеру `lib.rs`** — 25 штук,
+13 вьюх и 12 сеттеров. Построен скриптом по `lib.rs:48-76` и телам функций, не по
+памяти:
+
+| вьюха (`config.rs`) | гейты | вьюха (`config.rs`) | гейты |
+|---|---|---|---|
+| `get_staking_token` :190 | `ensure_non_payable` | `get_blend_stipend_per_epoch` :345 | `ensure_non_payable` |
+| `get_active_validators_length` :203 | `ensure_non_payable` | `get_min_verdict_due_blocks` :553 | `ensure_non_payable` |
+| `get_epoch_block_interval` :216 | `ensure_non_payable` | `get_exclusion_backoff_cap` :605 | `ensure_non_payable` |
+| `get_dpos_activation_block` :229 | `ensure_non_payable` | `get_production_liveness_disabled` :640 | `ensure_non_payable` |
+| `get_undelegate_period` :242 | `ensure_non_payable` | `get_blend_reserve` :672 | `ensure_non_payable` |
+| `get_min_validator_stake_amount` :255 | `ensure_non_payable` | | |
+| `get_min_staking_amount` :268 | `ensure_non_payable` | | |
+| `get_slash_fund_address` :313 | `ensure_non_payable` | | |
+
+Двенадцать сеттеров — `set_slash_fund_address` :326, `set_blend_stipend_per_epoch`
+:358, `set_active_validators_length` :384, `set_epoch_block_interval` :424,
+`set_dpos_activation_block` :454, `set_undelegate_period` :483,
+`set_min_validator_stake_amount` :510, `set_min_staking_amount` :533,
+`set_min_verdict_due_blocks` :576, `set_exclusion_backoff_cap` :618,
+`set_production_liveness_disabled` :653, `set_blend_reserve` :693 — все начинаются с
+`ensure_governance_mutation`, а она зовёт `ensure_governance` (`config.rs:19-22`),
+которая ПЕРВОЙ строкой зовёт `ensure_initialized` (`util.rs:60`). Governance-гейт
+покрывает; отдельный гейт ни одному сеттеру не нужен.
+
+**Ни одна вьюха `config.rs` не падает арифметикой.** Все тринадцать — одно чтение поля
+через `write_abi(… get_checked …)`, ни одного деления и ни одного вызова
+`current_epoch`. Это измерено, а не вычитано: см. ниже.
+
+**Где симптом K-18 живёт на самом деле.** `ExitCode::IntegerDivisionByZero` рождается в
+одном месте — `util.rs:84`, `math::epoch_at_block(...).ok_or(ExitCode::IntegerDivisionByZero)`,
+а `staking_protocol::epoch_at_block` (`crates/types/src/staking_protocol.rs:139-148`)
+отдаёт `None` ровно при `interval == 0`, то есть до `initialize`. Я прогнал пробник по
+всем негейченным точкам чтения на неинициализированном контракте и получил (вывод
+теста, не рассуждение):
+
+    PROBE getValidators: IntegerDivisionByZero len=0
+    PROBE isValidatorActive: Ok 0x00000000
+    PROBE isValidator: Ok 0x00000000
+    PROBE getValidatorStatus: Ok 0x00000000
+    PROBE getValidatorByOwner: Ok 0x00000000
+    PROBE getValidatorDelegatedStakeAt: IntegerDivisionByZero len=0
+    PROBE getValidatorDelegation: Ok 0x00000000
+    PROBE getEpochBlockInterval: Ok 0x00000000
+    PROBE getBlendReserve: Ok 0x00000000
+    PROBE getStakingToken: Ok 0x00000000
+    PROBE getActiveValidatorsLength: Ok 0x00000000
+    PROBE getMinVerdictDueBlocks: Ok 0x00000000
+
+Две вьюхи, обе в `staking.rs`: `get_validators` (:894, через `selected_validators`
+→ `current_epoch`) и `get_validator_delegated_stake_at` (:1023, через
+`current_epoch_at_block`). `isValidatorActive` попадает во вторую группу по
+короткому замыканию `&&`, а не по устройству: `selected_validators` там стоит вторым
+операндом после `validator_status(...) == STATUS_ACTIVE`, который до `initialize` ложен
+для любого адреса (`staking.rs:848-853`). Пробник после замера удалён.
+
+**Что сделано.** `ensure_initialized` первой строкой в эти две вьюхи (`staking.rs:894`,
+`:1023`). В `config.rs` прод-кода не тронуто — там нечего чинить.
+
+**Файлы.** `src/staking.rs`, `src/tests.rs`.
+
+**Тесты.**
+
+- `the_two_views_that_reach_the_epoch_formula_refuse_an_uninitialized_contract` —
+  новый. **Был ли красным до правки: да** — снял оба `ensure_initialized`, прогон:
+  `test result: FAILED. 177 passed; 1 failed`, упал ровно он. Вторая половина теста
+  перечисляет ОСТАЛЬНЫЕ восемнадцать негейченных точек чтения и утверждает, что каждая
+  отвечает `ExitCode::Ok` на неинициализированном контракте — это и делает «гейт не
+  нужен» измерением, а не прочтением кода.
+- `every_config_setter_refuses_an_uninitialized_contract_before_it_checks_anything_else`
+  — новый. **Был ли красным до правки: НЕТ, он был зелёным** — он пинит поведение,
+  которое уже было, и никакого прод-кода под него не писалось. Что он стоит, показано
+  мутацией: снятие `ensure_initialized(sdk)?` из `ensure_governance` (`util.rs:60`)
+  даёт `test result: FAILED. 177 passed; 1 failed`, и падает ровно он — до этой
+  сессии ни один тест не ловил снятие этой строки.
+
+**Ворота после П2, verbatim:**
+
+    cargo test                         → test result: ok. 178 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+    cargo test --features devnet-views → test result: ok. 179 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+    cargo clippy --all-targets -- -D warnings → Finished `dev` profile [optimized] target(s) in 1.57s
+    cargo fmt --check                  → чисто
+
+ABI не затронут: селекторы те же, сигнатуры те же; меняется только, чем отвечают две
+вьюхи до `initialize` — состояние, в котором живая цепь не бывает после генезиса.
+
+**sha:** `548f10bd` (код), docs — следующим коммитом.
+
 ## §3 Отклонения Д-nn
 
 ### Д-01 (П1). Три способа, которыми правка задела существующие тесты
