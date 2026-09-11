@@ -12,7 +12,8 @@
 ## Текущее состояние
 
 - Строка: **4.1**, заход **А** (модуль `committee/` + фасад `CommitteeReads` + тесты модуля).
-- Фаза: **заход А закрыт кодом** (4 коммита `fcd3b2ba`, `751bce37`, `3f8bec8c`, `ef6e6265`); Ф7 доки `.claude/dpos_architecture/` (00, 06 §6.2b, 12, TOC) правлены; docs-коммит журналов — следующий.
+- Фаза: заход **Б1 закрыт** (коммиты `5451f5ab`, `0f9be693`, `04eb9b14` + docs ниже); доки `.claude/dpos_architecture/` (00, 06 §6.2b, 09) правлены под Б1. Заход **Б2** — Ф2, исполнитель B2 по `E4-prompts/4.1-B2-impl-1.md`.
+- Следующий шаг: журнал `history/E4-1-B2.md` → Ф3 → Ф4 (R3) → Ф5 → Ф6 → Ф7/Ф8 → Б3 (стенд `FakeStaking` по ветке хэша, кольцо, тумбстоуны, три стенд-теста, e2e-пин) → закрытие 4.1 (REGISTER, PLAN, EXPERIMENTS).
 - Следующий шаг: `docs(dpos)` коммит (журналы A/REVIEW/ORCHESTRATOR/prompts, `git add -f`) → заход **Б1** по `E4-prompts/4.1-B1-impl-1.md` (Ф2) → Ф3 → Ф4 → Ф5 → Ф6 → далее Б2 (продюсеры схем, один ET, `CertInlet.schemes`, `latest_live`, стенд `FakeStaking` по ветке + 3 стенд-теста) → В (e2e-пин `commit_height`) → Ф7/Ф8/Ф9 строки 4.1.
 
 ## Карта 4.1 (Ф1, собрана мной по коду 2026-09-11 [KNOWN])
@@ -37,6 +38,10 @@
 | A1 | исполнитель | 4.1 А | `E4-prompts/4.1-A-impl-1.md` | `history/E4-1-A.md` | завершён (реляция: lib 659/0, reader 60/0, контракт 175/0, 15 новых тестов, 10 Д-nn) |
 | R1 | ревьюер | 4.1 А | `E4-prompts/4.1-A-review-1.md` | `history/E4-1-A-REVIEW.md` | завершён (реляция: ворота = мои; 18 находок R-01…R-18) |
 | F1 | третий проход | 4.1 А | `E4-prompts/4.1-A-fix-1.md` | `history/E4-1-A.md` часть В | завершён (реляция: FIXED 17 · RECORDED 2 · REJECTED 0; +5 тестов; Д-11…Д-14) |
+| B1 | исполнитель | 4.1 Б1 | `E4-prompts/4.1-B1-impl-1.md` | `history/E4-1-B1.md` | завершён (реляция: lib 665/0, стенд 40/0, node 57/0, reader 60/0, slasher_integration 13/0; 19 файлов; Д-15…Д-20; `outer.rs` вне списка — Д-16) |
+| R2 | ревьюер | 4.1 Б1 | `E4-prompts/4.1-B1-review-1.md` | `history/E4-1-B1-REVIEW.md` | завершён (реляция: ворота = мои; B1-01…B1-15) |
+| F2 | третий проход | 4.1 Б1 | `E4-prompts/4.1-B1-fix-1.md` | `history/E4-1-B1.md` часть В | завершён (реляция: FIXED 10 · RECORDED 5; +6 тестов; Д-21…Д-23) |
+| B2 | исполнитель | 4.1 Б2 | `E4-prompts/4.1-B2-impl-1.md` | `history/E4-1-B2.md` | запущен |
 
 ## Квитанции
 
@@ -47,8 +52,14 @@
 - SERIOUS/BLOCKER в ревью нет ⇒ hard-stop (3) не рассматривается.
 - Ф6/F1 квитанции [KNOWN, открыл сам после прохода]: R-02 — `committee/mod.rs:213-219` `OutOfWindow{epoch,hi,..} => epoch > hi`; R-03/R-15/Д-13 — трейт `Committee` имеет `anchor_advanced` (`mod.rs:270`) и `anchor_hash` (`:281`), фасад `CommitteeReadsFacade::new(inner)` (`facade.rs:53`), `read_at` = `inner.anchor_hash()` (`:75`); R-01/Д-11 — `store.rs:125-128` `prune(state, lo)` (`retain epoch >= lo` для `records` и `reported`), зовётся из `anchor_advanced` (`:432-449`); метрики — `store.rs:22-43`. Остальные FIXED (R-05…R-14, R-16…R-18) — по реляции F1, якоря в части В журнала, сам не открывал.
 - Ф3 после третьего прохода (мои прогоны) [KNOWN]: consensus lib **664/0** (`gates/v-lib.txt`); стенд с фичей **40/0**; node **59/0**; staking-reader **60/0**; контракт **175/0**; clippy — 3 чужие строки (`large_enum_variant`), с фичей 0; fmt 0; doc 9. (Фоновый прогон был убит системой по памяти на стадии clippy; clippy/fmt/doc перепрогнаны в foreground.)
-- Ф8: компилируемость коммитов 1–3 по отдельности — реляция A1 (§6 журнала: убирал `committee/`, получал 645/60/13); сам проверяю состояние коммита 3 (`3f8bec8c`) во временном worktree (`cargo test --lib --no-run` + `cargo check` контракта) — результат ниже, когда придёт. Коммит 4 = дерево, ворота выше.
+- Ф8: компилируемость коммитов 1–3 по отдельности — реляция A1 (§6 журнала: убирал `committee/`, получал 645/60/13); сам проверяю состояние коммита 3 (`3f8bec8c`) во временном worktree (`cargo test --lib --no-run` + `cargo check` контракта) — [KNOWN] worktree на `3f8bec8c`: `cargo test -p fluentbase-consensus --lib --no-run` Finished, контракт `cargo check` Finished (`tasks/b405vwvtt.output`). Коммит 4 = дерево, ворота выше.
 - Счётчики текста перед docs-коммитом (E4-1-A.md / E4-1-A-REVIEW.md / E4-ORCHESTRATOR.md): строки с «…» 7 / 3 / 4 — все диапазоны (`R-01…R-18`, `Д-1…Д-10`) или цитаты §5.6, не обрывы; нечётные обратные кавычки 0 / 4 (перенос code-span через строку, `:93-94`, `:97-98`) / 0; `,,` 0; пустые `` `` `` 0; пустые `()` вне кода — счёт ненадёжен (спаны через перенос), выборочно — имена методов.
+- Б1 [KNOWN, дифф открыл сам]: `testbed/tests.rs` — единственная правка старого ассерта: в `a_committee_not_yet_committed_is_not_read_early` посылка `reads.committed.values().sum() > 50` заменена на «каждая пройденная эпоха прочитана ≥ 1» (модуль читает эпоху один раз — старая посылка утверждала бы дефект); свойство теста (`uncommitted` для эпохи 1 на генезисе) не тронуто. Принято; ревьюеру задан вопрос 5 (равносильно/ослабление). `executor.rs` — только `AnchorAdvancedFn` в `Config` + три вызова после `advance_finalized` (по диффу; номера строк — реляция B1 `:1110→:1115`, `:2482→:2485`, `:3600→:3605`, не открывал). `outer.rs` тронут вне списка (Д-16) — проводка `slasher::Config`/`executor::Config`/снятие `with_randomness`; сам дифф не читал — ревьюеру вопрос 11.
+- Б1 ворота Ф3 (мои прогоны, `gates/b1-*.txt`) [KNOWN]: consensus lib **665/0**; стенд с фичей **40/0**; node **57/0** (−2 удалённых теста курсоров); staking-reader **60/0**; `slasher_integration` **13/0**; clippy — 3 чужие строки, с фичей 0; fmt 0; doc 9. Совпадают с реляцией B1.
+- Ф5 по ревью R2 [KNOWN, открыл сам]: **B1-01 SERIOUS** — `slasher/actor.rs:712-724` маршрутизирует по `CommitteeError::is_transient()`; `committee/store.rs:411-421` ветка `Err(e)` зонда якоря ⇒ `failed(.., REASON_ANCHOR_FAULT)` (permanent, кроме трёх транзиентных вариантов); `executed.rs:49-58` (читал в Ф1) заворачивает ЛЮБУЮ ошибку провайдера в `ReadError::Backend` ⇒ рваное static-file чтение стало Permanent для слэшера (на HEAD `slasher/actor.rs:737-741` любой `Err` был Transient). Подтверждаю; проект §5.4 не отвечает (нет строки про `Backend`/torn read) — но это дефект проводки, не проекта ⇒ не hard-stop (3); решение FIXED в `executed_state_hash` через `classify_transient_provider_error`. **B1-02** — `node/dpos.rs:1432` `FinalizedCursor::default()` при сборке плоскости, засев в `executor::Actor::init`; окно слепоты подтверждаю; FIXED: `RethAnchor::height() = max(cursor, EL-finalized тег)`, курсор не трогать. **B1-03** — `slasher/actor.rs:640-668` повтор через `sleep` + `continue` без `recv` — подтверждаю; RECORDED (структура до Б1, для Э7). **B1-04** — `store.rs:460-471` `anchor_advanced` при `geometry == None` выходит до публикации; точка заморозки `node/dpos.rs:1569-1571` (читал ранее в Ф1 как `:1677`) стор не дёргает — подтверждаю; FIXED. B1-05 — доки, мой Ф7. B1-06 — «наполовину» между Б1/Б2 — принято, Б2 сразу после коммита. B1-07…B1-15 — решения в `4.1-B1-fix-1.md`; сами якоря не открывал (реляция).
+- Ф6/F2 квитанции [KNOWN, открыл сам]: B1-01 — `executed.rs:71-81` `Err(e) => Err(classify(e))`, `classify` через `fluentbase_staking_reader::classify_transient_provider_error` (`reader.rs:61` теперь `pub`); B1-02 — `committee/store.rs:557-565` `height() = cursor.height().max(finalized_block_number tag)`; B1-04 — `node/dpos.rs:1576-1586` `committee_wake.anchor_advanced()` сразу после `geometry_tx.send_replace`. Остальные FIXED (B1-08, B1-10…B1-15) — реляция F2.
+- Ф3 после третьего прохода Б1 (мои прогоны) [KNOWN]: consensus lib **668/0**; стенд **40/0**; node **57/0**; staking-reader **60/0**; `slasher_integration` **16/0**; clippy 3 чужие / с фичей 0; fmt 0; doc 9 (фоновый прогон дважды убит системой по памяти на clippy; clippy/fmt/doc сняты в foreground с `-j 6`).
+- Ф8 Б1: компилируемость коммита `0f9be693` без `04eb9b14` — по реляции B1 (§6: `application.rs` временно возвращён к `bf6d9f5e`, `--no-run` Finished) + моя проверка во временном worktree (фон, `tasks/bofg586fo`) — результат допишу.
 - Моё наблюдение при чтении `store.rs::install`: ретенция `pop_first` до 8 записей при окне 11 эпох — эпоха в окне ниже 8 самых новых перечитывается заново (два staticcall), write-once защита на неё не действует. Передано ревьюеру как вопрос, не находка.
 
 ## Коммиты
@@ -59,6 +70,10 @@
 | `751bce37` | 4.1 А | `feat(staking-reader): classify read errors as transient or permanent by variant` — `crates/dpos/staking-reader/src/error.rs` |
 | `3f8bec8c` | 4.1 А | `feat(consensus): expose the finalized-execution cursor's height` — `crates/dpos/consensus/src/application.rs` |
 | `ef6e6265` | 4.1 А | `feat(consensus): read every epoch committee as one frozen value at one anchor` — `crates/dpos/consensus/src/committee/**`, `crates/dpos/consensus/src/lib.rs` |
+| `bf6d9f5e` | 4.1 А | `docs(dpos): record the committee module` — журналы A/REVIEW, ORCHESTRATOR, промпты A и Б1 |
+| `5451f5ab` | 4.1 Б1 | `feat(staking-reader): let a read boundary outside this crate classify a provider error` — `staking-reader/src/{reader,lib}.rs` |
+| `0f9be693` | 4.1 Б1 | `feat(consensus)!: read every epoch committee through the committee module` — `committee/**`, `executed.rs`, `lib.rs`, `beacon/{plane,follower}.rs`, `cert_inlet.rs` (док), `dpos.rs`, `executor.rs`, `outer.rs`, `slasher/actor.rs`, `testbed/{stand,fakes,tests}.rs`, `tests/slasher_integration.rs`, `node/{dpos,ordering}.rs`, `node/cert_follow/mod.rs` |
+| `04eb9b14` | 4.1 Б1 | `refactor(consensus)!: drop the unread randomness handle from the application` — `application.rs`, `beacon/surface.rs` (док) |
 
 ## Отклонения от проекта
 
@@ -69,6 +84,8 @@
 | Д-12 (А, В) | `OutOfWindow.is_transient()` направленная | `committee/mod.rs:213-219` — ревью R-02 | нет; §5.4 «OutOfWindow ⇒ Permanent у слэшера» верно только снизу |
 | Д-13 (А, В) | трейт `Committee` — 6 методов (`anchor_advanced`, `anchor_hash`) | `committee/mod.rs:270`, `:281` — ревью R-03/R-15 | нет |
 | Д-14 (А, В) | шестая метка `reason` (`weights_len`) | `committee/store.rs:35` | нет |
+| Д-15…Д-20 (Б1) | ленивая геометрия `GeometryRx`; `outer.rs` вне списка (проводка); `AnchorAdvancedFn` вместо `Arc<dyn Committee>` в executor; follower-снимок из записи (`tombstoned=false`, `activation_epoch=0` — читателей нет); `slasher::Config` без `R`; `install(lo)` | `history/E4-1-B1.md` §3 | нет |
+| Д-21…Д-23 (Б1, В) | зонд якоря классифицирует ошибку провайдера reader'ом (`executed.rs:77-81`); `RethAnchor::height = max(cursor, EL-finalized тег)` (`store.rs:557-565`); четвёртый вызывающий `anchor_advanced` — заморозка геометрии (`node/dpos.rs:1586`) | `history/E4-1-B1.md` часть В | нет; §5.1 «якорь = executed_state_hash(ordering_finalized)» — уточнение формулы (пол по тегу), П-1 не меняет |
 
 ## Hard-stop
 
