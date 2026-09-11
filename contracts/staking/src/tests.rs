@@ -4235,6 +4235,82 @@ fn a_short_successor_cannot_let_its_predecessor_read_the_wrong_weights() {
     );
 }
 
+// The committee view answers the EPOCH's length, from the index, and never the
+// length of the record the index points at. The two are the same number for a
+// committed epoch, which is exactly what makes the distinction easy to lose;
+// they are not the same number for an epoch that was never committed, whose
+// index is all zeroes and therefore points at record 0. Reading the record's
+// own length there would hand the caller epoch 0's committee under another
+// epoch's name, with an empty stakes leg beside it.
+#[test]
+fn the_committee_view_answers_an_uncommitted_epoch_with_nothing() {
+    let owner = Address::with_last_byte(0xa0);
+    let members: Vec<(Address, U256)> = (1..=4)
+        .map(|index| {
+            (
+                Address::with_last_byte(index as u8),
+                DEFAULT_MIN_VALIDATOR_STAKE,
+            )
+        })
+        .collect();
+    let (validators, stakes) = with_filler_validators(&members);
+    let mut harness = Harness::new(1_000);
+    assert_eq!(
+        harness.initialize(owner, validators, stakes, 0),
+        ExitCode::Ok
+    );
+    commit_test_committee(&mut harness.sdk, 0, &members);
+
+    // The control: record 0 is populated, so "nothing" below is an answer about
+    // the epoch and not about an empty contract.
+    let (exit, output) = harness.call(encode_call(
+        SIG_GET_EPOCH_COMMITTEE_WITH_STAKES,
+        &U64Command { value: 0 },
+    ));
+    assert_eq!(exit, ExitCode::Ok);
+    let (seated, _, _, _): (Vec<Address>, Vec<ConsensusKeys>, Vec<U256>, Vec<bool>) =
+        decode_returns(&output);
+    assert_eq!(seated.len(), 4);
+
+    let (exit, output) = harness.call(encode_call(
+        SIG_GET_EPOCH_COMMITTEE_WITH_STAKES,
+        &U64Command { value: 99 },
+    ));
+    assert_eq!(exit, ExitCode::Ok);
+    let (seated, keys, stakes, tombstoned): (
+        Vec<Address>,
+        Vec<ConsensusKeys>,
+        Vec<U256>,
+        Vec<bool>,
+    ) = decode_returns(&output);
+    assert!(
+        seated.is_empty() && keys.is_empty() && stakes.is_empty() && tombstoned.is_empty(),
+        "an epoch with no committee has no members, not record 0's: {seated:?}"
+    );
+}
+
+// Calldata too short to carry a selector is refused as malformed, and the code
+// it is refused with is the one the node's `evm.rs` reads to decide whether a
+// system call failed on its input or on its work. The gate is the only thing
+// standing between a short buffer and the `split_at` below it.
+#[test]
+fn calldata_too_short_for_a_selector_is_malformed_input() {
+    let mut harness = Harness::new(1_000);
+    for length in 0..SIG_LEN_BYTES {
+        assert_eq!(
+            harness.call(vec![0xaau8; length]).0,
+            ExitCode::MalformedBuiltinParams,
+            "a {length}-byte call carries no selector"
+        );
+    }
+    // The control: four bytes is enough to be a selector, so the refusal that
+    // follows is the dispatcher's and no longer this gate's.
+    assert_ne!(
+        harness.call(vec![0xaau8; SIG_LEN_BYTES]).0,
+        ExitCode::MalformedBuiltinParams
+    );
+}
+
 // The odd-count belt, asserted against the REAL commit.
 //
 // An earlier version of this drove `commit_test_committee`, which is a
