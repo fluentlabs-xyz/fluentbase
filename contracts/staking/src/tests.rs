@@ -1950,6 +1950,33 @@ fn handlers_refuse_value_and_refuse_to_mutate_inside_a_static_frame() {
     );
     harness.sdk.context_mut().is_static = false;
     assert_eq!(harness.call(mutation()).0, ExitCode::Ok);
+
+    // The governance preamble is a THIRD call site, and until this it was
+    // unmeasured: dropping both `ensure_non_payable` and `ensure_mutable` from
+    // `ensure_governance_mutation` together left the suite green, because the
+    // two mutators above reach those guards by another path.
+    let setter = || {
+        encode_call(
+            SIG_SET_PRODUCTION_LIVENESS_DISABLED,
+            &BoolCommand { value: false },
+        )
+    };
+    harness.set_caller(GENESIS_GOVERNANCE);
+    assert_eq!(harness.call(setter()).0, ExitCode::Ok, "the control");
+    harness.sdk.context_mut().value = U256::from(1);
+    assert_eq!(
+        harness.call(setter()),
+        (ExitCode::Panic, Vec::new()),
+        "a governance setter must refuse a payable call too"
+    );
+    harness.sdk.context_mut().value = U256::ZERO;
+    harness.sdk.context_mut().is_static = true;
+    assert_eq!(
+        harness.call(setter()),
+        (ExitCode::StateChangeDuringStaticCall, Vec::new()),
+        "and must refuse a static frame"
+    );
+    harness.sdk.context_mut().is_static = false;
 }
 
 #[test]
@@ -10921,6 +10948,430 @@ fn every_config_setter_refuses_an_uninitialized_contract_before_it_checks_anythi
             &result.1[..SIG_LEN_BYTES],
             &ERR_NOT_INITIALIZED.to_be_bytes(),
             "{name} must refuse on initialization, ahead of its own validation"
+        );
+    }
+}
+
+// A ring miss inside `judge` has its own announcement, and until this test
+// nothing read it: the existing ring-miss test taints its epoch (half the
+// interval recorded), so the close never reaches `judge` at all and the event it
+// checks is the accrual's. Dropping the `EpochWeightsUnavailable` emit from
+// `judge` left the suite green.
+//
+// The two arms either side of the ring miss are deliberately silent, which is
+// exactly why this one must not be.
+#[test]
+fn a_verdict_pass_past_the_ring_forfeits_its_verdicts_and_says_so() {
+    let (mut harness, members) = liveness_harness(&[DEFAULT_MIN_VALIDATOR_STAKE; 4], 4);
+    equal_weight_committee(&mut harness.sdk, 0, &members);
+    // Overwritten by a later epoch's frame: the ring does not age, it is reused.
+    equal_weight_committee(&mut harness.sdk, WEIGHT_RING_EPOCHS, &members);
+    // Fully recorded, so the taint does not suppress judging and the close
+    // really does reach `judge`. Epoch 0 expects one block fewer than the
+    // interval — the activation block carries no record.
+    production_liveness_storage()
+        .blocks_in_epoch_accessor()
+        .entry(0)
+        .set_checked(&mut harness.sdk, DEFAULT_EPOCH_BLOCK_INTERVAL as u32 - 1)
+        .unwrap();
+    harness.sdk.take_logs();
+
+    assert_eq!(
+        close_epoch_late(&mut harness, 0, WEIGHT_RING_EPOCHS + 1),
+        ExitCode::Ok,
+        "the chain keeps running"
+    );
+
+    let logs = harness.sdk.take_logs();
+    assert!(
+        logs_of(&logs, events::PartialEpoch::SELECTOR).is_empty(),
+        "the epoch is complete, so judging was reached rather than suppressed"
+    );
+    let announced = logs_of(&logs, events::EpochWeightsUnavailable::SELECTOR);
+    assert_eq!(
+        announced.len(),
+        1,
+        "the verdict pass forfeits this epoch and says so — one announcement, \
+         from `judge`; the accrual leaves before its own forfeit arm because \
+         this harness configures no stipend"
+    );
+    assert_eq!(
+        decode_output::<u32>(&announced[0].0),
+        members.len() as u32,
+        "and it names the committee it could not judge"
+    );
+    assert!(
+        logs_of(&logs, events::ProductionVerdictFailed::SELECTOR).is_empty(),
+        "and it judged nobody rather than judging against zero weights"
+    );
+}
+
+// `recordProduction` is a pre-execution system call and its counters decide
+// every liveness verdict. Nothing tested the caller gate: dropping it left the
+// suite green, and an ordinary account could then inflate any seat's credit and
+// the epoch's block count.
+#[test]
+fn the_recorder_refuses_every_caller_but_the_system_address() {
+    let (mut harness, members) = liveness_harness(&[DEFAULT_MIN_VALIDATOR_STAKE; 4], 4);
+    equal_weight_committee(&mut harness.sdk, 0, &members);
+    let storage = production_liveness_storage();
+
+    for impostor in [
+        Address::with_last_byte(0xa0),
+        GENESIS_GOVERNANCE,
+        members[0],
+        GENESIS_STAKING,
+    ] {
+        harness.set_caller(impostor);
+        harness.set_block_number(1_100);
+        assert_revert_selector(
+            harness.call(encode_call(
+                SIG_RECORD_PRODUCTION,
+                &RecordProductionCommand { leader_index: 0 },
+            )),
+            ERR_ONLY_SYSTEM_CALL,
+        );
+    }
+    assert_eq!(
+        storage
+            .last_processed_block_accessor()
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        0,
+        "not one of them moved the cursor"
+    );
+    assert_eq!(
+        storage
+            .blocks_in_epoch_accessor()
+            .entry(0u64)
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        0,
+        "nor credited the epoch a single block"
+    );
+
+    // The control: the same call from the system address lands.
+    assert_eq!(record_production(&mut harness, 1_100, 0), ExitCode::Ok);
+    assert_eq!(
+        storage
+            .blocks_in_epoch_accessor()
+            .entry(0u64)
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        1
+    );
+}
+
+// The commit cursor may run at most `MAX_COMMITTEE_LOOKAHEAD_EPOCHS` ahead of the
+// current epoch, because the selection it would need sits at `target − 2` and is
+// only final once `current >= target − 2`. Nothing tested the ceiling: dropping
+// the revert left the suite green, and the commit would then freeze a committee
+// from a snapshot that later delegations can still move.
+#[test]
+fn the_commit_refuses_a_target_past_the_lookahead_horizon() {
+    let owner = Address::with_last_byte(0xa0);
+    let (validators, stakes) = with_filler_validators(&[]);
+    let mut harness = Harness::new(1_000);
+    assert_eq!(
+        harness.initialize(owner, validators, stakes, 0),
+        ExitCode::Ok
+    );
+
+    let cursor = consensus_storage().last_committed_epoch_p1_accessor();
+    // The current epoch is 0, so `MAX_COMMITTEE_LOOKAHEAD_EPOCHS` is the last
+    // committable target and one past it must be refused.
+    cursor
+        .set_checked(&mut harness.sdk, MAX_COMMITTEE_LOOKAHEAD_EPOCHS + 1)
+        .unwrap();
+    harness.set_caller(SYSTEM_CALLER);
+    assert_revert_selector(
+        harness.call(encode_empty_call(SIG_COMMIT_EPOCH_COMMITTEE)),
+        ERR_EPOCH_NOT_YET_COMMITTABLE,
+    );
+    assert_eq!(
+        cursor.get_checked(&harness.sdk).unwrap(),
+        MAX_COMMITTEE_LOOKAHEAD_EPOCHS + 1,
+        "a refused commit leaves the cursor where it was"
+    );
+
+    // The control: the horizon itself is committable.
+    cursor
+        .set_checked(&mut harness.sdk, MAX_COMMITTEE_LOOKAHEAD_EPOCHS)
+        .unwrap();
+    assert_eq!(
+        harness
+            .call(encode_empty_call(SIG_COMMIT_EPOCH_COMMITTEE))
+            .0,
+        ExitCode::Ok
+    );
+    assert_eq!(
+        cursor.get_checked(&harness.sdk).unwrap(),
+        MAX_COMMITTEE_LOOKAHEAD_EPOCHS + 1
+    );
+}
+
+// Seven of `validate_initialization`'s gates had no test at all: dropping the
+// zero-staking-token refusal, the committee-cap ceiling, the zero-interval and
+// zero-undelegate-period refusals, both zero-minimum refusals, both
+// compact-precision refusals and the activation-block alignment each left the
+// suite green. A genesis is one permissionless shot with a bare revert as its
+// only feedback, so an ungated argument there is a chain that comes up wrong.
+#[test]
+fn initialize_refuses_every_malformed_chain_configuration() {
+    let owner = Address::with_last_byte(0xa0);
+    let validator = Address::with_last_byte(0x01);
+    let stake = DEFAULT_MIN_VALIDATOR_STAKE;
+
+    type Mangle = fn(&mut InitializeCommand);
+    let cases: [(&str, Mangle, u32); 9] = [
+        (
+            "a zero staking token",
+            |c: &mut InitializeCommand| c.staking_token = Address::ZERO,
+            ERR_ZERO_STAKING_TOKEN,
+        ),
+        (
+            "a cap above the committee ceiling",
+            |c: &mut InitializeCommand| c.active_validators_length = MAX_COMMITTEE_SIZE as u32 + 1,
+            ERR_INVALID_CHAIN_CONFIG,
+        ),
+        (
+            "a zero epoch interval",
+            |c: &mut InitializeCommand| {
+                c.epoch_block_interval = 0;
+                c.dpos_activation_block = 0;
+            },
+            ERR_INVALID_CHAIN_CONFIG,
+        ),
+        (
+            "a zero undelegate period",
+            |c: &mut InitializeCommand| c.undelegate_period = 0,
+            ERR_INVALID_CHAIN_CONFIG,
+        ),
+        (
+            "a zero validator minimum",
+            |c: &mut InitializeCommand| c.min_validator_stake_amount = U256::ZERO,
+            ERR_INVALID_CHAIN_CONFIG,
+        ),
+        (
+            "a zero staking minimum",
+            |c: &mut InitializeCommand| c.min_staking_amount = U256::ZERO,
+            ERR_INVALID_CHAIN_CONFIG,
+        ),
+        (
+            "a validator minimum below the compact unit",
+            |c: &mut InitializeCommand| {
+                c.min_validator_stake_amount = BALANCE_COMPACT_PRECISION + U256::from(1)
+            },
+            ERR_INVALID_CHAIN_CONFIG,
+        ),
+        (
+            "a staking minimum below the compact unit",
+            |c: &mut InitializeCommand| {
+                c.min_staking_amount = BALANCE_COMPACT_PRECISION + U256::from(1)
+            },
+            ERR_INVALID_CHAIN_CONFIG,
+        ),
+        (
+            "an activation block off the interval grid",
+            |c: &mut InitializeCommand| c.dpos_activation_block = c.epoch_block_interval as u64 + 1,
+            ERR_UNALIGNED_ACTIVATION_BLOCK,
+        ),
+    ];
+
+    for (name, mangle, expected) in cases {
+        let mut harness = Harness::new(1_000);
+        harness.set_caller(GENESIS_GOVERNANCE);
+        let mut command = harness.initialize_command(owner, vec![validator], vec![stake], 0);
+        mangle(&mut command);
+        assert_revert_selector(
+            harness.call(encode_args_call(SIG_INITIALIZE, &command)),
+            expected,
+        );
+        assert!(
+            !initializer_storage()
+                .initialized_accessor()
+                .get_checked(&harness.sdk)
+                .unwrap(),
+            "{name}: a refused genesis must leave the contract uninitialized"
+        );
+    }
+
+    // The control: the unmangled command initializes.
+    let mut harness = Harness::new(1_000);
+    harness.set_caller(GENESIS_GOVERNANCE);
+    let command = harness.initialize_command(owner, vec![validator], vec![stake], 0);
+    assert_eq!(harness.initialize_with(command), ExitCode::Ok);
+}
+
+// The same gap on the setter side. Eight governance setters refused a value that
+// no test named, so dropping each refusal left the suite green — and unlike a
+// genesis these land on a running chain.
+#[test]
+fn the_governance_setters_refuse_every_value_they_are_supposed_to() {
+    let owner = Address::with_last_byte(0xa0);
+    let validator = Address::with_last_byte(0x01);
+    let dust = BALANCE_COMPACT_PRECISION + U256::from(1);
+
+    for (name, calldata, expected) in [
+        (
+            "a zero slash fund",
+            encode_call(
+                SIG_SET_SLASH_FUND_ADDRESS,
+                &AddressCommand {
+                    value: Address::ZERO,
+                },
+            ),
+            ERR_ZERO_VALUE,
+        ),
+        (
+            "a zero blend reserve",
+            encode_call(
+                SIG_SET_BLEND_RESERVE,
+                &AddressCommand {
+                    value: Address::ZERO,
+                },
+            ),
+            ERR_ZERO_VALUE,
+        ),
+        (
+            "a zero epoch interval",
+            encode_call(SIG_SET_EPOCH_BLOCK_INTERVAL, &U32Command { value: 0 }),
+            ERR_ZERO_VALUE,
+        ),
+        (
+            "a zero undelegate period",
+            encode_call(SIG_SET_UNDELEGATE_PERIOD, &U32Command { value: 0 }),
+            ERR_ZERO_VALUE,
+        ),
+        (
+            "a zero validator minimum",
+            encode_call(
+                SIG_SET_MIN_VALIDATOR_STAKE_AMOUNT,
+                &U256Command { value: U256::ZERO },
+            ),
+            ERR_ZERO_VALUE,
+        ),
+        (
+            "a zero staking minimum",
+            encode_call(
+                SIG_SET_MIN_STAKING_AMOUNT,
+                &U256Command { value: U256::ZERO },
+            ),
+            ERR_ZERO_VALUE,
+        ),
+        (
+            "a validator minimum below the compact unit",
+            encode_call(
+                SIG_SET_MIN_VALIDATOR_STAKE_AMOUNT,
+                &U256Command { value: dust },
+            ),
+            ERR_WRONG_AMOUNT_PRECISION,
+        ),
+        (
+            "a staking minimum below the compact unit",
+            encode_call(SIG_SET_MIN_STAKING_AMOUNT, &U256Command { value: dust }),
+            ERR_WRONG_AMOUNT_PRECISION,
+        ),
+    ] {
+        let mut harness = Harness::new(1_000);
+        assert_eq!(
+            harness.initialize(owner, vec![validator], vec![DEFAULT_MIN_VALIDATOR_STAKE], 0),
+            ExitCode::Ok
+        );
+        harness.set_caller(GENESIS_GOVERNANCE);
+        let before = chain_config_storage();
+        let interval_before = before
+            .epoch_block_interval_accessor()
+            .get_checked(&harness.sdk)
+            .unwrap();
+        assert_revert_selector(harness.call(calldata), expected);
+        assert_eq!(
+            before
+                .epoch_block_interval_accessor()
+                .get_checked(&harness.sdk)
+                .unwrap(),
+            interval_before,
+            "{name}: a refused setter writes nothing"
+        );
+    }
+}
+
+// `setDposActivationBlock` refuses a block already behind the chain, and
+// `setEpochBlockInterval` / `setUndelegatePeriod` / `setDposActivationBlock` all
+// refuse once DPoS is running. Neither refusal had a test at the setter that
+// carries it: dropping the past-block check, or the running-chain check on the
+// activation setter, left the suite green.
+#[test]
+fn the_activation_setter_refuses_the_past_and_a_running_chain() {
+    let owner = Address::with_last_byte(0xa0);
+    let validator = Address::with_last_byte(0x01);
+    let interval = DEFAULT_EPOCH_BLOCK_INTERVAL;
+    let mut harness = Harness::new(interval * 5);
+    let mut command =
+        harness.initialize_command(owner, vec![validator], vec![DEFAULT_MIN_VALIDATOR_STAKE], 0);
+    // Unarmed, so the setters stay open.
+    command.dpos_activation_block = 0;
+    assert_eq!(harness.initialize_with(command), ExitCode::Ok);
+    harness.set_caller(GENESIS_GOVERNANCE);
+    let activation = chain_config_storage().dpos_activation_block_accessor();
+
+    assert_revert_selector(
+        harness.call(encode_call(
+            SIG_SET_DPOS_ACTIVATION_BLOCK,
+            &U64Command { value: interval },
+        )),
+        ERR_ACTIVATION_BLOCK_IN_PAST,
+    );
+    assert_eq!(
+        activation.get_checked(&harness.sdk).unwrap(),
+        0,
+        "a refused schedule leaves the chain unarmed"
+    );
+
+    // Ahead of the head and on the grid: accepted.
+    let armed = interval * 6;
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_SET_DPOS_ACTIVATION_BLOCK,
+                &U64Command { value: armed },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+    assert_eq!(activation.get_checked(&harness.sdk).unwrap(), armed);
+
+    // Once the chain has passed the armed block, all three geometry setters shut.
+    harness.set_block_number(armed + 1);
+    for (name, calldata) in [
+        (
+            "setDposActivationBlock",
+            encode_call(
+                SIG_SET_DPOS_ACTIVATION_BLOCK,
+                &U64Command {
+                    value: interval * 100,
+                },
+            ),
+        ),
+        (
+            "setEpochBlockInterval",
+            encode_call(
+                SIG_SET_EPOCH_BLOCK_INTERVAL,
+                &U32Command {
+                    value: interval as u32 * 2,
+                },
+            ),
+        ),
+        (
+            "setUndelegatePeriod",
+            encode_call(SIG_SET_UNDELEGATE_PERIOD, &U32Command { value: 3 }),
+        ),
+    ] {
+        assert_revert_selector(harness.call(calldata), ERR_DPOS_ALREADY_ACTIVE);
+        assert_eq!(
+            activation.get_checked(&harness.sdk).unwrap(),
+            armed,
+            "{name}: a running chain keeps its geometry"
         );
     }
 }
