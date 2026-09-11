@@ -27,6 +27,10 @@ jobs:
   build:
     runs-on: self-hosted
     timeout-minutes: 45
+    # The `release` environment gates the only job that can push the builder image the
+    # release pipeline compiles and signs genesis inside. Configure required reviewers on it
+    # in the repository settings; the environment itself carries no secrets.
+    environment: release
     permissions:
       contents: read
       packages: write
