@@ -794,29 +794,48 @@ pub(crate) fn seize_self_stake<SDK: SharedAPI>(
     let configured_fund = chain_config_storage()
         .slash_fund_address_accessor()
         .get_checked(sdk)?;
-    let recipient = if configured_fund.is_zero() {
+    let mut recipient = if configured_fund.is_zero() {
         EQUIVOCATION_BURN_SINK
     } else {
         configured_fund
     };
-    // A refused payout REVERTS the whole seizure, and with it the tombstone, the
-    // jail and the active-set removal that were written above. The alternative
-    // this replaces swallowed the refusal, emitted `seized = 0` and left the
-    // stake sitting on this contract with no path off it — a silent, permanent
-    // loss that no view reported and no later call could undo. Rolling back
-    // keeps the two halves of the penalty together: either the validator is
-    // tombstoned AND its bond moved, or the charge did not land and can be
-    // brought again once the recipient accepts.
+    // A configured fund that refuses the payout does NOT stop the punishment:
+    // the bond is burned instead, and the tombstone, the jail and the active-set
+    // removal written above all stand. The two alternatives this replaces were
+    // both worse. Swallowing the refusal emitted `seized = 0` and left the stake
+    // sitting on this contract with no path off it. Reverting the whole seizure
+    // kept the penalty all-or-nothing, but it made the punishment depend on a
+    // third party's willingness to be paid, and the cost of that did not stay
+    // inside this contract: the node drops a charge from its per-epoch queue
+    // only once the victim reports `tombstoned`, so a never-tombstoned
+    // equivocator holds the one-charge-per-block slot against every later charge
+    // of its epoch, and on the transaction route a revert that is not
+    // `AlreadySlashedForEquivocation` leaves the WAL entry unacked and replayed
+    // after every restart.
     //
-    // What this costs: a token that refuses the configured fund makes
-    // equivocation unslashable for as long as it refuses. That is survivable
-    // where the swallowed version was not — the node soft-folds a revert from
-    // `slashEquivocation` (warn, state uncommitted, `node/src/evm.rs`), so the
-    // chain keeps producing and governance can point `slashFundAddress`
-    // somewhere that accepts; the default recipient is a burn sink, which
-    // refuses nothing.
+    // The fallback recipient is not a policy choice about where the money should
+    // go — it is the one recipient whose acceptance this contract does not have
+    // to negotiate for. A burn is the outcome the protocol is content with; the
+    // configured fund is the preference, and a preference that cannot be
+    // honoured must not become a veto over the penalty.
+    //
+    // The revert is still here, one step further down. `try_transfer` reports a
+    // refusal for a reverting call, for the `false` a plain ERC-20 returns, and
+    // for a return it cannot decode — none of which the burn address exempts
+    // itself from, because the call goes to the staking TOKEN and the address is
+    // only its argument. A token that refuses both recipients has nothing left
+    // to offer, and the seizure fails loud rather than inventing a third one.
+    //
+    // The event reports the recipient that actually received, so a burn caused
+    // by a refusing fund is visible off-chain as exactly that.
     if !try_transfer(sdk, recipient, seized)? {
-        return revert(sdk, ERR_STAKING_TOKEN_CALL_FAILED);
+        if recipient == EQUIVOCATION_BURN_SINK {
+            return revert(sdk, ERR_STAKING_TOKEN_CALL_FAILED);
+        }
+        recipient = EQUIVOCATION_BURN_SINK;
+        if !try_transfer(sdk, recipient, seized)? {
+            return revert(sdk, ERR_STAKING_TOKEN_CALL_FAILED);
+        }
     }
     events::EquivocationStakeSeized {
         validator,

@@ -6916,25 +6916,30 @@ fn a_seizure_stops_the_seized_bond_counting_as_stake() {
 }
 
 /// The two refusal vectors `try_transfer` handles in different branches, driven
-/// against the one recipient a seizure has, plus the accepting control that
-/// makes the refusal the only difference between the two outcomes.
+/// against a CONFIGURED fund, plus the accepting control that makes the refusal
+/// the only difference between the two outcomes.
 ///
-/// K-22: a refused payout used to be swallowed — the event reported
-/// `seized = 0`, the tombstone stood, and the bond stayed on this contract with
-/// no path off it. It now reverts, which rolls the tombstone, the jail and the
-/// active-set removal back with it, so the penalty is all-or-nothing.
+/// K-22, revised 2026-09-11: a refused payout used to be swallowed (the event
+/// reported `seized = 0`, the bond stayed on this contract), and then for part
+/// of one day it reverted the whole penalty. It now falls back to the burn sink:
+/// the punishment lands whatever the fund does, and the event names the
+/// recipient that actually received. What that buys is off-chain and is the
+/// reason the revert was not good enough — the node drops a charge from its
+/// per-epoch queue only on `tombstoned`, and its WAL entry is acked only on a
+/// submission that did not revert.
 ///
 /// The stub proves its own refusal rather than being trusted to refuse: it
 /// records every `transfer` it is handed, so each refusing leg asserts that the
-/// payout WAS attempted with the full bond, and the control leg — same fixture,
-/// same call, empty refusal list — carries the slash through. A stub that
-/// silently stopped refusing would turn the refusing legs green in a way the
-/// control cannot mask.
+/// fund WAS attempted with the full bond before the sink was, and the control
+/// leg — same fixture, same call, empty refusal list — keeps the payout on the
+/// fund. A stub that silently stopped refusing would show up as a missing first
+/// attempt, which the control cannot mask.
 #[test]
-fn a_fund_that_refuses_the_seizure_reverts_the_whole_slash() {
+fn a_fund_that_refuses_the_seizure_burns_the_bond_instead() {
     let sponsor = Address::with_last_byte(0xa0);
     let offender = Address::with_last_byte(0x01);
     let bystander = Address::with_last_byte(0x02);
+    let blacklisted = Address::with_last_byte(0xc1);
     let stake = DEFAULT_MIN_VALIDATOR_STAKE * U256::from(4);
 
     for hard_revert in [false, true] {
@@ -6943,36 +6948,38 @@ fn a_fund_that_refuses_the_seizure_reverts_the_whole_slash() {
             harness.initialize(sponsor, vec![offender, bystander], vec![stake, stake], 500),
             ExitCode::Ok
         );
-        let transfers =
-            record_transfers_refusing(&harness, vec![EQUIVOCATION_BURN_SINK], hard_revert);
-        let bond_before = staking_storage()
-            .validator_delegations_accessor()
-            .entry(offender)
-            .entry(offender)
-            .delegate_queue_accessor()
-            .len_checked(&harness.sdk)
-            .unwrap();
-        assert_ne!(bond_before, 0, "the offender must have a bond to seize");
+        harness.set_caller(GENESIS_GOVERNANCE);
+        assert_eq!(
+            harness
+                .call(encode_call(
+                    SIG_SET_SLASH_FUND_ADDRESS,
+                    &AddressCommand { value: blacklisted },
+                ))
+                .0,
+            ExitCode::Ok
+        );
+        let transfers = record_transfers_refusing(&harness, vec![blacklisted], hard_revert);
 
         let command = equivocation_report(&mut harness.sdk, &NOTARIZE_ROUTE, 0x11);
-        assert_revert_selector(
-            slash_with_evidence(&mut harness, &NOTARIZE_ROUTE, &command),
-            ERR_STAKING_TOKEN_CALL_FAILED,
+        assert_eq!(
+            slash_with_evidence(&mut harness, &NOTARIZE_ROUTE, &command).0,
+            ExitCode::Ok,
+            "a fund that refuses does not veto the penalty"
         );
 
         assert_eq!(
             transfers.borrow().as_slice(),
-            &[(EQUIVOCATION_BURN_SINK, stake)],
-            "the stub was reached and handed the whole bond — the refusal is \
-             what the revert is about"
+            &[(blacklisted, stake), (EQUIVOCATION_BURN_SINK, stake)],
+            "the fund was reached and handed the whole bond, and only its refusal \
+             sent the same bond to the sink"
         );
         assert!(
-            !consensus_storage()
+            consensus_storage()
                 .tombstoned_accessor()
                 .entry(offender)
                 .get_checked(&harness.sdk)
                 .unwrap(),
-            "the tombstone rolls back with the payout"
+            "the tombstone stands on a burned seizure"
         );
         assert_eq!(
             staking_storage()
@@ -6981,8 +6988,8 @@ fn a_fund_that_refuses_the_seizure_reverts_the_whole_slash() {
                 .status_accessor()
                 .get_checked(&harness.sdk)
                 .unwrap(),
-            STATUS_ACTIVE,
-            "the jail rolls back with the payout"
+            STATUS_JAIL,
+            "and so does the jail"
         );
         assert_eq!(
             staking_storage()
@@ -6992,50 +6999,169 @@ fn a_fund_that_refuses_the_seizure_reverts_the_whole_slash() {
                 .delegate_queue_accessor()
                 .len_checked(&harness.sdk)
                 .unwrap(),
-            bond_before,
-            "the bond the transfer refused is still booked to its owner"
+            0,
+            "the bond left the offender"
         );
         assert!(
-            staking::selection_visible_at(&harness.sdk, offender, 1).unwrap(),
-            "the selection-invisibility stamp rolls back too"
+            !staking::selection_visible_at(&harness.sdk, offender, 1).unwrap(),
+            "and the selection-invisibility stamp stands too"
         );
-        assert!(
-            !harness.sdk.take_logs().iter().any(|(_, topics)| {
-                topics.first() == Some(&B256::new(events::EquivocationStakeSeized::SELECTOR))
-            }),
-            "no seizure event survives a seizure that did not happen"
+        let logs = harness.sdk.take_logs();
+        let (seized_data, seized_topics) =
+            find_log(&logs, events::EquivocationStakeSeized::SELECTOR, "seizure");
+        assert_eq!(&seized_topics[1].0[12..], offender.as_slice());
+        assert_eq!(
+            decode_output::<(U256, Address)>(seized_data),
+            (stake, EQUIVOCATION_BURN_SINK),
+            "the event names the recipient that actually received, so a burn \
+             caused by a refusing fund is visible as one"
         );
     }
 
-    // The control: everything above, with the burn sink accepting.
+    // The control: everything above, with the configured fund accepting.
     let mut harness = Harness::new(1_000);
     assert_eq!(
         harness.initialize(sponsor, vec![offender, bystander], vec![stake, stake], 500),
+        ExitCode::Ok
+    );
+    harness.set_caller(GENESIS_GOVERNANCE);
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_SET_SLASH_FUND_ADDRESS,
+                &AddressCommand { value: blacklisted },
+            ))
+            .0,
         ExitCode::Ok
     );
     let transfers = record_transfers_refusing(&harness, vec![], false);
     let command = equivocation_report(&mut harness.sdk, &NOTARIZE_ROUTE, 0x11);
     assert_eq!(
         slash_with_evidence(&mut harness, &NOTARIZE_ROUTE, &command).0,
-        ExitCode::Ok,
-        "the same call with an accepting recipient lands"
+        ExitCode::Ok
     );
     assert_eq!(
         transfers.borrow().as_slice(),
-        &[(EQUIVOCATION_BURN_SINK, stake)]
+        &[(blacklisted, stake)],
+        "an accepting fund is paid once and the sink is never reached"
     );
-    assert!(consensus_storage()
-        .tombstoned_accessor()
-        .entry(offender)
-        .get_checked(&harness.sdk)
-        .unwrap());
     let logs = harness.sdk.take_logs();
     let (seized_data, _) = find_log(&logs, events::EquivocationStakeSeized::SELECTOR, "seizure");
     assert_eq!(
         decode_output::<(U256, Address)>(seized_data),
-        (stake, EQUIVOCATION_BURN_SINK),
-        "and the event reports the bond that actually moved"
+        (stake, blacklisted),
+        "and the event names the fund, not the sink"
     );
+}
+
+/// The last line: a token that refuses BOTH recipients reverts, and the whole
+/// penalty rolls back with the payout.
+///
+/// The third leg is the branch that must not double-attempt: with no fund
+/// configured the sink is already the first recipient, so its refusal reverts
+/// straight away rather than being retried against itself.
+///
+/// Each leg asserts the stub actually refused what it claims to have refused —
+/// the recorded attempts ARE the proof, because the stub records before it
+/// answers.
+#[test]
+fn a_seizure_reverts_only_when_the_burn_sink_refuses_too() {
+    let sponsor = Address::with_last_byte(0xa0);
+    let offender = Address::with_last_byte(0x01);
+    let bystander = Address::with_last_byte(0x02);
+    let blacklisted = Address::with_last_byte(0xc1);
+    let stake = DEFAULT_MIN_VALIDATOR_STAKE * U256::from(4);
+
+    // `None` is the unconfigured fund: the sink is the first recipient.
+    for fund in [Some(blacklisted), None] {
+        for hard_revert in [false, true] {
+            let mut harness = Harness::new(1_000);
+            assert_eq!(
+                harness.initialize(sponsor, vec![offender, bystander], vec![stake, stake], 500),
+                ExitCode::Ok
+            );
+            if let Some(fund) = fund {
+                harness.set_caller(GENESIS_GOVERNANCE);
+                assert_eq!(
+                    harness
+                        .call(encode_call(
+                            SIG_SET_SLASH_FUND_ADDRESS,
+                            &AddressCommand { value: fund },
+                        ))
+                        .0,
+                    ExitCode::Ok
+                );
+            }
+            let mut refused = vec![EQUIVOCATION_BURN_SINK];
+            refused.extend(fund);
+            let transfers = record_transfers_refusing(&harness, refused, hard_revert);
+            let bond_before = staking_storage()
+                .validator_delegations_accessor()
+                .entry(offender)
+                .entry(offender)
+                .delegate_queue_accessor()
+                .len_checked(&harness.sdk)
+                .unwrap();
+            assert_ne!(bond_before, 0, "the offender must have a bond to seize");
+
+            let command = equivocation_report(&mut harness.sdk, &NOTARIZE_ROUTE, 0x11);
+            assert_revert_selector(
+                slash_with_evidence(&mut harness, &NOTARIZE_ROUTE, &command),
+                ERR_STAKING_TOKEN_CALL_FAILED,
+            );
+
+            let expected: Vec<(Address, U256)> = match fund {
+                Some(fund) => vec![(fund, stake), (EQUIVOCATION_BURN_SINK, stake)],
+                None => vec![(EQUIVOCATION_BURN_SINK, stake)],
+            };
+            assert_eq!(
+                transfers.borrow().as_slice(),
+                expected.as_slice(),
+                "every recipient the seizure has was attempted with the whole \
+                 bond and every one of them refused — and the sink, when it is \
+                 already the first recipient, is not attempted twice"
+            );
+            assert!(
+                !consensus_storage()
+                    .tombstoned_accessor()
+                    .entry(offender)
+                    .get_checked(&harness.sdk)
+                    .unwrap(),
+                "the tombstone rolls back with the payout"
+            );
+            assert_eq!(
+                staking_storage()
+                    .validators_accessor()
+                    .entry(offender)
+                    .status_accessor()
+                    .get_checked(&harness.sdk)
+                    .unwrap(),
+                STATUS_ACTIVE,
+                "the jail rolls back with the payout"
+            );
+            assert_eq!(
+                staking_storage()
+                    .validator_delegations_accessor()
+                    .entry(offender)
+                    .entry(offender)
+                    .delegate_queue_accessor()
+                    .len_checked(&harness.sdk)
+                    .unwrap(),
+                bond_before,
+                "the bond both transfers refused is still booked to its owner"
+            );
+            assert!(
+                staking::selection_visible_at(&harness.sdk, offender, 1).unwrap(),
+                "the selection-invisibility stamp rolls back too"
+            );
+            assert!(
+                !harness.sdk.take_logs().iter().any(|(_, topics)| {
+                    topics.first() == Some(&B256::new(events::EquivocationStakeSeized::SELECTOR))
+                }),
+                "no seizure event survives a seizure that did not happen"
+            );
+        }
+    }
 }
 
 // The evidence route takes identity from the key, never from a committee seat,
@@ -12505,29 +12631,30 @@ fn an_abandoned_declaration_expires_and_can_be_withdrawn() {
     );
 }
 
-// The slash fund rotates in ONE call, and that is load-bearing rather than an
-// oversight. `seize_self_stake` reverts the whole penalty when the recipient
-// refuses the transfer, so a token that blacklists the configured fund makes
-// equivocation unslashable until the address moves. Behind a seven-epoch
-// timelock that is a week of an offender keeping its seat, its bond and its
-// rewards. It cannot fall back to the burn sink either: that is reached only when
-// the STORED address is zero, and the setter refuses a zero.
+// The slash fund rotates in ONE call, and that is deliberate rather than an
+// oversight. A fund that refuses no longer blocks the penalty — `seize_self_stake`
+// burns the bond instead — but every seizure it refuses is a seizure the chain
+// burned rather than banked, and behind a seven-epoch timelock that would be a
+// week of them. The setter was timelocked for part of 2026-09-11 and exempted
+// again the same day.
 //
-// This test drives the whole loop — blacklist, slash refused, rotate, slash
-// lands — because the property is the INTERACTION of two commits, and neither
-// alone shows it.
+// This test drives the whole loop — blacklist, seizure burned, rotate, seizure
+// banked — because the property is the INTERACTION of the setter and the
+// fallback, and neither alone shows it. The second half is also where an
+// ACCEPTING fund is pinned as the recipient: without it the fallback could pay
+// the sink every time and nothing here would notice.
 #[test]
 fn the_slash_fund_rotates_immediately_because_a_refused_seizure_needs_it() {
     let sponsor = Address::with_last_byte(0xa0);
     let offender = Address::with_last_byte(0x01);
-    let bystander = Address::with_last_byte(0x02);
+    let second = Address::with_last_byte(0x02);
     let blacklisted = Address::with_last_byte(0xc1);
     let accepting = Address::with_last_byte(0xc2);
     let stake = DEFAULT_MIN_VALIDATOR_STAKE * U256::from(4);
 
     let mut harness = Harness::new(1_000);
     assert_eq!(
-        harness.initialize(sponsor, vec![offender, bystander], vec![stake, stake], 500),
+        harness.initialize(sponsor, vec![offender, second], vec![stake, stake], 500),
         ExitCode::Ok
     );
     harness.set_caller(GENESIS_GOVERNANCE);
@@ -12544,17 +12671,18 @@ fn the_slash_fund_rotates_immediately_because_a_refused_seizure_needs_it() {
     let transfers = record_transfers_refusing(&harness, vec![blacklisted], false);
 
     let command = equivocation_report(&mut harness.sdk, &NOTARIZE_ROUTE, 0x11);
-    assert_revert_selector(
-        slash_with_evidence(&mut harness, &NOTARIZE_ROUTE, &command),
-        ERR_STAKING_TOKEN_CALL_FAILED,
+    assert_eq!(
+        slash_with_evidence(&mut harness, &NOTARIZE_ROUTE, &command).0,
+        ExitCode::Ok,
+        "a blacklisted fund costs the seizure, not the slash"
     );
     assert!(
-        !consensus_storage()
+        consensus_storage()
             .tombstoned_accessor()
             .entry(offender)
             .get_checked(&harness.sdk)
             .unwrap(),
-        "a blacklisted fund makes equivocation unslashable while it is configured"
+        "the equivocator is punished while the fund refuses"
     );
 
     // The repair, in the same block: no declaration, no waiting.
@@ -12575,24 +12703,30 @@ fn the_slash_fund_rotates_immediately_because_a_refused_seizure_needs_it() {
                 .1
         ),
         accepting,
-        "the rotation is live immediately — this is what the revert depends on"
+        "the rotation is live immediately — this is what stops the next burn"
     );
 
-    let command = equivocation_report(&mut harness.sdk, &NOTARIZE_ROUTE, 0x11);
+    let command = equivocation_report(&mut harness.sdk, &NOTARIZE_ROUTE, 0x12);
     assert_eq!(
         slash_with_evidence(&mut harness, &NOTARIZE_ROUTE, &command).0,
         ExitCode::Ok,
-        "and the same charge now lands"
+        "and the next charge lands too"
     );
-    assert!(consensus_storage()
-        .tombstoned_accessor()
-        .entry(offender)
-        .get_checked(&harness.sdk)
-        .unwrap());
+    let logs = harness.sdk.take_logs();
+    let (seized_data, _) = find_log(&logs, events::EquivocationStakeSeized::SELECTOR, "seizure");
+    assert_eq!(
+        decode_output::<(U256, Address)>(seized_data),
+        (stake, accepting),
+        "an accepting fund is the recipient — the sink is the fallback, not the rule"
+    );
     assert_eq!(
         transfers.borrow().as_slice(),
-        &[(blacklisted, stake), (accepting, stake)],
-        "both payouts were attempted, and only the second was accepted"
+        &[
+            (blacklisted, stake),
+            (EQUIVOCATION_BURN_SINK, stake),
+            (accepting, stake)
+        ],
+        "the refused bond was burned, and only the rotation kept the next one"
     );
 }
 

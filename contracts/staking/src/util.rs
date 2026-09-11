@@ -278,14 +278,16 @@ pub(crate) fn safe_transfer<SDK: SharedAPI>(
 
 /// Attempts an ERC-20 transfer and reports whether the tokens moved.
 ///
-/// A refusal is a VALUE here, not a revert — but that is about who decides, not
-/// about what gets decided. The only caller today (`seize_self_stake`) turns
-/// every refusal into `ERR_STAKING_TOKEN_CALL_FAILED` and rolls its whole
-/// penalty back, which is the opposite of what this function's earlier doc
-/// promised and is deliberate (K-22). What this still buys is that the CALLER
-/// chooses: all three refusal vectors — a reverting call, the `false` a plain
-/// ERC-20 returns, and a return this cannot decode — arrive here as `false`
-/// rather than as a `?` that would unwind before the caller saw them.
+/// A refusal is a VALUE here, not a revert — and the caller is what makes that
+/// worth having. All three refusal vectors — a reverting call, the `false` a
+/// plain ERC-20 returns, and a return this cannot decode — arrive as `false`
+/// rather than as a `?` that would unwind before the caller saw them. The only
+/// caller today (`seize_self_stake`) uses that to try a SECOND recipient: a
+/// refused payout to the configured slash fund is retried against the burn
+/// sink, and only a refusal from that one becomes
+/// `ERR_STAKING_TOKEN_CALL_FAILED` (K-22). Nothing here treats the burn address
+/// as special — the call goes to the staking token and the address is only its
+/// argument, so a token that blocks it refuses exactly like any other.
 ///
 /// Unlike `safe_transfer` this never forwards the callee's revert data into the
 /// output buffer, so a caller that DOES revert writes its own error selector

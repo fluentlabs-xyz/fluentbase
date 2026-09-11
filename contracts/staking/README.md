@@ -137,16 +137,17 @@ validator-creation call; there is no separate key-registration phase.
 - Leader weights are frozen at commit time from the selection epoch, and are never recomputed on
   read. An unfrozen weight would depend on the block height each node reads at, and the leader is
   drawn from those weights.
-- A seizure has one recipient — the configured slash fund, or the burn sink when none is set. Nobody
-  is paid for reporting, so no submitter of a slash can profit from copying another's evidence.
+- A seizure has one preferred recipient — the configured slash fund, or the burn sink when none is set —
+  and burns the bond if that recipient refuses. Nobody is paid for reporting, so no submitter of a slash
+  can profit from copying another's evidence.
 - **The two address setters are not symmetric, and the asymmetry is the point.** `setBlendReserve` names the
   account the stipend is PULLED FROM, which a stolen governance key could point at itself, so it is two-step:
   `setBlendReserve` declares, `applyBlendReserve` lands it after seven epochs and before the window closes
   seven epochs later, `cancelBlendReserve` withdraws it, and `getPendingBlendReserve` shows what is armed. The
   expiry and the withdrawal exist because a declaration that could neither lapse nor be taken back would sit
   armed for the life of the chain, and a key stolen long afterwards would land it in one block with the notice
-  period long past. `setSlashFundAddress` names where a seizure GOES, which a stolen key cannot drain, and it
-  is the repair path a refused seizure depends on — so it stays immediate. `setBlendStipendPerEpoch` is
+  period long past. `setSlashFundAddress` names where a seizure GOES, which a stolen key cannot drain, and a refused
+  seizure burns rather than waits — so it stays immediate. `setBlendStipendPerEpoch` is
   immediate too, decided separately.
 - A validator's `owner` is its immutable administrative, validator-fee, self-stake, and slashing identity.
   There is no ABI point that changes it.
@@ -173,19 +174,25 @@ long rotated out. That is why it stays: a charge that fails to reach a block bef
 longer be verified by any live committee, and this is the only way it still lands. A repeat here reverts
 with `AlreadySlashedForEquivocation(address)`.
 
-The seizure has a single recipient: the configured slash fund, or `EQUIVOCATION_BURN_SINK` when none is set.
-A recipient that refuses the transfer **reverts the whole penalty**: the tombstone, the jail, the active-set
-removal and the selection-invisibility stamp roll back with the payout, and the charge can be brought again
-once the recipient accepts. The alternative — swallowing the refusal — left the bond on this contract with no
-path off it and reported a seizure of nothing, which is half a penalty with the missing half unrecoverable.
+The seizure prefers one recipient and accepts one fallback: the configured slash fund, or
+`EQUIVOCATION_BURN_SINK` when none is set. **A configured fund that refuses the transfer does not stop the
+penalty — the bond is burned instead**, and the tombstone, the jail, the active-set removal and the
+selection-invisibility stamp all stand. `EquivocationStakeSeized` carries the recipient that actually
+received, so a burn caused by a refusing fund is visible off-chain as exactly that. Only a refusal from the
+burn sink as well reverts, with `ERR_STAKING_TOKEN_CALL_FAILED`; the burn address is not exempt from refusal
+by construction, because the call goes to the staking TOKEN and the address is only its argument.
 
-The cost is that a fund which refuses makes equivocation unslashable *while it refuses*, and the whole repair
-is `setSlashFundAddress`. That is why that setter is the one address setter with NO timelock: it was given one
-on 2026-09-11 and exempted again the same day, because seven epochs of notice on the repair path is seven
-epochs of an offender keeping its seat, its bond and its rewards. Nor can the fund fall back to the burn sink
-— the sink is reached only when the stored address is zero and the setter refuses a zero — so an immediate
-rotation is the only exit. Survivable because the node soft-folds a revert of the system-call route (below)
-rather than halting, and because the rotation lands in one block.
+Two earlier shapes were tried and both cost more. Swallowing the refusal left the bond on this contract with
+no path off it and reported a seizure of nothing. Reverting the whole penalty kept it all-or-nothing, but it
+made punishment conditional on a third party's willingness to be paid, and that cost did not stay inside this
+contract: the node drops a charge from its per-epoch queue only once the victim reports `tombstoned`, so a
+never-tombstoned equivocator holds the one-charge-per-block slot against every later charge of its epoch, and
+on the transaction route a revert that is not `AlreadySlashedForEquivocation` leaves the slasher's WAL entry
+unacked and replayed after every restart.
+
+`setSlashFundAddress` remains the one address setter with NO timelock. With the fallback in place it is no
+longer the only exit from a refusing fund — it is how the chain stops burning seizures it would rather bank,
+and that is still a repair nobody should have to wait seven epochs for.
 
 ## Solidity parity
 
