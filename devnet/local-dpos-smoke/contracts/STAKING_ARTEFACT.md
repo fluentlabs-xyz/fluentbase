@@ -91,7 +91,137 @@ Eleven more joined it on 2026-09-08 (task 1.5):
 `MAX_MIN_VERDICT_DUE_BLOCKS` `0x9b9a11ba`. A blob carrying any of them predates
 the dead-surface removal.
 
-## This build — 2026-09-11 (counter-review: the slash fund leaves the timelock, the reserve's declaration gains a cancel and an expiry)
+## This build — 2026-09-11 (review of the three contract sessions: a refused seizure BURNS, and argument-less handlers refuse a tail)
+
+The fourth build of the day, and the first in this file built from a CLEAN working
+tree: HEAD `0911b1b7` with `git status --short` showing nothing under
+`contracts/staking`. **No ABI point moves** — no selector added, removed or
+renamed, no event topic changed — but BEHAVIOUR behind three of them does, and the
+`.rwasm` bytes move with it.
+
+| point | change |
+|---|---|
+| `slashEquivocation` `0xdc6fb3f2` and the three `slashEquivocation{Notarize,Finalize,NullifyFinalize}` | A seizure the configured slash fund refuses is now retried against `EQUIVOCATION_BURN_SINK` and the penalty STANDS. `StakingTokenCallFailed()` survives only when BOTH recipients refuse; with no fund configured the sink is the first recipient and is not attempted twice. `EquivocationStakeSeized` carries the recipient that actually received |
+| every argument-less handler (24 of them) | Calldata longer than the bare selector is refused with `MalformedBuiltinParams`, the same answer a tail on a static argument tuple already got. Before this the dispatcher never handed those handlers the bytes, so `getStakingToken()` plus rubbish was accepted |
+| `getValidators` `0xb7ab4db5`, `getValidatorDelegatedStakeAt` `0xe8810ea7` | A payable call on an uninitialized contract now answers the payability failure, not `NotInitialized`: the two guards were in the opposite order from every other handler |
+
+**Why the revert became a burn.** `3c4560db` made a refused payout revert the whole
+penalty, and inside the contract that was the right shape. Outside it, it made the
+punishment conditional on a third party's willingness to be paid, and the node pays
+for that twice: `ChargeStore::next_charge` drops a charge only once the victim
+reports `tombstoned` (`crates/dpos/consensus/src/slasher/actor.rs:208-229`), so one
+never-tombstoned equivocator holds the one-charge-per-block slot against every
+later charge of its epoch; and on the transaction route any revert but
+`AlreadySlashedForEquivocation` becomes `SubmitOutcome::Failed`
+(`crates/node/src/slasher_sink.rs:235-244`, `:281`), which does NOT ack the WAL
+entry (`actor.rs:1050-1057`) and logs it as a deterministic encoding bug. The burn
+address is not exempt from refusal by construction — the call goes to the staking
+TOKEN and the address is only its argument — so the revert stays as the last line.
+
+Storage layout: UNCHANGED. `ChainConfigStorage` is now pinned field by field
+(`the_chain_config_layout_is_pinned_field_by_field`), which is what the two moves
+earlier today went without.
+
+- repository HEAD at build time: `0911b1b7`, working tree CLEAN for
+  `contracts/staking` and `crates/staking-abi` (`git status --short` — only
+  another session's `.dpos-study/history/E4-ORCHESTRATOR.md` and the untracked
+  `target-contract/`, neither of which reaches this artefact).
+- SHA-256 of every source file in `contracts/staking/src` as built:
+
+      a710d7e5c7cbd7cbe84e4594b0840ad5992e68a3d4b7a24812f22222d6a444f4  src/bls.rs
+      85497ef22472159fc13e90b9d8e7bab06376fc4d188e2df0719e98643de70072  src/config.rs
+      a771c300d85644d1be83a81d26b78eb53a649918583d8b18906e1260b482c7a5  src/consensus.rs
+      b09915ba04e85bc66c9f063c14f4e29e0bbe5e653a365afaa144edd04422e8f5  src/consts.rs
+      19f6caa299e31de016ad22d3a58730ee5912fb6eda3688695034f8a99bc995fd  src/events.rs
+      3f69dfe02d27be45e6b723e3f128b7049d74abe5c1b6dafac82b5af47d8b5576  src/evidence.rs
+      5f587627e81d7f38e52cfd974bf6c234de84f93925dd174f946b974dfac0987b  src/initializer.rs
+      2a049806bdfa61306101811ac723bc48e808f37be81d4cefe28ef483ea60f692  src/lib.rs
+      46e17a0600efaba7d52f0b57f68f1fe75985c3a5f38d47fe7d6a92fc0bdba1a8  src/liveness.rs
+      d106df9221d023e14adbec93ad329685208556ea0d1eb3946b4fde6bcad9b90f  src/math.rs
+      b1095c400eaf56c24181aef02d0afd6d9fc184d4efeee82c0a196e8248a4fe09  src/staking.rs
+      83b3b3580d55ea1a45c145319fecd117dc7fb9b90714f0e7f438b9aa7e2d991a  src/storage.rs
+      f7517c3490d7253d750b1c8e27a88dca6af796f1bcbf0fb1b6b0a287cf3a37f2  src/tests.rs
+      2fee9b56c3365c7d86305bbebfc435484c7dfc1ead99bff32c1f4c233189b257  src/types.rs
+      c91f41ea35c951ec15619bb2a2f322971140579152330c16ffccd7223c599d39  src/util.rs
+
+  Five files moved since the section below: `consensus.rs` (the burn fallback),
+  `lib.rs` (24 arms wrapped), `staking.rs` (the two guard orders), `util.rs`
+  (`no_args` plus the `try_transfer` doc), `tests.rs`. `consts.rs` did NOT move in
+  this change — it differs from the section below because `8468aa82` moved the two
+  timelock constants into `crates/types` AFTER that build and no rebuild followed;
+  that gap is what this one closes.
+- `fluentbase_contracts_staking.wasm` — 411,141 bytes (was 410,748, +393)
+  `acbfd08a67c9ec7bbc0ee66a600874b0f36d001a3e8dc764066a45a27b55bb58`
+- `fluentbase_contracts_staking.rwasm` — 2,827,432 bytes (was 2,825,599, +1,833)
+  `51b19926acaf7a503362a767193c930d8f9144b6dfbdd1f88acef0a03aaacb3a`
+
+Both `.rwasm` outputs of this build (two `fluentbase-genesis-<hash>/out`
+directories) are byte-identical, so the copy is not a coin toss between siblings.
+
+### Selector scan of this blob
+
+Byte-identical to the section below — no selector moves in this change — and
+re-run against this blob rather than inherited: 28 in `must_be_1`, 22 in
+`must_be_0`.
+
+    python3 - <<'EOF'
+    import pathlib
+    b = pathlib.Path("fluentbase_contracts_staking.rwasm").read_bytes()
+    must_be_1 = {"recordProduction":0x1752910e, "commitEpochCommittee":0xe505b249,
+                 "slashEquivocation":0xdc6fb3f2, "producedAt":0x91c7d453,
+                 "initialize":0xfecaf0f1, "getValidators":0xb7ab4db5,
+                 "isValidatorActive":0x42ad55ac, "getValidatorStatus":0xa310624f,
+                 "getEpochRewards":0x54c3e84b, "getDelegatorFee":0x52b7bea2,
+                 "claimDelegatorFee":0x426594b1,
+                 "redelegateDelegatorFee":0x8ecb3fc9, "getRegistryWithKeys":0xd96cbd7b,
+                 "getValidatorFee":0x457179fd, "nextEpochToCommit":0xc06a82de,
+                 "getEpochCommitteeWithStakes":0xa4d160c1, "getDkgQual":0x2660899f,
+                 "getEpochBlockInterval":0x346c90a8, "getDposActivationBlock":0xa2a50528,
+                 "getActiveValidatorsLength":0x32cc6f08, "getUndelegatePeriod":0x5e7b72ad,
+                 "slashEquivocationNotarize":0xe28d2f63,
+                 "slashEquivocationFinalize":0xadd07a3e,
+                 "slashEquivocationNullifyFinalize":0xa10827e9,
+                 "applyBlendReserve":0x47a9615b,
+                 "cancelBlendReserve":0xf75e5549,
+                 "getPendingBlendReserve":0x135dd16d,
+                 "setSlashFundAddress":0xa79e7263}
+    must_be_0 = {"changeValidatorOwner":0x0052c9e1, "getPendingValidatorFee":0xc6fb9065,
+                 "getPendingDelegatorFee":0xc2fd58fc, "claimDelegatorFeeAtEpoch":0xfe38ebef,
+                 "calcAvailableForRedelegateAmount":0x5ef9e8c6,
+                 "getValidatorsWithKeys":0xd41c52eb, "MAX_ACTIVE_VALIDATORS":0x5d887462,
+                 "MAX_BLEND_STIPEND_PER_EPOCH":0x2bc2fec4,
+                 "DEFAULT_MIN_VERDICT_DUE_BLOCKS":0x6fd3afb7,
+                 "DEFAULT_EXCLUSION_BACKOFF_CAP":0xd4c30c1a,
+                 "MAX_MIN_VERDICT_DUE_BLOCKS":0x9b9a11ba,
+                 "getValidatorsWithKeysAt":0x7cfba9f3, "committeeSelectionEpoch":0x8bd070e4,
+                 "getActiveValidatorsLengthAt":0xd9b083ba, "settleEpochStipend":0xa631344a,
+                 "settleEpochStipendFrom":0x92d321ab, "getBlsVerifier":0xc6b904ad,
+                 "setBlsVerifier":0x466ae541, "commitEpochBeaconKey":0x6ece9cb1,
+                 "getEpochBeaconKey":0xc9adaf5c, "claimValidatorFeeAtEpoch":0xadf2a79c,
+                 "applySlashFundAddress":0x7bb69756}
+    for n,s in must_be_1.items(): assert b.count(s.to_bytes(4,"little"))==1, n
+    for n,s in must_be_0.items(): assert b.count(s.to_bytes(4,"little"))==0, n
+    print("selector scan OK")
+    EOF
+
+Run against the blob recorded above: **`selector scan OK`**.
+
+### Tests
+
+- `cargo test` in `contracts/staking`: **210 passed, 0 failed**; **211** with
+  `--features devnet-views`. clippy `--all-targets -- -D warnings` and
+  `cargo fmt --check`: clean.
+- `cargo test -p fluentbase-staking-abi`: **2 passed, 0 failed**.
+  `cargo test -p fluentbase-types`: **13 passed, 0 failed** — the gate
+  `8468aa82` owed this file and did not run.
+- `cargo test -p fluentbase-node --lib`: **57 passed, 0 failed**.
+  `cargo test -p fluentbase-staking-reader`: **63 passed, 0 failed** (60 earlier
+  today; the three extra are another session's committed work, not this change).
+  `cargo test -p fluentbase-e2e --release staking`: **14 passed, 0 failed** (13
+  earlier today; the extra is that same session's `staking_commit`).
+  `agreement_check.py`: **15 checks, 0 disagree, 0 unread**.
+
+## Previous build — 2026-09-11 (counter-review: the slash fund leaves the timelock, the reserve's declaration gains a cancel and an expiry)
 
 A fresh-context counter-review of the day's work found that two commits of the
 SAME session contradicted each other, and this build is the answer. **Three ABI
