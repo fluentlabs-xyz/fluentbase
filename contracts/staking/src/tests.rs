@@ -11375,3 +11375,239 @@ fn the_activation_setter_refuses_the_past_and_a_running_chain() {
         );
     }
 }
+
+// The owner's reward walk carries the SAME per-claim bound as the delegator's,
+// and only the delegator's had a test: dropping
+// `min(before_epoch, claimed_at + MAX_EPOCHS_PER_CLAIM)` from
+// `validator_owner_rewards` left the suite green. Without it a validator that
+// never claimed builds a walk too long to execute, and the view that quotes it
+// runs out of fuel before it answers.
+#[test]
+fn the_owner_reward_walk_is_bounded_to_one_thousand_epochs_too() {
+    let owner = Address::with_last_byte(0xa0);
+    let validator = Address::with_last_byte(0x01);
+    let activation = DEFAULT_EPOCH_BLOCK_INTERVAL;
+    let mut harness = Harness::new(activation);
+    harness.set_caller(owner);
+    assert_eq!(
+        harness.initialize(
+            owner,
+            vec![validator],
+            vec![DEFAULT_MIN_VALIDATOR_STAKE],
+            500,
+        ),
+        ExitCode::Ok
+    );
+
+    // One credit inside the bound and one past it, so the bound is what decides
+    // the answer rather than an empty ledger.
+    let reward = U256::from(1_000_000);
+    for epoch in [1u64, MAX_EPOCHS_PER_CLAIM + 1] {
+        staking_storage()
+            .validator_snapshots_accessor()
+            .entry(validator)
+            .entry(epoch)
+            .total_blend_rewards_accessor()
+            .set_checked(
+                &mut harness.sdk,
+                math::narrow_reward(reward).expect("reward fits uint96"),
+            )
+            .unwrap();
+    }
+
+    harness
+        .set_block_number(activation + DEFAULT_EPOCH_BLOCK_INTERVAL * (MAX_EPOCHS_PER_CLAIM + 2));
+    let (exit, output) = harness.call(encode_call(
+        SIG_GET_VALIDATOR_FEE,
+        &AddressCommand { value: validator },
+    ));
+    assert_eq!(exit, ExitCode::Ok);
+    let quoted = decode_output::<U256>(&output);
+    // 5% of the one credit inside the window. The credit at
+    // `MAX_EPOCHS_PER_CLAIM + 1` is outside it and must not be counted.
+    assert_eq!(
+        quoted,
+        reward * U256::from(500) / U256::from(BPS_DENOMINATOR),
+        "the view stops at the per-claim bound and quotes only the epochs inside it"
+    );
+
+    harness.set_caller(validator);
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_CLAIM_VALIDATOR_FEE,
+                &AddressCommand { value: validator },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+    assert_eq!(
+        staking_storage()
+            .validators_accessor()
+            .entry(validator)
+            .claimed_at_accessor()
+            .get_checked(&harness.sdk)
+            .unwrap(),
+        MAX_EPOCHS_PER_CLAIM,
+        "and the claim advances the owner cursor by at most the same bound"
+    );
+}
+
+// `available_for_redelegate` floors the claim to a whole compact unit and then
+// refuses anything under `minStakingAmount`, handing the whole claim back as a
+// cash payout instead. Neither half had a test: dropping the minimum left the
+// suite green, so a dust redelegation would have opened a delegation below the
+// configured floor.
+#[test]
+fn a_redelegation_under_the_staking_minimum_is_paid_out_instead() {
+    let owner = Address::with_last_byte(0xa0);
+    let validator = Address::with_last_byte(0x01);
+    let delegator = Address::with_last_byte(0x02);
+    let reserve = Address::with_last_byte(0xc0);
+    let stake = DEFAULT_MIN_VALIDATOR_STAKE;
+    let activation = 1_000;
+
+    // The credit is divided between the two delegations of equal stake — the
+    // owner's self-delegation and the one below — so it is sized so that HALF of
+    // it is exactly one compact unit under the staking minimum: a whole
+    // representable amount, refused by the minimum and not by the flooring.
+    let dust = (DEFAULT_MIN_STAKING_AMOUNT - BALANCE_COMPACT_PRECISION) * U256::from(2);
+    let mut harness = Harness::new(activation);
+    harness.set_caller(owner);
+    let mut command = harness.initialize_command(owner, vec![validator], vec![stake], 0);
+    command.blend_reserve = reserve;
+    assert_eq!(harness.initialize_with(command), ExitCode::Ok);
+    staking::delegate_to(&mut harness.sdk, delegator, validator, stake, false).unwrap();
+    staking_storage()
+        .validator_snapshots_accessor()
+        .entry(validator)
+        .entry(WARMUP_DELAY + MAX_COMMITTEE_LOOKAHEAD_EPOCHS)
+        .total_blend_rewards_accessor()
+        .set_checked(
+            &mut harness.sdk,
+            math::narrow_reward(dust).expect("credit fits uint96"),
+        )
+        .unwrap();
+    let funding = install_stipend_token(
+        &harness.sdk,
+        reserve,
+        dust * U256::from(4),
+        dust * U256::from(4),
+        stake * U256::from(2),
+    );
+
+    harness.set_caller(delegator);
+    harness.set_block_number(
+        activation
+            + DEFAULT_EPOCH_BLOCK_INTERVAL * (WARMUP_DELAY + MAX_COMMITTEE_LOOKAHEAD_EPOCHS + 1),
+    );
+    let queue = staking_storage()
+        .validator_delegations_accessor()
+        .entry(validator)
+        .entry(delegator)
+        .delegate_queue_accessor();
+    let entries_before = queue.len_checked(&harness.sdk).unwrap();
+    assert_eq!(
+        harness
+            .call(encode_call(
+                SIG_REDELEGATE_DELEGATOR_FEE,
+                &AddressCommand { value: validator },
+            ))
+            .0,
+        ExitCode::Ok
+    );
+    assert_eq!(
+        queue.len_checked(&harness.sdk).unwrap(),
+        entries_before,
+        "a claim below the staking minimum opens no delegation"
+    );
+    let claim = dust / U256::from(2);
+    assert_eq!(
+        claim,
+        DEFAULT_MIN_STAKING_AMOUNT - BALANCE_COMPACT_PRECISION
+    );
+    assert_eq!(
+        claim % BALANCE_COMPACT_PRECISION,
+        U256::ZERO,
+        "the claim is representable, so it is the minimum and not the flooring \
+         that refuses it"
+    );
+    assert_eq!(
+        funding.borrow().pulls,
+        vec![(delegator, claim)],
+        "the whole claim is paid out to the delegator instead"
+    );
+}
+
+// The snapshot-epoch index is an ordered set with no duplicates, and this pins
+// that rather than the branch that appears to enforce it.
+//
+// Measured, not assumed: removing `insert_snapshot_epoch`'s
+// already-present short circuit leaves the whole suite green, INCLUDING this
+// test, because neither caller can reach it with an epoch already in the index —
+// `touch_snapshot_at_or_before` returns at `base_epoch == epoch` before calling
+// it (`staking.rs`), and `set_validator` calls it once per registration. The
+// short circuit is a belt behind a gate that already holds. What this test does
+// pin is the property the index is read under: every read of it is a binary
+// search, so ascending order and distinctness are what make the answers mean
+// anything.
+#[test]
+fn materializing_the_same_snapshot_epoch_twice_adds_no_second_entry() {
+    let owner = Address::with_last_byte(0xa0);
+    let validator = Address::with_last_byte(0x01);
+    let delegator = Address::with_last_byte(0x02);
+    let mut harness = Harness::new(1_000);
+    harness.set_caller(owner);
+    assert_eq!(
+        harness.initialize(owner, vec![validator], vec![DEFAULT_MIN_VALIDATOR_STAKE], 0),
+        ExitCode::Ok
+    );
+
+    let epochs = staking_storage()
+        .validator_snapshot_epochs_accessor()
+        .entry(validator);
+    let before = epochs.len_checked(&harness.sdk).unwrap();
+    let listed: Vec<u64> = (0..before)
+        .map(|i| epochs.at(i).get_checked(&harness.sdk).unwrap())
+        .collect();
+
+    // Three delegations landing on the SAME stake epoch: each one materializes
+    // that epoch's snapshot, and only the first may add an index entry.
+    for _ in 0..3 {
+        staking::delegate_to(
+            &mut harness.sdk,
+            delegator,
+            validator,
+            DEFAULT_MIN_STAKING_AMOUNT,
+            false,
+        )
+        .unwrap();
+    }
+
+    let after = epochs.len_checked(&harness.sdk).unwrap();
+    assert_eq!(
+        after,
+        before + 1,
+        "three touches of one epoch add one index entry, not three"
+    );
+    let mut all: Vec<u64> = (0..after)
+        .map(|i| epochs.at(i).get_checked(&harness.sdk).unwrap())
+        .collect();
+    let sorted = {
+        let mut copy = all.clone();
+        copy.sort_unstable();
+        copy
+    };
+    assert_eq!(all, sorted, "the index stays ascending");
+    all.dedup();
+    assert_eq!(
+        all.len(),
+        after as usize,
+        "and holds no duplicate — every read of it is a binary search"
+    );
+    assert_eq!(
+        &all[..listed.len()],
+        listed.as_slice(),
+        "the entries that were already there are untouched"
+    );
+}
