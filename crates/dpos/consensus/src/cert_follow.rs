@@ -60,6 +60,17 @@ pub trait CertUpstream: Clone + Send + Sync + 'static {
         height: Height,
     ) -> impl Future<Output = Option<UpstreamFinalized>> + Send;
 
+    // `get_finalization_targeted(height, targets)` — the §5.2 ladder step addressed
+    // at `committee[T+1]` — was BUILT here in the third pass and ROLLED BACK.
+    // Not for the reason the second pass gave (it is a one-method change with a
+    // default, and every other link is a file the pass could touch): with it wired
+    // through `UpstreamResolver` and `PlaneUpstreamHandle`, the stand's zero-overlap
+    // fixture loses the incoming half's epoch-3 DKG artifact —
+    // `testbed::tests::a_zero_overlap_boundary_halts_the_chain_verify_only`,
+    // `artifacts[4] = []` where it must be `[3]`. See
+    // `cert_inlet::UpstreamResolver::fetch_targeted` for the measurement and what
+    // it does and does not establish.
+
     /// [`Self::get_finalization`], but on an explicit CONTENT miss — the upstream
     /// answering that it does not hold the height — asks the REST of the
     /// configured sources before giving up.

@@ -356,6 +356,24 @@ pub trait BlockFetcher: Clone + Send + Sync + 'static {
         digest: crate::digest::Digest,
     ) -> impl std::future::Future<Output = Option<OrderBlock>> + Send;
 
+    /// LOCAL read of the `(finalization, block)` pair the marshal archived at
+    /// `height`, or `None` on an archive miss. No network, no verification, and
+    /// none needed: the only writer of that archive is `store_finalization` AFTER
+    /// `verify_delivered` (CW `marshal/core/actor.rs:1404-1463`), so what comes
+    /// back is already committee-authenticated — which is what makes it usable as
+    /// a jump TARGET (§5.2).
+    ///
+    /// On the trait rather than on the concrete mailbox because the target is read
+    /// through it (`maybe_re_jump`), and the unit tests drive that path through
+    /// [`FakeMarshal`]. Separate from [`Self::fetch_block_by_height`] rather than
+    /// composed out of it: the two answer different questions (a body for derive
+    /// vs an attested pair for the jump) and a test that counts one must not see
+    /// the other.
+    fn pair_at(
+        &self,
+        height: Height,
+    ) -> impl std::future::Future<Output = Option<(Finalization<BlsScheme, Digest>, OrderBlock)>> + Send;
+
     /// Ask peers for the finalization at `height` (fills `finalizations_by_height`
     /// durably). Fire-and-forget; the marshal skips it if already local.
     fn hint_finalization(
@@ -402,6 +420,21 @@ impl BlockFetcher
 
     async fn fetch_block_by_digest(&self, digest: crate::digest::Digest) -> Option<OrderBlock> {
         self.get_block(&digest).await
+    }
+
+    async fn pair_at(
+        &self,
+        height: Height,
+    ) -> Option<(Finalization<BlsScheme, Digest>, OrderBlock)> {
+        // ONE body for this concrete mailbox, not two (review B1-15): the same
+        // question already has an implementation on the same type under
+        // `FrontierMarshal`, which is what `plane_upstream::serve` answers a
+        // `Finalized{h}` fetch from. The two traits exist for different reasons —
+        // this one is the executor's erased seam, that one is the frontier
+        // producer's — but the read is identical, and duplicating it is how the
+        // `Identifier::Latest` trap it avoids (a block finalizing between the two
+        // awaits pairs `fin@h` with `block@h+1`) would get fixed in one copy only.
+        crate::plane_upstream::FrontierMarshal::pair_at(self, height).await
     }
 
     async fn hint_finalization(&self, height: Height, targets: NonEmptyVec<PeerPubkey>) {
@@ -478,35 +511,45 @@ pub type PeersForFinalization =
     std::sync::Arc<dyn Fn() -> Option<NonEmptyVec<PeerPubkey>> + Send + Sync>;
 
 /// Steady-state self-healing re-jump callback. Invoked from the `Update::Tip`
-/// arm when the marshal's frontier runs > [`crate::cold_start_jump::JUMP_THRESHOLD`]
-/// finalized blocks ahead of the highest derived ordering height (the upstream's
-/// serving window is exactly that wide, so beyond it `UpstreamResolver::fetch`
-/// returns nothing forever → the marshal floor freezes → the executor wedges).
-/// The callback re-runs the SAME forward-only, BLS-verified
-/// [`crate::cold_start_jump::cold_start_jump`] the cold-start path uses, fast-
-/// forwarding reth via one FCU + devp2p backfill.
+/// arm when the marshal tip runs more than [`ReJump::threshold`] finalized
+/// blocks ahead of the highest derived ordering height (the upstream's serving
+/// window is exactly that wide, so beyond it `UpstreamResolver::fetch` returns
+/// nothing forever → the marshal floor freezes → the executor wedges). The
+/// callback runs the SAME forward-only [`crate::cold_start_jump::jump_to_target`]
+/// the cold-start path runs, fast-forwarding reth via one FCU + devp2p backfill.
 ///
-/// The generics of the underlying `cold_start_jump` (upstream / committee source
-/// / EL-sync) are ERASED behind this boxed `Fn` so the executor [`Actor`] gains
-/// NO new generic params. The executor SPAWNS the future as a READ-ONLY waiter
-/// (the same spawned-fetch idiom the inlet uses) and reacts to its terminal
+/// The generics of the underlying jump (committee source / EL-sync) are ERASED
+/// behind this boxed `Fn` so the executor [`Actor`] gains NO new generic params.
+/// The executor SPAWNS the future as a READ-ONLY waiter (the same spawned-fetch
+/// idiom the inlet uses) and reacts to its terminal
 /// [`crate::cold_start_jump::JumpOutcome`] on a `oneshot` `select!` arm — NOT an
 /// in-task poll. The jump's only reth touch is the read-side `sync_to` FCU, which
 /// reth ancestor-skips when backward, so the spawned waiter cannot corrupt the
 /// executor's own forward FCUs.
 ///
-/// The `u64` argument is the trigger's `from` = the executor's current
-/// `ordering_finalized`. It returns the typed terminal
-/// [`crate::cold_start_jump::JumpOutcome`] (the spawn owns the whole backfill
-/// wait, so there is no in-progress variant): `Landed` ⇒ re-seed + advance the
-/// running marshal floor; `Lagging` ⇒ no-op; `Stalled` ⇒ NON-fatal transport
-/// stall (re-evaluated on the next `Update::Tip`); `AuthFailed` ⇒ NON-fatal (#1
-/// self-heal): a forged far-ahead target fails `verify_jump_authenticated`, so the
-/// executor ROTATES the upstream + stays up-degraded (`reason=auth_rotate`) and
-/// re-jumps onto the honest source on the next tip — it never serves the forged
-/// branch and never crashes (Decision A).
+/// TWO arguments, and the second is the §5.2 change: `from` = the trigger's
+/// `ordering_finalized`, and the TARGET — the `(finalization, block)` pair the
+/// executor read out of its OWN marshal archive at the tip it is triggering on.
+/// The callback no longer asks anybody for a target: the only writer of that
+/// archive is `store_finalization` after `verify_delivered` (CW
+/// `marshal/core/actor.rs:1404-1463`), so the target is already
+/// committee-authenticated before the jump sees it.
+///
+/// It returns the typed terminal [`crate::cold_start_jump::JumpOutcome`] (the
+/// spawn owns the whole backfill wait, so there is no in-progress variant):
+/// `Landed` ⇒ re-seed + advance the running marshal floor; `Lagging` ⇒ no-op;
+/// `Stalled` ⇒ NON-fatal transport stall (re-evaluated on the next
+/// `Update::Tip`); `InvalidTarget` ⇒ the EL did not land on the attested branch.
+/// The `BadTarget`/`AuthFailed` arms survive from the `get_latest` era and are
+/// unreachable-by-construction on a target read from this node's own archive;
+/// deleting them (and the two `verify_jump_*` stages behind them) is pass Б2.
 pub type ReJumpFn = std::sync::Arc<
-    dyn Fn(u64) -> BoxFuture<'static, crate::cold_start_jump::JumpOutcome> + Send + Sync,
+    dyn Fn(
+            u64,
+            crate::cert_follow::UpstreamFinalized,
+        ) -> BoxFuture<'static, crate::cold_start_jump::JumpOutcome>
+        + Send
+        + Sync,
 >;
 
 /// `dpos_frontier_step_unserved_total` — one probe tick where the tip was frozen,
@@ -519,10 +562,14 @@ const FRONTIER_STEP_UNSERVED: &str = "dpos_frontier_step_unserved_total";
 /// `dpos_frontier_step_skipped_total{reason}` — one probe tick where the ladder
 /// step was NOT put at all. Either this node cannot NAME `committee[T+1]`
 /// (`no_tracked_epoch`, `no_geometry`, `out_of_window`, `not_readable`,
-/// `read_failed`, `no_participants`), or the network is not known to have produced
-/// it yet (`above_the_frontier` — see `probe_frontier` for what that witness is
-/// worth), or the marshal would discard it (`at_or_below_the_floor`). The probe
-/// then asks `Latest` alone.
+/// `read_failed`, `no_participants`), or the marshal would discard it
+/// (`at_or_below_the_floor`). The probe then asks `Latest` alone.
+///
+/// `above_the_frontier` is GONE (§5.2, review A2-01): the step used to wait for
+/// an unauthenticated `Latest` height to witness that the network had produced
+/// `last(T+1)`, and that witness went with the unauthenticated trigger input it
+/// shared. A step nobody has costs one unanswered fetch, which §5.4 already
+/// calls "догон вместо прыжка".
 pub(crate) const FRONTIER_STEP_SKIPPED: &str = "dpos_frontier_step_skipped_total";
 
 /// What one frontier probe tick produced — one answer and one ADDRESS.
@@ -541,11 +588,13 @@ pub struct ProbeOutcome {
     /// probe was not served / the answer was refused or dropped as
     /// unauthenticated.
     ///
-    /// Feeds `upstream_frontier` — the deep re-jump trigger reads
-    /// `max(tip, upstream_frontier)` — and, as a WITNESS ONLY, the ladder step's
-    /// `servable` precondition. Both consumers are the same open question and go
-    /// together when that trigger becomes tip-only; `probe_frontier` says what the
-    /// witness is worth in the meantime (review A2-01/A2-04).
+    /// ONE consumer left: `hint_finalization(frontier)` when it stands above the
+    /// marshal tip — a HINT, which the marshal answers by fetching the height and
+    /// running its own `verify_delivered` before anything is stored. It no longer
+    /// feeds the jump trigger (that reads the marshal tip alone, §5.2) and no
+    /// longer gates the ladder step (`servable` is gone, review A2-01), so an
+    /// unauthenticated height can now buy exactly one by-height fetch and nothing
+    /// else.
     pub frontier: Option<Height>,
     /// `(last(T+1), committee[T+1])` — the ladder step and its addressees.
     /// `None` when this node cannot name them yet: no epoch tracked, no frozen
@@ -605,26 +654,11 @@ pub type AnchorAdvancedFn = std::sync::Arc<dyn Fn() + Send + Sync>;
 /// The steady-state re-jump callback bundled with the signal its trigger reads.
 #[derive(Clone)]
 pub struct ReJump {
-    /// The forward-only, BLS-verified jump (the `u64` arg is `from` =
-    /// `ordering_finalized`); see the callback notes above.
+    /// The forward-only jump onto a target read from this node's own marshal
+    /// archive (`(from, target)`); see the callback notes above.
     pub call: ReJumpFn,
-    /// The TRUE upstream frontier, advanced by the cert-inlet on EVERY received
-    /// cert (pre-verify, height-only) — see
-    /// [`crate::cert_inlet::LiveFrontierTee::upstream_frontier`]. The marshal's
-    /// STORED frontier (`last_tip_height`, fed by `Update::Tip`) FREEZES during
-    /// the "committee[E] not committed" defer deadlock — the inlet keeps
-    /// receiving certs but stores none, so no `Update::Tip` fires — which is
-    /// exactly when the re-jump is needed. The trigger therefore measures the gap
-    /// against `max(marshal tip, upstream_frontier)` so a frozen marshal tip can
-    /// never mask a real deep gap. HEIGHT-ONLY: it MUST NOT feed the committee
-    /// read (that stays the verified-only `live_height`), else a malicious
-    /// upstream could steer committee selection. SHARED between the inlet (writer)
-    /// and this re-jump (reader) on BOTH the follower AND the validator-with-upstream
-    /// (Rule Y symmetry — the inlet-fed joiner advances it on every cert); a
-    /// no-upstream validator has no `ReJump` at all (this field never exists there).
-    pub upstream_frontier: std::sync::Arc<std::sync::atomic::AtomicU64>,
     /// Forward-only re-jump need-gate, mirrored into the spawned jump's own gate
-    /// (`cold_start_jump_with_threshold`). The defer deadlock is EPOCH-relative
+    /// (`jump_to_target`). The defer deadlock is EPOCH-relative
     /// ("≥2 epochs behind ⇒ `committee[E]` uncommitted"), so its recovery gate is
     /// epoch-relative too: `min(JUMP_THRESHOLD, epoch_block_interval)` (real-prod
     /// epochs ≫ 1024 keep the 1024 serving-window size; a compressed test epoch
@@ -635,15 +669,17 @@ pub struct ReJump {
     /// validator-with-upstream alike (`dpos.rs` computes the same
     /// `JUMP_THRESHOLD.min(interval)` on each path). Only the tests construct a
     /// bare `JUMP_THRESHOLD`. The COLD-START jump is different and keeps the fixed
-    /// `JUMP_THRESHOLD` (`cold_start_jump` vs `cold_start_jump_with_threshold`),
-    /// which is why a short restart gap reaches this gate but not that one.
+    /// `JUMP_THRESHOLD` (`cold_start_jump` vs `jump_to_target`), which is why a
+    /// short restart gap reaches this gate but not that one.
     pub threshold: u64,
     /// The inlet's EXISTING upstream-rotation escape ([`crate::cert_inlet::RotateUpstream`]),
     /// the SAME `CertUpstream::rotate_callback()` the data-fault inlet uses. Fired
     /// when the re-jump's terminal outcome is a fault (Rule L): `BadTarget` (forgeable
-    /// structural mismatch), `InvalidTarget` (reth-rejected mid-sync), and `AuthFailed`
-    /// (#1 — a forged/unagreed POST-sync branch) rotate immediately; `Stalled` rotates
-    /// after `MAX_UPSTREAM_FAULTS` (an honest transient stall must not insta-rotate).
+    /// structural mismatch) and `AuthFailed` (#1 — a forged/unagreed POST-sync
+    /// branch) rotate immediately; `Stalled` rotates after `MAX_UPSTREAM_FAULTS` (an
+    /// honest transient stall must not insta-rotate). `InvalidTarget` does NOT rotate
+    /// (review B1-04): its target is this node's own attested archive pair, so the
+    /// contradiction is local and §5.4 files it as `Fault::corruption`.
     /// `Option` so unit tests / a no-rotate config leave it `None`.
     pub rotate: Option<crate::cert_inlet::RotateUpstream>,
     /// Upstream frontier-discovery probe, fired from the executor's 1 s probe
@@ -652,12 +688,15 @@ pub struct ReJump {
     /// driver for a validator with no cert-inlet (the plane-native default): a
     /// ROTATED-OUT validator participates in no consensus and has no inlet, so
     /// without the probe its marshal tip freezes at the demotion boundary — no
-    /// `Update::Tip`, no prehints, a frontier atomic stuck at 0 (the inlet was
-    /// its only writer) ⇒ a permanent silent wedge. The probe feeds
-    /// `upstream_frontier` (deep gaps → the re-jump trigger) and
-    /// `hint_finalization(frontier)` (small gaps → the marshal fetches, verifies
-    /// against the epoch scheme, and the normal `Update::Tip` pipeline walks the
-    /// gap). Self-silencing while live: an advancing tip skips the network probe
+    /// `Update::Tip`, no prehints ⇒ a permanent silent wedge.
+    ///
+    /// Everything the probe produces now lands on the MARSHAL and nowhere else:
+    /// the ladder step `Finalized{last(T+1)}` addressed at `committee[T+1]`, and
+    /// `hint_finalization(frontier)` when the answered `Latest` stands above the
+    /// tip. The marshal fetches, verifies against the epoch scheme, stores, and
+    /// the normal `Update::Tip` pipeline walks the gap — which is also how the
+    /// jump trigger learns anything, since it reads that tip alone (§5.2).
+    /// Self-silencing while live: an advancing tip skips the network probe
     /// entirely. `None` in unit tests.
     pub probe: Option<FrontierProbeFn>,
     /// `T` for the ladder step the probe takes — see [`TrackedEpochFn`]. `None`
@@ -1445,18 +1484,40 @@ where
                             self.rejump_fault_streak = 0; // ANY rotate resets (critic r2)
                         }
                         Ok(crate::cold_start_jump::JumpOutcome::InvalidTarget(error)) => {
-                            // reth itself rendered an Invalid verdict on the served
-                            // branch mid-sync (el_sync_calls >= 1) — a stronger,
-                            // more actionable signal than BadTarget's pre-sync
-                            // structural check, but the same NON-fatal bad-upstream
-                            // treatment: rotate immediately.
-                            warn!(
-                                error = %format_args!("{error:#}"),
-                                "steady-state re-jump target rejected by reth as \
-                                INVALID during EL-sync; rotating upstream (NON-fatal)"
-                            );
-                            self.rotate_upstream().await;
-                            self.rejump_fault_streak = 0; // ANY rotate resets (critic r2)
+                            // §5.4 "Посадка не на заверенную ветку" / "reth Invalid":
+                            // `Fault::corruption`, and NOT the rotation this arm used
+                            // to do (review B1-04).
+                            //
+                            // The target of a steady-state jump is the
+                            // `(finalization, block)` pair this node read out of its
+                            // OWN marshal archive (`maybe_re_jump`), which only
+                            // `store_finalization` writes and only after
+                            // `verify_delivered` — so the pair carries 2f+1 under a
+                            // committee this node read itself. There is no upstream
+                            // that chose it and therefore nobody to rotate AWAY from:
+                            // rotating would move the `Latest`/by-height seam and
+                            // leave the contradiction standing.
+                            //
+                            // Two causes reach here, and both say the same thing
+                            // about THIS node: reth rendered `Invalid` on the
+                            // attested branch mid-EL-sync, or `holds(result) == false`
+                            // after a `Valid` — the EL sat down somewhere other than
+                            // the branch a quorum attested. Either way the local EL
+                            // contradicts an authenticated certificate, which is the
+                            // corruption class: loud actor death, no further EL
+                            // writes, the supervisor aborts-all.
+                            let fault = Fault::corruption(eyre::eyre!(
+                                "steady-state re-jump onto this node's OWN attested \
+                                 archive pair did not land on the attested branch \
+                                 (reth answered INVALID mid-EL-sync, or reported Valid \
+                                 while not holding the attested result canonically): \
+                                 {error:#}"
+                            ));
+                            if self.dispatch_fault("re-jump landing", fault).await
+                                == Disposition::Shutdown
+                            {
+                                break;
+                            }
                         }
                         Ok(crate::cold_start_jump::JumpOutcome::Stalled(error)) => {
                             // NON-fatal transient transport stall: count toward the
@@ -2084,24 +2145,25 @@ where
     /// probe keeps firing.
     ///
     /// A probe does TWO things (§5.2 "Триггер и лестница"), and the frozen tip is
-    /// what earns both: the untargeted `Latest`, whose height feeds
-    /// `upstream_frontier` (the deep-gap re-jump trigger reads `max(tip, this)`)
-    /// and, when ahead of the known tip, `hint_finalization(frontier)`; and the
-    /// LADDER STEP `Finalized{last(T+1)}` addressed at `committee[T+1]`, where `T`
-    /// is the epoch this node last handed to `track`.
+    /// what earns both: the LADDER STEP `Finalized{last(T+1)}` addressed at
+    /// `committee[T+1]`, where `T` is the epoch this node last handed to `track`;
+    /// and the untargeted `Latest`, whose answered height — when it stands above
+    /// the marshal tip — becomes one `hint_finalization(frontier)`.
     ///
-    /// They are NOT independent today, and that is a named residual rather than a
-    /// design: the step waits for the `Latest` arm to witness that the network has
-    /// produced `last(T+1)`, because nothing local can. See the `servable` note in
-    /// the body for what that witness is worth after this pass and what has to
-    /// change before it can go (review A2-01).
+    /// They are INDEPENDENT now, which is the §5.2 shape and not the one this
+    /// file had: the step used to wait on the `Latest` arm to witness that the
+    /// network had produced `last(T+1)` (`servable`), and that predicate went with
+    /// the unauthenticated trigger input it propped up (review A2-01/A2-04 — they
+    /// held each other up and had to go together). The step is now put on every
+    /// frozen tick where this node can NAME it and the marshal would not discard
+    /// it, and nothing on this path reads a height it did not authenticate.
     ///
-    /// The step's answer never comes back through here — it goes through
-    /// [`crate::plane_upstream::FrontierHandler::deliver`] straight into the
-    /// marshal, so a served step shows up as the tip MOVING on the next tick. What
-    /// does come back is whether anyone served it, and an unserved step is counted
-    /// rather than reacted to: there is no state machine here, the ladder IS the
-    /// repetition of this tick.
+    /// Neither answer comes back through here — both go through
+    /// [`crate::plane_upstream::FrontierHandler::deliver`] and the marshal's own
+    /// `verify_delivered`, so a served step shows up as the tip MOVING on the next
+    /// tick. What does come back is whether anyone served it, and an unserved step
+    /// is counted rather than reacted to: there is no state machine here, the
+    /// ladder IS the repetition of this tick.
     async fn probe_frontier(&mut self) -> bool {
         let Some(probe) = self.re_jump.as_ref().and_then(|rj| rj.probe.clone()) else {
             return false;
@@ -2141,60 +2203,42 @@ where
         // the step every tick is the ladder and not a poll: there is no automaton,
         // only this tick happening again.
         //
-        // TWO CONDITIONS. The second is the marshal's own and is beyond argument;
-        // the first is a KNOWN RESIDUAL and is written out here in full, because
-        // §5.2 does not have it and the pass that removes it has to remove
-        // something else with it.
-        //
-        // (i) `servable` — "the network is known to have PRODUCED `last(T+1)`".
-        // `T` is this node's OWN tracked epoch, so `last(T+1)` is one epoch above
-        // its finalized tip: for a node genuinely BEHIND that is a height the
-        // network finalized long ago, and for a node sitting at the live tip with
-        // a momentarily frozen marshal it is a height that DOES NOT EXIST YET.
-        // Nothing local tells the two apart — `T`, the marshal tip and the floor
-        // are all consistent with either — so the only witness available is the
-        // `Latest` answer this same tick got back.
-        //
-        // That witness is not fully authenticated, and review A2-01 is right that
-        // §5.2 has no such input in the trigger. After this pass it is much
-        // narrower than it was: `deliver` now refuses an inflated height as a LIE
-        // at step (3) (the height↔epoch bind) before any window is consulted, so
-        // what can still reach `outcome.frontier` unauthenticated is a
-        // SELF-CONSISTENT (height, epoch) pair whose committee this node cannot
-        // read — and the whole cost of believing it is one targeted fetch issued
-        // earlier than warranted.
-        //
-        // Removing it is MEASURED and it is not free: the step then goes out on
-        // every tick for a height nobody has, and
-        // `testbed::tests::a_forged_seed_slot_is_admitted_with_no_key_and_refused_when_the_key_lands`
-        // loses the archive relay it pins — the dead targeted fetch crowds the
-        // frontier channel it shares. So the honest shape of A2-01 is the one the
-        // review's own §6 п.2 gives it: this predicate and the pass-through of an
-        // out-of-window `Latest` hold each other up, and both go when the deep
-        // re-jump trigger becomes tip-only. Until then it stays, named.
-        //
-        // (ii) A step at or below the marshal FLOOR is a no-op there
-        // (`HintFinalized` skipped when `height <= last_processed_height`,
-        // `marshal/core/actor.rs:633-635`), so putting it is a fetch nobody acts
-        // on. `self.marshal_floor` is this executor's mirror of exactly that value
-        // — seeded from the same `initial_marshal_floor` `outer.rs` sends in its
-        // buffered `SetFloor` and moved by every `reseed_forward`.
+        // ONE CONDITION, and it is the marshal's own. A step at or below the
+        // marshal FLOOR is a no-op there (`HintFinalized` skipped when
+        // `height <= last_processed_height`, `marshal/core/actor.rs:633-635`), so
+        // putting it is a fetch nobody acts on. `self.marshal_floor` is this
+        // executor's mirror of exactly that value — seeded from the same
+        // `initial_marshal_floor` `outer.rs` sends in its buffered `SetFloor` and
+        // moved by every `reseed_forward`.
         //
         // The FLOOR and not the tip, and the difference is a whole defect class
         // (review A2-10): a node that jumped holds nothing between its floor and
         // its tip, and a step landing in that HOLE is precisely the one the marshal
         // would accept and act on. Gating on the tip suppressed exactly those.
         //
-        // An unserved step is COUNTED and the contiguous catch-up from the floor
-        // continues (§5.4 "догон вместо прыжка"), which is what the `unserved`
-        // counter below is for.
-        let servable = |height: Height| outcome.frontier.is_some_and(|f| f >= height);
+        // THE SECOND CONDITION IS GONE (review A2-01). `servable` asked the
+        // `Latest` answer of this same tick to witness that the network had
+        // PRODUCED `last(T+1)`, because nothing local tells "a node genuinely
+        // behind" from "a node at the live tip whose marshal froze for a second"
+        // apart. That witness was the last unauthenticated input on this path, and
+        // it was only tolerable while the jump trigger read the same height; with
+        // the trigger on the marshal tip alone it has no reason to exist. What it
+        // cost to keep: a step inside a jumper's own hole was suppressed whenever
+        // its `Latest` source was silent. What it costs to drop: on a node already
+        // at the live tip the step names a height nobody has yet, and an
+        // unanswered targeted fetch is exactly §5.4's "догон вместо прыжка" — the
+        // `unserved` counter below.
+        //
+        // THE PRICE, in requests and not in ticks (review B1-07): this arm runs
+        // every frozen tick (1 s), but the WIRE cost is set by the resolver, not by
+        // this cadence. A repeated hint for a key already pending is a no-op
+        // (`resolver/src/p2p/engine.rs:229-252`, `is_new`), and an unanswerable key
+        // is re-sent once per `timeout` + `fetch_retry_timeout` — 5 s + 500 ms, so
+        // ≈ 0.18 requests/s per node, one key, deduplicated. It also does not
+        // monopolise the fetcher: `pending` is a `PrioritySet` ordered by next-try
+        // time (`fetcher.rs:119`, `utils/src/priority_set.rs:145-149`), so a fresh
+        // by-height repair key sorts AHEAD of this key's retry.
         match outcome.step {
-            Some((height, _)) if !servable(height) => {
-                metrics::counter!(FRONTIER_STEP_SKIPPED, "reason" => "above_the_frontier")
-                    .increment(1);
-                self.probe_step_pending = false;
-            }
             Some((height, _)) if height <= Height::new(self.marshal_floor) => {
                 metrics::counter!(FRONTIER_STEP_SKIPPED, "reason" => "at_or_below_the_floor")
                     .increment(1);
@@ -2221,10 +2265,6 @@ where
             debug!("frozen-tip probe: upstream get_latest returned None");
             return false;
         };
-        if let Some(rj) = &self.re_jump {
-            rj.upstream_frontier
-                .fetch_max(frontier.get(), std::sync::atomic::Ordering::Relaxed);
-        }
         if frontier > self.last_tip_height {
             debug!(
                 %frontier,
@@ -2439,12 +2479,12 @@ where
         Ok(())
     }
 
-    /// Steady-state self-healing re-jump (see [`ReJump`]). The marshal's frontier
-    /// (the `Update::Tip` height) has run > [`crate::cold_start_jump::JUMP_THRESHOLD`]
-    /// finalized blocks ahead of the highest derived ordering height
-    /// (`ordering_finalized`) — the upstream serving window is exactly that wide,
-    /// so beyond it the marshal's backfill resolver finds nothing and the floor
-    /// freezes forever.
+    /// Steady-state self-healing re-jump (see [`ReJump`]). The marshal TIP (the
+    /// `Update::Tip` height, §5.2's one frontier) has run more than
+    /// [`ReJump::threshold`] finalized blocks ahead of the highest derived
+    /// ordering height (`ordering_finalized`) — the upstream serving window is
+    /// that wide, so beyond it the marshal's backfill resolver finds nothing and
+    /// the floor freezes forever.
     ///
     /// This does NOT block the `select!` loop on the (multi-minute) backfill: it
     /// SPAWNS the re-jump as a READ-ONLY waiter (the same spawned-fetch idiom the
@@ -2455,9 +2495,10 @@ where
     /// executor state + `set_floor` (§9.6).
     ///
     /// Gates: a missing `re_jump`, an already-in-flight jump (`jump_done` is
-    /// `Some` — never spawn a second), a gap ≤ `JUMP_THRESHOLD`, or a mid-flight
-    /// startup drain all early-return without spawning. A parked (`deferred`)
-    /// block does NOT gate this off: once the gap runs past `JUMP_THRESHOLD` the
+    /// `Some` — never spawn a second), a gap ≤ [`ReJump::threshold`], a marshal
+    /// archive with no pair at the tip, or a mid-flight startup drain all
+    /// early-return without spawning. A parked (`deferred`)
+    /// block does NOT gate this off: once the gap runs past the threshold the
     /// situation is no longer "wait for this block's cert" but a deep catch-up
     /// (the durably-stuck-fetch case, §4.3) — the re-jump backfills the
     /// committee-BLS-authenticated `[.. landing]` (the parked height is a finalized
@@ -2472,15 +2513,16 @@ where
         if self.jump_done.is_some() {
             return Ok(());
         }
-        // The marshal's STORED frontier (`height`) FREEZES under the
-        // committee-not-committed defer deadlock; the inlet-advanced
-        // `upstream_frontier` does not. Trigger off the larger of the two so a
-        // frozen marshal tip cannot mask a real deep gap (see `ReJump`).
-        let upstream_frontier = re_jump
-            .upstream_frontier
-            .load(std::sync::atomic::Ordering::Relaxed);
-        let frontier = height.get().max(upstream_frontier);
-        if frontier.saturating_sub(self.ordering_finalized)
+        // §5.2: ONE frontier, and it is the marshal tip. `height` is the
+        // `Update::Tip` the marshal emits from `store_finalization`, i.e. the
+        // highest finalization this node VERIFIED and stored — there is no second
+        // signal, and no unauthenticated one. The `max(tip, upstream_frontier)`
+        // this line used to take existed because the tip freezes under the
+        // "committee[E] not committed" defer deadlock; it no longer can freeze
+        // silently, because the frozen-tip probe puts the ladder step
+        // `Finalized{last(T+1)}` on every frozen tick and a served step moves the
+        // tip through `verify_delivered` (`probe_frontier`).
+        if height.get().saturating_sub(self.ordering_finalized)
             <= re_jump.threshold
             // Symmetric closure to the startup-drain's jump-gate (bugs 6/7): a jump
             // and the startup backfill drain must not both drive reth's EL — never
@@ -2490,23 +2532,49 @@ where
         {
             return Ok(());
         }
+        // THE TARGET, read from this node's OWN marshal archive at the tip it is
+        // triggering on. `Update::Tip` fires from `store_finalization` only after
+        // the pair is written (CW `marshal/core/actor.rs:1404-1463`), so the two
+        // reads below hit an entry that already passed `verify_delivered` — the
+        // jump no longer asks anyone what to aim at.
+        //
+        // A miss is not a fault, and the case it covers is NOT "the floor moved"
+        // (review B1-08): a floor raise deletes nothing, because both finalized
+        // archives are `immutable::Archive`, whose `prune` is a no-op (CW
+        // `marshal/store.rs:223-226`, `:261-264`) — the same fact §5.2 leans on for
+        // retention. The reachable miss is the SEEDED tip: `last_tip_height` starts
+        // at `cfg.last_consensus_finalized_height` (`:1260`), and on a datadir whose
+        // marshal archive is empty — a fresh one after the pre-engine cold-start
+        // jump — the very first heartbeat re-poke names a height nothing was ever
+        // stored at. Skip and let the next `Update::Tip` / heartbeat re-arm.
+        let Some((finalization, block)) = self.marshal.pair_at(height).await else {
+            debug!(
+                tip = %height,
+                "re-jump trigger fired but the marshal archive has no pair at the tip; \
+                 re-evaluating on the next tip"
+            );
+            return Ok(());
+        };
+        let target = crate::cert_follow::UpstreamFinalized {
+            finalization,
+            block,
+        };
         info!(
             tip = %height,
-            upstream_frontier,
             ordering_finalized = self.ordering_finalized,
-            "frontier ran past the serving window; spawning steady-state re-jump waiter"
+            "marshal tip ran past the serving window; spawning steady-state re-jump waiter"
         );
-        // Spawn the whole `cold_start_jump` (sync_to wait + auth + L1) as a
-        // READ-ONLY waiter and react to its completion on the `jump_done` arm.
-        // `re_jump` is already owned (cloned out of `self.re_jump` above) and
-        // unused after this move — no second clone needed.
+        // Spawn the whole jump (sync_to wait + landing check + L1) as a READ-ONLY
+        // waiter and react to its completion on the `jump_done` arm. `re_jump` is
+        // already owned (cloned out of `self.re_jump` above) and unused after this
+        // move — no second clone needed.
         let from = self.ordering_finalized;
         let (tx, rx) = oneshot::channel();
         let handle = self
             .context
             .with_label("steady_state_rejump")
             .spawn(move |_| async move {
-                let _ = tx.send((re_jump.call)(from).await);
+                let _ = tx.send((re_jump.call)(from, target).await);
             });
         self.jump_done.replace(rx);
         self.jump_handle = Some(handle);
@@ -4207,6 +4275,77 @@ mod tests {
         }
     }
 
+    /// A REAL 2f+1 finalization certificate over `block`'s digest, under a
+    /// throwaway four-member committee built once per process.
+    ///
+    /// It exists so [`FakeMarshal`] can answer `BlockFetcher::pair_at` with a
+    /// `Finalization` VALUE — the jump target's type demands one. Nothing in this
+    /// module verifies it: the re-jump callback is scripted, and the production
+    /// gates that would check it run over the production archive on the stand.
+    fn canned_finalization(block: &OrderBlock) -> Finalization<BlsScheme, Digest> {
+        use commonware_codec::DecodeExt as _;
+        use commonware_consensus::{
+            simplex::types::{Finalize, Proposal},
+            types::{Epoch, Round, View},
+        };
+        use commonware_cryptography::{ed25519::PrivateKey as Ed25519PrivateKey, Signer as _};
+        use commonware_math::algebra::Random as _;
+        use commonware_parallel::Sequential;
+        use commonware_utils::{ordered::BiMap, TryCollect as _};
+        use fluentbase_bls::{
+            fluent_namespace,
+            keys::ValidatorBlsKeypair,
+            scheme::{build_signer, build_verifier},
+            BlsPubkey,
+        };
+        use rand_08::rngs::StdRng;
+        use rand_core::SeedableRng as _;
+
+        struct Canned {
+            signers: Vec<BlsScheme>,
+            verifier: BlsScheme,
+        }
+        static CANNED: std::sync::OnceLock<Canned> = std::sync::OnceLock::new();
+        let c = CANNED.get_or_init(|| {
+            const N: usize = 4;
+            let mut rng = StdRng::seed_from_u64(0xFA1E);
+            let peer_sks: Vec<_> = (0..N)
+                .map(|_| Ed25519PrivateKey::random(&mut rng))
+                .collect();
+            let bls_kps: Vec<_> = (0..N)
+                .map(|_| ValidatorBlsKeypair::generate(&mut rng))
+                .collect();
+            let bimap: BiMap<PeerPubkey, BlsPubkey> = peer_sks
+                .iter()
+                .zip(bls_kps.iter())
+                .map(|(p, b)| {
+                    (
+                        p.public_key(),
+                        BlsPubkey::decode(b.public_bytes().as_slice()).unwrap(),
+                    )
+                })
+                .try_collect()
+                .unwrap();
+            let ns = fluent_namespace(20_994);
+            Canned {
+                signers: bls_kps
+                    .iter()
+                    .map(|kp| build_signer(&ns, bimap.clone(), kp, 0, None).expect("member"))
+                    .collect(),
+                verifier: build_verifier(&ns, bimap, 0, None),
+            }
+        });
+        let round = Round::new(Epoch::new(0), View::new(block.height));
+        let prop = Proposal::new(round, View::new(block.height), block.digest());
+        let finalizes: Vec<_> = c
+            .signers
+            .iter()
+            .take(3)
+            .map(|s| Finalize::sign(s, prop.clone()).expect("sign"))
+            .collect();
+        Finalization::from_finalizes(&c.verifier, finalizes.iter(), &Sequential).expect("quorum")
+    }
+
     /// The next linked block after `parent` — a plain link now that nothing
     /// rides on the child. A test that needs σ for a specific round files it
     /// with [`record_fixture_seed`] instead; the child no longer carries one.
@@ -4677,6 +4816,20 @@ mod tests {
         dispatch: Arc<Mutex<Option<Mailbox>>>,
         stale_inventory: Arc<Mutex<Vec<OrderBlock>>>,
         escaped_waiters: Arc<Mutex<Vec<commonware_utils::acknowledgement::ExactWaiter>>>,
+        /// Set to make [`BlockFetcher::pair_at`] answer `None` at every height.
+        /// The default (`false`) models the real invariant — a marshal emits
+        /// `Update::Tip(h)` only from `store_finalization`, which has just written
+        /// the pair at `h` (CW `marshal/core/actor.rs:1404-1463`), so every tip the
+        /// executor sees has a pair behind it. Setting it models the one case
+        /// where it does not: a heartbeat re-poke replaying a tip the floor has
+        /// since moved past.
+        ///
+        /// A synthesized pair rather than a per-test canned one because nothing in
+        /// this module's re-jump tests reads the target's CONTENT — they script
+        /// the outcome (`Scripted`) — and priming a real certificate per height in
+        /// twenty tests would buy nothing. The stand runs the production jump over
+        /// the production archive, and that is where the content matters.
+        archive_empty: Arc<Mutex<bool>>,
     }
 
     impl FakeMarshal {
@@ -4700,6 +4853,16 @@ mod tests {
                 .values()
                 .find(|o| o.digest() == digest)
                 .cloned()
+        }
+        async fn pair_at(
+            &self,
+            height: Height,
+        ) -> Option<(Finalization<BlsScheme, Digest>, OrderBlock)> {
+            if *self.archive_empty.lock().unwrap() {
+                return None;
+            }
+            let block = sample_order(Digest(B256::ZERO), height.get(), B256::ZERO);
+            Some((canned_finalization(&block), block))
         }
         async fn hint_finalization(&self, height: Height, _targets: NonEmptyVec<PeerPubkey>) {
             self.hints.lock().unwrap().push(height.get());
@@ -9734,35 +9897,36 @@ mod tests {
     /// the scripted [`crate::cold_start_jump::JumpOutcome`].
     type RejumpCalls = Arc<Mutex<Vec<u64>>>;
     fn recording_re_jump(scripted: Scripted) -> (ReJump, RejumpCalls) {
-        let (cb, calls, _frontier) = recording_re_jump_with_frontier(scripted);
+        let (cb, calls, _targets) = recording_re_jump_with_targets(scripted);
         (cb, calls)
     }
 
-    /// As [`recording_re_jump`] but also returns the `upstream_frontier` atomic so
-    /// a test can simulate the cert-inlet advancing it (the deadlock path, where
-    /// the marshal `Update::Tip` height stays frozen).
-    fn recording_re_jump_with_frontier(
+    /// As [`recording_re_jump`] but also returns the TARGET heights the executor
+    /// handed in — the `(finalization, block)` pair it read out of its own marshal
+    /// archive at the tip it triggered on (§5.2).
+    fn recording_re_jump_with_targets(
         scripted: Scripted,
-    ) -> (ReJump, RejumpCalls, Arc<std::sync::atomic::AtomicU64>) {
+    ) -> (ReJump, RejumpCalls, Arc<Mutex<Vec<u64>>>) {
         let calls: RejumpCalls = Arc::new(Mutex::new(Vec::new()));
+        let targets: Arc<Mutex<Vec<u64>>> = Arc::new(Mutex::new(Vec::new()));
         let calls_cl = calls.clone();
-        let call: ReJumpFn = Arc::new(move |from| {
+        let targets_cl = targets.clone();
+        let call: ReJumpFn = Arc::new(move |from, target| {
             calls_cl.lock().unwrap().push(from);
+            targets_cl.lock().unwrap().push(target.block.height);
             let scripted = scripted.clone();
             Box::pin(async move { scripted.build() })
         });
-        let upstream_frontier = Arc::new(std::sync::atomic::AtomicU64::new(0));
         (
             ReJump {
                 call,
-                upstream_frontier: upstream_frontier.clone(),
                 threshold: JUMP_THRESHOLD,
                 rotate: None,
                 probe: None,
                 tracked_epoch: None,
             },
             calls,
-            upstream_frontier,
+            targets,
         )
     }
 
@@ -9781,7 +9945,7 @@ mod tests {
         let calls_cl = calls.clone();
         let scripts = Arc::new(scripts);
         let idx = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let call: ReJumpFn = Arc::new(move |from| {
+        let call: ReJumpFn = Arc::new(move |from, _target| {
             calls_cl.lock().unwrap().push(from);
             let i = idx
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
@@ -9802,7 +9966,6 @@ mod tests {
         (
             ReJump {
                 call,
-                upstream_frontier: Arc::new(std::sync::atomic::AtomicU64::new(0)),
                 threshold: JUMP_THRESHOLD,
                 rotate: Some(rotate),
                 probe: None,
@@ -9898,7 +10061,7 @@ mod tests {
             // window in which stale deliveries accumulate.
             let gate = Arc::new(tokio::sync::Notify::new());
             let gate_cl = gate.clone();
-            let call: ReJumpFn = Arc::new(move |_from| {
+            let call: ReJumpFn = Arc::new(move |_from, _target| {
                 let gate = gate_cl.clone();
                 Box::pin(async move {
                     gate.notified().await;
@@ -9911,7 +10074,6 @@ mod tests {
             });
             let cb = ReJump {
                 call,
-                upstream_frontier: Arc::new(std::sync::atomic::AtomicU64::new(0)),
                 threshold: JUMP_THRESHOLD,
                 rotate: None,
                 probe: None,
@@ -10038,7 +10200,7 @@ mod tests {
                 // test) so the escape is deterministic.
                 let gate = Arc::new(tokio::sync::Notify::new());
                 let gate_cl = gate.clone();
-                let call: ReJumpFn = Arc::new(move |_from| {
+                let call: ReJumpFn = Arc::new(move |_from, _target| {
                     let gate = gate_cl.clone();
                     Box::pin(async move {
                         gate.notified().await;
@@ -10051,7 +10213,6 @@ mod tests {
                 });
                 let cb = ReJump {
                     call,
-                    upstream_frontier: Arc::new(std::sync::atomic::AtomicU64::new(0)),
                     threshold: JUMP_THRESHOLD,
                     rotate: None,
                     probe: None,
@@ -10127,45 +10288,130 @@ mod tests {
         );
     }
 
-    // DEADLOCK PATH: under the "committee[E] not committed" defer, the inlet
-    // stores nothing → the marshal `Update::Tip` height FREEZES just above the
-    // anchor, so the OLD trigger (gap measured off the marshal tip) never fired
-    // and the follower wedged forever. The inlet keeps advancing
-    // `upstream_frontier` off the deferred certs, so the trigger — now measuring
-    // `max(tip, upstream_frontier) − ordering_finalized` — fires on a LOW (frozen)
-    // tip once the true frontier runs past the serving window. This test sends a
-    // low tip while the frontier is far ahead and asserts the re-jump still fires
-    // (it would NOT under the pre-fix tip-only gate).
+    // (4.2 Б1.1) THE TRIGGER IS THE MARSHAL TIP AND NOTHING ELSE — however loud
+    // an unauthenticated source is about how far ahead the chain has run.
+    //
+    // WHAT THIS TEST USED TO SAY. It was
+    // `re_jump_fires_off_upstream_frontier_when_marshal_tip_frozen`, and it
+    // asserted the OPPOSITE: that a frozen marshal tip plus a far-ahead
+    // `upstream_frontier` atomic MUST fire the jump, because the trigger read
+    // `max(tip, upstream_frontier)`. That atomic existed for one reason — under
+    // the "committee[E] not committed" defer the inlet stored nothing, so the tip
+    // froze exactly when the jump was needed — and it paid for that with an input
+    // nobody had authenticated: whoever fed the inlet, or answered the probe's
+    // `Latest`, chose the number the deep trigger compared against. §5.2 removes
+    // both the atomic and the reason: the frozen-tip probe puts the ladder step
+    // `Finalized{last(T+1)}` on the marshal every frozen tick, a served step goes
+    // through `verify_delivered`, and the tip moves. A tip that stays frozen is a
+    // tip nothing VERIFIED has moved, and that is not a state to jump out of.
+    //
+    // The remaining unauthenticated input on the path is the probe's `Latest`
+    // height, which is exactly what this test shouts: a probe answering with a
+    // height 5_010 blocks past the serving window, and a marshal tip five blocks
+    // above the anchor.
+    //
+    // RED under the mutation that hands the trigger that height — one line in
+    // `probe_frontier`, `let _ = self.maybe_re_jump(frontier).await;`, which is
+    // what `max(tip, upstream_frontier)` amounted to once the probe was the
+    // atomic's only writer: `a re-jump was spawned on a height no one
+    // authenticated: [100]`. (Run 2026-09-12; the mutation was reverted.)
+    //
+    // Falsifier: any recorded call (an unverified height reached the trigger); a
+    // probe that never ran (then the loud source never spoke and the test is
+    // vacuous).
     #[test]
-    fn re_jump_fires_off_upstream_frontier_when_marshal_tip_frozen() {
+    fn a_frozen_tip_spawns_no_re_jump_however_far_ahead_the_probe_claims_the_chain_is() {
         let runtime = deterministic::Runner::default();
         runtime.start(|ctx| async move {
             const ANCHOR: u64 = 100;
-            let (cb, calls, frontier) = recording_re_jump_with_frontier(Scripted::Lagging);
+            let (mut cb, calls, _targets) = recording_re_jump_with_targets(Scripted::Lagging);
+            let far = ANCHOR + JUMP_THRESHOLD + 5_010;
+            let (probe_rj, ticks) = scripted_probe(vec![ProbeOutcome {
+                frontier: Some(Height::new(far)),
+                step: None,
+            }]);
+            cb.probe = probe_rj.probe;
             let fx = Fixture::new(ANCHOR).with_re_jump(cb);
-            let (actor, mailbox) = fx.build(ctx.clone(), ANCHOR, ANCHOR);
-            let handle = actor.start();
+            let (mut actor, _mailbox) = fx.build(ctx.clone(), ANCHOR, ANCHOR);
 
-            // The inlet has advanced the TRUE frontier far past the serving window
-            // (deferred certs climb it) while the marshal tip is frozen at the
-            // anchor.
-            frontier.store(
-                ANCHOR + JUMP_THRESHOLD + 5_010,
-                std::sync::atomic::Ordering::Relaxed,
+            // A LOW (frozen) marshal tip: the gap off the tip is ≤ threshold.
+            actor
+                .maybe_re_jump(Height::new(ANCHOR + 5))
+                .await
+                .expect("no fault");
+            ctx.sleep(Duration::from_millis(10)).await;
+            // The loud source speaks — and is believed only as far as one
+            // `hint_finalization`, which is a fetch the marshal verifies itself.
+            actor.probe_frontier().await;
+            assert_eq!(
+                ticks.load(std::sync::atomic::Ordering::Relaxed),
+                1,
+                "the probe body never ran — the loud source never spoke"
             );
-            // A LOW (frozen) marshal tip — gap off the tip alone is ≤ JUMP_THRESHOLD,
-            // so the pre-fix gate would NOT fire. The fix maxes in the frontier.
-            mailbox.send(tip_msg(ANCHOR + 5)).expect("send low tip");
+            assert_eq!(
+                fx.marshal.hints.lock().unwrap().clone(),
+                vec![far],
+                "the probe's `Latest` bought one by-height hint and nothing else"
+            );
+            // ...and the next frozen tip still measures the gap off the tip.
+            actor
+                .maybe_re_jump(Height::new(ANCHOR + 5))
+                .await
+                .expect("no fault");
             ctx.sleep(Duration::from_millis(10)).await;
 
+            assert!(
+                calls.lock().unwrap().is_empty(),
+                "a re-jump was spawned on a height no one authenticated: {:?}",
+                calls.lock().unwrap()
+            );
+        });
+    }
+
+    // (4.2 Б1.2) AND THE TARGET COMES OUT OF THE NODE'S OWN ARCHIVE, AT THE TIP
+    // IT TRIGGERED ON — not from anything a peer answered.
+    //
+    // Falsifier: a target height that is not the tip; no call at all (then the
+    // fixture stopped triggering and the assert above it is vacuous).
+    #[test]
+    fn the_re_jump_target_is_the_pair_at_the_tip_the_trigger_fired_on() {
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            const ANCHOR: u64 = 100;
+            let tip = ANCHOR + JUMP_THRESHOLD + 5_010;
+            let (cb, calls, targets) = recording_re_jump_with_targets(Scripted::Lagging);
+            let fx = Fixture::new(ANCHOR).with_re_jump(cb);
+            let (mut actor, _mailbox) = fx.build(ctx.clone(), ANCHOR, ANCHOR);
+
+            actor
+                .maybe_re_jump(Height::new(tip))
+                .await
+                .expect("no fault");
+            ctx.sleep(Duration::from_millis(10)).await;
             assert_eq!(
                 *calls.lock().unwrap(),
                 vec![ANCHOR],
-                "re-jump fires off the upstream frontier even with a frozen marshal tip"
+                "the deep gap did not spawn the waiter"
+            );
+            assert_eq!(
+                *targets.lock().unwrap(),
+                vec![tip],
+                "the jump target was not the archive pair at the triggering tip"
             );
 
-            drop(mailbox);
-            let _ = handle.await;
+            // And with NO pair at that tip the trigger declines rather than
+            // guesses: a heartbeat re-poke of a tip the floor moved past.
+            *fx.marshal.archive_empty.lock().unwrap() = true;
+            actor
+                .maybe_re_jump(Height::new(tip + 1))
+                .await
+                .expect("no fault");
+            ctx.sleep(Duration::from_millis(10)).await;
+            assert_eq!(
+                *calls.lock().unwrap(),
+                vec![ANCHOR],
+                "the trigger spawned a jump with no archive pair behind the tip"
+            );
         });
     }
 
@@ -10196,8 +10442,7 @@ mod tests {
         };
         (
             ReJump {
-                call: Arc::new(|_| Box::pin(async { Scripted::Lagging.build() })),
-                upstream_frontier: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                call: Arc::new(|_, _| Box::pin(async { Scripted::Lagging.build() })),
                 threshold: JUMP_THRESHOLD,
                 rotate: None,
                 probe: Some(probe),
@@ -10210,6 +10455,185 @@ mod tests {
     /// A named ladder step for `height`, addressed at the dummy committee.
     fn step_at(height: u64) -> Option<(Height, NonEmptyVec<PeerPubkey>)> {
         Some((Height::new(height), dummy_peers().expect("one peer")))
+    }
+
+    /// A `CertUpstream` that answers nothing. The probe's `Latest` arm then
+    /// returns `None`, so the only thing the follower-shape test below can
+    /// observe is the LADDER STEP — which is the point: the step must not need
+    /// an answered `Latest` to be taken (review A2-01 removed `servable`).
+    #[derive(Clone)]
+    struct SilentUpstream;
+
+    impl crate::cert_follow::CertUpstream for SilentUpstream {
+        async fn get_finalization(
+            &self,
+            _height: Height,
+        ) -> Option<crate::cert_follow::UpstreamFinalized> {
+            None
+        }
+        async fn get_latest(&self) -> Option<crate::cert_follow::UpstreamFinalized> {
+            None
+        }
+        async fn rotate(&self) {}
+    }
+
+    /// A committee module with a frozen geometry and a readable record at every
+    /// epoch — the two things `dpos::frontier_probe` reads to NAME a rung
+    /// (`geometry().last(T+1)` and `committee(T+1).participants`).
+    fn committee_with_participants(
+        activation: u64,
+        interval: u64,
+    ) -> Arc<crate::committee::testing::SchemeCommittee> {
+        use commonware_codec::DecodeExt as _;
+        use commonware_cryptography::{ed25519::PrivateKey as Ed25519PrivateKey, Signer as _};
+        use commonware_math::algebra::Random as _;
+        use commonware_utils::TryFromIterator as _;
+        use fluentbase_bls::{keys::ValidatorBlsKeypair, BlsPubkey};
+        use fluentbase_staking_reader::reader::{
+            ConsensusKeys, ValidatorSetSnapshot, ValidatorWithKeys,
+        };
+        use rand_08::rngs::StdRng;
+        use rand_core::SeedableRng as _;
+
+        const N: usize = 4;
+        let mut rng = StdRng::seed_from_u64(0xB101);
+        let peers: Vec<PeerPubkey> = (0..N)
+            .map(|_| Ed25519PrivateKey::random(&mut rng).public_key())
+            .collect();
+        let bls: Vec<BlsPubkey> = (0..N)
+            .map(|_| {
+                let kp = ValidatorBlsKeypair::generate(&mut rng);
+                BlsPubkey::decode(kp.public_bytes().as_slice()).expect("bls pubkey")
+            })
+            .collect();
+        crate::committee::testing::SchemeCommittee::with_geometry(
+            |_| None,
+            move |epoch| {
+                let snap = ValidatorSetSnapshot {
+                    block_hash: B256::ZERO,
+                    block_number: 0,
+                    epoch,
+                    validators: peers
+                        .iter()
+                        .zip(bls.iter())
+                        .map(|(peer, bls)| ValidatorWithKeys {
+                            address: alloy_primitives::Address::ZERO,
+                            keys: ConsensusKeys {
+                                peer_pubkey: peer.clone(),
+                                bls_pubkey: *bls,
+                                activation_epoch: 0,
+                            },
+                            tombstoned: false,
+                        })
+                        .collect(),
+                    weights: Some(vec![1u128; N]),
+                };
+                Some(crate::committee::CommitteeRecord {
+                    epoch,
+                    members: peers
+                        .iter()
+                        .zip(bls.iter())
+                        .map(|(peer, bls)| crate::committee::Member {
+                            address: alloy_primitives::Address::ZERO,
+                            peer: peer.clone(),
+                            bls: *bls,
+                        })
+                        .collect(),
+                    weights: vec![1u128; N],
+                    changed: false,
+                    snapshot: (0, B256::ZERO),
+                    participants: commonware_utils::ordered::Set::try_from_iter(
+                        peers.iter().cloned(),
+                    )
+                    .expect("non-empty"),
+                    bls: crate::scheme::epoch_committee_from_snapshot(&snap).expect("committee"),
+                })
+            },
+            crate::committee::Geometry::new(activation, interval),
+        )
+    }
+
+    // (review B1-01) A FOLLOWER CLIMBS THE SAME LADDER, AND ITS `T` IS ITS OWN.
+    //
+    // The two production pieces a follower now wires (`consensus/dpos.rs`, the
+    // `launch_follower` re-jump: `probe: Some(frontier_probe(up, committee))` and
+    // `tracked_epoch: Some(local_tracked_epoch(committee, finalized_cursor))`),
+    // composed exactly as that site composes them, over an executor whose tip is
+    // frozen. What the run has to show is one thing: the rung `last(T+1)` reaches
+    // the marshal.
+    //
+    // WHY IT MATTERS THAT IT IS THE FOLLOWER. Until this pass the follower wired
+    // `probe: None, tracked_epoch: None` — a validator's step and a follower's
+    // silence — on the reasoning that its WS inlet is an always-on live producer.
+    // The inlet is a SUBSCRIPTION: it replays no intermediate height, and every
+    // cert above this node's own two-epoch ceiling is deferred by the committee
+    // read window, storing nothing. With `upstream_frontier` deleted (§5.2) the
+    // trigger reads the marshal tip alone, so at `fin == tip == ceiling` the gap
+    // is 0, the tip is frozen, and nothing local can unfreeze it. The step is what
+    // does: the marshal pulls `last(T+1)` BY HEIGHT through this node's own
+    // upstream, `verify_delivered` stores it, `Update::Tip` re-arms the trigger.
+    //
+    // THE FIXTURE IS THAT STATE. `fin = tip = 95 = last(2)`, so ET's rule gives
+    // `T = 3` and the rung is `last(4) = 159` — above the tip, which is the only
+    // reason putting it does anything.
+    //
+    // RED before the fix (mutation: `local_tracked_epoch` returning `None`, which
+    // IS the follower's pre-fix `tracked_epoch: None`): no step is named, `hints`
+    // stays empty.
+    //
+    // WHAT IT DOES NOT SHOW, said here because the journal says it too: a live
+    // follower under a real deep lag. The stand builds no follower, so the
+    // acceptance for that class stays open (В§0(5)).
+    //
+    // Falsifier: an empty `hints` (the follower names no rung, i.e. the pre-fix
+    // state); a rung at or below the frozen tip (a fetch the marshal discards);
+    // a rung that is not `last(T+1)` for the LOCAL `T`.
+    #[test]
+    fn a_follower_shaped_re_jump_puts_its_own_ladder_step_on_the_marshal() {
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            const INTERVAL: u64 = 32;
+            // `last(2)` under `(activation 0, interval 32)`: the terminal an
+            // execution-stalled node parks on.
+            const PARKED: u64 = 95;
+            let committee: Arc<dyn crate::committee::Committee> =
+                committee_with_participants(0, INTERVAL);
+            let cursor = crate::FinalizedCursor::default();
+            cursor.advance(PARKED);
+
+            let re_jump = ReJump {
+                call: Arc::new(|_, _| Box::pin(async { Scripted::Lagging.build() })),
+                threshold: JUMP_THRESHOLD,
+                rotate: None,
+                probe: Some(crate::dpos::frontier_probe(
+                    SilentUpstream,
+                    committee.clone(),
+                )),
+                tracked_epoch: Some(crate::dpos::local_tracked_epoch(
+                    committee.clone(),
+                    cursor.clone(),
+                )),
+            };
+            let fx = Fixture::new(PARKED).with_re_jump(re_jump);
+            // `last_consensus` seeds BOTH `last_tip_height` and `probe_prev_tip`,
+            // so the tip is 95 and frozen from tick one.
+            let (mut actor, _mailbox) = fx.build(ctx, PARKED, PARKED);
+
+            actor.probe_frontier().await;
+
+            let hints = fx.marshal.hints.lock().unwrap().clone();
+            assert_eq!(
+                hints,
+                vec![159],
+                "a frozen-tip follower named no rung (or the wrong one): `T` is \
+                 `epoch_of(95) + 1 = 3` and the rung is `last(4) = 159`"
+            );
+            assert!(
+                hints[0] > PARKED,
+                "the rung is at or below the frozen tip — the marshal would discard it \
+                 and nothing would move"
+            );
+        });
     }
 
     // (4.2 А) THE LADDER IS THE REPETITION OF THE TICK: a step the marshal can act
@@ -11045,56 +11469,85 @@ mod tests {
         });
     }
 
-    // (d''') Same NON-fatal rotate-immediately treatment as BadTarget, but for the
-    // POST-sync-attempt InvalidTarget outcome (reth itself rejected the served
-    // branch mid-EL-sync, el_sync_calls >= 1) — kept as a distinct outcome from
-    // BadTarget precisely so BadTarget's own el_sync_calls==0 invariant stays
-    // pinned, but the executor's reaction to both is identical (rotate, reset).
+    // (d''', review B1-04) THE LANDING CONTRADICTS AN AUTHENTICATED CERTIFICATE ⇒
+    // `Fault::corruption`, AND NOTHING IS ROTATED.
+    //
+    // WHAT THIS TEST SAID BEFORE. It was `re_jump_invalid_target_rotates` and it
+    // pinned the opposite: `rotations == 1` and a surviving loop, on the reasoning
+    // that `InvalidTarget` is "the same NON-fatal bad-upstream treatment as
+    // BadTarget". That reasoning belongs to the era when the jump target came from
+    // `CertUpstream::get_latest` — an answer a peer chose. Since §5.2 the
+    // steady-state target is the `(finalization, block)` pair this node read out of
+    // its OWN marshal archive, written only by `store_finalization` after
+    // `verify_delivered`, so there is no upstream to rotate away from: rotating
+    // moves the fetch seam and leaves the contradiction standing. §5.4 files both
+    // routes into this outcome — "Посадка не на заверенную ветку" and "reth
+    // Invalid" — as `Fault::corruption`.
+    //
+    // RED before the fix (mutation: the arm restored to `self.rotate_upstream()`),
+    // on `rotations == 0` and on the handle never resolving.
+    //
+    // Falsifier: a rotation (the node treats a local EL contradiction as somebody
+    // else's fault); a surviving loop (it keeps driving reth after the EL
+    // contradicted an authenticated certificate); no jump call at all (the fixture
+    // stopped triggering and everything above is vacuous); a floor advance.
     #[test]
-    fn re_jump_invalid_target_rotates() {
-        let runtime = deterministic::Runner::default();
-        runtime.start(|ctx| async move {
-            const ANCHOR: u64 = 100;
-            let (cb, calls, rotations) =
-                recording_re_jump_with_rotate(vec![Scripted::InvalidTarget(
-                    "reth rejected the served tip as INVALID".into(),
-                )]);
-            let fx = Fixture::new(ANCHOR).with_re_jump(cb);
-            let (actor, mailbox) = fx.build(ctx.clone(), ANCHOR, ANCHOR);
-            let handle = actor.start();
+    fn re_jump_invalid_target_is_corruption_and_does_not_rotate() {
+        let recorder = DebuggingRecorder::new();
+        let snap = recorder.snapshotter();
+        metrics::with_local_recorder(&recorder, || {
+            let runtime = deterministic::Runner::default();
+            runtime.start(|ctx| async move {
+                const ANCHOR: u64 = 100;
+                let (cb, calls, rotations) =
+                    recording_re_jump_with_rotate(vec![Scripted::InvalidTarget(
+                        "reth rejected the served tip as INVALID".into(),
+                    )]);
+                let fx = Fixture::new(ANCHOR).with_re_jump(cb);
+                let (actor, mailbox) = fx.build(ctx.clone(), ANCHOR, ANCHOR);
+                let mut handle = actor.start();
 
-            mailbox
-                .send(tip_msg(ANCHOR + JUMP_THRESHOLD + 5_010))
-                .expect("send tip");
-            // Yield so the spawned waiter completes + its `jump_done` arm runs.
-            ctx.sleep(Duration::from_millis(10)).await;
+                mailbox
+                    .send(tip_msg(ANCHOR + JUMP_THRESHOLD + 5_010))
+                    .expect("send tip");
+                // Yield so the spawned waiter completes + its `jump_done` arm runs.
+                ctx.sleep(Duration::from_millis(20)).await;
 
-            // Follow-up finalize: must STILL ack ⇒ the loop survived InvalidTarget.
-            finalize_and_ack_behind(
-                &fx,
-                &mailbox,
-                sample_order(Digest(B256::ZERO), ANCHOR + 1, B256::ZERO),
-            )
-            .await;
-
-            assert_eq!(
-                *calls.lock().unwrap(),
-                vec![ANCHOR],
-                "re-jump was invoked (gap > threshold) and returned InvalidTarget"
-            );
-            assert_eq!(
-                rotations.load(std::sync::atomic::Ordering::Relaxed),
-                1,
-                "an InvalidTarget re-jump rotates the upstream exactly once, same as BadTarget"
-            );
-            assert!(
-                fx.marshal.floors.lock().unwrap().is_empty(),
-                "an InvalidTarget re-jump must NOT advance the marshal floor"
-            );
-
-            drop(mailbox);
-            let _ = handle.await;
+                assert_eq!(
+                    *calls.lock().unwrap(),
+                    vec![ANCHOR],
+                    "re-jump was invoked (gap > threshold) and returned InvalidTarget"
+                );
+                assert_eq!(
+                    rotations.load(std::sync::atomic::Ordering::Relaxed),
+                    0,
+                    "an InvalidTarget on a target read from this node's own archive rotated \
+                     the upstream — there is nobody to rotate away from"
+                );
+                assert!(
+                    fx.marshal.floors.lock().unwrap().is_empty(),
+                    "an InvalidTarget re-jump must NOT advance the marshal floor"
+                );
+                assert!(
+                    (&mut handle).now_or_never().is_some(),
+                    "the executor kept running after its EL contradicted an authenticated \
+                     certificate — §5.4 files that as corruption, which shuts it down"
+                );
+                assert!(
+                    !fx.safety_halt.is_engaged(),
+                    "corruption is a loud death, not the fork-safety latch (that one is L1Fork)"
+                );
+            });
         });
+        assert_eq!(
+            counter_at(
+                &drain_counters(&snap),
+                "dpos_executor_fault_total",
+                ("class", "corruption")
+            ),
+            1,
+            "the landing contradiction must reach the fault router as a Corruption"
+        );
     }
 
     // A steady-state re-jump `AuthFailed` (a forged/unagreed
@@ -11855,7 +12308,6 @@ mod tests {
     // drains.
     #[test]
     fn no_derive_or_spec_while_jump_in_flight_then_drains() {
-        use std::sync::atomic::AtomicU64;
         let runtime = deterministic::Runner::default();
         runtime.start(|ctx| async move {
             const ANCHOR: u64 = 100;
@@ -11865,7 +12317,7 @@ mod tests {
             let calls: RejumpCalls = Arc::new(Mutex::new(Vec::new()));
             let calls_cl = calls.clone();
             let release_cl = release.clone();
-            let call: ReJumpFn = Arc::new(move |from| {
+            let call: ReJumpFn = Arc::new(move |from, _target| {
                 calls_cl.lock().unwrap().push(from);
                 let release = release_cl.clone();
                 Box::pin(async move {
@@ -11875,7 +12327,6 @@ mod tests {
             });
             let cb = ReJump {
                 call,
-                upstream_frontier: Arc::new(AtomicU64::new(0)),
                 threshold: JUMP_THRESHOLD,
                 rotate: None,
                 probe: None,

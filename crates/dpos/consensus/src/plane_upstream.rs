@@ -64,14 +64,16 @@
 //!   §0(6)(б), Д-72).
 //! * `Latest` — nothing is ORPHANED by dropping it (`fetch_one` clears its own
 //!   waiter and cancels the fetch on the timeout, `:534-553`, and the next probe
-//!   tick asks again), but the height it carries is the ONLY input of the deep
-//!   re-jump trigger, which still reads `max(tip, upstream_frontier)`
-//!   (`executor.rs`). Measured in pass А: with the drop in place a node more than
-//!   two epochs behind never reaches its jump threshold — its marshal freezes at
-//!   the two-epoch ceiling, the gap off the tip alone stays under the threshold,
-//!   and eight stand tests lose their deep catch-up. The drop and the tip-only
-//!   trigger are ONE change and it belongs to the pass that makes `Frontier` the
-//!   marshal tip (review A2-04, §6 п.2-3).
+//!   tick asks again). Since pass Б1 its height is no longer a TRIGGER input at
+//!   all: the jump trigger reads the marshal tip alone and the jump's target is a
+//!   pair out of the local archive (`executor::maybe_re_jump`). What a `Latest`
+//!   answer still buys is one `hint_finalization(frontier)` — a by-height fetch
+//!   the marshal then verifies and stores itself — and the probe's own "was I
+//!   served" bit. So the honest reason it is still passed on is smaller than it
+//!   was and it is the SAME as the by-height arm's: the consumer below has its own
+//!   gate, and nothing above believes the height. Dropping it out of the read
+//!   window is §5.2's letter and pass Б2's work, together with the cold-start
+//!   jump — the last consumer of an unverified `Latest` as a TARGET.
 //!
 //! Passing an answer on trusts nothing extra: a by-height pair still meets the
 //! marshal's own `verify_delivered` (BLS under the same committee module), and a
@@ -270,6 +272,13 @@ impl FrontierMarshal for MarshalMailbox {
         Some((fin, block))
     }
 
+    /// Both reads at the SAME explicit height, never `Identifier::Latest`: a block
+    /// finalizing between the two awaits would otherwise pair `fin@h` with
+    /// `block@h+1`, exactly as [`Self::latest_pair`] documents.
+    ///
+    /// THE one body for this concrete type. `executor::BlockFetcher::pair_at` —
+    /// the executor's erased seam, over the same `marshal::core::Mailbox` — calls
+    /// straight into this one rather than repeating it (review B1-15).
     async fn pair_at(&self, height: Height) -> Option<(Cert, OrderBlock)> {
         let fin = self.get_finalization(height).await?;
         let block = self.get_block(height).await?;
@@ -592,10 +601,14 @@ impl<E: Clock> PlaneUpstreamHandle<E> {
     /// has no fallback, and re-deriving targets from the HEIGHT inside this call
     /// retargets whichever ordinary by-height repair pull happens to land on
     /// `last(T+1)` — measured on the stand, that starves the contiguous catch-up
-    /// of a node that has just landed a jump and it never finishes. The step is
+    /// of a node that has just landed a jump and it never finishes.
+    ///
+    /// Carrying the step's OWN target list down to here — the A2-05 / B1-10 route
+    /// — was built and MEASURED in the third pass, and rolled back: see
+    /// `cert_inlet::UpstreamResolver::fetch_targeted` for the number. The step is
     /// addressed where it is ISSUED (`executor::probe_frontier` →
-    /// `marshal.hint_finalization(height, committee[T+1])`); see the journal §7 for
-    /// how far those targets actually travel on each resolver shape.
+    /// `marshal.hint_finalization(height, committee[T+1])`); how far those targets
+    /// travel on each resolver shape is the journal's §7.
     async fn fetch_one(&self, key: FrontierKey) -> Option<UpstreamFinalized> {
         let (tx, rx) = oneshot::channel();
         self.waiters
@@ -1116,13 +1129,14 @@ mod tests {
     ///
     /// §5.2 says to DROP it here, and unlike the by-height arm (г2) nothing would
     /// be ORPHANED by that — `fetch_one` clears its own waiter and cancels the
-    /// fetch on the timeout, and the next probe tick asks again. What stops it in
-    /// pass А is the CONSUMER: this height is the only input of the deep re-jump
-    /// trigger (`max(tip, upstream_frontier)`), so withholding it leaves a node
-    /// more than two epochs behind frozen at its ceiling with a gap below the jump
-    /// threshold. Measured in pass А: eight stand tests lose their deep catch-up,
-    /// `testbed::preconditions::a_node_more_than_two_epochs_behind_…` among them.
-    /// The drop and the tip-only trigger are one change (review A2-04, §6 п.2-3).
+    /// fetch on the timeout, and the next probe tick asks again. What stopped it
+    /// in pass А was the CONSUMER: this height was the only input of the deep
+    /// re-jump trigger. Pass Б1 took that consumer away (the trigger reads the
+    /// marshal tip, the target comes out of the local archive), so the height now
+    /// buys one `hint_finalization` and the probe's "was I served" bit. The
+    /// remaining consumer of an unverified `Latest` as a TARGET is the PRE-ENGINE
+    /// cold-start jump on an empty archive, which is what pass Б2 rebuilds — and
+    /// the drop lands with it (review A2-04, §6 п.2-3).
     ///
     /// Falsifier: a `false` (the honest peer would be excluded for this node's own
     /// lag); a marshal call; an unresolved waiter.

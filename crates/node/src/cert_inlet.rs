@@ -27,10 +27,12 @@ use tracing::{error, info};
 /// live `(Finalization, OrderBlock)` through [`CertInlet::ingest`] into the same
 /// marshal the local engine drives.
 ///
-/// `tee` re-homes the live-frontier cursors (`live_height` + the DkgActor deal
-/// clock) off the verified upstream tip — present on a validator (it owns the
-/// beacon plane), so committee[E+1] resolves and the DKG deals at the LIVE
-/// frontier rather than this node's lagging EL-finalized state.
+/// `tee` re-homes the DkgActor deal clock — the ONE cursor it still carries —
+/// off the verified upstream tip, present on a validator (it owns the beacon
+/// plane), so the DKG deals at the LIVE frontier rather than at this node's
+/// lagging EL-finalized state. The committee cursor that sat beside it
+/// (`live_height`) is gone: every committee read goes through the module at this
+/// node's ordering-finalized anchor.
 ///
 /// There is no `walk` parameter and no epoch geometry here: the ladder's
 /// boundary-walk rung was deleted 2026-08-19 with the agreement plane, and pin

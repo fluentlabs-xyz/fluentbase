@@ -978,13 +978,6 @@ pub struct DposLayerConfig<D, XC, A, U> {
     /// re-builds the network, re-spawns the `DkgActor`, re-registers the metrics, or
     /// re-binds `listen`.
     pub beacon_plane: SharedBeaconPlane,
-    /// The shared upstream-frontier atomic for the validator-with-upstream re-jump
-    /// (Rule Y). Created ONCE in the node crate (`node/dpos.rs::launch_validator_overlay`)
-    /// and threaded into BOTH the validator inlet's `LiveFrontierTee.upstream_frontier`
-    /// (writer) and this re-jump (reader) — the same inlet⇄executor signal the follower
-    /// has. HEIGHT-ONLY, never feeds committee/DKG selection (I6). A no-upstream
-    /// validator passes a standalone `0` atomic (nothing writes it; `re_jump` is `None`).
-    pub upstream_frontier: std::sync::Arc<std::sync::atomic::AtomicU64>,
     /// Supervisor handles of the epoch-key agreement instances the beacon plane
     /// starts. Threaded straight through to [`crate::epoch_manager::Actor`], which
     /// owns them and prunes them on the same frontier cutoff as the per-epoch
@@ -1102,6 +1095,129 @@ pub(crate) fn step_skip_reason(e: &crate::committee::CommitteeError) -> &'static
         crate::committee::CommitteeError::NotReadable { .. } => "not_readable",
         crate::committee::CommitteeError::Read(_) => "read_failed",
     }
+}
+
+/// The executor's frozen-tip frontier probe (see [`crate::executor::ReJump::probe`]),
+/// built ONCE here for BOTH launch paths — the plane-native validator and the
+/// follower.
+///
+/// TWO requests per tick (§5.2 "Триггер и лестница"): the untargeted `Latest`,
+/// whose height is the hint driver, and the LADDER STEP `Finalized{last(T+1)}`.
+/// This closure only NAMES the step and its addressees; the executor puts it on
+/// the MARSHAL's own resolver (`marshal.hint_finalization(height, targets)`), and
+/// it is that resolver which carries the targets to `committee[T+1]` — the set
+/// that finalized that height. Both answers are judged by
+/// [`crate::plane_upstream::FrontierHandler`]'s `deliver`; the step's never comes
+/// back here, it goes into the marshal and shows up as the tip moving.
+///
+/// `last(T+1)` and `committee[T+1]` both come from the committee module — ONE
+/// geometry and ONE committee map per process. An unreadable `committee[T+1]` is
+/// not a failure, it is "this node cannot name the addressee yet": count it and
+/// ask `Latest` alone.
+///
+/// ONE constructor and not two closures, because the two node classes have to
+/// climb the SAME ladder (review B1-01): the follower used to wire `probe: None`,
+/// which after §5.2 removed `upstream_frontier` left it with no way out of the
+/// "committee[E] not committed" defer at all. Its `Latest`/by-height seam is its
+/// WS upstream instead of the frontier resolver, and that is the only difference
+/// — it is the `U: CertUpstream` argument, not a second body.
+pub(crate) fn frontier_probe<U: crate::cert_follow::CertUpstream>(
+    up: U,
+    committee: Arc<dyn crate::committee::Committee>,
+) -> crate::executor::FrontierProbeFn {
+    Arc::new(move |tracked: Option<u64>| {
+        let up = up.clone();
+        let committee = committee.clone();
+        Box::pin(async move {
+            let step = match (tracked, committee.geometry()) {
+                (Some(t), Some(geometry)) => {
+                    let next = t + 1;
+                    match committee.committee(next) {
+                        Ok(record) => {
+                            let targets: Vec<_> = record.participants.iter().cloned().collect();
+                            // An empty `participants` is a readable record with
+                            // nobody to ask. It skips the step like every other
+                            // unnameable addressee, so it owes the dashboard the
+                            // same `reason` the others give.
+                            match commonware_utils::vec::NonEmptyVec::try_from(targets) {
+                                Ok(t) => Some((Height::new(geometry.last(next)), t)),
+                                Err(_) => {
+                                    metrics::counter!(
+                                        crate::executor::FRONTIER_STEP_SKIPPED,
+                                        "reason" => "no_participants",
+                                    )
+                                    .increment(1);
+                                    None
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            metrics::counter!(
+                                crate::executor::FRONTIER_STEP_SKIPPED,
+                                "reason" => step_skip_reason(&e),
+                            )
+                            .increment(1);
+                            None
+                        }
+                    }
+                }
+                (None, _) => {
+                    metrics::counter!(
+                        crate::executor::FRONTIER_STEP_SKIPPED,
+                        "reason" => "no_tracked_epoch",
+                    )
+                    .increment(1);
+                    None
+                }
+                (Some(_), None) => {
+                    metrics::counter!(
+                        crate::executor::FRONTIER_STEP_SKIPPED,
+                        "reason" => "no_geometry",
+                    )
+                    .increment(1);
+                    None
+                }
+            };
+            let latest = crate::cert_follow::CertUpstream::get_latest(&up).await;
+            crate::executor::ProbeOutcome {
+                frontier: latest.map(|uf| Height::new(uf.block.height)),
+                step,
+            }
+        })
+    })
+}
+
+/// `T` for a node that runs NO [`fluentbase_staking_reader::EpochTransition`] —
+/// the follower (review B1-01).
+///
+/// A validator mirrors `EpochTransition::last_tracked_epoch` off the boundary
+/// bridge; a follower spawns no per-epoch engine and therefore no transition, so
+/// it computes the SAME number from the two things it does have: the committee
+/// module's geometry and its own ordering-finalized cursor — the very cursor the
+/// module already anchors its reads on (`RethAnchor(finalized_cursor)`), not a
+/// new source.
+///
+/// THE RULE IS ET'S, restated over those two, not a second convention
+/// (`staking-reader/src/epoch_transition.rs:550-585`): the transition tracks
+/// `epoch_e + 1` when the finalized block is the LAST block of its epoch (both
+/// the cold-start arm `:558` and the boundary arm `:580`) and `epoch_e`
+/// otherwise. `geometry.last(epoch_of(fin)) == fin` is that boundary test — the
+/// activation-relative one `is_epoch_boundary` makes (`:532`), since
+/// `Geometry::last` is built from the same `(activation, interval)` pair.
+///
+/// `None` while the geometry is unfrozen or the cursor is still at its seed
+/// below activation — the one state with no step to take, which the probe counts
+/// as `no_tracked_epoch`/`no_geometry` and asks `Latest` alone.
+pub(crate) fn local_tracked_epoch(
+    committee: Arc<dyn crate::committee::Committee>,
+    cursor: crate::FinalizedCursor,
+) -> crate::executor::TrackedEpochFn {
+    Arc::new(move || {
+        let geometry = committee.geometry()?;
+        let fin = cursor.height();
+        let e = geometry.epoch_of(fin);
+        Some(if geometry.last(e) == fin { e + 1 } else { e })
+    })
 }
 
 /// The persistent beacon/DKG plane handed DOWN from the node crate's always-on
@@ -1626,7 +1742,6 @@ impl DposLayer {
             feed,
             spawn_unblocked,
             beacon_plane,
-            upstream_frontier,
             agreement_intake,
             #[cfg(feature = "dpos-devnet-byzantine")]
             byzantine,
@@ -2433,155 +2548,73 @@ impl DposLayer {
         // its `select!` arm, so its `sync_to` FCU is serialized with every other
         // reth write the executor makes — the executor stays the sole reth writer.
         //
-        // Rule Y: the validator-with-upstream re-jump is now SYMMETRIC with the
-        // follower — it shares the inlet⇄executor `upstream_frontier`, uses the
-        // epoch-relative threshold, and wires the same `rotate` escape.
+        // Rule Y: the validator-with-upstream re-jump is SYMMETRIC with the
+        // follower — same epoch-relative threshold, same `rotate` escape. Since
+        // §5.2 its TARGET is not asked for either: the executor reads the
+        // `(finalization, block)` pair out of its own marshal archive at the tip it
+        // triggered on and hands it in, so this closure has no `upstream` in it at
+        // all — only the committee source, the EL seam and the activation height.
         let re_jump_threshold = crate::cold_start_jump::JUMP_THRESHOLD.min(interval);
         let re_jump: Option<crate::executor::ReJump> = upstream.as_ref().map(|up| {
             let up = up.clone();
-            // The inlet's SAME upstream-rotation escape (Rule L/Y); bound BEFORE the
-            // cb moves `up`.
+            // The inlet's SAME upstream-rotation escape (Rule L/Y).
             let rotate = up.rotate_callback();
-            // The executor's frozen-tip frontier probe (see
-            // `executor::ReJump::probe`); bound BEFORE the cb moves `up`.
-            //
-            // TWO requests per tick (§5.2 "Триггер и лестница"): the untargeted
-            // `Latest`, whose height is the hint/re-jump driver, and the LADDER
-            // STEP `Finalized{last(T+1)}`. This closure only NAMES the step and its
-            // addressees; the executor puts it on the MARSHAL's own resolver
-            // (`marshal.hint_finalization(height, targets)`), and it is that
-            // resolver which carries the targets to `committee[T+1]` — the set that
-            // finalized that height and is inside the peer-set `primary`
-            // `C[T−1] ∪ C[T] ∪ C[T+1]`, so commonware actually sends it.
-            // `PlaneUpstreamHandle` addresses nothing: its fetches are untargeted.
-            // Both answers are judged by `FrontierHandler::deliver`; the step's
-            // never comes back here, it goes into the marshal and shows up as the
-            // tip moving.
-            //
-            // `last(T+1)` and `committee[T+1]` both come from the committee
-            // module — ONE geometry and ONE committee map per process. An
-            // unreadable `committee[T+1]` is not a failure, it is "this node
-            // cannot name the addressee yet": count it and ask `Latest` alone.
-            let frontier_probe: crate::executor::FrontierProbeFn = {
-                let up = up.clone();
-                let committee = committee.clone();
-                Arc::new(move |tracked: Option<u64>| {
-                    let up = up.clone();
-                    let committee = committee.clone();
-                    Box::pin(async move {
-                        let step = match (tracked, committee.geometry()) {
-                            (Some(t), Some(geometry)) => {
-                                let next = t + 1;
-                                match committee.committee(next) {
-                                    Ok(record) => {
-                                        let targets: Vec<_> =
-                                            record.participants.iter().cloned().collect();
-                                        // An empty `participants` is a readable
-                                        // record with nobody to ask. It skips the
-                                        // step like every other unnameable
-                                        // addressee, so it owes the dashboard the
-                                        // same `reason` the others give.
-                                        match commonware_utils::vec::NonEmptyVec::try_from(targets)
-                                        {
-                                            Ok(t) => Some((Height::new(geometry.last(next)), t)),
-                                            Err(_) => {
-                                                metrics::counter!(
-                                                    crate::executor::FRONTIER_STEP_SKIPPED,
-                                                    "reason" => "no_participants",
-                                                )
-                                                .increment(1);
-                                                None
-                                            }
-                                        }
-                                    }
-                                    Err(e) => {
-                                        metrics::counter!(
-                                            crate::executor::FRONTIER_STEP_SKIPPED,
-                                            "reason" => step_skip_reason(&e),
-                                        )
-                                        .increment(1);
-                                        None
-                                    }
-                                }
-                            }
-                            (None, _) => {
-                                metrics::counter!(
-                                    crate::executor::FRONTIER_STEP_SKIPPED,
-                                    "reason" => "no_tracked_epoch",
-                                )
-                                .increment(1);
-                                None
-                            }
-                            (Some(_), None) => {
-                                metrics::counter!(
-                                    crate::executor::FRONTIER_STEP_SKIPPED,
-                                    "reason" => "no_geometry",
-                                )
-                                .increment(1);
-                                None
-                            }
-                        };
-                        let latest = crate::cert_follow::CertUpstream::get_latest(&up).await;
-                        crate::executor::ProbeOutcome {
-                            frontier: latest.map(|uf| Height::new(uf.block.height)),
-                            step,
-                        }
-                    })
-                })
-            };
+            // The executor's frozen-tip frontier probe — ONE constructor, shared
+            // with the follower (`frontier_probe`, review B1-01).
+            let frontier_probe = frontier_probe(up.clone(), committee.clone());
             let provider = provider.clone();
             let evm_config = evm_config.clone();
             let staking_config = staking_config.clone();
             let beacon_engine_handle = beacon_engine_handle.clone();
             let ctx = ctx.clone();
             let peer_count = peer_count.clone();
-            let cb: crate::executor::ReJumpFn = Arc::new(move |from: u64| {
-                let up = up.clone();
-                let provider = provider.clone();
-                let evm_config = evm_config.clone();
-                let staking_config = staking_config.clone();
-                let beacon_engine_handle = beacon_engine_handle.clone();
-                let peer_count = peer_count.clone();
-                // `verify_jump_authenticated` needs a `&mut (Clock + CryptoRngCore)`;
-                // a fresh clone per call so the closure stays re-usable.
-                let mut jump_ctx = ctx.clone();
-                Box::pin(async move {
-                    let committees = crate::cert_inlet::RethCommitteeSource::new(
-                        RethStakingStateReader::new(provider.clone(), evm_config, staking_config),
-                        chain_id,
-                    );
-                    let el = crate::cold_start_jump::RethElSync::new(
-                        jump_ctx.clone(),
-                        provider.clone(),
-                        beacon_engine_handle,
-                        dpos_activation_block,
-                        peer_count,
-                    );
-                    // Return the typed terminal `JumpOutcome` verbatim — the
-                    // executor's completion arm classifies it (Landed re-seeds;
-                    // Stalled is NON-fatal + retried on the next Tip; AuthFailed
-                    // is fail-closed). §9.6.
-                    crate::cold_start_jump::cold_start_jump_with_threshold(
-                        from,
-                        &up,
-                        &committees,
-                        &el,
-                        // No L1 checkpoint on the validator path (trustless
-                        // POST-sync committee read at the landing).
-                        None,
-                        dpos_activation_block,
-                        re_jump_threshold,
-                        &mut jump_ctx,
-                    )
-                    .await
-                }) as futures::future::BoxFuture<'static, _>
-            });
+            let cb: crate::executor::ReJumpFn = Arc::new(
+                move |from: u64, target: crate::cert_follow::UpstreamFinalized| {
+                    let provider = provider.clone();
+                    let evm_config = evm_config.clone();
+                    let staking_config = staking_config.clone();
+                    let beacon_engine_handle = beacon_engine_handle.clone();
+                    let peer_count = peer_count.clone();
+                    // `verify_jump_authenticated` needs a `&mut (Clock + CryptoRngCore)`;
+                    // a fresh clone per call so the closure stays re-usable.
+                    let mut jump_ctx = ctx.clone();
+                    Box::pin(async move {
+                        let committees = crate::cert_inlet::RethCommitteeSource::new(
+                            RethStakingStateReader::new(
+                                provider.clone(),
+                                evm_config,
+                                staking_config,
+                            ),
+                            chain_id,
+                        );
+                        let el = crate::cold_start_jump::RethElSync::new(
+                            jump_ctx.clone(),
+                            provider.clone(),
+                            beacon_engine_handle,
+                            dpos_activation_block,
+                            peer_count,
+                        );
+                        // Return the typed terminal `JumpOutcome` verbatim — the
+                        // executor's completion arm classifies it (Landed re-seeds;
+                        // Stalled is NON-fatal + retried on the next Tip). §9.6.
+                        crate::cold_start_jump::jump_to_target(
+                            from,
+                            target,
+                            &committees,
+                            &el,
+                            // No L1 checkpoint on the validator path (trustless
+                            // POST-sync committee read at the landing).
+                            None,
+                            dpos_activation_block,
+                            re_jump_threshold,
+                            &mut jump_ctx,
+                        )
+                        .await
+                    }) as futures::future::BoxFuture<'static, _>
+                },
+            );
             crate::executor::ReJump {
                 call: cb,
-                // Rule Y: SHARED inlet⇄executor frontier — the validator inlet (when
-                // this node is an inlet-fed joiner) advances it on every cert, so a
-                // frozen marshal tip can't mask a deep gap, exactly as on the follower.
-                upstream_frontier: upstream_frontier.clone(),
                 // Epoch-relative gate, mirroring the follower (real-prod epochs ≫ 1024
                 // keep the serving-window size; a compressed test epoch heals within
                 // an epoch).
@@ -2590,11 +2623,11 @@ impl DposLayer {
                 // safe now that BadTarget is NON-fatal).
                 rotate: Some(rotate),
                 // Frozen-tip frontier probe — the live-follow driver for the
-                // PLANE-NATIVE validator (no inlet writes `upstream_frontier`, no
-                // consensus participation while rotated out): the executor probes
-                // `get_latest` when its tip freezes and hints the marshal toward
-                // the discovered frontier. Also a harmless backstop on the WS path
-                // (the inlet keeps the tip advancing → the probe stays silent).
+                // PLANE-NATIVE validator (no consensus participation while rotated
+                // out): the executor puts the ladder step on the marshal and hints
+                // it toward any `Latest` above its tip when that tip freezes. Also
+                // a harmless backstop on the WS path (the inlet keeps the tip
+                // advancing → the probe stays silent).
                 probe: Some(frontier_probe),
                 // `T` for the ladder step, mirrored off the boundary bridge (see
                 // `tracked_epoch_cell`). `None` while nothing is tracked yet.
@@ -3255,7 +3288,7 @@ impl DposLayer {
                     staking_config.clone(),
                 ),
                 Arc::new(crate::committee::RethAnchor::new(
-                    finalized_cursor,
+                    finalized_cursor.clone(),
                     provider.clone(),
                 )),
                 tokio::sync::watch::Sender::new(Some((activation, interval))).subscribe(),
@@ -3268,13 +3301,6 @@ impl DposLayer {
         // EL-sync / activation / L1 checkpoint. A follower ALWAYS has an upstream
         // (the WS the inlet uses), so this is set whenever `upstream.is_some()`.
         //
-        // The TRUE upstream frontier: the cert-inlet advances it on every received
-        // cert (INCLUDING the committee-not-committed deferred ones), and the
-        // executor's re-jump trigger reads it — so a follower whose marshal tip
-        // FROZE under the defer deadlock still sees the climbing frontier and
-        // re-jumps out. ONE atomic shared between the inlet (writer) and the
-        // re-jump trigger (reader). See [`crate::executor::ReJump::upstream_frontier`].
-        let upstream_frontier = Arc::new(std::sync::atomic::AtomicU64::new(0));
         // Epoch-relative re-jump gate: the defer deadlock is "≥2 epochs behind", so
         // recovery fires at `min(serving-window, 1 epoch)` — real-prod epochs ≫ 1024
         // keep 1024; a compressed test epoch heals within an epoch (see `ReJump::threshold`).
@@ -3292,54 +3318,78 @@ impl DposLayer {
             let beacon_engine_handle = beacon_engine_handle.clone();
             let ctx = ctx.clone();
             let peer_count = peer_count.clone();
-            let cb: crate::executor::ReJumpFn = Arc::new(move |from: u64| {
-                let up = up.clone();
-                let provider = provider.clone();
-                let evm_config = evm_config.clone();
-                let staking_config = staking_config.clone();
-                let beacon_engine_handle = beacon_engine_handle.clone();
-                let peer_count = peer_count.clone();
-                let mut jump_ctx = ctx.clone();
-                Box::pin(async move {
-                    let committees = crate::cert_inlet::RethCommitteeSource::new(
-                        RethStakingStateReader::new(provider.clone(), evm_config, staking_config),
-                        chain_id,
-                    );
-                    let el = crate::cold_start_jump::RethElSync::new(
-                        jump_ctx.clone(),
-                        provider.clone(),
-                        beacon_engine_handle,
-                        activation,
-                        peer_count,
-                    );
-                    // Return the typed terminal `JumpOutcome` verbatim — the
-                    // executor's completion arm classifies it (§9.6).
-                    crate::cold_start_jump::cold_start_jump_with_threshold(
-                        from,
-                        &up,
-                        &committees,
-                        &el,
-                        l1_checkpoint_hash,
-                        activation,
-                        re_jump_threshold,
-                        &mut jump_ctx,
-                    )
-                    .await
-                }) as futures::future::BoxFuture<'static, _>
-            });
+            let cb: crate::executor::ReJumpFn = Arc::new(
+                move |from: u64, target: crate::cert_follow::UpstreamFinalized| {
+                    let provider = provider.clone();
+                    let evm_config = evm_config.clone();
+                    let staking_config = staking_config.clone();
+                    let beacon_engine_handle = beacon_engine_handle.clone();
+                    let peer_count = peer_count.clone();
+                    let mut jump_ctx = ctx.clone();
+                    Box::pin(async move {
+                        let committees = crate::cert_inlet::RethCommitteeSource::new(
+                            RethStakingStateReader::new(
+                                provider.clone(),
+                                evm_config,
+                                staking_config,
+                            ),
+                            chain_id,
+                        );
+                        let el = crate::cold_start_jump::RethElSync::new(
+                            jump_ctx.clone(),
+                            provider.clone(),
+                            beacon_engine_handle,
+                            activation,
+                            peer_count,
+                        );
+                        // Return the typed terminal `JumpOutcome` verbatim — the
+                        // executor's completion arm classifies it (§9.6).
+                        crate::cold_start_jump::jump_to_target(
+                            from,
+                            target,
+                            &committees,
+                            &el,
+                            l1_checkpoint_hash,
+                            activation,
+                            re_jump_threshold,
+                            &mut jump_ctx,
+                        )
+                        .await
+                    }) as futures::future::BoxFuture<'static, _>
+                },
+            );
             crate::executor::ReJump {
                 call: cb,
-                upstream_frontier: upstream_frontier.clone(),
                 threshold: re_jump_threshold,
                 rotate: Some(rotate),
-                // No probe on the follower: its WS inlet is the ALWAYS-ON live
-                // producer (subscribe + gap-repair + conn-generation rotation), so
-                // the frozen-tip prod has nothing to add — the probe exists for the
-                // inlet-less plane-native validator.
-                probe: None,
-                // The follower's frontier is the WS inlet, not the plane probe
-                // (§5.4 "Отставший узел вне реестра"): no probe, no step.
-                tracked_epoch: None,
+                // THE SAME LADDER AS THE VALIDATOR (review B1-01), over the SAME
+                // constructor — only the `U: CertUpstream` differs (the WS handle
+                // here, the frontier resolver there).
+                //
+                // The follower used to wire `probe: None` on the reasoning that its
+                // WS inlet is an always-on live producer, and that was wrong in the
+                // one state the jump exists for. The inlet is a SUBSCRIPTION to
+                // current finalizations: it replays no intermediate height, and
+                // every cert it ingests more than two epochs above this node's own
+                // anchor is deferred by the committee read window
+                // (`cert_inlet.rs` → `committee.scheme(E)`), storing nothing. With
+                // `upstream_frontier` gone (§5.2) the trigger reads the marshal tip
+                // alone, so at `fin == tip == last(epoch(fin)+2)` the gap is 0, the
+                // tip is frozen and nothing local can unfreeze it — a permanent
+                // silent park. The step `Finalized{last(T+1)}` is what unfreezes
+                // it: the marshal's own resolver pulls that height by number
+                // (`UpstreamResolver` → this node's WS upstream), `verify_delivered`
+                // stores it, and `Update::Tip` re-arms the ordinary trigger.
+                probe: Some(frontier_probe(up.clone(), committee.clone())),
+                // `T` computed LOCALLY: a follower runs no `EpochTransition` to
+                // mirror (see below, where the poller is the validator's), so it
+                // applies ET's own rule to the committee module's geometry and the
+                // ordering-finalized cursor the module is already anchored on —
+                // `local_tracked_epoch`.
+                tracked_epoch: Some(local_tracked_epoch(
+                    committee.clone(),
+                    finalized_cursor.clone(),
+                )),
             }
         });
 
@@ -3699,17 +3749,6 @@ impl DposLayer {
         // The cert-inlet — the SOLE producer for a follower. Drives the marshal
         // (which drives the executor) + the B3 serving window. Runs on a child
         // task; fail-closed on TOTAL upstream loss (finalized_rx close).
-        // Frontier-aware committee read (the boundary-wedge fix): resolve
-        // committee[E] at max(EL-finalized, live-frontier) instead of the lagging
-        // finalized tip alone. `live_frontier` is advanced off each BLS-VERIFIED
-        // upstream cert via the tee wired below; committee[E] is ahead-committed
-        // during epoch E-1 and content-invariant across any in-epoch hash, so
-        // reading at the cert-finalized (no-reorg) frontier surfaces it the moment
-        // the boundary cert verifies — breaking the producer↔consumer cycle that
-        // wedged a migration follower at an epoch boundary (the first cert of epoch
-        // E is the very cert that must advance the finalized tip the read was gated
-        // on). Mirrors the validator `committee_for` closure in node/dpos.rs.
-        let live_frontier = Arc::new(std::sync::atomic::AtomicU64::new(0));
         // Observability for the committee-read defer regimes (the reth
         // pipeline-backfill fail-open): registered ONCE on the launch context so
         // the family carries the launch prefix, then cloned into the closure below
@@ -3784,10 +3823,12 @@ impl DposLayer {
             // follower fully trusts upstream committee reads, so it binds each
             // cert's round-epoch to its block's height-derived epoch.
             //
-            // The live-frontier tee is wired ONLY for its `live_height` cursor (the
-            // frontier-aware committee read above — the boundary-wedge fix). The
-            // follower has no beacon plane, so the DkgActor deal clock is a no-op:
-            // drop the receiver and each `try_send` is a benign Closed.
+            // The live-frontier tee is wired for the ONE cursor it still has, and
+            // the follower does not run it: it has no beacon plane, so the DkgActor
+            // deal clock is a no-op — drop the receiver and each `try_send` is a
+            // benign Closed. (`live_height` went in 4.2 with `upstream_frontier`:
+            // the committee module reads at this node's own ordering-finalized
+            // anchor, so the frontier-aware read it existed for has no consumer.)
             let (dkg_tx, dkg_rx) = tokio::sync::mpsc::channel::<u64>(1);
             drop(dkg_rx);
             let mut inlet = crate::cert_inlet::CertInlet::new(inlet_marshal, inlet_committee, c)
@@ -3796,11 +3837,6 @@ impl DposLayer {
                 .with_carry_forward_fail_metric(carry_forward_verify_failed)
                 .with_randomness(inlet_randomness)
                 .with_tee(crate::cert_inlet::LiveFrontierTee {
-                    live_height: live_frontier,
-                    // Same atomic the steady-state re-jump trigger reads: the inlet
-                    // advances it on every cert (deferred ones included) so a frozen
-                    // marshal tip can't freeze the re-jump (the cascade-wedge fix).
-                    upstream_frontier: upstream_frontier.clone(),
                     dkg_height_tx: dkg_tx,
                     // Unregistered, like this path's other clock handles: every
                     // `try_send` above is a by-design `Closed`, so counting them
@@ -5004,5 +5040,79 @@ mod follower_boundary_tests {
             .await
         );
         assert_eq!(last, None, "an undelivered epoch must not be consumed");
+    }
+}
+
+#[cfg(test)]
+mod local_tracked_epoch_tests {
+    use super::local_tracked_epoch;
+    use crate::committee::{testing::SchemeCommittee, Geometry};
+    use std::sync::Arc;
+
+    const ACTIVATION: u64 = 0;
+    const INTERVAL: u64 = 32;
+
+    fn probe_t(fin: u64) -> Option<u64> {
+        let committee: Arc<dyn crate::committee::Committee> =
+            SchemeCommittee::with_geometry(|_| None, |_| None, Geometry::new(ACTIVATION, INTERVAL));
+        let cursor = crate::FinalizedCursor::default();
+        cursor.advance(fin);
+        local_tracked_epoch(committee, cursor)()
+    }
+
+    /// `T` on the follower is ET's rule over the module's geometry, checked at the
+    /// two points where the rule differs (review B1-01).
+    ///
+    /// ET tracks `epoch_e + 1` when the finalized block is the LAST block of its
+    /// epoch — both its cold-start arm (`epoch_transition.rs:558`) and its boundary
+    /// arm (`:580`) — and `epoch_e` otherwise. A follower runs no `EpochTransition`,
+    /// so this is the ONE place the two can drift; the test is what stops them.
+    ///
+    /// The terminal point is not an edge case here, it is THE case: a node whose
+    /// execution stalled parks on an epoch terminal (that is where the ordering
+    /// plane's two-epoch ceiling puts it), and a `T` that read `epoch_e` there would
+    /// name a rung the node already holds — `last(T+1)` at or below its own frozen
+    /// tip, which the marshal discards at the floor and which moves nothing.
+    ///
+    /// Falsifier: `epoch_of(fin)` at a terminal (one rung too low, the ladder never
+    /// climbs); `epoch_of(fin) + 1` mid-epoch (a rung two epochs up, outside the
+    /// node's own committee read window).
+    #[test]
+    fn the_followers_t_follows_the_epoch_transition_rule_at_a_terminal_and_mid_epoch() {
+        // Mid-epoch: `fin = 100` sits inside epoch 3 (96..=127) ⇒ `T = 3`, rung
+        // `last(4) = 159`.
+        assert_eq!(
+            probe_t(100),
+            Some(3),
+            "mid-epoch `T` must be `epoch_of(fin)` — ET's non-boundary arm"
+        );
+        // Terminal: `fin = 95 = last(2)` ⇒ the network is already in epoch 3, ET
+        // tracks 3, and the rung is `last(4) = 159` — strictly above the parked
+        // node's two-epoch ceiling floor of the same state.
+        assert_eq!(
+            probe_t(95),
+            Some(3),
+            "on an epoch terminal `T` must be `epoch_of(fin) + 1` — ET's boundary arm"
+        );
+        // ...and the two are genuinely different heights, which is the whole point.
+        let geometry = Geometry::new(ACTIVATION, INTERVAL).expect("non-zero interval");
+        assert_eq!(geometry.epoch_of(95), 2, "95 is the terminal of epoch 2");
+        assert_eq!(geometry.last(2), 95, "…and `last(2)` names it");
+    }
+
+    /// Before the geometry freezes there is no epoch arithmetic at all, and the
+    /// probe must be told so rather than handed `0`: the skipped step is counted
+    /// (`no_tracked_epoch` / `no_geometry`) and the tick asks `Latest` alone.
+    #[test]
+    fn an_unfrozen_geometry_names_no_epoch() {
+        let committee: Arc<dyn crate::committee::Committee> =
+            SchemeCommittee::with_geometry(|_| None, |_| None, None);
+        let cursor = crate::FinalizedCursor::default();
+        cursor.advance(95);
+        assert_eq!(
+            local_tracked_epoch(committee, cursor)(),
+            None,
+            "an unfrozen geometry must not be answered with epoch 0"
+        );
     }
 }

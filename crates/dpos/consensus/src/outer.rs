@@ -125,20 +125,20 @@ where
     ) {
         match self {
             Self::Plane(r) => r.fetch_targeted(key, targets).await,
-            // A TARGETED `Finalized` is the §5.2 ladder step, and
-            // `UpstreamResolver::fetch_targeted` has one peer and DROPS the target
-            // list (review A2-05, `cert_inlet.rs`). It still goes there, and the
-            // alternative was measured rather than argued: routing a targeted
-            // `Finalized` to `plane` does honour the list, and it takes the request
-            // off the channel a rotated-out node is still served on — three stand
+            // A TARGETED `Finalized` is the §5.2 ladder step, and it goes to
+            // `upstream` because that is the channel a rotated-out node is still
+            // served on: on a plane validator `upstream` IS the frontier resolver
+            // client (`PlaneUpstreamHandle`), on a follower it is the WS handle.
+            // `UpstreamResolver::fetch_targeted` then DROPS the list — read the
+            // comment there before touching this: honouring it costs the stand's
+            // zero-overlap fixture its incoming half's DKG artifact, measured in
+            // the third pass and rolled back. The other way round — routing a
+            // targeted `Finalized` to `plane` — honours the list and takes the
+            // request off the channel a rotated-out node is served on: three stand
             // tests lose their deep catch-up under it
             // (`preconditions::a_node_more_than_two_epochs_behind_…`,
             // `preconditions::every_node_serves_the_terminal_pair_…`,
-            // `tests::the_rejump_runs_the_production_jump_…`). The addressing loss
-            // is bounded (on a plane validator `upstream` IS the frontier resolver,
-            // which fetches from the tracked frontier set — untargeted, so the step
-            // still reaches `committee[T+1]` members, just not only them); the
-            // reroute is not. Pass Б owns the fix, with `cert_inlet.rs` open to it.
+            // `tests::the_rejump_runs_the_production_jump_…`).
             Self::Hybrid { plane, upstream } => {
                 if is_finalized(&key) {
                     upstream.fetch_targeted(key, targets).await

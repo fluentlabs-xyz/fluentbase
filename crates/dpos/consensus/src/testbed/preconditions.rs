@@ -233,36 +233,81 @@ fn every_node_serves_the_terminal_pair_of_every_passed_epoch_after_re_jumps() {
     }
 }
 
-/// (Д3, gate at 80 blocks) The same rotation, the re-jump gate widened so node 3
-/// stays parked at 95 until the network is more than two epochs ahead. What the
-/// run shows: its MARSHAL freezes at `last(epoch(95) + 2) = 159` — the ordering
-/// plane's two-epoch ceiling (`.dpos-study` memory: `dpos ordering plane 2-epoch
-/// ceiling`) — while the members run on; the jump then lands ABOVE the frozen tip
-/// (`from: 95`, consumed tip ≥ 176) and leaves a HOLE in its archive: heights
-/// above 159 up to a few below the landing are absent outright, and the ones the
-/// marshal's backward parent walk pulled in from the consumed certificate are
-/// block-only (no certificate of their own). The node recovers and finishes in
-/// lockstep.
+/// (Д3, the deep-lag shape) The same rotation over EIGHT epochs: node 3 leaves
+/// the committee at epoch 3, its EXECUTION stalls at `last(2) = 95`, and its
+/// marshal therefore cannot store above the ordering plane's two-epoch ceiling
+/// `last(epoch(95) + 2) = 159` (`.dpos-study` memory: `dpos ordering plane 2-epoch
+/// ceiling`). It climbs out by RE-JUMPING, repeatedly, and this test reads that
+/// climb off the run.
 ///
-/// What this pins for the ladder: the pair a jumper can serve for a terminal it
-/// jumped OVER exists only if `seed_boundary_below_floor` fetched it
-/// (`executor.rs:2310-2365`), which needs `boundary_fetch` — `None` in this
-/// stand — so the stand cannot witness the seeding; it CAN witness that nothing
-/// else fills the hole. No terminal falls into the hole here (159 was archived
-/// before the freeze, 191 after the landing), so every terminal pair is still
-/// present on every node.
+/// WHAT THIS TEST PROVED BEFORE, AND WHAT IT PROVES NOW (4.2 Б1.2). It was
+/// `…_freezes_its_marshal_at_the_ceiling_and_jumps_over_a_hole`, run at a WIDENED
+/// gate of 80 blocks so the node stayed parked at 95 until the network was more
+/// than two epochs ahead; it then jumped from 95 to 180 — a height ABOVE its own
+/// frozen tip, taken from an upstream `get_latest` — and left a HOLE in its
+/// archive at 160..=182, which the test asserted the shape of.
 ///
-/// Falsifier: node 3 jumping before the network was two epochs ahead (consumed
-/// tip < 176); its marshal tip not frozen at 159 (then the ceiling is not what
-/// the memory says); no hole (then something back-filled the jumped range and
-/// the ladder's seeding is not the only source); a terminal missing on any node;
-/// node 3 not recovering.
+/// Both halves are gone FROM THIS RUN, for the same reason: §5.2 takes the jump
+/// TARGET out of the node's own marshal archive at its own tip instead of out of
+/// an unauthenticated `Latest`. Only one of the two is gone as a CLASS (the gate;
+/// production cannot configure 80) — the hole is not, see directly below.
+///
+///   * NO HOLE IN THIS RUN — and that is an OBSERVATION about this fixture, not a
+///     property of the jump (review B1-02). The landing is `target.height − K`
+///     and the target is a pair this node already holds, so a jump cannot skip a
+///     range it has archived; but the jump ALSO raises the floor to
+///     `landing − K = target − 2K`, and "the node holds the target" does not mean
+///     "the node holds everything below it". A rung served far above the
+///     contiguous edge — `last(T+1)` is up to two epochs above `fin`, and
+///     `hint_finalization(frontier)` can be higher still — makes the tip
+///     non-contiguous by design, and whatever `try_repair_gaps` has not pulled by
+///     the time the floor moves goes under it for good (the marshal never
+///     re-fetches below its floor). `seed_boundary_below_floor` therefore stays
+///     necessary, and the code rightly still calls it (`executor.rs`).
+///     What THIS run shows is the narrower fact its own numbers support: both of
+///     node 3's jump targets (128 and 160) were contiguous tips reached by its own
+///     climb, so nothing was skipped here — the assertion below says that, and the
+///     pre-4.2 version of this test asserted the shape of a hole because the target
+///     then came from an upstream `Latest` far above anything the node held.
+///   * THE 80-BLOCK GATE IS NOW A WEDGE, so the gate moves to the PRODUCTION value
+///     `min(JUMP_THRESHOLD, interval)` (`consensus/dpos.rs`, both launch paths).
+///     Measured at 80 on this very fixture: `heights=[264, 264, 264, 95]`,
+///     `marshal_fin=[268, 268, 268, 159]`, `jumps=[]` — node 3 never left 95. The
+///     mechanism is arithmetic, not luck: the reachable gap is bounded by the
+///     ceiling, `tip − fin ≤ last(epoch(fin) + 2) − fin < 3·interval`, and is only
+///     `2·interval = 64` when `fin` sits at an epoch terminal as it does here —
+///     below the 80-block gate, so the jump never arms and the ladder step, which
+///     names `last(T+1) = 159`, names a height the node already holds. A gate at
+///     or above `2·interval` therefore wedges an execution-stalled node
+///     PERMANENTLY after §5.2. Production cannot configure one: it computes
+///     `JUMP_THRESHOLD.min(interval)`, which is `≤ interval < 2·interval` for every
+///     interval.
+///
+/// The Д3 premises are kept: the jumper DID jump, its floor DID rise above earlier
+/// terminals, every node went at least two epochs past every terminal it is asked
+/// for, and every terminal pair is served by every node.
+///
+/// Falsifier: node 3 not jumping (the fixture stopped exercising the climb); a
+/// jump whose consumed target is not a height node 3's own marshal reached (the
+/// target came from somewhere else); a landing that is not `target − K`; any hole
+/// or block-only entry in node 3's archive (in THIS fixture that means a target
+/// that was not the archived pair at the triggering tip); a first target above the
+/// two-epoch ceiling of the park height (the marshal stored past the ceiling, so
+/// the ceiling is not what the memory says); a terminal missing on any node; node 3
+/// not recovering.
+///
+/// RENAMED in the third pass (review B1-13): the old
+/// `…_and_jumps_over_a_hole` named the half of the property that is gone from
+/// this run, and `PLAN.md` / `history/E4-PRECONDITIONS.md` still pointed at it for
+/// a hole shape it no longer asserts.
 #[test]
-fn a_node_more_than_two_epochs_behind_freezes_its_marshal_at_the_ceiling_and_jumps_over_a_hole() {
+fn a_node_more_than_two_epochs_behind_freezes_its_marshal_at_the_ceiling_and_climbs_it_by_jumps_to_its_own_tip(
+) {
     let mut cfg = StandConfig::live(4, 1);
     cfg.committees = rotate_four_three_four();
-    cfg.re_jump_threshold = Some(80);
+    cfg.re_jump_threshold = Some(crate::cold_start_jump::JUMP_THRESHOLD.min(EPOCH_LEN));
     cfg.archive_scan = true;
+    cfg.marshal_tip_series = true;
     let end = 8 * EPOCH_LEN + 8;
     let out = Stand::new(cfg).run_until(
         move |p| p.min_height_of(&[0, 1, 2]) >= end,
@@ -308,64 +353,100 @@ fn a_node_more_than_two_epochs_behind_freezes_its_marshal_at_the_ceiling_and_jum
     assert!(out.halted.is_empty(), "{:?}", out.halted);
     assert!(out.errors().is_empty(), "{:?}", out.errors());
 
-    // PREMISE: one jump, from the park height, consuming a tip more than two
-    // epochs above it, landing above the ceiling.
+    // PREMISE: node 3 parked at the rotation boundary and climbed out by jumping,
+    // more than once (the ladder, not one lucky landing).
     let calls = &out.jump_calls[3];
     let landed: Vec<_> = calls.iter().filter(|c| c.outcome == "Landed").collect();
-    assert_eq!(landed.len(), 1, "expected exactly one landing: {calls:?}");
-    let jump = landed[0];
+    assert!(
+        landed.len() >= 2,
+        "node 3 did not climb out by repeated re-jumps: {calls:?}"
+    );
+    let first = landed[0];
     assert_eq!(
-        jump.from,
+        first.from,
         last(2),
-        "the jump did not start from the park height"
+        "the first jump did not start from the park height"
     );
-    let (tip, _) = jump.consumed.expect("a landing consumed a certificate");
-    let (landing, _) = jump.landed.expect("asserted Landed");
     let ceiling = last(2 + 2);
+
+    // OBSERVATION (a) THE TARGET IS THIS NODE'S OWN ARCHIVE. Every landing
+    // consumed a height at or below the ceiling its own execution cursor allowed,
+    // and landed exactly `K` below it. Nothing above the ceiling was ever the
+    // target — which is the ceiling premise, stated in the one place the run can
+    // still witness it.
+    let tips = &out.marshal_tip_series[3];
     assert!(
-        tip > last(2) + 80,
-        "the jump fired before the network was 80 blocks ahead: tip {tip}"
+        !tips.is_empty(),
+        "no marshal-tip samples — `StandConfig::marshal_tip_series` was not set"
     );
     assert!(
-        landing > ceiling,
-        "the landing {landing} is not above the frozen tip {ceiling}"
+        first.consumed.expect("a landing consumed a target").0 <= ceiling,
+        "node 3's first jump target {:?} is ABOVE the two-epoch ceiling {ceiling} — its \
+         marshal stored past the ceiling: tips={tips:?}",
+        first.consumed
     );
-    let floor = out.metric(3, MARSHAL_FLOOR).expect("floor gauge");
+    for c in &landed {
+        let (target, _) = c.consumed.expect("a landing consumed a target");
+        let (landing, _) = c.landed.expect("asserted Landed");
+        // The ceiling is a function of the cursor the jump STARTED from, and
+        // `JumpCall::from` is exactly that cursor — so every landing, not only
+        // the first, is checkable against its own two-epoch ceiling.
+        let own_ceiling = last(c.from / EPOCH_LEN + 2);
+        assert!(
+            target <= own_ceiling,
+            "a jump from {} targeted {target}, above its own two-epoch ceiling \
+             {own_ceiling} — the marshal stored past the ceiling: {c:?}",
+            c.from
+        );
+        assert_eq!(
+            landing,
+            target - crate::order_block::K,
+            "a landing is not `target − K` — the target was not the archive pair at the \
+             triggering tip: {c:?}"
+        );
+        assert!(
+            tips.iter().any(|t| *t >= target),
+            "node 3 jumped to {target}, a height its own marshal tip never reached: {tips:?}"
+        );
+    }
+    let floor = out
+        .metric(3, MARSHAL_FLOOR)
+        .expect("the marshal registers its processed-height gauge");
+    let highest_landing = landed
+        .iter()
+        .filter_map(|c| c.landed.map(|l| l.0))
+        .max()
+        .expect("at least one landing");
     assert!(
-        floor >= landing as f64,
-        "floor {floor} below the landing {landing}"
+        floor >= highest_landing as f64,
+        "floor {floor} below the highest landing {highest_landing}"
+    );
+    assert!(
+        floor > last(3) as f64,
+        "node 3's floor {floor} never passed the terminal of epoch 3"
     );
 
-    // OBSERVATION: the ceiling — everything up to `last(4)` is archived with
-    // its certificate, `last(4) + 1` is not — and the hole above it.
-    for h in 1..=ceiling {
-        let a = entry(&out, 3, h);
-        assert!(
-            a.finalization && a.block,
-            "node 3 lacks the pair at {h} below the ceiling {ceiling}: {a:?}"
-        );
-    }
+    // OBSERVATION (b) NO HOLE IN THIS RUN. Every target above was a height node 3's
+    // OWN marshal tip had reached and the landing was `target − K`, so this climb
+    // skipped nothing and the archive came out contiguous with its own certificate
+    // at every height. NOT a general property of the jump (review B1-02): the floor
+    // goes to `target − 2K`, so a tip made non-contiguous by a far rung, plus a
+    // repair that has not caught up when the floor moves, still leaves a permanent
+    // hole — which is why `seed_boundary_below_floor` is still called. The
+    // assertion is kept because it is the falsifier for THIS fixture: a hole here
+    // would mean a target that was not the archived pair at the triggering tip.
     assert!(
-        missing.contains(&(ceiling + 1)),
-        "the marshal did not freeze at the ceiling: {} is archived; missing={missing:?}",
-        ceiling + 1
+        missing.is_empty(),
+        "node 3 has holes — in this fixture every jump target was a contiguous tip, so a \
+         hole means the target was not the archive pair at the triggering tip: {missing:?}"
     );
     assert!(
-        missing.iter().all(|h| *h > ceiling && *h < landing),
-        "a hole outside (ceiling, landing): missing={missing:?}"
+        block_only.is_empty(),
+        "node 3 holds blocks without their own finalization: {block_only:?}"
     );
-    assert!(
-        block_only.iter().all(|h| *h > ceiling && *h < tip),
-        "a block-only entry outside (ceiling, consumed tip): {block_only:?}"
-    );
-    for h in tip..=out.heights[3] {
-        let a = entry(&out, 3, h);
-        assert!(
-            a.finalization && a.block,
-            "node 3 lacks the pair at {h} above the consumed tip {tip}: {a:?}"
-        );
-    }
-    // Every terminal is still served by every node: none fell into the hole.
+
+    // OBSERVATION (c) every terminal is still served by every node, and the three
+    // members never had a hole to begin with.
     for e in 0..=epochs_passed {
         for i in 0..4 {
             let a = entry(&out, i, last(e));

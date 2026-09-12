@@ -248,44 +248,27 @@ impl MarshalSink for crate::MarshalMailbox {
     }
 }
 
-/// The live-frontier tee: the beacon-plane cursors a validator's cert-inlet
+/// The live-frontier tee: the beacon-plane clock a validator's cert-inlet
 /// advances from each live upstream cert it ingests. Re-homed here from the
-/// (deleted) unified supervisor that used to feed them off the window stream.
+/// (deleted) unified supervisor that used to feed it off the window stream.
 ///
-/// `live_height` is a committee-read cursor for the FOLLOWER only: its inlet's
-/// own committee source reads `committee[E]` at `max(EL-finalized, live_height)`
-/// (`dpos.rs`, `inlet_committees`), so a follower resolves the ahead-committed
-/// `committee[E+1]` at the LIVE upstream tip rather than its lagging
-/// EL-finalized state (the boundary-wedge fix). On the VALIDATOR path it no
-/// longer steers any committee read: the beacon plane takes every committee
-/// through the committee module, at this node's own ordering-finalized anchor,
-/// and the atomic is write-only there until 4.2 removes it together with
-/// `upstream_frontier`. `dkg_height` is the `beacon::actor::DkgActor` deal
-/// clock: dealing at the live frontier lets a still-catching-up early-joiner
-/// deal its first epoch's DKG share before the deal deadline (the vrf-rotation
-/// early-join fix) instead of K blocks late.
+/// ONE cursor left. `dkg_height` is the `beacon::actor::DkgActor` deal clock:
+/// dealing at the live frontier lets a still-catching-up early-joiner deal its
+/// first epoch's DKG share before the deal deadline (the vrf-rotation early-join
+/// fix) instead of K blocks late. It stays until Э5 5.4 replaces it.
 ///
-/// A validator-with-upstream wires BOTH cursors (it owns the beacon plane). A
-/// FOLLOWER also wires the tee — but only for `live_height`, with a NO-OP
-/// `dkg_height_tx` (the receiver is dropped — the follower has no beacon plane).
-/// A no-upstream validator has no inlet at all → both cursors stay
-/// finalized-driven, unchanged.
+/// The other two went in 4.2 (§5.2 "Тип и единственный писатель"):
+/// `upstream_frontier` fed the re-jump trigger a height nobody had authenticated,
+/// and the trigger now reads the marshal tip alone; `live_height` was the
+/// follower's committee-read cursor (`committee[E]` at `max(EL-finalized, live)`)
+/// and 4.1 took every committee read onto the module's own
+/// ordering-finalized anchor, leaving it with a writer and no reader.
+///
+/// A validator-with-upstream and a FOLLOWER both wire the tee; the follower's
+/// `dkg_height_tx` receiver is dropped (it has no beacon plane), so every
+/// `try_send` there is a by-design `Closed`. A no-upstream validator has no inlet
+/// at all.
 pub struct LiveFrontierTee {
-    /// `committee_for` read cursor, advanced monotonically (`fetch_max`) — ONLY
-    /// off VERIFIED certs (a trusted frontier; it must never be steerable by an
-    /// unverified upstream cert).
-    pub live_height: std::sync::Arc<std::sync::atomic::AtomicU64>,
-    /// The TRUE upstream frontier the executor's steady-state re-jump triggers
-    /// off (see [`crate::executor::ReJump::upstream_frontier`]). Unlike
-    /// `live_height` this is advanced on EVERY structurally-valid cert in
-    /// [`CertInlet::ingest`] — INCLUDING the "committee[E] not committed" deferred
-    /// ones — so a deadlocked follower (whose marshal tip has frozen because the
-    /// inlet stores nothing while it defers) still observes the climbing frontier
-    /// and re-jumps. HEIGHT-ONLY and NOT a trust input: it only sizes the re-jump
-    /// gap; the jump itself re-reads + BLS-authenticates the committee at the
-    /// landing, so an inflated frontier can at worst trigger a jump that then
-    /// fails closed — it can never select a committee.
-    pub upstream_frontier: std::sync::Arc<std::sync::atomic::AtomicU64>,
     /// DkgActor deal clock; its `on_height` clamps to its own running max, so a
     /// stale `try_send` never pulls the clock backward.
     pub dkg_height_tx: tokio::sync::mpsc::Sender<u64>,
@@ -576,16 +559,6 @@ where
                 return;
             }
         }
-        // Advance the executor's steady-state re-jump frontier off EVERY
-        // structurally-valid cert — CRUCIALLY including the committee-not-committed
-        // deferred ones below — so a deadlocked follower (frozen marshal tip) still
-        // sees the climbing upstream frontier and re-jumps. HEIGHT-ONLY: the
-        // committee read uses the verified-only `live_height` tee, NOT this
-        // (see [`LiveFrontierTee::upstream_frontier`]).
-        if let Some(tee) = &self.tee {
-            tee.upstream_frontier
-                .fetch_max(uf.block.height, std::sync::atomic::Ordering::Relaxed);
-        }
         // The inlet ALWAYS verifies. The certificate must sign THIS artifact: BLS
         // verify alone proves a quorum signed `proposal.payload`, NOT that the
         // served body matches it. A swapped body under a valid cert is the same
@@ -727,16 +700,13 @@ where
         // manager was still soft-entering against — two retentions over one
         // question. The beacon's key store keeps its own, below.
         self.randomness.observe_cert(epoch);
-        // Re-homed live-frontier tee: advance the beacon-plane cursors off the
-        // VERIFIED live upstream tip (skipped/tampered certs above never reach
-        // here). `committee_for` then resolves committee[E+1] and the DkgActor
-        // deals at the live frontier instead of this node's lagging EL-finalized
-        // state. Both feeders are monotone (`fetch_max` / DkgActor `on_height`
-        // clamps to its running max), so a stale tee can never rewind either
-        // clock. `Some` only on a validator-with-upstream (it owns the plane).
+        // Re-homed live-frontier tee: advance the beacon-plane DKG deal clock off
+        // the VERIFIED live upstream tip (skipped/tampered certs above never reach
+        // here), so the DkgActor deals at the live frontier instead of this node's
+        // lagging EL-finalized state. The feeder is monotone (the DkgActor's
+        // `on_height` clamps to its running max), so a stale tee can never rewind
+        // the clock. `Some` only on a node with an inlet.
         if let Some(tee) = &self.tee {
-            tee.live_height
-                .fetch_max(uf.block.height, std::sync::atomic::Ordering::Relaxed);
             if tee.dkg_height_tx.try_send(uf.block.height).is_err() {
                 tee.plane_clock.note_height_drop();
             }
@@ -1082,121 +1052,28 @@ mod tests {
         });
     }
 
-    /// A committee source that models the follower's frontier-aware read at the
-    /// trait boundary: it resolves `committee[E]` only when `max(finalized,
-    /// live_frontier) >= committed_from` (epoch 0 — the cold-start epoch — is
-    /// always readable). This reproduces what the production `finalized_hash`
-    /// closure does after the boundary-wedge fix (read committee at `max(EL-
-    /// finalized, live-frontier)` instead of the lagging finalized tip alone). The
-    /// inlet's tee advances `live_frontier`, so a verified cert moves the cursor.
-    /// Drive a follower across the epoch-0→1 boundary: ingest the epoch-0 cert at
-    /// the last block of epoch 0 (height 95) then the epoch-1 boundary cert (height
-    /// 96), against a finalized tip frozen at 69 where `committee[1]` is committed
-    /// only at tip `>= 70`. Returns the marshal driving calls. With the tee wired,
-    /// the epoch-0 cert advances `live_frontier` to 95 so the boundary cert
-    /// resolves; without it, `live_frontier` stays 0 and the boundary cert defers.
-    async fn run_boundary(
-        ctx: deterministic::Context,
-        c: &Committee,
-        wire_tee: bool,
-    ) -> Vec<&'static str> {
-        let marshal = FakeMarshal::default();
-        let finalized = Arc::new(std::sync::atomic::AtomicU64::new(69));
-        let live_frontier = Arc::new(std::sync::atomic::AtomicU64::new(0));
-        let committee = {
-            let bimap = c.bimap.clone();
-            let live = live_frontier.clone();
-            let fin = finalized.clone();
-            crate::committee::testing::SchemeCommittee::new(move |epoch| {
-                // The stand-in for what the module's anchor does on a follower:
-                // `committee[E]` for `E >= 1` is only readable once the node's own
-                // cursor — here `max(EL-finalized, live frontier)` — reaches the
-                // height that commits it. Epoch 0 (the cold-start epoch) always is.
-                let cursor = fin
-                    .load(std::sync::atomic::Ordering::Relaxed)
-                    .max(live.load(std::sync::atomic::Ordering::Relaxed));
-                if epoch >= 1 && cursor < 70 {
-                    return None;
-                }
-                Some(build_verifier(
-                    &fluent_namespace(CHAIN_ID),
-                    bimap.clone(),
-                    epoch,
-                    None,
-                ))
-            })
-        };
-        let mut inlet = CertInlet::new(marshal.clone(), committee, ctx);
-        if wire_tee {
-            // Dropped receiver ⇒ the DkgActor clock is a benign no-op (the follower
-            // has no beacon plane); only `live_height` matters here.
-            let (dkg_tx, _dkg_rx) = tokio::sync::mpsc::channel::<u64>(1);
-            inlet = inlet.with_tee(super::LiveFrontierTee {
-                live_height: live_frontier,
-                upstream_frontier: Arc::new(std::sync::atomic::AtomicU64::new(0)),
-                dkg_height_tx: dkg_tx,
-                plane_clock: crate::sync_metrics::PlaneClock::default(),
-            });
-        }
-        inlet
-            .ingest(certify(
-                c,
-                0,
-                &sample_order(Digest(B256::repeat_byte(0xaa)), 95),
-            ))
-            .await;
-        inlet
-            .ingest(certify(
-                c,
-                1,
-                &sample_order(Digest(B256::repeat_byte(0xbb)), 96),
-            ))
-            .await;
-        let calls = marshal.calls.lock().unwrap().clone();
-        calls
-    }
-
+    /// Safe-degrade: a cert whose committee the module cannot answer for defers
+    /// NON-fatally — no crash, no accept-unverified, no marshal drive.
+    ///
+    /// WHAT THIS TEST USED TO ALSO PROVE, AND WHY IT NO LONGER CAN. It carried a
+    /// second assertion — that a DEFERRED cert still advances
+    /// `LiveFrontierTee::upstream_frontier`, so a frozen marshal tip could not
+    /// freeze the re-jump trigger. That atomic is gone (§5.2): the trigger reads
+    /// the marshal tip alone, and the frozen tip is unfrozen by the ladder step the
+    /// probe puts on every frozen tick, not by a second height channel. The
+    /// deferring half of the property is what survives, and it is what this test
+    /// keeps — now with the POSITIVE CONTROL it needs (review B1-14): the same
+    /// cert through an inlet whose module CAN read epoch 1 DOES tick the clock,
+    /// so `dkg_rx.is_empty()` above is a statement about the defer and not about
+    /// a channel nothing ever writes.
     #[test]
-    fn boundary_cert_reads_committee_at_live_frontier_not_lagging_finalized() {
-        // The follower epoch-boundary wedge + its fix, deterministically (no flaky
-        // docker). The finalized tip lags at 69 (cold-start anchor jitter);
-        // committee[1] is ahead-committed only at a tip >= 70. The FIRST cert of
-        // epoch 1 (height 96) is the very cert that must advance the executor's
-        // finalized tip — a producer↔consumer cycle when the committee read is
-        // anchored at that lagging tip.
-        let runtime = deterministic::Runner::default();
-        runtime.start(|ctx| async move {
-            let c = committee(1);
-            // WITH the live-frontier tee: the epoch-0 height-95 cert advances
-            // live_frontier to 95, so the boundary cert resolves committee[1] at
-            // max(69,95)=95 >= 70 and drives the marshal — the wedge cannot form.
-            assert_eq!(
-                run_boundary(ctx.clone(), &c, true).await,
-                vec!["verified", "report", "verified", "report"],
-                "with the tee the boundary cert (96) verifies + drives the marshal"
-            );
-            // WITHOUT the tee (pre-fix): live_frontier stays 0, so the boundary
-            // cert reads committee[1] at max(69,0)=69 < 70 → defers-and-drops →
-            // the documented permanent wedge (only the epoch-0 cert ever drove).
-            assert_eq!(
-                run_boundary(ctx.clone(), &c, false).await,
-                vec!["verified", "report"],
-                "without the tee the boundary cert defers — the wedge this fix removes"
-            );
-        });
-    }
-
-    #[test]
-    fn boundary_cert_defers_when_committee_uncommitted_at_both_anchors() {
-        // Safe-degrade: a cert whose committee is committed at NEITHER the
-        // finalized tip NOR the live frontier defers non-fatally (no crash, no
-        // accept-unverified, no marshal drive) — exactly as before the fix.
+    fn boundary_cert_defers_when_the_committee_is_unreadable() {
         let runtime = deterministic::Runner::default();
         runtime.start(|ctx| async move {
             let c = committee(1);
             let marshal = FakeMarshal::default();
-            let live_frontier = Arc::new(std::sync::atomic::AtomicU64::new(95));
-            // Committed at NEITHER anchor: the module never answers for epoch 1.
+            // The module never answers for epoch 1 — a committee that is not
+            // committed at this node's anchor.
             let committee_module = {
                 let bimap = c.bimap.clone();
                 crate::committee::testing::SchemeCommittee::new(move |epoch| {
@@ -1205,30 +1082,58 @@ mod tests {
                     })
                 })
             };
-            let (dkg_tx, _dkg_rx) = tokio::sync::mpsc::channel::<u64>(1);
-            let upstream_frontier = Arc::new(std::sync::atomic::AtomicU64::new(0));
-            let mut inlet = CertInlet::new(marshal.clone(), committee_module, ctx).with_tee(
-                super::LiveFrontierTee {
-                    live_height: live_frontier,
-                    upstream_frontier: upstream_frontier.clone(),
+            let (dkg_tx, mut dkg_rx) = tokio::sync::mpsc::channel::<u64>(2);
+            // Built BEFORE the deferring inlet shadows the `inlet` helper: same
+            // committee, same tee channel, a module that CAN read epoch 1 — the
+            // positive control at the bottom of this test.
+            let control = {
+                let (control, _marshal, _reads) = inlet(ctx.clone(), &c);
+                control.with_tee(super::LiveFrontierTee {
+                    dkg_height_tx: dkg_tx.clone(),
+                    plane_clock: crate::sync_metrics::PlaneClock::default(),
+                })
+            };
+            let mut inlet = CertInlet::new(marshal.clone(), committee_module, ctx.clone())
+                .with_tee(super::LiveFrontierTee {
                     dkg_height_tx: dkg_tx,
                     plane_clock: crate::sync_metrics::PlaneClock::default(),
-                },
-            );
+                });
             inlet
-                .ingest(certify(&c, 1, &sample_order(Digest(B256::repeat_byte(0xbb)), 96)))
-                .await
-                ;
+                .ingest(certify(
+                    &c,
+                    1,
+                    &sample_order(Digest(B256::repeat_byte(0xbb)), 96),
+                ))
+                .await;
             assert!(
                 marshal.calls.lock().unwrap().is_empty(),
-                "an uncommitted-at-both-anchors boundary cert drives the marshal with ZERO calls"
+                "a boundary cert whose committee is unreadable drives the marshal with ZERO calls"
             );
-            // ...but a DEFERRED cert STILL advances the re-jump frontier (the
-            // deadlock fix: a frozen marshal must not freeze the re-jump trigger).
+            // ...and it advances NOTHING else either: the tee's one surviving
+            // cursor is fed past the verify gate, not before it.
+            assert!(
+                dkg_rx.is_empty(),
+                "a deferred cert fed the DKG deal clock — the tee is above the verify gate"
+            );
+            // THE POSITIVE CONTROL (review B1-14). `dkg_rx.is_empty()` on its own
+            // is nearly contentless: the tee sits above the verify gate, so it is
+            // true of any cert that did not verify, and it was true before this
+            // pass too. What makes it an assertion about the DEFER is the same
+            // cert, the same tee and the same channel driven through an inlet whose
+            // module CAN read epoch 1 — there the clock ticks.
+            let mut control = control;
+            control
+                .ingest(certify(
+                    &c,
+                    1,
+                    &sample_order(Digest(B256::repeat_byte(0xbb)), 96),
+                ))
+                .await;
             assert_eq!(
-                upstream_frontier.load(std::sync::atomic::Ordering::Relaxed),
-                96,
-                "deferred cert advances upstream_frontier so the executor can re-jump out of the wedge"
+                dkg_rx.try_recv(),
+                Ok(96),
+                "the control cert did not feed the clock either — then the assertion above \
+                 says nothing about the DEFER"
             );
         });
     }
@@ -1531,20 +1436,23 @@ mod tests {
     }
 
     #[test]
-    fn verified_cert_advances_the_live_frontier_tee() {
-        // Re-homed tee: a VERIFIED cert advances both beacon-plane cursors from
-        // `uf.block.height` (the live upstream frontier); a rejected cert leaves
-        // them untouched; the advance is monotone (a lower-height cert does not
-        // rewind `live_height`).
+    fn verified_cert_advances_the_dkg_deal_clock_tee() {
+        // Re-homed tee: a VERIFIED cert feeds the DkgActor deal clock from
+        // `uf.block.height` (the live upstream frontier); a rejected cert feeds
+        // nothing.
+        //
+        // WHAT THIS TEST USED TO ALSO PROVE. It pinned the same three things for
+        // `LiveFrontierTee::live_height` — advance, no-advance-on-reject, and
+        // `fetch_max` monotonicity. That cursor is gone (§5.2): every committee
+        // read goes through the module at this node's ordering-finalized anchor
+        // (4.1), which left it with a writer and no reader. Only the clock half
+        // survives, and only until Э5 5.4 replaces it.
         let runtime = deterministic::Runner::default();
         runtime.start(|ctx| async move {
             let c = committee(1);
             let (inlet, _marshal, _) = inlet(ctx, &c);
-            let live_height = Arc::new(std::sync::atomic::AtomicU64::new(0));
             let (dkg_tx, mut dkg_rx) = tokio::sync::mpsc::channel::<u64>(8);
             let mut inlet = inlet.with_tee(super::LiveFrontierTee {
-                live_height: live_height.clone(),
-                upstream_frontier: Arc::new(std::sync::atomic::AtomicU64::new(0)),
                 dkg_height_tx: dkg_tx,
                 plane_clock: crate::sync_metrics::PlaneClock::default(),
             });
@@ -1552,37 +1460,18 @@ mod tests {
             let block = sample_order(Digest(B256::repeat_byte(0xaa)), 65);
             inlet.ingest(certify(&c, 0, &block)).await;
             assert_eq!(
-                live_height.load(std::sync::atomic::Ordering::Relaxed),
-                65,
-                "live_height advances to the verified cert's height"
-            );
-            assert_eq!(
                 dkg_rx.try_recv(),
                 Ok(65),
                 "dkg clock fed the verified height"
             );
 
-            // A wrong-committee cert at a higher height must NOT advance either.
+            // A wrong-committee cert at a higher height must NOT feed it.
             let theirs = committee(2);
             let higher = sample_order(Digest(B256::repeat_byte(0xbb)), 99);
             inlet.ingest(certify(&theirs, 0, &higher)).await;
-            assert_eq!(
-                live_height.load(std::sync::atomic::Ordering::Relaxed),
-                65,
-                "a rejected cert must NOT advance live_height"
-            );
             assert!(
                 dkg_rx.try_recv().is_err(),
                 "a rejected cert feeds no dkg tick"
-            );
-
-            // `fetch_max` is monotone — a lower verified height does not rewind.
-            live_height.store(200, std::sync::atomic::Ordering::Relaxed);
-            inlet.ingest(certify(&c, 0, &block)).await;
-            assert_eq!(
-                live_height.load(std::sync::atomic::Ordering::Relaxed),
-                200,
-                "a lower verified cert does not rewind live_height (fetch_max)"
             );
         });
     }
@@ -2874,17 +2763,36 @@ where
         key: Self::Key,
         targets: commonware_utils::vec::NonEmptyVec<Self::PublicKey>,
     ) {
-        // The single upstream IS the only target; the peer list cannot be honoured
-        // here and is dropped. This is where the §5.2 ladder step's addressing goes
-        // today — `MarshalResolver::Hybrid` routes every `Finalized` here, targeted
-        // or not (`outer.rs`), and every node in production is `Hybrid` — so §5.2's
-        // "целевой fetch у `committee(T+1)`" and §5.4's `requests_created{Dropped}
-        // = 0` are NOT what happens on the wire (review A2-05). The loss is bounded
-        // rather than total: on a plane validator this `upstream` is the frontier
-        // resolver, which fetches the height from the tracked frontier peer set
-        // untargeted, so members of `committee[T+1]` are still asked — just not
-        // only them. Pass Б owns the fix; this line is here so the gap is visible
-        // in a log rather than only in a document.
+        // THE §5.2 LADDER STEP'S ADDRESSING ENDS HERE: the peer list is logged and
+        // DROPPED. `MarshalResolver::Hybrid` routes every `Finalized` to this
+        // resolver, targeted or not (`outer.rs`), and every production node is
+        // `Hybrid` — so §5.2's "целевой fetch у `committee(T+1)`" and §5.4's
+        // `requests_created{Dropped} = 0` are NOT what happens on the wire
+        // (review A2-05 / B1-10).
+        //
+        // AND THAT IS NOW A MEASUREMENT, not a file-list excuse. The third pass
+        // BUILT the honest route — a defaulted `CertUpstream::get_finalization_targeted`
+        // (`cert_follow.rs`), honoured by `PlaneUpstreamHandle` as a resolver
+        // `fetch_targeted` on FRONTIER_CHANNEL, ignored by the single-URL WS handle
+        // — and rolled it back, because one stand test goes red under it:
+        // `testbed::tests::a_zero_overlap_boundary_halts_the_chain_verify_only`
+        // loses the INCOMING half's epoch-3 DKG artifact (`artifacts[4] = []`,
+        // must be `[3]`), while with the same tree and the targets dropped again it
+        // is green (`heights=[95,95,95,95,63,63,63,63]`).
+        //
+        // What that does NOT establish: that the targets are undeliverable. In the
+        // ladder fixture the addressed rungs went out and one came back —
+        // `finalized_calls: 74, finalized_delivered: 65`, the same numbers as with
+        // the untargeted route, with rung 159 served. So the honest reading is that
+        // the addressed step CHANGES THE RUN (this fixture is the stand's known
+        // canary for exactly that — see `StandConfig::marshal_tip_series`), and
+        // which half of the change costs the artifact — commonware deferring a key
+        // whose targets do not intersect `participants`
+        // (`resolver/src/p2p/fetcher.rs:233-245`, `:278-283`, `:350-355`), or
+        // simply a different message schedule — this run does not separate.
+        // [ГИПОТЕЗА] the first; resolving it needs the `requests_created{Dropped}`
+        // family, which the stand's `Outcome::metric` cannot read (it matches whole
+        // metric names, `testbed/stand.rs`).
         if let MarshalRequest::Finalized { height } = key {
             tracing::debug!(
                 height = height.get(),

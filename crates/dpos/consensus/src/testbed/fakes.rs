@@ -51,7 +51,7 @@ pub(super) type ExecBlock = SealedBlock<reth_ethereum_primitives::Block>;
 /// `dposActivationBlock` of every stand: the ordering chain starts at genesis.
 /// ONE binding, because it is read in four places that must agree — the contract
 /// read ([`FakeStaking::dpos_activation_block`]), `OuterBuilder`, and the jump's
-/// two clamps ([`JumpElSync`]'s and `cold_start_jump_with_threshold`'s own).
+/// two clamps ([`JumpElSync`]'s and `jump_to_target`'s own).
 pub(super) const DPOS_ACTIVATION_BLOCK: u64 = 0;
 
 /// The derived-EVM-block stand-in: a sealed header at `number` over `parent`
@@ -139,8 +139,9 @@ impl ElNetwork {
 
 /// What [`FakeChain::land_jump`] did. The two refusals are NOT the same event and
 /// map to different production `SyncFailure`s, which the executor treats
-/// differently (`InvalidTarget` rotates the upstream at once, `StalledWithPeers`
-/// deliberately does NOT — `executor.rs:1297-1353`).
+/// differently (`InvalidTarget` is `Fault::corruption` since review B1-04 — the
+/// EL contradicted an attested pair this node read from its own archive —
+/// while `StalledWithPeers` is deliberately non-fatal and does not even rotate).
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum JumpLanding {
     /// The served branch's prefix was copied into the CANONICAL chain (the reth
@@ -1270,7 +1271,7 @@ impl StakingStateRead for FakeStaking {
 pub(super) type JumpCommitteeReads = Arc<Mutex<Vec<(u64, B256)>>>;
 
 /// One `ReJump::call` — one run of the production
-/// [`cold_start_jump_with_threshold`](crate::cold_start_jump::cold_start_jump_with_threshold).
+/// [`jump_to_target`](crate::cold_start_jump::jump_to_target).
 ///
 /// The `outcome` tag exists because EVERY non-`Landed` variant is otherwise
 /// INVISIBLE to a test: the stand wires `ReJump::rotate = None`, so
@@ -1284,10 +1285,13 @@ pub(super) struct JumpCall {
     pub from: u64,
     /// The `JumpOutcome` variant name, verbatim.
     pub outcome: &'static str,
-    /// `(height, result)` of the upstream certificate this call CONSUMED —
-    /// recorded by [`TeeingUpstream`] at the jump's own `get_latest`, so the
+    /// `(height, result)` of the TARGET certificate this call consumed — since
+    /// §5.2 the `(finalization, block)` pair the EXECUTOR read out of this node's
+    /// own marshal archive at the tip it triggered on and handed to `ReJumpFn`,
+    /// recorded in the stand's callback before the jump consumes it. So the
     /// landing can be checked against the cert it came from rather than against
-    /// the chain the landing just wrote.
+    /// the chain the landing just wrote. (It used to be teed off the jump's own
+    /// `get_latest`, which is the call §5.2 removed.)
     pub consumed: Option<(u64, B256)>,
     /// `(landing, hash)` on [`JumpOutcome::Landed`](crate::cold_start_jump::JumpOutcome::Landed).
     pub landed: Option<(u64, B256)>,
@@ -1312,45 +1316,6 @@ pub(super) type JumpCalls = Arc<Mutex<Vec<JumpCall>>>;
 /// changes the run (review A2-02, and the stand-side note in `stand.rs`). The
 /// step-vs-tip comparison is pinned in `executor::tests` instead.
 pub(super) type FrontierSteps = Arc<Mutex<Vec<(u64, u64)>>>;
-
-/// A one-shot tee over the upstream the jump reads: records the
-/// `(height, result)` of the `UpstreamFinalized` the jump actually consumed.
-/// Built fresh per `ReJump::call`, so its slot holds THAT call's certificate and
-/// not whatever the executor's frontier probe asked for in between.
-#[derive(Clone)]
-pub(super) struct TeeingUpstream<U> {
-    inner: U,
-    consumed: Arc<Mutex<Option<(u64, B256)>>>,
-}
-
-impl<U: CertUpstream> TeeingUpstream<U> {
-    pub(super) fn new(inner: U) -> Self {
-        Self {
-            inner,
-            consumed: Arc::new(Mutex::new(None)),
-        }
-    }
-
-    pub(super) fn consumed(&self) -> Option<(u64, B256)> {
-        *self.consumed.lock().unwrap()
-    }
-}
-
-impl<U: CertUpstream> CertUpstream for TeeingUpstream<U> {
-    async fn get_finalization(&self, height: Height) -> Option<UpstreamFinalized> {
-        self.inner.get_finalization(height).await
-    }
-    async fn get_latest(&self) -> Option<UpstreamFinalized> {
-        let got = self.inner.get_latest().await;
-        if let Some(uf) = &got {
-            *self.consumed.lock().unwrap() = Some((uf.block.height, uf.block.result));
-        }
-        got
-    }
-    async fn rotate(&self) {
-        self.inner.rotate().await
-    }
-}
 
 /// The jump's committee read over [`FakeStaking`], BY EXECUTED HASH — the stand's
 /// [`RethCommitteeSource`](crate::cert_inlet::RethCommitteeSource). Built exactly
@@ -1541,9 +1506,10 @@ impl ElSync for JumpElSync {
     /// blocks — so it answers the CANONICAL chain, not the executed tree. The
     /// trait's own doc says as much ("holds `hash` canonically",
     /// `cold_start_jump.rs:371-374`). Unreachable on the stand's path
-    /// (`l1_checkpoint` is `None`, so `cold_start_jump_with_threshold` skips the
-    /// L1 re-assert), but the tier has to be right or the first fixture that
-    /// wires a checkpoint inherits a fake oracle.
+    /// (`l1_checkpoint` is `None`, so `jump_to_target` skips the L1 re-assert),
+    /// but the tier has to be right or the first fixture that wires a checkpoint
+    /// inherits a fake oracle. The §5.2 LANDING check calls `holds` on this same
+    /// seam with the attested `block.result`, and that one IS reached.
     fn holds(&self, hash: B256) -> eyre::Result<bool> {
         Ok(self.chain.canonical_holds(hash))
     }
@@ -1590,14 +1556,36 @@ pub(super) struct UpstreamCounters {
     /// process-global recorder the stand does not read (journal §8.4), so no
     /// stand assert can say WHICH arm fired.
     pub deliveries_rejected: Arc<AtomicU64>,
+    /// Every BY-HEIGHT pull this node's upstream client made, in order.
+    ///
+    /// `finalized_calls`/`finalized_delivered` count the same events but cannot
+    /// say WHICH heights, which is what a ladder assertion needs (review B1-03):
+    /// "the rung `last(T+1)` was asked for by height and served" is a different
+    /// statement from "74 by-height pulls happened", and only the first one
+    /// separates a served rung from the ordinary contiguous repair traffic
+    /// running beside it.
+    ///
+    /// The ladder step and the marshal's ordinary gap repair are the SAME verb on
+    /// this seam (`get_finalization`), so a reader cannot tell them apart by the
+    /// call — only by the height, which is what the ladder test matches on.
+    pub served_heights: Arc<Mutex<Vec<Pull>>>,
     /// `ReJump::call` invocations — each one runs the PRODUCTION
-    /// [`crate::cold_start_jump::cold_start_jump_with_threshold`] over
+    /// [`crate::cold_start_jump::jump_to_target`] over
     /// [`JumpCommittees`] + [`JumpElSync`]. Stays 0 while
     /// `StandConfig::re_jump_threshold` is `None` (the gate is then `u64::MAX`,
     /// so `Executor::maybe_re_jump` never arms the waiter). A COUNT ONLY: what
     /// each call did is [`JumpCall`], and asserting on this number alone cannot
     /// tell a landing from a failed authentication.
     pub rejump_calls: Arc<AtomicU64>,
+}
+
+/// One by-height pull the upstream client made: the height asked for and whether
+/// the answer came back. `finalized_calls`/`finalized_delivered` count the same
+/// events without the height, which is the one thing a ladder assertion needs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct Pull {
+    pub height: u64,
+    pub delivered: bool,
 }
 
 /// A plain-number snapshot of [`UpstreamCounters`] for the outcome.
@@ -1641,19 +1629,28 @@ impl<U: CertUpstream> CountingUpstream<U> {
     pub(super) fn new(inner: U, counters: UpstreamCounters) -> Self {
         Self { inner, counters }
     }
+
+    fn note_served(&self, height: Height, delivered: bool) {
+        if delivered {
+            self.counters
+                .finalized_delivered
+                .fetch_add(1, Ordering::SeqCst);
+        }
+        self.counters.served_heights.lock().unwrap().push(Pull {
+            height: height.get(),
+            delivered,
+        });
+    }
 }
 
 impl<U: CertUpstream> CertUpstream for CountingUpstream<U> {
     async fn get_finalization(&self, height: Height) -> Option<UpstreamFinalized> {
         self.counters.finalized_calls.fetch_add(1, Ordering::SeqCst);
         let got = self.inner.get_finalization(height).await;
-        if got.is_some() {
-            self.counters
-                .finalized_delivered
-                .fetch_add(1, Ordering::SeqCst);
-        }
+        self.note_served(height, got.is_some());
         got
     }
+
     async fn get_latest(&self) -> Option<UpstreamFinalized> {
         self.counters.latest_calls.fetch_add(1, Ordering::SeqCst);
         let got = self.inner.get_latest().await;

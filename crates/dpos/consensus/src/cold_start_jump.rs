@@ -117,13 +117,24 @@ pub enum JumpOutcome {
     /// `PayloadStatusEnum::Invalid` during the EL-sync attempt
     /// (`el_sync_calls >= 1` — `verify_jump_structural`'s PRE-sync digest
     /// check already passed; reth is the one rejecting the served body/state
-    /// once backfill validates it). Same NON-fatal treatment as
-    /// [`BadTarget`](JumpOutcome::BadTarget):
-    /// the steady-state caller rotates immediately, the cold-start caller boots
-    /// anyway. Kept as a SEPARATE variant rather than reusing `BadTarget`
+    /// once backfill validates it). Kept as a SEPARATE variant rather than reusing `BadTarget`
     /// because `BadTarget`'s own doc/tests pin `el_sync_calls == 0` — folding
     /// this in would silently break that invariant. Distinct from `Stalled`:
     /// reth rendered an actual verdict here, it did not merely time out.
+    ///
+    /// ALSO the LANDING CHECK (§5.2): `sync_to` returned `Valid` but the
+    /// committee-attested `block.result` is not canonical in the local chain —
+    /// the EL landed on some other branch.
+    ///
+    /// THE STEADY-STATE REACTION IS `Fault::corruption` (§5.4 rows "Посадка не на
+    /// заверенную ветку" and "reth Invalid"; review B1-04), not the rotation this
+    /// arm inherited from the `get_latest` era: the only caller of `jump_to_target`
+    /// in steady state hands it a target read from this node's OWN marshal archive,
+    /// so no upstream chose it and there is nobody to rotate away from — the
+    /// contradiction is between the local EL and an authenticated certificate. The
+    /// COLD-START caller still boots anyway (`classify_jump_outcome`), because
+    /// there the target IS an unauthenticated `get_latest` answer; that path is
+    /// rebuilt in pass Б2, together with `BadTarget`/`AuthFailed`.
     InvalidTarget(eyre::Report),
     /// `sync_to` tripped the connected-but-no-progress net
     /// ([`SyncFailure::StalledWithPeers`]): reth had peers > 0 yet its executed
@@ -304,7 +315,7 @@ impl SyncWatchdog {
 /// Typed terminal failure of an [`ElSync::sync_to`] attempt — distinguishes a
 /// genuinely-INVALID served branch (reth itself rendered a verdict) from a
 /// timeout/transport stall (reth rendered no verdict at all), so
-/// [`cold_start_jump_with_threshold`] can route them to different
+/// [`jump_to_target`] can route them to different
 /// [`JumpOutcome`]s ([`JumpOutcome::InvalidTarget`] vs [`JumpOutcome::Stalled`])
 /// instead of folding both into one undifferentiated error.
 ///
@@ -622,8 +633,19 @@ where
 }
 
 /// PRE-`sync_to` structural gate: the served cert must sign the served body
-/// (`cert.payload == block.digest()`). This is the ONLY check that can run
-/// before `sync_to`, because the per-epoch committee that authenticates the cert
+/// (`cert.payload == block.digest()`).
+///
+/// **REDUNDANT on the steady-state path since the target became the node's own
+/// archive entry** (§5.2): the marshal checks exactly this before it stores
+/// anything — `handle_deliver` binds the delivered body's commitment to the
+/// certificate's payload (CW `marshal/core/actor.rs:987-993`) and only then does
+/// `store_finalization` write the pair (`:1404-1463`). A pair that came back out
+/// of that archive cannot fail this. It still runs because [`cold_start_jump`]
+/// feeds it an unverified `get_latest` answer; removing it as a STAGE is pass Б2,
+/// together with `JumpOutcome::BadTarget`.
+///
+/// It is also the ONLY check that can run before `sync_to` on the cold-start
+/// path, because the per-epoch committee that authenticates the cert
 /// is not yet locally readable (the whole point of the jump is to sync TO the
 /// state that holds it). A structural mismatch ABORTS the jump (the caller gets
 /// [`JumpOutcome::BadTarget`] and rotates / boots anyway) — still never drives
@@ -643,6 +665,17 @@ pub(crate) fn verify_jump_structural(latest: &UpstreamFinalized) -> eyre::Result
 /// POST-`sync_to` trustless authentication: BLS-verify the jump target's
 /// finalization against `committee[E]` read at the now-materialized landing
 /// state (`landing_hash`), and FAIL CLOSED on mismatch.
+///
+/// **REDUNDANT on the steady-state path since the target became the node's own
+/// archive entry** (§5.2): the marshal BLS-verifies a delivered finalization
+/// against the epoch scheme in `verify_delivered` before `store_finalization`
+/// writes it (CW `marshal/core/actor.rs:1404-1463`, scheme selection `:955-990`),
+/// and on the frontier channel `FrontierHandler::deliver` has already checked the
+/// same 2f+1 under `committee[round.epoch]` from the committee module
+/// (`plane_upstream.rs`). This gate re-reads the committee at a DIFFERENT state
+/// (the landing) and re-runs the same multisig. It still runs because
+/// [`cold_start_jump`] feeds it an unverified `get_latest` answer; removing it as
+/// a STAGE is pass Б2, together with `JumpOutcome::AuthFailed`.
 ///
 /// This runs AFTER `sync_to` — once reth holds the landing block's state, the
 /// committee read is local and complete. It is the AHEAD-COMMIT horizon that makes
@@ -741,10 +774,11 @@ pub(crate) fn verify_jump_authenticated<C: CommitteeSource>(
 ///     [`Stalled`] (NON-fatal in steady state — was the `?` that propagated as
 ///     fatal: THIS is the transient-stall-crash fix);
 ///   - `el.sync_to` observes reth declare the served branch INVALID
-///     ([`SyncFailure::Invalid`]) ⇒ [`InvalidTarget`] (NON-fatal, same
-///     treatment as `BadTarget` — the steady-state caller rotates immediately,
-///     the cold-start caller boots anyway — kept as a SEPARATE variant since
-///     `BadTarget` is pinned to the PRE-sync, `el_sync_calls == 0` case);
+///     ([`SyncFailure::Invalid`]) ⇒ [`InvalidTarget`] — the cold-start caller
+///     boots anyway, the steady-state caller takes it as `Fault::corruption`
+///     (§5.4; review B1-04), because there the target came out of the node's own
+///     attested archive; kept as a SEPARATE variant since `BadTarget` is pinned
+///     to the PRE-sync, `el_sync_calls == 0` case;
 ///   - success ⇒ [`Landed`].
 ///
 /// Gating is the caller's job: the launcher only calls this when
@@ -773,11 +807,14 @@ where
     ES: ElSync,
 {
     // The COLD-START callers use the fixed serving-window need-gate; the
-    // STEADY-STATE re-jump uses `cold_start_jump_with_threshold` with an
-    // epoch-relative gate (see `ReJump::threshold`).
-    cold_start_jump_with_threshold(
+    // STEADY-STATE re-jump uses `jump_to_target` directly with an epoch-relative
+    // gate (see `ReJump::threshold`) and a target it read from its own archive.
+    let Some(latest) = upstream.get_latest().await else {
+        return JumpOutcome::Lagging;
+    };
+    jump_to_target(
         anchor,
-        upstream,
+        latest,
         committees,
         el,
         l1_checkpoint,
@@ -788,20 +825,32 @@ where
     .await
 }
 
-/// As [`cold_start_jump`] but with a caller-supplied forward-only `jump_threshold`
-/// instead of the fixed [`JUMP_THRESHOLD`]. The cold-start path uses
-/// [`cold_start_jump`] (threshold = [`JUMP_THRESHOLD`], the serving-window size);
-/// the STEADY-STATE re-jump passes `min(JUMP_THRESHOLD, epoch_block_interval)` so
-/// the jump preempts the ≥2-epoch "committee[E] not committed" defer deadlock at
-/// ANY epoch interval (real-prod epochs ≫ 1024 keep 1024 unchanged; a compressed
-/// test epoch scales the gate down to ~1 epoch). The deadlock is epoch-relative,
-/// so its recovery gate is too. The post-sync trustless authentication
-/// (`verify_jump_authenticated` + L1 `holds()`) is UNCHANGED — a lower gate only
-/// makes the jump ATTEMPT a shallower gap; a forged target still fails closed.
+/// The jump itself, over a target the CALLER supplies, with a caller-supplied
+/// forward-only `jump_threshold`.
+///
+/// **Where the target comes from is the whole §5.2 change.** The steady-state
+/// re-jump reads `(finalization, block)` out of its OWN marshal archive at its
+/// own tip (`executor::maybe_re_jump`), where the single writer is
+/// `store_finalization` after `verify_delivered` (CW
+/// `marshal/core/actor.rs:1404-1463`) — so the target arrives already
+/// committee-authenticated and cannot be chosen by a peer. Only
+/// [`cold_start_jump`] still passes an unauthenticated `CertUpstream::get_latest`
+/// answer, because a node with an EMPTY archive has no target of its own; making
+/// that path go through a verified `Frontier` too is §5.2's "Правило единое" and
+/// belongs to the next pass.
+///
+/// It passes `min(JUMP_THRESHOLD, epoch_block_interval)` so the jump preempts the
+/// ≥2-epoch "committee[E] not committed" defer deadlock at ANY epoch interval
+/// (real-prod epochs ≫ 1024 keep 1024 unchanged; a compressed test epoch scales
+/// the gate down to ~1 epoch). The deadlock is epoch-relative, so its recovery
+/// gate is too.
+///
+/// The POST-`sync_to` gates are unchanged in shape and gained one: the LANDING
+/// CHECK (`el.holds(target.block.result)`) — see the call site below.
 #[allow(clippy::too_many_arguments)]
-pub async fn cold_start_jump_with_threshold<U, C, ES>(
+pub async fn jump_to_target<C, ES>(
     anchor: u64,
-    upstream: &U,
+    latest: UpstreamFinalized,
     committees: &C,
     el: &ES,
     l1_checkpoint: Option<B256>,
@@ -810,13 +859,9 @@ pub async fn cold_start_jump_with_threshold<U, C, ES>(
     ctx: &mut (impl Clock + CryptoRngCore),
 ) -> JumpOutcome
 where
-    U: crate::cert_follow::CertUpstream,
     C: CommitteeSource,
     ES: ElSync,
 {
-    let Some(latest) = upstream.get_latest().await else {
-        return JumpOutcome::Lagging;
-    };
     // Forward-only need-gate: only re-run the EL-sync phase for a gap beyond
     // `jump_threshold`.
     if latest.block.height <= anchor + jump_threshold {
@@ -846,6 +891,43 @@ where
     // upstream reorg) must not reseed backward.
     if landing_h <= anchor {
         return JumpOutcome::Lagging;
+    }
+    // THE LANDING CHECK (§5.2 "Порядок «аутентификация до `sync_to`»"): reth
+    // reported `Valid`, but `Valid` is reth's verdict on the branch it chose to
+    // canonicalize — it is not a statement that the branch is the ATTESTED one.
+    // `target.block.result` is the committee-attested derived hash of `height − K`
+    // and the only real EVM hash on this wire; if the EL does not hold it
+    // canonically after the sync, the EL sat down somewhere else.
+    //
+    // `holds` and not `landing_hash == result`, and the difference is not
+    // cosmetic: `sync_to` returns `block_hash(max(height − K, activation))` and
+    // SHORT-CIRCUITS to the local executed head on two legitimate paths — a
+    // `result` inside the pre-K window (`B256::ZERO`) and a node already executed
+    // past the target. On both, `landing_hash` is a perfectly good hash of a
+    // different height, so a byte comparison would call a healthy node corrupt.
+    // `block_number(result).is_some()` asks the question the design asks — is the
+    // attested branch ours — at every one of them. The `ZERO` case is the one
+    // where there is nothing to ask: the tip is inside the pre-K window, no
+    // derived hash exists yet, and `sync_to` did not drive the EL at all.
+    if latest.block.result != B256::ZERO {
+        match el
+            .holds(latest.block.result)
+            .wrap_err("attested-result probe after EL-sync failed")
+        {
+            Ok(true) => {}
+            Ok(false) => {
+                return JumpOutcome::InvalidTarget(eyre!(
+                    "EL-sync landed at {landing_h} but the committee-attested result \
+                     {:?} of jump target height {} is NOT canonical in the local chain — \
+                     the EL did not land on the attested branch",
+                    latest.block.result,
+                    latest.block.height
+                ));
+            }
+            // A transport error on the probe is not a verdict: retry on the next
+            // tip rather than declare the landing wrong.
+            Err(e) => return JumpOutcome::Stalled(e),
+        }
     }
     // POST-sync trustless authentication: now that reth holds the landing state,
     // read `committee[E]` at the landing hash and BLS-verify the finalization —
@@ -1284,14 +1366,29 @@ mod tests {
         landing: (u64, B256),
         calls: Arc<Mutex<u32>>,
         holds_l1: bool,
+        /// The attested `block.result` this EL actually canonicalized — recorded
+        /// by `sync_to`, because that is what a healthy EL does: it is told to
+        /// drive onto `latest.block.result` and it lands there.
+        landed_on: Arc<Mutex<Option<B256>>>,
+        /// Make `sync_to` report success WITHOUT landing on the attested result:
+        /// reth answered `Valid` for some other branch. The condition the §5.2
+        /// landing check exists for, and the only way to reach it here.
+        refuse_result: Arc<Mutex<bool>>,
     }
 
     impl ElSync for FakeElSync {
-        async fn sync_to(&self, _latest: &UpstreamFinalized) -> Result<(u64, B256), SyncFailure> {
+        async fn sync_to(&self, latest: &UpstreamFinalized) -> Result<(u64, B256), SyncFailure> {
             *self.calls.lock().unwrap() += 1;
+            if !*self.refuse_result.lock().unwrap() {
+                *self.landed_on.lock().unwrap() = Some(latest.block.result);
+            }
             Ok(self.landing)
         }
-        fn holds(&self, _hash: B256) -> eyre::Result<bool> {
+        fn holds(&self, hash: B256) -> eyre::Result<bool> {
+            if *self.landed_on.lock().unwrap() == Some(hash) {
+                return Ok(true);
+            }
+            // Anything else is the L1 checkpoint probe.
             Ok(self.holds_l1)
         }
     }
@@ -1330,6 +1427,8 @@ mod tests {
                 landing,
                 calls: el_sync_calls.clone(),
                 holds_l1,
+                landed_on: Arc::new(Mutex::new(None)),
+                refuse_result: Arc::new(Mutex::new(false)),
             },
             scheme_reads,
             el_sync_calls,
@@ -1383,6 +1482,124 @@ mod tests {
                 B256::repeat_byte(0xe1),
                 "committee read POST-sync at the landing hash (not the stale anchor) — the \
                  far-epoch committee is only committed in the state the jump just synced"
+            );
+        });
+    }
+
+    /// (4.2 Б1.2) THE LANDING CHECK. `sync_to` returned `Valid`, but `Valid` is
+    /// reth's verdict on the branch it chose — not a statement that the branch is
+    /// the ATTESTED one. After the sync the jump asks the EL whether it holds the
+    /// committee-attested `block.result` of the target; if it does not, the EL sat
+    /// down somewhere else and the outcome is `InvalidTarget` (§5.4: a corruption
+    /// witness, not a stall and not a rotate-the-peer).
+    ///
+    /// Both arms in one test, over ONE fixture, because the separating fact is
+    /// exactly one bit: whether the fake EL landed on what it was told to.
+    ///
+    /// RED under the mutation that disables the check (`if false && …` on the
+    /// `latest.block.result != B256::ZERO` guard in `jump_to_target`): `a landing
+    /// off the attested branch was accepted; expected InvalidTarget` — the
+    /// refusing arm fell through to a terminal that is NOT `InvalidTarget`, and
+    /// with `l1_checkpoint = None` and a readable committee the only one left is
+    /// `Landed { landing: 5000 }`: a jump that reseeds the anchor onto a branch
+    /// nobody attested. (Run 2026-09-12; the mutation was reverted.)
+    ///
+    /// Falsifier: a `Landed` from the refusing arm (no check); an `InvalidTarget`
+    /// from the holding arm (the check fires on an honest landing); an
+    /// `el_sync_calls` of 0 in either (the fixture never reached the check).
+    #[test]
+    fn a_landing_off_the_attested_result_is_invalid_and_one_on_it_lands() {
+        let runtime = deterministic::Runner::default();
+        runtime.start(|mut ctx| async move {
+            let far = ACTIVATION + 1 + JUMP_THRESHOLD + 10;
+            let target_of = |fx: &Fixture| {
+                let live = sample_order(
+                    Digest(B256::repeat_byte(0xaa)),
+                    far,
+                    B256::repeat_byte(0x44),
+                );
+                certify(&fx.committee, 0, &live)
+            };
+
+            // (1) The EL reports Valid but does NOT hold the attested result.
+            let (committees, fx) = fixture((5000, B256::repeat_byte(0xe1)), false);
+            *fx.el.refuse_result.lock().unwrap() = true;
+            let out = jump_to_target(
+                ACTIVATION,
+                target_of(&fx),
+                &committees,
+                &fx.el,
+                None,
+                ACTIVATION,
+                JUMP_THRESHOLD,
+                &mut ctx,
+            )
+            .await;
+            assert_eq!(
+                *fx.el_sync_calls.lock().unwrap(),
+                1,
+                "the EL-sync never ran — the check below is vacuous"
+            );
+            let JumpOutcome::InvalidTarget(e) = out else {
+                panic!("a landing off the attested branch was accepted; expected InvalidTarget");
+            };
+            assert!(
+                format!("{e:#}").contains("NOT canonical"),
+                "the refusal is not the landing check: {e:#}"
+            );
+
+            // (2) Same fixture, same target, the EL lands where it was told.
+            let (committees, fx) = fixture((5000, B256::repeat_byte(0xe1)), false);
+            let out = jump_to_target(
+                ACTIVATION,
+                target_of(&fx),
+                &committees,
+                &fx.el,
+                None,
+                ACTIVATION,
+                JUMP_THRESHOLD,
+                &mut ctx,
+            )
+            .await;
+            assert_eq!(*fx.el_sync_calls.lock().unwrap(), 1, "el_sync ran once");
+            assert!(
+                matches!(out, JumpOutcome::Landed { landing: 5000, .. }),
+                "an EL that landed on the attested result did not Land"
+            );
+        });
+    }
+
+    /// (4.2 Б1.2) A target inside the pre-K window carries `result ==
+    /// B256::ZERO`: nothing was derived at `height − K` yet, `sync_to` drives the
+    /// EL nowhere, and there is no attested branch to ask about. The landing check
+    /// must not fire there — that is the one case where a byte comparison against
+    /// the returned `landing_hash` would have called a healthy node corrupt.
+    ///
+    /// Falsifier: an `InvalidTarget` (the ZERO case is not excused).
+    #[test]
+    fn a_pre_k_target_with_no_derived_result_skips_the_landing_check() {
+        let runtime = deterministic::Runner::default();
+        runtime.start(|mut ctx| async move {
+            let (committees, fx) = fixture((5000, B256::repeat_byte(0xe1)), false);
+            let far = ACTIVATION + 1 + JUMP_THRESHOLD + 10;
+            // `result == ZERO` and the EL refuses to record ANY landing: even so,
+            // the check has nothing to ask and the jump proceeds.
+            *fx.el.refuse_result.lock().unwrap() = true;
+            let live = sample_order(Digest(B256::repeat_byte(0xaa)), far, B256::ZERO);
+            let out = jump_to_target(
+                ACTIVATION,
+                certify(&fx.committee, 0, &live),
+                &committees,
+                &fx.el,
+                None,
+                ACTIVATION,
+                JUMP_THRESHOLD,
+                &mut ctx,
+            )
+            .await;
+            assert!(
+                matches!(out, JumpOutcome::Landed { landing: 5000, .. }),
+                "a pre-K target (result = ZERO) was refused by the landing check"
             );
         });
     }

@@ -1262,32 +1262,64 @@ fn four_nodes_agree_the_epoch_key_and_carry_the_seed_across_the_boundary() {
 ///
 /// WHY THE NAMING-TIME TIP IS NOT ASSERTED HERE. "The step stood above my own tip
 /// when I named it" is the executor's own comparison (`last_tip_height`), and it
-/// is free there and not here: sampling the marshal tip from the probe closure is
+/// is free there and not here: sampling the marshal tip from the PROBE CLOSURE is
 /// an extra message into the marshal's select loop and it CHANGES THE RUN —
 /// measured, `a_zero_overlap_boundary_halts_the_chain_verify_only` loses its
-/// incoming half's DKG artifact under it. That comparison is pinned in
-/// `executor::tests::a_ladder_step_above_the_tip_is_put_on_the_marshal_every_frozen_tick`
-/// and `…::a_ladder_step_at_the_marshal_tip_is_skipped_and_one_above_it_is_put`.
+/// incoming half's DKG artifact under it (Д-81). That comparison is pinned at the
+/// unit level in `executor::tests`.
 ///
-/// The fixture is the deep-lag one: node 3 leaves the committee for epochs 3–4
-/// and the re-jump gate is widened to 80 so it parks below the ceiling instead of
-/// jumping out immediately — the same shape as the Д3 precondition, which this
-/// test does not duplicate (it asserts nothing about archives or landings).
+/// WHAT 4.2 Б1 ADDS: THE POSITIVE HALF OF THE LADDER. The driver samples the
+/// marshal's own `finalized_height` gauge once per tick — a registry read, no
+/// mailbox, so the Д-81 perturbation does not apply — beside a running count of
+/// steps NAMED. That dates every rung, and lets the test say the thing the old
+/// one could not: each named rung is REACHED by this node's own verified tip, and
+/// within a bounded number of ticks of being named. It does NOT claim the step
+/// CAUSED the tip to move — the third pass measured that here it mostly did not
+/// (see "WHAT IS *NOT* ASSERTED" below), so this bound is a progress check and
+/// the causal claim is left to the unit tests that can isolate it.
+///
+/// The fixture is the deep-lag one: node 3 leaves the committee for epochs 3–4 and
+/// its EXECUTION stalls at `last(2) = 95`, so its marshal freezes at the ordering
+/// plane's two-epoch ceiling and it climbs out a rung at a time. The re-jump gate
+/// is production's own, `min(JUMP_THRESHOLD, interval)`, and that is load-bearing
+/// rather than incidental: at the widened gate of 80 this fixture used to run
+/// under, the reachable gap after 4.2 Б1.2 is bounded by the ceiling at
+/// `2·interval = 64 < 80`, so the jump never arms, `T` never advances and the
+/// probe names ONE rung for the whole run (measured: `steps=[(3, 159, 727)]`).
+/// The Д3 precondition runs the same shape; this test does not duplicate it (it
+/// asserts nothing about archives or landings).
 ///
 /// WHAT IS ASSERTED: the probe named steps at all (the wiring is live and `T`
 /// reaches it); the distinct steps STRICTLY INCREASE and there is more than one
-/// (a ladder, not one rung repeated forever); and node 3's own marshal tip ends at
-/// or above the highest rung it named (every named rung was reached).
+/// (a ladder, not one rung repeated forever); node 3's own marshal tip ends at or
+/// above the highest rung it named; EVERY named rung left this node as a
+/// by-height pull and at least one came back SERVED; and every named rung is
+/// reached by that tip within [`LADDER_REACH_TICKS`] driver ticks of the tick it
+/// was first named on.
+///
+/// WHAT IS *NOT* ASSERTED, and the third pass says it in the code rather than
+/// only in the journal (review B1-03): that the ladder is what carries this node
+/// out. Measured here — rung 159 is served, rungs 191 and 223 are addressed and
+/// never answered inside the fetch bound, and node 3 reaches them anyway by
+/// contiguous repair plus its two jumps (targets 128 and 160, neither of them a
+/// named rung). A rung named two epochs above this node's `fin` runs into the
+/// chain's own live edge, which is §5.4's "догон вместо прыжка" and not a defect;
+/// but it does mean the causal claim "обслуженная ступень размораживает tip" has
+/// only its unit-level witness here (`executor::tests`), not a stand-level one.
 ///
 /// Falsifier: no step named (then `T` never reaches the probe and the run measures
 /// nothing); one rung repeated for the whole run (then `T` is frozen and §5.2's
 /// "новый `fin` ⇒ новый `T`" does not happen); a rung above the final marshal tip
-/// (then the node named a height it never got).
+/// (then the node named a height it never got); a rung that never leaves as a
+/// by-height pull (then the naming is a log line); no rung served at all (then the
+/// delivery half has no witness here either); a rung the tip never reaches inside
+/// the bound (then the climb stopped).
 #[test]
 fn the_ladder_names_successive_rungs_and_the_lagging_node_reaches_every_one() {
     let mut cfg = StandConfig::live(4, 1);
     cfg.committees = rotate_four_three_four();
-    cfg.re_jump_threshold = Some(80);
+    cfg.re_jump_threshold = Some(crate::cold_start_jump::JUMP_THRESHOLD.min(EPOCH_LEN));
+    cfg.marshal_tip_series = true;
     let end = 8 * EPOCH_LEN + 8;
     let out = Stand::new(cfg).run_until(
         move |p| p.min_height_of(&[0, 1, 2]) >= end,
@@ -1330,7 +1362,107 @@ fn the_ladder_names_successive_rungs_and_the_lagging_node_reaches_every_one() {
         "node 3's marshal tip {tip} never reached the highest rung it named ({highest}): \
          {distinct:?}"
     );
+
+    // THE POSITIVE PIN. For each rung, the tick it was FIRST named on (the first
+    // tick where the running count of named steps passes that rung's index in the
+    // raw list) and the first tick at or after it where node 3's own marshal tip
+    // stands at or above the rung.
+    let named = &out.frontier_steps_named_series[3];
+    let tips = &out.marshal_tip_series[3];
+    assert!(
+        !tips.is_empty(),
+        "no marshal-tip samples — `StandConfig::marshal_tip_series` was not set"
+    );
+    let mut reach: Vec<(u64, usize, Option<usize>)> = Vec::new();
+    for (rung_idx, (_t, height)) in steps.iter().enumerate() {
+        let Some(named_at) = named.iter().position(|c| *c > rung_idx) else {
+            continue; // named after the last sample — nothing to date it against
+        };
+        let reached_at = tips
+            .iter()
+            .enumerate()
+            .skip(named_at)
+            .find(|(_, t)| **t >= *height)
+            .map(|(i, _)| i);
+        reach.push((*height, named_at, reached_at));
+    }
+    // One entry per DISTINCT rung, the first time it was named.
+    reach.dedup_by_key(|(h, _, _)| *h);
+    eprintln!("(4.2 Б1.6) rung -> (first named tick, first reached tick) = {reach:?}");
+
+    // THE RUNG ON THE WIRE (review B1-03). `frontier_steps` says the probe NAMED a
+    // rung; it says nothing about whether anything was asked for. `upstream_served`
+    // is the client end of this node's own by-height pulls, so a rung that appears
+    // there left this node as a real fetch. It does NOT separate the ladder step
+    // from the marshal's ordinary contiguous repair — both are the same verb on
+    // the same wire key, and the addressed form that would separate them was
+    // measured and rolled back (`cert_inlet::UpstreamResolver::fetch_targeted`).
+    let served = &out.upstream_served[3];
+    let rungs: Vec<u64> = distinct.iter().map(|(_, h, _)| *h).collect();
+    let rung_pulls: Vec<_> = served
+        .iter()
+        .filter(|p| rungs.contains(&p.height))
+        .collect();
+    eprintln!(
+        "(4.2 В.B1-03) rungs={rungs:?} pulls={} rung pulls={rung_pulls:?}",
+        served.len(),
+    );
+    for rung in &rungs {
+        assert!(
+            rung_pulls.iter().any(|p| p.height == *rung),
+            "rung {rung} was NAMED but never left as a by-height pull — then the ladder is a \
+             log line and not a mechanism: {rung_pulls:?}"
+        );
+    }
+    // ...and at least one of them was actually SERVED. This is the weak half and
+    // it is weak on purpose: MEASURED on this fixture, a minority of the rungs
+    // comes back and the rest are asked for and never answered inside the fetch
+    // bound — by the tick a rung is named the network has often not produced it
+    // yet (the rung is up to two epochs above this node's `fin`, which on a
+    // climbing node runs into the chain's own live edge). The node reaches them
+    // anyway — by contiguous repair from the floor and by its two jumps, which is
+    // exactly §5.4's "догон вместо прыжка". So what this run witnesses is: the
+    // rung leaves the node and a served rung does arrive; it does NOT witness that
+    // the ladder is what carries this node out, and no assertion here may pretend
+    // otherwise. The per-rung numbers are printed above, not frozen here.
+    assert!(
+        rung_pulls.iter().any(|p| p.delivered),
+        "no named rung was ever served on this fixture — then `deliver` ⇒ `store_finalization` \
+         ⇒ `Update::Tip` has no live witness at all here: {rung_pulls:?}"
+    );
+    for (height, named_at, reached_at) in &reach {
+        let reached_at = reached_at.unwrap_or_else(|| {
+            panic!(
+                "node 3's marshal tip never reached rung {height} named at tick {named_at}: \
+                 tips={tips:?}"
+            )
+        });
+        assert!(
+            reached_at.saturating_sub(*named_at) <= LADDER_REACH_TICKS,
+            "rung {height} was named at tick {named_at} and only reached at tick {reached_at} — \
+             more than {LADDER_REACH_TICKS} ticks; naming and reaching look unrelated: {reach:?}"
+        );
+    }
 }
+
+/// How many driver ticks a rung may take between being NAMED by node 3's probe
+/// and being REACHED by node 3's own marshal tip, in
+/// [`the_ladder_names_successive_rungs_and_the_lagging_node_reaches_every_one`].
+///
+/// MEASURED, not chosen, and a BOUND rather than a mechanism (review B1-03).
+/// Observed on this fixture: rung 159 named at tick 961 and reached at 1592, rung
+/// 191 at 1282 → 1909, rung 223 at 1603 → 2229 — deltas 631, 627, 626. The
+/// near-constant delta was once read as evidence that naming CAUSES reaching; it
+/// is not, and the third pass corrects that: node 3 climbs at a roughly constant
+/// rate here, and a constant rate plus a constant naming cadence gives a constant
+/// delta on its own. Two of the three rungs are never even served (see the test
+/// doc), so most of that 631-tick delta is contiguous catch-up and two jumps.
+///
+/// What the bound is still worth: it fails if the climb STOPS after a rung is
+/// named — a rung named and never reached is a node that stopped making progress.
+/// It is not a latency target, and the ticks are driver ticks (≈ 8 per probe tick
+/// on this fixture), not seconds.
+const LADDER_REACH_TICKS: usize = 800;
 
 fn rotate_four_three_four() -> Committees {
     Committees::Schedule(Arc::new(|epoch, n| {
@@ -2214,7 +2346,7 @@ fn a_rotated_out_node_without_the_rejump_parks() {
 }
 
 /// (C9, honest control) The stand's steady-state re-jump IS the production
-/// `cold_start_jump_with_threshold`, not a re-telling of it: the stand supplies
+/// `jump_to_target`, not a re-telling of it: the stand supplies
 /// only the two seams below it (`JumpElSync` for `RethElSync`, `JumpCommittees`
 /// for `RethCommitteeSource`), and the landing selection, the PRE-sync
 /// `verify_jump_structural` and the POST-sync `verify_jump_authenticated` are
@@ -2760,10 +2892,38 @@ fn drop_the_last_two_from_epoch_two() -> Committees {
 fn a_forged_seed_slot_is_admitted_with_no_key_and_refused_when_the_key_lands() {
     let mut cfg = StandConfig::live(5, 1);
     cfg.committees = drop_the_last_two_from_epoch_two();
-    // Every link left in place, so the two outsiders can still acquire `PK_2`
-    // after the fact — the half of R-008 that only exists once the key lands.
+    // Every CONSENSUS-plane link left in place, so the two outsiders can still
+    // acquire `PK_2` after the fact — the half of R-008 that only exists once the
+    // key lands. (Only the consensus plane: `upstream_source_only_for` below cuts
+    // node 4's upstream links down to one, see there.)
     cfg.peer_set = PeerSet::CommitteeTrackedOnly;
     cfg.re_jump_threshold = Some(crate::cold_start_jump::JUMP_THRESHOLD.min(EPOCH_LEN));
+    // THE ARCHIVE-POISONING SEAM (4.2 Б1.3). The last assertion here is that a
+    // follower which accepted a forged certificate SERVES IT ON. That needs node 4
+    // to ask node 3 for one of the forged heights — and until this line, which
+    // peer answered node 4's by-height pull was the resolver's shuffle
+    // (`resolver/src/p2p/fetcher.rs:233-245`), not the fixture. It happened to be
+    // node 3 while the ladder step was gated on `servable`, and happened to be a
+    // committee member once that gate went (§5.2, review A2-01): same property,
+    // different luck — measured, `served_seed_replays` went from `[66..=70]` to
+    // empty while the five heights were served by the forgers instead (their
+    // `forged_heights` went from 6 entries to 10).
+    //
+    // So the fixture now SAYS it: node 4 pulls by height from node 3 and from
+    // nobody else, while node 3 keeps every link it had (it is the one that must
+    // hold a whole poisoned chain to hand on). The property is unchanged — a
+    // poisoned archive serves the forgery — and it is no longer decided by timing.
+    //
+    // WHAT THE SEAM COSTS, named because it is a narrowing (review B1-11): the run
+    // no longer witnesses that a poisoned follower is REACHED in an ordinary mesh;
+    // it witnesses what happens once it is. Measured BY THE REVIEW (not by this
+    // pass) with the seam removed: the
+    // primary half of R-008 survives intact (`branch = (a) REPRODUCED`,
+    // `keyless=310`, `refusals=10`) and only the last, secondary assertion reddens,
+    // with `serve_requests` per node `[91, 70, 840, 43, 44]` — node 2 (a forger)
+    // answers node 4's by-height pulls instead of node 3. So the seam fixes the
+    // draw, not the property.
+    cfg.upstream_source_only_for = Some((4, 3));
     let mut stand = Stand::new(cfg);
     for i in 0..3 {
         stand.node(i).role(Role::ForgedSeedUpstream);
@@ -2932,6 +3092,8 @@ fn lying_upstream_stand(role3: Role) -> super::stand::Outcome {
     }));
     cfg.re_jump_threshold = Some(crate::cold_start_jump::JUMP_THRESHOLD.min(EPOCH_LEN));
     cfg.upstream_only_link = Some((3, 0));
+    // R-004 reads every node's MARSHAL TIP per tick (§5.2's one frontier).
+    cfg.marshal_tip_series = true;
     let mut stand = Stand::new(cfg);
     stand.node(3).role(role3);
     stand.run_until(
@@ -2956,9 +3118,17 @@ fn lying_upstream_stand(role3: Role) -> super::stand::Outcome {
 /// certificate's own round epoch, and `epoch_of(real + 10^6) != round.epoch` long
 /// before the read window has anything to say — so the answer is a LIE, `deliver`
 /// returns `false`, commonware excludes node 3 from node 0's frontier fetches, and
-/// nothing reaches the executor at all. The observable inversion: the victim's
-/// frontier series never leaves 0 and `jump_calls` is EMPTY. No wasted backfill,
-/// no FCU on a forged target, no cycle.
+/// nothing reaches the executor at all.
+///
+/// **What the observable is, after 4.2 Б1.** It used to be `upstream_frontier` —
+/// the atomic the probe `fetch_max`ed the SERVED height into, whose series a test
+/// could watch stay at 0. That atomic is gone: §5.2 leaves the trigger ONE
+/// frontier, this node's own marshal tip, so the question a liar can be judged by
+/// is now "did the victim's VERIFIED tip move", not "what number did it believe".
+/// The series is therefore `marshal_tip_series[0]`, and the property is stronger
+/// than the one it replaces: an inflated `Latest` cannot move a tip even if it is
+/// believed, because a tip only moves through `store_finalization`. Both halves
+/// still hold: no tip growth past the honest chain, and `jump_calls` EMPTY.
 ///
 /// **Which arm of `deliver` fires, and why it is not the window.** §5.2 describes
 /// an inflated `Latest` as refused for being outside the READ WINDOW (`true` +
@@ -2981,13 +3151,14 @@ fn lying_upstream_stand(role3: Role) -> super::stand::Outcome {
 /// **Which assertions are vacuous, which load-bearing.** VACUOUS over an honest
 /// role: `latest_inflated == 0` on the control. LOAD-BEARING: the tamper witness
 /// (`latest_inflated >= 1`, the exact `10^6` delta, the structural pass), the
-/// victim's REJECTION (`deliveries_rejected >= 1`), the frontier never leaving 0,
-/// `jump_calls` empty, and the control landing every jump and recovering past 95.
+/// victim's REJECTION (`deliveries_rejected >= 1`), its marshal tip never leaving
+/// the honest chain, `jump_calls` empty, and the control landing every jump and
+/// recovering past 95.
 ///
 /// Falsifier: the wrapper inflating nothing; a delta != `10^6`; a forged answer
-/// failing the payload↔digest bind; the victim NOT rejecting; any value > 0 in the
-/// victim's frontier series; any jump call at all in the role run; the control not
-/// landing or not recovering; the forgery leaking to nodes 1–3.
+/// failing the payload↔digest bind; the victim NOT rejecting; a victim tip
+/// anywhere near the inflation; any jump call at all in the role run; the control
+/// not landing or not recovering; the forgery leaking to nodes 1–3.
 #[cfg(feature = "dpos-devnet-byzantine")]
 #[test]
 fn an_inflated_latest_probe_is_refused_at_the_frontier_and_spawns_no_re_jump() {
@@ -3022,15 +3193,15 @@ fn an_inflated_latest_probe_is_refused_at_the_frontier_and_spawns_no_re_jump() {
     );
 
     let calls = &role.jump_calls[0];
-    let series = &role.upstream_frontier_series[0];
+    let series = &role.marshal_tip_series[0];
     let peaked = series.iter().copied().max().unwrap_or(0);
     let ctrl_calls = &control.jump_calls[0];
     let branch = if peaked >= LATEST_INFLATION {
-        "(a) NOT CLOSED — the forged frontier still reached the executor"
+        "(a) NOT CLOSED — the forged height moved the victim's own marshal tip"
     } else if !calls.is_empty() {
         "(b) NOT CLOSED — a re-jump was spawned without a verified frontier"
     } else {
-        "(c) CLOSED — the forgery was refused at deliver; no frontier, no re-jump"
+        "(c) CLOSED — the forgery was refused at deliver; no tip growth, no re-jump"
     };
     eprintln!(
         "(R-004) branch = {branch} | role: peaked={peaked} calls={} up[0]={:?} probes[0]={} \
@@ -3072,12 +3243,18 @@ fn an_inflated_latest_probe_is_refused_at_the_frontier_and_spawns_no_re_jump() {
         control.upstream[0]
     );
 
-    // (3) THE INVERSION. The forged height never reached the executor's frontier —
-    // the series stays at its initial 0 — and no re-jump was ever spawned, so the
-    // per-tick wasted-backfill cycle this test used to pin cannot occur.
-    assert_eq!(
-        peaked, 0,
-        "the forged frontier reached the victim's executor (branch {branch}): {series:?}"
+    // (3) THE INVERSION. The victim's own marshal tip never leaves the honest
+    // chain — it can only move through `store_finalization`, and the forgery never
+    // gets that far — and no re-jump was ever spawned, so the per-tick
+    // wasted-backfill cycle this test used to pin cannot occur.
+    //
+    // The bound is the ROTATION BOUNDARY, not 0: node 0 is an honest member until
+    // epoch 3 and its marshal legitimately holds everything up to 95. What the lie
+    // could have bought is a tip beyond that, and it bought nothing.
+    assert!(
+        peaked < 3 * EPOCH_LEN,
+        "the victim's marshal tip ran past its rotation boundary on a forged frontier \
+         (branch {branch}): peak {peaked}, series {series:?}"
     );
     assert!(
         calls.is_empty(),
@@ -3119,11 +3296,11 @@ fn an_inflated_latest_probe_is_refused_at_the_frontier_and_spawns_no_re_jump() {
     assert!(role.halted.is_empty(), "{:?}", role.halted);
     for i in [1, 2, 3] {
         assert!(
-            role.upstream_frontier_series[i]
+            role.marshal_tip_series[i]
                 .iter()
                 .all(|&v| v < LATEST_INFLATION),
             "node {i} was reached by the forgery — isolation leaked: {:?}",
-            role.upstream_frontier_series[i]
+            role.marshal_tip_series[i]
         );
     }
 }

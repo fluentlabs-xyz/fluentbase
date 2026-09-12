@@ -735,12 +735,6 @@ where
     // Always-on beacon plane (one FluentP2P + 5 persistent Muxers + persistent
     // DkgActor + shared store), built ONCE — the engine CLONES the shared plane.
     let plane = build_beacon_plane(&ctx, &node, &cfg, share_seal_key, bls_keypair.clone()).await?;
-    // Rule Y: ONE shared upstream-frontier atomic threaded into BOTH the validator
-    // inlet tee (writer) and the layer's `executor::ReJump` (reader), so an
-    // inlet-fed joiner validator self-heals off the frontier exactly like a
-    // follower. Created unconditionally — harmless for a no-upstream validator
-    // (no inlet writes it; `re_jump` is `None` so nothing reads it).
-    let upstream_frontier = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
     // Cloned before `launch_dpos_layer` consumes `ctx` — used to spawn the
     // frontier-resolver keepalive task below.
     let keepalive_ctx = ctx.clone();
@@ -754,7 +748,6 @@ where
         plane.shared.clone(),
         plane.plane_upstream.clone(),
         plane.evidence.clone(),
-        upstream_frontier.clone(),
         plane.agreement_intake,
         plane.finalized_cursor.clone(),
         plane.committee.clone(),
@@ -774,10 +767,10 @@ where
     // (`handle.cert_mailbox`). `None` when no upstreams are configured. The inlet
     // tees the LIVE upstream cert frontier into the DkgActor deal clock (re-homed
     // from the deleted unified supervisor) — so a still-catching-up validator
-    // deals its DKG share at the live tip rather than K blocks late. It no longer
-    // tees anything into a committee-read cursor: this node reads every committee
-    // through the module, at its own ordering-finalized anchor, and `live_height`
-    // is write-only on this path until 4.2 removes it.
+    // deals its DKG share at the live tip rather than K blocks late. That clock is
+    // the ONLY thing it tees: 4.2 removed the committee-read cursor (`live_height`,
+    // superseded by the module's ordering-finalized anchor) and the re-jump
+    // frontier (`upstream_frontier`, superseded by the marshal tip).
     let inlet_handle = inlet_setup.map(|(inlet_ctx, urls)| {
         crate::cert_inlet::spawn_cert_inlet(
             inlet_ctx,
@@ -785,13 +778,6 @@ where
             plane.committee.clone(),
             urls,
             fluentbase_consensus::cert_inlet::LiveFrontierTee {
-                live_height: plane.live_height.clone(),
-                // Rule Y: the SAME atomic shared with this node's `executor::ReJump`
-                // (the inlet⇄executor signal). When this validator is an inlet-fed
-                // joiner (rotated out, following the inlet base) its re-jump self-heals
-                // off the climbing frontier exactly like a follower — symmetric wiring.
-                // See [`LiveFrontierTee::upstream_frontier`].
-                upstream_frontier: upstream_frontier.clone(),
                 dkg_height_tx: plane.dkg_height_tx.clone(),
                 plane_clock: plane.shared.plane_clock.clone(),
             },
@@ -950,8 +936,9 @@ pub(crate) struct BeaconPlane<Provider, EvmConfig> {
     /// The finalized-height poller driving the plane's ET + `dkg_height` clock.
     /// The poller owns its own `dkg_height_tx` clone (feeding the LOCAL
     /// ordering-finalized height `fin + K`); the live-cert-frontier tee is
-    /// re-homed onto the cert-inlet (`live_height` + `dkg_height_tx` below),
-    /// fed only on an upstream-configured node.
+    /// re-homed onto the cert-inlet (`dkg_height_tx` — its ONE remaining cursor
+    /// since `live_height` went with the frontier step), fed only on an
+    /// upstream-configured node.
     pub poller_handle: Handle<()>,
     /// The plane-native `CertUpstream` frontier resolver engine
     /// (`commonware_resolver::p2p`) on FRONTIER_CHANNEL — aborted ONLY at process
@@ -1009,11 +996,6 @@ pub(crate) struct BeaconPlane<Provider, EvmConfig> {
     /// executor's "the anchor moved" wake-up) and already backing the beacon's
     /// `CommitteeReads` facade above.
     pub committee: Arc<dyn fluentbase_consensus::Committee>,
-    /// The cert-inlet's live upstream frontier tee. Written only by an
-    /// upstream-configured validator's inlet and read by nothing on this path
-    /// any more — the committee module reads at the ordering-finalized anchor.
-    /// Removed with `upstream_frontier` in the frontier step.
-    pub live_height: Arc<std::sync::atomic::AtomicU64>,
     /// `T` — the epoch this node last handed to `track`
     /// (`EpochTransition::last_tracked_epoch`), mirrored into ONE cell with ONE
     /// reader: the executor's frontier probe, which names the ladder step
@@ -1337,14 +1319,6 @@ where
     // The per-epoch DKG share files, and the agreement artifacts persisted beside
     // them. Reloaded ONCE, inside the beacon build.
     let beacon_dir = node.data_dir.data_dir().join("beacon");
-
-    // Live cursor (consensus-finalized ≈ EL-finalized + K). The cert-inlet (on
-    // upstream-configured nodes) tees the live upstream cert frontier here. It is
-    // NO LONGER a committee-read cursor: the committee module reads at this
-    // node's own ordering-finalized anchor and at nothing else, so this atomic is
-    // now write-only on this path — kept because the inlet still writes it and
-    // 4.2 removes it together with `upstream_frontier`.
-    let live_height = Arc::new(std::sync::atomic::AtomicU64::new(0));
 
     // Under the 2-epoch committee warm-up the DKG ceremony roster IS the committed
     // slot: `committee[target]` is frozen a full epoch before its DKG runs (at its
@@ -1996,7 +1970,6 @@ where
         artifact_bytes,
         finalized_cursor,
         committee,
-        live_height,
         tracked_epoch,
         dkg_height_tx,
         marshal_slot,
@@ -2074,7 +2047,6 @@ pub(crate) async fn launch_dpos_layer<N, AddOns>(
     shared_beacon: SharedBeaconPlane,
     plane_upstream: fluentbase_consensus::PlaneUpstreamHandle<Context>,
     evidence: fluentbase_consensus::slasher::EvidenceBridge,
-    upstream_frontier: std::sync::Arc<std::sync::atomic::AtomicU64>,
     agreement_intake: mpsc::Receiver<(commonware_consensus::types::Epoch, Handle<()>)>,
     // The plane's ONE ordering-finalized cursor and the committee module built
     // over it. The executed-chain view below is constructed with this cursor
@@ -2303,10 +2275,6 @@ where
         // The plane's agreement instances, adopted by `epoch_manager` so they are
         // pruned on the same frontier cutoff as the per-epoch engines.
         agreement_intake: Some(agreement_intake),
-        // Rule Y: the SAME atomic the validator inlet tee writes (created once in
-        // `launch_validator_overlay`, threaded into both sinks) — the validator's
-        // `executor::ReJump` reads it, mirroring the follower's inlet⇄executor signal.
-        upstream_frontier,
         #[cfg(feature = "dpos-devnet-byzantine")]
         byzantine,
     };
