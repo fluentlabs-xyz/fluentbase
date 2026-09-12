@@ -77,8 +77,11 @@ fn default_chain_config(chain_id: u64) -> ChainConfig {
         merge_netsplit_block: Some(0u64),
         shanghai_time: Some(0u64),
         cancun_time: Some(0u64),
-        terminal_total_difficulty: None,
-        terminal_total_difficulty_passed: false,
+        // Every Fluent network starts post-merge. reth activates Paris from an external genesis
+        // file only when this field is set; without it `prevrandao` is absent and the first
+        // payload built from the file panics in the EIP-2935 pre-block system call.
+        terminal_total_difficulty: Some(U256::ZERO),
+        terminal_total_difficulty_passed: true,
         ethash: None,
         clique: None,
         extra_fields: Default::default(),

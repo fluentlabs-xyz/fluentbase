@@ -40,7 +40,7 @@ use revm::{
     },
     Database, Inspector,
 };
-use rwasm::TrapCode;
+use rwasm::{TrapCode, N_BYTES_PER_MEMORY_PAGE, N_DEFAULT_MAX_MEMORY_PAGES};
 use std::{boxed::Box, vec, vec::Vec};
 use tracing::warn;
 
@@ -48,6 +48,15 @@ use tracing::warn;
 ///
 /// This allows tests to inject deterministic memory sources while production uses the
 /// default runtime executor.
+/// Largest input a CALL-family syscall accepts: the linear memory an ordinary contract can own.
+///
+/// A guest passes its input as an offset range into its own memory, so anything larger is out of
+/// bounds by construction, and the EVM runtime builds its calldata from EVM memory, whose
+/// expansion cost keeps it far below this. Checking the length first keeps a bogus range from
+/// reserving a large buffer before the memory read would reject it; `CREATE` has its own cap.
+pub(crate) const CALL_INPUT_HARD_CAP: usize =
+    (N_DEFAULT_MAX_MEMORY_PAGES * N_BYTES_PER_MEMORY_PAGE) as usize;
+
 pub(crate) trait MemoryReaderTr {
     fn memory_read(&self, call_id: u32, offset: usize, buffer: &mut [u8]) -> Result<(), TrapCode>;
 }
@@ -234,6 +243,13 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let remaining_offset = inputs.input.start + $length;
             let remaining_length = inputs.input.end - inputs.input.start - $length;
             let lazy_contract_input = move || -> Result<Vec<u8>, TrapCode> {
+                // Probe the last byte first: guest memory is one contiguous region, so a
+                // readable last byte means the whole range is readable, and nothing is
+                // reserved for a range the read would reject anyway.
+                if remaining_length > 0 {
+                    let mut probe = [0u8; 1];
+                    mr.memory_read(call_id, remaining_offset + remaining_length - 1, &mut probe)?;
+                }
                 let mut variable_input = vec![0u8; remaining_length];
                 mr.memory_read(call_id, remaining_offset, &mut variable_input)?;
                 Ok(variable_input)
@@ -257,6 +273,13 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let remaining_offset = inputs.input.start + len;
             let remaining_length = inputs.input.end - inputs.input.start - len;
             let lazy_contract_input = move || -> Result<Vec<u8>, TrapCode> {
+                // Probe the last byte first: guest memory is one contiguous region, so a
+                // readable last byte means the whole range is readable, and nothing is
+                // reserved for a range the read would reject anyway.
+                if remaining_length > 0 {
+                    let mut probe = [0u8; 1];
+                    mr.memory_read(call_id, remaining_offset + remaining_length - 1, &mut probe)?;
+                }
                 let mut variable_input = vec![0u8; remaining_length];
                 mr.memory_read(call_id, remaining_offset, &mut variable_input)?;
                 Ok(variable_input)
@@ -355,6 +378,10 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
         }
 
         SYSCALL_ID_CALL => {
+            assert_halt!(
+                inputs.input.len() <= CALL_INPUT_HARD_CAP,
+                MalformedBuiltinParams
+            );
             let (input, lazy_contract_input) = get_input_validated!(>= 20 + 32);
             let target_address = Address::from_slice(&input[0..20]);
             let value = U256::from_le_slice(&input[20..52]);
@@ -419,6 +446,10 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
         }
 
         SYSCALL_ID_STATIC_CALL => {
+            assert_halt!(
+                inputs.input.len() <= CALL_INPUT_HARD_CAP,
+                MalformedBuiltinParams
+            );
             let (input, lazy_contract_input) = get_input_validated!(>= 20);
             let target_address = Address::from_slice(&input[0..20]);
             debug_syscall!("STATIC_CALL", "to={:?}", target_address);
@@ -471,6 +502,10 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
         }
 
         SYSCALL_ID_CALL_CODE => {
+            assert_halt!(
+                inputs.input.len() <= CALL_INPUT_HARD_CAP,
+                MalformedBuiltinParams
+            );
             let (input, lazy_contract_input) = get_input_validated!(>= 20 + 32);
             let target_address = Address::from_slice(&input[0..20]);
             let value = U256::from_le_slice(&input[20..52]);
@@ -533,6 +568,10 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
         }
 
         SYSCALL_ID_DELEGATE_CALL => {
+            assert_halt!(
+                inputs.input.len() <= CALL_INPUT_HARD_CAP,
+                MalformedBuiltinParams
+            );
             let (input, lazy_contract_input) = get_input_validated!(>= 20);
             let target_address = Address::from_slice(&input[0..20]);
             debug_syscall!("DELEGATE_CALL", "to={:?}", target_address);

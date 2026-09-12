@@ -1,6 +1,8 @@
 use super::types::{rust_to_sol, ConversionError};
-use crate::abi::{error::ABIError, parameter::Parameter, structs::StructResolver};
-use convert_case::{Case, Casing};
+use crate::{
+    abi::{error::ABIError, parameter::Parameter, structs::StructResolver},
+    utils::naming::solidity_function_name,
+};
 use crypto_hashes::{digest::Digest, sha3::Keccak256};
 use serde::{Deserialize, Serialize};
 use syn::{FnArg, Pat, ReturnType, Signature, Type};
@@ -50,7 +52,7 @@ impl From<ConversionError> for ABIError {
 impl FunctionABI {
     pub fn from_signature(sig: &Signature) -> Result<Self, ABIError> {
         Ok(Self {
-            name: sig.ident.to_string().to_case(Case::Camel),
+            name: solidity_function_name(&sig.ident.to_string()),
             inputs: Self::convert_inputs(&sig.inputs.iter().collect::<Vec<_>>())?,
             outputs: Self::convert_outputs(&sig.output)?,
             state_mutability: StateMutability::NonPayable,

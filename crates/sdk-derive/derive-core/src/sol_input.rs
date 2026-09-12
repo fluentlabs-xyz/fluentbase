@@ -4,6 +4,7 @@ use crate::{
         types::{convert_solidity_type, sol_to_rust},
     },
     attr::{StateMutabilityExt, STATE_MUTABILITY_ATTR},
+    utils::naming::solidity_function_name,
 };
 use alloy_sol_macro_input::{SolInput, SolInputKind};
 use convert_case::{Case, Casing};
@@ -328,8 +329,34 @@ fn sol_fn_to_trait_method(func: &ItemFunction, emit_mutability: bool) -> syn::Re
         return Ok(quote! {});
     }
 
-    // Convert function name to snake_case
-    let fn_name = format_ident!("{}", name.to_string().to_case(Case::Snake));
+    // The Rust method is named in snake_case when that spelling converts back to the Solidity
+    // one, which is what the router and client derive the selector from. A name it cannot
+    // reproduce (`mintNFT`, `tokenURI`, `DOMAIN_SEPARATOR`) is kept verbatim: snake-casing it
+    // would bake a selector no Solidity caller uses into the router and the generated client.
+    let sol_name = name.to_string();
+    let snake_name = sol_name.to_case(Case::Snake);
+    let (fn_name, name_attr) = if solidity_function_name(&snake_name) == sol_name {
+        (format_ident!("{}", snake_name), quote! {})
+    } else if solidity_function_name(&sol_name) == sol_name {
+        (
+            format_ident!("{}", sol_name),
+            quote! { #[allow(non_snake_case)] },
+        )
+    } else {
+        // A name without uppercase letters that is not camelCase (`foo_bar`, `_foo`) is one no
+        // Rust identifier derives: the router and client would camel-case it to `fooBar`.
+        // Refusing it here beats compiling a trait whose selectors do not exist on chain.
+        return Err(syn::Error::new(
+            name.span(),
+            format!(
+                "Solidity function `{sol_name}` has no Rust spelling that derives its selector \
+                 (the router and client would use `{}`); rename it in the interface, or write \
+                 the trait by hand and pin `#[function_id(\"{sol_name}(...)\")]` on the \
+                 implementation",
+                solidity_function_name(&sol_name)
+            ),
+        ));
+    };
     let receiver = determine_method_receiver(func);
 
     // Generate function parameters. A dropped parameter would change the selector,
@@ -367,6 +394,7 @@ fn sol_fn_to_trait_method(func: &ItemFunction, emit_mutability: bool) -> syn::Re
     // Generate the function signature
     Ok(quote! {
         #mutability_attr
+        #name_attr
         fn #fn_name(#receiver #(, #args)*) #ret;
     })
 }
@@ -471,6 +499,75 @@ mod tests {
         let formatted = prettyplease::unparse(&file);
 
         assert_snapshot!("sol_struct_to_rust_tokens", formatted);
+    }
+
+    /// `mintNFT`, `tokenURI` and `DOMAIN_SEPARATOR` have no snake_case spelling that converts
+    /// back to them, so the trait keeps the Solidity name; `balanceOf` round-trips and stays
+    /// idiomatic. The generated client and a router over the trait derive the real selectors.
+    #[test]
+    fn test_mixed_case_names_keep_their_solidity_spelling() {
+        let solidity_code = r#"
+            interface INft {
+                function mintNFT(address to) external;
+                function tokenURI(uint256 id) external view returns (string memory);
+                function DOMAIN_SEPARATOR() external view returns (bytes32);
+                function balanceOf(address owner) external view returns (uint256);
+            }
+        "#;
+        let input: alloy_sol_macro_input::SolInput = parse_str(solidity_code).unwrap();
+
+        let generated = to_rust_trait(input).unwrap().to_string();
+        let file = syn::parse_file(&generated).unwrap();
+        let formatted = prettyplease::unparse(&file);
+
+        assert!(
+            formatted.contains("fn mintNFT(&mut self, to: Address);"),
+            "{formatted}"
+        );
+        assert!(
+            formatted.contains("fn tokenURI(&self, id: U256) -> String;"),
+            "{formatted}"
+        );
+        assert!(
+            formatted.contains("fn DOMAIN_SEPARATOR(&self) -> FixedBytes<32usize>;"),
+            "{formatted}"
+        );
+        assert!(
+            formatted.contains("fn balance_of(&self, owner: Address) -> U256;"),
+            "{formatted}"
+        );
+        assert_eq!(
+            formatted.matches("#[allow(non_snake_case)]").count(),
+            3,
+            "{formatted}"
+        );
+
+        // Each kept name derives the selector Solidity callers use.
+        for (rust_name, selector) in [
+            ("tokenURI(id: U256)", [0xc8, 0x7b, 0x56, 0xdd]),
+            ("DOMAIN_SEPARATOR()", [0x36, 0x44, 0xe5, 0x15]),
+            ("mintNFT(to: Address)", [0x54, 0xba, 0x0f, 0x27]),
+        ] {
+            let sig: syn::Signature = syn::parse_str(&format!("fn {rust_name}")).unwrap();
+            let abi = crate::abi::function::FunctionABI::from_signature(&sig).unwrap();
+            assert_eq!(abi.function_id().unwrap(), selector, "{rust_name}");
+        }
+    }
+
+    /// `foo_bar` cannot be spelled by any Rust identifier the naming rule maps back to it, so
+    /// the macro refuses it instead of deriving `fooBar`.
+    #[test]
+    fn test_lowercase_underscore_names_are_refused() {
+        let solidity_code = r#"
+            interface IOdd {
+                function foo_bar(address to) external;
+            }
+        "#;
+        let input: alloy_sol_macro_input::SolInput = parse_str(solidity_code).unwrap();
+
+        let err = to_rust_trait(input).unwrap_err().to_string();
+        assert!(err.contains("`foo_bar`"), "{err}");
+        assert!(err.contains("`fooBar`"), "{err}");
     }
 
     #[test]

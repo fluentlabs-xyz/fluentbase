@@ -251,7 +251,9 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
             timestamp: ctx.block().timestamp().as_limbs()[0],
             number: ctx.block().number().as_limbs()[0],
             difficulty: ctx.block().difficulty(),
-            prev_randao: ctx.block().prevrandao().unwrap(),
+            // Every supported chain spec is post-merge, so `prevrandao` is always present; a
+            // missing value (a chain spec without Paris) must not take the node down.
+            prev_randao: ctx.block().prevrandao().unwrap_or_default(),
             gas_limit: ctx.block().gas_limit(),
             base_fee: U256::from(ctx.block().basefee()),
         },

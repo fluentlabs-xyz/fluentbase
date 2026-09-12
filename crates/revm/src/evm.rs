@@ -38,36 +38,65 @@ pub struct RwasmEvm<
 >(
     /// Inner EVM type.
     pub Evm<CTX, INSP, I, P, F>,
+    /// Fluent-specific execution options that have no place in the revm context.
+    pub RwasmEvmOptions,
 );
+
+/// Fluent-specific execution options.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RwasmEvmOptions {
+    /// Withhold the EIP-1559 base fee from the coinbase (Ethereum semantics).
+    ///
+    /// Off by default and on every node: Fluent credits the fee manager with the full effective
+    /// gas price. Only the Ethereum state-test comparison turns it on. See
+    /// `RwasmHandler::burn_base_fee`.
+    pub burn_base_fee: bool,
+}
 
 impl<CTX: ContextTr, INSP>
     RwasmEvm<CTX, INSP, EthInstructions<EthInterpreter, CTX>, RwasmPrecompiles>
 {
     /// Create a new Rwasm EVM.
     pub fn new(ctx: CTX, inspector: INSP) -> Self {
-        Self(Evm {
-            ctx,
-            inspector,
-            // Pinned to match the delegated EVM runtime, which always executes at Osaka because
-            // it is versioned by contract upgrade rather than by hardfork (see the
-            // `fluentbase_evm::evm` module docs). Deriving this from the chain spec instead
-            // would make the two interpreters disagree on which opcodes exist.
-            instruction: EthInstructions::new_mainnet_with_spec(SpecId::OSAKA),
-            precompiles: RwasmPrecompiles::default(),
-            frame_stack: FrameStack::new(),
-        })
+        Self(
+            Evm {
+                ctx,
+                inspector,
+                // Pinned to match the delegated EVM runtime, which always executes at Osaka
+                // because it is versioned by contract upgrade rather than by hardfork (see the
+                // `fluentbase_evm::evm` module docs). Deriving this from the chain spec instead
+                // would make the two interpreters disagree on which opcodes exist.
+                instruction: EthInstructions::new_mainnet_with_spec(SpecId::OSAKA),
+                precompiles: RwasmPrecompiles::default(),
+                frame_stack: FrameStack::new(),
+            },
+            RwasmEvmOptions::default(),
+        )
     }
 }
 
 impl<CTX, INSP, I, P> RwasmEvm<CTX, INSP, I, P> {
     /// Consumed self and returns a new Evm type with the given Inspector.
     pub fn with_inspector<OINSP>(self, inspector: OINSP) -> RwasmEvm<CTX, OINSP, I, P> {
-        RwasmEvm(self.0.with_inspector(inspector))
+        RwasmEvm(self.0.with_inspector(inspector), self.1)
     }
 
     /// Consumes self and returns a new Evm type with given Precompiles.
     pub fn with_precompiles<OP>(self, precompiles: OP) -> RwasmEvm<CTX, INSP, I, OP> {
-        RwasmEvm(self.0.with_precompiles(precompiles))
+        RwasmEvm(self.0.with_precompiles(precompiles), self.1)
+    }
+
+    /// Consumes self and returns the EVM with the EIP-1559 base-fee burn switched on or off.
+    ///
+    /// See [`RwasmEvmOptions::burn_base_fee`]; the chain's rule is `false`.
+    pub fn with_base_fee_burn(mut self, burn_base_fee: bool) -> Self {
+        self.1.burn_base_fee = burn_base_fee;
+        self
+    }
+
+    /// Fluent-specific execution options.
+    pub fn options(&self) -> &RwasmEvmOptions {
+        &self.1
     }
 
     /// Consumes self and returns the inner Inspector.

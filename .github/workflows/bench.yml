@@ -9,7 +9,8 @@ on:
 
 jobs:
   compare-on-pr:
-    if: github.event_name == 'pull_request'
+    # Persistent self-hosted runners must not execute code from a fork; see ci.yml.
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: self-hosted
     permissions:
       contents: read

@@ -27,9 +27,17 @@ jobs:
   build:
     runs-on: self-hosted
     timeout-minutes: 45
+    # The `release` environment gates the only job that can push the builder image the
+    # release pipeline compiles and signs genesis inside. Configure required reviewers on it
+    # in the repository settings; the environment itself carries no secrets.
+    environment: release
     permissions:
       contents: read
       packages: write
+      # Sign the pushed image's provenance so release.yml can prove the builder image was
+      # produced by this workflow at the release commit before building inside it.
+      id-token: write
+      attestations: write
 
     steps:
       - name: Checkout repository
@@ -136,6 +144,7 @@ jobs:
           echo "  TAGS=${TAGS}"
 
       - name: Build and push
+        id: build
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: ./
@@ -157,6 +166,16 @@ jobs:
             SDK_VERSION_BRANCH=${{ steps.meta.outputs.sdk_version_branch }}
             SDK_VERSION_TAG=${{ steps.meta.outputs.sdk_version_tag }}
           no-cache: true
+
+      - name: Attest image provenance
+        # Binds the image digest to this workflow, this repository and the commit that built it.
+        # release.yml verifies the attestation with `gh attestation verify` before it builds
+        # inside the image, which is what turns the pulled digest into a checked value.
+        uses: actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f # v3.2.0
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
 
       - name: Inspect image
         env:

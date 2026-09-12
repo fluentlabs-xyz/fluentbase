@@ -21,7 +21,7 @@ mod tests;
 mod types;
 
 pub use api::*;
-pub use evm::RwasmEvm;
+pub use evm::{RwasmEvm, RwasmEvmOptions};
 pub use handler::*;
 pub use precompiles::*;
 pub use result::*;

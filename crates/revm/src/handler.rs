@@ -19,8 +19,25 @@ use revm::{
 /// Rwasm handler that implements the default [`Handler`] trait for the Evm.
 #[derive(Debug, Clone)]
 pub struct RwasmHandler<CTX, ERROR> {
+    /// Whether `reward_beneficiary` withholds the EIP-1559 base fee from the coinbase.
+    ///
+    /// Fluent credits the block beneficiary (the fee manager) with the full effective gas price:
+    /// no live network burns the base fee, and changing that is a fork. The Ethereum state-test
+    /// harness turns this on so its native-versus-rWASM comparison runs both sides with Ethereum
+    /// semantics; nothing that mirrors the chain should.
+    pub burn_base_fee: bool,
     /// Phantom data to hold the generic type parameters.
     pub _phantom: core::marker::PhantomData<(CTX, ERROR)>,
+}
+
+impl<CTX, ERROR> RwasmHandler<CTX, ERROR> {
+    /// Creates a handler; see [`RwasmHandler::burn_base_fee`] for the flag.
+    pub fn new(burn_base_fee: bool) -> Self {
+        Self {
+            burn_base_fee,
+            _phantom: core::marker::PhantomData,
+        }
+    }
 }
 
 impl<EVM, ERROR> Handler for RwasmHandler<EVM, ERROR>
@@ -75,22 +92,20 @@ where
         evm: &mut Self::Evm,
         exec_result: &mut <<Self::Evm as EvmTr>::Frame as FrameTr>::FrameResult,
     ) -> Result<(), Self::Error> {
-        let (block, tx, _cfg, journal, _, _) = evm.ctx().all_mut();
+        let (block, tx, cfg, journal, _, _) = evm.ctx().all_mut();
         let basefee = block.basefee() as u128;
-        let coinbase_gas_price = tx.effective_gas_price(basefee);
+        let mut coinbase_gas_price = tx.effective_gas_price(basefee);
 
-        // Transfer fee to coinbase/beneficiary.
-        // EIP-1559 discard basefee for coinbase transfer. Basefee amount of gas is discarded.
-        #[cfg(feature = "eip1559-full-compatibility")]
-        let coinbase_gas_price = if _cfg
-            .spec()
-            .into()
-            .is_enabled_in(revm::primitives::hardfork::SpecId::LONDON)
+        // Ethereum semantics only (see `burn_base_fee`): EIP-1559 burns the base fee, so the
+        // coinbase receives the priority fee alone. Fluent's rule is the full effective price.
+        if self.burn_base_fee
+            && cfg
+                .spec()
+                .into()
+                .is_enabled_in(revm::primitives::hardfork::SpecId::LONDON)
         {
-            coinbase_gas_price.saturating_sub(basefee)
-        } else {
-            coinbase_gas_price
-        };
+            coinbase_gas_price = coinbase_gas_price.saturating_sub(basefee);
+        }
 
         journal
             .load_account_mut(block.beneficiary())?
@@ -103,9 +118,7 @@ where
 
 impl<CTX, ERROR> Default for RwasmHandler<CTX, ERROR> {
     fn default() -> Self {
-        Self {
-            _phantom: core::marker::PhantomData,
-        }
+        Self::new(false)
     }
 }
 

@@ -72,25 +72,30 @@ pub(crate) fn syscall_tower_fp2_add_sub_mul_handler<
     params: &[Value],
     _result: &mut [Value],
 ) -> Result<(), TrapCode> {
-    let (x_ptr, y_ptr) = (
+    // The guest ABI passes one pointer per limb (`_tower_fp2_*(a_c0, a_c1, b_c0, b_c1)`, see
+    // `fluentbase_types::import_linker`). The limbs are independent guest buffers, so nothing
+    // may be assumed about their layout; the result goes back through the two `a` pointers.
+    let (a_c0_ptr, a_c1_ptr, b_c0_ptr, b_c1_ptr) = (
         params[0].i32().unwrap() as u32,
         params[1].i32().unwrap() as u32,
+        params[2].i32().unwrap() as u32,
+        params[3].i32().unwrap() as u32,
     );
     let mut ac0 = [0u8; NUM_BYTES];
     let mut ac1 = [0u8; NUM_BYTES];
-    ctx.memory_read(x_ptr as usize, &mut ac0)?;
-    ctx.memory_read(x_ptr as usize + NUM_BYTES, &mut ac1)?;
+    ctx.memory_read(a_c0_ptr as usize, &mut ac0)?;
+    ctx.memory_read(a_c1_ptr as usize, &mut ac1)?;
     let mut bc0 = [0u8; NUM_BYTES];
     let mut bc1 = [0u8; NUM_BYTES];
-    ctx.memory_read(y_ptr as usize, &mut bc0)?;
-    ctx.memory_read(y_ptr as usize + NUM_BYTES, &mut bc1)?;
+    ctx.memory_read(b_c0_ptr as usize, &mut bc0)?;
+    ctx.memory_read(b_c1_ptr as usize, &mut bc1)?;
 
     let (res0, res1) =
         syscall_tower_fp2_add_sub_mul_impl::<NUM_BYTES, P, FIELD_OP>(ac0, ac1, bc0, bc1)
             .map_err(|exit_code| syscall_process_exit_code(ctx, exit_code))?;
 
-    ctx.memory_write(x_ptr as usize, &res0)?;
-    ctx.memory_write(x_ptr as usize + NUM_BYTES, &res1)?;
+    ctx.memory_write(a_c0_ptr as usize, &res0)?;
+    ctx.memory_write(a_c1_ptr as usize, &res1)?;
     Ok(())
 }
 
@@ -205,8 +210,60 @@ pub(crate) fn syscall_tower_fp2_add_sub_mul_impl<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::executor::{RuntimeExecutor, RuntimeFactoryExecutor};
+    use fluentbase_types::{import_linker_v1_preview, Address, BytecodeOrHash, B256};
     use rand::Rng;
+    use rwasm::{CompilationConfig, RwasmModule};
     use std::str::FromStr;
+
+    /// Drives the real `_tower_fp2_bn254_add` import from a guest whose four limbs live in
+    /// separate, non-adjacent buffers, the way the SDK wrapper passes them.
+    ///
+    /// `a = 1 + 2i` at offsets 0 and 96, `b = 3 + 4i` at offsets 160 and 256, a canary right
+    /// after `a_c0`. The host must read `b` through its own pointers and write `a_c1` through
+    /// its pointer, not at `a_c0 + 32`.
+    #[test]
+    fn guest_fp2_add_reads_and_writes_each_limb_through_its_own_pointer() {
+        let wasm = wat::parse_str(
+            r#"(module
+                (import "fluentbase_v1preview" "_tower_fp2_bn254_add"
+                    (func $add (param i32 i32 i32 i32)))
+                (import "fluentbase_v1preview" "_write" (func $write (param i32 i32)))
+                (memory (export "memory") 1)
+                (func (export "main")
+                    (i32.store (i32.const 0) (i32.const 1))
+                    (i32.store (i32.const 32) (i32.const 0xdeadbeef))
+                    (i32.store (i32.const 96) (i32.const 2))
+                    (i32.store (i32.const 160) (i32.const 3))
+                    (i32.store (i32.const 256) (i32.const 4))
+                    i32.const 0 i32.const 96 i32.const 160 i32.const 256
+                    call $add
+                    i32.const 0 i32.const 32 call $write
+                    i32.const 96 i32.const 32 call $write
+                    i32.const 32 i32.const 4 call $write))"#,
+        )
+        .unwrap();
+        let mut executor = RuntimeFactoryExecutor::new(import_linker_v1_preview());
+        let config = CompilationConfig::default()
+            .with_entrypoint_name("main".into())
+            .with_import_linker(executor.import_linker.clone());
+        let (module, _) = RwasmModule::compile(config, &wasm).unwrap();
+        let result = executor.execute(
+            BytecodeOrHash::Bytecode {
+                bytecode: module,
+                hash: B256::with_last_byte(0x42),
+                address: Address::ZERO,
+            },
+            RuntimeContext::default().with_fuel_limit(1_000_000),
+        );
+        assert_eq!(result.exit_code, 0, "{result:?}");
+
+        let mut expected = Vec::new();
+        expected.extend_from_slice(&big_uint_into_bytes::<BN254_FP_SIZE>(&BigUint::from(4u32)));
+        expected.extend_from_slice(&big_uint_into_bytes::<BN254_FP_SIZE>(&BigUint::from(6u32)));
+        expected.extend_from_slice(&0xdeadbeef_u32.to_le_bytes());
+        assert_eq!(result.output, expected);
+    }
 
     fn random_bigint<const NUM_BYTES: usize>(modulus: &BigUint) -> BigUint {
         let mut rng = rand::rng();
