@@ -344,6 +344,28 @@ pub struct FluentApp<XC, A> {
     /// On a node whose execution has stalled it is the only feeder still moving.
     /// `None` on a follower and in tests: neither runs a beacon plane.
     dkg_height_tx: Option<tokio::sync::mpsc::Sender<u64>>,
+    /// The marshal's ordering tip — the height of the highest finalization this
+    /// node has VERIFIED and stored — published from the same `Update::Tip` arm
+    /// of [`Reporter::report`] the two feeders above ride.
+    ///
+    /// Not a second feeder and not a second writer: `report` is the one place
+    /// the tip is delivered to this process, and this is the same value it
+    /// already hands the gauge and the DKG clock, in the one shape a consumer
+    /// can both READ at a decision point and be WOKEN by. Its consumer is
+    /// [`crate::epoch_manager::Actor`], whose live epoch IS `epoch_of(tip)` — so
+    /// the manager takes the tip from the writer that has it rather than
+    /// re-deriving a second copy from a marshal read of its own.
+    ///
+    /// `0` until the first tip: the marshal reports one at startup from its
+    /// highest stored finalization (CW `marshal/core/actor.rs:397-402`), and a
+    /// node with no stored finalization at all is genuinely at genesis, where
+    /// `epoch_of(0)` — the pre-activation clamp — is the right answer.
+    ///
+    /// An `Arc<Sender>` rather than a `Sender` because this app is CLONED (the
+    /// marshal's reporter half and the epoch manager's copy are the same app),
+    /// and a `watch::Sender` is not `Clone`; every clone must publish into the
+    /// one channel the manager subscribed to.
+    ordering_tip: Arc<tokio::sync::watch::Sender<u64>>,
 }
 
 impl<XC: Clone, A> Clone for FluentApp<XC, A> {
@@ -363,6 +385,7 @@ impl<XC: Clone, A> Clone for FluentApp<XC, A> {
             tombstones: self.tombstones.clone(),
             plane_clock: self.plane_clock.clone(),
             dkg_height_tx: self.dkg_height_tx.clone(),
+            ordering_tip: self.ordering_tip.clone(),
         }
     }
 }
@@ -399,6 +422,11 @@ where
             // which is what a follower and every test should publish.
             plane_clock: crate::sync_metrics::PlaneClock::default(),
             dkg_height_tx: None,
+            // Created HERE and not handed in, so that every app in a process —
+            // the marshal's reporter half and the epoch manager's copy are
+            // clones of one `FluentApp` — shares one channel by construction
+            // rather than by a wiring site remembering to pass the same one.
+            ordering_tip: Arc::new(tokio::sync::watch::Sender::new(0)),
             genesis: Arc::new(genesis),
             executor,
             boundary_hook,
@@ -424,6 +452,16 @@ where
     pub fn with_dkg_heights(mut self, dkg_height_tx: tokio::sync::mpsc::Sender<u64>) -> Self {
         self.dkg_height_tx = Some(dkg_height_tx);
         self
+    }
+
+    /// Subscribe to the marshal's ordering tip as this app publishes it.
+    ///
+    /// The receiver holds the LAST value, so a consumer built after a tip has
+    /// already been reported reads that tip rather than the `0` seed — which is
+    /// what makes this safe for a consumer (the epoch manager) that is started
+    /// per promotion, long after the marshal's startup tip.
+    pub fn ordering_tip(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.ordering_tip.subscribe()
     }
 
     /// Attach the epoch committee's pubkey→index map. Called from
@@ -1033,6 +1071,13 @@ where
         // untouched below either way.
         if let Update::Tip(_, height, _) = &activity {
             self.plane_clock.record_ordering_tip(height.get());
+            // The epoch manager's live-epoch input, and its wake-up: one
+            // `send_replace` is both. Unconditional and lossless where the DKG
+            // feeder below is lossy — a dropped tick there is clamped away by a
+            // consumer that keeps a running max, while the live epoch is a
+            // FUNCTION of the current tip and a consumer that missed the last
+            // tick would hold a stale epoch until the next one.
+            self.ordering_tip.send_replace(height.get());
             if let Some(tx) = &self.dkg_height_tx {
                 if tx.try_send(height.get()).is_err() {
                     self.plane_clock.note_height_drop();
@@ -2518,6 +2563,79 @@ mod tests {
                     panic!("FluentApp never emits SpecNotarized")
                 }
             }
+        });
+    }
+
+    /// The epoch manager's live-epoch input has ONE writer and it is the
+    /// marshal's BFT-attested tip — R-003 closed by construction.
+    ///
+    /// The incident was that the live frontier was inferred from epoch tags on
+    /// the unauthenticated vote backup channel, so a peer naming `u64::MAX` (or
+    /// f+1 of them naming anything) pinned an honest node into permanent
+    /// verify-only. The replacement is `epoch_of(marshal tip)`, and this is the
+    /// only door the tip comes through: a height reported here has been
+    /// BLS-verified and stored by the marshal (CW `marshal/core/actor.rs`
+    /// `verify_delivered` → `store_finalization` → `Update::Tip`), and no peer
+    /// can put a number in it that the committee did not certify.
+    ///
+    /// What the test can show locally is the door: a delivered BLOCK — the only
+    /// other activity this reporter sees — moves nothing, and a `Tip` publishes
+    /// exactly its own height. A second writer anywhere would break the first
+    /// half; taking the tip from anything but `Update::Tip` would break the
+    /// second.
+    #[test]
+    fn the_ordering_tip_watch_is_written_only_by_a_verified_tip() {
+        use commonware_consensus::types::{Epoch, Height, View};
+        use commonware_utils::{acknowledgement::Exact, Acknowledgement as _};
+
+        let runtime = commonware_runtime::deterministic::Runner::default();
+        runtime.start(|_ctx| async move {
+            let (mailbox, _rx) = fresh_mailbox();
+            let mut app = build_app(mailbox, Arc::new(|_b: OrderBlock| {}));
+            let mut tip = app.ordering_tip();
+            assert_eq!(*tip.borrow(), 0, "no tip reported yet");
+
+            // A finalized BLOCK at a height is not a tip: the block stream is
+            // ack-gated on the executor and lags the attested frontier, and the
+            // live epoch is a function of the frontier.
+            let (ack, _waiter) = Exact::handle();
+            <FluentApp<NoChain, NoTxs> as Reporter>::report(
+                &mut app,
+                Update::Block(sample_order(Digest(B256::ZERO), 7), ack),
+            )
+            .await;
+            assert_eq!(
+                *tip.borrow(),
+                0,
+                "a delivered block must not move the live-epoch input"
+            );
+
+            let round = Round::new(Epoch::new(0), View::new(0));
+            <FluentApp<NoChain, NoTxs> as Reporter>::report(
+                &mut app,
+                Update::Tip(round, Height::new(4_242), Digest(B256::ZERO)),
+            )
+            .await;
+            assert!(tip
+                .has_changed()
+                .expect("the sender is the app, alive here"));
+            assert_eq!(
+                *tip.borrow_and_update(),
+                4_242,
+                "the tip published is the attested height itself"
+            );
+
+            // A CLONE of the app publishes into the SAME channel: the marshal's
+            // reporter half and the epoch manager's copy are clones of one
+            // `FluentApp`, and a per-clone channel would leave the manager
+            // subscribed to a writer nothing drives.
+            let mut clone = app.clone();
+            <FluentApp<NoChain, NoTxs> as Reporter>::report(
+                &mut clone,
+                Update::Tip(round, Height::new(4_300), Digest(B256::ZERO)),
+            )
+            .await;
+            assert_eq!(*tip.borrow(), 4_300, "a clone writes the same channel");
         });
     }
 
