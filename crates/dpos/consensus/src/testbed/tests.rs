@@ -65,6 +65,10 @@ fn a_frontier_fetch_with_no_peer_times_out_on_the_runtime_clock() {
                 &oracle,
                 me,
                 Arc::new(std::sync::OnceLock::new()),
+                // No records and no geometry: this test only needs the fetch to
+                // park and time out, and an unfrozen module is the state a node
+                // is in before it has read anything at all.
+                crate::committee::testing::SchemeCommittee::new(|_| None),
                 UpstreamCounters::default(),
                 #[cfg(feature = "dpos-devnet-byzantine")]
                 Default::default(),
@@ -1236,6 +1240,98 @@ fn four_nodes_agree_the_epoch_key_and_carry_the_seed_across_the_boundary() {
 /// The (B2) schedule: 4 → 3 → 4. Epochs 0–2 all four (2 is the bootstrap
 /// mint), epochs 3–4 `[0,1,2]` (3 is a change ⇒ `dkgQual[3]`, 4 is stable ⇒
 /// carry-forward), epoch 5 all four again (a change ⇒ `dkgQual[5]`).
+/// (4.2 А.2) THE LADDER IS A LADDER: a lagging node names successive rungs and
+/// ends up holding every one of them.
+///
+/// §5.2 makes the frontier probe put `Finalized{last(T+1)}` at `committee[T+1]`
+/// on every tick where the marshal tip is frozen, and "лестница = повторение того
+/// же шага после посадки (новый `fin` ⇒ новый `T` ⇒ новое окно)". This test reads
+/// that sequence off a real deep-lag run.
+///
+/// WHAT THIS TEST USED TO SAY, AND WHY IT WAS WRONG (review A2-02). The first
+/// version asserted the OPPOSITE — that every named step is at or below this
+/// node's own marshal tip, so the ladder can lift nobody — on the arithmetic
+/// `last(T+1) <= last(epoch(fin)+2)`. That inequality compares the step with the
+/// marshal's CEILING, not with its tip, and `tip == ceiling` holds only for a node
+/// that received and stored everything below the ceiling (which the Д3
+/// precondition asserts as a property of ITS fixture, `preconditions.rs:261`).
+/// The assert passed because it compared every step with the tip the run ENDED on
+/// rather than the tip at naming time. The claim was false, and the run below
+/// shows why: the steps are DISTINCT successive epoch terminals and the node ends
+/// above all of them.
+///
+/// WHY THE NAMING-TIME TIP IS NOT ASSERTED HERE. "The step stood above my own tip
+/// when I named it" is the executor's own comparison (`last_tip_height`), and it
+/// is free there and not here: sampling the marshal tip from the probe closure is
+/// an extra message into the marshal's select loop and it CHANGES THE RUN —
+/// measured, `a_zero_overlap_boundary_halts_the_chain_verify_only` loses its
+/// incoming half's DKG artifact under it. That comparison is pinned in
+/// `executor::tests::a_ladder_step_above_the_tip_is_put_on_the_marshal_every_frozen_tick`
+/// and `…::a_ladder_step_at_the_marshal_tip_is_skipped_and_one_above_it_is_put`.
+///
+/// The fixture is the deep-lag one: node 3 leaves the committee for epochs 3–4
+/// and the re-jump gate is widened to 80 so it parks below the ceiling instead of
+/// jumping out immediately — the same shape as the Д3 precondition, which this
+/// test does not duplicate (it asserts nothing about archives or landings).
+///
+/// WHAT IS ASSERTED: the probe named steps at all (the wiring is live and `T`
+/// reaches it); the distinct steps STRICTLY INCREASE and there is more than one
+/// (a ladder, not one rung repeated forever); and node 3's own marshal tip ends at
+/// or above the highest rung it named (every named rung was reached).
+///
+/// Falsifier: no step named (then `T` never reaches the probe and the run measures
+/// nothing); one rung repeated for the whole run (then `T` is frozen and §5.2's
+/// "новый `fin` ⇒ новый `T`" does not happen); a rung above the final marshal tip
+/// (then the node named a height it never got).
+#[test]
+fn the_ladder_names_successive_rungs_and_the_lagging_node_reaches_every_one() {
+    let mut cfg = StandConfig::live(4, 1);
+    cfg.committees = rotate_four_three_four();
+    cfg.re_jump_threshold = Some(80);
+    let end = 8 * EPOCH_LEN + 8;
+    let out = Stand::new(cfg).run_until(
+        move |p| p.min_height_of(&[0, 1, 2]) >= end,
+        Duration::from_secs(600),
+    );
+    let steps = &out.frontier_steps[3];
+    let tip = out
+        .metric(3, "outer_marshal_finalized_height")
+        .expect("node 3 publishes a marshal finalized height") as u64;
+    // DISTINCT steps with how many ticks named each — the raw list is one entry
+    // per probe tick and says nothing the summary does not.
+    let mut distinct: Vec<(u64, u64, usize)> = Vec::new();
+    for (t, h) in steps {
+        match distinct.last_mut() {
+            Some(last) if last.0 == *t && last.1 == *h => last.2 += 1,
+            _ => distinct.push((*t, *h, 1)),
+        }
+    }
+    eprintln!(
+        "(4.2 А.2) node3 heights={:?} marshal_tip={tip} steps(T, last(T+1), ticks)={distinct:?} \
+         up[3]={:?}",
+        out.heights, out.upstream[3],
+    );
+    assert!(
+        !steps.is_empty(),
+        "the probe named no ladder step — `T` never reached it, so this run measures nothing"
+    );
+    assert!(
+        distinct.len() > 1,
+        "node 3 named ONE rung for the whole run — `T` never advanced, so there is no ladder \
+         here to measure: {distinct:?}"
+    );
+    assert!(
+        distinct.windows(2).all(|w| w[1].1 > w[0].1),
+        "the rungs do not strictly increase — the step is not climbing: {distinct:?}"
+    );
+    let highest = distinct.last().expect("non-empty").1;
+    assert!(
+        tip >= highest,
+        "node 3's marshal tip {tip} never reached the highest rung it named ({highest}): \
+         {distinct:?}"
+    );
+}
+
 fn rotate_four_three_four() -> Committees {
     Committees::Schedule(Arc::new(|epoch, n| {
         Some(match epoch {
@@ -2844,87 +2940,57 @@ fn lying_upstream_stand(role3: Role) -> super::stand::Outcome {
     )
 }
 
-/// (R-004) Node 3's frontier-plane `Producer` answers `FrontierKey::Latest` with
-/// the real tip whose `block.height` is inflated by
-/// `byzantine_roles::LATEST_INFLATION = 10^6` (payload re-pointed so
-/// `verify_jump_structural` still passes; `result` and the multisig UNCHANGED, so
-/// the served hash is the REAL, servable one).
+/// (R-004, INVERTED by the frontier trust gate) Node 3's frontier-plane
+/// `Producer` answers `FrontierKey::Latest` with the real tip whose `block.height`
+/// is inflated by `byzantine_roles::LATEST_INFLATION = 10^6` (payload re-pointed so
+/// the payload↔digest bind still passes; `result` and the multisig UNCHANGED).
+/// Node 0 is rotated out at epoch 3 and its ONLY frontier source is node 3
+/// (`upstream_only_link`).
+///
+/// **What this test asserted before, and what it asserts now.** It used to pin the
+/// DEFECT: the inflated height reached `ReJump::upstream_frontier`
+/// (`peak == inflate_to == real + 10^6`), the deep-gap trigger fired, and every
+/// re-jump came back `Stalled` because no block matches the claimed landing — a
+/// rotated-out validator wedged in a per-tick re-jump cycle. It now pins the
+/// CLOSURE: `FrontierHandler::deliver` binds the served height to the
+/// certificate's own round epoch, and `epoch_of(real + 10^6) != round.epoch` long
+/// before the read window has anything to say — so the answer is a LIE, `deliver`
+/// returns `false`, commonware excludes node 3 from node 0's frontier fetches, and
+/// nothing reaches the executor at all. The observable inversion: the victim's
+/// frontier series never leaves 0 and `jump_calls` is EMPTY. No wasted backfill,
+/// no FCU on a forged target, no cycle.
+///
+/// **Which arm of `deliver` fires, and why it is not the window.** §5.2 describes
+/// an inflated `Latest` as refused for being outside the READ WINDOW (`true` +
+/// drop). By the code it is refused one step earlier and more sharply: step (3),
+/// the height↔epoch bind, sees `epoch_of(height) != round.epoch` and calls it a
+/// lie. Out-of-window would be reached only by an answer whose height and epoch
+/// agree with each other — an honest peer far ahead — which is the case
+/// `plane_upstream::tests::an_out_of_window_latest_is_passed_on_unauthenticated`
+/// pins: `true`, the peer keeps the channel, and the answer is COUNTED and PASSED
+/// ON (not dropped — §5.2 asks for a drop and that unit records why pass А cannot
+/// make one).
 ///
 /// **The control is in-test (F1/F4).** The same fixture is run twice — node 3
-/// `InflatedProbe`, then node 3 `Honest` — and the SEPARATING fact is asserted
-/// from the pair: the control's re-jumps all `Landed` and carry node 0 PAST its
-/// rotation boundary (95), the role's all fail and leave node 0 wedged AT 95.
+/// `InflatedProbe`, then node 3 `Honest`. The separating fact: with an honest
+/// source node 0's re-jumps all `Landed` and it recovers to the committee's tip;
+/// with the liar it spawns no jump at all and parks at its rotation boundary (95)
+/// — not wedged in re-jumps, simply left without a frontier source, which is the
+/// correct outcome for a node whose only source lies.
 ///
-/// **PARTIALLY reproduced (F18).** What IS reproduced and observed: the frontier
-/// inflation, `Stalled` on every jump, and the control separation. What is NOT the
-/// register's stated mechanism: REGISTER.md R-004 has "reth gets an FCU on a
-/// NON-EXISTENT hash, `sync_to` spins to `StalledWithPeers` (300 s), derive blocked
-/// the whole time". This role deliberately keeps the REAL `result` hash, so
-/// production FCUs a servable hash, answers `Valid`, and fails on the LANDING
-/// HEIGHT instead — `Stalled`, no 300 s block. So the "derive blocked for the
-/// watchdog window each cycle" half is NOT what runs here; the wedge is a
-/// permanent no-reseed one (below), not a per-cycle 300 s freeze.
+/// **Which assertions are vacuous, which load-bearing.** VACUOUS over an honest
+/// role: `latest_inflated == 0` on the control. LOAD-BEARING: the tamper witness
+/// (`latest_inflated >= 1`, the exact `10^6` delta, the structural pass), the
+/// victim's REJECTION (`deliveries_rejected >= 1`), the frontier never leaving 0,
+/// `jump_calls` empty, and the control landing every jump and recovering past 95.
 ///
-/// **F5 — the outcome is `Stalled`, not `StalledWithPeers`.** Production FCUs reth
-/// toward the served `block.result` (the REAL hash) FIRST — servable, so reth
-/// backfills the real prefix — and only THEN resolves the claimed landing HEIGHT
-/// (`real + 10^6 − K`), which no block matches → `provider.block_hash → None →
-/// eyre → SyncFailure::Stalled` (`cold_start_jump.rs:603-611`). The stand models
-/// exactly that order (`JumpElSync::sync_to`). This matters: the executor's
-/// `Stalled` arm counts toward `rejump_fault_streak` and ATTEMPTS a rotation at
-/// `MAX_UPSTREAM_FAULTS` — a no-op with `rotate: None` — so the victim re-jumps on
-/// the heartbeat cadence (14 calls in this run) rather than freezing once inside a
-/// 300 s `StalledWithPeers` window.
-///
-/// **Which assertions are vacuous, which load-bearing (F12).** VACUOUS: the
-/// sampled-series non-decrease (F3 — `fetch_max` is the only writer in this stand,
-/// so a decrease is impossible by construction; the series is kept as evidence of
-/// the VALUE REACHED, not of monotonicity). The `latest_inflated == 0` control
-/// check is also satisfied by an honest run. LOAD-BEARING: `all(outcome ==
-/// "Stalled")` for the role while `all(outcome == "Landed")` for the control, the
-/// peak equalling `inflate_to` (`= real + 10^6`, F4), and `role.heights[0] == 95`
-/// while `control.heights[0] > 95`.
-///
-/// **BLIND SPOT — the victim is a ROTATED-OUT node, not the register's healthy
-/// one (F18, note-only).** R-004 frames the victim as a HEALTHY validator whose tip
-/// freezes for one jitter tick. Under the deterministic runner the block rate
-/// (`application::BLOCK_INTERVAL = 1 s`) and the idle frozen-tip probe interval
-/// (`FRONTIER_PROBE_INTERVAL = 1 s`), both PRODUCTION constants, are locked in
-/// step, so a healthy tip advances every probe tick and its probe NEVER fires
-/// `get_latest`. The frozen-tip probe (and with it `upstream_frontier`) is
-/// therefore effectively dead for every healthy node in this stand; only a
-/// rotated-out node reaches it, so that is the victim here. The mechanism R-004
-/// turns on is exercised in full; the "even a healthy node" reach is a
-/// devnet-latency question this deterministic stand cannot pose.
-///
-/// **F2 (note-only): "re-jump per tick" is bounded by the outcome, not the tip.**
-/// The count of completed jumps is set by how fast each jump returns; because a
-/// `Stalled` jump does NOT burn the 300 s stall, the jumps here fire on the ~1 s
-/// heartbeat and the count is large — but a stand where the target were `Unservable`
-/// (`StalledWithPeers`, 300 s) would show ~⌊run/300⌋ instead. The load-bearing
-/// facts are the outcome (all `Stalled`) and the separation from the landing
-/// control, not the raw count.
-///
-/// Declined findings, note-only: F5 (the probe counts are raw across runs of
-/// slightly different length — 200 vs 191.9 virtual s; the `role > control`
-/// separation survives normalised, 2.19 vs 1.53/s). F6 (the probe counter counts
-/// probe ticks that ASKED the upstream, not fast-burst membership; 2.19/s is below
-/// the 5/s fast burst, so the burst is only intermittently active — not observed).
-/// F15 (the isolation check on nodes 1–3 is largely structural: `upstream_only_link`
-/// already removed their links to the source).
-///
-/// Register R-004 cross-reference: this reproduces R-004's frontier-inflation +
-/// per-tick re-jump + wedge; the register's own consequence letters are its, not
-/// these (a)/(b)/(c).
-///
-/// Falsifier: the wrapper inflating nothing; a delta ≠ `10^6`; a forged answer
-/// failing `verify_jump_structural`; the peak frontier ≠ `inflate_to`; a role jump
-/// that LANDS (or the control that does NOT); node 0 recovering past 95 in the role
-/// run (or not recovering in the control); the role not probing more than the
-/// control; the forgery leaking to nodes 1–3.
+/// Falsifier: the wrapper inflating nothing; a delta != `10^6`; a forged answer
+/// failing the payload↔digest bind; the victim NOT rejecting; any value > 0 in the
+/// victim's frontier series; any jump call at all in the role run; the control not
+/// landing or not recovering; the forgery leaking to nodes 1–3.
 #[cfg(feature = "dpos-devnet-byzantine")]
 #[test]
-fn an_inflated_latest_probe_wedges_a_rotated_out_validator_in_re_jumps() {
+fn an_inflated_latest_probe_is_refused_at_the_frontier_and_spawns_no_re_jump() {
     use super::byzantine_roles::LATEST_INFLATION;
     let role = lying_upstream_stand(Role::InflatedProbe);
     let control = lying_upstream_stand(Role::Honest);
@@ -2942,7 +3008,7 @@ fn an_inflated_latest_probe_wedges_a_rotated_out_validator_in_re_jumps() {
     );
     assert!(
         byz.inflate_structural_ok,
-        "a forged Latest failed verify_jump_structural: {byz:?}"
+        "a forged Latest failed the payload-digest bind: {byz:?}"
     );
     assert_eq!(
         byz.inflate_to,
@@ -2959,17 +3025,19 @@ fn an_inflated_latest_probe_wedges_a_rotated_out_validator_in_re_jumps() {
     let series = &role.upstream_frontier_series[0];
     let peaked = series.iter().copied().max().unwrap_or(0);
     let ctrl_calls = &control.jump_calls[0];
-    let branch = if peaked < LATEST_INFLATION {
-        "(c) PATH NOT REACHED — node 0 was never served the forgery"
-    } else if calls.is_empty() {
-        "(b) frontier inflated but no re-jump spawned"
+    let branch = if peaked >= LATEST_INFLATION {
+        "(a) NOT CLOSED — the forged frontier still reached the executor"
+    } else if !calls.is_empty() {
+        "(b) NOT CLOSED — a re-jump was spawned without a verified frontier"
     } else {
-        "(a) PARTIALLY REPRODUCED — frontier inflated, re-jump per tick (Stalled), node 0 wedged"
+        "(c) CLOSED — the forgery was refused at deliver; no frontier, no re-jump"
     };
     eprintln!(
-        "(R-004) branch = {branch} | role: peaked={peaked} calls={} probes[0]={} heights={:?} \
-         | control: calls={} probes[0]={} heights={:?} | virt role={:?} ctrl={:?} real role={:?} ctrl={:?}",
+        "(R-004) branch = {branch} | role: peaked={peaked} calls={} up[0]={:?} probes[0]={} \
+         heights={:?} | control: calls={} probes[0]={} heights={:?} | virt role={:?} ctrl={:?} \
+         real role={:?} ctrl={:?}",
         calls.len(),
+        role.upstream[0],
         role.probe_calls[0],
         role.heights,
         ctrl_calls.len(),
@@ -2981,60 +3049,52 @@ fn an_inflated_latest_probe_wedges_a_rotated_out_validator_in_re_jumps() {
         control.real_elapsed,
     );
 
-    // (2) F4 — the victim's frontier reached the ATTACKER'S inflated tip, `real +
-    // 10^6`, not merely "some value ≥ 10^6": the peak equals the wrapper's own last
-    // forged height `inflate_to`. The per-tick series is kept only as evidence of
-    // the value the frontier reached — its non-decrease is NOT a checkable property
-    // here (F3), because `fetch_max` is the atomic's only writer in this stand
-    // (there is no cert inlet), so a decrease is impossible by construction.
-    assert_eq!(
-        Some(peaked),
-        byz.inflate_to,
-        "the victim's peak frontier is not the attacker's inflated tip `real + 10^6` \
-         (peak {peaked}, inflate_to {:?})",
-        byz.inflate_to
-    );
+    // (2) THE VICTIM REFUSED IT. `deliver` returned `false` at least once, which is
+    // what costs node 3 the channel for the life of node 0's resolver engine
+    // (`resolver/p2p/engine.rs:436-437` → `fetcher.rs:516` `excluded`, never
+    // cleared). The honest control is never refused.
     assert!(
-        peaked >= LATEST_INFLATION,
-        "the frontier never inflated (branch {branch}): peak {peaked}"
+        role.upstream[0].deliveries_rejected >= 1,
+        "the victim never refused the inflated Latest: {:?}",
+        role.upstream[0]
+    );
+    // AND THE HONEST CONTROL REFUSES NOTHING. This assert was dropped in the first
+    // pass because the control DID sometimes refuse: `deliver` verified the
+    // frontier multisig under the module's scheme, which carries the epoch's SEED
+    // oracle, so a rotated-out node with a stale epoch key failed an HONEST
+    // certificate the same way it failed a forged one (Д-75). `deliver` now builds
+    // its own verify-only scheme without the oracle, and the assert comes back —
+    // without it, `deliveries_rejected >= 1` above cannot tell a refused forgery
+    // from a refused honest peer.
+    assert_eq!(
+        control.upstream[0].deliveries_rejected, 0,
+        "the honest control refused a frontier answer: {:?}",
+        control.upstream[0]
     );
 
-    // (3) F5 — every role jump ends `Stalled` (real hash + inflated height ⇒
-    // landing unresolvable). F3 — the SEPARATING assertion the honest control
-    // cannot satisfy: the control's jumps all LAND, the role's none do.
-    assert!(
-        !calls.is_empty(),
-        "node 0 never re-jumped: {:?}",
-        role.heights
+    // (3) THE INVERSION. The forged height never reached the executor's frontier —
+    // the series stays at its initial 0 — and no re-jump was ever spawned, so the
+    // per-tick wasted-backfill cycle this test used to pin cannot occur.
+    assert_eq!(
+        peaked, 0,
+        "the forged frontier reached the victim's executor (branch {branch}): {series:?}"
     );
     assert!(
-        calls.iter().all(|c| c.outcome == "Stalled"),
-        "a role jump was not `Stalled` (branch {branch}): {calls:?}"
+        calls.is_empty(),
+        "a re-jump was spawned on an unverified frontier (branch {branch}): {calls:?}"
     );
+
+    // (4) ATTRIBUTION BY THE CONTROL. The same fixture with an honest node 3 lands
+    // every jump and carries node 0 past its rotation boundary; the liar leaves it
+    // parked AT the boundary with no frontier source at all.
     assert!(
         !ctrl_calls.is_empty() && ctrl_calls.iter().all(|c| c.outcome == "Landed"),
         "the honest control did not land every jump: {ctrl_calls:?}"
     );
-    assert!(
-        calls.iter().all(|c| c.outcome != "Landed"),
-        "a role jump LANDED (branch {branch}): {calls:?}"
-    );
-
-    // (4) F1/F9 — the freeze, attributed by the control. Both runs park node 0 at
-    // 95 (the rotation boundary, before any jump). The honest upstream carries the
-    // control PAST 95 (a `Landed` jump acks `awaiting_seed` in `reseed_forward`,
-    // `executor.rs:2386`), while the liar leaves the role wedged AT 95. The STANDING
-    // gate is `self.awaiting_seed.is_none()` in the drain guard
-    // (`executor.rs:1418`), NOT `jump_done`: a `Stalled` jump returns immediately
-    // (no 300 s sleep, F5), so `jump_done` is not held across ticks; what stays
-    // false for a rotated-out σ-less node is `awaiting_seed`, and the register says
-    // the re-jump is the exit precisely because `reseed_forward` acks it (R-007,
-    // REGISTER.md). A `Stalled` jump never reseeds, so `awaiting_seed` never clears
-    // and the ordering cursor never advances.
     assert_eq!(
         role.heights[0],
         3 * EPOCH_LEN - 1,
-        "the role victim did not stay wedged at the rotation boundary 95: {:?}",
+        "the role victim did not park at the rotation boundary 95: {:?}",
         role.heights
     );
     assert!(
@@ -3042,48 +3102,8 @@ fn an_inflated_latest_probe_wedges_a_rotated_out_validator_in_re_jumps() {
         "the honest control did not recover past 95 — the contrast is not attributed: {:?}",
         control.heights
     );
-    // F17 — name the TIER: `heights[0] == 95` is the ORDERING-finalized cursor
-    // (`FakeChain::tip`), while the victim's EL was in fact carried FORWARD by each
-    // jump's `land_jump(real_hash)` — `el_events[0]` shows it canonicalised the
-    // honest prefix well past 95 (up to ~the honest tip). The wedge is
-    // cursor-only, not an EL that holds nothing; production is the same (reth
-    // backfills the real branch before the landing-height probe fails).
-    let role_canon_max = role.el_events[0]
-        .iter()
-        .map(|e| match e {
-            ElEvent::Canonicalized(h, _) | ElEvent::Derived(h, _) => *h,
-        })
-        .max()
-        .unwrap_or(0);
-    assert!(
-        role_canon_max > role.heights[0] + EPOCH_LEN,
-        "the victim's EL was not carried forward past its ordering cursor — the wedge is not \
-         cursor-only as claimed: canonical max {role_canon_max}, cursor {}",
-        role.heights[0]
-    );
 
-    // (5) F7 — the role victim probes MORE than once per block (a productive probe
-    // drops the cadence to the 200 ms fast burst) and MORE than the control.
-    // DEVIATION from the F7 decision as worded: the control, being rotated-out too,
-    // ALSO probes above one-per-block — it sawtooths (falls one behind the group,
-    // fast-bursts, re-jumps, lands, repeats), so an absolute "control does not
-    // probe >1/block" is not available on this same-fixture control. The clean
-    // separation is that the role NEVER recovers, so its probing does not bound,
-    // while the control's is bounded by its catch-up: role > control.
-    let role_probes = role.probe_calls[0];
-    let ctrl_probes = control.probe_calls[0];
-    assert!(
-        role_probes > role.heights[1],
-        "the role victim did not probe faster than one per block: {role_probes} probes, tip {}",
-        role.heights[1]
-    );
-    assert!(
-        role_probes > ctrl_probes,
-        "the role victim did not probe more than the recovering control: role {role_probes}, control {ctrl_probes}"
-    );
-
-    // (6) F16 + no fork + honest lockstep + isolation (nodes 1–3 never see the 10^6
-    // inflation in their own sampled frontier series).
+    // (5) No fork, honest lockstep, and no leak of the inflation to nodes 1–3.
     assert!(
         !role.timed_out,
         "the role run timed out: {:?}",
@@ -3108,84 +3128,55 @@ fn an_inflated_latest_probe_wedges_a_rotated_out_validator_in_re_jumps() {
     }
 }
 
-/// (R-001 var Б) Node 3's frontier-plane `Producer` answers `FrontierKey::Latest`
-/// with the real tip (real height, real multisig) whose `block.result` is replaced
-/// by the tip of a DIVERGENT branch node 3 has seeded into the shared devp2p peer
-/// network (`ElNetwork::publish_branch`): the branch forks at
-/// `byzantine_roles::LYING_DIVERGE_AT = 100` — above node 0's rotation-boundary
-/// park (95) — with a fork parent that is the honest hash at 99, and extends to the
-/// served tip's landing height. `proposal.payload` is re-pointed to the forged
-/// block's digest so `verify_jump_structural` passes; the multisig is left as the
-/// REAL signature over the ORIGINAL payload. Node 0 is rotated OUT at epoch 3,
-/// re-jumps, and reads its `Latest` from node 3 alone (`upstream_only_link`).
+/// (R-001 var Б, INVERTED by the frontier trust gate) Node 3's frontier-plane
+/// `Producer` answers `FrontierKey::Latest` with the real tip (real height, real
+/// multisig) whose `block.result` is replaced by the tip of a DIVERGENT branch it
+/// has seeded into the shared devp2p peer network (`ElNetwork::publish_branch`),
+/// with `proposal.payload` re-pointed to the forged block's digest so the
+/// payload↔digest bind still passes. Node 0 is rotated OUT at epoch 3 and reads
+/// its `Latest` from node 3 alone (`upstream_only_link`).
 ///
-/// **What R-001 predicted for variant Б** (`.dpos-study/REGISTER.md`, R-001,
-/// consequence (б)): the landing passes, the node lives on the attacker's branch,
-/// and after K blocks guard #2's `ResultDivergence` SafetyHalts it.
+/// **What this test asserted before, and what it asserts now.** It used to pin the
+/// LAST LINE OF DEFENCE: the jump LANDED the attacker's branch (the stand's
+/// landing model commits a hash list unconditionally) and only then did the
+/// POST-sync `verify_jump_authenticated` refuse it (`JumpOutcome::AuthFailed`) —
+/// the moved payload breaks the real multisig against any committee. It now pins
+/// the FIRST line: the same broken multisig is checked at
+/// `FrontierHandler::deliver`, step (4), under `committee[round.epoch]` read from
+/// the module — so the forged `Latest` never leaves the channel, node 0 gets no
+/// frontier, spawns no jump, and reth is never pointed at the divergent branch at
+/// all. The defence moved from after a full EL backfill to before a single FCU.
 ///
-/// **Letter convention (F13, same disclaimer as R-004):** the branch labels below
-/// are Latin `(a)/(b)/(c)`; the register's own consequence letters are Cyrillic
-/// `(б)/(в)` and are ITS, not these — Latin `(a)` and Cyrillic `(а)` look alike, so
-/// they are never mixed as the same label here.
+/// **The post-sync gate is still there and still load-bearing.** Nothing about
+/// `verify_jump_authenticated` changed; what changed is that this particular
+/// forgery no longer reaches it. `the_rejump_runs_the_production_jump_and_
+/// authenticates_at_the_landing` keeps that gate pinned on honest input.
 ///
-/// **What the run showed (2026-09-10): the jump LANDS and authentication REFUSES
-/// it (`AuthFailed`).** The divergent branch is servable now, so `sync_to` FCUs
-/// reth onto it and `land_jump` walks it down to node 0's fork point and commits
-/// the prefix canonically, then `verify_jump_authenticated` runs and FAILS: the
-/// re-pointed `proposal.payload` means the REAL multisig `Finalization::verify`es
-/// over `Subject::Finalize { proposal }` against a proposal it never signed
-/// (`cold_start_jump.rs:688` — the BLS `ensure!`, distinguished from the
-/// unreadable-committee arm by the recorded error text, F7). So R-001 var Б does
-/// NOT reach the register's SafetyHalt on this stand — the fail-closed post-sync
-/// BLS gate refuses the branch FIRST (`JumpOutcome::AuthFailed`), before any block
-/// is executed under it and any guard could fire.
+/// **Letter convention (F13, unchanged):** branch labels below are Latin
+/// `(a)/(b)/(c)`; the register's own consequence letters are Cyrillic and are ITS,
+/// not these.
 ///
-/// **What this is NOT — three stand limitations, stated plainly (F8/F9).**
-/// (F8) The committee read "at the landing hash" is a CALL-SHAPE fact only:
-/// `FakeStaking` membership is `(members)(epoch)` and IGNORES `at_hash`
-/// (`fakes.rs`), so reading `committee[E]` at the attacker's divergent hash yields
-/// the HONEST committee. The register's ACTUAL mechanism — "`verify_jump_authenticated`
-/// reads `committee[E]` from the SUBSTITUTED state and the check PASSES"
-/// (REGISTER.md R-001) — is structurally UNREACHABLE here; this test shows the read
-/// HAPPENS at the landing hash, not that a substituted committee would validate.
-/// (F9) The branch node 3 seeds is a HASH LIST WITHOUT BODIES
-/// (`divergent_hash(h) = keccak("lying-upstream-div" ‖ h)`), which
-/// `FakeChain::land_jump` → `land_canonical` commits UNCONDITIONALLY — no download,
-/// no execution, no state root, no validity verdict. This is THE STAND'S LANDING
-/// MODEL, not reth: a real node must download and execute bodies, and a fabricated
-/// hash has no body, so no peer serves it and the FCU never returns `Valid`. So the
-/// victim ending on the attacker's prefix is NOT the register's consequence (в):
-/// that consequence was RETIRED by a real-node experiment (Ex-2, REGISTER.md
-/// consequence (в) "снят Ex-2"; EXPERIMENTS.md — reth answers `SYNCING` for an
-/// unserved `finalized`, then the next honest FCU is `VALID` in ~132 ms). We call
-/// the observed state "the stand's landing model held the divergent prefix", cite
-/// Ex-2, and do NOT claim (в).
+/// **What this is NOT (F8/F9, unchanged).** The committee read "at the landing
+/// hash" was always a CALL-SHAPE fact here (`FakeStaking` ignores `at_hash`), and
+/// the stand's landing model commits bodiless hashes; neither is claimed. Ex-2
+/// retired the register's consequence (в) on a real node, and this test does not
+/// re-open it.
 ///
-/// **F10 correction.** The multisig fails against ANY committee, because the
-/// certificate is the ORIGINAL and the proposal's payload was moved. Variant А (the
-/// attacker's own committee under its landing hash) needs BOTH a per-hash committee
-/// in `FakeStaking` AND the wrapper re-assembling a fresh 2f+1 multisig over the
-/// re-pointed proposal — the role forges the payload but keeps the signature, so it
-/// authenticates under no committee.
-///
-/// **Which branch is vacuous over a no-op wrapper.** `Landed` is what an honest
-/// `Latest` produces (the control here), so the load-bearing lines are
-/// `result_forged >= 1 && result_differs`, the landing being on the DIVERGENT
-/// hashes, the `AuthFailed` outcome, and its error text naming the BLS check.
-///
-/// Declined finding, note-only: F16 (this test's leak check is stricter than
-/// R-004's — it asserts nodes 1–3 neither forged nor re-jumped nor authenticated;
-/// R-004 checks only the frontier series. The asymmetry is left as-is: each test's
-/// leak surface is the one its own role could leak through).
+/// **Which assertions are vacuous, which load-bearing.** VACUOUS over an honest
+/// role: `result_forged == 0` on the control. LOAD-BEARING: the tamper witness
+/// (`result_forged >= 1`, `result_differs`, the structural pass — i.e. the forgery
+/// IS the kind that only a multisig check can catch), the victim's REJECTION, the
+/// empty `jump_calls`, the absence of any divergent hash in the victim's EL
+/// events, and the control landing its jumps.
 ///
 /// Falsifier: the wrapper forging nothing; a forged result equal to the original;
-/// a forged answer failing `verify_jump_structural`; the jump NOT landing; the
-/// landing hash not being the divergent tip; the outcome not `AuthFailed`; the
-/// error text not naming the BLS check; the stand's landing model not holding the
-/// divergent prefix; the forgery leaking to nodes 1–3.
+/// a forged answer failing the payload↔digest bind (then a cheaper check caught it
+/// and the multisig arm is not what this pins); the victim NOT rejecting; any jump
+/// call in the role run; a divergent hash in the victim's EL events; the control
+/// not landing; the forgery leaking to nodes 1–3.
 #[cfg(feature = "dpos-devnet-byzantine")]
 #[test]
-fn a_lying_upstream_lands_a_divergent_branch_and_authentication_refuses_it() {
+fn a_lying_upstream_is_refused_at_the_frontier_and_never_lands_its_branch() {
     use super::byzantine_roles::{divergent_hash, LYING_DIVERGE_AT};
     let role = lying_upstream_stand(Role::LyingUpstream);
     let control = lying_upstream_stand(Role::Honest);
@@ -3202,7 +3193,8 @@ fn a_lying_upstream_lands_a_divergent_branch_and_authentication_refuses_it() {
     );
     assert!(
         byz.result_structural_ok,
-        "a forged Latest failed verify_jump_structural: {byz:?}"
+        "a forged Latest failed the payload-digest bind — a cheaper check caught it, so this \
+         run does not exercise the multisig arm: {byz:?}"
     );
     assert!(
         byz.forged_result_to.is_some() && byz.forged_result_to != byz.forged_result_from,
@@ -3214,29 +3206,17 @@ fn a_lying_upstream_lands_a_divergent_branch_and_authentication_refuses_it() {
         control.byz[3]
     );
 
-    // Branch enumeration — a DIAGNOSTIC print of which branch the run took, then a
-    // HARD assert on the expected one (F14: branch (c) "path not reached" is a
-    // diagnostic label in the print, not a passing outcome — the assert below fails
-    // it).
     let calls = &role.jump_calls[0];
-    let last = calls.last();
-    let branch = match last.map(|c| c.outcome) {
-        Some("AuthFailed") => {
-            "(a) LANDED + REFUSED — the jump synced the divergent branch, \
-                                verify_jump_authenticated failed"
-        }
-        Some("Landed") => "(b) LANDED + PASSED — authentication accepted the branch (unexpected)",
-        Some("StalledWithPeers") | Some("Stalled") => {
-            "(c) PATH NOT REACHED — the branch was unservable, authentication never ran"
-        }
+    let branch = match calls.last().map(|c| c.outcome) {
+        None => "(c) CLOSED — the forgery was refused at deliver; node 0 never jumped",
+        Some("AuthFailed") => "(a) NOT CLOSED — the branch still reached the post-sync gate",
         Some(other) => other,
-        None => "(c) PATH NOT REACHED — node 0 never re-jumped",
     };
     eprintln!(
-        "(R-001) branch = {branch} | role: calls={calls:?} committee_reads[0]={:?} \
-         heights={:?} halted={:?} diverged={:?} | control: calls={} heights={:?} | \
-         virt role={:?} ctrl={:?} real role={:?} ctrl={:?}",
-        role.jump_committee_reads[0],
+        "(R-001) branch = {branch} | role: calls={calls:?} up[0]={:?} heights={:?} halted={:?} \
+         diverged={:?} | control: calls={} heights={:?} | virt role={:?} ctrl={:?} \
+         real role={:?} ctrl={:?}",
+        role.upstream[0],
         role.heights,
         role.halted,
         role.diverged,
@@ -3248,140 +3228,62 @@ fn a_lying_upstream_lands_a_divergent_branch_and_authentication_refuses_it() {
         control.real_elapsed,
     );
 
-    // (2) The jump RAN the production authentication and it REFUSED the branch. The
-    // control (honest upstream) lands every jump — the vacuous-`Landed` guard.
+    // (2) THE VICTIM REFUSED IT — the multisig arm of `deliver`, under a committee
+    // it CAN read (the forgery keeps a real certificate over a payload it no longer
+    // matches). A `false` costs node 3 node 0's frontier channel for good.
     assert!(
-        !calls.is_empty(),
-        "node 0 never re-jumped: {:?}",
-        role.heights
+        role.upstream[0].deliveries_rejected >= 1,
+        "the victim never refused the forged Latest: {:?}",
+        role.upstream[0]
     );
-    assert!(
-        calls.iter().all(|c| c.outcome == "AuthFailed"),
-        "a role jump was not `AuthFailed` (branch {branch}): {calls:?}"
-    );
-    // F7 — it is the committee-BLS arm that refused, NOT the unreadable-committee
-    // arm. `verify_jump_authenticated` errors on either; only the message tells
-    // them apart. The BLS `ensure!` says "FAILED BLS verification against
-    // committee[...]" (`cold_start_jump.rs:688`); the other arm says the committee
-    // "is unreadable at the synced landing" (`:702`). The recorded `outcome_detail`
-    // must be the former and never the latter.
-    for call in calls {
-        let detail = call
-            .outcome_detail
-            .as_deref()
-            .expect("an AuthFailed call must carry its error text");
-        assert!(
-            detail.contains("FAILED BLS verification against committee["),
-            "the AuthFailed did not fire on the committee-BLS check: {detail}"
-        );
-        assert!(
-            !detail.contains("is unreadable at the synced landing"),
-            "the AuthFailed fired on the unreadable-committee arm, not the BLS check: {detail}"
-        );
-    }
-    let ctrl_calls = &control.jump_calls[0];
-    assert!(
-        !ctrl_calls.is_empty() && ctrl_calls.iter().all(|c| c.outcome == "Landed"),
-        "the honest control did not land every jump: {ctrl_calls:?}"
+    // AND THE HONEST CONTROL REFUSES NOTHING — see the same assert in R-004 for why
+    // it was absent until `deliver` stopped verifying under the module's
+    // seed-oracle-carrying scheme (Д-75).
+    assert_eq!(
+        control.upstream[0].deliveries_rejected, 0,
+        "the honest control refused a frontier answer: {:?}",
+        control.upstream[0]
     );
 
-    // (3) verify_jump_authenticated ACTUALLY RAN, at the LANDING hash, and that hash
-    // is the DIVERGENT tip the wrapper forged (F12: link the consumed result to the
-    // tamper's own witness).
-    let reads = &role.jump_committee_reads[0];
+    // (3) THE INVERSION. No jump was spawned at all, so nothing pointed reth at the
+    // attacker's branch — and the victim's EL never holds one of its hashes.
     assert!(
-        !reads.is_empty(),
-        "no committee was read, so verify_jump_authenticated never ran: {calls:?}"
+        calls.is_empty(),
+        "a jump ran on an unverified frontier (branch {branch}): {calls:?}"
     );
-    for call in calls {
-        let (tip, result) = call.consumed.expect("a jump consumed a certificate");
-        // Each jump consumed a served result that IS the wrapper's forged divergent
-        // hash at the landing height (`result = block.result` the wrapper sets to
-        // `divergent_hash(block.height - K)`), and the committee was authenticated
-        // AT that hash — the F12 link between the consumed value and the tamper.
-        let landing = tip - crate::order_block::K;
-        assert_eq!(
-            result,
-            divergent_hash(landing),
-            "the consumed result is not the divergent hash at the landing height: {call:?}"
-        );
-        assert!(
-            reads.iter().any(|(_, at)| *at == result),
-            "the committee was not read AT the divergent landing hash {result}: reads {reads:?}"
-        );
-    }
-    // The tamper's own witness (the LAST forge it recorded) is one of those
-    // consumed divergent hashes — ties `ByzFacts.forged_result_to` to what the jump
-    // actually consumed (F12).
-    assert!(
-        calls.iter().any(|c| c
-            .consumed
-            .map(|(_, r)| Some(r) == role.byz[3].forged_result_to)
-            == Some(true)),
-        "no jump consumed the wrapper's last forged result {:?}: {calls:?}",
-        role.byz[3].forged_result_to
-    );
-
-    // (4) THE STAND'S LANDING MODEL held the divergent prefix (F9 — NOT the
-    // register's consequence (в), which was retired by Ex-2 on a real node): the
-    // seeded branch is a bodyless hash list that `land_canonical` commits
-    // unconditionally, so `el_events[0]` shows node 0 `Canonicalized` the divergent
-    // hashes even though it never executed or validated them. The executor never
-    // reseeded (`AuthFailed` is not `Landed`), so the ordering cursor stays at 95.
-    let canon_div: Vec<u64> = role.el_events[0]
+    let divergent: Vec<u64> = role.el_events[0]
         .iter()
         .filter_map(|e| match e {
-            ElEvent::Canonicalized(h, x) if *h >= LYING_DIVERGE_AT && *x == divergent_hash(*h) => {
-                Some(*h)
+            ElEvent::Canonicalized(h, hash) | ElEvent::Derived(h, hash) => {
+                (*h >= LYING_DIVERGE_AT && *hash == divergent_hash(*h)).then_some(*h)
             }
-            _ => None,
         })
         .collect();
     assert!(
-        !canon_div.is_empty(),
-        "node 0 did not canonicalize any divergent block — it never landed the branch: {:?}",
-        role.el_events[0]
+        divergent.is_empty(),
+        "the victim's EL holds the attacker's branch at {divergent:?} — the forgery was not \
+         refused before the FCU"
     );
 
-    // (5) The executor did NOT reseed (AuthFailed is not Landed), so node 0's
-    // finalized tip stays wedged at the rotation boundary, it never halts, and the
-    // honest three carry on. F16: no timeout, no fork.
+    // (4) ATTRIBUTION BY THE CONTROL, and no collateral damage.
+    assert!(
+        !control.jump_calls[0].is_empty()
+            && control.jump_calls[0].iter().all(|c| c.outcome == "Landed"),
+        "the honest control did not land every jump: {:?}",
+        control.jump_calls[0]
+    );
     assert!(
         !role.timed_out,
         "the role run timed out: {:?}",
         role.heights
     );
-    assert!(
-        !control.timed_out,
-        "the control run timed out: {:?}",
-        control.heights
-    );
-    assert_eq!(
-        role.heights[0],
-        3 * EPOCH_LEN - 1,
-        "node 0 did not stay wedged at the rotation boundary 95: {:?}",
-        role.heights
-    );
-    assert!(
-        control.heights[0] > 3 * EPOCH_LEN - 1,
-        "the honest control did not recover past 95: {:?}",
-        control.heights
-    );
-    assert!(
-        role.halted.is_empty(),
-        "node 0 halted, but authentication refused the branch before any block ran under it: {:?}",
-        role.halted
-    );
-    assert_eq!(role.diverged, None, "the honest three forked");
+    assert_eq!(role.diverged, None, "the role run forked");
+    assert!(role.halted.is_empty(), "role halted: {:?}", role.halted);
     role.assert_lockstep_except(&[0]);
-
-    // (6) F13 — no leak. The honest BYSTANDERS (nodes 1 and 2 — node 3 is the liar,
-    // node 0 the victim) forged nothing; and ONLY the victim re-jumped /
-    // authenticated (nodes 1, 2 AND the liar 3 never do).
-    for i in [1, 2] {
+    for i in [0, 1, 2] {
         assert_eq!(
             role.byz[i].result_forged, 0,
-            "bystander node {i} forged a result — the role leaked off node 3: {:?}",
+            "node {i} forged a result: {:?}",
             role.byz[i]
         );
     }
@@ -3425,49 +3327,57 @@ fn wrong_height_stand(source_role: Role) -> super::stand::Outcome {
     )
 }
 
-/// (R-009) `Role::WrongHeightFinalized`: node 0's frontier `Producer` answers every
-/// `Finalized{h}` by-height pull (for `h` in `WRONG_HEIGHT_WINDOW`) with its OWN valid
-/// pair of height `h − 1` instead of `h`. Nothing is mutated — the pair is a wholly real,
-/// self-consistent finalization (`payload == block.digest()`), just of the wrong height,
-/// and the wrapper self-checks both before it lets the answer out. Node 3, dropped from
-/// the committee at epoch 1, catches up by the plane path with node 0 as its ONLY source.
+/// (R-009, INVERTED by the frontier trust gate) `Role::WrongHeightFinalized`: node
+/// 0's frontier `Producer` answers every `Finalized{h}` by-height pull (for `h` in
+/// `WRONG_HEIGHT_WINDOW`) with its OWN valid pair of height `h − 1` instead of `h`.
+/// Nothing is mutated — the pair is a wholly real, self-consistent finalization,
+/// just of the wrong height, and the wrapper self-checks both before it lets the
+/// answer out. Node 3, dropped from the committee at epoch 1, catches up by the
+/// plane path with node 0 as its ONLY source (`upstream_only_link`).
 ///
-/// **What R-009 predicted** (`.dpos-study/REGISTER.md`, R-009): `FrontierHandler::deliver`
-/// does not bind the requested key to the delivered content — a decodable pair of the
-/// wrong height satisfies the `Finalized{h}` fetch and returns `true`. The marshal then
-/// rejects `block.height() != h`, so the gap at `h` never closes and catch-up stalls;
-/// the fast peer beats any catching-up validator. `[KNOWN]` deliver + `spawn_finalized`;
-/// `[LIKELY]` the resolver/marshal reaction to a `true`-with-wrong-content delivery.
+/// **What this test asserted before, and what it asserts now.** It used to pin the
+/// DEFECT R-009 named: `FrontierHandler::deliver` did not bind the requested key to
+/// the delivered content, so a decodable pair of the wrong height SATISFIED the
+/// `Finalized{h}` fetch and returned `true`; the marshal then rejected
+/// `block.height() != h` silently, the gap at `h` never closed, and the liar was
+/// asked again and again. It now pins the CLOSURE: `deliver` compares the key to
+/// the delivered height (step 2) and returns `false`, which is a lie signal —
+/// commonware `block!`s node 0 and drops it into the fetcher's `excluded` set,
+/// never cleared (`resolver/p2p/engine.rs:436-437`, `fetcher.rs:516`, `:242`).
 ///
-/// **What the run shows** — recorded by the branch string and the `role`/`control`
-/// separation. The reproduced branch: node 3 accepts every wrong-height pair at its
-/// frontier consumer (`deliveries_rejected == 0` — that counter tracks only DECODE
-/// failures, and a real `h − 1` pair decodes) and its upstream "delivers" the answer
-/// (`finalized_delivered > 0`), yet the marshal rejects the height mismatch SILENTLY
-/// (`marshal/core/actor.rs`: `block.height() != height ⇒ send_lossy(false)`, no log), so
-/// the gap never fills and node 3 stands near its drop point while the honest control
-/// fills the gap and reaches 16.
+/// **The observable that says "excluded", not merely "refused".** The wrapper
+/// substitutes on EVERY by-height pull inside its window, so under the old
+/// behaviour the substitution count grew with the run. Here it is ONE: the first
+/// lie costs node 0 the victim's frontier channel, and no second pull is ever
+/// addressed to it. `wrong_height_served == 1 == deliveries_rejected` is that fact
+/// stated twice — once from the liar's side, once from the victim's.
 ///
-/// **Which assertions are vacuous, which load-bearing.** VACUOUS over a no-op (honest)
-/// role: `deliveries_rejected == 0` and `finalized_delivered > 0` — an honest by-height
-/// pair also decodes and delivers, so both hold on the control too; they are kept as the
-/// `[KNOWN]` mechanism, not the proof. LOAD-BEARING: the tamper witness
-/// (`wrong_height_served ≥ 1`, every served height exactly `requested − 1`,
-/// `wrong_height_valid`) and the SEPARATION `role.heights[3] < control.heights[3]` (the
-/// victim starved vs the control following) — neither the honest control nor a no-op role
-/// can satisfy it. The register's "while the peer stays fastest" clause is a MULTI-PEER
-/// race that `upstream_only_link` does not pose (one source, no slower peer to lose to);
-/// the single-source starve IS posed.
+/// **The victim still starves, and that is the fixture, not the defect.** Node 3's
+/// only frontier source IS the liar (`upstream_only_link = (0, 3)`), so excluding
+/// it leaves node 3 with nowhere to pull from and it stands at its drop boundary.
+/// What changed is WHY: not "a wrong answer keeps satisfying the fetch", but "the
+/// one peer it may ask has been refused and will not be asked again". The
+/// in-fixture control — the same run with an HONEST node 0 — is what shows the gap
+/// closing from an honest source: its victim follows to 15.
 ///
-/// Falsifier: the wrapper serving nothing, or a served height not `requested − 1`, or a
-/// served pair that is not a self-consistent finalization; `deliveries_rejected > 0` (the
-/// victim rejected the wrong-height pair — then `deliver` did bind the key); a re-jump
-/// running (`rejump_calls > 0` — the by-height path was not the only one); the victim
-/// reaching 16 despite the substitution (not reproduced — the gap closed by some path);
-/// the honest control NOT following; the committee losing lockstep or halting.
+/// **Which assertions are vacuous, which load-bearing.** VACUOUS over a no-op
+/// (honest) role: nothing — the control now differs on every line below. LOAD-BEARING:
+/// the tamper witness (`wrong_height_served >= 1`, every served height exactly
+/// `requested − 1`, `wrong_height_valid`), the REFUSAL
+/// (`deliveries_rejected == wrong_height_served`), the wrong-height pull NOT
+/// completing (`finalized_calls > finalized_delivered`), the ONE substitution (the
+/// exclusion), and the separation `role.heights[3] < control.heights[3]`.
+///
+/// Falsifier: the wrapper serving nothing, or a served height not `requested − 1`,
+/// or a served pair that is not a self-consistent finalization;
+/// `deliveries_rejected == 0` (the victim accepted the lie — then `deliver` still
+/// binds nothing); more substitutions than refusals (the liar kept being asked
+/// after a `false`); a re-jump running (`rejump_calls > 0` — the by-height path was
+/// not the only one); the honest control NOT following; the committee losing
+/// lockstep or halting.
 #[cfg(feature = "dpos-devnet-byzantine")]
 #[test]
-fn a_wrong_height_answer_satisfies_the_fetch_and_starves_the_by_height_gap() {
+fn a_wrong_height_answer_costs_the_liar_the_channel_and_never_satisfies_the_fetch() {
     let role = wrong_height_stand(Role::WrongHeightFinalized);
     let control = wrong_height_stand(Role::Honest);
 
@@ -3502,21 +3412,21 @@ fn a_wrong_height_answer_satisfies_the_fetch_and_starves_the_by_height_gap() {
         control.byz[0]
     );
 
-    // The observed branch, from the victim's progress.
+    // The observed branch, from the victim's reaction.
     let v = 3usize;
     let u = role.upstream[v];
-    let branch = if u.finalized_calls == 0 || u.latest_delivered == 0 {
-        "(c) PATH NOT REACHED — the victim never pulled by-height / never discovered the frontier"
-    } else if role.heights[v] >= 16 {
-        "(b) NOT REPRODUCED — the gap closed and the victim caught up anyway"
+    let branch = if u.deliveries_rejected == 0 {
+        "(a) NOT CLOSED — the victim accepted a wrong-height pair"
+    } else if byz.wrong_height_served > u.deliveries_rejected {
+        "(b) PARTIAL — the liar was refused but kept being asked"
     } else {
-        "(a) REPRODUCED — the wrong-height answer satisfied the fetch, the gap never closed"
+        "(c) CLOSED — the first lie was refused and the liar was never asked again"
     };
     eprintln!(
-        "(R-009) branch = {branch} | role: served={} pairs(first 3)={:?} victim_h={} up={u:?} \
+        "(R-009) branch = {branch} | role: served={} pairs={:?} victim_h={} up={u:?} \
          | control: victim_h={} up={:?} | virt role={:?} ctrl={:?} real role={:?} ctrl={:?}",
         byz.wrong_height_served,
-        byz.wrong_height_pairs.iter().take(3).collect::<Vec<_>>(),
+        byz.wrong_height_pairs,
         role.heights[v],
         control.heights[v],
         control.upstream[v],
@@ -3526,53 +3436,45 @@ fn a_wrong_height_answer_satisfies_the_fetch_and_starves_the_by_height_gap() {
         control.real_elapsed,
     );
 
-    // (2) `deliver` BOUND NOTHING — the [KNOWN] core, VACUOUS over an honest role (see
-    // doc). The victim accepted every wrong-height pair and its upstream delivered the
-    // answer, yet no re-jump ran to mask the starve.
+    // (2) `deliver` BOUND THE KEY. Every substitution was refused, and a refusal is
+    // what commonware turns into a permanent exclusion — so the count of
+    // substitutions equals the count of refusals and stops there.
     assert_eq!(
-        u.deliveries_rejected, 0,
-        "the victim REJECTED a wrong-height pair at the frontier consumer: {u:?}"
+        u.deliveries_rejected, byz.wrong_height_served,
+        "the victim did not refuse every wrong-height pair (branch {branch}): {u:?} vs {byz:?}"
     );
+    assert_eq!(
+        byz.wrong_height_served, 1,
+        "the liar was asked for a second by-height pull after being refused — the exclusion \
+         did not take (branch {branch}): {byz:?}"
+    );
+    // The refused pull did NOT complete: a wrong-height answer no longer satisfies
+    // the fetch, which is R-009's whole subject stated as a counter.
     assert!(
-        u.finalized_delivered > 0,
-        "the victim's upstream never delivered a by-height answer: {u:?}"
+        u.finalized_calls > u.finalized_delivered,
+        "every by-height pull completed — a wrong-height answer still satisfied one: {u:?}"
     );
     assert_eq!(
         u.rejump_calls, 0,
         "a re-jump ran — the by-height path was not the only repair path: {u:?}"
     );
-    // Each wrong-height answer was CONSUMED and refused, not merely printed: the
-    // victim's upstream delivered at least as many by-height answers as node 0
-    // substituted, and every pull completed before the next was spawned (the in-flight
-    // dedupe in `cert_inlet.rs` `UpstreamResolver::spawn_finalized`), so
-    // `finalized_calls == finalized_delivered` — the full consume-and-refuse cycle.
-    assert!(
-        u.finalized_delivered >= byz.wrong_height_served,
-        "the victim delivered fewer by-height answers ({}) than node 0 substituted ({})",
-        u.finalized_delivered,
-        byz.wrong_height_served
-    );
     assert_eq!(
-        u.finalized_calls, u.finalized_delivered,
-        "a by-height pull did not complete before the next was spawned (in-flight dedupe): {u:?}"
+        control.upstream[v].deliveries_rejected, 0,
+        "the victim refused an HONEST source: {:?}",
+        control.upstream[v]
     );
 
-    // (3) THE SEPARATING FACT (load-bearing): the wrong-height answers keep satisfying
-    // the fetch, so the victim's by-height gap never closes and it stands near its drop
-    // point, while the honest control fills the gap and reaches 16.
-    // The honest control follows to within one of the committee tip (the outsider
-    // trails the by-height plane by ~1 block — the documented `[16, 16, 16, 15]`).
+    // (3) THE SEPARATING FACT (load-bearing): with the liar as its only source the
+    // victim stands at its drop boundary (the last block of epoch 0 it finalized
+    // in-committee, height 5); with an honest source the gap closes and it follows.
     assert!(
         control.heights[v] >= 14,
         "the honest control did not follow through the by-height plane: {:?}",
         control.heights
     );
-    // The victim stays EXACTLY at its drop boundary (the last block of epoch 0 it
-    // finalized in-committee, height 5) — the wrong-height answers never let it advance.
     assert_eq!(
         role.heights[v], 5,
-        "the victim did not stand at its drop boundary despite the wrong-height answers \
-         (branch {branch}): {:?}",
+        "the victim did not stand at its drop boundary (branch {branch}): {:?}",
         role.heights
     );
     assert!(

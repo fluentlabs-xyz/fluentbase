@@ -758,6 +758,7 @@ where
         plane.agreement_intake,
         plane.finalized_cursor.clone(),
         plane.committee.clone(),
+        plane.tracked_epoch.clone(),
         plane.artifact_bytes,
         plane.epoch_transition,
         shutdown_token,
@@ -1013,6 +1014,17 @@ pub(crate) struct BeaconPlane<Provider, EvmConfig> {
     /// any more — the committee module reads at the ordering-finalized anchor.
     /// Removed with `upstream_frontier` in the frontier step.
     pub live_height: Arc<std::sync::atomic::AtomicU64>,
+    /// `T` — the epoch this node last handed to `track`
+    /// (`EpochTransition::last_tracked_epoch`), mirrored into ONE cell with ONE
+    /// reader: the executor's frontier probe, which names the ladder step
+    /// `Finalized{last(T+1))}` and its addressees and hands both to the marshal
+    /// (`executor.rs:656`, read at `:2099-2103`). `PlaneUpstreamHandle` does NOT
+    /// read it — its fetches are untargeted, and `plane_upstream.rs` records why
+    /// re-deriving targets there starves the contiguous catch-up. Created here
+    /// because the handle below is built here, WRITTEN by the layer's
+    /// boundary-bridge forwarder — the one place that sees exactly the epochs the
+    /// transition tracked. `u64::MAX` is the "nothing tracked yet" sentinel.
+    pub tracked_epoch: Arc<std::sync::atomic::AtomicU64>,
     /// The DkgActor deal clock. The inlet ALSO tees the live frontier here so a
     /// still-catching-up early-joiner deals its first epoch's DKG share at the
     /// live tip (the vrf-rotation early-join fix), not K blocks late. The
@@ -1773,6 +1785,11 @@ where
     let marshal_slot: Arc<std::sync::OnceLock<fluentbase_consensus::MarshalMailbox>> =
         Arc::new(std::sync::OnceLock::new());
 
+    // See `BeaconPlane::tracked_epoch`. One cell, one writer (the layer's
+    // boundary-bridge forwarder), one reader (the executor's frontier probe).
+    let tracked_epoch: Arc<std::sync::atomic::AtomicU64> =
+        Arc::new(std::sync::atomic::AtomicU64::new(u64::MAX));
+
     // Plane-native `CertUpstream` frontier resolver (`commonware_resolver::p2p`) on
     // FRONTIER_CHANNEL — the seam that lets a plain `--dpos` validator run the cold-start
     // / steady-state JUMP without `--dpos.follower-upstream`. The `FrontierHandler` serves
@@ -1782,8 +1799,19 @@ where
     // validator overlay as the `U: CertUpstream`. `Blocker` is an isolated `NoopBlocker`
     // (NOT the shared oracle): a `deliver=false` on an undecodable tip must never
     // partition a peer from consensus channels (mirrors the beacon log resolver).
-    let (frontier_handler, frontier_waiters) =
-        fluentbase_consensus::plane_upstream::new_bridge(marshal_slot.clone());
+    // `committee` is the process's ONE committee module (built above): it is what
+    // makes `FrontierHandler::deliver` able to JUDGE an answer — the geometry for
+    // the height↔epoch bind and the record for the read window. `chain_id` gives
+    // it the certificate namespace, because the 2f+1 multisig is checked under a
+    // VERIFY-ONLY scheme `deliver` builds from that record rather than under the
+    // module's own scheme, which carries the epoch's seed oracle (see the
+    // `plane_upstream` module docs, Д-75).
+    let (frontier_handler, frontier_waiters) = fluentbase_consensus::plane_upstream::new_bridge(
+        marshal_slot.clone(),
+        committee.clone(),
+        ctx.clone(),
+        chain_id,
+    );
     let (frontier_engine, frontier_mailbox) = commonware_resolver::p2p::Engine::new(
         ctx.with_label("frontier_resolver"),
         commonware_resolver::p2p::Config {
@@ -1969,6 +1997,7 @@ where
         finalized_cursor,
         committee,
         live_height,
+        tracked_epoch,
         dkg_height_tx,
         marshal_slot,
         epoch_transition: fluentbase_consensus::dpos::PlaneEpochTransition {
@@ -2053,6 +2082,10 @@ pub(crate) async fn launch_dpos_layer<N, AddOns>(
     // the height the committee reads at" a type-level fact.
     finalized_cursor: fluentbase_consensus::FinalizedCursor,
     committee: std::sync::Arc<dyn fluentbase_consensus::Committee>,
+    // The `T` cell (see `BeaconPlane::tracked_epoch`): this launch's boundary
+    // forwarder is its ONE writer and the executor's frontier probe is its ONE
+    // reader.
+    tracked_epoch: std::sync::Arc<std::sync::atomic::AtomicU64>,
     // The beacon plane's serving read for `consensus_getEpochArtifact` — wired
     // into the feed beside `set_marshal` below, so a follower can obtain
     // `PK_epoch` from this validator over the SAME namespace it already takes
@@ -2238,6 +2271,9 @@ where
         // "the anchor moved" wake-up. The SAME `Arc` the beacon plane's facade
         // is built over, so the two node-side planes cannot drift.
         committee,
+        // The ONE `T` cell — this layer's boundary forwarder writes it; the
+        // frontier probe and `PlaneUpstreamHandle` read it.
+        tracked_epoch,
         slasher_sink,
         evidence,
         staking_config,

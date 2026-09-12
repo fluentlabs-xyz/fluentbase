@@ -1302,6 +1302,17 @@ pub(super) struct JumpCall {
 /// Every jump call one node made, in call order.
 pub(super) type JumpCalls = Arc<Mutex<Vec<JumpCall>>>;
 
+/// Every ladder step a node's frontier probe NAMED, as `(T, last(T+1))` in call
+/// order — the stand's window into §5.2's "ступень". Recorded where the step is
+/// NAMED (the probe closure), so a test reads what was asked for rather than
+/// inferring it from what arrived.
+///
+/// No tip beside it: the node's own marshal tip is what the executor judges the
+/// step against, and reading it from this closure is an extra marshal message that
+/// changes the run (review A2-02, and the stand-side note in `stand.rs`). The
+/// step-vs-tip comparison is pinned in `executor::tests` instead.
+pub(super) type FrontierSteps = Arc<Mutex<Vec<(u64, u64)>>>;
+
 /// A one-shot tee over the upstream the jump reads: records the
 /// `(height, result)` of the `UpstreamFinalized` the jump actually consumed.
 /// Built fresh per `ReJump::call`, so its slot holds THAT call's certificate and
@@ -1566,9 +1577,18 @@ pub(super) struct UpstreamCounters {
     pub serve_requests: Arc<AtomicU64>,
     /// `deliver` calls the resolver made on this node that decoded.
     pub deliveries_decoded: Arc<AtomicU64>,
-    /// `deliver` calls that did NOT decode (`false` — undecodable payload). The
-    /// wrong-height R-009 pairs DECODE and land in `deliveries_decoded`; R-009
-    /// asserts this stays 0 before П-4 binds the height (PLAN 4.2).
+    /// `deliver` calls that returned `false` — a SIGNAL OF A LIE on any of the
+    /// five arms (`plane_upstream.rs`: undecodable bytes, a foreign height under
+    /// `Finalized{h}`, a payload that is not the served body's digest, a height
+    /// outside the certificate's epoch, a multisig that fails under a READABLE
+    /// committee). Each one costs the sender this channel for the life of the
+    /// resolver engine.
+    ///
+    /// Since 4.2-А this is the load-bearing observable of the three role tests
+    /// (R-001/R-004/R-009): the victim REFUSED the forgery. It is a count only —
+    /// the `reason` split lives in `metrics::counter!`, which goes to the
+    /// process-global recorder the stand does not read (journal §8.4), so no
+    /// stand assert can say WHICH arm fired.
     pub deliveries_rejected: Arc<AtomicU64>,
     /// `ReJump::call` invocations — each one runs the PRODUCTION
     /// [`crate::cold_start_jump::cold_start_jump_with_threshold`] over
@@ -1779,12 +1799,17 @@ impl ByzReport {
 /// frontier resolver engine gets as producer and consumer.
 #[derive(Clone)]
 pub(super) struct CountingHandler {
-    inner: FrontierHandler,
+    /// The PRODUCTION handler, over the stand's one runtime context — nothing
+    /// about `deliver`'s five checks is re-implemented here.
+    inner: FrontierHandler<deterministic::Context>,
     counters: UpstreamCounters,
 }
 
 impl CountingHandler {
-    pub(super) fn new(inner: FrontierHandler, counters: UpstreamCounters) -> Self {
+    pub(super) fn new(
+        inner: FrontierHandler<deterministic::Context>,
+        counters: UpstreamCounters,
+    ) -> Self {
         Self { inner, counters }
     }
 }

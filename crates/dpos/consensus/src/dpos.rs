@@ -920,6 +920,19 @@ pub struct DposLayerConfig<D, XC, A, U> {
     /// beacon's `CommitteeReads` facade views, so the consensus layer and the
     /// beacon plane cannot hold two versions of one epoch's committee.
     pub committee: Arc<dyn crate::committee::Committee>,
+    /// `T` — `EpochTransition::last_tracked_epoch`, mirrored into ONE cell whose
+    /// single WRITER is this layer's boundary-bridge forwarder (the transition
+    /// advances `last_tracked_epoch` only on a successful `boundary_tx.try_send`,
+    /// `epoch_transition.rs:768-791`, cold start included — so the epochs the
+    /// forwarder drains ARE the epochs that advanced it). Its reader is exactly
+    /// ONE: the executor's frontier probe (`executor.rs:656`, read at
+    /// `:2099-2103`). `PlaneUpstreamHandle` does not read it — see the warning in
+    /// `plane_upstream::PlaneUpstreamHandle::fetch_one`.
+    ///
+    /// A cell and not a read of the transition: the transition sits behind an
+    /// async mutex, and a probe tick must never wait on the epoch machine it is
+    /// asking about. `u64::MAX` = nothing tracked yet.
+    pub tracked_epoch: Arc<std::sync::atomic::AtomicU64>,
     pub slasher_sink: Arc<dyn SlasherTxSink>,
     /// Evidence-channel bridge to the node's gossip task, which owns both p2p
     /// halves of `EVIDENCE_CHANNEL` ([`crate::slasher::gossip`]).
@@ -1078,6 +1091,17 @@ pub struct PlaneEpochTransition<Provider, EvmConfig> {
     /// Receiving half of the transition's `boundary_tx`. Drained by the
     /// `epoch_bridge` forwarder into `OuterEngine::boundary_sender()`.
     pub bridge_rx: mpsc::Receiver<(u64, fluentbase_staking_reader::reader::ValidatorSetSnapshot)>,
+}
+
+/// Why the frontier probe could not put its ladder step this tick, as the
+/// `dpos_frontier_step_skipped_total{reason}` label. One function so the label
+/// set cannot drift between the two places a probe is built.
+pub(crate) fn step_skip_reason(e: &crate::committee::CommitteeError) -> &'static str {
+    match e {
+        crate::committee::CommitteeError::OutOfWindow { .. } => "out_of_window",
+        crate::committee::CommitteeError::NotReadable { .. } => "not_readable",
+        crate::committee::CommitteeError::Read(_) => "read_failed",
+    }
 }
 
 /// The persistent beacon/DKG plane handed DOWN from the node crate's always-on
@@ -1589,6 +1613,7 @@ impl DposLayer {
             bls_keypair,
             peer_keypair,
             committee,
+            tracked_epoch,
             slasher_sink,
             evidence,
             staking_config,
@@ -2087,6 +2112,11 @@ impl DposLayer {
             mut bridge_rx,
         } = epoch_transition;
 
+        // `T` for the ladder step — see `DposLayerConfig::tracked_epoch`. This
+        // layer is its ONE writer (the boundary forwarder below).
+        const NO_TRACKED_EPOCH: u64 = u64::MAX;
+        let tracked_epoch_cell = tracked_epoch;
+
         // Cold-start at THIS node's anchor — the one the cold-start discriminator
         // resolved, i.e. AFTER a jump landed, which is strictly at or above the
         // EL-finalized height the plane poller reads. This is the process's ONE
@@ -2412,17 +2442,90 @@ impl DposLayer {
             // The inlet's SAME upstream-rotation escape (Rule L/Y); bound BEFORE the
             // cb moves `up`.
             let rotate = up.rotate_callback();
-            // Erased `get_latest`-height probe for the executor's frozen-tip
-            // frontier prod (see `executor::ReJump::probe`); bound BEFORE the cb
-            // moves `up`.
+            // The executor's frozen-tip frontier probe (see
+            // `executor::ReJump::probe`); bound BEFORE the cb moves `up`.
+            //
+            // TWO requests per tick (§5.2 "Триггер и лестница"): the untargeted
+            // `Latest`, whose height is the hint/re-jump driver, and the LADDER
+            // STEP `Finalized{last(T+1)}`. This closure only NAMES the step and its
+            // addressees; the executor puts it on the MARSHAL's own resolver
+            // (`marshal.hint_finalization(height, targets)`), and it is that
+            // resolver which carries the targets to `committee[T+1]` — the set that
+            // finalized that height and is inside the peer-set `primary`
+            // `C[T−1] ∪ C[T] ∪ C[T+1]`, so commonware actually sends it.
+            // `PlaneUpstreamHandle` addresses nothing: its fetches are untargeted.
+            // Both answers are judged by `FrontierHandler::deliver`; the step's
+            // never comes back here, it goes into the marshal and shows up as the
+            // tip moving.
+            //
+            // `last(T+1)` and `committee[T+1]` both come from the committee
+            // module — ONE geometry and ONE committee map per process. An
+            // unreadable `committee[T+1]` is not a failure, it is "this node
+            // cannot name the addressee yet": count it and ask `Latest` alone.
             let frontier_probe: crate::executor::FrontierProbeFn = {
                 let up = up.clone();
-                Arc::new(move || {
+                let committee = committee.clone();
+                Arc::new(move |tracked: Option<u64>| {
                     let up = up.clone();
+                    let committee = committee.clone();
                     Box::pin(async move {
-                        crate::cert_follow::CertUpstream::get_latest(&up)
-                            .await
-                            .map(|uf| Height::new(uf.block.height))
+                        let step = match (tracked, committee.geometry()) {
+                            (Some(t), Some(geometry)) => {
+                                let next = t + 1;
+                                match committee.committee(next) {
+                                    Ok(record) => {
+                                        let targets: Vec<_> =
+                                            record.participants.iter().cloned().collect();
+                                        // An empty `participants` is a readable
+                                        // record with nobody to ask. It skips the
+                                        // step like every other unnameable
+                                        // addressee, so it owes the dashboard the
+                                        // same `reason` the others give.
+                                        match commonware_utils::vec::NonEmptyVec::try_from(targets)
+                                        {
+                                            Ok(t) => Some((Height::new(geometry.last(next)), t)),
+                                            Err(_) => {
+                                                metrics::counter!(
+                                                    crate::executor::FRONTIER_STEP_SKIPPED,
+                                                    "reason" => "no_participants",
+                                                )
+                                                .increment(1);
+                                                None
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        metrics::counter!(
+                                            crate::executor::FRONTIER_STEP_SKIPPED,
+                                            "reason" => step_skip_reason(&e),
+                                        )
+                                        .increment(1);
+                                        None
+                                    }
+                                }
+                            }
+                            (None, _) => {
+                                metrics::counter!(
+                                    crate::executor::FRONTIER_STEP_SKIPPED,
+                                    "reason" => "no_tracked_epoch",
+                                )
+                                .increment(1);
+                                None
+                            }
+                            (Some(_), None) => {
+                                metrics::counter!(
+                                    crate::executor::FRONTIER_STEP_SKIPPED,
+                                    "reason" => "no_geometry",
+                                )
+                                .increment(1);
+                                None
+                            }
+                        };
+                        let latest = crate::cert_follow::CertUpstream::get_latest(&up).await;
+                        crate::executor::ProbeOutcome {
+                            frontier: latest.map(|uf| Height::new(uf.block.height)),
+                            step,
+                        }
                     })
                 })
             };
@@ -2493,6 +2596,17 @@ impl DposLayer {
                 // the discovered frontier. Also a harmless backstop on the WS path
                 // (the inlet keeps the tip advancing → the probe stays silent).
                 probe: Some(frontier_probe),
+                // `T` for the ladder step, mirrored off the boundary bridge (see
+                // `tracked_epoch_cell`). `None` while nothing is tracked yet.
+                tracked_epoch: Some({
+                    let cell = tracked_epoch_cell.clone();
+                    std::sync::Arc::new(move || {
+                        match cell.load(std::sync::atomic::Ordering::Relaxed) {
+                            NO_TRACKED_EPOCH => None,
+                            epoch => Some(epoch),
+                        }
+                    })
+                }),
             }
         });
 
@@ -2653,8 +2767,12 @@ impl DposLayer {
         // stayed "healthy". Handed to the host supervisor instead, which treats
         // ANY resolution (panic → `Err(Error::Exited)`, or the clean-exit warn)
         // as fatal — so the deliberate fail-fast holds for both paths.
+        let tracked_epoch_writer = tracked_epoch_cell.clone();
         let epoch_bridge_handle = ctx.with_label("epoch_bridge").spawn(move |_| async move {
             while let Some((u64_ep, _snap)) = bridge_rx.recv().await {
+                // The transition only queues an epoch it has just tracked, and it
+                // never goes backwards, so a plain store is the mirror.
+                tracked_epoch_writer.store(u64_ep, std::sync::atomic::Ordering::Relaxed);
                 if let Err(e) = outer_boundary_tx.send(Epoch::new(u64_ep)).await {
                     error!(
                         epoch = u64_ep,
@@ -3219,6 +3337,9 @@ impl DposLayer {
                 // the frozen-tip prod has nothing to add — the probe exists for the
                 // inlet-less plane-native validator.
                 probe: None,
+                // The follower's frontier is the WS inlet, not the plane probe
+                // (§5.4 "Отставший узел вне реестра"): no probe, no step.
+                tracked_epoch: None,
             }
         });
 

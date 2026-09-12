@@ -6,9 +6,10 @@ use super::{
     capture::{self, Captured, Sink},
     fakes::{
         genesis_sealed, BodyTap, BranchCommittees, CountingHandler, CountingUpstream, ElEvent,
-        ElNetwork, FakeBeacon, FakeChain, FakeDeriver, FakeStaking, JumpCall, JumpCalls,
-        JumpCommitteeReads, JumpCommittees, JumpElSync, Members, NoSink, NoTxs, StakingReads,
-        TapReceiver, TeeingUpstream, UpstreamCounters, UpstreamStats, DPOS_ACTIVATION_BLOCK,
+        ElNetwork, FakeBeacon, FakeChain, FakeDeriver, FakeStaking, FrontierSteps, JumpCall,
+        JumpCalls, JumpCommitteeReads, JumpCommittees, JumpElSync, Members, NoSink, NoTxs,
+        StakingReads, TapReceiver, TeeingUpstream, UpstreamCounters, UpstreamStats,
+        DPOS_ACTIVATION_BLOCK,
     },
 };
 /// A read of one held epoch-key artifact's wire bytes, for the stand's serving
@@ -611,6 +612,17 @@ pub(super) struct Outcome {
     /// upstream. Read only by the R-004 role test.
     #[cfg(feature = "dpos-devnet-byzantine")]
     pub probe_calls: Vec<u64>,
+    /// `frontier_steps[i]` = every ladder step node `i`'s frozen-tip probe NAMED,
+    /// as `(T, last(T+1))` in call order, one entry per tick (§5.2). Empty on a
+    /// node whose tip never froze — a healthy validator learns finalizations from
+    /// consensus and never reaches the probe body at all.
+    ///
+    /// NAMED, not PUT: whether the executor then hands the step to the marshal is
+    /// decided inside `executor::probe_frontier` against `last_tip_height`, and the
+    /// stand has no free seam on that — the executor takes the real `MarshalMailbox`
+    /// from `OuterEngine`, and sampling the tip from the probe closure perturbs the
+    /// run (see the closure). That half is pinned at the unit level in `executor.rs`.
+    pub frontier_steps: Vec<Vec<(u64, u64)>>,
     /// `byz[i]` = what node `i`'s byzantine wrappers actually did — all zeros on
     /// an honest node and on a build without `dpos-devnet-byzantine`. The tamper's
     /// own witness: a role test asserts THIS before it asserts anything about how
@@ -1035,6 +1047,8 @@ struct NodeHandles {
     /// Frozen-tip probe invocations (R-004 role test only).
     #[cfg(feature = "dpos-devnet-byzantine")]
     probe_calls: Arc<AtomicU64>,
+    /// Every ladder step this node's probe named — see `Outcome::frontier_steps`.
+    frontier_steps: FrontierSteps,
     trace: Arc<Mutex<Vec<TraceEntry>>>,
     upstream: UpstreamCounters,
     /// `Beacon::Live`: the beacon's artifact read.
@@ -1413,6 +1427,10 @@ async fn drive(
         .collect();
     #[cfg(feature = "dpos-devnet-byzantine")]
     let byz: Vec<ByzFacts> = nodes.iter().map(|node| node.byz.snapshot()).collect();
+    let frontier_steps: Vec<Vec<(u64, u64)>> = nodes
+        .iter()
+        .map(|node| node.frontier_steps.lock().unwrap().clone())
+        .collect();
     let (tracked_sets, tracked_mismatches, tracked_forwarded) = {
         let t = tracked.lock().unwrap();
         (t.per_node.clone(), t.mismatches, t.forwarded)
@@ -1516,6 +1534,7 @@ async fn drive(
         upstream_frontier_series: frontier_series,
         #[cfg(feature = "dpos-devnet-byzantine")]
         probe_calls,
+        frontier_steps,
         #[cfg(feature = "dpos-devnet-byzantine")]
         byz,
         head_gap_series,
@@ -1607,6 +1626,7 @@ pub(super) async fn frontier_plane(
     oracle: &Oracle,
     me: PeerPubkey,
     marshal_slot: Arc<OnceLock<MarshalMailbox>>,
+    committee: Arc<dyn crate::committee::Committee>,
     counters: UpstreamCounters,
     #[cfg(feature = "dpos-devnet-byzantine")] byz: ByzReport,
     #[cfg(feature = "dpos-devnet-byzantine")] mode: super::byzantine_roles::ForgeMode,
@@ -1617,7 +1637,7 @@ pub(super) async fn frontier_plane(
         .register(FRONTIER_CHANNEL, QUOTA)
         .await
         .expect("frontier channel");
-    let (handler, waiters) = new_bridge(marshal_slot);
+    let (handler, waiters) = new_bridge(marshal_slot, committee.clone(), ctx.clone(), CHAIN_ID);
     let handler = CountingHandler::new(handler, counters);
     // The lying-upstream roles wrap the SERVE side, so the victim's own consumer
     // path is production's verbatim.
@@ -1759,6 +1779,13 @@ async fn build_node(
     // `Some(bridge_tx)`) and of the `epoch_bridge` drain at
     // `consensus/src/dpos.rs:2648-2660`.
     let (bridge_tx, mut bridge_rx) = mpsc::channel::<(u64, ValidatorSetSnapshot)>(64);
+    // `T` = `EpochTransition::last_tracked_epoch`, mirrored off the boundary
+    // bridge exactly as `consensus/src/dpos.rs` mirrors it: the transition
+    // advances `last_tracked_epoch` only on a successful `boundary_tx.try_send`
+    // (`epoch_transition.rs:768-791`), cold start included, so the epochs this
+    // node's forwarder drains ARE the epochs that advanced it. `u64::MAX` is the
+    // "nothing tracked yet" sentinel.
+    let tracked_epoch_cell = Arc::new(AtomicU64::new(u64::MAX));
     let observer = EtObserver::default();
     let et = Arc::new(tokio::sync::Mutex::new(EpochTransition::new(
         staking.clone(),
@@ -1801,6 +1828,57 @@ async fn build_node(
         format!("node{i}-")
     };
 
+    // The committee module's read anchor, the stand's twin of production's
+    // `RethAnchor`: the HEIGHT is this node's ordering-finalized tip (which is
+    // what `FakeChain::advance_finalized` moves, `executor.rs` calling it with
+    // `order.height`), and the HASH is that chain's tier-F hash there.
+    //
+    // Production reads at `executed_state_hash(ordering_finalized)`, and so does
+    // this: [`FakeChain::executed_state_hash`] IS that probe over the fake chain
+    // — `Ok(None)` strictly above the executed head (the park), `Ok(Some)` at a
+    // materialized height, `Err` for a materialized height with no hash. Taking
+    // the probe rather than a bare `hash_at` costs nothing in VALUE (the anchor
+    // reads at the tier-F tip, where tier-F and tier-S agree) and keeps the
+    // `Err` arm — the input of the anchor-fault branch — reachable from the
+    // stand at all, instead of being a shape only the unit tests can produce.
+    struct StandAnchor {
+        chain: FakeChain,
+    }
+
+    impl crate::committee::Anchor for StandAnchor {
+        fn height(&self) -> u64 {
+            self.chain.tip()
+        }
+
+        fn executed_hash(
+            &self,
+            height: u64,
+        ) -> Result<Option<B256>, fluentbase_staking_reader::ReadError> {
+            self.chain.executed_state_hash(height)
+        }
+    }
+
+    // ONE committee module per stand node, exactly as production builds one per
+    // process: the beacon's `CommitteeReads` is a facade over it, the slasher
+    // resolves evidence through it, and the executor wakes it on every
+    // `advance_finalized`. The `max(EL-finalized, live)` cursor the stand used
+    // to keep beside it is gone with the production one it modelled.
+    // The module's ONE scheme producer, wired as production wires it: the beacon
+    // slot is filled the moment this node's beacon exists (below), and until then
+    // the store answers "no scheme yet" and retries — the same build order the
+    // node has, because the beacon is constructed from this store's facade.
+    let beacon_slot: crate::committee::BeaconSlot = Arc::new(OnceLock::new());
+    let committee: Arc<dyn crate::committee::Committee> =
+        Arc::new(crate::committee::CommitteeStore::new(
+            staking.clone(),
+            Arc::new(StandAnchor {
+                chain: chain.clone(),
+            }),
+            tokio::sync::watch::Sender::new(Some((DPOS_ACTIVATION_BLOCK, cfg.epoch_len)))
+                .subscribe(),
+            crate::committee::epoch_verifier(CHAIN_ID, beacon_slot.clone()),
+        ));
+
     // The upstream plane (research §2 #3/#8): the production frontier resolver
     // + `PlaneUpstreamHandle` over `FRONTIER_CHANNEL`, counted at both ends.
     // The marshal slot is filled once the `OuterEngine` is built (as
@@ -1813,6 +1891,7 @@ async fn build_node(
             upstream_oracle,
             me.clone(),
             marshal_slot.clone(),
+            committee.clone(),
             upstream_counters.clone(),
             #[cfg(feature = "dpos-devnet-byzantine")]
             byz.clone(),
@@ -1877,20 +1956,78 @@ async fn build_node(
     // inflated frontier makes every probe productive and drops the cadence to the
     // fast burst, so the count climbs far past once-per-block.
     let probe_calls = Arc::new(AtomicU64::new(0));
+    // Every ladder step this node's probe NAMED, as `(T, last(T+1))` — the stand's
+    // window into §5.2's "ступень". Surfaced as `Outcome::frontier_steps`, so a
+    // test can assert WHAT was asked for and not merely that something moved.
+    //
+    // NAMED, not PUT, and recorded WITHOUT the node's own marshal tip beside it.
+    // Both are deliberate: the executor decides whether to put the step, against
+    // `last_tip_height`, and reading that tip here (`get_info(Identifier::Latest)`)
+    // is an extra message into the marshal's select loop per named step — measured,
+    // it costs `a_zero_overlap_boundary_halts_the_chain_verify_only` its incoming
+    // half's DKG artifact, i.e. the observation changes the run. The step-vs-tip
+    // comparison is pinned at the unit level instead (`executor::tests`).
+    let frontier_steps: FrontierSteps = Arc::new(Mutex::new(Vec::new()));
     let re_jump = {
         let probe: FrontierProbeFn = {
             let up = upstream.clone();
             let live = live_height.clone();
             let probe_calls = probe_calls.clone();
-            Arc::new(move || {
+            let committee_probe = committee.clone();
+            let steps = frontier_steps.clone();
+            // Production's probe verbatim (`consensus/src/dpos.rs`): `Latest`
+            // untargeted plus, when `T` and `committee[T+1]` are both known, the
+            // ladder step `Finalized{last(T+1)}` and the peers to address it at —
+            // which the EXECUTOR hands to the marshal's own resolver.
+            Arc::new(move |tracked: Option<u64>| {
                 let up = up.clone();
                 let live = live.clone();
                 let probe_calls = probe_calls.clone();
+                let committee = committee_probe.clone();
+                let steps = steps.clone();
                 Box::pin(async move {
                     probe_calls.fetch_add(1, Ordering::Relaxed);
-                    let uf = up.get_latest().await?;
-                    live.fetch_max(uf.block.height, Ordering::Relaxed);
-                    Some(Height::new(uf.block.height))
+                    let step = match (tracked, committee.geometry()) {
+                        (Some(t), Some(geometry)) => match committee.committee(t + 1) {
+                            Ok(record) => {
+                                let height = geometry.last(t + 1);
+                                let targets: Vec<_> = record.participants.iter().cloned().collect();
+                                match commonware_utils::vec::NonEmptyVec::try_from(targets) {
+                                    Ok(targets) => {
+                                        steps.lock().unwrap().push((t, height));
+                                        Some((Height::new(height), targets))
+                                    }
+                                    Err(_) => {
+                                        metrics::counter!(
+                                            crate::executor::FRONTIER_STEP_SKIPPED,
+                                            "reason" => "no_participants",
+                                        )
+                                        .increment(1);
+                                        None
+                                    }
+                                }
+                            }
+                            // The same label function production uses, so the two
+                            // probes cannot drift apart on the `reason` set.
+                            Err(e) => {
+                                metrics::counter!(
+                                    crate::executor::FRONTIER_STEP_SKIPPED,
+                                    "reason" => crate::dpos::step_skip_reason(&e),
+                                )
+                                .increment(1);
+                                None
+                            }
+                        },
+                        _ => None,
+                    };
+                    let latest = up.get_latest().await;
+                    if let Some(uf) = latest.as_ref() {
+                        live.fetch_max(uf.block.height, Ordering::Relaxed);
+                    }
+                    crate::executor::ProbeOutcome {
+                        frontier: latest.map(|uf| Height::new(uf.block.height)),
+                        step,
+                    }
                 })
             })
         };
@@ -1996,6 +2133,13 @@ async fn build_node(
             threshold,
             rotate: None,
             probe: Some(probe),
+            tracked_epoch: Some({
+                let cell = tracked_epoch_cell.clone();
+                Arc::new(move || match cell.load(Ordering::Relaxed) {
+                    u64::MAX => None,
+                    epoch => Some(epoch),
+                })
+            }),
         }
     };
 
@@ -2005,56 +2149,6 @@ async fn build_node(
     // standing in for the staking reads. Built BEFORE the `OuterBuilder`, which
     // takes its randomness and adopts its agreement instances.
     let (dkg_height_tx, dkg_height_rx) = mpsc::channel::<u64>(256);
-    // The committee module's read anchor, the stand's twin of production's
-    // `RethAnchor`: the HEIGHT is this node's ordering-finalized tip (which is
-    // what `FakeChain::advance_finalized` moves, `executor.rs` calling it with
-    // `order.height`), and the HASH is that chain's tier-F hash there.
-    //
-    // Production reads at `executed_state_hash(ordering_finalized)`, and so does
-    // this: [`FakeChain::executed_state_hash`] IS that probe over the fake chain
-    // — `Ok(None)` strictly above the executed head (the park), `Ok(Some)` at a
-    // materialized height, `Err` for a materialized height with no hash. Taking
-    // the probe rather than a bare `hash_at` costs nothing in VALUE (the anchor
-    // reads at the tier-F tip, where tier-F and tier-S agree) and keeps the
-    // `Err` arm — the input of the anchor-fault branch — reachable from the
-    // stand at all, instead of being a shape only the unit tests can produce.
-    struct StandAnchor {
-        chain: FakeChain,
-    }
-
-    impl crate::committee::Anchor for StandAnchor {
-        fn height(&self) -> u64 {
-            self.chain.tip()
-        }
-
-        fn executed_hash(
-            &self,
-            height: u64,
-        ) -> Result<Option<B256>, fluentbase_staking_reader::ReadError> {
-            self.chain.executed_state_hash(height)
-        }
-    }
-
-    // ONE committee module per stand node, exactly as production builds one per
-    // process: the beacon's `CommitteeReads` is a facade over it, the slasher
-    // resolves evidence through it, and the executor wakes it on every
-    // `advance_finalized`. The `max(EL-finalized, live)` cursor the stand used
-    // to keep beside it is gone with the production one it modelled.
-    // The module's ONE scheme producer, wired as production wires it: the beacon
-    // slot is filled the moment this node's beacon exists (below), and until then
-    // the store answers "no scheme yet" and retries — the same build order the
-    // node has, because the beacon is constructed from this store's facade.
-    let beacon_slot: crate::committee::BeaconSlot = Arc::new(OnceLock::new());
-    let committee: Arc<dyn crate::committee::Committee> =
-        Arc::new(crate::committee::CommitteeStore::new(
-            staking.clone(),
-            Arc::new(StandAnchor {
-                chain: chain.clone(),
-            }),
-            tokio::sync::watch::Sender::new(Some((DPOS_ACTIVATION_BLOCK, cfg.epoch_len)))
-                .subscribe(),
-            crate::committee::epoch_verifier(CHAIN_ID, beacon_slot.clone()),
-        ));
 
     let (randomness, artifacts, agreement_intake) = match (cfg.beacon, role) {
         (Beacon::Static, _) => (
@@ -2281,8 +2375,10 @@ async fn build_node(
     {
         let boundary_tx = outer.boundary_sender();
         let boundaries = observer.boundaries.clone();
+        let tracked_epoch_writer = tracked_epoch_cell.clone();
         ctx_i.with_label("epoch_bridge").spawn(move |_| async move {
             while let Some((epoch, snap)) = bridge_rx.recv().await {
+                tracked_epoch_writer.store(epoch, Ordering::Relaxed);
                 boundaries.lock().unwrap().push(EtBoundary {
                     epoch,
                     block_hash: snap.block_hash,
@@ -2414,6 +2510,7 @@ async fn build_node(
         upstream_frontier,
         #[cfg(feature = "dpos-devnet-byzantine")]
         probe_calls,
+        frontier_steps,
         trace,
         upstream: upstream_counters,
         artifacts,

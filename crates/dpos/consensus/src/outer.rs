@@ -78,7 +78,8 @@ enum MarshalResolver<E, U> {
 }
 
 /// A `Finalized{height}` request routes to the upstream; `Block`/`Notarized`
-/// routes to the plane.
+/// routes to the plane. TARGETED or not — see the note on [`MarshalResolver`]'s
+/// `fetch_targeted` for the target list a `Hybrid` upstream cannot honour.
 fn is_finalized(key: &marshal_handler::Request<Digest>) -> bool {
     matches!(key, marshal_handler::Request::Finalized { .. })
 }
@@ -124,6 +125,20 @@ where
     ) {
         match self {
             Self::Plane(r) => r.fetch_targeted(key, targets).await,
+            // A TARGETED `Finalized` is the §5.2 ladder step, and
+            // `UpstreamResolver::fetch_targeted` has one peer and DROPS the target
+            // list (review A2-05, `cert_inlet.rs`). It still goes there, and the
+            // alternative was measured rather than argued: routing a targeted
+            // `Finalized` to `plane` does honour the list, and it takes the request
+            // off the channel a rotated-out node is still served on — three stand
+            // tests lose their deep catch-up under it
+            // (`preconditions::a_node_more_than_two_epochs_behind_…`,
+            // `preconditions::every_node_serves_the_terminal_pair_…`,
+            // `tests::the_rejump_runs_the_production_jump_…`). The addressing loss
+            // is bounded (on a plane validator `upstream` IS the frontier resolver,
+            // which fetches from the tracked frontier set — untargeted, so the step
+            // still reaches `committee[T+1]` members, just not only them); the
+            // reroute is not. Pass Б owns the fix, with `cert_inlet.rs` open to it.
             Self::Hybrid { plane, upstream } => {
                 if is_finalized(&key) {
                     upstream.fetch_targeted(key, targets).await

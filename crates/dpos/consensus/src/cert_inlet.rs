@@ -2872,10 +2872,26 @@ where
     async fn fetch_targeted(
         &mut self,
         key: Self::Key,
-        _targets: commonware_utils::vec::NonEmptyVec<Self::PublicKey>,
+        targets: commonware_utils::vec::NonEmptyVec<Self::PublicKey>,
     ) {
-        // The single upstream IS the only target; ignore the peer list.
+        // The single upstream IS the only target; the peer list cannot be honoured
+        // here and is dropped. This is where the §5.2 ladder step's addressing goes
+        // today — `MarshalResolver::Hybrid` routes every `Finalized` here, targeted
+        // or not (`outer.rs`), and every node in production is `Hybrid` — so §5.2's
+        // "целевой fetch у `committee(T+1)`" and §5.4's `requests_created{Dropped}
+        // = 0` are NOT what happens on the wire (review A2-05). The loss is bounded
+        // rather than total: on a plane validator this `upstream` is the frontier
+        // resolver, which fetches the height from the tracked frontier peer set
+        // untargeted, so members of `committee[T+1]` are still asked — just not
+        // only them. Pass Б owns the fix; this line is here so the gap is visible
+        // in a log rather than only in a document.
         if let MarshalRequest::Finalized { height } = key {
+            tracing::debug!(
+                height = height.get(),
+                targets = targets.len(),
+                "upstream resolver: targeted by-height fetch on a node with no plane — the \
+                 single upstream is the only peer, so the target list is ignored"
+            );
             self.spawn_finalized(height);
         }
     }

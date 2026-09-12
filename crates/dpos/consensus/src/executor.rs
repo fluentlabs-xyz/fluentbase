@@ -509,14 +509,73 @@ pub type ReJumpFn = std::sync::Arc<
     dyn Fn(u64) -> BoxFuture<'static, crate::cold_start_jump::JumpOutcome> + Send + Sync,
 >;
 
-/// Erased `CertUpstream::get_latest().map(|uf| uf.block.height)` — the upstream
-/// frontier-discovery probe the executor fires when the marshal tip FREEZES (see
-/// [`ReJump::probe`]). Trusted height-only, exactly like
-/// [`ReJump::upstream_frontier`]: a lying peer can at most inflate the frontier
-/// (a wasted hint fetch / a re-jump that fails closed at
-/// `verify_jump_authenticated`).
+/// `dpos_frontier_step_unserved_total` — one probe tick where the tip was frozen,
+/// the ladder step `Finalized{last(T+1)}` was REQUESTED, and nobody in
+/// `committee[T+1]` served it inside the fetch bound. §5.4 calls this outcome
+/// "догон вместо прыжка": the node is not stuck, it keeps walking contiguously
+/// from the floor and the next tick asks again.
+const FRONTIER_STEP_UNSERVED: &str = "dpos_frontier_step_unserved_total";
+
+/// `dpos_frontier_step_skipped_total{reason}` — one probe tick where the ladder
+/// step was NOT put at all. Either this node cannot NAME `committee[T+1]`
+/// (`no_tracked_epoch`, `no_geometry`, `out_of_window`, `not_readable`,
+/// `read_failed`, `no_participants`), or the network is not known to have produced
+/// it yet (`above_the_frontier` — see `probe_frontier` for what that witness is
+/// worth), or the marshal would discard it (`at_or_below_the_floor`). The probe
+/// then asks `Latest` alone.
+pub(crate) const FRONTIER_STEP_SKIPPED: &str = "dpos_frontier_step_skipped_total";
+
+/// What one frontier probe tick produced — one answer and one ADDRESS.
+///
+/// The probe does two things per tick (§5.2 "Триггер и лестница"), and only one
+/// of them is a network call here. It ASKS the upstream for `Latest`, whose
+/// height is the hint / re-jump driver. And it NAMES the ladder step —
+/// `Finalized{last(T+1)}` and the committee to address it at — which the
+/// executor then puts on the marshal's own resolver, because that resolver is
+/// the one whose deliveries end in `store_finalization`, the single writer §5.2
+/// names. Naming it here rather than fetching it here is what keeps this file
+/// from becoming a second writer of the same finalization.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct ProbeOutcome {
+    /// The height of a `Latest` answer that passed `deliver`, or `None` when the
+    /// probe was not served / the answer was refused or dropped as
+    /// unauthenticated.
+    ///
+    /// Feeds `upstream_frontier` — the deep re-jump trigger reads
+    /// `max(tip, upstream_frontier)` — and, as a WITNESS ONLY, the ladder step's
+    /// `servable` precondition. Both consumers are the same open question and go
+    /// together when that trigger becomes tip-only; `probe_frontier` says what the
+    /// witness is worth in the meantime (review A2-01/A2-04).
+    pub frontier: Option<Height>,
+    /// `(last(T+1), committee[T+1])` — the ladder step and its addressees.
+    /// `None` when this node cannot name them yet: no epoch tracked, no frozen
+    /// geometry, or `committee[T+1]` outside the read window / not readable at
+    /// this anchor. The probe then asks `Latest` alone.
+    pub step: Option<(Height, NonEmptyVec<PeerPubkey>)>,
+}
+
+/// Erased frontier probe (see [`ReJump::probe`]): asks the upstream for `Latest`
+/// and names the ladder step for the tracked epoch `T`. The argument is `T` —
+/// `None` before the node has tracked any epoch, which is the one state with no
+/// step to take.
+///
+/// The `Latest` HEIGHT it returns is still trusted height-only, and that is now a
+/// much narrower claim: the answer it came from passed the five checks of
+/// [`crate::plane_upstream::FrontierHandler`]'s `deliver`, so an inflated tip is
+/// refused at the channel instead of at the end of a wasted backfill.
 pub type FrontierProbeFn =
-    std::sync::Arc<dyn Fn() -> BoxFuture<'static, Option<Height>> + Send + Sync>;
+    std::sync::Arc<dyn Fn(Option<u64>) -> BoxFuture<'static, ProbeOutcome> + Send + Sync>;
+
+/// Erased "which epoch did this node last hand to `track`" — `T` of §5.2, read
+/// from the process's ONE `EpochTransition` (`last_tracked_epoch`, which advances
+/// only once the boundary trigger has been delivered,
+/// `epoch_transition.rs:768-791`).
+///
+/// `None` until the first epoch is tracked. Synchronous and cheap: it reads a
+/// cell the transition's own bridge forwarder writes, never the transition's
+/// async mutex, so a probe tick can never block on the epoch machine it is
+/// asking about.
+pub type TrackedEpochFn = std::sync::Arc<dyn Fn() -> Option<u64> + Send + Sync>;
 
 /// Erased "this node's history now begins here" publisher: raises
 /// `EpochTransition`'s read-height floor to the `u64` argument. The re-jump
@@ -601,6 +660,10 @@ pub struct ReJump {
     /// gap). Self-silencing while live: an advancing tip skips the network probe
     /// entirely. `None` in unit tests.
     pub probe: Option<FrontierProbeFn>,
+    /// `T` for the ladder step the probe takes — see [`TrackedEpochFn`]. `None`
+    /// in unit tests and wherever no `EpochTransition` is wired; the probe then
+    /// asks `Latest` alone, exactly as it did before the ladder existed.
+    pub tracked_epoch: Option<TrackedEpochFn>,
 }
 
 /// A finalized block PARKED by guard #2 (the node is ≥ K behind — `last_tip
@@ -944,6 +1007,13 @@ pub struct Actor<E, BE, D, XC, MarshalMailbox> {
     /// `last_tip_height` snapshot at the previous probe tick — the frozen-tip
     /// detector (tip advanced since ⇒ the marshal is live ⇒ skip the network probe).
     probe_prev_tip: Height,
+    /// A ladder step was put on the previous probe tick and the tip has not moved
+    /// since. The ONLY thing it decides is whether
+    /// `dpos_frontier_step_unserved_total` ticks: a step is "unserved" exactly
+    /// when it was asked for, a whole tick passed, and the tip stayed frozen
+    /// (this arm runs only at a frozen tip). Not a state machine — the ladder is
+    /// the repetition of the tick, and this bit is a metric's memory.
+    probe_step_pending: bool,
     /// Fast-cadence hysteresis: reset to [`FRONTIER_PROBE_FAST_BURST`] on every
     /// PRODUCTIVE probe (one that hinted a new frontier), decremented per tick
     /// otherwise. While non-zero the probe fires every tick (even if the tip just
@@ -1185,6 +1255,7 @@ where
             fcu_pace: cfg.fcu_pace,
             frontier_probe_timer,
             probe_prev_tip: cfg.last_consensus_finalized_height,
+            probe_step_pending: false,
             probe_fast_left: 0,
             finalized_heights_to_backfill,
             pending_backfill: OptionFuture::default(),
@@ -2010,12 +2081,27 @@ where
     /// marshal is learning finalizations from an independent live source
     /// (in-committee consensus or an inlet) — snapshot and return without network
     /// traffic. DURING a burst that advance is the probe's own delivery, so the
-    /// probe keeps firing. A probe asks the upstream for its frontier; feeds it
-    /// into `upstream_frontier` (the deep-gap re-jump trigger reads
-    /// `max(tip, this)`) and, when it is ahead of the known tip,
-    /// `hint_finalization(frontier)` so the marshal fetches + verifies it and the
-    /// ordinary `Update::Tip` pipeline (marshal gap-repair → contiguous block
-    /// dispatch → derive) takes over the follow.
+    /// probe keeps firing.
+    ///
+    /// A probe does TWO things (§5.2 "Триггер и лестница"), and the frozen tip is
+    /// what earns both: the untargeted `Latest`, whose height feeds
+    /// `upstream_frontier` (the deep-gap re-jump trigger reads `max(tip, this)`)
+    /// and, when ahead of the known tip, `hint_finalization(frontier)`; and the
+    /// LADDER STEP `Finalized{last(T+1)}` addressed at `committee[T+1]`, where `T`
+    /// is the epoch this node last handed to `track`.
+    ///
+    /// They are NOT independent today, and that is a named residual rather than a
+    /// design: the step waits for the `Latest` arm to witness that the network has
+    /// produced `last(T+1)`, because nothing local can. See the `servable` note in
+    /// the body for what that witness is worth after this pass and what has to
+    /// change before it can go (review A2-01).
+    ///
+    /// The step's answer never comes back through here — it goes through
+    /// [`crate::plane_upstream::FrontierHandler::deliver`] straight into the
+    /// marshal, so a served step shows up as the tip MOVING on the next tick. What
+    /// does come back is whether anyone served it, and an unserved step is counted
+    /// rather than reacted to: there is no state machine here, the ladder IS the
+    /// repetition of this tick.
     async fn probe_frontier(&mut self) -> bool {
         let Some(probe) = self.re_jump.as_ref().and_then(|rj| rj.probe.clone()) else {
             return false;
@@ -2023,9 +2109,115 @@ where
         let advanced = self.last_tip_height > self.probe_prev_tip;
         self.probe_prev_tip = self.last_tip_height;
         if advanced && self.probe_fast_left == 0 {
+            // The tip MOVED, so whatever step was standing was served — by the
+            // step's own answer or by an independent live source, and this metric
+            // cannot tell the two apart anyway. Clearing the bit here is what
+            // stops `dpos_frontier_step_unserved_total` from counting a SUCCESS:
+            // tick N puts a step (pending), tick N+1 sees the tip grow and returns
+            // here, tick N+2 finds the tip frozen again and would charge the
+            // earlier, already-answered step to whoever did not serve this one.
+            self.probe_step_pending = false;
             return false;
         }
-        let Some(frontier) = probe().await else {
+        // `T` at THIS tick, never a remembered one: a landing moves it, and the
+        // step that follows a landing is the next rung of the ladder.
+        let tracked = self
+            .re_jump
+            .as_ref()
+            .and_then(|rj| rj.tracked_epoch.clone())
+            .and_then(|f| f());
+        let outcome = probe(tracked).await;
+        // THE LADDER STEP. Put on the MARSHAL's resolver, not on this probe's:
+        // `HintFinalized{height, targets}` is a targeted by-height fetch whose
+        // answer is decoded, BLS-verified and stored by the marshal itself
+        // (`marshal/core/actor.rs:632-646`, then the `verify_delivered` path), so
+        // the step lands in the one place that moves the tip and there is no
+        // second writer. The `targets` travel with it: on a plane validator the
+        // marshal's own resolver addresses them, and on a WS-upstream validator
+        // `outer.rs`'s dispatcher routes a TARGETED `Finalized` to the plane for
+        // exactly that reason (the single-upstream resolver drops target lists).
+        //
+        // Repeated hints for the same height dedup in the resolver, so repeating
+        // the step every tick is the ladder and not a poll: there is no automaton,
+        // only this tick happening again.
+        //
+        // TWO CONDITIONS. The second is the marshal's own and is beyond argument;
+        // the first is a KNOWN RESIDUAL and is written out here in full, because
+        // §5.2 does not have it and the pass that removes it has to remove
+        // something else with it.
+        //
+        // (i) `servable` — "the network is known to have PRODUCED `last(T+1)`".
+        // `T` is this node's OWN tracked epoch, so `last(T+1)` is one epoch above
+        // its finalized tip: for a node genuinely BEHIND that is a height the
+        // network finalized long ago, and for a node sitting at the live tip with
+        // a momentarily frozen marshal it is a height that DOES NOT EXIST YET.
+        // Nothing local tells the two apart — `T`, the marshal tip and the floor
+        // are all consistent with either — so the only witness available is the
+        // `Latest` answer this same tick got back.
+        //
+        // That witness is not fully authenticated, and review A2-01 is right that
+        // §5.2 has no such input in the trigger. After this pass it is much
+        // narrower than it was: `deliver` now refuses an inflated height as a LIE
+        // at step (3) (the height↔epoch bind) before any window is consulted, so
+        // what can still reach `outcome.frontier` unauthenticated is a
+        // SELF-CONSISTENT (height, epoch) pair whose committee this node cannot
+        // read — and the whole cost of believing it is one targeted fetch issued
+        // earlier than warranted.
+        //
+        // Removing it is MEASURED and it is not free: the step then goes out on
+        // every tick for a height nobody has, and
+        // `testbed::tests::a_forged_seed_slot_is_admitted_with_no_key_and_refused_when_the_key_lands`
+        // loses the archive relay it pins — the dead targeted fetch crowds the
+        // frontier channel it shares. So the honest shape of A2-01 is the one the
+        // review's own §6 п.2 gives it: this predicate and the pass-through of an
+        // out-of-window `Latest` hold each other up, and both go when the deep
+        // re-jump trigger becomes tip-only. Until then it stays, named.
+        //
+        // (ii) A step at or below the marshal FLOOR is a no-op there
+        // (`HintFinalized` skipped when `height <= last_processed_height`,
+        // `marshal/core/actor.rs:633-635`), so putting it is a fetch nobody acts
+        // on. `self.marshal_floor` is this executor's mirror of exactly that value
+        // — seeded from the same `initial_marshal_floor` `outer.rs` sends in its
+        // buffered `SetFloor` and moved by every `reseed_forward`.
+        //
+        // The FLOOR and not the tip, and the difference is a whole defect class
+        // (review A2-10): a node that jumped holds nothing between its floor and
+        // its tip, and a step landing in that HOLE is precisely the one the marshal
+        // would accept and act on. Gating on the tip suppressed exactly those.
+        //
+        // An unserved step is COUNTED and the contiguous catch-up from the floor
+        // continues (§5.4 "догон вместо прыжка"), which is what the `unserved`
+        // counter below is for.
+        let servable = |height: Height| outcome.frontier.is_some_and(|f| f >= height);
+        match outcome.step {
+            Some((height, _)) if !servable(height) => {
+                metrics::counter!(FRONTIER_STEP_SKIPPED, "reason" => "above_the_frontier")
+                    .increment(1);
+                self.probe_step_pending = false;
+            }
+            Some((height, _)) if height <= Height::new(self.marshal_floor) => {
+                metrics::counter!(FRONTIER_STEP_SKIPPED, "reason" => "at_or_below_the_floor")
+                    .increment(1);
+                self.probe_step_pending = false;
+            }
+            Some((height, targets)) => {
+                // Tick taken, tip frozen (checked above), a step was standing from
+                // the previous tick and nothing moved: nobody served it.
+                if self.probe_step_pending {
+                    metrics::counter!(FRONTIER_STEP_UNSERVED).increment(1);
+                    debug!(
+                        tracked,
+                        tip = %self.last_tip_height,
+                        "frozen-tip probe: nobody served the ladder step — continuing the \
+                         contiguous catch-up from the floor"
+                    );
+                }
+                self.marshal.hint_finalization(height, targets).await;
+                self.probe_step_pending = true;
+            }
+            None => self.probe_step_pending = false,
+        }
+        let Some(frontier) = outcome.frontier else {
             debug!("frozen-tip probe: upstream get_latest returned None");
             return false;
         };
@@ -4603,6 +4795,10 @@ mod tests {
         /// `ordering_finalized`-seed test decouples the two (head ≫ acked with a
         /// speculative tail) to pin that the cursor seeds from the ACKED cursor.
         last_execution: Option<u64>,
+        /// `Config::initial_marshal_floor` — `0` (inert) everywhere except the
+        /// ladder-step test, which needs a floor BELOW the tip to show the step is
+        /// judged against the floor and not against the tip.
+        marshal_floor: u64,
     }
 
     impl Fixture {
@@ -4648,6 +4844,7 @@ mod tests {
                     std::num::NonZeroU64::new(1 << 40).expect("nonzero"),
                 ),
                 last_execution: None,
+                marshal_floor: 0,
             }
         }
 
@@ -4655,6 +4852,15 @@ mod tests {
         /// decoupling it from the anchor. Set BEFORE `build`.
         fn with_last_execution(mut self, height: u64) -> Self {
             self.last_execution = Some(height);
+            self
+        }
+
+        /// Boot with a non-zero marshal floor — a node that has jumped, so its
+        /// marshal holds nothing below `height` and the ladder step's no-op rule
+        /// (`HintFinalized` skipped at `height <= last_processed_height`) has a
+        /// real boundary to be tested against. Set BEFORE `build`.
+        fn with_marshal_floor(mut self, height: u64) -> Self {
+            self.marshal_floor = height;
             self
         }
 
@@ -4765,7 +4971,7 @@ mod tests {
                     last_execution_finalized_height: self.last_execution.unwrap_or(anchor_height),
                     initial_finalized: (Height::new(anchor_height), anchor_hash),
                     initial_head: (Height::new(anchor_height), anchor_hash),
-                    initial_marshal_floor: 0,
+                    initial_marshal_floor: self.marshal_floor,
                     boundary_fetch: self.boundary_fetch.lock().unwrap().clone(),
                     boundary_enter: self.boundary_enter.clone(),
                     boundary_read_floor: self.boundary_read_floor.clone(),
@@ -9553,6 +9759,7 @@ mod tests {
                 threshold: JUMP_THRESHOLD,
                 rotate: None,
                 probe: None,
+                tracked_epoch: None,
             },
             calls,
             upstream_frontier,
@@ -9599,6 +9806,7 @@ mod tests {
                 threshold: JUMP_THRESHOLD,
                 rotate: Some(rotate),
                 probe: None,
+                tracked_epoch: None,
             },
             calls,
             rotations,
@@ -9707,6 +9915,7 @@ mod tests {
                 threshold: JUMP_THRESHOLD,
                 rotate: None,
                 probe: None,
+                tracked_epoch: None,
             };
             let fx = Fixture::new(ANCHOR).with_re_jump(cb);
             let (actor, mailbox) = fx.build(ctx.clone(), ANCHOR, ANCHOR);
@@ -9846,6 +10055,7 @@ mod tests {
                     threshold: JUMP_THRESHOLD,
                     rotate: None,
                     probe: None,
+                    tracked_epoch: None,
                 };
                 let fx = Fixture::new(ANCHOR).with_re_jump(cb);
                 let (actor, mailbox) = fx.build(ctx.clone(), ANCHOR, ANCHOR);
@@ -9956,6 +10166,151 @@ mod tests {
 
             drop(mailbox);
             let _ = handle.await;
+        });
+    }
+
+    /// A `ReJump` whose probe REPLAYS canned outcomes, one per tick (saturating on
+    /// the last), and counts the ticks that actually reached the probe body.
+    ///
+    /// The probe closure itself is production's (`consensus/dpos.rs`, `stand.rs`)
+    /// and is not under test here; what is under test is what
+    /// `Actor::probe_frontier` DOES with a named step, which is why the outcomes
+    /// are canned. `tracked_epoch` answers a constant: the only thing
+    /// `probe_frontier` does with it is pass it to the closure and log it.
+    fn scripted_probe(
+        outcomes: Vec<ProbeOutcome>,
+    ) -> (ReJump, Arc<std::sync::atomic::AtomicUsize>) {
+        assert!(!outcomes.is_empty(), "need at least one scripted outcome");
+        let ticks = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let outcomes = Arc::new(outcomes);
+        let probe: FrontierProbeFn = {
+            let ticks = ticks.clone();
+            let outcomes = outcomes.clone();
+            Arc::new(move |_tracked| {
+                let i = ticks
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                    .min(outcomes.len() - 1);
+                let outcome = outcomes[i].clone();
+                Box::pin(async move { outcome })
+            })
+        };
+        (
+            ReJump {
+                call: Arc::new(|_| Box::pin(async { Scripted::Lagging.build() })),
+                upstream_frontier: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                threshold: JUMP_THRESHOLD,
+                rotate: None,
+                probe: Some(probe),
+                tracked_epoch: Some(Arc::new(|| Some(3))),
+            },
+            ticks,
+        )
+    }
+
+    /// A named ladder step for `height`, addressed at the dummy committee.
+    fn step_at(height: u64) -> Option<(Height, NonEmptyVec<PeerPubkey>)> {
+        Some((Height::new(height), dummy_peers().expect("one peer")))
+    }
+
+    // (4.2 А) THE LADDER IS THE REPETITION OF THE TICK: a step the marshal can act
+    // on is put AGAIN on the next frozen tick, not once.
+    //
+    // §5.2 has no state machine here — "лестница = повторение того же шага". The
+    // repetition is what makes an unserved step harmless (§5.4 "догон вместо
+    // прыжка": the node keeps walking contiguously and asks again) and it is what
+    // nothing pinned before this pass.
+    //
+    // Falsifier: an empty `hints` (the step never reached the marshal); a single
+    // hint over two frozen ticks (the ladder became a one-shot).
+    #[test]
+    fn a_ladder_step_is_put_on_the_marshal_again_on_every_frozen_tick() {
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            const ANCHOR: u64 = 100;
+            const STEP: u64 = 191;
+            let (re_jump, ticks) = scripted_probe(vec![ProbeOutcome {
+                // A `Latest` answer ABOVE the step: the network has produced
+                // `last(T+1)`, so `servable` holds (see `probe_frontier`). A
+                // distinct height so the step's hints are told apart from the
+                // untargeted frontier hint the same tick also puts.
+                frontier: Some(Height::new(STEP + 9)),
+                step: step_at(STEP),
+            }]);
+            let fx = Fixture::new(ANCHOR).with_re_jump(re_jump);
+            let (mut actor, _mailbox) = fx.build(ctx, ANCHOR, ANCHOR);
+
+            actor.probe_frontier().await;
+            actor.probe_frontier().await;
+
+            assert_eq!(
+                ticks.load(std::sync::atomic::Ordering::Relaxed),
+                2,
+                "the probe body did not run on both frozen ticks"
+            );
+            let hints = fx.marshal.hints.lock().unwrap().clone();
+            assert_eq!(
+                hints.iter().filter(|h| **h == STEP).count(),
+                2,
+                "the ladder step was not re-put on the second frozen tick — the ladder is the \
+                 repetition of this tick and nothing else: {hints:?}"
+            );
+        });
+    }
+
+    // (4.2 А, review A2-10) THE STEP IS JUDGED AGAINST THE MARSHAL FLOOR, NOT THE
+    // TIP — and the difference is the hole a jumped node carries.
+    //
+    // The marshal drops `HintFinalized` when `height <= last_processed_height`
+    // (`marshal/core/actor.rs:633-635`), so a step at or below the FLOOR is a
+    // fetch nobody acts on and is skipped here. A step between the floor and the
+    // tip is the opposite case: a node that jumped holds nothing in that range,
+    // the marshal WILL fetch and store it, and gating on the tip — which is what
+    // this code did — suppressed exactly those.
+    //
+    // RED before this change: the arm read `height <= self.last_tip_height`, so
+    // the in-hole step at 160 was skipped and `hints` stayed empty.
+    //
+    // Falsifier: the in-hole step missing from `hints` (the tip is still the
+    // gate); the at-floor step present (a fetch the marshal discards).
+    #[test]
+    fn a_ladder_step_is_skipped_at_the_marshal_floor_and_put_inside_the_hole() {
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            const ANCHOR: u64 = 200;
+            const FLOOR: u64 = 150;
+            // Tip 200, floor 150: heights 151..=200 are the hole the jump left,
+            // and the `Latest` witness is above both so `servable` never decides.
+            let (re_jump, _ticks) = scripted_probe(vec![
+                ProbeOutcome {
+                    frontier: Some(Height::new(ANCHOR)),
+                    step: step_at(FLOOR),
+                },
+                ProbeOutcome {
+                    frontier: Some(Height::new(ANCHOR)),
+                    step: step_at(FLOOR + 10),
+                },
+            ]);
+            let fx = Fixture::new(ANCHOR)
+                .with_marshal_floor(FLOOR)
+                .with_re_jump(re_jump);
+            // `last_consensus` seeds BOTH `last_tip_height` and `probe_prev_tip`,
+            // so the tip is 200 and frozen from tick one.
+            let (mut actor, _mailbox) = fx.build(ctx, ANCHOR, ANCHOR);
+
+            actor.probe_frontier().await;
+            assert!(
+                fx.marshal.hints.lock().unwrap().is_empty(),
+                "a step AT the marshal floor was put — the marshal discards it: {:?}",
+                fx.marshal.hints.lock().unwrap()
+            );
+
+            actor.probe_frontier().await;
+            assert!(
+                fx.marshal.hints.lock().unwrap().contains(&(FLOOR + 10)),
+                "a step inside the floor..tip HOLE was suppressed — that is the one range a \
+                 jumped node needs and the marshal would accept: {:?}",
+                fx.marshal.hints.lock().unwrap()
+            );
         });
     }
 
@@ -11524,6 +11879,7 @@ mod tests {
                 threshold: JUMP_THRESHOLD,
                 rotate: None,
                 probe: None,
+                tracked_epoch: None,
             };
             let fx = Fixture::new(ANCHOR).with_re_jump(cb);
             let (actor, mailbox) = fx.build(ctx.clone(), ANCHOR, ANCHOR);
