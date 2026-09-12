@@ -26,12 +26,17 @@ use commonware_consensus::{
     simplex::types::{Activity, Vote},
     Epochable, Viewable,
 };
-use fluentbase_bls::{fluent_namespace, EpochCommittee, Scheme as BlsScheme, VoteScheme};
-use fluentbase_p2p::constants::MAX_COMMITTEE_SIZE;
+use fluentbase_bls::{
+    fluent_namespace, EpochCommittee, PeerPubkey, Scheme as BlsScheme, VoteScheme,
+};
+use fluentbase_p2p::{constants::MAX_COMMITTEE_SIZE, Ingress, TrackedWindow};
 use rand_core::OsRng;
 use std::sync::{Arc, OnceLock};
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
+
+/// The `channel` label every EVIDENCE ingress refusal is counted under.
+pub(crate) const EVIDENCE_CHANNEL_LABEL: &str = "evidence";
 
 /// Wire payload: the votes one node republishes for a single round.
 ///
@@ -83,19 +88,39 @@ pub(crate) fn verify_vote(vote: &Vote<BlsScheme, Digest>, scheme: &VoteScheme) -
 /// store would be republished on the next trigger and could pair into a charge
 /// against a validator that signed nothing.
 ///
+/// The SENDER bound comes first (4.3, E4-13). Evidence is committee traffic: a
+/// peer that sits in none of the three tracked committee records
+/// (`C[E−1] ∪ C[E] ∪ C[E+1]`) has no round of its own to republish, and until
+/// this check existed any tracked peer could hand us a batch naming any epoch
+/// and buy a committee resolve with it. The classification is the peer set this
+/// node registered (`window`), not a read of anything: no EVM, no contract, no
+/// per-peer counter.
+///
 /// The epoch bound is the other half. Nothing about a forwarded vote constrains
 /// the epoch it names — its signer picks that — so the batch is checked against
-/// the window the vote store actually retains ([`EpochCursor::retains`]) BEFORE
-/// `committee_for` is called. Resolving first would mean one `getEpochCommitteeWithStakes`
-/// state read per message for any epoch a peer cares to name, ahead of any
-/// signature check, and would put a vote in the store that the very next
-/// `retain_floor` throws away.
+/// the window the vote store actually retains ([`EpochCursor::retains`]) AND
+/// against the sender's own membership mask BEFORE `committee_for` is called.
+/// Resolving first would mean one `getEpochCommitteeWithStakes` state read per
+/// message for any epoch a peer cares to name, ahead of any signature check, and
+/// would put a vote in the store that the very next `retain_floor` throws away.
 pub fn ingest_batch(
+    from: &PeerPubkey,
     bytes: &[u8],
     chain_id: u64,
     committee_for: &EvidenceCommitteeFor,
     bridge: &EvidenceBridge,
+    window: &TrackedWindow,
 ) {
+    // Before the decode: a sender outside the tracked set (or tombstoned) buys
+    // nothing at all here. `None` = no peer set registered yet, which is not a
+    // verdict — see `TrackedWindow::classify`.
+    let ingress = window.classify(from);
+    if matches!(ingress, Some(Ingress::Dropped) | Some(Ingress::Tracked(_))) {
+        let reason = ingress.as_ref().map_or("none", Ingress::refusal);
+        debug!(%from, reason, "evidence: sender is not a committee member; dropping");
+        crate::dpos::record_ingress_drop(EVIDENCE_CHANNEL_LABEL, reason);
+        return;
+    }
     let batch = match decode_batch(bytes) {
         Ok(batch) => batch,
         Err(e) => {
@@ -129,6 +154,18 @@ pub fn ingest_batch(
         );
         metrics::counter!("slasher_evidence_out_of_window_total").increment(1);
         return;
+    }
+    // The sender must be in the record of THE epoch it is republishing for, not
+    // merely in one of the three. Still before `committee_for`.
+    if let Some(ingress) = ingress.as_ref() {
+        if !ingress.member_of(epoch) {
+            debug!(
+                %from,
+                epoch, "evidence: sender is not in that epoch's committee; dropping"
+            );
+            crate::dpos::record_ingress_drop(EVIDENCE_CHANNEL_LABEL, "epoch");
+            return;
+        }
     }
     // Before the consensus layer launches there is no vote store to fill.
     let Some(sink) = bridge.gossip_sink() else {
@@ -313,6 +350,114 @@ mod tests {
         assert!(decode_batch(&encode_batch(&over)).is_err());
     }
 
+    /// The EVIDENCE sender bound (4.3, E4-13): a peer that is in NO tracked
+    /// committee record buys nothing, and a peer that is in one record does not
+    /// thereby get to speak for another.
+    ///
+    /// Before 4.3 `ingest_batch` did not take a sender at all — the epoch window
+    /// was the only bound, so any tracked peer (the whole ACTIVE REGISTRY, since
+    /// the registry was primary) could name any retained epoch and buy one
+    /// `getEpochCommitteeWithStakes` read per message ahead of any signature check.
+    ///
+    /// Falsifier: either refused case resolving a committee, or the admitted case
+    /// stopping.
+    #[test]
+    fn an_evidence_batch_from_outside_the_epochs_committee_resolves_nothing() {
+        let (signer, committee) = signer_and_committee(4, 4);
+        let (bridge, _publications) = EvidenceBridge::new();
+        let (tx, mut delivered) = mpsc::unbounded_channel();
+        bridge.bind_slasher(&crate::slasher::ingress::test_only_mailbox(tx));
+        bridge.epoch_cursor().advance(TEST_EPOCH);
+
+        let resolves = Arc::new(AtomicUsize::new(0));
+        // The window this node registered: the members are primary for TEST_EPOCH,
+        // one more peer is primary for TEST_EPOCH − 1 only, and an outsider is in
+        // the registry (tier 2) and in no committee.
+        let members: Vec<PeerPubkey> = committee.bimap.iter().cloned().collect();
+        let committee_for: EvidenceCommitteeFor = {
+            let resolves = resolves.clone();
+            Arc::new(move |_| {
+                resolves.fetch_add(1, AtomicOrdering::Relaxed);
+                Some(committee.clone())
+            })
+        };
+        let previous_only = Ed25519PrivateKey::from_seed(0xa1).public_key();
+        let outsider = Ed25519PrivateKey::from_seed(0xa2).public_key();
+        let window = TrackedWindow::default();
+        window.record(
+            TEST_EPOCH,
+            &fluentbase_staking_reader::TrackedPeers {
+                committees: vec![
+                    (
+                        TEST_EPOCH - 1,
+                        commonware_utils::ordered::Set::from_iter_dedup([previous_only.clone()]),
+                    ),
+                    (
+                        TEST_EPOCH,
+                        commonware_utils::ordered::Set::from_iter_dedup(members.iter().cloned()),
+                    ),
+                ],
+                secondary: commonware_utils::ordered::Set::from_iter_dedup([outsider.clone()]),
+            },
+        );
+
+        let batch = encode_batch(&vec![notarize_at(&signer, TEST_EPOCH, 0xaa)]);
+
+        // (1) A tier-2 sender: refused before the decode.
+        ingest_batch(
+            &outsider,
+            &batch,
+            TEST_CHAIN_ID,
+            &committee_for,
+            &bridge,
+            &window,
+        );
+        assert_eq!(
+            resolves.load(AtomicOrdering::Relaxed),
+            0,
+            "a registry-tier sender must not buy a committee state read"
+        );
+        assert!(
+            delivered.try_recv().is_err(),
+            "and must not reach the store"
+        );
+
+        // (2) A member of the OUTGOING committee speaking for the current one:
+        // in the window, but not in THIS epoch's record.
+        ingest_batch(
+            &previous_only,
+            &batch,
+            TEST_CHAIN_ID,
+            &committee_for,
+            &bridge,
+            &window,
+        );
+        assert_eq!(
+            resolves.load(AtomicOrdering::Relaxed),
+            0,
+            "membership in another epoch's record is not membership in this one"
+        );
+        assert!(
+            delivered.try_recv().is_err(),
+            "and must not reach the store"
+        );
+
+        // (3) A member of the epoch it republishes for: admitted, exactly as before.
+        ingest_batch(
+            &members[0],
+            &batch,
+            TEST_CHAIN_ID,
+            &committee_for,
+            &bridge,
+            &window,
+        );
+        assert_eq!(resolves.load(AtomicOrdering::Relaxed), 1);
+        assert!(
+            delivered.try_recv().is_ok(),
+            "a member's forwarded vote still lands"
+        );
+    }
+
     /// The epoch a forwarded batch names is chosen by its sender, and under the
     /// two-epoch ahead-commit horizon a committee for `E+2` is already on chain —
     /// so `committee_for` would happily resolve one, before a single signature had
@@ -340,7 +485,16 @@ mod tests {
             let (ahead_signer, _) = signer_and_committee_at(1, 4, TEST_EPOCH + 2);
             encode_batch(&vec![notarize_at(&ahead_signer, TEST_EPOCH + 2, 0xaa)])
         };
-        ingest_batch(&ahead, TEST_CHAIN_ID, &committee_for, &bridge);
+        let anyone = Ed25519PrivateKey::from_seed(0x5e).public_key();
+        let open = TrackedWindow::default();
+        ingest_batch(
+            &anyone,
+            &ahead,
+            TEST_CHAIN_ID,
+            &committee_for,
+            &bridge,
+            &open,
+        );
         assert_eq!(
             resolves.load(AtomicOrdering::Relaxed),
             0,
@@ -354,7 +508,14 @@ mod tests {
         // The same message inside the window is still resolved, verified and kept
         // — the bound rejects a claim, not the feature.
         let live = encode_batch(&vec![notarize_at(&signer, TEST_EPOCH, 0xaa)]);
-        ingest_batch(&live, TEST_CHAIN_ID, &committee_for, &bridge);
+        ingest_batch(
+            &anyone,
+            &live,
+            TEST_CHAIN_ID,
+            &committee_for,
+            &bridge,
+            &open,
+        );
         assert_eq!(resolves.load(AtomicOrdering::Relaxed), 1);
         let entry = delivered.try_recv().expect("an in-window vote lands");
         assert_eq!(

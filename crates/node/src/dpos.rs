@@ -1184,10 +1184,11 @@ where
     // counted like every other unrouted one. cert/resolver/broadcast also carry
     // the agreement plane's per-instance sub-channels, and marshal's route 0 is
     // registered by the signer engine and dies with it — a validator rotated out
-    // of the committee still sits in its peers' tracked set (registry ∪ committee
-    // ∪ committee+1), so their marshal frames keep arriving at a broker with no
-    // route 0. The backup channel is the only hook commonware exposes for seeing
-    // any of that.
+    // of the committee still sits in its peers' PRIMARY tracked set for one more
+    // epoch (since 4.3 that set is `committee[E−1] ∪ committee[E] ∪ committee[E+1]`
+    // and the outgoing record is exactly what keeps it there), so their marshal
+    // frames keep arriving at a broker with no route 0. The backup channel is the
+    // only hook commonware exposes for seeing any of that.
     //
     // The one mux with no observer is the `--cert-follow` follower's broadcast mux
     // (`cert_follow`): that follower mints an ephemeral identity with no
@@ -1312,6 +1313,16 @@ where
     // poll — which is exactly why the reaction survives a restart, where a list of
     // who this node personally caught misbehaving would not.
     let tombstones = fluentbase_consensus::slasher::TombstoneSet::default();
+    // THE peer-set window every channel's ingress check reads: the set the one
+    // `EpochTransition` below hands the Oracle, plus the tombstone list the
+    // finalized poller fills. One object, shared by value — a clone reads the same
+    // storage (`fluentbase_p2p::TrackedWindow`).
+    let ingress_window = {
+        let tombstones = tombstones.clone();
+        handles.oracle.window().with_tombstones(Arc::new(
+            move |peer: &fluentbase_bls::PeerPubkey| tombstones.contains(peer),
+        ))
+    };
     let (dkg_height_tx, dkg_height_rx) = mpsc::channel::<u64>(256);
     let et_reader = RethStakingStateReader::new(
         node.provider.clone(),
@@ -1800,8 +1811,16 @@ where
     };
     let evidence_handle = {
         let bridge = evidence_bridge.clone();
+        let evidence_window = ingress_window.clone();
         let mut sender = handles.evidence_sender;
-        let mut receiver = handles.evidence_receiver;
+        // Committee traffic: a sender outside the three tracked committee records
+        // (or a tombstoned one) is refused before this loop decodes anything.
+        let mut receiver = fluentbase_consensus::dpos::GatedReceiver::new(
+            handles.evidence_receiver,
+            ingress_window.clone(),
+            "evidence",
+            true,
+        );
         ctx.with_label("evidence_gossip").spawn(move |_| async move {
             // Two independent loops, joined rather than `select!`ed: neither
             // feeds the other, so there is no reason to drop a half-polled
@@ -1809,16 +1828,18 @@ where
             let inbound = async move {
                 loop {
                     match receiver.recv().await {
-                        Ok((_from, buf)) => {
+                        Ok((from, buf)) => {
                             // The bridge carries both what ingest needs: the
                             // gossip half of the slasher mailbox (absent until
                             // the consensus layer launches) and the epoch cursor
                             // that bounds what a peer may claim.
                             fluentbase_consensus::slasher::gossip::ingest_batch(
+                                &from,
                                 buf.as_ref(),
                                 chain_id,
                                 &evidence_committee_for,
                                 &bridge,
+                                &evidence_window,
                             );
                         }
                         Err(e) => {
@@ -1862,7 +1883,19 @@ where
             share_dir: beacon_dir,
             share_seal_key,
             peers: handles.oracle.clone(),
-            beacon_channel: (handles.beacon_sender, handles.beacon_receiver),
+            beacon_channel: (
+                handles.beacon_sender,
+                // Same gate as EVIDENCE: DKG gossip is committee traffic, so a
+                // registry-tier or untracked or tombstoned sender never reaches the
+                // actor's decode. The per-ceremony membership check is the actor's
+                // (`beacon::actor::on_message`).
+                fluentbase_consensus::dpos::GatedReceiver::new(
+                    handles.beacon_receiver,
+                    ingress_window.clone(),
+                    "beacon",
+                    true,
+                ),
+            ),
             resolver_channel: (
                 handles.beacon_resolver_sender,
                 handles.beacon_resolver_receiver,

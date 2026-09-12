@@ -485,8 +485,11 @@ where
     /// plaintext-dev.
     pub share_seal_key: Option<ShareSealKey>,
     /// The plane's own oracle. PRECONDITION: its `EpochTransition` tracks
-    /// `active_registry ∪ committee[E]`, which is the `latest.primary`
-    /// reachability both the dealer-log resolver and the body engine need.
+    /// `committee[E−1] ∪ committee[E] ∪ committee[E+1]` as PRIMARY (4.3 — the
+    /// Active registry is the secondary tier and commonware neither dials it nor
+    /// caches its bodies), which is the `latest.primary` reachability both the
+    /// dealer-log resolver and the body engine need: while `E` runs, the dealers
+    /// of `committee[E+1]` are in it by the incoming-committee leg.
     pub peers: P,
     /// BEACON_CHANNEL halves — the DKG ceremony's own gossip.
     pub beacon_channel: (Se, Re),

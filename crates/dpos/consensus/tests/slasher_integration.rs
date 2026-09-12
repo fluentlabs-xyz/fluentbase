@@ -878,10 +878,14 @@ fn a_gossiped_vote_inside_the_window_still_assembles_a_charge() {
         // inbound path: decode, epoch bound, committee resolve, signature verify.
         let batch = slasher::gossip::encode_batch(&vec![offender_vote(EPOCH, VIEW, 0xbb)]);
         slasher::gossip::ingest_batch(
+            &commonware_cryptography::ed25519::PrivateKey::from_seed(0x5e).public_key(),
             batch.as_ref(),
             C_MAIN,
             &evidence_committee_for(&bimap),
             &bridge,
+            // No peer set registered in this harness: the sender bound has no
+            // opinion, which is exactly what this test wants to leave alone.
+            &fluentbase_p2p::TrackedWindow::default(),
         );
         settle().await;
 

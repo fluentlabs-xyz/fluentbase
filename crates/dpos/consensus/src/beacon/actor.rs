@@ -114,6 +114,10 @@ use std::{
 /// (devnet `I=32` ⇒ deal window `I−20 = 12`; the production target is ~1200).
 pub(crate) const DKG_MARGIN_BLOCKS: u64 = 20;
 
+/// The `channel` label every BEACON ingress refusal is counted under
+/// (`dpos_ingress_dropped_total`).
+pub(crate) const BEACON_CHANNEL_LABEL: &str = "beacon";
+
 /// The epoch the beacon goes live at, deterministically. `committee[2]` runs its
 /// DKG during epoch 1 EVEN IF unchanged from `committee[1]`, so a long-stable
 /// initial committee still seeds the beacon (on-change-only activation would
@@ -419,7 +423,18 @@ pub struct DkgActor<Se, Re, R> {
     pending: BTreeMap<u64, BTreeMap<PeerPubkey, PendingDealings>>,
     /// Last finalized height seen on the `on_height` stream — the current chain time
     /// the event-driven `on_message` finalize uses for its deterministic-settle gate.
-    last_height: u64,
+    ///
+    /// `None` until the FIRST tick is drained, and that is a distinct state, not a
+    /// zero: the actor is constructed before the height poller's buffered tick is
+    /// read (`beacon/plane.rs`), and `epoch_of(0)` would say "the chain is in epoch
+    /// 0" about a chain that may be anywhere. Every deal/seal deadline below reads
+    /// it through [`Self::height_now`], whose `0` floor only ever DELAYS an action
+    /// (nothing is due below the first epoch boundary); the one place where the
+    /// difference is load-bearing is [`Self::on_confirm`], which refuses a
+    /// confirmation outside `[now, now+2]` and would otherwise drop, permanently
+    /// and with no retransmit behind it, every confirmation that beat the first
+    /// tick.
+    last_height: Option<u64>,
     /// Dealers whose LOG journal record failed to land, per target epoch. Excluded
     /// from [`Self::publish_recorded_logs`] — this node holds the bytes in memory but
     /// cannot back the claim across a restart. Retried from memory (not re-fetched:
@@ -590,7 +605,7 @@ where
             deferred_reported: BTreeSet::new(),
             reconciled_journals: false,
             pending: BTreeMap::new(),
-            last_height: 0,
+            last_height: None,
             nondurable_logs: BTreeMap::new(),
             plane_clock: None,
             eval_logged: BTreeSet::new(),
@@ -920,7 +935,7 @@ where
             target: "dpos::beacon",
             epoch,
             pinned = pinned.len(),
-            height = self.last_height,
+            height = self.height_now(),
             "live DKG: adopting the agreed dealer-log set as this epoch's pinned set"
         );
         self.agreed_pinned.insert(
@@ -1149,8 +1164,8 @@ where
         // ordering tip off `FluentApp::report` (the only one still moving once
         // execution stalls). Take the max so an interleaved lagging tick can never
         // pull the deal/seal clock backward; process at the monotone height.
-        self.last_height = self.last_height.max(height);
-        let height = self.last_height;
+        let height = self.height_now().max(height);
+        self.last_height = Some(height);
         // Gauged HERE, at the single point where every feeder's height lands,
         // rather than by each feeder. The poller gauged itself and the cert inlet
         // did not, so on a validator with an upstream the gauge reported `fin + K`
@@ -1402,10 +1417,29 @@ where
     /// Record a peer's share-confirmation, or drop it.
     ///
     /// The pool re-verifies the signature against `committee[target_epoch][idx]`, so
-    /// a relayed confirmation is as good as a directly-sent one and the sender is
-    /// only ever a diagnostic. The unsigned envelope epoch must agree with the
-    /// signed one — a mismatch is either a relay bug or an attempt to slip a
-    /// confirmation past a receive-side epoch filter it does not actually bind.
+    /// the SIGNED half of a relayed confirmation is as good as a directly-sent one.
+    /// The sender is no longer only a diagnostic, though: since 4.3
+    /// [`Self::on_message`] requires `from` to be a member of the frame's own
+    /// ceremony epoch ([`Self::beacon_member`]), and the envelope check below pins
+    /// that epoch to `target_epoch` — so a confirmation RELAYED by a non-member is
+    /// refused upstream of here. Nothing in the tree relays one (the only emitter
+    /// signs and sends its own, `confirmations.rs`), so this costs no live path; a
+    /// future relay would have to carry the signer's membership with it.
+    ///
+    /// The unsigned envelope epoch must agree with the signed one — a mismatch is
+    /// either a relay bug or an attempt to slip a confirmation past a receive-side
+    /// epoch filter it does not actually bind.
+    ///
+    /// ASYMMETRY WITH [`Self::epoch_is_actionable`], deliberate and unresolved: that
+    /// gate also admits an epoch whose ceremony is still RUNNING even after the
+    /// clock has moved past it (ceremonies are swept on a retention window in
+    /// `on_height`, not at the boundary), while the window below is `[now, now+2]`
+    /// and nothing else. A ceremony still open for an epoch below `now` therefore
+    /// gets its DKG frames through and its confirmations refused. It is the safe
+    /// direction — the entry bar those confirmations feed is consumed at the
+    /// agreement for `now+1` and later, so a count for an epoch already entered
+    /// changes no decision — but it is not a coincidence and must not be
+    /// "tidied up" by widening one to match the other.
     fn on_confirm(&mut self, envelope_epoch: u64, from: &PeerPubkey, confirm: ShareConfirm) {
         let Some(pool) = self.confirmations.pool() else {
             return;
@@ -1418,6 +1452,39 @@ where
                 "share-confirmation framing disagrees with its own signed epoch"
             );
             return;
+        }
+        // The entry bar only ever counts confirmations for an epoch whose agreement
+        // is live or about to be: `[now, now + 2]`, `now` being this actor's own
+        // epoch clock (`epoch_of(last_height)` — the same one `is_bufferable` and
+        // `maybe_start` run on). Outside it the confirmation is unusable, so it is
+        // refused HERE rather than after a committee resolve it would waste (R-023,
+        // E4-12).
+        //
+        // BEFORE the first height tick there is no window, and this must not invent
+        // one. `last_height` is `None` until `on_height` drains its first value, and
+        // the actor is spawned before that happens, so a `0` floor here would put
+        // the window at `[0, 2]` and refuse every confirmation on any chain past
+        // epoch 2. The cost of that is PERMANENT, unlike the dealing path's: a
+        // dealer re-sends an un-acked dealing on every pre-seal tick, but
+        // `Confirmations::mint` is edge-triggered on WIDTH growth
+        // (`confirmations.rs`, the `previous >= confirmed.len()` memo), so a
+        // full-width confirmation dropped here is never re-issued and this node's
+        // entry bar undercounts a member for the whole epoch. With no clock the
+        // membership check below is the whole bound — which is the same bound the
+        // window would add nothing to, since an epoch this node cannot place in time
+        // is one whose committee record it either holds or does not.
+        if let Some(height) = self.last_height {
+            let now = self.epoch_of(height);
+            if !(now..=now.saturating_add(2)).contains(&confirm.target_epoch) {
+                tracing::debug!(
+                    target: "dpos::beacon",
+                    now,
+                    target_epoch = confirm.target_epoch,
+                    "share-confirmation outside [now, now+2]; dropping before the committee read"
+                );
+                crate::dpos::record_ingress_drop(BEACON_CHANNEL_LABEL, "confirm_window");
+                return;
+            }
         }
         let Some(roster) = (self.committee_for)(confirm.target_epoch) else {
             return;
@@ -1560,7 +1627,7 @@ where
                     self.agreed_pinned.remove(&e);
                     tracing::info!(
                         epoch = e,
-                        height = self.last_height,
+                        height = self.height_now(),
                         "live DKG: PK_epoch + share computed + stored"
                     );
                 }
@@ -1667,7 +1734,7 @@ where
                 // journal cannot prove we did not already seal + broadcast a possibly-
                 // divergent log, so we NEVER re-seal.
                 let reconstruct_dealer =
-                    self.last_height < self.epoch_start(target).saturating_sub(DKG_MARGIN_BLOCKS);
+                    self.height_now() < self.epoch_start(target).saturating_sub(DKG_MARGIN_BLOCKS);
                 self.resume_from_journal(target, next, records, reconstruct_dealer, out)
             }
             JournalLoad::Torn => {
@@ -1822,11 +1889,59 @@ where
         {
             return false;
         }
-        let now = self.epoch_of(self.last_height);
+        let now = self.epoch_of(self.height_now());
         if epoch <= now || epoch > now + 2 {
             return false; // already started / past, or too far in the future
         }
         self.store.read().map_or(true, |s| !s.contains_key(&epoch))
+    }
+
+    /// The clock every deal/seal deadline reads: the last drained height, or `0`
+    /// before the first tick.
+    ///
+    /// `0` is the right FLOOR for a deadline — every comparison below is "is the
+    /// chain past height X yet", and answering "not yet" for a clock that has not
+    /// started only delays an action until the first tick lands. It is NOT the
+    /// right answer for a WINDOW: [`Self::on_confirm`] reads
+    /// [`Self::last_height`] itself, so that it can tell "epoch 0" from "no clock".
+    fn height_now(&self) -> u64 {
+        self.last_height.unwrap_or(0)
+    }
+
+    /// Whether `epoch` is one this actor could act on at all: a ceremony it is
+    /// already running, or one of the two it may still start / buffer for. Stated
+    /// up front so an arbitrary epoch on the wire costs no committee resolve
+    /// (E4-12, R-023).
+    ///
+    /// A deliberate SUPERSET of what the dispatch below will actually do with the
+    /// frame, not the same predicate: this admits `[now, now+2]`, while
+    /// [`Self::is_bufferable`] takes only `[now+1, now+2]` (`epoch <= now` is
+    /// already-started / past for a dealing) and the ceremony dispatch takes only a
+    /// live ceremony. Superset is the right side to err on here — this gate exists
+    /// to bound COST, and a frame it lets through is refused a few lines later by
+    /// the check that owns the decision.
+    fn epoch_is_actionable(&self, epoch: u64) -> bool {
+        if self.ceremonies.contains_key(&epoch) {
+            return true;
+        }
+        let now = self.epoch_of(self.height_now());
+        (now..=now.saturating_add(2)).contains(&epoch)
+    }
+
+    /// The BEACON ingress check: is `from` a member of `epoch`'s committee record?
+    ///
+    /// This is the per-epoch half of the 4.3 rule. The tier half — is the sender in
+    /// the registered peer set at all, and is it tombstoned — runs BEFORE this, at
+    /// the channel's `GatedReceiver` (`crate::dpos::GatedReceiver`, wired in
+    /// `node/dpos.rs`), which is why a decode never sees a frame from an untracked
+    /// or tombstoned peer.
+    ///
+    /// `committee_for` is the `committee/` module's write-once record — the same
+    /// records the `EpochTransition` builds `TrackedPeers.primary` from — and it is
+    /// asked ONLY for an epoch [`Self::epoch_is_actionable`] already admitted, so a
+    /// stranger naming epoch 10^9 buys no read of anything.
+    fn beacon_member(&self, from: &PeerPubkey, epoch: u64) -> bool {
+        (self.committee_for)(epoch).is_some_and(|roster| roster.position(from).is_some())
     }
 
     async fn on_message(&mut self, from: PeerPubkey, buf: &[u8], rng: &mut impl CryptoRngCore) {
@@ -1838,11 +1953,40 @@ where
             Ok(BeaconMessage::Dkg(p)) => p,
             Err(_) => return,
         };
+        // MEMBERSHIP BEFORE THE BODY. `DkgMsg`'s wire is
+        // `ceremony_epoch(u64) ‖ body_tag(u8) ‖ body` (`dkg_msg.rs:83-84`,
+        // `:137`), so the epoch is readable from the first eight bytes without
+        // touching the `Commitment` / `Reveal` decoders — which are the expensive
+        // ones, being the polynomial and the signed log. Everything a non-member
+        // could have made this node do (a committee resolve, a `pending` slot, a
+        // ceremony `handle`) is downstream of here.
+        let mut header = payload.as_ref();
+        let Ok(epoch) = u64::read_cfg(&mut header, &()) else {
+            return;
+        };
+        if !self.epoch_is_actionable(epoch) {
+            crate::dpos::record_ingress_drop(BEACON_CHANNEL_LABEL, "epoch");
+            return;
+        }
+        if !self.beacon_member(&from, epoch) {
+            tracing::debug!(
+                target: "dpos::beacon",
+                %from,
+                epoch,
+                "DKG frame from a non-member of that ceremony's committee; dropping"
+            );
+            crate::dpos::record_ingress_drop(BEACON_CHANNEL_LABEL, "not_member");
+            return;
+        }
         let mut body = payload.as_ref();
         let msg = match DkgMsg::read_cfg(&mut body, &max) {
             Ok(m) => m,
             Err(_) => return,
         };
+        debug_assert_eq!(
+            msg.ceremony_epoch, epoch,
+            "header peek must match the decode"
+        );
         let epoch = msg.ceremony_epoch;
         let body = msg.body;
         // A share-confirmation is agreement traffic, not ceremony traffic: it is
@@ -1981,10 +2125,12 @@ where
             // Target each fetch at the roster (the known holders). `fetch_targeted`
             // narrows within `latest.primary`; a committee member's logs are served
             // from any peer that holds them. The holders are in `latest.primary`
-            // during E-1: committee[E] ⊆ the Active registry that the beacon plane's
-            // `EpochTransition` tracks (registry ∪ committee[E]) on the SAME
-            // `OracleHandle` the resolver's `Provider` reads, and the E-1→E boundary
-            // `track(E)` re-includes committee[E] explicitly (STEP-0 reachability).
+            // during E-1: since 4.3 the beacon plane's `EpochTransition` tracks
+            // `committee[E-2] ∪ committee[E-1] ∪ committee[E]` as PRIMARY on the SAME
+            // `OracleHandle` the resolver's `Provider` reads, so committee[E] is in it
+            // by the INCOMING-committee leg (the Active registry is tier 2 now and
+            // would not cover it), and the E-1→E boundary `track(E)` re-includes
+            // committee[E] explicitly (STEP-0 reachability).
             let Some(targets) =
                 NonEmptyVec::try_from(roster.iter().cloned().collect::<Vec<_>>()).ok()
             else {
@@ -3171,7 +3317,8 @@ mod clock_tests {
             let mut arng = StdRng::seed_from_u64(13);
 
             // A real, decodable `Commitment` dealing tagged for epoch 1 (bufferable
-            // at the default last_height=0 ⇒ now=0, so 0 < 1 ≤ now+2). The body is
+            // with no height tick drained yet ⇒ `height_now() = 0` ⇒ now=0, so
+            // 0 < 1 ≤ now+2). The body is
             // never verified before buffering, so the same bytes stand in for any
             // sender's dealing — only the `from` key keys the per-sender slot.
             let commitment: DkgBody = {
@@ -4341,6 +4488,126 @@ mod clock_tests {
         )
     }
 
+    /// The BEACON ingress rule, measured by what the frame COSTS this node.
+    ///
+    /// Three frames, one counter of committee-record lookups:
+    ///  * a `Confirm` naming epoch 10^9 — no lookup at all. This is the E4-12 /
+    ///    R-023 shape: before 4.3 `on_confirm` resolved `committee_for(target_epoch)`
+    ///    for ANY epoch from ANY tracked sender, so this frame bought one state read
+    ///    per message and the counter here would read 1.
+    ///  * the same frame from a NON-MEMBER for an in-window epoch — exactly one
+    ///    lookup, the membership check itself (a memoized record, for an epoch this
+    ///    actor is already running), and nothing downstream: no `pending` slot, no
+    ///    pool record.
+    ///  * the same frame from a MEMBER — admitted, so the epoch is resolved again
+    ///    for the confirmation itself.
+    ///
+    /// Falsifier: the first count moving off 0, or the non-member's frame reaching
+    /// `pending`.
+    #[test]
+    fn a_beacon_frame_from_a_non_member_costs_no_committee_read_beyond_the_check() {
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            let oracle: Oracle<PeerPubkey, SimContext> = {
+                let (network, oracle) = Network::new(
+                    ctx.with_label("sim_net"),
+                    SimConfig {
+                        max_size: 1024 * 1024,
+                        disconnect_on_block: false,
+                        tracked_peer_sets: NZUsize!(4),
+                    },
+                );
+                network.start();
+                oracle
+            };
+            let mut rng = StdRng::seed_from_u64(0x4301);
+            let keys: Vec<Ed25519PrivateKey> = (0..5)
+                .map(|_| Ed25519PrivateKey::random(&mut rng))
+                .collect();
+            // keys[4] is the outsider: registered on the plane, in no committee.
+            let committee = Set::from_iter_dedup(keys[..4].iter().map(|k| k.public_key()));
+            let asked: Arc<std::sync::Mutex<Vec<u64>>> =
+                Arc::new(std::sync::Mutex::new(Vec::new()));
+            let committee_for: CommitteeFor = {
+                let set = committee.clone();
+                let asked = asked.clone();
+                Arc::new(move |epoch: u64| {
+                    asked.lock().unwrap().push(epoch);
+                    Some(set.clone())
+                })
+            };
+            let pool = crate::beacon::dkg_agree::ConfirmPool::new(b"FLUENT_TEST_INGRESS");
+            let mut actor = standalone_actor_cf(&oracle, keys[0].clone(), committee_for, None)
+                .await
+                .with_recorded_logs(Arc::new(RwLock::new(BTreeMap::new())))
+                .with_share_confirms(pool.clone());
+            let mut arng = StdRng::seed_from_u64(0x4302);
+            // Height 100 at INTERVAL 20 ⇒ `now` = epoch 5; the actionable window is
+            // [5, 7].
+            actor.on_height(100, &mut arng).await;
+            assert_eq!(actor.epoch_of(actor.height_now()), 5);
+            asked.lock().unwrap().clear();
+
+            let frame = |signer: &Ed25519PrivateKey, epoch: u64| -> Vec<u8> {
+                let confirm = ShareConfirm::sign(
+                    pool.namespace(),
+                    signer,
+                    0,
+                    epoch,
+                    vec![(0, B256::repeat_byte(0xAA))],
+                );
+                BeaconMessage::Dkg(
+                    DkgMsg {
+                        ceremony_epoch: epoch,
+                        body: DkgBody::Confirm(confirm),
+                    }
+                    .encode(),
+                )
+                .encode()
+                .to_vec()
+            };
+
+            // (1) An epoch nobody here could act on: refused before any read.
+            let far = frame(&keys[1], 1_000_000_000);
+            actor
+                .on_message(keys[1].public_key(), &far, &mut arng)
+                .await;
+            assert!(
+                asked.lock().unwrap().is_empty(),
+                "an out-of-window epoch bought a committee record: {:?}",
+                asked.lock().unwrap()
+            );
+
+            // (2) In-window epoch, sender in no committee: one lookup, the check.
+            let outsider = frame(&keys[4], 6);
+            actor
+                .on_message(keys[4].public_key(), &outsider, &mut arng)
+                .await;
+            assert_eq!(
+                *asked.lock().unwrap(),
+                vec![6],
+                "a non-member must cost exactly the one membership check"
+            );
+            assert!(
+                actor.pending.is_empty(),
+                "a non-member's frame must not occupy ceremony state"
+            );
+            asked.lock().unwrap().clear();
+
+            // (3) The same frame from a member is admitted — the gate rejects a
+            // sender, not the feature.
+            let member = frame(&keys[1], 6);
+            actor
+                .on_message(keys[1].public_key(), &member, &mut arng)
+                .await;
+            assert_eq!(
+                *asked.lock().unwrap(),
+                vec![6, 6],
+                "a member's confirmation is checked and then resolved as before"
+            );
+        });
+    }
+
     /// `dpos_dkg_clock_height` is the actor's clamp, not any one feeder's write.
     ///
     /// The inlet-fed shape is the one that used to lie: the cert inlet pushed the
@@ -4386,7 +4653,7 @@ mod clock_tests {
             // The finalized poller's `fin + K`, still catching up. The clock does
             // not rewind and neither does the gauge.
             actor.on_height(303, &mut arng).await;
-            assert_eq!(actor.last_height, 1000);
+            assert_eq!(actor.last_height, Some(1000));
             assert_eq!(clock.snapshot().1, 1000);
 
             clock.record_ordering_tip(1002);
@@ -4550,6 +4817,14 @@ mod clock_tests {
                 .await
                 .with_recorded_logs(recorded.clone())
                 .with_share_confirms(pool.clone());
+            // Put the actor's epoch clock where TARGET is inside `[now, now + 2]`:
+            // since 4.3 `on_confirm` refuses a confirmation outside that window
+            // BEFORE resolving its committee, and this test drives `on_confirm`
+            // directly rather than through `on_height` (whose side effects — a
+            // `maybe_start` for `now + 1` — would be a second thing under test).
+            // `INTERVAL` is 20, so height 100 is epoch 5 and TARGET 6 is in.
+            actor.last_height = Some(100);
+            assert_eq!(actor.epoch_of(actor.height_now()), TARGET - 1);
 
             // Nothing recorded is nothing to confirm: a confirmation of an empty set
             // would be a member claiming a coverage it does not have.
@@ -4660,6 +4935,104 @@ mod clock_tests {
             assert!(
                 pool.covering(TARGET, &logs).is_empty(),
                 "the confirmation pool outlived the epoch it was about"
+            );
+        });
+    }
+
+    /// A confirmation that beats the actor's FIRST height tick is counted, and the
+    /// window binds the moment a tick lands.
+    ///
+    /// `last_height` is `None` until `on_height` drains its first value, and the
+    /// actor is spawned before that: the plane builds it after the geometry freeze
+    /// while the poller's tick sits buffered, and `tokio::select!` picks a ready
+    /// branch at random, so a peer's frame can be served first. Reading that state
+    /// as height 0 would put `[now, now+2]` at `[0, 2]` and refuse every
+    /// confirmation on any chain past epoch 2 — permanently, because
+    /// `Confirmations::mint` is edge-triggered on width growth and never re-issues
+    /// a full-width statement. This node's entry bar would then undercount one
+    /// member for the whole epoch, with nothing to heal it.
+    ///
+    /// Falsifier: the pre-tick confirmation not landing in the pool (the `0` floor
+    /// is back), or the post-tick out-of-window one landing (the window stopped
+    /// binding once there IS a clock).
+    #[test]
+    fn a_confirmation_that_beats_the_first_height_tick_is_counted() {
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            let oracle: Oracle<PeerPubkey, SimContext> = {
+                let (network, oracle) = Network::new(
+                    ctx.with_label("sim_net"),
+                    SimConfig {
+                        max_size: 1024 * 1024,
+                        disconnect_on_block: false,
+                        tracked_peer_sets: NZUsize!(4),
+                    },
+                );
+                network.start();
+                oracle
+            };
+            let mut rng = StdRng::seed_from_u64(0x4501);
+            let keys: Vec<Ed25519PrivateKey> = (0..4)
+                .map(|_| Ed25519PrivateKey::random(&mut rng))
+                .collect();
+            let committee = Set::from_iter_dedup(keys.iter().map(|k| k.public_key()));
+            let seat = |k: &Ed25519PrivateKey| {
+                committee
+                    .iter()
+                    .position(|pk| *pk == k.public_key())
+                    .expect("a committee seat") as u8
+            };
+            // Far outside `[0, 2]`: this is the epoch a running chain would be in
+            // when this node's actor comes up, and the whole point of the case.
+            const TARGET: u64 = 40;
+            let logs: Vec<(u8, B256)> =
+                (0..4u8).map(|i| (i, B256::repeat_byte(0x90 + i))).collect();
+
+            let pool = ConfirmPool::new(b"FLUENT_TEST_FIRST_TICK");
+            let mut actor = standalone_actor(&oracle, keys[0].clone(), committee.clone(), None)
+                .await
+                .with_recorded_logs(Arc::new(RwLock::new(BTreeMap::new())))
+                .with_share_confirms(pool.clone());
+            assert_eq!(
+                actor.last_height, None,
+                "the clock must not have started — that IS the case under test"
+            );
+
+            let confirm = |k: &Ed25519PrivateKey, epoch: u64| {
+                ShareConfirm::sign(pool.namespace(), k, seat(k), epoch, logs.clone())
+            };
+            actor.on_confirm(TARGET, &keys[1].public_key(), confirm(&keys[1], TARGET));
+            assert_eq!(
+                pool.covering(TARGET, &logs).len(),
+                1,
+                "a confirmation that arrived before the first height tick was dropped, \
+                 and nothing re-sends it"
+            );
+
+            // One tick, and the window binds from there: INTERVAL is 20, so height
+            // 100 is epoch 5 and TARGET 40 is far outside `[5, 7]`.
+            let mut arng = StdRng::seed_from_u64(0x4502);
+            actor.on_height(100, &mut arng).await;
+            assert_eq!(actor.last_height, Some(100));
+            actor.on_confirm(TARGET, &keys[2].public_key(), confirm(&keys[2], TARGET));
+            assert_eq!(
+                pool.covering(TARGET, &logs).len(),
+                1,
+                "with a clock, `[now, now+2]` must still refuse an out-of-window epoch"
+            );
+
+            // ...and an epoch INSIDE the window still lands, so the refusal above is
+            // the window and not the tick.
+            let in_window = 6u64;
+            actor.on_confirm(
+                in_window,
+                &keys[2].public_key(),
+                confirm(&keys[2], in_window),
+            );
+            assert_eq!(
+                pool.covering(in_window, &logs).len(),
+                1,
+                "an in-window confirmation must still be counted after the first tick"
             );
         });
     }
@@ -7671,7 +8044,7 @@ mod clock_tests {
                 .insert(DETERMINISTIC_BOOTSTRAP_EPOCH, resumed.ceremony);
             // The chain is PAST the target's boundary — where the height-driven
             // fetch gives up — and the height clock has stopped there.
-            actor.last_height = BOUNDARY;
+            actor.last_height = Some(BOUNDARY);
 
             // The agreed set names every seat, including the two whose bodies this
             // node does not hold.
@@ -7745,7 +8118,7 @@ mod clock_tests {
                 .ceremonies
                 .insert(DETERMINISTIC_BOOTSTRAP_EPOCH, resumed.ceremony);
             // Sealed, and the epoch boundary is still a whole margin away.
-            actor.last_height = SEAL_DEADLINE;
+            actor.last_height = Some(SEAL_DEADLINE);
 
             let logs = pinned_logs_of(&actor, DETERMINISTIC_BOOTSTRAP_EPOCH, &committee);
             assert!(

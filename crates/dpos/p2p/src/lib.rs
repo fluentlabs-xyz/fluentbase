@@ -26,10 +26,10 @@ use commonware_p2p::{
 use commonware_runtime::{
     BufferPooler, Clock, Handle, Metrics, Network as RNetwork, Resolver, Spawner, Storage,
 };
-use commonware_utils::ordered::Set;
 use fluentbase_bls::PeerPubkey;
-use fluentbase_staking_reader::PeerSetSink;
+use fluentbase_staking_reader::{PeerSetSink, TrackedPeers as TrackedPeersOf};
 use rand_core::CryptoRngCore;
+use std::sync::{Arc, RwLock};
 
 pub use config::FluentP2PConfig;
 
@@ -106,6 +106,9 @@ pub fn generate_ephemeral_ed25519_key() -> ed25519::PrivateKey {
 #[derive(Clone, Debug)]
 pub struct OracleHandle {
     inner: Oracle<ed25519::PublicKey>,
+    /// The set this handle last registered, kept for the channel ingress checks.
+    /// Shared with every clone — there is one `EpochTransition` and one writer.
+    window: TrackedWindow,
 }
 
 /// Concrete commonware-p2p sender/receiver for our channel layout.
@@ -256,7 +259,10 @@ where
         );
 
         let handles = FluentP2PHandles {
-            oracle: OracleHandle { inner: oracle },
+            oracle: OracleHandle {
+                inner: oracle,
+                window: TrackedWindow::default(),
+            },
             vote_sender: vote_s,
             vote_receiver: vote_r,
             cert_sender: cert_s,
@@ -293,18 +299,176 @@ where
 // `EpochTransition` is p2p-agnostic; the one-liner adapter lives here,
 // where the OracleHandle is in scope.
 
-/// Adapter: `EpochTransition` calls `track(epoch, Set)`, which we
-/// forward verbatim to `commonware_p2p::Manager::track` on the Oracle.
-/// Commonware sorts the Set internally (`Set::from_iter_dedup`) — no
-/// caller-side `.sort()`; the canonical byte-lex order is pinned by
-/// `crates/bls/tests/ed25519_ordering_conformance.rs`.
+/// Adapter: `EpochTransition` calls `track(epoch, TrackedPeers)`; the two tiers
+/// go to `commonware_p2p::Manager::track` as commonware's own `TrackedPeers`,
+/// and the same value is kept in [`TrackedWindow`] so a channel's ingress check
+/// can classify a sender against THE set that was registered, without asking
+/// commonware for it per frame. Commonware sorts the Sets internally
+/// (`Set::from_iter_dedup`) — no caller-side `.sort()`; the canonical byte-lex
+/// order is pinned by `crates/bls/tests/ed25519_ordering_conformance.rs`.
 impl PeerSetSink for OracleHandle {
     // `async fn` here matches the trait's `-> impl Future + Send`
     // (Rust auto-promotes the future to `Send` when all captures are
     // Send — `&mut self.inner` is Send via `Oracle: Send`). Manager::track
     // is also `async fn` but body is `send_lossy` (no real await pressure).
-    async fn track(&mut self, epoch: u64, peers: Set<PeerPubkey>) {
-        Manager::track(&mut self.inner, epoch, peers).await
+    async fn track(&mut self, epoch: u64, peers: TrackedPeersOf) {
+        // Record BEFORE registering: the window is what every ingress check
+        // reads, and a frame from a member of the new set may arrive the instant
+        // commonware applies it.
+        self.window.record(epoch, &peers);
+        let registered = TrackedPeers::new(peers.primary(), peers.secondary);
+        Manager::track(&mut self.inner, epoch, registered).await
+    }
+}
+
+/// "Is this peer tombstoned on chain" — injected rather than typed, because the
+/// `TombstoneSet` lives in the consensus crate, which is ABOVE this one in the
+/// dependency graph.
+pub type TombstonePredicate = Arc<dyn Fn(&PeerPubkey) -> bool + Send + Sync>;
+
+/// The last peer set this node registered, readable by every channel's ingress
+/// check. Cloneable and shared: one writer (the `PeerSetSink` adapter above,
+/// driven by the single `EpochTransition`), many readers.
+///
+/// Why not `Provider::peer_set` / `Provider::subscribe`: commonware keeps only
+/// the flat union (`latest.primary`), and the question a channel asks is
+/// per-epoch — "which of `C[E−1]`, `C[E]`, `C[E+1]` does this sender sit in" —
+/// which the union cannot answer. It also costs a mailbox round-trip per call.
+#[derive(Clone, Default)]
+pub struct TrackedWindow {
+    /// `(tracked epoch, the set)`. `None` until the first `track`.
+    latest: Arc<RwLock<Option<(u64, TrackedPeersOf)>>>,
+    /// Peers observed tombstoned on-chain. Unset ⇒ nobody is tombstoned, which is
+    /// the honest answer for a node that has not wired the slasher.
+    tombstoned: Option<TombstonePredicate>,
+}
+
+impl std::fmt::Debug for TrackedWindow {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TrackedWindow")
+            .field(
+                "epoch",
+                &self.latest.read().map(|g| g.as_ref().map(|(e, _)| *e)).ok(),
+            )
+            .finish_non_exhaustive()
+    }
+}
+
+impl TrackedWindow {
+    /// A window that also drops tombstoned senders. One call per process, at the
+    /// wiring site that owns the `TombstoneSet`.
+    pub fn with_tombstones(mut self, tombstoned: TombstonePredicate) -> Self {
+        self.tombstoned = Some(tombstoned);
+        self
+    }
+
+    /// Publish the set just handed to `track`.
+    pub fn record(&self, epoch: u64, peers: &TrackedPeersOf) {
+        if let Ok(mut slot) = self.latest.write() {
+            *slot = Some((epoch, peers.clone()));
+        }
+    }
+
+    /// Classify a frame's sender. `None` means "no peer set registered yet" —
+    /// NOT "drop": before the first `track` this node has no membership opinion
+    /// at all, and a check that turned that into a drop would silence the plane
+    /// for the whole of cold start.
+    pub fn classify<'a>(&self, peer: &'a PeerPubkey) -> Option<Ingress<'a>> {
+        if self.tombstoned.as_ref().is_some_and(|t| t(peer)) {
+            return Some(Ingress::Dropped);
+        }
+        let guard = self.latest.read().ok()?;
+        let (_, peers) = guard.as_ref()?;
+        let mask = EpochMask::of(peers, peer);
+        Some(if mask.is_empty() {
+            if peers.secondary.position(peer).is_some() {
+                Ingress::Tracked(peer)
+            } else {
+                Ingress::Dropped
+            }
+        } else {
+            Ingress::Member { peer, epochs: mask }
+        })
+    }
+}
+
+/// What a frame's sender is, on the peer set this node last registered.
+///
+/// No penalty and no counter rides on this: a `Dropped` frame is dropped and
+/// counted on the channel's own metric, nothing more. The only global ban is the
+/// on-chain tombstone (PLAN §8 п.1).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Ingress<'a> {
+    /// In at least one carried committee record — `epochs` says which.
+    Member {
+        peer: &'a PeerPubkey,
+        epochs: EpochMask,
+    },
+    /// Tier 2: registered, served, but in no committee.
+    Tracked(&'a PeerPubkey),
+    /// Not in the registered set at all, or tombstoned.
+    Dropped,
+}
+
+impl Ingress<'_> {
+    /// Whether the sender is a member of `epoch`'s committee record.
+    pub fn member_of(&self, epoch: u64) -> bool {
+        matches!(self, Ingress::Member { epochs, .. } if epochs.contains(epoch))
+    }
+
+    /// The metric's `reason` label for a frame this classification refuses.
+    pub const fn refusal(&self) -> &'static str {
+        match self {
+            Ingress::Member { .. } => "none",
+            Ingress::Tracked(_) => "secondary",
+            Ingress::Dropped => "untracked",
+        }
+    }
+}
+
+/// The epochs of the tracked window whose committee record holds a given peer.
+/// At most three by construction (`C[E−1]`, `C[E]`, `C[E+1]`), so it is a fixed
+/// array — no allocation on a per-frame path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct EpochMask {
+    slots: [u64; 3],
+    len: u8,
+}
+
+impl EpochMask {
+    /// The mask of the records in `peers` that hold `peer`.
+    ///
+    /// Silently capped at three, and `debug_assert`ed so the cap can never become
+    /// a SILENT truncation in a test run: the invariant is
+    /// `TrackedPeers::committees` carrying at most three records with distinct
+    /// epochs (see its own doc), which `assemble_tracked_peers` guarantees by
+    /// construction. A fourth record would mean the window grew and this fixed
+    /// array has to grow with it — dropping the overflow instead would answer
+    /// "not a member" for an epoch the peer IS in.
+    fn of(peers: &TrackedPeersOf, peer: &PeerPubkey) -> Self {
+        debug_assert!(
+            peers.committees.len() <= 3,
+            "the tracked window is at most three committee records, got {}",
+            peers.committees.len()
+        );
+        let mut mask = Self::default();
+        for epoch in peers.epochs_of(peer) {
+            if (mask.len as usize) < mask.slots.len() {
+                mask.slots[mask.len as usize] = epoch;
+                mask.len += 1;
+            } else {
+                debug_assert!(false, "more than three epochs in one membership mask");
+            }
+        }
+        mask
+    }
+
+    pub fn contains(&self, epoch: u64) -> bool {
+        self.slots[..self.len as usize].contains(&epoch)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
     }
 }
 
@@ -314,6 +478,14 @@ impl PeerSetSink for OracleHandle {
 // `P: Provider<PublicKey = ed25519::PublicKey>`. The inner `Oracle<C>`
 // satisfies both upstream; this newtype delegates verbatim so the node
 // can pass `handles.oracle.clone()` directly to the Builder.
+
+impl OracleHandle {
+    /// The peer-set window this handle writes on every `track`. Clones share the
+    /// same storage, so an ingress check built from any clone sees the live set.
+    pub fn window(&self) -> TrackedWindow {
+        self.window.clone()
+    }
+}
 
 impl Blocker for OracleHandle {
     type PublicKey = ed25519::PublicKey;
@@ -387,7 +559,6 @@ mod tests {
     use commonware_cryptography::ed25519::PrivateKey;
     use commonware_p2p::Ingress;
     use commonware_runtime::{deterministic, Runner};
-    use commonware_utils::ordered::Set;
     use rand_core::SeedableRng as _;
     use std::net::SocketAddr;
 
@@ -471,9 +642,29 @@ mod tests {
             // Oracle handle is clonable (shares UnboundedMailbox).
             let _oracle_clone = handles.oracle.clone();
 
-            // PeerSetSink impl forwards to Manager::track.
+            // PeerSetSink impl forwards to Manager::track, and the window every
+            // ingress check reads is written on the way through. Probed through
+            // `classify`, the only thing that reads it: before the first `track`
+            // it must say "no opinion" (`None`), and after one it must have one —
+            // here `Dropped`, an empty set holding nobody.
             let mut sink = handles.oracle.clone();
-            <OracleHandle as PeerSetSink>::track(&mut sink, 7, Set::default()).await;
+            let stranger = {
+                use commonware_cryptography::Signer as _;
+                use commonware_math::algebra::Random as _;
+                let mut rng = rand_08::rngs::StdRng::seed_from_u64(77);
+                PrivateKey::random(&mut rng).public_key()
+            };
+            assert_eq!(
+                sink.window().classify(&stranger),
+                None,
+                "before the first track the window must have no opinion at all"
+            );
+            <OracleHandle as PeerSetSink>::track(&mut sink, 7, TrackedPeersOf::default()).await;
+            assert_eq!(
+                sink.window().classify(&stranger),
+                Some(super::Ingress::Dropped),
+                "the window must keep what was registered — a clone reads the same storage"
+            );
 
             // All 9 channels are exposed as raw (sender, receiver) — bound by move
             // to prove they are owned and usable (BEACON + BEACON_RESOLVER via `..`).

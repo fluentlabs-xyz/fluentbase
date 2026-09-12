@@ -21,7 +21,7 @@ use commonware_p2p::{
 };
 use commonware_runtime::{BufferPooler, Clock, Metrics, Spawner};
 use fluentbase_bls::PeerPubkey;
-use fluentbase_p2p::constants::{DKG_SUBCHANNEL_BASE, MAX_COMMITTEE_SIZE};
+use fluentbase_p2p::constants::DKG_SUBCHANNEL_BASE;
 
 use crate::{beacon::dkg_agree::DkgProposal, outer::SharedMux};
 
@@ -99,7 +99,7 @@ where
 ///
 /// `peers` MUST resolve `latest.primary` to a set containing
 /// `committee[target_epoch]`. `buffered` retains a received body only when its
-/// SENDER is in that set (`CW/broadcast/src/buffered/engine.rs:298`), so a
+/// SENDER is in that set (`CW/broadcast/src/buffered/engine.rs:319-322`), so a
 /// provider tracking any other set — the CURRENT committee at a change boundary,
 /// say — drops every proposal body on the floor. The failure is silent end to end:
 /// nothing logs above `debug`, `verify` parks on a body that is never cached, and
@@ -120,7 +120,19 @@ where
         buffered::Config {
             public_key: me,
             mailbox_size: BODY_MAILBOX_SIZE,
-            deque_size: MAX_COMMITTEE_SIZE as usize,
+            // Two agreement proposal bodies retained per PRIMARY sender.
+            // Measured, not guessed: the precondition pass counted exactly ONE
+            // distinct body per (instance, sender) in every shape it could
+            // build — B1, B2/C9 (three mints), B3 (an absent dealer), and a
+            // `[0,1] | [2,3]` network cut across six views inside epoch 1's
+            // agreement window (`testbed::preconditions::
+            // dkg_bodies_per_peer_are_measured_under_a_partition_in_the_agreement_window`);
+            // `Plan::Forward` re-sends the SAME digest, which the deque does not
+            // grow (`CW:broadcast/src/buffered/engine.rs:331-337`). The second
+            // slot is headroom for a re-proposal after a nullify, which the
+            // measurement never produced. `MAX_COMMITTEE_SIZE` was 51 bodies of
+            // ~154 KiB per sender (R-037).
+            deque_size: 2,
             priority: true,
             codec_config: (),
             peer_provider: peers,

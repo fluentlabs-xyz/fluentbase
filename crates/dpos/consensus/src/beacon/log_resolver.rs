@@ -12,10 +12,12 @@
 //! a 430 KiB blob).
 //!
 //! Reachability (verified): the beacon plane's `EpochTransition` tracks
-//! `active_registry_peers ∪ committee[E]` on the SAME `OracleHandle` the resolver's
-//! `Provider` reads, so during E-1 (when committee[E] is dealing) the log holders are
-//! in `latest.primary` via the registry union; targeted fetches aim at the known
-//! roster.
+//! `committee[E−1] ∪ committee[E] ∪ committee[E+1]` as PRIMARY on the SAME
+//! `OracleHandle` the resolver's `Provider` reads (4.3 — the Active registry moved
+//! to the secondary tier, which commonware never dials), so during E-1 (when
+//! committee[E] is dealing) the log holders are in `latest.primary` as that
+//! epoch's own `committee[(E−1)+1]` record — by the incoming-committee leg of the
+//! union, not by a registry union. Targeted fetches aim at the known roster.
 //!
 //! Wiring mirrors `marshal::resolver::handler`: [`LogHandler`] implements both
 //! `Producer` (serve a `SignedDealerLog` from the live ceremony's `signed_logs` +
@@ -99,9 +101,9 @@ impl Span for DkgLogKey {}
 /// seam at a 16/s quota and never a 128/s consensus one, because an inbound
 /// over-quota SLEEPS THE WHOLE CONNECTION to a peer and stalls its other
 /// channels; `BEACON_RESOLVER_CHANNEL` is already that quota, already tracks the
-/// right peer set (`registry ∪ committee`), and is already wired. Adding a
-/// top-level channel would have bought a second engine and a network-wide
-/// coordinated release for traffic that belongs on this one.
+/// right peer set (primary = the three committee records), and is already wired.
+/// Adding a top-level channel would have bought a second engine and a
+/// network-wide coordinated release for traffic that belongs on this one.
 ///
 /// The tag byte is the marshal request codec's shape (`resolver/handler.rs`
 /// keys). It is a WIRE change on this channel — a key that used to be a bare

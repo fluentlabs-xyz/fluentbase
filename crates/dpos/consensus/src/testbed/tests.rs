@@ -505,16 +505,31 @@ fn epoch_boundaries_pass_with_a_shrinking_committee_and_a_tracked_dropped_node_f
     );
 }
 
-/// (4b) The same rotation with the peer set narrowed to `committee[E]` and
-/// EVERY link of a node outside it severed — consensus plane and upstream
-/// plane: the rotated-out node is an unregistered joiner from epoch 1 on. It
-/// has no backfill source and STANDS; the members go on. Its frontier probe
-/// keeps asking (`latest_calls > 0`) and nobody answers (`latest_delivered ==
-/// 0`): the upstream plane without a peer is not a path.
+/// (4b) The same rotation with the peer set narrowed to the committees and EVERY
+/// link of a node outside them severed — consensus plane and upstream plane. Once
+/// severed the rotated-out node is an unregistered joiner: no backfill source, and
+/// it STANDS while the members go on.
 ///
-/// Falsifier: node 3 keeping up (then something other than a peer feeds it),
-/// the members not crossing the boundaries, or a `Latest` answer arriving
-/// over no link.
+/// WHEN it is severed moved in 4.3. Primary is `C[E−1] ∪ C[E] ∪ C[E+1]`, so the
+/// node rotated out at epoch 1 is still tracked while `E = 1` — the outgoing
+/// committee keeps its links for one more epoch, by design — and its links fall
+/// when its peers track `E = 2`, i.e. at `start(2) = 2 * epoch_len = 10`. So a flat
+/// `finalized_delivered == 0` is no longer the right shape of the claim: while it
+/// had peers it WAS answered, four times.
+///
+/// The negative property that replaces it is the same statement bounded in time,
+/// read off the by-height pull SERIES (`Outcome::upstream_served`, which carries
+/// the height and the answer of every `get_finalization` this node made) rather
+/// than off a total that cannot see when: AFTER the cut, not one pull is answered.
+/// Measured: pulls for 5, 6, 7 and 8 delivered; the pull for 14 — the first one
+/// past the severance — refused, and node 3 parks at 8 while the members reach 16.
+///
+/// Falsifier: node 3 reaching `start(2)` (then something feeds it across the cut);
+/// ANY pull at or above the severance line coming back (the cut did not hold); no
+/// pull being made past the line (the node stopped asking, so its silence proves
+/// nothing); no pull being answered at all (it was cut before it ever had a peer,
+/// so the stand proves nothing about severance); or the members not crossing the
+/// boundaries.
 #[test]
 fn a_node_outside_the_tracked_peer_set_stands_at_the_boundary() {
     let mut cfg = StandConfig::honest(4, 1);
@@ -536,31 +551,74 @@ fn a_node_outside_the_tracked_peer_set_stands_at_the_boundary() {
         views.len() >= 3,
         "epochs 1..=3 not all entered on node 0: {views:?}"
     );
+    // The severance line, as a NUMBER and not a guess: node 3's links fall when its
+    // peers track epoch 2, whose first block is `start(2) = 2 * epoch_len`. It can
+    // never execute into epoch 2, so this is the strict bound the old `< 10` was
+    // and the `< 15` that replaced it was not — `15 = start(3)` left the whole of
+    // epoch 2 inside the tolerance.
+    const SEVERED_AT: u64 = 2 * 5;
     assert!(
-        out.heights[3] < 10,
-        "node 3 kept following outside the peer set ({:?}) — revisit (4b)/(4c)",
+        out.heights[3] < SEVERED_AT,
+        "node 3 executed into epoch 2, which it has no peer to reach: {:?}",
         out.heights
     );
     let u3 = out.upstream[3];
-    // The live form of step A's timeout: the probe's first `get_latest` has no
-    // peer to reach and expires on the virtual clock (8 s) — the executor then
-    // issues the next one. A `fetch_one` that never returned would leave
-    // exactly one call.
+    // The live form of step A's timeout: the probe's `get_latest` has no peer to
+    // reach once the links are gone and expires on the virtual clock (8 s) — the
+    // executor then issues the next one. A `fetch_one` that never returned would
+    // leave exactly one call.
     assert!(
         u3.latest_calls >= 2,
         "node 3's first frontier fetch never expired (a hung fetch_one): {u3:?}"
     );
-    assert_eq!(
-        u3.latest_delivered, 0,
-        "a Latest answer over no link: {u3:?}"
+    // It HAD peers: cut before that, nothing below would be about severance.
+    assert!(
+        u3.latest_delivered > 0,
+        "node 3 was severed before it ever had a peer, so the assertions below prove \
+         nothing about severance: {u3:?}"
     );
-    assert_eq!(
-        u3.finalized_delivered, 0,
-        "a by-height answer over no link: {u3:?}"
+    assert!(
+        u3.latest_calls > u3.latest_delivered,
+        "every probe was answered — node 3 never lost its peers: {u3:?}"
+    );
+    // THE negative property, and the one the flat `finalized_delivered == 0` used
+    // to carry: past the severance line, not one by-height pull is answered.
+    let pulls = &out.upstream_served[3];
+    assert!(
+        pulls.iter().any(|p| p.delivered),
+        "node 3 was never served by height at all, so the refusal below is not a \
+         severance: {pulls:?}"
+    );
+    assert!(
+        pulls.iter().any(|p| p.height >= SEVERED_AT),
+        "node 3 never asked for a height past the severance, so its not being \
+         served there is vacuous: {pulls:?}"
+    );
+    assert!(
+        pulls
+            .iter()
+            .all(|p| !(p.delivered && p.height >= SEVERED_AT)),
+        "a pull at or above the severance line came back — something served node 3 \
+         across a link the tracked set does not cover: {pulls:?}"
+    );
+    // ...and the refusals are a TAIL, not a scattering: once the links are gone
+    // nothing is served again.
+    let last_served = pulls
+        .iter()
+        .rposition(|p| p.delivered)
+        .expect("served once");
+    assert!(
+        pulls[last_served + 1..].iter().all(|p| !p.delivered),
+        "deliveries resumed after they stopped: {pulls:?}"
     );
     eprintln!(
-        "(4b) heights={:?} epoch-first-block views={:?} upstream={:?} virtual={:?} real={:?}",
-        out.heights, views, out.upstream, out.virtual_elapsed, out.real_elapsed
+        "(4b) heights={:?} views={:?} u3={:?} pulls3={:?} virtual={:?} real={:?}",
+        out.heights,
+        views,
+        out.upstream[3],
+        out.upstream_served[3],
+        out.virtual_elapsed,
+        out.real_elapsed
     );
 }
 
@@ -2028,10 +2086,10 @@ fn the_epoch_transition_walks_the_boundaries_from_the_fake_state() {
         );
     }
     // The peer set every transition handed its sink is the same on every node:
-    // the union `active_registry ∪ committee[E] ∪ committee[E+1]` is a function
-    // of chain state alone, so a per-node difference means two nodes read
-    // different committees for one epoch. Counted at the sink over the MEMBERS,
-    // not their count — the registry union makes every set the same SIZE under
+    // both tiers (`primary = C[E−1] ∪ C[E] ∪ C[E+1]`, `secondary = registry`)
+    // are a function of chain state alone, so a per-node difference means two
+    // nodes read different committees for one epoch. Counted at the sink over the
+    // MEMBERS, not their count — every set is the same SIZE under
     // `PeerSet::AllNodes`, so a length comparison here would be vacuous.
     assert_eq!(
         out.tracked_mismatches, 0,
@@ -2039,12 +2097,12 @@ fn the_epoch_transition_walks_the_boundaries_from_the_fake_state() {
     );
     for i in 0..4 {
         assert!(
-            out.tracked[i].len() >= 4,
+            out.peer_sets[i].len() >= 4,
             "node {i} tracked only {} epochs: {:?}",
-            out.tracked[i].len(),
-            out.tracked[i]
+            out.peer_sets[i].len(),
+            out.peer_sets[i]
                 .iter()
-                .map(|(e, m)| (*e, m.len()))
+                .map(|(e, p, sec)| (*e, p.len(), sec.len()))
                 .collect::<Vec<_>>()
         );
     }
@@ -4078,5 +4136,100 @@ fn land_jump_refuses_an_unservable_tip_and_a_conflicting_prefix() {
             served: div5,
         },
         "a divergent block at an already-canonical height must be a ConflictingPrefix"
+    );
+}
+
+/// A node in the REGISTRY but in no committee is tier 2 on every node's peer
+/// set, and still follows the chain (4.3 A.1/A.5в).
+///
+/// Before 4.3 the whole Active registry was PRIMARY: a registry entry that had
+/// never been on a committee still got a `buffered` body deque of its own on
+/// every node, a slot in the discovery bit-vec and a place in the resolver's
+/// candidate list (R-013, R-037, E4-14). Now the registry is `secondary`:
+/// commonware never dials it, never bit-vec gossips it and never caches its
+/// bodies (`CW:.../tracker/record.rs:171`,
+/// `CW:broadcast/src/buffered/engine.rs:319-322`), but does accept it inbound and
+/// does serve it.
+///
+/// What the SIMULATED network can and cannot show. It models the tiers where they
+/// are read: `register_tracked_peer_set` keeps `primary` and `secondary` apart
+/// (`CW:p2p/src/simulated/network.rs:263-313`) and `latest_update` hands both to
+/// every `Provider::subscribe` consumer (`:624-631`) — which is exactly the input
+/// `buffered` filters its cache on. It does NOT tier DELIVERY: `all_connected_peers`
+/// returns every peer of every tier (`:639-641`) and `is_connectable` asks only
+/// that the key be in some set (`:644-646`). So "the secondary node receives" is
+/// not a discriminating claim in this harness — the discriminating evidence for
+/// the real transport is the authenticated-transport precondition
+/// (`testbed::preconditions::a_secondary_peer_on_the_authenticated_transport_is_accepted_and_heard`),
+/// which measures acceptance, service and the dial map on
+/// `commonware_p2p::authenticated::discovery`. What this test pins is the half
+/// the simulator DOES decide: which tier this node's own code puts the peer in.
+///
+/// Falsifier: the registry-only key appearing in any node's `primary`, a
+/// committee member missing from it, or the outsider's chain stopping.
+#[test]
+fn a_registry_only_node_is_secondary_on_every_peer_set_and_still_follows() {
+    use commonware_cryptography::Signer as _;
+
+    const OUTSIDER: usize = 3;
+    let mut cfg = StandConfig::honest(4, 43);
+    // The production shape: the registry holds every activated validator.
+    assert!(matches!(cfg.peer_set, PeerSet::AllNodes));
+    // Node 3 is activated and registered, and on no committee, ever.
+    cfg.committees = Committees::Schedule(Arc::new(|_epoch, n| Some((0..n - 1).collect())));
+    let members = [0usize, 1, 2];
+    let out = Stand::new(cfg).run_until(
+        move |p| p.min_height_of(&members) >= 3 * EPOCH_LEN,
+        Duration::from_secs(400),
+    );
+    assert!(!out.timed_out, "heights {:?}", out.heights);
+    assert!(out.halted.is_empty(), "{:?}", out.halted);
+
+    let (peers, _) = super::stand::keys(43, 4);
+    let key_of: Vec<_> = peers.iter().map(|p| p.public_key()).collect();
+    let outsider = &key_of[OUTSIDER];
+
+    // PREMISE: every node registered at least two epochs' peer sets, so the
+    // assertions below range over something.
+    for i in 0..4 {
+        assert!(
+            out.peer_sets[i].len() >= 2,
+            "node {i} tracked {} peer sets: nothing to check",
+            out.peer_sets[i].len()
+        );
+    }
+    let mut checked = 0usize;
+    for (i, sets) in out.peer_sets.iter().enumerate() {
+        for (epoch, primary, secondary) in sets {
+            assert!(
+                !primary.contains(outsider),
+                "node {i}'s epoch-{epoch} PRIMARY holds the registry-only node"
+            );
+            assert!(
+                secondary.contains(outsider),
+                "node {i}'s epoch-{epoch} SECONDARY is missing the registry-only node: \
+                 {secondary:?}"
+            );
+            for m in &members {
+                assert!(
+                    primary.contains(&key_of[*m]),
+                    "node {i}'s epoch-{epoch} PRIMARY is missing committee member {m}"
+                );
+            }
+            checked += 1;
+        }
+    }
+    assert!(checked >= 8, "only {checked} peer sets examined");
+    assert_eq!(
+        out.tracked_mismatches, 0,
+        "two nodes tracked different peer sets for one epoch"
+    );
+
+    // And the outsider is not cut off: it keeps executing the chain the committee
+    // finalizes. (Delivery, not tiering — see the doc block.)
+    assert!(
+        out.heights[OUTSIDER] >= 2 * EPOCH_LEN,
+        "the registry-only node stopped following: {:?}",
+        out.heights
     );
 }

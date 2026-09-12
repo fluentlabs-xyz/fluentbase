@@ -61,7 +61,12 @@ fn five_node_convergence() {
         // Generate N peer keys + listen addresses.
         let peers: Vec<PrivateKey> = (0..N).map(|i| peer_key(i as u64)).collect();
         let addresses: Vec<PeerPubkey> = peers.iter().map(|p| p.public_key()).collect();
-        let peer_set: Set<PeerPubkey> = Set::try_from(addresses.clone()).expect("distinct keys");
+        // One committee record at epoch 0 — the primary tier of the set the
+        // `PeerSetSink` adapter registers (4.3: `track` takes both tiers).
+        let peer_set = fluentbase_staking_reader::TrackedPeers {
+            committees: vec![(0, Set::try_from(addresses.clone()).expect("distinct keys"))],
+            secondary: Set::default(),
+        };
         let bootnode_addr = peer_listen(0);
 
         // Build N FluentP2P instances; each tracks the full peer

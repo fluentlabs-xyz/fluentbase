@@ -119,15 +119,71 @@ impl TriggerResult {
     }
 }
 
+/// The two tiers of one epoch's peer set, kept apart all the way to the
+/// `Oracle` because commonware treats them differently and because the epoch a
+/// peer owes its place to is what every channel's membership check asks for.
+///
+/// `primary` is not stored as a union: it is the per-epoch committee RECORDS
+/// (`E−1`, `E`, `E+1`) the union is taken over, so the consumer of a frame can
+/// ask "which of the three does this sender sit in" without a second read of
+/// anything. [`Self::primary`] takes the union for commonware, which wants one
+/// flat set; [`Self::epochs_of`] answers the membership question.
+///
+/// `secondary` is the Active validator REGISTRY: commonware never dials it, never
+/// gossips bit-vecs about it and never caches its bodies, but does accept its
+/// inbound connections and does serve it (`CW:.../tracker/record.rs:171`,
+/// `:264`, `:341-348`; `CW:broadcast/src/buffered/engine.rs:319-322`) — which is
+/// exactly the tier an ejected/upcoming validator belongs in.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TrackedPeers {
+    /// `(epoch, committee[epoch])` for each readable record among `E−1`, `E`,
+    /// `E+1`, ascending. A record that is not readable (below the contract's
+    /// window at cold start, or not committed yet) is ABSENT rather than empty —
+    /// "no record" and "empty committee" are different answers and only the
+    /// second one would be a fault.
+    ///
+    /// INVARIANT, held by every producer and relied on by every consumer: AT MOST
+    /// THREE entries, with DISTINCT epochs. [`Self::assemble_tracked_peers`] gets
+    /// it by construction (`E−1`, `E`, `E+1`, each pushed at most once); the
+    /// ingress mask on the consuming side is a fixed three-slot array sized off it
+    /// (`fluentbase_p2p::EpochMask`, which `debug_assert`s the bound rather than
+    /// truncating in silence). The field is `pub` because two test call sites build
+    /// a window by hand — a fourth record, or a repeated epoch, is a bug in the
+    /// builder, not something a consumer is expected to cope with.
+    pub committees: Vec<(u64, Set<PeerPubkey>)>,
+    /// Tier 2: every Active registry entry at the anchor.
+    pub secondary: Set<PeerPubkey>,
+}
+
+impl TrackedPeers {
+    /// The flat primary set commonware tracks: the union of the carried records.
+    pub fn primary(&self) -> Set<PeerPubkey> {
+        Set::from_iter_dedup(
+            self.committees
+                .iter()
+                .flat_map(|(_, members)| members.iter().cloned()),
+        )
+    }
+
+    /// The epochs whose carried record contains `peer` — the membership mask a
+    /// channel's ingress check reads. Empty ⇒ the peer is not primary here.
+    pub fn epochs_of<'a>(&'a self, peer: &'a PeerPubkey) -> impl Iterator<Item = u64> + 'a {
+        self.committees
+            .iter()
+            .filter(move |(_, members)| members.position(peer).is_some())
+            .map(|(epoch, _)| *epoch)
+    }
+}
+
 /// Where the assembled peer set is delivered. p2p-agnostic on purpose:
 /// `staking-reader` does not depend on `commonware-p2p`. The real adapter
 /// `impl PeerSetSink for commonware_p2p::Manager<PublicKey = PeerPubkey>`
-/// (a one-liner `Manager::track(self, epoch, set).await`) is written at the
-/// `Oracle`-handle owner (the node wiring), where the `oracle.track` call
-/// site lives. Style mirrors commonware's own traits (`-> impl Future + Send`,
-/// not `async fn`, to stay clean under `-D warnings`).
+/// (a one-liner `Manager::track(self, epoch, TrackedPeers::new(..)).await`) is
+/// written at the `Oracle`-handle owner (the node wiring), where the
+/// `oracle.track` call site lives. Style mirrors commonware's own traits
+/// (`-> impl Future + Send`, not `async fn`, to stay clean under `-D warnings`).
 pub trait PeerSetSink {
-    fn track(&mut self, epoch: u64, peers: Set<PeerPubkey>) -> impl Future<Output = ()> + Send;
+    fn track(&mut self, epoch: u64, peers: TrackedPeers) -> impl Future<Output = ()> + Send;
 }
 
 /// Drives finality-gated epoch boundaries: detect → frozen-committee
@@ -637,62 +693,129 @@ where
         Ok(TransitionOutcome::Intra)
     }
 
-    /// THE peer set for `epoch`, assembled once and in one place: the Active
-    /// validator REGISTRY ∪ the frozen committee ∪ `committee[epoch + 1]` (tier-2:
-    /// every activated validator — ejected, upcoming, the sequencer — keeps
-    /// consensus-plane connectivity; the committee union covers the
-    /// mid-epoch-jailed member that already left the registry but is still in the
-    /// frozen committee; the incoming-committee union is what the epoch-key
-    /// agreement plane needs, see below). The schemes and the bridge continue to
-    /// consume the COMMITTEE snapshot only.
+    /// THE peer set for `epoch`, assembled once and in one place:
+    /// primary = `committee[epoch − 1] ∪ committee[epoch] ∪ committee[epoch + 1]`,
+    /// secondary = the Active validator REGISTRY at the anchor.
     ///
-    /// A FUNCTION rather than two copies of the formula because it now has two
-    /// callers on two different clocks — [`Self::track_and_trigger`] at a boundary
-    /// and [`Self::track_peers`] before the layer exists — and a peer set that
-    /// differed between them would partition the plane in exactly the window where
-    /// nothing is watching. The size guard rides along for the same reason: it is
-    /// part of what "the tracked set" means, not of either caller.
+    /// The registry USED to be part of primary, which is what made a body buffer,
+    /// a bit-vec and a resolver candidate list scale with the number of ACTIVATED
+    /// validators instead of with the committee (R-013, R-037, E4-14). It buys
+    /// nothing there: an ejected / upcoming / sequencer peer needs to reach the
+    /// plane and be served, and commonware's secondary tier is exactly that — it
+    /// connects inbound and is answered, but is never dialed, never bit-vec
+    /// gossiped and never cached (`CW:.../tracker/record.rs:171`,
+    /// `CW:broadcast/src/buffered/engine.rs:319-322`).
+    ///
+    /// The three committees are the three whose traffic is legitimate while
+    /// `epoch` is the tracked one: `epoch + 1` because its epoch-key agreement
+    /// instance runs DURING `epoch` and its `buffered` body engine retains a
+    /// proposal body only from a sender in `latest.primary`; `epoch − 1` because
+    /// the outgoing committee is still finalizing, still answering resolver
+    /// fetches for its own rounds and still re-publishing evidence for them, and
+    /// the committee can turn over completely at a boundary (zero overlap is
+    /// legitimate) — dropping it from primary at the instant of the boundary is
+    /// the same silent partition, one epoch earlier.
+    ///
+    /// A FUNCTION rather than two copies of the formula because it has two callers
+    /// on two different clocks — [`Self::track_and_trigger`] at a boundary and
+    /// [`Self::track_peers`] before the layer exists — and a peer set that differed
+    /// between them would partition the plane in exactly the window where nothing
+    /// is watching. The size guard rides along for the same reason: it is part of
+    /// what "the tracked set" means, not of either caller. It checks PRIMARY only —
+    /// commonware panics on an oversized primary set and does not check secondary
+    /// at all, because the cap exists to bound the gossip bit-vec, which only
+    /// covers primary (`CW:.../tracker/actor.rs:157-164`).
+    ///
+    /// The records come from the reader, not from the `committee/` module: this
+    /// crate is BELOW consensus in the dependency graph (`crates/dpos/consensus`
+    /// depends on `fluentbase-staking-reader`, not the reverse), so the module's
+    /// type is not nameable here. Both read the same write-once committed slot, so
+    /// the sets agree; making the module the single source is a Cargo-level move,
+    /// not a code-level one.
+    ///
+    /// The two neighbour outcomes are NOT the same failure and are not treated
+    /// alike.
+    ///
+    /// * `Ok` with no validators = "that epoch is not committed at this anchor"
+    ///   (`reader.rs:639-641`), which is a legal chain state, not a fault: the
+    ///   ahead-commit loop drains up to `current_epoch + MAX_COMMITTEE_LOOKAHEAD_EPOCHS`
+    ///   (= 2, `crates/types/src/staking_protocol.rs:73`, `crates/node/src/evm.rs:902`)
+    ///   on every block, so in steady state `C[E+1]` is committed a whole epoch
+    ///   before this reads it and only the genesis-era epochs (`E ≤ 2`, before a
+    ///   block of `E−1` has executed) can legitimately answer empty. The record is
+    ///   then ABSENT from `committees` and the tier is skipped. Nothing downstream
+    ///   loses by it: the beacon's own per-epoch check reads the SAME write-once
+    ///   slot through `committee_for`, so an epoch with no record has no members to
+    ///   admit either.
+    /// * `Err` = the read itself failed (backend, decode, an on-chain invariant
+    ///   violation). That is NOT a legal state, and it is `?`. Both callers of this
+    ///   function turn the error into a retry that re-reads the SAME boundary:
+    ///   [`Self::track_and_trigger`] never reaches its `sink.track`, so
+    ///   `last_tracked_epoch` does not advance and the re-poke loop calls
+    ///   `on_finalized` again every `PENDING_RETRY_BACKOFF` forever
+    ///   (`consensus/src/dpos.rs:2241`, `:2259-2277`); [`Self::track_peers`] leaves
+    ///   the node's `peers_tracked` latch unset and retries on the next finalized
+    ///   change (`node/src/dpos.rs:1630`, `:1645-1651`). Both re-entries are
+    ///   idempotent, so the retry costs nothing.
+    ///
+    /// Degrading instead — which is what this did before — was NOT free once the
+    /// registry left `primary`: `last_tracked_epoch` advanced on the degraded set,
+    /// commonware ignores a second `track` for an index it already holds
+    /// (`.claude/COMMONWARE_INTERNALS.md:363`), and no second source covers the
+    /// missing record any more. One failed read would have cost the whole epoch its
+    /// `C[E±1]` reachability with nothing above `warn` to say so.
     fn assemble_tracked_peers(
         &self,
         epoch: u64,
         snap: &crate::reader::ValidatorSetSnapshot,
         at: B256,
-    ) -> Result<Vec<PeerPubkey>, ReadError> {
-        let mut tracked = self.reader.active_registry_peers(at)?;
-        tracked.extend(snap.validators.iter().map(|v| v.keys.peer_pubkey.clone()));
-        // The epoch-key agreement instance for `epoch + 1` runs DURING `epoch`, and
-        // its `buffered` body engine retains a proposal body only when the SENDER is
-        // in the tracked primary set (`CW/broadcast/src/buffered/engine.rs:298`). An
-        // incoming member missing from the set is therefore dropped in silence —
-        // `verify` parks on a body that never arrives and the plane never converges,
-        // with nothing above `debug` anywhere in the logs. The registry branch above
-        // covers most incoming members incidentally; this makes it a guarantee.
-        //
-        // Deliberately NOT `?`. An `Err` here would take the boundary trigger down
-        // with it, and the authoritative path retries a failed `on_finalized` every
-        // `PENDING_RETRY_BACKOFF` forever WITHOUT advancing `last_tracked_epoch`
-        // (`consensus/src/dpos.rs:2468-2485`) — a degraded peer set that the next
-        // finalized block re-reads is strictly better than a stalled epoch, and this
-        // function is idempotent so the retry costs nothing. An `Ok` with no
-        // validators means "not committed yet" (`reader.rs:673`), never "the
-        // committee is empty".
-        match self.reader.epoch_committee_snapshot(epoch + 1, at) {
-            Ok(next) if !next.validators.is_empty() => {
-                tracked.extend(next.validators.iter().map(|v| v.keys.peer_pubkey.clone()));
-            }
-            Ok(_) => tracing::debug!(
-                epoch = epoch + 1,
-                "incoming committee not committed yet; peer-set union skipped"
-            ),
-            Err(e) => tracing::warn!(
-                epoch = epoch + 1,
-                ?e,
-                "incoming committee read failed; peer-set union skipped (degraded \
-                 agreement-plane reachability, retried on the next finalized block)"
-            ),
+    ) -> Result<TrackedPeers, ReadError> {
+        let secondary = Set::from_iter_dedup(self.reader.active_registry_peers(at)?);
+        let mut committees: Vec<(u64, Set<PeerPubkey>)> = Vec::with_capacity(3);
+        if let Some(prev) = epoch.checked_sub(1) {
+            self.push_neighbour_committee(&mut committees, prev, at, "outgoing")?;
         }
-        check_peer_set_size(epoch, tracked.len(), self.max_peer_set_size)?; // typed, not panic
+        committees.push((
+            epoch,
+            Set::from_iter_dedup(snap.validators.iter().map(|v| v.keys.peer_pubkey.clone())),
+        ));
+        self.push_neighbour_committee(&mut committees, epoch + 1, at, "incoming")?;
+        let tracked = TrackedPeers {
+            committees,
+            secondary,
+        };
+        // typed, not panic
+        check_peer_set_size(epoch, tracked.primary().len(), self.max_peer_set_size)?;
         Ok(tracked)
+    }
+
+    /// Read one neighbour committee into the primary records.
+    ///
+    /// An uncommitted epoch reads back empty and is SKIPPED (no record, rather
+    /// than an empty one); a failed read is returned and replays the whole
+    /// boundary. See [`Self::assemble_tracked_peers`] for why the two are not the
+    /// same failure.
+    fn push_neighbour_committee(
+        &self,
+        committees: &mut Vec<(u64, Set<PeerPubkey>)>,
+        neighbour: u64,
+        at: B256,
+        which: &'static str,
+    ) -> Result<(), ReadError> {
+        let record = self.reader.epoch_committee_snapshot(neighbour, at)?;
+        if record.validators.is_empty() {
+            tracing::debug!(
+                epoch = neighbour,
+                which,
+                "neighbour committee is not committed at this anchor; peer-set tier skipped"
+            );
+            return Ok(());
+        }
+        committees.push((
+            neighbour,
+            Set::from_iter_dedup(record.validators.iter().map(|v| v.keys.peer_pubkey.clone())),
+        ));
+        Ok(())
     }
 
     /// Register the peer set for the epoch `number` falls in, and DO NOTHING ELSE —
@@ -721,12 +844,13 @@ where
     /// ignores a `track` for an index already registered, and requires the index to
     /// grow (`.claude/COMMONWARE_INTERNALS.md:363`).
     ///
-    /// TEMPORARY BRIDGE. Design step 4.3 (`E4-CORE-DESIGN.md:534-548`) moves peer-set
-    /// registration out of the epoch machine entirely, to a
-    /// `track(E, TrackedPeers { primary: C[E−1] ∪ C[E] ∪ C[E+1], secondary: registry })`
-    /// owned by its own module. When that lands, this method and the `track` inside
-    /// [`Self::track_and_trigger`] are replaced by that one call site, and
-    /// [`Self::assemble_tracked_peers`] goes with them.
+    /// TEMPORARY BRIDGE. The SET is now the 4.3 one —
+    /// `TrackedPeers { primary: C[E−1] ∪ C[E] ∪ C[E+1], secondary: registry }`,
+    /// assembled by [`Self::assemble_tracked_peers`] — but the two call sites are
+    /// still two: this one and the `track` inside [`Self::track_and_trigger`].
+    /// Design step 4.3 (`E4-CORE-DESIGN.md:534-548`) moves peer-set registration out
+    /// of the epoch machine entirely; when that lands, both are replaced by that one
+    /// call site and [`Self::assemble_tracked_peers`] goes with them.
     pub async fn track_peers(&mut self, at: B256, number: u64) -> Result<Option<u64>, ReadError> {
         // `None` until the geometry freezes — the plane's cursor must not be what
         // fixes it either, so there is no freeze attempt here.
@@ -745,7 +869,7 @@ where
             return Ok(None);
         }
         let tracked = self.assemble_tracked_peers(epoch, &snap, at)?;
-        self.sink.track(epoch, Set::from_iter_dedup(tracked)).await;
+        self.sink.track(epoch, tracked).await;
         Ok(Some(epoch))
     }
 
@@ -763,7 +887,7 @@ where
         at: B256,
     ) -> Result<TriggerResult, ReadError> {
         let tracked = self.assemble_tracked_peers(epoch, &snap, at)?;
-        self.sink.track(epoch, Set::from_iter_dedup(tracked)).await; // one-shot
+        self.sink.track(epoch, tracked).await; // one-shot
 
         // Gate `last_tracked_epoch` advance on `try_send` success. A
         // `Full` channel means the consensus bridge is backed up; leave the
@@ -1008,12 +1132,13 @@ mod tests {
 
     /// Records the full tracked SET, not just its size — the peer-set union's
     /// whole point is WHICH keys reach the agreement plane, and a size match can
-    /// be satisfied by any three keys.
-    type TrackedSets = Arc<Mutex<Vec<(u64, Set<PeerPubkey>)>>>;
+    /// be satisfied by any three keys. Both tiers, because which tier a key lands
+    /// in is the whole of 4.3.
+    type TrackedSets = Arc<Mutex<Vec<(u64, TrackedPeers)>>>;
     #[derive(Clone, Default)]
     struct KeySink(TrackedSets);
     impl PeerSetSink for KeySink {
-        fn track(&mut self, epoch: u64, peers: Set<PeerPubkey>) -> impl Future<Output = ()> + Send {
+        fn track(&mut self, epoch: u64, peers: TrackedPeers) -> impl Future<Output = ()> + Send {
             let log = self.0.clone();
             async move {
                 log.lock().unwrap().push((epoch, peers));
@@ -1021,35 +1146,48 @@ mod tests {
         }
     }
 
-    /// Records every `track` call.
+    /// Records every `track` call as `(epoch, |primary|)` — the size the
+    /// commonware cap is taken against.
     #[derive(Clone, Default)]
     struct RecordingSink(Arc<Mutex<Vec<(u64, usize)>>>);
     impl PeerSetSink for RecordingSink {
-        fn track(&mut self, epoch: u64, peers: Set<PeerPubkey>) -> impl Future<Output = ()> + Send {
+        fn track(&mut self, epoch: u64, peers: TrackedPeers) -> impl Future<Output = ()> + Send {
             let log = self.0.clone();
             async move {
-                log.lock().unwrap().push((epoch, peers.len()));
+                log.lock().unwrap().push((epoch, peers.primary().len()));
             }
         }
     }
 
+    /// Primary is the THREE COMMITTEES and nothing else; the registry is tier 2.
+    ///
+    /// This is the whole of 4.3 A.1 in one assertion. Before it, an Active
+    /// registry entry that sits in no committee was a primary peer — which is
+    /// what made the `buffered` body cache, the discovery bit-vec and the
+    /// resolver candidate list scale with the registry instead of with the
+    /// committee (R-013, R-037, E4-14). It must now be secondary-only, and the
+    /// outgoing committee `C[E−1]` must have JOINED primary.
+    ///
+    /// Falsifier: the registry-only key reappearing in `primary()`, or `C[E−1]`
+    /// missing from it.
     #[test]
-    fn tracked_set_is_registry_union_committee() {
+    fn the_registry_is_tier_two_and_the_outgoing_committee_is_tier_one() {
         deterministic::Runner::default().start(|_ctx| async move {
-            let sink = RecordingSink::default();
+            let sink = KeySink::default();
             let h = B256::repeat_byte(0x33);
-            // 2 registry-only peers (seeds far from the committee's) + committee[2]
-            // of 3 + committee[3] of 3 — MockReader seeds per epoch, so the incoming
-            // committee is disjoint from the current one.
+            // 2 registry-only peers (seeds far from every committee's) + the three
+            // committees of 3 — MockReader seeds per epoch, so C[1], C[2] and C[3]
+            // are pairwise disjoint.
+            let registry_only: Vec<PeerPubkey> = vec![
+                validator(900_001).keys.peer_pubkey,
+                validator(900_002).keys.peer_pubkey,
+            ];
             let reader = RegistryReader {
                 inner: MockReader {
                     committee: 3,
                     interval: 100,
                 },
-                registry: vec![
-                    validator(900_001).keys.peer_pubkey,
-                    validator(900_002).keys.peer_pubkey,
-                ],
+                registry: registry_only.clone(),
             };
             let mut et = EpochTransition::new(
                 reader,
@@ -1060,8 +1198,54 @@ mod tests {
                 3,
             );
             et.cold_start(h, 200).await.unwrap();
+
             let log = sink.0.lock().unwrap();
-            assert_eq!(log.as_slice(), &[(2, 8)]);
+            let [(epoch, tracked)] = log.as_slice() else {
+                panic!("expected exactly one track call, got {log:?}");
+            };
+            assert_eq!(*epoch, 2);
+            assert_eq!(
+                tracked
+                    .committees
+                    .iter()
+                    .map(|(e, _)| *e)
+                    .collect::<Vec<_>>(),
+                vec![1, 2, 3],
+                "primary carries C[E-1], C[E], C[E+1] as separate records"
+            );
+            let primary = tracked.primary();
+            assert_eq!(primary.len(), 9, "three disjoint committees of 3");
+            let reader = MockReader {
+                committee: 3,
+                interval: 100,
+            };
+            for member in reader.epoch_committee_snapshot(1, h).unwrap().validators {
+                assert!(
+                    primary.position(&member.keys.peer_pubkey).is_some(),
+                    "outgoing committee[1] member {:?} missing from primary",
+                    member.address
+                );
+            }
+            for peer in &registry_only {
+                assert!(
+                    primary.position(peer).is_none(),
+                    "a registry entry in no committee must not be primary"
+                );
+                assert!(
+                    tracked.secondary.position(peer).is_some(),
+                    "a registry entry in no committee must be secondary"
+                );
+                assert_eq!(
+                    tracked.epochs_of(peer).count(),
+                    0,
+                    "a secondary peer's membership mask is empty"
+                );
+            }
+            assert_eq!(
+                tracked.secondary.len(),
+                2,
+                "the registry is the whole of it"
+            );
         });
     }
 
@@ -1100,14 +1284,24 @@ mod tests {
                 committee: 3,
                 interval: 100,
             };
+            let primary = peers.primary();
             for member in reader.epoch_committee_snapshot(6, h).unwrap().validators {
                 assert!(
-                    peers.position(&member.keys.peer_pubkey).is_some(),
+                    primary.position(&member.keys.peer_pubkey).is_some(),
                     "committee[6] member {:?} missing from the epoch-5 peer set",
                     member.address
                 );
             }
-            assert_eq!(peers.len(), 6, "committee[5] ∪ committee[6], both of 3");
+            assert_eq!(
+                primary.len(),
+                9,
+                "committee[4] ∪ committee[5] ∪ committee[6], each of 3"
+            );
+            assert_eq!(
+                peers.committees.iter().map(|(e, _)| *e).collect::<Vec<_>>(),
+                vec![4, 5, 6],
+                "the three records are carried separately, not flattened"
+            );
 
             // The union is additive only — the boundary trigger still carries the
             // CURRENT committee, unchanged.
@@ -1153,8 +1347,8 @@ mod tests {
             );
             assert_eq!(
                 *sink.0.lock().unwrap(),
-                vec![(5, 3)],
-                "committee[5] only; the empty incoming read adds nothing"
+                vec![(5, 6)],
+                "committee[4] ∪ committee[5]; the empty incoming read adds nothing"
             );
             assert_eq!(et.last_tracked_epoch, Some(5));
             assert_eq!(
@@ -1167,12 +1361,23 @@ mod tests {
         });
     }
 
+    /// A FAILED neighbour read replays the boundary; it does not register a short
+    /// peer set and move on.
+    ///
+    /// This is the difference between "not committed yet" (legal: skip the tier,
+    /// `uncommitted_incoming_committee_skips_the_union_and_still_triggers` above)
+    /// and "the read broke". Degrading on the second one used to be free, because
+    /// the Active registry was ALSO primary and covered an incoming member
+    /// incidentally. Since 4.3 the registry is tier 2 and `C[E±1]` has exactly one
+    /// source, while `last_tracked_epoch` advances on the degraded set and
+    /// commonware ignores a re-`track` of an index it already holds — so a single
+    /// failed read would have cost the whole epoch its neighbour reachability, with
+    /// nothing above a `warn` to say so.
+    ///
+    /// Falsifier: `track` being called at all, `last_tracked_epoch` advancing, or
+    /// the boundary trigger firing — each of them is the old degrade-and-continue.
     #[test]
-    fn failed_incoming_committee_read_degrades_the_peer_set_not_the_trigger() {
-        // An `Err` on the union read must NOT propagate: the authoritative path
-        // retries a failed `on_finalized` every PENDING_RETRY_BACKOFF forever
-        // without advancing the epoch, so a briefly-short peer set is the far
-        // cheaper failure.
+    fn a_failed_neighbour_committee_read_replays_the_boundary_instead_of_tracking() {
         deterministic::Runner::default().start(|_ctx| async move {
             let sink = RecordingSink::default();
             let (boundary_tx, mut boundary_rx) = tokio::sync::mpsc::channel(8);
@@ -1194,27 +1399,59 @@ mod tests {
                 std::sync::Arc::new(move |_n| Ok(Some(h))),
                 3,
             );
-            assert_eq!(
-                et.cold_start(h, 500).await.unwrap(),
-                TransitionOutcome::EpochAdvanced(5),
-                "a failed incoming-committee read must not sink the boundary"
+            let err = et
+                .cold_start(h, 500)
+                .await
+                .expect_err("a failed neighbour read must surface, not degrade");
+            assert!(
+                matches!(err, ReadError::Backend(_)),
+                "the read's own error must reach the caller verbatim: {err:?}"
             );
             assert!(
                 requested.lock().unwrap().contains(&6),
                 "the union must have ASKED for committee[6] — else this proves nothing"
             );
+            assert!(
+                sink.0.lock().unwrap().is_empty(),
+                "no peer set may be registered off a failed read: {:?}",
+                sink.0.lock().unwrap()
+            );
+            assert_eq!(
+                et.last_tracked_epoch, None,
+                "the epoch stays un-tracked so the next finalized block re-reads it"
+            );
+            assert!(
+                boundary_rx.try_recv().is_err(),
+                "the boundary trigger must not fire off a set that was never tracked"
+            );
+
+            // ...and the retry is what makes that safe: the same call against a
+            // reader whose read now works registers the full three records and
+            // fires the boundary, with no state left over from the failure.
+            let mut healed = EpochTransition::new(
+                IncomingUnavailableReader {
+                    inner: MockReader {
+                        committee: 3,
+                        interval: 100,
+                    },
+                    ok_through: u64::MAX,
+                    fail: true,
+                    requested: requested.clone(),
+                },
+                sink.clone(),
+                64,
+                None,
+                std::sync::Arc::new(move |_n| Ok(Some(h))),
+                3,
+            );
+            assert_eq!(
+                healed.cold_start(h, 500).await.unwrap(),
+                TransitionOutcome::EpochAdvanced(5)
+            );
             assert_eq!(
                 *sink.0.lock().unwrap(),
-                vec![(5, 3)],
-                "peer set degrades to committee[5]"
-            );
-            assert_eq!(et.last_tracked_epoch, Some(5));
-            assert_eq!(
-                boundary_rx
-                    .try_recv()
-                    .expect("boundary trigger delivered")
-                    .0,
-                5
+                vec![(5, 9)],
+                "the healed read registers committee[4] ∪ committee[5] ∪ committee[6]"
             );
         });
     }
@@ -1247,8 +1484,8 @@ mod tests {
                 let log = sink.0.lock().unwrap();
                 assert_eq!(
                     *log,
-                    vec![(5, 10)],
-                    "tracked once for epoch 5: committee[5] ∪ the incoming committee[6]"
+                    vec![(5, 15)],
+                    "tracked once for epoch 5: committee[4] ∪ committee[5] ∪ committee[6]"
                 );
             }
         });
@@ -1340,7 +1577,7 @@ mod tests {
             let log = sink.0.lock().unwrap();
             assert_eq!(
                 *log,
-                vec![(5, 10), (6, 10)],
+                vec![(5, 15), (6, 15)],
                 "bootstrap epoch 5, then spawn epoch 6 at its boundary"
             );
         });
@@ -1371,7 +1608,7 @@ mod tests {
             );
             assert_eq!(
                 *sink.0.lock().unwrap(),
-                vec![(6, 10)],
+                vec![(6, 15)],
                 "boundary cold-start tracks epoch 6"
             );
         });
@@ -1387,8 +1624,8 @@ mod tests {
                     interval: 100,
                 },
                 RecordingSink::default(),
-                // Below the tracked union: registry ∅ + committee[2] of 10 + the
-                // incoming committee[3] of 10.
+                // Below the tracked primary: committee[1] ∪ committee[2] ∪
+                // committee[3], each of 10 and pairwise disjoint.
                 4,
                 None,
                 h,
@@ -1397,7 +1634,7 @@ mod tests {
                 et.cold_start(h, 200).await,
                 Err(ReadError::PeerSetTooLarge {
                     epoch: 2,
-                    size: 20,
+                    size: 30,
                     max: 4
                 })
             ));
@@ -1671,7 +1908,7 @@ mod tests {
                 h,
             );
             et.cold_start(h, 1200).await.unwrap();
-            assert_eq!(*sink.0.lock().unwrap(), vec![(12, 6)]);
+            assert_eq!(*sink.0.lock().unwrap(), vec![(12, 9)]);
         });
     }
 
@@ -1723,7 +1960,7 @@ mod tests {
             );
             assert_eq!(
                 *sink.0.lock().unwrap(),
-                vec![(5, 10), (6, 10)],
+                vec![(5, 15), (6, 15)],
                 "epoch 6 entered via the pending-boundary replay"
             );
         });
@@ -2786,9 +3023,14 @@ mod tests {
                 "the pre-jump track and the bootstrap track register the SAME set"
             );
             assert_eq!(
-                log[0].1.len(),
-                8,
-                "registry(2) union committee[2](3) union committee[3](3)"
+                log[0].1.primary().len(),
+                9,
+                "primary = committee[1] union committee[2] union committee[3], each of 3"
+            );
+            assert_eq!(
+                log[0].1.secondary.len(),
+                2,
+                "the registry is tier 2 now, and is no longer part of primary"
             );
             drop(log);
 

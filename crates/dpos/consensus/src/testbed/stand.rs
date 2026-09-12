@@ -61,7 +61,7 @@ use fluentbase_p2p::{
     NoopBlocker,
 };
 use fluentbase_staking_reader::{
-    epoch_transition::{PeerSetSink, TransitionOutcome, PENDING_RETRY_BACKOFF},
+    epoch_transition::{PeerSetSink, TrackedPeers, TransitionOutcome, PENDING_RETRY_BACKOFF},
     reader::ValidatorSetSnapshot,
     EpochTransition,
 };
@@ -237,8 +237,9 @@ pub(super) enum Beacon {
 /// only.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum PeerSet {
-    /// Every node, tracked once at index 0 — production's `active_registry ∪
-    /// committee[E]` for a registry that never changes.
+    /// Every node, tracked once at index 0 — production's primary
+    /// `committee[E-1] ∪ committee[E] ∪ committee[E+1]` for a committee that
+    /// never changes.
     AllNodes,
     /// `committee[E]` only, re-tracked at index `E` when the chain enters epoch
     /// `E`, and the consensus-plane links of a node outside the set are REMOVED
@@ -539,6 +540,11 @@ pub(super) enum Divergence {
     Tie { height: u64, hashes: Vec<B256> },
 }
 
+/// One node's `PeerSetSink` log: `(epoch, primary, secondary)` per `track` call,
+/// in call order. Both tiers, because which tier a key lands in is what 4.3
+/// changed and a union cannot answer it.
+pub(super) type TrackedRegistrations = Vec<(u64, Vec<PeerPubkey>, Vec<PeerPubkey>)>;
+
 pub(super) struct Outcome {
     /// Tier-F (finalized-executed) tip per node.
     pub heights: Vec<u64>,
@@ -574,9 +580,11 @@ pub(super) struct Outcome {
     /// end of the run: `(dposActivationBlock, epochBlockInterval)` or `None`
     /// when nothing froze it.
     pub geometry: Vec<Option<(u64, u64)>>,
-    /// `tracked[i]` = every `(epoch, peer set)` node `i`'s transition handed its
-    /// `PeerSetSink`.
-    pub tracked: Vec<Vec<(u64, Vec<PeerPubkey>)>>,
+    /// `peer_sets[i]` = every registration node `i`'s transition handed its
+    /// `PeerSetSink`. The two tiers apart, because which tier a key lands in is
+    /// what 4.3 changed: primary is the three committee records
+    /// (`C[E−1] ∪ C[E] ∪ C[E+1]`), secondary the Active registry.
+    pub peer_sets: Vec<TrackedRegistrations>,
     /// How many times two nodes' transitions tracked DIFFERENT peer sets for the
     /// same epoch. Must be zero.
     pub tracked_mismatches: u64,
@@ -992,7 +1000,8 @@ struct EtObserver {
 }
 
 /// The `PeerSetSink` half of the production wiring: `EpochTransition` hands the
-/// assembled `active_registry ∪ committee[E] ∪ committee[E+1]` set here and the
+/// assembled `TrackedPeers { primary: committee[E-1] ∪ committee[E] ∪
+/// committee[E+1], secondary: active_registry }` set here and the
 /// simulated network's `Manager::track` takes it, exactly as the node hands it
 /// to the real `Oracle` (`node/src/dpos.rs:1566`, `consensus/src/dpos.rs:2036`).
 ///
@@ -1025,13 +1034,22 @@ struct Tracked {
     /// engines need a peer set to be there), so the transitions' own epoch-0
     /// track is a no-op against it.
     by_epoch: BTreeMap<u64, Vec<PeerPubkey>>,
-    /// `per_node[i]` = every `(epoch, set)` node `i`'s transition tracked.
-    per_node: Vec<Vec<(u64, Vec<PeerPubkey>)>>,
-    /// How many times a node tracked a set for an epoch that DIFFERS from the
-    /// one already recorded for it. Forwarding only the first node's set would
-    /// otherwise swallow the disagreement in silence: the union is a function of
-    /// chain state alone, so a difference means two nodes read different
-    /// committees for one epoch.
+    /// `epoch -> (primary, secondary)` as the FIRST node to reach that epoch split
+    /// them. Separate from [`Self::by_epoch`] on purpose: that one is the
+    /// link-severing model's input and is deliberately the UNION, which cannot see
+    /// two nodes agreeing on who is tracked while disagreeing on which TIER each
+    /// one is in — and the tier split is the whole subject of 4.3. Not seeded with
+    /// the harness's epoch-0 registration, which has no tier split of its own:
+    /// whichever node registers epoch 0 first sets the reference.
+    tiers_by_epoch: BTreeMap<u64, (Vec<PeerPubkey>, Vec<PeerPubkey>)>,
+    /// `per_node[i]` = every registration node `i`'s transition tracked.
+    per_node: Vec<TrackedRegistrations>,
+    /// How many times a node tracked a set for an epoch whose TIER SPLIT differs
+    /// from the one already recorded for it. Forwarding only the first node's set
+    /// would otherwise swallow the disagreement in silence: both tiers are a
+    /// function of chain state alone, so a difference means two nodes read
+    /// different committees — or sorted the same peers into different tiers — for
+    /// one epoch.
     mismatches: u64,
     /// How many peer-set registrations actually reached the simulated network —
     /// the only events that can cost an ack (see `Outcome::SIMULATOR_ACK_DROP`).
@@ -1042,24 +1060,43 @@ impl PeerSetSink for TrackSink {
     fn track(
         &mut self,
         epoch: u64,
-        peers: Set<PeerPubkey>,
+        peers: TrackedPeers,
     ) -> impl core::future::Future<Output = ()> + Send {
-        let members: Vec<PeerPubkey> = peers.iter().cloned().collect();
+        let primary = peers.primary();
+        let primary_members: Vec<PeerPubkey> = primary.iter().cloned().collect();
+        let secondary_members: Vec<PeerPubkey> = peers.secondary.iter().cloned().collect();
+        // `by_epoch` (what the link-severing model reads) is both tiers: the
+        // authenticated transport keeps a connection to a secondary peer too — it
+        // just never dials it (`CW:.../tracker/record.rs:171`, `:341`).
+        let connectable: Vec<PeerPubkey> = {
+            let mut all = primary_members.clone();
+            all.extend(secondary_members.iter().cloned());
+            all.sort();
+            all.dedup();
+            all
+        };
         let forward = {
             let mut shared = self.shared.lock().unwrap();
-            shared.per_node[self.node].push((epoch, members.clone()));
+            // The disagreement counter reads the TIERS, not the union: two nodes
+            // that put the same peer in different tiers have read different
+            // committees, and the union hides exactly that.
+            let tiers = (primary_members.clone(), secondary_members.clone());
+            match shared.tiers_by_epoch.get(&epoch) {
+                Some(recorded) if *recorded != tiers => shared.mismatches += 1,
+                Some(_) => {}
+                None => {
+                    shared.tiers_by_epoch.insert(epoch, tiers);
+                }
+            }
+            shared.per_node[self.node].push((epoch, primary_members, secondary_members));
             let changed = shared
                 .by_epoch
                 .last_key_value()
-                .is_none_or(|(_, last)| *last != members);
+                .is_none_or(|(_, last)| *last != connectable);
             match shared.by_epoch.get(&epoch) {
-                Some(recorded) if *recorded != members => {
-                    shared.mismatches += 1;
-                    false
-                }
                 Some(_) => false,
                 None => {
-                    shared.by_epoch.insert(epoch, members);
+                    shared.by_epoch.insert(epoch, connectable);
                     if changed {
                         shared.forwarded += 1;
                     }
@@ -1068,9 +1105,10 @@ impl PeerSetSink for TrackSink {
             }
         };
         let mut manager = self.oracle.manager();
+        let registered = commonware_p2p::TrackedPeers::new(primary, peers.secondary);
         async move {
             if forward {
-                manager.track(epoch, peers).await;
+                manager.track(epoch, registered).await;
             }
         }
     }
@@ -1149,6 +1187,7 @@ async fn drive(
                 .cloned()
                 .collect::<Vec<PeerPubkey>>(),
         )]),
+        tiers_by_epoch: BTreeMap::new(),
         per_node: vec![Vec::new(); n],
         mismatches: 0,
         forwarded: 0,
@@ -1341,8 +1380,10 @@ async fn drive(
         if cfg.peer_set != PeerSet::AllNodes {
             // The links follow what the nodes' `EpochTransition`s actually
             // TRACKED, never the schedule: the tracked set is the state machine's
-            // own `active_registry ∪ committee[E] ∪ committee[E+1]`, and it is
-            // the set the authenticated transport would keep connections for.
+            // own `TrackedPeers` — primary `committee[E-1] ∪ committee[E] ∪
+            // committee[E+1]` plus the secondary registry — and BOTH tiers are what
+            // the authenticated transport would keep connections for (it declines to
+            // DIAL a secondary peer, it does not refuse one).
             let latest = {
                 let t = tracked.lock().unwrap();
                 t.by_epoch.last_key_value().map(|(e, m)| (*e, m.clone()))
@@ -1580,7 +1621,7 @@ async fn drive(
         et_steps,
         et_boundaries,
         geometry,
-        tracked: tracked_sets,
+        peer_sets: tracked_sets,
         tracked_mismatches,
         tracked_forwarded,
         staking_reads,
@@ -2321,7 +2362,9 @@ async fn build_node(
         dkg_height_tx,
         timeouts: ConsensusTimeouts::fluent_1s(),
         mailbox_size: 256,
-        deque_size: 64,
+        // The stand is the model, so it carries the production number
+        // (`consensus/src/dpos.rs`): a body cache four deep per primary sender.
+        deque_size: 4,
         partition_prefix: format!("node{i}-consensus_marshal"),
         engine_partition_prefix,
         resolver_initial: Duration::from_secs(1),

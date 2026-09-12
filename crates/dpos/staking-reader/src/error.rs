@@ -89,7 +89,13 @@ pub enum ReadError {
         validator: alloy_primitives::Address,
     },
 
-    #[error("epoch {epoch} tracker peer-set size {size} (registry ∪ committee) exceeds configured max_peer_set_size {max} (misconfig / governance drift)")]
+    /// The size is the PRIMARY tier only — `committee[E−1] ∪ committee[E] ∪
+    /// committee[E+1]` — because that is the tier commonware caps
+    /// (`max_peer_set_size` bounds the discovery bit-vec, which covers primary
+    /// alone). The Active registry is tier 2 since 4.3 and is not counted here, so
+    /// an operator who sees this is looking at oversized COMMITTEES, never at a
+    /// grown registry.
+    #[error("epoch {epoch} tracker primary peer-set size {size} (committee[E−1] ∪ committee[E] ∪ committee[E+1]) exceeds configured max_peer_set_size {max} (misconfig / governance drift)")]
     PeerSetTooLarge { epoch: u64, size: usize, max: usize },
 
     /// The committee the contract returned is not strictly ascending on the raw

@@ -514,8 +514,10 @@ pub struct AgreementPlaneConfig<P, R> {
     /// `latest.primary` to a set containing `committee[target_epoch]`, or the body
     /// engine caches nothing and the plane never converges. In production it is
     /// the plane's own oracle, on which the `EpochTransition` tracks
-    /// `active_registry ∪ committee[E]` — the same reachability the dealer-log
-    /// resolver already rides.
+    /// `committee[E−1] ∪ committee[E] ∪ committee[E+1]` as PRIMARY (4.3 — the
+    /// Active registry is tier 2 and `buffered` caches no body from it), so
+    /// `committee[target_epoch]` is covered as the incoming record of the epoch the
+    /// agreement runs in. The same reachability the dealer-log resolver rides.
     pub peers: P,
     /// The `{epoch, dealer}` dealer-log resolver, narrowed to the log key space.
     pub logs: R,

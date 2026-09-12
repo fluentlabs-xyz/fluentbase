@@ -57,6 +57,91 @@ use tokio::sync::{mpsc, Mutex};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
+/// The metric every channel's ingress refusal lands on. ONE counter for all of
+/// them, labelled by channel and by why — no per-peer counter, no penalty, no
+/// timer: the only global ban is the on-chain tombstone (PLAN §8 п.1).
+pub const INGRESS_DROPPED_TOTAL: &str = "dpos_ingress_dropped_total";
+
+/// Count one refused frame.
+pub fn record_ingress_drop(channel: &'static str, reason: &'static str) {
+    metrics::counter!(INGRESS_DROPPED_TOTAL, "channel" => channel, "reason" => reason).increment(1);
+}
+
+/// A `commonware_p2p::Receiver` that refuses a frame before anything decodes it,
+/// on the peer set this node last registered.
+///
+/// This is the FIRST half of the 4.3 ingress rule and the only half that can run
+/// before a decode: the sender is either in the tracked window or it is not, and
+/// a tombstoned sender is out regardless. The SECOND half — which epoch's
+/// committee the sender must be in for THIS frame — needs the frame's own epoch
+/// and therefore lives at each channel's own entry (`beacon::actor::on_message`,
+/// `slasher::gossip::ingest_batch`).
+///
+/// `members_only` says which tier the channel serves: BEACON and EVIDENCE are
+/// committee traffic, so a tier-2 (registry) sender has no business on them;
+/// a channel that serves the registry would set it `false` and only lose the
+/// untracked and the tombstoned.
+///
+/// Before the first `track` the window has no opinion and NOTHING is refused —
+/// a node in cold start has not read the chain yet, and turning "I do not know"
+/// into a drop would silence the plane exactly when it is trying to join.
+#[derive(Debug)]
+pub struct GatedReceiver<R> {
+    inner: R,
+    window: fluentbase_p2p::TrackedWindow,
+    channel: &'static str,
+    members_only: bool,
+}
+
+impl<R> GatedReceiver<R> {
+    pub fn new(
+        inner: R,
+        window: fluentbase_p2p::TrackedWindow,
+        channel: &'static str,
+        members_only: bool,
+    ) -> Self {
+        Self {
+            inner,
+            window,
+            channel,
+            members_only,
+        }
+    }
+
+    /// Whether this frame survives the window check.
+    fn admits(&self, from: &fluentbase_bls::PeerPubkey) -> bool {
+        let Some(ingress) = self.window.classify(from) else {
+            return true; // no peer set registered yet
+        };
+        let admitted = match ingress {
+            fluentbase_p2p::Ingress::Member { .. } => true,
+            fluentbase_p2p::Ingress::Tracked(_) => !self.members_only,
+            fluentbase_p2p::Ingress::Dropped => false,
+        };
+        if !admitted {
+            record_ingress_drop(self.channel, ingress.refusal());
+        }
+        admitted
+    }
+}
+
+impl<R> commonware_p2p::Receiver for GatedReceiver<R>
+where
+    R: commonware_p2p::Receiver<PublicKey = fluentbase_bls::PeerPubkey>,
+{
+    type Error = R::Error;
+    type PublicKey = fluentbase_bls::PeerPubkey;
+
+    async fn recv(&mut self) -> Result<commonware_p2p::Message<Self::PublicKey>, R::Error> {
+        loop {
+            let (from, buf) = self.inner.recv().await?;
+            if self.admits(&from) {
+                return Ok((from, buf));
+            }
+        }
+    }
+}
+
 /// Codeless-tolerant epoch-geometry read: `None` when `ChainConfig` is not
 /// deployed (or DPoS not yet scheduled) at `at` — the launch discriminator
 /// between "restart datadir / genesis-baked devnet" and "fresh datadir on a
@@ -2464,7 +2549,18 @@ impl DposLayer {
             dkg_height_tx: Some(dkg_height_tx),
             timeouts: ConsensusTimeouts::fluent_1s(),
             mailbox_size: 256,
-            deque_size: 64,
+            // BROADCAST body cache: at most 4 order-block bodies retained per
+            // PRIMARY sender (`CW:broadcast/src/buffered/engine.rs:319-322`,
+            // `:353-359`). 64 was 64 × `MAX_ORDER_BLOCK_SIZE` = 256 MiB per peer,
+            // and the primary set used to be the whole registry (R-013, E4-14);
+            // 4.3 makes primary the three committee records, and 4 covers the
+            // deepest legitimate pipeline (the proposal in flight plus a re-proposal
+            // after nullify) with a spare. There is NO byte cap to pair it with:
+            // `buffered::Config` carries `deque_size` and nothing else
+            // (`CW:broadcast/src/buffered/config.rs:5-22`), so the per-peer memory
+            // bound is `deque_size × MAX_ORDER_BLOCK_SIZE` — a library boundary,
+            // not a choice made here.
+            deque_size: 4,
             partition_prefix: MARSHAL_PARTITION_PREFIX.into(),
             engine_partition_prefix: String::new(),
             resolver_initial: Duration::from_secs(1),
@@ -3312,7 +3408,18 @@ impl DposLayer {
             dkg_height_tx: None,
             timeouts: ConsensusTimeouts::fluent_1s(),
             mailbox_size: 256,
-            deque_size: 64,
+            // BROADCAST body cache: at most 4 order-block bodies retained per
+            // PRIMARY sender (`CW:broadcast/src/buffered/engine.rs:319-322`,
+            // `:353-359`). 64 was 64 × `MAX_ORDER_BLOCK_SIZE` = 256 MiB per peer,
+            // and the primary set used to be the whole registry (R-013, E4-14);
+            // 4.3 makes primary the three committee records, and 4 covers the
+            // deepest legitimate pipeline (the proposal in flight plus a re-proposal
+            // after nullify) with a spare. There is NO byte cap to pair it with:
+            // `buffered::Config` carries `deque_size` and nothing else
+            // (`CW:broadcast/src/buffered/config.rs:5-22`), so the per-peer memory
+            // bound is `deque_size × MAX_ORDER_BLOCK_SIZE` — a library boundary,
+            // not a choice made here.
+            deque_size: 4,
             partition_prefix: MARSHAL_PARTITION_PREFIX.into(),
             engine_partition_prefix: String::new(),
             resolver_initial: Duration::from_secs(1),
@@ -4832,6 +4939,190 @@ mod local_tracked_epoch_tests {
             local_tracked_epoch(committee, cursor)(),
             None,
             "an unfrozen geometry must not be answered with epoch 0"
+        );
+    }
+}
+
+#[cfg(test)]
+mod gated_receiver_tests {
+    use super::GatedReceiver;
+    use commonware_cryptography::{ed25519::PrivateKey, Signer as _};
+    use commonware_p2p::Receiver as _;
+    use commonware_runtime::IoBuf;
+    use commonware_utils::ordered::Set;
+    use fluentbase_bls::PeerPubkey;
+    use fluentbase_p2p::TrackedWindow;
+    use fluentbase_staking_reader::TrackedPeers;
+    use std::sync::Arc;
+
+    /// A `commonware_p2p::Receiver` that hands back a canned queue, then reports
+    /// end-of-stream. The queue is what a real channel would deliver; what the
+    /// `GatedReceiver` lets through is the whole subject.
+    #[derive(Debug)]
+    struct CannedReceiver(std::collections::VecDeque<PeerPubkey>);
+
+    impl commonware_p2p::Receiver for CannedReceiver {
+        type Error = std::io::Error;
+        type PublicKey = PeerPubkey;
+
+        async fn recv(&mut self) -> Result<commonware_p2p::Message<PeerPubkey>, std::io::Error> {
+            match self.0.pop_front() {
+                Some(from) => Ok((from, IoBuf::from(b"frame".as_ref()))),
+                None => Err(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)),
+            }
+        }
+    }
+
+    /// The LIVE seam of the 4.3 tier rule, tested where production runs it.
+    ///
+    /// `GatedReceiver` is the only thing between the network and a channel's
+    /// decode, and by the time `slasher::gossip::ingest_batch` or
+    /// `beacon::actor::on_message` sees a frame this has already ruled on its
+    /// sender — so the tier checks inside those two are unreachable in production
+    /// and their tests cannot stand in for this one (P-06/P-24).
+    ///
+    /// Every arm of `admits` at once, on ONE queue, so the assertion is the
+    /// SURVIVING SEQUENCE rather than a per-frame boolean: a gate that dropped or
+    /// admitted one frame too many would shift everything after it.
+    ///
+    /// Falsifier: a tombstoned, untracked or registry-tier sender reaching `recv`
+    /// on a committee channel; a committee member NOT reaching it; or the
+    /// registry-tier sender being refused on a channel that serves the registry.
+    #[test]
+    fn a_committee_channel_admits_only_members_and_a_registry_channel_admits_the_tier() {
+        let member = PrivateKey::from_seed(1).public_key();
+        let registry_only = PrivateKey::from_seed(2).public_key();
+        let untracked = PrivateKey::from_seed(3).public_key();
+        let tombstoned = PrivateKey::from_seed(4).public_key();
+
+        // The tombstoned peer is a full committee member: the tombstone must beat
+        // membership, not merely stand in for its absence.
+        let peers = TrackedPeers {
+            committees: vec![
+                (6, Set::from_iter_dedup([member.clone()])),
+                (7, Set::from_iter_dedup([tombstoned.clone()])),
+            ],
+            secondary: Set::from_iter_dedup([registry_only.clone()]),
+        };
+        let banned = tombstoned.clone();
+        let window =
+            TrackedWindow::default().with_tombstones(Arc::new(move |p: &PeerPubkey| *p == banned));
+
+        // Before the first `track` the window has no MEMBERSHIP opinion, so nothing
+        // is refused for being in the wrong tier — a node in cold start must not
+        // silence its own plane. The tombstone is the exception, and deliberately:
+        // it is an on-chain verdict, read before the set is even looked at.
+        let queue = || {
+            std::collections::VecDeque::from(vec![
+                member.clone(),
+                registry_only.clone(),
+                untracked.clone(),
+                tombstoned.clone(),
+            ])
+        };
+        let drain = |mut r: GatedReceiver<CannedReceiver>| {
+            futures::executor::block_on(async move {
+                let mut seen = Vec::new();
+                while let Ok((from, _)) = r.recv().await {
+                    seen.push(from);
+                }
+                seen
+            })
+        };
+
+        assert_eq!(
+            drain(GatedReceiver::new(
+                CannedReceiver(queue()),
+                window.clone(),
+                "beacon",
+                true,
+            )),
+            vec![member.clone(), registry_only.clone(), untracked.clone()],
+            "with no peer set registered the gate must pass everything through \
+             except the tombstoned peer, whose verdict does not wait for a set"
+        );
+
+        window.record(7, &peers);
+
+        assert_eq!(
+            drain(GatedReceiver::new(
+                CannedReceiver(queue()),
+                window.clone(),
+                "beacon",
+                true,
+            )),
+            vec![member.clone()],
+            "a committee channel must admit the member and nobody else: the \
+             registry tier, the untracked peer and the tombstoned member all stop \
+             before `recv` returns"
+        );
+
+        assert_eq!(
+            drain(GatedReceiver::new(
+                CannedReceiver(queue()),
+                window.clone(),
+                "registry",
+                false,
+            )),
+            vec![member.clone(), registry_only.clone()],
+            "a channel that serves the registry keeps the tier-2 sender and still \
+             loses the untracked and the tombstoned"
+        );
+    }
+
+    /// The mask a `Member` carries is per-EPOCH, which is what the second half of
+    /// the rule (each channel's own entry) reads. The gate itself does not look at
+    /// it — a member of ANY carried record passes the transport seam — so the two
+    /// halves cannot be collapsed into one.
+    #[test]
+    fn the_gate_admits_a_member_of_any_carried_record_and_the_mask_says_which() {
+        let outgoing = PrivateKey::from_seed(11).public_key();
+        let incoming = PrivateKey::from_seed(12).public_key();
+        let peers = TrackedPeers {
+            committees: vec![
+                (5, Set::from_iter_dedup([outgoing.clone()])),
+                (7, Set::from_iter_dedup([incoming.clone()])),
+            ],
+            secondary: Set::default(),
+        };
+        let window = TrackedWindow::default();
+        window.record(6, &peers);
+
+        let mut gate = GatedReceiver::new(
+            CannedReceiver(std::collections::VecDeque::from(vec![
+                outgoing.clone(),
+                incoming.clone(),
+            ])),
+            window.clone(),
+            "beacon",
+            true,
+        );
+        let seen = futures::executor::block_on(async {
+            let mut seen = Vec::new();
+            while let Ok((from, _)) = gate.recv().await {
+                seen.push(from);
+            }
+            seen
+        });
+        assert_eq!(
+            seen,
+            vec![outgoing.clone(), incoming.clone()],
+            "the transport seam admits a member of any of the three records"
+        );
+
+        // ...and the per-epoch answer, which only the channel's own entry reads, is
+        // the one that separates them.
+        let ingress = window.classify(&outgoing).expect("a registered window");
+        assert!(ingress.member_of(5));
+        assert!(
+            !ingress.member_of(7),
+            "the outgoing member speaks for epoch 5 only"
+        );
+        let ingress = window.classify(&incoming).expect("a registered window");
+        assert!(ingress.member_of(7));
+        assert!(
+            !ingress.member_of(5),
+            "the incoming member speaks for epoch 7 only"
         );
     }
 }
