@@ -385,6 +385,25 @@ pub trait Committee: Send + Sync {
     /// the anchor and finds nothing new.
     fn anchor_advanced(&self);
 
+    /// The ONE epoch geometry of this process, or `None` while the single
+    /// in-process source has not frozen `(activation, interval)` yet.
+    ///
+    /// Here rather than beside the trait because the module already owns it:
+    /// the read window, `commit_height` and the record retention are all
+    /// derived from this pair, so a consumer that needs `epoch_of(height)` —
+    /// the frontier's height↔epoch bind ([`crate::plane_upstream`]) and the
+    /// ladder's `last(T+1)` — must not be able to reach a SECOND copy of it.
+    /// That is the whole defect class this module exists to close, restated for
+    /// the arithmetic instead of for the committee.
+    fn geometry(&self) -> Option<Geometry>;
+
+    /// The epoch a block height falls in, over [`Self::geometry`]. `None`
+    /// before the freeze — no height means anything yet, and answering `0`
+    /// there would let a frontier answer bind itself to epoch 0.
+    fn epoch_of(&self, height: u64) -> Option<u64> {
+        Some(self.geometry()?.epoch_of(height))
+    }
+
     /// The hash every read of this implementation is taken at:
     /// `executed_state_hash(anchor)`, or `None` while that height is not
     /// executed.
@@ -629,7 +648,7 @@ where
 /// Test doubles shared by the consumers of this module.
 #[cfg(test)]
 pub(crate) mod testing {
-    use super::{BlsScheme, Committee, CommitteeError, CommitteeRecord, PeerPubkey};
+    use super::{BlsScheme, Committee, CommitteeError, CommitteeRecord, Geometry, PeerPubkey};
     use alloy_primitives::B256;
     use std::{
         collections::BTreeMap,
@@ -657,6 +676,16 @@ pub(crate) mod testing {
         answer: Box<dyn Fn(u64) -> Option<BlsScheme> + Send + Sync>,
         records: Box<dyn Fn(u64) -> Option<CommitteeRecord> + Send + Sync>,
         entries: Mutex<BTreeMap<u64, Arc<BlsScheme>>>,
+        /// The frozen geometry this double answers [`Committee::geometry`]
+        /// with. `None` by default — the unfrozen state, where every
+        /// `epoch_of` is `None` — because most consumers of this double never
+        /// ask.
+        geometry: Option<Geometry>,
+        /// When `Some((lo, hi))`, an epoch outside it is refused with
+        /// [`CommitteeError::OutOfWindow`] BEFORE the record closure is asked —
+        /// the production store's step 1. `None` means "no window", which is
+        /// what every consumer that does not distinguish the two refusals wants.
+        window: Option<(u64, u64)>,
     }
 
     impl SchemeCommittee {
@@ -674,16 +703,56 @@ pub(crate) mod testing {
             answer: impl Fn(u64) -> Option<BlsScheme> + Send + Sync + 'static,
             records: impl Fn(u64) -> Option<CommitteeRecord> + Send + Sync + 'static,
         ) -> Arc<Self> {
+            Self::with_geometry(answer, records, None)
+        }
+
+        /// The same double with a read WINDOW, so a consumer that must react to
+        /// `OutOfWindow` differently from `NotReadable` can be shown both.
+        pub(crate) fn with_window(
+            answer: impl Fn(u64) -> Option<BlsScheme> + Send + Sync + 'static,
+            records: impl Fn(u64) -> Option<CommitteeRecord> + Send + Sync + 'static,
+            geometry: Option<Geometry>,
+            window: (u64, u64),
+        ) -> Arc<Self> {
+            let mut this = Self::build(answer, records, geometry);
+            Arc::get_mut(&mut this).expect("sole owner").window = Some(window);
+            this
+        }
+
+        /// The same double with the geometry half — for the consumers that
+        /// bind a height to an epoch through the module
+        /// ([`Committee::epoch_of`]) rather than through a second copy of
+        /// `(activation, interval)`.
+        pub(crate) fn with_geometry(
+            answer: impl Fn(u64) -> Option<BlsScheme> + Send + Sync + 'static,
+            records: impl Fn(u64) -> Option<CommitteeRecord> + Send + Sync + 'static,
+            geometry: Option<Geometry>,
+        ) -> Arc<Self> {
+            Self::build(answer, records, geometry)
+        }
+
+        fn build(
+            answer: impl Fn(u64) -> Option<BlsScheme> + Send + Sync + 'static,
+            records: impl Fn(u64) -> Option<CommitteeRecord> + Send + Sync + 'static,
+            geometry: Option<Geometry>,
+        ) -> Arc<Self> {
             Arc::new(Self {
                 answer: Box::new(answer),
                 records: Box::new(records),
                 entries: Mutex::new(BTreeMap::new()),
+                geometry,
+                window: None,
             })
         }
     }
 
     impl Committee for SchemeCommittee {
         fn committee(&self, epoch: u64) -> Result<Arc<CommitteeRecord>, CommitteeError> {
+            if let Some((lo, hi)) = self.window {
+                if epoch < lo || epoch > hi {
+                    return Err(CommitteeError::OutOfWindow { epoch, lo, hi });
+                }
+            }
             (self.records)(epoch)
                 .map(Arc::new)
                 .ok_or(CommitteeError::NotReadable { epoch, ready_at: 0 })
@@ -734,6 +803,10 @@ pub(crate) mod testing {
 
         fn subscribe(&self) -> tokio::sync::watch::Receiver<u64> {
             tokio::sync::watch::Sender::new(0).subscribe()
+        }
+
+        fn geometry(&self) -> Option<Geometry> {
+            self.geometry
         }
 
         fn anchor_advanced(&self) {}

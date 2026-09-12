@@ -600,6 +600,12 @@ impl<R: EpochReads> Committee for CommitteeStore<R> {
         self.readable.subscribe()
     }
 
+    fn geometry(&self) -> Option<Geometry> {
+        // The SAME accessor the window, `commit_height` and the retention floor
+        // read — not a second copy of `(activation, interval)`.
+        Self::geometry_of(&self.geometry)
+    }
+
     fn anchor_advanced(&self) {
         // No geometry yet ⇒ no window to prune to and no readable epoch to
         // publish. Nothing is lost: the map is empty (every read so far
