@@ -47,8 +47,8 @@ pub struct RwasmEvm<
 pub struct RwasmEvmOptions {
     /// Withhold the EIP-1559 base fee from the coinbase (Ethereum semantics).
     ///
-    /// Off by default and on every node: Fluent credits the fee manager with the full effective
-    /// gas price. Only the Ethereum state-test comparison turns it on. See
+    /// Off by default on nodes: the handler applies Fluent rules, including historical Testnet
+    /// burning. The Ethereum state-test comparison forces burning at every London+ block. See
     /// `RwasmHandler::burn_base_fee`.
     pub burn_base_fee: bool,
 }
@@ -88,7 +88,7 @@ impl<CTX, INSP, I, P> RwasmEvm<CTX, INSP, I, P> {
 
     /// Consumes self and returns the EVM with the EIP-1559 base-fee burn switched on or off.
     ///
-    /// See [`RwasmEvmOptions::burn_base_fee`]; the chain's rule is `false`.
+    /// See [`RwasmEvmOptions::burn_base_fee`]; nodes leave this `false` to use the historical chain rules.
     pub fn with_base_fee_burn(mut self, burn_base_fee: bool) -> Self {
         self.1.burn_base_fee = burn_base_fee;
         self

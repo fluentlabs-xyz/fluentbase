@@ -74,10 +74,12 @@ where
             return Ok(());
         }
 
-        // Encode values
-        let mut value_encoder = BytesMut::zeroed(ALIGN.max(T::HEADER_SIZE) * self.len());
+        // Use the decoder's aligned stride, including for widths such as FixedBytes<11>.
+        // Writers honor the supplied offset and do not align element starts for us.
+        let element_header_size = align_up::<ALIGN>(T::HEADER_SIZE);
+        let mut value_encoder = BytesMut::zeroed(element_header_size * self.len());
         for (index, obj) in self.iter().enumerate() {
-            let elem_offset = ALIGN.max(T::HEADER_SIZE) * index;
+            let elem_offset = element_header_size * index;
             obj.encode(&mut value_encoder, elem_offset)?;
         }
 

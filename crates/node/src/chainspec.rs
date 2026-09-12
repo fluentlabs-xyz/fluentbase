@@ -61,7 +61,7 @@ pub(crate) fn built_in_genesis_assets() -> Vec<(&'static str, ReleaseAsset)> {
 
 pub const FLUENT_LOCALNET_CHAIN_ID: u64 = 1337;
 pub const FLUENT_DEVNET_CHAIN_ID: u64 = 0x5201;
-pub const FLUENT_TESTNET_CHAIN_ID: u64 = 0x5202;
+pub use fluentbase_types::FLUENT_TESTNET_CHAIN_ID;
 pub const FLUENT_MAINNET_CHAIN_ID: u64 = 25363;
 
 /// Local Node (1337)

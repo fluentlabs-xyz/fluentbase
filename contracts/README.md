@@ -19,8 +19,8 @@ therefore rebuilds everything in this directory.
 - `evm` — the EVM runtime. Executes EVM bytecode for every account that delegates to `PRECOMPILE_EVM_RUNTIME`. The
   interpreter is pinned to a single hardfork (Osaka) and is replaced through `runtime-upgrade`, so EVM semantics are
   upgraded forklessly.
-- `wasm` — the WASM runtime. Its deploy path compiles the submitted WASM module into rWasm, charges fuel per input
-  byte and rejects results larger than `RWASM_MAX_CODE_SIZE`.
+- `wasm` — the WASM runtime. Its deploy path compiles the submitted WASM module into rWasm under engine fuel
+  metering and rejects results larger than `RWASM_MAX_CODE_SIZE`.
 - `universal-token` — an ERC-20-style token runtime with a 4-byte selector ABI, ERC-2612 permits and optional
   mintable/pausable plugins.
 - `svm` — the Solana VM runtime (loader v4). Excluded from the workspace and gated behind the `svm` feature of

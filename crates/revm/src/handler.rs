@@ -2,7 +2,7 @@
 
 use crate::{RwasmFrame, RwasmHaltReason};
 use alloy_primitives::U256;
-use fluentbase_sdk::calldata_quadratic_surcharge;
+use fluentbase_sdk::{calldata_quadratic_surcharge, testnet_burns_base_fee};
 use revm::{
     context::{
         journaled_state::account::JournaledAccountTr, result::InvalidTransaction, Block, ContextTr,
@@ -22,7 +22,7 @@ pub struct RwasmHandler<CTX, ERROR> {
     /// Whether `reward_beneficiary` withholds the EIP-1559 base fee from the coinbase.
     ///
     /// Fluent credits the block beneficiary (the fee manager) with the full effective gas price:
-    /// no live network burns the base fee, and changing that is a fork. The Ethereum state-test
+    /// historical Testnet burn rules are applied separately. The Ethereum state-test
     /// harness turns this on so its native-versus-rWASM comparison runs both sides with Ethereum
     /// semantics; nothing that mirrors the chain should.
     pub burn_base_fee: bool,
@@ -96,9 +96,9 @@ where
         let basefee = block.basefee() as u128;
         let mut coinbase_gas_price = tx.effective_gas_price(basefee);
 
-        // Ethereum semantics only (see `burn_base_fee`): EIP-1559 burns the base fee, so the
-        // coinbase receives the priority fee alone. Fluent's rule is the full effective price.
-        if self.burn_base_fee
+        // Ethereum fixtures and historical Testnet credit only the priority fee. Read the
+        // current block here so reusing an EVM across the historical boundary stays correct.
+        if (self.burn_base_fee || testnet_burns_base_fee(cfg.chain_id(), block.number()))
             && cfg
                 .spec()
                 .into()
@@ -147,6 +147,98 @@ mod tests {
         state::AccountInfo,
         Database, ExecuteCommitEvm,
     };
+
+    #[test]
+    fn historical_testnet_fee_credit_matches_rpc_balances() {
+        // These expected balances come from canonical RPC state, not this handler's formula.
+        // Only the fee-reward stage is replayed here; this is not a full state-root replay.
+        let evidence: serde_json::Value =
+            serde_json::from_str(include_str!("../testdata/testnet-fee-history.json")).unwrap();
+        for vector in evidence["vectors"].as_array().unwrap() {
+            let number = vector["block_number_decimal"].as_u64().unwrap();
+            let receipt = &vector["receipts"][0];
+            let parse = |value: &serde_json::Value| {
+                U256::from_str_radix(value.as_str().unwrap().trim_start_matches("0x"), 16).unwrap()
+            };
+            let beneficiary: Address = vector["miner"].as_str().unwrap().parse().unwrap();
+            let mut db = InMemoryDB::default();
+            db.insert_account_info(
+                beneficiary,
+                AccountInfo {
+                    balance: parse(&vector["miner_balance_before"]),
+                    ..Default::default()
+                },
+            );
+            let mut ctx = RwasmContext::new(db, RwasmSpecId::CANCUN);
+            ctx.cfg.chain_id = 0x5202;
+            ctx.block.number = U256::from(number);
+            ctx.block.beneficiary = beneficiary;
+            ctx.block.basefee = parse(&vector["baseFeePerGas"]).to();
+            ctx.tx = TxEnv::builder()
+                .gas_price(parse(&receipt["effectiveGasPrice"]).to())
+                .build()
+                .unwrap();
+            let mut evm = ctx.build_rwasm();
+            let mut result =
+                revm::handler::FrameResult::new_call_oog(parse(&receipt["gasUsed"]).to(), 0..0);
+            RwasmHandler::<_, EVMError<core::convert::Infallible>>::default()
+                .reward_beneficiary(&mut evm, &mut result)
+                .unwrap();
+            let balance = evm
+                .0
+                .ctx
+                .journal_mut()
+                .load_account(beneficiary)
+                .unwrap()
+                .info
+                .balance;
+            assert_eq!(
+                balance,
+                parse(&vector["miner_balance_after"]),
+                "block {number}"
+            );
+        }
+    }
+
+    #[test]
+    fn fee_rule_tracks_current_block_and_preserves_other_chains_and_fixture_override() {
+        let beneficiary = Address::repeat_byte(0x33);
+        for (chain_id, force_burn) in [(0x5202, false), (25363, false), (1337, true)] {
+            let mut ctx = RwasmContext::new(InMemoryDB::default(), RwasmSpecId::CANCUN);
+            ctx.cfg.chain_id = chain_id;
+            ctx.block.beneficiary = beneficiary;
+            ctx.block.basefee = 7;
+            ctx.tx = TxEnv::builder().gas_price(107).build().unwrap();
+            let mut evm = ctx.build_rwasm();
+            let handler = RwasmHandler::<_, EVMError<core::convert::Infallible>>::new(force_burn);
+            let mut expected = U256::ZERO;
+            // Reuse the same EVM and handler, then rewind it across the boundary as well.
+            for (number, testnet_credit) in
+                [(21_781_416, 100u64), (21_781_417, 107), (21_781_414, 100)]
+            {
+                evm.0.ctx.block.number = U256::from(number);
+                let mut result = revm::handler::FrameResult::new_call_oog(1, 0..0);
+                handler.reward_beneficiary(&mut evm, &mut result).unwrap();
+                expected += U256::from(if force_burn {
+                    100
+                } else if chain_id == 0x5202 {
+                    testnet_credit
+                } else {
+                    107
+                });
+                assert_eq!(
+                    evm.0
+                        .ctx
+                        .journal_mut()
+                        .load_account(beneficiary)
+                        .unwrap()
+                        .info
+                        .balance,
+                    expected
+                );
+            }
+        }
+    }
 
     #[test]
     fn rejects_calldata_surcharge_that_exceeds_gas_limit() {

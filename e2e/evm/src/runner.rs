@@ -10,7 +10,7 @@ use crate::{
     },
 };
 use fluentbase_revm::{RwasmBuilder, RwasmContext, RwasmEvm, RwasmPrecompiles};
-use fluentbase_sdk::{Address, PRECOMPILE_EVM_RUNTIME};
+use fluentbase_sdk::{testnet_burns_base_fee, Address, PRECOMPILE_EVM_RUNTIME};
 use indicatif::{ProgressBar, ProgressDrawTarget};
 use revm::{
     bytecode::Bytecode,
@@ -86,9 +86,9 @@ pub enum TestErrorKind {
 
 /// What the block beneficiary must hold after a fixture transaction.
 ///
-/// Fixtures drop the fee manager (the coinbase on every Fluent network) from their partial
-/// state, so its credit was never asserted. It is computed here instead: the beneficiary
-/// receives `gas_used * effective_gas_price` in full, the chain's rule (no EIP-1559 burn).
+/// Some fixtures omit the beneficiary from their partial poststate. For those, assert fee
+/// credit using the chain's rule, including historical Testnet base-fee burning. A fixed
+/// RPC-derived beneficiary post-balance takes precedence when present in the fixture.
 #[derive(Clone, Copy, Debug)]
 struct CoinbaseExpectation {
     coinbase: Address,
@@ -99,15 +99,24 @@ struct CoinbaseExpectation {
 impl CoinbaseExpectation {
     /// `None` when the beneficiary also sends or receives the transaction, because then its
     /// balance moves for reasons other than the fee credit.
-    fn for_transaction(pre_balance: U256, block_env: &BlockEnv, tx_env: &TxEnv) -> Option<Self> {
+    fn for_transaction(
+        pre_balance: U256,
+        block_env: &BlockEnv,
+        tx_env: &TxEnv,
+        chain_id: u64,
+    ) -> Option<Self> {
         let coinbase = block_env.beneficiary;
         if tx_env.caller == coinbase || tx_env.kind.to() == Some(&coinbase) {
             return None;
         }
+        let mut effective_gas_price = tx_env.effective_gas_price(block_env.basefee as u128);
+        if testnet_burns_base_fee(chain_id, block_env.number) {
+            effective_gas_price = effective_gas_price.saturating_sub(block_env.basefee as u128);
+        }
         Some(Self {
             coinbase,
             pre_balance,
-            effective_gas_price: tx_env.effective_gas_price(block_env.basefee as u128),
+            effective_gas_price,
         })
     }
 }
@@ -1286,8 +1295,12 @@ pub fn execute_fluent_test_suite(
                     .get(&block_env.beneficiary)
                     .map(|account| account.balance)
                     .unwrap_or_default();
-                let coinbase =
-                    CoinbaseExpectation::for_transaction(coinbase_pre_balance, &block_env, &tx_env);
+                let coinbase = CoinbaseExpectation::for_transaction(
+                    coinbase_pre_balance,
+                    &block_env,
+                    &tx_env,
+                    cfg_env.chain_id,
+                );
 
                 let cache = cache_state.clone();
                 // cache.set_state_clear_flag(spec_id.is_enabled_in(SpecId::SPURIOUS_DRAGON));
