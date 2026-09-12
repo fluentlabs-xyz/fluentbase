@@ -125,10 +125,12 @@ pub type RotateUpstream = Arc<dyn Fn() -> BoxFuture<'static, ()> + Send + Sync>;
 /// itself is committee-only — the oracle comes from the caller, never from chain
 /// storage (the PK_E layer stays deleted).
 pub trait CommitteeSource: Send + Sync + 'static {
-    /// Read `committee[epoch]` at a SPECIFIC executed hash. Used by the
-    /// cold-start jump ([`crate::cold_start_jump::verify_jump_authenticated`])
-    /// and the follower's `cold_start_register`, which both have a
-    /// known-committed hash to read at.
+    /// Read `committee[epoch]` at a SPECIFIC executed hash. Used by the two
+    /// by-height seams that fetch one finalization outside both writers
+    /// ([`crate::cold_start_jump::verify_jump_authenticated`], called from
+    /// `dpos::refetch_verified_archive_hole` and
+    /// `cert_follow::fetch_verified_boundary`), which have a known-committed hash to
+    /// read at. The jump itself no longer reads a committee (pass Б2).
     fn scheme_at(
         &self,
         epoch: u64,
@@ -138,9 +140,10 @@ pub trait CommitteeSource: Send + Sync + 'static {
 }
 
 /// [`CommitteeSource`] over a node's own reth state: committee snapshot at the
-/// given executed hash → BLS verifier. The consensus-crate home for the
-/// per-epoch verifier read both the cert-inlet (`--cert-follow`/upstream
-/// validators) and the cold-start jump ([`crate::cold_start_jump`]) consume.
+/// given executed hash → BLS verifier. The consensus-crate home for the per-epoch
+/// verifier the cert-inlet (`--cert-follow`/upstream validators) and the two
+/// by-height re-fetch seams ([`crate::cold_start_jump::verify_jump_authenticated`])
+/// consume.
 pub struct RethCommitteeSource<Provider, EvmConfig> {
     reader: RethStakingStateReader<Provider, EvmConfig>,
     namespace: Vec<u8>,

@@ -424,7 +424,8 @@ pub struct OuterBuilder<B, P, BE, D, XC, A> {
     pub executor_metrics: crate::executor::ExecutorMetrics,
     /// Self-heal stuck-detector (cross-launch singleton from `dpos.rs::launch`,
     /// already registered there). Threaded to the executor for the #14 finalize-FCU
-    /// transport-retry + #1 steady-state re-jump `AuthFailed` rotate gauges.
+    /// transport-retry gauge and for CLEARING the #12 `crash_recover` gauge when the
+    /// executor's startup backfill drain finishes.
     pub sync_metrics: crate::sync_metrics::SyncMetrics,
     /// Fork-safety latch (Phase 3 `SafetyHalt`, cross-launch singleton from
     /// `dpos.rs::launch`). Threaded to the executor (engages it on divergence /

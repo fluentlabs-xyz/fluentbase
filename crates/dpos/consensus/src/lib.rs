@@ -75,9 +75,7 @@ pub use cert_inlet::{
     CertInlet, CommitteeSource, MarshalSink, NoopResolver, RethCommitteeSource, RotateUpstream,
     MAX_UPSTREAM_FAULTS,
 };
-pub use cold_start_jump::{
-    assert_l1_checkpoint, cold_start_jump, ElSync, RethElSync, JUMP_THRESHOLD,
-};
+pub use cold_start_jump::{assert_l1_checkpoint, ElSync, RethElSync, JUMP_THRESHOLD};
 // `Geometry` is deliberately NOT here: since the store took its geometry lazily
 // (a `GeometryRx`), the type has no user outside `committee/` — re-exporting it
 // would be public surface nobody can reach through.

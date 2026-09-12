@@ -37,10 +37,6 @@ pub enum SyncReason {
     NoPeers,
     /// #13 reth does not yet hold the DPoS activation block — polling forever.
     ActivationWait,
-    /// #4 cold-start has no upstream/frontier to authenticate the anchor yet.
-    AwaitingUpstream,
-    /// #1 a jump target failed committee-BLS; rotating/backing-off upstreams.
-    AuthRotate,
     /// #14 a transient engine-API transport error; retrying the FCU/import.
     EngineRetry,
     /// #17 a just-landed block is not yet reth-visible; visibility belt retrying.
@@ -66,8 +62,6 @@ impl SyncReason {
         match self {
             Self::NoPeers => "no_peers",
             Self::ActivationWait => "activation_wait",
-            Self::AwaitingUpstream => "awaiting_upstream",
-            Self::AuthRotate => "auth_rotate",
             Self::EngineRetry => "engine_retry",
             Self::LandingWait => "landing_wait",
             Self::CrashRecover => "crash_recover",
@@ -83,11 +77,9 @@ impl SyncReason {
     /// persisted [`SafetyHalt`] marker. `None` for a label this build does not
     /// know (a marker written by another version).
     pub fn from_label(label: &str) -> Option<Self> {
-        const ALL: [SyncReason; 12] = [
+        const ALL: [SyncReason; 10] = [
             SyncReason::NoPeers,
             SyncReason::ActivationWait,
-            SyncReason::AwaitingUpstream,
-            SyncReason::AuthRotate,
             SyncReason::EngineRetry,
             SyncReason::LandingWait,
             SyncReason::CrashRecover,
@@ -787,8 +779,6 @@ mod tests {
         for reason in [
             SyncReason::NoPeers,
             SyncReason::ActivationWait,
-            SyncReason::AwaitingUpstream,
-            SyncReason::AuthRotate,
             SyncReason::EngineRetry,
             SyncReason::LandingWait,
             SyncReason::CrashRecover,

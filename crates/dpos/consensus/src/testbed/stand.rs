@@ -7,8 +7,8 @@ use super::{
     fakes::{
         genesis_sealed, BodyTap, BranchCommittees, CountingHandler, CountingUpstream, ElEvent,
         ElNetwork, FakeBeacon, FakeChain, FakeDeriver, FakeStaking, FrontierSteps, JumpCall,
-        JumpCalls, JumpCommitteeReads, JumpCommittees, JumpElSync, Members, NoSink, NoTxs, Pull,
-        StakingReads, TapReceiver, UpstreamCounters, UpstreamStats, DPOS_ACTIVATION_BLOCK,
+        JumpCalls, JumpElSync, Members, NoSink, NoTxs, Pull, StakingReads, TapReceiver,
+        UpstreamCounters, UpstreamStats, DPOS_ACTIVATION_BLOCK,
     },
 };
 /// A read of one held epoch-key artifact's wire bytes, for the stand's serving
@@ -53,7 +53,7 @@ use commonware_runtime::{
     deterministic, Clock as _, Metrics as _, Quota, Runner as _, Spawner as _,
 };
 use commonware_utils::{ordered::Set, NZUsize};
-use fluentbase_bls::{fluent_namespace, keys::ValidatorBlsKeypair, BlsPubkey, PeerPubkey};
+use fluentbase_bls::{keys::ValidatorBlsKeypair, BlsPubkey, PeerPubkey};
 use fluentbase_p2p::{
     constants::{
         BEACON_CHANNEL, BEACON_RESOLVER_CHANNEL, BROADCAST_CHANNEL, CERT_CHANNEL,
@@ -623,11 +623,6 @@ pub(super) struct Outcome {
     /// the certificate it consumed and the landing it chose. A refused jump is
     /// invisible anywhere else in this struct — see `fakes::JumpCall`.
     pub jump_calls: Vec<Vec<JumpCall>>,
-    /// `jump_committee_reads[i]` = every `(epoch, executed hash)` node `i`'s
-    /// steady-state re-jump read `committee[E]` at — recorded inside the stand's
-    /// `CommitteeSource` by production's own `verify_jump_authenticated` call, so
-    /// "the committee was read at the LANDING hash" is observed, not inferred.
-    pub jump_committee_reads: Vec<Vec<(u64, B256)>>,
     /// `el_events[i]` = every EL tier transition node `i` made, IN ORDER — each
     /// `derive_and_execute` insert into the executed tree and each
     /// canonicalization an FCU (or a jump landing) committed. See
@@ -1086,8 +1081,6 @@ impl PeerSetSink for TrackSink {
 struct NodeHandles {
     chain: FakeChain,
     halt: SafetyHalt,
-    /// Every committee read the node's steady-state re-jump made, in call order.
-    jump_committee_reads: JumpCommitteeReads,
     /// Every steady-state re-jump call the node made, with its outcome variant.
     jump_calls: JumpCalls,
     /// Frozen-tip probe invocations (R-004 role test only).
@@ -1484,10 +1477,6 @@ async fn drive(
         .map(|node| node.observer.boundaries.lock().unwrap().clone())
         .collect();
     let staking_reads: Vec<StakingReads> = nodes.iter().map(|node| node.staking.reads()).collect();
-    let jump_committee_reads: Vec<Vec<(u64, B256)>> = nodes
-        .iter()
-        .map(|node| node.jump_committee_reads.lock().unwrap().clone())
-        .collect();
     let jump_calls: Vec<Vec<JumpCall>> = nodes
         .iter()
         .map(|node| node.jump_calls.lock().unwrap().clone())
@@ -1602,7 +1591,6 @@ async fn drive(
         committees,
         metrics_before_collect,
         jump_calls,
-        jump_committee_reads,
         el_events,
         marshal_tip_series: tip_series,
         frontier_steps_named_series: steps_named_series,
@@ -2024,9 +2012,6 @@ async fn build_node(
     // is the cursor alone. Pinned by `committee::tests` instead (§7).
     // The executor's frozen-tip frontier probe, wired as `dpos.rs::launch`
     // wires it for a plane validator (`get_latest` → height).
-    // Every `committee[E]` read the jump made, with the executed hash it read AT
-    // — see `JumpCommitteeReads`. Surfaced as `Outcome::jump_committee_reads`.
-    let jump_committee_reads: JumpCommitteeReads = Arc::new(Mutex::new(Vec::new()));
     // Every jump call, with the outcome VARIANT it returned — see `JumpCall`.
     let jump_calls: JumpCalls = Arc::new(Mutex::new(Vec::new()));
     // How many times this node's frozen-tip probe actually ASKED the upstream
@@ -2109,16 +2094,13 @@ async fn build_node(
         // The steady-state re-jump is the PRODUCTION `jump_to_target`, called
         // the way the node calls it (`consensus/src/dpos.rs`): the same
         // forward-only need-gate, the same landing check against the attested
-        // `block.result`,
-        // the same PRE-sync `verify_jump_structural`, the same POST-sync
-        // `verify_jump_authenticated` (a 2f+1 BLS multisig against `committee[E]`
-        // read at the LANDING's own executed state), the same `l1_checkpoint =
-        // None` on the validator path. Only the two seams below it are the
-        // stand's: `JumpElSync` for `RethElSync` (the EL peer is `ElNetwork`,
-        // not devp2p) and `JumpCommittees` for `RethCommitteeSource` (the
-        // committee comes out of `FakeStaking`'s contract state machine, read by
-        // executed hash). Nothing about the landing choice is re-stated here —
-        // the production function picks it.
+        // `block.result`, the same `l1_checkpoint = None` on the validator path.
+        // There are no verify STAGES to mirror any more (pass Б2): the target is a
+        // pair the executor read out of this node's own marshal archive, so the jump
+        // takes no committee source and no verify RNG. The one seam below it is the
+        // stand's: `JumpElSync` for `RethElSync` (the EL peer is `ElNetwork`, not
+        // devp2p). Nothing about the landing choice is re-stated here — the
+        // production function picks it.
         //
         // The threshold goes to BOTH the executor's arming gate and the jump's
         // own need-gate, as production's `re_jump_threshold` does. At the stand
@@ -2128,16 +2110,9 @@ async fn build_node(
         let threshold = cfg.re_jump_threshold.unwrap_or(u64::MAX);
         let call: ReJumpFn = {
             let chain = chain.clone();
-            let staking = staking.clone();
-            let jump_reads = jump_committee_reads.clone();
             let calls_log = jump_calls.clone();
             let ctx_jump = ctx_i.clone();
             Arc::new(move |from: u64, target: UpstreamFinalized| {
-                let committees = JumpCommittees::new(
-                    staking.clone(),
-                    fluent_namespace(CHAIN_ID),
-                    jump_reads.clone(),
-                );
                 let el = JumpElSync::new(chain.clone(), ctx_jump.clone(), DPOS_ACTIVATION_BLOCK);
                 let calls = rejump_calls.clone();
                 let calls_log = calls_log.clone();
@@ -2146,24 +2121,18 @@ async fn build_node(
                 // a test can check the landing against the certificate it came
                 // from rather than against the chain the landing just wrote.
                 let consumed = Some((target.block.height, target.block.result));
-                // `verify_jump_authenticated` wants a `&mut (Clock +
-                // CryptoRngCore)`; a fresh clone per call, as production does.
-                let mut jump_ctx = ctx_jump.clone();
                 Box::pin(async move {
                     calls.fetch_add(1, Ordering::SeqCst);
                     let outcome = crate::cold_start_jump::jump_to_target(
                         from,
                         target,
-                        &committees,
                         &el,
-                        // No L1 checkpoint on the validator path — the trustless
-                        // POST-sync committee read at the landing IS the anchor.
-                        // `ElSync::holds` IS called: the landing check asks it for
-                        // the attested `block.result` (§5.2).
+                        // No L1 checkpoint on the validator path. `ElSync::holds`
+                        // IS called: the landing check asks it for the attested
+                        // `block.result` (§5.2).
                         None,
                         DPOS_ACTIVATION_BLOCK,
                         threshold,
-                        &mut jump_ctx,
                     )
                     .await;
                     // The production return value, recorded verbatim — the
@@ -2177,10 +2146,8 @@ async fn build_node(
                             JumpOutcome::Landed { .. } => "Landed",
                             JumpOutcome::Lagging => "Lagging",
                             JumpOutcome::Stalled(_) => "Stalled",
-                            JumpOutcome::BadTarget(_) => "BadTarget",
                             JumpOutcome::InvalidTarget(_) => "InvalidTarget",
                             JumpOutcome::StalledWithPeers(_) => "StalledWithPeers",
-                            JumpOutcome::AuthFailed(_) => "AuthFailed",
                             JumpOutcome::L1Fork(_) => "L1Fork",
                         },
                         consumed,
@@ -2189,13 +2156,11 @@ async fn build_node(
                             _ => None,
                         },
                         // The error text of a refusal, so a test can tell the
-                        // committee-BLS arm from the unreadable-committee arm.
+                        // landing-check arm from a stall.
                         outcome_detail: match &outcome {
                             JumpOutcome::Stalled(e)
-                            | JumpOutcome::BadTarget(e)
                             | JumpOutcome::InvalidTarget(e)
                             | JumpOutcome::StalledWithPeers(e)
-                            | JumpOutcome::AuthFailed(e)
                             | JumpOutcome::L1Fork(e) => Some(format!("{e:#}")),
                             JumpOutcome::Landed { .. } | JumpOutcome::Lagging => None,
                         },
@@ -2269,9 +2234,9 @@ async fn build_node(
                                 .cloned()
                                 .collect(),
                             committee_for: committee_for.clone(),
-                            namespace: fluentbase_bls::beacon::seed_namespace(&fluent_namespace(
-                                CHAIN_ID,
-                            )),
+                            namespace: fluentbase_bls::beacon::seed_namespace(
+                                &fluentbase_bls::fluent_namespace(CHAIN_ID),
+                            ),
                             report: byz.clone(),
                         })
                     }
@@ -2580,7 +2545,6 @@ async fn build_node(
     NodeHandles {
         chain,
         halt,
-        jump_committee_reads,
         jump_calls,
         #[cfg(feature = "dpos-devnet-byzantine")]
         probe_calls,

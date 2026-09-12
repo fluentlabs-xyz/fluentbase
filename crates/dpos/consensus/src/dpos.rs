@@ -274,9 +274,13 @@ enum RecoverOutcome {
     Recovered(B256),
     /// reth is `> MAX_COLD_RECOVER` behind its OWN (INTACT) consensus archive (#12):
     /// the pre-engine replay is capped, so the caller anchors the cold-start at
-    /// `provider.best_block_number()` and the eligible `cold_start_jump` devp2p-
-    /// backfills the EL. This is a distance problem, NOT an archive hole — the
-    /// marshal holds every block, so reth heals from devp2p alone. Needs an upstream
+    /// `provider.best_block_number()` and the EXECUTOR'S STARTUP BACKFILL DRAIN
+    /// (`executor.rs::finalized_heights_to_backfill`, seeded from the marshal's own
+    /// acked cursor) walks the rest of the tail into reth. NOT the steady-state
+    /// jump: it is gated off while that drain is non-empty and its trigger is 0 at
+    /// boot (both `last_tip_height` and `ordering_finalized` come from the same
+    /// cursor). This is a distance problem, NOT an archive hole — the
+    /// marshal holds every block. Needs an upstream
     /// (a no-upstream node is FATAL at the recovery site,
     /// [`crash_recover_defer_or_fatal`]). `gap` = blocks reth is behind `target`
     /// (`crash_recover_gap_blocks` gauge).
@@ -288,7 +292,7 @@ enum RecoverOutcome {
     /// below floor at `:700`, and `HintFinalized` skips `<= floor` at `:633`), so its
     /// `UpstreamResolver` would NEVER repopulate a below-floor hole — and the executor
     /// gap-walk agrees (`executor.rs` "a hole below the floor cannot self-heal"). Nor
-    /// does the deferred jump help: a #8 gap is `<= MAX_COLD_RECOVER (64) <
+    /// does the steady-state jump help: a #8 gap is `<= MAX_COLD_RECOVER (64) <
     /// JUMP_THRESHOLD (1024)`, so the jump is always `Lagging` and never fires. #8 is
     /// therefore healed INLINE by [`refetch_verified_archive_hole`], not deferred.
     DeferToElSync { gap: u64 },
@@ -377,15 +381,19 @@ where
 /// A #8 hole sits BELOW the marshal's finalized floor (`target ==
 /// last_processed_height`), which the live marshal's own resolver NEVER re-fetches
 /// — it repairs `[floor+1 ..]` only and prunes below floor (monorepo
-/// `marshal/core/actor.rs:1557`/`:700`/`:633`), and the deferred `cold_start_jump`
-/// can't fire either (a #8 gap `<= MAX_COLD_RECOVER (64) < JUMP_THRESHOLD (1024)`
-/// ⇒ always `Lagging`). So a bare defer would leave reth permanently missing the
-/// block. Instead we pull the finalization+block from the upstream (the SAME
-/// by-height seam the inlet uses) and authenticate it EXACTLY like the cold-start
-/// jump landing: `verify_jump_structural` (payload == digest) + `verify_jump_
-/// authenticated` (2f+1 BLS multisig against `committee[E]` read at `at_hash`, the
-/// already-recovered parent's materialized state). The caller then derives + imports
-/// the verified block into reth, splicing the hole shut in the same replay.
+/// `marshal/core/actor.rs:1557`/`:700`/`:633`), and the steady-state jump can't fire
+/// either (a #8 gap `<= MAX_COLD_RECOVER (64) < JUMP_THRESHOLD (1024)` ⇒ always
+/// `Lagging`). So a bare defer would leave reth permanently missing the block.
+/// Instead we pull the finalization+block from the upstream (the SAME by-height seam
+/// the inlet uses) and authenticate it HERE, because this pull reaches neither of the
+/// two writers that would otherwise have done it (`store_finalization` after
+/// `verify_delivered`, or `FrontierHandler::deliver`): `verify_jump_structural`
+/// (payload == digest) + `verify_jump_authenticated` (2f+1 BLS multisig against
+/// `committee[E]` read at `at_hash`, the already-recovered parent's materialized
+/// state). These two functions exist for exactly this seam and for
+/// `cert_follow::fetch_verified_boundary` — they are no longer stages of any jump.
+/// The caller then derives + imports the verified block into reth, splicing the hole
+/// shut in the same replay.
 ///
 /// We do NOT write the re-fetched entry back into the marshal archive, and the
 /// reason is NOT that a below-floor write would be discarded — it would not be.
@@ -405,7 +413,6 @@ async fn refetch_verified_archive_hole<U, C>(
     committees: &C,
     verify_ctx: &mut (impl commonware_runtime::Clock + rand_core::CryptoRngCore),
     at_hash: B256,
-    l1_checkpoint: Option<B256>,
     height: u64,
     which: &str,
 ) -> eyre::Result<crate::cert_follow::UpstreamFinalized>
@@ -445,19 +452,13 @@ where
             "re-fetched finalization for the marshal {which} hole at height {height} is malformed"
         )
     })?;
-    crate::cold_start_jump::verify_jump_authenticated(
-        &uf,
-        committees,
-        at_hash,
-        l1_checkpoint,
-        verify_ctx,
-    )
-    .wrap_err_with(|| {
-        format!(
-            "BLS-authenticating the re-fetched finalization for the marshal {which} hole at \
+    crate::cold_start_jump::verify_jump_authenticated(&uf, committees, at_hash, verify_ctx)
+        .wrap_err_with(|| {
+            format!(
+                "BLS-authenticating the re-fetched finalization for the marshal {which} hole at \
              height {height} against committee[E] read at the recovered parent {at_hash:?}"
-        )
-    })?;
+            )
+        })?;
     Ok(uf)
 }
 
@@ -475,7 +476,6 @@ async fn recover_walk_block<A, U, C>(
     committees: &C,
     verify_ctx: &mut Context,
     at_hash: B256,
-    l1_checkpoint: Option<B256>,
     sync_metrics: &SyncMetrics,
     h: u64,
 ) -> eyre::Result<OrderBlock>
@@ -501,7 +501,6 @@ where
         committees,
         verify_ctx,
         at_hash,
-        l1_checkpoint,
         h,
         "finalized_blocks",
     )
@@ -628,7 +627,6 @@ async fn recover_replay_seed<A, U, C>(
     committees: &C,
     verify_ctx: &mut Context,
     parent_hash: B256,
-    l1_checkpoint: Option<B256>,
     sync_metrics: &SyncMetrics,
     order: &OrderBlock,
 ) -> eyre::Result<ReplaySeed>
@@ -666,7 +664,6 @@ where
             committees,
             verify_ctx,
             parent_hash,
-            l1_checkpoint,
             order.height,
             "finalizations (own-round seed)",
         )
@@ -733,7 +730,6 @@ async fn recover_finalized_tail_into_reth<Provider, BeaconEngine, D, U, C>(
     target: u64,
     upstream: Option<&U>,
     committees: &C,
-    l1_checkpoint: Option<B256>,
     sync_metrics: &SyncMetrics,
     beacon: &dyn Beacon,
     epocher: &OriginEpocher,
@@ -745,8 +741,10 @@ where
     U: crate::cert_follow::CertUpstream,
     C: crate::cert_inlet::CommitteeSource,
 {
-    // The #8 re-fetch authenticates the upstream cert exactly like the cold-start
-    // jump landing; `verify_jump_authenticated` needs a `&mut Clock + CryptoRngCore`.
+    // The #8 re-fetch authenticates the upstream cert ITSELF — it is one of the two
+    // by-height seams that reach neither `store_finalization` nor
+    // `FrontierHandler::deliver`, which is the whole reason `verify_jump_authenticated`
+    // still exists after pass Б2. It needs a `&mut Clock + CryptoRngCore`.
     let mut verify_ctx = ctx.clone();
     // An ungraceful crash loses only reth's unflushed tail (typically 1-2 blocks).
     // A larger gap is NOT a recoverable flush race — #12 defers to devp2p EL-sync.
@@ -809,7 +807,6 @@ where
             committees,
             &mut verify_ctx,
             parent_hash,
-            l1_checkpoint,
             sync_metrics,
             h,
         )
@@ -830,7 +827,6 @@ where
             committees,
             &mut verify_ctx,
             parent_hash,
-            l1_checkpoint,
             sync_metrics,
             &order,
         )
@@ -944,13 +940,13 @@ pub struct DposLayerConfig<D, XC, A, U> {
     /// no in-process `disengage`, so without it a restart silently cleared a
     /// halt and the node signed again on the same disk. `None` only in tests.
     pub halt_marker: Option<std::path::PathBuf>,
-    /// Cert upstream for the single-shot, pre-engine cold-start EL-sync JUMP
-    /// ([`crate::cold_start_jump`]). `Some` ⇒ an upstream-configured node
-    /// (production-path external joiner / follower): a deep cold-start gap is
-    /// fast-forwarded via one FCU + devp2p backfill before the OuterEngine
-    /// starts. `None` ⇒ a no-upstream validator: it catches up on the
-    /// consensus-plane treadmill instead (no jump). FreshMigration never jumps
-    /// (the clean-halt invariant pins its anchor at `dposActivationBlock`).
+    /// Cert upstream: the marshal's by-height backfill resolver, the frozen-tip
+    /// ladder probe, and the steady-state re-jump's EL work all ride it. `Some` for
+    /// every launched node since the plane-native default (`node/dpos.rs` wraps both
+    /// the `Plane` and the `Ws` branch in `Some`). `None` is a no-upstream validator,
+    /// which `resolve_cold_start_kind` refuses for the empty-archive start (nothing
+    /// would climb the ladder) and which catches up on the consensus-plane treadmill
+    /// otherwise. There is no pre-engine jump any more (pass Б2).
     pub upstream: Option<U>,
     /// OrderBlock → derived-EVM-block execution (node-built over reth-evm).
     pub deriver: D,
@@ -1270,9 +1266,7 @@ pub struct SharedBeaconPlane {
 }
 
 /// Cold-start kind resolved from durable state. Pure function of the inputs
-/// so the decision is unit-testable without a node. A deeply-behind node with
-/// an upstream re-seeds its `Restart` anchor via the forward [`cold_start_jump`]
-/// (no separate kind) rather than anchoring at the EL tip directly.
+/// so the decision is unit-testable without a node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ColdStartKind {
     /// Empty archive, EL at/inside epoch 0: anchor at the activation block.
@@ -1280,6 +1274,17 @@ enum ColdStartKind {
     /// Populated archive: resume at its finalized height (real consensus
     /// state always wins).
     Restart,
+    /// Empty archive but the EL is already past epoch 0 — a node whose consensus
+    /// store was lost or never existed while its reth datadir kept going. Anchor at
+    /// reth's OWN finalized tag `(cs_finalized, cs_finalized_hash)` and let the
+    /// ladder + the steady-state jump carry it forward (Д-2(а)).
+    ///
+    /// The anchor is NOT the genesis (`archive_finalized`, where a runtime-deployed
+    /// ChainConfig is codeless) and NOT an upstream's `Latest` (nothing local can
+    /// check it). It is the same datum the follower path anchors on (`rf_hash`,
+    /// `derive_cold_start_heights`), written by exactly one thing — an FCU this node
+    /// itself issued, or the pre-DPoS sequencer's.
+    ElFinalized,
 }
 
 fn resolve_cold_start_kind(
@@ -1303,188 +1308,67 @@ fn resolve_cold_start_kind(
         return Ok(ColdStartKind::Restart);
     }
     if cs_finalized >= activation + interval {
-        // EL is past epoch 0 with an empty consensus archive. WITH a sync upstream
-        // (plane-tracked or WS) this is a legal deep `Restart`: the pre-engine
-        // `cold_start_jump` re-seeds the anchor at the verified frontier (§4.1/§4.3),
-        // and the empty-archive caller REQUIRES that jump to LAND (never anchors staking
-        // reads on the genesis hash — `dpos.rs::launch`). WITHOUT any upstream it stays
-        // FATAL: anchoring DPoS on state of unknown provenance is forbidden.
+        // EL past epoch 0 with an empty consensus archive: anchor at reth's own
+        // finalized tag (`ElFinalized`). An UPSTREAM is still required, but the
+        // reason changed with pass Б2 — it is no longer "something has to serve a
+        // frontier to jump to", because this path no longer jumps at boot. It is
+        // that every route out of the gap runs through a peer: the ladder's
+        // `Finalized{last(T+1)}` probe (§5.2), the marshal's by-height pulls, and
+        // the steady-state jump's own target, which only exists once the marshal has
+        // stored something. A node with no upstream at all would anchor here and
+        // never move.
         ensure!(
             has_upstream,
             "EL is past epoch 0 (finalized {cs_finalized} >= activation {activation} + interval \
              {interval}) with an empty consensus archive and NO sync upstream (not plane-tracked \
-             and no --dpos.follower-upstream); refusing to anchor DPoS on a state of unknown \
-             provenance. Register+activate the validator (it then joins the plane and \
-             cold-start-jumps to the verified frontier) or restore the consensus archive."
+             and no --dpos.follower-upstream): the node would anchor at its own EL-finalized tag \
+             and have nobody to climb the ladder from. Register+activate the validator (it then \
+             joins the plane and catches up by verified steps), or give it \
+             --dpos.follower-upstream (a WS peer this node dials BY URL, so the ladder step and \
+             the marshal's by-height pulls stop going through the consensus plane's peer set), \
+             or restore the consensus archive."
         );
-        return Ok(ColdStartKind::Restart);
+        return Ok(ColdStartKind::ElFinalized);
     }
     Ok(ColdStartKind::FreshMigration)
 }
 
-/// Whether the single-shot, pre-engine cold-start EL-sync JUMP
-/// ([`crate::cold_start_jump`]) is eligible to run. FreshMigration is NEVER
-/// eligible: its anchor MUST equal `dposActivationBlock` (the clean-halt
-/// invariant) and the pre-DPoS sequencer is production-gated there, so there is
-/// no deep gap to jump and a jump would orphan the activation anchor. An
-/// upstream is required (a no-upstream validator catches up on the
-/// consensus-plane treadmill). The forward-only need-gate (target far enough
-/// ahead; landing actually advances) lives INSIDE `cold_start_jump`.
-fn cold_start_jump_eligible(kind: ColdStartKind, has_upstream: bool) -> bool {
-    kind != ColdStartKind::FreshMigration && has_upstream
+/// What a FRESH follower datadir — one with no local `ChainConfig`, so no
+/// geometry, no committee and no archive — is allowed to use as its EL entry
+/// (§5.2 "Правило единое"). The ONE place in the system where nothing local can
+/// check a peer's answer, so the choice is a policy and not a lookup: pure, and
+/// unit-tested as such ([`fresh_follower_entry`] in `cold_start_kind_tests`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FreshFollowerEntry {
+    /// The operator named a block: `sync_to_checkpoint(hash)`.
+    Checkpoint(B256),
+    /// LOCAL/test network only: take the upstream's word for its own tip. The one
+    /// surviving `get_latest ⇒ sync_to`, and it is named for what it is.
+    UpstreamLatest,
 }
 
-/// The disposition of a single cold-start [`JumpOutcome`], split so the two
-/// single-shot pre-engine call sites can SELF-HEAL a transient stall (#11) rather
-/// than re-fuse it to fatal.
-enum JumpDisposition {
-    /// #11 SELF-HEAL: an EL-sync NET trip (sustained zero devp2p peers / the
-    /// backstop ceiling — [`crate::cold_start_jump::JumpOutcome::Stalled`]). The
-    /// cold-start path retries FOREVER (a peer may connect) under
-    /// `dpos_sync_degraded{reason=no_peers}` — NO backstop exit (Decision A: a
-    /// no-peers fatal would restart-storm every honest joiner at once).
-    RetryStalled(eyre::Report),
-    /// #1 SELF-HEAL: a POST-sync committee-BLS / L1 rejection (`AuthFailed`) — the
-    /// CURRENT upstream served a forged/unagreed far-ahead branch. The cold-start
-    /// path ROTATES the upstream, backs off, and RE-JUMPS forever under
-    /// `dpos_sync_degraded{reason=auth_rotate}` (Decision A — never crash on a
-    /// forged UPSTREAM). With ≥2 upstreams `rotate()` routes to the next URL and the
-    /// re-jump recovers off the honest source; with a SINGLE upstream `rotate()` is a
-    /// no-op so it re-polls the same one degraded (recovery genuinely needs ≥2). The
-    /// node never boots on the forged branch (the anchor stays un-advanced).
-    RotateAuth(eyre::Report),
-    /// A terminal outcome: proceed with `Ok(Some(landing))` / `Ok(None)` (no-op),
-    /// or fail closed `Err` (a genuinely-fatal cold-start jump error).
-    Done(eyre::Result<Option<(u64, B256, u64)>>),
-}
-
-/// Classify [`crate::cold_start_jump::cold_start_jump`]'s typed terminal
-/// [`JumpOutcome`] for the two single-shot pre-engine call sites.
-///
-/// `Landed` ⇒ `Done(Ok(Some(..)))`; `Lagging` ⇒ `Done(Ok(None))`; `BadTarget` /
-/// `InvalidTarget` (both a forgeable/reth-rejected structural mismatch — one
-/// PRE-sync, one discovered DURING `sync_to`, Rule S) ⇒ `Done(Ok(None))` (boot
-/// anyway, never crash on attacker-controlled or upstream-served-bad input);
-/// `AuthFailed` ⇒ `RotateAuth` (a POST-sync forged/unagreed branch — rotate +
-/// backoff + re-jump forever, was `Done(Err)`);
-/// `Stalled` ⇒ `RetryStalled` — the #11 no-peers self-heal (was a fatal re-fuse).
-fn classify_jump_outcome(outcome: crate::cold_start_jump::JumpOutcome) -> JumpDisposition {
-    use crate::cold_start_jump::JumpOutcome;
-    match outcome {
-        JumpOutcome::Landed {
-            landing,
-            hash,
-            floor,
-        } => JumpDisposition::Done(Ok(Some((landing, hash, floor)))),
-        JumpOutcome::Lagging => JumpDisposition::Done(Ok(None)),
-        // Rule S: a forgeable PRE-anchor structural mismatch (`payload != digest`)
-        // is NON-fatal — boot anyway (the inlet's ordinary pulls cover the residual
-        // gap, and a structurally-bad upstream recurs in steady state where Phase 2
-        // WARNs + rotates). Distinct from the POST-anchor authenticated rejections.
-        JumpOutcome::BadTarget(_e) => JumpDisposition::Done(Ok(None)),
-        // Same NON-fatal "boot anyway" treatment as BadTarget: reth itself
-        // rejected the served branch as INVALID during the EL-sync attempt
-        // (`el_sync_calls >= 1`, unlike BadTarget's PRE-sync `== 0`) — still a
-        // bad-upstream signal, not a reason to crash the node.
-        JumpOutcome::InvalidTarget(_e) => JumpDisposition::Done(Ok(None)),
-        // #11: an EL-sync stall (likely zero devp2p peers) is no longer a
-        // cold-start fatal — the call site retries forever + raises the gauge.
-        JumpOutcome::Stalled(e) => JumpDisposition::RetryStalled(e),
-        // Connected-but-wedged EL pipeline (soak v43): `sync_to` already ERROR-logged
-        // the stuck head. At cold-start the node has committed to nothing, so retry
-        // forever (same posture as `Stalled`) — a deterministic divergence keeps
-        // re-wedging, but the node stays observable + un-advanced rather than crashing.
-        JumpOutcome::StalledWithPeers(e) => JumpDisposition::RetryStalled(e),
-        // A POST-sync committee-BLS rejection of a
-        // canonicalized branch means the CURRENT upstream is forged — rotate + backoff
-        // + re-jump forever (was fail-closed `Done(Err)`); never crash on a forged
-        // UPSTREAM (Decision A).
-        JumpOutcome::AuthFailed(e) => JumpDisposition::RotateAuth(e),
-        // #10 L1 fork PRE-ENGINE: the node has not committed to serving anything yet
-        // (the anchor stays un-advanced), so rotate + re-jump forever exactly like a
-        // forged upstream — a different honest source may serve an L1-consistent
-        // branch, and the node never boots on the forked chain. The RUNTIME SafetyHalt
-        // (executor `jump_done` arm) is where an L1 fork halts an already-serving node;
-        // here there is nothing up to keep alive, so the stay-up posture IS the rotate.
-        JumpOutcome::L1Fork(e) => JumpDisposition::RotateAuth(e),
-    }
-}
-
-/// Run the single-shot cold-start jump with the #11 no-peers + #1 forged-upstream
-/// SELF-HEALs: a transient `Stalled` re-attempts FOREVER on the [`EL_SYNC_TICK`]
-/// cadence under `dpos_sync_degraded{reason=no_peers}=1` (a peer may connect), and an
-/// `AuthFailed` ROTATES the upstream + backs off + re-jumps FOREVER under
-/// `{reason=auth_rotate}=1` (a forged UPSTREAM — never crash, Decision A); any
-/// terminal outcome resolves via [`classify_jump_outcome`]. Shared by the validator
-/// `launch` and `launch_follower` cold-start call sites.
-///
-/// [`EL_SYNC_TICK`]: crate::cold_start_jump::EL_SYNC_TICK
-#[allow(clippy::too_many_arguments)]
-async fn cold_start_jump_self_heal<U, C, ES>(
-    ctx: &Context,
-    sync_metrics: &SyncMetrics,
-    anchor: u64,
-    upstream: &U,
-    committees: &C,
-    el: &ES,
+/// The policy itself. On a DEPLOYED network (`deployed_network`, evaluated by the
+/// node — `node/dpos.rs::is_deployed_network`) a missing checkpoint is a startup
+/// REFUSAL (E4-05): trusting one peer on first use is exactly the unauthenticated
+/// entry §5.2 removes, and unlike the other two entries there is no local datum to
+/// fall back on.
+fn fresh_follower_entry(
     l1_checkpoint: Option<B256>,
-    activation: u64,
-    jump_ctx: &mut Context,
-) -> eyre::Result<Option<(u64, B256, u64)>>
-where
-    U: crate::cert_follow::CertUpstream,
-    C: crate::cert_inlet::CommitteeSource,
-    ES: crate::cold_start_jump::ElSync,
-{
-    let mut stalled = false;
-    let mut auth_rotated = false;
-    loop {
-        let outcome = crate::cold_start_jump::cold_start_jump(
-            anchor,
-            upstream,
-            committees,
-            el,
-            l1_checkpoint,
-            activation,
-            jump_ctx,
-        )
-        .await;
-        match classify_jump_outcome(outcome) {
-            JumpDisposition::RetryStalled(e) => {
-                stalled = true;
-                warn!(
-                    error = ?e,
-                    "cold-start EL-sync stalled (likely zero devp2p peers); retrying (no give-up)"
-                );
-                sync_metrics.degrade(SyncReason::NoPeers);
-                ctx.sleep(crate::cold_start_jump::EL_SYNC_TICK).await;
-            }
-            JumpDisposition::RotateAuth(e) => {
-                // #1 SELF-HEAL: the CURRENT upstream served a forged/unagreed
-                // far-ahead branch. Rotate to the next upstream (a NO-OP at a single
-                // upstream — round-robin len==1), back off, and RE-JUMP forever under
-                // `reason=auth_rotate`; never crash on a forged UPSTREAM (Decision A),
-                // and never advance the anchor onto the forged branch.
-                auth_rotated = true;
-                warn!(
-                    error = ?e,
-                    "cold-start jump target failed committee-BLS / L1 authentication (forged \
-                     upstream); rotating upstream + backing off + re-jumping (no give-up)"
-                );
-                sync_metrics.degrade(SyncReason::AuthRotate);
-                upstream.rotate().await;
-                ctx.sleep(crate::cold_start_jump::EL_SYNC_TICK).await;
-            }
-            JumpDisposition::Done(res) => {
-                if stalled {
-                    sync_metrics.recover(SyncReason::NoPeers);
-                }
-                if auth_rotated {
-                    sync_metrics.recover(SyncReason::AuthRotate);
-                }
-                return res;
-            }
-        }
+    deployed_network: bool,
+    chain_id: u64,
+) -> eyre::Result<FreshFollowerEntry> {
+    match l1_checkpoint {
+        Some(hash) => Ok(FreshFollowerEntry::Checkpoint(hash)),
+        None if deployed_network => Err(eyre!(
+            "cert-follow: fresh datadir on a deployed network (chain_id {chain_id}) with no \
+             --dpos.l1-checkpoint. A datadir with no ChainConfig has no geometry, no committee \
+             and no archive, so there is NOTHING this node can check an upstream's answer \
+             against — syncing to one would be trust-on-first-use against a single peer. \
+             Restart with --dpos.l1-checkpoint pointing at the L1 Rollup contract (the \
+             checkpoint block is then the entry), or restore a datadir that already holds the \
+             ChainConfig."
+        )),
+        None => Ok(FreshFollowerEntry::UpstreamLatest),
     }
 }
 
@@ -1827,14 +1711,12 @@ impl DposLayer {
         let epoch_length_blocks =
             NonZeroU64::new(interval).ok_or_eyre("epoch_block_interval must be > 0")?;
 
-        // Cold-start discriminator (restart vs fresh migration). The marshal's
-        // durable application-metadata is the signal: an empty store (height <=
-        // activation) is a fresh sequencer→DPoS migration — unless the EL overshot
-        // epoch 0, which is fatal (state of unknown provenance). A populated
-        // store is a restart of an already-migrated node, which MUST resume at
-        // its real finalized height so the scheme cascade starts at the correct
-        // epoch. A deeply-behind restart with an upstream then fast-forwards via
-        // the forward `cold_start_jump` below.
+        // Cold-start discriminator. The marshal's durable application-metadata is the
+        // signal: an empty store (height <= activation) is a fresh sequencer→DPoS
+        // migration — unless the EL overshot epoch 0, which anchors at reth's own
+        // finalized tag instead (`ElFinalized`). A populated store is a restart of an
+        // already-migrated node, which MUST resume at its real finalized height so the
+        // scheme cascade starts at the correct epoch.
         let archive_finalized =
             read_consensus_archive_last_finalized(&ctx, MARSHAL_PARTITION_PREFIX).await?;
         let kind = resolve_cold_start_kind(
@@ -1844,237 +1726,148 @@ impl DposLayer {
             cs_finalized,
             upstream.is_some(),
         )?;
-        // The legal deep-`Restart` arm reached with an EMPTY archive (archive at/below
-        // activation) anchors at `archive_finalized` = genesis until the jump lands, so
-        // it MUST land: an un-landed jump would leave the staking reads below
-        // pointed at the genesis hash, where a runtime-deployed ChainConfig is
-        // codeless → an opaque "evm read call reverted" crash. A populated Restart (real
-        // archived finalized block) has no such hazard — the anchor is already readable.
-        let empty_archive_requires_landed_jump =
-            kind == ColdStartKind::Restart && archive_finalized <= dpos_activation_block;
-        // #8/#12 self-heal: set when the pre-engine crash-survivor replay DEFERRED
-        // to the post-engine devp2p EL-sync (anchoring at reth's tip). Cleared once
-        // the eligible jump below fast-forwards reth (the `crash_recover` gauge).
-        let mut crash_recover_deferred = false;
-        let (mut latest_finalized, mut latest_finalized_hash) = if kind
-            == ColdStartKind::FreshMigration
-        {
-            // FRESH MIGRATION: anchor ≡ block@dposActivationBlock; wait for reth
-            // to hold it, hash derived locally (canonical at a finalized height).
-            // Checkpoint-provisioned EL-ahead start is deferred to Phase 2/β — a
-            // node-local EL head as genesis would diverge cross-node.
-            let hash =
-                wait_for_activation_block(&ctx, &provider, dpos_activation_block, &sync_metrics)
-                    .await?;
-            (dpos_activation_block, hash)
-        } else {
-            // RESTART (already migrated): resume at the consensus archive's
-            // finalized height.
-            match provider.block_hash(archive_finalized)? {
-                Some(hash) => (archive_finalized, hash),
-                None => {
-                    // CRASH SURVIVOR: an ungraceful crash lost reth's
-                    // unflushed finalized tail while the marshal persisted the
-                    // finalization (the two stores flush independently). reth is
-                    // behind the consensus archive. Recover the missing block(s)
-                    // from the marshal's OWN finalized_blocks archive into reth —
-                    // the cold-start analog of the executor gap-heal, and how tempo
-                    // backfills marshal→reth. fluentbase needs this at cold-start
-                    // (not just in the executor backfill) because the committee
-                    // read at `latest_finalized_hash` and the genesis read both
-                    // require reth to hold the resume block. The later executor
-                    // backfill then becomes a no-op.
-                    //
-                    // The committee source authenticates a #8 below-floor re-fetch
-                    // (`committee[E]` read at the already-recovered parent state); the
-                    // validator path carries no L1 checkpoint (the on-chain committee
-                    // at the local finalized tip is the trust anchor — same as the jump).
-                    let recover_committees = crate::cert_inlet::RethCommitteeSource::new(
-                        RethStakingStateReader::new(
-                            provider.clone(),
-                            evm_config.clone(),
-                            staking_config.clone(),
-                        ),
-                        chain_id,
-                    );
-                    match recover_finalized_tail_into_reth(
-                        &ctx,
-                        &beacon_engine_handle,
-                        &provider,
-                        &deriver,
-                        archive_finalized,
-                        upstream.as_ref(),
-                        &recover_committees,
-                        None,
-                        &sync_metrics,
-                        randomness.as_ref(),
-                        &OriginEpocher::new(dpos_activation_block, epoch_length_blocks),
-                    )
-                    .await?
-                    {
-                        RecoverOutcome::Recovered(hash) => (archive_finalized, hash),
-                        RecoverOutcome::DeferToElSync { gap } => {
-                            // #12 (reth deeply behind an INTACT archive): the pre-engine
-                            // replay is capped, so anchor at reth's ACTUAL tip and let
-                            // the eligible `cold_start_jump` below devp2p-backfill the EL
-                            // (`has_upstream` was asserted inside recover). #8 holes never
-                            // reach here — they heal inline via the by-height re-fetch.
-                            crash_recover_deferred = true;
-                            let best = provider.best_block_number()?;
-                            info!(
-                                gap,
-                                reth_best = best,
-                                finalized_target = archive_finalized,
-                                "crash-survivor recovery deferred to devp2p EL-sync; anchoring at \
-                                 reth's tip for the pre-engine jump"
-                            );
-                            let best_hash = read_with_visibility_belt(
-                                &ctx,
-                                &sync_metrics,
-                                &format!("the crash-recover reth tip {best}"),
-                                || provider.block_hash(best).wrap_err("reading reth tip hash"),
-                            )
-                            .await?;
-                            (best, best_hash)
+        let (latest_finalized, latest_finalized_hash) = match kind {
+            ColdStartKind::FreshMigration => {
+                // FRESH MIGRATION: anchor ≡ block@dposActivationBlock; wait for reth
+                // to hold it, hash derived locally (canonical at a finalized height).
+                let hash = wait_for_activation_block(
+                    &ctx,
+                    &provider,
+                    dpos_activation_block,
+                    &sync_metrics,
+                )
+                .await?;
+                (dpos_activation_block, hash)
+            }
+            ColdStartKind::ElFinalized => {
+                // EMPTY ARCHIVE, EL PAST EPOCH 0 (§5.2 "Правило единое", Д-2(а)).
+                // Anchor at reth's OWN finalized tag — the pair
+                // `derive_cold_start_heights` already read, which is the same datum the
+                // follower path anchors on (`rf_hash`). It is not state of unknown
+                // provenance: `canonical_in_memory_state`'s finalized slot has exactly
+                // ONE writer, `update_finalized_block` on an FCU
+                // (RETH `crates/engine/tree/src/tree/mod.rs:3109-3140`, reached only from
+                // `ensure_consistent_forkchoice_state`, `:3181-3190`), which refuses a
+                // hash that is not canonical here, and it survives a restart because the
+                // same function stages it to disk and `BlockchainProvider::with_latest`
+                // reloads it (`crates/storage/provider/src/providers/blockchain_provider.rs:87-116`).
+                // The devp2p pipeline never touches it. So the tag was written by an FCU
+                // THIS datadir accepted — this node's own `sync_to`/executor, or the
+                // pre-DPoS sequencer — never by a peer's answer.
+                //
+                // NO jump here (pass Б2): the node boots on this anchor and climbs with
+                // the ladder (§5.2) plus the steady-state tip-only jump, whose target is
+                // a pair out of its own archive.
+                info!(
+                    anchor = cs_finalized,
+                    anchor_hash = ?cs_finalized_hash,
+                    activation = dpos_activation_block,
+                    "empty consensus archive with the EL past epoch 0: anchoring at reth's own \
+                     EL-finalized tag and catching up by verified steps. Those steps are served \
+                     over the consensus plane, which can only ask THIS node's own \
+                     C[T-1] u C[T] u C[T+1]; if every committee it remembers has rotated out, \
+                     --dpos.follower-upstream (a WS peer dialled by URL) is the one entry that \
+                     does not go through that set"
+                );
+                (cs_finalized, cs_finalized_hash)
+            }
+            ColdStartKind::Restart => {
+                // RESTART (already migrated): resume at the consensus archive's
+                // finalized height.
+                match provider.block_hash(archive_finalized)? {
+                    Some(hash) => (archive_finalized, hash),
+                    None => {
+                        // CRASH SURVIVOR: an ungraceful crash lost reth's
+                        // unflushed finalized tail while the marshal persisted the
+                        // finalization (the two stores flush independently). reth is
+                        // behind the consensus archive. Recover the missing block(s)
+                        // from the marshal's OWN finalized_blocks archive into reth —
+                        // the cold-start analog of the executor gap-heal, and how tempo
+                        // backfills marshal→reth. fluentbase needs this at cold-start
+                        // (not just in the executor backfill) because the committee
+                        // read at `latest_finalized_hash` and the genesis read both
+                        // require reth to hold the resume block. The later executor
+                        // backfill then becomes a no-op.
+                        //
+                        // The committee source authenticates a #8 below-floor re-fetch
+                        // (`committee[E]` read at the already-recovered parent state).
+                        let recover_committees = crate::cert_inlet::RethCommitteeSource::new(
+                            RethStakingStateReader::new(
+                                provider.clone(),
+                                evm_config.clone(),
+                                staking_config.clone(),
+                            ),
+                            chain_id,
+                        );
+                        match recover_finalized_tail_into_reth(
+                            &ctx,
+                            &beacon_engine_handle,
+                            &provider,
+                            &deriver,
+                            archive_finalized,
+                            upstream.as_ref(),
+                            &recover_committees,
+                            &sync_metrics,
+                            randomness.as_ref(),
+                            &OriginEpocher::new(dpos_activation_block, epoch_length_blocks),
+                        )
+                        .await?
+                        {
+                            RecoverOutcome::Recovered(hash) => (archive_finalized, hash),
+                            RecoverOutcome::DeferToElSync { gap } => {
+                                // #12 (reth deeply behind an INTACT archive): the pre-engine
+                                // replay is capped, so anchor at reth's ACTUAL tip. WHAT
+                                // CLOSES THE GAP after pass Б2 is the EXECUTOR'S STARTUP
+                                // BACKFILL DRAIN, not a jump: `outer.rs` hands the executor
+                                // `last_consensus_finalized_height` (the marshal's own acked
+                                // cursor, which an INTACT archive leaves far above reth), and
+                                // the executor drains
+                                // `(last_execution_finalized_height .. that cursor]` block by
+                                // block out of the marshal archive through the same
+                                // derive+import path live dispatch uses
+                                // (`executor.rs::finalized_heights_to_backfill`).
+                                //
+                                // The steady-state jump CANNOT serve here and never fires on
+                                // this path: `last_tip_height` and `ordering_finalized` are
+                                // both seeded from that same cursor, so the heartbeat re-poke
+                                // sees a difference of 0, and `maybe_re_jump` refuses to spawn
+                                // at all while the drain is non-empty. So
+                                // `dpos_sync_degraded{reason=crash_recover}` stays raised until
+                                // the drain's LAST height clears it (`executor.rs`, the
+                                // `pending_backfill` arm) — there is no pre-engine step left
+                                // that could clear it here. Cost of the change: this gap is now
+                                // walked by derive+import instead of one devp2p fast-forward.
+                                let best = provider.best_block_number()?;
+                                info!(
+                                    gap,
+                                    reth_best = best,
+                                    finalized_target = archive_finalized,
+                                    "crash-survivor recovery deferred to the executor's startup \
+                                     backfill drain; anchoring at reth's tip"
+                                );
+                                let best_hash = read_with_visibility_belt(
+                                    &ctx,
+                                    &sync_metrics,
+                                    &format!("the crash-recover reth tip {best}"),
+                                    || provider.block_hash(best).wrap_err("reading reth tip hash"),
+                                )
+                                .await?;
+                                (best, best_hash)
+                            }
                         }
                     }
                 }
             }
         };
 
-        // Single-shot, forward-only, pre-engine EL-sync JUMP. For an
-        // upstream-configured, deeply-behind node (production-path external
-        // joiner / future follower) the resolved anchor can be millions of
-        // blocks below the live frontier; the JUMP fast-forwards reth via one
-        // FCU + devp2p backfill so the inlet+marshal then close the residual gap
-        // by ordinary pulls. Gated:
-        //   - `kind != FreshMigration` — a fresh migration MUST anchor at
-        //     `dposActivationBlock` (the clean-halt invariant below); it never
-        //     jumps.
-        //   - `upstream.is_some()` — a no-upstream validator catches up on the
-        //     consensus-plane treadmill (epoch_manager soft-enter), NOT here.
-        // SAFETY (single writer): this runs BEFORE `OuterBuilder::build` (and
-        // thus before the executor task starts) — mutually exclusive with the
-        // executor, the SAME property `recover_finalized_tail_into_reth` relies
-        // on. `sync_to` issues exactly one read-side fast-forward FCU; it is a
-        // cold-start prep path, never a concurrent second reth writer.
-        let mut jumped_marshal_floor: Option<Height> = None;
-        if cold_start_jump_eligible(kind, upstream.is_some()) {
-            // `upstream.is_some()` is the eligibility gate above, so this unwrap
-            // is total — destructure via `if let` to keep `up` borrowed.
-            if let Some(up) = &upstream {
-                let committees = crate::cert_inlet::RethCommitteeSource::new(
-                    RethStakingStateReader::new(
-                        provider.clone(),
-                        evm_config.clone(),
-                        staking_config.clone(),
-                    ),
-                    chain_id,
-                );
-                let el = crate::cold_start_jump::RethElSync::new(
-                    ctx.clone(),
-                    provider.clone(),
-                    beacon_engine_handle.clone(),
-                    dpos_activation_block,
-                    peer_count.clone(),
-                );
-                // The post-sync cert `verify()` inside `verify_jump_authenticated`
-                // needs a `&mut CryptoRngCore`; clone `ctx` (a cheap handle) so the
-                // move does not consume the launcher's own `ctx`.
-                let mut jump_ctx = ctx.clone();
-                loop {
-                    if let Some((h, hash, floor)) = cold_start_jump_self_heal(
-                        &ctx,
-                        &sync_metrics,
-                        latest_finalized,
-                        up,
-                        &committees,
-                        &el,
-                        // No L1 checkpoint on the validator path: the deep jump is
-                        // authenticated trustlessly by the POST-sync committee read at
-                        // the landing (`verify_jump_authenticated`), which fails closed
-                        // if the upstream serves a forged/unagreed branch. The L1
-                        // arg is only the operator-gated fallback for the degenerate
-                        // "committee unreadable even at the landing" case.
-                        None,
-                        dpos_activation_block,
-                        &mut jump_ctx,
-                    )
-                    .await?
-                    {
-                        latest_finalized = h;
-                        latest_finalized_hash = hash;
-                        jumped_marshal_floor = Some(Height::new(floor));
-                    }
-                    // #4 retry-for-upstream: an empty-archive legal-Restart MUST land
-                    // the jump before it can read staking state (the genesis ChainConfig
-                    // is codeless), but a NON-landed jump (Lagging — frontier within
-                    // JUMP_THRESHOLD, or no plane peer has served a frontier yet, e.g.
-                    // the node booted before peers tracked it at their next epoch
-                    // boundary) is NOT fatal (Decision A: a no-upstream/no-frontier exit
-                    // would restart-storm every honest joiner). Re-attempt FOREVER under
-                    // dpos_sync_degraded{reason=awaiting_upstream}=1 until a committee
-                    // peer serves a frontier above the threshold — the plane IS the path
-                    // to BFT (the removed guard already said "retry once plane-tracked").
-                    // A POPULATED Restart / fresh migration needs no landing → breaks on
-                    // the first pass.
-                    if empty_archive_requires_landed_jump && jumped_marshal_floor.is_none() {
-                        sync_metrics.degrade(SyncReason::AwaitingUpstream);
-                        warn!(
-                            "empty consensus archive + EL past epoch 0: cold-start jump has not \
-                             landed yet (no plane peer served a frontier above the jump \
-                             threshold); parked-degraded, retrying (no give-up — retry once \
-                             plane-tracked)"
-                        );
-                        ctx.sleep(crate::cold_start_jump::EL_SYNC_TICK).await;
-                        continue;
-                    }
-                    break;
-                }
-                if jumped_marshal_floor.is_some() {
-                    sync_metrics.recover(SyncReason::AwaitingUpstream);
-                }
-            }
-        }
-
-        // #12: the eligible jump above devp2p-fast-forwarded reth from its tip, so
-        // the pre-engine crash-recover EL gap is closed (the archive was INTACT — no
-        // consensus-store repair needed, unlike a #8 hole, which already healed
-        // inline during the replay). Clear the gauge.
-        if crash_recover_deferred {
-            sync_metrics.recover(SyncReason::CrashRecover);
-            sync_metrics.crash_recover_gap_blocks.set(0);
-        }
-
-        // Empty-archive legal-Restart guard (§4.1): the #4 retry loop above re-attempts
-        // the jump FOREVER until it lands whenever `empty_archive_requires_landed_jump`,
-        // so by construction `jumped_marshal_floor` is `Some` here for that case — the
-        // node NEVER reaches the staking reads below (which would hit the codeless
-        // genesis ChainConfig) on an un-landed anchor. This residual fatal is therefore
-        // PATH-LESS by construction: it can only fire if the empty-archive case were
-        // reached without an upstream (so the retry loop never ran), which
-        // `resolve_cold_start_kind` forbids (empty-archive Restart REQUIRES an upstream,
-        // the `has_upstream` ensure). Kept as a fail-closed guard against a future
-        // refactor breaking that invariant.
-        if empty_archive_requires_landed_jump && jumped_marshal_floor.is_none() {
-            return Err(eyre!(
-                "empty consensus archive with an EL past epoch 0 and NO upstream to jump from — \
-                 path-less by construction (resolve_cold_start_kind requires an upstream for this \
-                 case). Refusing to run staking reads against the genesis hash (a runtime-deployed \
-                 ChainConfig is codeless there)."
-            ));
-        }
-
-        // Read the EL head AFTER a possible jump: `sync_to` drives reth's
-        // canonical head forward via devp2p backfill, so a pre-jump snapshot
-        // would be stale. The clean-halt invariant below is FreshMigration-only
-        // (which never jumps), so it still sees the un-jumped head.
+        // Read the EL head AFTER the crash-survivor recovery above: it imports the
+        // missing reth tail, so a pre-recovery snapshot would be stale.
         let (_cs_fin, _cs_fin_hash, head_num, head_hash) =
             derive_cold_start_heights(&canonical_state, genesis_hash);
 
-        // Read AFTER the crash-survivor recovery + jump above: both import the
-        // missing reth tail, and a pre-recovery snapshot would make the executor
-        // backfill re-derive exactly those blocks (idempotent but wasted V).
+        // Read AFTER the crash-survivor recovery above: it imports the missing reth
+        // tail, and a pre-recovery snapshot would make the executor backfill
+        // re-derive exactly those blocks (idempotent but wasted V).
         let last_execution_finalized_height = provider
             .last_block_number()
             .wrap_err("provider failed to report chain head block number at startup")?;
@@ -2101,9 +1894,12 @@ impl DposLayer {
             ensure!(
                 head_hash == latest_finalized_hash,
                 "fresh migration but reth head {head_num} ({head_hash:?}) != activation \
-                 anchor {latest_finalized} ({latest_finalized_hash:?}); the sequencer \
-                 was not production-gated at dposActivationBlock — refusing to anchor DPoS \
-                 on an orphaned tail"
+                 anchor {latest_finalized} ({latest_finalized_hash:?}). Either the sequencer \
+                 was not production-gated at dposActivationBlock, or this EL was filled by \
+                 devp2p with no FCU ever issued: the staged pipeline never writes reth's \
+                 `finalized` tag, so `get_finalized_num_hash()` is None, the cold-start \
+                 discriminator reads the anchor as height 0 and routes an EL that is far past \
+                 activation into this arm. Refusing to anchor DPoS on an orphaned tail"
             );
         }
         let (initial_head_num, initial_head_hash) = (head_num, head_hash);
@@ -2537,11 +2333,11 @@ impl DposLayer {
         // share-gate demotes to verify-only, the recompute-heal re-promotes.
 
         // Steady-state self-healing re-jump (finding #6): the executor's reaction
-        // to its own `Update::Tip` event. The cold-start `cold_start_jump` above
-        // runs ONCE pre-engine; this closure is its steady-state TWIN — same
-        // `upstream` / `RethCommitteeSource` / `RethElSync` / activation, same
-        // forward-only BLS-verified `cold_start_jump`, but re-runnable while the
-        // executor runs. Enabled wherever an upstream is configured, which since the
+        // to its own `Update::Tip` event, and since pass Б2 the ONLY jump in the
+        // system — the pre-engine one is gone, and a node with an empty archive
+        // anchors at its own EL-finalized tag and climbs from there. Forward-only,
+        // over a target out of this node's own marshal archive, re-runnable while
+        // the executor runs. Enabled wherever an upstream is configured, which since the
         // plane-native default is EVERY launched node — `node/src/dpos.rs:1683` wraps
         // both the `Plane` and the `Ws` branch in `Some(`, so a plain validator has
         // one too and re-jumps plane-natively. The executor runs it synchronously in
@@ -2563,32 +2359,18 @@ impl DposLayer {
             // with the follower (`frontier_probe`, review B1-01).
             let frontier_probe = frontier_probe(up.clone(), committee.clone());
             let provider = provider.clone();
-            let evm_config = evm_config.clone();
-            let staking_config = staking_config.clone();
             let beacon_engine_handle = beacon_engine_handle.clone();
             let ctx = ctx.clone();
             let peer_count = peer_count.clone();
             let cb: crate::executor::ReJumpFn = Arc::new(
                 move |from: u64, target: crate::cert_follow::UpstreamFinalized| {
                     let provider = provider.clone();
-                    let evm_config = evm_config.clone();
-                    let staking_config = staking_config.clone();
                     let beacon_engine_handle = beacon_engine_handle.clone();
                     let peer_count = peer_count.clone();
-                    // `verify_jump_authenticated` needs a `&mut (Clock + CryptoRngCore)`;
-                    // a fresh clone per call so the closure stays re-usable.
-                    let mut jump_ctx = ctx.clone();
+                    let jump_ctx = ctx.clone();
                     Box::pin(async move {
-                        let committees = crate::cert_inlet::RethCommitteeSource::new(
-                            RethStakingStateReader::new(
-                                provider.clone(),
-                                evm_config,
-                                staking_config,
-                            ),
-                            chain_id,
-                        );
                         let el = crate::cold_start_jump::RethElSync::new(
-                            jump_ctx.clone(),
+                            jump_ctx,
                             provider.clone(),
                             beacon_engine_handle,
                             dpos_activation_block,
@@ -2597,17 +2379,17 @@ impl DposLayer {
                         // Return the typed terminal `JumpOutcome` verbatim — the
                         // executor's completion arm classifies it (Landed re-seeds;
                         // Stalled is NON-fatal + retried on the next Tip). §9.6.
+                        // No committee source and no verify RNG any more: the target
+                        // is a pair out of this node's OWN marshal archive, already
+                        // 2f+1 under a committee this node read (pass Б2).
                         crate::cold_start_jump::jump_to_target(
                             from,
                             target,
-                            &committees,
                             &el,
-                            // No L1 checkpoint on the validator path (trustless
-                            // POST-sync committee read at the landing).
+                            // No L1 checkpoint on the validator path.
                             None,
                             dpos_activation_block,
                             re_jump_threshold,
-                            &mut jump_ctx,
                         )
                         .await
                     }) as futures::future::BoxFuture<'static, _>
@@ -2619,8 +2401,9 @@ impl DposLayer {
                 // keep the serving-window size; a compressed test epoch heals within
                 // an epoch).
                 threshold: re_jump_threshold,
-                // Rule L/Y: the same upstream-rotation escape the follower wires (T2 —
-                // safe now that BadTarget is NON-fatal).
+                // Rule L/Y: the same upstream-rotation escape the follower wires (T2).
+                // After pass Б2 the only arm that fires it is a `Stalled` streak —
+                // the insta-rotating `BadTarget`/`AuthFailed` arms are gone.
                 rotate: Some(rotate),
                 // Frozen-tip frontier probe — the live-follow driver for the
                 // PLANE-NATIVE validator (no consensus participation while rotated
@@ -2752,13 +2535,10 @@ impl DposLayer {
             initial_head: (Height::new(initial_head_num), initial_head_hash),
             // DPoS-era floor: the marshal never dispatches pre-anchor history.
             // Fresh migration: anchor = activation. Restart: a raises-only no-op
-            // (the archive's floor is already at/above its own finalized). After
-            // a cold-start JUMP the floor is `landing − K` (the K below-landing
-            // blocks are derivable via the inlet's ordinary pulls + the executor
-            // gap-walk).
-            marshal_floor: Some(
-                jumped_marshal_floor.unwrap_or_else(|| Height::new(latest_finalized)),
-            ),
+            // (the archive's floor is already at/above its own finalized).
+            // `ElFinalized`: reth's own finalized tag. A later steady-state jump
+            // raises the floor to `landing − K` through `set_floor`, not here.
+            marshal_floor: Some(Height::new(latest_finalized)),
             boundary_fetch,
             boundary_enter: enter_boundary,
             boundary_read_floor: read_floor_boundary,
@@ -2895,10 +2675,20 @@ pub struct FollowerLayerConfig<D, XC, A, U> {
     /// no in-process `disengage`, so without it a restart silently cleared a
     /// halt and the node signed again on the same disk. `None` only in tests.
     pub halt_marker: Option<std::path::PathBuf>,
-    /// L1 Rollup-checkpoint hash (B2). `Some` ⇒ fail-closed post-EL-sync assert
-    /// (`cert-follow: L1 Rollup checkpoint …`); `None` ⇒ the upstream head is the
-    /// only trust input (devnet fallback).
+    /// L1 Rollup-checkpoint hash (B2) — ALSO the operator checkpoint a fresh
+    /// datadir syncs to (§5.2 "Правило единое"): `Some` ⇒ the fresh-datadir entry
+    /// FCUs to this hash and then fail-closed asserts it
+    /// (`cert-follow: L1 Rollup checkpoint …`). `None` on a fresh datadir is a
+    /// startup refusal on a deployed network and a `warn!`-ed trust-on-first-use
+    /// on a local one — see [`Self::deployed_network`].
     pub l1_checkpoint_hash: Option<B256>,
+    /// Whether this chain_id is one of the DEPLOYED networks (devnet / testnet /
+    /// mainnet). Evaluated by the node — the chain_id constants live in its
+    /// `chainspec`, and this crate must not carry a second copy of that list — and
+    /// used here for exactly one decision: a fresh datadir with NO operator
+    /// checkpoint refuses to start on a deployed network (E4-05) and falls back to
+    /// the upstream's `Latest` only off one.
+    pub deployed_network: bool,
     /// OrderBlock → derived-EVM-block execution (node-built over reth-evm).
     pub deriver: D,
     /// Local derived-chain view (node-built over the reth provider).
@@ -2918,9 +2708,12 @@ pub struct FollowerLayerConfig<D, XC, A, U> {
     /// `consensus` RPC latest-tier. `None` for nodes that don't serve the feed.
     pub feed: Option<crate::feed_sink::FeedSink>,
     pub fcu_heartbeat_interval: Duration,
-    /// Cert upstream for the single-shot, pre-engine cold-start EL-sync JUMP
-    /// (`get_latest`). A follower ALWAYS has an upstream (the WS the inlet uses);
-    /// `None` only in tests.
+    /// Cert upstream. After pass Б2 the follower has no pre-engine jump: what rides
+    /// this handle is the marshal's by-height backfill resolver, the frozen-tip
+    /// ladder probe, the steady-state re-jump's EL work, and — on a FRESH datadir off
+    /// a deployed network only — the one surviving `get_latest ⇒ sync_to`
+    /// ([`FreshFollowerEntry::UpstreamLatest`]). A follower ALWAYS has an upstream
+    /// (the WS the inlet uses); `None` only in tests.
     pub upstream: Option<U>,
     /// The live finalized-cert stream the node's WS actor pushes — the inlet's
     /// SOLE producer (a follower forms no certs locally).
@@ -3020,6 +2813,7 @@ impl DposLayer {
             staking_config,
             halt_marker,
             l1_checkpoint_hash,
+            deployed_network,
             deriver,
             executed,
             finalized_cursor,
@@ -3053,11 +2847,15 @@ impl DposLayer {
             staking_config.clone(),
         );
 
-        // Epoch geometry. RESTART datadir: `ChainConfig` readable from local
-        // state. FRESH datadir (runtime-deployed cluster): geometry unreadable
-        // locally → EL-sync FIRST, then read it at the synced landing. `read_geometry`
-        // discriminates (it returns `None` when `ChainConfig`/activation are absent).
-        let (_rf_num, rf_hash, _h0_num, _h0_hash) =
+        // Epoch geometry + the cold-start anchor (§5.2 "Правило единое": `sync_to`
+        // is only ever called with an input this node can check).
+        //
+        // RESTART datadir: `ChainConfig` is readable from local state at reth's own
+        // finalized hash, so the geometry AND the anchor are local — no `sync_to` at
+        // all. FRESH datadir (runtime-deployed cluster): nothing is readable locally,
+        // which is the one place in the system with nothing to check a peer against,
+        // so the entry is an explicit operator checkpoint or a refusal.
+        let (rf_num, rf_hash, _h0_num, _h0_hash) =
             derive_cold_start_heights(&canonical_state, genesis_hash);
         let mk_el_sync = |activation: u64| {
             crate::cold_start_jump::RethElSync::new(
@@ -3069,73 +2867,105 @@ impl DposLayer {
             )
         };
 
-        let (activation, interval, mut anchor_height, mut anchor_hash) =
+        let (activation, interval, anchor_height, anchor_hash) =
             match read_geometry(&reader, rf_hash)? {
                 Some((activation, interval)) => {
-                    let el = mk_el_sync(activation);
-                    let (h, hash) = match upstream.as_ref() {
-                        Some(up) => match up.get_latest().await {
-                            Some(latest) => el.sync_to(&latest).await?,
-                            None => {
-                                warn!(
-                                    "cert-follow: upstream getLatest returned none; relying on \
-                                     existing reth state"
-                                );
-                                let hash = wait_for_activation_block(
-                                    &ctx,
-                                    &provider,
-                                    activation,
-                                    &sync_metrics,
-                                )
+                    // THE ANCHOR IS `rf_hash` — reth's own EL-finalized tag, the same
+                    // datum the validator path anchors on. The `get_latest ⇒ sync_to`
+                    // that used to stand here drove the EL onto a height a peer named,
+                    // with nothing checking it (§5.2 lists it as one of the three
+                    // unauthenticated entries); it is gone. A follower that is behind
+                    // climbs from this anchor exactly like a validator: the ladder
+                    // probe + the marshal's by-height pulls + the steady-state jump
+                    // onto a pair out of its own archive.
+                    //
+                    // `wait_for_activation_block` stays for `rf < activation`: the
+                    // ordering chain starts at the activation block, so an anchor below
+                    // it is not a DPoS anchor at all and the node waits for reth to
+                    // hold the activation block (the pre-DPoS sequencer finalizes it).
+                    if rf_num < activation {
+                        let hash =
+                            wait_for_activation_block(&ctx, &provider, activation, &sync_metrics)
                                 .await?;
-                                (activation, hash)
-                            }
-                        },
-                        None => {
-                            let hash = wait_for_activation_block(
-                                &ctx,
-                                &provider,
-                                activation,
-                                &sync_metrics,
-                            )
-                            .await?;
-                            (activation, hash)
-                        }
-                    };
-                    (activation, interval, h, hash)
+                        (activation, interval, activation, hash)
+                    } else {
+                        (activation, interval, rf_num, rf_hash)
+                    }
                 }
                 None => {
-                    // Fresh datadir: sync without an activation clamp (unknown
-                    // yet), then read geometry at the landing and re-clamp.
-                    let up = upstream.as_ref().ok_or_else(|| {
-                        eyre!(
-                            "cert-follow: fresh datadir without a local ChainConfig needs a \
-                             reachable upstream to EL-sync from"
-                        )
-                    })?;
-                    let latest = up.get_latest().await.ok_or_else(|| {
-                        eyre!(
-                            "cert-follow: fresh datadir without a local ChainConfig needs a \
-                             reachable upstream to EL-sync from"
-                        )
-                    })?;
-                    let (h, hash) = mk_el_sync(0).sync_to(&latest).await?;
+                    // FRESH DATADIR. No geometry, no committee, no archive — the one
+                    // entry where a peer's answer cannot be checked by anything local.
+                    // The policy is the pure `fresh_follower_entry`; only the EL work
+                    // is here.
+                    let (h, hash, entry) =
+                        match fresh_follower_entry(l1_checkpoint_hash, deployed_network, chain_id)?
+                        {
+                            // `sync_to_checkpoint` FCUs to the operator's HASH and learns
+                            // the height from the landing, which is why the config needs
+                            // no `(height, hash)` pair: reth reports the number once it
+                            // holds the block canonically, and a hash it never
+                            // canonicalizes stalls instead of landing somewhere else.
+                            FreshFollowerEntry::Checkpoint(l1_hash) => {
+                                info!(
+                                    checkpoint = ?l1_hash,
+                                    "cert-follow: fresh datadir — EL-syncing to the operator \
+                                     checkpoint (the only entry with nothing local to check)"
+                                );
+                                let (h, hash) = mk_el_sync(0).sync_to_checkpoint(l1_hash).await?;
+                                (h, hash, "the operator --dpos.l1-checkpoint block")
+                            }
+                            FreshFollowerEntry::UpstreamLatest => {
+                                let up = upstream.as_ref().ok_or_else(|| {
+                                    eyre!(
+                                        "cert-follow: fresh datadir without a local ChainConfig \
+                                         needs a reachable upstream to EL-sync from"
+                                    )
+                                })?;
+                                let latest = up.get_latest().await.ok_or_else(|| {
+                                    eyre!(
+                                        "cert-follow: fresh datadir without a local ChainConfig \
+                                         needs a reachable upstream to EL-sync from"
+                                    )
+                                })?;
+                                warn!(
+                                    chain_id,
+                                    tip = latest.block.height,
+                                    "cert-follow: devnet-only trust-on-first-use — a fresh \
+                                     datadir with no --dpos.l1-checkpoint is EL-syncing to \
+                                     whatever the upstream calls its tip. This entry is REFUSED \
+                                     on a deployed network (E4-05)."
+                                );
+                                let (h, hash) = mk_el_sync(0).sync_to(&latest).await?;
+                                (h, hash, "the devnet upstream's own tip")
+                            }
+                        };
                     let (activation, interval) =
                         read_geometry(&reader, hash)?.ok_or_else(|| {
                             eyre!(
-                                "cert-follow: ChainConfig still not deployed at the synced tip \
-                                 {h} — wrong chain, or the upstream predates DPoS activation"
-                            )
+                            "cert-follow: ChainConfig is not deployed at the synced entry {h} — \
+                             wrong chain, or the entry predates DPoS activation"
+                        )
                         })?;
-                    let h = h.max(activation);
+                    // An entry BELOW the activation block is not a DPoS anchor at all, and
+                    // the `h.max(activation)` clamp that used to stand here turned that into a
+                    // read for a height reth does not hold: the visibility belt below then
+                    // failed 10 s later naming the CLAMPED height, never the operator input
+                    // that caused it. Refuse on the input instead (4.2 Б2 fix-1, B2-12).
+                    ensure!(
+                        h >= activation,
+                        "cert-follow: {entry} is block {h}, BELOW the DPoS activation block \
+                         {activation} — the ordering chain starts at activation, so nothing at \
+                         or under {h} can be a DPoS anchor. Point the entry at a block at or \
+                         above {activation}."
+                    );
                     let hash = read_with_visibility_belt(
                         &ctx,
                         &sync_metrics,
-                        &format!("the clamped landing {h}"),
+                        &format!("the fresh-datadir landing {h}"),
                         || {
                             provider
                                 .block_hash(h)
-                                .wrap_err("reading clamped landing hash")
+                                .wrap_err("reading the fresh-datadir landing hash")
                         },
                     )
                     .await?;
@@ -3148,41 +2978,6 @@ impl DposLayer {
         // "is NOT in the local chain after EL-sync".
         if let Some(l1_hash) = l1_checkpoint_hash {
             crate::cold_start_jump::assert_l1_checkpoint(&provider, l1_hash)?;
-        }
-
-        // Deep catch-up: a residual gap above JUMP_THRESHOLD re-runs the EL-sync
-        // phase and re-seeds the anchor + marshal floor at landing − K. Forward-only,
-        // BLS-verified (or L1-gated). Runs BEFORE the OuterEngine/executor — the same
-        // single-writer mutual-exclusion `recover_finalized_tail_into_reth` relies on.
-        let mut jumped_marshal_floor: Option<Height> = None;
-        if let Some(up) = upstream.as_ref() {
-            let committees = crate::cert_inlet::RethCommitteeSource::new(
-                RethStakingStateReader::new(
-                    provider.clone(),
-                    evm_config.clone(),
-                    staking_config.clone(),
-                ),
-                chain_id,
-            );
-            let el = mk_el_sync(activation);
-            let mut jump_ctx = ctx.clone();
-            if let Some((h, hash, floor)) = cold_start_jump_self_heal(
-                &ctx,
-                &sync_metrics,
-                anchor_height,
-                up,
-                &committees,
-                &el,
-                l1_checkpoint_hash,
-                activation,
-                &mut jump_ctx,
-            )
-            .await?
-            {
-                anchor_height = h;
-                anchor_hash = hash;
-                jumped_marshal_floor = Some(Height::new(floor));
-            }
         }
 
         // Two-tier seed: the landing block's own result attestation arrives only
@@ -3296,9 +3091,11 @@ impl DposLayer {
             ));
 
         // Steady-state self-healing re-jump (finding #6): the follower's executor
-        // reaction to its own `Update::Tip` event — the steady-state twin of the
-        // pre-engine `cold_start_jump` above. Same upstream / committee source /
-        // EL-sync / activation / L1 checkpoint. A follower ALWAYS has an upstream
+        // reaction to its own `Update::Tip` event, and since pass Б2 the ONLY jump
+        // on the follower path too: the pre-engine one is gone and the anchor above
+        // is either `rf_hash` or the operator checkpoint. Same upstream / EL-sync /
+        // activation / L1 checkpoint; no committee source (the target is a pair out
+        // of this follower's own marshal archive). A follower ALWAYS has an upstream
         // (the WS the inlet uses), so this is set whenever `upstream.is_some()`.
         //
         // Epoch-relative re-jump gate: the defer deadlock is "≥2 epochs behind", so
@@ -3308,51 +3105,39 @@ impl DposLayer {
         let re_jump: Option<crate::executor::ReJump> = upstream.as_ref().map(|up| {
             let up = up.clone();
             // The inlet's SAME upstream-rotation escape (Rule L): the re-jump's
-            // terminal fault (`BadTarget` / repeated `Stalled`) rotates the SAME WS
+            // terminal fault (a repeated `Stalled`) rotates the SAME WS
             // actor mailbox the inlet's `inlet_rotate` wraps → coalesced at the WS
             // actor. Bound BEFORE the cb moves `up`.
             let rotate = up.rotate_callback();
             let provider = provider.clone();
-            let evm_config = evm_config.clone();
-            let staking_config = staking_config.clone();
             let beacon_engine_handle = beacon_engine_handle.clone();
             let ctx = ctx.clone();
             let peer_count = peer_count.clone();
             let cb: crate::executor::ReJumpFn = Arc::new(
                 move |from: u64, target: crate::cert_follow::UpstreamFinalized| {
                     let provider = provider.clone();
-                    let evm_config = evm_config.clone();
-                    let staking_config = staking_config.clone();
                     let beacon_engine_handle = beacon_engine_handle.clone();
                     let peer_count = peer_count.clone();
-                    let mut jump_ctx = ctx.clone();
+                    let jump_ctx = ctx.clone();
                     Box::pin(async move {
-                        let committees = crate::cert_inlet::RethCommitteeSource::new(
-                            RethStakingStateReader::new(
-                                provider.clone(),
-                                evm_config,
-                                staking_config,
-                            ),
-                            chain_id,
-                        );
                         let el = crate::cold_start_jump::RethElSync::new(
-                            jump_ctx.clone(),
+                            jump_ctx,
                             provider.clone(),
                             beacon_engine_handle,
                             activation,
                             peer_count,
                         );
                         // Return the typed terminal `JumpOutcome` verbatim — the
-                        // executor's completion arm classifies it (§9.6).
+                        // executor's completion arm classifies it (§9.6). The target
+                        // is a pair out of this follower's OWN marshal archive, so
+                        // there is no committee source and no verify RNG (pass Б2).
                         crate::cold_start_jump::jump_to_target(
                             from,
                             target,
-                            &committees,
                             &el,
                             l1_checkpoint_hash,
                             activation,
                             re_jump_threshold,
-                            &mut jump_ctx,
                         )
                         .await
                     }) as futures::future::BoxFuture<'static, _>
@@ -3595,9 +3380,9 @@ impl DposLayer {
             last_execution_finalized_height,
             initial_finalized: (Height::new(anchor_height), anchor_hash),
             initial_head: (Height::new(head_info.best_number), head_info.best_hash),
-            marshal_floor: Some(
-                jumped_marshal_floor.unwrap_or_else(|| Height::new(finalized_floor)),
-            ),
+            // The follower's DPoS-era floor. A later steady-state jump raises it to
+            // `landing − K` through `set_floor`, not here.
+            marshal_floor: Some(Height::new(finalized_floor)),
             boundary_fetch,
             // Height-keyed epoch entry, and the read floor a re-jump publishes:
             // both exist to serve `EpochTransition`, which a follower does not
@@ -3811,7 +3596,8 @@ impl DposLayer {
             // lifetime. The WS actor's `run` loop exits the instant ALL
             // `UpstreamHandle`s drop (its `mailbox_rx` closes → `None => return`),
             // and that SAME actor feeds `finalized_rx` (the inlet's sole producer).
-            // The cold-start only borrows it (`get_latest`/jump), so without this
+            // The cold-start only borrows it (the devnet fresh-datadir
+            // `get_latest`), so without this
             // move it would drop when `launch_follower` returns → the WS actor
             // exits cleanly → the node-stack supervisor tears the follower down
             // before it ever follows. The marshal's `UpstreamResolver` holds its
@@ -3904,107 +3690,110 @@ impl DposLayer {
 
 #[cfg(test)]
 mod cold_start_kind_tests {
-    use super::{
-        classify_jump_outcome, cold_start_jump_eligible, resolve_cold_start_kind, ColdStartKind,
-        JumpDisposition,
-    };
-    use crate::cold_start_jump::JumpOutcome;
+    use super::{fresh_follower_entry, resolve_cold_start_kind, ColdStartKind, FreshFollowerEntry};
     use alloy_primitives::B256;
 
     const ACTIVATION: u64 = 192;
     const INTERVAL: u64 = 64;
+    /// Any of the deployed chain_ids would do — the predicate is the node's
+    /// (`node/dpos.rs::is_deployed_network`); this crate only receives its answer.
+    const A_DEPLOYED_CHAIN: u64 = 0x5202;
+    const A_LOCAL_CHAIN: u64 = 1337;
 
-    // The cold-start disposition split (#11): `Stalled` now routes to a
-    // retry-forever no-peers self-heal (was a FATAL re-fuse); every other outcome
-    // keeps its terminal mapping. The steady-state classifier is tested in
-    // cold_start_jump.rs.
+    /// (4.2 Б2.7в) The fresh-datadir follower entry, the ONE place in the system
+    /// with nothing local to check a peer against. On a DEPLOYED network a missing
+    /// operator checkpoint is a startup REFUSAL naming the flag (E4-05); off one it
+    /// is trust-on-first-use, which the caller logs as such. A checkpoint wins on
+    /// either.
+    ///
+    /// Falsifier: a deployed network without a checkpoint that returns an entry (the
+    /// refusal is gone); a local network that refuses (devnet cannot start); a
+    /// checkpoint that does not become the entry.
     #[test]
-    fn classify_jump_outcome_dispositions() {
-        let hash = B256::repeat_byte(0x5A);
-        let done = |o| match classify_jump_outcome(o) {
-            JumpDisposition::Done(res) => res,
-            JumpDisposition::RetryStalled(_) => panic!("expected Done, got RetryStalled"),
-            JumpDisposition::RotateAuth(_) => panic!("expected Done, got RotateAuth"),
-        };
-        assert_eq!(
-            done(JumpOutcome::Landed {
-                landing: 700,
-                hash,
-                floor: 697
-            })
-            .expect("Landed is Ok"),
-            Some((700, hash, 697)),
-            "Landed ⇒ Done(Ok(Some(landing, hash, floor)))"
-        );
-        assert_eq!(
-            done(JumpOutcome::Lagging).expect("Lagging is Ok"),
-            None,
-            "Lagging ⇒ Done(Ok(None)) (no-op; inlet pulls cover the residual gap)"
-        );
-        assert_eq!(
-            done(JumpOutcome::BadTarget(eyre::eyre!("payload != digest")))
-                .expect("BadTarget is Ok"),
-            None,
-            "BadTarget ⇒ Done(Ok(None)) (forgeable pre-anchor mismatch — boot anyway)"
-        );
-        assert_eq!(
-            done(JumpOutcome::InvalidTarget(eyre::eyre!("reth REJECTED"))).expect("Invalid is Ok"),
-            None,
-            "InvalidTarget ⇒ Done(Ok(None)) (reth-rejected branch mid-sync — boot anyway)"
-        );
-        // A forged/unagreed POST-sync branch now ROTATES
-        // the upstream + re-jumps (was fail-closed `Done(Err)`) — never crash on a
-        // forged UPSTREAM.
+    fn a_fresh_datadir_without_a_checkpoint_refuses_on_a_deployed_network() {
+        let err = fresh_follower_entry(None, true, A_DEPLOYED_CHAIN)
+            .expect_err("a deployed network must refuse trust-on-first-use");
+        let text = format!("{err:#}");
         assert!(
-            matches!(
-                classify_jump_outcome(JumpOutcome::AuthFailed(eyre::eyre!("forged branch"))),
-                JumpDisposition::RotateAuth(_)
-            ),
-            "AuthFailed ⇒ RotateAuth (rotate + backoff + re-jump, not fail-closed)"
+            text.contains("--dpos.l1-checkpoint"),
+            "the refusal does not name the flag the operator has to set: {text}"
         );
-        // #11: a transport stall (likely zero peers) is now a retry, NOT a fatal.
         assert!(
-            matches!(
-                classify_jump_outcome(JumpOutcome::Stalled(eyre::eyre!("transport stall"))),
-                JumpDisposition::RetryStalled(_)
-            ),
-            "Stalled ⇒ RetryStalled (no-peers self-heal — retry forever, not fatal)"
+            text.contains(&A_DEPLOYED_CHAIN.to_string()),
+            "the refusal does not name the chain it fired on: {text}"
         );
-        // Connected-but-wedged EL pipeline (soak v43): at cold-start, retry forever
-        // (same posture as `Stalled`) — a deterministic re-wedge stays observable +
-        // un-advanced rather than crashing the node.
-        assert!(
-            matches!(
-                classify_jump_outcome(JumpOutcome::StalledWithPeers(eyre::eyre!("EL wedged"))),
-                JumpDisposition::RetryStalled(_)
-            ),
-            "StalledWithPeers ⇒ RetryStalled (connected-but-wedged self-heal — retry, not fatal)"
+
+        assert_eq!(
+            fresh_follower_entry(None, false, A_LOCAL_CHAIN).expect("a local network may start"),
+            FreshFollowerEntry::UpstreamLatest,
+            "off a deployed network the upstream's own tip is the (named) fallback"
+        );
+
+        let cp = B256::repeat_byte(0x7e);
+        for deployed in [true, false] {
+            assert_eq!(
+                fresh_follower_entry(Some(cp), deployed, A_DEPLOYED_CHAIN)
+                    .expect("a checkpoint is always a legal entry"),
+                FreshFollowerEntry::Checkpoint(cp),
+                "the operator checkpoint is not the entry (deployed = {deployed})"
+            );
+        }
+    }
+
+    /// (4.2 Б2.7а) THE EMPTY-ARCHIVE ANCHOR. An empty consensus archive with the EL
+    /// already past epoch 0, and an upstream, resolves to [`ColdStartKind::ElFinalized`]
+    /// — the kind whose anchor in `launch` is reth's OWN finalized pair
+    /// `(cs_finalized, cs_finalized_hash)`, not the genesis (`archive_finalized`,
+    /// where a runtime-deployed ChainConfig is codeless) and not an upstream's
+    /// `Latest` (nothing local can check it).
+    ///
+    /// RED BEFORE THIS CHANGE, verbatim: on HEAD `f8ec4939` this arm returned
+    /// `ColdStartKind::Restart` — the kind whose `launch` anchor is
+    /// `archive_finalized`, i.e. the GENESIS hash for an empty archive, held there
+    /// until a `get_latest`-targeted jump landed (and `cold_start_jump_eligible`
+    /// answered `true` for it, which is why the retry-forever loop existed). Both the
+    /// variant and that function are gone, so this assertion could not compile there.
+    ///
+    /// WHAT THIS TEST DOES NOT COVER, and the name says so (4.2 Б2 fix-1, B2-07):
+    /// the KIND is all it pins. The anchor ITSELF — that `launch`'s `ElFinalized` arm
+    /// binds `(cs_finalized, cs_finalized_hash)` and not some other pair — is held by
+    /// the compiler and by reading alone: `launch` is never entered from a test
+    /// (`testbed/mod.rs` drives the stand below it), so a mutation of that arm's
+    /// tuple reddens nothing here.
+    ///
+    /// Falsifier: a `Restart` (the anchor would be the genesis hash); a
+    /// `FreshMigration` (the anchor would be the activation block, orphaning the EL
+    /// tail).
+    #[test]
+    fn empty_archive_with_the_el_past_epoch_zero_resolves_to_el_finalized() {
+        let kind = resolve_cold_start_kind(0, ACTIVATION, INTERVAL, ACTIVATION + 500, true)
+            .expect("an upstream makes this arm legal");
+        assert_eq!(
+            kind,
+            ColdStartKind::ElFinalized,
+            "the empty-archive / EL-past-epoch-0 start must anchor at reth's own finalized tag"
         );
     }
 
+    /// The same empty archive with the EL still INSIDE epoch 0 is the ordinary
+    /// sequencer→DPoS migration: anchor at the activation block.
     #[test]
-    fn fresh_migration_never_jumps_even_with_an_upstream() {
-        // The load-bearing #7 guard: a FreshMigration MUST anchor at
-        // dposActivationBlock (clean-halt invariant), so the cold-start jump is
-        // inert for it regardless of whether an upstream is configured.
-        assert!(!cold_start_jump_eligible(
-            ColdStartKind::FreshMigration,
-            true
-        ));
-        assert!(!cold_start_jump_eligible(
-            ColdStartKind::FreshMigration,
-            false
-        ));
+    fn inside_epoch_zero_is_fresh_migration() {
+        let kind =
+            resolve_cold_start_kind(0, ACTIVATION, INTERVAL, ACTIVATION + 10, true).expect("fresh");
+        assert_eq!(kind, ColdStartKind::FreshMigration);
     }
 
+    /// Below activation there is no DPoS anchor to take from the EL at all.
     #[test]
-    fn restart_jumps_only_with_an_upstream() {
-        // A no-upstream validator catches up on the consensus-plane treadmill,
-        // NOT via the jump (Risk-1).
-        assert!(cold_start_jump_eligible(ColdStartKind::Restart, true));
-        assert!(!cold_start_jump_eligible(ColdStartKind::Restart, false));
+    fn el_below_activation_is_fresh_migration() {
+        let kind =
+            resolve_cold_start_kind(0, ACTIVATION, INTERVAL, ACTIVATION - 1, true).expect("fresh");
+        assert_eq!(kind, ColdStartKind::FreshMigration);
     }
 
+    /// No upstream at all: the node would anchor at its EL-finalized tag and have
+    /// nobody to climb the ladder from — refuse at startup, naming the flag.
     #[test]
     fn overshoot_with_empty_archive_and_no_upstream_is_fatal() {
         let err =
@@ -4013,23 +3802,6 @@ mod cold_start_kind_tests {
             err.to_string().contains("--dpos.follower-upstream"),
             "{err}"
         );
-    }
-
-    #[test]
-    fn overshoot_with_empty_archive_and_upstream_is_legal_deep_restart() {
-        // With a sync upstream (plane-tracked or WS) the EL-past-epoch-0 empty-archive
-        // arm is a legal deep `Restart`: the pre-engine `cold_start_jump` re-seeds the
-        // anchor. The launch caller then REQUIRES that jump to land.
-        let kind = resolve_cold_start_kind(0, ACTIVATION, INTERVAL, ACTIVATION + 500, true)
-            .expect("legal deep restart with an upstream");
-        assert_eq!(kind, ColdStartKind::Restart);
-    }
-
-    #[test]
-    fn inside_epoch_zero_is_fresh_migration() {
-        let kind =
-            resolve_cold_start_kind(0, ACTIVATION, INTERVAL, ACTIVATION + 10, true).expect("fresh");
-        assert_eq!(kind, ColdStartKind::FreshMigration);
     }
 
     #[test]
@@ -4048,8 +3820,9 @@ mod cold_start_kind_tests {
 
     #[test]
     fn boundary_exactly_one_interval_is_overshoot() {
-        // cs_finalized == activation + interval is the FIRST fatal height
-        // (epoch 0 is [activation, activation + interval)) when there is no upstream.
+        // cs_finalized == activation + interval is the FIRST height past epoch 0
+        // (epoch 0 is [activation, activation + interval)); with no upstream it is
+        // the startup refusal.
         let err = resolve_cold_start_kind(0, ACTIVATION, INTERVAL, ACTIVATION + INTERVAL, false)
             .unwrap_err();
         assert!(err.to_string().contains("past epoch 0"), "{err}");
@@ -4813,7 +4586,6 @@ mod refetch_hole_tests {
                 &committees,
                 &mut ctx,
                 B256::repeat_byte(1),
-                None,
                 65,
                 "finalized_blocks",
             )
@@ -4837,7 +4609,6 @@ mod refetch_hole_tests {
                 &committees,
                 &mut ctx,
                 B256::repeat_byte(1),
-                None,
                 65,
                 "finalized_blocks",
             )
@@ -4864,7 +4635,6 @@ mod refetch_hole_tests {
                 &committees,
                 &mut ctx,
                 B256::repeat_byte(1),
-                None,
                 65,
                 "finalized_blocks",
             )
@@ -4892,7 +4662,6 @@ mod refetch_hole_tests {
                 &committees,
                 &mut ctx,
                 B256::repeat_byte(1),
-                None,
                 65,
                 "finalized_blocks",
             )

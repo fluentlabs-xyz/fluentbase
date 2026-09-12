@@ -50,14 +50,13 @@
 //!   frontier resolver + `PlaneUpstreamHandle` over `FRONTIER_CHANNEL` on a
 //!   second simulated network, counted at both ends ([`fakes::UpstreamCounters`]),
 //!   and the executor's frozen-tip probe is wired as in `dpos.rs::launch`. The
-//!   steady-state re-jump is the PRODUCTION
-//!   `cold_start_jump::cold_start_jump_with_threshold` (so `verify_jump_structural`
-//!   and `verify_jump_authenticated` run for real), over two fakes for its two
-//!   seams: [`fakes::JumpElSync`] for `RethElSync` (the EL peer is
-//!   [`fakes::ElNetwork`]) and [`fakes::JumpCommittees`] for
-//!   `RethCommitteeSource` (`committee[E]` read by EXECUTED HASH out of
-//!   [`fakes::FakeStaking`]). Its gate is `u64::MAX` unless a test sets
-//!   `StandConfig::re_jump_threshold`.
+//!   steady-state re-jump is the PRODUCTION `cold_start_jump::jump_to_target`,
+//!   over ONE fake for its one remaining seam: [`fakes::JumpElSync`] for
+//!   `RethElSync` (the EL peer is [`fakes::ElNetwork`]). There is no committee seam
+//!   under it any more — `jump_to_target` takes no `CommitteeSource` and runs no
+//!   verify stage — so the authentication the stand exercises on this path is the
+//!   one in `FrontierHandler::deliver` on the way IN. Its gate is `u64::MAX` unless
+//!   a test sets `StandConfig::re_jump_threshold`.
 //!
 //! What the stand reports: executed heights and hashes per node, the first
 //! height whose executed hashes disagree (a minority node, or a tie), what

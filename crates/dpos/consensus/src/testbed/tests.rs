@@ -1293,9 +1293,11 @@ fn four_nodes_agree_the_epoch_key_and_carry_the_seed_across_the_boundary() {
 /// reaches it); the distinct steps STRICTLY INCREASE and there is more than one
 /// (a ladder, not one rung repeated forever); node 3's own marshal tip ends at or
 /// above the highest rung it named; EVERY named rung left this node as a
-/// by-height pull and at least one came back SERVED; and every named rung is
-/// reached by that tip within [`LADDER_REACH_TICKS`] driver ticks of the tick it
-/// was first named on.
+/// by-height pull and at least one came back SERVED; that at least one rung went
+/// UNANSWERED and cost this node nothing (`deliveries_rejected == 0` — 4.2 Б2.6
+/// п.1: a peer with no data never reaches `deliver`, so it is never excluded); and
+/// every named rung is reached by that tip within [`LADDER_REACH_TICKS`] driver
+/// ticks of the tick it was first named on.
 ///
 /// WHAT IS *NOT* ASSERTED, and the third pass says it in the code rather than
 /// only in the journal (review B1-03): that the ladder is what carries this node
@@ -1312,8 +1314,11 @@ fn four_nodes_agree_the_epoch_key_and_carry_the_seed_across_the_boundary() {
 /// "новый `fin` ⇒ новый `T`" does not happen); a rung above the final marshal tip
 /// (then the node named a height it never got); a rung that never leaves as a
 /// by-height pull (then the naming is a log line); no rung served at all (then the
-/// delivery half has no witness here either); a rung the tip never reaches inside
-/// the bound (then the climb stopped).
+/// delivery half has no witness here either); every rung served (then the run holds
+/// no unanswered-rung case to measure); a non-zero `deliveries_rejected` (then a
+/// no-data answer is reaching `deliver` and honest peers are being excluded for
+/// this node's own lag); a rung the tip never reaches inside the bound (then the
+/// climb stopped).
 #[test]
 fn the_ladder_names_successive_rungs_and_the_lagging_node_reaches_every_one() {
     let mut cfg = StandConfig::live(4, 1);
@@ -1429,6 +1434,31 @@ fn the_ladder_names_successive_rungs_and_the_lagging_node_reaches_every_one() {
         rung_pulls.iter().any(|p| p.delivered),
         "no named rung was ever served on this fixture — then `deliver` ⇒ `store_finalization` \
          ⇒ `Update::Tip` has no live witness at all here: {rung_pulls:?}"
+    );
+
+    // (4.2 Б2.6 п.1) A PEER WITH NO DATA COSTS THE ASKER NOTHING. The unserved
+    // rungs above are exactly that case, and it is the production default rather
+    // than a byzantine role: `FrontierHandler::produce` drops its response channel
+    // unsent when the local marshal has no pair for the key
+    // (`plane_upstream.rs`, the `produce` impl), the resolver relays that as a
+    // no-data answer, and `Consumer::deliver` is therefore NEVER CALLED — so the
+    // refusal counter cannot move and commonware's `fetcher.block(peer)` (which only
+    // a `deliver == false` reaches) never runs. The node keeps climbing: it names
+    // and pulls strictly higher rungs after an unserved one, asserted above.
+    //
+    // Non-vacuity is asserted first: if every rung came back, this run would not
+    // contain the case at all.
+    let unserved = rung_pulls.iter().filter(|p| !p.delivered).count();
+    assert!(
+        unserved > 0,
+        "every named rung was served on this fixture — then it holds no witness that an \
+         unanswered rung costs nothing: {rung_pulls:?}"
+    );
+    assert_eq!(
+        out.upstream[3].deliveries_rejected, 0,
+        "node 3 refused {} frontier answers while {unserved} of its rungs went unanswered — \
+         a peer that simply has no data must never reach `deliver`, let alone be excluded: {:?}",
+        out.upstream[3].deliveries_rejected, out.upstream[3]
     );
     for (height, named_at, reached_at) in &reach {
         let reached_at = reached_at.unwrap_or_else(|| {
@@ -2346,24 +2376,28 @@ fn a_rotated_out_node_without_the_rejump_parks() {
 }
 
 /// (C9, honest control) The stand's steady-state re-jump IS the production
-/// `jump_to_target`, not a re-telling of it: the stand supplies
-/// only the two seams below it (`JumpElSync` for `RethElSync`, `JumpCommittees`
-/// for `RethCommitteeSource`), and the landing selection, the PRE-sync
-/// `verify_jump_structural` and the POST-sync `verify_jump_authenticated` are
+/// `jump_to_target`, not a re-telling of it: the stand supplies only ONE seam
+/// below it (`JumpElSync` for `RethElSync`), and the need-gate, the landing
+/// selection and the landing check against the attested `block.result` are
 /// production code.
 ///
-/// Everything asserted is OBSERVED rather than inferred, through two recorders
-/// the stand keeps: `Outcome::jump_calls` (every call, its `JumpOutcome` VARIANT,
-/// the certificate it consumed and the landing it chose) and
-/// `Outcome::jump_committee_reads` (every `(epoch, hash)` the authentication
-/// asked `FakeStaking` for). On an honest frontier the production function lands
-/// on exactly the pairs the retired hand-written model landed on — heights 125
-/// and 157 are kept as literals so a change in landing selection fails HERE and
-/// not four tests away — each landing hash is the `result` of the certificate the
-/// call consumed and each landing is that certificate's `tip − K`, the honest
-/// three executed the same hash there, and `verify_jump_authenticated` actually
-/// ran: its `committee[E]` read is recorded AT the LANDING hash, which is the
-/// trustless post-sync read and not the finalized tip nor a schedule lookup.
+/// WHAT THIS TEST ASSERTED BEFORE (4.2 Б2.4). Section (4) read
+/// `Outcome::jump_committee_reads` and pinned that `verify_jump_authenticated`
+/// RAN and read `committee[E]` AT the landing hash — the trustless post-sync
+/// authentication. That stage is gone: the target of a steady-state jump is a pair
+/// out of this node's own marshal archive, already 2f+1 under a committee it read
+/// itself, so re-reading a committee here was a second opinion on a settled
+/// question. Section (4) now records why the observation is no longer available,
+/// and the recorder it used has been removed with the seam.
+///
+/// Everything asserted is OBSERVED rather than inferred, through
+/// `Outcome::jump_calls` (every call, its `JumpOutcome` VARIANT, the certificate
+/// it consumed and the landing it chose). On an honest frontier the production
+/// function lands on exactly the pairs the retired hand-written model landed on —
+/// heights 125 and 157 are kept as literals so a change in landing selection fails
+/// HERE and not four tests away — each landing hash is the `result` of the
+/// certificate the call consumed and each landing is that certificate's `tip − K`,
+/// and the honest three executed the same hash there.
 ///
 /// Same stand as `three_boundaries_with_committee_rotation_keep_dkg_qual_honest`
 /// (the rotated-out node 3 falls behind and the re-jump is what carries it), so
@@ -2380,11 +2414,9 @@ fn a_rotated_out_node_without_the_rejump_parks() {
 /// the jump); a landing pair the model did not produce; a landing hash that is
 /// not the `result` of the certificate the call consumed, or a landing that is
 /// not that certificate's `tip − K`; a landing the honest three did not execute;
-/// a committee read at a hash other than the landing (then the authentication is
-/// reading the wrong state); no committee read at all (then
-/// `verify_jump_authenticated` did not run); a non-jumping node recording either.
+/// a non-jumping node recording a call.
 #[test]
-fn the_rejump_runs_the_production_jump_and_authenticates_at_the_landing() {
+fn the_rejump_runs_the_production_jump_and_lands_on_its_own_archive_pair() {
     let mut cfg = StandConfig::live(4, 1);
     cfg.committees = rotate_four_three_four();
     cfg.re_jump_threshold = Some(crate::cold_start_jump::JUMP_THRESHOLD.min(EPOCH_LEN));
@@ -2454,38 +2486,23 @@ fn the_rejump_runs_the_production_jump_and_authenticates_at_the_landing() {
         }
     }
 
-    // (4) `verify_jump_authenticated` ran once per landing, and read
-    // `committee[E]` AT the landing hash.
-    let reads = &out.jump_committee_reads[3];
-    assert_eq!(
-        reads.len(),
-        calls.len(),
-        "one committee read per landing is what `verify_jump_authenticated` does: {reads:?}"
-    );
-    for (call, (epoch, at)) in calls.iter().zip(reads) {
-        let (_, landing_hash) = call.landed.expect("asserted Landed above");
-        assert_eq!(
-            *at, landing_hash,
-            "committee[{epoch}] was read at {at} — not at the landing {landing_hash}"
-        );
-        assert!(
-            *epoch > 0,
-            "the authenticated epoch is 0: the cert's own round epoch was not used"
-        );
-    }
+    // (4) The jump read NO committee. There is nothing to observe here any more
+    // and that is the point: `jump_to_target` takes no `CommitteeSource` parameter
+    // at all (pass Б2), so the absence of the post-sync authentication is a
+    // COMPILE-TIME fact rather than a runtime one, and the stand no longer builds a
+    // committee seam for the jump. What still makes the landing authentic is
+    // assertion (2): each landing hash is the `result` of the archive certificate
+    // the call consumed, and that certificate only entered the archive through
+    // `store_finalization` after `verify_delivered`.
 
     // (5) Nobody else jumped, so no observation above can be coming from a node
     // that was never behind.
     for i in [0, 1, 2] {
         assert_eq!(out.upstream[i].rejump_calls, 0, "node {i} re-jumped");
         assert!(out.jump_calls[i].is_empty(), "node {i} called the jump");
-        assert!(
-            out.jump_committee_reads[i].is_empty(),
-            "node {i} authenticated a jump"
-        );
     }
     eprintln!(
-        "(C9) calls={calls:?} committee reads={reads:?} virtual={:?} real={:?}",
+        "(C9) calls={calls:?} virtual={:?} real={:?}",
         out.virtual_elapsed, out.real_elapsed
     );
 }
@@ -3136,10 +3153,10 @@ fn lying_upstream_stand(role3: Role) -> super::stand::Outcome {
 /// the height↔epoch bind, sees `epoch_of(height) != round.epoch` and calls it a
 /// lie. Out-of-window would be reached only by an answer whose height and epoch
 /// agree with each other — an honest peer far ahead — which is the case
-/// `plane_upstream::tests::an_out_of_window_latest_is_passed_on_unauthenticated`
-/// pins: `true`, the peer keeps the channel, and the answer is COUNTED and PASSED
-/// ON (not dropped — §5.2 asks for a drop and that unit records why pass А cannot
-/// make one).
+/// `plane_upstream::tests::an_out_of_window_latest_is_dropped_without_punishing_the_peer`
+/// pins: `true`, the peer keeps the channel, and the answer is COUNTED and
+/// THROWN AWAY (pass Б2 made the drop §5.2 asks for; pass А passed it on and that
+/// unit records why).
 ///
 /// **The control is in-test (F1/F4).** The same fixture is run twice — node 3
 /// `InflatedProbe`, then node 3 `Honest`. The separating fact: with an honest
@@ -3324,10 +3341,15 @@ fn an_inflated_latest_probe_is_refused_at_the_frontier_and_spawns_no_re_jump() {
 /// frontier, spawns no jump, and reth is never pointed at the divergent branch at
 /// all. The defence moved from after a full EL backfill to before a single FCU.
 ///
-/// **The post-sync gate is still there and still load-bearing.** Nothing about
-/// `verify_jump_authenticated` changed; what changed is that this particular
-/// forgery no longer reaches it. `the_rejump_runs_the_production_jump_and_
-/// authenticates_at_the_landing` keeps that gate pinned on honest input.
+/// **AND THE POST-SYNC GATE IS NOW GONE (4.2 Б2.4), which makes `deliver` the
+/// ONLY defence this forgery ever meets.** `verify_jump_authenticated` is no
+/// longer a stage of `jump_to_target`: a real jump's target is a pair out of the
+/// node's own marshal archive, already 2f+1 under a committee it read itself, so
+/// the stage re-checked a settled question. The consequence for THIS test is that
+/// its subject is no longer "which of two gates caught it" but "the gate that
+/// caught it is the only one there is" — a jump call here would mean the branch
+/// reached an EL FCU with nothing left to refuse it, which is why assertion (3)
+/// below is now the whole safety claim.
 ///
 /// **Letter convention (F13, unchanged):** branch labels below are Latin
 /// `(a)/(b)/(c)`; the register's own consequence letters are Cyrillic and are ITS,
@@ -3384,9 +3406,11 @@ fn a_lying_upstream_is_refused_at_the_frontier_and_never_lands_its_branch() {
     );
 
     let calls = &role.jump_calls[0];
+    // There is no post-sync gate to name any more (4.2 Б2.4): ANY jump call here
+    // means the forged frontier got past `deliver`, and nothing downstream would
+    // have refused it.
     let branch = match calls.last().map(|c| c.outcome) {
         None => "(c) CLOSED — the forgery was refused at deliver; node 0 never jumped",
-        Some("AuthFailed") => "(a) NOT CLOSED — the branch still reached the post-sync gate",
         Some(other) => other,
     };
     eprintln!(
@@ -3469,11 +3493,6 @@ fn a_lying_upstream_is_refused_at_the_frontier_and_never_lands_its_branch() {
             role.jump_calls[i].is_empty(),
             "node {i} re-jumped: {:?}",
             role.jump_calls[i]
-        );
-        assert!(
-            role.jump_committee_reads[i].is_empty(),
-            "node {i} authenticated a jump: {:?}",
-            role.jump_committee_reads[i]
         );
     }
 }

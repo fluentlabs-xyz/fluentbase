@@ -540,9 +540,9 @@ pub type PeersForFinalization =
 /// `Landed` ⇒ re-seed + advance the running marshal floor; `Lagging` ⇒ no-op;
 /// `Stalled` ⇒ NON-fatal transport stall (re-evaluated on the next
 /// `Update::Tip`); `InvalidTarget` ⇒ the EL did not land on the attested branch.
-/// The `BadTarget`/`AuthFailed` arms survive from the `get_latest` era and are
-/// unreachable-by-construction on a target read from this node's own archive;
-/// deleting them (and the two `verify_jump_*` stages behind them) is pass Б2.
+/// There is no `BadTarget` / `AuthFailed` any more: the two `verify_jump_*` stages
+/// behind them re-checked what the target already carried, and pass Б2 removed
+/// stages and variants together.
 pub type ReJumpFn = std::sync::Arc<
     dyn Fn(
             u64,
@@ -668,18 +668,19 @@ pub struct ReJump {
     /// BOTH node kinds use the epoch-relative value — the follower and the
     /// validator-with-upstream alike (`dpos.rs` computes the same
     /// `JUMP_THRESHOLD.min(interval)` on each path). Only the tests construct a
-    /// bare `JUMP_THRESHOLD`. The COLD-START jump is different and keeps the fixed
-    /// `JUMP_THRESHOLD` (`cold_start_jump` vs `jump_to_target`), which is why a
-    /// short restart gap reaches this gate but not that one.
+    /// bare `JUMP_THRESHOLD`. There is no cold-start jump beside it any more (pass
+    /// Б2): a node with an empty archive anchors at its own EL-finalized tag and
+    /// climbs from there, so this is the only jump gate in the system.
     pub threshold: u64,
     /// The inlet's EXISTING upstream-rotation escape ([`crate::cert_inlet::RotateUpstream`]),
     /// the SAME `CertUpstream::rotate_callback()` the data-fault inlet uses. Fired
-    /// when the re-jump's terminal outcome is a fault (Rule L): `BadTarget` (forgeable
-    /// structural mismatch) and `AuthFailed` (#1 — a forged/unagreed POST-sync
-    /// branch) rotate immediately; `Stalled` rotates after `MAX_UPSTREAM_FAULTS` (an
-    /// honest transient stall must not insta-rotate). `InvalidTarget` does NOT rotate
-    /// (review B1-04): its target is this node's own attested archive pair, so the
-    /// contradiction is local and §5.4 files it as `Fault::corruption`.
+    /// when the re-jump's terminal outcome is a fault (Rule L). After pass Б2 the
+    /// ONLY arm that fires it is `Stalled`, and only after `MAX_UPSTREAM_FAULTS`
+    /// consecutive ones (an honest transient stall must not insta-rotate) — the two
+    /// insta-rotating arms, `BadTarget` and `AuthFailed`, are gone with the stages
+    /// that produced them. `InvalidTarget` does NOT rotate (review B1-04): its
+    /// target is this node's own attested archive pair, so the contradiction is
+    /// local and §5.4 files it as `Fault::corruption`.
     /// `Option` so unit tests / a no-rotate config leave it `None`.
     pub rotate: Option<crate::cert_inlet::RotateUpstream>,
     /// Upstream frontier-discovery probe, fired from the executor's 1 s probe
@@ -884,9 +885,10 @@ pub struct Config<BE, D, XC, MarshalMailbox> {
     /// Self-heal observability handle (cross-launch singleton from
     /// `dpos.rs::launch`, already registered there). The executor raises
     /// `dpos_sync_degraded{reason=engine_retry}` while retrying a transient
-    /// engine-API TRANSPORT error at the finalize FCU (#14) and
-    /// `{reason=auth_rotate}` while rotating/backing-off after a steady-state
-    /// re-jump `AuthFailed` (#1).
+    /// engine-API TRANSPORT error at the finalize FCU (#14), and CLEARS
+    /// `{reason=crash_recover}` when the STARTUP BACKFILL DRAIN finishes — the #12
+    /// cold start (`dpos.rs`, `RecoverOutcome::DeferToElSync`) anchors at reth's
+    /// tip and defers closing its EL gap to exactly that drain, not to a jump.
     pub sync_metrics: SyncMetrics,
     /// Fork-safety latch (Phase 3). The executor ENGAGES it on #2/#3 result
     /// divergence, #15 an EL `Ok(Invalid)` verdict, and #10 an L1-fork re-jump —
@@ -967,10 +969,9 @@ pub struct Actor<E, BE, D, XC, MarshalMailbox> {
     re_jump: Option<ReJump>,
     /// Consecutive steady-state re-jump `Stalled` outcomes since the last reset. At
     /// `MAX_UPSTREAM_FAULTS` the executor `rotate()`s (Rule L) and resets. Reset to 0
-    /// on ANY executor-side `rotate()` (incl. the `BadTarget` arm) and on
-    /// `Landed`/`Lagging` (progress / upstream agrees we're caught up) — so a streak
-    /// accrued on URL A NEVER carries into URL B (critic r2: cross-URL carryover →
-    /// A→B→A oscillation). A SECOND, independent streak from the inlet's data-fault
+    /// on that rotate and on `Landed`/`Lagging` (progress / the gap closed under the
+    /// threshold) — so a streak accrued on URL A NEVER carries into URL B (critic r2:
+    /// cross-URL carryover → A→B→A oscillation). A SECOND, independent streak from the inlet's data-fault
     /// counter ([`crate::cert_inlet::CertInlet`]); both feed the SAME `rotate()` sink,
     /// deduped at the WS actor.
     rejump_fault_streak: u32,
@@ -1413,23 +1414,64 @@ where
                                 {
                                     break;
                                 }
+                            } else if self.finalized_heights_to_backfill.is_empty()
+                                && self.sync_metrics.degraded_value(SyncReason::CrashRecover) == 1
+                            {
+                                // #12 ENDS HERE, and NOT at a jump landing (4.2 Б2).
+                                // `dpos.rs`'s `RecoverOutcome::DeferToElSync` anchors the
+                                // cold start at reth's tip and raises
+                                // `dpos_sync_degraded{reason=crash_recover}`; THIS drain is
+                                // what walks `(reth tip .. marshal cursor]` back into reth,
+                                // block by block, through the same derive+import path live
+                                // dispatch uses. `maybe_re_jump` cannot do it and never
+                                // fires there: `last_tip_height` and `ordering_finalized`
+                                // are BOTH seeded from `last_consensus_finalized_height`
+                                // (`:1264`, `:1289`), so their difference is 0 at boot, and
+                                // the gate additionally refuses to spawn while this drain
+                                // is non-empty (`maybe_re_jump`, the
+                                // `finalized_heights_to_backfill` clause). The last drained
+                                // height is therefore the one moment the deferral is over.
+                                self.sync_metrics.recover(SyncReason::CrashRecover);
+                                self.sync_metrics.crash_recover_gap_blocks.set(0);
                             }
                         }
                         None => {
-                            // bug 10: a hole in the marshal's OWN floor..=last_finalized
-                            // inventory cannot self-heal (`get_block` is local-only), so a
-                            // skip merely relocates + mislabels the fatal — the later
-                            // gap-walk (`derive_finalized_with_gap_fill`) re-hits the same height and
-                            // fails naming the WRONG height. Fail loud AT the true site.
-                            // Routed rather than `break`n: a bare break leaves the
-                            // loop WITHOUT reading the halt latch, so an already-halted
-                            // node exits and drops every retained marshal `Exact` into
-                            // Canceled — which the marshal treats as fatal.
+                            // bug 10, named by its CAUSE (4.2 Б2 fix-1, B2-02).
+                            //
+                            // The range this drain walks is
+                            // `(reth's last block .. the marshal's acked cursor]` (`init`),
+                            // and that cursor IS the marshal's finalized floor — the same
+                            // `last_processed_height` under `LATEST_KEY` that `SetFloor`
+                            // compares against and refuses to move below
+                            // (`.claude/COMMONWARE_INTERNALS.md:190-193`: repair starts at
+                            // `last_processed_height.next()`, `HintFinalized` skips `<=`
+                            // it, `store_finalization` drops `<=` it). So EVERY height the
+                            // drain asks for is at or below the floor, and a miss here is
+                            // a hole the marshal will never repair from anywhere — not a
+                            // transient. The reachable cause is an EL rolled back (a
+                            // snapshot restore) below a range this node once JUMPED OVER
+                            // and therefore never stored.
+                            //
+                            // Fail loud AT the true site: a skip merely relocates +
+                            // mislabels the fatal — the later gap-walk
+                            // (`derive_finalized_with_gap_fill`) re-hits the same height
+                            // and fails naming the WRONG one. Routed rather than `break`n:
+                            // a bare break leaves the loop WITHOUT reading the halt latch,
+                            // so an already-halted node exits and drops every retained
+                            // marshal `Exact` into Canceled — which the marshal treats as
+                            // fatal.
+                            let floor = *self.finalized_heights_to_backfill.end();
                             let fault = Fault::corruption(eyre::eyre!(
-                                "marshal has no block at height {height} inside its own \
-                                 floor..=last_finalized range — the finalized archives are \
-                                 inconsistent (a hole below the floor cannot self-heal); \
-                                 a skip would fail later in the gap-walk at the WRONG height"
+                                "the marshal archive has no block at height {height}. Every \
+                                 height of this startup drain is at or below the marshal \
+                                 floor {floor} (its acked cursor), and the marshal never \
+                                 repairs below its floor — so this hole is permanent, not a \
+                                 race. reth's tip is below the marshal floor {floor}: the EL \
+                                 is older than a range this node jumped over and the \
+                                 consensus archive holds no blocks there. Restore an EL \
+                                 snapshot at or above {floor}, or delete the consensus \
+                                 archive so the node re-enters as ElFinalized. (Skipping \
+                                 would fail later in the gap-walk at the WRONG height.)"
                             ));
                             if self.dispatch_fault("backfill", fault).await
                                 == Disposition::Shutdown
@@ -1461,27 +1503,17 @@ where
                                     break;
                                 }
                             }
-                            // Progress: clear any stale fault tally + the #1 rotate gauge.
+                            // Progress: clear any stale fault tally. The #12
+                            // crash-recover gauge is NOT cleared here — that deferral
+                            // ends at the startup drain's last height, not at a jump
+                            // landing (see the `pending_backfill` arm above).
                             self.rejump_fault_streak = 0;
-                            self.sync_metrics.recover(SyncReason::AuthRotate);
                         }
                         Ok(crate::cold_start_jump::JumpOutcome::Lagging) => {
                             debug!("steady-state re-jump: lagging / stale target — no-op");
-                            // The upstream's own `get_latest` says we're caught up
-                            // (U2) — clear any stale tally + the #1 rotate gauge.
+                            // The gap closed under the threshold on its own — clear
+                            // any stale tally.
                             self.rejump_fault_streak = 0;
-                            self.sync_metrics.recover(SyncReason::AuthRotate);
-                        }
-                        Ok(crate::cold_start_jump::JumpOutcome::BadTarget(error)) => {
-                            // Rule S/L: a forgeable PRE-anchor structural mismatch is
-                            // NON-fatal but a bad-upstream signal — rotate immediately.
-                            warn!(
-                                error = %format_args!("{error:#}"),
-                                "steady-state re-jump target structurally invalid \
-                                (forgeable); rotating upstream (NON-fatal)"
-                            );
-                            self.rotate_upstream().await;
-                            self.rejump_fault_streak = 0; // ANY rotate resets (critic r2)
                         }
                         Ok(crate::cold_start_jump::JumpOutcome::InvalidTarget(error)) => {
                             // §5.4 "Посадка не на заверенную ветку" / "reth Invalid":
@@ -1562,38 +1594,14 @@ where
                                  local to reth, not the upstream)"
                             );
                         }
-                        Ok(crate::cold_start_jump::JumpOutcome::AuthFailed(error)) => {
-                            // Decision A — never crash on a forged UPSTREAM: a
-                            // POST-sync committee-BLS / L1 rejection
-                            // means the CURRENT upstream served a forged/unagreed
-                            // far-ahead branch. Route it through the SAME `rotate_upstream`
-                            // escape `BadTarget`/`InvalidTarget` use — with ≥2 upstreams
-                            // this moves to the next URL and the next tip/heartbeat
-                            // re-jumps onto the honest source; with a SINGLE upstream
-                            // `rotate()` is a NO-OP (`upstream.rs` round-robin at len==1),
-                            // so the node stays UP-degraded and re-polls the same upstream
-                            // on the next tip (recovery from a forged source genuinely
-                            // needs ≥2 upstreams). NEVER participates on the forged branch:
-                            // the engine hasn't signed it, and reth reorgs off it on the
-                            // next jump's FCU. Bounded by the SAME streak reset as the
-                            // other rotate arms.
-                            warn!(
-                                error = %format_args!("{error:#}"),
-                                "steady-state re-jump failed authentication (forged \
-                                upstream); rotating upstream + staying up-degraded (NON-fatal)"
-                            );
-                            self.sync_metrics.degrade(SyncReason::AuthRotate);
-                            self.rotate_upstream().await;
-                            self.rejump_fault_streak = 0; // ANY rotate resets (critic r2)
-                        }
                         Ok(crate::cold_start_jump::JumpOutcome::L1Fork(error)) => {
                             // #10 SafetyHalt (Phase 3): the EL-synced head does NOT
                             // descend from the L1-FINALIZED checkpoint — a fork
-                            // against L1 finality, the strongest trust root. Unlike
-                            // `AuthFailed` (a forged UPSTREAM → rotate to an honest
-                            // one), there is nothing to rotate to; HALT (demote to
-                            // verify-only, stop driving reth, stay observable) and
-                            // wait for the L1 proof + governance recovery.
+                            // against L1 finality, the strongest trust root. There
+                            // is nothing to rotate to — L1 finality itself disagrees
+                            // — so HALT (demote to verify-only, stop driving reth,
+                            // stay observable) and wait for the L1 proof + governance
+                            // recovery.
                             let fault = Fault::fork_safety(
                                 SyncReason::L1Fork,
                                 eyre::eyre!(
@@ -4929,7 +4937,9 @@ mod tests {
         /// `with_boundary_read_floor`.
         boundary_read_floor: BoundaryReadFloorFn,
         /// Self-heal metrics handle the built actor's `Config` carries — exposed so
-        /// #14/#1 tests assert the `engine_retry` / `auth_rotate` gauges + counters.
+        /// the #14 tests assert the `engine_retry` gauge + counter. (It used to name
+        /// `auth_rotate` alongside it; that reason went with `SyncReason::AuthRotate`
+        /// in pass Б2.4, and no test asserts it any more.)
         sync_metrics: SyncMetrics,
         /// Fork-safety latch the built actor's `Config` carries — exposed so the
         /// Phase-3 SafetyHalt tests assert it engages on divergence / EL-Invalid.
@@ -9861,9 +9871,7 @@ mod tests {
         Lagging,
         Stalled(String),
         StalledWithPeers(String),
-        BadTarget(String),
         InvalidTarget(String),
-        AuthFailed(String),
         L1Fork(String),
     }
 
@@ -9885,9 +9893,7 @@ mod tests {
                 Scripted::StalledWithPeers(s) => {
                     JumpOutcome::StalledWithPeers(eyre::eyre!(s.clone()))
                 }
-                Scripted::BadTarget(s) => JumpOutcome::BadTarget(eyre::eyre!(s.clone())),
                 Scripted::InvalidTarget(s) => JumpOutcome::InvalidTarget(eyre::eyre!(s.clone())),
-                Scripted::AuthFailed(s) => JumpOutcome::AuthFailed(eyre::eyre!(s.clone())),
                 Scripted::L1Fork(s) => JumpOutcome::L1Fork(eyre::eyre!(s.clone())),
             }
         }
@@ -9935,8 +9941,7 @@ mod tests {
     /// atomic so a test can assert Rule-L failover fired the expected number of times.
     /// `scripts` is a SATURATING sequence — call N returns `scripts[min(N, len−1)]` —
     /// so a single-element vec is the single-outcome case and a longer vec scripts a
-    /// per-call outcome sequence (the cross-URL streak-reset test needs Stalled→…→
-    /// BadTarget→Stalled).
+    /// per-call outcome sequence.
     fn recording_re_jump_with_rotate(
         scripts: Vec<Scripted>,
     ) -> (ReJump, RejumpCalls, Arc<std::sync::atomic::AtomicU32>) {
@@ -10809,6 +10814,54 @@ mod tests {
         });
     }
 
+    // (4.2 Б2 fix-1, B2-02) THE STARTUP DRAIN'S `None` ARM IS REACHABLE AND FATAL,
+    // and the fatal is the END of #12's deferral, not a pause in it. The drain walks
+    // `(reth's last block .. the marshal's acked cursor]`, and that cursor IS the
+    // marshal's floor (`.claude/COMMONWARE_INTERNALS.md:190-193`), which the marshal
+    // never repairs below — so a marshal that cannot serve a drained height will
+    // never be able to, and the jump cannot cover for it either (`maybe_re_jump`
+    // refuses to spawn while this drain is non-empty). The executor must therefore
+    // DIE here rather than skip; the message it dies with names the floor and the
+    // operator's two ways out (this test pins the death, `dispatch_fault`'s log
+    // carries the text).
+    //
+    // NOT a SafetyHalt: nothing here says the NETWORK disagrees with this node —
+    // only that this node's own two stores disagree.
+    //
+    // Falsifier: the actor still running after the drain hit a hole (the deferral
+    // would then be silently permanent, with `dpos_sync_degraded{crash_recover}`
+    // stuck raised); the fork-safety latch engaging.
+    #[test]
+    fn a_startup_drain_over_a_hole_the_marshal_cannot_repair_dies_loudly() {
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            const ANCHOR: u64 = 100; // reth's last block = the drain's lower bound
+            const CURSOR: u64 = ANCHOR + 2; // the marshal's acked cursor = its floor
+            let fx = Fixture::new(ANCHOR);
+            // The marshal holds NOTHING at ANCHOR+1: `FakeMarshal::canned` is empty,
+            // so the very first drained height comes back `None`.
+            let (actor, _mailbox) = fx.build(ctx.clone(), ANCHOR, CURSOR);
+            let handle = actor.start();
+
+            let exited = futures::future::select(
+                Box::pin(handle),
+                Box::pin(ctx.sleep(Duration::from_secs(30))),
+            )
+            .await;
+            assert!(
+                matches!(exited, futures::future::Either::Left(_)),
+                "the startup drain hit a height the marshal cannot serve and the executor \
+                 kept running — a below-floor hole never heals, so this is a permanent \
+                 silent stall, not a wait"
+            );
+            assert!(
+                !fx.safety_halt.is_engaged(),
+                "a hole between this node's OWN two stores is Corruption, not a fork-safety \
+                 halt"
+            );
+        });
+    }
+
     // STARTUP-BACKFILL FAST-FORWARD (the v33 fresh-spare freeze in miniature):
     // a fresh spare's `[last_execution+1 ..= last_consensus]`
     // backfill iterator is pending at a LOW height (377) when a fast-jump lands far
@@ -11322,10 +11375,6 @@ mod tests {
         });
     }
 
-    // (c) AuthFailed is now a NON-fatal rotate-and-stay-up-degraded self-heal (#1) —
-    // see `re_jump_auth_failed_rotates_and_stays_up_degraded` below (with the rotate
-    // recorder). The old fail-closed-shutdown assertion was removed in the same change.
-
     // (c') THE transient-stall-crash regression test: a `Stalled` outcome (an
     // `EL_SYNC_NO_PROGRESS` transport stall) is NON-fatal — the executor KEEPS
     // RUNNING and a follow-up finalize still acks. Pre-fix, `sync_to`'s `?`
@@ -11404,64 +11453,6 @@ mod tests {
             assert!(
                 fx.marshal.floors.lock().unwrap().is_empty(),
                 "Lagging must NOT advance the marshal floor"
-            );
-
-            drop(mailbox);
-            let _ = handle.await;
-        });
-    }
-
-    // (d') Rule S/L: a `BadTarget` outcome (a forgeable PRE-anchor structural
-    // mismatch served by an untrusted upstream) is NON-fatal — the executor KEEPS
-    // RUNNING (a follow-up finalize still acks, no floor advance) AND it rotates the
-    // upstream exactly once (a structurally-bad upstream is failed over). A
-    // signature-free attacker-controlled input must never crash a node.
-    #[test]
-    fn re_jump_bad_target_rotates() {
-        let runtime = deterministic::Runner::default();
-        runtime.start(|ctx| async move {
-            const ANCHOR: u64 = 100;
-            let (cb, calls, rotations) = recording_re_jump_with_rotate(vec![Scripted::BadTarget(
-                "payload != block digest".into(),
-            )]);
-            let entered = Arc::new(Mutex::new(Vec::new()));
-            let fx = Fixture::new(ANCHOR)
-                .with_re_jump(cb)
-                .with_boundary_enter(entered.clone());
-            let (actor, mailbox) = fx.build(ctx.clone(), ANCHOR, ANCHOR);
-            let handle = actor.start();
-
-            mailbox
-                .send(tip_msg(ANCHOR + JUMP_THRESHOLD + 5_010))
-                .expect("send tip");
-            // Yield so the spawned waiter completes + its `jump_done` arm runs.
-            ctx.sleep(Duration::from_millis(10)).await;
-
-            // Follow-up finalize: must STILL ack ⇒ the loop survived BadTarget.
-            finalize_and_ack_behind(
-                &fx,
-                &mailbox,
-                sample_order(Digest(B256::ZERO), ANCHOR + 1, B256::ZERO),
-            )
-            .await;
-
-            assert_eq!(
-                *calls.lock().unwrap(),
-                vec![ANCHOR],
-                "re-jump was invoked (gap > threshold) and returned BadTarget"
-            );
-            assert!(
-                entered.lock().unwrap().is_empty(),
-                "a non-Landed outcome runs no reseed and must enter no epoch"
-            );
-            assert_eq!(
-                rotations.load(std::sync::atomic::Ordering::Relaxed),
-                1,
-                "a BadTarget re-jump rotates the upstream exactly once (Rule L)"
-            );
-            assert!(
-                fx.marshal.floors.lock().unwrap().is_empty(),
-                "a BadTarget re-jump must NOT advance the marshal floor"
             );
 
             drop(mailbox);
@@ -11548,58 +11539,6 @@ mod tests {
             1,
             "the landing contradiction must reach the fault router as a Corruption"
         );
-    }
-
-    // A steady-state re-jump `AuthFailed` (a forged/unagreed
-    // POST-sync branch) is NON-fatal — the executor rotates the upstream + stays
-    // up-degraded (`auth_rotate=1`) instead of the old `break`/shutdown, and never
-    // advances the marshal floor onto the forged branch. With a SINGLE upstream
-    // `rotate()` is a no-op, so this same arm keeps the node UP and re-polls on the
-    // next tip (recovery from a forged source genuinely needs ≥2 upstreams).
-    #[test]
-    fn re_jump_auth_failed_rotates_and_stays_up_degraded() {
-        let runtime = deterministic::Runner::default();
-        runtime.start(|ctx| async move {
-            const ANCHOR: u64 = 100;
-            let (cb, calls, rotations) = recording_re_jump_with_rotate(vec![Scripted::AuthFailed(
-                "post-sync committee-BLS rejected the served branch".into(),
-            )]);
-            let fx = Fixture::new(ANCHOR).with_re_jump(cb);
-            let (actor, mailbox) = fx.build(ctx.clone(), ANCHOR, ANCHOR);
-            let handle = actor.start();
-
-            mailbox
-                .send(tip_msg(ANCHOR + JUMP_THRESHOLD + 5_010))
-                .expect("send tip");
-            ctx.sleep(Duration::from_millis(10)).await;
-
-            // Follow-up finalize STILL acks ⇒ the loop survived AuthFailed (no
-            // shutdown — the pre-fix behaviour would have broken the loop here).
-            finalize_and_ack_behind(&fx, &mailbox, sample_order(Digest(B256::ZERO), ANCHOR + 1, B256::ZERO)).await;
-
-            assert_eq!(
-                *calls.lock().unwrap(),
-                vec![ANCHOR],
-                "re-jump was invoked and returned AuthFailed"
-            );
-            assert_eq!(
-                rotations.load(std::sync::atomic::Ordering::Relaxed),
-                1,
-                "an AuthFailed re-jump rotates the upstream (route around the forged source)"
-            );
-            assert!(
-                fx.marshal.floors.lock().unwrap().is_empty(),
-                "an AuthFailed re-jump must NEVER advance the marshal floor (never serve the forged branch)"
-            );
-            assert_eq!(
-                fx.sync_metrics.degraded_value(SyncReason::AuthRotate),
-                1,
-                "the node stays up-degraded under auth_rotate (it never crashed)"
-            );
-
-            drop(mailbox);
-            let _ = handle.await;
-        });
     }
 
     // #10 SafetyHalt (Phase 3): a steady-state re-jump `L1Fork` (the EL-synced head
@@ -11719,54 +11658,6 @@ mod tests {
                 calls.lock().unwrap().len(),
                 crate::cert_inlet::MAX_UPSTREAM_FAULTS as usize + 1,
                 "every tip spawned a fresh re-jump (no jump skipped / doubled)"
-            );
-
-            drop(mailbox);
-            let _ = handle.await;
-        });
-    }
-
-    // (d''') CRITIC r2 regression: ANY executor-side rotate() resets the streak, so a
-    // tally accrued on URL A never carries into URL B. Accrue MAX_UPSTREAM_FAULTS−1
-    // Stalleds (streak just below the rotate threshold), then ONE BadTarget (which
-    // rotates + resets), then ONE Stalled — the post-BadTarget stall must NOT rotate
-    // (proving the BadTarget arm reset the streak; pre-fix it would have tipped to
-    // MAX on URL B's first stall → A→B→A oscillation).
-    #[test]
-    fn re_jump_bad_target_resets_cross_url_streak() {
-        let runtime = deterministic::Runner::default();
-        runtime.start(|ctx| async move {
-            const ANCHOR: u64 = 100;
-            let mut scripts: Vec<Scripted> = (0..crate::cert_inlet::MAX_UPSTREAM_FAULTS - 1)
-                .map(|_| Scripted::Stalled("transient stall".into()))
-                .collect();
-            scripts.push(Scripted::BadTarget("payload != block digest".into()));
-            scripts.push(Scripted::Stalled(
-                "first stall on the rotated-to URL".into(),
-            ));
-            let total = scripts.len();
-            let (cb, calls, rotations) = recording_re_jump_with_rotate(scripts);
-            let fx = Fixture::new(ANCHOR).with_re_jump(cb);
-            let (actor, mailbox) = fx.build(ctx.clone(), ANCHOR, ANCHOR);
-            let handle = actor.start();
-
-            for _ in 0..total {
-                mailbox
-                    .send(tip_msg(ANCHOR + JUMP_THRESHOLD + 5_010))
-                    .expect("send tip");
-                ctx.sleep(Duration::from_millis(10)).await;
-            }
-
-            assert_eq!(
-                calls.lock().unwrap().len(),
-                total,
-                "every scripted outcome was driven"
-            );
-            assert_eq!(
-                rotations.load(std::sync::atomic::Ordering::Relaxed),
-                1,
-                "ONLY the BadTarget rotated; the post-BadTarget stall did NOT (streak reset \
-                 to 0, so URL A's MAX−1 tally never carried into URL B)"
             );
 
             drop(mailbox);

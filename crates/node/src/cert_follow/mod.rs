@@ -230,6 +230,12 @@ where
                 .join(crate::dpos::SAFETY_HALT_MARKER),
         ),
         l1_checkpoint_hash,
+        // E4-05: a fresh datadir with no operator checkpoint refuses to start on a
+        // deployed network. The chain_id constants live in this crate's
+        // `chainspec`, so the predicate is evaluated HERE (ONE predicate — the same
+        // `is_deployed_network` the plaintext-BLS refusal uses) and the ANSWER is
+        // what crosses into the consensus crate.
+        deployed_network: crate::dpos::is_deployed_network(chain_id),
         deriver,
         executed,
         finalized_cursor,

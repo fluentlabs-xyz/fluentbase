@@ -14,9 +14,10 @@
 //! cert-inlet as a second producer into its own marshal. Both share only
 //! [`CertUpstream`] / [`UpstreamFinalized`] — the by-height pull + live
 //! finalized-cert stream the node's WS actor implements (the inlet's sole
-//! producer; the cold-start JUMP's `get_latest` source). The per-epoch BLS
-//! verifier read ([`crate::cert_inlet::RethCommitteeSource`]) and the EL-sync
-//! JUMP ([`crate::cold_start_jump::RethElSync`]) live in their own modules.
+//! producer; the frozen-tip ladder probe's and the devnet fresh-datadir entry's
+//! source). The per-epoch BLS verifier read
+//! ([`crate::cert_inlet::RethCommitteeSource`]) and the EL-sync JUMP
+//! ([`crate::cold_start_jump::RethElSync`]) live in their own modules.
 
 use crate::{
     cert_inlet::CommitteeSource,
@@ -216,7 +217,7 @@ where
         warn!(height, error = %e, "boundary finalization is malformed");
         return failed("cert payload != block digest");
     }
-    if let Err(e) = verify_jump_authenticated(&uf, committees, at_hash, None, ctx) {
+    if let Err(e) = verify_jump_authenticated(&uf, committees, at_hash, ctx) {
         warn!(height, error = %e, "boundary finalization failed BLS authentication");
         return failed("committee unreadable or multisig invalid");
     }

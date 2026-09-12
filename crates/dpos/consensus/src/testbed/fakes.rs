@@ -6,12 +6,10 @@ use crate::{
     },
     beacon::Seed,
     cert_follow::{CertUpstream, UpstreamFinalized},
-    cert_inlet::CommitteeSource,
     cold_start_jump::{ElSync, SyncFailure, EL_SYNC_STALL_ESCAPE},
     fault::EngineError,
     order_block::{OrderBlock, K},
     plane_upstream::{FrontierHandler, FrontierKey},
-    scheme::epoch_committee_from_snapshot,
     slasher::actor::{SlasherTxSink, SubmitOutcome},
 };
 use alloy_consensus::{Block as AlloyBlock, BlockBody, Header as AlloyHeader};
@@ -25,10 +23,8 @@ use commonware_p2p::{utils::mux, Message, Receiver};
 use commonware_resolver::{p2p::Producer, Consumer};
 use commonware_runtime::{deterministic, Clock as _};
 use commonware_utils::channel::oneshot as cw_oneshot;
-use eyre::{ensure, eyre};
-use fluentbase_bls::{
-    oracle::SeedOracle, scheme::build_verifier, BlsPubkey, PeerPubkey, Scheme as BlsScheme,
-};
+use eyre::eyre;
+use fluentbase_bls::{BlsPubkey, PeerPubkey};
 use fluentbase_staking_reader::{
     reader::{ConsensusKeys, ValidatorSetSnapshot, ValidatorWithKeys},
     ReadError, StakingStateRead,
@@ -1264,19 +1260,13 @@ impl StakingStateRead for FakeStaking {
     }
 }
 
-/// Every `committee[E]` read the jump made, in call order: `(epoch, executed
-/// hash it was read AT)`. The observation behind "the committee was read at the
-/// LANDING hash" — recorded by [`JumpCommittees`] itself, so a test asserts what
-/// production asked for instead of inferring it from the outcome.
-pub(super) type JumpCommitteeReads = Arc<Mutex<Vec<(u64, B256)>>>;
-
 /// One `ReJump::call` — one run of the production
 /// [`jump_to_target`](crate::cold_start_jump::jump_to_target).
 ///
 /// The `outcome` tag exists because EVERY non-`Landed` variant is otherwise
 /// INVISIBLE to a test: the stand wires `ReJump::rotate = None`, so
-/// `Executor::rotate_upstream` is a silent no-op, and an `AuthFailed` or
-/// `BadTarget` leaves nothing behind but a WARN line. Without the tag a test
+/// `Executor::rotate_upstream` is a silent no-op, and a `Stalled` or an
+/// `InvalidTarget` leaves nothing behind but a log line. Without the tag a test
 /// asserting `rejump_calls >= 1` passes just as happily on a chain where every
 /// jump authenticated and FAILED.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1295,11 +1285,11 @@ pub(super) struct JumpCall {
     pub consumed: Option<(u64, B256)>,
     /// `(landing, hash)` on [`JumpOutcome::Landed`](crate::cold_start_jump::JumpOutcome::Landed).
     pub landed: Option<(u64, B256)>,
-    /// The `Display` text of the `eyre::Report` a NON-terminal outcome carries
-    /// (`AuthFailed`, `Stalled`, `BadTarget`, …) — `None` for `Landed`/`Lagging`.
-    /// Lets a test tell WHICH refusal arm fired: `verify_jump_authenticated`
-    /// returns an error on the committee-BLS `ensure!` AND on an unreadable
-    /// committee, and only the message distinguishes them.
+    /// The `Display` text of the `eyre::Report` a refusing outcome carries
+    /// (`Stalled`, `InvalidTarget`, …) — `None` for `Landed`/`Lagging`.
+    /// Lets a test tell WHICH refusal arm fired — the landing check and a reth
+    /// `Invalid` verdict both produce `InvalidTarget`, and only the message
+    /// distinguishes them.
     pub outcome_detail: Option<String>,
 }
 
@@ -1316,65 +1306,6 @@ pub(super) type JumpCalls = Arc<Mutex<Vec<JumpCall>>>;
 /// changes the run (review A2-02, and the stand-side note in `stand.rs`). The
 /// step-vs-tip comparison is pinned in `executor::tests` instead.
 pub(super) type FrontierSteps = Arc<Mutex<Vec<(u64, u64)>>>;
-
-/// The jump's committee read over [`FakeStaking`], BY EXECUTED HASH — the stand's
-/// [`RethCommitteeSource`](crate::cert_inlet::RethCommitteeSource). Built exactly
-/// as the node's steady-state re-jump builds it (`consensus/src/dpos.rs`): a
-/// state reader plus the chain namespace. `verify_jump_authenticated` calls
-/// `scheme_at(epoch, landing_hash, None)`, so the committee comes out of the
-/// CONTRACT STATE MACHINE at the landing — never out of the stand's schedule.
-///
-/// The finalized-tip hash closure it used to carry is gone with
-/// `CommitteeSource::scheme_at_finalized_tip`: every committee read that is NOT
-/// at an arbitrary jump hash goes through the committee module now.
-pub(super) struct JumpCommittees {
-    staking: FakeStaking,
-    namespace: Vec<u8>,
-    reads: JumpCommitteeReads,
-}
-
-impl JumpCommittees {
-    pub(super) fn new(staking: FakeStaking, namespace: Vec<u8>, reads: JumpCommitteeReads) -> Self {
-        Self {
-            staking,
-            namespace,
-            reads,
-        }
-    }
-
-    fn build_at(
-        &self,
-        epoch: u64,
-        at_hash: B256,
-        oracle: Option<Arc<dyn SeedOracle>>,
-    ) -> eyre::Result<BlsScheme> {
-        let snap = self.staking.epoch_committee_snapshot(epoch, at_hash)?;
-        ensure!(
-            !snap.validators.is_empty(),
-            "epoch {epoch} has no committed committee at {at_hash}"
-        );
-        let committee = epoch_committee_from_snapshot(&snap)
-            .map_err(|e| eyre!("epoch {epoch} committee has non-unique participants: {e:?}"))?;
-        Ok(build_verifier(
-            &self.namespace,
-            committee.bimap,
-            epoch,
-            oracle,
-        ))
-    }
-}
-
-impl CommitteeSource for JumpCommittees {
-    fn scheme_at(
-        &self,
-        epoch: u64,
-        at_hash: B256,
-        oracle: Option<Arc<dyn SeedOracle>>,
-    ) -> eyre::Result<BlsScheme> {
-        self.reads.lock().unwrap().push((epoch, at_hash));
-        self.build_at(epoch, at_hash, oracle)
-    }
-}
 
 /// The jump's EL seam over [`FakeChain`] + [`ElNetwork`] — the stand's
 /// [`RethElSync`](crate::cold_start_jump::RethElSync). Same three branches as
@@ -1428,6 +1359,17 @@ impl JumpElSync {
 }
 
 impl ElSync for JumpElSync {
+    /// The stand never builds a fresh-datadir follower (`launch_follower` is not on
+    /// the stand — `testbed/mod.rs`), so the operator-checkpoint entry has no caller
+    /// here. Refuse loudly rather than model it: a silent `Ok` would let a future
+    /// fixture believe the stand covers a path it does not.
+    async fn sync_to_checkpoint(&self, checkpoint: B256) -> Result<(u64, B256), SyncFailure> {
+        panic!(
+            "the testbed does not model the fresh-datadir operator-checkpoint entry \
+             (sync_to_checkpoint({checkpoint})); only `launch`/`launch_follower` reach it"
+        )
+    }
+
     async fn sync_to(&self, latest: &UpstreamFinalized) -> Result<(u64, B256), SyncFailure> {
         let tip_hash = latest.block.result;
         let tip_height = latest.block.height.saturating_sub(K);
@@ -1571,11 +1513,10 @@ pub(super) struct UpstreamCounters {
     pub served_heights: Arc<Mutex<Vec<Pull>>>,
     /// `ReJump::call` invocations — each one runs the PRODUCTION
     /// [`crate::cold_start_jump::jump_to_target`] over
-    /// [`JumpCommittees`] + [`JumpElSync`]. Stays 0 while
-    /// `StandConfig::re_jump_threshold` is `None` (the gate is then `u64::MAX`,
-    /// so `Executor::maybe_re_jump` never arms the waiter). A COUNT ONLY: what
-    /// each call did is [`JumpCall`], and asserting on this number alone cannot
-    /// tell a landing from a failed authentication.
+    /// [`JumpElSync`]. Stays 0 while `StandConfig::re_jump_threshold` is `None`
+    /// (the gate is then `u64::MAX`, so `Executor::maybe_re_jump` never arms the
+    /// waiter). A COUNT ONLY: what each call did is [`JumpCall`], and asserting on
+    /// this number alone cannot tell a landing from a refusal.
     pub rejump_calls: Arc<AtomicU64>,
 }
 

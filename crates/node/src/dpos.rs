@@ -2134,7 +2134,8 @@ where
     let canonical_state = node.provider.canonical_state();
     let genesis_hash = node.chain_spec().genesis_hash();
     // Read-only devp2p peer-count probe for the EL-sync no-peers net
-    // (`cold_start_jump::RethElSync`). `node.network` is `FullNetwork: PeersInfo`.
+    // (`cold_start_jump::RethElSync`, the EL-sync seam). `node.network` is
+    // `FullNetwork: PeersInfo`.
     let peer_count: Arc<dyn Fn() -> usize + Send + Sync> = {
         let net = node.network.clone();
         Arc::new(move || net.num_connected_peers())
@@ -2204,25 +2205,26 @@ where
     };
 
     // Cert upstream for an upstream-configured validator (`--dpos.follower-upstream`),
-    // serving TWO consensus-side consumers off ONE WS actor: (1) the single-shot,
-    // pre-engine cold-start EL-sync JUMP (`cold_start_jump`) — a deeply-behind
-    // external joiner / follower fast-forwards reth before its OuterEngine starts;
-    // and (2) the marshal's by-height backfill resolver, which `launch` keeps alive
-    // for the engine lifetime so an OUT-OF-COMMITTEE validator (zero consensus-plane
-    // connectivity) backfills the cold-start `[floor+1 .. first_live]` gap from the
-    // upstream instead of wedging (the validator-with-upstream wedge fix). The actor
-    // is started so the handle's `get_latest`/`get_finalization` round-trips work; it
-    // stays alive as long as the resolver holds the handle. A no-upstream validator
-    // passes `None` and catches up on the consensus-plane treadmill instead. `launch`
-    // itself gates: FreshMigration never jumps. NOTE this WS actor is independent of
+    // serving TWO consensus-side consumers off ONE WS actor: (1) the STEADY-STATE
+    // re-jump and the frozen-tip ladder probe (there is no pre-engine jump any more —
+    // pass Б2); and (2) the marshal's by-height backfill resolver, which `launch`
+    // keeps alive for the engine lifetime so an OUT-OF-COMMITTEE validator (zero
+    // consensus-plane connectivity) backfills the cold-start `[floor+1 ..
+    // first_live]` gap from the upstream instead of wedging (the
+    // validator-with-upstream wedge fix). The actor is started so the handle's
+    // `get_latest`/`get_finalization` round-trips work; it stays alive as long as the
+    // resolver holds the handle. A no-upstream validator passes `None` and catches up
+    // on the consensus-plane treadmill instead. NOTE this WS actor is independent of
     // the live-stream cert-inlet's WS actor (`spawn_cert_inlet` in the overlay) — the
     // inlet drives the live frontier; this one serves the marshal's by-height pulls.
     let upstream = Some(if cfg.follower_upstreams.is_empty() {
         // Plane-native (NEW default): no WS URL — the frontier resolver built in
         // `build_beacon_plane` discovers the frontier + pulls by-height finalizations
-        // over the consensus plane. `upstream.is_some()` now holds for a plain
-        // validator, so the cold-start jump + `MarshalResolver::Hybrid` + steady-state
-        // re-jump all activate plane-natively.
+        // over the consensus plane. `upstream` is `Some` UNCONDITIONALLY on both
+        // branches, so a plain validator has one too and the frozen-tip ladder probe +
+        // `MarshalResolver::Hybrid` + the steady-state re-jump all activate
+        // plane-natively. That is what makes `resolve_cold_start_kind`'s `has_upstream`
+        // ensure unreachable from a real launch: it guards a `None` only tests build.
         ValidatorUpstream::Plane(plane_upstream)
     } else {
         // Deprecated `--dpos.follower-upstream` escape: this WS serves ONLY the marshal's
@@ -2353,6 +2355,23 @@ async fn serve_metrics(ctx: Context, port: u16) {
 
 // Host-only key loading helpers (filesystem syscalls + permission checks)
 
+/// The DEPLOYED networks — devnet, testnet, mainnet — by chain_id. ONE predicate,
+/// because two lists drift: it gates the plaintext-BLS-key refusal
+/// ([`load_bls_keypair`]) and the cert-follow fresh-datadir refusal (E4-05), which
+/// is threaded into the consensus crate as
+/// `FollowerLayerConfig::deployed_network` — that crate cannot import these
+/// constants (they live in this node's `chainspec`, and node depends on consensus,
+/// not the other way round), so the node evaluates it and passes the answer.
+pub(crate) fn is_deployed_network(chain_id: u64) -> bool {
+    use crate::chainspec::{
+        FLUENT_DEVNET_CHAIN_ID, FLUENT_MAINNET_CHAIN_ID, FLUENT_TESTNET_CHAIN_ID,
+    };
+    matches!(
+        chain_id,
+        FLUENT_DEVNET_CHAIN_ID | FLUENT_TESTNET_CHAIN_ID | FLUENT_MAINNET_CHAIN_ID
+    )
+}
+
 /// Load the validator BLS keypair AND, IFF it came from an EIP-2335 keystore (an
 /// off-disk operator secret exists), the HKDF-derived [`ShareSealKey`] that seals
 /// the per-epoch DKG shares at rest (E2). The plaintext-dev branch
@@ -2390,13 +2409,7 @@ async fn load_bls_keypair(
             Ok((keypair, Some(seal_key)))
         }
         (None, Some(plain_path), None) => {
-            use crate::chainspec::{
-                FLUENT_DEVNET_CHAIN_ID, FLUENT_MAINNET_CHAIN_ID, FLUENT_TESTNET_CHAIN_ID,
-            };
-            if matches!(
-                chain_id,
-                FLUENT_DEVNET_CHAIN_ID | FLUENT_TESTNET_CHAIN_ID | FLUENT_MAINNET_CHAIN_ID
-            ) {
+            if is_deployed_network(chain_id) {
                 return Err(eyre!(
                     "--dpos.bls-key-path (plaintext BLS key) is forbidden on deployed network \
                      (chain_id {chain_id}); production must use --dpos.bls-keystore-path with an \
