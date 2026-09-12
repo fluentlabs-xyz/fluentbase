@@ -147,8 +147,9 @@ impl FunctionABI {
     /// whatever the Rust parameter types derive to. The published entry has to say the same thing,
     /// otherwise callers encoding from the artifact never reach the method. The entry takes the
     /// pinned name, and every leaf parameter whose derived type differs takes the pinned type at
-    /// its position, provided both are encoded the same way (a single word, dynamic bytes, or
-    /// arrays of those). A substitution that changes the calldata layout, a tuple mapped onto a
+    /// its position, provided both have the same representation and accepted values. Apart from
+    /// identical types, only full-word `bytes32`/`uint256` aliases (and arrays of them) are allowed.
+    /// A substitution that changes the calldata representation, a tuple mapped onto a
     /// different pinned type, and a different number of parameters cannot be mapped; all are
     /// errors, and on an error the entry is left exactly as it was derived.
     pub fn retype_from_signature(&mut self, signature: &str) -> Result<(), ABIError> {
@@ -245,16 +246,15 @@ impl FunctionABI {
     }
 }
 
-/// How a canonical leaf type is laid out in calldata
-///
-/// Two types with the same layout are encoded identically, so one can stand in for the other in a
-/// published signature without changing what the generated codec decodes.
+/// Representation-compatible types in calldata, including their accepted value domain.
 #[derive(Debug, PartialEq, Eq)]
 enum WireLayout {
-    /// One 32-byte word: integers, `address`, `bool`, `bytesN`
-    Word,
-    /// Offset, length and padded data: `bytes` and `string`
-    DynamicBytes,
+    /// Both types carry any 256-bit word with identical padding.
+    FullWord,
+    /// Other leaf types may only substitute for themselves. Equal encoded size is insufficient:
+    /// fixed bytes and integers pad opposite ends, narrowing changes the domain, and strings
+    /// require UTF-8 whereas bytes do not.
+    Exact(String),
     /// Offset, length and the elements of the inner layout
     Array(Box<WireLayout>),
     /// A fixed number of elements of the inner layout, inline
@@ -271,8 +271,8 @@ fn wire_layout(ty: &str) -> Option<WireLayout> {
         return wire_layout(inner).map(|inner| WireLayout::FixedArray(length, Box::new(inner)));
     }
     match ty {
-        "bytes" | "string" => Some(WireLayout::DynamicBytes),
-        "address" | "bool" => Some(WireLayout::Word),
+        "bytes32" | "uint256" => Some(WireLayout::FullWord),
+        "bytes" | "string" | "address" | "bool" => Some(WireLayout::Exact(ty.to_string())),
         _ => {
             let (is_fixed_bytes, width) = if let Some(width) = ty.strip_prefix("bytes") {
                 (true, width)
@@ -289,7 +289,7 @@ fn wire_layout(ty: &str) -> Option<WireLayout> {
             } else {
                 width.is_multiple_of(8) && (8..=256).contains(&width)
             };
-            is_valid.then_some(WireLayout::Word)
+            is_valid.then(|| WireLayout::Exact(ty.to_string()))
         }
     }
 }
@@ -374,10 +374,10 @@ mod tests {
         };
         let mut abi = FunctionABI::from_signature(&sig).unwrap();
 
-        abi.retype_from_signature("set((uint256,bool),bytes32)")
+        abi.retype_from_signature("set((uint256,bool),address)")
             .unwrap();
 
-        assert_eq!(abi.signature().unwrap(), "set((uint256,bool),bytes32)");
+        assert_eq!(abi.signature().unwrap(), "set((uint256,bool),address)");
     }
 
     /// Only a type encoded the same way can stand in for the derived one: a pinned `bytes32`
@@ -409,12 +409,45 @@ mod tests {
             assert_eq!(abi, derived);
         }
 
-        abi.retype_from_signature("store(bytes1[32],string,bytes32[],int256[2],uint8)")
+        abi.retype_from_signature("store(uint8[32],bytes,bytes32[],bytes32[2],bool)")
             .unwrap();
         assert_eq!(
             abi.signature().unwrap(),
-            "store(bytes1[32],string,bytes32[],int256[2],uint8)"
+            "store(uint8[32],bytes,bytes32[],bytes32[2],bool)"
         );
+    }
+
+    #[test]
+    fn test_pinned_signature_rejects_incompatible_scalar_representations() {
+        for (derived, pinned) in [
+            ("uint32", "bytes4"),
+            ("bytes4", "uint32"),
+            ("address", "bytes20"),
+            ("address", "bytes32"),
+            ("bool", "uint8"),
+            ("uint32", "uint64"),
+            ("uint64", "uint32"),
+            ("uint256", "int256"),
+            ("bytes", "string"),
+            ("string", "bytes"),
+            ("uint32[]", "bytes4[]"),
+            ("uint8[32]", "bytes1[32]"),
+        ] {
+            let sig: Signature = parse_quote! { fn store(value: u32) };
+            let mut abi = FunctionABI::from_signature(&sig).unwrap();
+            abi.inputs[0].ty = derived.to_string();
+            abi.inputs[0].internal_type = derived.to_string();
+            let original = abi.clone();
+            assert!(
+                abi.retype_from_signature(&format!("renamed({pinned})"))
+                    .is_err(),
+                "must reject {derived} -> {pinned}"
+            );
+            assert_eq!(
+                abi, original,
+                "a rejected signature must not mutate the ABI"
+            );
+        }
     }
 
     /// A tuple that disagrees with the pinned signature, or a different arity, cannot be mapped,
