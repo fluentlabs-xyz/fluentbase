@@ -295,7 +295,9 @@ pub fn solidity_storage(input: TokenStream) -> TokenStream {
 /// - **Automatic type conversion**: Solidity → Rust types
 /// - **Name conversion**: camelCase → snake_case for methods when the snake_case name
 ///   converts back to the Solidity one; a name it cannot reproduce (`mintNFT`, `tokenURI`,
-///   `DOMAIN_SEPARATOR`) is kept verbatim so the router and client derive the real selector
+///   `DOMAIN_SEPARATOR`) is kept verbatim so the router and client derive the real selector.
+///   A lowercase name with underscores (`foo_bar`) has no Rust spelling that derives its
+///   selector and is rejected with a compile error
 /// - **Method receivers**: `&self` for view/pure, `&mut self` for others
 /// - **Struct support**: Generates Rust structs for Solidity structs
 /// - **Works with router**: Use traits in `#[router]` implementations

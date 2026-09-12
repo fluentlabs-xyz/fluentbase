@@ -337,11 +337,25 @@ fn sol_fn_to_trait_method(func: &ItemFunction, emit_mutability: bool) -> syn::Re
     let snake_name = sol_name.to_case(Case::Snake);
     let (fn_name, name_attr) = if solidity_function_name(&snake_name) == sol_name {
         (format_ident!("{}", snake_name), quote! {})
-    } else {
+    } else if solidity_function_name(&sol_name) == sol_name {
         (
             format_ident!("{}", sol_name),
             quote! { #[allow(non_snake_case)] },
         )
+    } else {
+        // A name without uppercase letters that is not camelCase (`foo_bar`, `_foo`) is one no
+        // Rust identifier derives: the router and client would camel-case it to `fooBar`.
+        // Refusing it here beats compiling a trait whose selectors do not exist on chain.
+        return Err(syn::Error::new(
+            name.span(),
+            format!(
+                "Solidity function `{sol_name}` has no Rust spelling that derives its selector \
+                 (the router and client would use `{}`); rename it in the interface, or write \
+                 the trait by hand and pin `#[function_id(\"{sol_name}(...)\")]` on the \
+                 implementation",
+                solidity_function_name(&sol_name)
+            ),
+        ));
     };
     let receiver = determine_method_receiver(func);
 
@@ -538,6 +552,22 @@ mod tests {
             let abi = crate::abi::function::FunctionABI::from_signature(&sig).unwrap();
             assert_eq!(abi.function_id().unwrap(), selector, "{rust_name}");
         }
+    }
+
+    /// `foo_bar` cannot be spelled by any Rust identifier the naming rule maps back to it, so
+    /// the macro refuses it instead of deriving `fooBar`.
+    #[test]
+    fn test_lowercase_underscore_names_are_refused() {
+        let solidity_code = r#"
+            interface IOdd {
+                function foo_bar(address to) external;
+            }
+        "#;
+        let input: alloy_sol_macro_input::SolInput = parse_str(solidity_code).unwrap();
+
+        let err = to_rust_trait(input).unwrap_err().to_string();
+        assert!(err.contains("`foo_bar`"), "{err}");
+        assert!(err.contains("`fooBar`"), "{err}");
     }
 
     #[test]
