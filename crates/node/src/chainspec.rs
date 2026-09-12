@@ -225,17 +225,28 @@ pub(crate) fn chain_value_parser(s: &str) -> eyre::Result<Arc<ChainSpec>, eyre::
         "fluent-testnet" => FLUENT_TESTNET.clone(),
         "fluent-mainnet" => FLUENT_MAINNET.clone(),
         _ => {
-            let spec: ChainSpec = parse_genesis(s)?.into();
+            let genesis = parse_genesis(s)?;
             // reth activates Paris from a genesis file only through `terminalTotalDifficulty`.
             // Without Paris the block environment carries no `prevrandao`, which the pre-block
             // system calls and every delegated runtime need, so a validator started from such
-            // a file would fail on its first payload. Refuse the file up front instead.
+            // a file would fail on its first payload. Every Fluent chain starts post-merge with
+            // zero difficulty, so the only meaningful value is 0: a nonzero TTD would still
+            // activate Paris at block 0 through `mergeNetsplitBlock`, but describes a merge
+            // that never happens. Refuse anything else up front.
+            match genesis.config.terminal_total_difficulty {
+                Some(ttd) if ttd.is_zero() => {}
+                Some(ttd) => eyre::bail!(
+                    "the genesis file sets `config.terminalTotalDifficulty` to {ttd}: every \
+                     Fluent chain starts post-merge with zero difficulty, so it must be 0"
+                ),
+                None => eyre::bail!(
+                    "the genesis file does not set `config.terminalTotalDifficulty`: every \
+                     Fluent chain starts post-merge, set it to 0"
+                ),
+            }
+            let spec: ChainSpec = genesis.into();
             if !spec.is_paris_active_at_block(0) {
-                eyre::bail!(
-                    "the genesis file does not activate Paris at block 0: every Fluent chain \
-                     starts post-merge, set `config.terminalTotalDifficulty` (0 for a chain \
-                     that has no pre-merge history)"
-                );
+                eyre::bail!("the genesis file does not activate Paris at block 0");
             }
             Arc::new(spec)
         }
@@ -273,6 +284,15 @@ mod tests {
         let err = chain_value_parser(&genesis_json(None)).unwrap_err();
         assert!(
             err.to_string().contains("terminalTotalDifficulty"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn genesis_file_with_nonzero_terminal_total_difficulty_is_refused() {
+        let err = chain_value_parser(&genesis_json(Some(U256::from(1)))).unwrap_err();
+        assert!(
+            err.to_string().contains("terminalTotalDifficulty") && err.to_string().contains("1"),
             "unexpected error: {err}"
         );
     }
