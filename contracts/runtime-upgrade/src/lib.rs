@@ -317,10 +317,8 @@ impl<SDK: SharedAPI> App<SDK> {
     /// `EVM_MAX_CODE_SIZE`: EIP-170 is consensus-visible for EVM accounts, so an oversized EVM
     /// runtime would be observably out of spec rather than merely large.
     ///
-    /// The one caveat worth knowing: `EXT_CODE_COPY_MAX_COPY_SIZE` bounds a single `CODE_COPY`
-    /// request, and [`RuntimeUpgradeTr::recompile`] reads a target back in one full-length copy. A
-    /// target installed above that bound therefore cannot be recompiled through this contract and
-    /// would need a fresh `upgradeTo` carrying the WASM again.
+    /// Upgrades carry the original WASM in `upgradeTo`; they do not recover it with `CODE_COPY`.
+    /// The per-request `EXT_CODE_COPY_MAX_COPY_SIZE` bound therefore does not limit this path.
     ///
     /// Audit note: raised and closed as intended behaviour (FLU-1075). Please do not "fix" this by
     /// adding a size check without revisiting the upgrade-authority argument above.
