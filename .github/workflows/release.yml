@@ -128,6 +128,7 @@ jobs:
           echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io --username "${{ github.actor }}" --password-stdin
 
       - name: Wait for fluentbase-build image
+        id: wait_image
         if: ${{ github.event.inputs.dry_run != 'true' }}
         run: |
           IMAGE="${{ steps.build_image.outputs.image }}:${{ steps.build_image.outputs.tag }}"
@@ -159,7 +160,7 @@ jobs:
         # A substituted image, or one built from another commit, fails here.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          IMAGE_DIGEST: ${{ steps.build_image.outputs.digest }}
+          IMAGE_DIGEST: ${{ steps.wait_image.outputs.digest }}
           RELEASE_COMMIT: ${{ github.sha }}
           SIGNER_WORKFLOW: ${{ github.repository }}/.github/workflows/build-docker.yml
         run: |
@@ -186,7 +187,7 @@ jobs:
           FLUENTBASE_CONTRACTS_DOCKER: "true"
           FLUENTBASE_BUILD_DOCKER_IMAGE: ${{ steps.build_image.outputs.image }}
           FLUENTBASE_BUILD_DOCKER_TAG: ${{ steps.build_image.outputs.tag }}
-          FLUENTBASE_BUILD_DOCKER_DIGEST: ${{ steps.build_image.outputs.digest }}
+          FLUENTBASE_BUILD_DOCKER_DIGEST: ${{ steps.wait_image.outputs.digest }}
           # A dry run builds the image locally, so it has no digest to verify.
           FLUENTBASE_BUILD_ALLOW_UNVERIFIED_IMAGE: ${{ github.event.inputs.dry_run == 'true' }}
         run: |
@@ -227,7 +228,7 @@ jobs:
         env:
           FLUENTBASE_BUILD_DOCKER_IMAGE: ${{ steps.build_image.outputs.image }}
           FLUENTBASE_BUILD_DOCKER_TAG: ${{ steps.build_image.outputs.tag }}
-          FLUENTBASE_BUILD_DOCKER_DIGEST: ${{ steps.build_image.outputs.digest }}
+          FLUENTBASE_BUILD_DOCKER_DIGEST: ${{ steps.wait_image.outputs.digest }}
           BUILD_TARGET: "genesis"
           BUILD_PROFILE: "release"
         run: |
