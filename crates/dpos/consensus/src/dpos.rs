@@ -32,7 +32,7 @@ use commonware_storage::{
 };
 use commonware_utils::sequence::U64;
 use eyre::{ensure, eyre, OptionExt as _, WrapErr as _};
-use fluentbase_bls::{keys::ValidatorBlsKeypair, PeerPubkey, Scheme as BlsScheme};
+use fluentbase_bls::{keys::ValidatorBlsKeypair, Scheme as BlsScheme};
 use fluentbase_p2p::{NoopBlocker, OracleHandle};
 use fluentbase_staking_reader::{
     reader::StakingReaderConfig, EpochTransition, RethStakingStateReader, TransitionOutcome,
@@ -1007,53 +1007,6 @@ pub type PlaneMux = Arc<
     >,
 >;
 
-/// One item the vote Muxer's backup channel surfaces: a vote for an epoch with no
-/// registered sub-channel (the network is ahead of us). The payload is unused by
-/// the catch-up hint.
-///
-/// The muxer hands back the RAW wire sub-channel id, which shares its `u64` with
-/// the epoch-key agreement slice (`DKG_SUBCHANNEL_BASE | E`) and is therefore not
-/// an epoch. The [`Epoch`] here is the proof that the plane's forwarder classified
-/// it through `fluentbase_p2p::constants::epoch_from_subchannel` first — the
-/// consumer cannot be handed an agreement id.
-pub type VoteBackupItem = (Epoch, (PeerPubkey, commonware_runtime::IoBuf));
-
-/// A re-settable forwarding target: a single mpsc slot the plane re-points to the
-/// CURRENTLY-active consumer per promotion. The plane's forwarder drains a move-only
-/// source (the vote Muxer's backup receiver) and `try_send`s each item to the parked
-/// sender; on demote the receiver drops and the forwarder parks (drops items while no
-/// engine is up — a follower needs no catch-up hint). [`subscribe`] hands each
-/// promotion a fresh `Receiver`, re-pointing the slot.
-#[derive(Clone)]
-pub struct ResettableForward<T> {
-    slot: Arc<Mutex<Option<mpsc::Sender<T>>>>,
-    capacity: usize,
-}
-
-impl<T> ResettableForward<T> {
-    pub fn new(capacity: usize) -> Self {
-        Self {
-            slot: Arc::new(Mutex::new(None)),
-            capacity,
-        }
-    }
-
-    /// Hand the currently-active consumer a fresh receiver and re-point the
-    /// forwarder's sender at it (replacing any prior promotion's). The prior
-    /// receiver — already dropped on demote — leaves its sender to fail `try_send`,
-    /// so re-pointing is the only state to update.
-    pub async fn subscribe(&self) -> mpsc::Receiver<T> {
-        let (tx, rx) = mpsc::channel(self.capacity);
-        *self.slot.lock().await = Some(tx);
-        rx
-    }
-
-    /// The shared slot — the plane's forwarder task reads the live target from it.
-    pub fn slot(&self) -> Arc<Mutex<Option<mpsc::Sender<T>>>> {
-        self.slot.clone()
-    }
-}
-
 /// The ONE [`EpochTransition`] a validator process runs, handed DOWN from the node
 /// crate's always-on plane (where it is built, before the engine, so the geometry it
 /// freezes is available to the `DkgActor` and the committee module) together with the
@@ -1201,9 +1154,13 @@ pub(crate) fn frontier_probe<U: crate::cert_follow::CertUpstream>(
 /// activation-relative one `is_epoch_boundary` makes (`:532`), since
 /// `Geometry::last` is built from the same `(activation, interval)` pair.
 ///
-/// `None` while the geometry is unfrozen or the cursor is still at its seed
-/// below activation — the one state with no step to take, which the probe counts
-/// as `no_tracked_epoch`/`no_geometry` and asks `Latest` alone.
+/// `None` while the geometry is unfrozen, and ONLY then — the one state with no
+/// step to take, which the probe counts as `no_tracked_epoch`/`no_geometry` and
+/// asks `Latest` alone. A cursor still at its seed below activation is not a
+/// second refusal, though this doc used to promise one: `Geometry::epoch_of`
+/// clamps a pre-activation height to epoch `0` (`epoch_at_block`'s
+/// `saturating_sub`, `types/src/staking_protocol.rs:177`), so the answer there
+/// is `Some(0)`.
 pub(crate) fn local_tracked_epoch(
     committee: Arc<dyn crate::committee::Committee>,
     cursor: crate::FinalizedCursor,
@@ -1242,10 +1199,6 @@ pub struct SharedBeaconPlane {
     pub resolver_mux: PlaneMux,
     pub broadcast_mux: PlaneMux,
     pub marshal_mux: PlaneMux,
-    /// The vote Muxer's backup re-settable forwarder: the plane owns the move-only
-    /// backup receiver and forwards each catch-up item to the currently-active
-    /// `EpochManager`; each promotion `subscribe()`s a fresh receiver.
-    pub vote_backup: ResettableForward<VoteBackupItem>,
     /// Committee members observed slashed for equivocation. Written by the plane's
     /// tombstone watcher (the sole writer, riding the finalized-height poller);
     /// read by every promoted engine's `FluentApp`. One instance per process, and
@@ -1506,10 +1459,10 @@ type FollowerBoundaryDeliver =
 /// epoch's verify-only scheme (without which a resolver-delivered cert for any
 /// epoch above the cold-start one finds NO scheme and the marshal answers the
 /// fetch `true` without storing — a re-request loop that never closes),
-/// `highest_entered_epoch` (the repair sweep's only frontier evidence here, since
-/// the vote-backup arm that feeds the corroborated one is parked), and
-/// `latest_live` (the snapshot hash the sweep's boundary FETCH authenticates its
-/// committee read at).
+/// `highest_entered_epoch` (the repair sweep's frontier evidence in the window
+/// before the geometry freezes, where the live epoch is not yet defined), and
+/// the reconcile that the live epoch's own edges would otherwise be the only
+/// source of.
 ///
 /// **`last_delivered` advances only after a delivery.** An unreadable committee
 /// must leave the epoch unconsumed: `committee[E]` is committed during `E-1` but
@@ -1643,12 +1596,10 @@ impl DposLayer {
             resolver_mux,
             broadcast_mux,
             marshal_mux,
-            vote_backup,
             tombstones,
             plane_clock,
             dkg_height_tx,
         } = beacon_plane;
-        let vote_backup_rx = vote_backup.subscribe().await;
 
         let RethHandle {
             provider,
@@ -2626,7 +2577,6 @@ impl DposLayer {
             resolver_mux,
             broadcast_mux,
             marshal_mux,
-            vote_backup_rx,
             upstream,
         );
 
@@ -3859,7 +3809,7 @@ mod broker_repromote_tests {
     fn plane_mux_supports_drop_then_reclone_reregister() {
         let executor = deterministic::Runner::default();
         executor.start(|ctx| async move {
-            let (network, oracle) = Network::<_, super::PeerPubkey>::new(
+            let (network, oracle) = Network::<_, fluentbase_bls::PeerPubkey>::new(
                 ctx.with_label("net"),
                 SimConfig {
                     max_size: 1024 * 1024,

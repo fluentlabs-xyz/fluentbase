@@ -16,7 +16,6 @@ use crate::{
     },
     committee::Committee,
     digest::Digest,
-    dpos::VoteBackupItem,
     epoch_manager,
     epocher::OriginEpocher,
     executor,
@@ -1165,7 +1164,6 @@ where
         resolver_mux: SharedMux<HS, HR>,
         broadcast_mux: SharedMux<HS, HR>,
         marshal_mux: SharedMux<HS, HR>,
-        vote_backup: mpsc::Receiver<VoteBackupItem>,
         upstream: Option<U>,
     ) -> Handle<()>
     where
@@ -1183,7 +1181,6 @@ where
                 resolver_mux,
                 broadcast_mux,
                 marshal_mux,
-                vote_backup,
                 upstream,
             )
             .await
@@ -1199,7 +1196,6 @@ where
         resolver_mux: SharedMux<HS, HR>,
         broadcast_mux: SharedMux<HS, HR>,
         marshal_mux: SharedMux<HS, HR>,
-        vote_backup: mpsc::Receiver<VoteBackupItem>,
         upstream: Option<U>,
     ) where
         E: Clone + Sync,
@@ -1324,14 +1320,11 @@ where
         // absorbed the original ordering gap, but starting epoch_manager
         // first eliminates the window for live epoch transitions when
         // bursty finalization races a still-uninitialized consumer.
-        let mut em_handle = self.epoch_manager.start(
-            Some(epoch_manager::Muxes {
-                vote: vote_mux,
-                cert: cert_mux,
-                res: resolver_mux,
-            }),
-            vote_backup,
-        );
+        let mut em_handle = self.epoch_manager.start(Some(epoch_manager::Muxes {
+            vote: vote_mux,
+            cert: cert_mux,
+            res: resolver_mux,
+        }));
         let mut buffered_handle = self.buffered.start(broadcast);
         let mut executor_handle = self.executor.start();
         // Compose the cert-feed sink as a second application-Reporter so it
@@ -1494,12 +1487,7 @@ where
         };
         let marshal_chan = (marshal_rx, marshal_resolver);
 
-        // Vote-backup is PARKED: a follower's manager only soft-enters and never
-        // consumes catch-up hints, but `run` exits if its `vote_backup` receiver
-        // closes — so hold the sender alive for the lifetime.
-        let (_parked_vote_backup_tx, parked_vote_backup) = mpsc::channel(1);
-
-        let mut em_handle = self.epoch_manager.start::<HS, HR>(None, parked_vote_backup);
+        let mut em_handle = self.epoch_manager.start::<HS, HR>(None);
         let mut buffered_handle = self.buffered.start(broadcast);
         let mut executor_handle = self.executor.start();
         let app_reporter: Reporters<marshal::Update<OrderBlock>, FluentApp<XC, A>, FeedSink> =
@@ -1513,8 +1501,7 @@ where
         drop(self.slasher);
 
         // Supervisor: on first subsystem exit, abort the others. Held alive across
-        // the select: `_parked_marshal_tx` + `_parked_vote_backup_tx` keep the
-        // marshal resolver_rx / manager vote_backup open.
+        // the select: `_parked_marshal_tx` keeps the marshal resolver_rx open.
         let exit = tokio::select! {
             r = &mut buffered_handle => ("buffered", r),
             r = &mut executor_handle => ("executor", r),

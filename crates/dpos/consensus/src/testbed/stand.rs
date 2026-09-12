@@ -28,7 +28,6 @@ use crate::{
     },
     cert_follow::CertUpstream as _,
     cold_start_jump::JumpOutcome,
-    dpos::VoteBackupItem,
     epoch_manager::EpochEngineMetrics,
     executor::{ExecutorMetrics, FrontierProbeFn, ReJump, ReJumpFn},
     extra_data::decode_production_record,
@@ -56,9 +55,8 @@ use commonware_utils::{ordered::Set, NZUsize};
 use fluentbase_bls::{keys::ValidatorBlsKeypair, BlsPubkey, PeerPubkey};
 use fluentbase_p2p::{
     constants::{
-        BEACON_CHANNEL, BEACON_RESOLVER_CHANNEL, BROADCAST_CHANNEL, CERT_CHANNEL,
-        DKG_SUBCHANNEL_BASE, FRONTIER_CHANNEL, MARSHAL_CHANNEL, MAX_REGISTRY_PEER_SET,
-        RESOLVER_CHANNEL, VOTE_CHANNEL,
+        BEACON_CHANNEL, BEACON_RESOLVER_CHANNEL, BROADCAST_CHANNEL, CERT_CHANNEL, FRONTIER_CHANNEL,
+        MARSHAL_CHANNEL, MAX_REGISTRY_PEER_SET, RESOLVER_CHANNEL, VOTE_CHANNEL,
     },
     NoopBlocker,
 };
@@ -1807,17 +1805,14 @@ async fn build_node(
     let bcast_mux = Arc::new(tokio::sync::Mutex::new(bcast_handle));
     let marshal_mux = Arc::new(tokio::sync::Mutex::new(marshal_handle));
 
-    // Vote-backup forwarder: a frame the vote muxer cannot route is a vote for
-    // an epoch this node has no engine for — the epoch manager's catch-up hint.
-    // Mirrors `node/src/dpos.rs::forward_vote_backup` (epoch space only).
-    let (vb_tx, vb_rx) = mpsc::channel::<VoteBackupItem>(64);
-    ctx_i.with_label("vote_backup").spawn(move |_| async move {
-        while let Some((subchannel, msg)) = vote_backup_rx.recv().await {
-            if subchannel < DKG_SUBCHANNEL_BASE {
-                let _ = vb_tx.try_send((Epoch::new(subchannel), msg));
-            }
-        }
-    });
+    // The vote Muxer's backup channel is DRAINED and dropped, exactly as the
+    // plane's four observer channels are (`node/src/dpos.rs`: since 4.2 В all
+    // five are observers). Draining rather than leaving it unread keeps the
+    // Muxer from blocking on a full backup mailbox when a frame arrives for an
+    // epoch this node has no engine for.
+    ctx_i
+        .with_label("vote_backup")
+        .spawn(move |_| async move { while vote_backup_rx.recv().await.is_some() {} });
 
     // Per-node singletons.
     let sync_metrics = SyncMetrics::default();
@@ -2538,7 +2533,6 @@ async fn build_node(
         res_mux,
         bcast_mux,
         marshal_mux,
-        vb_rx,
         Some(upstream),
     );
 

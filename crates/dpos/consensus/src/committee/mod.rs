@@ -668,10 +668,11 @@ pub(crate) mod testing {
     ///
     /// `committee()` answers [`CommitteeError::NotReadable`] by default: the
     /// double holds no records, and most consumers of it want only the scheme.
-    /// [`SchemeCommittee::with_records`] gives it the record half as well, for
-    /// the consumers that distinguish "this node cannot read `committee[E]`"
-    /// from "the record is here but no scheme could be built from it" —
-    /// `register_span` is the one that must.
+    /// [`SchemeCommittee::with_geometry`] and [`SchemeCommittee::with_window`]
+    /// give it the record half as well, for the consumers that distinguish
+    /// "this node cannot read `committee[E]`" from "the record is here but no
+    /// scheme could be built from it" — the upstream frontier gate's fixtures
+    /// are the ones that must.
     pub(crate) struct SchemeCommittee {
         answer: Box<dyn Fn(u64) -> Option<BlsScheme> + Send + Sync>,
         records: Box<dyn Fn(u64) -> Option<CommitteeRecord> + Send + Sync>,
@@ -692,18 +693,9 @@ pub(crate) mod testing {
         pub(crate) fn new(
             answer: impl Fn(u64) -> Option<BlsScheme> + Send + Sync + 'static,
         ) -> Arc<Self> {
-            Self::with_records(answer, |_| None)
-        }
-
-        /// The same double with a record half. `records` answering `None` is
-        /// [`CommitteeError::NotReadable`] — the epoch is not readable at this
-        /// node's anchor — which is the ONE fact a caller is entitled to stop a
-        /// contiguous walk on.
-        pub(crate) fn with_records(
-            answer: impl Fn(u64) -> Option<BlsScheme> + Send + Sync + 'static,
-            records: impl Fn(u64) -> Option<CommitteeRecord> + Send + Sync + 'static,
-        ) -> Arc<Self> {
-            Self::with_geometry(answer, records, None)
+            // `|_| None` for the record half is [`CommitteeError::NotReadable`]
+            // on every epoch — the state most consumers of this double want.
+            Self::with_geometry(answer, |_| None, None)
         }
 
         /// The same double with a read WINDOW, so a consumer that must react to

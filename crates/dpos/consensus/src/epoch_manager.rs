@@ -4,8 +4,8 @@
 //! (`mpsc::Receiver<Epoch>`) fed by
 //! [`fluentbase_staking_reader::EpochTransition`]. The vote/cert/resolver Muxers
 //! are NOT owned here — they live in the always-on plane (node crate); this manager
-//! receives their `MuxHandle`s + the vote backup forwarder per promotion and
-//! registers/deregisters per-epoch sub-channels against them.
+//! receives their `MuxHandle`s per promotion and registers/deregisters per-epoch
+//! sub-channels against them.
 //!
 //! `marshal::core::Actor`, `buffered::Engine`, and the 2
 //! `immutable::Archive` instances do **not** pass through here — they live
@@ -18,7 +18,6 @@ use crate::{
     beacon::{constant_fallback_seed, witness_fallback_seed},
     beacon::{Beacon, PinEffort, ShareProbe, SignerVerdict},
     committee::Committee,
-    dpos::VoteBackupItem,
     engine::{EpochEngine, EpochEngineConfig},
     epocher::OriginEpocher,
     order_block::OrderBlock,
@@ -30,7 +29,7 @@ use crate::{
 };
 use commonware_consensus::{
     marshal::{core::Mailbox as MarshalMailbox, standard::Standard},
-    types::{Epoch, Epocher as _, Height, Round, View},
+    types::{Epoch, Epocher as _, Round, View},
 };
 use commonware_cryptography::ed25519::PublicKey;
 use commonware_p2p::{Blocker, Receiver, Sender};
@@ -38,7 +37,6 @@ use commonware_runtime::{
     buffer::paged::CacheRef, spawn_cell, BufferPooler, Clock, ContextCell, Handle, Metrics,
     Spawner, Storage,
 };
-use commonware_utils::vec::NonEmptyVec;
 use fluentbase_bls::{keys::ValidatorBlsKeypair, Scheme as BlsScheme};
 use fluentbase_staking_reader::reader::ValidatorSetSnapshot;
 use futures::future::BoxFuture;
@@ -71,7 +69,7 @@ use tracing::{debug, error, info, warn};
 /// without its boundary block. Neither is modelled by the role verdict itself.
 ///
 /// "Caught up" is NOT a separate signal: a node reaches the live frontier when
-/// `is_live` (its f+1-corroborated `highest_observed_epoch` reaches `E`) and its
+/// `is_live` (`E` is the epoch of its own VERIFIED marshal tip) and its
 /// always-on executor has derived the chain up to E-1's boundary (the
 /// `Inline::genesis` spawn gate). The validator's executor is the sole reth
 /// writer and follows the chain by LOCAL derivation, so no cert-follow plane and
@@ -300,12 +298,25 @@ const BOUNDARY_BUFFER: usize = 64;
 /// `dkg_epoch_{n}`, and unlike the ceremony journals there is no reconciler for
 /// it, so the directory and its one blob per traversed view survive forever.
 ///
-/// A band swept on every prune reclaims them all: it is driven by epoch NUMBER
-/// rather than by a map this process populated, so it also collects a previous
-/// process's leftovers on the first boundary after a restart, and it re-collects a
-/// partition that an aborted-but-not-yet-stopped voter recreated with one last
-/// journal write. The band is the trailing scheme-retention window — the same
-/// distance the rest of this actor keeps state for.
+/// A band reclaims them all: it is driven by epoch NUMBER rather than by a map
+/// this process populated, so it also collects a previous process's leftovers on
+/// the first boundary after a restart, and it collects a partition that an
+/// aborted-but-not-yet-stopped voter wrote one last time. The band is the
+/// trailing scheme-retention window — the same distance the rest of this actor
+/// keeps state for.
+///
+/// It is NOT swept on every prune, and that is the difference from the shape
+/// this replaced. `abort_below` runs on every reconcile, a reconcile runs on
+/// every finalized block through the committee module's wake-up
+/// (`CommitteeStore::anchor_advanced` publishes unconditionally), and each sweep
+/// is `AGREEMENT_SWEEP_SPAN` `Storage::remove` calls — every one of them a
+/// process-global runtime lock and a directory removal. Per BLOCK, for a band
+/// that changes once per EPOCH. The two states that can put a reclaimable
+/// partition inside the band are both edges, so the sweep follows them instead:
+/// the cutoff reaching a height it has never been at (a new epoch enters the
+/// band, and a fresh process's first prune is this case), or this very call
+/// having aborted an instance (its last journal write is on disk by then — the
+/// abort is JOINED above the sweep).
 const AGREEMENT_SWEEP_SPAN: u64 = SCHEME_RETENTION_EPOCHS as u64;
 
 /// Drop every epoch-key agreement instance whose target is below `cutoff`,
@@ -316,17 +327,29 @@ const AGREEMENT_SWEEP_SPAN: u64 = SCHEME_RETENTION_EPOCHS as u64;
 /// reason: below the frontier an instance has either delivered its artifact —
 /// its supervisor has already returned, so the abort is a no-op — or it is still
 /// agreeing a key for an epoch the chain has gone past.
+///
+/// `swept_to` is the highest cutoff whose band this process has already swept —
+/// see [`AGREEMENT_SWEEP_SPAN`] for why the sweep is edge-driven. It is RAISED
+/// rather than assigned: a prune at a cutoff below the highest one (a deferred
+/// reconcile for an older epoch draining through the committee wake-up) sweeps
+/// its own band when it aborted something, but it has not un-swept the higher
+/// band, and a memo that went backwards there would re-sweep bands already done
+/// on every block until the cutoff climbed back.
 async fn prune_agreements<E: Storage>(
     context: &E,
     agreements: &mut BTreeMap<Epoch, Handle<()>>,
     cutoff: u64,
     partition_prefix: &str,
+    swept_to: &mut u64,
 ) {
     let stale: Vec<Epoch> = agreements
         .keys()
         .copied()
         .filter(|e| e.get() < cutoff)
         .collect();
+    // Taken BEFORE the loop consumes the list: an instance aborted here is the
+    // one state that puts a partition in the band without the cutoff moving.
+    let aborted_one = !stale.is_empty();
     for e in stale {
         if let Some(handle) = agreements.remove(&e) {
             handle.abort();
@@ -343,6 +366,9 @@ async fn prune_agreements<E: Storage>(
             info!(?e, "epoch-key agreement instance pruned (transition)");
         }
     }
+    if !(cutoff > *swept_to || aborted_one) {
+        return;
+    }
     for epoch in cutoff.saturating_sub(AGREEMENT_SWEEP_SPAN)..cutoff {
         // A live instance still owns its partition even below the cutoff: it was
         // adopted after this prune's abort pass.
@@ -354,8 +380,9 @@ async fn prune_agreements<E: Storage>(
             .await
         {
             Ok(()) => info!(epoch, "epoch-key agreement journal partition reclaimed"),
-            // Nothing to reclaim: the overwhelmingly common case, since the band is
-            // swept on every prune whether or not an instance ever ran there.
+            // Nothing to reclaim: the overwhelmingly common case, since the band
+            // is swept whenever it moves whether or not an instance ever ran
+            // there.
             Err(commonware_runtime::Error::PartitionMissing(_)) => {}
             Err(err) => warn!(
                 epoch,
@@ -364,6 +391,7 @@ async fn prune_agreements<E: Storage>(
             ),
         }
     }
+    *swept_to = (*swept_to).max(cutoff);
 }
 
 /// `recv()` on an optional receiver, or park forever when it is `None` — so the
@@ -420,22 +448,6 @@ where
     pub res: SharedMux<HS, HR>,
 }
 
-/// Max distinct future epochs one peer may pin on the vote backup channel before
-/// its live frontier is corroborated. Two covers the legitimate case (a peer is
-/// at most ~1 boundary ahead of what it gossips) with slack; together with the
-/// committee bound this caps the corroboration map at `n · 2` epochs and stops a
-/// Byzantine minority from crowding out the honest frontier.
-const PINS_PER_SENDER: usize = 2;
-
-/// Max epochs to pre-register ahead of the entered tip in ONE catch-up step (the
-/// span soft-entered by [`Config::soft_enter_span`] on a single backup-vote hint).
-/// Bounds the per-hint catch-up work AND — crucially — MUST stay strictly less
-/// than `crate::SCHEME_RETENTION_EPOCHS` (= 8): the marshal verifies the
-/// span's finalization certs against schemes the provider retains in a trailing
-/// window, so a span wider than that window would evict the low end before the
-/// gap-walk reaches it (the cert at the bottom boundary would fail to verify).
-const CATCHUP_SPAN_CAP: u64 = 6;
-
 /// Per-epoch lifecycle actor.
 pub struct Actor<E, B, XC, A>
 where
@@ -457,6 +469,12 @@ where
     /// polls it: a completed supervisor simply sits until `abort_below` drops it,
     /// and `abort()` on an already-completed handle is a no-op.
     dkg_agreements: BTreeMap<Epoch, Handle<()>>,
+    /// The highest cutoff whose agreement-journal band [`prune_agreements`] has
+    /// already swept in THIS process — the memo that makes the sweep an
+    /// epoch-rate job instead of a per-block one. `0` at construction, which is
+    /// what makes a fresh process's first prune sweep (and collect the previous
+    /// process's leftovers); a cutoff of `0` has an empty band either way.
+    agreements_swept_to: u64,
     /// Where those handles come from. `None` ⇒ no agreement plane wired ⇒ the
     /// branch parks forever and the map stays empty; the beacon plane holds the
     /// sending half and posts a handle per instance it starts.
@@ -467,33 +485,44 @@ where
     /// certs. Drives the catch-up hint target. Monotonic; never decremented by
     /// `prune_old` (the scheme provider keeps a trailing window).
     highest_entered_epoch: Epoch,
-    /// Highest live-network epoch corroborated by f+1 DISTINCT peers on the vote
-    /// backup channel. Gates `is_live_epoch`: epochs below it only soft-enter.
-    /// NEVER advanced from a single peer's wire-supplied epoch tag (that is
-    /// unauthenticated — one Byzantine peer naming `u64::MAX` would otherwise
-    /// pin every honest node into permanent soft-enter = network liveness halt).
-    /// f+1 distinct corroboration guarantees ≥1 honest reporter, so the value
-    /// only ever reaches an epoch the honest majority is actually voting at.
-    highest_observed_epoch: Epoch,
-    /// Distinct backup-vote senders per future epoch, pending the f+1 threshold.
-    /// Bounded by the per-sender pin quota (see `sender_pins`); entries ≤
-    /// `highest_observed_epoch` are pruned on every advance.
-    observed_reporters: BTreeMap<Epoch, BTreeSet<PublicKey>>,
-    /// Per-sender quota of future epochs each peer may pin
-    /// ([`PINS_PER_SENDER`]). Bounds memory to `n · PINS_PER_SENDER` epochs AND
-    /// stops ≤f Byzantine from flooding many decoy epochs to crowd out the
-    /// honestly-corroborated true frontier — they can occupy at most `f ·
-    /// PINS_PER_SENDER` slots, so the frontier always has room to reach f+1.
-    sender_pins: BTreeMap<PublicKey, BTreeSet<Epoch>>,
-    /// Committee size of the HIGHEST-ENTERED epoch, used to derive the Byzantine
-    /// threshold f = (n−1)/3 for corroboration. Keyed on the newest entered epoch
-    /// (set in `enter` only when `epoch == highest_entered_epoch`) so it follows
-    /// both validator-set growth and shrink; a stale soft-enter (epoch <
-    /// highest_entered) cannot lower it, preserving the R4-2 grow-attack guard.
-    /// `0` until the first reconcile full-enters an epoch, during which backup
-    /// corroboration is disabled (the cold-start epoch full-enters from the
-    /// verified boundary trigger).
-    committee_size: usize,
+    /// The marshal's ordering tip as [`crate::application::FluentApp`] publishes
+    /// it — the height of the highest finalization this node has VERIFIED and
+    /// stored, and therefore the ONE input of [`Self::live_epoch`].
+    ///
+    /// It replaced `highest_observed_epoch` + `observed_reporters` +
+    /// `sender_pins` + `corroborate_frontier`: the live frontier used to be
+    /// inferred from unauthenticated epoch tags on the vote backup channel,
+    /// corroborated by f+1 distinct senders because no single one of them could
+    /// be believed (R-003). A verified finalization needs no corroborating
+    /// witness — the certificate IS the witness — so the whole structure has one
+    /// field left, and a peer naming `u64::MAX` moves nothing.
+    ///
+    /// A `watch` receiver and not a marshal read: the same handle is the VALUE
+    /// at a decision point ([`Self::live_epoch`] borrows it) and the EDGE that
+    /// re-decides when the tip moves without a boundary (the `tip_wake` arm in
+    /// [`Self::run`]) — a dead epoch's engine therefore outlives the tip that
+    /// killed it by one `Update::Tip` and no longer.
+    tip: watch::Receiver<u64>,
+    /// The live epoch the LAST reconcile of the live epoch ran for — the tip
+    /// edge's memo, and the whole reason that edge is not per-block work.
+    ///
+    /// The edge this actor owes is "the LIVE EPOCH changed", and the tip is only
+    /// its input: a verified finalization arrives roughly once a second, while
+    /// the epoch it names changes once an epoch. Every pass of
+    /// [`Self::reconcile_roles`] runs `abort_below`, and that unconditionally
+    /// sweeps the epoch-key agreement band — `SCHEME_RETENTION_EPOCHS`
+    /// `Storage::remove` calls, each one a process-global runtime lock and a
+    /// directory removal — so an ungated tip arm would pay that, plus a
+    /// `Beacon::observe_epoch` and a participation probe, on every block.
+    ///
+    /// Written by `reconcile_roles` itself rather than by the arm, because every
+    /// OTHER edge that reconciles the live epoch (a boundary delivery that
+    /// happens to be it, the committee wake-up, the beacon stream,
+    /// `spawn_unblocked`) settles the same question — a memo the arm alone wrote
+    /// would let the first tip after any of them pay a whole reconcile for
+    /// nothing. `None` until the geometry freezes, which is also the value the
+    /// gate compares against while there is no live epoch at all.
+    tip_reconciled_live: Option<Epoch>,
     /// The role this node currently holds per epoch — the single source of truth
     /// the reconciler diffs against. `Signer` ⟺ a participating engine in
     /// `active_epochs`; `Verifier` ⟺ a verify-only scheme registered, no engine.
@@ -501,8 +530,8 @@ where
     /// Live-frontier epochs whose `Verifier→Signer` spawn is parked on marshal
     /// block availability: the `Inline::genesis(E)` precondition (the E-1 boundary
     /// block not yet in marshal storage) — resumes as backfill lands.
-    /// Re-checked on every reconcile edge (boundary / share /
-    /// spawn_unblocked / vote_backup) — `reconcile_roles` is idempotent, so a parked
+    /// Re-checked on every reconcile edge (boundary / tip / share /
+    /// spawn_unblocked) — `reconcile_roles` is idempotent, so a parked
     /// epoch spawns the instant the boundary block lands. Never panics (defer, never
     /// `unreachable!`).
     deferred_spawns: BTreeSet<Epoch>,
@@ -520,36 +549,19 @@ where
     /// It exists because that early return has no other retry. Every other edge
     /// of the `select!` is gated on something a not-yet-readable epoch does not
     /// produce, and the module's own wake-up went through
-    /// [`Self::reconcile_live`], which reconciles `latest_live` ONLY while it is
-    /// still the live frontier — so a boundary for an epoch below a corroborated
-    /// frontier (a raised `highest_observed_epoch`, R-003) got no retry at all
-    /// and its scheme was never registered. Draining this set on the wake-up is
-    /// that retry, and it deliberately skips the `is_live_epoch` gate: the gate
-    /// guards against re-running a reconcile that ALREADY ran over a stale epoch
-    /// (the downgrade churn `reconcile_live` documents), which is not the state
-    /// an epoch in here is in.
+    /// [`Self::reconcile_live`], which reconciles the LIVE epoch and nothing
+    /// else — so a boundary for an epoch the tip has already passed got no retry
+    /// at all and its scheme was never registered. Draining this set on the
+    /// wake-up is that retry, and it deliberately skips the `is_live_epoch` gate:
+    /// the gate guards against re-running a reconcile that ALREADY ran over a
+    /// stale epoch (the downgrade churn `reconcile_live` documents), which is not
+    /// the state an epoch in here is in.
     ///
     /// Only a RETRYABLE miss is remembered
     /// ([`crate::committee::CommitteeError::is_transient`]), which is also what
     /// bounds the set: an epoch below the read window can never be read again,
     /// so keeping it would be a permanent entry no wake-up can ever clear.
     deferred_reconciles: BTreeSet<Epoch>,
-    /// The most-recent boundary delivery. The non-boundary edges (share /
-    /// spawn_unblocked / vote_backup / the module's own wake-up) carry no epoch,
-    /// so they reconcile the CURRENT live epoch from this.
-    ///
-    /// An EPOCH and no longer `(epoch, snapshot)`: the committee is re-read from
-    /// [`Config::committee`], which is write-once inside its window, so caching a
-    /// snapshot beside the epoch would have been a second copy of a frozen value
-    /// — the defect class the module exists to close, restated as a field.
-    latest_live: Option<Epoch>,
-    /// Last `(highest_entered, highest_observed)` pair for which
-    /// [`pipeline_catchup_span`] ran and registered nothing new (bug 15).
-    /// Identical re-attempts are suppressed until an edge (share landed /
-    /// execution progressed / frontier moved) clears it, so a backup-vote storm
-    /// (128/s/peer × n) cannot re-run the EVM span fan-out + marshal hint per
-    /// vote while nothing changed.
-    catchup_no_progress: Option<(Epoch, Epoch)>,
     cfg: Config<B, XC, A>,
 }
 
@@ -610,11 +622,15 @@ pub struct Config<B, XC, A> {
     ///
     /// It replaced three inputs at once: the `(epoch, snapshot)` the boundary
     /// channel used to carry, the `register_scheme` callback into a second map,
-    /// and the bulk catch-up `soft_enter_span` closure that read committees at a
-    /// cursor of its own. Reading `committee[E]` through this handle IS the
-    /// registration — the module builds the epoch's verify-only scheme in the
-    /// same map slot as the record — so "soft-enter" is a read and the catch-up
-    /// span is a loop of reads.
+    /// and the bulk catch-up span closure that read committees at a cursor of
+    /// its own. Reading `committee[E]` through this handle IS the registration —
+    /// the module builds the epoch's verify-only scheme in the same map slot as
+    /// the record — so "soft-enter" is a read, and the catch-up span is gone
+    /// entirely: the marshal's `CertProvider` is this same handle
+    /// ([`EpochSchemeProvider`]'s `CertProvider::scoped`), so the epoch of a certificate it is
+    /// asked to verify registers itself on the read that verification needs, at
+    /// an anchor at least as high as any earlier pre-registration would have
+    /// used.
     pub committee: Arc<dyn Committee>,
     /// The repair sweep's view on that same map: which epochs hold a verify-only
     /// scheme is a question only the map can answer, and the answer covers every
@@ -651,18 +667,20 @@ where
             context: ContextCell::new(context),
             active_epochs: BTreeMap::new(),
             dkg_agreements: BTreeMap::new(),
+            agreements_swept_to: 0,
             agreement_intake: None,
             boundary_rx,
             highest_entered_epoch: Epoch::new(0),
-            highest_observed_epoch: Epoch::new(0),
-            observed_reporters: BTreeMap::new(),
-            sender_pins: BTreeMap::new(),
-            committee_size: 0,
+            // Subscribed HERE rather than in `run`, because the value is read on
+            // every role decision and not only on the edge — and because a
+            // `watch` receiver holds the last published value, so a manager built
+            // after the marshal's startup tip starts from that tip and not from
+            // the seed.
+            tip: cfg.app.ordering_tip(),
+            tip_reconciled_live: None,
             roles: BTreeMap::new(),
             deferred_spawns: BTreeSet::new(),
             deferred_reconciles: BTreeSet::new(),
-            latest_live: None,
-            catchup_no_progress: None,
             cfg,
         };
         (actor, boundary_tx)
@@ -683,35 +701,23 @@ where
     /// Start the manager. The 3 simplex broker handles (vote/cert/resolver) are
     /// owned by the always-on plane (node crate); this manager CLONES them per
     /// promotion to register per-epoch sub-channels and drops them on exit (the
-    /// `SubReceiver`s auto-deregister, freeing the slots for the next promotion). The
-    /// vote Muxer's backup receiver is the plane's re-settable forwarder, fresh per
-    /// promotion.
-    pub fn start<HS, HR>(
-        mut self,
-        muxes: Option<Muxes<HS, HR>>,
-        vote_backup: mpsc::Receiver<VoteBackupItem>,
-    ) -> Handle<()>
+    /// `SubReceiver`s auto-deregister, freeing the slots for the next promotion).
+    pub fn start<HS, HR>(mut self, muxes: Option<Muxes<HS, HR>>) -> Handle<()>
     where
         HS: Sender<PublicKey = PublicKey>,
         HR: Receiver<PublicKey = PublicKey>,
     {
-        spawn_cell!(self.context, self.run(muxes, vote_backup).await)
+        spawn_cell!(self.context, self.run(muxes).await)
     }
 
-    async fn run<HS, HR>(
-        mut self,
-        muxes: Option<Muxes<HS, HR>>,
-        mut vote_backup: mpsc::Receiver<VoteBackupItem>,
-    ) where
+    async fn run<HS, HR>(mut self, muxes: Option<Muxes<HS, HR>>)
+    where
         HS: Sender<PublicKey = PublicKey>,
         HR: Receiver<PublicKey = PublicKey>,
     {
         // The vote/cert/resolver Muxers live in the always-on plane (one set per
-        // process). Catch-up votes for an unregistered epoch surface on the plane's
-        // `vote_backup` forwarder (re-pointed to THIS manager per promotion), driving
-        // the catch-up hint. Graceful exit is via boundary_rx close OR vote_backup
-        // close (the plane parks the forwarder while no engine is up); the plane's
-        // Muxer tasks are NOT aborted here (they outlive this manager).
+        // process). Graceful exit is via boundary_rx close; the plane's Muxer
+        // tasks are NOT aborted here (they outlive this manager).
         // Cloned Arcs so the per-iteration `notified()` futures borrow the local
         // handles, not `self` (the arms below take `&mut self`).
         let spawn_unblocked = self.cfg.spawn_unblocked.clone();
@@ -729,11 +735,20 @@ where
         // itself, so a boundary that arrives before this node's anchor can see the
         // epoch returns having decided nothing — and every other edge here is
         // gated on something that a not-yet-readable epoch does not produce
-        // (`spawn_unblocked` needs a parked spawn, `vote_backup` needs a frontier
-        // move, the beacon stream needs a share or a key). Subscribed ONCE, before
+        // (`spawn_unblocked` needs a parked spawn, the tip edge needs a verified
+        // finalization, the beacon stream needs a share or a key). Subscribed ONCE, before
         // the loop, so a wake-up fired between the first read and the first
         // `changed()` is held by the watch's own "seen" marker rather than lost.
         let mut committee_readable = self.cfg.committee.subscribe();
+        // The marshal tip's EDGE. A second receiver on the SAME channel
+        // `self.tip` reads the value from — not a second source: `changed()`
+        // needs a `&mut` the value-reading arms cannot lend it, and the two
+        // receivers' "seen" markers are independent by construction. This is the
+        // only edge that fires when the tip moves without a boundary delivery,
+        // which is exactly the state a node whose execution lags is in: the
+        // frontier passes `last(E)`, `E` stops being live, and the engine this
+        // node still holds for `E` is aborted on the reconcile below.
+        let mut tip_wake = self.tip.clone();
         // The repair sweep runs OFF this loop — see `spawn_repair_sweep`. Waking
         // it is a synchronous `send_replace`, so no arm below can be held by it.
         // Dropping this sender on the way out is what stops the task.
@@ -783,17 +798,17 @@ where
                 recv = self.boundary_rx.recv() => {
                     match recv {
                         Some(epoch) => {
-                            // The only edge carrying a fresh epoch — cache it for the
-                            // non-boundary edges, then reconcile (folds enter + prune_old).
-                            self.latest_live = Some(epoch);
+                            // The edge carrying an epoch this node's own execution
+                            // has just reached. It is NOT the live frontier by
+                            // itself — a node walking a multi-epoch catch-up
+                            // crosses boundaries the network left long ago — so it
+                            // is reconciled as the epoch it is, and the liveness
+                            // gate inside decides between a scheme and an engine.
                             self.reconcile_roles(epoch, muxes.as_ref()).await;
                             // AFTER the reconcile, so the frontier the sweep runs
                             // under already includes this boundary's epoch and it
                             // cannot pin under the engine just spawned for it.
-                            sweep_wake.send_replace((
-                                self.highest_observed_epoch,
-                                self.highest_entered_epoch,
-                            ));
+                            sweep_wake.send_replace(self.sweep_frontier());
                         }
                         None => {
                             info!("boundary_rx closed, epoch_manager exiting");
@@ -801,43 +816,73 @@ where
                         }
                     }
                 }
-                backup = vote_backup.recv() => {
-                    match backup {
-                        Some((their_epoch, (from, _bytes))) => {
-                            // Corroboration / catch-up only affects a role decision when it
-                            // moves the frontier (`highest_observed_epoch` flips `is_live`)
-                            // or the entered tip (`highest_entered_epoch` registers new
-                            // schemes). Reconcile ONLY on that change — otherwise every
-                            // backup vote (>100/s during catch-up) re-runs an identical
-                            // no-op reconcile. The change-gate still breaks the cycle-2
-                            // deadlock: the FIRST vote that corroborates the new frontier
-                            // reconciles, even with the chain stalled.
-                            let before = (self.highest_observed_epoch, self.highest_entered_epoch);
-                            self.handle_msg_for_unregistered_epoch(their_epoch, from).await;
-                            if (self.highest_observed_epoch, self.highest_entered_epoch) != before {
-                                self.reconcile_live(muxes.as_ref()).await;
-                            }
-                        }
-                        None => {
-                            info!("vote backup channel closed, epoch_manager exiting");
-                            break;
-                        }
+                // Edge: the LIVE EPOCH moved, as the marshal's verified tip
+                // reports it. The tip itself moves once per finalized block and
+                // carries no obligation of its own — what this actor owes is a
+                // reconcile when the epoch that tip names CHANGES, which is the
+                // edge on which an epoch stops being live, and the only one that
+                // fires while this node's own execution (and therefore its
+                // boundary stream) is stalled behind the network.
+                // `reconcile_live` reconciles the NEW live epoch, whose
+                // `abort_below` retires the engine of the epoch the tip just
+                // left.
+                //
+                // The engine of a dead epoch therefore outlives the tip that
+                // killed it by one `Update::Tip` — EXCEPT when `committee[live]`
+                // is not readable at this node's anchor. `reconcile_roles` reads
+                // the committee BEFORE `abort_below`, so an unreadable live
+                // epoch defers the whole pass (`deferred_reconciles`) and the
+                // dead engine lives on until the committee module's own wake-up
+                // fires. That window is reachable: `live ≤ epoch(fin) + 3` on a
+                // node whose execution has stalled (4.2 Б2's two-epoch ceiling
+                // plus the terminal arm), while the module reads at most
+                // `epoch(anchor) + 2`.
+                //
+                // `Err` (the sender dropped) only happens with the app itself
+                // gone; the arm then stops firing and the loop keeps its other
+                // edges rather than exiting on a channel that carries no
+                // obligation.
+                Ok(()) = tip_wake.changed() => {
+                    // The gate that makes this an epoch-rate edge and not a
+                    // block-rate one. A tip inside the epoch the last reconcile
+                    // already ran for has nothing to add: the role rule reads the
+                    // tip only through `live_epoch`, so an unchanged live epoch
+                    // means an unchanged verdict, while the pass itself is not
+                    // free (`abort_below` sweeps the agreement journal band on
+                    // every call, `observe_epoch` re-attempts the previous
+                    // epoch's key backfill, and a live engine pays a
+                    // participation probe). The retries that DO belong to a
+                    // block-rate edge have their own: a parked spawn has
+                    // `spawn_unblocked`, a deferred reconcile has the committee
+                    // module's wake-up, a share or key landing has the beacon
+                    // stream.
+                    //
+                    // Deliberately NOT a sweep wake either. The repair sweep's
+                    // wake set is unchanged by this pass (boundary + the beacon
+                    // stream); only the frontier VALUE it runs under changed.
+                    // Poking it here as well would repair the beacon key of an
+                    // epoch this node's own execution has not reached — a real
+                    // liveness hole, and a behaviour change wide enough to retire
+                    // the parked-node premise three stand fixtures are built on
+                    // (one a proven precondition). Recorded as a finding, not
+                    // taken.
+                    if self.live_epoch() != self.tip_reconciled_live {
+                        self.reconcile_live(muxes.as_ref()).await;
                     }
                 }
                 // Edge: the committee module can read higher than it could — its
-                // anchor advanced, or the geometry froze. The consumer contract is
-                // "wake and re-ask", so re-run the live epoch's reconcile: if it
-                // was parked on an unreadable committee it now proceeds, and if it
+                // anchor advanced. NOT the geometry freeze itself: the publisher
+                // returns without publishing while there is no geometry
+                // (`committee/store.rs:614-616`), so what carries a freeze here
+                // is the FIRST anchor advance after it — one per finalized
+                // derive (`executor.rs:3873`). The consumer contract is "wake
+                // and re-ask", so re-run the live epoch's reconcile: if it was
+                // parked on an unreadable committee it now proceeds, and if it
                 // was not, `reconcile_roles` is idempotent.
                 _ = committee_readable.changed() => {
-                    let live_is_current = self
-                        .latest_live
-                        .is_some_and(|epoch| self.is_live_epoch(epoch));
-                    let targets = committee_wake_targets(
-                        &mut self.deferred_reconciles,
-                        self.latest_live,
-                        live_is_current,
-                    );
+                    let live = self.live_epoch();
+                    let targets =
+                        committee_wake_targets(&mut self.deferred_reconciles, live);
                     for epoch in targets {
                         self.reconcile_roles(epoch, muxes.as_ref()).await;
                     }
@@ -848,7 +893,6 @@ where
                 // spawn so the per-block fire is a no-op in steady state. Execution
                 // progress can also unblock a catch-up span read → clear the memo.
                 _ = &mut spawn_n => {
-                    self.catchup_no_progress = None;
                     if !self.deferred_spawns.is_empty() {
                         self.reconcile_live(muxes.as_ref()).await;
                     }
@@ -911,39 +955,21 @@ where
                 // gain a second consumer without its producer growing a second
                 // fan-out.
                 event = next_reconcile_wake(&mut beacon_events) => {
-                    // The two classes are NOT the same edge, and merging their
-                    // effects is how one of them quietly acquires the other's:
-                    //
-                    // - PARTICIPATION: a landed share clears the catch-up
-                    //   no-progress memo — it can make a previously-unresolvable
-                    //   span read succeed (bug 15).
-                    // - KEY: wakes the repair sweep (below the frontier this arm is
-                    //   its fast path; at the frontier it owes the ACQUISITION).
-                    //
-                    // The share class ALSO wakes the sweep, which the HEAD share arm
-                    // did not: the sweep is idempotent and built to be woken, and
-                    // two arms that must agree by hand is what this merge removes.
-                    // It does NOT gain the memo clear in the other direction.
-                    match event {
-                        Ok(crate::beacon::BeaconEvent::ParticipationChanged) => {
-                            self.catchup_no_progress = None;
-                        }
-                        Ok(crate::beacon::BeaconEvent::KeyAvailable) => {}
-                        // `Lagged`/`Closed`: either class may have been dropped, so
-                        // both effects apply. Re-reading everything is all this
-                        // actor would have done for each message it missed.
-                        Err(_) => {
-                            self.catchup_no_progress = None;
-                        }
+                    // ONE effect for both classes now, and that is a REMOVAL
+                    // rather than a merge: the participation class used to also
+                    // clear the catch-up span's no-progress memo, and the span it
+                    // memoized is gone (the committee module registers an epoch's
+                    // scheme on the read that needs it, so there is no span to
+                    // re-attempt). What is left — wake the repair sweep, re-run
+                    // the live epoch's reconcile — is what BOTH classes always
+                    // owed: a landed share can promote a parked member, and a
+                    // landed `PK_epoch` is both the sweep's input and the live
+                    // epoch's acquisition.
+                    if let Ok(crate::beacon::BeaconEvent::SeedRecorded) = event {
                         // Filtered out by `next_reconcile_wake`.
-                        Ok(crate::beacon::BeaconEvent::SeedRecorded) => unreachable!(
-                            "the seed class never leaves next_reconcile_wake"
-                        ),
+                        unreachable!("the seed class never leaves next_reconcile_wake");
                     }
-                    sweep_wake.send_replace((
-                        self.highest_observed_epoch,
-                        self.highest_entered_epoch,
-                    ));
+                    sweep_wake.send_replace(self.sweep_frontier());
                     self.reconcile_live(muxes.as_ref()).await;
                 }
                 // Edge: the beacon plane started an epoch-key agreement instance
@@ -1011,79 +1037,60 @@ where
         sweep_handle.abort();
     }
 
-    /// A vote arrived for an epoch with no registered sub-channel — the network
-    /// is ahead of us. PRE-REGISTER a bounded SPAN of verify-only schemes ahead of
-    /// our entered tip in one step (`soft_enter_span`), then hint the marshal to
-    /// fetch the finalization at the boundary of the HIGHEST epoch we just
-    /// registered — so its gap-repair can walk our finalized tip across the whole
-    /// span at once instead of stalling one boundary per finalized round-trip
-    /// (the deep-catch-up wedge: each boundary cost ~14s while the chain paced
-    /// 1 blk/s, so a multi-epoch gap never converged). The span is bounded by the
-    /// f+1-corroborated observed frontier AND [`CATCHUP_SPAN_CAP`]
-    /// (< `SCHEME_RETENTION_EPOCHS`, so the marshal never evicts the span's low
-    /// end before the walk reaches it). `highest_entered_epoch` advances to the
-    /// highest registered epoch so a repeat backup vote does not re-register the
-    /// same span and the hint stays monotone.
-    async fn handle_msg_for_unregistered_epoch(&mut self, their_epoch: Epoch, from: PublicKey) {
-        // Advance the live frontier ONLY when f+1 DISTINCT peers have named the
-        // same future epoch on the (unauthenticated) vote backup channel. With
-        // ≤ f Byzantine validators, f+1 distinct reporters always include ≥1
-        // honest one, who only votes at the true live epoch — so a single (or up
-        // to f colluding) Byzantine peer(s) cannot inflate the frontier and force
-        // permanent soft-enter. Until the first `enter` sets the committee size,
-        // corroboration is disabled (the cold-start epoch full-enters from the
-        // verified boundary trigger, so an early backup message must not gate it
-        // off). `corroborate_frontier` is a free fn so this logic is unit-testable
-        // without an `Actor`.
-        corroborate_frontier(
-            &mut self.observed_reporters,
-            &mut self.sender_pins,
-            &mut self.highest_observed_epoch,
-            self.committee_size,
-            their_epoch,
-            from.clone(),
-        );
-        let mailbox = self.cfg.marshal_mailbox.clone();
-        let hint = move |boundary| {
-            Box::pin(async move {
-                mailbox
-                    .hint_finalized(boundary, NonEmptyVec::new(from))
-                    .await;
-            }) as BoxFuture<'static, ()>
-        };
-        // The span-pipeline body is a free async fn over the state pieces +
-        // callbacks so the pipelining invariant (ONE bounded span per hint, the
-        // hint targeting the registered frontier) is unit-testable without
-        // standing up the full generic `Actor` / a real marshal mailbox.
-        pipeline_catchup_span(
-            &mut self.highest_entered_epoch,
-            self.highest_observed_epoch,
-            their_epoch,
-            &self.cfg.epocher,
-            self.cfg.committee.as_ref(),
-            hint,
-            &mut self.catchup_no_progress,
-        )
-        .await;
+    /// The ONE live epoch, as a function of the marshal tip — the height of the
+    /// highest finalization this node has VERIFIED and stored.
+    ///
+    /// `epoch_of(tip)` while the tip is inside that epoch, `epoch_of(tip) + 1`
+    /// once the tip IS the epoch's last block. The second arm is not a
+    /// refinement, it is what makes the function total: at `tip == last(E)`
+    /// epoch `E` is finished — its terminal block is final, the engine for `E`
+    /// builds no descendant of it (CW `standard/inline.rs:274-293` re-proposes
+    /// the parent at a boundary instead) — so an `is_live(E) = E == epoch_of(tip)
+    /// ∧ tip < last(E)` written as a conjunction would answer FALSE for every
+    /// epoch at exactly that height, and a node sitting on a boundary would hold
+    /// no live epoch at all. The two are the same rule: `E == epoch_of(tip) ∧ tip
+    /// < last(E)` is `E == live_epoch(tip)` restricted to the non-boundary case,
+    /// and the boundary case is `E + 1`.
+    ///
+    /// It is the SAME rule as [`crate::dpos::local_tracked_epoch`] (`dpos.rs`),
+    /// which computes the epoch a node hands `track` from its finalized cursor —
+    /// deliberately, because the two answer one question ("which epoch is this
+    /// node's network in") from two cursors, and disagreeing on the boundary
+    /// would put the peer set one epoch away from the engines.
+    ///
+    /// `None` while the geometry has not frozen: no height means anything yet,
+    /// so no epoch is live and every reconcile soft-enters. That is the ONE
+    /// refusal, here and in `local_tracked_epoch` alike — both are a `?` on
+    /// `geometry()` and nothing else. A height below activation is NOT a second
+    /// one: [`crate::committee::Geometry::epoch_of`] clamps it to epoch `0`
+    /// (`epoch_at_block`'s `saturating_sub`), so a cursor still at its seed
+    /// answers `Some(0)` and cold start full-enters epoch 0.
+    fn live_epoch(&self) -> Option<Epoch> {
+        Some(live_epoch_of(
+            &self.cfg.committee.geometry()?,
+            *self.tip.borrow(),
+        ))
     }
 
-    /// True when `epoch` is at or past the highest epoch observed on the backup
-    /// channel — i.e. the live frontier, not a historical catch-up epoch. Below
-    /// the frontier we only soft-enter (register the scheme, NO participating
-    /// engine): a Simplex engine for a stale epoch has no live peers and would
-    /// drive the executor on a dead fork, intermittently wedging the catch-up.
+    /// True when `epoch` is THE live epoch — the one the verified frontier is in.
+    /// Every other epoch only soft-enters (register the scheme, NO participating
+    /// engine): a Simplex engine for an epoch the network has left has no live
+    /// peers and would drive the executor on a dead fork, intermittently wedging
+    /// the catch-up.
     ///
-    /// NB: must NOT add a retention window here. During fast catch-up
-    /// `highest_observed_epoch` tracks only ~1-2 epochs ahead of the walk, so a
-    /// retention-window slack makes the gate true for nearly every
-    /// catch-up epoch → they all full-enter → spurious engines → flaky wedge.
-    /// Strict `>=` soft-enters every below-frontier epoch; once the walk reaches
-    /// the frontier (votes arrive on a registered subchannel, not backup, so
-    /// `highest_observed_epoch` stops rising) the frontier epoch full-enters.
-    /// The frontier itself is corroboration-gated — see
-    /// [`corroborate_frontier`].
+    /// Equality and not `>=`, and that is the whole difference from the
+    /// corroborated frontier this replaced. `>=` had to be inexact because the
+    /// input was: an unauthenticated epoch tag could name anything, so the gate
+    /// was written to fail SAFE (soft-enter) whenever it was not sure, and one
+    /// peer naming `u64::MAX` therefore pinned the node into permanent
+    /// verify-only (R-003). A verified finalization names exactly one epoch, so
+    /// the gate can be exact — and an epoch ABOVE the live one is now refused
+    /// too, which `>=` admitted.
     fn is_live_epoch(&self, epoch: Epoch) -> bool {
-        epoch >= self.highest_observed_epoch
+        self.cfg
+            .committee
+            .geometry()
+            .is_some_and(|g| is_live_epoch_at(&g, *self.tip.borrow(), epoch))
     }
 
     /// Reconcile this node's per-epoch role from current state — the single
@@ -1097,9 +1104,23 @@ where
         HS: Sender<PublicKey = PublicKey>,
         HR: Receiver<PublicKey = PublicKey>,
     {
+        // The tip edge's memo, taken BEFORE the read below can defer this pass:
+        // whatever it decides, THIS is the answer for the live epoch, and the
+        // next `Update::Tip` that does not move the live epoch has nothing to
+        // add. A pass that defers on an unreadable committee memoizes too —
+        // deliberately, because its retry is `deferred_reconciles` drained by
+        // the module's own wake-up, and re-asking the same unreadable epoch once
+        // per finalized block was the old shape's standing cost on exactly the
+        // node that could least afford it (a stalled executor).
+        //
+        // Here rather than in the tip arm, so the memo covers every edge that
+        // reconciles the live epoch — see the field's doc.
+        if self.live_epoch() == Some(epoch) {
+            self.tip_reconciled_live = Some(epoch);
+        }
         // The epoch's committee, as ONE frozen value read at this node's own
         // anchor. It arrives HERE rather than riding the boundary channel: every
-        // edge below (share / spawn_unblocked / vote_backup / the module's own
+        // edge below (tip / share / spawn_unblocked / the module's own
         // wake-up) carries an epoch and nothing else, and a snapshot handed in by
         // whoever fired the edge would be a second authority on a value the
         // module already froze.
@@ -1135,15 +1156,8 @@ where
                 return;
             }
         };
-        // Boundary bookkeeping (idempotent; monotone). Committee size is keyed on
-        // the HIGHEST-ENTERED epoch (follows validator-set growth and shrink) — it
-        // feeds the f+1 corroboration threshold. Reaching an epoch RESOLVES it:
-        // free pending corroboration pins ≤ it so a healthy node's boundary-race
-        // pins don't permanently mute honest senders.
+        // Boundary bookkeeping (idempotent; monotone).
         self.highest_entered_epoch = self.highest_entered_epoch.max(epoch);
-        if epoch == self.highest_entered_epoch {
-            self.committee_size = record.members.len();
-        }
         // Tell the randomness subsystem where the core stands. It owns what that
         // means: the previous-epoch key warm-up (W3) and the retention of its own
         // store against the entered frontier. Both used to be written out here,
@@ -1157,18 +1171,13 @@ where
         self.cfg
             .randomness
             .observe_epoch(epoch, self.highest_entered_epoch);
-        prune_resolved(
-            &mut self.observed_reporters,
-            &mut self.sender_pins,
-            self.highest_entered_epoch,
-        );
 
         // Exit-at-transition: abort every engine strictly below the live epoch
         // (folded `prune_old`; `e < cutoff` only, so a stale/replayed boundary for
         // an OLD epoch can never abort a newer engine).
         self.abort_below(epoch).await;
 
-        // Below the live frontier → soft-enter (verify-only scheme, NO engine): a
+        // Not the live epoch → soft-enter (verify-only scheme, NO engine): a
         // Simplex engine for a stale epoch has no live peers and would drive a dead
         // fork. Verify-only lets the marshal verify this epoch's certs — with the
         // seed slot checked against `PK_epoch` whenever the oracle can resolve it
@@ -1221,7 +1230,7 @@ where
                 // epoch fell below the frontier and `abort_below` reached it.
                 //
                 // The probe is two store reads and runs on edges that already fire
-                // (boundary / participation / spawn_unblocked / vote_backup), and
+                // (boundary / tip / participation / spawn_unblocked), and
                 // its verdict is stable rather than transient: the attested tier
                 // appears once and is never downgraded, so this cannot flap an
                 // engine down and up.
@@ -1480,7 +1489,7 @@ where
     /// (`PULL_MIN_INTERVAL` + `PULL_TIMEOUT`), once per epoch in a work list
     /// bounded only by [`SCHEME_RETENTION_EPOCHS`]. Awaited inline that is a
     /// ~100 s section during which the beacon wake-up arm, `spawn_unblocked` and
-    /// `vote_backup`
+    /// the tip edge
     /// do not run — the three arms that turn this node into a signer.
     ///
     /// Everything the sweep touches is a cross-epoch singleton this actor holds
@@ -1491,8 +1500,7 @@ where
     /// `watch` out in `beacon::keys` needs a per-iteration `subscribe`,
     /// which this is not.
     fn spawn_repair_sweep(&self) -> (watch::Sender<(Epoch, Epoch)>, Handle<()>) {
-        let (wake_tx, wake_rx) =
-            watch::channel((self.highest_observed_epoch, self.highest_entered_epoch));
+        let (wake_tx, wake_rx) = watch::channel(self.sweep_frontier());
         let hint: RepairHint = {
             let epocher = self.cfg.epocher.clone();
             let peers = self.cfg.peers_for_finalization.clone();
@@ -1525,27 +1533,50 @@ where
         (wake_tx, handle)
     }
 
-    /// Re-run [`Self::reconcile_roles`] for the CURRENT live epoch (the cached most
-    /// recent boundary delivery). The non-boundary edges (share / spawn_unblocked /
-    /// vote_backup) carry no fresh snapshot, so they reconcile this.
+    /// The `(frontier, entered)` pair the repair sweep runs under.
     ///
-    /// Only reconciles the cached epoch while it is STILL the live frontier. Once
-    /// corroboration advanced the frontier past it, the cached epoch is
-    /// below-frontier — already aborted/soft-entered by `abort_below` on the
-    /// boundary that passed it, and carrying NO signer obligation. Re-running
-    /// `reconcile_roles` on it would soft-enter a verify-only scheme over an epoch
-    /// registered as `Signer` → `EpochSchemeProvider` downgrade-refusal churn +
-    /// `roles`↔provider divergence. The next BOUNDARY delivery refreshes
-    /// `latest_live` to the new frontier and reconciles it there.
+    /// The sweep repairs the beacon key of every registered verify-only epoch
+    /// STRICTLY BELOW `max(frontier, entered)`, so the frontier's only job here
+    /// is to be the live epoch — which the sweep must exclude, because a live
+    /// epoch's scheme reads its key through its own oracle and has nothing to
+    /// repair. With no geometry there is no live epoch and `0` leaves the entered
+    /// tip as the whole frontier: exactly the behaviour the un-corroborated
+    /// `highest_observed_epoch` had, minus the ability of a peer to inflate it.
+    fn sweep_frontier(&self) -> (Epoch, Epoch) {
+        (
+            self.live_epoch().unwrap_or(Epoch::new(0)),
+            self.highest_entered_epoch,
+        )
+    }
+
+    /// Re-run [`Self::reconcile_roles`] for the live epoch — the epoch the
+    /// verified marshal tip is in. The edges that carry no epoch of their own
+    /// (tip / share / spawn_unblocked / the module's own wake-up) reconcile this.
+    ///
+    /// There is no "still the frontier?" guard any more. The guard existed
+    /// because the epoch came from a CACHE of the last boundary delivery, which a
+    /// frontier move could leave behind — re-running a reconcile over such an
+    /// epoch would soft-enter a verify-only scheme over one registered as
+    /// `Signer` (`EpochSchemeProvider` downgrade-refusal churn + `roles`↔provider
+    /// divergence). Deriving the epoch from the tip instead of caching it removes
+    /// the state the guard was protecting.
+    ///
+    /// It does NOT make the epoch un-stale-able, and the doc used to claim it
+    /// did. `reconcile_roles` re-reads the tip at its own liveness gate
+    /// (`is_live_epoch`, the `self.tip.borrow()` inside it) AFTER an
+    /// `abort_below(...).await` that does file I/O, so the tip can move — and the
+    /// live epoch with it — between the choice here and the gate there, and that
+    /// gate can then answer FALSE for the epoch this call picked as live. What
+    /// the removal of the guard costs in that window is one `soft_enter` pass,
+    /// and what it CANNOT cost is the divergence the guard was for: `soft_enter`
+    /// returns early on a running engine or a recorded `Signer` (its first two
+    /// lines), so the verify-only registration never lands over a signer entry.
     async fn reconcile_live<HS, HR>(&mut self, muxes: Option<&Muxes<HS, HR>>)
     where
         HS: Sender<PublicKey = PublicKey>,
         HR: Receiver<PublicKey = PublicKey>,
     {
-        if let Some(epoch) = self.latest_live {
-            if !self.is_live_epoch(epoch) {
-                return;
-            }
+        if let Some(epoch) = self.live_epoch() {
             self.reconcile_roles(epoch, muxes).await;
         }
     }
@@ -1603,6 +1634,7 @@ where
             &mut self.dkg_agreements,
             cutoff,
             &self.cfg.partition_prefix,
+            &mut self.agreements_swept_to,
         )
         .await;
         self.deferred_spawns.retain(|e| e.get() >= cutoff);
@@ -1795,16 +1827,25 @@ async fn run_repair_sweep(
 /// that owns it.
 ///
 /// **The frontier is the higher of the two epochs this node has evidence for,
-/// and it has to be both.** `observed` is the f+1-corroborated live epoch, which
-/// is the tighter bound whenever it is available — but it is fed ONLY by the
-/// vote-backup arm, and a follower PARKS that arm, so on a follower it is
-/// `Epoch(0)` for the life of the process and a sweep scoped to it discards every
-/// registered epoch. `entered` is the highest epoch whose scheme this node has
-/// registered, advanced on every boundary delivery and every catch-up span, so it
-/// is evidence a follower does have. Taking the max never widens the exclusion
-/// zone below what a signer needs: every path that registers a scheme for `E`
-/// advances `entered` to `E` first, so a live epoch is at or above the frontier
-/// under either input.
+/// and it has to be both.** `observed` is the LIVE epoch — `epoch_of(verified
+/// marshal tip)` — which is the tighter bound whenever there is one, but it is
+/// `Epoch(0)` while the geometry has not frozen, and a sweep scoped to it alone
+/// would then discard every registered epoch. `entered` is the highest epoch
+/// whose scheme this node has registered THROUGH A RECONCILE, advanced on every
+/// boundary delivery, so it is evidence available in that window too.
+///
+/// `entered` is NOT "every epoch that holds a scheme", and the doc used to say
+/// it was. The marshal's `CertProvider` is the committee module itself, so a
+/// certificate arriving for an epoch this node never reconciled registers that
+/// epoch's scheme on the read the verification needs — without passing through
+/// `reconcile_roles`, where `highest_entered_epoch` is advanced. A node whose
+/// execution lags therefore holds schemes ABOVE `entered` (the 4.2 stand test
+/// `a_node_three_epochs_behind_registers_the_schemes_and_spawns_no_engine` is
+/// exactly that state). What still holds is the conclusion the exclusion needs:
+/// the LIVE epoch is at or above the frontier under either input, because the
+/// `live` leg is the live epoch itself — and the epochs the `CertProvider` path
+/// registers above `entered` are below it, which is what makes them sweep
+/// candidates rather than an exclusion problem.
 ///
 /// **A wrong key is terminal for that epoch on this node** — everything reading
 /// the key store treats it as the network's `PK_epoch` — so this path asks for
@@ -1866,47 +1907,33 @@ async fn repair_keyless_schemes(
     upgraded
 }
 
-/// Live-frontier corroboration step. Advances `highest_observed_epoch` to
-/// `their_epoch` only once f+1 DISTINCT peers (f = (n−1)/3) have named it on the
-/// unauthenticated vote backup channel — with ≤f Byzantine, f+1 distinct
-/// reporters always include ≥1 honest one, so the frontier only ever reaches an
-/// epoch the honest majority is actually voting at. A per-sender pin quota bounds
-/// memory AND prevents a Byzantine minority from flooding decoy epochs to crowd
-/// the honest frontier out of the map. Extracted as a free function over the
-/// state pieces so the Byzantine-resistance invariant is unit-testable without
-/// standing up the full generic `Actor`.
-fn corroborate_frontier(
-    observed_reporters: &mut BTreeMap<Epoch, BTreeSet<PublicKey>>,
-    sender_pins: &mut BTreeMap<PublicKey, BTreeSet<Epoch>>,
-    highest_observed_epoch: &mut Epoch,
-    committee_size: usize,
-    their_epoch: Epoch,
-    from: PublicKey,
-) {
-    if committee_size == 0 || their_epoch <= *highest_observed_epoch {
-        return;
-    }
-    let threshold = (committee_size - 1) / 3 + 1; // f + 1, n = 3f + 1
+/// The live epoch for a marshal tip, over the frozen geometry — the body of
+/// [`Actor::live_epoch`], as a free function so the rule itself is unit-testable
+/// (an `Actor` cannot be constructed in a unit test: `Config::marshal_mailbox` is
+/// `marshal::core::Mailbox`, whose constructor is `pub(crate)` upstream).
+///
+/// Its ONLY inputs are the geometry and a height the marshal has verified and
+/// stored. That is the whole of R-003's closure: there is no parameter a peer
+/// can supply, so no epoch tag off the wire can name the live epoch, and no
+/// quorum of reporters is needed to disbelieve one.
+fn live_epoch_of(geometry: &crate::committee::Geometry, tip: u64) -> Epoch {
+    let e = geometry.epoch_of(tip);
+    // `tip == last(e)` ⇒ epoch `e` is finished and `e + 1` is live. See
+    // `Actor::live_epoch` for why this arm is what makes the rule total.
+    Epoch::new(if geometry.last(e) == tip { e + 1 } else { e })
+}
 
-    // Per-sender quota: a peer may pin at most PINS_PER_SENDER distinct future
-    // epochs. f Byzantine therefore occupy ≤ f·PINS_PER_SENDER slots and cannot
-    // evict/crowd out the honestly-corroborated true frontier.
-    let pins = sender_pins.entry(from.clone()).or_default();
-    if !pins.contains(&their_epoch) {
-        if pins.len() >= PINS_PER_SENDER {
-            return;
-        }
-        pins.insert(their_epoch);
-    }
-
-    let reporters = observed_reporters.entry(their_epoch).or_default();
-    reporters.insert(from);
-    if reporters.len() >= threshold {
-        *highest_observed_epoch = (*highest_observed_epoch).max(their_epoch);
-        // Prune everything now at or below the advanced frontier and free the
-        // senders' quota for those epochs.
-        prune_resolved(observed_reporters, sender_pins, *highest_observed_epoch);
-    }
+/// The role gate itself — [`Actor::is_live_epoch`]'s body, free for the same
+/// reason [`live_epoch_of`] is.
+///
+/// EQUALITY, and it is the whole difference from the `epoch >=
+/// highest_observed_epoch` this replaced: that gate had to fail SAFE over an
+/// input it could not trust, so it called every epoch at or above the (possibly
+/// inflated) frontier live. Over a verified tip there is exactly one live epoch,
+/// and an epoch on either side of it — a stale one the network has left, a
+/// future one nothing has finalized — gets a verify-only scheme and no engine.
+fn is_live_epoch_at(geometry: &crate::committee::Geometry, tip: u64, epoch: Epoch) -> bool {
+    live_epoch_of(geometry, tip) == epoch
 }
 
 /// The epochs ONE committee wake-up must reconcile, in order, and the set of
@@ -1914,173 +1941,29 @@ fn corroborate_frontier(
 ///
 /// Two groups, and the order between them is the point. FIRST every epoch whose
 /// reconcile deferred on an unreadable committee
-/// ([`Actor::deferred_reconciles`]) — UNGATED, because such an epoch has not run
-/// its first reconcile at all: no bookkeeping, no `soft_enter`, no registered
-/// scheme, so the downgrade churn the live gate exists to prevent cannot be what
-/// this would cause. THEN the live epoch, gated exactly as
-/// [`Actor::reconcile_live`] gates it, because that one HAS run and re-running it
-/// over a frontier that has moved past it is the churn.
+/// ([`Actor::deferred_reconciles`]) — such an epoch has not run its first
+/// reconcile at all: no bookkeeping, no `soft_enter`, no registered scheme.
+/// THEN the live epoch, which may already be in the first group and must not be
+/// reconciled twice for one wake-up.
 ///
 /// The deferred set is DRAINED rather than filtered: `reconcile_roles` re-enters
 /// the epoch itself if the committee is still unreadable, so the set after this
 /// call describes the reads that failed on THIS wake-up and not the ones that
 /// failed on an earlier one.
 ///
-/// Extracted as a free fn over the two state pieces for the reason
-/// `pipeline_catchup_span` is: an `Actor` cannot be constructed in a unit test
-/// (`Config::marshal_mailbox` is `marshal::core::Mailbox`, whose constructor is
-/// `pub(crate)` upstream), so the ordering invariant would otherwise be
-/// unobservable outside the stand.
-fn committee_wake_targets(
-    deferred: &mut BTreeSet<Epoch>,
-    latest_live: Option<Epoch>,
-    live_is_current: bool,
-) -> Vec<Epoch> {
+/// Extracted as a free fn over the two state pieces because an `Actor` cannot be
+/// constructed in a unit test (`Config::marshal_mailbox` is
+/// `marshal::core::Mailbox`, whose constructor is `pub(crate)` upstream), so the
+/// ordering invariant would otherwise be unobservable outside the stand.
+fn committee_wake_targets(deferred: &mut BTreeSet<Epoch>, live: Option<Epoch>) -> Vec<Epoch> {
     let mut targets: Vec<Epoch> = Vec::new();
     targets.extend(std::mem::take(deferred));
-    if let Some(epoch) = latest_live {
-        if live_is_current && !targets.contains(&epoch) {
+    if let Some(epoch) = live {
+        if !targets.contains(&epoch) {
             targets.push(epoch);
         }
     }
     targets
-}
-
-/// Read `committee[e]` for every `e` in the inclusive span, stopping at the
-/// first epoch whose RECORD this node cannot read, and return the highest epoch
-/// registered (or `from − 1` when none is).
-///
-/// Reading IS registering: the module builds the epoch's verify-only scheme in
-/// the same map slot as the record, so there is no second step and no callback
-/// to thread. Stopping at the first unreadable RECORD is the on-chain fact the
-/// old bulk reader encoded too — the commit cursor is a contiguous prefix, so
-/// nothing above a gap is committed yet — and it covers the module's own two
-/// refusals for free: an epoch above the read window (`OutOfWindow`) and one
-/// whose commit height the anchor has not reached (`NotReadable`) both stop the
-/// walk instead of paying an EVM call per epoch above it.
-///
-/// The break is on the RECORD and not on `scheme()`, because `scheme()` returns
-/// one `None` for two different facts: "this node cannot read `committee[e]`",
-/// which is the contiguous-prefix statement the walk is entitled to stop on,
-/// and "the record is here but the verifier could not build a scheme from it
-/// yet" (the beacon slot is still empty — see [`crate::committee::EpochVerifier`]),
-/// which says nothing at all about the epochs above. The bulk reader this
-/// replaced kept walking on the second (`HEAD:outer.rs` span closure: a failed
-/// `soft_enter_verifier` skipped its epoch and the loop went on), and collapsing
-/// the two would have made a build failure look like the end of the committed
-/// prefix. Such an epoch does not advance the frontier either — its scheme is
-/// not registered — so the next span re-reads it, which is exactly what the
-/// module's own retry of the producer does underneath.
-fn register_span(committee: &dyn Committee, from: Epoch, to: Epoch) -> Epoch {
-    let mut registered = Epoch::new(from.get().saturating_sub(1));
-    for epoch in from.get()..=to.get() {
-        if let Err(e) = committee.committee(epoch) {
-            debug!(
-                epoch,
-                %e,
-                "catch-up span stops here — committee[E] is not readable at this node's anchor"
-            );
-            break;
-        }
-        if committee.scheme(epoch).is_none() {
-            warn!(
-                epoch,
-                "committee[E] is readable but its certificate scheme could not be built yet \
-                 (the beacon is younger than the store); the span walks past it and the \
-                 frontier stays below it until the producer's own retry fills the slot"
-            );
-            continue;
-        }
-        registered = Epoch::new(epoch);
-    }
-    registered
-}
-
-/// The catch-up span pipeline: PRE-REGISTER a bounded span of verify-only
-/// schemes ahead of the entered tip in ONE step, then hint the marshal toward
-/// the registered frontier's boundary so its gap-repair walks the whole span at
-/// once (replacing the one-boundary-per-finalized-round-trip walk that never
-/// converged on a deep gap). Extracted as a free async fn over the state pieces
-/// and callbacks so the pipelining invariant is unit-testable without an `Actor`
-/// or a real marshal mailbox.
-///
-/// - early-outs when `their_epoch ≤ *highest_entered_epoch` (caught up);
-/// - span = `[entered+1 .. min(highest_observed_epoch, entered+CATCHUP_SPAN_CAP)]`
-///   (bounded; `CATCHUP_SPAN_CAP < SCHEME_RETENTION_EPOCHS` so the provider never
-///   evicts the span's low end before the walk reaches it);
-/// - the span is registered by READING `committee[e]` for each `e` in it — the
-///   module builds the epoch's verify-only scheme in the same slot as the
-///   record — and stops at the first epoch it cannot read, so what is registered
-///   is the contiguous prefix the on-chain commit cursor allows;
-/// - `*highest_entered_epoch` advances to that frontier so a repeat backup vote
-///   does not re-register the same span and the hint stays monotone;
-/// - `hint(boundary)` targets `epocher.last(registered_to)`.
-async fn pipeline_catchup_span(
-    highest_entered_epoch: &mut Epoch,
-    highest_observed_epoch: Epoch,
-    their_epoch: Epoch,
-    epocher: &OriginEpocher,
-    committee: &dyn Committee,
-    hint: impl FnOnce(Height) -> BoxFuture<'static, ()>,
-    no_progress: &mut Option<(Epoch, Epoch)>,
-) {
-    if their_epoch <= *highest_entered_epoch {
-        return;
-    }
-    // Suppress an identical re-attempt (bug 15): if the last run at this exact
-    // (entered, observed) state registered nothing new, a backup-vote storm must
-    // not re-run the EVM span fan-out + marshal hint while nothing changed. The
-    // memo is cleared on the share / spawn_unblocked edges (a share landing or
-    // execution progressing can change the outcome) and a frontier move changes
-    // `state` itself — so the first vote corroborating a NEW frontier still runs.
-    let state = (*highest_entered_epoch, highest_observed_epoch);
-    if *no_progress == Some(state) {
-        return;
-    }
-    let prior_entered = *highest_entered_epoch;
-    let entered = highest_entered_epoch.get();
-    let span_from = Epoch::new(entered + 1);
-    let span_top = highest_observed_epoch.min(Epoch::new(entered + CATCHUP_SPAN_CAP));
-    let registered_to = if span_top >= span_from {
-        register_span(committee, span_from, span_top)
-    } else {
-        *highest_entered_epoch
-    };
-    // Memoize a no-progress attempt (nothing new registered) so identical
-    // re-votes early-out above; a real advance clears the memo (progress moves
-    // `state`, and this stores `None`).
-    *no_progress = (registered_to == prior_entered).then_some(state);
-    let Some(boundary) = epocher.last(registered_to) else {
-        return;
-    };
-    info!(
-        observed = their_epoch.get(),
-        entered,
-        registered_to = registered_to.get(),
-        %boundary,
-        "catch-up: behind network; span soft-entered, hinting marshal toward frontier"
-    );
-    // Advance the entered tip to the registered frontier so the next backup
-    // vote does not re-register the same span and the hint stays monotone.
-    *highest_entered_epoch = registered_to;
-    hint(boundary).await;
-}
-
-/// Drop pending corroboration state for every epoch `≤ floor` and free those
-/// epochs from each sender's pin quota. Called when the frontier advances
-/// (corroboration threshold met) AND when an epoch is entered (resolved by the
-/// verified boundary trigger) — the latter is what keeps a healthy node's
-/// boundary-race pins from permanently muting honest senders.
-fn prune_resolved(
-    observed_reporters: &mut BTreeMap<Epoch, BTreeSet<PublicKey>>,
-    sender_pins: &mut BTreeMap<PublicKey, BTreeSet<Epoch>>,
-    floor: Epoch,
-) {
-    observed_reporters.retain(|e, _| *e > floor);
-    sender_pins
-        .values_mut()
-        .for_each(|eps| eps.retain(|e| *e > floor));
-    sender_pins.retain(|_, eps| !eps.is_empty());
 }
 
 /// True when a per-epoch engine `Handle` has COMPLETED (its task finished — normal
@@ -2088,7 +1971,7 @@ fn prune_resolved(
 /// the handle without propagating to the manager). Commonware `Handle` exposes only
 /// `abort()` + `impl Future` (no `is_finished`) and is `Unpin`, so we poll it once
 /// with a no-op waker: `Ready` ⇒ dead, `Pending` ⇒ still running. Extracted as a
-/// free fn (mirroring `corroborate_frontier` / `pipeline_catchup_span`) so the
+/// free fn (mirroring `live_epoch_of` / `committee_wake_targets`) so the
 /// alive/completed/aborted branches are unit-testable on real spawned handles.
 fn engine_handle_dead(handle: &mut Handle<()>) -> bool {
     let waker = futures::task::noop_waker();
@@ -2127,51 +2010,6 @@ mod tests {
     use fluentbase_staking_reader::reader::{ConsensusKeys, ValidatorWithKeys};
     use rand_08::rngs::StdRng;
     use rand_core::SeedableRng;
-
-    fn distinct_keys(n: usize) -> Vec<PublicKey> {
-        (0..n)
-            .map(|i| {
-                let mut rng = StdRng::seed_from_u64(0xF100 + i as u64);
-                Ed25519PrivateKey::random(&mut rng).public_key()
-            })
-            .collect()
-    }
-
-    /// Test harness mirroring the actor's three corroboration state pieces.
-    struct Frontier {
-        observed: BTreeMap<Epoch, BTreeSet<PublicKey>>,
-        pins: BTreeMap<PublicKey, BTreeSet<Epoch>>,
-        epoch: Epoch,
-        committee_size: usize,
-    }
-    impl Frontier {
-        fn new(committee_size: usize, start: u64) -> Self {
-            Self {
-                observed: BTreeMap::new(),
-                pins: BTreeMap::new(),
-                epoch: Epoch::new(start),
-                committee_size,
-            }
-        }
-        fn report(&mut self, epoch: u64, from: &PublicKey) {
-            corroborate_frontier(
-                &mut self.observed,
-                &mut self.pins,
-                &mut self.epoch,
-                self.committee_size,
-                Epoch::new(epoch),
-                from.clone(),
-            );
-        }
-        /// Mirror the actor's `enter`: resolve `epoch` (free its corroboration
-        /// state below the entered floor).
-        fn enter(&mut self, epoch: u64) {
-            prune_resolved(&mut self.observed, &mut self.pins, Epoch::new(epoch));
-        }
-        fn pin_count(&self, from: &PublicKey) -> usize {
-            self.pins.get(from).map_or(0, |e| e.len())
-        }
-    }
 
     /// Committee fixture for the repair-sweep tests. Returns the snapshot and the
     /// BLS keypairs behind it, because one test has to build a SIGNER scheme and
@@ -2657,15 +2495,15 @@ mod tests {
         assert_eq!(upgraded, vec![epoch]);
     }
 
-    /// The follower half of the frontier. A follower PARKS the vote-backup arm,
-    /// so nothing ever corroborates `highest_observed_epoch` and it stays at
-    /// `Epoch(0)` for the life of the process — under which every registered
-    /// epoch is at or above the frontier and the sweep discards all of them. The
-    /// epoch a boundary delivery entered is the evidence a follower does have.
+    /// The half of the frontier that is not the live epoch. Before the geometry
+    /// freezes there IS no live epoch, so the `observed` leg is `Epoch(0)` —
+    /// under which every registered epoch is at or above the frontier and the
+    /// sweep discards all of them. The epoch a boundary delivery entered is the
+    /// evidence available in that window.
     ///
     /// Reds if the sweep is re-scoped to `observed` alone.
     #[tokio::test]
-    async fn the_sweep_reaches_below_an_entered_epoch_with_no_corroborated_frontier() {
+    async fn the_sweep_reaches_below_an_entered_epoch_with_no_live_epoch_yet() {
         let epoch = Epoch::new(5);
         let module = sweep_committee();
         let provider = EpochSchemeProvider::new(module.clone());
@@ -2674,20 +2512,19 @@ mod tests {
 
         let r = randomness_over(store.clone(), None, None);
         register_verifier(module.as_ref(), epoch, r.as_ref());
-        let never_corroborated = Epoch::new(0);
+        let no_live_epoch = Epoch::new(0);
         assert!(
             repair_keyless_schemes(
                 &provider,
                 r.as_ref(),
                 &mut BTreeSet::new(),
-                never_corroborated,
+                no_live_epoch,
                 Epoch::new(0),
             )
             .await
             .is_empty(),
             "with no frontier evidence at all the sweep must stay inert — the \
-             pre-fix follower state, kept here so the assertion below is not \
-             vacuous"
+             pre-freeze state, kept here so the assertion below is not vacuous"
         );
 
         // The boundary for epoch 6 lands and `reconcile_roles` enters it.
@@ -2696,7 +2533,7 @@ mod tests {
                 &provider,
                 r.as_ref(),
                 &mut BTreeSet::new(),
-                never_corroborated,
+                no_live_epoch,
                 Epoch::new(6),
             )
             .await,
@@ -2771,9 +2608,9 @@ mod tests {
     /// SLEEPS on its caller-side rate bound before it even issues the fetch — up
     /// to `SCHEME_RETENTION_EPOCHS` × (`PULL_MIN_INTERVAL` + `PULL_TIMEOUT`) of
     /// awaiting per sweep. Awaited on the epoch manager's `select!`, that is a
-    /// ~100 s window in which the beacon wake-up arm, `spawn_unblocked` and
-    /// `vote_backup` do
-    /// not run — the three arms that turn this node into a signer.
+    /// ~100 s window in which the beacon wake-up arm, `spawn_unblocked` and the
+    /// tip edge do not run — three of the arms that turn this node into a
+    /// signer.
     ///
     /// So the driver here is the manager's loop in miniature: a second arm with
     /// work queued on it, and the sweep wake sent from that arm exactly as the
@@ -3041,363 +2878,6 @@ mod tests {
         assert_eq!(store.attested(9), Some(pk));
     }
 
-    #[test]
-    fn single_peer_cannot_advance_frontier() {
-        let keys = distinct_keys(4);
-        let mut f = Frontier::new(4, 5);
-        f.report(u64::MAX, &keys[0]);
-        assert_eq!(
-            f.epoch,
-            Epoch::new(5),
-            "one peer must not move the frontier"
-        );
-        // Repeated messages from the SAME peer stay at one distinct reporter.
-        f.report(u64::MAX, &keys[0]);
-        assert_eq!(f.epoch, Epoch::new(5));
-    }
-
-    // f+1 distinct peers (≥1 honest) DO advance the frontier; lower pending
-    // entries are pruned.
-    #[test]
-    fn fplus1_distinct_peers_advance_frontier() {
-        let keys = distinct_keys(4);
-        let mut f = Frontier::new(4, 5);
-        f.report(9, &keys[0]);
-        assert_eq!(f.epoch, Epoch::new(5), "first reporter is below threshold");
-        f.report(9, &keys[1]);
-        assert_eq!(f.epoch, Epoch::new(9), "f+1=2 distinct reporters advance");
-        assert!(
-            f.observed.is_empty(),
-            "entries ≤ frontier pruned after advance"
-        );
-    }
-
-    // Before the first entered epoch (committee_size == 0) corroboration is
-    // disabled, so a pre-enter backup message can't gate off the cold-start epoch.
-    #[test]
-    fn no_corroboration_before_first_committee() {
-        let keys = distinct_keys(4);
-        let mut f = Frontier::new(0, 0);
-        for k in &keys {
-            f.report(99, k);
-        }
-        assert_eq!(f.epoch, Epoch::new(0));
-        assert!(f.observed.is_empty());
-    }
-
-    // R4-1 regression: f Byzantine cannot freeze the honest frontier by flooding
-    // many DECOY epochs each corroborated to count f. With n=7 (f=2), the 2
-    // Byzantine keys flood 100 high decoy epochs (each reaching count 2 < 3), then
-    // 3 honest peers back the true frontier 10. The per-sender pin quota stops the
-    // decoys from crowding it out, so the honest frontier still reaches f+1=3 and
-    // advances. (The old count-based eviction would have dropped epoch 10 forever.)
-    #[test]
-    fn byzantine_decoy_flood_cannot_freeze_honest_frontier() {
-        let keys = distinct_keys(7); // n=7 ⇒ f=2 ⇒ threshold 3; keys[5],[6] Byzantine
-        let mut f = Frontier::new(7, 0);
-        for e in 1_000..1_100u64 {
-            f.report(e, &keys[5]);
-            f.report(e, &keys[6]);
-        }
-        // Memory stays bounded by the per-sender quota (≤ n · PINS_PER_SENDER).
-        assert!(
-            f.observed.len() <= 7 * PINS_PER_SENDER,
-            "map bounded by quota: {}",
-            f.observed.len()
-        );
-        // 3 honest peers corroborate the true frontier 10 → must advance.
-        f.report(10, &keys[0]);
-        f.report(10, &keys[1]);
-        f.report(10, &keys[2]);
-        assert_eq!(
-            f.epoch,
-            Epoch::new(10),
-            "honest frontier advanced despite the decoy flood"
-        );
-    }
-
-    // The per-sender quota caps how many distinct future epochs one peer pins;
-    // beyond PINS_PER_SENDER its further (new-epoch) reports are ignored.
-    #[test]
-    fn per_sender_quota_caps_pins() {
-        let keys = distinct_keys(7);
-        let mut f = Frontier::new(7, 0);
-        for e in 50..60u64 {
-            f.report(e, &keys[6]);
-        }
-        assert_eq!(
-            f.observed.len(),
-            PINS_PER_SENDER,
-            "one peer pins at most PINS_PER_SENDER epochs"
-        );
-    }
-
-    // Regression: a healthy node's boundary-race pins must be FREED when the node
-    // enters the epoch, not permanently consume the sender's quota. Without the
-    // enter()-time prune, a peer that races a vote for E+1 onto the backup channel
-    // each boundary would exhaust PINS_PER_SENDER after 2 boundaries and be muted
-    // → the live frontier freezes.
-    #[test]
-    fn entering_an_epoch_frees_boundary_race_pins() {
-        let keys = distinct_keys(7); // threshold 3 — single races never fire it
-        let mut f = Frontier::new(7, 0);
-        // Simulate many boundaries: each, one peer races a single vote for the
-        // next epoch, then the node enters it.
-        for e in 1..=20u64 {
-            f.report(e, &keys[6]); // race vote for epoch e (below threshold)
-            f.enter(e); // node enters e → its pin must be freed
-            assert_eq!(
-                f.pin_count(&keys[6]),
-                0,
-                "pin for entered epoch {e} must be freed, not retained"
-            );
-        }
-        // The racer was never muted, so it can still corroborate a real future
-        // frontier together with f+1−1 others.
-        f.report(25, &keys[6]);
-        f.report(25, &keys[0]);
-        f.report(25, &keys[1]);
-        assert_eq!(
-            f.epoch,
-            Epoch::new(25),
-            "frontier still advances after 20 boundaries"
-        );
-    }
-
-    /// One epoch's RECORD, as the module would have installed it — the fixture
-    /// committee with the weights the window invariant guarantees.
-    fn record_fixture(epoch: u64) -> Option<crate::committee::CommitteeRecord> {
-        use commonware_utils::TryFromIterator as _;
-        let (snap, _) = repair_fixture(Epoch::new(epoch));
-        let bls = epoch_committee_from_snapshot(&snap).ok()?;
-        let members: Vec<crate::committee::Member> = snap
-            .validators
-            .iter()
-            .map(|v| crate::committee::Member {
-                address: v.address,
-                peer: v.keys.peer_pubkey.clone(),
-                bls: v.keys.bls_pubkey,
-            })
-            .collect();
-        let participants =
-            commonware_utils::ordered::Set::try_from_iter(members.iter().map(|m| m.peer.clone()))
-                .ok()?;
-        Some(crate::committee::CommitteeRecord {
-            epoch,
-            weights: vec![1u128; members.len()],
-            members,
-            changed: false,
-            snapshot: (snap.block_number, snap.block_hash),
-            participants,
-            bls,
-        })
-    }
-
-    /// A committee module that answers EVERY epoch and logs the ones the
-    /// catch-up pipeline asked for, in order.
-    ///
-    /// The span is no longer a callback taking `(from, to)` — reading
-    /// `committee[e]` IS the registration — so what a test can observe is the
-    /// epochs the walk actually read. That is strictly more than the old
-    /// `(from, to)` pair: a pipeline that hinted the right frontier without
-    /// registering the epochs under it would have passed the pair assertion.
-    ///
-    /// The log hangs off the RECORD half, because that is the read the walk
-    /// stops on (`register_span`): a double that logged only the scheme half
-    /// would count the epochs that produced a scheme rather than the epochs the
-    /// walk asked about, and those are the same number only while every record
-    /// yields one.
-    fn recording_span(
-        log: std::sync::Arc<std::sync::Mutex<Vec<u64>>>,
-    ) -> Arc<crate::committee::testing::SchemeCommittee> {
-        crate::committee::testing::SchemeCommittee::with_records(
-            move |epoch| {
-                let (snap, _) = repair_fixture(Epoch::new(epoch));
-                Some(fluentbase_bls::scheme::build_verifier(
-                    &fluentbase_bls::fluent_namespace(1),
-                    epoch_committee_from_snapshot(&snap).ok()?.bimap,
-                    epoch,
-                    None,
-                ))
-            },
-            move |epoch| {
-                log.lock().unwrap().push(epoch);
-                record_fixture(epoch)
-            },
-        )
-    }
-
-    /// The same, but nothing is readable — the unresolvable-committee span. Each
-    /// attempt reads exactly the first epoch of the span and stops there, so the
-    /// log LENGTH counts attempts.
-    fn unreadable_span(
-        log: std::sync::Arc<std::sync::Mutex<Vec<u64>>>,
-    ) -> Arc<crate::committee::testing::SchemeCommittee> {
-        crate::committee::testing::SchemeCommittee::with_records(
-            |_| None,
-            move |epoch| {
-                log.lock().unwrap().push(epoch);
-                None
-            },
-        )
-    }
-
-    // A DEEP gap (entered 0, observed frontier 3) must be pipelined in ONE hint:
-    // a single soft_enter_span(1, 3) and a single marshal hint at last(3) — NOT
-    // three serialized one-boundary-at-a-time round-trips. A repeat vote at the
-    // now-entered frontier must be a no-op. Then a CAP variant: a 20-deep
-    // observed frontier is capped to (1, CATCHUP_SPAN_CAP) and hints last(CAP).
-    #[test]
-    fn deep_catchup_pipelines_span_in_one_hint() {
-        use commonware_consensus::types::Epocher as _;
-        use std::sync::Mutex as StdMutex;
-
-        let epocher = OriginEpocher::new(0, 32u64.try_into().unwrap());
-
-        // A hint recorder that records each targeted boundary.
-        let mk_hint = |hints: std::sync::Arc<StdMutex<Vec<Height>>>| {
-            move |b: Height| {
-                hints.lock().unwrap().push(b);
-                Box::pin(async move {}) as BoxFuture<'static, ()>
-            }
-        };
-
-        // Deep gap: entered 0, observed frontier 3.
-        let spans = std::sync::Arc::new(StdMutex::new(Vec::<u64>::new()));
-        let hints = std::sync::Arc::new(StdMutex::new(Vec::<Height>::new()));
-        let soft = recording_span(spans.clone());
-        let mut entered = Epoch::new(0);
-
-        futures::executor::block_on(pipeline_catchup_span(
-            &mut entered,
-            Epoch::new(3),
-            Epoch::new(3),
-            &epocher,
-            soft.as_ref(),
-            mk_hint(hints.clone()),
-            &mut None,
-        ));
-        assert_eq!(
-            *spans.lock().unwrap(),
-            vec![1, 2, 3],
-            "deep gap pipelined in ONE walk over the whole span, not three \
-             serialized one-boundary hops"
-        );
-        assert_eq!(
-            *hints.lock().unwrap(),
-            vec![epocher.last(Epoch::new(3)).unwrap()],
-            "single hint targets the registered frontier's boundary last(3)"
-        );
-        assert_eq!(
-            entered,
-            Epoch::new(3),
-            "entered tip advanced to the frontier"
-        );
-
-        // A second identical vote at the now-entered frontier is a no-op (early-out).
-        futures::executor::block_on(pipeline_catchup_span(
-            &mut entered,
-            Epoch::new(3),
-            Epoch::new(3),
-            &epocher,
-            soft.as_ref(),
-            mk_hint(hints.clone()),
-            &mut None,
-        ));
-        assert_eq!(
-            spans.lock().unwrap().len(),
-            3,
-            "a repeat vote at the entered frontier must NOT re-walk the span"
-        );
-        assert_eq!(hints.lock().unwrap().len(), 1, "no second hint");
-
-        // CAP variant: a 20-deep observed frontier caps the span at
-        // (1, CATCHUP_SPAN_CAP) and hints last(CAP).
-        let spans = std::sync::Arc::new(StdMutex::new(Vec::<u64>::new()));
-        let hints = std::sync::Arc::new(StdMutex::new(Vec::<Height>::new()));
-        let soft = recording_span(spans.clone());
-        let mut entered = Epoch::new(0);
-        futures::executor::block_on(pipeline_catchup_span(
-            &mut entered,
-            Epoch::new(20),
-            Epoch::new(20),
-            &epocher,
-            soft.as_ref(),
-            mk_hint(hints.clone()),
-            &mut None,
-        ));
-        assert_eq!(
-            *spans.lock().unwrap(),
-            (1..=CATCHUP_SPAN_CAP).collect::<Vec<_>>(),
-            "span capped at CATCHUP_SPAN_CAP, not the full 20-deep frontier"
-        );
-        assert_eq!(
-            *hints.lock().unwrap(),
-            vec![epocher.last(Epoch::new(CATCHUP_SPAN_CAP)).unwrap()],
-            "hint targets last(CATCHUP_SPAN_CAP)"
-        );
-        assert_eq!(entered, Epoch::new(CATCHUP_SPAN_CAP));
-    }
-
-    /// A span that registers NOTHING (unresolvable committee read) is memoized
-    /// (bug 15): an identical re-vote must NOT re-run the fan-out; but clearing
-    /// the memo (a share/spawn edge) OR a frontier advance must let it re-run.
-    #[test]
-    fn no_progress_span_is_memoized_and_cleared_by_edges() {
-        use std::sync::Mutex as StdMutex;
-
-        let epocher = OriginEpocher::new(0, 32u64.try_into().unwrap());
-        let calls = std::sync::Arc::new(StdMutex::new(Vec::<u64>::new()));
-        // A module that registers nothing: the walk stops at the first epoch, so
-        // the walk's result is `from - 1` (== entered) and the log grows by
-        // exactly one entry per ATTEMPT.
-        let no_progress_span = unreadable_span(calls.clone());
-        let noop_hint = |_b: Height| Box::pin(async move {}) as BoxFuture<'static, ()>;
-
-        let mut entered = Epoch::new(0);
-        let mut memo = None;
-        let run = |entered: &mut Epoch, memo: &mut Option<(Epoch, Epoch)>, observed: u64| {
-            futures::executor::block_on(pipeline_catchup_span(
-                entered,
-                Epoch::new(observed),
-                Epoch::new(observed),
-                &epocher,
-                no_progress_span.as_ref(),
-                noop_hint,
-                memo,
-            ));
-        };
-
-        run(&mut entered, &mut memo, 3);
-        assert_eq!(
-            calls.lock().unwrap().len(),
-            1,
-            "first attempt runs the span"
-        );
-        // Identical re-vote: suppressed by the memo.
-        run(&mut entered, &mut memo, 3);
-        assert_eq!(
-            calls.lock().unwrap().len(),
-            1,
-            "identical no-progress re-vote must NOT re-run the span"
-        );
-        // An edge clears the memo → the span runs again.
-        memo = None;
-        run(&mut entered, &mut memo, 3);
-        assert_eq!(
-            calls.lock().unwrap().len(),
-            2,
-            "clearing the memo re-enables the span"
-        );
-        // A frontier advance changes `state` → the span runs again without a clear.
-        run(&mut entered, &mut memo, 4);
-        assert_eq!(
-            calls.lock().unwrap().len(),
-            3,
-            "a frontier advance re-enables the span"
-        );
-    }
-
     // `engine_handle_dead` must read PENDING (parked engine) as alive and both
     // COMPLETED (returned) and ABORTED handles as dead — the three branches the
     // respawn gate in `reconcile_roles` diffs on. Under `catch_panics(true)` a
@@ -3490,7 +2970,7 @@ mod tests {
             // Let the spawned tasks reach their park before anything is aborted.
             ctx.sleep(Duration::from_millis(1)).await;
 
-            prune_agreements(&ctx, &mut agreements, 5, "").await;
+            prune_agreements(&ctx, &mut agreements, 5, "", &mut 0).await;
             assert_eq!(
                 agreements.keys().copied().collect::<Vec<_>>(),
                 vec![Epoch::new(5)],
@@ -3534,7 +3014,7 @@ mod tests {
                     .spawn(move |_| async move { std::future::pending::<()>().await }),
             );
 
-            prune_agreements(&ctx, &mut agreements, 5, "").await;
+            prune_agreements(&ctx, &mut agreements, 5, "", &mut 0).await;
 
             assert!(
                 ctx.scan(&agreement_partition("", 3)).await.is_err(),
@@ -3547,6 +3027,91 @@ mod tests {
             assert!(
                 ctx.scan(&agreement_partition("", 20)).await.is_ok(),
                 "the sweep must stay inside its band"
+            );
+        });
+    }
+
+    /// The band sweep costs `AGREEMENT_SWEEP_SPAN` `Storage::remove` calls, each
+    /// one a process-global runtime lock and a directory removal, and
+    /// `abort_below` runs it on EVERY reconcile — which is every finalized block,
+    /// because the committee module's wake-up publishes unconditionally on every
+    /// anchor advance. The band itself moves once per EPOCH, so the repeat is
+    /// pure cost.
+    ///
+    /// What this pins is that the repeat is gone WITHOUT the collection being
+    /// gone: a partition that appears under a cutoff already swept is left alone
+    /// until the cutoff moves, and then it is collected. The two edges that can
+    /// legitimately put a reclaimable partition in the band are the other two
+    /// cases — a cutoff the process has never been at (the first test above, and
+    /// every new epoch) and an abort this call performed (the test above it,
+    /// where the abort is joined before the sweep).
+    ///
+    /// Falsifier: the partition surviving the cutoff move (the gate is stuck
+    /// shut, a real leak); the partition disappearing on the repeat (the gate
+    /// never closed and this test proves nothing); the first call not collecting
+    /// at all (`swept_to` starting above the cutoff).
+    #[test]
+    fn a_repeat_prune_at_a_cutoff_already_swept_does_not_touch_storage() {
+        use commonware_runtime::{deterministic, Runner as _, Storage as _};
+        use std::time::Duration;
+
+        let runner = deterministic::Runner::timed(Duration::from_secs(10));
+        runner.start(|ctx| async move {
+            let mut agreements: BTreeMap<Epoch, Handle<()>> = BTreeMap::new();
+            let mut swept_to = 0u64;
+
+            // A fresh process: `swept_to = 0`, so the first prune sweeps and the
+            // leftover goes.
+            ctx.open(&agreement_partition("", 4), b"blob")
+                .await
+                .expect("partition");
+            prune_agreements(&ctx, &mut agreements, 5, "", &mut swept_to).await;
+            assert!(
+                ctx.scan(&agreement_partition("", 4)).await.is_err(),
+                "the first prune at a cutoff this process has never been at must sweep"
+            );
+            assert_eq!(swept_to, 5, "the memo must name the cutoff just swept");
+
+            // The same cutoff again, nothing aborted: the band is where it was, so
+            // the partition recreated under it is NOT the sweep's business yet.
+            ctx.open(&agreement_partition("", 4), b"blob")
+                .await
+                .expect("partition");
+            prune_agreements(&ctx, &mut agreements, 5, "", &mut swept_to).await;
+            assert!(
+                ctx.scan(&agreement_partition("", 4)).await.is_ok(),
+                "the repeat prune swept the band again — `abort_below` runs per finalized \
+                 block, so this is `AGREEMENT_SWEEP_SPAN` filesystem removals per block"
+            );
+
+            // The cutoff moves: the band moves with it and the partition goes.
+            prune_agreements(&ctx, &mut agreements, 6, "", &mut swept_to).await;
+            assert!(
+                ctx.scan(&agreement_partition("", 4)).await.is_err(),
+                "a cutoff this process has never been at must sweep, or the gate is a leak"
+            );
+            assert_eq!(swept_to, 6);
+
+            // A prune BELOW the highest cutoff, with an instance to abort: it
+            // sweeps its own band (the abort is the edge), and it must not lower
+            // the memo — a memo that went backwards would re-sweep on every block
+            // until the cutoff climbed back.
+            ctx.open(&agreement_partition("", 1), b"blob")
+                .await
+                .expect("partition");
+            agreements.insert(
+                Epoch::new(1),
+                ctx.with_label("stale")
+                    .spawn(move |_| async move { std::future::pending::<()>().await }),
+            );
+            prune_agreements(&ctx, &mut agreements, 2, "", &mut swept_to).await;
+            assert!(
+                ctx.scan(&agreement_partition("", 1)).await.is_err(),
+                "a prune that aborted an instance must sweep its band whatever the memo says"
+            );
+            assert_eq!(
+                swept_to, 6,
+                "the memo must be raised, never assigned: epoch 6's band is still swept"
             );
         });
     }
@@ -3586,65 +3151,77 @@ mod tests {
         ));
     }
 
-    /// `register_span` stops on an unreadable RECORD and NOT on an unbuildable
-    /// SCHEME, because `Committee::scheme` returns one `None` for both and only
-    /// the first says anything about the epochs above.
+    /// The live epoch is `epoch_of(verified tip)`, and the epoch AFTER it once
+    /// the tip is that epoch's terminal block. Three points, and the third is
+    /// the one the old `>=` gate got wrong.
     ///
-    /// Reds if the walk goes back to breaking on `scheme()`: an epoch whose
-    /// record is readable but whose verifier could not build yet (the beacon is
-    /// younger than the store) would then end the walk, and the contiguous
-    /// committed prefix above it would go unregistered until some later edge
-    /// happened to re-run the span.
+    /// RED BEFORE THE CHANGE, and the mutation that shows it: replace the
+    /// equality in [`Actor::is_live_epoch`] with `epoch >= live`, which is the
+    /// shape `is_live_epoch` had while the frontier was corroborated
+    /// (`epoch >= highest_observed_epoch`). The first two assertions still pass
+    /// — `>=` admits equality — and the third fails: with the tip three epochs
+    /// below, `>=` calls the node's own stale epoch live and spawns an engine on
+    /// a fork the network has left, which is the defect this rule exists to
+    /// close. MUTATION №1, verbatim in the journal.
     #[test]
-    fn a_span_walks_past_an_epoch_whose_scheme_cannot_be_built_yet() {
-        let read = std::sync::Arc::new(std::sync::Mutex::new(Vec::<u64>::new()));
-        let committee = {
-            let read = read.clone();
-            crate::committee::testing::SchemeCommittee::with_records(
-                // Every record is readable; NO scheme can be built from any of
-                // them — the `EpochVerifier`'s beacon slot is still empty.
-                |_| None,
-                move |epoch| {
-                    read.lock().unwrap().push(epoch);
-                    record_fixture(epoch)
-                },
-            )
-        };
+    fn the_live_epoch_is_the_verified_tips_epoch_and_the_next_one_at_a_terminal() {
+        let geometry = crate::committee::Geometry::new(0, 32).expect("nonzero interval");
+        let live = |tip: u64| live_epoch_of(&geometry, tip);
+        // The PRODUCTION gate, not a mirror of it: `Actor::is_live_epoch` is
+        // this call with the geometry and the tip taken off the actor.
+        let is_live = |epoch: u64, tip: u64| is_live_epoch_at(&geometry, tip, Epoch::new(epoch));
 
-        let registered = register_span(committee.as_ref(), Epoch::new(1), Epoch::new(3));
-        assert_eq!(
-            *read.lock().unwrap(),
-            vec![1, 2, 3],
-            "an unbuildable scheme must not end the walk — the committed prefix above it is \
-             still committed"
+        // (1) MID-EPOCH. The tip is inside epoch 4 (blocks 128..=159).
+        assert_eq!(live(140), Epoch::new(4), "a tip inside E makes E live");
+        assert!(is_live(4, 140));
+        assert!(
+            !is_live(5, 140),
+            "the epoch ABOVE the tip is not live either"
         );
-        assert_eq!(
-            registered,
-            Epoch::new(0),
-            "and none of them is REGISTERED: the frontier stays below an epoch whose scheme \
-             the map does not hold, so the next span re-reads it"
+
+        // (2) TERMINAL. `tip == last(4) == 159`: epoch 4 is finished — its
+        // terminal block is final and its engine builds no descendant — so the
+        // live epoch is 5. Written as a conjunction (`E == epoch_of(tip) ∧ tip <
+        // last(E)`) this height would make NO epoch live at all.
+        assert_eq!(geometry.last(4), 159);
+        assert_eq!(live(159), Epoch::new(5), "at last(E) the live epoch is E+1");
+        assert!(!is_live(4, 159));
+        assert!(is_live(5, 159));
+
+        // (3) THREE EPOCHS BEHIND. The node's own finalized epoch is 1 while the
+        // verified tip sits in epoch 4 — epoch 1 is NOT live, so a member of it
+        // registers a verify-only scheme and spawns no engine.
+        assert!(
+            !is_live(1, 140),
+            "an epoch the verified tip has passed is dead"
         );
+        assert!(!is_live(2, 140));
+        assert!(!is_live(3, 140));
+
+        // Pre-activation heights clamp to epoch 0 (`Geometry::epoch_of`), so a
+        // node with no stored finalization at all is live at 0 — the cold start,
+        // which must not depend on anyone having reported a tip yet.
+        assert_eq!(live(0), Epoch::new(0));
     }
 
     /// The committee wake-up owes TWO groups, and the deferred one is the group
     /// that has no other retry.
     ///
     /// Reds if the drain is dropped: an epoch whose reconcile deferred on an
-    /// unreadable committee is BELOW a corroborated frontier in the case that
-    /// matters (R-003 raises `highest_observed_epoch` from the backup channel
-    /// while the boundary for a lower epoch is still being read), so the live
-    /// gate refuses it and `reconcile_live` — the wake-up's only consumer before
-    /// this — reconciles nothing at all. Its scheme is then never registered and
-    /// the marshal never verifies that epoch's certificates.
+    /// unreadable committee is one the tip has usually already passed (a node
+    /// catching up crosses boundaries whose committee its anchor could not read
+    /// at the time), so `reconcile_live` — the wake-up's only consumer before
+    /// this — reconciles the LIVE epoch and never that one. Its scheme is then
+    /// never registered and the marshal never verifies that epoch's certificates.
     #[test]
     fn a_committee_wake_up_reconciles_every_deferred_epoch_past_the_live_gate() {
-        // Below the frontier: the live gate is FALSE, which is exactly the state
-        // in which the old wake-up did nothing.
+        // Two deferred epochs, neither of them the live one: both are reconciled,
+        // which is exactly what `reconcile_live` alone would not have done.
         let mut deferred = BTreeSet::from([Epoch::new(7), Epoch::new(9)]);
         assert_eq!(
-            committee_wake_targets(&mut deferred, Some(Epoch::new(7)), false),
-            vec![Epoch::new(7), Epoch::new(9)],
-            "a deferred epoch is reconciled on the wake-up whatever the live gate says"
+            committee_wake_targets(&mut deferred, Some(Epoch::new(11))),
+            vec![Epoch::new(7), Epoch::new(9), Epoch::new(11)],
+            "a deferred epoch is reconciled on the wake-up whether or not it is live"
         );
         assert!(
             deferred.is_empty(),
@@ -3652,23 +3229,24 @@ mod tests {
              read — `reconcile_roles` re-enters the epoch itself"
         );
 
-        // At the frontier the live epoch is reconciled too — and exactly once,
-        // even when it is also the epoch that deferred.
+        // The live epoch is reconciled exactly once, even when it is also the
+        // epoch that deferred.
         let mut deferred = BTreeSet::from([Epoch::new(9)]);
         assert_eq!(
-            committee_wake_targets(&mut deferred, Some(Epoch::new(9)), true),
+            committee_wake_targets(&mut deferred, Some(Epoch::new(9))),
             vec![Epoch::new(9)],
             "the live epoch must not be reconciled twice by one wake-up"
         );
 
-        // Nothing deferred and no live epoch yet (before the first boundary):
-        // the wake-up is a no-op, as it was.
+        // No live epoch yet (the geometry has not frozen): only the deferred set
+        // is owed, and with nothing deferred the wake-up is a no-op.
         let mut deferred = BTreeSet::new();
-        assert!(committee_wake_targets(&mut deferred, None, true).is_empty());
+        assert!(committee_wake_targets(&mut deferred, None).is_empty());
+        let mut deferred = BTreeSet::from([Epoch::new(4)]);
         assert_eq!(
-            committee_wake_targets(&mut deferred, Some(Epoch::new(4)), false),
-            Vec::<Epoch>::new(),
-            "a live epoch the frontier has passed is still gated out"
+            committee_wake_targets(&mut deferred, None),
+            vec![Epoch::new(4)],
+            "an unfrozen geometry names no live epoch, and owes the deferred set anyway"
         );
     }
 

@@ -8,7 +8,7 @@ use crate::consensus_rpc::{feed_actor::FeedActor, FeedStateHandle};
 // `Metrics` (ctx.with_label, ctx.encode) + `Spawner` (ctx.spawn) — used by the
 // always-on beacon plane, the cert-feed actor, and the feature-gated devnet
 // metrics endpoint.
-use commonware_consensus::types::{Epoch, Height};
+use commonware_consensus::types::Height;
 use commonware_cryptography::Signer as _;
 use commonware_p2p::{
     utils::mux::{Builder, Muxer},
@@ -18,8 +18,7 @@ use commonware_runtime::{tokio::Context, Handle, IoBuf, Metrics as _, Spawner as
 use eyre::{eyre, OptionExt as _, WrapErr as _};
 use fluentbase_bls::PeerPubkey;
 use fluentbase_consensus::dpos::{
-    DposLayer, DposLayerConfig, DposLayerHandle, ResettableForward, RethHandle, SharedBeaconPlane,
-    VoteBackupItem,
+    DposLayer, DposLayerConfig, DposLayerHandle, RethHandle, SharedBeaconPlane,
 };
 pub use fluentbase_consensus::FeedSink;
 use fluentbase_p2p::{
@@ -1041,10 +1040,11 @@ type RouteMissFrame = (u64, (PeerPubkey, IoBuf));
 /// space the unrouted sub-channel belongs to: `agreement` for the epoch-key
 /// agreement slice (`DKG_SUBCHANNEL_BASE | E`), `unknown` for the epoch space.
 ///
-/// `channel="vote"` only ever pairs with `kind="agreement"`: an unrouted id that
-/// IS in the epoch space is forwarded as a corroboration attempt rather than
-/// counted, so the vote path reaches [`record_route_miss`] only for ids outside
-/// it. The four observer channels emit both kinds.
+/// Every one of the five channels emits both kinds. The vote channel used to be
+/// the exception — an unrouted id in the EPOCH space was forwarded to the epoch
+/// manager as a catch-up hint rather than counted — and that forwarder is gone
+/// with the corroborated frontier it fed (4.2 В): a vote for an epoch this node
+/// has no engine for is now exactly what the metric says, a frame nothing routes.
 const ROUTE_MISS_TOTAL: &str = "dpos_subchannel_route_miss_total";
 
 const VOTE_LABEL: &str = "vote";
@@ -1084,30 +1084,6 @@ async fn observe_route_misses(channel: &'static str, mut rx: mpsc::Receiver<Rout
     let mut seen = 0u64;
     while let Some((subchannel, _)) = rx.recv().await {
         record_route_miss(channel, subchannel, &mut seen);
-    }
-}
-
-/// Drain the vote Muxer's backup channel into the CURRENTLY-active `EpochManager`.
-///
-/// The id shares its `u64` with the epoch-key agreement slice, so it is classified
-/// here before it can become an [`Epoch`] — this is the ingress that makes
-/// `VoteBackupItem`'s `Epoch` true. An agreement id is dropped and counted, and
-/// its sender is neither disconnected nor penalised: honest committee members
-/// produce those frames by design while an instance tears down.
-async fn forward_vote_backup(
-    mut rx: mpsc::Receiver<RouteMissFrame>,
-    slot: Arc<Mutex<Option<mpsc::Sender<VoteBackupItem>>>>,
-) {
-    let mut seen = 0u64;
-    while let Some((subchannel, msg)) = rx.recv().await {
-        let Some(epoch) = epoch_from_subchannel(subchannel) else {
-            record_route_miss(VOTE_LABEL, subchannel, &mut seen);
-            continue;
-        };
-        let guard = slot.lock().await;
-        if let Some(tx) = guard.as_ref() {
-            let _ = tx.try_send((Epoch::new(epoch), msg));
-        }
     }
 }
 
@@ -1201,15 +1177,17 @@ where
     // sub-channels. A demoted engine drops its `SubReceiver`s (auto-deregister); the
     // next promotion re-registers against the SAME brokers — restart-free.
     //
-    // The vote Muxer's backup channel carries catch-up hints; the plane classifies
-    // and forwards them to the currently-active engine via a re-settable forwarder
-    // (`vote_backup`). The other four take a backup channel purely as OBSERVERS:
-    // cert/resolver/broadcast also carry the agreement plane's per-instance
-    // sub-channels, and marshal's route 0 is registered by the signer engine and
-    // dies with it — a validator rotated out of the committee still sits in its
-    // peers' tracked set (registry ∪ committee ∪ committee+1), so their marshal
-    // frames keep arriving at a broker with no route 0. The backup channel is the
-    // only hook commonware exposes for seeing any of that.
+    // All five take a backup channel purely as OBSERVERS. Vote frames for an
+    // epoch with no registered sub-channel used to be forwarded to the epoch
+    // manager as catch-up hints; since 4.2 В the live epoch is `epoch_of(marshal
+    // tip)` and nothing on this channel decides anything, so the frame is
+    // counted like every other unrouted one. cert/resolver/broadcast also carry
+    // the agreement plane's per-instance sub-channels, and marshal's route 0 is
+    // registered by the signer engine and dies with it — a validator rotated out
+    // of the committee still sits in its peers' tracked set (registry ∪ committee
+    // ∪ committee+1), so their marshal frames keep arriving at a broker with no
+    // route 0. The backup channel is the only hook commonware exposes for seeing
+    // any of that.
     //
     // The one mux with no observer is the `--cert-follow` follower's broadcast mux
     // (`cert_follow`): that follower mints an ephemeral identity with no
@@ -1285,6 +1263,7 @@ where
         adopt("plane_marshal_mux_sup", mux_marshal.start()),
     ];
     for (label, task, rx) in [
+        (VOTE_LABEL, "plane_vote_route_miss", vote_backup_rx),
         (CERT_LABEL, "plane_cert_route_miss", cert_backup_rx),
         (
             RESOLVER_LABEL,
@@ -1303,18 +1282,6 @@ where
                 .spawn(move |_| observe_route_misses(label, rx)),
         );
     }
-
-    // Vote-backup re-settable forwarder: the plane owns the move-only backup
-    // receiver and re-broadcasts each catch-up item to the CURRENTLY-active
-    // EpochManager (`subscribe()`d fresh per promotion). While no engine is up the
-    // parked sender is `None`/closed and items are dropped — a follower needs no
-    // catch-up hint.
-    let vote_backup: ResettableForward<VoteBackupItem> = ResettableForward::new(mux_mailbox);
-    mux_handles.push({
-        let slot = vote_backup.slot();
-        ctx.with_label("plane_vote_backup_fwd")
-            .spawn(move |_| forward_vote_backup(vote_backup_rx, slot))
-    });
 
     // The per-epoch DKG share files, and the agreement artifacts persisted beside
     // them. Reloaded ONCE, inside the beacon build.
@@ -1962,7 +1929,6 @@ where
             resolver_mux,
             broadcast_mux,
             marshal_mux,
-            vote_backup,
             tombstones,
             plane_clock,
             dkg_height_tx: dkg_height_tx.clone(),
@@ -2732,15 +2698,14 @@ mod tests {
     }
 }
 
-/// The plane's vote-backup ingress and the route-miss observers that sit on the
-/// other four Muxers. The muxer itself is upstream code and is not under test —
-/// what is under test is that a raw wire sub-channel id can no longer become an
-/// [`Epoch`], and that the drops are counted where they happen.
+/// The route-miss observers that sit on all five plane Muxers. The muxer itself
+/// is upstream code and is not under test — what is under test is that a raw wire
+/// sub-channel id goes nowhere but a counter, and that the drops are counted on
+/// the channel they arrived on, split by which id space they came from.
 #[cfg(test)]
 mod route_miss_tests {
     use super::*;
     use commonware_cryptography::ed25519::PrivateKey as Ed25519PrivateKey;
-    use fluentbase_consensus::dpos::ResettableForward;
     use fluentbase_p2p::constants::DKG_SUBCHANNEL_BASE;
     use metrics::{SharedString, Unit};
     use metrics_util::{
@@ -2780,96 +2745,62 @@ mod route_miss_tests {
             .sum()
     }
 
-    /// Run the production forwarder over `frames` to completion — dropping the
-    /// sender is what ends its loop — and return everything it handed the
-    /// `EpochManager`'s end of the re-settable forwarder.
-    fn drain_forwarder(frames: Vec<RouteMissFrame>) -> Vec<VoteBackupItem> {
-        let (tx, rx) = mpsc::channel(16);
-        for f in frames {
-            tx.try_send(f).expect("test channel has room");
-        }
-        drop(tx);
-        let forward: ResettableForward<VoteBackupItem> = ResettableForward::new(16);
-        let mut consumer = futures::executor::block_on(forward.subscribe());
-        futures::executor::block_on(forward_vote_backup(rx, forward.slot()));
-        let mut delivered = Vec::new();
-        while let Ok(item) = consumer.try_recv() {
-            delivered.push(item);
-        }
-        delivered
-    }
-
-    /// FLU-1170. Two distinct senders is the f+1 corroboration bar at n=4, so this
-    /// is exactly the traffic that used to carry `DKG_SUBCHANNEL_BASE | 2` into
-    /// `highest_observed_epoch` as epoch 4294967298 — soft-entering the live epoch
-    /// verify-only and dropping the committee below quorum. Nothing reaching the
-    /// manager is the strong form of "the frontier did not move, no span was
-    /// registered, no marshal hint was sent": those are all downstream of this
-    /// channel.
+    /// FLU-1170, closed by CONSTRUCTION. The incident was an epoch-key agreement
+    /// sub-channel id (`DKG_SUBCHANNEL_BASE | 2`) arriving on the vote Muxer's
+    /// backup channel, being read as the epoch `4294967298` and carried into the
+    /// epoch manager's corroborated frontier — which soft-entered the live epoch
+    /// verify-only and dropped the committee below quorum. Two distinct senders
+    /// was the f+1 bar at n=4, so the traffic below is exactly the incident.
+    ///
+    /// The forwarder that carried it is gone (4.2 В: the live epoch is
+    /// `epoch_of(marshal tip)`, so there is no frontier for an unauthenticated
+    /// wire tag to move), and this pins the stronger statement its removal
+    /// bought: the vote channel's backup receiver reaches a COUNTER and nothing
+    /// else, for BOTH id spaces. No `Epoch` is constructed anywhere on this path,
+    /// which is why the assertion is about where the frames went rather than
+    /// about which of them were filtered out.
     #[test]
-    fn an_agreement_subchannel_never_reaches_the_epoch_manager() {
+    fn no_vote_backup_id_leaves_the_route_miss_counter() {
         let recorder = DebuggingRecorder::new();
         let snapshotter = recorder.snapshotter();
-        let delivered = metrics::with_local_recorder(&recorder, || {
-            drain_forwarder(vec![
-                frame(AGREEMENT_ID, peer(1)),
-                frame(AGREEMENT_ID, peer(2)),
-            ])
+        metrics::with_local_recorder(&recorder, || {
+            let (tx, rx) = mpsc::channel(8);
+            // The incident's own traffic: the agreement id from two senders.
+            tx.try_send(frame(AGREEMENT_ID, peer(1))).expect("room");
+            tx.try_send(frame(AGREEMENT_ID, peer(2))).expect("room");
+            // And an id that IS in the epoch space — the one the forwarder used
+            // to hand on. It is a route miss like any other now.
+            tx.try_send(frame(7, peer(1))).expect("room");
+            drop(tx);
+            futures::executor::block_on(observe_route_misses(VOTE_LABEL, rx));
         });
-        let epochs: Vec<u64> = delivered.iter().map(|(e, _)| e.get()).collect();
-        assert!(
-            epochs.is_empty(),
-            "an agreement sub-channel id reached the frontier as an epoch: {epochs:?}"
-        );
         let metrics = snapshotter.snapshot().into_vec();
         assert_eq!(
             route_miss_count(&metrics, VOTE_LABEL, "agreement"),
             2,
-            "both drops must be counted"
+            "both agreement drops must be counted on the vote channel"
+        );
+        assert_eq!(
+            route_miss_count(&metrics, VOTE_LABEL, "unknown"),
+            1,
+            "an epoch-space id with no route is a route miss, not a hint"
         );
     }
 
-    /// The control for the test above: if catch-up itself broke, that test would
-    /// pass for the wrong reason.
-    #[test]
-    fn a_real_epoch_from_two_senders_still_reaches_the_epoch_manager() {
-        let recorder = DebuggingRecorder::new();
-        let snapshotter = recorder.snapshotter();
-        let delivered = metrics::with_local_recorder(&recorder, || {
-            drain_forwarder(vec![frame(7, peer(1)), frame(7, peer(2))])
-        });
-        let epochs: Vec<u64> = delivered.iter().map(|(e, _)| e.get()).collect();
-        assert_eq!(epochs, vec![7, 7], "a live-frontier hint must still arrive");
-        let metrics = snapshotter.snapshot().into_vec();
-        assert_eq!(route_miss_count(&metrics, VOTE_LABEL, "agreement"), 0);
-    }
-
-    /// Classification is per-frame, not per-sender: two out-of-space ids and one
-    /// real epoch from the SAME sender must reach the manager as the real epoch
-    /// alone. A build that forwards raw ids delivers all three.
-    #[test]
-    fn only_the_epoch_space_id_of_a_sender_reaches_the_epoch_manager() {
-        let sender = peer(3);
-        let delivered = drain_forwarder(vec![
-            frame(DKG_SUBCHANNEL_BASE | 2, sender.clone()),
-            frame(DKG_SUBCHANNEL_BASE | 3, sender.clone()),
-            frame(9, sender.clone()),
-        ]);
-        let pins: Vec<(u64, PeerPubkey)> = delivered
-            .into_iter()
-            .map(|(e, (from, _))| (e.get(), from))
-            .collect();
-        assert_eq!(pins, vec![(9, sender)]);
-    }
-
-    /// The four observer muxes: they count and log, and hand nothing on — the
+    /// All five observer muxes: they count and log, and hand nothing on — the
     /// task has no output at all. Both id spaces have to be distinguishable in the
     /// counter, because only one of them is expected traffic.
     #[test]
     fn route_miss_observers_count_by_channel_and_kind() {
         let recorder = DebuggingRecorder::new();
         let snapshotter = recorder.snapshotter();
-        let observed = [CERT_LABEL, RESOLVER_LABEL, BROADCAST_LABEL, MARSHAL_LABEL];
+        let observed = [
+            VOTE_LABEL,
+            CERT_LABEL,
+            RESOLVER_LABEL,
+            BROADCAST_LABEL,
+            MARSHAL_LABEL,
+        ];
         metrics::with_local_recorder(&recorder, || {
             for label in observed {
                 let (tx, rx) = mpsc::channel(4);
@@ -2884,6 +2815,5 @@ mod route_miss_tests {
             assert_eq!(route_miss_count(&metrics, label, "agreement"), 1, "{label}");
             assert_eq!(route_miss_count(&metrics, label, "unknown"), 1, "{label}");
         }
-        assert_eq!(route_miss_count(&metrics, VOTE_LABEL, "agreement"), 0);
     }
 }

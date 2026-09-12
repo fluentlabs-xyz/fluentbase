@@ -2205,7 +2205,8 @@ fn promote_gates(
 /// the vote path: covers a node promoted mid-`E` that never ran `E−1`'s
 /// engine (no W1 entry for `E−1`). Insert ONLY on success — a failure is
 /// never cached, so this re-attempts on every reconcile edge (boundary /
-/// share / spawn_unblocked / vote_backup). A warm-up, not the boundary
+/// share / spawn_unblocked / the committee module's wake-up / the tip edge,
+/// which fires only when the LIVE EPOCH moves). A warm-up, not the boundary
 /// repair path: the first block of `E+1` is verified ~1 s after the
 /// spawn, so the repair that fires there is the per-vote lazy resolve.
 ///

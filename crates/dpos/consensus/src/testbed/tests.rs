@@ -2507,6 +2507,327 @@ fn the_rejump_runs_the_production_jump_and_lands_on_its_own_archive_pair() {
     );
 }
 
+/// (PLAN 4.2, the replacement for R-003's test) A node three epochs behind
+/// registers the schemes of the epochs it is behind and spawns an engine for
+/// NONE of them — and which epoch is live is decided by its own VERIFIED tip.
+///
+/// The fixture is the (C8) rotation with one epoch changed: node 3 is out of the
+/// committee for epoch 3 ONLY, so it misses `PK_3` and its execution parks at
+/// `last(2) = 95` exactly as (C8) pins — but it IS a committee member of every
+/// epoch above, including `epoch(fin) + 2 = 4`. That is what makes the
+/// no-engine assertion non-vacuous on epoch 4: a node rotated OUT of it would
+/// hold a verify-only scheme there whatever any gate said.
+///
+/// While it is parked its marshal keeps storing what it can VERIFY, up to the
+/// ordering plane's two-epoch ceiling `last(epoch(95) + 2) = last(4) = 159`
+/// (4.2 Б2 discards anything above the read window). So the state under test is
+/// the one §5.1 names: this node's execution is in epoch 2 and its verified tip
+/// says the live epoch is `5` — and `is_live_epoch` reads the second, not the
+/// first, and not anything a peer said.
+///
+/// WHAT IS ASSERTED:
+///   1. the tip really is at the ceiling, so the live epoch is 5 — without this
+///      the run is just "a node that fell behind";
+///   2. the schemes of the epochs between the park and the ceiling ARE
+///      registered — the certificates that carried the tip there verified under
+///      them, and they were registered by the read that verification needed
+///      (the committee module is the marshal's `CertProvider`), with no
+///      pre-registration span anywhere;
+///   3. NO signer scheme for any epoch above the park, epoch 4 included, where
+///      this node IS a member and CAN read the committee (the premise is stated
+///      at (3) in the body, the property asserted at (5));
+///   4. the live epoch itself is above this node's read window
+///      (`epoch(anchor) + 2 = 4`), so it holds nothing at all for it;
+///   5. the control, in the same run: node 3 IS a signer for exactly 0..=2 —
+///      the epochs it reached while its own verified tip was inside them.
+///
+/// WHAT THIS TEST DOES NOT SEPARATE, and where that is done instead. Nothing
+/// here is the liveness gate REFUSING: for epochs 4 and 5 node 3 takes no
+/// decision at all — no edge offers them to `reconcile_roles` while its
+/// execution is parked in epoch 2 — and even if one did, it holds no DKG share
+/// for them, so the share gate would refuse a member too. What this test pins is
+/// the layer BELOW the gate: which schemes a node three epochs behind ends up
+/// holding, and that none of them is a signer. The gate as the SOLE refusal is
+/// pinned by
+/// `a_catching_up_member_takes_verify_only_at_every_boundary_below_its_own_tip`
+/// (a member with a usable share crossing a boundary below its own verified
+/// tip — `is_live_epoch_at → true` reds it), and the rule itself as a unit on
+/// the production predicate in
+/// `epoch_manager::tests::the_live_epoch_is_the_verified_tips_epoch_and_the_next_one_at_a_terminal`.
+///
+/// Falsifier: node 3 not parking at 95, or its tip not reaching the ceiling (the
+/// fixture stopped producing the state); a signer scheme on node 3 for 3 or 4;
+/// node 3 holding no scheme for epoch 4 (then (3) is vacuous — nothing was
+/// registered to refuse); node 3 unable to READ committee[4] (then (3) is the
+/// module refusing, not the role gate); a signer scheme missing for 0..=2 (the
+/// gate refuses more than the epochs the tip has left).
+#[test]
+fn a_node_three_epochs_behind_registers_the_schemes_and_spawns_no_engine() {
+    use commonware_cryptography::certificate::Scheme as _;
+
+    let mut cfg = StandConfig::live(4, 1);
+    // Node 3 leaves the committee for epoch 3 only — long enough to miss `PK_3`
+    // and park, short enough to stay a MEMBER of `epoch(fin) + 2`.
+    cfg.committees = Committees::Schedule(Arc::new(|epoch, n| {
+        Some(match epoch {
+            3 => vec![0, 1, 2],
+            _ => (0..n).collect(),
+        })
+    }));
+    assert_eq!(
+        cfg.re_jump_threshold, None,
+        "the re-jump gate must stay closed: the lag IS the fixture"
+    );
+    cfg.marshal_tip_series = true;
+    let members = [0, 1, 2];
+    let out = Stand::new(cfg).run_until(
+        move |p| p.min_height_of(&members) >= 6 * EPOCH_LEN,
+        Duration::from_secs(400),
+    );
+    assert!(!out.timed_out, "heights {:?}", out.heights);
+    assert!(out.halted.is_empty(), "{:?}", out.halted);
+
+    // PREMISE (a): node 3's EXECUTION parked at the last block of epoch 2, three
+    // epochs below the network.
+    assert_eq!(
+        out.heights[3],
+        3 * EPOCH_LEN - 1,
+        "the lagging node did not park at last(2): {:?}",
+        out.heights
+    );
+    assert!(
+        out.heights[0] >= 6 * EPOCH_LEN,
+        "the network did not run three epochs ahead of it: {:?}",
+        out.heights
+    );
+
+    // (1) Its marshal kept VERIFYING past its own execution, up to the two-epoch
+    // ceiling — the tip the live epoch is read off. `tip == last(4)` ⇒ epoch 4 is
+    // finished ⇒ the live epoch is 5, three above the epoch this node executes in.
+    let ceiling = 5 * EPOCH_LEN - 1; // last(4) = 159
+    let tip = *out.marshal_tip_series[3]
+        .last()
+        .expect("`marshal_tip_series` was enabled");
+    assert_eq!(
+        tip, ceiling,
+        "node 3's marshal tip is not at the two-epoch ceiling, so the live epoch under test \
+         is not the one this test names: {:?}",
+        out.marshal_tip_series[3]
+    );
+    let live = 5u64;
+    assert_eq!(
+        epoch_at_block(out.heights[3], DPOS_ACTIVATION_BLOCK, EPOCH_LEN),
+        Some(2),
+        "premise: the node executes in epoch 2 while its verified tip says {live}"
+    );
+
+    let module = &out.committees[3];
+
+    // (2) REGISTERED, with no span: every epoch between the park and the ceiling
+    // holds a scheme.
+    for e in 3..=4 {
+        assert!(
+            module.scheme(e).is_some(),
+            "node 3 holds no scheme for epoch {e}, so refusing an engine there proves nothing"
+        );
+    }
+
+    // (3) PREMISE for the control in (5): epoch 4 is one this node IS a member
+    // of and CAN read, so the absence of a signer half there is not the module
+    // refusing the read. It is a premise and not the property — the property is
+    // asserted in (5). And it is an ABSENCE OF A DECISION rather than a
+    // refusal: with its execution parked in epoch 2 and the live epoch at 5, no
+    // edge ever offers epoch 4 to `reconcile_roles` on this node, so the
+    // liveness gate is not even asked. The gate's own refusal is pinned by
+    // `a_catching_up_member_takes_verify_only_at_every_boundary_below_its_own_tip`
+    // below, where it is the only thing that can say no.
+    assert!(
+        out.committee_records[3].get(&4).is_some_and(|r| r.is_ok()),
+        "premise: node 3 must be able to read committee[4]: {:?}",
+        out.committee_records[3].get(&4)
+    );
+
+    // (4) The LIVE epoch itself is above this node's own read window
+    // (`epoch(anchor) + 2` = 4 at an anchor inside epoch 2), so it is refused
+    // before any EVM call and holds nothing. This is why (3) is asserted on
+    // epoch 4 and not on epoch 5.
+    assert!(
+        module.scheme(live).is_none(),
+        "the live epoch is outside this node's read window and must hold nothing"
+    );
+
+    // (5) CONTROL: it signed exactly the epochs its own verified tip was inside.
+    let signer_epochs: Vec<u64> = (0..=live)
+        .filter(|e| module.scheme(*e).is_some_and(|s| s.me().is_some()))
+        .collect();
+    assert_eq!(
+        signer_epochs,
+        vec![0, 1, 2],
+        "node 3 signed something other than the epochs its verified tip was inside: \
+         {signer_epochs:?}"
+    );
+    eprintln!(
+        "(4.2В) heights={:?} tip3={tip} signer3={signer_epochs:?} verifier3={:?}",
+        out.heights, out.committee_verifier_epochs[3]
+    );
+}
+
+/// (PLAN 4.2, the liveness gate ON ITS OWN) A node catching up after a partition
+/// crosses the boundaries of epochs the network has already left, and takes a
+/// VERIFY-ONLY scheme at every one of them — while it is a committee member
+/// there, holds a usable share there, and holds the boundary block there.
+///
+/// This is the state the `a_node_three_epochs_behind…` test above does NOT
+/// produce, and the one the rule exists for: the liveness gate is the ONLY
+/// refusal on the path. The fixture removes the other two by construction —
+/// `Committees::All` makes node 3 a member of every epoch, and
+/// `StandConfig::honest` runs `StaticRandomness`, whose `can_participate` is
+/// `Ready` for every epoch and whose `signer` always builds a signing scheme
+/// (`beacon/surface.rs:849-851`, `:885-...`). The boundary block is in its
+/// marshal because it is DERIVING through it. So for every epoch below its own
+/// tip, `reconcile_roles` reaches the gate with nothing else able to say no.
+///
+/// The lag is made by a partition of the single node rather than by rotation:
+/// a rotated-out node loses the epoch key with the seat, which is exactly the
+/// second refusal this test must not have. The cut holds for long enough that
+/// the three members cross two whole epochs without it (`epoch_len = 5`), and
+/// the heal lets it catch up — its executor walks the missed range block by
+/// block while its marshal already holds the network's certificates, so its own
+/// boundary deliveries arrive with the live epoch (the epoch of its VERIFIED
+/// tip) already above them.
+///
+/// WHAT IS ASSERTED:
+///   1. the cut produced the state: at the heal node 3 was more than one epoch
+///      behind the members (without this the run is not a catch-up at all);
+///   2. it caught up — every node ends at the same height, so the missed
+///      boundaries were CROSSED and reconciled, not skipped;
+///   3. node 3 holds a scheme but NO signer half for every epoch it crossed
+///      during the catch-up, while nodes 0..=2 hold the signer half for the
+///      same epochs — the gate refused what nothing else could have;
+///   4. node 3 IS a signer for the epoch its execution finally caught up in,
+///      so the refusal is per-epoch and not a node that stopped signing.
+///
+/// Falsifier: node 3 not falling behind by an epoch (the partition was too
+/// short — assertion 1); node 3 not catching up (then it never reconciled the
+/// epochs in question); node 3 holding no scheme at all for a crossed epoch
+/// (then (3) is vacuous — nothing was registered to refuse); node 3 holding the
+/// signer half everywhere (the gate is not refusing); node 3 holding it nowhere
+/// (something other than the gate stopped it — the share gate or the boundary
+/// block).
+#[test]
+fn a_catching_up_member_takes_verify_only_at_every_boundary_below_its_own_tip() {
+    use commonware_cryptography::certificate::Scheme as _;
+
+    // 24 and not the stand's usual 32: the shortest epoch that keeps the
+    // staking transition's single-park invariant (`interval > MAX_PENDING_ACKS
+    // + K` = 16 + 3, `staking-reader/src/epoch_transition.rs:421-431`), so the
+    // catch-up burst below cannot have two boundaries parked at once.
+    const LEN: u64 = 24;
+    let mut cfg = StandConfig::honest(4, 1);
+    cfg.epoch_len = LEN;
+    cfg.marshal_tip_series = true;
+    let mut stand = Stand::new(cfg);
+    // Cut inside epoch 0 and hold it for longer than a whole epoch, so the
+    // members are two epochs ahead at the heal and node 3's catch-up crosses a
+    // boundary the network left long before.
+    stand
+        .partition(&[0, 1, 2], &[3])
+        .after_height(10)
+        .for_views(24);
+    let out = stand.run_until(reached(3 * LEN), Duration::from_secs(400));
+
+    let signer_epochs = |node: usize| -> Vec<u64> {
+        (0..8)
+            .filter(|e| {
+                out.committees[node]
+                    .scheme(*e)
+                    .is_some_and(|s| s.me().is_some())
+            })
+            .collect::<Vec<u64>>()
+    };
+    let held = |node: usize| -> Vec<u64> {
+        (0..8)
+            .filter(|e| out.committees[node].scheme(*e).is_some())
+            .collect::<Vec<u64>>()
+    };
+    eprintln!(
+        "(4.2В-gate) heights={:?} timed_out={} parts={:?}\n            held3={:?} signer3={:?} \
+         signer0={:?} tip3_last={:?}",
+        out.heights,
+        out.timed_out,
+        out.partitions,
+        held(3),
+        signer_epochs(3),
+        signer_epochs(0),
+        out.marshal_tip_series[3].last(),
+    );
+    assert!(!out.timed_out, "heights {:?}", out.heights);
+    assert!(out.halted.is_empty(), "{:?}", out.halted);
+    assert_eq!(out.diverged, None);
+
+    // (1) PREMISE: the cut left node 3 more than a whole epoch behind.
+    let cut = out
+        .partitions
+        .first()
+        .expect("the partition was configured");
+    let lag = cut.heights_at_heal[0].saturating_sub(cut.heights_at_heal[3]);
+    assert!(
+        lag > LEN,
+        "node 3 was not even one epoch behind at the heal, so nothing below its tip was \
+         crossed: {:?}",
+        cut.heights_at_heal
+    );
+
+    // (2) PREMISE: it caught up, so the missed boundaries were crossed.
+    assert_eq!(
+        out.heights[3], out.heights[0],
+        "node 3 did not catch up: {:?}",
+        out.heights
+    );
+
+    // (3) The epochs it crossed while its own verified tip was already past
+    // them: from the epoch it was in at the heal up to the epoch the members
+    // were in at the heal, exclusive of the latter (the one it caught up INTO).
+    let behind_at_heal = cut.heights_at_heal[3] / LEN;
+    let ahead_at_heal = cut.heights_at_heal[0] / LEN;
+    let crossed: Vec<u64> = (behind_at_heal + 1..ahead_at_heal).collect();
+    assert!(
+        !crossed.is_empty(),
+        "no epoch was crossed below the tip: {:?}",
+        cut.heights_at_heal
+    );
+    let signer3 = signer_epochs(3);
+    let held3 = held(3);
+    for e in &crossed {
+        assert!(
+            held3.contains(e),
+            "node 3 holds no scheme for the crossed epoch {e}, so refusing an engine there \
+             proves nothing: held={held3:?}"
+        );
+        assert!(
+            !signer3.contains(e),
+            "node 3 took the SIGNER half for epoch {e}, which its own verified tip had already \
+             left — the liveness gate is the only thing that could have refused it here: \
+             signer3={signer3:?}"
+        );
+        for control in [0usize, 1, 2] {
+            assert!(
+                signer_epochs(control).contains(e),
+                "control node {control} is not a signer for epoch {e} either, so (3) does not \
+                 separate the gate from the fixture: {:?}",
+                signer_epochs(control)
+            );
+        }
+    }
+
+    // (4) CONTROL on the same node: it signs the epoch it caught up in.
+    assert!(
+        signer3.iter().any(|e| *e >= ahead_at_heal),
+        "node 3 never re-promoted after the catch-up, so (3) is a node that stopped signing \
+         and not a per-epoch gate: signer3={signer3:?}"
+    );
+}
+
 /// `committee[E]` is peer-key ASCENDING (`commitEpochCommittee` sorts it), so a
 /// node's seat is the position of its peer key in the sorted set. Derived from the
 /// stand's own key schedule, which is a function of the seed alone.

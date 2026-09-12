@@ -86,8 +86,7 @@ pub use committee::{
 pub use digest::Digest;
 pub use dpos::{
     peek_consensus_archive_last_finalized, DposLayer, DposLayerConfig, DposLayerHandle,
-    FollowerLayerConfig, FollowerRethHandle, PlaneMux, ResettableForward, RethHandle,
-    SharedBeaconPlane, VoteBackupItem,
+    FollowerLayerConfig, FollowerRethHandle, PlaneMux, RethHandle, SharedBeaconPlane,
 };
 pub use epocher::OriginEpocher;
 pub use executed::executed_state_hash;
