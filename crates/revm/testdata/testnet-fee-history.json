@@ -1,0 +1,193 @@
+{
+  "chain_id": "0x5202",
+  "rpc_url": "https://rpc.testnet.fluent.xyz",
+  "fetched_at_utc": "2026-09-12T13:08:36.239734+00:00",
+  "methodology": "Canonical Testnet RPC headers, receipts and beneficiary balances at n-1 and n. The two boundary transaction traces contain no beneficiary transfers. These vectors test only fee reward, not complete transaction or state-root replay. Blocks 21781415 and 21781416 are empty; 21781417 is the first observed full-fee transaction after 21781414.",
+  "vectors": [
+    {
+      "number": "0x1450331",
+      "hash": "0xf97efcc0b62052e49dc4de339857c950a43515d6f213416870b80258c2e40936",
+      "parentHash": "0x7979c1760ffca136e5aa79cd00ded64b89feab29bf9b2c8289653682492b3e7e",
+      "miner": "0x0000000000000000000000000000000000520fee",
+      "baseFeePerGas": "0x7",
+      "gasUsed": "0x7fab",
+      "stateRoot": "0x21606d2de527825c8d730c43318377d08647e933e9e2e8404bc2313cf08c3e0b",
+      "receiptsRoot": "0x24f5678a0335cb032f723fa9928012c5ee543b82bc5d5a1569ca31db72167b04",
+      "transactions": [
+        "0x02454aaf00b8dd44394683dd7474f9f692638953337429a29c60a7edc1e9cc4c"
+      ],
+      "block_number_decimal": 21300017,
+      "miner_balance_before": "0x17f4d0a1f6875f1ea05",
+      "miner_balance_after": "0x17f4d0a3d22108cd805",
+      "miner_balance_delta_wei": "32683000000000",
+      "full_transaction_fees_wei": "32683000228781",
+      "transaction_priority_fees_wei": "32683000000000",
+      "matches_full_fees": false,
+      "matches_priority_fees": true,
+      "receipts": [
+        {
+          "transactionHash": "0x02454aaf00b8dd44394683dd7474f9f692638953337429a29c60a7edc1e9cc4c",
+          "blockHash": "0xf97efcc0b62052e49dc4de339857c950a43515d6f213416870b80258c2e40936",
+          "blockNumber": "0x1450331",
+          "from": "0xede253d1bdc355db33209cf5c3eb399273417b87",
+          "to": "0x2aa4cd120f463fe0288b0ca2b1749b7cc2f161b0",
+          "status": "0x1",
+          "gasUsed": "0x7fab",
+          "effectiveGasPrice": "0x3b9aca07"
+        }
+      ]
+    },
+    {
+      "number": "0x14bf5d0",
+      "hash": "0xcdf2b4a917111f5e802a8203f5e1cb93d8273349eb9e390fc921bd3b0c08c3a3",
+      "parentHash": "0xaafd0736597444c6412f4e0dabe4f29c109811ba4d6c08551e39d2b2916d2b42",
+      "miner": "0x4c6875f3a270519fdd1508fa231867108cc82ece",
+      "baseFeePerGas": "0x7",
+      "gasUsed": "0x19853",
+      "stateRoot": "0xf9aa19b01943c538b606f9fcc7aaf8824aec7f39427f510a08870008791c51f3",
+      "receiptsRoot": "0xfb5061ed1ecb5ba5e3627f7694ead1d2af6d3d6f3257159a1af6c70da74275f0",
+      "transactions": [
+        "0x80858963a1359bc008d588aa1fe7528e0b7579542a2c938435fb9a6cf87f595d"
+      ],
+      "block_number_decimal": 21755344,
+      "miner_balance_before": "0x0",
+      "miner_balance_after": "0x5f12051f7e00",
+      "miner_balance_delta_wei": "104531000000000",
+      "full_transaction_fees_wei": "104531000731717",
+      "transaction_priority_fees_wei": "104531000000000",
+      "matches_full_fees": false,
+      "matches_priority_fees": true,
+      "receipts": [
+        {
+          "transactionHash": "0x80858963a1359bc008d588aa1fe7528e0b7579542a2c938435fb9a6cf87f595d",
+          "blockHash": "0xcdf2b4a917111f5e802a8203f5e1cb93d8273349eb9e390fc921bd3b0c08c3a3",
+          "blockNumber": "0x14bf5d0",
+          "from": "0x1099ea494a1f54c0edd2acd03dd5dd9b477f4a35",
+          "to": "0x69be606be7fd2d27c8f9821329c748c77d24ff4f",
+          "status": "0x1",
+          "gasUsed": "0x19853",
+          "effectiveGasPrice": "0x3b9aca07"
+        }
+      ]
+    },
+    {
+      "number": "0x14d5747",
+      "hash": "0x9e375da22589143578fa801ce21d9a7d6e69fc6dc10863e53f97d1510b5ef009",
+      "parentHash": "0x2d517bad38a70d2dfadaee8ebacda66d3a45e255429f02165f14b1ba104397a5",
+      "miner": "0x0000000000000000000000000000000000520fee",
+      "baseFeePerGas": "0x7",
+      "gasUsed": "0x18de3",
+      "stateRoot": "0xb85935a8ab65775ed80852c910a2b03e214702d182d70a0fe4f7de911c1942ba",
+      "receiptsRoot": "0x203464f58ce542dd19f8c8fd902a8746151e224666ef8daa8ab58efe9345ca28",
+      "transactions": [
+        "0xe42a2fc0b533035b8f016b3e351c5227cf9c20105548004e8ba4ea46affc5482"
+      ],
+      "block_number_decimal": 21845831,
+      "miner_balance_before": "0x17fa0047767e382f2c7",
+      "miner_balance_after": "0x17fa006469b5f1d69fc",
+      "miner_balance_delta_wei": "509295000713013",
+      "full_transaction_fees_wei": "509295000713013",
+      "transaction_priority_fees_wei": "509295000000000",
+      "matches_full_fees": true,
+      "matches_priority_fees": false,
+      "receipts": [
+        {
+          "transactionHash": "0xe42a2fc0b533035b8f016b3e351c5227cf9c20105548004e8ba4ea46affc5482",
+          "blockHash": "0x9e375da22589143578fa801ce21d9a7d6e69fc6dc10863e53f97d1510b5ef009",
+          "blockNumber": "0x14d5747",
+          "from": "0x5fe243b4d89662e2ca7cb31a0de080b5b842e20c",
+          "to": "0x69be606be7fd2d27c8f9821329c748c77d24ff4f",
+          "status": "0x1",
+          "gasUsed": "0x18de3",
+          "effectiveGasPrice": "0x12a05f207"
+        }
+      ]
+    },
+    {
+      "number": "0x14c5ba6",
+      "hash": "0x6b99a800e033cc74151ed78bf9f7462ec4c9248c19d0b009979e4472932e9f1e",
+      "parentHash": "0x79d15cc10d87eec573519761262eb32a0e3414a27b38989f2fa61a10dbe283af",
+      "miner": "0x0000000000000000000000000000000000520fee",
+      "baseFeePerGas": "0x7",
+      "gasUsed": "0xb8d2",
+      "stateRoot": "0xf5116e31e1e6f87f1c6bfbd43df13e94e56926944d67b178fa85f7b3f5a89e61",
+      "receiptsRoot": "0x7ce4c1f3dad047033c7c71743755f1cace7d7a15c9bf0bcd2b711442fc85d670",
+      "transactions": [
+        "0xeccbcadbca4c01a3c01a2ab8fb681868ffb65aafdf15f31154b7a3272835a491"
+      ],
+      "block_number_decimal": 21781414,
+      "miner_balance_before": "0x17f6fd8356043e20a41",
+      "miner_balance_after": "0x17f6fd860686a0bbe41",
+      "miner_balance_delta_wei": "47314000000000",
+      "full_transaction_fees_wei": "47314000331198",
+      "transaction_priority_fees_wei": "47314000000000",
+      "matches_full_fees": false,
+      "matches_priority_fees": true,
+      "receipts": [
+        {
+          "transactionHash": "0xeccbcadbca4c01a3c01a2ab8fb681868ffb65aafdf15f31154b7a3272835a491",
+          "blockHash": "0x6b99a800e033cc74151ed78bf9f7462ec4c9248c19d0b009979e4472932e9f1e",
+          "blockNumber": "0x14c5ba6",
+          "from": "0xc612588829089d1c3b5d34a3e57d3606f1b0d7d7",
+          "to": "0x780ae565a4104b3099dab72d9610656b94f1389f",
+          "status": "0x1",
+          "gasUsed": "0xb8d2",
+          "effectiveGasPrice": "0x3b9aca07"
+        }
+      ]
+    },
+    {
+      "number": "0x14c5ba9",
+      "hash": "0x94ecde8bc29f0826fbcf2a441074f58e94b7a0d1178336cba0b4b3e62350d845",
+      "parentHash": "0x3d7dbc7e84aeac7ec490ed8afab9aae8506acc82be26219ce76943a2b6776e13",
+      "miner": "0x0000000000000000000000000000000000520fee",
+      "baseFeePerGas": "0x7",
+      "gasUsed": "0xb4b3",
+      "stateRoot": "0x3b02e4dbd89ce30fc795c25aff2c6b704a24a710de3e8cb0328ba1a58cf4a9d6",
+      "receiptsRoot": "0x67ecbb6d514539f02163a3c03a707c7baf147a6f09e05b105a52234a93391db3",
+      "transactions": [
+        "0xcb6f645a93abc0b1a8488282df26d9f3ccccdf16696ef039ff9bf9e474e958e0"
+      ],
+      "block_number_decimal": 21781417,
+      "miner_balance_before": "0x17f6fd860686a0bbe41",
+      "miner_balance_after": "0x17f6fd892e507949326",
+      "miner_balance_delta_wei": "55510800323813",
+      "full_transaction_fees_wei": "55510800323813",
+      "transaction_priority_fees_wei": "55510800000000",
+      "matches_full_fees": true,
+      "matches_priority_fees": false,
+      "receipts": [
+        {
+          "transactionHash": "0xcb6f645a93abc0b1a8488282df26d9f3ccccdf16696ef039ff9bf9e474e958e0",
+          "blockHash": "0x94ecde8bc29f0826fbcf2a441074f58e94b7a0d1178336cba0b4b3e62350d845",
+          "blockNumber": "0x14c5ba9",
+          "from": "0x4cb75146e98562c9d79b31649c6c739e4dcb7cd5",
+          "to": "0x14f1420523b0b99bdb32b5190298f6112638c93a",
+          "status": "0x1",
+          "gasUsed": "0xb4b3",
+          "effectiveGasPrice": "0x47868c07"
+        }
+      ]
+    }
+  ],
+  "empty_boundary_blocks": [
+    {
+      "number": "0x14c5ba7",
+      "hash": "0x934f6087aa936ffc5626a759c9791451aa3e8ad3bd9d203cfe8692185e36bd67",
+      "parentHash": "0x6b99a800e033cc74151ed78bf9f7462ec4c9248c19d0b009979e4472932e9f1e",
+      "miner": "0x0000000000000000000000000000000000520fee",
+      "gasUsed": "0x0",
+      "baseFeePerGas": "0x7",
+      "transactions": []
+    },
+    {
+      "number": "0x14c5ba8",
+      "hash": "0x3d7dbc7e84aeac7ec490ed8afab9aae8506acc82be26219ce76943a2b6776e13",
+      "parentHash": "0x934f6087aa936ffc5626a759c9791451aa3e8ad3bd9d203cfe8692185e36bd67",
+      "miner": "0x0000000000000000000000000000000000520fee",
+      "gasUsed": "0x0",
+      "baseFeePerGas": "0x7",
+      "transactions": []
+    }
+  ]
+}
