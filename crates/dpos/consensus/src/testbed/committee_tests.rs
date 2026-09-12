@@ -40,6 +40,26 @@ fn reached(h: u64) -> impl Fn(&Progress) -> bool + Send + 'static {
     move |p| p.min_height() >= h
 }
 
+/// True once every node's `SafetyHalt` has been engaged for `ticks` CONSECUTIVE
+/// driver samples.
+///
+/// Not "all halted" on its own, and the difference is the whole observation: a
+/// halt is asserted by what stops happening after it, so the run has to keep
+/// going past the edge or there is nothing standing still to look at. The
+/// counter resets on any tick where a node is not halted, so a single sample
+/// taken mid-engage cannot satisfy it.
+fn halted_for(ticks: usize) -> impl Fn(&Progress) -> bool + Send + 'static {
+    let seen = std::cell::Cell::new(0usize);
+    move |p: &Progress| {
+        if !p.halted.is_empty() && p.halted.iter().all(|h| *h) {
+            seen.set(seen.get() + 1);
+        } else {
+            seen.set(0);
+        }
+        seen.get() >= ticks
+    }
+}
+
 /// The (B2)/(C9) rotation `super::tests` and `super::preconditions` share:
 /// 4 → 3 → 4, node 3 out for epochs 3 and 4. Reproduced here rather than
 /// imported because the two modules are siblings, and because the branching
@@ -600,9 +620,12 @@ fn a_node_below_the_chain_refuses_what_it_cannot_see_without_an_evm_call() {
     );
 }
 
-/// (4.1, impossible answer) `weights: None` inside the read window is a
-/// PERMANENT refusal: no record, no certificate scheme, one `error!` per node,
-/// and the chain below the epoch keeps running.
+/// (4.1, impossible answer, R-128) `weights: None` inside the read window is a
+/// PERMANENT refusal that STOPS the node: no record, no certificate scheme, one
+/// `error!` from the module, the epoch's slot poisoned so no further staticcall
+/// is spent on it, and — the part this test exists for since R-128 — the
+/// `SafetyHalt` latch engaged with `ContractFork` on every node that had to
+/// enter the epoch, after which nothing moves.
 ///
 /// The contract's frozen weights live in a ring of `WEIGHT_RING_EPOCHS` frames
 /// and go missing 14 epochs below the reading height — far outside the module's
@@ -612,39 +635,81 @@ fn a_node_below_the_chain_refuses_what_it_cannot_see_without_an_evm_call() {
 /// point: the module treats it as "the contract answered something no committed
 /// epoch can answer", not as a missing optional to fall back from.
 ///
-/// Falsifier: the chain not reaching the end of epoch 1 (then "the chain below
-/// is alive" is untested); the contract not actually answering `weights: None`
-/// (then the switch is inert); a record, or a scheme of ANY strength, for the
-/// epoch; a refusal that is TRANSIENT (then a consumer would spin on it for
-/// ever); a silent refusal, or one that is logged more than once per node.
+/// Every node halts, and that is the DESIGNED outcome rather than a stand
+/// artifact: all four read the same contract, so an impossible answer is
+/// correlated by construction — which is exactly why the old behaviour (skip
+/// the epoch, keep running, one log line) was the defect. `run_until` therefore
+/// waits past the halt with [`halted_for`], so the standing still below can be
+/// observed rather than assumed.
+///
+/// Falsifier: the chain not reaching the end of epoch 1 (then "the chain ran up
+/// to the epoch it refused" is untested); the contract not actually answering
+/// `weights: None` (then the switch is inert); a record, or a scheme of ANY
+/// strength, for the epoch; a refusal that is TRANSIENT (then a consumer would
+/// spin on it for ever); a silent refusal, or one logged more than once per
+/// node; a node that keeps finalizing after its latch engaged; a second
+/// staticcall for the poisoned epoch.
 #[test]
-fn a_weightless_committee_inside_the_window_is_refused_permanently_and_loudly() {
+fn a_weightless_committee_inside_the_window_stops_every_node_that_must_enter_it() {
     let epoch = 2u64;
+    // How many driver ticks the run stays up after the last node halted — the
+    // window the marshal tip is then asserted to stand still in. Ten ticks is
+    // one virtual second (`stand::POLL`), several block times at the stand's
+    // pace, so a chain that was still finalizing would move inside it.
+    const AFTER_HALT_TICKS: usize = 10;
     let recorder = DebuggingRecorder::new();
     let snap = recorder.snapshotter();
     let out = metrics::with_local_recorder(&recorder, || {
         let mut cfg = StandConfig::honest(4, 1);
         cfg.weights_none_for = Some(epoch);
         // The run's own counters, snapshotted before the post-run poll of
-        // `committee_records` — which re-reads the refused epoch on every node
-        // and would otherwise be the bulk of what is counted here, since a
-        // permanent refusal is not memoised (`committee/store.rs:480-503`).
+        // `committee_records` — which re-reads the refused epoch on every node.
+        // Since R-128 that re-read is answered from the poisoned slot and costs
+        // no contract call, but it still TICKS the refusal counter, which is
+        // what this snapshot keeps out of the numbers below.
         cfg.metrics_snapshotter = Some(snap.clone());
-        Stand::new(cfg).run_until(reached(last(1)), Duration::from_secs(200))
+        // The marshal tip, sampled once per driver tick — the "and then nothing
+        // moved" half of the halt.
+        cfg.marshal_tip_series = true;
+        Stand::new(cfg).run_until(halted_for(AFTER_HALT_TICKS), Duration::from_secs(200))
     });
     let drained = &out.metrics_before_collect;
     let by_collect = drain_counters(&snap);
     let n = out.heights.len();
-    assert!(!out.timed_out, "heights {:?}", out.heights);
-    assert!(out.halted.is_empty(), "{:?}", out.halted);
+    assert!(
+        !out.timed_out,
+        "not every node halted: halted={:?} heights={:?}",
+        out.halted, out.heights
+    );
 
-    // PREMISE 1: the chain below the refused epoch is ALIVE — every node ran to
-    // the last block of epoch 1 in lockstep.
+    // PREMISE 1: the chain RAN THROUGH the epoch below the refused one, and
+    // every node was OWED the refused epoch — the halt is the end of a working
+    // chain reaching a boundary it must cross, not a node that never started.
+    //
+    // The ORDERING plane is the one asserted to have completed epoch 1: the
+    // boundary that asks for `committee[2]` is delivered off a finalized
+    // ORDER block, and execution trails it by `K` under deferred execution, so
+    // a node that halts at the boundary stops with its executed tier up to `K`
+    // blocks short of `last(1)`. Asserting the executed tier alone would be
+    // asserting the lag, not the premise.
     for i in 0..n {
+        let tip = *out.marshal_tip_series[i]
+            .last()
+            .expect("`marshal_tip_series` was enabled");
         assert!(
-            out.heights[i] >= last(epoch - 1),
-            "node {i} did not reach the end of epoch {}: {:?}",
-            epoch - 1,
+            tip >= last(epoch - 1),
+            "node {i}'s ordering plane did not finish epoch {}: tip {tip}",
+            epoch - 1
+        );
+        assert!(
+            out.et_boundaries[i].iter().any(|b| b.epoch == epoch),
+            "node {i} was never handed the boundary for epoch {epoch} — the halt below would be \
+             for an epoch nothing owed it: {:?}",
+            out.et_boundaries[i]
+        );
+        assert!(
+            out.heights[i] + crate::order_block::K >= last(epoch - 1),
+            "node {i}'s execution fell more than K blocks behind the boundary it halted at: {:?}",
             out.heights
         );
     }
@@ -662,7 +727,37 @@ fn a_weightless_committee_inside_the_window_is_refused_permanently_and_loudly() 
         );
     }
 
-    // OBSERVATION (a): no record, and no scheme either — the epoch is absent
+    // OBSERVATION (a): EVERY node is safety-halted, with the typed reason.
+    assert_eq!(
+        out.halted.len(),
+        n,
+        "not every node halted on an impossible committee: {:?}",
+        out.halted
+    );
+    for (i, reason) in &out.halted {
+        assert!(
+            reason.contains("ContractFork"),
+            "node {i} halted for another reason: {reason}"
+        );
+    }
+
+    // OBSERVATION (b): and then nothing moved. The marshal tip — the node's own
+    // VERIFIED frontier — is identical across the last `AFTER_HALT_TICKS`
+    // samples, which are the ticks taken after the last latch engaged.
+    for i in 0..n {
+        let tips = &out.marshal_tip_series[i];
+        assert!(
+            tips.len() > AFTER_HALT_TICKS,
+            "node {i} has no samples after the halt: {tips:?}"
+        );
+        let tail = &tips[tips.len() - AFTER_HALT_TICKS..];
+        assert!(
+            tail.iter().all(|t| *t == tail[0]),
+            "node {i}'s marshal tip kept moving after its SafetyHalt: {tail:?}"
+        );
+    }
+
+    // OBSERVATION (c): no record, and no scheme either — the epoch is absent
     // from the ONE map, so nothing downstream can be built over it.
     for i in 0..n {
         let refusal = out.committee_records[i][&epoch]
@@ -681,10 +776,10 @@ fn a_weightless_committee_inside_the_window_is_refused_permanently_and_loudly() 
             "node {i} built a certificate scheme for an epoch it holds no committee for: {:?}",
             out.committee_verifier_epochs[i]
         );
-        // `verifier_epochs` lists VERIFY-ONLY schemes alone (`store.rs:577-587`
-        // filters on `me().is_none()`), so on its own it would miss a SIGNER
-        // scheme for the refused epoch — the one an engine spawn installs. Ask
-        // the module directly for both.
+        // `verifier_epochs` lists VERIFY-ONLY schemes alone (`store.rs` filters
+        // on `me().is_none()`), so on its own it would miss a SIGNER scheme for
+        // the refused epoch — the one an engine spawn installs. Ask the module
+        // directly for both.
         assert!(
             out.committees[i].scheme(epoch).is_none(),
             "node {i} holds a certificate scheme for the epoch it refused"
@@ -699,9 +794,188 @@ fn a_weightless_committee_inside_the_window_is_refused_permanently_and_loudly() 
         );
     }
 
-    // OBSERVATION (b): LOUD, and exactly once per node. The stand's capture
-    // carries no node label (`super::mod`'s doc), so "once per node" is a count
-    // over one process, which is why the ERROR set must contain nothing else.
+    // OBSERVATION (d): the slot is POISONED — the epoch cost the contract
+    // EXACTLY ONE snapshot call on each node, for the whole run plus the
+    // post-run poll of every consumer's question. `==`, not `>=`: the
+    // memoisation is the property (B3-12), and a second call would mean the
+    // refusal is being re-derived on the hot path again.
+    for i in 0..n {
+        assert_eq!(
+            out.staking_reads[i].module_snapshot.get(&epoch),
+            Some(&1),
+            "node {i} paid for the impossible epoch more than once: {:?}",
+            out.staking_reads[i]
+        );
+    }
+
+    // OBSERVATION (e): LOUD, and exactly once per node for each of the two
+    // lines this failure owes — the module's refusal and the manager's halt.
+    // The stand's capture carries no node label (`super::mod`'s doc), so "once
+    // per node" is a count over one process, which is why the ERROR set must
+    // contain nothing else.
+    let permanent: Vec<&super::capture::Captured> = out
+        .errors()
+        .into_iter()
+        .filter(|l| l.text.contains("committee read failed PERMANENTLY"))
+        .collect();
+    assert_eq!(
+        permanent.len(),
+        n,
+        "expected one permanent-refusal ERROR per node, got {:?}",
+        permanent.iter().map(|l| &l.text).collect::<Vec<_>>()
+    );
+    let halts: Vec<&super::capture::Captured> = out
+        .errors()
+        .into_iter()
+        .filter(|l| l.text.contains("is IMPOSSIBLE"))
+        .collect();
+    assert_eq!(
+        halts.len(),
+        n,
+        "expected one halt ERROR per node, got {:?}",
+        halts.iter().map(|l| &l.text).collect::<Vec<_>>()
+    );
+    // The third line each node owes, and the one that says the halt REACHED
+    // execution: the executor parks instead of deriving.
+    let parked: Vec<&super::capture::Captured> = out
+        .errors()
+        .into_iter()
+        .filter(|l| l.text.contains("executor SafetyHalt — parking"))
+        .collect();
+    assert_eq!(
+        parked.len(),
+        n,
+        "expected one executor park per node, got {:?}",
+        parked.iter().map(|l| &l.text).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        out.errors().len(),
+        3 * n,
+        "the run produced ERROR lines beyond the refusal, the halt and the park under test: {:?}",
+        out.errors()
+            .iter()
+            .map(|l| l.text.as_str())
+            .collect::<Vec<_>>()
+    );
+    // Two shapes for one epoch: the module logs a bare `u64`, the manager the
+    // `Epoch` newtype it is handed.
+    for line in permanent.iter().chain(&halts) {
+        assert!(
+            line.text.contains(&format!("epoch={epoch}"))
+                || line.text.contains(&format!("epoch=Epoch({epoch})")),
+            "a line about the refusal names another epoch: {}",
+            line.text
+        );
+    }
+
+    // OBSERVATION (f): counted under its own cause, at least once per node.
+    let weights_none = counter_of(
+        drained,
+        "dpos_committee_read_permanent_total",
+        Some(("reason", "weights_none")),
+    );
+    assert!(
+        weights_none >= n as u64,
+        "the weightless refusal was not counted once per node during the run: \
+         {weights_none} < {n}"
+    );
+    assert_eq!(
+        counter_of(drained, "dpos_committee_read_permanent_total", None),
+        weights_none,
+        "some OTHER permanent cause fired in this run: {drained:?}"
+    );
+    eprintln!(
+        "(4.1/weights) heights={:?} halted={:?} weights_none={weights_none} \
+         weights_none_by_collect={} errors={} reads={:?}",
+        out.heights,
+        out.halted,
+        counter_of(
+            &by_collect,
+            "dpos_committee_read_permanent_total",
+            Some(("reason", "weights_none"))
+        ),
+        out.errors().len(),
+        out.staking_reads[0]
+    );
+}
+
+/// (4.1, revert, R-128) A committee read that REVERTS inside the window is the
+/// OTHER permanent class: the epoch is refused loudly and is not registered,
+/// and the node does NOT stop.
+///
+/// The contrast is the point. A revert says the read could not be served — a
+/// staking-module code error, a read of a module that is not there — and an
+/// operator repairs it and restarts; it is not the chain stating a committee
+/// that cannot exist, so it does not carry the one thing that justifies
+/// stopping a node. The design writes the two lines separately
+/// (`E4-CORE-DESIGN.md` §5.4: revert ⇒ `error!`, the epoch is not registered;
+/// impossible ⇒ the node stands), and before R-128 the code could not tell them
+/// apart because it only ever had the weaker outcome.
+///
+/// Falsifier: the contract not actually reverting (then the switch is inert); a
+/// record for the epoch; a halted node; a run that never reached the epoch
+/// below; more than one `error!` per node.
+#[test]
+fn a_reverting_committee_read_inside_the_window_refuses_the_epoch_and_leaves_the_node_up() {
+    let epoch = 2u64;
+    let out = {
+        let mut cfg = StandConfig::honest(4, 1);
+        cfg.reverts_for = Some(epoch);
+        Stand::new(cfg).run_until(reached(last(epoch - 1)), Duration::from_secs(200))
+    };
+    let n = out.heights.len();
+    assert!(!out.timed_out, "heights {:?}", out.heights);
+
+    // PREMISE 1: the chain ran up to the epoch whose read reverts.
+    for i in 0..n {
+        assert!(
+            out.heights[i] >= last(epoch - 1),
+            "node {i} did not reach the end of epoch {}: {:?}",
+            epoch - 1,
+            out.heights
+        );
+    }
+
+    // PREMISE 2: the contract really reverted, for that epoch and no other, on
+    // every node.
+    for i in 0..n {
+        let reverted: Vec<u64> = out.staking_reads[i].reverted.keys().copied().collect();
+        assert_eq!(
+            reverted,
+            vec![epoch],
+            "node {i}'s contract reverted for the wrong epochs: {:?}",
+            out.staking_reads[i]
+        );
+    }
+
+    // OBSERVATION (a): NOBODY halted. This is the line that separates the two
+    // permanent classes, and it is the whole reason this fixture exists.
+    assert!(
+        out.halted.is_empty(),
+        "a revert stopped a node: {:?}",
+        out.halted
+    );
+
+    // OBSERVATION (b): the epoch is not registered — no record, no scheme.
+    for i in 0..n {
+        let refusal = out.committee_records[i][&epoch]
+            .as_ref()
+            .expect_err("a reverting read must not produce a record");
+        assert!(
+            !refusal.transient,
+            "node {i} was told to retry a revert: {refusal:?}"
+        );
+        assert!(
+            refusal.error.contains("reverted"),
+            "node {i} refused epoch {epoch} for some other reason: {refusal:?}"
+        );
+        assert!(
+            out.committees[i].scheme(epoch).is_none(),
+            "node {i} holds a certificate scheme for the epoch its contract refused to answer"
+        );
+    }
+
+    // OBSERVATION (c): one `error!` per node, and no halt line among them.
     let permanent: Vec<&super::capture::Captured> = out
         .errors()
         .into_iter()
@@ -722,39 +996,10 @@ fn a_weightless_committee_inside_the_window_is_refused_permanently_and_loudly() 
             .map(|l| l.text.as_str())
             .collect::<Vec<_>>()
     );
-    for line in &permanent {
-        assert!(
-            line.text.contains(&format!("epoch={epoch}")),
-            "a permanent refusal names another epoch: {}",
-            line.text
-        );
-    }
-
-    // OBSERVATION (c): counted under its own cause, at least once per node.
-    let weights_none = counter_of(
-        drained,
-        "dpos_committee_read_permanent_total",
-        Some(("reason", "weights_none")),
-    );
-    assert!(
-        weights_none >= n as u64,
-        "the weightless refusal was not counted once per node during the run: \
-         {weights_none} < {n}"
-    );
-    assert_eq!(
-        counter_of(drained, "dpos_committee_read_permanent_total", None),
-        weights_none,
-        "some OTHER permanent cause fired in this run: {drained:?}"
-    );
     eprintln!(
-        "(4.1/weights) heights={:?} weights_none={weights_none} \
-         weights_none_by_collect={} errors={} reads={:?}",
+        "(4.1/revert) heights={:?} halted={:?} errors={} reads={:?}",
         out.heights,
-        counter_of(
-            &by_collect,
-            "dpos_committee_read_permanent_total",
-            Some(("reason", "weights_none"))
-        ),
+        out.halted,
         out.errors().len(),
         out.staking_reads[0]
     );

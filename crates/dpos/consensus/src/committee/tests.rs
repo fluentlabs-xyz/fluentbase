@@ -572,24 +572,39 @@ fn a_second_answer_for_one_epoch_is_refused_and_the_first_record_stands() {
         "a contract fork is permanent, not a retry"
     );
 
-    let stored = store
+    // The epoch is POISONED from here on. Not "the first record stands and
+    // answers": the chain stated two different committees for one epoch, and
+    // serving whichever read won the race would be serving one of two guesses.
+    // What the record is still good for is the write-once comparison above —
+    // the module knows which answer it kept — not for a consumer.
+    let refusal = store
         .committee(10)
-        .expect("the installed record still answers");
+        .expect_err("a forked epoch answers the refusal, not a record");
     assert!(
-        stored.same_value(kept[0]),
-        "the FIRST record stands; the second never overwrites it"
+        refusal.is_contract_impossible(),
+        "a contract fork is the impossible class: {refusal:?}"
     );
+    assert_eq!(store.poisoned_epochs(), vec![10]);
     assert_eq!(
         store.reads().calls().snapshots_of(10),
         2,
-        "no third read: the refusal did not evict the record"
+        "no third read: the refusal came from the poisoned slot"
+    );
+    assert!(
+        store.scheme(10).is_none(),
+        "a forked epoch keeps no certificate scheme either"
     );
 }
 
 // ---------------------------------------------------------- 7. absent weights
 
+/// `weights: None` inside the window is the IMPOSSIBLE class, and an impossible
+/// answer is memoised: the epoch's slot is poisoned, so the same refusal comes
+/// back without a second staticcall (R-128 / B3-12 — before it, every consumer
+/// re-derived the refusal on every call, two blocking reads at a time, on the
+/// marshal actor's own task).
 #[test]
-fn absent_weights_inside_the_window_are_permanent_and_cache_nothing() {
+fn absent_weights_inside_the_window_are_permanent_and_poison_the_epoch() {
     let at = hash(7);
     let store = new_store(
         FakeAnchor::at(325, at),
@@ -608,9 +623,28 @@ fn absent_weights_inside_the_window_are_permanent_and_cache_nothing() {
         "the ring cannot have wrapped past an epoch in the window — this is a fork, not a retry"
     );
 
-    // Nothing was cached: the next call goes to the contract again.
-    let _ = store.committee(10);
-    assert_eq!(store.reads().calls().snapshots_of(10), 2);
+    assert!(
+        err.is_contract_impossible(),
+        "the ring cannot have wrapped past an in-window epoch — the contract answered something \
+         impossible: {err:?}"
+    );
+    assert_eq!(store.reads().calls().snapshots_of(10), 1);
+
+    // The verdict was kept: the next call answers the SAME error and the
+    // contract is not asked again.
+    let again = store.committee(10).expect_err("the epoch stays refused");
+    assert_eq!(again.to_string(), err.to_string());
+    assert_eq!(
+        store.reads().calls().snapshots_of(10),
+        1,
+        "the poisoned slot spent another staticcall"
+    );
+    assert_eq!(store.poisoned_epochs(), vec![10]);
+    assert!(
+        store.cached_epochs().is_empty(),
+        "a poisoned epoch holds no record"
+    );
+    assert!(store.scheme(10).is_none(), "and no scheme");
 }
 
 // --------------------------------------------------------- 8. transient error
@@ -660,6 +694,26 @@ fn a_transient_read_error_caches_nothing_and_is_retried() {
     assert!(matches!(err, CommitteeError::Read(_)));
     assert!(!err.is_transient(), "CallReverted is not a retry");
     assert!(reverting.cached_epochs().is_empty());
+
+    // And it is NOT the impossible class, so nothing is memoised: a revert is
+    // the contract refusing to answer, and the moment an operator repairs what
+    // produced it the next read must be able to succeed without a restart. The
+    // node is not stopped by it either — `epoch_manager::reconcile_roles` routes
+    // on exactly this predicate.
+    assert!(
+        !err.is_contract_impossible(),
+        "a revert is the contract refusing to answer, not an impossible answer"
+    );
+    assert!(
+        reverting.poisoned_epochs().is_empty(),
+        "a revert poisoned the epoch: a repaired contract would need a restart to be read"
+    );
+    let _ = reverting.committee(10);
+    assert_eq!(
+        reverting.reads().calls().snapshots_of(10),
+        2,
+        "the revert was memoised after all"
+    );
 }
 
 // -------------------------------------------------------- 9. empty committee

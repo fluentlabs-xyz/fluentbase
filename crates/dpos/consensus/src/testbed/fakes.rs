@@ -911,6 +911,11 @@ pub(super) struct StakingReads {
     /// weights` — the contract's "my weight ring has wrapped past this epoch"
     /// answer (`stakes` empty beside a non-empty `addrs`).
     pub weights_none: BTreeMap<u64, u64>,
+    /// `epoch → how many committee reads REVERTED` — the other permanent class
+    /// (`FakeStaking::reverts_for`). A counter of its own, because a revert
+    /// produces no snapshot at all and so lands in neither `committed` nor
+    /// `uncommitted`.
+    pub reverted: BTreeMap<u64, u64>,
     /// `epoch -> reads that answered at least one TOMBSTONED member`.
     pub tombstoned_seen: BTreeMap<u64, u64>,
     /// `epoch -> snapshot calls made through the COMMITTEE MODULE'S port`
@@ -978,6 +983,16 @@ pub(super) struct FakeStaking {
     /// refuses such an epoch permanently, so a second one would only be a second
     /// copy of the same refusal.
     weights_none_for: Option<u64>,
+    /// The one epoch whose committee read REVERTS — the other permanent class.
+    ///
+    /// A revert is the contract refusing to answer (a staking-module code
+    /// error, a read before the module exists), not a statement about the
+    /// committed state, so the module must treat it differently from the switch
+    /// above: refuse the epoch loudly and keep the node running. Without this
+    /// knob the stand could only ever produce one of the two permanent classes,
+    /// and "the node halts on the impossible one" would have had nothing to
+    /// contrast with.
+    reverts_for: Option<u64>,
     /// Nodes tombstoned from a height on — see [`Tombstones`].
     tombstoned: Tombstones,
     /// Every stand node as the contract would hold it, indexed by node number.
@@ -1016,6 +1031,7 @@ impl FakeStaking {
             members,
             by_branch: None,
             weights_none_for: None,
+            reverts_for: None,
             tombstoned: Arc::new(Vec::new()),
             validators: Arc::new(validators),
             registry: Arc::new(registry),
@@ -1024,9 +1040,9 @@ impl FakeStaking {
         }
     }
 
-    /// The three step-5b knobs, applied after [`Self::new`] rather than passed
-    /// through it: the constructor already takes six arguments, and three more
-    /// positional ones would be three more things a caller can transpose.
+    /// The step-5b knobs, applied after [`Self::new`] rather than passed
+    /// through it: the constructor already takes six arguments, and more
+    /// positional ones would be more things a caller can transpose.
     /// Every one of them defaults to the pre-step behaviour.
     pub(super) fn with_schedule(
         mut self,
@@ -1037,6 +1053,12 @@ impl FakeStaking {
         self.by_branch = by_branch;
         self.weights_none_for = weights_none_for;
         self.tombstoned = tombstoned;
+        self
+    }
+
+    /// The epoch whose committee read reverts — see [`Self::reverts_for`].
+    pub(super) fn with_revert(mut self, reverts_for: Option<u64>) -> Self {
+        self.reverts_for = reverts_for;
         self
     }
 
@@ -1210,6 +1232,22 @@ impl StakingStateRead for FakeStaking {
         at: B256,
     ) -> Result<ValidatorSetSnapshot, ReadError> {
         let height = self.height_at(at)?;
+        // The revert arm, BEFORE any of the counters below: a reverting call
+        // produced no snapshot, so counting it as committed/uncommitted would
+        // be counting an answer that was never given. It is counted as what it
+        // is.
+        if self.reverts_for == Some(epoch) {
+            *self
+                .reads
+                .lock()
+                .unwrap()
+                .reverted
+                .entry(epoch)
+                .or_default() += 1;
+            return Err(ReadError::CallReverted(format!(
+                "testbed: getEpochCommitteeWithStakes({epoch}) reverted"
+            )));
+        }
         let branch = self.branch_of(at, height);
         let validators = self
             .committed_at(epoch, height)

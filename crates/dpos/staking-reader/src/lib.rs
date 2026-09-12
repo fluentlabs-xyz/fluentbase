@@ -41,5 +41,5 @@ pub mod error;
 pub mod reader;
 
 pub use epoch_transition::{EpochTransition, PeerSetSink, TrackedPeers, TransitionOutcome};
-pub use error::ReadError;
+pub use error::{ReadClass, ReadError};
 pub use reader::{classify_transient_provider_error, RethStakingStateReader, StakingStateRead};

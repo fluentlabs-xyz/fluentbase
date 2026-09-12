@@ -54,6 +54,17 @@ pub enum SyncReason {
     L1Fork,
     /// #15 SafetyHalt: reth returned Invalid for our locally-derived block.
     ElInvalid,
+    /// SafetyHalt: the staking contract answered an epoch's committee with
+    /// something no committed epoch can answer (`ReadClass::Impossible` —
+    /// undecodable bytes, a committee out of order / duplicated / below the
+    /// on-chain floor, frozen weights missing inside the read window, one epoch
+    /// read twice with two different values), for an epoch this node has to
+    /// enter. The chain contradicted its own invariants, so every validator
+    /// reads the same impossible thing: participating on a guess is the one
+    /// thing a node must not do, and skipping the epoch in silence is what this
+    /// halt replaces. Engaged by `epoch_manager::reconcile_roles`, the ONE site
+    /// that knows the epoch was owed.
+    ContractFork,
 }
 
 impl SyncReason {
@@ -70,6 +81,7 @@ impl SyncReason {
             Self::ResultDivergence => "result_divergence",
             Self::L1Fork => "l1_fork",
             Self::ElInvalid => "el_invalid",
+            Self::ContractFork => "contract_fork",
         }
     }
 
@@ -77,7 +89,7 @@ impl SyncReason {
     /// persisted [`SafetyHalt`] marker. `None` for a label this build does not
     /// know (a marker written by another version).
     pub fn from_label(label: &str) -> Option<Self> {
-        const ALL: [SyncReason; 10] = [
+        const ALL: [SyncReason; 11] = [
             SyncReason::NoPeers,
             SyncReason::ActivationWait,
             SyncReason::EngineRetry,
@@ -88,6 +100,7 @@ impl SyncReason {
             SyncReason::ResultDivergence,
             SyncReason::L1Fork,
             SyncReason::ElInvalid,
+            SyncReason::ContractFork,
         ];
         ALL.into_iter().find(|r| r.as_str() == label)
     }
@@ -787,6 +800,7 @@ mod tests {
             SyncReason::ResultDivergence,
             SyncReason::L1Fork,
             SyncReason::ElInvalid,
+            SyncReason::ContractFork,
         ] {
             assert_eq!(
                 SyncReason::from_label(reason.as_str()),

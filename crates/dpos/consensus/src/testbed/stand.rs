@@ -106,6 +106,9 @@ pub(super) struct StandConfig {
     /// though its ring frame is intact — "the contract answered something no
     /// committed epoch can answer". `None` = never.
     pub weights_none_for: Option<u64>,
+    /// One epoch whose committee read REVERTS — the other permanent class, the
+    /// one that must NOT stop the node. `None` = never.
+    pub reverts_for: Option<u64>,
     /// `(node, from height)` pairs the fake contract reports TOMBSTONED from
     /// that height on, in every epoch that node sits in — the contract's live
     /// equivocation flag, read at the call's own block.
@@ -269,6 +272,7 @@ impl StandConfig {
             committees: Committees::All,
             committees_by_branch: None,
             weights_none_for: None,
+            reverts_for: None,
             tombstoned: Vec::new(),
             metrics_snapshotter: None,
             shared_engine_partitions: false,
@@ -1887,7 +1891,8 @@ async fn build_node(
         cfg.committees_by_branch.clone(),
         cfg.weights_none_for,
         Arc::new(cfg.tombstoned.clone()),
-    );
+    )
+    .with_revert(cfg.reverts_for);
     let (hook_tx, mut hook_rx) = mpsc::unbounded_channel::<OrderBlock>();
 
     // The production epoch state machine — ONE per node, as in production. `bridge_tx`

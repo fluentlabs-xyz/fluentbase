@@ -266,6 +266,24 @@ impl CommitteeError {
             Self::Read(e) => e.is_transient(),
         }
     }
+
+    /// Whether the CONTRACT answered something no committed epoch can answer —
+    /// [`fluentbase_staking_reader::ReadClass::Impossible`], and only through
+    /// [`Self::Read`].
+    ///
+    /// The other two variants are never this, and the distinction is what the
+    /// predicate is for: [`Self::NotReadable`] is this node being behind and
+    /// [`Self::OutOfWindow`] is this node's own window predicate — a request
+    /// refused before any read, which says nothing at all about the chain.
+    /// Only a read that CAME BACK can carry a statement the chain made about
+    /// itself, and only such a statement may stop the node
+    /// (`epoch_manager::reconcile_roles`).
+    pub fn is_contract_impossible(&self) -> bool {
+        match self {
+            Self::NotReadable { .. } | Self::OutOfWindow { .. } => false,
+            Self::Read(e) => e.is_contract_impossible(),
+        }
+    }
 }
 
 /// The committee of an epoch, frozen — the whole read surface of this module.

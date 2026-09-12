@@ -23,6 +23,7 @@ use crate::{
     order_block::OrderBlock,
     outer::{EpochSchemeProvider, SharedMux},
     slasher::Mailbox as SlasherMailbox,
+    sync_metrics::SyncReason,
     timeouts::ConsensusTimeouts,
     weighted_vrf::WeightedVrf,
     SCHEME_RETENTION_EPOCHS,
@@ -1142,16 +1143,67 @@ where
                 // Remember the epoch so the module's own wake-up re-runs THIS
                 // reconcile — `deferred_reconciles` says why nothing else will.
                 // Only a retryable miss: a permanent refusal (an epoch the
-                // window has dropped, a contract fork) is a debt no wake-up can
-                // ever settle, and parking it would leave an entry the set can
-                // never lose.
+                // window has dropped, a reverting contract) is a debt no wake-up
+                // can ever settle, and parking it would leave an entry the set
+                // can never lose.
                 if e.is_transient() {
                     self.deferred_reconciles.insert(epoch);
+                    debug!(
+                        ?epoch,
+                        %e,
+                        "reconcile deferred — committee[E] not readable at this node's anchor yet"
+                    );
+                    return;
+                }
+                // THE ONE SITE THAT TURNS AN IMPOSSIBLE COMMITTEE INTO A HALT.
+                //
+                // This reconcile was owed: the epoch arrived on a boundary this
+                // node's own execution reached, on the live-epoch edge, or on
+                // the module's wake-up for an epoch already parked — never as a
+                // lookahead or as a stranger's claim, which is why this is the
+                // site and the module is not (a p2p frame naming an epoch, the
+                // marshal verifying a certificate and the slasher resolving an
+                // old charge all read the same store and must NOT stop the node
+                // between them).
+                //
+                // `Impossible` and not `!is_transient()`: a revert keeps the
+                // behaviour it had — the epoch is refused, the module's one
+                // `error!` names it, the node stays up and an operator repairs
+                // the module — because a revert says the read could not be
+                // served, not that the committed state is impossible. An
+                // impossible answer is different in kind: it is the chain
+                // contradicting its own invariants, every validator reads the
+                // same thing, and a node that merely skipped the epoch would go
+                // on looking healthy while the whole network stopped
+                // participating in silence (E4-REVIEW §9.1).
+                //
+                // The latch does the rest: the `engaged_edge` arm of `run`
+                // aborts every running engine and the agreement instances, and
+                // the `is_member` gate below keeps this node a Verifier for
+                // good. Execution stops; the marshal keeps verifying and
+                // serving what it already holds.
+                if e.is_contract_impossible() {
+                    if !self.cfg.safety_halt.is_engaged() {
+                        error!(
+                            ?epoch,
+                            %e,
+                            reason = SyncReason::ContractFork.as_str(),
+                            "committee[E] of an epoch this node must enter is IMPOSSIBLE — the \
+                             contract contradicted its own invariants; SafetyHalt: this node \
+                             stops signing, proposing and voting (marshal keeps serving). \
+                             Recovery is a repaired chain and a fresh start."
+                        );
+                    }
+                    // Idempotent, and the FIRST verdict is the one recorded — a
+                    // halt already engaged for another reason keeps its own.
+                    self.cfg.safety_halt.engage(SyncReason::ContractFork);
+                    return;
                 }
                 debug!(
                     ?epoch,
                     %e,
-                    "reconcile deferred — committee[E] not readable at this node's anchor yet"
+                    "reconcile refused — committee[E] is permanently unreadable at this node's \
+                     anchor (a revert, this node's storage, or an epoch below the window)"
                 );
                 return;
             }

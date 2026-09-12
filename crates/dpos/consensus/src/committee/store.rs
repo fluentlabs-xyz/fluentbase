@@ -8,7 +8,7 @@ use super::{
 use alloy_primitives::B256;
 use commonware_utils::TryFromIterator as _;
 use fluentbase_bls::{PeerPubkey, Scheme as BlsScheme};
-use fluentbase_staking_reader::{reader::ValidatorSetSnapshot, ReadError};
+use fluentbase_staking_reader::{reader::ValidatorSetSnapshot, ReadClass, ReadError};
 use fluentbase_types::staking_protocol::MAX_COMMITTEE_LOOKAHEAD_EPOCHS;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -66,6 +66,26 @@ struct EpochEntry {
     scheme: Option<Arc<BlsScheme>>,
 }
 
+/// One epoch's slot after the contract answered something no committed epoch
+/// can answer ([`ReadClass::Impossible`]).
+///
+/// The refusal is MEMOISED, which the first version of this store deliberately
+/// did not do — and that was the defect: an impossible answer was re-derived by
+/// every consumer on every call, so the two staticcalls of a read that cannot
+/// succeed were paid again on the marshal actor's own task, for as long as the
+/// epoch stayed in the window. Keeping the verdict costs one entry, bounded by
+/// the window like everything else here, and makes the second `committee(E)`
+/// free.
+///
+/// `reason` rides along so the refusal is still COUNTED under the cause that
+/// produced it: an operator watching
+/// `dpos_committee_read_permanent_total{reason}` sees the same rate as before,
+/// with the contract reads gone from underneath it.
+struct Poison {
+    error: ReadError,
+    reason: &'static str,
+}
+
 /// Everything the store mutates, behind one lock.
 ///
 /// The lock is NEVER held across a staking read: an `eth_call` into reth is a
@@ -76,15 +96,34 @@ struct State {
     records: BTreeMap<u64, EpochEntry>,
     /// Epochs whose PERMANENT failure has already been logged.
     ///
-    /// A permanent failure is re-derived on every call (nothing is cached for
-    /// it, by design — see `weights: None` below), so without this the first
-    /// contract fork would produce one `error!` per consumer per tick. It is
+    /// A [`ReadClass::Permanent`] failure is re-derived on every call (a revert
+    /// can start answering once an operator repairs its cause, so it is not
+    /// memoised), so without this the first reverting contract would produce one
+    /// `error!` per consumer per tick. An impossible answer is memoised in
+    /// `poisoned` below and logged once through this same set. It is
     /// pruned by the same window floor as `records` ([`CommitteeStore::prune`]),
     /// which is what makes "once per epoch" true: an epoch is only ever
     /// forgotten together with the window that could still ask about it, and an
     /// epoch below the floor is refused by the window before any read is
     /// attempted. Bounded by the window's width for the same reason.
     reported: BTreeSet<u64>,
+    /// Epochs the contract answered IMPOSSIBLY, with the verdict to repeat —
+    /// see [`Poison`].
+    ///
+    /// A map beside `records` rather than a variant inside `EpochEntry`,
+    /// because the two are not alternatives in the type's other direction: an
+    /// entry carries a record AND a scheme, and a poisoned epoch has neither
+    /// and never will. It is pruned by the same window floor, so a poisoned
+    /// epoch is forgotten exactly when the window stops admitting it — at which
+    /// point the window predicate refuses it anyway, before any read.
+    ///
+    /// It takes PRECEDENCE over `records`, which matters in one case only: the
+    /// contract fork found by [`CommitteeStore::install`], where a record for
+    /// the epoch already exists. The epoch is refused from then on rather than
+    /// answered from the record that happened to get there first — the chain
+    /// has stated two different committees for it, and serving either is
+    /// serving a guess.
+    poisoned: BTreeMap<u64, Poison>,
 }
 
 /// The committee module's production store.
@@ -172,6 +211,7 @@ impl<R: EpochReads> CommitteeStore<R> {
     fn prune(state: &mut State, lo: u64) {
         state.records.retain(|epoch, _| *epoch >= lo);
         state.reported.retain(|epoch| *epoch >= lo);
+        state.poisoned.retain(|epoch, _| *epoch >= lo);
     }
 
     /// `[lo, hi]`, inclusive both ends.
@@ -189,18 +229,55 @@ impl<R: EpochReads> CommitteeStore<R> {
     /// refused before any read — so "once" is once.) A transient failure is
     /// counted nowhere and returned silently: it is the normal shape of a node
     /// that is still catching up.
+    ///
+    /// The two permanent classes part company here, and only here:
+    /// [`ReadClass::Impossible`] POISONS the epoch's slot — the verdict is kept
+    /// and every later `committee(E)` answers it without a staticcall — while
+    /// [`ReadClass::Permanent`] (a revert, a storage fault at the anchor) is
+    /// re-derived as before. The asymmetry is the split itself: an impossible
+    /// answer is a statement the chain makes about ITSELF and cannot take back,
+    /// whereas a revert can start answering the moment an operator repairs what
+    /// produced it, and memoising that would need a restart to clear.
+    ///
+    /// Every caller is past the window predicate, so "in the window" is a
+    /// property of the call site, not a condition re-checked here.
     fn failed(&self, epoch: u64, error: ReadError, reason: &'static str) -> CommitteeError {
-        if !error.is_transient() {
+        let class = error.class();
+        if class != ReadClass::Transient {
             metrics::counter!(READ_PERMANENT, "reason" => reason).increment(1);
-            let first = self.state.lock().unwrap().reported.insert(epoch);
+            let first = {
+                let mut state = self.state.lock().unwrap();
+                if class == ReadClass::Impossible {
+                    state.poisoned.entry(epoch).or_insert_with(|| Poison {
+                        error: error.clone(),
+                        reason,
+                    });
+                }
+                state.reported.insert(epoch)
+            };
             if first {
-                error!(
-                    epoch,
-                    %error,
-                    "committee read failed PERMANENTLY inside the read window — the contract \
-                     answered something no committed epoch can answer; this epoch will not be \
-                     registered and no retry can fix it"
-                );
+                // One prefix for both classes — an operator greps for the
+                // refusal, not for its taxonomy — and two tails, because the
+                // two demand different things of them.
+                if class == ReadClass::Impossible {
+                    error!(
+                        epoch,
+                        %error,
+                        "committee read failed PERMANENTLY inside the read window — the \
+                         contract answered something no committed epoch can answer; this epoch \
+                         will not be registered, no retry can fix it, and this node STOPS as \
+                         soon as it must enter the epoch"
+                    );
+                } else {
+                    error!(
+                        epoch,
+                        %error,
+                        "committee read failed PERMANENTLY inside the read window — the read \
+                         cannot succeed as things stand (the call reverted, or this node's own \
+                         storage faulted); this epoch will not be registered and no retry can \
+                         fix it — repair the cause and restart"
+                    );
+                }
             }
         }
         CommitteeError::Read(error)
@@ -337,6 +414,18 @@ impl<R: EpochReads> CommitteeStore<R> {
                 return Ok(existing);
             }
             metrics::counter!(READ_PERMANENT, "reason" => REASON_FORK).increment(1);
+            let forked = ReadError::AbiDecode(format!(
+                "epoch {epoch} committee was already read with a different value"
+            ));
+            // The epoch is poisoned even though a record for it is sitting
+            // right here: two different committees for one epoch means the
+            // chain contradicted itself, and answering from whichever read won
+            // the race would hand a consumer one of the two guesses. From here
+            // on the epoch answers the refusal, at no further cost.
+            state.poisoned.entry(epoch).or_insert_with(|| Poison {
+                error: forked.clone(),
+                reason: REASON_FORK,
+            });
             let first = state.reported.insert(epoch);
             drop(state);
             if first {
@@ -349,9 +438,7 @@ impl<R: EpochReads> CommitteeStore<R> {
                      record and refusing this epoch"
                 );
             }
-            return Err(CommitteeError::Read(ReadError::AbiDecode(format!(
-                "epoch {epoch} committee was already read with a different value"
-            ))));
+            return Err(CommitteeError::Read(forked));
         }
         // Prune BEFORE the insert, so what this call returns is what the map
         // holds: the record just read was inside the window when it was read —
@@ -401,6 +488,17 @@ impl<R> CommitteeStore<R> {
     /// The epochs currently held, oldest first — the retention observation.
     pub(super) fn cached_epochs(&self) -> Vec<u64> {
         self.state.lock().unwrap().records.keys().copied().collect()
+    }
+
+    /// The epochs whose slot is POISONED — the memoised-refusal observation.
+    pub(super) fn poisoned_epochs(&self) -> Vec<u64> {
+        self.state
+            .lock()
+            .unwrap()
+            .poisoned
+            .keys()
+            .copied()
+            .collect()
     }
 
     /// The epochs whose permanent failure has been logged — the "once per
@@ -455,8 +553,32 @@ impl<R: EpochReads> Committee for CommitteeStore<R> {
         //    The window is checked FIRST on purpose: an epoch that has dropped
         //    under the floor is refused, not answered from a leftover entry —
         //    and there is no such entry anyway, since retention IS the floor.
-        if let Some(entry) = self.state.lock().unwrap().records.get(&epoch) {
-            return Ok(entry.record.clone());
+        //
+        //    A POISONED slot is a hit too, and it is consulted first: an
+        //    impossible answer is as final as a record, and repeating it here
+        //    is what keeps the two staticcalls of a read that cannot succeed
+        //    off the hot path (the marshal actor's own task asks for exactly
+        //    this through `CertProvider::scoped`). The counter still ticks, so
+        //    the refusal rate an operator watches is unchanged; the `error!` is
+        //    not repeated, because `failed` already logged it once for as long
+        //    as the epoch stays in the window.
+        let cached = {
+            let state = self.state.lock().unwrap();
+            match state.poisoned.get(&epoch) {
+                Some(poison) => Some(Err((poison.error.clone(), poison.reason))),
+                None => state
+                    .records
+                    .get(&epoch)
+                    .map(|entry| Ok(entry.record.clone())),
+            }
+        };
+        match cached {
+            Some(Ok(record)) => return Ok(record),
+            Some(Err((error, reason))) => {
+                metrics::counter!(READ_PERMANENT, "reason" => reason).increment(1);
+                return Err(CommitteeError::Read(error));
+            }
+            None => {}
         }
 
         // 4. ANCHOR HASH. `Ok(None)` is "the height is not executed yet" — a
