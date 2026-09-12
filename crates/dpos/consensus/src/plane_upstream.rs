@@ -2,8 +2,9 @@
 //!
 //! A plain `--dpos` validator with no WS `--dpos.follower-upstream` still needs the
 //! ONE capability the consensus plane lacks natively: FRONTIER DISCOVERY — the
-//! cold-start / steady-state JUMP consumes [`CertUpstream::get_latest`] to obtain the
-//! tip `(finalization, OrderBlock)` it drives reth EL-sync toward, and commonware's
+//! frozen-tip ladder probe consumes [`CertUpstream::get_latest`] (and
+//! `get_finalization` for the rung itself) to learn there is a
+//! `(finalization, OrderBlock)` above its own frozen tip, and commonware's
 //! marshal `Request` enum has no over-the-wire `Latest` variant (`BlockID::Latest`
 //! resolves via a LOCAL archive read). This module adds that transport as a tiny
 //! Fluent-side resolver channel (`FRONTIER_CHANNEL`) built on the same
@@ -51,36 +52,35 @@
 //! under a committee this node CAN read. Everything else — an epoch outside the
 //! read window, a committee this node cannot read yet, no frozen geometry yet —
 //! is "I cannot check this", and `deliver` returns `true` there: the fetch closes
-//! and the peer is not punished. The ANSWER is then COUNTED and PASSED ON — for
-//! BOTH keys — and that is where §5.2 as written does not survive contact with
-//! this codebase. §5.2 says to throw such an answer away with a metric; neither
-//! arm can afford it today, for two different reasons:
+//! and the peer is not punished.
 //!
-//! * `Finalized{h}` — its retry driver is `UpstreamResolver::spawn_finalized`, a
-//!   ONE-SHOT spawned pull re-armed only by the marshal's `try_repair_gaps`, which
-//!   runs per STORED finalization. Withholding the answer removes the very event
-//!   that would ask for it again. Measured: with the drop in place the Д3
-//!   precondition's node 3 lands at 180 and never fetches another height (journal
-//!   §0(6)(б), Д-72).
-//! * `Latest` — nothing is ORPHANED by dropping it (`fetch_one` clears its own
-//!   waiter and cancels the fetch on the timeout, `:534-553`, and the next probe
-//!   tick asks again). Since pass Б1 its height is no longer a TRIGGER input at
-//!   all: the jump trigger reads the marshal tip alone and the jump's target is a
-//!   pair out of the local archive (`executor::maybe_re_jump`). What a `Latest`
-//!   answer still buys is one `hint_finalization(frontier)` — a by-height fetch
-//!   the marshal then verifies and stores itself — and the probe's own "was I
-//!   served" bit. So the honest reason it is still passed on is smaller than it
-//!   was and it is the SAME as the by-height arm's: the consumer below has its own
-//!   gate, and nothing above believes the height. Dropping it out of the read
-//!   window is §5.2's letter and pass Б2's work, together with the cold-start
-//!   jump — the last consumer of an unverified `Latest` as a TARGET.
+//! **An answer this node cannot authenticate is DROPPED** (pass Б2, §5.2's letter)
+//! — on BOTH keys, with `dpos_frontier_dropped_total{reason}` counting it and the
+//! waiting caller answered `None` at once. Pass А passed such an answer on instead,
+//! and the two reasons it gave are both spent:
 //!
-//! Passing an answer on trusts nothing extra: a by-height pair still meets the
-//! marshal's own `verify_delivered` (BLS under the same committee module), and a
-//! tip still meets `cold_start_jump`'s POST-sync `verify_jump_authenticated` at
-//! the landing's own state. What the four checks above add is everything that does
-//! NOT need a committee — which is what closes R-009 (a foreign height), R-004's
-//! inflated one, and a swapped body under a real certificate.
+//! * `Finalized{h}` — Д-72: withholding the answer was said to remove the only
+//!   event that would ask for the height again, because
+//!   `UpstreamResolver::spawn_finalized` is re-armed by the marshal's
+//!   `try_repair_gaps`, which runs per STORED finalization. That was measured with
+//!   no ladder in the system. Pass Б1 gave every node one: the executor's
+//!   frozen-tip probe names `Finalized{last(T+1)}` on EVERY frozen tick and hands
+//!   it to the marshal (`executor::probe_frontier`), so a node that stores nothing
+//!   still asks again, once a second, forever.
+//! * `Latest` — Д-78: its height was the only input of the deep re-jump trigger.
+//!   Pass Б1 took that consumer away (the trigger reads the marshal tip alone and
+//!   the target is a pair out of the local archive,
+//!   `executor::maybe_re_jump`), and pass Б2 took the last one that used a `Latest`
+//!   answer as a jump TARGET (the pre-engine cold-start jump). What is left is one
+//!   `hint_finalization(frontier)` and the probe's "was I served" bit, neither of
+//!   which is worth admitting an unauthenticatable certificate for.
+//!
+//! Nothing is ORPHANED by the drop: `deliver` removes the key's whole waiter
+//! entry, so `fetch_one` resolves with `None` at once. It does NOT cancel: with the
+//! entry already gone, `fetch_one`'s `None` branch finds no waiters, leaves `empty`
+//! false and never reaches `mailbox.cancel` — and nothing needs it to, because the
+//! `true` returned here already COMPLETES the fetch on the commonware side
+//! (`.claude/COMMONWARE_INTERNALS.md:389`). The next probe tick asks again.
 //!
 //! A peer with no data never reaches `deliver` at all (it answers
 //! `Payload::Error` ⇒ `add_retry`, no ban).
@@ -115,18 +115,14 @@ use std::{
 use tokio::sync::oneshot;
 use tracing::warn;
 
-/// `dpos_frontier_unauthenticated_total{reason}` — a frontier answer that passed
-/// every check this node could MAKE (decode, the requested height, the
-/// payload↔digest bind, the height↔epoch bind) but whose committee it cannot
-/// read, so the 2f+1 multisig went unchecked HERE. Not a fault and not a drop:
-/// it is the ordinary shape of a node whose anchor has not reached the epoch the
-/// answer belongs to, and the answer is passed on to the gate that CAN check it
-/// (the marshal's own `verify_delivered` for a by-height pair, the jump's
-/// post-sync `verify_jump_authenticated` for a tip). §5.2 asks for a DROP here
-/// and the module docs record, with the measurement, why pass А could not make
-/// one. A rate that does not fall as a node catches up is a node that never gets
-/// inside its own read window.
-const FRONTIER_UNAUTHENTICATED: &str = "dpos_frontier_unauthenticated_total";
+/// `dpos_frontier_dropped_total{reason}` — a frontier answer that passed every
+/// check this node could MAKE (decode, the requested height, the payload↔digest
+/// bind, the height↔epoch bind) but whose committee it cannot read, so the 2f+1
+/// multisig cannot be checked. It is THROWN AWAY (§5.2): not a fault — the peer
+/// keeps the channel, because this is a statement about this node's own lag — and
+/// not an admission either. A rate that does not fall as a node catches up is a
+/// node that never gets inside its own read window.
+const FRONTIER_DROPPED: &str = "dpos_frontier_dropped_total";
 
 /// `dpos_frontier_rejected_total{reason}` — a frontier answer that carried a
 /// SIGNAL OF A LIE (`deliver` ⇒ `false`), so commonware excluded its sender from
@@ -164,9 +160,9 @@ type VerifySchemeSlot = Arc<Mutex<Option<(u64, Arc<BlsScheme>)>>>;
 type Waiters = Arc<Mutex<HashMap<FrontierKey, Vec<oneshot::Sender<UpstreamFinalized>>>>>;
 
 /// How long a single `get_latest`/`get_finalization` awaits a plane delivery before
-/// returning `None`. Bounds the jump's single-shot `get_latest` so an isolated /
-/// not-yet-tracked node returns `None` (→ `Lagging` → boot on the treadmill) rather
-/// than hanging; the resolver's own retry/multi-peer fallback delivers well inside
+/// returning `None`. Bounds the ladder probe's single-shot `get_latest` so an
+/// isolated / not-yet-tracked node returns `None` (→ the probe is a no-op this tick)
+/// rather than hanging; the resolver's own retry/multi-peer fallback delivers well inside
 /// this window when a tracked peer holds the data. Measured on the runtime
 /// [`Clock`] (the tokio timer in production, virtual time under the
 /// deterministic runner), never on a tokio timer directly.
@@ -468,27 +464,29 @@ where
             };
         }
 
-        // (5) WHAT HAPPENS TO AN ANSWER THIS NODE CANNOT AUTHENTICATE. It is
-        // COUNTED AND PASSED ON — not dropped — on BOTH arms, and that is the one
-        // place where §5.2 as written does not survive contact with this codebase.
-        // The module docs carry the two measurements; the short form is: the
-        // by-height arm loses its only retry driver if the answer is withheld
-        // (journal §0(6)(б), Д-72), and the `Latest` arm can be withheld safely
-        // but its height is the only input of the deep re-jump trigger, so
-        // dropping it wedges every node more than two epochs behind until that
-        // trigger becomes tip-only (review A2-04).
+        // (5) WHAT HAPPENS TO AN ANSWER THIS NODE CANNOT AUTHENTICATE: it is
+        // DROPPED, on BOTH arms (§5.2 "Правило единое", pass Б2). The certificate
+        // carries a 2f+1 claim nobody here can check, so nothing downstream gets to
+        // see it — that is the whole point of making `deliver` the single point of
+        // trust.
         //
-        // Passing it on trusts nothing extra. Every consumer below this line has
-        // its own gate against the same committee module: a by-height pair goes
-        // to the marshal's `verify_delivered` (BLS under `EpochSchemeProvider`,
-        // the same map), and a tip goes to `cold_start_jump`, whose POST-sync
-        // `verify_jump_authenticated` reads `committee[E]` at the LANDING's own
-        // state — the one anchor at which a far-ahead epoch IS readable. What the
-        // four checks above add is everything that does NOT need a committee, and
-        // that is what closes R-009 (a foreign height), R-004 (an inflated one)
-        // and a swapped body under a real certificate.
+        // The peer is NOT punished for it (`true` below): an epoch outside this
+        // node's read window, an anchor below the commit height or a faulted read
+        // are statements about THIS node, and excluding the peer that answered
+        // honestly would cost the channel for the node's own lag.
+        //
+        // The waiting caller is answered NOW rather than left to time out: removing
+        // the whole entry drops its sender, so `fetch_one` resolves `None`
+        // immediately. No `cancel` is issued and none is needed — `fetch_one`'s
+        // `None` branch sees the entry already gone (`waiters.get_mut` is `None` ⇒
+        // `empty = false`), and the `true` returned below already completes the
+        // fetch commonware-side. The retry driver is the executor's frozen-tip
+        // probe, which names the ladder step every tick (`executor::probe_frontier`)
+        // — not this answer.
         if let Some(reason) = unauthenticated {
-            metrics::counter!(FRONTIER_UNAUTHENTICATED, "reason" => reason).increment(1);
+            metrics::counter!(FRONTIER_DROPPED, "reason" => reason).increment(1);
+            drop(self.waiters.lock().unwrap().remove(&key));
+            return true;
         }
         // The answer is admitted. It is NOT written into the marshal from here:
         // on every path that ends in the marshal, this value is handed on to the
@@ -501,10 +499,10 @@ where
         // measured on the stand, that moves every jump landing and fires
         // `epoch_transition.rs`'s "two boundaries pending at once" debug assert.
         let waiting = self.waiters.lock().unwrap().remove(&key);
-        // The awaiting `get_latest` / `get_finalization` calls. They are still here
-        // in pass A — what changed is that ONLY a five-step-verified answer can
-        // reach them, so nothing downstream of this file consumes an unchecked
-        // frontier any more.
+        // The awaiting `get_latest` / `get_finalization` calls. Only a
+        // five-step-verified answer can reach them — an unauthenticatable one was
+        // dropped above — so nothing downstream of this file ever consumes an
+        // unchecked frontier.
         for tx in waiting.into_iter().flatten() {
             let _ = tx.send(uf.clone());
         }
@@ -633,9 +631,14 @@ impl<E: Clock> PlaneUpstreamHandle<E> {
             }
             None => {
                 tracing::debug!(%key, "frontier fetch timed out (no tracked peer served it)");
-                // Timed out (or the sender was dropped): prune the now-closed waiter and,
-                // if this key has no remaining waiters, cancel the in-flight fetch so the
-                // resolver stops probing peers for it.
+                // Timed out: prune the now-closed waiter and, if this key has no
+                // remaining waiters, cancel the in-flight fetch so the resolver stops
+                // probing peers for it.
+                //
+                // The OTHER way in here is a `deliver` DROP, and it takes neither
+                // branch: `deliver` removed the whole entry, so `get_mut` is `None`,
+                // `empty` stays false and no `cancel` is sent. Deliberate — `deliver`
+                // returned `true`, which already closes that fetch commonware-side.
                 let empty = {
                     let mut waiters = self.waiters.lock().unwrap();
                     let empty = match waiters.get_mut(&key) {
@@ -1123,25 +1126,23 @@ mod tests {
 
     /// (г1) An epoch the read window does not admit, delivered under `Latest` —
     /// an honest peer far ahead of this node. Unverifiable is NOT a lie: `deliver`
-    /// answers `true`, the peer keeps the channel, and the answer is COUNTED and
-    /// PASSED ON to the gate that can check it (`cold_start_jump`'s POST-sync
-    /// `verify_jump_authenticated`, at the landing's own state).
+    /// answers `true` and the peer keeps the channel. But the answer is DROPPED
+    /// (pass Б2, §5.2): it carries a 2f+1 claim nobody here can check, and there is
+    /// no longer a consumer that needs it — the jump trigger reads the marshal tip
+    /// and its target comes out of the local archive (pass Б1), and the pre-engine
+    /// cold-start jump that used a `Latest` answer as a TARGET is gone (pass Б2).
     ///
-    /// §5.2 says to DROP it here, and unlike the by-height arm (г2) nothing would
-    /// be ORPHANED by that — `fetch_one` clears its own waiter and cancels the
-    /// fetch on the timeout, and the next probe tick asks again. What stopped it
-    /// in pass А was the CONSUMER: this height was the only input of the deep
-    /// re-jump trigger. Pass Б1 took that consumer away (the trigger reads the
-    /// marshal tip, the target comes out of the local archive), so the height now
-    /// buys one `hint_finalization` and the probe's "was I served" bit. The
-    /// remaining consumer of an unverified `Latest` as a TARGET is the PRE-ENGINE
-    /// cold-start jump on an empty archive, which is what pass Б2 rebuilds — and
-    /// the drop lands with it (review A2-04, §6 п.2-3).
+    /// WHAT THIS TEST PROVED BEFORE. It was
+    /// `an_out_of_window_latest_is_passed_on_unauthenticated` and its last assert
+    /// was `rx.await.is_ok()` — "the answer was withheld — the deep re-jump trigger
+    /// has no other input". That input no longer exists, so the assertion is
+    /// inverted: the waiter must be resolved with NOTHING.
     ///
     /// Falsifier: a `false` (the honest peer would be excluded for this node's own
-    /// lag); a marshal call; an unresolved waiter.
+    /// lag); a marshal call; a waiter that RECEIVES the answer; a drop counter that
+    /// did not move.
     #[test]
-    fn an_out_of_window_latest_is_passed_on_unauthenticated() {
+    fn an_out_of_window_latest_is_dropped_without_punishing_the_peer() {
         deterministic::Runner::default().start(|ctx| async move {
             let f = fixture(1);
             // Window [0, 3]; the answer belongs to epoch 9 (heights 288..=319).
@@ -1157,24 +1158,27 @@ mod tests {
             );
             assert!(marshal.calls().is_empty(), "the marshal was driven");
             assert!(
-                rx.await.is_ok(),
-                "the answer was withheld — the deep re-jump trigger has no other input"
+                rx.await.is_err(),
+                "the answer reached the caller — an unauthenticatable certificate was admitted"
             );
         });
     }
 
     /// (г2) The SAME out-of-window answer under a BY-HEIGHT key. Same verdict, and
-    /// a second reason for it that (г1) does not have: `Finalized{h}` is driven by
-    /// `UpstreamResolver::spawn_finalized`, a one-shot spawned pull re-armed only
-    /// by the marshal's `try_repair_gaps`, which runs per STORED finalization — so
-    /// withholding the answer removes the event that would ask for it again, and a
-    /// node that stores nothing never asks again (journal §0(6)(б), Д-72; measured
-    /// as the Д3 precondition's node 3 never fetching another height after its
-    /// landing). The pair still meets the marshal's own `verify_delivered` below.
+    /// the same drop.
     ///
-    /// Falsifier: a `false`; a marshal call; an UNRESOLVED waiter.
+    /// WHAT THIS TEST PROVED BEFORE. It was
+    /// `an_out_of_window_by_height_answer_is_passed_on_unauthenticated` and it
+    /// pinned Д-72: `UpstreamResolver::spawn_finalized` is re-armed only by the
+    /// marshal's `try_repair_gaps`, which runs per STORED finalization, so
+    /// withholding the answer was said to remove the event that would ask again.
+    /// Pass Б1 added a second driver that does not depend on storing anything: the
+    /// executor's frozen-tip probe names `Finalized{last(T+1)}` on every frozen tick
+    /// (`executor::probe_frontier`). The assertion is inverted with it.
+    ///
+    /// Falsifier: a `false`; a marshal call; a waiter that RECEIVES the answer.
     #[test]
-    fn an_out_of_window_by_height_answer_is_passed_on_unauthenticated() {
+    fn an_out_of_window_by_height_answer_is_dropped_without_punishing_the_peer() {
         deterministic::Runner::default().start(|ctx| async move {
             let f = fixture(1);
             let height = 9 * EPOCH_LEN + 4;
@@ -1194,8 +1198,8 @@ mod tests {
             );
             assert!(marshal.calls().is_empty(), "the marshal was driven");
             assert!(
-                rx.await.is_ok(),
-                "the answer was withheld — the by-height path has no other retry driver"
+                rx.await.is_err(),
+                "the answer reached the caller — an unauthenticatable certificate was admitted"
             );
         });
     }
@@ -1203,11 +1207,14 @@ mod tests {
     /// (д) The epoch is inside the window but this node's anchor has not reached
     /// its commit height — `CommitteeError::NotReadable`. Same verdict as (г) and
     /// for the same reason: this is a statement about THIS node, not about the
-    /// peer, and withholding it would strand the fetch.
+    /// peer — and the answer is dropped all the same, because
+    /// an unchecked 2f+1 claim is not admissible whatever the reason it is
+    /// unchecked. (Was `an_unreadable_committee_passes_the_answer_on_without_
+    /// punishing_the_peer`, whose last assert was `rx.await.is_ok()`.)
     ///
-    /// Falsifier: a `false`; a marshal call; an unresolved waiter.
+    /// Falsifier: a `false`; a marshal call; a waiter that RECEIVES the answer.
     #[test]
-    fn an_unreadable_committee_passes_the_answer_on_without_punishing_the_peer() {
+    fn an_unreadable_committee_is_dropped_without_punishing_the_peer() {
         deterministic::Runner::default().start(|ctx| async move {
             let f = fixture(1);
             let verifier_f = fixture(1);
@@ -1232,7 +1239,10 @@ mod tests {
                 "an unreadable committee must not cost the peer the channel"
             );
             assert!(marshal.calls().is_empty(), "the marshal was driven");
-            assert!(rx.await.is_ok(), "the answer was withheld");
+            assert!(
+                rx.await.is_err(),
+                "the answer reached the caller — an unauthenticatable certificate was admitted"
+            );
         });
     }
 
