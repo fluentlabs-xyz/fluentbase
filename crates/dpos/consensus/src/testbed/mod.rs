@@ -84,6 +84,10 @@
 #[cfg(feature = "dpos-devnet-byzantine")]
 mod byzantine_roles;
 mod capture;
+/// Э5 5.0а — the stand's cert-inlet tests. A file of their own rather than more
+/// of `tests.rs`: that file is the Э5 5.1 work surface, and the two lines run in
+/// parallel over one tree.
+mod cert_inlet_tests;
 mod committee_tests;
 mod fakes;
 mod preconditions;
