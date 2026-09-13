@@ -59,7 +59,8 @@
 //!
 //! # A pulled artifact enters the write-back, it does not just land in the store
 //!
-//! Filing an artifact answers the `PK_epoch` rungs and lets this node serve peers,
+//! Filing an artifact answers every `PK_epoch` read ([`KeyIndex`]) and lets this
+//! node serve peers,
 //! and neither of those reaches
 //! [`DkgActor::on_artifact`](crate::beacon::actor::DkgActor::on_artifact) — that is
 //! fed by the agreement write-back alone. So on a FIRST insert the seam hands the
@@ -1251,7 +1252,7 @@ where
 ///
 /// The `DkgActor` adopts a pinned dealer-log set from exactly ONE place: the
 /// artifacts channel a LIVE agreement instance feeds. Every other reader of this
-/// store — the two `PK_epoch` key rungs, the pull seam's serve path — reads it to
+/// store — [`KeyIndex`]'s key reads, the pull seam's serve path — reads it to
 /// answer a key question, and none of them reaches
 /// [`crate::beacon::actor::DkgActor::on_artifact`]. So a member of
 /// `committee[E+1]` that restarts after adopting an artifact but before
@@ -1600,7 +1601,7 @@ impl ArtifactBridge {
     /// Hand a newly-pulled artifact to the agreement write-back, which is the only
     /// route from this seam to the `DkgActor`.
     ///
-    /// Without it a pulled artifact answers the `PK_epoch` rungs and serves peers
+    /// Without it a pulled artifact answers every `PK_epoch` read and serves peers
     /// while the node stays permanently SHARELESS for the epoch: `on_artifact` is
     /// reached from the write-back alone, so nothing adopts the pinned set and
     /// nothing finalizes over it until `drive_recompute` heals — after the chain
@@ -2441,7 +2442,7 @@ mod tests {
     /// A pulled artifact must reach the agreement write-back, and reach it exactly
     /// once.
     ///
-    /// The store answers the `PK_epoch` rungs and serves peers, but nothing that
+    /// The store answers every `PK_epoch` read and serves peers, but nothing that
     /// reads it reaches `DkgActor::on_artifact` — so without this push a node whose
     /// own instance died mid-agreement can verify the epoch key it pulled and still
     /// never derive its share for that epoch.

@@ -13,12 +13,23 @@
 //!   Simplex behaviour to the Fluent Reth execution layer.
 
 /// Trailing epochs retained for cross-epoch certificate verification: the BLS
-/// schemes in [`outer::EpochSchemeProvider`], and the DERIVED tiers of the
-/// beacon's cross-epoch key store, which prunes to the SAME window because a
-/// key is only ever read to verify a certificate a retained scheme covers.
+/// schemes in [`outer::EpochSchemeProvider`], and — because a key is only ever
+/// read to verify a certificate a retained scheme covers — every beacon window
+/// that has to reach as far back as those schemes do.
 ///
-/// Crate-level because it is one policy with two enforcers on opposite sides of
-/// the randomness surface. Defining it in either of them would make that one
+/// The beacon's DERIVED key tiers, which this used to name, are deleted (П-3): the
+/// artifact store owns `PK_epoch` and has NO retention at all, deliberately (see
+/// `beacon::artifact`'s module doc — on a long-stable committee the OLDEST record
+/// is the valuable one, so any epoch-measured window would drop it first). What
+/// does measure itself against this number is the recompute-heal and DKG-journal
+/// window (`beacon::JOURNAL_RETENTION_EPOCHS`, one alias of this value), the
+/// mint-artifact acquisition window, the σ quarantine/terminal window, and the
+/// committee module's read window — and the last two of those are coupled: the
+/// acquisition asks for exactly the epochs the committee module can still answer a
+/// `changed` bit for.
+///
+/// Crate-level because it is one policy with enforcers on opposite sides of the
+/// randomness surface. Defining it in either of them would make that one
 /// import the other, which is exactly the coupling the surface exists to remove.
 ///
 /// (Marshal backfill / catch-up register epochs in order, so older schemes are

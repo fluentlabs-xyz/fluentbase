@@ -1917,9 +1917,11 @@ mod tests {
 /// key the network attested" two possible values of one entry. **The value gate**
 /// then compared the two and demoted on a mismatch. With [`KeyIndex`] the
 /// polynomial this node signs with IS the artifact's, so the comparison has no two
-/// sides: `WithheldReason::KeyDivergence` and its
-/// `dpos_engine_demoted_key_divergence_total` counter are deleted rather than left
-/// unreachable.
+/// sides: `WithheldReason::KeyDivergence` and the
+/// `epoch_engine_demoted_key_divergence_total` counter that watched it are deleted
+/// rather than left unreachable — the counter one pass later than the arm, because
+/// removing the only `inc` site left the family REGISTERED and pinned at zero,
+/// which an operator reads as "this never happens".
 ///
 /// What a member loses by W1's removal: nothing it used to have. Its epoch key is
 /// the artifact its own agreement produced, which is in the store before the

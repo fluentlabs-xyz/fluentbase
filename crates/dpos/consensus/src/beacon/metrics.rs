@@ -34,12 +34,6 @@ pub struct BeaconMetrics {
     /// A per-epoch engine self-demoted to the cert-follow plane because it holds no
     /// local beacon polynomial for the epoch (`NoBeaconPolynomial`).
     pub engine_demoted_no_polynomial: Counter,
-    /// A would-be signer was demoted to verify-only by the promote VALUE-gate:
-    /// its locally-resolved `PK_epoch` differs from the quorum-attested key (the
-    /// agreement artifact's entry). Non-zero = a diverged local key
-    /// reconstruction was caught before it could sign/publish (soak 2026-07-14
-    /// class).
-    pub engine_demoted_key_divergence: Counter,
     /// A would-be signer was demoted to verify-only by the promote SHARE-gate: its
     /// resolved DKG share does not verify against its own sharing. Distinct from
     /// the VALUE gate above, which compares the GROUP key against the network and
@@ -213,12 +207,6 @@ impl BeaconMetrics {
             "epoch_engine_demoted_no_polynomial_total",
             "Per-epoch engines self-demoted to cert-follow for lack of a local beacon polynomial.",
             self.engine_demoted_no_polynomial.clone(),
-        );
-        ctx.register(
-            "epoch_engine_demoted_key_divergence_total",
-            "Would-be signers demoted to verify-only because the locally-resolved PK_epoch \
-             differs from the network-attested key.",
-            self.engine_demoted_key_divergence.clone(),
         );
         ctx.register(
             "epoch_engine_demoted_geometry_unfrozen_total",

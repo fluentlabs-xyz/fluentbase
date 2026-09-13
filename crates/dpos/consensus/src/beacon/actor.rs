@@ -1722,7 +1722,8 @@ where
 
     /// Start a ceremony for `target` (run during the just-entered epoch) when the
     /// committee actually changes; an unchanged committee carries the key forward
-    /// (no ceremony — Phase 5 reuses the prior epoch's `BeaconKey`).
+    /// (no ceremony — nothing is stored or reused: `MintIndex::minted_at(target)`
+    /// resolves to the EARLIER mint and the key comes out of that mint's artifact).
     fn maybe_start(&mut self, target: u64, out: &mut Vec<Outgoing>) {
         // Skip if a ceremony for this epoch is in flight OR already computed (the
         // per-tick retry would otherwise re-deal an epoch whose ceremony finished
@@ -2459,8 +2460,9 @@ where
     /// bootstrap mint) — a stable epoch runs no agreement at all. Asking for a
     /// stable epoch's artifact would be a fetch that can never succeed, re-issued
     /// every `PULL_MIN_INTERVAL` for the epoch's whole life, on every node. The key
-    /// in force at a stable epoch is the mint's, and the ladder's own
-    /// `chain_key_epoch` walk is what addresses it once the artifact is local; what
+    /// in force at a stable epoch is the mint's, and
+    /// [`MintIndex::minted_at`](crate::beacon::artifact::MintIndex) is what
+    /// addresses it once the artifact is local; what
     /// this leg owes is the artifact itself, and the epochs that have one are exactly
     /// the epochs `maybe_start` deals at — read here through the same
     /// `changed` bit and the same `DETERMINISTIC_BOOTSTRAP_EPOCH` exception, so the
@@ -8467,7 +8469,7 @@ mod clock_tests {
     /// the epoch, so the startup replay finds nothing; its relaunched instance draws
     /// no votes because every peer's launcher already holds the target in `started`.
     /// The pull is its ONLY source — and the store the pull files into is read by
-    /// the `PK_epoch` rungs and the serve path, none of which reach `on_artifact`.
+    /// every `PK_epoch` read and the serve path, none of which reach `on_artifact`.
     /// Without the seam's push into the write-back the node verifies the epoch key
     /// and stays permanently shareless for the epoch it was elected to sign in.
     #[test]

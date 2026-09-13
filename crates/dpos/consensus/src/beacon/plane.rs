@@ -286,10 +286,10 @@ struct ArtifactSeam {
 }
 
 /// Open the beacon recovery seam: the `commonware_resolver::p2p` engine carrying
-/// both beacon subjects, and the two artifact-backed key rungs built over it.
+/// both beacon subjects, and the artifact pull built over it.
 ///
-/// The engine is built HERE rather than at the node's plane site because the two
-/// rungs are the reason it exists: `pull_keys` is a `fetch` on the very mailbox
+/// The engine is built HERE rather than at the node's plane site because the pull
+/// is the reason it exists: `ArtifactPull::pull` is a `fetch` on the very mailbox
 /// `Engine::new` returns, and splitting the two across the crate boundary would
 /// leave a mailbox on one side and the only caller that needs it on the other.
 ///

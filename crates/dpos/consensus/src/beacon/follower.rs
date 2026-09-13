@@ -4,7 +4,7 @@
 //!
 //! # What this closes
 //!
-//! A follower used to run [`super::surface::absent`], whose key rungs answer
+//! A follower used to run [`super::surface::absent`], whose `ensure_key` answers
 //! `None` at both efforts for the life of the process. Every certificate it
 //! ingested therefore took VOTE-ONLY admission: the attributable `2f+1` multisig
 //! quorum was checked, the seed slot was not, so a tampered or cleared seed

@@ -1061,7 +1061,7 @@ pub struct DposLayerConfig<D, XC, A, U> {
     /// (`build_beacon_plane`) and shared across the follower↔signer phase switch.
     /// The
     /// signer engine is a CONSUMER of its shared `ceremony_store` (the per-epoch
-    /// `PK_epoch`/share source) and its artifact ladder rungs, re-uses
+    /// `PK_epoch`/share source) and its artifact store plus pull seam, re-uses
     /// its `oracle` (the single network's peer set) + its already-registered
     /// `beacon_metrics`, and CLONES its 5 `MuxHandle`s + `subscribe()`s the vote
     /// backup to wire the OuterEngine's per-promotion sub-channels — it never
