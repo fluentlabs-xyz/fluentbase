@@ -1406,8 +1406,9 @@ where
     /// same epoch is a no-op. `< required_commitments` valid logs ever settling ⇒
     /// `ready` stays false ⇒ never finalized ⇒ the natural option-A stall (the residual
     /// LIVENESS-only failure, paired with `dkg_ceremony_fail_total` below; a
-    /// forged/divergent `PK_E` is independently caught by the Stage-2 certify hook
-    /// `beacon::certify`, which σ-verifies the recovered seed and Nullifies on
+    /// forged/divergent `PK_E` is independently caught by the certificate verdict
+    /// rule `beacon::surface::certificate_verdict`, which σ-verifies every seed a
+    /// certificate carries under the epoch's attested key and refuses on
     /// mismatch). The Byzantine log-equivocation case (a dealer signing conflicting
     /// logs) is the still-deferred consensus-pinned-QUAL residual
     /// (`dpos_beacon_share_reshare`). The actor is single-threaded (`run`'s `select!`),

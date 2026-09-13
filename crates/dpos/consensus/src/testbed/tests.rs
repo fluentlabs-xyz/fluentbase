@@ -3398,7 +3398,7 @@ fn the_first_three_are_the_committee() -> Committees {
 ///
 /// **What R-008 predicted** (`.dpos-study/REGISTER.md`, R-008): `verify_certificate`
 /// under `SeedCheck::NoKey` accepts any σ, so a follower with no `PK_E` puts the
-/// forged certificate in its archive and quarantines the σ; when the key lands the
+/// forged certificate in its archive and HOLDS the σ; when the key lands the
 /// σ is refused as `Invalid` and dropped, and the archive keeps serving the
 /// forgery to other nodes, which see a data fault and rotate away from the honest
 /// follower. `record_data_fault` is never called, so the follower does not rotate
@@ -3408,8 +3408,10 @@ fn the_first_three_are_the_committee() -> Committees {
 /// the archive poisoning.** Node 0 forged the six certificates 65..70. Nodes 3
 /// and 4 rejected NOTHING (`deliveries_rejected == 0`) and counted the keyless
 /// admission (`dpos_seed_verify_no_key_total` non-zero). Both later obtained
-/// `PK_2` and `promote_epoch` refused exactly the six forged rounds
-/// (`beacon/certify.rs:310-317`), one ERROR line each, six per node — the rounds
+/// `PK_2` and the settle refused exactly the six forged rounds
+/// (`beacon/seed_index.rs::settle_epoch`; the ERROR text was
+/// "quarantined seed does not verify" before row 5.2 renamed the state to
+/// `Pending`), one ERROR line each, six per node — the rounds
 /// are `(2, view h − 63)` for exactly the six forged heights, which is what ties
 /// the refusal back to THIS wrapper's bytes. Neither node ever derived 64..70:
 /// what carried them forward was the production re-jump (EL sync), not the σ.
@@ -3430,10 +3432,20 @@ fn the_first_three_are_the_committee() -> Committees {
 /// certificate was admitted some other way — is pinned by three observations
 /// together.** The epoch-2 oracle WAS attached on the follower: the two live
 /// callers of `SeedOracle::verify_seed` are `CombinedScheme::verify_certificate`
-/// and `VerifiedSeed::check`, and the two implementations that bump
-/// `dpos_seed_verify_no_key_total` are `BeaconOracle` and `KeyOnlyOracle`
-/// (`beacon/oracle.rs`) — of which this stand can only build the first, since
-/// nothing here constructs a `--cert-follow` `FollowerRandomness`. Nothing was
+/// and `VerifiedSeed::check`, and since row 5.2 folded the follower's provider
+/// into `LiveBeacon` there is ONE implementation that bumps
+/// `dpos_seed_verify_no_key_total` — `BeaconOracle` (`beacon/oracle.rs`) — which
+/// is the one this stand builds.
+///
+/// **What row 5.2 did NOT change here, said out loud.** The refusal is still one
+/// ERROR line per refused ROUND, and it has to be: the per-EPOCH latch bounds the
+/// SYNCHRONOUS refusal, which is judged per certificate (~1/s for the life of the
+/// epoch), while the settle judges each held round exactly once and then drops it.
+/// This test's `refused_heights == forged_sorted` equality rests on that, and it
+/// is why the two refusal lines are different lines. What 5.2 DID add is a
+/// consumer for the machine-readable half (`DataFault` ⇒ the inlet's rotation),
+/// which these nodes do not run — `cfg.cert_inlet` is unset here, so nothing takes
+/// the `faults()` receiver and nothing is queued behind it. Nothing was
 /// rejected at the resolver (`deliveries_rejected == 0`). And the follower later
 /// SERVED those very certificates on — a certificate the marshal refused would not
 /// be in its archive to serve; the seed slot is checked on EVERY certificate
@@ -3581,7 +3593,7 @@ fn a_forged_seed_slot_is_admitted_with_no_key_and_refused_when_the_key_lands() {
                 .unwrap_or(0.0)
         })
         .sum();
-    let refusals = out.logs_containing("quarantined seed does not verify");
+    let refusals = out.logs_containing("held seed does not verify");
     let branch = if rejected > 0 {
         "(b) NOT reproduced — a follower rejected the forged certificate outright"
     } else if refusals.is_empty() {
@@ -3623,7 +3635,7 @@ fn a_forged_seed_slot_is_admitted_with_no_key_and_refused_when_the_key_lands() {
     // The ONLY ERROR lines this run may carry are the promote refusals.
     for line in out.errors() {
         assert!(
-            line.text.contains("quarantined seed does not verify"),
+            line.text.contains("held seed does not verify"),
             "unexpected ERROR line: {line:?}"
         );
     }

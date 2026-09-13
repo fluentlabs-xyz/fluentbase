@@ -26,7 +26,7 @@
 //! over the ONE relationship a follower has — its cert upstream — and that route
 //! now exists as `CertUpstream::get_epoch_artifact` over the `consensus`
 //! namespace's `getEpochArtifact` (FLU-1167). It is a SECOND seam, deliberately
-//! separate from this one, built in [`crate::beacon::follower`]: same artifact,
+//! separate from this one, built in [`crate::beacon::plane::build_follower`]: same artifact,
 //! same [`verify_artifact_for_epoch`] check against `committee[minted_at]`, a
 //! different transport. So a follower's cert-inlet leaves vote-only admission
 //! when the epoch's artifact arrives, not when the process exits. See
@@ -430,14 +430,15 @@ pub struct ArtifactStore {
     /// THE EDGE THAT USED TO BE `BeaconKeys::subscribe`, moved here with the fact
     /// (П-3): "a key this node could not resolve became resolvable" now means
     /// "an artifact landed", because the artifact is the only thing a key comes
-    /// from. Its two consumers are the quarantined-σ promoter and the
-    /// `KeyAvailable` event bridge.
+    /// from. Its ONE consumer on the validator plane is the `KeyAvailable` event
+    /// bridge, which settles the held σ before it publishes; the follower's fetch
+    /// task is the other class's.
     ///
     /// PER CONSUMER, never a shared handle, and the reason is the one
     /// `beacon::keys`' module header gave for the store it replaces: `notify_one`
     /// wakes exactly ONE waiter, so two consumers sharing a handle silently
     /// swallow each other's wake-ups — and each loss here is a silent degrade (an
-    /// epoch left vote-only, or a σ that never leaves quarantine).
+    /// epoch left vote-only, or a σ that is never settled).
     listeners: Arc<Mutex<Vec<Arc<tokio::sync::Notify>>>>,
 }
 
@@ -2163,7 +2164,8 @@ mod tests {
     ///    still bounds growth. GONE AS A CLASS, not moved: W1, W3, `Carried` and the
     ///    three-tier `BeaconKeys` are deleted, so there is no derived tier left to
     ///    prune. What is still prunable and still pruned is the σ half
-    ///    (`FollowerRandomness::retain_from`) and this node's own shares
+    ///    (`seed_index::evict`, both node classes since row 5.2 folded the
+    ///    follower's provider into `LiveBeacon`) and this node's own shares
     ///    (`actor::ceremony_retain_floor`).
     /// 2. *The attested tier at the mint epoch is EXEMPT from the window, and
     ///    survives a frontier ten windows above it.* CARRIED HERE, and it is the
@@ -2242,7 +2244,7 @@ mod tests {
 
             // (1) EVERY epoch from the mint to the far frontier is minted by the
             // bootstrap epoch — resolved one epoch at a time, as the live callers do
-            // (one `observe_epoch` per epoch entered).
+            // (one resolve per epoch entered).
             for epoch in BOOTSTRAP..=frontier {
                 assert_eq!(
                     keys.minted_at(epoch),

@@ -21,7 +21,7 @@
 //!
 //! Every submodule below is PRIVATE, so the lists in this file are the whole of
 //! the module's front door and the compiler is what enforces it: a path like
-//! `beacon::certify::SeedStore` from any other file does not resolve. A grep for
+//! `beacon::seed_index::SeedIndex` from any other file does not resolve. A grep for
 //! `beacon::` is no longer the way to audit the boundary — these three lists are.
 //!
 //! `pub use` — what leaves the module: the [`Beacon`] trait and its vocabulary
@@ -33,17 +33,29 @@
 //! a follower, the one route it has to fetch an artifact over
 //! ([`ArtifactFetch`]).
 //!
-//! Four of the vocabulary names — [`WithheldReason`], [`PinEffort`],
-//! [`Observed`], [`DataFault`] — are here because a signature above names them,
-//! not because anything outside reads them yet: the first two are fields of
-//! [`ShareProbe`]/`ensure_key`, and the last two are the return types of
-//! [`Beacon::observe_certificate`] and [`Beacon::faults`]. PLAN rows 5.1-5.2 give
-//! the last two their readers.
+//! TWO of the vocabulary names — [`WithheldReason`], [`PinEffort`] — are here
+//! because a signature above names them, not because anything outside reads them
+//! yet: both are fields of [`ShareProbe`]/`ensure_key`.
+//!
+//! The other two are READ, and by production. [`Observed`], the verdict of
+//! [`Beacon::observe_certificate`], is branched on at three production sites plus
+//! the crash-survivor replay: the notarization door decides whether to speculate
+//! at all (`spec_exec.rs:123`), the live-stream cert inlet turns a `Refused` into
+//! a counted data fault (`cert_inlet.rs:733-736`), the by-height door
+//! (`cert_inlet::UpstreamResolver`) makes it a loud witness with no lever
+//! (`cert_inlet.rs:3030-3032`), and the replay's `seed_via_beacon` maps all four
+//! variants onto its `CertSeed` answer (`dpos.rs:750-758`). [`DataFault`], the
+//! item of [`Beacon::faults`], is the inlet's late-verdict charge: it holds the
+//! receiver (`cert_inlet.rs:406`, taken at `:472`) and drains it into the
+//! rotate judgement on every certificate (`drain_late_verdicts`,
+//! `cert_inlet.rs:562`, `:847`).
 //!
 //! On NEITHER list, and deliberately: how the epoch key is agreed, where
 //! the artifact is stored, how a share is derived, how a peer is served, and the
-//! module-internal [`surface::Randomness`] trait the two PRODUCTION
-//! implementations still speak while the internals move
+//! module-internal [`surface::Randomness`] trait, which by now has exactly ONE
+//! production implementation left — `impl Randomness for LiveBeacon`
+//! (`surface.rs:2194`), the single hit of `git grep 'impl Randomness for'
+//! -- crates` — and which stays a trait while the internals move
 //! (`.dpos-study/PLAN.md` rows 5.1-5.4). The testbed's own implementations do not
 //! speak it: they implement [`Beacon`] directly, so the trait is the one
 //! substitution seam and `Randomness` is `pub(super)`.
@@ -56,7 +68,6 @@
 mod actor;
 mod artifact;
 mod ceremony;
-mod certify;
 mod confirmations;
 mod dkg_agree;
 mod dkg_engine;
@@ -67,7 +78,6 @@ mod dkg_msg;
 #[cfg(test)]
 mod dkg_oracle;
 mod dkg_transport;
-mod follower;
 mod log_resolver;
 mod log_store;
 mod metrics;
@@ -75,6 +85,7 @@ mod oracle;
 mod outcome;
 mod plane;
 mod seed;
+mod seed_index;
 mod seed_journal;
 mod share_state;
 mod surface;
@@ -125,8 +136,8 @@ mod wire;
 /// ONE window with the scheme registry's, and the comment above says why.
 const JOURNAL_RETENTION_EPOCHS: u64 = crate::SCHEME_RETENTION_EPOCHS as u64;
 
-pub use follower::{build_follower, ArtifactFetch, FollowerInputs};
 pub use plane::{build, CommitteeReads, Tasks, ValidatorInputs};
+pub use plane::{build_follower, ArtifactFetch, FollowerInputs};
 pub use seed::{constant_fallback_seed, prev_randao_from_seed, witness_fallback_seed, Seed};
 pub use surface::{
     Beacon, BeaconEvent, DataFault, Observed, ObservedCertificate, PinEffort, ShareProbe,
@@ -143,7 +154,7 @@ pub(crate) use surface::absent_unregistered;
 ///
 /// It exists because the fixtures of `executor`, `epoch_manager`, `cert_inlet`,
 /// `dpos`, `application`, `slasher` and the testbed build their beacons out of
-/// the REAL rungs (a real [`certify::SeedStore`], a real
+/// the REAL rungs (a real [`seed_index::SeedIndex`], a real
 /// [`artifact::KeyIndex`] over a real [`artifact::ArtifactStore`], the shipped
 /// [`surface::LiveBeacon`]) rather than out of stubs that agree with
 /// them today. Those tests live in the same FILES as the production code they
@@ -160,12 +171,24 @@ pub(crate) mod testing {
         artifact_with_key, decode_artifact, AcquireArtifact, AcquireMint, ArtifactStore,
         MintFixture,
     };
-    pub(crate) use super::certify::SeedStore;
     pub(crate) use super::metrics::BeaconMetrics;
     pub(crate) use super::outcome::{encode_outcome, group_public_key, parse_outcome, DkgOutcome};
+    /// Row 5.2 renamed this type (`SeedStore` → [`seed_index::SeedIndex`]) and
+    /// folded the quarantine into it as a state. The OLD NAME survives as an alias
+    /// HERE and nowhere else, because `epoch_manager.rs`'s test module names it
+    /// (`epoch_manager.rs:2076`, `:2080`, `:2129`, `:2836`, `:2848`) and that file
+    /// is outside row 5.2's write list. Dropping the alias is one rename in that
+    /// file.
+    pub(crate) use super::seed_index::SeedIndex as SeedStore;
     pub(crate) use super::surface::testing::Canned;
+    /// `keyless_index` is row 5.2's replacement for the deleted `for_seeds`: an
+    /// empty [`super::artifact::KeyIndex`], so a fixture can build a real
+    /// [`super::surface::LiveBeacon`] over a real [`super::seed_index::SeedIndex`]
+    /// whose
+    /// every epoch answers `NoKey`. It is a CONSTRUCTOR on the test boundary, not
+    /// a rename of anything above — unlike the `SeedStore` alias above it.
     pub(crate) use super::surface::{
-        absent, for_seeds, DealtOracle, LiveBeacon, LiveBeaconConfig, StaticRandomness,
+        absent, keyless_index, DealtOracle, LiveBeacon, LiveBeaconConfig, StaticRandomness,
     };
     pub(crate) use super::verified_seed::{PkOracle, VerifiedSeed};
     /// The byzantine roles' tier: only `testbed::byzantine_roles` names these, so

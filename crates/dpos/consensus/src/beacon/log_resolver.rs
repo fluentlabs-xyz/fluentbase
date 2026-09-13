@@ -125,10 +125,29 @@ impl BeaconFetchKey {
     /// `OrderBlock`'s retired `beacon_flags` bits take (§13 rule 39).
     ///
     /// It carried `Seed { from, to }`, a by-round σ request. Nothing asks any
-    /// more: σ rides the certificate, `capture_certificate_seed` files it at the
-    /// certificate's own round on BOTH cert doors, and `SeedStore::insert` writes
-    /// the per-epoch terminal pin from that same call — so a node that pulls a
-    /// boundary finalization obtains exactly the σ this request existed to fetch.
+    /// more: σ rides the certificate, and `Beacon::observe_certificate` files it
+    /// at the certificate's own round on EVERY cert door — the notarization door,
+    /// the live-stream inlet, the by-height resolver and the crash-survivor
+    /// replay all hand their certificate to that one operation
+    /// (`beacon/seed_index.rs:1-8`) — so a node that pulls a boundary
+    /// finalization obtains exactly the σ this request existed to fetch.
+    ///
+    /// THAT CONCLUSION NOW RESTS ON A WEAKER FOOT, and it is named here rather
+    /// than quietly inherited. It used to rest on a WRITE: the same call that
+    /// filed σ wrote a SECOND copy of the epoch's highest round into a dedicated
+    /// `terminal` map (`SeedStore::insert` → `pin_terminal`), so the boundary
+    /// reader had its own storage and the σ-per-round count could not touch it.
+    /// There is no second copy. The filed σ lives in the one `round → σ` map and
+    /// survives only because the EVICTION RULE spares it:
+    /// `seed_index.rs::oldest_evictable` skips the highest VERIFIED round held
+    /// for each epoch inside the trailing `SCHEME_RETENTION_EPOCHS` window. A
+    /// negative property (nothing removes it) where there used to be a positive
+    /// one (something wrote it somewhere else), under one shared budget instead
+    /// of two. The WINDOW is not the new part — `retain_terminal_from` took the
+    /// same `SCHEME_RETENTION_EPOCHS` edge — so anyone reviving a by-round pull
+    /// has to show that the skip rule can lose a boundary σ the pin would have
+    /// kept, not merely that the window exists.
+    ///
     /// The one caller it was built for, the propose-side witness embed, is gone
     /// with the field, and it could not have helped the node it was meant to
     /// save: `build_proposal` runs only inside an already-spawned engine, and the

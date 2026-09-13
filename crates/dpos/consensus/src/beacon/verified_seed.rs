@@ -38,7 +38,7 @@ impl VerifiedSeed {
     /// [`SeedCheck::Invalid`] is a peer serving a σ that does not verify against
     /// an attested key — a real witness, and loud. [`SeedCheck::NoKey`] is a
     /// statement about US, not about the network: the epoch key is not resolvable
-    /// here yet, the value goes to quarantine, and it is re-checked when the key
+    /// here yet, the value is HELD (`Pending`), and it is re-checked when the key
     /// lands.
     pub fn check(
         oracle: &dyn SeedOracle,
@@ -60,8 +60,8 @@ impl VerifiedSeed {
     /// silent regression the type is meant to prevent:
     ///
     /// 1. the persist channel, whose sender is created inside
-    ///    [`SeedStore::with_persistence`](crate::beacon::certify::SeedStore::with_persistence)
-    ///    and therefore cannot exist outside a store whose only writer takes a
+    ///    [`SeedIndex::with_persistence`](crate::beacon::seed_index::SeedIndex::with_persistence)
+    ///    and therefore cannot exist outside an index whose only writer takes a
     ///    `VerifiedSeed`;
     /// 2. [`SeedJournal::append`](crate::beacon::seed_journal::SeedJournal::append);
     /// 3. [`spawn_writer`](crate::beacon::seed_journal::spawn_writer), which owns

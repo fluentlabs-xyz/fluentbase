@@ -96,7 +96,7 @@ fn drop_the_last_two_from_epoch_two() -> Committees {
 ///
 /// 1. **Every attempt was a clean ingest.** `ingests` counts certificates handed
 ///    to `CertInlet::ingest`; the tee fires on the LAST line of the clean path
-///    only (`cert_inlet.rs`, after `observe_certificate` + `observe_cert` and
+///    only (`cert_inlet.rs`, after `observe_certificate` and
 ///    after the three fault arms have returned), so `tee_heights.len() ==
 ///    ingests` says the verify gate passed every time. With `rotations == 0` and
 ///    `defers == 0` beside it, all three fault arms and the deferral arm are
@@ -215,6 +215,24 @@ fn an_inlet_on_a_healthy_member_verifies_every_height_it_is_fed_and_tees_it() {
 /// inlet's BLS verify, counts as a DATA fault, and after
 /// `MAX_UPSTREAM_FAULTS = 3` consecutive ones the inlet ROTATES away from the
 /// upstream.
+///
+/// **WHICH ARM THIS IS, after row 5.2 gave the σ verdict readers.** The verify is
+/// still the gate here and the cause is still "BLS verify FAILED" — the mechanism
+/// did not move and the numbers did not change. The reason is a wiring fact worth
+/// stating, because the plan predicted otherwise: the scheme this inlet verifies
+/// with is built by `committee::epoch_verifier`, which passes
+/// `Beacon::oracle_for(epoch)` into `build_verifier`, so a certificate whose σ
+/// slot was swapped is refused by `verify_certificate` itself and never reaches
+/// `observe_certificate`. Row 5.2's synchronous `Refused` reader in
+/// `CertInlet::ingest` covers the arm this fixture cannot produce — a verifier
+/// built WITHOUT an oracle (the shape `plane_upstream::verifier_for` builds) — and
+/// is pinned by the unit
+/// `cert_inlet::tests::a_forged_seed_under_an_oracle_less_verifier_is_refused_at_the_ingress`.
+/// The LATE verdict (σ admitted keyless, refused when the key lands ⇒ `DataFault`
+/// ⇒ rotation) is the OTHER half of R-008 and needs a keyless victim: it is pinned
+/// by `cert_inlet::tests::a_late_refusal_costs_the_upstream_a_rotation_once_the_key_lands`,
+/// and its stand half is `tests::a_forged_seed_slot_is_admitted_with_no_key_and_refused_when_the_key_lands`,
+/// whose nodes run no inlet.
 ///
 /// **Why the victim is a committee member.** The forged window is the first seven
 /// heights of epoch 2 (`byzantine_roles::FORGE_WINDOW = 64..=70`), and the

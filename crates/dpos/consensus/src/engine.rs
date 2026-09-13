@@ -41,7 +41,7 @@ const FETCH_CONCURRENT: usize = 4;
 /// [`EpochEngine::new`]. It used to be wrapped for a beacon seed-verify at
 /// `certify`; the epoch key no longer rides a block, so there is nothing left to
 /// check there and `Inline`'s own availability gate stands alone
-/// (`beacon::certify` records why).
+/// (`beacon::surface::certificate_verdict` records why).
 type AutomatonFor<E, XC, A> = Inline<E, BlsScheme, FluentApp<XC, A>, OrderBlock, OriginEpocher>;
 
 type ConsensusEngine<E, B, XC, A> = simplex::Engine<

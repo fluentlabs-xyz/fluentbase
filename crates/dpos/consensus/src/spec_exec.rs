@@ -15,14 +15,14 @@
 //! there is no cross-actor race on the speculative state.
 
 use crate::{
-    beacon::{Beacon, ObservedCertificate, Seed},
+    beacon::{Beacon, Observed, ObservedCertificate, Seed},
     executor,
     executor::{Command, Notarized},
 };
 use commonware_consensus::{simplex::types::Activity, Reporter};
 use fluentbase_bls::Scheme as BlsScheme;
 use std::sync::Arc;
-use tracing::{error, Span};
+use tracing::{error, warn, Span};
 
 type Digest = crate::digest::Digest;
 
@@ -89,13 +89,46 @@ impl Reporter for Mailbox {
         // through the epoch's own oracle. One pairing per round is the cheaper
         // half of that trade against a constructor that skipped the check for the
         // local path and became the one door a later writer reached for.
-        let _observed = self
+        let observed = self
             .beacon
             .observe_certificate(ObservedCertificate::Notarization(n.proposal.round, &n));
-        // PLAN row 5.2 wires the verdict: `Pending` becomes `ReplaySeed::Defer`
-        // on the crash-replay path and `Refused` an inlet data fault. Until then
-        // nobody reads it here — named rather than `_` so the three sites that
-        // owe 5.2 a reader are greppable.
+        // THE VERDICT, READ. A σ the beacon would not FILE is a σ this node may not
+        // SPECULATE on, and the two outcomes that say so are both about the value
+        // rather than about the door:
+        //
+        //  - `Refused` — recovered from partials this node had already verified and
+        //    still failing the epoch's own group key. The verdict logs it; there is
+        //    nothing here worth executing against.
+        //  - `Pending` — no `PK_E` resolvable here, so the certificate took
+        //    vote-only admission and its σ slot was never checked. Speculating on it
+        //    is the seed-blind divergence class: `prev_randao` rides the state root,
+        //    so a wrong σ is a fork rather than a wasted attempt.
+        //
+        // SKIPPING THE SPECULATION IS THE WHOLE CONSEQUENCE, and it costs no
+        // liveness because speculation is best-effort by construction: the height is
+        // derived from the FINALIZED tier off the seed index, and a σ filed
+        // `Pending` here is settled on the `KeyAvailable` edge — which wakes the
+        // executor's own arm. Blanking the seed instead would be the defect: a
+        // beacon-active height derived with `None` re-rolls `prev_randao`.
+        //
+        // THE SKIP ALSO DROPS THIS ROUND'S `SpecNotarized` MESSAGE, and with it
+        // the `try_drain_parked` the executor runs after `spec_execute`
+        // (`executor.rs:2478`). An out-of-order notarization parked below this
+        // round therefore waits for the next round that DOES speculate — a delay,
+        // not a park: the drain has two other drivers (`executor.rs:2920`,
+        // `:3892`), both on delivery paths this skip does not touch (review C-12).
+        //
+        // `Inactive` is the ordinary pre-beacon answer and must NOT skip — those
+        // epochs legitimately derive from `None`.
+        if matches!(observed, Observed::Refused | Observed::Pending) {
+            warn!(
+                round = %n.proposal.round,
+                ?observed,
+                "beacon will not file this round's σ; skipping speculation (the finalized tier \
+                 derives the height once the σ is filed)"
+            );
+            return;
+        }
         let msg = executor::Message {
             cause: Span::current(),
             command: Command::SpecNotarized(Box::new(Notarized {

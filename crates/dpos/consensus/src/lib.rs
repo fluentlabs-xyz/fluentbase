@@ -23,7 +23,7 @@
 /// is the valuable one, so any epoch-measured window would drop it first). What
 /// does measure itself against this number is the recompute-heal and DKG-journal
 /// window (`beacon::JOURNAL_RETENTION_EPOCHS`, one alias of this value), the
-/// mint-artifact acquisition window, the σ quarantine/terminal window, and the
+/// mint-artifact acquisition window, the seed index's terminal-round protection, and the
 /// committee module's read window — and the last two of those are coupled: the
 /// acquisition asks for exactly the epochs the committee module can still answer a
 /// `changed` bit for.

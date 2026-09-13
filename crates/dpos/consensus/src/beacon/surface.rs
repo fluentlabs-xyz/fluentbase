@@ -34,7 +34,7 @@ use fluentbase_staking_reader::reader::ValidatorSetSnapshot;
 use futures::future::BoxFuture;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    Arc, Mutex,
+    Arc, Mutex, OnceLock,
 };
 use tokio::sync::{broadcast, mpsc, watch};
 use tracing::{error, warn};
@@ -113,9 +113,10 @@ pub enum PinEffort {
 /// derived, how a peer is served, and every handle those need, all stay behind
 /// [`super::build`]'s [`Tasks`](super::Tasks).
 ///
-/// The PRODUCTION implementations (`LiveBeacon`, `FollowerRandomness`) reach it
-/// through a blanket impl over [`Randomness`], the module-internal trait they
-/// still speak while the internals are moved epoch by epoch
+/// The ONE PRODUCTION implementation ([`LiveBeacon`], which row 5.2 made both
+/// node classes share) reaches it through a blanket impl over [`Randomness`], the
+/// module-internal trait it still speaks while the internals are moved epoch by
+/// epoch
 /// (`.dpos-study/PLAN.md` rows 5.1-5.4). The test implementations do NOT: they
 /// implement this trait directly, so `Randomness` is reachable from nowhere but
 /// `beacon/` and shrinks with the rows that delete it. The one rule they share is
@@ -129,10 +130,29 @@ pub trait Beacon: Send + Sync {
     /// never a substitute round.
     fn seed(&self, round: Round) -> Option<Seed>;
 
-    /// σ of `round`, answered ONLY when `round` is this node's pinned terminal
-    /// round for its epoch — the boundary base of the NEXT epoch, which outlives
-    /// the round window [`Self::seed`] reads.
-    fn terminal_seed(&self, round: Round) -> Option<Seed>;
+    /// σ of `round` for the caller that asks ACROSS an epoch boundary: the
+    /// boundary base of the NEXT epoch is σ of `E-1`'s terminal round, up to a
+    /// full epoch old against a window measured in rounds.
+    ///
+    /// The SAME read as [`Self::seed`], and row 5.2 is what made it one: the
+    /// terminal round is kept by an EVICTION RULE inside the index rather than in
+    /// a second map, so there is no second place to look and no pin that could
+    /// answer a round the caller did not name. It survives as its own operation
+    /// only because `epoch_manager.rs:163` names it, and that file is outside row
+    /// 5.2's write list — collapsing the two call sites into `seed` is the last
+    /// step and it belongs to whoever may write that file.
+    ///
+    /// ONE PROPERTY LEFT WITH THE PIN (review C-22): the deleted
+    /// `terminal_seed_at` answered ONLY the pinned round and refused its
+    /// neighbours, so a caller that named the wrong round got nothing. This one
+    /// answers any round it holds. Safety is unaffected because the only caller
+    /// takes the round off the agreed terminal BLOCK (`epoch_manager.rs:159-163`)
+    /// rather than guessing — which is also why the `HEAD` doc already called the
+    /// two forms equivalent by argument. Nothing pins the difference, and nothing
+    /// can once the operation is gone.
+    fn terminal_seed(&self, round: Round) -> Option<Seed> {
+        self.seed(round)
+    }
 
     /// Is randomness mandatory at `epoch`? CONSENSUS-AGREED DATA, not a local
     /// capability: every node of one network must answer identically or the
@@ -166,8 +186,8 @@ pub trait Beacon: Send + Sync {
     /// Take the σ a verified certificate carries and return the verdict HERE.
     ///
     /// One operation instead of the four the ingresses used to compose
-    /// (`oracle_for` + `VerifiedSeed::check` + `record_seed`/`quarantine_seed` +
-    /// `on_invalid_seed`): the verdict rule is the beacon's, and spreading it
+    /// (`oracle_for` + `VerifiedSeed::check` + `record_seed`/`hold_seed` +
+    /// the refusal latch): the verdict rule is the beacon's, and spreading it
     /// over the callers is what let two ingresses judge the same σ differently.
     fn observe_certificate(&self, cert: ObservedCertificate<'_>) -> Observed;
 
@@ -181,16 +201,34 @@ pub trait Beacon: Send + Sync {
     /// The core reconciled `reconciled` while its highest registered epoch is
     /// `entered_frontier`.
     ///
-    /// TRANSITIONAL: row 5.1 took its KEY leg (W3, and the key store it pruned);
-    /// what is left is the two σ windows, and row 5.2 deletes those. It survives
-    /// because the retention it still drives is real.
-    fn observe_epoch(&self, reconciled: Epoch, entered_frontier: Epoch);
+    /// NO LEG LEFT, and that is why the body is a default no-op rather than an
+    /// operation. Row 5.1 took its KEY leg (W3, and the key store it pruned); row
+    /// 5.2 took the two σ windows, because the seed index's retention is now a
+    /// RULE measured from the highest epoch the index itself holds
+    /// (`seed_index::oldest_evictable`) instead of a pair of maps some caller had
+    /// to age out.
+    ///
+    /// It is still ON THE TRAIT only because two files outside row 5.2's write
+    /// list name it — the caller `epoch_manager.rs:1225` and the delegating
+    /// wrapper `testbed/byzantine_roles.rs:400` — so deleting it would be an edit
+    /// to both. Deleting the METHOD is what those two owe; nothing implements it
+    /// any more.
+    fn observe_epoch(&self, _reconciled: Epoch, _entered_frontier: Epoch) {}
 
-    /// The cert-inlet ingested a verified certificate for `epoch`. Transitional
-    /// for the same reason as [`Self::observe_epoch`], and a SECOND observation
-    /// rather than a redundancy: the inlet prunes from its live-upstream
-    /// frontier, the epoch manager from its entered one.
-    fn observe_cert(&self, epoch: u64);
+    /// The cert-inlet ingested a verified certificate for `epoch`.
+    ///
+    /// A no-op for the same reason as [`Self::observe_epoch`], and with one extra
+    /// leg retired rather than merely emptied: the follower's KEY WANT used to
+    /// ride here, one push per certificate. It rides the `Pending` verdict of
+    /// [`Self::observe_certificate`] now, which is both narrower (a want is
+    /// raised for exactly the epoch whose σ could not be checked) and WIDER in
+    /// coverage — the by-height door (`cert_inlet::UpstreamResolver`) never called
+    /// this one, so a follower with no live WS stream used to raise no want at
+    /// all. NO PRODUCTION CALLER is left (review C-10): the last one, in
+    /// `CertInlet::ingest`, was removed with this pass. It is kept on the trait
+    /// only by the delegating wrapper in `testbed/byzantine_roles.rs:404`, which
+    /// row 5.2 may not write; 5.4 deletes both.
+    fn observe_cert(&self, _epoch: u64) {}
 
     /// Wake-ups, not facts: on every one the consumer RE-READS what it needs
     /// through the queries above.
@@ -222,10 +260,10 @@ pub trait Beacon: Send + Sync {
 /// not the σ's provenance, and the difference matters:
 ///
 /// - [`Self::Finalization`] is the door that must not DROP a value it could
-///   re-check later, so a failure there consults key provenance
-///   (`on_invalid_seed`) and may quarantine.
+///   re-check later, so an UNRESOLVABLE key there leaves the σ `Pending` in the
+///   index for the settle to judge when the key lands.
 /// - [`Self::Notarization`] is the speculation door. Its σ never reaches the
-///   served map on a failure, and there is nothing later to re-check it against
+///   served state on a failure, and there is nothing later to re-check it against
 ///   at this round, so a failure is logged and refused outright.
 ///
 /// NOT a provenance claim, checked rather than assumed: commonware reports
@@ -268,8 +306,64 @@ pub enum Observed {
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct DataFault {
     pub epoch: u64,
-    /// How many quarantined rounds of `epoch` failed the re-check.
+    /// How many HELD rounds of `epoch` failed the re-check once the key landed.
     pub refused: usize,
+}
+
+/// The late-`Refused` channel, ONE implementation for every provider that files
+/// one.
+///
+/// Both node classes need it and for the same reason: the verdict on a held σ is
+/// reached long after `observe_certificate` returned, so the only way it can cost
+/// the upstream anything is a channel the inlet drains. The plane had it from row
+/// 5.0; the follower — where a keyless window is the ORDINARY state and most σ
+/// therefore lands `Pending` — had no late half at all until review C-06, and a
+/// second hand-written copy of the same three fields is how the two would drift.
+///
+/// `armed` gates the SEND rather than the receive, so an unread channel cannot
+/// grow: nothing is queued until a consumer has taken the receiver, and
+/// [`Self::take`] hands it out at most once.
+pub(super) struct LateFaults {
+    tx: mpsc::UnboundedSender<DataFault>,
+    rx: Mutex<Option<mpsc::UnboundedReceiver<DataFault>>>,
+    armed: AtomicBool,
+}
+
+impl LateFaults {
+    pub(super) fn new() -> Self {
+        let (tx, rx) = mpsc::unbounded_channel();
+        Self {
+            tx,
+            rx: Mutex::new(Some(rx)),
+            armed: AtomicBool::new(false),
+        }
+    }
+
+    /// File a late `Refused` verdict. Dropped on the floor until a consumer has
+    /// taken the receiver — see [`Beacon::faults`].
+    pub(super) fn report(&self, fault: DataFault) {
+        if !self.armed.load(Ordering::Relaxed) {
+            return;
+        }
+        let _ = self.tx.send(fault);
+    }
+
+    /// The receiver, at MOST once: a second caller gets `None`, which is what
+    /// makes "at most one consumer" a property of the type rather than of the
+    /// current call sites.
+    pub(super) fn take(&self) -> Option<mpsc::UnboundedReceiver<DataFault>> {
+        let taken = self.rx.lock().ok()?.take()?;
+        // Arm only once a consumer exists, so the queue can never grow behind a
+        // receiver nobody reads.
+        self.armed.store(true, Ordering::Relaxed);
+        Some(taken)
+    }
+}
+
+impl Default for LateFaults {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// Which beacon state may have changed. A WAKE-UP: the variant names the class,
@@ -322,7 +416,7 @@ pub(crate) fn certificate_verdict(
     cert: ObservedCertificate<'_>,
     oracle_for: impl FnOnce(u64) -> Option<Arc<dyn SeedOracle>>,
     record: impl FnOnce(VerifiedSeed),
-    quarantine: impl FnOnce(Round, BlsSignature),
+    hold: impl FnOnce(Round, BlsSignature),
     first_refusal: impl FnOnce(u64) -> bool,
 ) -> Observed {
     // `speculation` names the DOOR, never the σ's provenance — see
@@ -349,11 +443,11 @@ pub(crate) fn certificate_verdict(
         // normally holds its own epoch key, but there is a window before the
         // key lands where it does not. Hold the value rather than drop it.
         Err(SeedCheck::NoKey) => {
-            quarantine(round, seed);
+            hold(round, seed);
             Observed::Pending
         }
         Err(check @ SeedCheck::Invalid) if speculation => {
-            // The speculation door. Refused outright rather than quarantined:
+            // The speculation door. Refused outright rather than held:
             // nothing later re-checks a notarization's σ at this round, so a held
             // value would only accumulate. `check` is named in the line because it
             // is the only field that would tell this apart from a THIRD failure
@@ -406,10 +500,6 @@ where
         Randomness::seed_for(self, round)
     }
 
-    fn terminal_seed(&self, round: Round) -> Option<Seed> {
-        Randomness::terminal_seed_at(self, round)
-    }
-
     fn mandatory_at(&self, epoch: u64) -> bool {
         Randomness::mandatory_at(self, epoch)
     }
@@ -440,21 +530,13 @@ where
             cert,
             |epoch| Randomness::oracle_for(self, epoch),
             |verified| self.record_seed(verified),
-            |round, seed| self.quarantine_seed(round, seed),
+            |round, seed| self.hold_seed(round, seed),
             |epoch| self.first_seed_refusal(epoch),
         )
     }
 
     fn artifact_bytes(&self, epoch: u64) -> Option<Vec<u8>> {
         Randomness::artifact_bytes(self, epoch)
-    }
-
-    fn observe_epoch(&self, reconciled: Epoch, entered_frontier: Epoch) {
-        Randomness::observe_epoch(self, reconciled, entered_frontier)
-    }
-
-    fn observe_cert(&self, epoch: u64) {
-        Randomness::observe_cert(self, epoch)
     }
 
     fn subscribe(&self) -> broadcast::Receiver<BeaconEvent> {
@@ -491,12 +573,12 @@ pub(super) trait Randomness: Send + Sync {
     fn record_seed(&self, verified: VerifiedSeed);
 
     /// Hold a σ that arrived from the network for an epoch whose key is not
-    /// resolvable here yet.
+    /// resolvable here yet — the `Pending` state of the index.
     ///
     /// Separate from [`record_seed`](Self::record_seed) by design: the two take
     /// different types because they mean different things, and no caller can
-    /// reach the served map with a value it did not check.
-    fn quarantine_seed(&self, round: Round, seed: BlsSignature);
+    /// reach the SERVED state with a value it did not check.
+    fn hold_seed(&self, round: Round, seed: BlsSignature);
 
     /// Is this the FIRST σ refusal reported for `epoch`? The latch behind the ERROR
     /// line, and all that is left of the provenance question P-3 removed — see
@@ -507,22 +589,6 @@ pub(super) trait Randomness: Send + Sync {
     /// the executor's derive and the crash-replay walk — reads it without an
     /// await.
     fn seed_for(&self, round: Round) -> Option<Seed>;
-
-    /// σ of `round`, answered ONLY when `round` is the round this node pinned as
-    /// its epoch's terminal one.
-    ///
-    /// Separate from [`seed_for`](Self::seed_for) because the ask has a different
-    /// lifetime: `seed_for` reads the trailing `SEED_RETENTION` window, and the
-    /// one legitimate ask that outlives that window is the boundary base for the
-    /// NEXT epoch — σ of E-1's terminal round, up to a full epoch old against a
-    /// window measured in rounds. The pin is what survives eviction for it.
-    ///
-    /// The CALLER names the round, from agreed data; a neighbouring round is a
-    /// MISS, never a substitute. The pin may not be trusted to name the terminal
-    /// round itself — a hard kill between a record and the journal's sync can
-    /// leave it one round low, and a valid σ for the wrong round is
-    /// indistinguishable from the right one to whoever trusts it to name.
-    fn terminal_seed_at(&self, round: Round) -> Option<Seed>;
 
     /// The wake-up publisher this implementation fires, and the ONE fan-out for
     /// all three classes — see [`Beacon::subscribe`], which is what consumers
@@ -594,18 +660,6 @@ pub(super) trait Randomness: Send + Sync {
     /// the variant a vote path or a per-certificate path may call.
     fn ensure_key(&self, epoch: u64, effort: PinEffort) -> BoxFuture<'_, bool>;
 
-    /// The core reconciled `reconciled` while its highest registered epoch is
-    /// `entered_frontier`.
-    fn observe_epoch(&self, reconciled: Epoch, entered_frontier: Epoch);
-
-    /// The cert-inlet ingested a verified certificate for `epoch`.
-    ///
-    /// A SECOND observation and not a redundancy: the inlet prunes from its own
-    /// live-upstream frontier, the epoch manager from its entered frontier, and
-    /// each is the right one for its caller. Collapsing them would make the
-    /// implementation guess.
-    fn observe_cert(&self, epoch: u64);
-
     /// One held artifact's wire bytes. Defaults to "this provider holds no
     /// artifact store" — the plane and the follower override it, every test
     /// provider takes the default.
@@ -627,8 +681,9 @@ pub(super) trait Randomness: Send + Sync {
 /// contract from prose into a type.
 ///
 /// It no longer describes `--cert-follow`: that class carries keys since FLU-1167
-/// and its own `SeedStore` since the follower seed store landed, so it runs
-/// `FollowerRandomness` (`crates/dpos/consensus/src/beacon/follower.rs:394`), not this.
+/// and its own [`super::seed_index::SeedIndex`] since the follower seed store
+/// landed, so it runs the SAME [`LiveBeacon`] a validator does, built by
+/// [`super::plane::build_follower`] over an empty ceremony store — not this.
 /// What is left here is a struct-literal DEFAULT that no consumer observes:
 /// `CertInlet::new` has `with_randomness` called on it before first use on every
 /// production path, and `FluentApp` no longer carries a randomness handle at all
@@ -841,12 +896,6 @@ impl Beacon for StaticRandomness {
         })
     }
 
-    /// No pin to keep: σ is recomputable for any round, so nothing here can age
-    /// out of a window and the terminal round answers like every other one.
-    fn terminal_seed(&self, round: Round) -> Option<Seed> {
-        self.seed(round)
-    }
-
     /// Never withheld: this implementation cannot fail to hold a share.
     fn can_participate(&self, _epoch: Epoch) -> ShareProbe {
         ShareProbe::Ready
@@ -854,7 +903,7 @@ impl Beacon for StaticRandomness {
 
     /// The shared verdict rule over an EMPTY sink: nothing to record, because σ
     /// is recomputable for any round, so there is no memo that could go stale
-    /// and none that has to be fed; nothing to quarantine for the same reason;
+    /// and none that has to be fed; nothing to hold for the same reason;
     /// and no key store to judge provenance with, so a failure proves nothing
     /// and the value is held rather than accused.
     fn observe_certificate(&self, cert: ObservedCertificate<'_>) -> Observed {
@@ -954,16 +1003,17 @@ impl Beacon for StaticRandomness {
         // a derivable key is always already resolvable.
         Box::pin(async move { self.mandatory_at(epoch) })
     }
-
-    fn observe_epoch(&self, _reconciled: Epoch, _entered_frontier: Epoch) {}
-
-    fn observe_cert(&self, _epoch: u64) {}
 }
 
-/// An empty share store, for the entry point below and for every test provider:
-/// none of them carries local DKG material.
-#[cfg(test)]
-fn keyless_ceremony() -> CeremonyStore {
+/// An empty share store: for every test provider, and for the `--cert-follow`
+/// follower, none of which carries local DKG material.
+///
+/// It is the whole of what made the deleted `FollowerRandomness` a second
+/// `Randomness` implementation rather than a configuration: with no share, every
+/// material-bound answer of [`super::oracle::BeaconOracle`] goes through
+/// `with_material`, which returns `None` on an empty store — the same permanent
+/// negatives the deleted `KeyOnlyOracle` returned by type.
+pub(super) fn keyless_ceremony() -> CeremonyStore {
     Arc::new(std::sync::RwLock::new(std::collections::BTreeMap::new()))
 }
 
@@ -973,26 +1023,6 @@ fn keyless_ceremony() -> CeremonyStore {
 #[cfg(test)]
 pub(crate) fn keyless_index() -> KeyIndex {
     super::artifact::key_index_over(ArtifactStore::new(), &[])
-}
-
-/// A provider over a seed store alone, for tests that exercise the executor's
-/// two seed operations against a REAL store rather than canned answers.
-///
-/// It builds the same [`LiveBeacon`] production uses, so a test written against
-/// it is testing the shipped `seed` / `subscribe`, not a stub that happens to
-/// agree with them today.
-#[cfg(test)]
-pub(crate) fn for_seeds(seeds: super::certify::SeedStore) -> Arc<dyn Beacon> {
-    LiveBeacon::build(LiveBeaconConfig {
-        seeds,
-        keys: keyless_index(),
-        ceremony: keyless_ceremony(),
-        acquire: None,
-        metrics: BeaconMetrics::default(),
-        chain_id: 0,
-        artifacts: ArtifactStore::new(),
-        geometry: watch::channel(Some((0, 1))).1,
-    })
 }
 
 /// Holds no store, and that is the honest shape. It carried a `BeaconKeys` whose
@@ -1019,10 +1049,6 @@ impl Beacon for Absent {
     }
 
     fn seed(&self, _round: Round) -> Option<Seed> {
-        None
-    }
-
-    fn terminal_seed(&self, _round: Round) -> Option<Seed> {
         None
     }
 
@@ -1070,11 +1096,6 @@ impl Beacon for Absent {
     fn faults(&self) -> Option<mpsc::UnboundedReceiver<DataFault>> {
         None
     }
-
-    fn observe_epoch(&self, _reconciled: Epoch, _entered_frontier: Epoch) {}
-
-    /// Nothing to prune: there is no store, because nothing could ever fill one.
-    fn observe_cert(&self, _epoch: u64) {}
 }
 
 /// Test provider. One place for every migrated test to get a [`Beacon`],
@@ -1086,7 +1107,7 @@ impl Beacon for Absent {
 #[cfg(test)]
 pub(crate) mod testing {
     use super::*;
-    use crate::beacon::{artifact::MintFixture, oracle::KeyOnlyOracle};
+    use crate::beacon::artifact::MintFixture;
     use std::{collections::BTreeMap, sync::Mutex};
 
     pub(crate) struct Canned {
@@ -1099,7 +1120,7 @@ pub(crate) mod testing {
         events: broadcast::Sender<BeaconEvent>,
         /// A real store, so a test can assert WHERE a captured σ landed —
         /// served or held — instead of only that the call happened.
-        store: crate::beacon::certify::SeedStore,
+        store: crate::beacon::seed_index::SeedIndex,
         /// Must match the namespace the fixture signed under, or every σ this
         /// provider is asked about is `Invalid` rather than `Valid`.
         seed_namespace: Vec<u8>,
@@ -1113,7 +1134,7 @@ pub(crate) mod testing {
                 bootstrap: super::super::actor::DETERMINISTIC_BOOTSTRAP_EPOCH,
                 efforts: Mutex::new(Vec::new()),
                 events: idle_events(),
-                store: crate::beacon::certify::SeedStore::new(),
+                store: crate::beacon::seed_index::SeedIndex::new(),
                 seed_namespace: Vec::new(),
             }
         }
@@ -1135,7 +1156,7 @@ pub(crate) mod testing {
             self
         }
 
-        pub(crate) fn store(&self) -> &crate::beacon::certify::SeedStore {
+        pub(crate) fn store(&self) -> &crate::beacon::seed_index::SeedIndex {
             &self.store
         }
 
@@ -1154,10 +1175,12 @@ pub(crate) mod testing {
             self.seeds.get(&round).cloned()
         }
 
-        /// Reads the real `store` — the map [`Beacon::observe_certificate`]
-        /// writes — so a test that records a σ and asks for the pin gets it back.
+        /// Reads the real `store` — the index [`Beacon::observe_certificate`]
+        /// writes — so a test that records a σ and asks across a boundary gets it
+        /// back. NOT the default body: this fixture's `seed` answers from its own
+        /// CANNED map, and the two are deliberately different sources.
         fn terminal_seed(&self, round: Round) -> Option<Seed> {
-            self.store.terminal_at(round).map(|signature| Seed {
+            self.store.seed(round).map(|signature| Seed {
                 target_round: round,
                 signature,
             })
@@ -1180,12 +1203,20 @@ pub(crate) mod testing {
             SignerVerdict::Withheld(WithheldReason::NoUsableShare)
         }
 
+        /// The PRODUCTION oracle over an empty ceremony store — the follower's
+        /// exact shape since row 5.2 folded `KeyOnlyOracle` away: `verify_seed`
+        /// answers off [`KeyIndex`], and every material-bound answer is `None`
+        /// because this fixture holds no share.
         fn oracle_for(&self, epoch: u64) -> Option<Arc<dyn SeedOracle>> {
             self.mandatory_at(epoch).then(|| {
-                Arc::new(KeyOnlyOracle {
+                Arc::new(super::super::oracle::BeaconOracle {
                     epoch,
+                    ceremony: keyless_ceremony(),
                     keys: self.mints.keys.clone(),
                     namespace: self.seed_namespace.clone(),
+                    me: None,
+                    warned_threshold_mismatch: Arc::new(AtomicBool::new(false)),
+                    warned_seat_mismatch: Arc::new(AtomicBool::new(false)),
                     metrics: BeaconMetrics::default(),
                 }) as Arc<dyn SeedOracle>
             })
@@ -1201,7 +1232,7 @@ pub(crate) mod testing {
         }
 
         /// The shared verdict rule over the REAL stores this fixture carries: a
-        /// recorded σ lands in `store`'s served map, a held one in its quarantine.
+        /// recorded σ lands `Verified` in `store`, a held one `Pending`.
         /// That is what lets an ingress test assert WHERE the σ went rather than only
         /// that the call happened. The provenance question the third sink used to
         /// route through a key store is gone (П-3) — every refusal is a witness.
@@ -1210,7 +1241,7 @@ pub(crate) mod testing {
                 cert,
                 |epoch| self.oracle_for(epoch),
                 |verified| self.store.record(verified),
-                |round, seed| self.store.quarantine(round, seed),
+                |round, seed| self.store.hold(round, seed),
                 |_epoch| true,
             )
         }
@@ -1222,10 +1253,6 @@ pub(crate) mod testing {
         fn faults(&self) -> Option<mpsc::UnboundedReceiver<DataFault>> {
             None
         }
-
-        fn observe_epoch(&self, _reconciled: Epoch, _entered_frontier: Epoch) {}
-
-        fn observe_cert(&self, _epoch: u64) {}
     }
 }
 
@@ -1363,7 +1390,7 @@ mod tests {
                 .insert(epoch.get(), share);
         }
         LiveBeacon::build(LiveBeaconConfig {
-            seeds: super::super::certify::SeedStore::new(),
+            seeds: super::super::seed_index::SeedIndex::new(),
             keys: mints.keys.clone(),
             ceremony,
             acquire: None,
@@ -1378,7 +1405,7 @@ mod tests {
     /// has not reached it.
     fn keyless_provider() -> Arc<dyn Beacon> {
         LiveBeacon::build(LiveBeaconConfig {
-            seeds: super::super::certify::SeedStore::new(),
+            seeds: super::super::seed_index::SeedIndex::new(),
             keys: keyless_index(),
             ceremony: keyless_ceremony(),
             acquire: None,
@@ -1413,7 +1440,7 @@ mod tests {
             .insert(epoch.get(), share);
         let before = mints.artifacts.epochs();
         let randomness = LiveBeacon::build(LiveBeaconConfig {
-            seeds: super::super::certify::SeedStore::new(),
+            seeds: super::super::seed_index::SeedIndex::new(),
             keys: mints.keys.clone(),
             ceremony,
             acquire: None,
@@ -1662,7 +1689,7 @@ mod tests {
             .insert(mint.get(), share);
         let keys = mints.keys.clone();
         let r = LiveBeacon::build(LiveBeaconConfig {
-            seeds: super::super::certify::SeedStore::new(),
+            seeds: super::super::seed_index::SeedIndex::new(),
             keys: keys.clone(),
             ceremony,
             acquire: None,
@@ -1972,7 +1999,7 @@ fn promote_gates(
 /// cannot change behaviour; the bodies relocate in later phases, once this is
 /// their only caller.
 pub(crate) struct LiveBeacon {
-    seeds: super::certify::SeedStore,
+    seeds: super::seed_index::SeedIndex,
     /// The OWNER of `PK_epoch` and the public polynomial: the chain's mint record
     /// plus the artifact store (П-3). It replaces a `BeaconKeys` store, a
     /// `BeaconResolver` closure over the ceremony store, a `DkgQualFor` and the two
@@ -2002,11 +2029,25 @@ pub(crate) struct LiveBeacon {
     /// been able to start yet, which is a reason worth a metric of its own rather
     /// than the `NoUsableShare` it used to be indistinguishable from.
     geometry: watch::Receiver<Option<(u64, u64)>>,
-    /// The late-verdict channel. `armed` gates the SEND, so an unread channel
-    /// cannot grow: nothing is queued until a consumer has taken the receiver.
-    faults_tx: mpsc::UnboundedSender<DataFault>,
-    faults_rx: Mutex<Option<mpsc::UnboundedReceiver<DataFault>>>,
-    faults_armed: AtomicBool,
+    /// The late-verdict channel, the SAME type the follower files through.
+    faults: LateFaults,
+    /// THE KEY WANT, and only the `--cert-follow` class has one.
+    ///
+    /// A σ this node cannot check is exactly the statement "I need `PK_epoch` for
+    /// this epoch", so [`Randomness::hold_seed`] is where the want is raised. On a
+    /// validator the want has no leg: the epoch manager already calls
+    /// `ensure_key(Thorough)` per participation edge and the acquisition runs off
+    /// the certificate path, so the field is `None` and the push is skipped. On a
+    /// follower NOTHING else asks — there is no epoch manager — and this is the
+    /// only trigger its artifact fetch task has.
+    ///
+    /// A full channel DROPS rather than blocks: the next certificate of the epoch
+    /// re-asks a second later, and the fetch is one acquisition at a time on the
+    /// task at the other end.
+    ///
+    /// WRITE-ONCE rather than a constructor argument, because [`LiveBeaconConfig`]
+    /// is built in files outside row 5.2's write list — see [`Self::wire_want`].
+    want: OnceLock<mpsc::Sender<u64>>,
 }
 
 /// Everything [`LiveBeacon::build`] needs, in one value.
@@ -2016,7 +2057,7 @@ pub(crate) struct LiveBeacon {
 /// type-compatible with each other, so a transposed pair compiles and only shows
 /// up as a provider that silently answers from the wrong rung.
 pub(crate) struct LiveBeaconConfig {
-    pub(crate) seeds: super::certify::SeedStore,
+    pub(crate) seeds: super::seed_index::SeedIndex,
     pub(crate) keys: KeyIndex,
     pub(crate) ceremony: CeremonyStore,
     pub(crate) acquire: Option<super::artifact::AcquireMint>,
@@ -2041,7 +2082,6 @@ impl LiveBeacon {
             artifacts,
             geometry,
         } = cfg;
-        let (faults_tx, faults_rx) = mpsc::unbounded_channel();
         Arc::new(Self {
             seeds,
             keys,
@@ -2052,19 +2092,67 @@ impl LiveBeacon {
             chain_id,
             artifacts,
             geometry,
-            faults_tx,
-            faults_rx: Mutex::new(Some(faults_rx)),
-            faults_armed: AtomicBool::new(false),
+            faults: LateFaults::new(),
+            want: OnceLock::new(),
         })
     }
 
-    /// File a late `Refused` verdict. Dropped on the floor until a consumer has
-    /// taken the receiver — see [`Beacon::faults`].
-    pub(crate) fn report_fault(&self, fault: DataFault) {
-        if !self.faults_armed.load(Ordering::Relaxed) {
-            return;
+    /// Wire the KEY WANT — see [`LiveBeacon::want`]. Called by
+    /// [`super::plane::build_follower`] on the `Arc` it just built and before that
+    /// `Arc` is handed to anything, which is why a write-once cell is enough and
+    /// why this is not a [`LiveBeaconConfig`] field: that struct is constructed in
+    /// files row 5.2 may not write (`epoch_manager.rs:2083`, `:2128`), so adding a
+    /// field to it would break them.
+    pub(super) fn wire_want(&self, want: mpsc::Sender<u64>) {
+        if self.want.set(want).is_err() {
+            // Unreachable through the one caller; loud rather than silent if a
+            // second builder ever appears.
+            error!("beacon key want is already wired; the second wiring is ignored");
         }
-        let _ = self.faults_tx.send(fault);
+    }
+
+    /// This beacon's counters, for the tests of the builders in
+    /// [`super::plane`] — the follower's refusal test asserts that latching the
+    /// ERROR line did not latch the COUNT (review C-11).
+    #[cfg(test)]
+    pub(super) fn metrics(&self) -> &BeaconMetrics {
+        &self.metrics
+    }
+
+    /// Re-check every σ the index is HOLDING, now that a key has landed, and file
+    /// the late verdict for what fails.
+    ///
+    /// THE `KeyAvailable` EDGE IS ITS WHOLE TRIGGER, and that is the promoter task
+    /// this replaces, folded into the edge that was already there. A dedicated task
+    /// waiting on a SECOND subscription of the artifact store's notifier bought
+    /// nothing and cost the ordering: the task and the wake-up bridge raced, so a
+    /// consumer woken by `KeyAvailable` could re-read the index BEFORE the settle
+    /// had run and see a miss where the σ was about to be servable. Called from the
+    /// bridge ahead of the publish, the wake-up now means "the key landed AND the σ
+    /// it unlocks is filed".
+    ///
+    /// Per epoch because resolution is per epoch: one `PK_e` settles every round of
+    /// its epoch at once. The rounds of an epoch whose key STILL does not resolve
+    /// are left held (`settle_epoch`'s `NoKey` arm), so this is cheap on the
+    /// ordinary edge — an artifact landing for one epoch does not re-verify
+    /// another's.
+    pub(crate) fn settle_pending(&self) {
+        for epoch in self.seeds.pending_epochs() {
+            let Some(oracle) = Randomness::oracle_for(self, epoch) else {
+                continue;
+            };
+            let (promoted, refused) = self.seeds.settle_epoch(epoch, oracle.as_ref());
+            if promoted > 0 || refused > 0 {
+                tracing::info!(epoch, promoted, refused, "beacon: settled held seeds");
+            }
+            // The LATE verdict, on the channel that may not lose it. The ERROR line
+            // `settle_epoch` already writes stays: this is the machine-readable
+            // half, and it is dropped on the floor until a consumer has taken the
+            // receiver.
+            if refused > 0 {
+                self.faults.report(DataFault { epoch, refused });
+            }
+        }
     }
 
     /// One resolve of the material this node may SIGN `epoch` with: the artifact's
@@ -2104,9 +2192,9 @@ impl LiveBeacon {
 }
 
 impl Randomness for LiveBeacon {
-    /// The store's, not one of this type's own: `SeedStore::record` is what fires
-    /// the seed class, and the promoter records through it too. The plane's bridge
-    /// sends the other two classes into this same publisher.
+    /// The index's, not one of this type's own: `SeedIndex::record` is what fires
+    /// the seed class, and [`LiveBeacon::settle_pending`] records through it too.
+    /// The plane's bridge sends the other two classes into this same publisher.
     fn events(&self) -> &broadcast::Sender<BeaconEvent> {
         self.seeds.events()
     }
@@ -2115,8 +2203,20 @@ impl Randomness for LiveBeacon {
         self.seeds.record(verified);
     }
 
-    fn quarantine_seed(&self, round: Round, seed: BlsSignature) {
-        self.seeds.quarantine(round, seed);
+    /// The `Pending` state, and the KEY WANT with it on the class that has one —
+    /// see [`LiveBeacon::want`].
+    ///
+    /// STRICTLY WIDER than the `observe_cert` edge the want used to ride, not
+    /// merely tidier: that one had its single caller in the live-stream inlet, so
+    /// a follower whose certificates arrive through the by-height door
+    /// (`cert_inlet::UpstreamResolver`) raised no want at all and could only
+    /// obtain a key by accident. Both doors route through
+    /// [`Beacon::observe_certificate`].
+    fn hold_seed(&self, round: Round, seed: BlsSignature) {
+        self.seeds.hold(round, seed);
+        if let Some(want) = self.want.get() {
+            let _ = want.try_send(round.epoch().get());
+        }
     }
 
     /// Latch only, one line per epoch. The provenance question this used to route
@@ -2130,18 +2230,7 @@ impl Randomness for LiveBeacon {
     }
 
     fn seed_for(&self, round: Round) -> Option<Seed> {
-        self.seeds.lookup(round).map(|signature| Seed {
-            target_round: round,
-            signature,
-        })
-    }
-
-    /// The pin alone, with no fall-through to the served window: the pin is
-    /// written from the same `insert` that fills the window, highest round per
-    /// epoch wins, and no round of a CLOSED epoch can exceed its terminal one —
-    /// so a σ the window holds for the asked round is already the pinned one.
-    fn terminal_seed_at(&self, round: Round) -> Option<Seed> {
-        self.seeds.terminal_at(round).map(|signature| Seed {
+        self.seeds.seed(round).map(|signature| Seed {
             target_round: round,
             signature,
         })
@@ -2406,32 +2495,6 @@ impl Randomness for LiveBeacon {
         })
     }
 
-    /// SEED RETENTION ONLY. Its key leg — `w3_backfill`, which published this
-    /// node's own reconstruction of `E−1`'s key — was deleted with W1 (П-3), and the
-    /// key store it pruned no longer exists: [`KeyIndex`]'s artifact half is
-    /// deliberately never evicted (`artifact` module doc) and its mint memo is
-    /// bytes per epoch. `reconciled` therefore names an epoch nothing is resolved
-    /// FOR; the operation survives because the two σ windows below are still real,
-    /// and PLAN row 5.2 is what removes it.
-    fn observe_epoch(&self, _reconciled: Epoch, entered_frontier: Epoch) {
-        let oldest = entered_frontier
-            .get()
-            .saturating_sub(crate::SCHEME_RETENTION_EPOCHS as u64);
-        // The quarantine rides the scheme-retention window: past that edge no key
-        // can arrive any more, so a held σ can never be promoted and is only memory
-        // a peer could grow.
-        self.seeds.retain_quarantine_from(oldest);
-        // And so does the terminal pin: it is asked for by the NEXT epoch, so an
-        // epoch past the retention edge has no asker left.
-        self.seeds.retain_terminal_from(oldest);
-    }
-
-    fn observe_cert(&self, epoch: u64) {
-        let oldest = epoch.saturating_sub(crate::SCHEME_RETENTION_EPOCHS as u64);
-        self.seeds.retain_quarantine_from(oldest);
-        self.seeds.retain_terminal_from(oldest);
-    }
-
     fn artifact_bytes(&self, epoch: u64) -> Option<Vec<u8>> {
         self.artifacts
             .get(epoch)
@@ -2439,10 +2502,6 @@ impl Randomness for LiveBeacon {
     }
 
     fn faults(&self) -> Option<mpsc::UnboundedReceiver<DataFault>> {
-        let taken = self.faults_rx.lock().ok()?.take()?;
-        // Arm only once a consumer exists, so the queue can never grow behind a
-        // receiver nobody reads.
-        self.faults_armed.store(true, Ordering::Relaxed);
-        Some(taken)
+        self.faults.take()
     }
 }

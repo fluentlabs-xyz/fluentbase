@@ -752,7 +752,7 @@ struct HeldForSeed {
 /// executor has not followed. Every honest source of a hold is far shorter: σ is
 /// filed from the SAME finalization certificate that makes the marshal dispatch
 /// the body, so the record-vs-delivery race is one certificate wide, and the
-/// slowest legitimate case — a follower whose σ quarantines until `PK_epoch`
+/// slowest legitimate case — a follower whose σ stays `Pending` until `PK_epoch`
 /// lands — is bounded by one artifact fetch. It is also far below the horizon
 /// where the re-jump takes over (`JUMP_THRESHOLD` = 1024 blocks ≈ 17 min at
 /// 1 blk/s), so a stall is named as a SEED hold before a deep-gap jump can paper
@@ -1688,8 +1688,14 @@ where
                     }
                 }
 
-                // Seed-record notify arm (replaces the `SpecNotarized` Poke): a
-                // HELD tip's own round seed just landed in the `SeedStore` — the
+                // Seed-record wake-up arm (replaces the `SpecNotarized` Poke).
+                // The mechanism is the beacon's `broadcast::Sender<BeaconEvent>`
+                // and its `SeedRecorded` variant (`beacon/seed_index.rs`), NOT a
+                // `Notify`: a broadcast buffers only FROM THE SUBSCRIPTION
+                // onward and drops a send with no receiver, where a `notify_one`
+                // permit survived having no waiter at all
+                // (`beacon/surface.rs:236-243`). A HELD tip's own round seed just
+                // landed in the `SeedIndex` — the
                 // record-vs-delivery race the on-delivery eager derive missed.
                 // Gated on a tip being HELD and no predecessor parked / jump in
                 // flight (the same suppression `try_eager_finalized_derive`
@@ -2479,9 +2485,12 @@ where
                 // NOTE: the eager-derive re-attempt for a HELD tip whose seed
                 // landed late (the record-vs-delivery race) is NO LONGER poked
                 // from here. It is now the executor's seed-notify `select!` arm
-                // (driven by `SeedStore`'s per-record `Notify`), which fires
-                // directly on the seed record — correct regardless of this
-                // mailbox's ordering, with no lost-notification window.
+                // (driven by the beacon's `broadcast::Sender<BeaconEvent>` and its
+                // per-record `SeedRecorded` variant — `beacon/seed_index.rs`, not
+                // a `Notify`), which fires directly on the seed record — correct
+                // regardless of this mailbox's ordering, with no
+                // lost-notification window: the arm subscribes before its first
+                // seed read (`beacon/surface.rs:236-243`).
             }
         }
         Ok(())
@@ -2984,7 +2993,7 @@ where
         // (mid-spin rejoin; body not buffered at V0) must not seal the block
         // with `seed(V0+k)` — that guarantees a re-derive + head reorg at the
         // boundary. On a round mismatch take the canonical round's bytes from
-        // `SeedStore` (a threshold seed is unique per round, so the store is a
+        // `SeedIndex` (a threshold seed is unique per round, so the store is a
         // byte source for an already-pinned round); on a miss SKIP speculating —
         // never speculate with a known-wrong seed (the finalized path resolves
         // this height's own round regardless).
@@ -4252,6 +4261,30 @@ mod tests {
             crate::beacon::testing::SeedStore::new();
     }
 
+    /// The fixture's beacon: the SHIPPED [`crate::beacon::Beacon`] over a real
+    /// seed index, so a test written against it exercises the production `seed`
+    /// and `subscribe` rather than a stub that happens to agree with them today.
+    ///
+    /// Built HERE, in the file that owns the fixture, because the beacon-internal
+    /// constructor it used to call (`beacon::testing::for_seeds`) was deleted with
+    /// row 5.2: one test provider assembled inside the beacon on behalf of another
+    /// module's fixture is a rung the boundary does not owe anyone. Everything it
+    /// names is keyless — no artifact, no share — which is exactly the state these
+    /// tests want: the two seed operations answer from the index and from nothing
+    /// else.
+    fn beacon_over(seeds: crate::beacon::testing::SeedStore) -> Arc<dyn crate::beacon::Beacon> {
+        crate::beacon::testing::LiveBeacon::build(crate::beacon::testing::LiveBeaconConfig {
+            seeds,
+            keys: crate::beacon::testing::keyless_index(),
+            ceremony: Arc::new(std::sync::RwLock::new(std::collections::BTreeMap::new())),
+            acquire: None,
+            metrics: crate::beacon::testing::BeaconMetrics::default(),
+            chain_id: 0,
+            artifacts: crate::beacon::testing::ArtifactStore::new(),
+            geometry: tokio::sync::watch::channel(Some((0, 1))).1,
+        })
+    }
+
     /// Record the canonical σ for a block proposed at `view` of epoch 0 — the
     /// epoch the fixture's default single huge epocher puts every test height in.
     ///
@@ -4263,7 +4296,7 @@ mod tests {
     fn record_fixture_seed(view: u64) {
         let round = active_round(view);
         FIXTURE_SEEDS.with(|seeds| {
-            if seeds.lookup(round).is_none() {
+            if seeds.seed(round).is_none() {
                 seeds.record(real_witness(round));
             }
         });
@@ -5009,9 +5042,7 @@ mod tests {
                 sync_metrics,
                 safety_halt,
                 fcu_heartbeat: Duration::from_secs(60),
-                randomness: crate::beacon::testing::for_seeds(
-                    FIXTURE_SEEDS.with(|seeds| seeds.clone()),
-                ),
+                randomness: beacon_over(FIXTURE_SEEDS.with(|seeds| seeds.clone())),
                 epocher: crate::epocher::OriginEpocher::new(
                     0,
                     std::num::NonZeroU64::new(1 << 40).expect("nonzero"),
@@ -5048,7 +5079,7 @@ mod tests {
         /// (empty) the way to opt out of the default and pin a store MISS. Set
         /// BEFORE `build`.
         fn with_seed_store(mut self, store: crate::beacon::testing::SeedStore) -> Self {
-            self.randomness = crate::beacon::testing::for_seeds(store);
+            self.randomness = beacon_over(store);
             self
         }
 
@@ -7695,7 +7726,7 @@ mod tests {
             let round = Round::new(Epoch::new(0), View::new(VIEW));
             FIXTURE_SEEDS.with(|seeds| seeds.record(real_witness(round)));
             assert!(
-                FIXTURE_SEEDS.with(|seeds| seeds.lookup(round).is_some()),
+                FIXTURE_SEEDS.with(|seeds| seeds.seed(round).is_some()),
                 "premise: σ IS recorded for the round this block names"
             );
 
@@ -8230,7 +8261,7 @@ mod tests {
 
     // (P2 🟡) A FIRST-SEEN SPIN NOTARIZATION must not speculate with the spin
     // round's seed: §4.1 re-canonicalises the round to the block's own
-    // `proposal_view`. Without a `SeedStore` entry for the canonical round the
+    // `proposal_view`. Without a `SeedIndex` entry for the canonical round the
     // speculation is SKIPPED (never speculate with a known-wrong seed); once σ
     // for that round lands the finalized path derives it exactly once, no reorg.
     #[test]
@@ -8285,7 +8316,7 @@ mod tests {
     }
 
     // (P2 🟡, the SeedStore arm) A node that HOLDS the canonical round's seed in
-    // its `SeedStore` re-canonicalises the spin notarization and speculates with
+    // its `SeedIndex` re-canonicalises the spin notarization and speculates with
     // the SAME seed everyone else uses — the finalized reconcile then reuses the
     // speculation (rounds match; no re-derive, no reorg).
     #[test]
@@ -9068,7 +9099,7 @@ mod tests {
 
     // EAGER FINALIZED DERIVE (record-lag closer): a
     // delivered finalized `h` whose OWN agreed round `Round(0, proposal_view)` is
-    // in the SeedStore is derived + finalized-recorded AT DELIVERY, before its
+    // in the seed index is derived + finalized-recorded AT DELIVERY, before its
     // child `h+1` exists — closing the recorded_tip = delivered_tip − 1 lag that
     // livelocked the finalized-tier result gate (nullify storm / stall).
     #[test]
@@ -9445,13 +9476,15 @@ mod tests {
     // `SpecNotarized` Poke — the race in miniature):
     // `h` is finalized-delivered BEFORE its seed is recorded → the on-delivery
     // eager derive MISSES → `h` is HELD. Then the notarization for `h`'s round
-    // lands: the Reporter records the seed into the shared SeedStore (which fires
-    // the `Notify`), and the executor's seed-notify `select!` arm re-runs the
+    // lands: the Reporter records the seed into the shared seed index (which
+    // publishes `BeaconEvent::SeedRecorded` on the beacon's broadcast — not a
+    // `Notify`), and the executor's seed-notify `select!` arm re-runs the
     // eager derive. `h` is derived + finalized-recorded WITHOUT any further
     // finalized delivery — the exact event that a stalled chain cannot produce.
     // Drives the arm's BODY (`try_eager_finalized_derive(Notified)`) directly —
-    // the arm's WAKEUP (no lost notification) is covered by certify.rs's
-    // `seed_store_record_notifies_without_a_lost_wakeup`.
+    // the arm's WAKEUP (no lost notification) is covered by the seed index's own
+    // `seed_index_record_notifies_without_a_lost_wakeup`
+    // (`beacon/seed_index.rs:634`).
     #[test]
     fn seed_notify_recovers_a_held_tip_after_a_late_seed_record() {
         let runtime = deterministic::Runner::default();

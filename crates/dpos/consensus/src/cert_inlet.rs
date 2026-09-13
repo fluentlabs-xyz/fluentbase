@@ -14,7 +14,7 @@
 //! the local BFT engine) on an upstream-configured validator.
 
 use crate::{
-    beacon::{Beacon, ObservedCertificate, PinEffort},
+    beacon::{Beacon, Observed, ObservedCertificate, PinEffort},
     cert_follow::UpstreamFinalized,
     digest::Digest,
     scheme::epoch_committee_from_snapshot,
@@ -386,6 +386,24 @@ pub struct CertInlet<E, M> {
     /// Default (unregistered) on inlets not wired via
     /// [`Self::with_carry_forward_fail_metric`].
     carry_forward_verify_failed: Counter,
+    /// THE LATE-VERDICT CONSUMER (Д-3 = (в)): σ admitted while this node had no
+    /// `PK_E`, refused once the key landed. The beacon files it here and the inlet
+    /// is the ONE consumer, because the only action a late `Refused` has is the one
+    /// this type owns — rotate away from the upstream that served it. Connection
+    /// failover can never see this class: the bytes arrive over a healthy socket.
+    ///
+    /// Taken in [`Self::with_randomness`] rather than through a builder of its own,
+    /// and that is what makes "at most one consumer" structural: the receiver is
+    /// handed out once by `Beacon::faults`, so the inlet becomes the consumer at the
+    /// moment it is handed the beacon, and a node with no inlet arms nothing at all
+    /// (the channel then queues nothing — see `Beacon::faults`).
+    ///
+    /// DRAINED AT THE HEAD OF [`Self::ingest`], because this type has no `select!`
+    /// loop of its own: its driver is `crate::outer`'s follower/validator run loop.
+    /// The cost is bounded and named — a fault is acted on at the next certificate,
+    /// ~1 s at the target block rate — and a rotation only matters while
+    /// certificates are still arriving.
+    faults: Option<tokio::sync::mpsc::UnboundedReceiver<crate::beacon::DataFault>>,
     /// Once-per-episode rate limit for the committee-not-readable WARN: during a
     /// deep backfill the module answers `NotReadable` for every cert, ~1/s for
     /// minutes, so the un-limited warn used to spam. Cleared on the next clean
@@ -417,6 +435,7 @@ where
             epoch_bind: None,
             committee_read_deferred: Family::default(),
             carry_forward_verify_failed: Counter::default(),
+            faults: None,
             committee_not_committed_warned: false,
         }
     }
@@ -445,6 +464,12 @@ where
     /// Attach the randomness provider. Builder-style because the provider is
     /// assembled at the launch site, after this inlet exists.
     pub fn with_randomness(mut self, randomness: Arc<dyn Beacon>) -> Self {
+        // ALSO the late-verdict subscription — see `faults`. It is taken here and
+        // not in a builder of its own so that "the inlet is the consumer" is a
+        // consequence of holding the beacon rather than of a wiring step a call
+        // site could forget: every production inlet reaches this line, and nothing
+        // else in the process calls `Beacon::faults`.
+        self.faults = randomness.faults();
         self.randomness = randomness;
         self
     }
@@ -532,6 +557,9 @@ where
                 self.consecutive_faults = 0;
             }
         }
+        // The late half of the verdict, charged BEFORE this certificate is judged
+        // and remembered across the judgement: see `drain_late_verdicts`.
+        let late_charges = self.drain_late_verdicts().await;
         let round = uf.finalization.proposal.round;
         let epoch = round.epoch().get();
         // DEFENSE-IN-DEPTH height↔epoch bind: an honest cert always
@@ -686,24 +714,64 @@ where
         // most one signature that verifies, and a round this node will not ask
         // for can only sit unused. This is a supply of BYTES for a round, never
         // a claim about WHICH round a block's witness names (§13 rule 28).
-        let _observed = self
+        // THE SYNCHRONOUS VERDICT, READ (Д-3 = (в)). `Refused` means the σ this
+        // certificate carries does not verify under a key a `committee[minted_at]`
+        // quorum attested — a statement about the SENDER, so a data fault and a
+        // skip rather than a hand-on to the marshal.
+        //
+        // Ordinarily unreachable from here, and that is a property of the wiring
+        // rather than of this arm: the scheme above carries the epoch's seed oracle
+        // (`committee::epoch_verifier`), so a forged σ under a resolvable key fails
+        // `uf.finalization.verify` and never reaches this line. What it covers is
+        // the window where the two disagree — the key becoming resolvable between
+        // the verify and this call — plus any future door whose verifier is built
+        // without an oracle.
+        //
+        // `Pending` is NOT a fault: the multisig quorum was checked and the σ is
+        // held for the key to settle, which is the same admission the certificate
+        // itself just got. The late half of that verdict arrives on `faults`.
+        if self
             .randomness
-            .observe_certificate(ObservedCertificate::Finalization(round, &uf.finalization));
-        // PLAN row 5.2: the synchronous `Refused` becomes this inlet's data
-        // fault. Until then nobody reads the verdict here.
+            .observe_certificate(ObservedCertificate::Finalization(round, &uf.finalization))
+            == Observed::Refused
+        {
+            warn!(
+                height = uf.block.height,
+                epoch,
+                %round,
+                "cert-inlet: the certificate's σ is REFUSED under this epoch's attested key; \
+                 skipping and counting a data fault"
+            );
+            self.record_data_fault().await;
+            return;
+        }
 
         // Verified: a clean ingest — reset the data-fault streak and end any
         // open defer WARN episodes (the next backfill / boundary-lag window
         // warns afresh).
-        self.consecutive_faults = 0;
+        //
+        // SYMMETRIC WITH THE SYNCHRONOUS FAULT (review C-07). A synchronous fault
+        // `return`s above and therefore survives the certificate it was charged
+        // on; a late one is charged at the TOP of this same call, so an unguarded
+        // reset here erased it every time and an upstream forging a round or two
+        // per epoch — the cheapest version of R-008 — paid nothing, ever. A charge
+        // made during THIS ingest now outlives it either way; the next clean
+        // certificate is what clears it, which is what "consecutive" means.
+        if late_charges == 0 {
+            self.consecutive_faults = 0;
+        }
         self.committee_not_committed_warned = false;
         // No scheme retention of its own any more: the inlet holds no map, and
         // the one it now reads is retained by the committee module's own read
         // window. The prune that stood here kept `{prev, cur}` on the inlet's
         // clock, which during a deep catch-up could drop an entry the epoch
         // manager was still soft-entering against — two retentions over one
-        // question. The beacon's key store keeps its own, below.
-        self.randomness.observe_cert(epoch);
+        // question. Nor is there a beacon-side prune to drive from here any more:
+        // row 5.2 made the seed index measure its own retention window from the
+        // highest epoch it holds, so `observe_cert` became an empty default and
+        // the call that stood here was dead code with a misleading comment on it.
+        // The METHOD survives on the trait alone, for a holder outside this row's
+        // file list (`testbed/byzantine_roles.rs`), and 5.4 removes it.
         // Re-homed live-frontier tee: advance the beacon-plane DKG deal clock off
         // the VERIFIED live upstream tip (skipped/tampered certs above never reach
         // here), so the DkgActor deals at the live frontier instead of this node's
@@ -756,6 +824,45 @@ where
     /// upstream serving bad payload over a healthy connection (connection-level
     /// failover can never see it). No trigger configured (a unit test) ⇒ just
     /// count (the inlet keeps skipping non-fatally).
+    /// Take every late `Refused` the beacon has filed and charge it to the
+    /// upstream's streak.
+    ///
+    /// A message says "`refused` rounds of `epoch` were served with a σ that does
+    /// not verify under the key a quorum attested". Each refused round is one bad
+    /// certificate, so each counts — capped at the rotation threshold per message,
+    /// because the point of the streak is to decide WHETHER to fail over and a
+    /// message carrying a whole epoch's forgeries has already decided it. Rotating
+    /// once per refused round beyond that would be churn: a rotation cancels the
+    /// in-flight request and nothing else.
+    ///
+    /// Returns how many faults it charged, because [`Self::ingest`] must not erase
+    /// them with the very certificate they arrived on. The synchronous fault
+    /// survives its own certificate by `return`ing before the streak reset; the
+    /// late one is drained at the TOP of the same call, so without this count the
+    /// reset at the bottom wiped every sub-threshold charge and an upstream
+    /// forging one or two rounds per epoch never reached the rotation threshold
+    /// (review C-07). "Consecutive" now means the same thing on both halves: the
+    /// NEXT clean certificate clears the streak, not the one that carried the
+    /// accusation.
+    async fn drain_late_verdicts(&mut self) -> usize {
+        let mut charges = 0usize;
+        if let Some(faults) = self.faults.as_mut() {
+            while let Ok(fault) = faults.try_recv() {
+                warn!(
+                    epoch = fault.epoch,
+                    refused = fault.refused,
+                    "cert-inlet: the beacon refused σ this upstream served once the epoch key \
+                     landed; counting it toward rotation"
+                );
+                charges += fault.refused.min(MAX_UPSTREAM_FAULTS as usize);
+            }
+        }
+        for _ in 0..charges {
+            self.record_data_fault().await;
+        }
+        charges
+    }
+
     async fn record_data_fault(&mut self) {
         self.consecutive_faults += 1;
         if self.consecutive_faults >= MAX_UPSTREAM_FAULTS {
@@ -1658,10 +1765,10 @@ mod tests {
             ObservedCertificate::Finalization(round, &uf.finalization),
         );
         assert!(
-            known.store().lookup(round).is_some(),
+            known.store().seed(round).is_some(),
             "a checked seed is served"
         );
-        assert!(known.store().quarantined_epochs().is_empty());
+        assert!(known.store().pending_epochs().is_empty());
     }
 
     #[test]
@@ -1677,11 +1784,11 @@ mod tests {
             ObservedCertificate::Finalization(round, &uf.finalization),
         );
         assert_eq!(
-            keyless.store().lookup(round),
+            keyless.store().seed(round),
             None,
-            "an unchecked seed never reaches the served map"
+            "an unchecked seed is never served"
         );
-        assert_eq!(keyless.store().quarantined_epochs(), vec![5]);
+        assert_eq!(keyless.store().pending_epochs(), vec![5]);
     }
 
     #[test]
@@ -1701,9 +1808,9 @@ mod tests {
             &wrong,
             ObservedCertificate::Finalization(round, &uf.finalization),
         );
-        assert_eq!(wrong.store().lookup(round), None);
+        assert_eq!(wrong.store().seed(round), None);
         assert!(
-            wrong.store().quarantined_epochs().is_empty(),
+            wrong.store().pending_epochs().is_empty(),
             "a refused seed is not parked for a re-check that can never pass"
         );
     }
@@ -1773,14 +1880,14 @@ mod tests {
             // The pull runs in its own task; step the virtual clock until it has
             // landed rather than assuming a scheduling order.
             for _ in 0..64 {
-                if probe_in_task.lookup(round).is_some() {
+                if probe_in_task.seed(round).is_some() {
                     break;
                 }
                 commonware_runtime::Clock::sleep(&ctx, std::time::Duration::from_millis(1)).await;
             }
         });
         assert!(
-            store_probe.lookup(round).is_some(),
+            store_probe.seed(round).is_some(),
             "the plane arm files σ under the certificate's own round"
         );
     }
@@ -1984,6 +2091,288 @@ mod tests {
                 rotations.load(std::sync::atomic::Ordering::Relaxed),
                 1,
                 "MAX_UPSTREAM_FAULTS seed-tampered certs are data faults ⇒ exactly one rotation"
+            );
+        });
+    }
+
+    /// A provider over the real key index, kept CONCRETE so a test can drive the
+    /// late verdict the way the `KeyAvailable` edge does in production
+    /// (`LiveBeacon::settle_pending`, called from the beacon's wake-up bridge).
+    fn live_beacon(mints: &MintFixture) -> Arc<crate::beacon::testing::LiveBeacon> {
+        crate::beacon::testing::LiveBeacon::build(LiveBeaconConfig {
+            seeds: crate::beacon::testing::SeedStore::new(),
+            keys: mints.keys.clone(),
+            ceremony: Arc::new(std::sync::RwLock::new(std::collections::BTreeMap::new())),
+            acquire: None,
+            metrics: crate::beacon::testing::BeaconMetrics::default(),
+            chain_id: CHAIN_ID,
+            artifacts: mints.artifacts.clone(),
+            geometry: tokio::sync::watch::channel(Some((0, 1))).1,
+        })
+    }
+
+    /// A committee module whose verifier carries NO seed oracle — the shape
+    /// `plane_upstream::verifier_for` builds, and the reason the σ verdict has to be
+    /// read at the ingress at all: such a verifier admits a certificate whose σ slot
+    /// was swapped under an intact multisig.
+    fn oracle_less_inlet(
+        ctx: deterministic::Context,
+        bc: &BeaconFixture,
+        marshal: FakeMarshal,
+    ) -> BeaconInlet {
+        let namespace = bc.namespace.clone();
+        let bimap = bc.bimap.clone();
+        let committee = crate::committee::testing::SchemeCommittee::new(move |epoch| {
+            Some(build_verifier(&namespace, bimap.clone(), epoch, None))
+        });
+        CertInlet::new(marshal, committee, ctx)
+    }
+
+    /// (5.2) THE SYNCHRONOUS VERDICT HAS A READER. A certificate whose σ slot is
+    /// forged passes a verifier built without the epoch's oracle, so the inlet's own
+    /// `verify` says nothing about σ — and the beacon's verdict is then the only gate
+    /// left. `Refused` must SKIP the certificate (never hand it to the marshal, never
+    /// tee it) and count a data fault, so three of them rotate away from the upstream
+    /// that served them.
+    ///
+    /// The forgery is a genuine σ of a foreign round: a decodable curve point that
+    /// verifies for no round here. It is asserted to differ from the genuine σ, and
+    /// the GENUINE certificate is ingested first over the same wiring — so "the
+    /// oracle-less verifier admits the multisig" is witnessed rather than assumed,
+    /// and a refusal that came from the multisig half instead would show up as that
+    /// first ingest failing.
+    ///
+    /// RED BEFORE THE FIX: the verdict used to be dropped into `let _observed`, so a
+    /// forged σ was archived, teed and never rotated. Reproduce with one line — drop
+    /// the `== Observed::Refused` arm in `ingest` back to `let _ = ...`.
+    #[test]
+    fn a_forged_seed_under_an_oracle_less_verifier_is_refused_at_the_ingress() {
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            let bc = beacon_committee(3);
+            let marshal = FakeMarshal::default();
+            let (rotations, rotate) = count_rotations();
+            let (window_tx, mut window_rx) = tokio::sync::mpsc::unbounded_channel();
+            let mints = minted_at(&bc, 2);
+            let mut inlet = oracle_less_inlet(ctx, &bc, marshal.clone())
+                .with_rotate(rotate)
+                .with_window(window_tx)
+                .with_randomness(live_beacon(&mints));
+
+            let wrong = certify_seeded(&bc, 9, &beacon_order(999))
+                .finalization
+                .certificate
+                .seed;
+            let genuine = certify_seeded(&bc, 2, &beacon_order(64));
+            assert_ne!(
+                genuine.finalization.certificate.seed, wrong,
+                "the forgery must differ from the genuine σ"
+            );
+
+            inlet.ingest(genuine).await;
+            assert_eq!(
+                *marshal.calls.lock().unwrap(),
+                vec!["verified", "report"],
+                "the oracle-less verifier admits a genuine certificate"
+            );
+            assert_eq!(window_rx.try_recv().expect("teed").block.height, 64);
+
+            for h in 65..=67u64 {
+                let mut forged = certify_seeded(&bc, 2, &beacon_order(h));
+                forged.finalization.certificate.seed = wrong;
+                inlet.ingest(forged).await;
+            }
+            assert_eq!(
+                *marshal.calls.lock().unwrap(),
+                vec!["verified", "report"],
+                "a σ-refused certificate drives the marshal ZERO further times"
+            );
+            assert!(
+                window_rx.try_recv().is_err(),
+                "and reaches no serving window"
+            );
+            assert_eq!(
+                rotations.load(std::sync::atomic::Ordering::Relaxed),
+                1,
+                "MAX_UPSTREAM_FAULTS σ refusals are data faults ⇒ exactly one rotation"
+            );
+        });
+    }
+
+    /// (5.2, Д-3 = (в)) THE LATE VERDICT HAS A CONSUMER. σ admitted while this node
+    /// held no `PK_E` is `Pending`, not a fault — the certificate itself got the same
+    /// vote-only admission. When the key lands, the settle refuses what does not
+    /// verify and files a `DataFault`; the inlet is the ONE consumer of that channel,
+    /// and what it does with it is the same thing it does with a synchronous fault:
+    /// charge the upstream's streak and fail over.
+    ///
+    /// The three halves are asserted at their own moments: keyless ⇒ `Pending` and
+    /// nothing served; key lands ⇒ the settle refuses all three rounds; the next
+    /// ingest ⇒ one rotation. Without the drain the third is 0 — which is the state
+    /// R-008 describes, a node that never rotates away from the upstream that lied to
+    /// it.
+    ///
+    /// RED BEFORE THE FIX: reproduce with one line — make
+    /// `CertInlet::with_randomness` skip the subscription (`self.faults = None;`),
+    /// and the rotation count drops to 0 while everything above it still passes.
+    #[test]
+    fn a_late_refusal_costs_the_upstream_a_rotation_once_the_key_lands() {
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            let bc = beacon_committee(4);
+            let marshal = FakeMarshal::default();
+            let (rotations, rotate) = count_rotations();
+            // NOTHING minted yet: the keyless window every epoch opens in, and the
+            // one in which a forged σ is admitted rather than refused.
+            let mints = MintFixture::new();
+            let beacon = live_beacon(&mints);
+            let (inlet, _reads, slot) = beacon_inlet(ctx, &bc, marshal.clone());
+            let mut inlet = with_beacon(inlet.with_rotate(rotate), &slot, beacon.clone());
+
+            let wrong = certify_seeded(&bc, 9, &beacon_order(999))
+                .finalization
+                .certificate
+                .seed;
+            let mut rounds = Vec::new();
+            for h in 64..=66u64 {
+                let mut forged = certify_seeded(&bc, 2, &beacon_order(h));
+                forged.finalization.certificate.seed = wrong;
+                let round = forged.finalization.proposal.round;
+                assert_eq!(
+                    Beacon::observe_certificate(
+                        beacon.as_ref(),
+                        ObservedCertificate::Finalization(round, &forged.finalization),
+                    ),
+                    Observed::Pending,
+                    "with no key resolvable the σ is HELD, not judged"
+                );
+                assert!(
+                    Beacon::seed(beacon.as_ref(), round).is_none(),
+                    "a held σ is never served"
+                );
+                rounds.push(round);
+            }
+            assert_eq!(
+                rotations.load(std::sync::atomic::Ordering::Relaxed),
+                0,
+                "the keyless window is not a fault: nothing has been judged yet"
+            );
+
+            // THE KEY LANDS. In production this is an artifact insert and the
+            // beacon's wake-up bridge calls `settle_pending` on the edge before it
+            // publishes `KeyAvailable`.
+            mints.mint(2, bc.outcome.clone());
+            beacon.settle_pending();
+            for round in &rounds {
+                assert!(
+                    Beacon::seed(beacon.as_ref(), *round).is_none(),
+                    "a refused σ is dropped, not promoted"
+                );
+            }
+
+            // The next certificate is where the inlet reads its channel. A clean one,
+            // so the rotation cannot be confused with a synchronous fault.
+            inlet
+                .ingest(certify_seeded(&bc, 2, &beacon_order(67)))
+                .await;
+            assert_eq!(
+                rotations.load(std::sync::atomic::Ordering::Relaxed),
+                1,
+                "three late refusals charge the streak to its threshold ⇒ one rotation"
+            );
+            assert_eq!(
+                *marshal.calls.lock().unwrap(),
+                vec!["verified", "report"],
+                "and the clean certificate it rode in on is still processed"
+            );
+        });
+    }
+
+    /// (5.2, review C-07) THE TWO HALVES OF THE STREAK ARE SYMMETRIC. A
+    /// synchronous fault `return`s before [`CertInlet::ingest`]'s clean-ingest
+    /// reset, so it survives the certificate it was charged on. A late one is
+    /// drained at the TOP of the same call, so an unguarded reset erased every
+    /// charge below the rotation threshold — and an upstream that forges one or two
+    /// rounds per epoch and serves clean traffic otherwise then paid NOTHING,
+    /// forever, which is the cheapest version of R-008 rather than an exotic one.
+    ///
+    /// One late charge, then two synchronous ones: the streak has to reach
+    /// `MAX_UPSTREAM_FAULTS` across both halves.
+    ///
+    /// FALSIFIER (one line): in `ingest`, make the guard unconditional —
+    /// `if true {` in place of `if late_charges == 0 {`. Every assertion above the
+    /// last still passes and the rotation count drops to 0.
+    #[test]
+    fn a_sub_threshold_late_charge_survives_the_certificate_it_rode_in_on() {
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            let bc = beacon_committee(4);
+            let marshal = FakeMarshal::default();
+            let (rotations, rotate) = count_rotations();
+            // Keyless to begin with: the window in which a forged σ is HELD rather
+            // than judged.
+            let mints = MintFixture::new();
+            let beacon = live_beacon(&mints);
+            let (inlet, _reads, slot) = beacon_inlet(ctx, &bc, marshal.clone());
+            let mut inlet = with_beacon(inlet.with_rotate(rotate), &slot, beacon.clone());
+
+            let wrong = certify_seeded(&bc, 9, &beacon_order(999))
+                .finalization
+                .certificate
+                .seed;
+
+            // ONE forged round held while keyless ⇒ exactly one late charge, below
+            // the threshold on its own.
+            let mut forged = certify_seeded(&bc, 2, &beacon_order(64));
+            assert_ne!(
+                forged.finalization.certificate.seed, wrong,
+                "the splice must change the σ, or this test refuses nothing"
+            );
+            forged.finalization.certificate.seed = wrong;
+            let round = forged.finalization.proposal.round;
+            assert_eq!(
+                Beacon::observe_certificate(
+                    beacon.as_ref(),
+                    ObservedCertificate::Finalization(round, &forged.finalization),
+                ),
+                Observed::Pending,
+                "with no key resolvable the σ is HELD, not judged"
+            );
+            mints.mint(2, bc.outcome.clone());
+            beacon.settle_pending();
+
+            // The CLEAN certificate the charge rides in on. It is processed, and it
+            // must not erase the accusation it delivered.
+            inlet
+                .ingest(certify_seeded(&bc, 2, &beacon_order(65)))
+                .await;
+            assert_eq!(
+                *marshal.calls.lock().unwrap(),
+                vec!["verified", "report"],
+                "the clean certificate is still processed"
+            );
+            assert_eq!(
+                rotations.load(std::sync::atomic::Ordering::Relaxed),
+                0,
+                "one charge is below the rotation threshold on its own"
+            );
+
+            // Two SYNCHRONOUS faults. Together with the surviving late charge the
+            // streak reaches `MAX_UPSTREAM_FAULTS`.
+            for h in 66..=67u64 {
+                let mut tampered = certify_seeded(&bc, 2, &beacon_order(h));
+                tampered.finalization.certificate.seed = wrong;
+                inlet.ingest(tampered).await;
+            }
+            assert_eq!(
+                *marshal.calls.lock().unwrap(),
+                vec!["verified", "report"],
+                "and the tampered certificates drive the marshal zero further times"
+            );
+            assert_eq!(
+                rotations.load(std::sync::atomic::Ordering::Relaxed),
+                1,
+                "a late charge plus two synchronous ones is the threshold: one rotation"
             );
         });
     }
@@ -2581,11 +2970,11 @@ where
     /// by which a follower's executor can derive a beacon-active block's
     /// `prev_randao`.
     ///
-    /// Only ONE of the two doors prunes what it files: `observe_cert`, which
-    /// carries the retention window, has its single production call site in
-    /// [`CertInlet::ingest`] and none here. So a σ repaired through the gap door
-    /// stays unpruned until the live stream next delivers a certificate — about a
-    /// second later on a following node. A delay, not a leak.
+    /// NEITHER door prunes what it files, and neither has to: since row 5.2 the
+    /// seed index measures its own retention window from the highest epoch it
+    /// holds, so a σ repaired through this door is bounded by the same rule as one
+    /// that arrived on the live stream. The `observe_cert` observation that used
+    /// to carry the window from the live door alone is gone.
     fn spawn_finalized(&self, height: commonware_consensus::types::Height) {
         let h = height.get();
         if !self.inflight.lock().unwrap().insert(h) {
@@ -2632,18 +3021,31 @@ where
                         //
                         // The σ capture rides that verdict rather than preceding
                         // it. σ authenticates itself under `PK_e`, so recording
-                        // was never the risk — but QUARANTINE is keyed on a round
+                        // was never the risk — but a HELD σ is keyed on a round
                         // the RESPONDER chose, and taking that from an unverified
                         // pull would let one peer name any round it liked. After
                         // `true` the multisig has been checked against
                         // `committee[epoch]`, so the round came from a quorum.
-                        if handler.deliver(key, value).await {
-                            let _observed = randomness.observe_certificate(
-                                ObservedCertificate::Finalization(round, &captured),
+                        if handler.deliver(key, value).await
+                            && randomness.observe_certificate(ObservedCertificate::Finalization(
+                                round, &captured,
+                            )) == Observed::Refused
+                        {
+                            // READ, and it is a WITNESS with no lever: this door
+                            // holds no `RotateUpstream`. The one the inlet holds is
+                            // wired at the launch site (`crates/node/src/dpos.rs`),
+                            // which row 5.2 may not write, and `UpstreamResolver` is
+                            // constructed there and in `crate::outer` — so giving
+                            // this door the inlet's escape is an edit to files
+                            // outside this row. Until then the refusal is loud here
+                            // and countable through the beacon's own ERROR line.
+                            warn!(
+                                height = h,
+                                %round,
+                                "upstream resolver: the certificate's σ is REFUSED under this \
+                                 epoch's attested key — this door cannot rotate away from the \
+                                 upstream that served it"
                             );
-                            // PLAN row 5.2: the synchronous `Refused` becomes this
-                            // resolver's data fault (rotate the upstream). Until
-                            // then nobody reads the verdict here.
                         }
                     }
                 }),

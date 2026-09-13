@@ -51,7 +51,7 @@ use crate::{
         outcome::group_public_key,
         share_state::{self, ShareState},
         surface::{LiveBeacon, LiveBeaconConfig},
-        Beacon, BeaconEvent, DataFault,
+        Beacon, BeaconEvent,
     },
     dpos::{ARTIFACT_JOURNAL_PARTITION, MINT_MEMO_PARTITION, SEED_JOURNAL_PARTITION},
     outer::SharedMux,
@@ -130,7 +130,7 @@ pub trait CommitteeReads: Send + Sync {
 
     /// One raw on-chain `(dkgQual[epoch], committee[epoch] is committed)` read at
     /// `at`. The freeze/memo rule that turns it into the carry-forward arbiter stays
-    /// on this side of the boundary: [`super::follower::changed_bit`] drops the
+    /// on this side of the boundary: [`changed_bit`] drops the
     /// `committed` leg (Д-7 — the facade answers it unconditionally `true`) and
     /// [`super::artifact::MintIndex`] caches the decided bit and walks to the mint.
     fn dkg_qual(&self, epoch: u64, at: B256) -> Option<(bool, bool)>;
@@ -625,9 +625,9 @@ where
         Arc::new(move |epoch: u64| reads.committee_bls(epoch, reads.read_at()?))
     };
     // The frozen `changed` bit, one closure for both node classes — see
-    // `follower::changed_bit` for why the `committed` leg is dropped rather than
-    // guarded (Д-7).
-    let changed: ChangedAt = super::follower::changed_bit(committees.clone());
+    // [`changed_bit`] for why the `committed` leg is dropped rather than guarded
+    // (Д-7).
+    let changed: ChangedAt = changed_bit(committees.clone());
     let me = peer_keypair.public_key();
     let share_state = match share_seal_key {
         Some(key) => ShareState::Encrypted(key),
@@ -687,12 +687,11 @@ where
     )
     .await?;
 
-    // Shared `round → recovered seed` map for the Stage-2 beacon certify gate
-    // (`crate::beacon::certify`). The spec-exec reporter writes it (it already
-    // recovers the seed per notarization); each per-epoch `BeaconCertify`
-    // wrapper reads it, and the executor holds a clone for the speculative
-    // seed re-canonicalisation. Cross-epoch singleton — created BEFORE the
-    // executor (its first consumer below).
+    // The `round → σ` index (`crate::beacon::seed_index`), the ONE owner of the
+    // seed fact. Every door writes it through `Beacon::observe_certificate`; the
+    // executor's derive and the epoch manager's boundary base read it
+    // synchronously. Cross-epoch singleton — created BEFORE the executor (its
+    // first consumer below).
     //
     // The durable store is opened and REPLAYED here, ahead of the executor,
     // `FluentApp` and every engine, so no consumer can observe a
@@ -722,7 +721,7 @@ where
         context.with_label("seed_journal"),
         context.with_label("seed_journal_writer"),
         &journal_partition(&partition_prefix, SEED_JOURNAL_PARTITION),
-        super::certify::SEED_RETENTION,
+        super::seed_index::SEED_RETENTION,
     )
     .await?;
 
@@ -799,9 +798,13 @@ where
     // here because the store moves into the agreement launcher further down and
     // the actor's spawn wrapper takes the watch.
     let artifact_store_for_serving = artifact_store.clone();
-    // Two edges taken BEFORE the store moves into the agreement launcher, and each
-    // is its own notifier — see `ArtifactStore::subscribe`.
-    let promoter_edge = artifact_store.subscribe();
+    // ONE edge, taken BEFORE the store moves into the agreement launcher. It used
+    // to be two independent subscriptions — one for the wake-up bridge, one for a
+    // seed-promoter task — and the pair was a RACE rather than a redundancy: both
+    // fired on the same artifact insert, in either order, so a consumer woken by
+    // `KeyAvailable` could re-read the seed index before the promote had run. The
+    // settle is the bridge's first act now (`LiveBeacon::settle_pending`), so the
+    // wake-up cannot outrun the σ it unlocks.
     let bridge_key_edge = artifact_store.subscribe();
     let geometry_for_probe = geometry.clone();
 
@@ -929,7 +932,6 @@ where
     // where all of its inputs exist at once — the ceremony store, the frozen
     // `dkgQual` arbiter, the key store, the seed store and the two agreement
     // rungs — and none of them crosses back out.
-    let quarantine = seed_store.clone();
     let seed_events = seed_store.events().clone();
     let randomness = LiveBeacon::build(LiveBeaconConfig {
         artifacts: artifact_store_for_serving,
@@ -942,49 +944,6 @@ where
         chain_id,
     });
 
-    // The promotion trigger for quarantined σ. A seed captured at ingress before
-    // its epoch key resolved is held, not dropped — and the event that decides
-    // whether it can be served is exactly the one this waits on. The boundary
-    // does not DEPEND on it (a leader that misses its witness asks for it on the
-    // propose path), but an untriggered quarantine is a value the node holds and
-    // can never use.
-    //
-    // Its OWN edge (`ArtifactStore::subscribe`), never a shared handle: one
-    // `notify_one` shared by two waiters swallows one of them, and both losses are
-    // silent — an epoch stuck vote-only, or a σ that never leaves quarantine.
-    let promoter_randomness = randomness.clone();
-    // THE ARTIFACT STORE'S OWN EDGE, where it used to be the key store's: "a key
-    // this node could not resolve became resolvable" now means "an artifact landed",
-    // because the artifact is the only thing a key comes from (П-3). Per consumer,
-    // for the reason the old store's header gave — see `ArtifactStore::subscribe`.
-    let seed_promoter_handle = context
-        .with_label("seed_promoter")
-        .spawn(move |_| async move {
-            loop {
-                promoter_edge.notified().await;
-                for epoch in quarantine.quarantined_epochs() {
-                    let Some(oracle) = Beacon::oracle_for(promoter_randomness.as_ref(), epoch)
-                    else {
-                        continue;
-                    };
-                    let (promoted, refused) = quarantine.promote_epoch(epoch, oracle.as_ref());
-                    if promoted > 0 || refused > 0 {
-                        info!(
-                            epoch,
-                            promoted, refused, "beacon: re-checked quarantined seeds"
-                        );
-                    }
-                    // The LATE verdict, on the channel that may not lose it. The
-                    // ERROR line `promote_epoch` already writes stays: this is the
-                    // machine-readable half, and it is dropped on the floor until a
-                    // consumer has taken the receiver.
-                    if refused > 0 {
-                        promoter_randomness.report_fault(DataFault { epoch, refused });
-                    }
-                }
-            }
-        });
-
     // The wake-up bridge. `record_seed` fires its own class from inside the
     // beacon; these two are written from OTHER tasks through a bare `Notify` —
     // an accepted `ArtifactStore::insert` and the `DkgActor`'s share edge — and `notify_one`
@@ -995,11 +954,12 @@ where
     // epoch manager never learns its participation changed, which is a silent
     // stall rather than a visible failure.
     let bridge_handle = {
-        // Its OWN artifact notifier, never a shared handle: the seed promoter waits
-        // on a subscription of its own for the same reason.
         let key_edge = bridge_key_edge;
+        // The settle rides this task's KEY arm — see `LiveBeacon::settle_pending`
+        // for why it is not a task of its own any more.
+        let settle = randomness.clone();
         let participation_edge = share_notify.clone();
-        // The SAME publisher `SeedStore::record` fires the seed class into, so the
+        // The SAME publisher `SeedIndex::record` fires the seed class into, so the
         // three classes reach every consumer over one subscription.
         let events = seed_events.clone();
         context
@@ -1010,7 +970,13 @@ where
                     let participation = participation_edge.notified();
                     tokio::pin!(key, participation);
                     let event = tokio::select! {
-                        () = &mut key => BeaconEvent::KeyAvailable,
+                        () = &mut key => {
+                            // BEFORE the publish, never after: a consumer re-reads
+                            // state on the wake-up, and a σ the landed key has just
+                            // made servable must already be `Verified` when it does.
+                            settle.settle_pending();
+                            BeaconEvent::KeyAvailable
+                        }
                         () = &mut participation => BeaconEvent::ParticipationChanged,
                     };
                     // `Err` means no subscriber right now, which is ordinary at
@@ -1034,7 +1000,6 @@ where
             vec![
                 ("dkg", dkg_handle),
                 ("beacon_resolver", resolver_handle),
-                ("seed_promoter", seed_promoter_handle),
                 ("agreement_launcher", agreement_launcher_handle),
                 ("agreement_write_back", write_back_handle),
                 ("event_bridge", bridge_handle),
@@ -1044,6 +1009,299 @@ where
         agreement_intake,
     };
     Ok((randomness, tasks))
+}
+
+// ---------------------------------------------------------------------------
+// The `--cert-follow` follower's beacon
+// ---------------------------------------------------------------------------
+//
+// ONE `Randomness` IMPLEMENTATION FOR BOTH NODE CLASSES, which is what PLAN row
+// 5.2 asks for when it says to delete the follower's seed half and the file it
+// lived in. What a follower is, is now a CONFIGURATION of `LiveBeacon` rather
+// than a second implementation of the surface:
+//
+//   * an EMPTY `CeremonyStore` (`surface::keyless_ceremony`). Every
+//     material-bound answer of `BeaconOracle` goes through `with_material`, which
+//     returns `None` when this node holds no share of the mint — the exact
+//     permanent negatives the deleted `KeyOnlyOracle` returned by type. `KeyIndex`
+//     still resolves the epoch's mint and its public polynomial out of the
+//     artifact, so `verify_seed` — the one answer a follower CAN give — is
+//     unchanged: both oracles' bodies were already byte-identical.
+//   * RAM-only stores: no `share_dir` on this path and no durable partition to
+//     open. What a restart loses is one fetch per epoch over a link the follower
+//     holds open anyway, including the mint memo.
+//   * `acquire` over this class's own transport, and the KEY WANT wired into
+//     `hold_seed` (`LiveBeacon::wire_want`): a follower has no epoch manager, so
+//     the `Pending` verdict is the ONLY thing that can ask for a key.
+//   * no DKG, no agreement plane, no muxes — the `Withheld`
+//     verdicts follow from the empty share store rather than from a second type.
+//     The geometry watch is the one item of that list that STAYS, and is SET on
+//     purpose rather than left at its default: `build_resolved` hands the beacon
+//     a resolved `watch::channel(Some((0, 1))).1` (`plane.rs:1206-1210`) exactly
+//     because a follower freezes no `(activation, interval)` of its own and never
+//     asks to participate, so `share_probe`'s `GeometryUnfrozen` refinement must
+//     not fire — `NoUsableShare` is the true story for a node class that runs no
+//     ceremony. The consequence is confined to the `WithheldReason` LABEL, not
+//     to behaviour; dropping the field would only mislabel it.
+//
+// # What this closed, and still closes
+//
+// A follower used to run `surface::absent`, whose `ensure_key` answers `None` at
+// both efforts for the life of the process. Every certificate it ingested
+// therefore took VOTE-ONLY admission: the attributable `2f+1` multisig quorum was
+// checked, the seed slot was not, so a tampered or cleared seed riding a valid
+// quorum was admitted in silence. Nothing the verification needs was missing —
+// the chain id, an rng and the `committee[epoch]` read are all things a follower
+// already has. What was missing was a DELIVERY ROUTE for the artifact, which the
+// caller supplies as [`ArtifactFetch`] over the one peer relationship a follower
+// has: its cert upstream.
+//
+// # Trust
+//
+// The upstream is trusted for DELIVERY and for nothing else. A fetched artifact
+// is checked against `committee[epoch]` read from THIS node's own chain state, by
+// the same `verify_artifact_for_epoch` a validator's pull seam uses — so a lying
+// upstream is caught here exactly as a lying peer is caught there.
+
+/// Depth of the want channel between `Randomness::hold_seed` and the fetch task.
+/// Wants are re-issued on every certificate (~1/s) for as long as the epoch stays
+/// unresolved, so a full channel costs nothing: the drop is re-asked a second
+/// later, and dropping is what keeps the verdict off the network.
+const WANT_MAILBOX: usize = 16;
+
+/// One artifact fetch over the follower's cert upstream, by MINTING epoch — the
+/// BYTES half of an acquisition, supplied by the node.
+///
+/// It is [`artifact::ArtifactBytes`] under this seam's own name, and it stays a closure
+/// rather than becoming the trait journal 5.0's Д-11 asked for, for a reason that
+/// is a boundary and not a preference: the only supplier is
+/// `crate::dpos::CertUpstream::get_epoch_artifact`, whose call site is production
+/// code in a file this row may not write. The trait Д-11 wanted DOES exist —
+/// [`AcquireArtifact`], with the two implementors that justify it — and this alias
+/// is now its argument rather than a second abstraction.
+pub type ArtifactFetch = artifact::ArtifactBytes;
+
+/// What [`build_follower`] needs that it cannot build itself. Every field is a
+/// capability the node already holds; none of them is beacon state.
+///
+/// `--cert-follow` has no keys, no muxes and no DKG, so this is not a narrowing of
+/// [`ValidatorInputs`] but a different set: what it does have is the artifact
+/// upstream, and the artifact half is all a follower's beacon does.
+///
+/// There is no `partition_prefix`: the follower is RAM-only by decision, and what
+/// a restart costs it is one fetch per epoch over a link it holds open anyway.
+pub struct FollowerInputs {
+    pub chain_id: u64,
+    /// Every staking read the follower's beacon takes, on ONE cursor — the same
+    /// trait the validator plane is handed.
+    pub committees: Arc<dyn CommitteeReads>,
+    /// The delivery route. See [`ArtifactFetch`].
+    pub fetch: ArtifactFetch,
+}
+
+/// [`FollowerInputs`] with its staking reads already projected into the two
+/// closures the internals speak. Private: it exists so the body below is unchanged
+/// by the boundary move, and so this file's tests can build the beacon over canned
+/// closures without going through [`CommitteeReads`].
+struct ResolvedFollowerInputs {
+    chain_id: u64,
+    committees: CommitteeSource,
+    changed: ChangedAt,
+    fetch: ArtifactFetch,
+}
+
+/// What [`build_resolved`] hands back. Private: the two halves leave through
+/// [`build_follower`]'s [`Tasks`].
+struct FollowerBeacon {
+    randomness: Arc<dyn Beacon>,
+    /// The SAME object as `randomness`, kept concrete for this file's own tests:
+    /// the refusal latch is a `Randomness` method and the counters are private to
+    /// the provider, neither of which `dyn Beacon` can reach.
+    #[cfg(test)]
+    provider: Arc<LiveBeacon>,
+    fetch_handle: Handle<()>,
+}
+
+/// Build the follower's beacon.
+///
+/// Registers the beacon metric families on `context` — a follower is the sole
+/// owner of them on its node class.
+pub fn build_follower<E>(context: &E, cfg: FollowerInputs) -> (Arc<dyn Beacon>, Tasks)
+where
+    E: Clock + Metrics + Spawner + Clone + Send + 'static,
+{
+    let committee_source: CommitteeSource = {
+        let reads = cfg.committees.clone();
+        Arc::new(move |epoch: u64| reads.committee_bls(epoch, reads.read_at()?))
+    };
+    let changed = changed_bit(cfg.committees.clone());
+    let beacon = build_resolved(
+        context,
+        ResolvedFollowerInputs {
+            chain_id: cfg.chain_id,
+            committees: committee_source,
+            changed,
+            fetch: cfg.fetch,
+        },
+    );
+    (
+        beacon.randomness,
+        Tasks {
+            supervised: beacon.fetch_handle,
+            // A follower opens no journal partition — RAM-only artifact store,
+            // RAM-only seed index — so there is nothing to flush at shutdown.
+            drain: context
+                .with_label("beacon_drain")
+                .spawn(move |_| async move {}),
+            // No agreement plane on this node class, so nothing ever arrives.
+            agreement_intake: mpsc::channel(1).1,
+        },
+    )
+}
+
+/// The body, over the closures the internals speak.
+fn build_resolved<E>(context: &E, cfg: ResolvedFollowerInputs) -> FollowerBeacon
+where
+    E: Clock + Metrics + Spawner + Clone + Send + 'static,
+{
+    let metrics = BeaconMetrics::default();
+    metrics.register(context);
+
+    let store = ArtifactStore::new();
+    let keys = KeyIndex::new(store.clone(), artifact::MintIndex::new(cfg.changed));
+
+    // THE SAME ACQUISITION THE NON-MEMBER VALIDATOR USES, over this class's
+    // transport. Throttle, decode, verify against `committee[minted_at]` and file —
+    // one body in `artifact`, so the check that makes a lying upstream and a lying
+    // peer the same non-event cannot be two different checks. No write-back hop:
+    // this node class has no actor to adopt a pinned set into.
+    let acquire: AcquireMint = Arc::new(artifact::TransportAcquire::new(
+        cfg.chain_id,
+        cfg.committees,
+        cfg.fetch,
+        store.clone(),
+        None,
+        context.clone(),
+        metrics.clone(),
+    ));
+
+    let (want_tx, want_rx) = mpsc::channel(WANT_MAILBOX);
+    // Captured before the task exists, as the store's own edge requires: a fill
+    // landing between the spawn and the task's first poll would be lost to a handle
+    // taken inside the loop, and an artifact arrives ONCE per epoch — unlike a want,
+    // nothing re-issues it a second later.
+    let key_edge = store.subscribe();
+    let randomness = LiveBeacon::build(LiveBeaconConfig {
+        // RAM-only, like the artifact store above and for the same reason: this
+        // path opens no journal partition. What a restart loses is σ the next
+        // certificate carries anyway.
+        seeds: super::seed_index::SeedIndex::new(),
+        keys,
+        // THE ONE FIELD THAT MAKES THIS A FOLLOWER — see the section head.
+        ceremony: super::surface::keyless_ceremony(),
+        acquire: Some(acquire),
+        metrics,
+        chain_id: cfg.chain_id,
+        artifacts: store,
+        // A follower freezes no `(activation, interval)` of its own and never asks
+        // to participate, so the only reader of this watch — `share_probe`'s
+        // `GeometryUnfrozen` refinement — must not fire: `NoUsableShare` is the
+        // true story for a node class that runs no ceremony.
+        geometry: watch::channel(Some((0, 1))).1,
+    });
+    // Before the `Arc` is handed to anything, which is what makes the write-once
+    // cell sound.
+    randomness.wire_want(want_tx);
+    let fetch_handle = {
+        // WEAK on purpose: the task holds the receiving end of `want_tx`, so an
+        // `Arc` here would keep the sender alive through its own owner and the
+        // loop could never tell shutdown from idleness.
+        let provider = Arc::downgrade(&randomness);
+        context
+            .with_label("follower_artifact_fetch")
+            .spawn(move |_| run_fetcher(want_rx, key_edge, provider))
+    };
+
+    FollowerBeacon {
+        #[cfg(test)]
+        provider: randomness.clone(),
+        randomness,
+        fetch_handle,
+    }
+}
+
+/// The FROZEN `changed` bit over a [`CommitteeReads`], for both node classes.
+///
+/// The `committed` leg the raw read carries is dropped here rather than guarded —
+/// see [`ChangedAt`] for why that is Д-7 resolved: the module answers a record only
+/// for an epoch whose committee it read, so `committed` is unconditionally `true`
+/// and `!(bit || committed) ⇒ None` had one live meaning left.
+pub(super) fn changed_bit(reads: Arc<dyn CommitteeReads>) -> ChangedAt {
+    Arc::new(move |epoch: u64| {
+        let at = reads.read_at()?;
+        reads.dkg_qual(epoch, at).map(|(bit, _committed)| bit)
+    })
+}
+
+/// The off-path half, and the ONLY place a follower touches the network for a key.
+///
+/// Sequential by construction: one acquisition at a time, so a slow upstream costs
+/// latency and never a fan-out. The per-epoch throttle lives inside
+/// `TransportAcquire`, shared with every other consumer of it. The acquisition
+/// itself is `ensure_key(Thorough)` — the SAME operation the epoch manager calls on
+/// a validator, which is what keeps "how a key is obtained" one body.
+///
+/// It carries the SETTLE of held σ on a second arm, and that arm is this class's
+/// copy of the validator plane's event bridge: what decides whether a held σ can be
+/// served is an artifact landing, and the STORE's own edge is the trigger rather
+/// than this task's fetch result — an epoch also resolves off an artifact adopted
+/// for a DIFFERENT epoch (a carry), and a σ waiting on that one would otherwise
+/// never be re-checked. The settle rides this task instead of one of its own
+/// because the two share a single failure story — a follower that has stopped using
+/// `PK_epoch` — and a second task would have to be supervised separately to tell
+/// the same thing.
+async fn run_fetcher(
+    mut want_rx: mpsc::Receiver<u64>,
+    key_edge: Arc<Notify>,
+    provider: std::sync::Weak<LiveBeacon>,
+) {
+    loop {
+        let epoch = tokio::select! {
+            want = want_rx.recv() => match want {
+                Some(epoch) => epoch,
+                None => break,
+            },
+            _ = key_edge.notified() => {
+                // Gone means the last beacon handle dropped, i.e. shutdown.
+                let Some(randomness) = provider.upgrade() else { break };
+                // BEFORE the publish, never after — the plane's bridge takes the
+                // same order and for the same reason: a consumer re-reads state on
+                // the wake-up, and a σ the landed key has just made servable must
+                // already be `Verified` when it does.
+                randomness.settle_pending();
+                // This task is the SOLE waiter on the store's own notifier, so it is
+                // also the only place that can turn an artifact landing into the
+                // beacon's `KeyAvailable` wake-up.
+                let _ = super::surface::Randomness::events(randomness.as_ref())
+                    .send(BeaconEvent::KeyAvailable);
+                continue;
+            }
+        };
+        let Some(randomness) = provider.upgrade() else {
+            break;
+        };
+        let _ = super::surface::Randomness::ensure_key(
+            randomness.as_ref(),
+            epoch,
+            super::surface::PinEffort::Thorough,
+        )
+        .await;
+    }
+    // PARK, never return: this handle is supervised, where a clean exit means "a
+    // subsystem died, take the node down". The loop ends only when the last beacon
+    // handle drops, which is shutdown, and that must not be the thing that cancels
+    // the node.
+    std::future::pending::<()>().await;
 }
 
 #[cfg(test)]
@@ -1071,5 +1329,819 @@ mod tests {
             journal_partition("node3-", SEED_JOURNAL_PARTITION),
             "node3-beacon-seed-ordinal"
         );
+    }
+}
+
+/// The follower beacon's own tests, moved with the builder above when row 5.2
+/// deleted `beacon/follower.rs`. Kept a module of their own rather than merged
+/// into [`tests`]: the two have disjoint fixtures and the import blocks do not
+/// overlap.
+#[cfg(test)]
+mod follower_tests {
+    use super::*;
+    use crate::beacon::{
+        surface::{PinEffort, Randomness},
+        DataFault,
+    };
+    use crate::{
+        beacon::{
+            artifact::decode_artifact,
+            dkg_agree::{AgreedArtifact, DkgProposal},
+            outcome::DkgOutcome,
+            surface::DealtOracle,
+            BeaconEvent, Observed, ObservedCertificate,
+        },
+        digest::Digest,
+    };
+    use alloy_primitives::{Address, B256};
+    use commonware_codec::{DecodeExt as _, Encode as _};
+    use commonware_consensus::{
+        simplex::types::{Finalization, Finalize, Proposal},
+        types::{Epoch, Round, View},
+    };
+    use commonware_cryptography::{
+        bls12381::{
+            dkg::deal,
+            primitives::{group::Share, sharing::Mode, variant::MinSig},
+        },
+        ed25519::PrivateKey as Ed25519PrivateKey,
+    };
+    use commonware_math::algebra::Random as _;
+    use commonware_parallel::Sequential;
+    use commonware_runtime::{deterministic, Runner as _};
+    use commonware_utils::{
+        ordered::{BiMap, Set},
+        N3f1, TryCollect as _,
+    };
+    use fluentbase_bls::oracle::SeedOracle;
+    use fluentbase_bls::{
+        beacon::dkg_namespace, fluent_namespace, keys::ValidatorBlsKeypair, scheme::build_signer,
+        scheme::build_verifier, BlsPubkey, EpochCommittee, PeerPubkey, Scheme as BlsScheme,
+    };
+    use fluentbase_staking_reader::reader::{ConsensusKeys, ValidatorWithKeys};
+    use rand_08::{rngs::StdRng, SeedableRng as _};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::time::Duration;
+
+    const CHAIN_ID: u64 = 20_994;
+    /// The epoch whose committee MINTED the key, so `dkgQual[TARGET]` is set and
+    /// the ladder asks for exactly this epoch's artifact.
+    const TARGET: u64 = 9;
+    const N: usize = 4;
+
+    struct Committee {
+        peers: Vec<Ed25519PrivateKey>,
+        bls: Vec<ValidatorBlsKeypair>,
+    }
+
+    fn committee(seed: u64) -> Committee {
+        let mut rng = StdRng::seed_from_u64(seed);
+        Committee {
+            peers: (0..N)
+                .map(|_| Ed25519PrivateKey::random(&mut rng))
+                .collect(),
+            bls: (0..N)
+                .map(|_| ValidatorBlsKeypair::generate(&mut rng))
+                .collect(),
+        }
+    }
+
+    impl Committee {
+        fn bimap(&self) -> BiMap<PeerPubkey, BlsPubkey> {
+            self.peers
+                .iter()
+                .zip(self.bls.iter())
+                .map(|(p, b)| {
+                    (
+                        p.public_key(),
+                        BlsPubkey::decode(b.public_bytes().as_slice()).expect("bls pubkey"),
+                    )
+                })
+                .try_collect()
+                .expect("unique committee")
+        }
+
+        /// Exactly what the follower's own `committee_source` closure hands back.
+        fn epoch_committee(&self, epoch: u64) -> EpochCommittee {
+            let snap = fluentbase_staking_reader::reader::ValidatorSetSnapshot {
+                block_hash: B256::repeat_byte(0x11),
+                block_number: 4_096,
+                epoch,
+                validators: self
+                    .peers
+                    .iter()
+                    .zip(self.bls.iter())
+                    .enumerate()
+                    .map(|(i, (p, b))| ValidatorWithKeys {
+                        address: Address::repeat_byte(i as u8 + 1),
+                        keys: ConsensusKeys {
+                            bls_pubkey: BlsPubkey::decode(b.public_bytes().as_slice())
+                                .expect("bls pubkey"),
+                            peer_pubkey: p.public_key(),
+                            activation_epoch: 0,
+                        },
+                        tombstoned: false,
+                    })
+                    .collect(),
+                weights: None,
+            };
+            crate::scheme::epoch_committee_from_snapshot(&snap).expect("committee")
+        }
+
+        /// A real DKG over THIS committee's peers, so the artifact the follower
+        /// adopts and the σ its certificates carry stand under one key. `deal`
+        /// indexes shares by the player's position in the commonware-sorted
+        /// `Set`, which is the order `build_signer` asserts a member's share
+        /// index against — hence the per-peer lookup rather than a bare `values`.
+        fn deal(&self) -> (DkgOutcome, Vec<Share>) {
+            let mut rng = StdRng::seed_from_u64(77);
+            let players: Set<PeerPubkey> =
+                Set::from_iter_dedup(self.peers.iter().map(|k| k.public_key()));
+            let (outcome, share_map) =
+                deal::<MinSig, PeerPubkey, N3f1>(&mut rng, Mode::NonZeroCounter, players)
+                    .expect("deal");
+            let shares = self
+                .peers
+                .iter()
+                .map(|p| share_map.get_value(&p.public_key()).expect("share").clone())
+                .collect();
+            (outcome, shares)
+        }
+
+        /// A finalization whose certificate CARRIES the round's σ: every signer
+        /// holds a threshold share and the assembler recovers the seed into the
+        /// cert. It is the only shape in which σ ever reaches a follower.
+        fn certify_seeded(
+            &self,
+            epoch: u64,
+            outcome: &DkgOutcome,
+            shares: &[Share],
+            payload: Digest,
+        ) -> Finalization<BlsScheme, Digest> {
+            let bimap = self.bimap();
+            let ns = dkg_namespace(&fluent_namespace(CHAIN_ID));
+            let seed_ns = seed_namespace(&fluent_namespace(CHAIN_ID));
+            let oracle = |share: Option<Share>| {
+                Arc::new(DealtOracle {
+                    sharing: outcome.public().clone(),
+                    share,
+                    namespace: seed_ns.clone(),
+                }) as Arc<dyn SeedOracle>
+            };
+            let round = Round::new(Epoch::new(epoch), View::new(1));
+            let proposal = Proposal::new(round, View::new(0), payload);
+            let finalizes: Vec<_> = self
+                .bls
+                .iter()
+                .zip(shares)
+                .take(3)
+                .map(|(kp, share)| {
+                    let signer = build_signer(
+                        &ns,
+                        bimap.clone(),
+                        kp,
+                        epoch,
+                        Some(oracle(Some(share.clone()))),
+                    )
+                    .expect("member");
+                    Finalize::sign(&signer, proposal.clone()).expect("sign")
+                })
+                .collect();
+            Finalization::from_finalizes(
+                &build_verifier(&ns, bimap, epoch, Some(oracle(None))),
+                finalizes.iter(),
+                &Sequential,
+            )
+            .expect("quorum + recovered seed")
+        }
+
+        fn certify(&self, epoch: u64, payload: Digest) -> Finalization<BlsScheme, Digest> {
+            let bimap = self.bimap();
+            let ns = dkg_namespace(&fluent_namespace(CHAIN_ID));
+            let round = Round::new(Epoch::new(epoch), View::new(1));
+            let proposal = Proposal::new(round, View::new(0), payload);
+            let finalizes: Vec<_> = self
+                .bls
+                .iter()
+                .take(3)
+                .map(|kp| {
+                    let signer = build_signer(&ns, bimap.clone(), kp, epoch, None).expect("member");
+                    Finalize::sign(&signer, proposal.clone()).expect("sign")
+                })
+                .collect();
+            Finalization::from_finalizes(
+                &build_verifier(&ns, bimap, epoch, None),
+                finalizes.iter(),
+                &Sequential,
+            )
+            .expect("quorum")
+        }
+    }
+
+    /// The same proposal carrying a group key the caller chose, so the artifact
+    /// the follower adopts is the key its certificates' σ was formed under.
+    fn proposal_keyed(epoch: u64, group_key: DkgOutcome) -> DkgProposal {
+        DkgProposal {
+            target_epoch: epoch,
+            logs: (0..N as u8)
+                .map(|i| (i, B256::repeat_byte(0x40 + i)))
+                .collect(),
+            group_key,
+            confirms: Vec::new(),
+        }
+    }
+
+    /// A recording upstream. `served` is swappable so one test can watch what the
+    /// follower does with two different answers to the same question.
+    #[derive(Clone, Default)]
+    struct Upstream {
+        served: Arc<std::sync::Mutex<Option<Vec<u8>>>>,
+        calls: Arc<AtomicUsize>,
+        /// Set for as long as the caller is inside the verdict. The fetch
+        /// asserting on it is what makes "never inline" a real observation rather
+        /// than a claim about a signature.
+        forbidden: Arc<AtomicBool>,
+    }
+
+    impl Upstream {
+        fn fetch(&self) -> ArtifactFetch {
+            let me = self.clone();
+            Arc::new(move |_epoch: u64| {
+                assert!(
+                    !me.forbidden.load(Ordering::SeqCst),
+                    "the fetch ran on the caller's task — the verdict must only file and send"
+                );
+                me.calls.fetch_add(1, Ordering::SeqCst);
+                let served = me.served.lock().expect("served").clone();
+                let forbidden = me.forbidden.clone();
+                Box::pin(async move {
+                    assert!(
+                        !forbidden.load(Ordering::SeqCst),
+                        "the fetch future was polled on the caller's task"
+                    );
+                    served
+                }) as BoxFuture<'static, _>
+            })
+        }
+    }
+
+    fn config(c: &Committee, up: &Upstream) -> ResolvedFollowerInputs {
+        let committee = c.epoch_committee(TARGET);
+        ResolvedFollowerInputs {
+            chain_id: CHAIN_ID,
+            committees: Arc::new(move |epoch: u64| (epoch == TARGET).then(|| committee.clone())),
+            // Only TARGET minted; every epoch above it carries TARGET's key.
+            changed: Arc::new(|epoch: u64| Some(epoch == TARGET)),
+            fetch: up.fetch(),
+        }
+    }
+
+    /// Hand the follower a σ for `epoch` and return the verdict.
+    ///
+    /// THIS IS HOW A WANT IS RAISED since row 5.2 retired `observe_cert`: a
+    /// `Pending` verdict — a σ this node cannot check — IS the statement "I need
+    /// `PK_epoch` for this epoch". Production raises it from the same two cert
+    /// doors, so a test that drove a want any other way would be driving a fixture.
+    fn hand_seed(
+        fb: &FollowerBeacon,
+        c: &Committee,
+        epoch: u64,
+        outcome: &DkgOutcome,
+        shares: &[Share],
+    ) -> (Observed, Round) {
+        let cert = c.certify_seeded(epoch, outcome, shares, Digest(B256::repeat_byte(0xcc)));
+        let round = cert.proposal.round;
+        let observed = fb
+            .randomness
+            .observe_certificate(ObservedCertificate::Finalization(round, &cert));
+        (observed, round)
+    }
+
+    /// Let the fetch task run to the point where `pred` holds. Bounded so a
+    /// regression fails the assertion below instead of hanging the suite.
+    async fn settle(ctx: &deterministic::Context, pred: impl Fn() -> bool) {
+        for _ in 0..64 {
+            if pred() {
+                return;
+            }
+            ctx.sleep(Duration::from_millis(1)).await;
+        }
+    }
+
+    /// A follower must not trust its upstream for the key any more than for a
+    /// certificate. An artifact carrying a quorum of the WRONG committee is
+    /// refused, nothing is stored, and the epoch stays unpinned — i.e. its certs
+    /// keep taking vote-only admission rather than being verified against a key
+    /// the upstream chose.
+    ///
+    /// The forged bytes are asserted to DECODE first, so the refusal is proven to
+    /// come from the committee check and not from the codec.
+    #[test]
+    fn an_artifact_certified_by_the_wrong_committee_is_refused() {
+        let runner = deterministic::Runner::default();
+        runner.start(|ctx| async move {
+            let c = committee(1);
+            let foreign = committee(2);
+            let (outcome, shares) = c.deal();
+            let body = proposal_keyed(TARGET, outcome.clone());
+            let forged: AgreedArtifact = (body.clone(), foreign.certify(TARGET, body.digest()));
+            let bytes = forged.encode().to_vec();
+            assert!(
+                decode_artifact(&bytes).is_ok(),
+                "the forgery must survive the codec, or this tests the decoder"
+            );
+
+            let up = Upstream::default();
+            *up.served.lock().expect("served") = Some(bytes);
+            let fb = build_resolved(&ctx, config(&c, &up));
+
+            assert_eq!(
+                hand_seed(&fb, &c, TARGET, &outcome, &shares).0,
+                Observed::Pending,
+                "the want rides the `Pending` verdict, so this node must be keyless here"
+            );
+            settle(&ctx, || up.calls.load(Ordering::SeqCst) > 0).await;
+
+            assert!(
+                up.calls.load(Ordering::SeqCst) > 0,
+                "the fetch must have run"
+            );
+            assert!(
+                !fb.randomness.ensure_key(TARGET, PinEffort::Local).await,
+                "a refused artifact must leave the epoch KEYLESS"
+            );
+            assert!(
+                fb.randomness.artifact_bytes(TARGET).is_none(),
+                "a refused artifact must not be stored, let alone re-served to a tier-2 follower"
+            );
+        });
+    }
+
+    /// The positive half: a genuine artifact is adopted, the epoch's key then
+    /// resolves, and it resolves WITHOUT a fetch — the certificate path stays
+    /// network-free after the one off-path delivery.
+    #[test]
+    fn a_genuine_artifact_is_adopted_and_then_resolves_without_a_fetch() {
+        let runner = deterministic::Runner::default();
+        runner.start(|ctx| async move {
+            let c = committee(1);
+            let (outcome, shares) = c.deal();
+            let body = proposal_keyed(TARGET, outcome.clone());
+            let genuine: AgreedArtifact = (body.clone(), c.certify(TARGET, body.digest()));
+            let expected = *crate::beacon::outcome::group_public_key(&genuine.0.group_key);
+
+            let up = Upstream::default();
+            *up.served.lock().expect("served") = Some(genuine.encode().to_vec());
+            let fb = build_resolved(&ctx, config(&c, &up));
+
+            assert!(
+                !fb.randomness.ensure_key(TARGET, PinEffort::Local).await,
+                "nothing is held before the first delivery"
+            );
+            assert_eq!(
+                hand_seed(&fb, &c, TARGET, &outcome, &shares).0,
+                Observed::Pending
+            );
+            settle(&ctx, || fb.randomness.artifact_bytes(TARGET).is_some()).await;
+
+            let after_adoption = up.calls.load(Ordering::SeqCst);
+            assert_eq!(after_adoption, 1, "exactly one delivery");
+            assert!(fb.randomness.ensure_key(TARGET, PinEffort::Local).await);
+            // The VALUE, read off the adopted artifact itself: `ensure_key` reports
+            // only that a key resolved, so without this the test would pass on a
+            // wrong one.
+            assert_eq!(
+                *crate::beacon::outcome::group_public_key(
+                    &decode_artifact(&fb.randomness.artifact_bytes(TARGET).expect("adopted"))
+                        .expect("decodes")
+                        .0
+                        .group_key
+                ),
+                expected,
+                "the adopted PK_epoch is the genuine one"
+            );
+            // A carried (stable) epoch above the mint resolves off the SAME
+            // artifact through the dkgQual walk — no second delivery.
+            assert!(
+                fb.randomness.ensure_key(TARGET + 3, PinEffort::Local).await,
+                "a stable epoch carries the minting epoch's key"
+            );
+            // And the trigger stands down: with the key held the same certificate
+            // is `Recorded` instead of `Pending`, so no want is raised at all.
+            assert_eq!(
+                hand_seed(&fb, &c, TARGET, &outcome, &shares).0,
+                Observed::Recorded,
+                "a checkable σ must not raise a key want"
+            );
+            settle(&ctx, || up.calls.load(Ordering::SeqCst) > after_adoption).await;
+            assert_eq!(
+                up.calls.load(Ordering::SeqCst),
+                after_adoption,
+                "ensure_key and the verdict must not spend the network once the key is held"
+            );
+            assert!(
+                fb.randomness.artifact_bytes(TARGET).is_some(),
+                "the adopted artifact is servable to a tier-2 follower"
+            );
+        });
+    }
+
+    /// The verdict runs once per verified certificate (~1/s) on the task that
+    /// drains the cert stream. Raising a want must be a non-blocking send and
+    /// nothing else: the fetch, the decode and the verify all belong to the
+    /// background task. The `forbidden` flag is what proves it — the fetch panics
+    /// if it is reached while the caller is still inside the verdict.
+    #[test]
+    fn the_key_want_neither_blocks_nor_fetches_inline() {
+        let runner = deterministic::Runner::default();
+        runner.start(|ctx| async move {
+            let c = committee(1);
+            let (outcome, shares) = c.deal();
+            let body = proposal_keyed(TARGET, outcome.clone());
+            let genuine: AgreedArtifact = (body.clone(), c.certify(TARGET, body.digest()));
+
+            let up = Upstream::default();
+            *up.served.lock().expect("served") = Some(genuine.encode().to_vec());
+            let fb = build_resolved(&ctx, config(&c, &up));
+
+            up.forbidden.store(true, Ordering::SeqCst);
+            assert_eq!(
+                hand_seed(&fb, &c, TARGET, &outcome, &shares).0,
+                Observed::Pending
+            );
+            assert_eq!(
+                up.calls.load(Ordering::SeqCst),
+                0,
+                "the verdict returned having already fetched — it is on the hot path"
+            );
+            up.forbidden.store(false, Ordering::SeqCst);
+
+            settle(&ctx, || up.calls.load(Ordering::SeqCst) > 0).await;
+            assert_eq!(
+                up.calls.load(Ordering::SeqCst),
+                1,
+                "the work happens on the background task, and it does happen"
+            );
+        });
+    }
+
+    /// An upstream that serves nothing — no artifact, or a server too old to know
+    /// the method, which reach here identically as `None` — must leave the
+    /// follower exactly where it was: unpinned, still asking, and with nothing
+    /// stored. It is never a data fault and never poisons the epoch.
+    #[test]
+    fn an_upstream_with_no_artifact_leaves_the_epoch_unpinned_and_retryable() {
+        let runner = deterministic::Runner::default();
+        runner.start(|ctx| async move {
+            let c = committee(1);
+            let (outcome, shares) = c.deal();
+            let up = Upstream::default();
+            let fb = build_resolved(&ctx, config(&c, &up));
+
+            assert_eq!(
+                hand_seed(&fb, &c, TARGET, &outcome, &shares).0,
+                Observed::Pending
+            );
+            settle(&ctx, || up.calls.load(Ordering::SeqCst) > 0).await;
+
+            assert_eq!(up.calls.load(Ordering::SeqCst), 1);
+            assert!(
+                !fb.randomness.ensure_key(TARGET, PinEffort::Local).await,
+                "no artifact means no key — never a wrong one"
+            );
+            assert!(fb.randomness.artifact_bytes(TARGET).is_none());
+
+            // The miss is not memoised: once the upstream has it, the very next
+            // want adopts it. (The per-epoch throttle bounds HOW OFTEN, and it is
+            // the only thing between these two wants.)
+            let body = proposal_keyed(TARGET, outcome.clone());
+            let genuine: AgreedArtifact = (body.clone(), c.certify(TARGET, body.digest()));
+            *up.served.lock().expect("served") = Some(genuine.encode().to_vec());
+            ctx.sleep(crate::beacon::artifact::PULL_MIN_INTERVAL).await;
+            assert_eq!(
+                hand_seed(&fb, &c, TARGET, &outcome, &shares).0,
+                Observed::Pending
+            );
+            settle(&ctx, || fb.randomness.artifact_bytes(TARGET).is_some()).await;
+            assert!(
+                fb.randomness.ensure_key(TARGET, PinEffort::Local).await,
+                "a miss must not be terminal"
+            );
+        });
+    }
+
+    /// σ reaches this node class on the certificate and nowhere else — a follower
+    /// forms no round and has no by-round transport — and its executor derives a
+    /// beacon-active block's `prev_randao` from that σ alone. So a checked σ has
+    /// to be filed and served back, and the seed edge has to be the index's
+    /// rather than the `idle` handle nothing ever fires.
+    ///
+    /// The key arrives through the KEYLESS want first, because that is the only
+    /// route this node class has to one. The σ this test then files belongs to a
+    /// CARRIED epoch above the mint, so it is a round the keyless priming never
+    /// touched and the filing is the keyed path's own.
+    #[test]
+    fn a_verified_certificates_seed_is_filed_and_served() {
+        let runner = deterministic::Runner::default();
+        runner.start(|ctx| async move {
+            let c = committee(1);
+            let (outcome, shares) = c.deal();
+            let body = proposal_keyed(TARGET, outcome.clone());
+            let genuine: AgreedArtifact = (body.clone(), c.certify(TARGET, body.digest()));
+
+            let up = Upstream::default();
+            *up.served.lock().expect("served") = Some(genuine.encode().to_vec());
+            let fb = build_resolved(&ctx, config(&c, &up));
+
+            assert_eq!(
+                hand_seed(&fb, &c, TARGET, &outcome, &shares).0,
+                Observed::Pending
+            );
+            settle(&ctx, || fb.randomness.artifact_bytes(TARGET).is_some()).await;
+            assert!(fb.randomness.ensure_key(TARGET, PinEffort::Local).await);
+
+            const CARRIED: u64 = TARGET + 3;
+            let cert =
+                c.certify_seeded(CARRIED, &outcome, &shares, Digest(B256::repeat_byte(0xcc)));
+            let round = cert.proposal.round;
+            let sigma = cert
+                .certificate
+                .seed()
+                .expect("a beacon-active certificate carries the round seed");
+            assert!(
+                fb.randomness.seed(round).is_none(),
+                "the priming must not have filed this round"
+            );
+
+            let mut edge = fb.randomness.subscribe();
+            assert_eq!(
+                fb.randomness
+                    .observe_certificate(ObservedCertificate::Finalization(round, &cert)),
+                Observed::Recorded,
+                "a σ checkable under the carried key is filed on the spot"
+            );
+
+            assert_eq!(
+                fb.randomness.seed(round).map(|s| s.signature),
+                Some(sigma),
+                "the σ the certificate carried is what a later derive reads back"
+            );
+            let woken = tokio::select! {
+                event = edge.recv() => matches!(event, Ok(BeaconEvent::SeedRecorded)),
+                _ = ctx.sleep(Duration::from_millis(10)) => false,
+            };
+            assert!(
+                woken,
+                "a held tip waits on the seed wake-up; an unfired one parks it forever"
+            );
+        });
+    }
+
+    /// The keyless window is the ORDINARY state here: a follower obtains
+    /// `PK_epoch` only by fetching the epoch's artifact, so σ routinely lands
+    /// first. Held (`Pending`) rather than dropped, and re-checked when the key
+    /// turns up — an unwired settle would discard most of what the cert doors
+    /// file, in silence.
+    ///
+    /// The artifact is SERVABLE from the start and the follower still has no key
+    /// when it judges the σ, because nothing fetches until a want exists and the
+    /// `Pending` verdict is what raises the first one. The two assertions between
+    /// the verdict and the first await are therefore taken with the key provably
+    /// absent.
+    #[test]
+    fn a_seed_that_arrives_before_the_key_is_held_and_then_promoted() {
+        let runner = deterministic::Runner::default();
+        runner.start(|ctx| async move {
+            let c = committee(1);
+            let (outcome, shares) = c.deal();
+            let body = proposal_keyed(TARGET, outcome.clone());
+            let genuine: AgreedArtifact = (body.clone(), c.certify(TARGET, body.digest()));
+
+            let up = Upstream::default();
+            *up.served.lock().expect("served") = Some(genuine.encode().to_vec());
+            let fb = build_resolved(&ctx, config(&c, &up));
+            assert!(
+                fb.randomness.artifact_bytes(TARGET).is_none(),
+                "nothing is fetched before a want exists"
+            );
+
+            let cert = c.certify_seeded(TARGET, &outcome, &shares, Digest(B256::repeat_byte(0xcc)));
+            let round = cert.proposal.round;
+            let sigma = cert
+                .certificate
+                .seed()
+                .expect("a beacon-active certificate carries the round seed");
+            assert_eq!(
+                fb.randomness
+                    .observe_certificate(ObservedCertificate::Finalization(round, &cert)),
+                Observed::Pending
+            );
+            assert!(
+                fb.randomness.seed(round).is_none(),
+                "an unchecked σ must never be served"
+            );
+
+            // The want the `Pending` above raised is the only thing that reaches
+            // the network here, and the settle on the artifact's own edge is what
+            // releases the held σ.
+            settle(&ctx, || fb.randomness.seed(round).is_some()).await;
+            // Only a σ that was HELD can be served now: the capture above ran
+            // once, and nothing re-delivers it.
+            assert_eq!(
+                fb.randomness.seed(round).map(|s| s.signature),
+                Some(sigma),
+                "the key landing must release what the keyless window held"
+            );
+        });
+    }
+
+    /// ONE ERROR LINE PER EPOCH, and the class that had none. A refusal is judged
+    /// PER CERTIFICATE — a follower takes one a second — so the unlatched
+    /// `first_seed_refusal` this class used to carry printed one ERROR a second for
+    /// the life of the epoch, on the node class where a forged upstream is the
+    /// whole threat model. The VERDICT is unchanged (`Refused` every time, a σ that
+    /// fails an attested key is a witness every time); only the line is bounded,
+    /// which is the rule the deleted `keys.rs::reported_invalid_seed` carried and
+    /// row 5.2 moved here.
+    ///
+    /// The forgery is a REAL σ of a neighbouring round under the SAME key, spliced
+    /// into this round's certificate: a decodable curve point that verifies for
+    /// nothing here, which is what the upstream forger of R-008 serves. It is
+    /// asserted to differ from the genuine σ first, so a green run cannot rest on a
+    /// splice that did not happen.
+    ///
+    /// RED BEFORE THE FIX on the third assertion: the old body was
+    /// `fn first_seed_refusal(&self, _epoch: u64) -> bool { true }`, so the latch
+    /// was never consumed and every certificate printed.
+    #[test]
+    fn the_refusal_line_is_latched_once_per_epoch() {
+        let runner = deterministic::Runner::default();
+        runner.start(|ctx| async move {
+            let c = committee(1);
+            let (outcome, shares) = c.deal();
+            let body = proposal_keyed(TARGET, outcome.clone());
+            let genuine: AgreedArtifact = (body.clone(), c.certify(TARGET, body.digest()));
+
+            let up = Upstream::default();
+            *up.served.lock().expect("served") = Some(genuine.encode().to_vec());
+            let fb = build_resolved(&ctx, config(&c, &up));
+
+            // The key first: an `Invalid` verdict needs a resolvable key, or the σ
+            // is merely `Pending` and no line is printed at all.
+            assert_eq!(
+                hand_seed(&fb, &c, TARGET, &outcome, &shares).0,
+                Observed::Pending
+            );
+            settle(&ctx, || fb.randomness.artifact_bytes(TARGET).is_some()).await;
+            assert!(fb.randomness.ensure_key(TARGET, PinEffort::Local).await);
+
+            // A genuine σ of the NEXT round, spliced into this round's certificate.
+            let payload = Digest(B256::repeat_byte(0xcc));
+            let mut forged = c.certify_seeded(TARGET + 1, &outcome, &shares, payload);
+            let round = forged.proposal.round;
+            let neighbour = c
+                .certify_seeded(TARGET + 2, &outcome, &shares, payload)
+                .certificate
+                .seed;
+            assert_ne!(
+                forged.certificate.seed, neighbour,
+                "the splice must change the σ, or this test refuses nothing"
+            );
+            forged.certificate.seed = neighbour;
+
+            assert_eq!(
+                fb.randomness
+                    .observe_certificate(ObservedCertificate::Finalization(round, &forged)),
+                Observed::Refused,
+                "a σ that fails an attested key is refused"
+            );
+            assert!(
+                !Randomness::first_seed_refusal(fb.provider.as_ref(), round.epoch().get()),
+                "the first refusal must have consumed this epoch's latch"
+            );
+            assert!(
+                Randomness::first_seed_refusal(fb.provider.as_ref(), round.epoch().get() + 5),
+                "and the latch is per epoch, not global"
+            );
+            // The verdict itself does not change with the latch: a second forged
+            // certificate of the same epoch is still refused, and still not served.
+            assert_eq!(
+                fb.randomness
+                    .observe_certificate(ObservedCertificate::Finalization(round, &forged)),
+                Observed::Refused
+            );
+            assert!(
+                fb.randomness.seed(round).is_none(),
+                "a refused σ is never served"
+            );
+            // THE COUNT IS NOT LATCHED (review C-11). Bounding the LINE is only
+            // legitimate while the refusal stays countable: two certificates were
+            // refused above, and both must show.
+            assert_eq!(
+                fb.provider.metrics().seed_verify_invalid.get(),
+                2,
+                "the latch bounds the line, never the count"
+            );
+        });
+    }
+
+    /// THE LATE HALF OF Д-3 ON THE FOLLOWER (review C-06). A forged σ that arrives
+    /// BEFORE the epoch key is `Pending` — the ordinary case on this class, since a
+    /// follower obtains `PK_epoch` only by fetching the artifact — so
+    /// `observe_certificate` has already answered the inlet by the time the refusal
+    /// is reached. Without a channel the verdict reaches nobody and a lying
+    /// upstream pays nothing; the plane has had one since row 5.0 and this class
+    /// had none at all.
+    ///
+    /// FALSIFIER (one line): delete `self.faults.report(DataFault { epoch, refused
+    /// });` in `FollowerRandomness::settle_pending`. The settle still drops the σ
+    /// and still writes its ERROR line, and this test goes red on the `try_recv`.
+    #[test]
+    fn a_late_refusal_reaches_the_followers_fault_consumer() {
+        let runner = deterministic::Runner::default();
+        runner.start(|ctx| async move {
+            let c = committee(1);
+            let (outcome, shares) = c.deal();
+            let body = proposal_keyed(TARGET, outcome.clone());
+            let genuine: AgreedArtifact = (body.clone(), c.certify(TARGET, body.digest()));
+
+            let up = Upstream::default();
+            *up.served.lock().expect("served") = Some(genuine.encode().to_vec());
+            let fb = build_resolved(&ctx, config(&c, &up));
+
+            // The consumer arms the channel; nothing is queued before this.
+            let mut faults = fb
+                .randomness
+                .faults()
+                .expect("the follower files late verdicts");
+            assert!(
+                fb.randomness.faults().is_none(),
+                "and at most one consumer can take it"
+            );
+
+            // A genuine σ of a neighbouring round spliced into this one's
+            // certificate — the upstream forgery of R-008 — handed over while this
+            // node is still keyless for the epoch.
+            let payload = Digest(B256::repeat_byte(0xcc));
+            let mut forged = c.certify_seeded(TARGET + 1, &outcome, &shares, payload);
+            let round = forged.proposal.round;
+            let neighbour = c
+                .certify_seeded(TARGET + 2, &outcome, &shares, payload)
+                .certificate
+                .seed;
+            assert_ne!(
+                forged.certificate.seed, neighbour,
+                "the splice must change the σ, or this test refuses nothing"
+            );
+            forged.certificate.seed = neighbour;
+            assert_eq!(
+                fb.randomness
+                    .observe_certificate(ObservedCertificate::Finalization(round, &forged)),
+                Observed::Pending,
+                "keyless, so the verdict at the door can only be `Pending`"
+            );
+            assert!(
+                faults.try_recv().is_err(),
+                "and nothing is filed while the verdict is still open"
+            );
+
+            // The want raised above pulls the artifact; its landing settles the
+            // held σ, and THAT is where the refusal is finally reached.
+            settle(&ctx, || fb.randomness.artifact_bytes(TARGET).is_some()).await;
+            let epoch = round.epoch().get();
+            settle(&ctx, || {
+                fb.randomness.seed(round).is_none() && {
+                    Randomness::oracle_for(fb.provider.as_ref(), epoch).is_some()
+                }
+            })
+            .await;
+            assert_eq!(
+                faults.try_recv(),
+                Ok(DataFault { epoch, refused: 1 }),
+                "the late refusal has to reach the consumer that can act on it"
+            );
+        });
+    }
+
+    /// The beacon-active rule, which binds every implementation: an ORACLE tells
+    /// `verify_certificate` that the epoch is beacon-active, so one on a
+    /// pre-beacon epoch rejects every LEGAL seedless certificate there.
+    #[test]
+    fn a_pre_beacon_epoch_gets_no_oracle_and_no_key() {
+        let runner = deterministic::Runner::default();
+        runner.start(|ctx| async move {
+            let c = committee(1);
+            let up = Upstream::default();
+            let fb = build_resolved(&ctx, config(&c, &up));
+            for epoch in 0..super::super::actor::DETERMINISTIC_BOOTSTRAP_EPOCH {
+                assert!(
+                    fb.randomness.oracle_for(epoch).is_none(),
+                    "epoch {epoch} predates the beacon: an oracle there would reject \
+                     every legal seedless certificate"
+                );
+                assert!(!fb.randomness.ensure_key(epoch, PinEffort::Local).await);
+                assert!(!fb.randomness.mandatory_at(epoch));
+            }
+        });
     }
 }

@@ -351,7 +351,7 @@ struct CertInletObs {
     rotations: Arc<AtomicU64>,
     /// Every height the inlet pushed through the live-frontier tee, in order. The
     /// tee fires ONLY on a clean ingest (`cert_inlet.rs:712-717`, after
-    /// `observe_certificate` and `observe_cert`), so this is also the list of
+    /// `observe_certificate`), so this is also the list of
     /// certificates that passed the verify gate.
     ///
     /// EMPTY under [`TeeWiring::Production`], where the tee's only receiver is
@@ -2669,9 +2669,9 @@ async fn build_node(
     };
     // Everything the optional cert-inlet task needs that is about to be MOVED
     // into the builders below, captured here and only on the nodes that run one:
-    // the node's ONE beacon (a second provider would leave the inlet's
-    // `observe_cert` pruning a store nobody reads and would never see the key
-    // this plane's DKG publishes — `node/src/cert_inlet.rs`), the node's ONE
+    // the node's ONE beacon (a second provider would file the inlet's σ into an
+    // index nobody derives from and would never see the key this plane's DKG
+    // publishes — `node/src/cert_inlet.rs`), the node's ONE
     // `PlaneClock`, and the REAL `dkg_height_tx` the beacon actor's `heights`
     // receiver drains (`ValidatorInputs::heights` above).
     let inlet_inputs = cfg

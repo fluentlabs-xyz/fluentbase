@@ -210,17 +210,22 @@ impl SeedOracle for BeaconOracle {
         // to go resolve: resolving would put an await on the vote path, and the
         // caller already knows what to do with `NoKey`.
         //
-        // TWO OF THE THREE ARMS ARE COUNTED, and `Invalid` deliberately is not.
-        // A wrong seed under a known key already has loud, attributable handling
-        // at every call site (the inlet's `BLS verify FAILED` + data-fault
-        // rotation, the scheme's `false`); what had no witness at all was the
-        // keyed/keyless SPLIT, which is what these two make readable.
+        // ALL THREE ARMS ARE COUNTED. `Invalid` used to be left out, on the
+        // argument that a wrong seed under a known key already has loud,
+        // attributable handling at every call site. Row 5.2 latched that line per
+        // epoch (and `--cert-follow` never had the data-fault half at all), so the
+        // line no longer scales with the attack and the count has to — see
+        // `BeaconMetrics::seed_verify_invalid`. What the other two make readable
+        // is the keyed/keyless SPLIT, which had no witness at all.
         match self.keys.key_at(self.epoch) {
             Some(pk) if beacon::verify_seed(&pk, &self.namespace, round, seed) => {
                 self.metrics.seed_verify_ok.inc();
                 SeedCheck::Valid
             }
-            Some(_) => SeedCheck::Invalid,
+            Some(_) => {
+                self.metrics.seed_verify_invalid.inc();
+                SeedCheck::Invalid
+            }
             None => {
                 self.metrics.seed_verify_no_key.inc();
                 SeedCheck::NoKey
@@ -237,66 +242,6 @@ impl fmt::Debug for BeaconOracle {
         f.debug_struct("BeaconOracle")
             .field("epoch", &self.epoch)
             .field("me", &self.me)
-            .finish_non_exhaustive()
-    }
-}
-
-/// A [`SeedOracle`] for a node that holds no threshold material and never will:
-/// a `--cert-follow` follower. It obtains `PK_epoch` from its upstream's
-/// artifact and can check an assembled σ against it — nothing else.
-///
-/// The three material-bound answers are permanently negative BY TYPE rather than
-/// by state, which is the same distinction [`super::follower`] draws everywhere
-/// else: a follower runs no ceremony, so "not yet" would be a lie.
-#[derive(Clone)]
-pub(crate) struct KeyOnlyOracle {
-    pub(crate) epoch: u64,
-    pub(crate) keys: KeyIndex,
-    pub(crate) namespace: Vec<u8>,
-    /// The same two families [`BeaconOracle`] bumps, for the same reason. A
-    /// follower is where the keyless window is most ordinary — it can obtain
-    /// `PK_epoch` only by fetching the epoch's artifact — so leaving this node
-    /// class uncounted would leave the split invisible exactly where it is
-    /// routine.
-    pub(crate) metrics: BeaconMetrics,
-}
-
-impl SeedOracle for KeyOnlyOracle {
-    fn sign_partial(&self, _round: Round) -> Option<BlsSignature> {
-        None
-    }
-
-    fn verify_partial(&self, _round: Round, _index: Participant, _value: &BlsSignature) -> bool {
-        false
-    }
-
-    fn recover(
-        &self,
-        _partials: &[(Participant, BlsSignature)],
-        _threshold: u32,
-    ) -> Option<BlsSignature> {
-        None
-    }
-
-    fn verify_seed(&self, round: Round, seed: &BlsSignature) -> SeedCheck {
-        match self.keys.key_at(self.epoch) {
-            Some(pk) if beacon::verify_seed(&pk, &self.namespace, round, seed) => {
-                self.metrics.seed_verify_ok.inc();
-                SeedCheck::Valid
-            }
-            Some(_) => SeedCheck::Invalid,
-            None => {
-                self.metrics.seed_verify_no_key.inc();
-                SeedCheck::NoKey
-            }
-        }
-    }
-}
-
-impl fmt::Debug for KeyOnlyOracle {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("KeyOnlyOracle")
-            .field("epoch", &self.epoch)
             .finish_non_exhaustive()
     }
 }

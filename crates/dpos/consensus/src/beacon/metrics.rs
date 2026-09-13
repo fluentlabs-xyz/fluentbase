@@ -168,6 +168,23 @@ pub struct BeaconMetrics {
     /// `--cert-upstream` runs no inlet at all, so on a plain validator this is the
     /// ONLY place the keyless window is visible.
     pub seed_verify_no_key: Counter,
+    /// Assembled seeds this node checked against `PK_epoch` and REFUSED —
+    /// [`fluentbase_bls::oracle::SeedCheck::Invalid`], the accusation arm.
+    ///
+    /// It used to be deliberately uncounted, on the argument that every call site
+    /// already gives the refusal loud attributable handling. Row 5.2 broke that
+    /// argument in two places at once (review C-11): the ERROR line is now LATCHED
+    /// per epoch on both node classes, so repeat refusals of the same epoch are
+    /// silent; and on `--cert-follow` the loud handling never existed — that class
+    /// had no data-fault channel until this pass. A latched line without a counter
+    /// is a witness that does not scale with the attack, which is the one shape
+    /// the rule "bound the line, never the count" forbids.
+    ///
+    /// Counted at the ORACLE, so it covers both halves of Д-3 with one family: the
+    /// synchronous refusal inside `observe_certificate`, and the late one the
+    /// settle reaches when a key finally lands on a held σ. GLOBAL, not per-epoch,
+    /// for the reason `seed_verify_ok` gives.
+    pub seed_verify_invalid: Counter,
 }
 
 impl BeaconMetrics {
@@ -311,6 +328,12 @@ impl BeaconMetrics {
              The certificate is admitted on its multisig quorum alone and nobody consumes its \
              seed.",
             self.seed_verify_no_key.clone(),
+        );
+        ctx.register(
+            "dpos_seed_verify_invalid_total",
+            "Assembled seeds REFUSED under the epoch's attested key. The paired ERROR line is \
+             latched per epoch; this is not, so a repeat forger stays visible.",
+            self.seed_verify_invalid.clone(),
         );
     }
 }

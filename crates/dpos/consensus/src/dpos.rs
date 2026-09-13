@@ -7,7 +7,7 @@ use crate::{
         derive_with_visibility_retry, BeaconEngineLike, DerivedBlock as _, DerivedBlockBuilder,
         ExecutedChain, OrderingAssembler,
     },
-    beacon::{Beacon, Seed},
+    beacon::{Beacon, Observed, ObservedCertificate, Seed},
     cold_start_jump::ElSync as _,
     digest::Digest,
     epocher::OriginEpocher,
@@ -178,7 +178,7 @@ const PARKED_BOUNDARY_WARN_EVERY: u64 = 150;
 const MARSHAL_PARTITION_PREFIX: &str = "consensus_marshal";
 
 /// Partition for the durable `Round → σ` store behind the
-/// `beacon::certify::SeedStore`. Deliberately NOT under
+/// `beacon::seed_index::SeedIndex`. Deliberately NOT under
 /// [`MARSHAL_PARTITION_PREFIX`]: this is a Fluent-side store beside the marshal's,
 /// not part of it, and it must stay independently prunable.
 ///
@@ -452,6 +452,26 @@ where
              disk from a snapshot"
         ));
     }
+    crash_recover_defer(provider, target, sync_metrics, cause)
+}
+
+/// The deferring half alone, for a cause that is NOT local data loss and therefore
+/// has no fatal arm.
+///
+/// The one caller is [`ReplaySeed::Defer`]: "this node does not hold the epoch key
+/// yet" is a statement about the BEACON's acquisition, which self-heals off the
+/// artifact — the `KeyAvailable` edge settles the σ the replay held — and an
+/// upstream is irrelevant to it in both directions. Making it fatal on a node with
+/// no cert upstream would turn a bounded wait into a re-sync instruction.
+fn crash_recover_defer<Provider>(
+    provider: &Provider,
+    target: u64,
+    sync_metrics: &SyncMetrics,
+    cause: &str,
+) -> eyre::Result<RecoverOutcome>
+where
+    Provider: BlockNumReader,
+{
     let best = provider
         .best_block_number()
         .wrap_err("best_block_number at crash-survivor defer")?;
@@ -628,6 +648,12 @@ enum ReplaySeed {
     Derive(Option<Seed>),
     /// σ is mandatory here and no source has it. The walk stops and defers.
     Unavailable,
+    /// σ is mandatory here, a certificate for the round CARRIES it, and this node
+    /// cannot check it yet: the epoch key is not resolvable locally. The beacon is
+    /// holding the value (`Observed::Pending`) and will settle it on the
+    /// `KeyAvailable` edge, so the walk defers instead of deriving — and never
+    /// fatally, whatever the upstream configuration.
+    Defer,
 }
 
 /// σ for `height`'s own round out of this node's own store, or the round to go
@@ -678,20 +704,59 @@ fn replay_seed_source(
     }
 }
 
-/// σ out of a finalization, PINNED to the round the caller named.
+/// What one certificate could give the replay for `round`.
+enum CertSeed {
+    /// Checked under `PK_E` and filed: the index answers for the round.
+    Held(Seed),
+    /// The key is not resolvable here yet; the beacon is holding the value.
+    Pending,
+    /// Nothing usable: a certificate for another round, one carrying no σ, or one
+    /// whose σ was REFUSED under the epoch's attested key.
+    Absent,
+}
+
+/// σ out of a finalization, PINNED to the round the caller named and CHECKED under
+/// the epoch key.
 ///
 /// σ signs `seed_message(round)`, so a certificate for another round carries a
 /// perfectly valid signature over something else; taking it would be the fork the
 /// caller is avoiding. One implementation for both cert sources — the local
 /// archive and the upstream — because the rule is the same for both.
-fn seed_from_cert(round: Round, finalization: &Finalization<BlsScheme, Digest>) -> Option<Seed> {
+///
+/// THE CHECK IS NEW (E5-03), and what made it possible is that the miss now has an
+/// outcome. This walk used to read σ straight out of the archive with no
+/// verification, justified as "the epoch key needed for the check is also the one
+/// thing a restart may legitimately not have" — true, and the wrong conclusion: the
+/// two cases are distinguishable, and the beacon is what distinguishes them.
+/// `Observed::Pending` IS "no key here yet", and it defers; `Observed::Refused` is a
+/// σ that fails an ATTESTED key, which after П-3 is the only kind there is, so a
+/// corrupted or tampered archive record can no longer be derived from. The trust
+/// this walk extends to the archive's BLOCK BODIES is unchanged — they are what
+/// the derive is of, and the result is cross-checked by consensus.
+///
+/// The verdict is the beacon's for the same reason the two live ingresses use it:
+/// one rule in one place. It also FILES what it checks, so the walk's own read
+/// (`Beacon::seed`) is the answer, and a later height of the same round needs no
+/// second check.
+fn seed_via_beacon(
+    beacon: &dyn Beacon,
+    round: Round,
+    finalization: &Finalization<BlsScheme, Digest>,
+) -> CertSeed {
     if finalization.proposal.round != round {
-        return None;
+        return CertSeed::Absent;
     }
-    Some(Seed {
-        target_round: round,
-        signature: finalization.certificate.seed()?,
-    })
+    match beacon.observe_certificate(ObservedCertificate::Finalization(round, finalization)) {
+        Observed::Recorded => match beacon.seed(round) {
+            Some(seed) => CertSeed::Held(seed),
+            // Unreachable while the index's retention window is measured in
+            // thousands of rounds and this read is the same tick as the file: it
+            // would take an eviction between the two.
+            None => CertSeed::Absent,
+        },
+        Observed::Pending => CertSeed::Pending,
+        Observed::Refused | Observed::Inactive => CertSeed::Absent,
+    }
 }
 
 /// Resolve σ for one replayed height: this node's store, then the local
@@ -705,7 +770,7 @@ fn seed_from_cert(round: Round, finalization: &Finalization<BlsScheme, Digest>) 
 /// would be incoherent (the epoch key needed for the check is also the one thing a
 /// restart may legitimately not have). The UPSTREAM read is the only VERIFIED
 /// one: `refetch_verified_archive_hole` authenticates it exactly like the
-/// cold-start jump landing. Every source is round-pinned by [`seed_from_cert`],
+/// cold-start jump landing. Every source is round-pinned by [`seed_via_beacon`],
 /// so no source can substitute a neighbouring round's σ.
 ///
 /// A local certificate is often absent and that is normal, not a fault: an
@@ -749,8 +814,13 @@ where
                 order.height
             )
         })?;
-    if let Some(seed) = local.as_ref().and_then(|cert| seed_from_cert(round, cert)) {
-        return Ok(ReplaySeed::Derive(Some(seed)));
+    match local
+        .as_ref()
+        .map(|cert| seed_via_beacon(beacon, round, cert))
+    {
+        Some(CertSeed::Held(seed)) => return Ok(ReplaySeed::Derive(Some(seed))),
+        Some(CertSeed::Pending) => return Ok(ReplaySeed::Defer),
+        Some(CertSeed::Absent) | None => {}
     }
     if upstream.is_some() {
         match refetch_verified_archive_hole(
@@ -763,18 +833,19 @@ where
         )
         .await
         {
-            Ok(uf) => {
-                if let Some(seed) = seed_from_cert(round, &uf.finalization) {
+            Ok(uf) => match seed_via_beacon(beacon, round, &uf.finalization) {
+                CertSeed::Held(seed) => {
                     sync_metrics.crash_recover_refetched.inc();
                     return Ok(ReplaySeed::Derive(Some(seed)));
                 }
-                warn!(
+                CertSeed::Pending => return Ok(ReplaySeed::Defer),
+                CertSeed::Absent => warn!(
                     height = order.height,
                     %round,
                     "crash-survivor recovery: the upstream's verified finalization carries no σ \
-                     for this round"
-                );
-            }
+                     this node can use for this round (absent, or refused under the epoch key)"
+                ),
+            },
             // NOT fatal here, where it is fatal for a missing BLOCK: the block is
             // already in hand, so a σ that cannot be fetched is a reason to let
             // devp2p carry the EL forward, not evidence of local data loss. The
@@ -927,6 +998,19 @@ where
         .await?
         {
             ReplaySeed::Derive(seed) => seed,
+            ReplaySeed::Defer => {
+                return crash_recover_defer(
+                    provider,
+                    target,
+                    sync_metrics,
+                    &format!(
+                        "block {h} sits on a beacon-active link, a certificate for its own round \
+                         carries σ, and this node cannot yet check it — the epoch key is not \
+                         resolvable here; the beacon holds the value and settles it when the \
+                         artifact lands"
+                    ),
+                );
+            }
             ReplaySeed::Unavailable => {
                 return crash_recover_defer_or_fatal(
                     provider,
@@ -3634,11 +3718,13 @@ impl DposLayer {
         let inlet_committee = committee.clone();
         let shutdown_for_inlet = shutdown.clone();
         // The SAME provider the epoch manager holds, not a second one over a
-        // private store — and on this path that is now load-bearing twice over.
-        // `observe_cert` prunes what `ensure_key` reads, so splitting them would make
-        // the pruning a no-op on a map nothing else can see; and `observe_cert` is
-        // also the key-delivery TRIGGER, so a second instance would fetch into a
-        // store the epoch manager's repair sweep never reads.
+        // private store, and on this path that is load-bearing: the σ the inlet
+        // files through `observe_certificate` and the key `ensure_key` resolves
+        // are the SAME index and the SAME key store the epoch manager and the
+        // executor read. A second instance would hold a σ nothing derives from and
+        // fetch into a key store the repair sweep never sees. (The `observe_cert`
+        // prune this note used to name is gone with row 5.2 — the index measures
+        // its own window; the argument does not depend on it.)
         let inlet_randomness = randomness.clone();
         // DATA-fault rotation trigger (#7): after MAX_UPSTREAM_FAULTS consecutive
         // unverifiable certs over a healthy connection the inlet rotates to the
@@ -4376,7 +4462,8 @@ mod crash_recover_tests {
 // and what the fork hinges on — is that a MISS never reads as "no σ here".
 #[cfg(test)]
 mod replay_seed_tests {
-    use super::{replay_seed_source, ReplaySeedSource, SyncMetrics};
+    use super::{replay_seed_source, seed_via_beacon, CertSeed, ReplaySeedSource, SyncMetrics};
+    use crate::beacon::Beacon;
     use crate::{
         beacon::testing::{
             ArtifactStore, LiveBeacon, LiveBeaconConfig, MintFixture, PkOracle, SeedStore,
@@ -4449,6 +4536,236 @@ mod replay_seed_tests {
             m.crash_recover_stray_seed.get(),
             0,
             "nothing stray was seen — the counter is for the inactive arm only"
+        );
+    }
+
+    /// A committee that can produce a REAL seeded finalization: `n` multisig
+    /// members over one dealt threshold key, so the σ its certificates carry is a
+    /// genuine threshold signature and the beacon's check of it is the shipped one.
+    struct Seeded {
+        signers: Vec<fluentbase_bls::Scheme>,
+        verifier: fluentbase_bls::Scheme,
+        outcome: crate::beacon::testing::DkgOutcome,
+    }
+
+    fn seeded_committee() -> Seeded {
+        use commonware_codec::DecodeExt as _;
+        use commonware_cryptography::{
+            bls12381::{
+                dkg::deal,
+                primitives::{sharing::Mode, variant::MinSig},
+            },
+            ed25519::PrivateKey as Ed25519PrivateKey,
+            Signer as _,
+        };
+        use commonware_math::algebra::Random as _;
+        use commonware_utils::{ordered::BiMap, ordered::Set, TryCollect as _};
+        use fluentbase_bls::{
+            beacon::seed_namespace, fluent_namespace, keys::ValidatorBlsKeypair,
+            oracle::SeedOracle, scheme::build_signer, scheme::build_verifier, BlsPubkey,
+            PeerPubkey,
+        };
+        use rand_08::rngs::StdRng;
+        use rand_core::SeedableRng as _;
+
+        let mut rng = StdRng::seed_from_u64(5);
+        let peers: Vec<_> = (0..4)
+            .map(|_| Ed25519PrivateKey::random(&mut rng))
+            .collect();
+        let bls: Vec<_> = (0..4)
+            .map(|_| ValidatorBlsKeypair::generate(&mut rng))
+            .collect();
+        let bimap: BiMap<PeerPubkey, BlsPubkey> = peers
+            .iter()
+            .zip(bls.iter())
+            .map(|(p, b)| {
+                (
+                    p.public_key(),
+                    BlsPubkey::decode(b.public_bytes().as_slice()).expect("bls pubkey"),
+                )
+            })
+            .try_collect()
+            .expect("unique committee");
+        let players: Set<PeerPubkey> = Set::from_iter_dedup(peers.iter().map(|p| p.public_key()));
+        let (outcome, share_map) =
+            deal::<MinSig, PeerPubkey, N3f1>(&mut rng, Mode::NonZeroCounter, players)
+                .expect("deal");
+        let seed_ns = seed_namespace(&fluent_namespace(1));
+        let oracle = |share: Option<_>| {
+            Arc::new(crate::beacon::testing::DealtOracle {
+                sharing: outcome.public().clone(),
+                share,
+                namespace: seed_ns.clone(),
+            }) as Arc<dyn SeedOracle>
+        };
+        let ns = fluent_namespace(1);
+        let signers = peers
+            .iter()
+            .zip(bls.iter())
+            .map(|(p, kp)| {
+                let share = share_map.get_value(&p.public_key()).expect("share").clone();
+                build_signer(
+                    &ns,
+                    bimap.clone(),
+                    kp,
+                    DETERMINISTIC_BOOTSTRAP_EPOCH,
+                    Some(oracle(Some(share))),
+                )
+                .expect("member")
+            })
+            .collect();
+        let verifier = build_verifier(
+            &ns,
+            bimap,
+            DETERMINISTIC_BOOTSTRAP_EPOCH,
+            Some(oracle(None)),
+        );
+        Seeded {
+            signers,
+            verifier,
+            outcome,
+        }
+    }
+
+    /// A 2f+1 finalization for `round` whose certificate CARRIES the round's σ.
+    fn seeded_cert(
+        c: &Seeded,
+        round: Round,
+    ) -> commonware_consensus::simplex::types::Finalization<
+        fluentbase_bls::Scheme,
+        crate::digest::Digest,
+    > {
+        use commonware_consensus::simplex::types::{Finalization, Finalize, Proposal};
+        let prop = Proposal::new(
+            round,
+            View::new(0),
+            crate::digest::Digest(alloy_primitives::B256::repeat_byte(0xcc)),
+        );
+        let finalizes: Vec<_> = c
+            .signers
+            .iter()
+            .take(3)
+            .map(|s| Finalize::sign(s, prop.clone()).expect("sign"))
+            .collect();
+        Finalization::from_finalizes(
+            &c.verifier,
+            finalizes.iter(),
+            &commonware_parallel::Sequential,
+        )
+        .expect("quorum + recovered seed")
+    }
+
+    /// A provider over an EMPTY index, with `mint` optionally filed — the two
+    /// states the replay walk has to tell apart.
+    fn provider(mint: Option<&crate::beacon::testing::DkgOutcome>) -> Arc<LiveBeacon> {
+        let mints = MintFixture::new();
+        if let Some(outcome) = mint {
+            mints.mint(DETERMINISTIC_BOOTSTRAP_EPOCH, outcome.clone());
+        }
+        LiveBeacon::build(LiveBeaconConfig {
+            seeds: SeedStore::new(),
+            keys: mints.keys.clone(),
+            ceremony: Arc::new(std::sync::RwLock::new(std::collections::BTreeMap::new())),
+            acquire: None,
+            metrics: crate::beacon::testing::BeaconMetrics::default(),
+            chain_id: 1,
+            artifacts: mints.artifacts.clone(),
+            geometry: tokio::sync::watch::channel(Some((0, 1))).1,
+        })
+    }
+
+    // (E5-03) THE ARCHIVE IS NO LONGER TRUSTED FOR σ. This walk used to read σ
+    // straight out of a certificate with no check, justified as "the key may
+    // legitimately not be here" — and the two cases ARE distinguishable, which is
+    // what the beacon's verdict says:
+    //
+    //   - genuine σ + key resolvable ⇒ `Held`, and it is FILED on the way past;
+    //   - any σ + no key ⇒ `Pending` ⇒ the caller defers and resumes on
+    //     `KeyAvailable`, instead of deriving from bytes nobody checked;
+    //   - a σ that FAILS an attested key ⇒ `Absent`: the walk looks elsewhere and
+    //     stops rather than forking on a corrupt or tampered record.
+    //
+    // RED BEFORE THE FIX, on the third assertion: the predecessor
+    // (`seed_from_cert`) returned `Some(σ)` for all three. Reproduce the `Pending`
+    // half with one line — `Observed::Pending => CertSeed::Absent` in
+    // `seed_via_beacon`.
+    #[test]
+    fn the_replays_certificate_seed_is_checked_under_the_epoch_key() {
+        let c = seeded_committee();
+        let round = Round::new(Epoch::new(DETERMINISTIC_BOOTSTRAP_EPOCH), View::new(VIEW));
+        let cert = seeded_cert(&c, round);
+        let sigma = cert
+            .certificate
+            .seed()
+            .expect("a beacon-active certificate carries the round seed");
+
+        // (1) The key is here and the σ is genuine: taken, and filed for the rest of
+        // the walk.
+        let keyed = provider(Some(&c.outcome));
+        match seed_via_beacon(keyed.as_ref(), round, &cert) {
+            CertSeed::Held(seed) => {
+                assert_eq!(seed.target_round, round);
+                assert_eq!(seed.signature, sigma);
+            }
+            CertSeed::Pending | CertSeed::Absent => panic!("a genuine σ under its own key"),
+        }
+        assert_eq!(
+            Beacon::seed(keyed.as_ref(), round).map(|s| s.signature),
+            Some(sigma),
+            "the verdict FILES what it checks, so the walk needs no second check"
+        );
+
+        // (2) No key here: HELD, and the walk defers. Deriving here is the fork this
+        // arm exists to prevent — a restart with an empty artifact partition is an
+        // ordinary state.
+        let keyless = provider(None);
+        assert!(
+            matches!(
+                seed_via_beacon(keyless.as_ref(), round, &cert),
+                CertSeed::Pending
+            ),
+            "no `PK_E` ⇒ defer, never a blind derive"
+        );
+        assert!(
+            Beacon::seed(keyless.as_ref(), round).is_none(),
+            "and nothing unchecked is served"
+        );
+
+        // (3) A σ that fails an ATTESTED key — a tampered or corrupt archive record.
+        // The genuine σ of a NEIGHBOURING round is the forgery: a decodable curve
+        // point that verifies for no round here.
+        let neighbour = Round::new(
+            Epoch::new(DETERMINISTIC_BOOTSTRAP_EPOCH),
+            View::new(VIEW + 1),
+        );
+        let mut tampered = seeded_cert(&c, round);
+        tampered.certificate.seed = seeded_cert(&c, neighbour).certificate.seed;
+        assert_ne!(
+            tampered.certificate.seed, cert.certificate.seed,
+            "the splice must change the σ, or this refuses nothing"
+        );
+        let fresh = provider(Some(&c.outcome));
+        assert!(
+            matches!(
+                seed_via_beacon(fresh.as_ref(), round, &tampered),
+                CertSeed::Absent
+            ),
+            "a σ refused under the epoch's attested key is not something to derive from"
+        );
+        assert!(
+            Beacon::seed(fresh.as_ref(), round).is_none(),
+            "and it is not filed either"
+        );
+
+        // (4) The round PIN, unchanged: a certificate for another round carries a
+        // perfectly valid signature over something else.
+        let other = provider(Some(&c.outcome));
+        assert!(
+            matches!(
+                seed_via_beacon(other.as_ref(), round, &seeded_cert(&c, neighbour)),
+                CertSeed::Absent
+            ),
+            "σ signs the round, so a neighbour's certificate answers nothing here"
         );
     }
 

@@ -1,13 +1,29 @@
-//! Durable backing for the in-memory [`SeedStore`](crate::beacon::certify::SeedStore):
+//! Durable backing for the in-memory [`SeedIndex`](crate::beacon::seed_index::SeedIndex):
 //! a `Round → σ` store plus the startup rehydration that refills the RAM map
 //! from it.
 //!
 //! ## Why the durable write may be asynchronous when the RAM write may not
 //!
-//! `SeedStore::record` is ORDERING-CRITICAL (`crate::spec_exec`): it must stay
-//! synchronous and precede the executor send, because the certify gate's
-//! `false`-on-missing-seed verdict is cross-node deterministic only if every
-//! honest node has recorded the round before its own `certify` scan reaches it.
+//! `SeedIndex::record` is ORDERING-CRITICAL (`crate::spec_exec`, the comment at
+//! `spec_exec.rs:56-85` is where that contract is derived): it must stay
+//! SYNCHRONOUS — never behind an await, never in a spawned task. The justification
+//! this paragraph used to carry is DEAD: it cited the certify gate's
+//! `false`-on-missing-seed verdict, and the gate went with `certify.rs`. What the
+//! synchronous record protects now is the propose path's LIVENESS. The voter
+//! awaits `report()` inline before it advances the view, so a record made
+//! synchronously there happens-before the next view exists; the block just
+//! notarized is finalized moments later and the executor derives it from σ at that
+//! same round, and a miss is not a wrong derive but a HELD height waiting on the
+//! beacon's wake-up. Deferring the record would lose that race against the very
+//! next finalization and put the whole execution pipeline one wake behind
+//! consensus.
+//!
+//! The OTHER half of the old rule — "and precede the executor send" — is NOT
+//! load-bearing, and `spec_exec.rs:77-85` says why: the executor consults the
+//! index only on a spin-round mismatch and then for the CANONICAL round, one an
+//! earlier report filed. Both statements are synchronous anyway, so the order
+//! between them is unobservable.
+//!
 //! That contract constrains *in-RAM visibility within this process*. Durability
 //! is only ever read by a LATER process, after a restart, so it is free to lag.
 //! The store therefore hands each fresh record to [`spawn_writer`] over a
@@ -284,7 +300,7 @@ impl<E: Storage + Metrics + Clock + BufferPooler> SeedJournal<E> {
     /// The HIGHEST record of every epoch the store still holds, oldest epoch
     /// first.
     ///
-    /// The rehydration counterpart of `SeedStore`'s terminal pin, and the reason
+    /// The rehydration counterpart of the index's terminal-round eviction rule, and the reason
     /// it is a separate read: [`replay_window`](Self::replay_window) walks
     /// newest-first and stops at `retention` RECORDS, so once the current epoch
     /// is past that count the PREVIOUS epoch's terminal round is not in the
@@ -353,7 +369,7 @@ pub async fn open<E>(
     writer_context: E,
     partition: &str,
     retention: usize,
-) -> eyre::Result<(crate::beacon::certify::SeedStore, Handle<()>)>
+) -> eyre::Result<(crate::beacon::seed_index::SeedIndex, Handle<()>)>
 where
     E: Storage + Metrics + Clock + Spawner + BufferPooler + Clone + Send + 'static,
 {
@@ -377,7 +393,7 @@ where
         epochs = terminals.len(),
         "pinned the per-epoch terminal seeds"
     );
-    let (store, rx) = crate::beacon::certify::SeedStore::with_persistence(rehydrated, terminals);
+    let (store, rx) = crate::beacon::seed_index::SeedIndex::with_persistence(rehydrated, terminals);
     let writer = spawn_writer(writer_context, journal, rx, retention as u64);
     Ok((store, writer))
 }
@@ -392,7 +408,7 @@ where
 /// ## What the returned handle guarantees, and what it does not
 ///
 /// `UnboundedReceiver::recv` yields every buffered item before it returns `None`,
-/// so once the LAST [`SeedStore`](crate::beacon::certify::SeedStore) clone drops
+/// so once the LAST [`SeedIndex`](crate::beacon::seed_index::SeedIndex) clone drops
 /// (dropping the sender) this loop makes one final pass — write the remainder,
 /// sync it — and only then exits. Awaiting the returned [`Handle`] therefore
 /// waits for the tail to be ON DISK, and the node's graceful-shutdown path does
@@ -458,7 +474,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::beacon::certify::{SeedStore, SEED_RETENTION};
+    use crate::beacon::seed_index::{SeedIndex, SEED_RETENTION};
     use crate::beacon::verified_seed::VerifiedSeed;
     use commonware_codec::FixedSize;
     use commonware_cryptography::bls12381::primitives::{group::Private, ops, variant::MinSig};
@@ -526,17 +542,17 @@ mod tests {
                 "one entry per epoch, each its highest round, oldest epoch first"
             );
 
-            let (store, _rx) = SeedStore::with_persistence(window, terminals);
+            let (store, _rx) = SeedIndex::with_persistence(window, terminals);
             assert!(
-                store.terminal_at(old_terminal).is_some(),
-                "and the restarted store can answer for the epoch its window lost"
+                store.seed(old_terminal).is_some(),
+                "and the restarted index can answer for the epoch its window lost"
             );
         });
     }
 
     // The whole loop, end to end and through the real writer task:
-    //   SeedStore::record  →  channel  →  spawn_writer  →  store + fsync
-    //   →  restart  →  replay_window  →  SeedStore::with_persistence  →  lookup
+    //   SeedIndex::record  →  channel  →  spawn_writer  →  store + fsync
+    //   →  restart  →  replay_window  →  SeedIndex::with_persistence  →  lookup
     // This is the claim Band 4.1 exists to make, so it is asserted against the
     // production path rather than against the store API directly.
     #[test]
@@ -547,7 +563,7 @@ mod tests {
             let journal = SeedJournal::init(ctx.with_label("boot1"), "seeds".into())
                 .await
                 .expect("open");
-            let (store, rx) = SeedStore::with_persistence(Vec::new(), Vec::new());
+            let (store, rx) = SeedIndex::with_persistence(Vec::new(), Vec::new());
             let writer = spawn_writer(ctx.with_label("writer"), journal, rx, SEED_RETENTION as u64);
             for r in &rounds {
                 store.record(VerifiedSeed::from_journal(*r, sig_for(*r)));
@@ -571,10 +587,10 @@ mod tests {
                 "every recorded round reached disk through the writer task"
             );
 
-            let (restarted, _rx2) = SeedStore::with_persistence(rehydrated, Vec::new());
+            let (restarted, _rx2) = SeedIndex::with_persistence(rehydrated, Vec::new());
             for r in &rounds {
                 assert_eq!(
-                    restarted.lookup(*r),
+                    restarted.seed(*r),
                     Some(sig_for(*r)),
                     "the restarted store returns the same sigma the first one recorded"
                 );
@@ -605,7 +621,7 @@ mod tests {
             let journal = SeedJournal::init(ctx.with_label("boot1"), "seeds".into())
                 .await
                 .expect("open");
-            let (store, rx) = SeedStore::with_persistence(Vec::new(), Vec::new());
+            let (store, rx) = SeedIndex::with_persistence(Vec::new(), Vec::new());
             let writer = spawn_writer(ctx.with_label("writer"), journal, rx, SEED_RETENTION as u64);
             for r in &rounds {
                 store.record(VerifiedSeed::from_journal(*r, sig_for(*r)));
@@ -660,10 +676,10 @@ mod tests {
                 .expect("replay");
             assert_eq!(rehydrated.len(), rounds.len());
 
-            let (store, _rx) = SeedStore::with_persistence(rehydrated, Vec::new());
+            let (store, _rx) = SeedIndex::with_persistence(rehydrated, Vec::new());
             for r in &rounds {
                 assert_eq!(
-                    store.lookup(*r),
+                    store.seed(*r),
                     Some(sig_for(*r)),
                     "the rehydrated store returns the same sigma it recorded"
                 );
@@ -684,13 +700,13 @@ mod tests {
             journal.sync().await.expect("sync");
             let rehydrated = journal.replay_window(SEED_RETENTION).await.expect("replay");
 
-            let (store, _rx) = SeedStore::with_persistence(rehydrated, Vec::new());
+            let (store, _rx) = SeedIndex::with_persistence(rehydrated, Vec::new());
             assert_eq!(
-                store.lookup(round_at(99)),
+                store.seed(round_at(99)),
                 None,
                 "a round that was never persisted misses, exactly as with a RAM-only store"
             );
-            assert_eq!(SeedStore::new().lookup(round_at(99)), None);
+            assert_eq!(SeedIndex::new().seed(round_at(99)), None);
         });
     }
 
