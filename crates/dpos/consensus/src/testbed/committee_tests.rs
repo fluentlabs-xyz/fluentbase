@@ -143,6 +143,21 @@ fn tree_only_hash(events: &[ElEvent]) -> Option<(u64, B256)> {
 /// nodes' anchors are four different heights — which the records themselves
 /// then say, because each one carries the `(height, hash)` it was read at.
 ///
+/// WHAT MAKES IT FALL BEHIND (5.1). Not the rotation: since П-3 a rotated-out
+/// node fetches the epoch key as an artifact over `BEACON_RESOLVER_CHANNEL`
+/// (R-121/R-122) and stays in lockstep, which left this run with one anchor and
+/// no re-jump (measured: every node at 168 and `tree_only=[None, None, None,
+/// None]`). The lag is therefore built by a PHYSICAL cut of node 3
+/// ([`Stand::partition`], both planes) inside epoch 2, healed an epoch later, and
+/// the cut has to be physical: a consensus-plane-only cut leaves the frontier
+/// probe feeding the node, which then climbs the whole way by JUMPS and DERIVES
+/// nothing above its park — and with no derive of its own there is no hash for a
+/// landing to arrive over, which is the state PREMISE 2 needs (measured on that
+/// variant: `jump_calls[3]` non-empty, `tree_only` still all `None`). Under the
+/// physical cut it comes back the way a restarted node does — a burst of
+/// certificates its executor derives against while the fork-choice updates trail
+/// — and the derive the landing arrives over is the tree-only hash.
+///
 /// What makes it a test and not a tautology: [`branching_rotation`] hands a
 /// DIFFERENT committee of the same size to any read taken off the reading
 /// node's canonical chain. So "every node holds the same record" now means
@@ -184,7 +199,12 @@ fn four_nodes_at_four_heights_hold_one_committee_record_per_epoch() {
     // above the height; node 3 is rotated out of epochs 3 and 4 and would not.
     cfg.tombstoned = vec![(0, TOMBSTONE_FROM)];
     cfg.re_jump_threshold = Some(crate::cold_start_jump::JUMP_THRESHOLD.min(EPOCH_LEN));
-    let out = Stand::new(cfg).run_until(reached(5 * EPOCH_LEN + 8), Duration::from_secs(400));
+    let mut stand = Stand::new(cfg);
+    stand
+        .partition(&[0, 1, 2], &[3])
+        .after_height(2 * EPOCH_LEN + 4)
+        .for_views(EPOCH_LEN as u32 + 8);
+    let out = stand.run_until(reached(5 * EPOCH_LEN + 8), Duration::from_secs(400));
     let n = out.heights.len();
     assert!(!out.timed_out, "heights {:?}", out.heights);
     assert!(out.halted.is_empty(), "{:?}", out.halted);
@@ -204,6 +224,20 @@ fn four_nodes_at_four_heights_hold_one_committee_record_per_epoch() {
              {epoch}: {canonical:?}"
         );
     }
+
+    // PREMISE 2a: the fixture's own two halves — the cut fired and healed, and the
+    // gate carried node 3 back by a re-jump. Without both there is no catching-up
+    // node and every observation below is about four nodes in lockstep.
+    let part = &out.partitions[0];
+    assert!(
+        !part.heights_at_heal.is_empty(),
+        "the cut never fired or never healed: {part:?}"
+    );
+    assert!(
+        !out.jump_calls[3].is_empty(),
+        "node 3 never re-jumped, so nothing carried it back over its own derive:          heights={:?} cut={part:?}",
+        out.heights
+    );
 
     // PREMISE 2: `Branch::Speculative` is REACHABLE state on this run — the
     // catching-up node really did hold a hash in its executed tree that its
@@ -368,6 +402,20 @@ fn four_nodes_at_four_heights_hold_one_committee_record_per_epoch() {
 /// (the stand default) the rotated-out node parks at `last(2)` for good, and
 /// with the gate at production's own value the same node comes back.
 ///
+/// WHAT HOLDS THE PARK (5.1). The rotation alone no longer does. Since П-3 the
+/// epoch key is an artifact any node may ASK a member for over
+/// `BEACON_RESOLVER_CHANNEL` (R-121/R-122), and the tracked peer set is
+/// `committee[E-1] ∪ committee[E] ∪ committee[E+1]`, so a node rotated out at
+/// epoch 3 keeps its consensus links through epoch 3, fetches `PK_3` and follows
+/// the chain (measured: `heights=[168, 168, 168, 168]`). Both runs therefore take
+/// the lag from a CONSENSUS-PLANE cut instead
+/// ([`super::stand::CutPlanes::ConsensusOnly`]),
+/// inside epoch 2 so node 3 still holds every key up to `PK_2`: its frontier
+/// probe keeps feeding its marshal — which is what the window refusals below are
+/// asked about — while its execution cannot cross into epoch 3. Run A never
+/// heals the cut (the park is "for good"); run B heals it two epochs later, which
+/// is what "the same node comes back" means now.
+///
 /// WHICH refusal arm a backfilling node takes is arithmetic, and it is not the
 /// one the plan named. `commit_height(E) = start(E − 2)` and the window top is
 /// `epoch(anchor) + 2`, so every epoch INSIDE the window has
@@ -404,6 +452,13 @@ fn four_nodes_at_four_heights_hold_one_committee_record_per_epoch() {
 fn a_node_below_the_chain_refuses_what_it_cannot_see_without_an_evm_call() {
     let members = [0usize, 1, 2];
     let end = 5 * EPOCH_LEN + 8;
+    /// Inside epoch 2: node 3 holds every key up to `PK_2` and nothing above it.
+    const CUT_AT: u64 = 2 * EPOCH_LEN + 4;
+    /// Longer than either run's virtual deadline — the cut never heals.
+    const NEVER: u32 = 4096;
+    /// Two epochs of cut: at the heal node 3 is far enough behind for
+    /// production's own gate to arm, which is what run B is about.
+    const HELD_FOR: u32 = 2 * EPOCH_LEN as u32 + 8;
 
     // Run A — the gate shut: node 3 parks at the last block of epoch 2.
     let recorder = DebuggingRecorder::new();
@@ -416,7 +471,13 @@ fn a_node_below_the_chain_refuses_what_it_cannot_see_without_an_evm_call() {
         // `committee_records` — see `StandConfig::metrics_snapshotter`.
         cfg.metrics_snapshotter = Some(snap.clone());
         assert_eq!(cfg.re_jump_threshold, None, "the gate must stay shut here");
-        Stand::new(cfg).run_until(
+        let mut stand = Stand::new(cfg);
+        stand
+            .partition(&[0, 1, 2], &[3])
+            .after_height(CUT_AT)
+            .consensus_only()
+            .for_views(NEVER);
+        stand.run_until(
             move |p| p.min_height_of(&members) >= end,
             Duration::from_secs(400),
         )
@@ -556,7 +617,13 @@ fn a_node_below_the_chain_refuses_what_it_cannot_see_without_an_evm_call() {
         let mut cfg = StandConfig::live(4, 1);
         cfg.committees = rotate_four_three_four();
         cfg.re_jump_threshold = Some(crate::cold_start_jump::JUMP_THRESHOLD.min(EPOCH_LEN));
-        Stand::new(cfg).run_until(reached(end), Duration::from_secs(400))
+        let mut stand = Stand::new(cfg);
+        stand
+            .partition(&[0, 1, 2], &[3])
+            .after_height(CUT_AT)
+            .consensus_only()
+            .for_views(HELD_FOR);
+        stand.run_until(reached(end), Duration::from_secs(400))
     };
     assert!(!caught_up.timed_out, "heights {:?}", caught_up.heights);
     assert!(caught_up.halted.is_empty(), "{:?}", caught_up.halted);

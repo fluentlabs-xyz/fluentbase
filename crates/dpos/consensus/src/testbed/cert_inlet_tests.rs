@@ -27,7 +27,7 @@
 //! else" is an assertion in each run rather than a property of the green suite.
 
 use super::stand::{
-    CertInletCfg, CertInletFacts, CertInletSource, Committees, Outcome, PeerSet, Progress, Stand,
+    CertInletCfg, CertInletFacts, CertInletSource, Committees, Outcome, Progress, Stand,
     StandConfig, TeeWiring,
 };
 use crate::beacon::testing::DETERMINISTIC_BOOTSTRAP_EPOCH;
@@ -454,17 +454,25 @@ fn a_forged_seed_slot_costs_the_upstream_a_rotation_once_the_epoch_key_is_held()
 /// front of the inlet, which only a node whose read window is BELOW the
 /// committee's epoch can show.
 ///
-/// The victim is dropped from `committee[2]` with its consensus-plane links
-/// severed and its `FRONTIER_CHANNEL` links kept
-/// (`PeerSet::Committee { upstream_link: true }`) — the shape `(4c)`
+/// The victim is dropped from `committee[2]` and its consensus-plane links are
+/// cut inside epoch 1 while its `FRONTIER_CHANNEL` links are kept
+/// ([`super::stand::CutPlanes::ConsensusOnly`]) — the shape `(4c)`
 /// (`a_node_outside_the_tracked_peer_set_keeps_following_through_the_upstream_plane`)
 /// already pins as "a node whose only path to the chain is the upstream plane".
-/// The lag is HELD rather than merely started, and that needs nothing added
-/// either: outside `committee[2]` the node holds no `PK_2` (R-121/R-122 — nothing
-/// asks for a non-member's artifact), so it can verify no σ of epoch 2, can
-/// execute no epoch-2 block, and stands at the epoch-1 boundary for the whole
-/// run; `re_jump_threshold` is left at the stand default (`u64::MAX`), so the
-/// re-jump that would otherwise carry it forward never arms.
+///
+/// WHY THE CUT AND NOT THE TRACKED SET (5.1). Non-membership no longer holds a
+/// node keyless: since П-3 `PK_E` is an artifact any node may ASK a member for
+/// over `BEACON_RESOLVER_CHANNEL` (R-121/R-122), and the tracked set is
+/// `committee[E-1] ∪ committee[E] ∪ committee[E+1]`, so under
+/// `PeerSet::Committee { upstream_link: true }` the victim keeps its consensus
+/// links for the whole of epoch 2 — long enough to fetch `PK_2`, after which the
+/// committee never changes again and that ONE key carries it to the end of the run
+/// (measured: `heights=[160, 160, 160, 159, 159]`). The cut is taken in epoch 1
+/// instead, before the epoch-2 mint, and never heals: the victim holds every key
+/// up to `PK_1`, so it executes to `last(1)` and stands at the epoch-1 boundary
+/// for the whole run, with no path by which to ask for `PK_2`.
+/// `re_jump_threshold` is left at the stand default (`u64::MAX`), so the re-jump
+/// that would otherwise carry it forward never arms.
 ///
 /// Its inlet is fed the upstream's LIVE FRONTIER
 /// (`CertInletSource::Frontier` — production's own inlet input), so the
@@ -513,22 +521,31 @@ fn a_keyless_admission_is_all_the_plane_lets_an_outrun_inlet_see() {
     /// really does outrun the victim's read window and the bound below is a bound
     /// on something.
     const TARGET: u64 = 5 * EPOCH_LEN;
+    /// Inside epoch 1 and BELOW the epoch-2 mint: the victim holds `PK_1` and
+    /// nothing above it.
+    const CUT_AT: u64 = EPOCH_LEN + 4;
+    /// Longer than the run's virtual deadline — the cut never heals, which is
+    /// what "the lag is HELD" means.
+    const NEVER: u32 = 4096;
     let recorder = DebuggingRecorder::new();
     let snapshotter = recorder.snapshotter();
     let out = metrics::with_local_recorder(&recorder, || {
         let mut cfg = StandConfig::live(5, 1);
         cfg.epoch_len = EPOCH_LEN;
         cfg.committees = drop_the_last_two_from_epoch_two();
-        cfg.peer_set = PeerSet::Committee {
-            upstream_link: true,
-        };
         cfg.metrics_snapshotter = Some(snapshotter.clone());
         cfg.cert_inlet = Some(CertInletCfg {
             nodes: vec![VICTIM],
             source: CertInletSource::Frontier,
             tee: TeeWiring::Observed,
         });
-        Stand::new(cfg).run_until(
+        let mut stand = Stand::new(cfg);
+        stand
+            .partition(&[0, 1, 2, 3], &[VICTIM])
+            .after_height(CUT_AT)
+            .consensus_only()
+            .for_views(NEVER);
+        stand.run_until(
             move |p| p.min_height_of(&[0, 1, 2]) >= TARGET,
             Duration::from_secs(400),
         )
@@ -539,7 +556,13 @@ fn a_keyless_admission_is_all_the_plane_lets_an_outrun_inlet_see() {
         out.heights
     );
 
-    // PREMISE: the lag is real and HELD.
+    // PREMISE: the lag is real and HELD. The cut is the fixture, so it is a
+    // premise of its own — without it the victim fetches `PK_2` and follows.
+    assert!(
+        !out.partitions[0].heights_at_cut.is_empty(),
+        "the consensus-plane cut never fired: {:?}",
+        out.partitions[0]
+    );
     assert!(
         out.heights[VICTIM] < EPOCH_2_START,
         "node {VICTIM} executed into epoch 2 without a key: {:?}",
@@ -849,18 +872,26 @@ fn a_donors_archive_hands_the_inlet_an_epoch_it_cannot_read_and_it_defers() {
     /// The same target as the keyless test: the committee climbs well above the
     /// victim's read window, so the walk has heights the victim cannot read.
     const TARGET: u64 = 5 * EPOCH_LEN;
+    /// Inside epoch 1 and BELOW the epoch-2 mint — see the keyless test above for
+    /// why the lag is held by a cut and not by the tracked peer set.
+    const CUT_AT: u64 = EPOCH_LEN + 4;
+    /// Longer than the run's virtual deadline — the cut never heals.
+    const NEVER: u32 = 4096;
     let mut cfg = StandConfig::live(5, 1);
     cfg.epoch_len = EPOCH_LEN;
     cfg.committees = drop_the_last_two_from_epoch_two();
-    cfg.peer_set = PeerSet::Committee {
-        upstream_link: true,
-    };
     cfg.cert_inlet = Some(CertInletCfg {
         nodes: vec![VICTIM],
         source: CertInletSource::PeerArchive { from: DONOR },
         tee: TeeWiring::Observed,
     });
-    let out = Stand::new(cfg).run_until(
+    let mut stand = Stand::new(cfg);
+    stand
+        .partition(&[0, 1, 2, 3], &[VICTIM])
+        .after_height(CUT_AT)
+        .consensus_only()
+        .for_views(NEVER);
+    let out = stand.run_until(
         move |p| p.min_height_of(&[0, 1, 2]) >= TARGET,
         Duration::from_secs(400),
     );
@@ -872,7 +903,12 @@ fn a_donors_archive_hands_the_inlet_an_epoch_it_cannot_read_and_it_defers() {
 
     // PREMISE: the same held lag as the keyless test — the victim's committee
     // anchor stays in epoch 1, which is what puts the donor's later epochs outside
-    // its read window.
+    // its read window — and the cut that holds it really fired.
+    assert!(
+        !out.partitions[0].heights_at_cut.is_empty(),
+        "the consensus-plane cut never fired: {:?}",
+        out.partitions[0]
+    );
     assert!(
         out.heights[VICTIM] < EPOCH_2_START,
         "node {VICTIM} executed into epoch {DETERMINISTIC_BOOTSTRAP_EPOCH} without a \

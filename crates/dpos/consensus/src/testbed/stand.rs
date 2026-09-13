@@ -583,6 +583,40 @@ pub(super) enum Role {
     AbsentBeacon,
 }
 
+/// WHICH of the two simulated networks a [`Partition`] cuts.
+///
+/// `Both` is a physical partition: the machine is unreachable, and nothing —
+/// neither plane — reaches the isolated side.
+///
+/// `ConsensusOnly` leaves the `FRONTIER_CHANNEL` links in place and removes the
+/// consensus-plane ones (votes, the marshal's own resolver, `BEACON_CHANNEL` and
+/// `BEACON_RESOLVER_CHANNEL`). It is the same shape
+/// [`PeerSet::Committee { upstream_link: true }`](PeerSet::Committee) already
+/// pins as a production regime — "a node whose only path to the chain is the
+/// upstream plane" — with the severance taken at a height the test names instead
+/// of at a tracked-set transition, which is what a fixture needs whenever the two
+/// do not coincide: the tracked set is
+/// `committee[E-1] ∪ committee[E] ∪ committee[E+1]`, so a node rotated out at E
+/// keeps its consensus links for the whole of epoch E and part of E+1.
+///
+/// It is the ONLY generator left for "following the chain without an epoch's
+/// key". Since П-3 the epoch key is an artifact any node can ASK for over
+/// `BEACON_RESOLVER_CHANNEL` (`beacon::artifact::TransportAcquire`), which lives
+/// on the consensus plane: a node that still has that plane gets the key whether
+/// it is in the committee or not (R-121/R-122), so non-membership no longer holds
+/// an execution cursor back. A node cut from the consensus plane is fed
+/// certificates by its frontier probe and can verify them vote-only, so its
+/// marshal still climbs to the ordering plane's two-epoch ceiling while its
+/// EXECUTION parks at the boundary of the last epoch it holds a key for — the
+/// state the deep-lag fixtures are about.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum CutPlanes {
+    /// Both planes — a machine that is simply gone.
+    Both,
+    /// The consensus plane only; the frontier plane keeps delivering.
+    ConsensusOnly,
+}
+
 #[derive(Clone, Debug)]
 pub(super) struct Partition {
     pub a: Vec<usize>,
@@ -590,6 +624,11 @@ pub(super) struct Partition {
     /// Cut once every node's executed tip is at or above this height.
     pub after_height: u64,
     pub duration: Duration,
+    /// Heal once the HIGHEST executed tip in the run is at or above this height,
+    /// instead of after [`Self::duration`]. `None` = heal on the duration.
+    pub heal_above: Option<u64>,
+    /// Which planes the cut removes — see [`CutPlanes`].
+    pub planes: CutPlanes,
 }
 
 pub(super) struct PartitionCfg<'a>(&'a mut Partition);
@@ -599,10 +638,28 @@ impl PartitionCfg<'_> {
         self.0.after_height = h;
         self
     }
+    /// Cut the consensus plane only and leave the frontier plane alive — see
+    /// [`CutPlanes::ConsensusOnly`].
+    pub(super) fn consensus_only(self) -> Self {
+        self.0.planes = CutPlanes::ConsensusOnly;
+        self
+    }
     /// Hold the cut for `views` leader timeouts of `ConsensusTimeouts::fluent_1s`
     /// — the time the split halves need to nullify that many views.
     pub(super) fn for_views(self, views: u32) -> Self {
         self.0.duration = ConsensusTimeouts::fluent_1s().leader * views;
+        self
+    }
+    /// Hold the cut until the chain the isolated node is missing has reached
+    /// `height`, rather than for a wall-clock span — see [`Partition::heal_above`].
+    ///
+    /// Every fixture that cuts a node in order to make it FALL BEHIND wants the
+    /// lag in blocks, and a duration only reaches that through the pacing: at
+    /// `leader = 1750ms` a `for_views` count is not the block count it reads as,
+    /// and a heal that lands after the run's stopping predicate has fired is a cut
+    /// that silently never healed.
+    pub(super) fn heal_above(self, height: u64) -> Self {
+        self.0.heal_above = Some(height);
         self
     }
 }
@@ -1093,6 +1150,8 @@ impl Stand {
             b: b.to_vec(),
             after_height: 0,
             duration: Duration::from_secs(5),
+            heal_above: None,
+            planes: CutPlanes::Both,
         });
         PartitionCfg(self.partitions.last_mut().unwrap())
     }
@@ -1535,6 +1594,16 @@ async fn drive(
         Healed,
     }
     let mut part_state: Vec<PartState> = partitions.iter().map(|_| PartState::Pending).collect();
+    // What each cut actually REMOVED, per plane, so the heal restores exactly that
+    // and no more. A pair can already be unlinked when the cut fires —
+    // [`StandConfig::upstream_only_link`] and
+    // [`StandConfig::upstream_source_only_for`] shape the upstream mesh before the
+    // run — and re-adding such a pair at the heal would hand the isolated node a
+    // source the fixture deliberately took away (in the lying-upstream stands, an
+    // HONEST second source, which is the whole contrast). `true` = the consensus
+    // plane, `false` = the upstream plane.
+    let mut cut_pairs: Vec<Vec<(usize, usize, bool)>> =
+        partitions.iter().map(|_| Vec::new()).collect();
     let mut part_obs: Vec<PartitionObservation> = partitions
         .iter()
         .map(|_| PartitionObservation {
@@ -1576,25 +1645,36 @@ async fn drive(
         for (p, part) in partitions.iter().enumerate() {
             match part_state[p] {
                 PartState::Pending if progress.min_height() >= part.after_height => {
-                    // A partition is physical: it cuts both planes.
+                    // `CutPlanes::Both` is physical — it cuts both planes;
+                    // `ConsensusOnly` leaves the frontier plane delivering.
                     for (x, y) in cross_pairs(part) {
-                        for o in [&oracle, &upstream_oracle] {
-                            o.remove_link(pks[x].clone(), pks[y].clone())
-                                .await
-                                .expect("remove link");
+                        for (consensus_plane, o) in cut_oracles(part, &oracle, &upstream_oracle) {
+                            // A pair that was not linked is not an error: the cut is
+                            // "no path between these two", and there already is none.
+                            if o.remove_link(pks[x].clone(), pks[y].clone()).await.is_ok() {
+                                cut_pairs[p].push((x, y, consensus_plane));
+                            }
                         }
                     }
                     part_obs[p].heights_at_cut = progress.heights.clone();
                     part_obs[p].cut_at = progress.elapsed;
                     part_state[p] = PartState::Active(progress.elapsed);
                 }
-                PartState::Active(since) if progress.elapsed >= since + part.duration => {
-                    for (x, y) in cross_pairs(part) {
-                        for o in [&oracle, &upstream_oracle] {
-                            o.add_link(pks[x].clone(), pks[y].clone(), link.clone())
-                                .await
-                                .expect("add link");
-                        }
+                PartState::Active(since)
+                    if match part.heal_above {
+                        Some(h) => progress.heights.iter().copied().max().unwrap_or(0) >= h,
+                        None => progress.elapsed >= since + part.duration,
+                    } =>
+                {
+                    for (x, y, consensus_plane) in cut_pairs[p].drain(..) {
+                        let o = if consensus_plane {
+                            &oracle
+                        } else {
+                            &upstream_oracle
+                        };
+                        o.add_link(pks[x].clone(), pks[y].clone(), link.clone())
+                            .await
+                            .expect("add link");
                     }
                     part_obs[p].heights_at_heal = progress.heights.clone();
                     part_obs[p].healed_at = progress.elapsed;
@@ -1904,6 +1984,19 @@ fn marshal_tip_of(exposition: &str, i: usize) -> u64 {
             (k == key).then(|| v.trim().parse().ok()).flatten()
         })
         .unwrap_or(0)
+}
+
+/// The oracles a cut touches, each flagged `true` for the consensus plane: both
+/// networks, or the consensus one alone.
+fn cut_oracles<'a>(
+    p: &Partition,
+    consensus: &'a Oracle,
+    upstream: &'a Oracle,
+) -> Vec<(bool, &'a Oracle)> {
+    match p.planes {
+        CutPlanes::Both => vec![(true, consensus), (false, upstream)],
+        CutPlanes::ConsensusOnly => vec![(true, consensus)],
+    }
 }
 
 fn cross_pairs(p: &Partition) -> Vec<(usize, usize)> {

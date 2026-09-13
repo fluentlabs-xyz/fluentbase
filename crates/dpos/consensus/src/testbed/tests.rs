@@ -5,7 +5,8 @@
 use super::{
     fakes::{ElEvent, UpstreamCounters, DPOS_ACTIVATION_BLOCK},
     stand::{
-        Committees, Divergence, Outcome, PeerSet, Progress, Role, Stand, StandConfig, CHAIN_ID,
+        CertInletCfg, CertInletSource, Committees, Divergence, Outcome, PeerSet, Progress, Role,
+        Stand, StandConfig, TeeWiring, CHAIN_ID,
     },
 };
 use crate::beacon::{
@@ -1322,7 +1323,7 @@ fn four_nodes_agree_the_epoch_key_and_carry_the_seed_across_the_boundary() {
 /// when I named it" is the executor's own comparison (`last_tip_height`), and it
 /// is free there and not here: sampling the marshal tip from the PROBE CLOSURE is
 /// an extra message into the marshal's select loop and it CHANGES THE RUN —
-/// measured, `a_zero_overlap_boundary_halts_the_chain_verify_only` loses its
+/// measured, `a_zero_overlap_boundary_is_crossed_by_acquiring_the_other_halfs_key` loses its
 /// incoming half's DKG artifact under it (Д-81). That comparison is pinned at the
 /// unit level in `executor::tests`.
 ///
@@ -1552,6 +1553,24 @@ fn the_ladder_names_successive_rungs_and_the_lagging_node_reaches_every_one() {
 /// on this fixture), not seconds.
 const LADDER_REACH_TICKS: usize = 800;
 
+/// Where the (C9) fixture cuts node 3 off, and how long for.
+///
+/// WHAT THE CUT IS FOR (5.1). The rotation alone no longer makes a node fall
+/// behind: since П-3 the epoch key is an artifact any node may ASK a member for
+/// over `BEACON_RESOLVER_CHANNEL` (R-121/R-122), and the tracked peer set is
+/// `committee[E-1] ∪ committee[E] ∪ committee[E+1]`, so the node rotated out at
+/// epoch 3 keeps its consensus links through epoch 3, fetches `PK_3` and stays in
+/// lockstep (measured: `heights=[168, 168, 168, 168]`, `rejump_calls=[0, 0, 0, 0]`).
+/// The lag is therefore a PHYSICAL cut of node 3 inside epoch 2 — after it has
+/// dealt the epoch-2 ceremony, so its ceremony count is unchanged — held until the
+/// network is a re-jump gate and more above it, which is what arms the jump these
+/// two tests are about. It heals before `epoch_start(4) = 128`, where the epoch-5
+/// ceremony opens: node 3 is a member of `committee[5]` and has to deal it.
+const CUT_AT: u64 = 2 * EPOCH_LEN + 4;
+/// The height the network reaches before the cut heals — `CUT_AT` plus more than
+/// the re-jump gate (`min(JUMP_THRESHOLD, 32)`), and below `epoch_start(4)`.
+const HEAL_ABOVE: u64 = 3 * EPOCH_LEN + 12;
+
 fn rotate_four_three_four() -> Committees {
     Committees::Schedule(Arc::new(|epoch, n| {
         Some(match epoch {
@@ -1598,7 +1617,12 @@ fn three_boundaries_with_committee_rotation_keep_dkg_qual_honest() {
     cfg.committees = rotate_four_three_four();
     cfg.re_jump_threshold = Some(crate::cold_start_jump::JUMP_THRESHOLD.min(EPOCH_LEN));
     let end = 5 * EPOCH_LEN + 8;
-    let out = Stand::new(cfg).run_until(reached(end), Duration::from_secs(400));
+    let mut stand = Stand::new(cfg);
+    stand
+        .partition(&[0, 1, 2], &[3])
+        .after_height(CUT_AT)
+        .heal_above(HEAL_ABOVE);
+    let out = stand.run_until(reached(end), Duration::from_secs(400));
     assert!(
         !out.timed_out,
         "heights {:?} halted {:?} errors {:?}",
@@ -2274,28 +2298,65 @@ fn cold_start_computes_the_epoch_from_the_finalized_state() {
     );
 }
 
-/// (C7, verify-only) Zero committee overlap at a boundary HALTS the chain, and
-/// nothing detects it. Project memory's trap (7): σ has no backfill, so a
-/// committee that shares no member with its predecessor can neither serve the
-/// old epoch's key nor be served the new one — enforced nowhere.
+/// (C7) Zero committee overlap at a boundary is SURVIVABLE: each half acquires
+/// the epoch key it had no part in minting, and the chain crosses the boundary.
 ///
-/// N=8, committee `[0,1,2,3]` through epoch 2 and `[4,5,6,7]` from epoch 3. Both
-/// halves walk their boundaries through the transition; then the chain stops.
-/// The outgoing half enters epoch 3 as verifiers holding only the epoch-2
-/// artifact and parks at the last block of epoch 2; the incoming half minted the
-/// epoch-3 artifact (it is `committee[3]`, so it dealt during epoch 2) but never
-/// held the epoch-2 key and parked a whole epoch earlier, at the last block of
-/// epoch 1.
+/// # What this test used to say, and why it is inverted
 ///
-/// This test pins the FACT, not a wish: nothing here says the halt is
-/// acceptable. What it forbids is the fact changing silently.
+/// It used to pin the OPPOSITE fact (R-121/R-122): "zero committee overlap at a
+/// boundary halts the chain, and nothing detects it". Its assertions were the halt
+/// itself — `timed_out`, the two park heights `[3·EL−1 ×4, 2·EL−1 ×4]`, each half
+/// holding exactly ONE artifact (`[2]` for the outgoing, `[3]` for the incoming) —
+/// and its falsifier was "any node crossing its park height". The mechanism it
+/// recorded was I4: `PK_E` reaches a node that is not in `committee[E]` only as
+/// `committee[E]`'s artifact, and nothing on the FRONTIER ever asked for one
+/// (`drive_recompute` pulled for members only; the epoch manager's repair sweep
+/// excludes `epoch >= frontier` by construction; the cert-inlet's per-certificate
+/// `ensure_key` spends the network-free `PinEffort::Local`).
 ///
-/// Falsifier: any node crossing its park height (then zero overlap is
-/// survivable and the memory note is wrong); a `SafetyHalt` (then the stop is
-/// DETECTED rather than silent, which is a different — and better — world);
-/// executed hashes disagreeing (a fork rather than a stop).
+/// `DkgActor::acquire_mint_artifacts` is what closes it, and this test is the only
+/// live witness of the closure. Its assertions are therefore the inverse of the old
+/// ones, one for one:
+///
+/// | old (the halt) | new (the crossing) |
+/// |---|---|
+/// | `out.timed_out` | `!out.timed_out` — every node reaches past the boundary |
+/// | park heights `[3·EL−1, 2·EL−1]` | `assert_lockstep_except(&[])` — one chain, all eight |
+/// | `artifacts[0..4] == [2]`, `artifacts[4..8] == [3]` | every node holds BOTH `[2, 3]` |
+///
+/// # The two acquisitions are in OPPOSITE directions, and both are required
+///
+/// `committee[2] = [0,1,2,3]`, `committee[3] = [4,5,6,7]` — no member in common, so
+/// neither half can serve itself the other's key:
+///
+/// - the INCOMING half (4-7) is `committee[3]`, so it dealt epoch 3's ceremony
+///   during epoch 2 and holds epoch 3's artifact. It was never in `committee[2]`,
+///   so it holds no epoch-2 key and used to park at the last height of epoch 1 —
+///   the whole epoch it cannot verify lies BEFORE the epoch it minted for. It has
+///   to fetch epoch 2's artifact BACKWARD, from the outgoing half.
+/// - the OUTGOING half (0-3) is `committee[2]` and holds epoch 2's artifact. It is
+///   not in `committee[3]`, so it has to fetch epoch 3's artifact FORWARD, from the
+///   incoming half.
+///
+/// Only the second of the two is reachable through a window that stops at the
+/// actor's current epoch; the first is why
+/// [`acquire_mint_artifacts`](crate::beacon) reaches `now + 1`. A fix that closed
+/// only the forward direction would leave this test red.
+///
+/// # The fake does not lie
+///
+/// A pulled artifact is checked by `verify_artifact` against `committee[minted_at]`
+/// read from `FakeStaking` — the same check a validator applies to a peer's answer
+/// in production. So "the key arrived" here means a `committee[E]` quorum
+/// certificate verified, not that a fixture handed a value over.
+///
+/// Falsifier, in the new form: `timed_out` (the halt is back); a node holding only
+/// one of the two artifacts (the acquisition works in one direction only); a
+/// `SafetyHalt` (the crossing is a detected fault rather than a crossing); two nodes
+/// deriving different σ for one height, or `diverged` (the halves crossed onto
+/// DIFFERENT chains, which would be worse than the halt this replaces).
 #[test]
-fn a_zero_overlap_boundary_halts_the_chain_verify_only() {
+fn a_zero_overlap_boundary_is_crossed_by_acquiring_the_other_halfs_key() {
     let mut cfg = StandConfig::live(8, 1);
     cfg.committees = Committees::Schedule(Arc::new(|epoch, _n| {
         Some(if epoch <= 2 {
@@ -2304,50 +2365,106 @@ fn a_zero_overlap_boundary_halts_the_chain_verify_only() {
             vec![4, 5, 6, 7]
         })
     }));
+    // THE OUTGOING HALF RUNS THE PRODUCTION CERT-INLET, and that is a fixture
+    // change with a reason rather than a knob turned until the test passed.
+    //
+    // A node that is not in `committee[E]` runs no engine for `E`, so its σ ingress
+    // is not `spec_exec`'s notarization reporter — it is `CertInlet::ingest`, which
+    // is what calls `observe_certificate` (recording σ) and `ensure_key` (resolving
+    // `PK_E` out of the artifact) on a validator syncing plane-natively. The stand
+    // had no inlet at all when the old version of this test was written, so on it
+    // the outgoing half could hold `PK_3` and STILL park for want of σ — a property
+    // of the fixture, not of the node. Measured that way: with the acquisition
+    // landed but no inlet, every node holds both artifacts and the outgoing half
+    // still sits at `3·EL−1`.
+    //
+    // The incoming half deliberately gets none: it is `committee[3]`, so its own
+    // engine is its σ ingress, and giving it an inlet would blur which of the two
+    // halves the acquisition is being read through.
+    cfg.cert_inlet = Some(CertInletCfg {
+        nodes: vec![0, 1, 2, 3],
+        source: CertInletSource::NextAboveTier,
+        tee: TeeWiring::Observed,
+    });
     let out = Stand::new(cfg).run_until(reached(3 * EPOCH_LEN + 4), Duration::from_secs(400));
-    assert!(
-        out.timed_out,
-        "the chain crossed the zero-overlap boundary: {:?}",
-        out.heights
-    );
-    assert_eq!(
+    // Printed BEFORE the first assertion on purpose: the height vector alone cannot
+    // say WHICH of the two acquisitions failed, and the artifact map can.
+    eprintln!(
+        "(C7) heights={:?} artifacts={:?} halted={:?} pulls(out)={:?} pulls(in)={:?} \
+         virtual={:?} real={:?}",
         out.heights,
-        vec![
-            3 * EPOCH_LEN - 1,
-            3 * EPOCH_LEN - 1,
-            3 * EPOCH_LEN - 1,
-            3 * EPOCH_LEN - 1,
-            2 * EPOCH_LEN - 1,
-            2 * EPOCH_LEN - 1,
-            2 * EPOCH_LEN - 1,
-            2 * EPOCH_LEN - 1
-        ],
-        "the outgoing committee parks at the last block of epoch 2 and the \
-         incoming one a whole epoch earlier"
+        out.artifacts
+            .iter()
+            .map(|a| a.keys().copied().collect::<Vec<_>>())
+            .collect::<Vec<_>>(),
+        out.halted,
+        out.upstream[0],
+        out.upstream[4],
+        out.virtual_elapsed,
+        out.real_elapsed
+    );
+    assert!(
+        !out.timed_out,
+        "a zero-overlap boundary still halts the chain: {:?}",
+        out.heights
     );
     assert!(
         out.halted.is_empty(),
-        "the stop was detected as a safety fault: {:?}",
+        "the crossing was reported as a safety fault: {:?}",
         out.halted
     );
     assert_eq!(out.diverged, None);
-    for i in 0..4 {
+    // ONE chain across all eight, not two that happen to be equally long.
+    out.assert_lockstep_except(&[]);
+
+    // Both artifacts on every node, which is the direct statement of the fix: the
+    // half that minted neither `2` nor `3` does not exist here, so every entry
+    // beyond a node's own mint was acquired from the other half.
+    for i in 0..8 {
         assert_eq!(
             out.artifacts[i].keys().copied().collect::<Vec<_>>(),
-            vec![2],
-            "outgoing node {i} holds an artifact other than epoch 2's"
+            vec![2, 3],
+            "node {i} does not hold both epochs' artifacts — the acquisition works \
+             in at most one direction: {:?}",
+            out.artifacts[i].keys().collect::<Vec<_>>()
         );
     }
-    for i in 4..8 {
-        assert_eq!(
-            out.artifacts[i].keys().copied().collect::<Vec<_>>(),
-            vec![3],
-            "incoming node {i} holds an artifact other than epoch 3's"
-        );
+
+    // `prev_randao` is `H(σ)` of the height's own round, so equal σ at every height
+    // IS byte-equal `prev_randao`. Asserted on the σ the executors actually derived
+    // from, across the boundary the test is about, rather than inferred from the
+    // executed hashes alone.
+    let min = *out.heights.iter().min().expect("eight nodes");
+    assert!(
+        min >= 3 * EPOCH_LEN + 4,
+        "premise: every node is past the boundary, or the σ comparison below \
+         covers only the pre-boundary epochs: {:?}",
+        out.heights
+    );
+    let mut beacon_active = 0usize;
+    for h in 1..=min {
+        let first = out.seeds[0].get(&h).cloned().flatten();
+        if first.is_some() {
+            beacon_active += 1;
+        }
+        for i in 1..8 {
+            assert_eq!(
+                out.seeds[i].get(&h).cloned().flatten(),
+                first,
+                "node {i} derived height {h} from a different σ than node 0 — \
+                 prev_randao is H(σ), so this is a randomness fork"
+            );
+        }
     }
+    // Non-vacuity: an all-`None` σ map would satisfy the loop above trivially, and
+    // that is exactly what a run whose beacon never started looks like.
+    assert!(
+        beacon_active > EPOCH_LEN as usize,
+        "premise: more than one epoch's worth of heights derived from a real σ \
+         ({beacon_active} of {min}) — otherwise the equality above is vacuous"
+    );
     eprintln!(
-        "(C7) heights={:?} boundaries(out)={:?} boundaries(in)={:?} virtual={:?} real={:?}",
-        out.heights,
+        "(C7) boundaries(out)={:?} boundaries(in)={:?}",
         out.et_boundaries[0]
             .iter()
             .map(|b| (b.epoch, b.block_number))
@@ -2356,80 +2473,94 @@ fn a_zero_overlap_boundary_halts_the_chain_verify_only() {
             .iter()
             .map(|b| (b.epoch, b.block_number))
             .collect::<Vec<_>>(),
-        out.virtual_elapsed,
-        out.real_elapsed
     );
 }
 
-/// (C8, verify-only) The "before" half of the re-jump exit: with the jump gate
-/// pinned at `u64::MAX` — the stand's default, and what every test written
-/// before step 5 assumes — the rotated-out node PARKS and never comes back.
+/// (C8) A rotated-out node DOES come back with the jump gate closed, because the
+/// key it was missing is now acquired — R-122's other witness, beside C7.
 ///
-/// This is the observation the sweep-wake gap produces, kept so a fix to it has
-/// something to move. The mechanism, read out of the code rather than guessed:
-/// the node enters epoch 3 as a verifier holding no artifact for it; nothing
-/// spends a network pull for the LIVE epoch's key (`epoch_manager.rs:1106-1111`
-/// goes to `soft_enter`, and the repair sweep excludes the frontier by
-/// construction at `:1677`); the sweep is woken only by a boundary trigger
-/// (`:730`) or a local `PK_epoch` insert (`:817`), and the catch-up span that
-/// raises the frontier wakes neither (`:741-757`, `:1811`). So it sits at the
-/// last block of epoch 2 with the network four epochs ahead.
+/// # What this test used to say
 ///
-/// It pins the FACT, not a wish: nothing here says parking is acceptable.
+/// It pinned the "before" half of the re-jump exit: with `re_jump_threshold` at
+/// `None` the rotated-out node PARKED at the last block of epoch 2 and never came
+/// back (`heights[3] == 3·EL−1`), holding exactly `artifacts[3] == [2]` — "the
+/// parked node acquired an epoch key it has no path to". Its mechanism was R-122
+/// read out of the code: the node enters epoch 3 as a verifier holding no artifact
+/// for it, and nothing spent a network pull for the LIVE epoch's key — the epoch
+/// manager's repair sweep excludes `epoch >= frontier` by construction, the
+/// cert-inlet's per-certificate `ensure_key` is contractually network-free, and
+/// `drive_recompute`'s pull is gated on membership.
 ///
-/// Falsifier: the node moving off 95 with the gate closed (then the wedge has
-/// some other exit and the "after" test proves less than it claims); the
-/// committee members failing to go on without it; a halt (the park is
-/// verify-only, not a safety fault); the three disagreeing on a hash.
+/// `DkgActor::acquire_mint_artifacts` spends that pull. The park is gone, and the
+/// assertions invert: the node holds BOTH epochs' artifacts and follows the
+/// committee without a single re-jump. The re-jump gate stays closed, which is what
+/// makes this a statement about the KEY and not about the jump: nothing here is
+/// allowed to climb out by jumping.
+///
+/// The two halves of the old mechanism are told apart on purpose. It parked for
+/// want of the KEY, not for want of blocks — the upstream assertion below was
+/// already the proof of that and is kept unchanged, because it is what stops this
+/// test from passing on a node that is simply being fed everything.
+///
+/// Falsifier: the node stuck at `3·EL−1` (the acquisition did not reach it); a
+/// re-jump (it climbed out by the mechanism this fixture disables, so the claim
+/// would be about the jump instead of the key); `artifacts[3]` missing epoch 3 (it
+/// followed without the key, which would mean σ is not being checked at all); a
+/// halt; the four disagreeing on a hash.
 #[test]
-fn a_rotated_out_node_without_the_rejump_parks() {
+fn a_rotated_out_node_follows_the_committee_once_it_acquires_the_epoch_key() {
     let mut cfg = StandConfig::live(4, 1);
     cfg.committees = rotate_four_three_four();
     assert_eq!(
         cfg.re_jump_threshold, None,
-        "the gate must stay closed here"
+        "the gate must stay closed here: the exit under test is the KEY, not the jump"
     );
     let members = [0, 1, 2];
     let out = Stand::new(cfg).run_until(
         move |p| p.min_height_of(&members) >= 5 * EPOCH_LEN + 8,
         Duration::from_secs(400),
     );
-    assert!(!out.timed_out, "heights {:?}", out.heights);
-    assert_eq!(
-        out.heights[3],
-        3 * EPOCH_LEN - 1,
-        "the rotated-out node did not park at the last block of epoch 2: {:?}",
-        out.heights
-    );
-    assert!(out.halted.is_empty(), "{:?}", out.halted);
-    out.assert_lockstep_except(&[3]);
-    assert_eq!(
-        out.artifacts[3].keys().copied().collect::<Vec<_>>(),
-        vec![2],
-        "the parked node acquired an epoch key it has no path to"
-    );
-    // It is parked for want of the KEY, not for want of blocks: its upstream
-    // plane is being served the whole time. Without this the same height vector
-    // would also be produced by a node nobody feeds, and the test would pin the
-    // wrong mechanism.
-    let u3 = out.upstream[3];
-    assert!(
-        u3.latest_delivered > 0 && u3.finalized_delivered > 0,
-        "the parked node was not being served by the upstream plane at all: {u3:?}"
-    );
-    assert_eq!(
-        u3.rejump_calls, 0,
-        "the gate was supposed to be closed, but the node re-jumped"
-    );
     eprintln!(
-        "(C8) heights={:?} rejumps={:?} ack_drops={} virtual={:?} real={:?}",
+        "(C8) heights={:?} artifacts3={:?} rejumps={:?} ack_drops={} virtual={:?} real={:?}",
         out.heights,
+        out.artifacts[3].keys().copied().collect::<Vec<_>>(),
         (0..4)
             .map(|i| out.upstream[i].rejump_calls)
             .collect::<Vec<_>>(),
         out.simulator_ack_drops,
         out.virtual_elapsed,
         out.real_elapsed
+    );
+    assert!(!out.timed_out, "heights {:?}", out.heights);
+    assert!(out.halted.is_empty(), "{:?}", out.halted);
+    assert!(
+        out.heights[3] > 3 * EPOCH_LEN - 1,
+        "the rotated-out node is still parked at the last block of epoch 2, so the \
+         live-epoch acquisition did not reach it: {:?}",
+        out.heights
+    );
+    // ONE chain across all four, the rotated-out node included — it is following,
+    // not running its own.
+    out.assert_lockstep_except(&[]);
+    assert!(
+        out.artifacts[3].contains_key(&3),
+        "the rotated-out node followed WITHOUT epoch 3's artifact, which would mean \
+         its certificates were admitted on the multisig half alone: {:?}",
+        out.artifacts[3].keys().collect::<Vec<_>>()
+    );
+    // It is fed by the upstream plane, and it did NOT climb out by jumping: the
+    // exit under test is the key. Kept verbatim from the "before" form — the same
+    // two facts that stopped that test from pinning the wrong mechanism stop this
+    // one from pinning the jump.
+    let u3 = out.upstream[3];
+    assert!(
+        u3.latest_delivered > 0 && u3.finalized_delivered > 0,
+        "the node was not being served by the upstream plane at all: {u3:?}"
+    );
+    assert_eq!(
+        u3.rejump_calls, 0,
+        "the gate was supposed to be closed, but the node re-jumped — the recovery \
+         under test would then be the jump's and not the key's"
     );
 }
 
@@ -2452,8 +2583,13 @@ fn a_rotated_out_node_without_the_rejump_parks() {
 /// `Outcome::jump_calls` (every call, its `JumpOutcome` VARIANT, the certificate
 /// it consumed and the landing it chose). On an honest frontier the production
 /// function lands on exactly the pairs the retired hand-written model landed on —
-/// heights 125 and 157 are kept as literals so a change in landing selection fails
-/// HERE and not four tests away — each landing hash is the `result` of the
+/// heights 105 and 136 are kept as literals so a change in landing selection fails
+/// HERE and not four tests away (they were 125 and 157 while the lag came from the
+/// rotation's keylessness; 5.1 makes the lag a physical cut at a named height, so
+/// the ladder starts from the cut instead of from `last(2)` and BOTH literals
+/// moved — what did not move is the shape asserted on every call right below
+/// them: `landing = tip − K`, the landing hash is the consumed certificate's
+/// `result`, and the honest three executed that hash) — each landing hash is the `result` of the
 /// certificate the call consumed and each landing is that certificate's `tip − K`,
 /// and the honest three executed the same hash there.
 ///
@@ -2479,7 +2615,12 @@ fn the_rejump_runs_the_production_jump_and_lands_on_its_own_archive_pair() {
     cfg.committees = rotate_four_three_four();
     cfg.re_jump_threshold = Some(crate::cold_start_jump::JUMP_THRESHOLD.min(EPOCH_LEN));
     let end = 5 * EPOCH_LEN + 8;
-    let out = Stand::new(cfg).run_until(reached(end), Duration::from_secs(400));
+    let mut stand = Stand::new(cfg);
+    stand
+        .partition(&[0, 1, 2], &[3])
+        .after_height(CUT_AT)
+        .heal_above(HEAL_ABOVE);
+    let out = stand.run_until(reached(end), Duration::from_secs(400));
     assert!(
         !out.timed_out,
         "heights {:?} halted {:?} errors {:?}",
@@ -2511,8 +2652,8 @@ fn the_rejump_runs_the_production_jump_and_lands_on_its_own_archive_pair() {
     assert_eq!(
         calls.iter().map(|c| c.landed).collect::<Vec<_>>(),
         vec![
-            Some((125, out.hashes[3][124].1)),
-            Some((157, out.hashes[3][156].1))
+            Some((105, out.hashes[3][104].1)),
+            Some((136, out.hashes[3][135].1))
         ],
         "the production jump did not land where the model landed: {calls:?}"
     );
@@ -2638,12 +2779,36 @@ fn a_node_three_epochs_behind_registers_the_schemes_and_spawns_no_engine() {
     );
     cfg.marshal_tip_series = true;
     let members = [0, 1, 2];
-    let out = Stand::new(cfg).run_until(
+    let mut stand = Stand::new(cfg);
+    // WHAT HOLDS THE LAG (5.1). Non-membership no longer does: since П-3 the epoch
+    // key is an artifact any node may ASK a member for over
+    // `BEACON_RESOLVER_CHANNEL` (R-121/R-122), and on this schedule node 3 keeps
+    // its consensus links for the whole of epoch 3 — the tracked set is
+    // `committee[2] ∪ committee[3] ∪ committee[4]` — so it fetches `PK_3` and
+    // follows the chain (measured: `heights=[192, 192, 192, 192]`). What is left
+    // for "an execution cursor that cannot cross a boundary" is a node with no
+    // consensus plane at all, and that is exactly the cut below: taken inside
+    // epoch 2, so node 3 has already dealt and holds the shares of 0..=2 (the
+    // control at (5)), never healed, and on the CONSENSUS plane only — its
+    // frontier probe keeps feeding its marshal, which is what carries the tip to
+    // the two-epoch ceiling at (1) while the execution stays at `last(2)`.
+    stand
+        .partition(&[0, 1, 2], &[3])
+        .after_height(2 * EPOCH_LEN + 4)
+        .consensus_only()
+        .for_views(4096);
+    let out = stand.run_until(
         move |p| p.min_height_of(&members) >= 6 * EPOCH_LEN,
         Duration::from_secs(400),
     );
     assert!(!out.timed_out, "heights {:?}", out.heights);
     assert!(out.halted.is_empty(), "{:?}", out.halted);
+    // The cut is the fixture, so its own observation is a premise: no cut, no lag.
+    assert!(
+        !out.partitions[0].heights_at_cut.is_empty(),
+        "the consensus-plane cut never fired, so nothing held node 3 back: {:?}",
+        out.partitions[0]
+    );
 
     // PREMISE (a): node 3's EXECUTION parked at the last block of epoch 2, three
     // epochs below the network.
@@ -3199,20 +3364,29 @@ fn a_two_log_dealer_that_also_withholds_its_partial_stops_the_chain_silently() {
     }
 }
 
-/// The (R-008) schedule: all five members in epochs 0 and 1, `[0, 1, 2]` from
-/// epoch 2 on. Nodes 3 and 4 are therefore inside the committee while the epoch-2
-/// ceremony runs and OUTSIDE it from the first block of epoch 2 — the height at
-/// which they first need `PK_2` and have to reach the chain through the upstream
-/// plane.
+/// The (R-008) schedule: `[0, 1, 2]` is the committee of EVERY epoch, so nodes 3
+/// and 4 are pure followers — never members, and therefore never holders of `PK_2`
+/// by their own ceremony. They reach the chain through the upstream plane alone,
+/// the (4c) class.
+///
+/// WHY THEY ARE NEVER MEMBERS (5.1), where they used to leave at epoch 2. The
+/// keyless window this fixture is about has to be CUT open now, and the cut has to
+/// land before the followers' DKG clock enters epoch 1: that is when
+/// `acquire_mint_artifacts` starts pulling the epoch-2 artifact for a NON-MEMBER
+/// (`actor.rs`, `lo..=now + 1`), the artifact exists within the first block of the
+/// epoch (the ceremony is message-driven, not height-driven), and one pull is all it
+/// takes. So the cut must be in place inside epoch 0 — and a cut that early must not
+/// cost the chain its quorum, which it does as long as the two are members of
+/// `committee[0]` (measured: a cut at height 28 with the old schedule froze every
+/// node at 28, three of five cannot finalize; a cut at height 34 with the two
+/// dropped from epoch 1 came too late — at the heal they stood at 92 against the
+/// committee's 96, i.e. they had `PK_2` and never fell behind).
+///
+/// Nothing about `PK_2` changes: the committee never changes, so the only mint is
+/// the epoch-2 bootstrap one and `minted_at(E) = 2` for every epoch of the run.
 #[cfg(feature = "dpos-devnet-byzantine")]
-fn drop_the_last_two_from_epoch_two() -> Committees {
-    Committees::Schedule(Arc::new(|epoch, n| {
-        Some(if epoch >= 2 {
-            vec![0, 1, 2]
-        } else {
-            (0..n).collect()
-        })
-    }))
+fn the_first_three_are_the_committee() -> Committees {
+    Committees::Schedule(Arc::new(|_epoch, _n| Some(vec![0, 1, 2])))
 }
 
 /// (R-008) The three committee members serve `Finalized{h}` over the frontier
@@ -3286,12 +3460,22 @@ fn drop_the_last_two_from_epoch_two() -> Committees {
 #[cfg(feature = "dpos-devnet-byzantine")]
 #[test]
 fn a_forged_seed_slot_is_admitted_with_no_key_and_refused_when_the_key_lands() {
+    /// Inside epoch 0 and long before the epoch-2 ceremony seals — see
+    /// [`the_first_three_are_the_committee`] for why it has to be this early and why
+    /// that is free of quorum cost.
+    const CUT_AT: u64 = 4;
+    /// The height the committee reaches before the cut heals — well above the forge
+    /// window, so the forged certificates are taken while the followers are keyless,
+    /// and far enough below the stop height that the key has time to land and the
+    /// promote refusals to be logged.
+    const HEAL_ABOVE: u64 = 3 * EPOCH_LEN;
     let mut cfg = StandConfig::live(5, 1);
-    cfg.committees = drop_the_last_two_from_epoch_two();
-    // Every CONSENSUS-plane link left in place, so the two outsiders can still
-    // acquire `PK_2` after the fact — the half of R-008 that only exists once the
-    // key lands. (Only the consensus plane: `upstream_source_only_for` below cuts
-    // node 4's upstream links down to one, see there.)
+    cfg.committees = the_first_three_are_the_committee();
+    // Every CONSENSUS-plane link left in place BY THE PEER SET, so the two outsiders
+    // can still acquire `PK_2` after the fact — the half of R-008 that only exists
+    // once the key lands. What takes those links away for a bounded window is the cut
+    // below, not this. (Only the consensus plane: `upstream_source_only_for` below
+    // cuts node 4's upstream links down to one, see there.)
     cfg.peer_set = PeerSet::CommitteeTrackedOnly;
     cfg.re_jump_threshold = Some(crate::cold_start_jump::JUMP_THRESHOLD.min(EPOCH_LEN));
     // THE ARCHIVE-POISONING SEAM (4.2 Б1.3). The last assertion here is that a
@@ -3324,11 +3508,33 @@ fn a_forged_seed_slot_is_admitted_with_no_key_and_refused_when_the_key_lands() {
     for i in 0..3 {
         stand.node(i).role(Role::ForgedSeedUpstream);
     }
+    // WHAT OPENS THE KEYLESS WINDOW (5.1). Non-membership no longer does: since П-3
+    // a non-member ASKS a member for the mint's artifact over
+    // `BEACON_RESOLVER_CHANNEL` (R-121/R-122), and `acquire_mint_artifacts` issues
+    // that pull an epoch AHEAD of the need (`lo..=now + 1`), so both followers hold
+    // `PK_2` before the first block of epoch 2 and never fall behind — measured, the
+    // forge window is then never asked for at all (`certs_seen: 1,
+    // certs_forged: 0`, every node at 194). A CONSENSUS-PLANE cut
+    // (`CutPlanes::ConsensusOnly`) is what leaves them without that pull while their
+    // frontier probe keeps feeding their marshal: they stand at `last(1) = 63`, walk
+    // the forge window by height off the forgers, admit it with NO key — and when the
+    // cut heals they acquire `PK_2` and the second half of R-008 runs exactly as
+    // before. The cut is the fixture, so its own observation is asserted below.
+    stand
+        .partition(&[0, 1, 2], &[3, 4])
+        .after_height(CUT_AT)
+        .consensus_only()
+        .heal_above(HEAL_ABOVE);
     let out = stand.run_until(
         |p| p.min_height_of(&[0, 1, 2]) >= 140,
         Duration::from_secs(300),
     );
     assert!(!out.timed_out, "heights {:?}", out.heights);
+    assert!(
+        !out.partitions[0].heights_at_heal.is_empty(),
+        "the consensus-plane cut never fired or never healed, so the keyless window          and the key landing are not this fixture's: {:?}",
+        out.partitions[0]
+    );
 
     // (1) THE TAMPER'S OWN WITNESS.
     let forged: Vec<u64> = (0..3)
@@ -3336,8 +3542,10 @@ fn a_forged_seed_slot_is_admitted_with_no_key_and_refused_when_the_key_lands() {
         .collect();
     assert!(
         !forged.is_empty(),
-        "no certificate was forged: {:?}",
-        (0..5).map(|i| out.byz[i].clone()).collect::<Vec<_>>()
+        "no certificate was forged — heights {:?}, cut {:?}, seen {:?}",
+        out.heights,
+        out.partitions[0],
+        (0..3).map(|i| out.byz[i].certs_seen).collect::<Vec<_>>()
     );
     for i in 0..3 {
         let byz = &out.byz[i];
@@ -3492,6 +3700,27 @@ fn lying_upstream_stand(role3: Role) -> super::stand::Outcome {
     cfg.marshal_tip_series = true;
     let mut stand = Stand::new(cfg);
     stand.node(3).role(role3);
+    // WHAT MAKES NODE 0 FALL BEHIND (5.1), and why it is a cut rather than the
+    // rotation. The rotation used to leave it without `PK_3`: it is not in
+    // `committee[3]`, and nothing fetched a non-member's artifact. Since П-3 it ASKS
+    // for that artifact over `BEACON_RESOLVER_CHANNEL` (R-121/R-122) — an epoch
+    // AHEAD of the need (`acquire_mint_artifacts`, `lo..=now + 1`) — so it crosses
+    // the boundary in lockstep and the CONTROL run spawns no re-jump at all
+    // (measured: `calls=[]`, every node at 192). The lag is therefore physical: node
+    // 0 is cut off at `last(2)`, the height it parked at before, and the cut heals a
+    // gate-and-a-half later so production's own re-jump is what carries it back.
+    //
+    // It is the CONTROL run this restores. The ROLE runs park node 0 at `last(2)`
+    // either way, and for the reason the test names — its only frontier source is the
+    // liar, `deliver` refuses the forged `Latest`, commonware excludes the peer, and
+    // nothing ever TELLS this node a height above its own boundary exists (its
+    // consensus-plane peers cannot: it has no engine for `committee[3]`, so no
+    // epoch-3 notification is addressed to it). The cut leaves that untouched: it
+    // fires at the height node 0 stops at anyway.
+    stand
+        .partition(&[1, 2, 3], &[0])
+        .after_height(3 * EPOCH_LEN - 1)
+        .heal_above(4 * EPOCH_LEN + 16);
     stand.run_until(
         move |p| p.min_height_of(&[1, 2, 3]) >= 6 * EPOCH_LEN,
         Duration::from_secs(400),

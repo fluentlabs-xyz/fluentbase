@@ -333,9 +333,9 @@ impl<E: Storage + Metrics + Clock + BufferPooler> SeedJournal<E> {
 
 /// Open the durable seed store, replay its window, and join it to a RAM map.
 ///
-/// The mirror of [`key_journal::open`](crate::beacon::key_journal::open), and it
-/// exists for the same reason: assembly is knowledge about this store, so it
-/// belongs to this store. The caller previously spelled init → replay → channel →
+/// The mirror of [`artifact::open_mint_memo`](crate::beacon::artifact::open_mint_memo)
+/// (and of the deleted key journal's `open` before it), and it exists for the same
+/// reason: assembly is knowledge about this store, so it belongs to this store. The caller previously spelled init → replay → channel →
 /// spawn by hand and had to supply `retention` TWICE, once to the replay and once
 /// to the writer, from two independent reads of the same constant. Nothing made
 /// the two agree. Here it is one argument, used for both.

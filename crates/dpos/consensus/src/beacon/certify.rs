@@ -111,11 +111,13 @@ pub struct SeedStore {
     /// unobtainable network-wide until the next boundary, so the epoch's spawn
     /// would defer for up to a full epoch.
     ///
-    /// One entry per epoch, bounded by the same trailing epoch window the key
-    /// store uses. Same shape as [`BeaconKeys::retain_from`] keeping `Agreed`
-    /// entries at any age while the derived tiers take the window.
+    /// One entry per epoch, bounded by the trailing epoch window a retained scheme
+    /// covers. The KEY half it used to be compared against is no longer bounded at
+    /// all and cannot be: [`ArtifactStore`] is keyed by MINTING epoch, so a window
+    /// measured from the frontier drops the entry every carry epoch depends on — see
+    /// that store's own retention note.
     ///
-    /// [`BeaconKeys::retain_from`]: crate::beacon::keys::BeaconKeys::retain_from
+    /// [`ArtifactStore`]: crate::beacon::artifact::ArtifactStore
     terminal: Arc<Mutex<BTreeMap<u64, (Round, BlsSignature)>>>,
 }
 

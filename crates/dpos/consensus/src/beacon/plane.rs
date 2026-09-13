@@ -30,24 +30,22 @@ use std::{
     time::Duration,
 };
 use tokio::sync::{mpsc, watch, Notify};
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::{
     beacon::{
         actor::{
-            AgreedOutcomeAt, CeremonyStore, CommitteeFor, CommitteePairFor, DkgActor, DkgLogIndex,
-            PinnedRequest, PullArtifact,
+            AgreedOutcomeAt, CeremonyStore, CommitteeFor, DkgActor, DkgLogIndex, PinnedRequest,
+            PullArtifact,
         },
         artifact::{
-            self, decode_artifact, restart_replay, ArtifactBridge, ArtifactPull, ArtifactStore,
-            CommitteeSource, PullAnswer,
+            self, restart_replay, AcquireArtifact, AcquireMint, ArtifactBridge, ArtifactPull,
+            ArtifactStore, ChangedAt, CommitteeSource, KeyIndex, PullAnswer,
         },
-        carry::{frozen_dkg_qual, DkgQualFor},
         dkg_agree::{AgreedArtifact, ConfirmPool},
         dkg_engine::{
             spawn_agreement_launcher, AgreementMuxes, AgreementPlaneConfig, AgreementTimeouts,
         },
-        keys::{AgreedKeys, BeaconKeys, KeySource},
         log_resolver::{BeaconFetchHandler, BeaconFetchKey, LogFetcher, LogHandler, LogMessage},
         metrics::BeaconMetrics,
         outcome::group_public_key,
@@ -55,7 +53,7 @@ use crate::{
         surface::{LiveBeacon, LiveBeaconConfig},
         Beacon, BeaconEvent, DataFault,
     },
-    dpos::{ARTIFACT_JOURNAL_PARTITION, KEY_JOURNAL_PARTITION, SEED_JOURNAL_PARTITION},
+    dpos::{ARTIFACT_JOURNAL_PARTITION, MINT_MEMO_PARTITION, SEED_JOURNAL_PARTITION},
     outer::SharedMux,
 };
 
@@ -108,9 +106,9 @@ const EDGE_MAILBOX: usize = 16;
 ///
 /// There is no second cursor for the `dkgQual` leg any more. `qual_read_at`
 /// existed for ONE window — a live cert cursor with no EL-finalized marker,
-/// where `read_at` fell back to the GENESIS hash and the write-once memo in
-/// [`super::carry::frozen_dkg_qual`] would have frozen `false` for that epoch
-/// for the life of the process. The single implementation of this trait is now
+/// where `read_at` fell back to the GENESIS hash and the write-once bit cache
+/// (then `carry::frozen_dkg_qual`, now [`super::artifact::MintIndex`]'s) would have
+/// frozen `false` for that epoch for the life of the process. The single implementation of this trait is now
 /// [`crate::committee::CommitteeReadsFacade`], whose anchor is
 /// `executed_state_hash(ordering_finalized)` and which has no genesis fallback
 /// at all: below `commit_height(E)` the module answers "not readable" without
@@ -131,8 +129,10 @@ pub trait CommitteeReads: Send + Sync {
     fn committee_bls(&self, epoch: u64, at: B256) -> Option<EpochCommittee>;
 
     /// One raw on-chain `(dkgQual[epoch], committee[epoch] is committed)` read at
-    /// `at`. The freeze/memo rule that turns it into the carry-forward arbiter is
-    /// [`super::carry::frozen_dkg_qual`]'s and stays on this side of the boundary.
+    /// `at`. The freeze/memo rule that turns it into the carry-forward arbiter stays
+    /// on this side of the boundary: [`super::follower::changed_bit`] drops the
+    /// `committed` leg (Д-7 — the facade answers it unconditionally `true`) and
+    /// [`super::artifact::MintIndex`] caches the decided bit and walks to the mint.
     fn dkg_qual(&self, epoch: u64, at: B256) -> Option<(bool, bool)>;
 
     /// `committee[target−1]` and `committee[target]` at ONE state hash — the
@@ -271,18 +271,17 @@ struct ArtifactSeam {
     resolver_handle: Handle<()>,
     /// The dealer-log fetch handle the ceremony and every agreement instance take.
     logs: BeaconLogs,
-    /// The `PK_epoch` ladder's two artifact rungs. Both answer the same question
-    /// of the same object — the minting epoch's agreed artifact — and differ only
-    /// in where they look: `held` reads the local store (memory, then the durable
-    /// mirror), `pull` spends one bounded peer fetch on top of it. Splitting them
-    /// is what lets the vote-path caller take the cheap one and the off-path
-    /// repair sweep take both.
-    held_keys: AgreedKeys,
-    pull_keys: AgreedKeys,
-    /// The `DkgActor`'s live-epoch artifact pull — a SECOND consumer of the same
-    /// [`ArtifactPull`] the key ladder's `pull` rung uses, in the actor's
-    /// fire-and-forget shape. Built here because this is the only place the pull
-    /// and the resolver mailbox exist together.
+    /// ONE bounded acquisition of a minting epoch's artifact over this class's
+    /// transport — the same [`AcquireArtifact`] the follower is built on, which is
+    /// what makes the non-member's route and the follower's route one code path.
+    /// It replaces the `held`/`pull` rung pair: with a single provenance tier (П-3)
+    /// there is nothing for a "cheap rung" to exclude, so the local probe is just
+    /// [`KeyIndex::holds_mint_of`] and this is the network half.
+    acquire: AcquireMint,
+    /// The `DkgActor`'s live-epoch pull — a SECOND consumer of the same
+    /// [`ArtifactPull`] `acquire` uses, in the actor's fire-and-forget shape: the
+    /// actor calls it from its height tick and cannot await a bounded fetch there.
+    /// One `ArtifactPull` under both, so they share one per-epoch throttle.
     pull_artifact: PullArtifact,
 }
 
@@ -306,7 +305,6 @@ fn open_artifact_seam<E, P, S, R>(
     channel: (S, R),
     store: ArtifactStore,
     committee: CommitteeSource,
-    dkg_qual: DkgQualFor,
     adopt_tx: mpsc::Sender<AgreedArtifact>,
     metrics: BeaconMetrics,
     log_handler: LogHandler,
@@ -343,35 +341,18 @@ where
     );
     let resolver_handle = engine.start(channel);
 
-    let held_keys = AgreedKeys::new(
-        Arc::new(move |epoch: u64| {
-            let key = store.get(epoch).map(|a| *group_public_key(&a.0.group_key));
-            Box::pin(async move { key }) as BoxFuture<'static, _>
-        }),
-        dkg_qual.clone(),
-    );
     // ONE pull for both consumers, so they share the per-epoch throttle that bounds
     // how often this node asks its peers for the same artifact.
     let pull = ArtifactPull::new(context.with_label("artifact_pull"), bridge);
-    let pull_keys = {
+    let acquire: AcquireMint = {
         let pull = pull.clone();
         let mailbox = mailbox.clone();
-        AgreedKeys::new(
-            Arc::new(move |epoch: u64| {
-                let pull = pull.clone();
-                let mut resolver = mailbox.clone();
-                Box::pin(async move {
-                    match pull.pull(&mut resolver, epoch).await {
-                        Some(PullAnswer::Have(a)) => Some(*group_public_key(&a.0.group_key)),
-                        // `NotYet` and an exhausted walk are the same answer to
-                        // this caller: nobody can give it the key right now, so
-                        // the rung yields and the caller stays unpinned.
-                        _ => None,
-                    }
-                }) as BoxFuture<'static, _>
-            }),
-            dkg_qual,
-        )
+        let store = store.clone();
+        Arc::new(PlaneAcquire {
+            pull,
+            mailbox,
+            store,
+        })
     };
     // The `DkgActor`'s consumer of the same pull. Fire-and-forget by contract: the
     // actor calls this from its height tick, which drives every live ceremony, and
@@ -413,28 +394,78 @@ where
     ArtifactSeam {
         resolver_handle,
         logs: LogFetcher::new(mailbox),
-        held_keys,
-        pull_keys,
+        acquire,
         pull_artifact,
+    }
+}
+
+/// [`AcquireArtifact`] over `BEACON_RESOLVER_CHANNEL` — the validator half.
+///
+/// The verify/store/write-back body is NOT here: it lives in [`ArtifactBridge`],
+/// which is the resolver's own `Consumer`, because a `deliver = false` there is what
+/// costs a lying peer its standing. That is the one asymmetry against the follower's
+/// [`artifact::TransportAcquire`], and it is deliberate — moving the check out of the
+/// `Consumer` would move the peer-punishment decision with it.
+struct PlaneAcquire<E: Clock, M> {
+    pull: ArtifactPull<E>,
+    mailbox: M,
+    store: ArtifactStore,
+}
+
+impl<E, M> AcquireArtifact for PlaneAcquire<E, M>
+where
+    E: Clock + Send + Sync,
+    M: commonware_resolver::Resolver<Key = BeaconFetchKey> + Clone + Send + Sync,
+{
+    fn fetch(&self, minted_at: u64) -> BoxFuture<'_, bool> {
+        Box::pin(async move {
+            if self.store.has(minted_at) {
+                return true;
+            }
+            let mut resolver = self.mailbox.clone();
+            // `NotYet` and an exhausted walk are the same answer to this caller:
+            // nobody can give it the artifact right now, so it stays unresolved.
+            // The ANSWER's artifact is deliberately dropped: `ArtifactBridge::deliver`
+            // verified and FILED it before it could reach here, so the store is the
+            // thing to believe and re-reading it is what the caller does next.
+            match self.pull.pull(&mut resolver, minted_at).await {
+                Some(PullAnswer::Have(served)) => {
+                    // The STORE is what to believe — `ArtifactBridge::deliver`
+                    // verified and filed this before it could reach here — but the
+                    // answer's own epoch is named in the line, because "a peer
+                    // served something" and "a peer served THIS epoch" are the two
+                    // readings a silent `true` would collapse.
+                    debug!(
+                        epoch = minted_at,
+                        served = served.0.target_epoch,
+                        "beacon: a peer served the minting epoch's artifact"
+                    );
+                    self.store.has(minted_at)
+                }
+                _ => false,
+            }
+        })
     }
 }
 
 /// Spawn the agreement write-back's middle hop.
 ///
 /// It does two things and neither belongs to the actor. It publishes the agreed
-/// key at [`KeySource::Agreed`], which is what lets W1 stand down for the epoch
-/// and still leaves ladder rung 1 answered for `repair_keyless_schemes`. Then it
-/// hands the artifact to the `DkgActor`, where its dealer-log set becomes the
-/// pinned set the existing finalize rails run over — the write-back proper.
+/// artifact to the `DkgActor`, where its dealer-log set becomes the pinned set the
+/// existing finalize rails run over — the write-back proper. It used to ALSO publish
+/// the agreed key into a `BeaconKeys` store; the artifact it forwards is already in
+/// [`ArtifactStore`], and that store IS the key's owner (П-3), so the publish had
+/// nothing left to add.
 ///
-/// Spawned separately from the rest of the plane because `beacon_keys` does not
-/// exist until the consensus layer has launched, which is after the plane is
-/// built.
+/// IT NO LONGER PUBLISHES A KEY, and does not need to: the artifact it forwards is
+/// already in [`ArtifactStore`] (the bridge and the instance both file before they
+/// hand over), and that store IS the key's owner (П-3). What is left of this hop is
+/// the write-back proper — handing the artifact to the actor so its dealer-log set
+/// becomes the pinned set the finalize rails run over.
 fn spawn_write_back<E>(
     context: &E,
     mut agreed_rx: mpsc::Receiver<AgreedArtifact>,
     adopt_tx: mpsc::Sender<AgreedArtifact>,
-    beacon_keys: BeaconKeys,
 ) -> Handle<()>
 where
     E: Metrics + Spawner,
@@ -444,12 +475,11 @@ where
         .spawn(move |_| async move {
             while let Some(artifact) = agreed_rx.recv().await {
                 let epoch = artifact.0.target_epoch;
-                let pk = *group_public_key(&artifact.0.group_key);
                 info!(
                     epoch,
-                    "beacon: epoch-key agreement artifact adopted — publishing PK_epoch"
+                    group_public = %artifact::pk_prefix(group_public_key(&artifact.0.group_key)),
+                    "beacon: epoch-key agreement artifact adopted"
                 );
-                beacon_keys.set_pk(epoch, pk, KeySource::Agreed);
                 if adopt_tx.send(artifact).await.is_err() {
                     warn!("beacon: the DkgActor is gone; agreement write-back stopped");
                     break;
@@ -524,7 +554,7 @@ where
     /// Prefix of every storage partition the plane opens: the epoch-key
     /// agreement journals (`{prefix}dkg_epoch_{E}`, see
     /// [`crate::beacon::agreement_partition`]) and the key / seed / artifact
-    /// journals (`{prefix}` ‖ [`KEY_JOURNAL_PARTITION`] etc., see
+    /// journals (`{prefix}` ‖ [`MINT_MEMO_PARTITION`] etc., see
     /// [`journal_partition`]). Production passes `""`; the in-crate testbed a
     /// per-node prefix, so N planes on one in-memory `Storage` do not write one
     /// journal.
@@ -590,24 +620,14 @@ where
         let reads = committees.clone();
         Arc::new(move |epoch: u64| reads.committee(epoch, reads.read_at()?))
     };
-    let committee_pair_for: CommitteePairFor = {
-        let reads = committees.clone();
-        Arc::new(move |target: u64| reads.committee_pair(target))
-    };
     let committee_source: CommitteeSource = {
         let reads = committees.clone();
         Arc::new(move |epoch: u64| reads.committee_bls(epoch, reads.read_at()?))
     };
-    let dkg_qual_for = frozen_dkg_qual(
-        {
-            let reads = committees.clone();
-            Arc::new(move || reads.read_at())
-        },
-        {
-            let reads = committees.clone();
-            Arc::new(move |epoch: u64, at: B256| reads.dkg_qual(epoch, at))
-        },
-    );
+    // The frozen `changed` bit, one closure for both node classes — see
+    // `follower::changed_bit` for why the `committed` leg is dropped rather than
+    // guarded (Д-7).
+    let changed: ChangedAt = super::follower::changed_bit(committees.clone());
     let me = peer_keypair.public_key();
     let share_state = match share_seal_key {
         Some(key) => ShareState::Encrypted(key),
@@ -617,22 +637,12 @@ where
     // Shared live-DKG store, reloaded from the share dir ONCE.
     let ceremony_store: CeremonyStore = Arc::new(RwLock::new(BTreeMap::new()));
     let share_notify = Arc::new(Notify::new());
-    // The artifacts ride out of the share files here but land further down, once
-    // the artifact store is open (it does not exist yet at this point).
-    let mut reloaded_artifacts: Vec<(u64, Vec<u8>)> = Vec::new();
     let reloaded = share_state::load_all(&share_dir, &share_state);
     if !reloaded.is_empty() {
         if let Ok(mut store) = ceremony_store.write() {
-            for (epoch, output, share, artifact) in reloaded {
-                info!(
-                    epoch,
-                    artifact = artifact.is_some(),
-                    "beacon: reloaded persisted live-DKG share from disk"
-                );
-                if let Some(bytes) = artifact {
-                    reloaded_artifacts.push((epoch, bytes));
-                }
-                store.insert(epoch, (output, share));
+            for (epoch, share) in reloaded {
+                info!(epoch, "beacon: reloaded persisted live-DKG share from disk");
+                store.insert(epoch, share);
             }
         }
     }
@@ -663,17 +673,17 @@ where
     let (agreement_request_tx, agreement_request_rx) = mpsc::channel::<u64>(EDGE_MAILBOX);
     let (agreement_intake_tx, agreement_intake) =
         mpsc::channel::<(Epoch, Handle<()>)>(EDGE_MAILBOX);
-    // The write-back's two ends. They are NOT joined here — the hop between them
-    // publishes the agreed key into the consensus layer's `BeaconKeys`, which does
-    // not exist until that layer launches.
-    // The cross-epoch `epoch → PK_epoch` store. Opened HERE, not at the layer
-    // launch, and that reordering is what lets the agreement write-back be armed
-    // in place below instead of being handed out unjoined for the node to arm
-    // later (`BeaconWriteBack`, deleted with this change).
-    let (beacon_keys, key_writer) = super::key_journal::open(
-        context.with_label("key_journal"),
-        context.with_label("key_journal_writer"),
-        &journal_partition(&partition_prefix, KEY_JOURNAL_PARTITION),
+    // THE DURABLE MINT MEMO, and it opens where the key journal used to. It is the
+    // PRECONDITION of that journal's deletion, not a replacement for it: the journal
+    // held `epoch → pk` and could not answer a carry epoch at all (W1 did that, and
+    // W1 is gone); this holds `epoch → minting epoch`, which is what makes the
+    // durable artifact store ADDRESSABLE without a chain read. See
+    // `artifact::open_mint_memo` for what it closes and the one case it does not.
+    let (mints, mint_writer) = artifact::open_mint_memo(
+        context.with_label("mint_memo"),
+        context.with_label("mint_memo_writer"),
+        &journal_partition(&partition_prefix, MINT_MEMO_PARTITION),
+        changed.clone(),
     )
     .await?;
 
@@ -733,29 +743,14 @@ where
         &journal_partition(&partition_prefix, ARTIFACT_JOURNAL_PARTITION),
     )
     .await?;
-    // Refill from the share files, AFTER the journal's own rehydration. `insert` is
-    // first-wins, so the journal's copy always stands and this only fills a gap —
-    // an epoch whose share was persisted but whose journal record never synced.
-    // Not re-verified against `committee[epoch]` here, matching the journal replay:
-    // both read a 0600 file this node wrote itself, and refusing to start over an
-    // unreadable one would forfeit the very key the store exists to serve.
-    for (epoch, bytes) in reloaded_artifacts {
-        match decode_artifact(&bytes) {
-            Ok(artifact) => {
-                if artifact_store.insert(epoch, artifact) {
-                    info!(
-                        epoch,
-                        "beacon: reloaded the agreed artifact from the share file"
-                    );
-                }
-            }
-            Err(e) => warn!(
-                epoch,
-                ?e,
-                "beacon: the share file's agreed artifact does not decode; re-agreeing"
-            ),
-        }
-    }
+    // THERE IS NO SECOND REFILL ROUTE ANY MORE, and its absence is П-3. The share
+    // file used to carry a copy of the agreed artifact, and this is where that copy
+    // was read back into the store — so an epoch whose artifact journal record never
+    // synced still came back with a locally-sourced `PK_E`. The copy is gone
+    // (`share_state`), so the artifact journal's own rehydration above is the whole
+    // of what a restart recovers, and an epoch it lost is acquired from peers
+    // (`DkgActor::acquire_mint_artifacts`). The liveness trade is named in
+    // `share_state`'s module doc.
     // Pick the artifacts this restart owes the `DkgActor`. Nothing else reads the
     // store back INTO the actor, so a member that went down between adopting an
     // artifact and finalizing over it would otherwise wait for a re-agreement its
@@ -769,8 +764,7 @@ where
     let ArtifactSeam {
         resolver_handle,
         logs,
-        held_keys,
-        pull_keys,
+        acquire,
         pull_artifact,
     } = open_artifact_seam(
         context,
@@ -780,11 +774,13 @@ where
         resolver_channel,
         artifact_store.clone(),
         committee_source.clone(),
-        dkg_qual_for.clone(),
         agreed_tx.clone(),
         metrics.clone(),
         log_handler,
     );
+    // The ONE owner of `PK_epoch` and the polynomial, assembled where its two halves
+    // first exist together: the durable artifact store and the durable mint memo.
+    let key_index = KeyIndex::new(artifact_store.clone(), mints);
 
     // The demote-heal reads the agreed `Output` for an EPOCH out of the artifact
     // store. It used to read the boundary block at `epoch_start(E)`, which was a
@@ -803,6 +799,10 @@ where
     // here because the store moves into the agreement launcher further down and
     // the actor's spawn wrapper takes the watch.
     let artifact_store_for_serving = artifact_store.clone();
+    // Two edges taken BEFORE the store moves into the agreement launcher, and each
+    // is its own notifier — see `ArtifactStore::subscribe`.
+    let promoter_edge = artifact_store.subscribe();
+    let bridge_key_edge = artifact_store.subscribe();
     let geometry_for_probe = geometry.clone();
 
     // The persistent `DkgActor` — spawned ONCE, runs for the whole process. It is
@@ -856,7 +856,7 @@ where
                 share_state,
                 Some(outcome_at),
             )
-            .with_committee_pair(committee_pair_for)
+            .with_changed_bit(changed.clone())
             .with_recorded_logs(recorded)
             .with_share_confirms(confirms)
             .with_pinned_requests(pinned_rx)
@@ -904,7 +904,7 @@ where
     // unjoined (`BeaconWriteBack`) for the node to arm after the consensus layer
     // had created the key store; the store is created above now, so the two ends
     // meet here and the arm-later dance is gone.
-    let write_back_handle = spawn_write_back(context, agreed_rx, adopt_tx, beacon_keys.clone());
+    let write_back_handle = spawn_write_back(context, agreed_rx, adopt_tx);
     // The replay is pushed AFTER the hop is spawned and not before, because this
     // hop is the channel's only drain: a send issued first would deadlock on a
     // store holding more records than the channel's depth.
@@ -929,24 +929,15 @@ where
     // where all of its inputs exist at once — the ceremony store, the frozen
     // `dkgQual` arbiter, the key store, the seed store and the two agreement
     // rungs — and none of them crosses back out.
-    let namespace = seed_namespace(&fluent_namespace(chain_id));
     let quarantine = seed_store.clone();
     let seed_events = seed_store.events().clone();
     let randomness = LiveBeacon::build(LiveBeaconConfig {
         artifacts: artifact_store_for_serving,
         geometry: geometry_for_probe,
         seeds: seed_store,
-        keys: beacon_keys.clone(),
-        resolver: super::resolve::beacon_share_resolver(
-            ceremony_store.clone(),
-            dkg_qual_for.clone(),
-            namespace,
-            beacon_keys.clone(),
-        ),
+        keys: key_index.clone(),
         ceremony: ceremony_store.clone(),
-        dkg_qual: dkg_qual_for.clone(),
-        held: Some(held_keys.clone()),
-        pull: Some(pull_keys),
+        acquire: Some(acquire),
         metrics: metrics.clone(),
         chain_id,
     });
@@ -958,12 +949,14 @@ where
     // propose path), but an untriggered quarantine is a value the node holds and
     // can never use.
     //
-    // Its OWN edge (`BeaconKeys::subscribe`), never the `Arc` the epoch manager's
-    // reconcile arm holds: one `notify_one` shared by two waiters swallows one of
-    // them, and both losses are silent — an epoch stuck vote-only, or a σ that
-    // never leaves quarantine.
+    // Its OWN edge (`ArtifactStore::subscribe`), never a shared handle: one
+    // `notify_one` shared by two waiters swallows one of them, and both losses are
+    // silent — an epoch stuck vote-only, or a σ that never leaves quarantine.
     let promoter_randomness = randomness.clone();
-    let promoter_edge = beacon_keys.subscribe();
+    // THE ARTIFACT STORE'S OWN EDGE, where it used to be the key store's: "a key
+    // this node could not resolve became resolvable" now means "an artifact landed",
+    // because the artifact is the only thing a key comes from (П-3). Per consumer,
+    // for the reason the old store's header gave — see `ArtifactStore::subscribe`.
     let seed_promoter_handle = context
         .with_label("seed_promoter")
         .spawn(move |_| async move {
@@ -994,7 +987,7 @@ where
 
     // The wake-up bridge. `record_seed` fires its own class from inside the
     // beacon; these two are written from OTHER tasks through a bare `Notify` —
-    // `BeaconKeys::set_pk` and the `DkgActor`'s share edge — and `notify_one`
+    // an accepted `ArtifactStore::insert` and the `DkgActor`'s share edge — and `notify_one`
     // wakes exactly ONE waiter, so this task being their SOLE waiter is what lets
     // any number of consumers subscribe without swallowing each other's edges.
     //
@@ -1002,9 +995,9 @@ where
     // epoch manager never learns its participation changed, which is a silent
     // stall rather than a visible failure.
     let bridge_handle = {
-        // Its OWN key notifier, never the shared `notifier()` handle: the seed
-        // promoter waits on a subscription of its own for the same reason.
-        let key_edge = beacon_keys.subscribe();
+        // Its OWN artifact notifier, never a shared handle: the seed promoter waits
+        // on a subscription of its own for the same reason.
+        let key_edge = bridge_key_edge;
         let participation_edge = share_notify.clone();
         // The SAME publisher `SeedStore::record` fires the seed class into, so the
         // three classes reach every consumer over one subscription.
@@ -1032,8 +1025,8 @@ where
     if let Some(writer) = artifact_writer_handle {
         writers.push(("artifact_store_writer", writer));
     }
-    if let Some(writer) = key_writer {
-        writers.push(("key_journal_writer", writer));
+    if let Some(writer) = mint_writer {
+        writers.push(("mint_memo_writer", writer));
     }
     let tasks = Tasks {
         supervised: spawn_supervisor(
@@ -1063,8 +1056,8 @@ mod tests {
     #[test]
     fn journal_partitions_are_the_production_names_under_the_empty_prefix() {
         assert_eq!(
-            journal_partition("", KEY_JOURNAL_PARTITION),
-            "beacon-key-ordinal"
+            journal_partition("", MINT_MEMO_PARTITION),
+            "beacon-mint-metadata"
         );
         assert_eq!(
             journal_partition("", SEED_JOURNAL_PARTITION),

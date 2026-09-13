@@ -931,12 +931,11 @@ where
                 // of the epoch.
                 //
                 // This arm CANNOT be the only trigger for the sweep, and that is the
-                // whole reason the boundary arm also sweeps. The key class fires on
-                // a `BeaconKeys` record, and every production writer of that store
-                // needs either this node's own DKG material or a change epoch's
-                // agreement artifact. A node with no DKG material on a committee that
-                // has not changed — the case that repair exists for — never fires it
-                // at all.
+                // whole reason the boundary arm also sweeps. The key class fires on an
+                // accepted `ArtifactStore` insert, and the only producers of one are a
+                // change epoch's own agreement and a verified acquisition. A node on a
+                // committee that has not changed — the case that repair exists for —
+                // never fires it at all.
                 //
                 // NB a near-miss that makes a cheaper fix tempting and wrong: an
                 // attested insert IS followed one task-hop later by `spawn_unblocked`, but
@@ -1211,10 +1210,11 @@ where
         // Boundary bookkeeping (idempotent; monotone).
         self.highest_entered_epoch = self.highest_entered_epoch.max(epoch);
         // Tell the randomness subsystem where the core stands. It owns what that
-        // means: the previous-epoch key warm-up (W3) and the retention of its own
-        // store against the entered frontier. Both used to be written out here,
-        // and both are facts ABOUT randomness that the core has no business
-        // knowing — it reports the two epochs and nothing else.
+        // means. It used to mean the previous-epoch key warm-up (W3) and the
+        // retention of its own key store; W3 and that store are gone (П-3), and what
+        // is left is the σ retention. Either way it is a fact ABOUT randomness that
+        // the core has no business knowing — it reports the two epochs and nothing
+        // else.
         //
         // The report sits AFTER the frontier update deliberately: the retention
         // floor is taken from `highest_entered_epoch`, so reporting before the
@@ -1263,8 +1263,8 @@ where
         // completes the `Handle` without reaching the manager (nothing joins engine
         // handles), so a dead engine would otherwise wedge behind this gate forever.
         // Poll the handle: `Pending` ⇒ alive, keep it; `Ready` ⇒ dead, drop the
-        // entry and fall through to the spawn path (re-spawn is safe — W1
-        // `insert_group_key` is idempotent and a pre-drop `AlreadyRegistered` is
+        // entry and fall through to the spawn path (re-spawn is safe — the signer
+        // path writes nothing at all now, and a pre-drop `AlreadyRegistered` is
         // handled by `spawn_engine` returning false, retried next edge). The
         // respawn stays behind every gate below (share-gate, boundary-block,
         // safety-halt), reached only because the caller is at the live frontier.
@@ -1428,9 +1428,11 @@ where
                 // The scheme this epoch votes with, built whole by the
                 // randomness subsystem. Everything the core used to do here —
                 // the promote value-gate, the share self-probe, W1, and the
-                // `build_signer` call itself — is inside that one operation now,
-                // over ONE sample of the material, which is what keeps the gates
-                // coherent with the key they admitted.
+                // `build_signer` call itself — moved inside that one operation, and
+                // П-3 then deleted the first and the third of those: the value gate
+                // had no second value to compare once the artifact became the key's
+                // only owner, and W1 had nothing left to publish. What is left is the
+                // share self-probe over ONE sample of the material.
                 //
                 // KNOWN DEVIATION from the pre-split behaviour, recorded rather
                 // than claimed neutral: the material is now sampled twice across
@@ -1549,8 +1551,8 @@ where
     /// is the frontier, which rides the wake. A `watch` (not a `Notify`) because
     /// the frontier has to ride it and because its receiver is created ONCE here,
     /// before the task's loop — the baseline-at-subscribe hazard that rules
-    /// `watch` out in `beacon::keys` needs a per-iteration `subscribe`,
-    /// which this is not.
+    /// `watch` out for the beacon's own per-consumer `Notify` edges needs a
+    /// per-iteration `subscribe`, which this is not.
     fn spawn_repair_sweep(&self) -> (watch::Sender<(Epoch, Epoch)>, Handle<()>) {
         let (wake_tx, wake_rx) = watch::channel(self.sweep_frontier());
         let hint: RepairHint = {
@@ -1726,12 +1728,12 @@ where
         HS: Sender<PublicKey = PublicKey>,
         HR: Receiver<PublicKey = PublicKey>,
     {
-        // The W1 ordering tripwire that used to stand here has moved INSIDE the
-        // randomness subsystem (`beacon::surface`), where the store it asserts
-        // against still is. It is now structural rather than asserted: the
-        // scheme this spawn requires is the return value of the same operation
-        // that performs the W1 publish, so publish-happens-before-spawn is a
-        // data dependency no refactor can silently reorder.
+        // The W1 ordering tripwire that used to stand here is GONE, and so is the
+        // thing it guarded: W1 published this node's own reconstruction of `PK_E`
+        // before the engine existed, and П-3 deleted the publish along with the store
+        // that held it. There is no publish left to order against a spawn — the epoch
+        // key's owner is the artifact, which is in place before the finalize that
+        // yields the share.
         //
         // `None` ⇒ a FOLLOWER manager (no plane). A follower's `signer_keypair`
         // is `None`, so `is_member` in `reconcile_roles` is always false → the
@@ -2035,11 +2037,8 @@ fn engine_handle_dead(handle: &mut Handle<()>) -> bool {
 mod tests {
     use super::*;
     use crate::{
-        beacon::testing::BeaconResolve,
-        beacon::testing::LiveBeaconConfig,
-        beacon::testing::DETERMINISTIC_BOOTSTRAP_EPOCH,
-        beacon::testing::{AgreedKeys, BeaconKeys, KeySource, KeySources},
-        outer::EpochSchemeProvider,
+        beacon::testing::LiveBeaconConfig, beacon::testing::MintFixture,
+        beacon::testing::DETERMINISTIC_BOOTSTRAP_EPOCH, outer::EpochSchemeProvider,
         scheme::epoch_committee_from_snapshot,
     };
     use alloy_primitives::{Address, B256};
@@ -2055,7 +2054,6 @@ mod tests {
     use commonware_math::algebra::Random as _;
     use commonware_parallel::Sequential;
     use commonware_utils::{test_rng, N3f1, NZU32};
-    use fluentbase_bls::beacon::GroupPublic;
 
     use fluentbase_bls::scheme::build_signer;
     use fluentbase_bls::BlsPubkey;
@@ -2066,36 +2064,89 @@ mod tests {
     /// Committee fixture for the repair-sweep tests. Returns the snapshot and the
     /// BLS keypairs behind it, because one test has to build a SIGNER scheme and
     /// that needs a keypair the committee actually contains.
-    /// A provider over the given ladder pieces, so the sweep tests keep
-    /// exercising the REAL ladder (store tiering, floor, rung order) rather
-    /// than canned answers — that behaviour is what these tests exist to pin.
-    fn randomness_over(
-        store: BeaconKeys,
-        held: Option<AgreedKeys>,
-        pull: Option<AgreedKeys>,
-    ) -> Arc<dyn Beacon> {
-        randomness_over_seeds(crate::beacon::testing::SeedStore::new(), store, held, pull)
+    /// A provider over the REAL key index, so the sweep tests keep exercising the
+    /// shipped resolve rather than canned answers.
+    ///
+    /// It used to take a `BeaconKeys` store plus two `AgreedKeys` ladder rungs, and
+    /// "this epoch is resolvable" was a `set_pk` into the store. After П-3 the only
+    /// thing that makes an epoch resolvable is holding the artifact of the epoch the
+    /// chain says minted its key, so the fixture states a MINT
+    /// ([`MintFixture::mint`]) and the sweep's answer follows from that.
+    fn randomness_over(mints: &MintFixture) -> Arc<dyn Beacon> {
+        randomness_over_seeds(crate::beacon::testing::SeedStore::new(), mints)
     }
 
     fn randomness_over_seeds(
         seeds: crate::beacon::testing::SeedStore,
-        store: BeaconKeys,
-        held: Option<AgreedKeys>,
-        pull: Option<AgreedKeys>,
+        mints: &MintFixture,
     ) -> Arc<dyn Beacon> {
         crate::beacon::testing::LiveBeacon::build(LiveBeaconConfig {
             seeds,
-            keys: store,
-            resolver: Arc::new(|_| BeaconResolve::Absent),
+            keys: mints.keys.clone(),
             ceremony: Arc::new(std::sync::RwLock::new(std::collections::BTreeMap::new())),
-            dkg_qual: Arc::new(|_| Some(false)),
-            held,
-            pull,
+            acquire: None,
             metrics: crate::beacon::testing::BeaconMetrics::default(),
             chain_id: 1,
-            artifacts: crate::beacon::testing::ArtifactStore::new(),
+            artifacts: mints.artifacts.clone(),
             geometry: tokio::sync::watch::channel(Some((0, 1))).1,
         })
+    }
+
+    /// An [`AcquireArtifact`] that parks inside its bounded fetch, so a test can hold
+    /// the sweep in the middle of one. It replaces an `AgreedKeys` rung that did the
+    /// same: the rung is gone (П-3), the acquisition is what the sweep spends now.
+    struct ParkingAcquire {
+        parked: Arc<Notify>,
+        gate: Arc<Notify>,
+        pulls: Arc<std::sync::atomic::AtomicUsize>,
+        /// Where the artifact lands when the gate releases — a real acquisition
+        /// SUCCEEDS by filing it, so the released sweep has something to upgrade on.
+        artifacts: crate::beacon::testing::ArtifactStore,
+    }
+
+    impl crate::beacon::testing::AcquireArtifact for ParkingAcquire {
+        fn fetch(&self, minted_at: u64) -> BoxFuture<'_, bool> {
+            Box::pin(async move {
+                self.pulls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                self.parked.notify_one();
+                self.gate.notified().await;
+                self.artifacts.insert(
+                    minted_at,
+                    crate::beacon::testing::artifact_with_key(minted_at, some_outcome(0xB2)),
+                );
+                true
+            })
+        }
+    }
+
+    /// [`randomness_over`] with an acquisition route wired — the only thing a
+    /// `Thorough` effort can spend.
+    fn randomness_over_acquiring(
+        mints: &MintFixture,
+        acquire: crate::beacon::testing::AcquireMint,
+    ) -> Arc<dyn Beacon> {
+        crate::beacon::testing::LiveBeacon::build(LiveBeaconConfig {
+            seeds: crate::beacon::testing::SeedStore::new(),
+            keys: mints.keys.clone(),
+            ceremony: Arc::new(std::sync::RwLock::new(std::collections::BTreeMap::new())),
+            acquire: Some(acquire),
+            metrics: crate::beacon::testing::BeaconMetrics::default(),
+            chain_id: 1,
+            artifacts: mints.artifacts.clone(),
+            geometry: tokio::sync::watch::channel(Some((0, 1))).1,
+        })
+    }
+
+    /// A real DKG outcome, for a fixture that has to state a mint.
+    fn some_outcome(seed: u64) -> crate::beacon::testing::DkgOutcome {
+        use commonware_cryptography::bls12381::{dkg::deal, primitives::sharing::Mode};
+        use commonware_utils::ordered::Set;
+        let mut rng = StdRng::seed_from_u64(seed);
+        let players: Set<fluentbase_bls::PeerPubkey> =
+            Set::from_iter_dedup((0..4).map(|_| Ed25519PrivateKey::random(&mut rng).public_key()));
+        deal::<MinSig, fluentbase_bls::PeerPubkey, N3f1>(&mut rng, Mode::NonZeroCounter, players)
+            .expect("deal")
+            .0
     }
 
     fn repair_fixture(epoch: Epoch) -> (ValidatorSetSnapshot, Vec<ValidatorBlsKeypair>) {
@@ -2129,24 +2180,8 @@ mod tests {
         )
     }
 
-    fn some_group_key() -> GroupPublic {
-        let (sharing, _) =
-            deal_anonymous::<MinSig, N3f1>(&mut test_rng(), Default::default(), NZU32!(4));
-        *sharing.public()
-    }
-
     /// Register `epoch` pin-less the way the bulk catch-up span does — straight
     /// into the provider, touching neither `roles` nor any epoch-manager state.
-    /// A group key distinct from [`some_group_key`].
-    fn some_other_group_key() -> GroupPublic {
-        let mut rng = StdRng::seed_from_u64(0xC0FFEE);
-        let (sharing, _) = commonware_cryptography::bls12381::dkg::deal_anonymous::<
-            commonware_cryptography::bls12381::primitives::variant::MinSig,
-            commonware_utils::N3f1,
-        >(&mut rng, Default::default(), commonware_utils::NZU32!(4));
-        *sharing.public()
-    }
-
     /// Register `epoch` the way the bulk catch-up span does — straight into the
     /// provider, touching neither `roles` nor any epoch-manager state.
     ///
@@ -2248,8 +2283,8 @@ mod tests {
     #[tokio::test]
     async fn a_soft_entered_epoch_is_swept_for_its_key_once_the_frontier_passes_it() {
         let epoch = Epoch::new(DETERMINISTIC_BOOTSTRAP_EPOCH + 3);
-        let store = BeaconKeys::new();
-        let r = randomness_over(store.clone(), None, None);
+        let mints = MintFixture::new();
+        let r = randomness_over(&mints);
         let module = sweep_committee();
         let provider = EpochSchemeProvider::new(module.clone());
         register_verifier(module.as_ref(), epoch, r.as_ref());
@@ -2270,7 +2305,7 @@ mod tests {
         .await
         .is_empty());
 
-        store.set_pk(epoch.get(), some_group_key(), KeySource::Agreed);
+        mints.mint(epoch.get(), some_outcome(0xA1));
         assert_eq!(
             repair_keyless_schemes(
                 &provider,
@@ -2301,8 +2336,10 @@ mod tests {
     async fn the_registered_scheme_starts_refusing_a_foreign_seed_when_the_key_lands() {
         use commonware_cryptography::certificate::{Provider as _, Scheme as _};
         let epoch = Epoch::new(DETERMINISTIC_BOOTSTRAP_EPOCH + 3);
-        let store = BeaconKeys::new();
-        let r = randomness_over(store.clone(), None, None);
+        let mints = MintFixture::new();
+        // The chain's bit is frozen up front; the ARTIFACT is what lands mid-test.
+        mints.changed(epoch.get());
+        let r = randomness_over(&mints);
         let module = sweep_committee();
         let provider = EpochSchemeProvider::new(module.clone());
         register_verifier(module.as_ref(), epoch, r.as_ref());
@@ -2330,7 +2367,7 @@ mod tests {
             "keyless: NoKey admits on the multisig quorum alone"
         );
 
-        store.set_pk(epoch.get(), some_group_key(), KeySource::Agreed);
+        mints.arrive(epoch.get(), some_outcome(0xA1));
         assert_eq!(
             repair_keyless_schemes(
                 &provider,
@@ -2369,16 +2406,13 @@ mod tests {
         let provider = EpochSchemeProvider::new(module.clone());
         // "Nothing to repair" now means the KEY STORE holds the epoch's key, not
         // that the scheme carries a pin.
-        let store = BeaconKeys::new();
-        store.set_pk(epoch.get(), some_group_key(), KeySource::Agreed);
+        let mints = MintFixture::new();
+        mints.mint(epoch.get(), some_outcome(0xA1));
 
-        let exploding = AgreedKeys::new(
-            Arc::new(|_| {
-                Box::pin(async { panic!("an epoch whose key is held must not be resolved for") })
-            }),
-            Arc::new(|_| Some(true)),
-        );
-        let r = randomness_over(store, Some(exploding), None);
+        // There is no acquisition route wired at all, which is the stronger form of
+        // the old `exploding` rung: an epoch whose key is held must resolve without
+        // one, and `ensure_key` here has nothing to spend even if it tried.
+        let r = randomness_over(&mints);
         register_verifier(module.as_ref(), epoch, r.as_ref());
         let mut hinted = BTreeSet::new();
 
@@ -2421,9 +2455,12 @@ mod tests {
         let (older, newer) = (Epoch::new(5), Epoch::new(6));
         let module = sweep_committee();
         let provider = EpochSchemeProvider::new(module.clone());
-        let store = BeaconKeys::new();
-        store.set_pk(older.get(), some_group_key(), KeySource::Agreed);
-        let r = randomness_over(store.clone(), None, None);
+        // Both epochs re-minted, so neither can borrow the other's key through a
+        // carry; only `older`'s artifact is on hand.
+        let mints = MintFixture::new();
+        mints.mint(older.get(), some_outcome(0xA1));
+        mints.changed(newer.get());
+        let r = randomness_over(&mints);
         register_verifier(module.as_ref(), older, r.as_ref());
         register_verifier(module.as_ref(), newer, r.as_ref());
 
@@ -2452,9 +2489,9 @@ mod tests {
         let pre_beacon = Epoch::new(DETERMINISTIC_BOOTSTRAP_EPOCH - 1);
         let module = sweep_committee();
         let provider = EpochSchemeProvider::new(module.clone());
-        let store = BeaconKeys::new();
-        store.set_pk(pre_beacon.get(), some_group_key(), KeySource::Agreed);
-        let r = randomness_over(store.clone(), None, None);
+        let mints = MintFixture::new();
+        mints.mint(pre_beacon.get(), some_outcome(0xA1));
+        let r = randomness_over(&mints);
         register_verifier(module.as_ref(), pre_beacon, r.as_ref());
         assert!(
             !provider
@@ -2503,12 +2540,12 @@ mod tests {
         let provider = EpochSchemeProvider::new(module.clone());
         assert!(module.upgrade_scheme(epoch.get(), signer));
 
-        let store = BeaconKeys::new();
-        store.set_pk(epoch.get(), some_group_key(), KeySource::Agreed);
+        let mints = MintFixture::new();
+        mints.mint(epoch.get(), some_outcome(0xA1));
 
         let upgraded = repair_keyless_schemes(
             &provider,
-            randomness_over(store.clone(), None, None).as_ref(),
+            randomness_over(&mints).as_ref(),
             &mut BTreeSet::new(),
             Epoch::new(7),
             Epoch::new(0),
@@ -2530,9 +2567,9 @@ mod tests {
         let epoch = Epoch::new(5);
         let module = sweep_committee();
         let provider = EpochSchemeProvider::new(module.clone());
-        let store = BeaconKeys::new();
-        store.set_pk(epoch.get(), some_group_key(), KeySource::Agreed);
-        let r = randomness_over(store.clone(), None, None);
+        let mints = MintFixture::new();
+        mints.mint(epoch.get(), some_outcome(0xA1));
+        let r = randomness_over(&mints);
         register_verifier(module.as_ref(), epoch, r.as_ref());
 
         let upgraded = repair_keyless_schemes(
@@ -2559,10 +2596,10 @@ mod tests {
         let epoch = Epoch::new(5);
         let module = sweep_committee();
         let provider = EpochSchemeProvider::new(module.clone());
-        let store = BeaconKeys::new();
-        store.set_pk(epoch.get(), some_group_key(), KeySource::Agreed);
+        let mints = MintFixture::new();
+        mints.mint(epoch.get(), some_outcome(0xA1));
 
-        let r = randomness_over(store.clone(), None, None);
+        let r = randomness_over(&mints);
         register_verifier(module.as_ref(), epoch, r.as_ref());
         let no_live_epoch = Epoch::new(0);
         assert!(
@@ -2605,10 +2642,10 @@ mod tests {
         let epoch = Epoch::new(5);
         let module = sweep_committee();
         let provider = EpochSchemeProvider::new(module.clone());
-        let store = BeaconKeys::new();
-        store.set_pk(epoch.get(), some_group_key(), KeySource::Agreed);
+        let mints = MintFixture::new();
+        mints.mint(epoch.get(), some_outcome(0xA1));
 
-        let r = randomness_over(store.clone(), None, None);
+        let r = randomness_over(&mints);
         register_verifier(module.as_ref(), epoch, r.as_ref());
         let mut hinted = BTreeSet::new();
         let sweep = async |hinted: &mut BTreeSet<Epoch>| {
@@ -2619,30 +2656,38 @@ mod tests {
         assert_eq!(sweep(&mut hinted).await, Vec::<Epoch>::new());
     }
 
-    /// Everything that verifies a certificate of an epoch reads its key from the
-    /// shared store, so a key this node reconstructed ITSELF and got wrong (soak
-    /// 2026-07-14) makes every valid certificate of that epoch reject. Dropping
-    /// the own-DKG rung does NOT prevent it: W1/W3 write the same locally derived
-    /// key into that store, and the store rung answers before `held`/`pull` are
-    /// consulted.
+    /// THERE IS NO PROVENANCE FLOOR FOR THE SWEEP TO RESPECT ANY MORE, and this is
+    /// what replaced the test of it.
     ///
-    /// The floor is a floor and not an `Agreed`-only gate, because that would
-    /// hollow out rung 1: `Carried` is derived from chain facts alone (an
-    /// attested mint plus the chain's `dkgQual` bit) and is how the ladder
-    /// memoises a resolved carry.
+    /// `the_sweep_refuses_a_locally_derived_store_key` asserted that the sweep would
+    /// not upgrade an epoch whose only store entry was `KeySource::LocalDkg`, while
+    /// taking a `Carried` one — a rule that existed because the key store MIXED a
+    /// locally reconstructed tier with chain-derived ones, and the sweep's pin was
+    /// terminal when wrong. After П-3 there is exactly one tier: the only thing that
+    /// makes an epoch resolvable is the artifact a `committee[minted_at]` quorum
+    /// certified, so a locally derived key cannot be in the picture and the floor has
+    /// nothing to exclude.
     ///
-    /// Reds if the store rung goes back to being provenance-blind.
+    /// What survives, and what this asserts, is the property the floor protected: the
+    /// sweep upgrades an epoch ONLY when the chain-named mint's artifact is held, and
+    /// an epoch with no artifact anywhere is left alone rather than pinned on
+    /// something weaker.
+    ///
+    /// Reds if the sweep starts upgrading an epoch whose mint is not held.
     #[tokio::test]
-    async fn the_sweep_refuses_a_locally_derived_store_key() {
-        let (local, carried) = (Epoch::new(5), Epoch::new(6));
+    async fn the_sweep_upgrades_only_an_epoch_whose_mint_artifact_is_held() {
+        let (held, absent) = (Epoch::new(5), Epoch::new(6));
         let module = sweep_committee();
         let provider = EpochSchemeProvider::new(module.clone());
-        let store = BeaconKeys::new();
-        store.set_pk(local.get(), some_group_key(), KeySource::LocalDkg);
-        store.set_pk(carried.get(), some_other_group_key(), KeySource::Carried);
-        let r = randomness_over(store.clone(), None, None);
-        register_verifier(module.as_ref(), local, r.as_ref());
-        register_verifier(module.as_ref(), carried, r.as_ref());
+        // `held` re-minted and its artifact is on hand; `absent` re-minted too but its
+        // artifact never arrived. Both are change epochs, so neither can borrow the
+        // other's key through the carry.
+        let mints = MintFixture::new();
+        mints.mint(held.get(), some_outcome(0xA1));
+        mints.changed(absent.get());
+        let r = randomness_over(&mints);
+        register_verifier(module.as_ref(), held, r.as_ref());
+        register_verifier(module.as_ref(), absent, r.as_ref());
 
         let upgraded = repair_keyless_schemes(
             &provider,
@@ -2652,26 +2697,13 @@ mod tests {
             Epoch::new(0),
         )
         .await;
-
-        assert_eq!(upgraded, vec![carried]);
+        assert_eq!(
+            upgraded,
+            vec![held],
+            "only the epoch whose chain-named mint is on hand may be upgraded: {upgraded:?}"
+        );
     }
 
-    /// The sweep spends one bounded peer pull per unpinned epoch, and that pull
-    /// SLEEPS on its caller-side rate bound before it even issues the fetch — up
-    /// to `SCHEME_RETENTION_EPOCHS` × (`PULL_MIN_INTERVAL` + `PULL_TIMEOUT`) of
-    /// awaiting per sweep. Awaited on the epoch manager's `select!`, that is a
-    /// ~100 s window in which the beacon wake-up arm, `spawn_unblocked` and the
-    /// tip edge do not run — three of the arms that turn this node into a
-    /// signer.
-    ///
-    /// So the driver here is the manager's loop in miniature: a second arm with
-    /// work queued on it, and the sweep wake sent from that arm exactly as the
-    /// manager sends it. The whole window under test is the one in which the
-    /// sweep is parked inside its pull, and the assertion is that the second arm
-    /// is served throughout it. Under the pre-fix inline shape that count is
-    /// zero, and `parked.notified()` below is never even reached.
-    ///
-    /// The timeout is there so a regression FAILS instead of hanging the suite.
     /// It costs nothing on the passing path — the future is dropped, not awaited.
     #[tokio::test]
     async fn a_parked_sweep_does_not_hold_its_driver() {
@@ -2682,7 +2714,7 @@ mod tests {
         register_verifier(
             module.as_ref(),
             epoch,
-            randomness_over(BeaconKeys::new(), None, None).as_ref(),
+            randomness_over(&MintFixture::new()).as_ref(),
         );
 
         // Both directions are permit-storing, so neither side can miss the
@@ -2690,22 +2722,16 @@ mod tests {
         let parked = Arc::new(Notify::new());
         let gate = Arc::new(Notify::new());
         let pulls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let pk = some_group_key();
-        let pull = AgreedKeys::new(
-            Arc::new({
-                let (parked, gate, pulls) = (parked.clone(), gate.clone(), pulls.clone());
-                move |_| {
-                    let (parked, gate, pulls) = (parked.clone(), gate.clone(), pulls.clone());
-                    Box::pin(async move {
-                        pulls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                        parked.notify_one();
-                        gate.notified().await;
-                        Some(pk)
-                    }) as BoxFuture<'static, Option<GroupPublic>>
-                }
-            }),
-            Arc::new(|_| Some(true)),
-        );
+        // The artifact is ABSENT, and the acquisition below parks inside the bounded
+        // fetch — which is the state this test measures the SWEEP in.
+        let mints = MintFixture::new();
+        mints.changed(9);
+        let acquire: crate::beacon::testing::AcquireMint = Arc::new(ParkingAcquire {
+            parked: parked.clone(),
+            gate: gate.clone(),
+            pulls: pulls.clone(),
+            artifacts: mints.artifacts.clone(),
+        });
 
         let (hint_tx, mut hint_rx) = mpsc::unbounded_channel();
         let hint: RepairHint = Arc::new(move |upgraded| {
@@ -2720,7 +2746,7 @@ mod tests {
         let sweep = tokio::spawn(run_repair_sweep(
             wake_rx,
             provider.clone(),
-            randomness_over(BeaconKeys::new(), None, Some(pull)),
+            randomness_over_acquiring(&mints, acquire),
             hint,
         ));
 
@@ -2842,7 +2868,7 @@ mod tests {
         };
 
         let seeds = seeds_holding(terminal);
-        let held = randomness_over_seeds(seeds.clone(), BeaconKeys::new(), None, None);
+        let held = randomness_over_seeds(seeds.clone(), &MintFixture::new());
         let expected = witness_fallback_seed(
             &held
                 .terminal_seed(terminal)
@@ -2864,9 +2890,7 @@ mod tests {
         // ordinary "σ has not landed here yet" miss.
         let stale = randomness_over_seeds(
             seeds_holding(SimplexRound::new(prev, View::new(TERMINAL_VIEW - 1))),
-            BeaconKeys::new(),
-            None,
-            None,
+            &MintFixture::new(),
         );
         assert_eq!(
             boundary_base(stale.as_ref(), prev, TERMINAL_VIEW),
@@ -2887,9 +2911,7 @@ mod tests {
             boundary_base(
                 randomness_over_seeds(
                     seeds_holding(SimplexRound::new(inactive, View::new(TERMINAL_VIEW))),
-                    BeaconKeys::new(),
-                    None,
-                    None,
+                    &MintFixture::new(),
                 )
                 .as_ref(),
                 inactive,
@@ -2903,31 +2925,34 @@ mod tests {
     // A single peer (even naming u64::MAX) must NOT advance the live frontier —
     // the P2-11 permanent-soft-enter halt. n = 4 ⇒ f = 1 ⇒ threshold f+1 = 2.
 
-    /// The suppression is only sound because the artifact's entry answers the rung
-    /// W1's did — and it is now ALSO the promote value-gate's comparand, which is
-    /// what the shrink changed: the gate used to read a finalized boundary block's
-    /// outcome, and no block carries one.
+    /// The artifact IS the rung, and the tiering that used to sit above it is gone.
+    ///
+    /// This test used to be `an_agreed_key_answers_rung_one_and_is_the_value_gate_comparand`:
+    /// it asserted that a `KeySource::Agreed` store entry answered the ladder's first
+    /// rung, was what the promote value-gate compared against, and could never be
+    /// displaced by a `LocalDkg` write. All three statements were about a store with
+    /// THREE provenance tiers, and П-3 left one — the artifact. So the statement
+    /// collapses to what it always meant: a held artifact answers, and nothing local
+    /// can answer instead of it.
+    ///
+    /// Reds if a key resolves for an epoch whose mint is not held.
     #[tokio::test]
-    async fn an_agreed_key_answers_rung_one_and_is_the_value_gate_comparand() {
-        let store = BeaconKeys::new();
-        let pk = some_group_key();
-        store.set_pk(9, pk, KeySource::Agreed);
-        assert_eq!(
-            store.get_pk(9, KeySources::default()).await,
-            Some(pk),
-            "the artifact must answer the store rung W1 used to"
+    async fn a_held_artifact_is_the_whole_of_what_answers_for_an_epoch() {
+        let mints = MintFixture::new();
+        // The chain's record is frozen FIRST — the contract writes the bit with the
+        // committee — and only the artifact is what arrives later.
+        mints.changed(9);
+        let r = randomness_over(&mints);
+        assert!(
+            !crate::beacon::Beacon::ensure_key(r.as_ref(), 9, crate::beacon::PinEffort::Local)
+                .await,
+            "with no artifact anywhere nothing may answer for the epoch"
         );
-        assert_eq!(
-            store.attested(9),
-            Some(pk),
-            "and it is what the promote value-gate compares against"
+        mints.arrive(9, some_outcome(0xC3));
+        assert!(
+            crate::beacon::Beacon::ensure_key(r.as_ref(), 9, crate::beacon::PinEffort::Local).await,
+            "the mint's artifact is the rung — and it answers without a network round-trip"
         );
-        // Tiering: a local reconstruction can never displace it, whatever the
-        // write order — which is what makes W1 standing down a no-op for
-        // readers rather than a loss.
-        store.set_pk(9, some_other_group_key(), KeySource::LocalDkg);
-        assert_eq!(store.cached_only(9), Some(pk));
-        assert_eq!(store.attested(9), Some(pk));
     }
 
     // `engine_handle_dead` must read PENDING (parked engine) as alive and both

@@ -8,9 +8,7 @@
 
 use super::{
     actor::CeremonyStore,
-    artifact::ArtifactStore,
-    carry::DkgQualFor,
-    keys::{pk_prefix, BeaconKeys, InvalidSeed, KeySource},
+    artifact::{ArtifactStore, KeyIndex},
     metrics::BeaconMetrics,
     oracle::BeaconOracle,
     seed::Seed,
@@ -29,8 +27,8 @@ use commonware_runtime::Metrics;
 use commonware_utils::{ordered::Error as OrderedError, Participant};
 use fluentbase_bls::oracle::SeedCheck;
 use fluentbase_bls::{
-    beacon as beacon_bls, beacon::GroupPublic, keys::ValidatorBlsKeypair, oracle::SeedOracle,
-    BlsSignature, Scheme as BlsScheme,
+    beacon as beacon_bls, keys::ValidatorBlsKeypair, oracle::SeedOracle, BlsSignature,
+    Scheme as BlsScheme,
 };
 use fluentbase_staking_reader::reader::ValidatorSetSnapshot;
 use futures::future::BoxFuture;
@@ -39,7 +37,7 @@ use std::sync::{
     Arc, Mutex,
 };
 use tokio::sync::{broadcast, mpsc, watch};
-use tracing::{debug, error, info, warn};
+use tracing::{error, warn};
 
 /// Per-epoch threshold material this node holds: the public polynomial, its
 /// share (`None` for a verifier-only node) and the seed namespace.
@@ -55,7 +53,6 @@ pub(crate) type BeaconKey = (Sharing<MinSig>, Option<Share>, Vec<u8>);
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum WithheldReason {
     NoUsableShare,
-    KeyDivergence,
     BadShare,
     /// The plane has not frozen `(dpos_activation, epoch_interval)` yet, so no
     /// ceremony has been able to run. Distinct from [`Self::NoUsableShare`], which
@@ -184,9 +181,9 @@ pub trait Beacon: Send + Sync {
     /// The core reconciled `reconciled` while its highest registered epoch is
     /// `entered_frontier`.
     ///
-    /// TRANSITIONAL: PLAN row 5.1 deletes this together with `keys.rs` and W3,
-    /// and row 5.2 deletes the quarantine window it also ages out. It survives
-    /// the boundary move because the retention it drives is still real.
+    /// TRANSITIONAL: row 5.1 took its KEY leg (W3, and the key store it pruned);
+    /// what is left is the two σ windows, and row 5.2 deletes those. It survives
+    /// because the retention it still drives is real.
     fn observe_epoch(&self, reconciled: Epoch, entered_frontier: Epoch);
 
     /// The cert-inlet ingested a verified certificate for `epoch`. Transitional
@@ -279,9 +276,9 @@ pub struct DataFault {
 /// never the value — the consumer re-reads the value through the queries.
 ///
 /// No payload, and that is the point rather than an omission. Two of the three
-/// producers do not have one to give (`BeaconKeys` and the ceremony's
-/// participation edge both fire a bare `Notify` from tasks that do not name an
-/// epoch), and a consumer that acted on a payload instead of re-reading would be
+/// producers do not have one to give (the artifact store's insert edge and the
+/// ceremony's participation edge both fire a bare `Notify` from tasks that do not
+/// name an epoch), and a consumer that acted on a payload instead of re-reading would be
 /// wrong the moment a `Lagged` collapsed two of them.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum BeaconEvent {
@@ -326,7 +323,7 @@ pub(crate) fn certificate_verdict(
     oracle_for: impl FnOnce(u64) -> Option<Arc<dyn SeedOracle>>,
     record: impl FnOnce(VerifiedSeed),
     quarantine: impl FnOnce(Round, BlsSignature),
-    on_invalid: impl FnOnce(u64) -> InvalidSeed,
+    first_refusal: impl FnOnce(u64) -> bool,
 ) -> Observed {
     // `speculation` names the DOOR, never the σ's provenance — see
     // [`ObservedCertificate`] for why a notarization off the wire arrives here
@@ -369,24 +366,28 @@ pub(crate) fn certificate_verdict(
             );
             Observed::Refused
         }
-        // Off the wire, a failure means something about the NETWORK only when
-        // the key it failed against is attested — judged against a locally
-        // reconstructed one it means something about US, and dropping the
-        // value would leave nothing to re-check once the attested key arrives.
-        Err(SeedCheck::Invalid) => match on_invalid(round.epoch().get()) {
-            InvalidSeed::Quarantine => {
-                quarantine(round, seed);
-                Observed::Pending
-            }
-            InvalidSeed::RefuseLoud => {
+        // OFF THE WIRE, A FAILURE IS NOW ALWAYS A WITNESS, and that is П-3's doing
+        // rather than a hardening. It used to consult key PROVENANCE and QUARANTINE
+        // on a miss, because the key it failed against could be this node's own
+        // reconstruction (`KeySource::LocalDkg`), and an honest σ fails against a
+        // diverged local key — accusing the sender there would both punish honest
+        // peers and DISCARD a value the attested key could still promote. There is
+        // no such tier any more: the only key this rule can fail against is one a
+        // `committee[minted_at]` quorum certified, so the failure says something
+        // about the SENDER by construction. The unresolvable case keeps its own arm
+        // — it is `NoKey`, above, and it is still a hold rather than a drop.
+        //
+        // Loud ONCE per epoch: this runs per CERTIFICATE, so an unlatched line
+        // would emit one a second for the epoch's life.
+        Err(SeedCheck::Invalid) => {
+            if first_refusal(round.epoch().get()) {
                 error!(
                     ?round,
                     "certificate seed does not verify under its epoch key"
                 );
-                Observed::Refused
             }
-            InvalidSeed::RefuseQuiet => Observed::Refused,
-        },
+            Observed::Refused
+        }
         // Unreachable by construction, not by argument:
         // [`VerifiedSeed::check`](crate::beacon::verified_seed::VerifiedSeed::check)
         // maps `SeedCheck::Valid` onto `Ok` and only the other variants onto
@@ -440,7 +441,7 @@ where
             |epoch| Randomness::oracle_for(self, epoch),
             |verified| self.record_seed(verified),
             |round, seed| self.quarantine_seed(round, seed),
-            |epoch| self.on_invalid_seed(epoch),
+            |epoch| self.first_seed_refusal(epoch),
         )
     }
 
@@ -497,10 +498,10 @@ pub(super) trait Randomness: Send + Sync {
     /// reach the served map with a value it did not check.
     fn quarantine_seed(&self, round: Round, seed: BlsSignature);
 
-    /// What a σ that failed `verify_seed` for `epoch` means, and how loudly.
-    /// Delegates to [`BeaconKeys::on_invalid_seed`], which owns the rule because
-    /// it owns provenance.
-    fn on_invalid_seed(&self, epoch: u64) -> InvalidSeed;
+    /// Is this the FIRST σ refusal reported for `epoch`? The latch behind the ERROR
+    /// line, and all that is left of the provenance question P-3 removed — see
+    /// [`certificate_verdict`]'s `Invalid` arm.
+    fn first_seed_refusal(&self, epoch: u64) -> bool;
 
     /// The seed in force at `round`, if this node has it. Sync: every caller —
     /// the executor's derive and the crash-replay walk — reads it without an
@@ -862,7 +863,7 @@ impl Beacon for StaticRandomness {
             |epoch| self.oracle_for(epoch),
             |_verified| {},
             |_round, _seed| {},
-            |_epoch| InvalidSeed::Quarantine,
+            |_epoch| true,
         )
     }
 
@@ -959,19 +960,19 @@ impl Beacon for StaticRandomness {
     fn observe_cert(&self, _epoch: u64) {}
 }
 
-/// An empty ceremony store, for the two entry points below: neither carries
-/// local DKG material, so their oracles answer from the key store alone.
+/// An empty share store, for the entry point below and for every test provider:
+/// none of them carries local DKG material.
 #[cfg(test)]
 fn keyless_ceremony() -> CeremonyStore {
     Arc::new(std::sync::RwLock::new(std::collections::BTreeMap::new()))
 }
 
-/// A `dkgQual` history with no bit set anywhere. Paired with
-/// [`keyless_ceremony`]: with no mint stored, the carry walk has nothing to
-/// find whatever it answers.
+/// A [`KeyIndex`] over an empty artifact store and a bit history with nothing set:
+/// it resolves the bootstrap mint and finds no artifact for it, which is the
+/// "keyless" state every provider below wants.
 #[cfg(test)]
-fn no_mint() -> DkgQualFor {
-    Arc::new(|_| Some(false))
+pub(crate) fn keyless_index() -> KeyIndex {
+    super::artifact::key_index_over(ArtifactStore::new(), &[])
 }
 
 /// A provider over a seed store alone, for tests that exercise the executor's
@@ -984,39 +985,10 @@ fn no_mint() -> DkgQualFor {
 pub(crate) fn for_seeds(seeds: super::certify::SeedStore) -> Arc<dyn Beacon> {
     LiveBeacon::build(LiveBeaconConfig {
         seeds,
-        keys: BeaconKeys::new(),
-        resolver: Arc::new(|_| BeaconResolve::Absent),
+        keys: keyless_index(),
         ceremony: keyless_ceremony(),
-        dkg_qual: no_mint(),
-        held: None,
-        pull: None,
+        acquire: None,
         metrics: BeaconMetrics::default(),
-        chain_id: 0,
-        artifacts: ArtifactStore::new(),
-        geometry: watch::channel(Some((0, 1))).1,
-    })
-}
-
-/// A provider over a key store alone. **TEST ENTRY POINT**, and gated as one.
-///
-/// It used to be ungated, for a test in the NODE crate that could not see this
-/// crate's test items. That is not a reason to keep a test seam on the production
-/// surface — the node-side test now builds its own store — and the doc that stood
-/// here still issued instructions for a wiring deleted when the stores moved into
-/// `build`. Built on the same [`LiveBeacon`] as everything else, so a test
-/// written against it exercises the shipped ladder rather than a stub.
-#[cfg(test)]
-pub(crate) fn for_keys(keys: BeaconKeys, held: Option<super::keys::AgreedKeys>) -> Arc<dyn Beacon> {
-    LiveBeacon::build(LiveBeaconConfig {
-        seeds: super::certify::SeedStore::new(),
-        keys,
-        resolver: Arc::new(|_| BeaconResolve::Absent),
-        ceremony: keyless_ceremony(),
-        dkg_qual: no_mint(),
-        held,
-        pull: None,
-        metrics: BeaconMetrics::default(),
-        // Reaches `build_signer` only, which an ingress path never calls.
         chain_id: 0,
         artifacts: ArtifactStore::new(),
         geometry: watch::channel(Some((0, 1))).1,
@@ -1087,7 +1059,7 @@ impl Beacon for Absent {
             |_epoch| None,
             |_verified| {},
             |_round, _seed| {},
-            |_epoch| InvalidSeed::Quarantine,
+            |_epoch| true,
         )
     }
 
@@ -1114,13 +1086,13 @@ impl Beacon for Absent {
 #[cfg(test)]
 pub(crate) mod testing {
     use super::*;
-    use crate::beacon::{keys::KeySource, oracle::KeyOnlyOracle};
+    use crate::beacon::{artifact::MintFixture, oracle::KeyOnlyOracle};
     use std::{collections::BTreeMap, sync::Mutex};
 
     pub(crate) struct Canned {
-        /// Canned `PK_epoch` values, reachable through [`Beacon::oracle_for`]
-        /// exactly as a real one is: a plain store the oracle reads.
-        keys: BeaconKeys,
+        /// Canned mints, reachable through [`Beacon::oracle_for`] exactly as a real
+        /// one is: a real [`KeyIndex`] over a real artifact store.
+        mints: MintFixture,
         seeds: BTreeMap<Round, Seed>,
         bootstrap: u64,
         efforts: Mutex<Vec<(u64, PinEffort)>>,
@@ -1136,7 +1108,7 @@ pub(crate) mod testing {
     impl Canned {
         pub(crate) fn new() -> Self {
             Self {
-                keys: BeaconKeys::new(),
+                mints: MintFixture::new(),
                 seeds: BTreeMap::new(),
                 bootstrap: super::super::actor::DETERMINISTIC_BOOTSTRAP_EPOCH,
                 efforts: Mutex::new(Vec::new()),
@@ -1146,8 +1118,15 @@ pub(crate) mod testing {
             }
         }
 
-        pub(crate) fn with_pin(self, epoch: u64, pk: GroupPublic) -> Self {
-            self.keys.set_pk(epoch, pk, KeySource::Agreed);
+        /// State a MINT rather than a bare key: after П-3 the key is a projection of
+        /// the epoch's artifact, so "pin this `GroupPublic` at this epoch" is not a
+        /// state a node can be in and the fixture may not offer it.
+        pub(crate) fn with_mint(
+            self,
+            minted_at: u64,
+            group_key: crate::beacon::outcome::DkgOutcome,
+        ) -> Self {
+            self.mints.mint(minted_at, group_key);
             self
         }
 
@@ -1205,7 +1184,7 @@ pub(crate) mod testing {
             self.mandatory_at(epoch).then(|| {
                 Arc::new(KeyOnlyOracle {
                     epoch,
-                    keys: self.keys.clone(),
+                    keys: self.mints.keys.clone(),
                     namespace: self.seed_namespace.clone(),
                     metrics: BeaconMetrics::default(),
                 }) as Arc<dyn SeedOracle>
@@ -1217,22 +1196,22 @@ pub(crate) mod testing {
                 .lock()
                 .expect("efforts lock")
                 .push((epoch, effort));
-            let known = self.keys.cached_only(epoch).is_some();
+            let known = self.mints.keys.key_at(epoch).is_some();
             Box::pin(async move { known })
         }
 
         /// The shared verdict rule over the REAL stores this fixture carries: a
-        /// recorded σ lands in `store`'s served map, a held one in its quarantine,
-        /// and the provenance question goes to the same [`BeaconKeys`] the live
-        /// beacon asks. That is what lets an ingress test assert WHERE the σ went
-        /// rather than only that the call happened.
+        /// recorded σ lands in `store`'s served map, a held one in its quarantine.
+        /// That is what lets an ingress test assert WHERE the σ went rather than only
+        /// that the call happened. The provenance question the third sink used to
+        /// route through a key store is gone (П-3) — every refusal is a witness.
         fn observe_certificate(&self, cert: ObservedCertificate<'_>) -> Observed {
             certificate_verdict(
                 cert,
                 |epoch| self.oracle_for(epoch),
                 |verified| self.store.record(verified),
                 |round, seed| self.store.quarantine(round, seed),
-                |epoch| self.keys.on_invalid_seed(epoch),
+                |_epoch| true,
             )
         }
 
@@ -1253,7 +1232,6 @@ pub(crate) mod testing {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use commonware_math::algebra::Additive as _;
     use commonware_runtime::{deterministic::Runner, Runner as _};
     use rand_08::rngs::StdRng;
     use rand_core::SeedableRng;
@@ -1287,82 +1265,54 @@ mod tests {
         });
     }
 
-    /// W1's suppression rule, and the reason it is CONDITIONAL.
+    /// A committee snapshot with real BLS keypairs, plus a REAL DKG outcome dealt
+    /// over its own peer set. Returns the keypair at index 0 (a member) and one that
+    /// is NOT in the committee, so both the signing and the rotated-out arms are
+    /// reachable.
     ///
-    /// Where the agreement plane has published a key, a locally reconstructed one
-    /// has nothing to add and W1 stands down. Where it has not — every stable
-    /// carry-forward epoch, which runs no agreement instance at all — W1 must still
-    /// publish, or ladder rung 1 stops answering for epochs this node signed,
-    /// `repair_keyless_schemes` (which consults no local DKG material precisely
-    /// BECAUSE W1 fills the store) never resolves them, and their oracles keep
-    /// answering `NoKey` — vote-only cert admission for the life of the process.
-    #[test]
-    fn w1_defers_to_an_agreed_key_and_publishes_where_there_is_none() {
-        let mine = {
-            let mut rng = StdRng::seed_from_u64(0x5EED);
-            let (sharing, _) =
-                commonware_cryptography::bls12381::dkg::deal_anonymous::<
-                    commonware_cryptography::bls12381::primitives::variant::MinSig,
-                    commonware_utils::N3f1,
-                >(&mut rng, Default::default(), commonware_utils::NZU32!(4));
-            *sharing.public()
-        };
-        let theirs = {
-            let mut rng = StdRng::seed_from_u64(0xB0B);
-            let (sharing, _) =
-                commonware_cryptography::bls12381::dkg::deal_anonymous::<
-                    commonware_cryptography::bls12381::primitives::variant::MinSig,
-                    commonware_utils::N3f1,
-                >(&mut rng, Default::default(), commonware_utils::NZU32!(4));
-            *sharing.public()
-        };
-        assert_ne!(mine, theirs, "the fixture must produce two distinct keys");
-
-        assert_eq!(own_key_publication(None, mine), OwnKeyPublication::Publish);
-        assert_eq!(
-            own_key_publication(Some(mine), mine),
-            OwnKeyPublication::DeferAgreeing
-        );
-        assert_eq!(
-            own_key_publication(Some(theirs), mine),
-            OwnKeyPublication::DeferDiverging(theirs)
-        );
-    }
-
-    /// A committee snapshot with real BLS keypairs, plus DKG material for it.
-    /// Returns the keypair at index 0 (a member) and one that is NOT in the
-    /// committee, so both the signing and the rotated-out arms are reachable.
+    /// It deals an `Output` rather than an anonymous `Sharing`, and that is П-3 in
+    /// the fixture: the polynomial a node signs with is now a projection of the
+    /// epoch's ARTIFACT, and an artifact carries an `Output`. A fixture that could
+    /// only produce a bare `Sharing` could not state the state under test.
     fn signer_fixture(
         epoch: Epoch,
     ) -> (
         ValidatorSetSnapshot,
         ValidatorBlsKeypair,
         ValidatorBlsKeypair,
-        BeaconKey,
+        super::super::outcome::DkgOutcome,
+        Share,
     ) {
         use alloy_primitives::{Address, B256};
         use commonware_codec::DecodeExt as _;
         use commonware_cryptography::{
-            bls12381::{dkg::deal_anonymous, primitives::variant::MinSig},
+            bls12381::{
+                dkg::deal,
+                primitives::{sharing::Mode, variant::MinSig},
+            },
             ed25519::PrivateKey as Ed25519PrivateKey,
             Signer as _,
         };
         use commonware_math::algebra::Random as _;
-        use fluentbase_bls::BlsPubkey;
+        use commonware_utils::{ordered::Set, N3f1};
+        use fluentbase_bls::{BlsPubkey, PeerPubkey};
         use fluentbase_staking_reader::reader::{ConsensusKeys, ValidatorWithKeys};
 
         let mut keypairs = Vec::new();
+        let mut peers: Vec<PeerPubkey> = Vec::new();
         let validators = (0..4u8)
             .map(|i| {
                 let mut rng = StdRng::seed_from_u64(0x5EED + i as u64);
                 let kp = ValidatorBlsKeypair::generate(&mut rng);
                 let bls_pubkey = BlsPubkey::decode(kp.public_bytes().as_slice()).unwrap();
                 keypairs.push(kp);
+                let peer = Ed25519PrivateKey::random(&mut rng).public_key();
+                peers.push(peer.clone());
                 ValidatorWithKeys {
                     address: Address::repeat_byte(i),
                     keys: ConsensusKeys {
                         bls_pubkey,
-                        peer_pubkey: Ed25519PrivateKey::random(&mut rng).public_key(),
+                        peer_pubkey: peer,
                         activation_epoch: 1,
                     },
                     tombstoned: false,
@@ -1377,50 +1327,61 @@ mod tests {
             weights: None,
         };
 
+        // Dealt over the committee's OWN peer set, so each player's share index is
+        // the consensus participant index the oracle checks it against — by
+        // construction rather than by a seat lookup.
+        let players: Set<PeerPubkey> = Set::from_iter_dedup(peers.iter().cloned());
         let mut rng = StdRng::seed_from_u64(0xDEA1);
-        let (sharing, shares) = deal_anonymous::<MinSig, commonware_utils::N3f1>(
-            &mut rng,
-            Default::default(),
-            commonware_utils::NZU32!(4),
-        );
-        // `CombinedScheme::new` asserts the share's index equals this node's
-        // CONSENSUS participant index, and that index comes from the committee's
-        // sorted order — not from the order the fixture generated the keypairs
-        // in. Ask the vote scheme where this member actually sits.
+        let (outcome, shares) =
+            deal::<MinSig, PeerPubkey, N3f1>(&mut rng, Mode::NonZeroCounter, players)
+                .expect("deal");
         let member = keypairs.remove(0);
-        let committee = crate::scheme::epoch_committee_from_snapshot(&snap).expect("committee");
-        let seat: usize = {
-            use commonware_cryptography::certificate::Scheme as _;
-            fluentbase_bls::scheme::build_signer(
-                &fluentbase_bls::fluent_namespace(1),
-                committee.bimap,
-                &member,
-                snap.epoch,
-                None,
-            )
-            .and_then(|s| s.me())
-            .expect("the fixture's member is in its own committee")
-            .into()
-        };
-        let material: BeaconKey = (
-            sharing,
-            Some(shares[seat].clone()),
-            b"test-seed-ns".to_vec(),
-        );
+        let share = shares
+            .get_value(&peers[0])
+            .expect("the fixture's member has a share")
+            .clone();
 
         let outsider = ValidatorBlsKeypair::generate(&mut StdRng::seed_from_u64(0xDEAD));
-        (snap, member, outsider, material)
+        (snap, member, outsider, outcome, share)
     }
 
-    fn provider_over(keys: BeaconKeys, material: BeaconKey) -> Arc<dyn Beacon> {
+    /// A live beacon whose key index answers for `epoch` out of a REAL artifact, and
+    /// whose share store holds `share` at the same minting epoch — the shape a
+    /// qualified member is in.
+    fn provider_over(
+        epoch: Epoch,
+        outcome: super::super::outcome::DkgOutcome,
+        share: Option<Share>,
+    ) -> Arc<dyn Beacon> {
+        let mints = super::super::artifact::MintFixture::new();
+        mints.mint(epoch.get(), outcome);
+        let ceremony = keyless_ceremony();
+        if let Some(share) = share {
+            ceremony
+                .write()
+                .expect("share store")
+                .insert(epoch.get(), share);
+        }
         LiveBeacon::build(LiveBeaconConfig {
             seeds: super::super::certify::SeedStore::new(),
-            keys,
-            resolver: Arc::new(move |_| BeaconResolve::Key(material.clone())),
+            keys: mints.keys.clone(),
+            ceremony,
+            acquire: None,
+            metrics: BeaconMetrics::default(),
+            chain_id: 1,
+            artifacts: mints.artifacts.clone(),
+            geometry: watch::channel(Some((0, 1))).1,
+        })
+    }
+
+    /// A live beacon that resolves NO key: the state of a node whose mint artifact
+    /// has not reached it.
+    fn keyless_provider() -> Arc<dyn Beacon> {
+        LiveBeacon::build(LiveBeaconConfig {
+            seeds: super::super::certify::SeedStore::new(),
+            keys: keyless_index(),
             ceremony: keyless_ceremony(),
-            dkg_qual: no_mint(),
-            held: None,
-            pull: None,
+            acquire: None,
             metrics: BeaconMetrics::default(),
             chain_id: 1,
             artifacts: ArtifactStore::new(),
@@ -1428,37 +1389,53 @@ mod tests {
         })
     }
 
-    /// W1's ordering guarantee, in the only form that survives the move: the
-    /// caller CANNOT hold a signing scheme for an epoch whose `PK_epoch` is not
-    /// already in the key store. The core used to assert this from outside with a
-    /// `debug_assert` in `spawn_engine`; it can no longer see the store, so the
-    /// property has to be provable from the surface alone.
+    /// THE INVERSE OF W1'S OLD GUARANTEE, and the property П-3 needs from this side:
+    /// handing out a SIGNING scheme writes nothing anywhere.
     ///
-    /// The engine cannot vote before it is spawned and cannot be spawned without
-    /// this scheme, so "published before any vote" follows from this one
-    /// assertion — no ordering convention a refactor can quietly drop.
+    /// The previous version asserted the opposite — that `PK_epoch` was in a key
+    /// store by the time the scheme came back — which was W1 publishing this node's
+    /// own reconstruction under `KeySource::LocalDkg`. That write is what made "the
+    /// key I rebuilt" and "the key the network attested" two possible values of one
+    /// entry. With W1 gone the store has no locally-derived writer at all, so the
+    /// property worth pinning is that the signer path is READ-ONLY.
+    ///
+    /// Reds if the artifact store grows an entry the fixture did not put there.
     #[test]
-    fn a_signing_scheme_is_never_handed_out_before_the_epoch_key_is_published() {
+    fn a_signing_scheme_publishes_nothing_of_its_own() {
         let epoch = Epoch::new(9);
-        let (snap, member, _outsider, material) = signer_fixture(epoch);
-        let keys = BeaconKeys::new();
-        let expected = *material.0.public();
-        let randomness = provider_over(keys.clone(), material);
+        let (snap, member, _outsider, outcome, share) = signer_fixture(epoch);
+        let mints = super::super::artifact::MintFixture::new();
+        mints.mint(epoch.get(), outcome);
+        let ceremony = keyless_ceremony();
+        ceremony
+            .write()
+            .expect("share store")
+            .insert(epoch.get(), share);
+        let before = mints.artifacts.epochs();
+        let randomness = LiveBeacon::build(LiveBeaconConfig {
+            seeds: super::super::certify::SeedStore::new(),
+            keys: mints.keys.clone(),
+            ceremony,
+            acquire: None,
+            metrics: BeaconMetrics::default(),
+            chain_id: 1,
+            artifacts: mints.artifacts.clone(),
+            geometry: watch::channel(Some((0, 1))).1,
+        });
 
         assert!(
-            keys.cached_only(epoch.get()).is_none(),
-            "fixture precondition: nothing published yet"
-        );
-        let verdict = randomness.signer(epoch, &snap, &member);
-
-        assert!(
-            matches!(verdict, SignerVerdict::Signs(_)),
-            "a committee member holding verifying DKG material signs"
+            matches!(
+                randomness.signer(epoch, &snap, &member),
+                SignerVerdict::Signs(_)
+            ),
+            "a committee member holding verifying DKG material still signs — the scheme \
+             is built from the material, only the PUBLISH is gone"
         );
         assert_eq!(
-            keys.cached_only(epoch.get()),
-            Some(expected),
-            "the scheme came back only after PK_epoch was in the store"
+            mints.artifacts.epochs(),
+            before,
+            "the signer path must leave the fact's owner untouched: after П-3 the only \
+             writers are the agreement write-back and a verified acquisition"
         );
     }
 
@@ -1469,8 +1446,8 @@ mod tests {
     #[test]
     fn a_keypair_outside_the_committee_gets_a_verify_only_scheme() {
         let epoch = Epoch::new(9);
-        let (snap, _member, outsider, material) = signer_fixture(epoch);
-        let randomness = provider_over(BeaconKeys::new(), material);
+        let (snap, _member, outsider, outcome, share) = signer_fixture(epoch);
+        let randomness = provider_over(epoch, outcome, Some(share));
 
         assert!(matches!(
             randomness.signer(epoch, &snap, &outsider),
@@ -1506,8 +1483,8 @@ mod tests {
         use commonware_cryptography::certificate::Provider as _;
 
         let epoch = Epoch::new(9);
-        let (snap, _member, outsider, material) = signer_fixture(epoch);
-        let randomness = provider_over(BeaconKeys::new(), material);
+        let (snap, _member, outsider, outcome, share) = signer_fixture(epoch);
+        let randomness = provider_over(epoch, outcome, Some(share));
         assert!(
             randomness.mandatory_at(epoch.get()),
             "fixture precondition: the epoch is beacon-active, so an oracle is \
@@ -1544,18 +1521,19 @@ mod tests {
     /// against its own sharing must report `BadShare`, never the value gate's
     /// `KeyDivergence`.
     #[test]
-    fn a_share_that_does_not_verify_reports_bad_share_and_not_key_divergence() {
+    fn a_share_that_does_not_verify_reports_bad_share() {
         let epoch = Epoch::new(9);
-        let (snap, member, _outsider, material) = signer_fixture(epoch);
-        // Same sharing, a share from an unrelated deal: the index still matches,
-        // the value does not lie on the polynomial.
+        let (snap, member, _outsider, outcome, _share) = signer_fixture(epoch);
+        // The epoch's REAL outcome, paired with a share from an unrelated deal at the
+        // same index: the polynomial is right, the share's value is not on it. That
+        // is the one shape `adopt_share`'s gate cannot have caught — a share file
+        // written by an older binary, or edited under a running node.
         let mut rng = StdRng::seed_from_u64(0xBAD5);
         let (_, foreign) = commonware_cryptography::bls12381::dkg::deal_anonymous::<
             commonware_cryptography::bls12381::primitives::variant::MinSig,
             commonware_utils::N3f1,
         >(&mut rng, Default::default(), commonware_utils::NZU32!(4));
-        let tampered: BeaconKey = (material.0, Some(foreign[0].clone()), material.2);
-        let randomness = provider_over(BeaconKeys::new(), tampered);
+        let randomness = provider_over(epoch, outcome, Some(foreign[0].clone()));
 
         assert!(matches!(
             randomness.signer(epoch, &snap, &member),
@@ -1580,7 +1558,7 @@ mod tests {
     fn the_whole_surface_is_satisfied_by_an_implementation_with_no_dkg_and_no_store() {
         let epoch = Epoch::new(9);
         let round = Round::new(epoch, commonware_consensus::types::View::new(4));
-        let (snap, member, outsider, _unused) = signer_fixture(epoch);
+        let (snap, member, outsider, _outcome, _share) = signer_fixture(epoch);
         let r = StaticRandomness::build(1, snap.clone());
 
         // Propose: the leader has a seed for the round, with no one to receive it
@@ -1650,138 +1628,75 @@ mod tests {
         });
     }
 
-    /// The quorum-attested key is sampled ONCE per `promote_gates` call.
+    /// THE DIVERGENCE CLASS IS GONE BY CONSTRUCTION, and this is what replaced the
+    /// two tests that used to pin its handling.
     ///
-    /// It used to be read twice — value gate, then W1 — with a BLS pairing check
-    /// between, while the agreement write-back writes that same shared map from
-    /// another task. A disagreement between the two reads meant the gate had
-    /// passed on the stale one, and W1 only warned: the node signed with material
-    /// it had just been shown was divergent.
+    /// They were `material_diverging_from_the_agreed_key_is_withheld_from_signing`
+    /// and `the_participation_probe_reports_a_divergence_that_appears_after_the_spawn`:
+    /// both staged a key store holding a quorum-attested `PK_E` that DIFFERED from
+    /// the polynomial the node had reconstructed, and asserted the value gate
+    /// demoted on it. Staging that state is no longer possible — the polynomial and
+    /// the attested key are read from ONE object, the artifact of the epoch the
+    /// chain says minted the key (`KeyIndex`), so there is no second value to
+    /// disagree with. `WithheldReason::KeyDivergence` and its counter are deleted
+    /// rather than left unreachable.
     ///
-    /// **This test cannot reach that window, and saying so is the point.** With a
-    /// single read the W1 divergence arm is structurally unreachable from here, so
-    /// there is nothing left to stage; with two reads it was reachable only by
-    /// mutating the store between them, which a single-threaded test cannot do
-    /// without injecting a mutating store. An earlier version of this test claimed
-    /// to cover the arm and did not — it passed through the value gate, verified
-    /// by removing the arm's body and watching it stay green.
+    /// What is still assertable, and what this asserts, is the IDENTITY: the key the
+    /// probe and the signer judge by is byte-for-byte the artifact's, for the same
+    /// epoch, on both the exact-mint and the CARRIED path — because if those two
+    /// ever came from different places the class would be back.
     ///
-    /// What IS testable, and what this asserts, is the decision the single sample
-    /// produces: a node whose material diverges from the agreed key is withheld.
+    /// Reds if `oracle_for`'s key stops being the artifact's, and reds if a carry
+    /// epoch resolves to anything but its mint's key.
     #[test]
-    fn material_diverging_from_the_agreed_key_is_withheld_from_signing() {
-        let epoch = Epoch::new(super::super::actor::DETERMINISTIC_BOOTSTRAP_EPOCH + 1);
-        let (snap, member, _outsider, material) = signer_fixture(epoch);
-        let mine = *material.0.public();
-
-        let keys = BeaconKeys::new();
-        let theirs = {
-            let mut rng = StdRng::seed_from_u64(0xD1FF);
-            let (sharing, _) =
-                commonware_cryptography::bls12381::dkg::deal_anonymous::<
-                    commonware_cryptography::bls12381::primitives::variant::MinSig,
-                    commonware_utils::N3f1,
-                >(&mut rng, Default::default(), commonware_utils::NZU32!(4));
-            *sharing.public()
-        };
-        assert_ne!(
-            mine, theirs,
-            "premise: the fixture produces two distinct keys"
-        );
-        keys.set_pk(epoch.get(), theirs, KeySource::Agreed);
-
+    fn the_key_and_the_polynomial_are_one_object_on_the_mint_and_on_a_carry() {
+        let mint = Epoch::new(super::super::actor::DETERMINISTIC_BOOTSTRAP_EPOCH + 1);
+        let (snap, member, _outsider, outcome, share) = signer_fixture(mint);
+        let expected = *outcome.public().public();
+        let mints = super::super::artifact::MintFixture::new();
+        mints.mint(mint.get(), outcome);
+        let ceremony = keyless_ceremony();
+        ceremony
+            .write()
+            .expect("share store")
+            .insert(mint.get(), share);
+        let keys = mints.keys.clone();
         let r = LiveBeacon::build(LiveBeaconConfig {
             seeds: super::super::certify::SeedStore::new(),
             keys: keys.clone(),
-            resolver: Arc::new(move |_| BeaconResolve::Key(material.clone())),
-            ceremony: keyless_ceremony(),
-            dkg_qual: no_mint(),
-            held: None,
-            pull: None,
+            ceremony,
+            acquire: None,
             metrics: BeaconMetrics::default(),
             chain_id: 1,
-            artifacts: ArtifactStore::new(),
+            artifacts: mints.artifacts.clone(),
             geometry: watch::channel(Some((0, 1))).1,
         });
 
-        assert!(
-            matches!(
-                r.signer(epoch, &snap, &member),
-                SignerVerdict::Withheld(WithheldReason::KeyDivergence)
-            ),
-            "a node holding material that diverges from the agreed key must not sign with it"
-        );
-        // And it must not have overwritten the agreed key on its way out — the
-        // store is the comparand every later resolve depends on.
+        // The member participates and signs — no gate has anything to compare.
+        assert_eq!(r.can_participate(mint), ShareProbe::Ready);
+        assert!(matches!(
+            r.signer(mint, &snap, &member),
+            SignerVerdict::Signs(_)
+        ));
+
+        // The key at the MINT is the artifact's.
         assert_eq!(
-            keys.attested(epoch.get()),
-            Some(theirs),
-            "the agreed key survives the withheld attempt"
+            keys.key_at(mint.get()),
+            Some(expected),
+            "the key at the minting epoch must be the artifact's own"
         );
-    }
-
-    /// The participation probe answers the DIVERGENCE question, not only the
-    /// "do I hold material" one — and that is what lets a caller revisit a
-    /// decision it already made.
-    ///
-    /// `signer_scheme` runs once, at the spawn. This probe runs on every reconcile
-    /// edge, including while an engine is live. A quorum can attest an epoch key
-    /// AFTER this node spawned; if it differs from the one this node
-    /// reconstructed, every vote it casts carries a seed partial the rest of the
-    /// committee rejects. Until the probe answered this, nothing revisited it.
-    ///
-    /// The verdict must also be STABLE, or it would flap an engine down and up:
-    /// the comparand is the attested tier, which appears once and is never
-    /// downgraded. The repeat below asserts that.
-    #[test]
-    fn the_participation_probe_reports_a_divergence_that_appears_after_the_spawn() {
-        let epoch = Epoch::new(super::super::actor::DETERMINISTIC_BOOTSTRAP_EPOCH + 1);
-        let (_snap, _member, _outsider, material) = signer_fixture(epoch);
-        let mine = *material.0.public();
-        let keys = BeaconKeys::new();
-        let r = LiveBeacon::build(LiveBeaconConfig {
-            seeds: super::super::certify::SeedStore::new(),
-            keys: keys.clone(),
-            resolver: Arc::new(move |_| BeaconResolve::Key(material.clone())),
-            ceremony: keyless_ceremony(),
-            dkg_qual: no_mint(),
-            held: None,
-            pull: None,
-            metrics: BeaconMetrics::default(),
-            chain_id: 1,
-            artifacts: ArtifactStore::new(),
-            geometry: watch::channel(Some((0, 1))).1,
-        });
-
-        // Before the quorum speaks: this node participates.
+        // And at a CARRY epoch above it — where no artifact exists at all — it is
+        // still the same one object's, resolved through the chain's mint record.
+        let carried = mint.get() + 3;
         assert_eq!(
-            r.can_participate(epoch),
-            ShareProbe::Ready,
-            "premise: with no attested key the node participates — otherwise the \
-             verdict below would not be caused by the divergence"
-        );
-
-        // The quorum attests a DIFFERENT key, exactly as the write-back would.
-        let theirs = {
-            let mut rng = StdRng::seed_from_u64(0xD1FF);
-            let (sharing, _) =
-                commonware_cryptography::bls12381::dkg::deal_anonymous::<
-                    commonware_cryptography::bls12381::primitives::variant::MinSig,
-                    commonware_utils::N3f1,
-                >(&mut rng, Default::default(), commonware_utils::NZU32!(4));
-            *sharing.public()
-        };
-        assert_ne!(mine, theirs);
-        keys.set_pk(epoch.get(), theirs, KeySource::Agreed);
-
-        assert_eq!(
-            r.can_participate(epoch),
-            ShareProbe::Withheld(WithheldReason::KeyDivergence)
+            keys.minted_at(carried),
+            Some(mint.get()),
+            "a carry epoch's key epoch is the last epoch that changed"
         );
         assert_eq!(
-            r.can_participate(epoch),
-            ShareProbe::Withheld(WithheldReason::KeyDivergence),
-            "the verdict is stable — an engine aborted on it must not be re-spawned next edge"
+            keys.key_at(carried),
+            Some(expected),
+            "and its key is that mint's, byte for byte — one owner, both paths"
         );
     }
 
@@ -1802,21 +1717,9 @@ mod tests {
     fn a_beacon_active_epoch_with_no_material_is_withheld_and_never_signs_seedless() {
         let epoch = Epoch::new(super::super::actor::DETERMINISTIC_BOOTSTRAP_EPOCH + 1);
         let (snap, member, ..) = signer_fixture(epoch);
-        // A provider whose resolver answers `Absent` — the state reached when the
-        // material vanishes between the two samples.
-        let r = LiveBeacon::build(LiveBeaconConfig {
-            seeds: super::super::certify::SeedStore::new(),
-            keys: BeaconKeys::new(),
-            resolver: Arc::new(|_| BeaconResolve::Absent),
-            ceremony: keyless_ceremony(),
-            dkg_qual: no_mint(),
-            held: None,
-            pull: None,
-            metrics: BeaconMetrics::default(),
-            chain_id: 1,
-            artifacts: ArtifactStore::new(),
-            geometry: watch::channel(Some((0, 1))).1,
-        });
+        // A provider that resolves no key at all — the state of a member whose mint
+        // artifact has not reached it, which is what "no material" now means.
+        let r = keyless_provider();
 
         assert!(
             matches!(
@@ -1842,45 +1745,44 @@ mod tests {
         );
     }
 
-    /// The provenance floor, on BOTH efforts.
+    /// THERE IS NO PROVENANCE FLOOR LEFT TO TEST, and this is what replaced the test
+    /// of it.
     ///
-    /// A wrong epoch key is terminal for that epoch on this node; its own W1/W3
-    /// reconstruction is the one tier that can diverge from the network's key. So
-    /// no effort takes it — the asymmetry (wrong key rejects everything, missing
-    /// key merely degrades to multisig-only admission) only ever runs one way.
+    /// `no_effort_takes_a_locally_reconstructed_key` asserted that neither effort
+    /// would answer from a `KeySource::LocalDkg` store entry while `Carried` was
+    /// admitted — a rule that existed because the key store MIXED a locally
+    /// reconstructed tier with attested ones. `KeyIndex` has one tier by construction
+    /// (П-3: the only source is an artifact a `committee[minted_at]` quorum
+    /// certified), so the floor has nothing to exclude and the three-rung ladder it
+    /// guarded collapsed to a local probe plus one bounded fetch.
     ///
-    /// This test previously asserted the OPPOSITE for `Local`, on purpose: the
-    /// floor had been reverted there after it halved the devnet block rate, and
-    /// the test stated that gap so it could not close by accident. It closed
-    /// deliberately — `chain_key_epoch` is memoised now, so the fall-through the
-    /// floor causes no longer walks the epoch range on every certificate.
+    /// What survives as a property, and what this asserts, is the ASYMMETRY the floor
+    /// existed for: a missing key degrades the epoch to vote-only admission, and
+    /// `ensure_key` says so honestly — `false` while the mint's artifact is absent,
+    /// `true` once it is there, with no third answer in between and nothing local
+    /// able to produce the `true`.
+    ///
+    /// Reds if `ensure_key` starts answering `true` without an artifact.
     #[test]
-    fn no_effort_takes_a_locally_reconstructed_key() {
+    fn ensure_key_answers_only_for_a_mint_whose_artifact_is_held() {
         let runner = Runner::default();
         runner.start(|_| async move {
-            let epoch = 9u64;
-            let local_only = BeaconKeys::new();
-            local_only.set_pk(epoch, GroupPublic::zero(), KeySource::LocalDkg);
-            let r = for_keys(local_only.clone(), None);
+            let epoch = Epoch::new(super::super::actor::DETERMINISTIC_BOOTSTRAP_EPOCH + 1);
+            let (_snap, _member, _outsider, outcome, _share) = signer_fixture(epoch);
 
+            // Nothing held: both efforts refuse, and `Thorough` has no route wired.
+            let keyless = keyless_provider();
+            assert!(!keyless.ensure_key(epoch.get(), PinEffort::Local).await);
             assert!(
-                local_only.cached_only(epoch).is_some(),
-                "premise: the store DOES hold an entry — the verdicts below are about its TIER"
-            );
-            assert!(!r.ensure_key(epoch, PinEffort::Local).await);
-            assert!(
-                !r.ensure_key(epoch, PinEffort::Thorough).await,
-                "the rule is about the TIER, not about how hard the caller looked"
+                !keyless.ensure_key(epoch.get(), PinEffort::Thorough).await,
+                "with no acquisition route wired there is no rung left to spend"
             );
 
-            // A tier the floor admits, to prove this is a FLOOR and not a blanket
-            // refusal of the store rung — without it both assertions above would
-            // hold for a provider that had simply stopped reading the store.
-            let carried = BeaconKeys::new();
-            carried.set_pk(epoch, GroupPublic::zero(), KeySource::Carried);
-            let r = for_keys(carried, None);
-            assert!(r.ensure_key(epoch, PinEffort::Local).await);
-            assert!(r.ensure_key(epoch, PinEffort::Thorough).await);
+            // The mint's artifact held: both efforts answer, and the cheap one does
+            // it without a network rung — which is the contract a vote path relies on.
+            let held = provider_over(epoch, outcome, None);
+            assert!(held.ensure_key(epoch.get(), PinEffort::Local).await);
+            assert!(held.ensure_key(epoch.get(), PinEffort::Thorough).await);
         });
     }
 
@@ -1986,130 +1888,51 @@ mod tests {
     fn the_test_provider_records_every_key_effort_it_was_asked_for() {
         let runner = Runner::default();
         runner.start(|_| async move {
-            let canned = testing::Canned::new().with_pin(4, GroupPublic::zero());
+            let (.., outcome, _share) = signer_fixture(Epoch::new(4));
+            let canned = testing::Canned::new().with_mint(4, outcome);
 
+            // 4 is the mint and its artifact is held. 3 is BELOW it, so its own key
+            // epoch is the bootstrap mint — which this fixture does not hold.
             assert!(Beacon::ensure_key(&canned, 4, PinEffort::Local).await);
-            assert!(!Beacon::ensure_key(&canned, 5, PinEffort::Thorough).await);
+            assert!(!Beacon::ensure_key(&canned, 3, PinEffort::Thorough).await);
 
             assert_eq!(
                 canned.efforts(),
-                vec![(4, PinEffort::Local), (5, PinEffort::Thorough)],
+                vec![(4, PinEffort::Local), (3, PinEffort::Thorough)],
                 "both calls recorded, in order, with the effort each was given"
             );
         });
     }
 }
 
-/// Outcome of a per-epoch beacon-key resolve (see [`BeaconResolver`]).
-pub enum BeaconResolve {
-    /// The epoch's key + share — the mint at the chain's `dkgQual` key epoch
-    /// (`beacon::carry::select_carry_scheme`), an exact-epoch ceremony or a
-    /// carried one no re-mint superseded.
-    Key(BeaconKey),
-    /// No usable local material for the epoch: nothing stored at or below it,
-    /// a chain-declined or superseded mint, or an undecided (unreadable)
-    /// `dkgQual` bit. ⇒ a fallback (pure-multisig) epoch / share-gate demote;
-    /// re-resolved on the next edge.
-    Absent,
-}
-
-/// Resolves the per-epoch [`BeaconKey`] (live-DKG store + `dkgQual`-bit-gated
-/// carry-forward). Built at the launch site over the `CeremonyStore`; see
-/// `dpos.rs::beacon_share_resolver`. This is the LOCAL DKG material (full
-/// polynomial + this node's share) — required to SIGN seed partials and
-/// verify individual partials. The polynomial is NOT on-chain, so this stays
-/// node-local.
-pub type BeaconResolver = Arc<dyn Fn(u64) -> BeaconResolve + Send + Sync>;
-
-/// What W1 does with the key it resolved for an epoch it is about to sign.
+/// The promote SHARE self-probe — one gate over ONE resolved sample of the beacon
+/// material.
 ///
-/// A free fn so the suppression rule is testable without an `Actor`, and so the
-/// three outcomes are named rather than implied by a nested `if`.
-// A `GroupPublic` (G2) is ~288 B; this is a transient return value matched
-// immediately by its one caller and never stored, so the stack copy is cheaper
-// than the heap allocation boxing would add — the identical trade `BoundaryOutcome`
-// makes (`beacon::keys`).
-#[allow(clippy::large_enum_variant)]
-#[derive(Debug, PartialEq, Eq)]
-enum OwnKeyPublication {
-    /// No quorum-agreed key is recorded for the epoch: publish, exactly as W1
-    /// always has. This is every stable (carry-forward) epoch, where no agreement
-    /// instance runs at all — and it is why the suppression is conditional: an
-    /// unconditional one would stop answering ladder rung 1 for those, and
-    /// `repair_keyless_schemes` would never resolve them, leaving their oracles
-    /// on `NoKey` and their certs on vote-only admission.
-    Publish,
-    /// A quorum already published this exact key. The store entry answers rung 1
-    /// at a strictly higher provenance, so W1 has nothing to add.
-    DeferAgreeing,
-    /// A quorum published a DIFFERENT key for this epoch. The agreed one holds
-    /// (the tiering in `BeaconKeys::insert` would have kept it anyway); the
-    /// divergence is the thing worth saying out loud.
-    DeferDiverging(GroupPublic),
-}
-
-/// The promote VALUE gate, the share self-probe, and W1 — one unit, in this
-/// order, over ONE resolved sample of the beacon material.
+/// # It publishes nothing, and there is no value gate left either (П-3)
 ///
-/// Free fn over its inputs so the three gates and the publish they guard cannot
-/// drift apart: W1 must never run for material a gate rejected, and the ordering
-/// is what makes that structural rather than a convention.
+/// Two things used to live here and both are gone with the second owner that
+/// created them. **W1** wrote this node's own reconstruction into a `BeaconKeys`
+/// store under `KeySource::LocalDkg` once per epoch ENTERED (W3 did the same for
+/// `E−1` off the reconcile edge), which is what made "the key I rebuilt" and "the
+/// key the network attested" two possible values of one entry. **The value gate**
+/// then compared the two and demoted on a mismatch. With [`KeyIndex`] the
+/// polynomial this node signs with IS the artifact's, so the comparison has no two
+/// sides: `WithheldReason::KeyDivergence` and its
+/// `dpos_engine_demoted_key_divergence_total` counter are deleted rather than left
+/// unreachable.
+///
+/// What a member loses by W1's removal: nothing it used to have. Its epoch key is
+/// the artifact its own agreement produced, which is in the store before the
+/// finalize that yields the share (`DkgActor::on_artifact`), and the mint memo
+/// addresses it without a chain read after the first resolve.
+///
+/// Free fn over its input so the gate cannot drift apart from the sample the scheme
+/// is then built from.
 fn promote_gates(
-    group_keys: &BeaconKeys,
     metrics: &BeaconMetrics,
     beacon: Option<&BeaconKey>,
     epoch: Epoch,
 ) -> Result<(), WithheldReason> {
-    // Promote-gate VALUE check (defense-in-depth; f297cc36 extended
-    // from key PRESENCE to key VALUE): when a `committee[E]` quorum
-    // has already certified a `PK_epoch` for E, a resolver key that
-    // DIFFERS is a diverged local reconstruction, whatever produced
-    // it. Never sign, W1-publish, or witness-check under it: demote
-    // to verify-only; the recompute-heal stores the correct
-    // exact-epoch `(PK_E, share)` and its `share_notify` edge
-    // re-runs this reconcile, which then promotes with the matching
-    // key.
-    //
-    // The comparand is the agreement artifact, reached through the
-    // store (`attested`). It used to be a second, weaker source
-    // underneath: the boundary block's own `beacon_outcome`, read
-    // by height. That source is strictly worse and no longer
-    // exists — it required a block of E to have been produced and
-    // stored, so it was blind at exactly the moment the gate is
-    // asked (the epoch's first spawn), whereas the artifact is
-    // certified BEFORE the epoch starts and covers a stable
-    // carry-forward epoch, which no boundary block ever did.
-    // ONE READ of the quorum-attested key, used by BOTH the value gate below and
-    // the W1 publish further down. It used to be read twice, with a BLS pairing
-    // check in between — and the agreement write-back writes that same shared map
-    // from its own task on a multi-threaded runtime, so the two reads could
-    // legitimately disagree. When they did, the gate had passed on the stale one
-    // and W1 arrived holding proof it was wrong, warned, and returned `Ok`: the
-    // node signed with material it had just been shown was divergent.
-    //
-    // Sampling once is the fix, and it is the same rule the rest of this surface
-    // already follows — the gates run over ONE sample and the scheme is built from
-    // the SAME one. Reacting to the second read instead would only have narrowed
-    // the window by the width of a pairing check, while leaving the decision
-    // dependent on the atomicity of two reads.
-    let attested = group_keys.attested(epoch.get());
-    if let Some((sharing, _, _)) = beacon {
-        let pk = *sharing.public();
-        if let Some(net) = attested {
-            if net != pk {
-                metrics.engine_demoted_key_divergence.inc();
-                warn!(
-                    ?epoch,
-                    resolved = %pk_prefix(&pk),
-                    network = %pk_prefix(&net),
-                    "resolved PK_epoch DIVERGES from the quorum-attested \
-                     key — verify-only (promote value-gate)"
-                );
-                return Err(WithheldReason::KeyDivergence);
-            }
-        }
-    }
-
     // Promote-gate SHARE check. `CombinedScheme::new` asserts only that
     // the share's INDEX equals this node's participant index — never
     // that its VALUE lies on the sharing. While blocks flow, a bad share
@@ -2117,9 +1940,13 @@ fn promote_gates(
     // proposals, so it is not, and since every Nullify now carries a seed
     // partial and `t == quorum`, one such member on the plane makes the
     // nullify quorum unreachable exactly when nullification is the escape
-    // hatch. The probe is purely local (share vs its own sharing), so it
-    // also covers the cold-ceremony window where the VALUE gate above is
-    // a no-op for want of a network-attested key.
+    // hatch.
+    //
+    // IT IS NOT REDUNDANT WITH `adopt_share`'s GATE, and the two are not the same
+    // check. That one runs once, at adoption, over the artifact's polynomial; this
+    // one runs at every promote over whatever the store holds NOW — a share written
+    // by an older binary, or a file edited under a running node, reaches here
+    // without ever passing the other.
     if let Some((sharing, Some(share), namespace)) = beacon {
         let probe = Round::new(epoch, View::new(1));
         let partial = beacon_bls::sign_seed_partial(share, namespace, probe);
@@ -2133,111 +1960,7 @@ fn promote_gates(
             return Err(WithheldReason::BadShare);
         }
     }
-
-    // W1 (P1) — publish `PK_epoch` into the cross-epoch group-key
-    // map BEFORE the engine exists (never inside `spawn_engine`):
-    // the engine cannot cast a vote before it is spawned, so every
-    // node that votes on epoch E finds `group_keys[E]` populated at
-    // its first vote — the same-epoch quorum argument (`b = 0`).
-    // Infallible here: `beacon` is already resolved and the
-    // share-gate above demoted the shareless case to verify-only.
-    // One epoch later this same entry IS the boundary warm (W2):
-    // `E+1`'s gate needs `PK_E` and reads the map, no I/O.
-    //
-    // It stands down where the epoch-key agreement plane already
-    // spoke: an artifact is a `committee[epoch]` quorum over this
-    // exact key, and a local reconstruction has nothing to add to
-    // it. Rung 1 of the ladder is answered by the artifact's entry
-    // either way, which is what `repair_keyless_schemes` depends on
-    // (the sweep consults no local DKG material BECAUSE W1 fills the
-    // store).
-    if let Some((sharing, _, _)) = beacon {
-        let pk = *sharing.public();
-        match own_key_publication(attested, pk) {
-            OwnKeyPublication::Publish => {
-                // The value fingerprint is the point: a restarted signer whose
-                // carried-forward key diverged from the network's is only
-                // diagnosable by grepping this line across nodes (soak
-                // 2026-07-14 v5@epoch77 reject{bad_signature}).
-                info!(
-                    ?epoch,
-                    group_public = %pk_prefix(&pk),
-                    "W1: publishing own epoch group key"
-                );
-                group_keys.set_pk(epoch.get(), pk, KeySource::LocalDkg);
-            }
-            OwnKeyPublication::DeferAgreeing => debug!(
-                ?epoch,
-                group_public = %pk_prefix(&pk),
-                "W1: the agreement plane already published this epoch's key"
-            ),
-            // The divergence witness the suppressed `set_pk` used to
-            // raise from inside the store. Same metric name, so a
-            // dashboard watching for a split key still sees this one.
-            // UNREACHABLE FROM HERE, and that is the point of the single read
-            // above: this arm needs `attested` to be `Some(other)`, which the
-            // value gate has already turned into a demote. It stays because
-            // `own_key_publication` is a pure function with its own tests and its
-            // own contract — a caller that samples differently could still reach
-            // it — but from `promote_gates` it cannot fire, and if it ever does,
-            // the single-read property has been broken.
-            OwnKeyPublication::DeferDiverging(agreed) => {
-                metrics::counter!(
-                    "dpos_group_key_conflict_total",
-                    "winner" => "agreed_kept"
-                )
-                .increment(1);
-                warn!(
-                    ?epoch,
-                    resolved = %pk_prefix(&pk),
-                    agreed = %pk_prefix(&agreed),
-                    "resolved PK_epoch DIVERGES from the quorum-agreed key; \
-                     keeping the agreed one"
-                );
-            }
-        }
-    }
-
     Ok(())
-}
-
-/// W3 (P1) — best-effort group-key backfill for the PREVIOUS epoch, off
-/// the vote path: covers a node promoted mid-`E` that never ran `E−1`'s
-/// engine (no W1 entry for `E−1`). Insert ONLY on success — a failure is
-/// never cached, so this re-attempts on every reconcile edge (boundary /
-/// share / spawn_unblocked / the committee module's wake-up / the tip edge,
-/// which fires only when the LIVE EPOCH moves). A warm-up, not the boundary
-/// repair path: the first block of `E+1` is verified ~1 s after the
-/// spawn, so the repair that fires there is the per-vote lazy resolve.
-///
-/// Runs for BOTH roles, before the role match — it is not part of the promote
-/// decision and must not be folded into one.
-fn w3_backfill(group_keys: &BeaconKeys, resolver: &BeaconResolver, epoch: Epoch) {
-    let Some(prev) = epoch.get().checked_sub(1) else {
-        return;
-    };
-    if group_keys.cached_only(prev).is_some() {
-        return;
-    }
-    // Best-effort: an undecided resolve is NOT backfilled — the
-    // next edge re-attempts.
-    if let BeaconResolve::Key((sharing, _, _)) = resolver(prev) {
-        let pk = *sharing.public();
-        debug!(
-            epoch = prev,
-            group_public = %pk_prefix(&pk),
-            "W3: backfilling previous-epoch group key from own DKG material"
-        );
-        group_keys.set_pk(prev, pk, KeySource::LocalDkg);
-    }
-}
-
-fn own_key_publication(agreed: Option<GroupPublic>, resolved: GroupPublic) -> OwnKeyPublication {
-    match agreed {
-        None => OwnKeyPublication::Publish,
-        Some(agreed) if agreed == resolved => OwnKeyPublication::DeferAgreeing,
-        Some(agreed) => OwnKeyPublication::DeferDiverging(agreed),
-    }
 }
 
 /// The live provider: today's handles behind the trait.
@@ -2248,16 +1971,22 @@ fn own_key_publication(agreed: Option<GroupPublic>, resolved: GroupPublic) -> Ow
 /// their only caller.
 pub(crate) struct LiveBeacon {
     seeds: super::certify::SeedStore,
-    keys: BeaconKeys,
-    resolver: BeaconResolver,
-    /// The oracle's two inputs, held HERE and nowhere above: a scheme reads the
-    /// live ceremony store through the oracle rather than being handed a copy of
-    /// the material, so a ceremony that finishes after the scheme was built is
-    /// picked up on the next vote instead of at the next epoch.
+    /// The OWNER of `PK_epoch` and the public polynomial: the chain's mint record
+    /// plus the artifact store (П-3). It replaces a `BeaconKeys` store, a
+    /// `BeaconResolver` closure over the ceremony store, a `DkgQualFor` and the two
+    /// `AgreedKeys` ladder rungs — five handles for one fact.
+    keys: KeyIndex,
+    /// This node's own share per minting epoch, held HERE and nowhere above: a
+    /// scheme reads the live store through the oracle rather than being handed a
+    /// copy, so a ceremony that finishes after the scheme was built is picked up on
+    /// the next vote instead of at the next epoch.
     ceremony: CeremonyStore,
-    dkg_qual: DkgQualFor,
-    held: Option<super::keys::AgreedKeys>,
-    pull: Option<super::keys::AgreedKeys>,
+    /// One bounded peer fetch of a minting epoch's artifact, for
+    /// [`Randomness::ensure_key`]'s `Thorough` effort. `None` ⇒ no route (tests).
+    acquire: Option<super::artifact::AcquireMint>,
+    /// Epochs whose σ refusal has already been reported. Per epoch, because this
+    /// runs per certificate.
+    reported_refusal: Arc<Mutex<std::collections::BTreeSet<u64>>>,
     metrics: BeaconMetrics,
     chain_id: u64,
     /// The per-epoch artifact store, for [`Beacon::artifact_bytes`] alone. Held
@@ -2286,12 +2015,9 @@ pub(crate) struct LiveBeacon {
 /// up as a provider that silently answers from the wrong rung.
 pub(crate) struct LiveBeaconConfig {
     pub(crate) seeds: super::certify::SeedStore,
-    pub(crate) keys: BeaconKeys,
-    pub(crate) resolver: BeaconResolver,
+    pub(crate) keys: KeyIndex,
     pub(crate) ceremony: CeremonyStore,
-    pub(crate) dkg_qual: DkgQualFor,
-    pub(crate) held: Option<super::keys::AgreedKeys>,
-    pub(crate) pull: Option<super::keys::AgreedKeys>,
+    pub(crate) acquire: Option<super::artifact::AcquireMint>,
     pub(crate) metrics: BeaconMetrics,
     pub(crate) chain_id: u64,
     pub(crate) artifacts: ArtifactStore,
@@ -2306,11 +2032,8 @@ impl LiveBeacon {
         let LiveBeaconConfig {
             seeds,
             keys,
-            resolver,
             ceremony,
-            dkg_qual,
-            held,
-            pull,
+            acquire,
             metrics,
             chain_id,
             artifacts,
@@ -2320,11 +2043,9 @@ impl LiveBeacon {
         Arc::new(Self {
             seeds,
             keys,
-            resolver,
             ceremony,
-            dkg_qual,
-            held,
-            pull,
+            acquire,
+            reported_refusal: Arc::default(),
             metrics,
             chain_id,
             artifacts,
@@ -2344,17 +2065,24 @@ impl LiveBeacon {
         let _ = self.faults_tx.send(fault);
     }
 
-    /// One resolve of this node's local DKG material for `epoch`.
+    /// One resolve of the material this node may SIGN `epoch` with: the artifact's
+    /// polynomial plus this node's own share, both keyed by the minting epoch the
+    /// chain names.
     ///
-    /// PRIVATE, and it stays private: the share reached the scheme through this
-    /// until the oracle existed. What is left of it is the promote GATES, which
-    /// need the polynomial and the share to judge this node's own fitness — a
-    /// decision that never leaves the plane.
+    /// PRIVATE, and it stays private: what is left of it is the promote GATE, which
+    /// needs the polynomial and the share to judge this node's own fitness — a
+    /// decision that never leaves the plane. It replaces `resolve::beacon_share_resolver`,
+    /// whose carry arbitration, refusal metrics and divergence guard all collapsed
+    /// into [`KeyIndex`]: one owner cannot disagree with itself, and "this node holds
+    /// no mint at the chain's key epoch" is now simply a `None` here.
     fn material(&self, epoch: u64) -> Option<BeaconKey> {
-        match (self.resolver)(epoch) {
-            BeaconResolve::Key(key) => Some(key),
-            BeaconResolve::Absent => None,
-        }
+        let (minted_at, sharing) = self.keys.sharing_at(epoch)?;
+        let share = self.ceremony.read().ok()?.get(&minted_at).cloned();
+        Some((
+            sharing,
+            share,
+            beacon_bls::seed_namespace(&fluentbase_bls::fluent_namespace(self.chain_id)),
+        ))
     }
 
     /// The oracle for `epoch`, bound to this node's consensus seat when it has
@@ -2364,10 +2092,8 @@ impl LiveBeacon {
             epoch,
             ceremony: self.ceremony.clone(),
             keys: self.keys.clone(),
-            dkg_qual: self.dkg_qual.clone(),
             namespace: beacon_bls::seed_namespace(&fluentbase_bls::fluent_namespace(self.chain_id)),
             me,
-            minted_at: Arc::new(Mutex::new(None)),
             warned_threshold_mismatch: Arc::new(AtomicBool::new(false)),
             warned_seat_mismatch: Arc::new(AtomicBool::new(false)),
             metrics: self.metrics.clone(),
@@ -2391,8 +2117,14 @@ impl Randomness for LiveBeacon {
         self.seeds.quarantine(round, seed);
     }
 
-    fn on_invalid_seed(&self, epoch: u64) -> InvalidSeed {
-        self.keys.on_invalid_seed(epoch)
+    /// Latch only, one line per epoch. The provenance question this used to route
+    /// through `BeaconKeys` is gone — see [`certificate_verdict`]'s `Invalid` arm.
+    fn first_seed_refusal(&self, epoch: u64) -> bool {
+        match self.reported_refusal.lock() {
+            Ok(mut seen) => seen.insert(epoch),
+            // A poisoned latch must not silence a real witness.
+            Err(_) => true,
+        }
     }
 
     fn seed_for(&self, round: Round) -> Option<Seed> {
@@ -2420,7 +2152,22 @@ impl Randomness for LiveBeacon {
         // participation edge.
         //
         let material = self.material(epoch.get());
-        if Randomness::mandatory_at(self, epoch.get()) && material.is_none() {
+        // THE GATE IS THE SHARE, NOT THE POLYNOMIAL, and П-3 is what made the two
+        // separable. `material()` resolves the polynomial out of the ARTIFACT
+        // ([`KeyIndex`]), which a node can hold without ever having had a share of
+        // it — a non-member that acquired the mint (R-121/R-122), or a member whose
+        // share file is gone after a restart. Before П-3 the material came from the
+        // ceremony store, so `Some(..)` implied a share and `material.is_none()` was
+        // the whole test; keyed on the artifact it no longer is, and a member with
+        // the artifact and no share would pass this gate, spawn a PARTICIPATING
+        // engine, cast votes with no seed partial and subtract itself from the
+        // quorum while believing it signs — the wedge the gate exists to prevent
+        // (measured before this line: `restart_without_the_share_dirs_parks_the_chain`
+        // parked the chain with `engine_demoted_no_polynomial = 0`).
+        let signable = material
+            .as_ref()
+            .is_some_and(|(_, share, _)| share.is_some());
+        if Randomness::mandatory_at(self, epoch.get()) && !signable {
             // UNFROZEN GEOMETRY REFINES THIS ARM; it does not stand ahead of it.
             //
             // The reason matters and the verdict must not: `NoUsableShare` reads
@@ -2446,32 +2193,23 @@ impl Randomness for LiveBeacon {
             // that already exists: the ceremony that geometry unblocks fills the
             // store and fires `share_notify`, which the plane's bridge turns into
             // `ParticipationChanged`.
-            if self.geometry.borrow().is_none() {
+            // On `material.is_none()` only: an artifact in hand is proof that a
+            // ceremony DID run, so "no ceremony could have run yet" would be a
+            // false story for a node that holds the mint and lost the share.
+            if material.is_none() && self.geometry.borrow().is_none() {
                 self.metrics.engine_demoted_geometry_unfrozen.inc();
                 return ShareProbe::Withheld(WithheldReason::GeometryUnfrozen);
             }
             self.metrics.engine_demoted_no_polynomial.inc();
             return ShareProbe::Withheld(WithheldReason::NoUsableShare);
         }
-        // THE VALUE CHECK BELONGS HERE TOO, and not only in `signer_scheme`.
-        // `signer_scheme` runs once, at the spawn; this probe runs on EVERY
-        // reconcile edge, including while an engine is already live. A quorum can
-        // attest a key AFTER this node spawned — the agreement write-back lands
-        // whenever it lands — and until this check existed nothing revisited that
-        // decision: `reconcile_roles` returns early while the handle is alive,
-        // before every gate, so a node that learned its key was divergent went on
-        // voting with it until a halt or until the epoch fell below the frontier.
-        //
-        // Safe to act on, because the verdict is STABLE rather than transient: the
-        // comparand is the attested tier, which only ever appears once and is never
-        // downgraded. A `Withheld` here will not flap back to `Ready` next tick.
-        if let Some((sharing, _, _)) = material.as_ref() {
-            let pk = *sharing.public();
-            if self.keys.attested(epoch.get()).is_some_and(|net| net != pk) {
-                self.metrics.engine_demoted_key_divergence.inc();
-                return ShareProbe::Withheld(WithheldReason::KeyDivergence);
-            }
-        }
+        // THE VALUE CHECK THAT USED TO SIT HERE IS GONE, and it is П-3 that removed
+        // it rather than a simplification. It compared the polynomial this node
+        // resolved against the key a quorum had attested, and revisited the promote
+        // decision when the two disagreed. They come from ONE object now
+        // (`KeyIndex`: the artifact of the epoch the chain says minted the key), so
+        // there is no second value to disagree with — the state the check watched
+        // for is unreachable, not merely unobserved.
         ShareProbe::Ready
     }
 
@@ -2481,16 +2219,24 @@ impl Randomness for LiveBeacon {
         snap: &ValidatorSetSnapshot,
         keypair: &ValidatorBlsKeypair,
     ) -> SignerVerdict {
-        // THE `mandatory_at` GATE, STATED. Below `DETERMINISTIC_BOOTSTRAP_EPOCH`
-        // there is no key to resolve and a pure-multisig signer is LEGAL, so the
-        // material has to be `None` there — an oracle attached to a pre-beacon
-        // epoch refuses every legal seedless certificate of it.
+        // THE `mandatory_at` GATE, AND IT IS NOW THE ONLY ROAD. Below
+        // `DETERMINISTIC_BOOTSTRAP_EPOCH` there is no key to resolve and a
+        // pure-multisig signer is LEGAL, so the material has to be `None` there —
+        // an oracle attached to a pre-beacon epoch refuses every legal seedless
+        // certificate of it.
         //
-        // Today that `None` also arrives on its own, through
+        // That `None` used to ALSO arrive on its own, through
         // `carry::chain_key_epoch_memoised`'s `Some(None)` arm making the share
-        // resolver answer `Absent`. Both roads lead here, which is why this gate
-        // can be added without changing a single verdict — and PLAN row 5.1
-        // deletes `carry.rs`, so the road that is left has to be the stated one.
+        // resolver answer `Absent`. The two-layer `Option` is DELETED
+        // (`MintIndex::minted_at` is flat now), and this gate — added in 5.0 for
+        // exactly that reason — is what STATES the property here instead of
+        // inheriting it. The belt did not disappear, it MOVED: `minted_at` returns
+        // `None` unconditionally below `DETERMINISTIC_BOOTSTRAP_EPOCH`
+        // (`artifact.rs`, first lines of `MintIndex::minted_at`), so the material
+        // cannot become `Some` below the bootstrap epoch even with this gate
+        // removed. Two independent places, and the mistake to avoid is the opposite
+        // one: removing `mandatory_at` here loses the property for EVERY caller of
+        // `oracle_for`, which is where the one door lives.
         let material = Randomness::mandatory_at(self, epoch.get())
             .then(|| self.material(epoch.get()))
             .flatten();
@@ -2515,13 +2261,20 @@ impl Randomness for LiveBeacon {
         // both the gate and the scheme, so this could not arise. Splitting the
         // operation is what created the second sample; the split's own comment
         // reasoned about the Absent→Key direction only.
-        if Randomness::mandatory_at(self, epoch.get()) && material.is_none() {
+        // The SHARE, for the reason spelled out in `share_probe`: since П-3 the
+        // polynomial comes from the artifact and says nothing about whether THIS
+        // node holds a share of it.
+        if Randomness::mandatory_at(self, epoch.get())
+            && !material
+                .as_ref()
+                .is_some_and(|(_, share, _)| share.is_some())
+        {
             self.metrics.engine_demoted_no_polynomial.inc();
             return SignerVerdict::Withheld(WithheldReason::NoUsableShare);
         }
         // The gates run over ONE sample, and the scheme is built from the SAME
         // one — that coherence is why the two are not separate operations.
-        if let Err(reason) = promote_gates(&self.keys, &self.metrics, material.as_ref(), epoch) {
+        if let Err(reason) = promote_gates(&self.metrics, material.as_ref(), epoch) {
             return SignerVerdict::Withheld(reason);
         }
         // The W1 ordering tripwire that used to sit here is GONE with the copy it
@@ -2584,14 +2337,13 @@ impl Randomness for LiveBeacon {
         // `oracle_at`, NOT `oracle_for` — the one place on this type that goes
         // round the door `oracle_for` exists to be. It has to, because the seat
         // must ride the oracle here and `oracle_for` builds the `me: None`
-        // flavour. So the pre-beacon refusal is INHERITED rather than applied:
-        // below `DETERMINISTIC_BOOTSTRAP_EPOCH` the resolver answers `Absent`
-        // (`beacon/carry.rs::chain_key_epoch_memoised` returns `Some(None)`
-        // there → `NoUsableMint`), `material` is `None`, and `then` never fires.
-        // If that ever stops holding, this line starts attaching an oracle to a
-        // pre-beacon epoch and every LEGAL seedless certificate of it is refused
-        // — so the two facts have to move together. The invariant is already
-        // covered, if only as a premise: the pre-beacon half of
+        // flavour. So the pre-beacon refusal is INHERITED from the `mandatory_at`
+        // gate above rather than applied again: `material` is `None` below the
+        // bootstrap epoch and `then` never fires. If that gate is ever removed,
+        // this line starts attaching an oracle to a pre-beacon epoch and every
+        // LEGAL seedless certificate of it is refused — so the two have to move
+        // together. The invariant is already covered, if only as a premise: the
+        // pre-beacon half of
         // `a_beacon_active_epoch_with_no_material_is_withheld_and_never_signs_seedless`
         // asserts `Signs(_)` here at `DETERMINISTIC_BOOTSTRAP_EPOCH - 1` under an
         // `Absent` resolver.
@@ -2628,59 +2380,44 @@ impl Randomness for LiveBeacon {
             if !Randomness::mandatory_at(self, epoch) {
                 return false;
             }
-            let sources = super::keys::KeySources {
-                held: self.held.as_ref(),
-                // The ONLY thing the effort decides: may this call spend a peer
-                // round-trip. `Local` callers (cert ingress, soft-enter) run
-                // against a ~1 s verify budget and the network rung's is seconds.
-                pull: match effort {
-                    PinEffort::Local => None,
-                    PinEffort::Thorough => self.pull.as_ref(),
-                },
-                // THE PROVENANCE FLOOR APPLIES TO BOTH EFFORTS.
-                //
-                // A wrong key here is terminal for the epoch: everything reading
-                // this store treats it as the network's `PK_epoch`, and a wrong
-                // one rejects every legal certificate of that epoch. A MISSING key
-                // only degrades the epoch to vote-only admission, which still
-                // verifies the multisig quorum, committee membership and subject
-                // binding. This node's own W1/W3 reconstruction is the one tier
-                // that can diverge from the network's key (soak 2026-07-14), so no
-                // effort may write it here — the trade only ever runs one way.
-                //
-                // THIS COST HALF THE BLOCK RATE ON ITS FIRST ATTEMPT, and the
-                // reason is worth keeping. With the floor on, a self-reconstructed
-                // store entry stops answering, so the call falls through to the
-                // `held` rung — which opens with `chain_key_epoch`, a reverse walk
-                // over `(BOOTSTRAP, E]`. On a stable committee the answer sits at
-                // the bootstrap epoch, so that walk ran its full length on EVERY
-                // certificate: 26-27 devnet blocks per 60 s against a target of
-                // 60, reproduced on an idle machine and bisected to this line.
-                //
-                // What made it affordable was not weakening the floor but
-                // memoising the walk (`chain_key_epoch_memoised`): a successful
-                // answer is a function of frozen bits alone and therefore eternal,
-                // so caching it adds no trust, and monotonicity makes a miss cost
-                // one step instead of `E - BOOTSTRAP`. Capping the walk is
-                // NOT an alternative — on a stable committee the right answer is
-                // arbitrarily deep, which is why `CARRY_WALK_CAP` was retired
-                // without replacement.
-                store_floor: Some(super::keys::KeySource::Carried),
+            // THE WHOLE LADDER, in two lines. It used to be three rungs over a key
+            // store with a provenance FLOOR on the first, because the store mixed a
+            // locally reconstructed tier with attested ones and a caller whose write
+            // was terminal could not take the weak one. `KeyIndex` has one tier by
+            // construction (П-3), so the floor has nothing to exclude and the rungs
+            // collapse to: is the mint's artifact local, and — off the vote path
+            // only — may we spend one bounded fetch for it.
+            let Some(minted_at) = self.keys.minted_at(epoch) else {
+                return false;
             };
-            self.keys.get_pk(epoch, sources).await.is_some()
+            if self.keys.holds_mint_of(epoch) == Some(true) {
+                return true;
+            }
+            // The ONLY thing the effort decides, unchanged: may this call spend a
+            // peer round-trip. `Local` callers (cert ingress, soft-enter) run
+            // against a ~1 s verify budget and the network rung's is seconds.
+            let (PinEffort::Thorough, Some(acquire)) = (effort, self.acquire.as_ref()) else {
+                return false;
+            };
+            acquire.fetch(minted_at).await;
+            self.keys.holds_mint_of(epoch) == Some(true)
         })
     }
 
-    fn observe_epoch(&self, reconciled: Epoch, entered_frontier: Epoch) {
-        w3_backfill(&self.keys, &self.resolver, reconciled);
+    /// SEED RETENTION ONLY. Its key leg — `w3_backfill`, which published this
+    /// node's own reconstruction of `E−1`'s key — was deleted with W1 (П-3), and the
+    /// key store it pruned no longer exists: [`KeyIndex`]'s artifact half is
+    /// deliberately never evicted (`artifact` module doc) and its mint memo is
+    /// bytes per epoch. `reconciled` therefore names an epoch nothing is resolved
+    /// FOR; the operation survives because the two σ windows below are still real,
+    /// and PLAN row 5.2 is what removes it.
+    fn observe_epoch(&self, _reconciled: Epoch, entered_frontier: Epoch) {
         let oldest = entered_frontier
             .get()
             .saturating_sub(crate::SCHEME_RETENTION_EPOCHS as u64);
-        self.keys.retain_from(oldest);
-        // The quarantine rides the SAME window as the key store, because it is
-        // waiting on exactly what that store retains: past the retention edge no
-        // key can arrive any more, so a held σ can never be promoted and is only
-        // memory a peer could grow.
+        // The quarantine rides the scheme-retention window: past that edge no key
+        // can arrive any more, so a held σ can never be promoted and is only memory
+        // a peer could grow.
         self.seeds.retain_quarantine_from(oldest);
         // And so does the terminal pin: it is asked for by the NEXT epoch, so an
         // epoch past the retention edge has no asker left.
@@ -2689,7 +2426,6 @@ impl Randomness for LiveBeacon {
 
     fn observe_cert(&self, epoch: u64) {
         let oldest = epoch.saturating_sub(crate::SCHEME_RETENTION_EPOCHS as u64);
-        self.keys.retain_from(oldest);
         self.seeds.retain_quarantine_from(oldest);
         self.seeds.retain_terminal_from(oldest);
     }

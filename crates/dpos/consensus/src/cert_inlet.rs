@@ -312,16 +312,17 @@ pub struct CertInlet<E, M> {
     /// AFTER the verify gate), so the served window can never expose an
     /// unverified cert.
     window_tx: Option<tokio::sync::mpsc::UnboundedSender<UpstreamFinalized>>,
-    /// The node's SHARED beacon-key store (see [`BeaconKeys`]) — the same handle
-    /// `FluentApp` and `epoch_manager` hold on a validator. The inlet reads it as
-    /// the store rung of [`BeaconKeys::get_pk`]'s ladder, and the ladder's own
-    /// resolve fills it.
+    /// The node's SHARED beacon handle — the same one `FluentApp` and
+    /// `epoch_manager` hold on a validator. The inlet asks it to make the epoch's key
+    /// resolvable (`Beacon::ensure_key`) and to judge the certificate's σ
+    /// (`Beacon::observe_certificate`); WHERE the key comes from is behind that door
+    /// and not this file's business.
     ///
     /// It replaced a PRIVATE carry-forward cursor that answered "what is `PK_E`"
     /// as "the greatest observed change-epoch ≤ E" — an UNBOUNDED walk forward
-    /// from the last key it happened to see. The chain's own `dkgQual` record,
-    /// which `beacon::keys::AgreedKeys` reads, is the one policy both
-    /// planes now use.
+    /// from the last key it happened to see. The chain's own `dkgQual` record is the
+    /// one policy both planes now use, and after П-3 the artifact that record names
+    /// is the key's only owner.
     ///
     /// A default-constructed store on an inlet nobody wired one into is a private
     /// empty one — the unit-test shape.
@@ -578,11 +579,11 @@ where
             return;
         }
         // ACQUISITION, and it is load-bearing rather than bookkeeping. The scheme's
-        // oracle answers `verify_seed` from the SYNC key-store probe alone, and the
-        // only thing that ever fills that store for an artifact-sourced epoch is
-        // this ladder walk — `BeaconKeys::get_pk` writes back what it resolves.
-        // Drop this call and every such epoch stays permanently keyless, admitting
-        // its certificates on the multisig half for the life of the process.
+        // oracle answers `verify_seed` from a SYNC resolve alone — the chain's mint
+        // record plus the artifact store — and on an epoch whose artifact has not
+        // reached this node, THIS call is the only thing that asks for it. Drop it and
+        // every such epoch stays permanently keyless, admitting its certificates on
+        // the multisig half for the life of the process.
         //
         // Runs on EVERY certificate, unlike the pin resolve it replaces: there is
         // no cached-pin state to bound it with any more, and the store hit it
@@ -779,8 +780,7 @@ mod tests {
     use super::*;
     use crate::{
         beacon::testing::{
-            encode_outcome, group_public_key, parse_outcome, AgreedKeyAt, AgreedKeys, BeaconKeys,
-            DkgQualFor, LiveBeaconConfig,
+            encode_outcome, group_public_key, parse_outcome, LiveBeaconConfig, MintFixture,
         },
         order_block::OrderBlock,
     };
@@ -1534,6 +1534,9 @@ mod tests {
         members: Vec<(ValidatorBlsKeypair, Share)>,
         sharing: Sharing<MinSig>,
         seed_ns: Vec<u8>,
+        /// The ceremony's own `Output`. Held because after П-3 a fixture states a
+        /// MINT rather than a bare key, and a mint is an artifact carrying this.
+        outcome: crate::beacon::testing::DkgOutcome,
         outcome_bytes: Vec<u8>,
         bimap: BiMap<PeerPubkey, BlsPubkey>,
         namespace: Vec<u8>,
@@ -1622,6 +1625,7 @@ mod tests {
             sharing,
             seed_ns,
             outcome_bytes: encode_outcome(&outcome),
+            outcome,
             bimap,
             namespace: ns,
         }
@@ -1648,7 +1652,7 @@ mod tests {
 
         let known = crate::beacon::testing::Canned::new()
             .with_seed_namespace(bc.seed_ns.clone())
-            .with_pin(5, *bc.sharing.public());
+            .with_mint(5, bc.outcome.clone());
         let _ = Beacon::observe_certificate(
             &known,
             ObservedCertificate::Finalization(round, &uf.finalization),
@@ -1692,7 +1696,7 @@ mod tests {
         // that verifies under nobody's key here.
         let wrong = crate::beacon::testing::Canned::new()
             .with_seed_namespace(bc.seed_ns.clone())
-            .with_pin(5, *other.sharing.public());
+            .with_mint(5, other.outcome.clone());
         let _ = Beacon::observe_certificate(
             &wrong,
             ObservedCertificate::Finalization(round, &uf.finalization),
@@ -1737,7 +1741,7 @@ mod tests {
         let known = Arc::new(
             crate::beacon::testing::Canned::new()
                 .with_seed_namespace(bc.seed_ns.clone())
-                .with_pin(5, *bc.sharing.public()),
+                .with_mint(5, bc.outcome.clone()),
         );
 
         let runtime = commonware_runtime::deterministic::Runner::default();
@@ -1855,44 +1859,33 @@ mod tests {
         inlet.with_randomness(randomness)
     }
 
-    /// A provider over canned ladder pieces. The tests keep building the REAL
-    /// rungs (`canned_held` is an actual `AgreedKeys`), so what they pin is the
-    /// ladder's behaviour, not a stubbed answer.
-    fn canned_randomness(
-        keys: BeaconKeys,
-        held: Option<AgreedKeys>,
-    ) -> Arc<dyn crate::beacon::Beacon> {
+    /// A provider over the REAL key index. The tests keep exercising the shipped
+    /// resolve — the chain's mint record plus the artifact store (П-3) — so what they
+    /// pin is its behaviour, not a stubbed answer.
+    ///
+    /// It used to take a `BeaconKeys` store plus an `AgreedKeys` rung built by
+    /// `canned_held`, because "this epoch's key is available" was a store write. It is
+    /// a MINT now: `mints.mint(e, outcome)` files the artifact and records the chain's
+    /// `changed` bit, and everything the inlet asks follows from that.
+    fn canned_randomness(mints: &MintFixture) -> Arc<dyn crate::beacon::Beacon> {
         crate::beacon::testing::LiveBeacon::build(LiveBeaconConfig {
             seeds: crate::beacon::testing::SeedStore::new(),
-            keys,
-            resolver: Arc::new(|_| crate::beacon::testing::BeaconResolve::Absent),
+            keys: mints.keys.clone(),
             ceremony: Arc::new(std::sync::RwLock::new(std::collections::BTreeMap::new())),
-            dkg_qual: Arc::new(|_| Some(false)),
-            held,
-            pull: None,
+            acquire: None,
             metrics: crate::beacon::testing::BeaconMetrics::default(),
             chain_id: CHAIN_ID,
-            artifacts: crate::beacon::testing::ArtifactStore::new(),
+            artifacts: mints.artifacts.clone(),
             geometry: tokio::sync::watch::channel(Some((0, 1))).1,
         })
     }
 
-    /// The ladder's held-artifact rung over a canned store. `at` answers for a
-    /// MINTING epoch; `mints` is the chain's `dkgQual` record, which is what says
-    /// which epoch that is for the epoch being asked about.
-    fn canned_held(
-        at: impl Fn(u64) -> Option<GroupPublic> + Send + Sync + 'static,
-        mints: &[u64],
-    ) -> AgreedKeys {
-        let set: std::collections::BTreeSet<u64> = mints.iter().copied().collect();
-        let dkg_qual: DkgQualFor = Arc::new(move |e| Some(set.contains(&e)));
-        AgreedKeys::new(
-            Arc::new(move |epoch: u64| {
-                let key = at(epoch);
-                Box::pin(async move { key }) as futures::future::BoxFuture<'static, _>
-            }) as AgreedKeyAt,
-            dkg_qual,
-        )
+    /// A [`MintFixture`] that has minted `epoch` with `bc`'s own outcome — the state
+    /// in which the inlet can check a certificate of every epoch that carries it.
+    fn minted_at(bc: &BeaconFixture, epoch: u64) -> MintFixture {
+        let mints = MintFixture::new();
+        mints.mint(epoch, bc.outcome.clone());
+        mints
     }
 
     /// The group key a fixture's ceremony produced — what its seeded certs verify
@@ -1927,15 +1920,13 @@ mod tests {
         let runtime = deterministic::Runner::default();
         runtime.start(|ctx| async move {
             let bc = beacon_committee(1);
-            let pk = fixture_key(&bc);
+            let _pk = fixture_key(&bc);
             let marshal = FakeMarshal::default();
             let (inlet, _reads, slot) = beacon_inlet(ctx, &bc, marshal.clone());
             let (rotations, rotate) = count_rotations();
             let (window_tx, mut window_rx) = tokio::sync::mpsc::unbounded_channel();
-            let randomness = canned_randomness(
-                BeaconKeys::new(),
-                Some(canned_held(move |e| (e == 2).then_some(pk), &[2])),
-            );
+            let mints = minted_at(&bc, 2);
+            let randomness = canned_randomness(&mints);
             let mut inlet = with_beacon(
                 inlet.with_rotate(rotate).with_window(window_tx),
                 &slot,
@@ -2012,15 +2003,8 @@ mod tests {
             let pk2 = fixture_key(&bc);
             let marshal = FakeMarshal::default();
             let (inlet, reads, slot) = beacon_inlet(ctx, &bc, marshal.clone());
-            let keys = BeaconKeys::new();
-            let mut inlet = with_beacon(
-                inlet,
-                &slot,
-                canned_randomness(
-                    keys.clone(),
-                    Some(canned_held(move |e| (e == 2).then_some(pk2), &[2])),
-                ),
-            );
+            let mints = minted_at(&bc, 2);
+            let mut inlet = with_beacon(inlet, &slot, canned_randomness(&mints));
 
             let wrong = certify_seeded(&bc, 9, &beacon_order(999))
                 .finalization
@@ -2030,15 +2014,19 @@ mod tests {
             inlet
                 .ingest(certify_seeded(&bc, 2, &beacon_order(64)))
                 .await;
+            // The RESOLVE, read where the fact lives now: the mint's artifact is what
+            // answers, and it answers the same value the certificates verify under.
+            // It used to read a shared `BeaconKeys` at two provenance tiers; П-3 left
+            // one owner, so there is one read.
             assert_eq!(
-                keys.cached_only(2),
+                mints.keys.key_at(2),
                 Some(pk2),
-                "the ladder's resolve fills the SHARED store"
+                "epoch 2's key is the artifact's, and the ingress resolves it"
             );
             assert_eq!(
-                keys.attested(2),
-                Some(pk2),
-                "a quorum signed this key FOR epoch 2, so the attested tier"
+                mints.keys.minted_at(2),
+                Some(2),
+                "and epoch 2 is its own mint here, which is what the chain record says"
             );
 
             inlet
@@ -2085,17 +2073,10 @@ mod tests {
         let runtime = deterministic::Runner::default();
         runtime.start(|ctx| async move {
             let bc = beacon_committee(3);
-            let pk = fixture_key(&bc);
+            let _pk = fixture_key(&bc);
             let marshal = FakeMarshal::default();
             let (inlet, reads, slot) = beacon_inlet(ctx, &bc, marshal.clone());
-            let mut inlet = with_beacon(
-                inlet,
-                &slot,
-                canned_randomness(
-                    BeaconKeys::new(),
-                    Some(canned_held(move |e| (e == 2).then_some(pk), &[2])),
-                ),
-            );
+            let mut inlet = with_beacon(inlet, &slot, canned_randomness(&minted_at(&bc, 2)));
 
             let wrong = certify_seeded(&bc, 9, &beacon_order(999))
                 .finalization
@@ -2171,6 +2152,7 @@ mod tests {
                 sharing,
                 seed_ns: seed_ns.clone(),
                 outcome_bytes: encode_outcome(&outcome),
+                outcome,
                 bimap: bimap.clone(),
                 namespace: ns.clone(),
             }
@@ -2200,7 +2182,7 @@ mod tests {
         let runtime = deterministic::Runner::default();
         runtime.start(|ctx| async move {
             let (f1, f2) = beacon_committee_pair(4);
-            let pk3 = fixture_key(&f2);
+            let _pk3 = fixture_key(&f2);
 
             // WITHOUT the source: no key for epoch 3, so vote-only admission.
             let marshal = FakeMarshal::default();
@@ -2224,14 +2206,7 @@ mod tests {
             // late): the same sequence verifies end-to-end.
             let marshal = FakeMarshal::default();
             let (inlet, _reads, slot) = beacon_inlet(ctx, &f1, marshal.clone());
-            let mut inlet = with_beacon(
-                inlet,
-                &slot,
-                canned_randomness(
-                    BeaconKeys::new(),
-                    Some(canned_held(move |e| (e == 3).then_some(pk3), &[3])),
-                ),
-            );
+            let mut inlet = with_beacon(inlet, &slot, canned_randomness(&minted_at(&f2, 3)));
             inlet
                 .ingest(certify_seeded(&f2, 3, &beacon_order(129)))
                 .await;
@@ -2265,18 +2240,14 @@ mod tests {
         let runtime = deterministic::Runner::default();
         runtime.start(|ctx| async move {
             let (f1, f2) = beacon_committee_pair(5);
-            let pk2 = fixture_key(&f2);
-            // Epoch 2's artifact is ABSENT until `arrived` flips.
-            let arrived = Arc::new(std::sync::atomic::AtomicBool::new(false));
-            let seen = arrived.clone();
-            let held = canned_held(
-                move |e| (e == 2 && seen.load(std::sync::atomic::Ordering::Relaxed)).then_some(pk2),
-                &[2],
-            );
+            let _pk2 = fixture_key(&f2);
+            // Epoch 2's artifact is ABSENT until the fixture files it — which is what
+            // "the artifact arrived" means now, rather than a closure flipping a flag.
+            let mints = MintFixture::new();
 
             let marshal = FakeMarshal::default();
             let (inlet, reads, slot) = beacon_inlet(ctx, &f1, marshal.clone());
-            let mut inlet = with_beacon(inlet, &slot, canned_randomness(BeaconKeys::new(), Some(held)));
+            let mut inlet = with_beacon(inlet, &slot, canned_randomness(&mints));
 
             inlet
                 .ingest(certify_seeded(&f2, 2, &beacon_order(129)))
@@ -2293,7 +2264,10 @@ mod tests {
                  start — being keyless is a property of the key store, not of the scheme"
             );
 
-            arrived.store(true, std::sync::atomic::Ordering::Relaxed);
+            // THE ARTIFACT ARRIVES. This is the whole edge now: filing it is what makes
+            // the epoch's key resolvable, where the fixture used to flip a flag inside a
+            // key-store rung.
+            mints.mint(2, f2.outcome.clone());
             inlet
                 .ingest(certify_seeded(&f2, 2, &beacon_order(131)))
                 .await
@@ -2330,54 +2304,64 @@ mod tests {
         });
     }
 
-    /// The acquisition is MEMOISED, so the certificate path stays cheap: the
-    /// artifact rung answers once, `get_pk` writes the key into the shared store,
-    /// and every later certificate of the epoch resolves off that store. The
-    /// scheme is built once too — it reads the key live, so a key arriving after
-    /// it was built needs no rebuild.
+    /// The key resolve is MEMOISED, so the certificate path stays cheap: the rung
+    /// the ladder pays for — the CHAIN, asked for the epoch's `changed` bit, a
+    /// staticcall in production — answers ONCE however many certificates of the
+    /// epoch arrive, and every later one is a memo hit plus a map hit. The scheme is
+    /// built once too: it reads the key live, so a key arriving after it was built
+    /// needs no rebuild.
     ///
-    /// A rung that answers exactly once is what makes a regression visible: if
-    /// anything re-consulted it, the second answer would be empty.
+    /// THE FALSIFIER IS A COUNT, and the assert is `== 1`, so ANY route that re-asks
+    /// the chain for this epoch reddens it on the SECOND consult. `ensure_key` runs
+    /// on EVERY certificate by design (there is no cached-pin state left to bound it
+    /// with), so what keeps the path cheap is not a skipped resolve but the
+    /// memoisation under it — and what this pins is the PROPERTY, not one mechanism:
+    /// `MintIndex` holds an answer memo and a decided-bit cache that deliberately
+    /// overlap, so each alone covers for the other's removal and it takes losing the
+    /// memoisation itself to go 1 → 2 (verified by mutation, journal 5.1Д). That is
+    /// the half a counting one-shot rung used to hold before `BeaconKeys` was
+    /// deleted, in the one place П-3 left it.
+    ///
+    /// The mint is epoch 3 and NOT the bootstrap epoch on purpose: `minted_at`
+    /// answers the bootstrap epoch without reading the chain at all
+    /// (`artifact.rs`'s `minted_at` returns before the walk), so a bootstrap-epoch
+    /// fixture would count zero consults and the pin would be vacuous.
     #[test]
-    fn the_artifact_rung_is_consulted_once_and_the_committee_read_once() {
+    fn the_mint_resolve_reads_the_chain_once_and_the_committee_once() {
+        const MINT: u64 = 3;
         let runtime = deterministic::Runner::default();
         runtime.start(|ctx| async move {
             let (f1, f2) = beacon_committee_pair(6);
-            let pk2 = fixture_key(&f2);
-            // A rung that answers for epoch 2 exactly ONCE, so a second resolve
-            // would come back empty and could only downgrade.
-            let consults = Arc::new(std::sync::atomic::AtomicU32::new(0));
-            let seen = consults.clone();
-            let held = canned_held(
-                move |e| {
-                    let first = seen.fetch_add(1, std::sync::atomic::Ordering::Relaxed) == 0;
-                    (e == 2 && first).then_some(pk2)
-                },
-                &[2],
-            );
+            let _pk2 = fixture_key(&f2);
+            // The artifact is filed ONCE and stays filed — an artifact store is
+            // insert-only and never evicted (П-3).
+            let mints = minted_at(&f2, MINT);
 
             let marshal = FakeMarshal::default();
             let (inlet, reads, slot) = beacon_inlet(ctx, &f1, marshal.clone());
-            let mut inlet = with_beacon(
-                inlet,
-                &slot,
-                canned_randomness(BeaconKeys::new(), Some(held)),
-            );
+            let mut inlet = with_beacon(inlet, &slot, canned_randomness(&mints));
 
             inlet
-                .ingest(certify_seeded(&f2, 2, &beacon_order(129)))
+                .ingest(certify_seeded(&f2, MINT, &beacon_order(129)))
                 .await;
             inlet
-                .ingest(certify_seeded(&f2, 2, &beacon_order(130)))
+                .ingest(certify_seeded(&f2, MINT, &beacon_order(130)))
                 .await;
             assert_eq!(
-                consults.load(std::sync::atomic::Ordering::Relaxed),
+                mints.chain_reads(MINT),
                 1,
-                "once the key is in the store the artifact rung is never re-consulted"
+                "TWO certificates of the epoch, ONE chain read: the mint memo is what \
+                 makes the resolve cheap, and a second consult means it is gone"
+            );
+            assert_eq!(
+                mints.artifacts.epochs(),
+                vec![MINT],
+                "one artifact, filed once: the store is insert-only, so the resolve after \
+                 the first is a map hit with nothing to re-consult"
             );
             assert_eq!(
                 *reads.lock().unwrap(),
-                vec![(2, true)],
+                vec![(MINT, true)],
                 "the entry is not rebuilt, so the committee is read once — and it was \
                  built WITH an oracle, which is what makes the seed half checked at all"
             );
@@ -2386,7 +2370,7 @@ mod tests {
                 .finalization
                 .certificate
                 .seed;
-            let mut tampered = certify_seeded(&f2, 2, &beacon_order(131));
+            let mut tampered = certify_seeded(&f2, MINT, &beacon_order(131));
             tampered.finalization.certificate.seed = wrong;
             inlet.ingest(tampered).await;
             assert_eq!(
@@ -2394,6 +2378,11 @@ mod tests {
                 4,
                 "the surviving pin still rejects a seed-tampered cert — had the \
                  pin-less ingest replaced the entry, this one would have been admitted"
+            );
+            assert_eq!(
+                mints.chain_reads(MINT),
+                1,
+                "and a THIRD certificate still buys no chain read"
             );
         });
     }

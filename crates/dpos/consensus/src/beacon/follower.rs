@@ -20,7 +20,7 @@
 //! `verify_artifact_for_epoch` and the artifact types are `pub(crate)` and the
 //! module is closed (see [`super`]'s docs). Building the provider here keeps them
 //! that way: the node hands in capabilities — a fetch closure, a committee source
-//! and a `DkgQualFor` — exactly as it already does for the validator plane, and
+//! and a `ChangedAt` — exactly as it already does for the validator plane, and
 //! receives back a [`Randomness`] plus one serving read closure.
 //!
 //! # Trust
@@ -34,15 +34,12 @@
 
 use super::{
     artifact::{
-        decode_artifact, encode_artifact, verify_artifact_for_epoch, ArtifactError, ArtifactStore,
-        CommitteeSource, PULL_MIN_INTERVAL,
+        encode_artifact, AcquireMint, ArtifactBytes, ArtifactStore, ChangedAt, CommitteeSource,
+        KeyIndex, MintIndex, TransportAcquire,
     },
-    carry::{frozen_dkg_qual, DkgQualFor},
     certify::SeedStore,
-    keys::{pk_prefix, AgreedKeyAt, AgreedKeys, BeaconKeys, InvalidSeed, KeySource, KeySources},
     metrics::BeaconMetrics,
     oracle::KeyOnlyOracle,
-    outcome::group_public_key,
     plane::{CommitteeReads, Tasks},
     seed::Seed,
     surface::{
@@ -58,14 +55,9 @@ use fluentbase_bls::{
 };
 use fluentbase_staking_reader::reader::ValidatorSetSnapshot;
 use futures::future::BoxFuture;
-use rand_core::OsRng;
-use std::{
-    collections::BTreeMap,
-    sync::{Arc, Weak},
-    time::SystemTime,
-};
+use std::sync::{Arc, Weak};
 use tokio::sync::{broadcast, mpsc, Notify};
-use tracing::{info, warn};
+use tracing::info;
 
 /// Depth of the want channel between [`Randomness::observe_cert`] and the fetch
 /// task. Wants are re-issued on every certificate (~1/s) for as long as the epoch
@@ -79,17 +71,21 @@ const WANT_MAILBOX: usize = 16;
 struct ResolvedFollowerInputs {
     chain_id: u64,
     committees: CommitteeSource,
-    dkg_qual: DkgQualFor,
+    changed: ChangedAt,
     fetch: ArtifactFetch,
 }
 
-/// One artifact fetch over the follower's cert upstream, by MINTING epoch.
+/// One artifact fetch over the follower's cert upstream, by MINTING epoch — the
+/// BYTES half of an acquisition, supplied by the node.
 ///
-/// Returns the wire bytes `decode_artifact` reads, or `None` for every negative
-/// alike — no artifact, an upstream too old to know the method, a dead link. The
-/// three are one answer here (stay unpinned, ask again) and separating them would
-/// only invite a caller to treat one of them as a fault.
-pub type ArtifactFetch = Arc<dyn Fn(u64) -> BoxFuture<'static, Option<Vec<u8>>> + Send + Sync>;
+/// It is [`ArtifactBytes`] under this module's own name, and it stays a closure
+/// rather than becoming the trait journal 5.0's Д-11 asked for, for a reason that is
+/// a boundary and not a preference: the only supplier is
+/// `crate::dpos::CertUpstream::get_epoch_artifact`, whose call site is production
+/// code in a file this row may not write. The trait Д-11 wanted DOES exist —
+/// [`super::artifact::AcquireArtifact`], with the two implementors that justify it —
+/// and this alias is now its argument rather than a second abstraction.
+pub type ArtifactFetch = ArtifactBytes;
 
 /// What [`build_follower`] needs that it cannot build itself. Every field is a
 /// capability the node already holds; none of them is beacon state.
@@ -122,22 +118,13 @@ where
         let reads = cfg.committees.clone();
         Arc::new(move |epoch: u64| reads.committee_bls(epoch, reads.read_at()?))
     };
-    let dkg_qual_for = frozen_dkg_qual(
-        {
-            let reads = cfg.committees.clone();
-            Arc::new(move || reads.read_at())
-        },
-        {
-            let reads = cfg.committees.clone();
-            Arc::new(move |epoch: u64, at| reads.dkg_qual(epoch, at))
-        },
-    );
+    let changed = changed_bit(cfg.committees.clone());
     let beacon = build_resolved(
         context,
         ResolvedFollowerInputs {
             chain_id: cfg.chain_id,
             committees: committee_source,
-            dkg_qual: dkg_qual_for,
+            changed,
             fetch: cfg.fetch,
         },
     );
@@ -165,7 +152,7 @@ struct FollowerBeacon {
     fetch_handle: Handle<()>,
 }
 
-/// The body, over the two closures the internals speak.
+/// The body, over the closures the internals speak.
 fn build_resolved<E>(context: &E, cfg: ResolvedFollowerInputs) -> FollowerBeacon
 where
     E: Clock + Metrics + Spawner + Clone + Send + 'static,
@@ -175,46 +162,36 @@ where
 
     // RAM-only, and deliberately so: there is no `share_dir` on this path and no
     // durable partition to open. What a restart loses is one fetch per epoch over
-    // a link the follower holds open anyway.
+    // a link the follower holds open anyway — including the mint memo, which is why
+    // this class builds a RAM-only [`MintIndex`].
     let store = ArtifactStore::new();
-    let keys = BeaconKeys::new();
+    let keys = KeyIndex::new(store.clone(), MintIndex::new(cfg.changed));
 
-    // The two rungs of the SHIPPED ladder, in the shipped order — a local read of
-    // the artifact store, then one delivery over the upstream. Only the second is
-    // new; `ensure_key` is handed the first alone, so the certificate path stays
-    // network-free by construction rather than by discipline.
-    let held = AgreedKeys::new(
-        {
-            let store = store.clone();
-            Arc::new(move |epoch: u64| {
-                let key = store.get(epoch).map(|a| *group_public_key(&a.0.group_key));
-                Box::pin(async move { key }) as BoxFuture<'static, _>
-            })
-        },
-        cfg.dkg_qual.clone(),
-    );
-    let pull = AgreedKeys::new(
-        fetch_and_verify(
-            cfg.chain_id,
-            cfg.committees,
-            cfg.fetch,
-            store.clone(),
-            metrics.clone(),
-        ),
-        cfg.dkg_qual,
-    );
+    // THE SAME ACQUISITION THE NON-MEMBER VALIDATOR USES, over this class's
+    // transport. Throttle, decode, verify against `committee[minted_at]` and file —
+    // one body in `artifact`, so the check that makes a lying upstream and a lying
+    // peer the same non-event cannot be two different checks. No write-back hop:
+    // this node class has no actor to adopt a pinned set into.
+    let acquire: AcquireMint = Arc::new(TransportAcquire::new(
+        cfg.chain_id,
+        cfg.committees,
+        cfg.fetch,
+        store.clone(),
+        None,
+        context.clone(),
+        metrics.clone(),
+    ));
 
     let (want_tx, want_rx) = mpsc::channel(WANT_MAILBOX);
-    // Captured before the task exists, as `BeaconKeys::subscribe` requires: a
-    // fill landing between the spawn and the task's first poll would be lost to a
-    // handle taken inside the loop, and a key arrives ONCE per epoch — unlike a
-    // want, nothing re-issues it a second later.
-    let key_edge = keys.subscribe();
+    // Captured before the task exists, as the store's own edge requires: a fill
+    // landing between the spawn and the task's first poll would be lost to a handle
+    // taken inside the loop, and an artifact arrives ONCE per epoch — unlike a want,
+    // nothing re-issues it a second later.
+    let key_edge = store.subscribe();
     let randomness = Arc::new(FollowerRandomness {
-        artifacts: store.clone(),
-        keys: keys.clone(),
+        artifacts: store,
+        keys,
         seed_namespace: seed_namespace(&fluent_namespace(cfg.chain_id)),
-        held: held.clone(),
         want_tx,
         // RAM-only, like the artifact store above and for the same reason: this
         // path opens no journal partition. What a restart loses is σ the next
@@ -229,7 +206,7 @@ where
         let promoter = Arc::downgrade(&randomness);
         context
             .with_label("follower_artifact_fetch")
-            .spawn(move |c| run_fetcher(c, keys, held, pull, want_rx, key_edge, promoter))
+            .spawn(move |_| run_fetcher(acquire, want_rx, key_edge, promoter))
     };
 
     FollowerBeacon {
@@ -238,107 +215,39 @@ where
     }
 }
 
-/// The pull rung's body: one fetch, decoded and CHECKED against
-/// `committee[minted_at]` before anything is kept.
+/// The FROZEN `changed` bit over a [`CommitteeReads`], for both node classes.
 ///
-/// The three failure classes are counted apart because they mean different
-/// things about different parties: a miss is the upstream having nothing (or
-/// being too old to be asked), an unreadable committee is this node's own chain
-/// view lagging, and a rejection is the only one that is an accusation.
-fn fetch_and_verify(
-    chain_id: u64,
-    committees: CommitteeSource,
-    fetch: ArtifactFetch,
-    store: ArtifactStore,
-    metrics: BeaconMetrics,
-) -> AgreedKeyAt {
-    Arc::new(move |minted_at: u64| {
-        let (fetch, committees, store, metrics) = (
-            fetch.clone(),
-            committees.clone(),
-            store.clone(),
-            metrics.clone(),
-        );
-        Box::pin(async move {
-            let Some(bytes) = fetch(minted_at).await else {
-                metrics.follower_artifact_miss.inc();
-                return None;
-            };
-            let artifact = match decode_artifact(&bytes) {
-                Ok(artifact) => artifact,
-                Err(e) => {
-                    warn!(
-                        epoch = minted_at,
-                        ?e,
-                        "cert-follow: the upstream's epoch artifact does not decode"
-                    );
-                    metrics.dkg_artifact_rejected.inc();
-                    return None;
-                }
-            };
-            match verify_artifact_for_epoch(&mut OsRng, chain_id, &committees, minted_at, &artifact)
-            {
-                Ok(()) => {}
-                // Not the upstream's fault and not a verdict on the artifact:
-                // this node's executor has not reached the block that committed
-                // `committee[minted_at]`. Drop it and re-ask on the next cert.
-                Err(ArtifactError::CommitteeUnreadable(_)) => {
-                    metrics.dkg_artifact_unverifiable.inc();
-                    return None;
-                }
-                Err(e) => {
-                    warn!(
-                        epoch = minted_at,
-                        ?e,
-                        "cert-follow: REJECTING the upstream's epoch artifact — it does not \
-                         carry a committee[epoch] quorum; staying on vote-only admission"
-                    );
-                    metrics.dkg_artifact_rejected.inc();
-                    return None;
-                }
-            }
-            let pk = *group_public_key(&artifact.0.group_key);
-            store.insert(minted_at, artifact);
-            metrics.follower_artifact_adopted.inc();
-            info!(
-                epoch = minted_at,
-                group_public = %pk_prefix(&pk),
-                "cert-follow: PK_epoch obtained and verified against committee[epoch] — \
-                 certificates of the epochs it covers leave vote-only admission"
-            );
-            Some(pk)
-        }) as BoxFuture<'static, _>
+/// The `committed` leg the raw read carries is dropped here rather than guarded —
+/// see [`ChangedAt`] for why that is Д-7 resolved: the module answers a record only
+/// for an epoch whose committee it read, so `committed` is unconditionally `true`
+/// and `!(bit || committed) ⇒ None` had one live meaning left.
+pub(super) fn changed_bit(reads: Arc<dyn CommitteeReads>) -> ChangedAt {
+    Arc::new(move |epoch: u64| {
+        let at = reads.read_at()?;
+        reads.dkg_qual(epoch, at).map(|(bit, _committed)| bit)
     })
 }
 
-/// The off-path half of the ladder, and the ONLY place a follower touches the
-/// network for a key.
+/// The off-path half, and the ONLY place a follower touches the network for a key.
 ///
-/// Sequential by construction: one fetch at a time, so a slow upstream costs
-/// latency and never a fan-out. The per-epoch throttle is the same
-/// [`PULL_MIN_INTERVAL`] budget the plane's pull seam owes its peers — the want
-/// arrives on every certificate (~1/s) for as long as the epoch stays unresolved,
-/// and without the throttle that would be one upstream round-trip per second per
-/// unresolved epoch.
+/// Sequential by construction: one acquisition at a time, so a slow upstream costs
+/// latency and never a fan-out. The per-epoch throttle lives inside
+/// [`TransportAcquire`], shared with every other consumer of it.
 ///
-/// It carries the QUARANTINE PROMOTE on a second arm. What decides whether a
-/// held σ can be served is a key landing, and the key store's own edge is the
-/// trigger rather than this task's fetch result: an epoch also resolves through
-/// `ensure_key` off an artifact adopted for a DIFFERENT epoch, and a σ waiting on
-/// that one would otherwise never be re-checked. The promote rides this task
-/// instead of one of its own because the two share a single failure story — a
-/// follower that has stopped using `PK_epoch` — and a second task would have to
-/// be supervised separately to tell the same thing.
-async fn run_fetcher<E: Clock>(
-    ctx: E,
-    keys: BeaconKeys,
-    held: AgreedKeys,
-    pull: AgreedKeys,
+/// It carries the QUARANTINE PROMOTE on a second arm. What decides whether a held σ
+/// can be served is an artifact landing, and the STORE's own edge is the trigger
+/// rather than this task's fetch result: an epoch also resolves off an artifact
+/// adopted for a DIFFERENT epoch (a carry), and a σ waiting on that one would
+/// otherwise never be re-checked. The promote rides this task instead of one of its
+/// own because the two share a single failure story — a follower that has stopped
+/// using `PK_epoch` — and a second task would have to be supervised separately to
+/// tell the same thing.
+async fn run_fetcher(
+    acquire: AcquireMint,
     mut want_rx: mpsc::Receiver<u64>,
     key_edge: Arc<Notify>,
     promoter: Weak<FollowerRandomness>,
 ) {
-    let mut next_allowed: BTreeMap<u64, SystemTime> = BTreeMap::new();
     loop {
         let epoch = tokio::select! {
             want = want_rx.recv() => match want {
@@ -349,37 +258,21 @@ async fn run_fetcher<E: Clock>(
                 // Gone means the last beacon handle dropped, i.e. shutdown.
                 let Some(randomness) = promoter.upgrade() else { break };
                 randomness.promote_quarantined();
-                // This task is the SOLE waiter on the key store's own notifier, so
-                // it is also the only place that can turn a key landing into the
+                // This task is the SOLE waiter on the store's own notifier, so it is
+                // also the only place that can turn an artifact landing into the
                 // beacon's `KeyAvailable` wake-up.
                 let _ = randomness.seeds.events().send(BeaconEvent::KeyAvailable);
                 continue;
             }
         };
-        let now = ctx.current();
-        // Keep only the epochs still being held back; otherwise this grows one
-        // entry per epoch ever asked for, forever (the same reason
-        // `ArtifactPull::throttle` prunes).
-        next_allowed.retain(|_, at| *at > now);
-        if next_allowed.contains_key(&epoch) {
+        let Some(randomness) = promoter.upgrade() else {
+            break;
+        };
+        let Some(minted_at) = randomness.keys.minted_at(epoch) else {
             continue;
-        }
-        next_allowed.insert(epoch, now + PULL_MIN_INTERVAL);
-        // The full ladder, off-path: the store, then the held artifacts, then the
-        // upstream. A hit writes `PK_epoch` into the shared store at
-        // `KeySource::Agreed` and memoises the carry for `epoch`, which is what
-        // makes the next `ensure_key(Local)` answer without a fetch and stops
-        // `observe_cert` re-asking for it.
-        let _ = keys
-            .get_pk(
-                epoch,
-                KeySources {
-                    held: Some(&held),
-                    pull: Some(&pull),
-                    store_floor: Some(KeySource::Carried),
-                },
-            )
-            .await;
+        };
+        drop(randomness);
+        let _ = acquire.fetch(minted_at).await;
     }
     // PARK, never return: this handle is supervised, where a clean exit means "a
     // subsystem died, take the node down". The loop ends only when the last
@@ -397,14 +290,12 @@ struct FollowerRandomness {
     /// `consensus_getEpochArtifact`, exactly as it already serves
     /// `getFinalization` out of its bounded cert window.
     artifacts: ArtifactStore,
-    keys: BeaconKeys,
+    /// The OWNER of `PK_epoch` on this class too: the same [`KeyIndex`] the plane
+    /// holds, over a RAM-only store and a RAM-only mint memo.
+    keys: KeyIndex,
     /// The seed-signing domain an assembled σ is verified under. Held because
     /// the oracle needs it and a follower has no plane to ask.
     seed_namespace: Vec<u8>,
-    /// The LOCAL rung only. The upstream rung is deliberately unreachable from
-    /// [`Randomness::ensure_key`]: ingress resolves per certificate at
-    /// [`PinEffort::Local`], which is contractually network-free.
-    held: AgreedKeys,
     want_tx: mpsc::Sender<u64>,
     /// σ this node received on a certificate, split the same way the plane splits
     /// it: checked values in the served map, unchecked ones in the quarantine.
@@ -416,12 +307,18 @@ struct FollowerRandomness {
 }
 
 impl FollowerRandomness {
-    /// Drop everything below `oldest`. The three maps take ONE window because
-    /// they wait on one thing: past the retention edge no key can arrive any
-    /// more, so a quarantined σ can never be promoted, and a terminal pin is
-    /// asked for by the NEXT epoch alone.
+    /// Drop the two σ maps below `oldest`. They take ONE window because they wait on
+    /// one thing: past the retention edge no key can arrive any more, so a
+    /// quarantined σ can never be promoted, and a terminal pin is asked for by the
+    /// NEXT epoch alone.
+    ///
+    /// The KEY half is not pruned and no longer can be: its owner is the artifact
+    /// store, which is deliberately never evicted (`artifact` module doc — on a long
+    /// stable committee the entry worth having is the OLDEST one), plus a mint memo
+    /// of bytes per epoch. Pruning a store keyed by MINTING epoch on a window
+    /// measured from the FRONTIER is exactly how the old key store lost the one
+    /// entry every carry epoch depended on.
     fn retain_from(&self, oldest: u64) {
-        self.keys.retain_from(oldest);
         self.seeds.retain_quarantine_from(oldest);
         self.seeds.retain_terminal_from(oldest);
     }
@@ -467,8 +364,13 @@ impl Randomness for FollowerRandomness {
         self.seeds.quarantine(round, seed);
     }
 
-    fn on_invalid_seed(&self, epoch: u64) -> InvalidSeed {
-        self.keys.on_invalid_seed(epoch)
+    /// Always the first report, and that is honest for this class rather than lazy:
+    /// a follower's only key source is an artifact a `committee[minted_at]` quorum
+    /// certified, so an `Invalid` here is a witness every time — and the latch that
+    /// bounds the LINE is the plane's, where the same σ arrives per certificate.
+    /// PLAN row 5.2 gives both classes one latch on `faults()`.
+    fn first_seed_refusal(&self, _epoch: u64) -> bool {
+        true
     }
 
     fn seed_for(&self, round: Round) -> Option<Seed> {
@@ -529,22 +431,12 @@ impl Randomness for FollowerRandomness {
                 return false;
             }
             // BOTH efforts answer identically, and the asymmetry is the point:
-            // `Thorough` has nothing extra to spend here because the upstream rung
-            // belongs to the fetch task, off the certificate path. The provenance
-            // floor is the plane's, unchanged — a follower has no local
-            // reconstruction to floor out today, and a floor that differed by node
-            // class is how one of them quietly starts pinning a weaker tier.
-            self.keys
-                .get_pk(
-                    epoch,
-                    KeySources {
-                        held: Some(&self.held),
-                        pull: None,
-                        store_floor: Some(KeySource::Carried),
-                    },
-                )
-                .await
-                .is_some()
+            // `Thorough` has nothing extra to spend here because the acquisition
+            // belongs to the fetch task, off the certificate path. What the ladder
+            // over a tiered key store used to do — three rungs and a provenance
+            // floor — is one local probe now: there is one tier (П-3), so there is
+            // nothing to floor out.
+            self.keys.holds_mint_of(epoch) == Some(true)
         })
     }
 
@@ -562,7 +454,7 @@ impl Randomness for FollowerRandomness {
     /// A full channel DROPS rather than blocks, which costs nothing because the
     /// next certificate re-asks.
     fn observe_cert(&self, epoch: u64) {
-        if self.keys.cached_only(epoch).is_none() {
+        if self.keys.holds_mint_of(epoch) != Some(true) {
             let _ = self.want_tx.try_send(epoch);
         }
         self.retain_from(epoch.saturating_sub(crate::SCHEME_RETENTION_EPOCHS as u64));
@@ -836,7 +728,7 @@ mod tests {
             chain_id: CHAIN_ID,
             committees: Arc::new(move |epoch: u64| (epoch == TARGET).then(|| committee.clone())),
             // Only TARGET minted; every epoch above it carries TARGET's key.
-            dkg_qual: Arc::new(|epoch: u64| Some(epoch == TARGET)),
+            changed: Arc::new(|epoch: u64| Some(epoch == TARGET)),
             fetch: up.fetch(),
         }
     }
@@ -1020,7 +912,7 @@ mod tests {
             let body = proposal(TARGET);
             let genuine: AgreedArtifact = (body.clone(), c.certify(TARGET, body.digest()));
             *up.served.lock().expect("served") = Some(genuine.encode().to_vec());
-            ctx.sleep(PULL_MIN_INTERVAL).await;
+            ctx.sleep(crate::beacon::artifact::PULL_MIN_INTERVAL).await;
             fb.randomness.observe_cert(TARGET);
             settle(&ctx, || fb.randomness.artifact_bytes(TARGET).is_some()).await;
             assert!(

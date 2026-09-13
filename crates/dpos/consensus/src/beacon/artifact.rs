@@ -30,8 +30,9 @@
 //! same [`verify_artifact_for_epoch`] check against `committee[minted_at]`, a
 //! different transport. So a follower's cert-inlet leaves vote-only admission
 //! when the epoch's artifact arrives, not when the process exits. See
-//! [`crate::beacon::keys::BeaconKeys`]'s ladder doc for how a caller picks which
-//! rungs it may spend.
+//! Both transports speak ONE acquisition ([`AcquireArtifact`]), and what a caller
+//! may spend on one is stated there rather than in a ladder of rungs — the tiered
+//! key store that ladder walked is gone (П-3).
 //!
 //! # The three pieces
 //!
@@ -105,13 +106,14 @@ use commonware_codec::{
     Read, ReadExt as _, Write,
 };
 use commonware_consensus::simplex::types::Finalization;
+use commonware_cryptography::bls12381::primitives::{sharing::Sharing, variant::MinSig};
 use commonware_parallel::Sequential;
 use commonware_runtime::{Clock, Handle, Metrics, Spawner, Storage};
 use commonware_storage::metadata::{Config as MetadataConfig, Error as MetadataError, Metadata};
 use commonware_utils::sequence::U64;
 use fluentbase_bls::{
-    beacon::dkg_namespace, fluent_namespace, scheme::build_verifier, EpochCommittee,
-    Scheme as BlsScheme,
+    beacon::dkg_namespace, beacon::GroupPublic, fluent_namespace, scheme::build_verifier,
+    EpochCommittee, Scheme as BlsScheme,
 };
 use fluentbase_p2p::constants::MAX_COMMITTEE_SIZE;
 // Only [`verify_artifact_from_snapshot`] speaks the snapshot type, and that is
@@ -134,7 +136,9 @@ use tracing::{debug, warn};
 #[cfg(test)]
 use crate::scheme::epoch_committee_from_snapshot;
 use crate::{
-    beacon::{dkg_agree::AgreedArtifact, metrics::BeaconMetrics, share_state},
+    beacon::{
+        dkg_agree::AgreedArtifact, metrics::BeaconMetrics, outcome::group_public_key, share_state,
+    },
     digest::Digest,
 };
 
@@ -397,10 +401,11 @@ impl Read for ArtifactResponse {
 ///
 /// # Why the durable write may lag the RAM write
 ///
-/// The same argument [`crate::beacon::key_journal`] makes: the RAM write is what
-/// in-process readers (the producer serving a peer, the write-back adopting the
-/// pinned set) see and must stay synchronous, while durability is only ever read
-/// by a LATER process after a restart, so it is free to lag. Records go out over
+/// The same argument [`crate::beacon::seed_journal`] makes, and the one the deleted
+/// key journal made: the RAM write is what in-process readers (the producer serving
+/// a peer, the write-back adopting the pinned set) see and must stay synchronous,
+/// while durability is only ever read by a LATER process after a restart, so it is
+/// free to lag. Records go out over
 /// a non-blocking unbounded channel and every disk touch happens on the writer.
 ///
 /// # Retention: none
@@ -418,6 +423,21 @@ impl Read for ArtifactResponse {
 pub struct ArtifactStore {
     ram: Arc<RwLock<BTreeMap<u64, Arc<AgreedArtifact>>>>,
     durable: Option<tokio::sync::mpsc::UnboundedSender<(u64, Vec<u8>)>>,
+    /// One notifier per [`Self::subscribe`] caller, fired by every accepted
+    /// [`Self::insert`].
+    ///
+    /// THE EDGE THAT USED TO BE `BeaconKeys::subscribe`, moved here with the fact
+    /// (П-3): "a key this node could not resolve became resolvable" now means
+    /// "an artifact landed", because the artifact is the only thing a key comes
+    /// from. Its two consumers are the quarantined-σ promoter and the
+    /// `KeyAvailable` event bridge.
+    ///
+    /// PER CONSUMER, never a shared handle, and the reason is the one
+    /// `beacon::keys`' module header gave for the store it replaces: `notify_one`
+    /// wakes exactly ONE waiter, so two consumers sharing a handle silently
+    /// swallow each other's wake-ups — and each loss here is a silent degrade (an
+    /// epoch left vote-only, or a σ that never leaves quarantine).
+    listeners: Arc<Mutex<Vec<Arc<tokio::sync::Notify>>>>,
 }
 
 impl ArtifactStore {
@@ -437,7 +457,18 @@ impl ArtifactStore {
         Self {
             ram: Arc::new(RwLock::new(ram)),
             durable: Some(durable),
+            listeners: Arc::default(),
         }
+    }
+
+    /// A notifier of this consumer's OWN, fired by every accepted [`Self::insert`].
+    /// See the field's doc for why it is never shared.
+    pub fn subscribe(&self) -> Arc<tokio::sync::Notify> {
+        let handle = Arc::new(tokio::sync::Notify::new());
+        if let Ok(mut listeners) = self.listeners.lock() {
+            listeners.push(handle.clone());
+        }
+        handle
     }
 
     /// Record `artifact` as the agreement's output for `epoch`.
@@ -464,10 +495,27 @@ impl ArtifactStore {
             // is gone for the rest of the process, which costs a re-fetch after
             // the next restart and nothing now.
             if durable.send((epoch, encoded)).is_err() {
+                // Counted as well as logged: "accepted in RAM, never written" is
+                // precisely the state §5.4 allows and an operator must be able to
+                // see, and a `warn!` alone is not a signal anything scrapes. Same
+                // arm the writer's own `sync` failure lands on
+                // (`dpos_artifact_store_sync_failed_total`) — the value stands, the
+                // durability does not.
+                metrics::counter!("dpos_artifact_store_handoff_failed_total").increment(1);
                 warn!(
                     epoch,
-                    "artifact store: the durable writer is gone; this epoch stays RAM-only"
+                    "artifact store: the durable writer is gone; this epoch stays RAM-only \
+                     and must be re-fetched from a peer after a restart"
                 );
+            }
+        }
+        // Strictly AFTER the durable hand-off, and unconditionally for every
+        // accepted insert: what a waiter does on the wake-up is re-read, which is
+        // idempotent, so a conditional fire would have to reason about which
+        // reader's answer this particular artifact can change.
+        if let Ok(listeners) = self.listeners.lock() {
+            for handle in listeners.iter() {
+                handle.notify_one();
             }
         }
         true
@@ -479,7 +527,6 @@ impl ArtifactStore {
     }
 
     /// Whether this node can answer `Have` for `epoch`.
-    #[cfg(test)]
     pub fn has(&self, epoch: u64) -> bool {
         self.lock().contains_key(&epoch)
     }
@@ -503,6 +550,700 @@ impl ArtifactStore {
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
+}
+
+/// Read the FROZEN on-chain `dkgQual[epoch]` bit: did the committee CHANGE at
+/// `epoch`, i.e. did its DKG re-mint the key. `None` = could not read yet, which
+/// the caller must treat as undecided and never as "no re-mint".
+///
+/// The `committed` leg the raw staking read carries is NOT here, and that is Д-7
+/// resolved rather than dropped: the module answers a record only for an epoch
+/// whose committee it actually read, so "is it committed" is answered by having a
+/// record at all (`committee::CommitteeReadsFacade::dkg_qual`, whose second leg is
+/// unconditionally `true`). The `!(bit || committed) ⇒ None` guard this used to
+/// carry had exactly one live meaning left — `false` — so keeping it would be a
+/// second name for the `None` above.
+pub(crate) type ChangedAt = Arc<dyn Fn(u64) -> Option<bool> + Send + Sync>;
+
+/// `epoch → the epoch that MINTED the key in force at it`, memoised on disk.
+///
+/// # The rule
+///
+/// `minted_at(E) = last e in (BOOTSTRAP, E] with changed[e], else BOOTSTRAP`. The
+/// bits are set deterministically by the contract at `commitEpochCommittee`
+/// (`changed[e] = committee[e] != committee[e−1]`) and never mutated, so a
+/// resolved answer is a function of frozen chain facts and cannot change later.
+/// The deterministic bootstrap epoch mints unconditionally.
+///
+/// # Why it is DURABLE, which is the part the project did not say
+///
+/// The project keeps this memo ("правила memo сохраняются") and deletes the key
+/// journal. Those two are only compatible if the memo survives a restart, and the
+/// key journal's own doc says why: the walk reads the chain, and "the `dkgQual`
+/// read is exactly what is NOT answerable while a restarted node's EL is still
+/// catching up" — the gap that store existed to close. Worse than "slow": the
+/// committee module answers a bit only inside
+/// `[epoch(anchor) − SCHEME_RETENTION_EPOCHS, epoch(anchor) + lookahead]`
+/// (`committee/mod.rs`), and folds everything below that window into the same
+/// `None`, so a walk that must reach a mint older than the window never terminates
+/// in an answer at all. A restarted node with an empty memo would therefore hold a
+/// durable artifact it cannot ADDRESS.
+///
+/// Persisting the memo closes that for every epoch this node ever resolved AND can
+/// still REACH, and the cost is a `(u64, u64)` per epoch against the whole key
+/// journal. Two epochs it does not close, both stated rather than implied:
+///
+/// - a FRESH node (empty memo) whose mint is older than the window — see this
+///   module's `open_mint_memo` doc;
+/// - an epoch whose memo entry lies BELOW an unreadable bit: the walk answers
+///   `None` at the first undecided bit (it must — recording a guess is
+///   unrecoverable), so a node restarting more than `SCHEME_RETENTION_EPOCHS`
+///   epochs behind cannot read PAST the gap to the entry underneath it. The answer
+///   is on disk and unreachable until the bits above it become readable. Low
+///   reachability rather than closed: the restarted node's committee anchor is
+///   equally old, and `cold_start_jump` bounds the jump to two epochs.
+///
+/// # Two rules carried over verbatim, because breaking either is unrecoverable
+///
+/// - **`None` is never memoised.** An undecided bit means "retry", and recording it
+///   would pin the bootstrap answer onto an epoch the chain has not committed yet
+///   — a wrong mint is a wrong key for the epoch's whole life.
+/// - **Write-once.** A resolved answer is frozen chain fact; a second, different
+///   answer for one epoch cannot be honest, so the first stands and the
+///   disagreement is loud.
+#[derive(Clone)]
+pub(crate) struct MintIndex {
+    changed: ChangedAt,
+    /// `epoch → minted_at`. Shared by clone: every reader of the same plane shares
+    /// one, which is what makes the walk cost one step instead of `E − BOOTSTRAP`
+    /// per certificate.
+    memo: Arc<Mutex<BTreeMap<u64, u64>>>,
+    /// Decided bits, so the walk pays one chain read per epoch per PROCESS rather
+    /// than per call. Not persisted: it is derivable and the memo above is what has
+    /// to survive.
+    bits: Arc<Mutex<BTreeMap<u64, bool>>>,
+    /// Durable sink for resolved answers. `None` ⇒ RAM-only (tests, and any config
+    /// without a partition). Non-blocking by construction, like every other durable
+    /// half in this module: readers see the RAM map, and durability is only ever
+    /// read by a LATER process.
+    persist: Option<tokio::sync::mpsc::UnboundedSender<(u64, u64)>>,
+}
+
+impl MintIndex {
+    /// A RAM-only index over `changed`.
+    pub(crate) fn new(changed: ChangedAt) -> Self {
+        Self {
+            changed,
+            memo: Arc::default(),
+            bits: Arc::default(),
+            persist: None,
+        }
+    }
+
+    /// The epoch that minted the key in force at `epoch`, or `None` when the chain
+    /// cannot answer yet.
+    ///
+    /// FLAT `Option`, unlike the two-layer `Option<Option<u64>>` this replaces. The
+    /// inner layer meant "`epoch` predates the beacon entirely", and it had one
+    /// consumer beyond its own answer: `signer_scheme`'s `Signs` arm was safe only
+    /// because that `Some(None)` made the material resolve to `None` below the
+    /// bootstrap epoch. That arm STATES the gate itself now
+    /// (`mandatory_at(epoch).then(|| material(..))`), so the layer has no second
+    /// reader and collapsing it removes a distinction every caller was flattening
+    /// anyway — "not now" and "never" both mean "no key here".
+    pub(crate) fn minted_at(&self, epoch: u64) -> Option<u64> {
+        if epoch < super::actor::DETERMINISTIC_BOOTSTRAP_EPOCH {
+            return None;
+        }
+        if let Some(hit) = self.memo.lock().ok().and_then(|m| m.get(&epoch).copied()) {
+            return Some(hit);
+        }
+        let mut answer = None;
+        for e in (super::actor::DETERMINISTIC_BOOTSTRAP_EPOCH + 1..=epoch).rev() {
+            // A memoised LOWER epoch answers this one too, by monotonicity: nothing
+            // between it and `epoch` had its bit set, or the scan would have stopped.
+            if let Some(hit) = self.memo.lock().ok().and_then(|m| m.get(&e).copied()) {
+                answer = Some(hit);
+                break;
+            }
+            match self.bit(e) {
+                Some(true) => {
+                    answer = Some(e);
+                    break;
+                }
+                Some(false) => continue,
+                // Undecided: abort WITHOUT recording anything.
+                None => return None,
+            }
+        }
+        let minted_at = answer.unwrap_or(super::actor::DETERMINISTIC_BOOTSTRAP_EPOCH);
+        self.record(epoch, minted_at);
+        Some(minted_at)
+    }
+
+    /// One decided bit, cached for the process.
+    fn bit(&self, epoch: u64) -> Option<bool> {
+        if let Some(hit) = self.bits.lock().ok().and_then(|b| b.get(&epoch).copied()) {
+            return Some(hit);
+        }
+        let bit = (self.changed)(epoch)?;
+        if let Ok(mut b) = self.bits.lock() {
+            b.insert(epoch, bit);
+        }
+        Some(bit)
+    }
+
+    /// Write-once record plus the durable offer. A DIFFERING second answer is
+    /// fork-grade — two mint epochs for one epoch cannot both be chain fact — so it
+    /// is kept loud and the first answer stands.
+    fn record(&self, epoch: u64, minted_at: u64) {
+        let fresh = match self.memo.lock() {
+            Ok(mut memo) => match memo.get(&epoch).copied() {
+                Some(existing) if existing != minted_at => {
+                    warn!(
+                        epoch,
+                        existing,
+                        offered = minted_at,
+                        "mint index: a DIFFERING mint epoch for one epoch — keeping the \
+                         first; two answers cannot both be chain fact"
+                    );
+                    metrics::counter!("dpos_mint_index_conflict_total").increment(1);
+                    false
+                }
+                Some(_) => false,
+                None => {
+                    memo.insert(epoch, minted_at);
+                    true
+                }
+            },
+            Err(_) => false,
+        };
+        if !fresh {
+            return;
+        }
+        if let Some(tx) = self.persist.as_ref() {
+            if tx.send((epoch, minted_at)).is_err() {
+                warn!(
+                    epoch,
+                    "mint index: the durable writer is gone; this answer is in memory only"
+                );
+            }
+        }
+    }
+}
+
+/// `PK_epoch` and the public polynomial, read from their ONE owner (П-3).
+///
+/// Two facts and nothing else: the chain says WHICH epoch minted the key in force
+/// at `epoch` ([`MintIndex`]), and that mint's quorum-certified artifact carries the
+/// key ([`ArtifactStore`]). There is no store of keys any more — `BeaconKeys`, its
+/// three provenance tiers, its journal and the ladder over them are gone, and with
+/// them the class where "the key I rebuilt" and "the key the network attested" were
+/// two possible values of one map entry.
+#[derive(Clone)]
+pub(crate) struct KeyIndex {
+    artifacts: ArtifactStore,
+    mints: MintIndex,
+}
+
+impl KeyIndex {
+    pub(crate) fn new(artifacts: ArtifactStore, mints: MintIndex) -> Self {
+        Self { artifacts, mints }
+    }
+
+    /// The epoch that minted the key in force at `epoch`.
+    pub(crate) fn minted_at(&self, epoch: u64) -> Option<u64> {
+        self.mints.minted_at(epoch)
+    }
+
+    /// `PK_epoch` in force at `epoch`. SYNCHRONOUS and I/O-free: "not resolvable"
+    /// is the answer a vote path acts on, never a reason to go fetch.
+    pub(crate) fn key_at(&self, epoch: u64) -> Option<GroupPublic> {
+        let minted_at = self.mints.minted_at(epoch)?;
+        self.artifacts
+            .get(minted_at)
+            .map(|a| *group_public_key(&a.0.group_key))
+    }
+
+    /// `(minting epoch, public polynomial)` in force at `epoch` — what a partial is
+    /// signed and verified against. The share that pairs with it is the
+    /// `CeremonyStore`'s, keyed by the SAME minting epoch.
+    pub(crate) fn sharing_at(&self, epoch: u64) -> Option<(u64, Sharing<MinSig>)> {
+        let minted_at = self.mints.minted_at(epoch)?;
+        let artifact = self.artifacts.get(minted_at)?;
+        Some((minted_at, artifact.0.group_key.public().clone()))
+    }
+
+    /// Whether the mint's artifact is already local — the probe an acquisition
+    /// short-circuits on.
+    pub(crate) fn holds_mint_of(&self, epoch: u64) -> Option<bool> {
+        Some(self.artifacts.has(self.mints.minted_at(epoch)?))
+    }
+}
+
+/// ONE bounded acquisition of a MINTING epoch's artifact — the single shape both
+/// classes that need one speak (Д-11).
+///
+/// # Why this is a trait and was a closure
+///
+/// Journal 5.0's Д-11 kept `ArtifactFetch` a closure because it had exactly one
+/// implementation and "a trait from one method with one implementor is another type
+/// on the boundary with no second caller to justify it". The second caller appears
+/// HERE: a validator that is not in `committee[E]` needs the same acquisition the
+/// follower needed, over a different transport, and the CALLER must not be able to
+/// tell them apart — that is what makes the non-member's route and the follower's
+/// route one code path rather than two that agree today.
+///
+/// # The contract
+///
+/// One bounded attempt, throttled to at most one network round-trip per epoch per
+/// [`PULL_MIN_INTERVAL`], answering whether the store now holds `minted_at`. An
+/// implementation may only return `true` for an artifact it VERIFIED against
+/// `committee[minted_at]` read from this node's own chain state — a lying transport
+/// is caught by the implementation, never by the caller.
+pub(crate) trait AcquireArtifact: Send + Sync {
+    fn fetch(&self, minted_at: u64) -> futures::future::BoxFuture<'_, bool>;
+}
+
+/// The handle every consumer of [`AcquireArtifact`] holds.
+pub(crate) type AcquireMint = Arc<dyn AcquireArtifact>;
+
+/// The BYTES half of an acquisition: one transport's answer for a minting epoch.
+///
+/// `None` for every negative alike — no artifact, a peer/upstream too old to know
+/// the method, a dead link. The three are one answer to the caller (stay unpinned,
+/// ask again) and separating them would only invite someone to treat one as a
+/// fault. Two implementations: the follower's cert-upstream RPC and, on a
+/// validator, the `BEACON_RESOLVER_CHANNEL` pull.
+pub(crate) type ArtifactBytes =
+    Arc<dyn Fn(u64) -> futures::future::BoxFuture<'static, Option<Vec<u8>>> + Send + Sync>;
+
+/// [`AcquireArtifact`] over a byte transport: throttle, fetch, decode, VERIFY
+/// against `committee[minted_at]`, file, and hand the artifact to the write-back.
+///
+/// ONE body for every transport that delivers bytes, which is the half that must
+/// not diverge: the verify is what makes a lying upstream and a lying peer the same
+/// non-event, and a second copy of it is a second place for the check to be
+/// weakened. The follower used to carry this inline; the non-member validator half
+/// of PLAN row 5.1 is the second caller that makes it shared code rather than a
+/// generalisation for its own sake.
+pub(crate) struct TransportAcquire<E: Clock> {
+    chain_id: u64,
+    committees: CommitteeSource,
+    bytes: ArtifactBytes,
+    store: ArtifactStore,
+    adopt: Option<tokio::sync::mpsc::Sender<AgreedArtifact>>,
+    clock: E,
+    /// Per-epoch budget, pruned as it expires — the same `PULL_MIN_INTERVAL` the
+    /// plane's pull seam owes its peers. Without it a want that arrives on every
+    /// certificate (~1/s) would be one round-trip a second per unresolved epoch.
+    next_allowed: Arc<Mutex<BTreeMap<u64, SystemTime>>>,
+    metrics: BeaconMetrics,
+}
+
+impl<E: Clock> TransportAcquire<E> {
+    pub fn new(
+        chain_id: u64,
+        committees: CommitteeSource,
+        bytes: ArtifactBytes,
+        store: ArtifactStore,
+        adopt: Option<tokio::sync::mpsc::Sender<AgreedArtifact>>,
+        clock: E,
+        metrics: BeaconMetrics,
+    ) -> Self {
+        Self {
+            chain_id,
+            committees,
+            bytes,
+            store,
+            adopt,
+            clock,
+            next_allowed: Arc::default(),
+            metrics,
+        }
+    }
+
+    /// `false` when this epoch's budget has not refilled yet.
+    fn claim(&self, minted_at: u64) -> bool {
+        let now = self.clock.current();
+        let mut next = self
+            .next_allowed
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        next.retain(|_, at| *at > now);
+        if next.contains_key(&minted_at) {
+            return false;
+        }
+        next.insert(minted_at, now + PULL_MIN_INTERVAL);
+        true
+    }
+}
+
+impl<E: Clock + Send + Sync> AcquireArtifact for TransportAcquire<E> {
+    fn fetch(&self, minted_at: u64) -> futures::future::BoxFuture<'_, bool> {
+        Box::pin(async move {
+            // Short-circuit on a local hit: an acquisition is never the way to read
+            // what is already held.
+            if self.store.has(minted_at) {
+                return true;
+            }
+            if !self.claim(minted_at) {
+                return false;
+            }
+            let Some(bytes) = (self.bytes)(minted_at).await else {
+                self.metrics.follower_artifact_miss.inc();
+                return false;
+            };
+            let artifact = match decode_artifact(&bytes) {
+                Ok(artifact) => artifact,
+                Err(e) => {
+                    warn!(
+                        epoch = minted_at,
+                        ?e,
+                        "beacon: a served epoch artifact does not decode"
+                    );
+                    self.metrics.dkg_artifact_rejected.inc();
+                    return false;
+                }
+            };
+            match verify_artifact_for_epoch(
+                &mut OsRng,
+                self.chain_id,
+                &self.committees,
+                minted_at,
+                &artifact,
+            ) {
+                Ok(()) => {}
+                // Not the server's fault and not a verdict on the artifact: this
+                // node has not reached the block that committed
+                // `committee[minted_at]`. Drop it and re-ask later.
+                Err(ArtifactError::CommitteeUnreadable(_)) => {
+                    self.metrics.dkg_artifact_unverifiable.inc();
+                    return false;
+                }
+                Err(e) => {
+                    warn!(
+                        epoch = minted_at,
+                        ?e,
+                        "beacon: REJECTING a served epoch artifact — it does not carry a \
+                         committee[epoch] quorum; staying on vote-only admission"
+                    );
+                    self.metrics.dkg_artifact_rejected.inc();
+                    return false;
+                }
+            }
+            let pk = *group_public_key(&artifact.0.group_key);
+            let first = self.store.insert(minted_at, artifact.clone());
+            self.metrics.follower_artifact_adopted.inc();
+            if first {
+                debug!(
+                    epoch = minted_at,
+                    group_public = %pk_prefix(&pk),
+                    "beacon: PK_epoch obtained and verified against committee[epoch]"
+                );
+                // The write-back hop, where the caller wired one: a pulled artifact
+                // must reach the actor's adoption rails exactly as an agreed one
+                // does, or a member whose own instance died stays shareless for an
+                // epoch it was elected to sign in (see this module's header).
+                if let Some(adopt) = self.adopt.as_ref() {
+                    let _ = adopt.try_send(artifact);
+                }
+            }
+            true
+        })
+    }
+}
+
+/// First 8 serialized bytes of a group public key, hex — a stable, greppable value
+/// fingerprint. Enough to byte-diff key VALUES across nodes from logs alone; the
+/// full G2 hex is 192 chars of log noise.
+///
+/// It lived in `beacon::keys` until that module's store was deleted (П-3); it is a
+/// formatter for the fact this module now owns.
+pub(crate) fn pk_prefix(pk: &GroupPublic) -> String {
+    let mut s = pk.to_string();
+    s.truncate(16);
+    s
+}
+
+/// ONE artifact builder for every test in this module tree that needs a
+/// [`KeyIndex`] to answer, rather than one per test module.
+///
+/// The committee is a throwaway set whose only job is to make a real
+/// `Finalization` constructible: nothing downstream of [`ArtifactStore::insert`]
+/// re-verifies (verification happens BEFORE the insert on every production path —
+/// `verify_artifact` at the bridge, the instance's own certificate on the plane),
+/// so a caller that wants a store answering for `minted_at` wants exactly this.
+#[cfg(test)]
+pub(crate) fn artifact_with_key(
+    minted_at: u64,
+    group_key: crate::beacon::outcome::DkgOutcome,
+) -> AgreedArtifact {
+    use alloy_primitives::B256;
+    use commonware_codec::DecodeExt as _;
+    use commonware_consensus::{
+        simplex::types::{Finalization, Finalize, Proposal},
+        types::{Epoch, Round, View},
+    };
+    use commonware_cryptography::{ed25519::PrivateKey as Ed25519PrivateKey, Signer as _};
+    use commonware_math::algebra::Random as _;
+    use commonware_utils::{ordered::BiMap, TryCollect as _};
+    use fluentbase_bls::{keys::ValidatorBlsKeypair, scheme::build_signer, BlsPubkey};
+    use rand_08::rngs::StdRng;
+    use rand_core::SeedableRng as _;
+
+    let mut rng = StdRng::seed_from_u64(0xA27 ^ minted_at);
+    let peers: Vec<Ed25519PrivateKey> = (0..4)
+        .map(|_| Ed25519PrivateKey::random(&mut rng))
+        .collect();
+    let bls: Vec<ValidatorBlsKeypair> = (0..4)
+        .map(|_| ValidatorBlsKeypair::generate(&mut rng))
+        .collect();
+    let bimap: BiMap<fluentbase_bls::PeerPubkey, BlsPubkey> = peers
+        .iter()
+        .zip(bls.iter())
+        .map(|(p, b)| {
+            (
+                p.public_key(),
+                BlsPubkey::decode(b.public_bytes().as_slice()).expect("bls pubkey"),
+            )
+        })
+        .try_collect()
+        .expect("unique committee");
+    let proposal = crate::beacon::dkg_agree::DkgProposal {
+        target_epoch: minted_at,
+        logs: (0..4u8).map(|i| (i, B256::repeat_byte(0x40 + i))).collect(),
+        group_key,
+        confirms: Vec::new(),
+    };
+    let ns = dkg_namespace(&fluent_namespace(1));
+    let round = Round::new(Epoch::new(minted_at), View::new(1));
+    let subject = Proposal::new(round, View::new(0), proposal.digest());
+    let finalizes: Vec<_> = bls
+        .iter()
+        .take(3)
+        .map(|kp| {
+            let signer =
+                build_signer(&ns, bimap.clone(), kp, minted_at, None).expect("committee member");
+            Finalize::sign(&signer, subject.clone()).expect("sign")
+        })
+        .collect();
+    let cert = Finalization::from_finalizes(
+        &build_verifier(&ns, bimap, minted_at, None),
+        finalizes.iter(),
+        &Sequential,
+    )
+    .expect("quorum");
+    (proposal, cert)
+}
+
+/// The ONE test seam for "this node holds the epoch key", for every module that
+/// needs a [`KeyIndex`] to answer.
+///
+/// A test states a MINT — an epoch plus the real `Output` its ceremony produced —
+/// and the fixture does what production does with one: files the artifact that
+/// carries it and records the chain's `changed` bit at that epoch. There is no way
+/// to state a bare `GroupPublic`, and that is the point: the key is a projection of
+/// the artifact now (П-3), so a fixture that could inject one without an artifact
+/// would be testing a state the node cannot be in.
+#[cfg(test)]
+pub(crate) struct MintFixture {
+    pub(crate) artifacts: ArtifactStore,
+    bits: Arc<Mutex<BTreeSet<u64>>>,
+    /// How many times the CHAIN was asked for an epoch's `changed` bit — the rung
+    /// the ladder pays for, in production a staticcall. A test that ingests many
+    /// certificates of one epoch asserts on this to pin that the walk is memoised
+    /// and the chain is read ONCE, not once per certificate.
+    chain_reads: Arc<Mutex<BTreeMap<u64, u32>>>,
+    pub(crate) keys: KeyIndex,
+}
+
+#[cfg(test)]
+impl MintFixture {
+    pub(crate) fn new() -> Self {
+        let artifacts = ArtifactStore::new();
+        let bits: Arc<Mutex<BTreeSet<u64>>> = Arc::default();
+        let chain_reads: Arc<Mutex<BTreeMap<u64, u32>>> = Arc::default();
+        let changed: ChangedAt = {
+            let bits = bits.clone();
+            let reads = chain_reads.clone();
+            Arc::new(move |e| {
+                *reads
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .entry(e)
+                    .or_default() += 1;
+                Some(
+                    bits.lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .contains(&e),
+                )
+            })
+        };
+        let keys = KeyIndex::new(artifacts.clone(), MintIndex::new(changed));
+        Self {
+            artifacts,
+            bits,
+            chain_reads,
+            keys,
+        }
+    }
+
+    /// How many times the chain was asked for `epoch`'s bit since this fixture was
+    /// built.
+    pub(crate) fn chain_reads(&self, epoch: u64) -> u32 {
+        self.chain_reads
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&epoch)
+            .copied()
+            .unwrap_or_default()
+    }
+
+    /// Record that the chain says `epoch` re-minted, WITHOUT the artifact arriving.
+    ///
+    /// The two halves are separate because they happen at different times and the
+    /// order is load-bearing: the contract writes the bit with the committee, an
+    /// epoch before the epoch, while the artifact arrives when the agreement
+    /// converges or a peer serves it. A fixture that set the bit LATE would be
+    /// staging a chain that changed its own history — and [`MintIndex`]'s write-once
+    /// memo correctly refuses to notice, so the test would fail for the wrong reason.
+    pub(crate) fn changed(&self, epoch: u64) {
+        self.bits
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(epoch);
+    }
+
+    /// The artifact for a mint the chain has already recorded ARRIVES.
+    pub(crate) fn arrive(&self, minted_at: u64, group_key: crate::beacon::outcome::DkgOutcome) {
+        self.artifacts
+            .insert(minted_at, artifact_with_key(minted_at, group_key));
+    }
+
+    /// Both halves at once, for a fixture that only needs the end state.
+    pub(crate) fn mint(&self, minted_at: u64, group_key: crate::beacon::outcome::DkgOutcome) {
+        self.changed(minted_at);
+        self.arrive(minted_at, group_key);
+    }
+}
+
+/// A [`ChangedAt`] over a fixed set of CHANGE epochs — the frozen chain record a
+/// test asserts against.
+#[cfg(test)]
+pub(crate) fn changed_at(bits: &[u64]) -> ChangedAt {
+    let set: BTreeSet<u64> = bits.iter().copied().collect();
+    Arc::new(move |e| Some(set.contains(&e)))
+}
+
+/// A [`KeyIndex`] over a store the CALLER holds, so a test can make the mint's
+/// artifact ARRIVE mid-test — the one edge a key resolve turns on.
+#[cfg(test)]
+pub(crate) fn key_index_over(artifacts: ArtifactStore, bits: &[u64]) -> KeyIndex {
+    KeyIndex::new(artifacts, MintIndex::new(changed_at(bits)))
+}
+
+/// Open the durable mint memo and join it to a [`MintIndex`] over `changed`, or
+/// hand back a RAM-only index when no partition is configured.
+///
+/// # What this closes and what it does not
+///
+/// Rehydrating the memo means a restarted node needs NO chain read for any epoch it
+/// already resolved, and one step for the next — which is the whole of what the
+/// deleted key journal provided for this question, and strictly more: the journal
+/// held `epoch → pk` for MINT epochs only, so it never answered a carry epoch at
+/// all (W1 did, and W1 is gone).
+///
+/// It does NOT close a FRESH node whose datadir is empty and whose committee last
+/// minted more than `SCHEME_RETENTION_EPOCHS` epochs ago: its walk must reach that
+/// mint, every epoch below its own anchor's window folds to `None`, and no memo
+/// entry exists to stop the walk. That node stays on vote-only admission for the
+/// epoch — which is I4's residual and NOT a regression: the deleted ladder had the
+/// identical walk and the deleted journal was empty for it too.
+pub(crate) async fn open_mint_memo<E>(
+    journal_context: E,
+    writer_context: E,
+    partition: &str,
+    changed: ChangedAt,
+) -> eyre::Result<(MintIndex, Option<Handle<()>>)>
+where
+    E: Storage + Clock + Metrics + Spawner + Clone + Send + 'static,
+{
+    if partition.is_empty() {
+        return Ok((MintIndex::new(changed), None));
+    }
+    let mut store: Metadata<E, U64, Vec<u8>> = Metadata::init(
+        journal_context,
+        MetadataConfig {
+            partition: partition.to_string(),
+            codec_config: ((0..=u64::BITS as usize).into(), ()),
+        },
+    )
+    .await
+    .map_err(|e| eyre::eyre!("opening the durable mint memo: {e}"))?;
+    let mut memo = BTreeMap::new();
+    let mut rejected = 0u64;
+    for key in store.keys() {
+        match store
+            .get(key)
+            .and_then(|b| <[u8; 8]>::try_from(&b[..]).ok())
+        {
+            Some(bytes) => {
+                memo.insert(u64::from(key), u64::from_be_bytes(bytes));
+            }
+            None => rejected += 1,
+        }
+    }
+    metrics::counter!("dpos_mint_memo_replayed_total").increment(memo.len() as u64);
+    metrics::counter!("dpos_mint_memo_replay_rejected_total").increment(rejected);
+    tracing::info!(
+        entries = memo.len(),
+        rejected,
+        "rehydrated the beacon mint memo from disk"
+    );
+    // THE TORN OUTCOME, NAMED. A record of the wrong length is dropped, and a memo
+    // that dropped everything behaves exactly like a memo that was empty — so
+    // without this line the two are distinguishable only by a counter nobody was
+    // told to look at. There is no state to enter: the walk re-resolves whatever it
+    // can still read, which is the correct response to a partly lost memo, and
+    // `None` was never memoised so nothing wrong can have been kept.
+    if rejected > 0 {
+        warn!(
+            rejected,
+            entries = memo.len(),
+            "mint memo: PARTLY UNREADABLE — every rejected record is re-resolved from the \
+             chain, and any epoch whose bits are no longer readable stays unaddressable \
+             until they are"
+        );
+    }
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<(u64, u64)>();
+    let writer = writer_context.spawn(move |_| async move {
+        while let Some((epoch, minted_at)) = rx.recv().await {
+            store.put(U64::new(epoch), minted_at.to_be_bytes().to_vec());
+            // One record per epoch entered, so there is no batch worth waiting for
+            // and the answer is durable the moment it is known.
+            if let Err(e) = store.sync().await {
+                metrics::counter!("dpos_mint_memo_sync_failed_total").increment(1);
+                warn!(
+                    epoch,
+                    ?e,
+                    "mint memo: sync failed; this answer is lost on a hard kill and the walk \
+                     re-runs for it after a restart"
+                );
+                continue;
+            }
+            metrics::counter!("dpos_mint_memo_appended_total").increment(1);
+        }
+    });
+    Ok((
+        MintIndex {
+            changed,
+            memo: Arc::new(Mutex::new(memo)),
+            bits: Arc::default(),
+            persist: Some(tx),
+        },
+        Some(writer),
+    ))
 }
 
 /// The stored artifacts a restarting node has to push back through the write-back,
@@ -652,6 +1393,18 @@ where
 
 /// Drain `rx` onto the journal. The RAM store hands records over and returns
 /// immediately; every disk touch happens here.
+///
+/// # What "the write is retried" means, exactly (§5.4)
+///
+/// `Metadata::put` is an in-memory insert and `sync` commits the WHOLE map, so a
+/// failed `sync` loses nothing it was given: the record stays staged and the next
+/// `sync` re-attempts it. That is the retry §5.4 asks for, and its trigger is the
+/// next record on `rx` — nothing else calls `sync` here. Artifacts arrive once per
+/// committee change, so the retry is real but can be far away, and the gap is
+/// bounded by the loss being LOUD rather than by a timer (a timer is the thing this
+/// plane does not have and does not want). PLAN row 5.4 is where the beacon's clock
+/// becomes a `watch` every task can subscribe to; a clock-driven re-`sync` belongs
+/// there and not in a second consumer of today's single-consumer height channel.
 pub(crate) fn spawn_writer<E>(
     context: E,
     mut journal: ArtifactJournal<E>,
@@ -670,7 +1423,8 @@ where
                 warn!(
                     epoch,
                     ?e,
-                    "artifact store: sync failed; this epoch is lost on a hard kill and must be \
+                    "artifact store: sync failed; the record stays staged and the next artifact's \
+                     sync re-attempts it — until then a hard kill loses this epoch and it must be \
                      re-fetched from a peer"
                 );
                 continue;
@@ -1317,6 +2071,269 @@ mod tests {
                 "the artifact did not survive the restart"
             );
             assert_eq!(*restarted.get(TARGET).expect("rehydrated"), mine);
+        });
+    }
+
+    /// PERSIST ERROR OF THE ARTIFACT (project §5.4; PLAN row 5.1 names this test).
+    /// A failing durable half must NOT gate acceptance: the artifact stands in RAM,
+    /// the epoch stays VERIFIABLE off it, and the failure is observable.
+    ///
+    /// Why RAM acceptance is the rule rather than a convenience: refusing an
+    /// artifact this node cannot journal would turn a local disk fault into "no
+    /// `PK_E` ⇒ every σ of the epoch `Pending` ⇒ execution parks" — a node that
+    /// cannot WRITE would stop being able to VERIFY, which is the one failure mode
+    /// §5.4 refuses to buy.
+    ///
+    /// The injected class is the durable writer being GONE (its task died, or the
+    /// drain closed). It is the class this runtime can inject — commonware's
+    /// deterministic `Storage` is in-memory and has no fault knob, so a real
+    /// `Metadata::sync` error is not reachable here — and it is the SAME arm: value
+    /// kept, durability lost, operator told. The `sync` half is
+    /// `dpos_artifact_store_sync_failed_total` in this module's writer.
+    ///
+    /// Falsifier: `insert` answering `false`, or the key going unresolvable, when
+    /// the durable half is dead; the counter staying at 0 (a silent loss of
+    /// durability, which is the state an operator must never have to infer).
+    #[test]
+    fn an_artifact_whose_durable_write_is_lost_is_kept_in_ram_and_counted() {
+        use metrics_util::debugging::{DebugValue, DebuggingRecorder};
+        let recorder = DebuggingRecorder::new();
+        let snap = recorder.snapshotter();
+        metrics::with_local_recorder(&recorder, || {
+            let c = committee(5);
+            let mine = artifact(&c, TARGET);
+            // The writer end dropped: what a dead writer task leaves behind.
+            let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+            drop(rx);
+            let store = ArtifactStore::with_persistence(Vec::new(), tx);
+            assert!(
+                store.insert(TARGET, mine.clone()),
+                "the artifact is ACCEPTED — the durable half does not gate it"
+            );
+            assert_eq!(
+                *store.get(TARGET).expect("held in RAM"),
+                mine,
+                "and it is the artifact that was offered, not a placeholder"
+            );
+            // And the node keeps verifying: the key of the epoch resolves off the
+            // RAM half alone, which is the whole point of accepting it.
+            let keys = key_index_over(store.clone(), &[TARGET]);
+            assert!(
+                keys.key_at(TARGET).is_some(),
+                "`PK_epoch` resolves, so certificates of the epoch are still checked"
+            );
+            assert_eq!(
+                keys.holds_mint_of(TARGET),
+                Some(true),
+                "and nothing asks the network for an artifact this node holds"
+            );
+        });
+        let lost: u64 = snap
+            .snapshot()
+            .into_vec()
+            .into_iter()
+            .filter(|(k, ..)| k.key().name() == "dpos_artifact_store_handoff_failed_total")
+            .map(|(.., v)| match v {
+                DebugValue::Counter(c) => c,
+                _ => 0,
+            })
+            .sum();
+        assert_eq!(
+            lost, 1,
+            "the lost durable write is OBSERVABLE — one counter increment, named"
+        );
+    }
+
+    /// (П-3, RECREATED — `resolve.rs::a_stable_committees_attested_mint_outlives_the_retention_window`
+    /// went with its file) A STABLE committee's mint outlives the retention window,
+    /// and now the restart with it.
+    ///
+    /// WHY THE CLAIM SURVIVED ITS OWNER. On a committee that never changes the mint
+    /// is the deterministic bootstrap epoch FOREVER, while every pruner in the plane
+    /// runs frontier-relative — so an epoch-measured window over the wrong store
+    /// deletes the one object every later epoch depends on and nothing re-inserts
+    /// it. That is what the old test guarded, and the shape of the danger did not
+    /// change when the owner did.
+    ///
+    /// WHAT THE OLD ASSERT PROVED, ITEM BY ITEM, AND WHERE EACH ITEM IS NOW:
+    ///
+    /// 1. *A local publication (`KeySource::LocalDkg`) and a carry memo
+    ///    (`KeySource::Carried`) far below the frontier ARE pruned* — the window
+    ///    still bounds growth. GONE AS A CLASS, not moved: W1, W3, `Carried` and the
+    ///    three-tier `BeaconKeys` are deleted, so there is no derived tier left to
+    ///    prune. What is still prunable and still pruned is the σ half
+    ///    (`FollowerRandomness::retain_from`) and this node's own shares
+    ///    (`actor::ceremony_retain_floor`).
+    /// 2. *The attested tier at the mint epoch is EXEMPT from the window, and
+    ///    survives a frontier ten windows above it.* CARRIED HERE, and it is the
+    ///    heart of the test: the owner of the key is the artifact store, which has
+    ///    no prune surface at all, plus the mint memo that ADDRESSES it.
+    /// 3. *Therefore the share gate keeps demoting instead of publishing a divergent
+    ///    key at a far-frontier stable epoch.* GONE AS A CLASS: the divergence gate
+    ///    compared "the key I rebuilt" against "the key the network attested", and
+    ///    [`KeyIndex`] has one value — `WithheldReason::KeyDivergence` and its
+    ///    counter are deleted rather than left unreachable.
+    /// 4. *`ceremony_retain_floor` keeps the single old mint of a stable committee*
+    ///    (the old test read this through the resolver). Already pinned directly, as
+    ///    a unit, by `actor::retain_floor_tests::single_old_mint_on_stable_committee_is_retained`
+    ///    — not duplicated here.
+    ///
+    /// WHAT THIS TEST ADDS that the old one could not: the RESTART. The old owner
+    /// rebuilt its answer by walking the chain's `dkgQual` bits, and that walk cannot
+    /// terminate for this fixture after a restart — the committee module folds every
+    /// epoch below `epoch(anchor) − SCHEME_RETENTION_EPOCHS` into the same `None`
+    /// (`committee/facade.rs`), which the second half models by a `changed` closure
+    /// that answers `None` for every epoch. The durable memo is what still addresses
+    /// the artifact, and the third half is the negative control that says so: the
+    /// same blind chain with a FRESH memo answers nothing at all, which is I4's
+    /// residual stated as an assertion rather than as prose.
+    ///
+    /// Falsifier: any epoch above the mint resolving to a different mint (the walk
+    /// or the memo is wrong); the artifact store losing the entry over a frontier ten
+    /// windows above it; `key_at` at the far frontier answering `None` after the
+    /// restart (the memo is not durable, and a restarted node holds an artifact it
+    /// cannot address); the FRESH index answering the far frontier off a blind chain
+    /// (then the walk does not depend on the memo and the second half proves
+    /// nothing).
+    #[test]
+    fn a_stable_committees_mint_outlives_the_retention_window() {
+        let runner = deterministic::Runner::default();
+        runner.start(|context| async move {
+            const BOOTSTRAP: u64 = super::super::actor::DETERMINISTIC_BOOTSTRAP_EPOCH;
+            /// Ten windows above the mint: whatever the window is, the frontier is
+            /// far outside it.
+            const WINDOWS: u64 = 10;
+            let frontier = BOOTSTRAP + WINDOWS * crate::SCHEME_RETENTION_EPOCHS as u64;
+
+            let c = committee(11);
+            let mint = artifact(&c, BOOTSTRAP);
+            let minted_pk = *group_public_key(&mint.0.group_key);
+
+            let (store, store_writer) = open(
+                context.with_label("journal"),
+                context.with_label("writer"),
+                "stable_artifacts",
+            )
+            .await
+            .expect("open the artifact store");
+            assert!(store.insert(BOOTSTRAP, mint.clone()));
+
+            // THE CHAIN: one mint, at the bootstrap epoch, and a committee that never
+            // changes after it. The asked-epoch log is what makes the restart half
+            // non-vacuous — it shows the second process asking nothing.
+            let asked: Arc<Mutex<Vec<u64>>> = Arc::default();
+            let stable: ChangedAt = {
+                let asked = asked.clone();
+                Arc::new(move |epoch: u64| {
+                    asked.lock().expect("asked").push(epoch);
+                    Some(false)
+                })
+            };
+            let (mints, memo_writer) = open_mint_memo(
+                context.with_label("memo_journal"),
+                context.with_label("memo_writer"),
+                "stable_mints",
+                stable,
+            )
+            .await
+            .expect("open the mint memo");
+            let keys = KeyIndex::new(store.clone(), mints);
+
+            // (1) EVERY epoch from the mint to the far frontier is minted by the
+            // bootstrap epoch — resolved one epoch at a time, as the live callers do
+            // (one `observe_epoch` per epoch entered).
+            for epoch in BOOTSTRAP..=frontier {
+                assert_eq!(
+                    keys.minted_at(epoch),
+                    Some(BOOTSTRAP),
+                    "epoch {epoch} resolved to a mint other than the only one there is"
+                );
+            }
+            assert!(
+                !asked.lock().expect("asked").is_empty(),
+                "the walk never read the chain, so the memo below is memoising nothing"
+            );
+
+            // (2) AND THE KEY IS SERVED THERE. The window is an epoch count and the
+            // frontier is ten of them above the mint; nothing evicted the object that
+            // answers.
+            assert_eq!(
+                keys.key_at(frontier),
+                Some(minted_pk),
+                "the mint's key is gone at a frontier {WINDOWS} windows above it"
+            );
+            assert_eq!(
+                keys.sharing_at(frontier).map(|(at, _)| at),
+                Some(BOOTSTRAP),
+                "the polynomial is served from an epoch other than the mint"
+            );
+            assert_eq!(
+                store.epochs(),
+                vec![BOOTSTRAP],
+                "the artifact store gained or lost an entry over the walk"
+            );
+
+            // Let both writers drain, then stop them: the restart below reopens the
+            // same two partitions.
+            context.sleep(Duration::from_millis(50)).await;
+            for writer in [
+                store_writer.expect("a partitioned store has a writer"),
+                memo_writer.expect("a partitioned memo has a writer"),
+            ] {
+                writer.abort();
+                drop(writer.await);
+            }
+
+            // (3) THE RESTART, over a chain that can no longer answer the bit. Every
+            // epoch of this fixture is more than one window below the anchor's
+            // window floor, and the committee module folds that into `None` — so a
+            // walk has nothing to bottom out on and the memo is the whole answer.
+            let blind_asks: Arc<Mutex<Vec<u64>>> = Arc::default();
+            let blind: ChangedAt = {
+                let asks = blind_asks.clone();
+                Arc::new(move |epoch: u64| {
+                    asks.lock().expect("asks").push(epoch);
+                    None
+                })
+            };
+            let (restarted_store, _) = open(
+                context.with_label("journal2"),
+                context.with_label("writer2"),
+                "stable_artifacts",
+            )
+            .await
+            .expect("reopen the artifact store");
+            let (restarted_mints, _) = open_mint_memo(
+                context.with_label("memo_journal2"),
+                context.with_label("memo_writer2"),
+                "stable_mints",
+                blind.clone(),
+            )
+            .await
+            .expect("reopen the mint memo");
+            let restarted = KeyIndex::new(restarted_store, restarted_mints);
+            assert_eq!(
+                restarted.key_at(frontier),
+                Some(minted_pk),
+                "a restarted node holds the artifact and cannot address it — the memo                  did not survive"
+            );
+            assert!(
+                blind_asks.lock().expect("asks").is_empty(),
+                "the restarted walk asked the chain after all, so the answer above is                  not the memo's: {:?}",
+                blind_asks.lock().expect("asks")
+            );
+
+            // (4) NEGATIVE CONTROL, and it is I4's residual as an assertion: the same
+            // blind chain with a FRESH memo answers nothing. So (3) is the memo's
+            // durability and not something the walk would have managed anyway — and a
+            // node whose datadir is empty and whose mint is older than the window
+            // stays on vote-only admission for the epoch.
+            let fresh = KeyIndex::new(store.clone(), MintIndex::new(blind));
+            assert_eq!(
+                fresh.key_at(frontier),
+                None,
+                "an empty memo resolved a mint below the chain's own read window"
+            );
         });
     }
 

@@ -194,8 +194,17 @@ const MARSHAL_PARTITION_PREFIX: &str = "consensus_marshal";
 /// a real migration, not a rename.**
 pub(crate) const SEED_JOURNAL_PARTITION: &str = "beacon-seed-ordinal";
 
-/// Partition of the durable `epoch → PK_epoch` store. Empty would mean RAM-only.
-pub(crate) const KEY_JOURNAL_PARTITION: &str = "beacon-key-ordinal";
+/// Partition of the durable mint memo (`epoch → the epoch that MINTED the key in
+/// force at it`, `beacon::artifact::MintIndex`). Empty would mean RAM-only.
+///
+/// NOT the old `beacon-key-ordinal`, and the rename is not cosmetic: that name
+/// belonged to the deleted `epoch → PK_epoch` key journal, whose backing primitive
+/// was `ordinal::Ordinal`, while this is a `Metadata` store of a different record.
+/// A `Metadata` opened over a partition holding another codec's blobs PANICS at
+/// init (`.claude/COMMONWARE_INTERNALS.md`, "wrong codec on an existing
+/// partition"), and "every net relaunches from a fresh genesis" is a deployment
+/// policy, not a property of this code — so the two formats get two names.
+pub(crate) const MINT_MEMO_PARTITION: &str = "beacon-mint-metadata";
 
 /// Partition of the durable `epoch → agreement artifact` store
 /// (`beacon::artifact::ArtifactStore`). Public because the store is
@@ -2364,8 +2373,9 @@ impl DposLayer {
         // (host-side construction).
 
         // Per-epoch threshold beacon resolver for the combined consensus scheme —
-        // see `beacon_share_resolver`: carry-forward under the frozen on-chain
-        // `dkgQual`-bit arbitration (`beacon::carry`); refusal ⇒ the epoch_manager
+        // carry-forward under the frozen on-chain `dkgQual`-bit arbitration, which
+        // after П-3 lives in `beacon::artifact::MintIndex` (the bit walk, memoised on
+        // disk) over `beacon::artifact::ArtifactStore` (the key); refusal ⇒ the epoch_manager
         // share-gate demotes to verify-only, the recompute-heal re-promotes.
 
         // Steady-state self-healing re-jump (finding #6): the executor's reaction
@@ -4369,8 +4379,8 @@ mod replay_seed_tests {
     use super::{replay_seed_source, ReplaySeedSource, SyncMetrics};
     use crate::{
         beacon::testing::{
-            ArtifactStore, BeaconKeys, BeaconResolve, LiveBeacon, LiveBeaconConfig, PkOracle,
-            SeedStore, DETERMINISTIC_BOOTSTRAP_EPOCH,
+            ArtifactStore, LiveBeacon, LiveBeaconConfig, MintFixture, PkOracle, SeedStore,
+            DETERMINISTIC_BOOTSTRAP_EPOCH,
         },
         epocher::OriginEpocher,
     };
@@ -4403,14 +4413,13 @@ mod replay_seed_tests {
             let sigma = recover_seed::<N3f1>(&sharing, &partials).expect("the fixture recovers σ");
             seeds.record(PkOracle::new(*sharing.public(), ns.clone()).witness(round, sigma));
         }
+        // No key index entries: this fixture is about the σ store, and the replay
+        // path's claim is that a σ MISS never reads as "no σ here".
         LiveBeacon::build(LiveBeaconConfig {
             seeds,
-            keys: BeaconKeys::new(),
-            resolver: Arc::new(|_| BeaconResolve::Absent),
+            keys: MintFixture::new().keys.clone(),
             ceremony: Arc::new(std::sync::RwLock::new(std::collections::BTreeMap::new())),
-            dkg_qual: Arc::new(|_| Some(false)),
-            held: None,
-            pull: None,
+            acquire: None,
             metrics: crate::beacon::testing::BeaconMetrics::default(),
             chain_id: 1,
             artifacts: ArtifactStore::new(),

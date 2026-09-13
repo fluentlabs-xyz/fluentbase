@@ -1167,8 +1167,9 @@ impl FakeStaking {
     }
 
     /// `getDkgQual(epoch)` paired with "is `epoch`'s committee committed at
-    /// `at`" — the two legs `beacon::CommitteeReads::dkg_qual` answers with, and
-    /// the beacon's own frozen reader is built over them (`carry.rs:185`). An
+    /// `at`" — the two legs `beacon::CommitteeReads::dkg_qual` answers with. The
+    /// beacon projects them onto the BIT alone (`beacon::follower::changed_bit`,
+    /// Д-7) and caches the decided answer in `beacon::artifact::MintIndex`. An
     /// uncommitted epoch reads its bit as the contract
     /// map's default `false` over an empty committee, which is `(false, false)`.
     pub(super) fn dkg_qual(&self, epoch: u64, at: B256) -> Result<(bool, bool), ReadError> {

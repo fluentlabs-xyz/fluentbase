@@ -18,6 +18,17 @@ const EPOCH_LEN: u64 = 32;
 /// advances.
 const MARSHAL_FLOOR: &str = "outer_marshal_processed_height";
 
+/// The height the network reaches before the consensus-plane cut heals.
+///
+/// It has to be above `park + gate` for the isolated node to land any re-jump at
+/// all (the gate is `min(JUMP_THRESHOLD, 32)` and the park is `last(2) = 95`), and
+/// it has to leave the run enough room for the node to CATCH UP afterwards: the Д3
+/// premises include a marshal floor at or above the node's last landing, and a
+/// node that is still cut sits at `landing − K` for good — the floor advances
+/// again only once it is processing the chain instead of jumping over it (measured
+/// on a never-healed cut: `floor=182` against a last landing of 185).
+const HEAL_ABOVE: u64 = 4 * EPOCH_LEN + 12;
+
 fn last(epoch: u64) -> u64 {
     (epoch + 1) * EPOCH_LEN - 1
 }
@@ -126,6 +137,20 @@ fn gap_line(hist: &BTreeMap<u64, u64>) -> String {
 /// certificate (no block-only entries), so `Finalized{last(E)}` is answerable
 /// from an explicit finalization rather than a descendant's.
 ///
+/// WHAT HOLDS NODE 3 BACK (5.1). Not the rotation. Since П-3 the epoch key is an
+/// artifact any node may ASK a member for over `BEACON_RESOLVER_CHANNEL`
+/// (R-121/R-122), and the tracked peer set is
+/// `committee[E-1] ∪ committee[E] ∪ committee[E+1]`, so a node rotated out at
+/// epoch 3 keeps its consensus links through epoch 3, fetches `PK_3` and never
+/// falls behind at all (measured: every node at the same height,
+/// `jump_calls[3] = []`). The lag is therefore taken from a CONSENSUS-PLANE cut
+/// ([`super::stand::CutPlanes::ConsensusOnly`]) of node 3 inside epoch 2 — after
+/// it has dealt and holds every key up to `PK_2`, before the epoch-3 mint — and
+/// the cut never heals. That is the SAME state the rotation used to produce, node
+/// for node: no consensus plane means no vote, no ceremony and no artifact to ask
+/// for, while the frontier probe keeps feeding its marshal, which is what carries
+/// its tip to the two-epoch ceiling and what its re-jumps then climb.
+///
 /// Falsifier: node 3 not jumping (`jump_calls[3]` empty — the fixture changed);
 /// its floor gauge below its first landing (the floor did not rise); a node
 /// short of five epochs; a terminal without its pair on a member of the NEXT
@@ -137,7 +162,13 @@ fn every_node_serves_the_terminal_pair_of_every_passed_epoch_after_re_jumps() {
     cfg.re_jump_threshold = Some(crate::cold_start_jump::JUMP_THRESHOLD.min(EPOCH_LEN));
     cfg.archive_scan = true;
     let end = 5 * EPOCH_LEN + 8;
-    let out = Stand::new(cfg).run_until(move |p| p.min_height() >= end, Duration::from_secs(400));
+    let mut stand = Stand::new(cfg);
+    stand
+        .partition(&[0, 1, 2], &[3])
+        .after_height(2 * EPOCH_LEN + 4)
+        .consensus_only()
+        .heal_above(HEAL_ABOVE);
+    let out = stand.run_until(move |p| p.min_height() >= end, Duration::from_secs(400));
     let epochs_passed = 4u64;
     eprintln!(
         "(Д3/a) heights={:?} jumps={:?} floor={:?}\n{}",
@@ -287,6 +318,20 @@ fn every_node_serves_the_terminal_pair_of_every_passed_epoch_after_re_jumps() {
 /// terminals, every node went at least two epochs past every terminal it is asked
 /// for, and every terminal pair is served by every node.
 ///
+/// WHAT HOLDS NODE 3 BACK (5.1). Not the rotation. Since П-3 the epoch key is an
+/// artifact any node may ASK a member for over `BEACON_RESOLVER_CHANNEL`
+/// (R-121/R-122), and the tracked peer set is
+/// `committee[E-1] ∪ committee[E] ∪ committee[E+1]`, so a node rotated out at
+/// epoch 3 keeps its consensus links through epoch 3, fetches `PK_3` and never
+/// falls behind at all (measured: every node at the same height,
+/// `jump_calls[3] = []`). The lag is therefore taken from a CONSENSUS-PLANE cut
+/// ([`super::stand::CutPlanes::ConsensusOnly`]) of node 3 inside epoch 2 — after
+/// it has dealt and holds every key up to `PK_2`, before the epoch-3 mint — and
+/// the cut never heals. That is the SAME state the rotation used to produce, node
+/// for node: no consensus plane means no vote, no ceremony and no artifact to ask
+/// for, while the frontier probe keeps feeding its marshal, which is what carries
+/// its tip to the two-epoch ceiling and what its re-jumps then climb.
+///
 /// Falsifier: node 3 not jumping (the fixture stopped exercising the climb); a
 /// jump whose consumed target is not a height node 3's own marshal reached (the
 /// target came from somewhere else); a landing that is not `target − K`; any hole
@@ -309,7 +354,13 @@ fn a_node_more_than_two_epochs_behind_freezes_its_marshal_at_the_ceiling_and_cli
     cfg.archive_scan = true;
     cfg.marshal_tip_series = true;
     let end = 8 * EPOCH_LEN + 8;
-    let out = Stand::new(cfg).run_until(
+    let mut stand = Stand::new(cfg);
+    stand
+        .partition(&[0, 1, 2], &[3])
+        .after_height(2 * EPOCH_LEN + 4)
+        .consensus_only()
+        .heal_above(HEAL_ABOVE + EPOCH_LEN);
+    let out = stand.run_until(
         move |p| p.min_height_of(&[0, 1, 2]) >= end,
         Duration::from_secs(600),
     );

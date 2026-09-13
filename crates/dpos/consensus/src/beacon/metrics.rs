@@ -117,6 +117,25 @@ pub struct BeaconMetrics {
     /// across epochs is the real alert, and it means the share directory is being
     /// destroyed under a running node.
     pub dkg_share_unrecoverable: Counter,
+    /// Shares REFUSED by the share-on-polynomial self-check inside
+    /// `DkgActor::adopt_share` — the one gate every adoption path now passes
+    /// through (П-3). A non-zero value on the LIVE finalize path means this node
+    /// computed a share that does not lie on the polynomial the certified
+    /// artifact pinned, which is an internal inconsistency and not a peer's
+    /// fault; on the recompute-heal path it is the ordinary "keep fetching"
+    /// verdict for an incomplete dealer-log set. Either way the share is not
+    /// adopted and the epoch stays verify-only, so this counter is the ONLY
+    /// witness that the refusal happened.
+    pub dkg_share_off_polynomial: Counter,
+    /// Shares REFUSED because their disk write failed (§5.4 of
+    /// `.dpos-study/history/E5-BEACON-DESIGN.md`). The share is not adopted, so the
+    /// node is verify-only for the epoch and its participation probe keeps saying
+    /// so — the alternative, adopting a share no restart can reload, is "signing
+    /// now, mute after a restart" (R-021). The retry is the recompute-heal, which
+    /// finds the epoch share-less on the next height tick and re-derives it from the
+    /// retained journal, so a climbing counter with a flat
+    /// `dkg_ceremony_ok_total` means the share directory itself is unwritable.
+    pub dkg_share_persist_failed: Counter,
     /// Artifacts a `--cert-follow` follower adopted from its cert upstream after
     /// checking them against `committee[epoch]` read from its OWN chain state.
     /// The follower's only key producer, so a flat zero here and a climbing
@@ -155,18 +174,6 @@ pub struct BeaconMetrics {
     /// `--cert-upstream` runs no inlet at all, so on a plain validator this is the
     /// ONLY place the keyless window is visible.
     pub seed_verify_no_key: Counter,
-    /// Certificate/vote seed checks the oracle refused because the local mint's
-    /// polynomial disagrees with the key attested at that mint
-    /// (`mint_diverges_from_attested`).
-    ///
-    /// The worse half of the two, and it was invisible until now. `share_probe`
-    /// withholds a node whose polynomial diverges but does NOT correct the
-    /// ceremony store, so the divergent entry stays; an oracle reading that store
-    /// directly would judge honest partials under the wrong polynomial, which is
-    /// why the gate exists. Non-zero means the gate is load-bearing on this node
-    /// right now — a diverged local reconstruction (soak 2026-07-14 class) that
-    /// would otherwise be voting.
-    pub seed_material_refused_divergent: Counter,
 }
 
 impl BeaconMetrics {
@@ -279,6 +286,19 @@ impl BeaconMetrics {
             self.dkg_share_unrecoverable.clone(),
         );
         ctx.register(
+            "dpos_dkg_share_off_polynomial_total",
+            "Shares refused by the share-on-polynomial self-check that gates every adoption \
+             path: the share does not lie on the artifact-pinned polynomial at this node's \
+             index, so it is never adopted and the epoch stays verify-only.",
+            self.dkg_share_off_polynomial.clone(),
+        );
+        ctx.register(
+            "dpos_dkg_share_persist_failed_total",
+            "Shares refused because the disk write failed: the share is not adopted and the \
+             epoch stays verify-only rather than signing with material no restart can reload.",
+            self.dkg_share_persist_failed.clone(),
+        );
+        ctx.register(
             "dpos_follower_artifact_adopted_total",
             "Epoch-key artifacts a cert-follow follower adopted after verifying them against \
              committee[epoch] read from its own chain state.",
@@ -303,13 +323,6 @@ impl BeaconMetrics {
              The certificate is admitted on its multisig quorum alone and nobody consumes its \
              seed.",
             self.seed_verify_no_key.clone(),
-        );
-        ctx.register(
-            "dpos_seed_material_refused_divergent_total",
-            "Seed checks refused because the local mint's polynomial disagrees with the key \
-             attested at that mint. Non-zero means a diverged local reconstruction is being \
-             kept out of the vote path on this node.",
-            self.seed_material_refused_divergent.clone(),
         );
     }
 }

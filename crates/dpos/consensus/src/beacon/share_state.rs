@@ -1,4 +1,4 @@
-//! On-disk persistence of a live-DKG per-epoch share `(CeremonyOutput, Share)`.
+//! On-disk persistence of a live-DKG per-epoch `Share`.
 //!
 //! The live DKG (§8.11.1) memoizes `(PK_E, share)` for each committee-change epoch
 //! into the in-memory [`crate::beacon::actor::CeremonyStore`]. A mid-epoch restart
@@ -7,21 +7,54 @@
 //! and reloads them at launch, so a restarted committee member rejoins the seed
 //! quorum without re-running the ceremony.
 //!
-//! The record is `(output, share, agreed artifact)` — the artifact rides along
-//! because it is what lets a restarted member come back holding the value its own
-//! agreement instance decided, instead of re-agreeing from nothing.
+//! The record is the SHARE, and nothing else.
 //!
-//! Two FRAME versions, each in a plaintext and an encrypted arm, dispatched on the
-//! leading 1-byte tag. The tagless `inner` frame is what both arms of a version
-//! carry:
-//! - v1 (`TAG_PLAINTEXT` / `TAG_ENCRYPTED`) — READ-ONLY, never written any more:
-//!   `u32_be(len(output)) ‖ encode_outcome(output) ‖ share.encode()`, the share
-//!   running unlengthed to the end of the frame.
+//! # Neither the artifact nor the group output rides along any more (П-3)
+//!
+//! The v2 record used to be `(output, share, artifact)`. Both of the other two
+//! fields were copies of `PK_E` and of the public polynomial: the artifact
+//! literally, the `output` by carrying the same `Sharing`. That made this file a
+//! SECOND on-disk owner of the fact beside
+//! [`ArtifactStore`](crate::beacon::artifact::ArtifactStore), and the ratified rule
+//! (`.dpos-study/DECISIONS.md`, П-3) is that the artifact store is the only one. The
+//! polynomial a reloaded share pairs with is read from the artifact of the SAME
+//! minting epoch (`KeyIndex::sharing_at`), so nothing is lost and the file holds the
+//! one thing only it can hold: this node's secret.
+//!
+//! **The liveness this costs is named, not discovered.** A node that restarts
+//! holding a share whose artifact never reached its durable store (the artifact
+//! journal is write-behind) no longer has the epoch key locally at all: σ of the
+//! epoch is held pending, execution parks, and the key arrives from peers —
+//! `DkgActor::drive_recompute` asks for it on the next height tick from its
+//! share-HELD branch (`acquire_mint_artifacts` is the non-member's leg and
+//! excludes members by design), and at `≤ f` faults the peers hold it. That is the
+//! trade §5.4 of
+//! `.dpos-study/history/E5-BEACON-DESIGN.md` accepts: one quorum-attested owner of
+//! `PK_E` against a locally-sourced key on a disk fault.
+//!
+//! ONE frame version, in a plaintext and an encrypted arm, dispatched on the
+//! leading 1-byte tag. The tagless `inner` frame is what both arms carry:
 //! - v2 (`TAG_PLAINTEXT_V2` / `TAG_ENCRYPTED_V2`) — what is written today:
-//!   `u32_be(len(output)) ‖ output ‖ u32_be(len(share)) ‖ share ‖
-//!   u32_be(len(artifact)) ‖ artifact`. A ZERO-length artifact means "this node
-//!   holds no artifact for the epoch" and is a normal record, not a damaged one:
-//!   the reload treats it as "re-agree", never as an error.
+//!   `u32_be(len(share)) ‖ share`.
+//!
+//! # What happens to an OLDER file at startup — stated, because it is silent
+//!
+//! Both retired shapes take `load_all`'s warn-and-skip path, which is the same one
+//! a corrupt file takes, and the node then treats the epoch as one it holds no
+//! share for: `maybe_start` resumes from the ceremony journal where that is still
+//! on disk, and sits the epoch out as a verifier where it is not. Nothing aborts
+//! startup and no wrong share is ever adopted.
+//! - a **v1** file (leading tag `TAG_PLAINTEXT` / `TAG_ENCRYPTED`) — the arm is
+//!   deleted, so its tag is now simply unknown to the share-file reader. (Those two
+//!   tag BYTES are still live: the ceremony-journal frame below uses them, under its
+//!   own domain-separated AAD.)
+//! - a **two- or three-field v2** file written before this change — the extra fields
+//!   are read as trailing bytes, which `parse_inner` rejects outright rather than
+//!   ignoring.
+//!
+//! Both are acceptable rather than merely tolerable here because a DPoS network is
+//! relaunched from a fresh genesis rather than migrated in place, so the upgrade
+//! path an old share file represents is a test datadir, never a live validator's.
 //!
 //! A plaintext arm writes `tag(1) ‖ inner`; an encrypted arm (E2 — gated on
 //! keystore mode) writes
@@ -40,10 +73,10 @@
 //! secret uses EIP-2335 (`bls/keystore.rs`), a different secret shape with its own
 //! codec.
 
+#[cfg(test)]
+use crate::beacon::{ceremony::CeremonyOutput, outcome::encode_outcome};
 use crate::beacon::{
-    ceremony::CeremonyOutput,
     dkg_msg::{Ack, DealerReveal},
-    outcome::{encode_outcome, parse_outcome},
     seed::parse_share,
 };
 use chacha20poly1305::{
@@ -71,10 +104,10 @@ pub enum ShareState {
 
 const TAG_PLAINTEXT: u8 = 0;
 const TAG_ENCRYPTED: u8 = 1;
-/// v2 plaintext: every field length-prefixed, third field = the agreed artifact.
+/// v2 plaintext: the share, length-prefixed.
 const TAG_PLAINTEXT_V2: u8 = 2;
-/// v2 encrypted. Its AAD leads with THIS byte, so a v1 ciphertext can never
-/// AEAD-open as a v2 record even at the same epoch under the same key.
+/// v2 encrypted. Its AAD leads with THIS byte, so a retired-v1 ciphertext can
+/// never AEAD-open as a v2 record even at the same epoch under the same key.
 const TAG_ENCRYPTED_V2: u8 = 3;
 /// Envelope version inside an encrypted frame — lets the AEAD/KDF params evolve
 /// without colliding with the tag byte.
@@ -89,16 +122,10 @@ const FILE_SUFFIX: &str = ".bin";
 /// `TAG_PLAINTEXT_V2` writes `tag ‖ inner`; `TAG_ENCRYPTED_V2` seals `inner` as
 /// the AEAD plaintext.
 ///
-/// `artifact = None` is written as a zero-length field, so "no artifact" and "an
-/// empty artifact" are the same on-disk record and both reload as "re-agree".
-fn inner_frame(output: &CeremonyOutput, share: &Share, artifact: Option<&[u8]>) -> Vec<u8> {
-    let out_bytes = encode_outcome(output);
+fn inner_frame(share: &Share) -> Vec<u8> {
     let share_bytes = share.encode();
-    let art_bytes = artifact.unwrap_or(&[]);
-    let mut buf = Vec::with_capacity(12 + out_bytes.len() + share_bytes.len() + art_bytes.len());
-    push_field(&mut buf, &out_bytes);
+    let mut buf = Vec::with_capacity(4 + share_bytes.len());
     push_field(&mut buf, share_bytes.as_ref());
-    push_field(&mut buf, art_bytes);
     buf
 }
 
@@ -125,39 +152,22 @@ fn take_field<'a>(rest: &'a [u8], what: &str) -> eyre::Result<(&'a [u8], &'a [u8
     Ok(rest.split_at(len))
 }
 
-/// Parse a v2 tagless inner frame back into `(output, share, artifact)`.
+/// Parse a v2 tagless inner frame back into the share.
 ///
-/// Trailing bytes are REJECTED. In v1 that check came for free from
-/// [`parse_share`] consuming to the end of the frame; length-prefixing the share
-/// took it away, so it is made explicit here — it is what catches a file whose
-/// tail was corrupted or appended to.
-fn parse_inner(rest: &[u8]) -> eyre::Result<(CeremonyOutput, Share, Option<Vec<u8>>)> {
-    let (out_bytes, rest) = take_field(rest, "output")?;
+/// Trailing bytes are REJECTED, and that check carries a second job: a pre-П-3
+/// record leads with the OUTPUT's length prefix, so it reaches here with fields left
+/// over, and this is what refuses it instead of silently reading a record whose shape
+/// it does not know.
+fn parse_inner(rest: &[u8]) -> eyre::Result<Share> {
     let (share_bytes, rest) = take_field(rest, "share")?;
-    let (art_bytes, rest) = take_field(rest, "artifact")?;
     if !rest.is_empty() {
         eyre::bail!(
-            "trailing bytes after the share record ({} bytes)",
+            "trailing bytes after the share record ({} bytes) — a pre-П-3 record \
+             carrying the group output and/or the artifact reads exactly like this",
             rest.len()
         );
     }
-    let output =
-        parse_outcome(out_bytes).map_err(|e| eyre::eyre!("parse persisted outcome: {e:?}"))?;
-    let share =
-        parse_share(share_bytes).map_err(|e| eyre::eyre!("parse persisted share: {e:?}"))?;
-    let artifact = (!art_bytes.is_empty()).then(|| art_bytes.to_vec());
-    Ok((output, share, artifact))
-}
-
-/// Parse a v1 tagless inner frame — `u32_be(len(output)) ‖ output ‖ share`, the
-/// share unlengthed to the end. Read-only: nothing writes this frame any more.
-fn parse_inner_v1(rest: &[u8]) -> eyre::Result<(CeremonyOutput, Share)> {
-    let (out_bytes, share_bytes) = take_field(rest, "output")?;
-    let output =
-        parse_outcome(out_bytes).map_err(|e| eyre::eyre!("parse persisted outcome: {e:?}"))?;
-    let share =
-        parse_share(share_bytes).map_err(|e| eyre::eyre!("parse persisted share: {e:?}"))?;
-    Ok((output, share))
+    parse_share(share_bytes).map_err(|e| eyre::eyre!("parse persisted share: {e:?}"))
 }
 
 /// Seal `inner` into an encrypted envelope under `key` for `aad`:
@@ -218,20 +228,12 @@ fn tagged_aad(tag: u8, epoch: u64) -> [u8; 10] {
     aad
 }
 
-/// Frame an `(output, share, artifact)` record for on-disk storage under `state`
-/// for `epoch`, always in the v2 frame. Takes references because the caller
-/// persists before moving the pair into the in-memory store; `CeremonyOutput` is
-/// `Clone` in the pinned commonware, so this is about ownership order, not about
-/// the type. The `Encrypted` arm seals a `Zeroizing` inner buffer with a fresh
-/// random 24-byte nonce + version-and-epoch-bound AAD.
-pub fn encode(
-    state: &ShareState,
-    epoch: u64,
-    output: &CeremonyOutput,
-    share: &Share,
-    artifact: Option<&[u8]>,
-) -> Vec<u8> {
-    let inner = Zeroizing::new(inner_frame(output, share, artifact));
+/// Frame a share record for on-disk storage under `state` for `epoch`, always in the
+/// v2 frame. Takes a reference because the caller persists before moving the share
+/// into the in-memory store. The `Encrypted` arm seals a `Zeroizing` inner buffer
+/// with a fresh random 24-byte nonce + version-and-epoch-bound AAD.
+pub fn encode(state: &ShareState, epoch: u64, share: &Share) -> Vec<u8> {
+    let inner = Zeroizing::new(inner_frame(share));
     match state {
         ShareState::Plaintext => {
             let mut buf = Vec::with_capacity(1 + inner.len());
@@ -251,31 +253,21 @@ pub fn encode(
 /// Decode a framed share for `epoch`, dispatching on the LEADING TAG BYTE (not on
 /// `state`): a plaintext file always decodes; an encrypted file requires
 /// `state == Encrypted(key)` and AEAD-opens with the version-and-epoch-bound AAD.
-/// A v1 file yields no artifact, which the caller reads as "re-agree".
-/// Errors on an unknown tag, a malformed body, a missing key, or AEAD failure
-/// (wrong key / tampered / wrong-epoch / wrong-version file) — `load_all` turns
-/// those into a warn+skip.
-pub fn decode(
-    bytes: &[u8],
-    epoch: u64,
-    state: &ShareState,
-) -> eyre::Result<(CeremonyOutput, Share, Option<Vec<u8>>)> {
+/// Errors on an unknown tag (which now includes the retired v1 share tags), a
+/// malformed body, a missing key, or AEAD failure (wrong key / tampered /
+/// wrong-epoch / wrong-version file) — `load_all` turns those into a warn+skip.
+pub fn decode(bytes: &[u8], epoch: u64, state: &ShareState) -> eyre::Result<Share> {
     let (&tag, rest) = bytes
         .split_first()
         .ok_or_else(|| eyre::eyre!("empty share file"))?;
     match tag {
-        TAG_PLAINTEXT => parse_inner_v1(rest).map(|(o, s)| (o, s, None)),
-        TAG_ENCRYPTED => {
-            let inner = open_share_envelope(state, &tagged_aad(TAG_ENCRYPTED, epoch), rest)?;
-            parse_inner_v1(&inner).map(|(o, s)| (o, s, None))
-        }
         TAG_PLAINTEXT_V2 => parse_inner(rest),
         TAG_ENCRYPTED_V2 => {
             let inner = open_share_envelope(state, &tagged_aad(TAG_ENCRYPTED_V2, epoch), rest)?;
             parse_inner(&inner)
         }
         other => {
-            eyre::bail!("unknown share-state tag {other} (supported: plaintext v1={TAG_PLAINTEXT}, encrypted v1={TAG_ENCRYPTED}, plaintext v2={TAG_PLAINTEXT_V2}, encrypted v2={TAG_ENCRYPTED_V2})")
+            eyre::bail!("unknown share-state tag {other} (supported: plaintext v2={TAG_PLAINTEXT_V2}, encrypted v2={TAG_ENCRYPTED_V2}; v1 tags {TAG_PLAINTEXT}/{TAG_ENCRYPTED} are RETIRED for the share file and re-run the ceremony)")
         }
     }
 }
@@ -297,31 +289,23 @@ fn file_for(dir: &Path, epoch: u64) -> PathBuf {
     dir.join(format!("{FILE_PREFIX}{epoch}{FILE_SUFFIX}"))
 }
 
-/// Persist a memoized `(output, share, artifact)` for `epoch` under `dir`, mode
-/// 0600, framed per `state`. `artifact` is the encoded agreed artifact that
-/// produced this share where one exists; `None` on a path that derived the share
-/// without one (the reload then reads it as "re-agree"). The encoded bytes (which
-/// embed the secret share) are scrubbed on drop. Best-effort: the caller logs +
-/// continues on error (the in-memory store is authoritative for the running
-/// process).
-pub fn persist(
-    dir: &Path,
-    epoch: u64,
-    output: &CeremonyOutput,
-    share: &Share,
-    artifact: Option<&[u8]>,
-    state: &ShareState,
-) -> eyre::Result<()> {
+/// Persist the memoized share for `epoch` under `dir`, mode 0600, framed per
+/// `state`. The encoded bytes (which embed the secret share) are scrubbed on drop.
+///
+/// NOT best-effort to its caller any more: the error is returned as it always was,
+/// but `DkgActor::adopt_share` now treats it as a REFUSAL rather than a warning —
+/// see §5.4 of `.dpos-study/history/E5-BEACON-DESIGN.md` and that function's doc
+/// for why "signing now, mute after a restart" is the outcome that rule exists to
+/// forbid.
+pub fn persist(dir: &Path, epoch: u64, share: &Share, state: &ShareState) -> eyre::Result<()> {
     std::fs::create_dir_all(dir).map_err(|e| eyre::eyre!("create share dir {dir:?}: {e}"))?;
-    let bytes = Zeroizing::new(encode(state, epoch, output, share, artifact));
+    let bytes = Zeroizing::new(encode(state, epoch, share));
     fluentbase_bls::secret_store::write_mode_0600(&file_for(dir, epoch), &bytes)
         .map_err(|e| eyre::eyre!("write share file: {e}"))
 }
 
-/// One reloaded share record: the epoch, its memoized `(PK_E, share)`, and the
-/// agreed artifact that produced it where the file carried one. `None` is the
-/// normal shape of a v1 file and of a share derived without an artifact.
-pub(crate) type ReloadedShare = (u64, CeremonyOutput, Share, Option<Vec<u8>>);
+/// One reloaded share record: the minting epoch and this node's share at it.
+pub(crate) type ReloadedShare = (u64, Share);
 
 /// Reload every persisted `beacon-share-e<E>.bin` under `dir`, decoding each per
 /// `state`. A missing dir → empty; a malformed OR undecryptable file is skipped
@@ -352,7 +336,7 @@ pub fn load_all(dir: &Path, state: &ShareState) -> Vec<ReloadedShare> {
             .and_then(|()| std::fs::read(entry.path()).map_err(|e| eyre::eyre!(e)))
             .and_then(|b| decode(&b, epoch, state))
         {
-            Ok((output, share, artifact)) => out.push((epoch, output, share, artifact)),
+            Ok(share) => out.push((epoch, share)),
             Err(e) => {
                 tracing::warn!(
                     epoch,
@@ -752,13 +736,8 @@ mod tests {
         dir
     }
 
-    /// Opaque stand-in for the encoded agreed artifact: this module frames the
-    /// artifact as bytes and never parses it, so a real one would only make the
-    /// test slower.
-    const ARTIFACT: &[u8] = b"an encoded agreed artifact";
-
     /// The v1 inner frame this module no longer writes, rebuilt by hand so the
-    /// backward-compat tests exercise real legacy bytes rather than a v1 encoder
+    /// retired-format tests exercise real legacy bytes rather than a v1 encoder
     /// kept alive only for them.
     fn v1_inner(output: &CeremonyOutput, share: &Share) -> Vec<u8> {
         let out_bytes = encode_outcome(output);
@@ -768,73 +747,93 @@ mod tests {
         buf
     }
 
-    /// The v2 plaintext frame, pinned byte-for-byte: every field length-prefixed,
-    /// the artifact last.
+    /// The v2 plaintext frame, pinned byte-for-byte: ONE length-prefixed field — the
+    /// share — and nothing after it.
+    ///
+    /// Reds if ANY second field comes back. That is the assertion П-3 needs from this
+    /// module: both of the copies of `PK_E` this record used to carry (the group
+    /// output, and the artifact after it) were length-prefixed tails, so their
+    /// absence is checkable as a byte count rather than only as an API shape.
     #[test]
     fn plaintext_v2_frame_is_pinned() {
-        let (output, share) = sample_output_share();
-        let bytes = encode(&ShareState::Plaintext, 7, &output, &share, Some(ARTIFACT));
-        let out_bytes = encode_outcome(&output);
+        let (_output, share) = sample_output_share();
+        let bytes = encode(&ShareState::Plaintext, 7, &share);
         let share_bytes = share.encode();
         let mut expected = vec![TAG_PLAINTEXT_V2];
-        expected.extend_from_slice(&(out_bytes.len() as u32).to_be_bytes());
-        expected.extend_from_slice(&out_bytes);
         expected.extend_from_slice(&(share_bytes.len() as u32).to_be_bytes());
         expected.extend_from_slice(share_bytes.as_ref());
-        expected.extend_from_slice(&(ARTIFACT.len() as u32).to_be_bytes());
-        expected.extend_from_slice(ARTIFACT);
         assert_eq!(bytes, expected);
     }
 
-    /// An absent artifact is a zero-length field, not a shorter frame.
+    /// A v1 file is no longer readable, and the outcome is the warn-and-skip one —
+    /// the node re-runs the ceremony rather than crashing or adopting a share it
+    /// cannot frame. Both arms, because the encrypted one used to open on its own
+    /// AAD and must now fail on the tag alone.
+    ///
+    /// Reds if the v1 share arms come back: a reader for them would resurrect a
+    /// frame the write path cannot produce.
     #[test]
-    fn plaintext_v2_frame_without_an_artifact_is_a_zero_length_field() {
+    fn a_v1_share_file_is_retired_and_skipped_not_read() {
         let (output, share) = sample_output_share();
-        let with = encode(&ShareState::Plaintext, 7, &output, &share, Some(&[]));
-        let without = encode(&ShareState::Plaintext, 7, &output, &share, None);
-        assert_eq!(with, without);
-        assert_eq!(without[without.len() - 4..], [0, 0, 0, 0]);
-    }
+        let mut plain = vec![TAG_PLAINTEXT];
+        plain.extend_from_slice(&v1_inner(&output, &share));
+        assert!(
+            decode(&plain, 7, &ShareState::Plaintext).is_err(),
+            "the v1 plaintext arm is deleted, so its tag is unknown"
+        );
 
-    /// A v1 plaintext file written by a binary that predates the artifact must keep
-    /// decoding, yielding no artifact — which the reload reads as "re-agree".
-    #[test]
-    fn v1_plaintext_file_decodes_with_no_artifact() {
-        let (output, share) = sample_output_share();
-        let mut bytes = vec![TAG_PLAINTEXT];
-        bytes.extend_from_slice(&v1_inner(&output, &share));
-
-        let (out2, share2, artifact) =
-            decode(&bytes, 7, &ShareState::Plaintext).expect("a v1 file still decodes");
-        assert_eq!(encode_outcome(&out2), encode_outcome(&output));
-        assert_eq!(share2.encode().as_ref(), share.encode().as_ref());
-        assert!(artifact.is_none());
-    }
-
-    /// Same for a v1 ciphertext: its AAD leads with the v1 tag, so it opens on the
-    /// v1 arm and only there.
-    #[test]
-    fn v1_encrypted_file_decodes_with_no_artifact() {
-        let (output, share) = sample_output_share();
         let key = seal_key(303);
-        let bytes = seal_envelope(
+        let sealed = seal_envelope(
             &key,
             TAG_ENCRYPTED,
             &tagged_aad(TAG_ENCRYPTED, 7),
             &v1_inner(&output, &share),
         );
+        assert!(
+            decode(&sealed, 7, &ShareState::Encrypted(key.clone())).is_err(),
+            "and so is the v1 encrypted arm, holder of the key or not"
+        );
+        // Non-vacuity: the SAME reader accepts a current record, so the two
+        // refusals above are about the retired frame and not about this fixture.
+        let current = encode(&ShareState::Encrypted(key.clone()), 7, &share);
+        assert!(decode(&current, 7, &ShareState::Encrypted(key)).is_ok());
+    }
 
-        let (out2, share2, artifact) = decode(&bytes, 7, &ShareState::Encrypted(key.clone()))
-            .expect("a v1 ciphertext still decodes");
-        assert_eq!(encode_outcome(&out2), encode_outcome(&output));
-        assert_eq!(share2.encode().as_ref(), share.encode().as_ref());
-        assert!(artifact.is_none());
+    /// A PRE-П-3 v2 record — `(output, share)` or `(output, share, artifact)` — must be
+    /// REFUSED rather than read with its tail ignored.
+    ///
+    /// It is the one legacy shape whose leading tag still matches, so the
+    /// trailing-byte check is the only thing standing between it and a record whose
+    /// third field would be read as nothing at all. The outcome is `load_all`'s
+    /// warn-and-skip, stated in this module's doc.
+    #[test]
+    fn a_pre_p3_record_is_refused_not_silently_truncated() {
+        let (output, share) = sample_output_share();
+        // Exactly the old `inner_frame`: output, then share, then the artifact.
+        let mut legacy = vec![TAG_PLAINTEXT_V2];
+        let out_bytes = encode_outcome(&output);
+        legacy.extend_from_slice(&(out_bytes.len() as u32).to_be_bytes());
+        legacy.extend_from_slice(&out_bytes);
+        let share_bytes = share.encode();
+        legacy.extend_from_slice(&(share_bytes.len() as u32).to_be_bytes());
+        legacy.extend_from_slice(share_bytes.as_ref());
+        let artifact = b"an encoded agreed artifact";
+        legacy.extend_from_slice(&(artifact.len() as u32).to_be_bytes());
+        legacy.extend_from_slice(artifact);
+        assert!(
+            decode(&legacy, 7, &ShareState::Plaintext).is_err(),
+            "a pre-П-3 record leads with the OUTPUT's length prefix, and reading it as \
+             a current one would accept a frame this binary cannot write"
+        );
 
-        // Re-tagged as v2, the SAME ciphertext must fail: the frame version is in
-        // the AAD, so a v1 body can never be opened as a v2 record.
-        let mut retagged = bytes.clone();
-        retagged[0] = TAG_ENCRYPTED_V2;
-        assert!(decode(&retagged, 7, &ShareState::Encrypted(key)).is_err());
+        let dir = fresh_dir("legacy-3field");
+        std::fs::create_dir_all(&dir).unwrap();
+        fluentbase_bls::secret_store::write_mode_0600(&file_for(&dir, 7), &legacy).unwrap();
+        assert!(
+            load_all(&dir, &ShareState::Plaintext).is_empty(),
+            "and the startup outcome is a skip, never an abort"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// The other direction of tag-as-version: a v2 file met by a binary that knows
@@ -842,17 +841,9 @@ mod tests {
     /// a warn-and-skip — the node re-runs the ceremony instead of crashing.
     #[test]
     fn v2_file_is_unreadable_to_a_v1_only_reader_and_skipped_not_fatal() {
-        let (output, share) = sample_output_share();
+        let (_output, share) = sample_output_share();
         let dir = fresh_dir("v1-reader");
-        persist(
-            &dir,
-            7,
-            &output,
-            &share,
-            Some(ARTIFACT),
-            &ShareState::Plaintext,
-        )
-        .expect("persist");
+        persist(&dir, 7, &share, &ShareState::Plaintext).expect("persist");
 
         let on_disk = std::fs::read(file_for(&dir, 7)).unwrap();
         assert!(
@@ -873,64 +864,32 @@ mod tests {
     /// used to provide for free; v2 has to keep catching a corrupted tail.
     #[test]
     fn v2_frame_rejects_trailing_bytes() {
-        let (output, share) = sample_output_share();
-        let mut bytes = encode(&ShareState::Plaintext, 7, &output, &share, Some(ARTIFACT));
+        let (_output, share) = sample_output_share();
+        let mut bytes = encode(&ShareState::Plaintext, 7, &share);
         bytes.push(0);
         assert!(decode(&bytes, 7, &ShareState::Plaintext).is_err());
     }
 
     #[test]
     fn plaintext_persist_load_round_trip() {
-        let (output, share) = sample_output_share();
+        let (_output, share) = sample_output_share();
         let dir = fresh_dir("plain");
-        persist(
-            &dir,
-            7,
-            &output,
-            &share,
-            Some(ARTIFACT),
-            &ShareState::Plaintext,
-        )
-        .expect("persist");
+        persist(&dir, 7, &share, &ShareState::Plaintext).expect("persist");
 
         let loaded = load_all(&dir, &ShareState::Plaintext);
         assert_eq!(loaded.len(), 1);
-        let (epoch, out2, share2, artifact) = &loaded[0];
+        let (epoch, share2) = &loaded[0];
         assert_eq!(*epoch, 7);
-        assert_eq!(encode_outcome(out2), encode_outcome(&output));
         assert_eq!(share2.encode().as_ref(), share.encode().as_ref());
-        assert_eq!(artifact.as_deref(), Some(ARTIFACT));
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// A share persisted without an artifact (the demote-heal recompute) reloads as
-    /// `None` — a well-formed record the caller reads as "re-agree", not a failure.
-    #[test]
-    fn persist_without_an_artifact_reloads_as_none() {
-        let (output, share) = sample_output_share();
-        let dir = fresh_dir("plain-noartifact");
-        persist(&dir, 7, &output, &share, None, &ShareState::Plaintext).expect("persist");
-
-        let loaded = load_all(&dir, &ShareState::Plaintext);
-        assert_eq!(loaded.len(), 1);
-        assert!(loaded[0].3.is_none());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn encrypted_persist_load_round_trip() {
-        let (output, share) = sample_output_share();
+        let (_output, share) = sample_output_share();
         let key = seal_key(101);
         let dir = fresh_dir("enc");
-        persist(
-            &dir,
-            7,
-            &output,
-            &share,
-            Some(ARTIFACT),
-            &ShareState::Encrypted(key.clone()),
-        )
-        .expect("persist");
+        persist(&dir, 7, &share, &ShareState::Encrypted(key.clone())).expect("persist");
 
         let on_disk = std::fs::read(file_for(&dir, 7)).unwrap();
         assert_eq!(
@@ -940,11 +899,9 @@ mod tests {
 
         let loaded = load_all(&dir, &ShareState::Encrypted(key));
         assert_eq!(loaded.len(), 1, "encrypted share round-trips");
-        let (epoch, out2, share2, artifact) = &loaded[0];
+        let (epoch, share2) = &loaded[0];
         assert_eq!(*epoch, 7);
-        assert_eq!(encode_outcome(out2), encode_outcome(&output));
         assert_eq!(share2.encode().as_ref(), share.encode().as_ref());
-        assert_eq!(artifact.as_deref(), Some(ARTIFACT));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -952,17 +909,9 @@ mod tests {
     /// SKIPPED (warn), not panicked.
     #[test]
     fn encrypted_file_with_wrong_or_absent_key_is_skipped() {
-        let (output, share) = sample_output_share();
+        let (_output, share) = sample_output_share();
         let dir = fresh_dir("enc-wrongkey");
-        persist(
-            &dir,
-            7,
-            &output,
-            &share,
-            Some(ARTIFACT),
-            &ShareState::Encrypted(seal_key(1)),
-        )
-        .expect("persist");
+        persist(&dir, 7, &share, &ShareState::Encrypted(seal_key(1))).expect("persist");
 
         assert!(
             load_all(&dir, &ShareState::Encrypted(seal_key(2))).is_empty(),
@@ -978,18 +927,10 @@ mod tests {
     /// The epoch-bound AAD rejects a ciphertext file renamed to a different epoch.
     #[test]
     fn epoch_bound_aad_rejects_renamed_ciphertext() {
-        let (output, share) = sample_output_share();
+        let (_output, share) = sample_output_share();
         let key = seal_key(55);
         let dir = fresh_dir("enc-rename");
-        persist(
-            &dir,
-            7,
-            &output,
-            &share,
-            Some(ARTIFACT),
-            &ShareState::Encrypted(key.clone()),
-        )
-        .expect("persist");
+        persist(&dir, 7, &share, &ShareState::Encrypted(key.clone())).expect("persist");
         std::fs::rename(file_for(&dir, 7), file_for(&dir, 9)).unwrap();
 
         // load_all reads the filename epoch (9) for the AAD → AEAD-open fails.
@@ -1005,8 +946,8 @@ mod tests {
 
     #[test]
     fn unknown_tag_is_rejected() {
-        let (output, share) = sample_output_share();
-        let mut bytes = encode(&ShareState::Plaintext, 7, &output, &share, Some(ARTIFACT));
+        let (_output, share) = sample_output_share();
+        let mut bytes = encode(&ShareState::Plaintext, 7, &share);
         bytes[0] = 0xFF;
         assert!(decode(&bytes, 7, &ShareState::Plaintext).is_err());
     }
@@ -1196,31 +1137,41 @@ mod tests {
     /// `reconcile_journals(now)` deletes only journals that have aged OUT of the
     /// recompute-heal window (`epoch + JOURNAL_RETENTION_EPOCHS < now`), keeps the
     /// in-window ones (so a demoted member can still recompute from them past the
-    /// boundary), and never touches a foreign file. With `JOURNAL_RETENTION_EPOCHS = 1`
-    /// at now=5: e3 aged out (3+1<5), e5 in-window (5+1≥5), e7 future (kept).
+    /// boundary), and never touches a foreign file.
+    ///
+    /// The heights are DERIVED from the window rather than written down, because the
+    /// window is now the crate's one retention constant (`beacon/mod.rs`) and a test
+    /// that hard-codes `1` pins a number instead of the predicate. `now` sits one
+    /// epoch above the aged-out one's edge, so exactly one of the three is past it.
     #[test]
     fn reconcile_journals_deletes_past_window_keeps_in_window_ignores_foreign() {
         let (records, _n) = sample_journal_records();
         let dir = fresh_dir("journal-reconcile");
-        for e in [3u64, 5, 7] {
+        let window = crate::beacon::JOURNAL_RETENTION_EPOCHS;
+        let aged_out = 3u64;
+        // `aged_out + window < now` by exactly one, so `in_window + window >= now`.
+        let now = aged_out + window + 1;
+        let in_window = now;
+        let future = now + 2;
+        for e in [aged_out, in_window, future] {
             append_journal(&dir, e, &records[0], &ShareState::Plaintext).expect("append");
         }
         let foreign = dir.join("some-other-file.bin");
         std::fs::write(&foreign, b"keep me").expect("write foreign");
 
-        reconcile_journals(&dir, 5);
+        reconcile_journals(&dir, now);
 
         assert!(
-            !journal_file_for(&dir, 3).exists(),
-            "e3 + RET(1) < now=5 → aged out of the recompute window, deleted"
+            !journal_file_for(&dir, aged_out).exists(),
+            "e{aged_out} + RET({window}) < now={now} → aged out of the recompute window, deleted"
         );
         assert!(
-            journal_file_for(&dir, 5).exists(),
-            "e5 + RET(1) >= now=5 → still in the recompute window, kept"
+            journal_file_for(&dir, in_window).exists(),
+            "e{in_window} + RET({window}) >= now={now} → still in the recompute window, kept"
         );
         assert!(
-            journal_file_for(&dir, 7).exists(),
-            "e7 > now=5 → future, kept"
+            journal_file_for(&dir, future).exists(),
+            "e{future} > now={now} → future, kept"
         );
         assert!(foreign.exists(), "a foreign filename is never deleted");
         let _ = std::fs::remove_dir_all(&dir);
@@ -1233,11 +1184,11 @@ mod tests {
     /// share exists (normal at a committee-change boundary) — this pins the floor rule.
     #[test]
     fn reconcile_prunes_superseded_shares_keeps_active_and_future() {
-        let (output, share) = sample_output_share();
+        let (_output, share) = sample_output_share();
         let dir = fresh_dir("share-reconcile");
         // Shares {3, 5, 7}, now=6 → floor = max{e<=6} = 5 (active), 7 is future.
         for e in [3u64, 5, 7] {
-            persist(&dir, e, &output, &share, None, &ShareState::Plaintext).expect("persist");
+            persist(&dir, e, &share, &ShareState::Plaintext).expect("persist");
         }
         reconcile_journals(&dir, 6);
         assert!(
@@ -1259,10 +1210,10 @@ mod tests {
     /// floor, so reconcile deletes NOTHING (a node with only future shares keeps them all).
     #[test]
     fn reconcile_keeps_all_when_every_share_is_future() {
-        let (output, share) = sample_output_share();
+        let (_output, share) = sample_output_share();
         let dir = fresh_dir("share-all-future");
         for e in [8u64, 9] {
-            persist(&dir, e, &output, &share, None, &ShareState::Plaintext).expect("persist");
+            persist(&dir, e, &share, &ShareState::Plaintext).expect("persist");
         }
         reconcile_journals(&dir, 5); // now=5, both shares > now
         assert!(
