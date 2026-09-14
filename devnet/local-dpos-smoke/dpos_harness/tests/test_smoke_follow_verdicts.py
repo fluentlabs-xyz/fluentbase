@@ -735,8 +735,60 @@ def test_no_isolated_warning_FAILS_when_the_monitor_cried_wolf():
 def test_the_cascade_budgets_are_the_ones_bash_used():
     """Pinned for the same reason as the tamper window: the bogus-refusal poll passes only by
     OBSERVING for its full budget on the failing side, so a shortened budget turns a real
-    fail-open into a "did not refuse" that reads like flakiness."""
-    assert vf.CC_ALIGN_S == 240 and vf.CC_REJECT_S == 240 and vf.CC_REJECT_POLL_S == 3
+    fail-open into a "did not refuse" that reads like flakiness.
+
+    `CC_REJECT_S` is NOT pinned here any more. It is not a ported bash literal: it is derived
+    from a watchdog constant in the product, so the test below asserts the RELATION instead —
+    see `test_the_bogus_refusal_budget_outlasts_the_product_watchdog`."""
+    assert vf.CC_ALIGN_S == 240 and vf.CC_REJECT_POLL_S == 3
     assert vf.CC_FINALIZE_S == 60
     assert vf.TXC_ALIGN_S == 200 and vf.TXC_FINALIZE_S == 120
     assert vf.TXC_RECEIPT_TRIES == 90 and vf.TXC_L3_RECEIPT_TRIES == 120
+
+
+def test_the_bogus_refusal_budget_outlasts_the_product_watchdog():
+    """PHASE 3's BUDGET IS A DEADLINE ON A CLOCK THE PRODUCT SETS, so this reads that clock out
+    of the Rust rather than trusting a number.
+
+    The bogus checkpoint hash is in no chain, so the follower — which, below the activation
+    block, spends the operator checkpoint FIRST (PLAN row 4.4) — dies inside `sync_to_checkpoint`.
+    It shares the devnet's devp2p network, so it has peers and its executed head never leaves 0:
+    that is the `StalledWithPeers` net, `EL_SYNC_STALL_ESCAPE`, and nothing shorter can fire.
+    A budget under that constant makes the phase UNPASSABLE at any speed of host, which is
+    exactly what the 2026-09-13 live run showed — `240 < 300`, and the case reported
+    "bogus-checkpoint follower did not refuse" twelve seconds before the refusal was due.
+
+    WHY THE RELATION AND NOT THE NUMBER. `test_smoke_boundary_cases.py`'s jump-gate tripwire is
+    the cautionary tale in this very tree: it pins a source literal that no longer exists at any
+    point of history, so it went red and stayed red instead of catching a move. A bare
+    `CC_REJECT_S == 420` fails the same way in the other direction — it stays GREEN while the
+    watchdog moves out from under it. Reading the constant is what makes this falsifiable.
+
+    Reds if `EL_SYNC_STALL_ESCAPE` grows past the margin, if `CC_REJECT_S` is trimmed back
+    toward it, or if the constant stops being findable in the file at all (a rename must be
+    seen, not skipped)."""
+    crates = pathlib.Path(__file__).resolve().parents[4] / "crates"
+    if not crates.is_dir():
+        pytest.skip(f"crates not in this tree ({crates})")
+    src = (crates / "dpos/consensus/src/cold_start_jump.rs").read_text(encoding="utf-8")
+    m = re.search(
+        r"const EL_SYNC_STALL_ESCAPE:\s*Duration\s*=\s*Duration::from_secs\((\d+)\)", src)
+    assert m, (
+        "EL_SYNC_STALL_ESCAPE is no longer a plain `Duration::from_secs` const in "
+        "cold_start_jump.rs — phase 3's budget is derived from it, so a rename has to be read "
+        "here rather than skipped past")
+    escape_s = int(m.group(1))
+
+    assert vf.CC_REJECT_S > escape_s, (
+        f"phase 3 gives the bogus follower {vf.CC_REJECT_S} s to refuse, but the refusal is "
+        f"produced by a {escape_s} s watchdog — the phase cannot pass at any speed of host")
+    assert vf.CC_REJECT_S - escape_s >= vf.CC_REJECT_MARGIN_S, (
+        f"only {vf.CC_REJECT_S - escape_s} s of headroom over the {escape_s} s watchdog, and the "
+        f"named margin is {vf.CC_REJECT_MARGIN_S} s. The headroom covers container boot up to the "
+        f"first FCU, one {vf.CC_REJECT_POLL_S} s poll interval and a log read — all of which grow "
+        "with host load, which is why the margin is named and not squeezed")
+    # …and the margin is headroom, not the budget itself: a margin that swallowed the watchdog
+    # would satisfy both assertions above while measuring nothing about the product.
+    assert vf.CC_REJECT_MARGIN_S < escape_s, (
+        "the margin has outgrown the watchdog it is headroom for — phase 3 would then be timing "
+        "the host rather than the refusal")

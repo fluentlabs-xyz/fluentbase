@@ -782,8 +782,35 @@ BOGUS_SERVICE = "cert-follower-l1-bogus"
 #: `:59`, `:76` — the tier-1 and tier-2 alignment budgets. Longer than cert-follow's 180 s: tier 2
 #: syncs through tier 1's window rather than off the producer.
 CC_ALIGN_S = 240
-#: `:94` — how long the bogus follower gets to refuse, and `:103` the poll cadence.
-CC_REJECT_S = 240
+#: How long the bogus follower gets to refuse. DERIVED FROM A PRODUCT CONSTANT, not ported from
+#: the bash the rest of this block still cites: the refusal this phase waits for is produced by a
+#: watchdog in `cold_start_jump.rs`, so a budget picked independently of that watchdog is a
+#: deadline on a clock nobody set.
+#:
+#: THE ARITHMETIC. Below the activation block the operator checkpoint is the FIRST entry tried
+#: (PLAN row 4.4), so a hash that is in no chain dies inside `sync_to_checkpoint` rather than at
+#: `assert_l1_checkpoint`. The bogus follower shares the devnet's devp2p network, so it reports
+#: peers > 0 and its executed head never moves off 0 (nothing canonicalises blocks toward an FCU
+#: target that does not exist) — which is the `StalledWithPeers` signature, NOT `NoPeers`. That
+#: net is `EL_SYNC_STALL_ESCAPE = 300 s`, and the tick accounting adds nothing to it: the
+#: watchdog sleeps `EL_SYNC_TICK` at the END of each iteration and the first `on_tick` only sets
+#: the head baseline, so the trip lands after exactly `300 / 2` sleeps = 300 s
+#: (`cold_start_jump.rs::stall_with_peers_trips_when_head_frozen_and_not_before` pins that shape).
+#: Everything else is environment: container boot up to the first FCU, plus `CC_REJECT_POLL_S`
+#: granularity, plus one log read.
+#:
+#: 420 = 300 + `CC_REJECT_MARGIN_S`. The live run this was measured against (2026-09-13) showed
+#: ~228 s of frozen-head status inside the old 240 s budget, i.e. ~12 s of pre-wait overhead, and
+#: then FAILED twelve seconds before the net could fire — the phase could not pass BY
+#: CONSTRUCTION, at any speed of host. The margin is an order of magnitude over that overhead
+#: because it is bounded only by how slow a loaded host can be, while the cost of oversizing it
+#: is paid only on a genuinely broken run.
+CC_REJECT_S = 420
+#: The headroom over `EL_SYNC_STALL_ESCAPE`, NAMED so the relation can be asserted instead of the
+#: number. `test_the_bogus_refusal_budget_outlasts_the_product_watchdog` reads the Rust constant
+#: and re-derives this; a bare `CC_REJECT_S == 420` would go stale silently the day the watchdog
+#: moves, which is exactly how `test_smoke_boundary_cases.py`'s jump-gate tripwire died.
+CC_REJECT_MARGIN_S = 120
 CC_REJECT_POLL_S = 3
 #: `:47`, `:92` — `wait_finalized_ge "$set_block"` with NO second argument, i.e. lib.sh:182's
 #: `${2:-60}` default. Named here rather than left implicit because the bash reads as if it had no
