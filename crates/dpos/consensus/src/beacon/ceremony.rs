@@ -188,6 +188,11 @@ pub(crate) struct Resumed {
 pub(crate) struct DkgCeremony {
     epoch: u64,
     info: Info<MinSig, PeerPubkey>,
+    /// The ceremony's roster — `committee[epoch]`, the one set `info` was built
+    /// over (Model B, [`info_for`]: dealers == players == this). Kept beside
+    /// `info` because commonware's `Info` exposes neither set, and the actor
+    /// needs to ask [`has_seat`](Self::has_seat) before it hands a frame in.
+    roster: Set<PeerPubkey>,
     /// This node's dealer (consumed by `seal_dealings`).
     dealer: Option<Dealer<MinSig, Ed25519PrivateKey>>,
     /// This node's player (consumed by `finalize`).
@@ -410,7 +415,7 @@ impl DkgCeremony {
         me_key: Ed25519PrivateKey,
     ) -> Result<(Self, Step), DkgError> {
         let me = me_key.public_key();
-        let info = info_for(namespace, epoch, committee)?;
+        let info = info_for(namespace, epoch, committee.clone())?;
         let mut player = Player::new(info.clone(), me_key.clone())?;
         let (mut dealer, pub_msg, unsent, self_priv) = init_dealer(&me_key, epoch, &info)?;
 
@@ -452,6 +457,7 @@ impl DkgCeremony {
             Self {
                 epoch,
                 info,
+                roster: committee,
                 dealer: Some(dealer),
                 player: Some(player),
                 pending_pub: BTreeMap::new(),
@@ -789,6 +795,18 @@ impl DkgCeremony {
         self.dealer.is_none()
     }
 
+    /// Whether `peer` holds a seat in this ceremony — is in `committee[epoch]`,
+    /// which under Model B ([`info_for`]: dealers == players == the committee) is
+    /// both "one of its dealers" and "one of its players". The consumer-side
+    /// answer to "may this sender speak for this epoch": [`handle`](Self::handle)
+    /// keys a dealing and an ack by the sender, and commonware answers a stranger
+    /// silently (`Player::dealer_message` → `None` on `dealer_index` failing,
+    /// `Dealer::receive_player_ack` → `Err(UnknownPlayer)`, both swallowed there),
+    /// so the actor asks this first and refuses out loud.
+    pub fn has_seat(&self, peer: &PeerPubkey) -> bool {
+        self.roster.position(peer).is_some()
+    }
+
     /// Our own valid log is recorded — the seal-before-finalize precondition AND the
     /// torn-own-seal recovery target. `seal_dealings` files `me`'s log at the instant
     /// of a successful seal; a torn-own-seal node makes this true again the moment the
@@ -898,7 +916,7 @@ impl DkgCeremony {
         reconstruct_dealer: bool,
     ) -> Result<Resumed, DkgError> {
         let me = me_key.public_key();
-        let info = info_for(namespace, epoch, committee)?;
+        let info = info_for(namespace, epoch, committee.clone())?;
 
         // The recorded set is rebuilt through the SAME `insert_log` the live path
         // uses, in journal order — so a replayed journal keys every log by
@@ -909,6 +927,7 @@ impl DkgCeremony {
         let mut shell = Self {
             epoch,
             info: info.clone(),
+            roster: committee,
             dealer: None,
             player: None,
             pending_pub: BTreeMap::new(),

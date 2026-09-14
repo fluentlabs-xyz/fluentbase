@@ -25,7 +25,7 @@ use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 const EPOCH_LEN: u64 = 32;
 
-/// The height the record test tombstones node 0 from — chosen because the four
+/// The height the record test tombstones node 0 from — chosen because the five
 /// nodes' anchors for epoch 3 STRADDLE it, so the contract's live flag is
 /// `true` for some nodes' read of that epoch and `false` for the others'. The
 /// test asserts that straddle rather than assuming it: a fixture that stops
@@ -73,15 +73,33 @@ fn rotate_four_three_four() -> Committees {
     }))
 }
 
-/// [`rotate_four_three_four`] on the CANONICAL branch, and a committee nobody
+/// The record test's rotation: 5 → 4 → 5, node 3 out for epochs 3 and 4, node 0
+/// (the tombstoned one) in every epoch. [`rotate_four_three_four`] with one
+/// more seat, and the extra seat is load-bearing: since 5.3-В+Г1 the stand
+/// applies its own tombstone to the beacon gate the way production does, so a
+/// tombstoned member does NOT take part in the ceremony it sits in, and the
+/// epoch-3/4 DKG has to reach `quorum(4) = 3` out of the members that remain
+/// once node 0 (tombstoned) and node 3 (rotated out AND cut) are gone — nodes
+/// 1, 2 and 4. On the four-node roster that count was 2 < 3 and the chain
+/// parked at `last(2)` for want of `PK_3`.
+fn rotate_five_four_five() -> Committees {
+    Committees::Schedule(Arc::new(|epoch, n| {
+        Some(match epoch {
+            3 | 4 => vec![0, 1, 2, 4],
+            _ => (0..n).collect(),
+        })
+    }))
+}
+
+/// [`rotate_five_four_five`] on the CANONICAL branch, and a committee nobody
 /// elected on every other hash of the reading node's own tree.
 ///
 /// The canonical half is not a copy of that schedule, it IS that schedule: the
 /// stand builds its peer-set expectations from the plain `Committees`, so the
-/// two must agree member for member, and reproducing the `3 | 4 => [0, 1, 2]`
+/// two must agree member for member, and reproducing the `3 | 4 => [0, 1, 2, 4]`
 /// table here would have made that agreement a comment. `n` comes from the
 /// caller because [`BranchCommittees`] — unlike [`Committees`] — is not handed
-/// the roster size, and hard-coding `0..4` would drift silently the first time
+/// the roster size, and hard-coding `0..5` would drift silently the first time
 /// a fixture runs a different `n`.
 ///
 /// The speculative half is a ROTATION of the seats, not a subset: it has the
@@ -91,8 +109,8 @@ fn rotate_four_three_four() -> Committees {
 /// caught by the committee-floor guards long before any record was compared,
 /// and would therefore have pinned those guards instead of the read cursor.
 fn branching_rotation(n: usize) -> BranchCommittees {
-    let Committees::Schedule(flat) = rotate_four_three_four() else {
-        unreachable!("rotate_four_three_four is a Schedule");
+    let Committees::Schedule(flat) = rotate_five_four_five() else {
+        unreachable!("rotate_five_four_five is a Schedule");
     };
     Arc::new(
         move |epoch: u64, _at: &B256, _height: u64, branch: Branch| {
@@ -134,14 +152,28 @@ fn tree_only_hash(events: &[ElEvent]) -> Option<(u64, B256)> {
     })
 }
 
-/// (4.1, record) Four nodes at four different heights hold ONE committee record
+/// (4.1, record) Five nodes at five different heights hold ONE committee record
 /// per epoch — over a contract whose answer depends on the BRANCH the reading
 /// hash sits on.
 ///
-/// The fixture is (C9): node 3 rotates out at epoch 3, falls behind, and the
-/// production re-jump carries it back, so at every moment of the run the four
-/// nodes' anchors are four different heights — which the records themselves
-/// then say, because each one carries the `(height, hash)` it was read at.
+/// The fixture is (C9) on a five-node roster: node 3 rotates out at epoch 3,
+/// falls behind, and the production re-jump carries it back, so at every moment
+/// of the run the nodes' anchors are different heights — which the records
+/// themselves then say, because each one carries the `(height, hash)` it was
+/// read at.
+///
+/// WHY FIVE NODES (5.3-В+Г1). The tombstoned member takes no part in the plan
+/// any more: the stand fills its `TombstoneSet` from the finalized feed the way
+/// production does, so node 0's dealings, acks and confirms are refused at the
+/// beacon gate as `untracked` from [`TOMBSTONE_FROM`] on, and node 0 still has
+/// to SIT in every committee for the flag to reach every read (PREMISE 4). The
+/// ceremonies for epochs 3 and 4 therefore have to reach quorum without node 0
+/// and without node 3, which is rotated out and cut — on `C[3] = C[4] =
+/// {0, 1, 2}` that left 2 < `quorum(3) = 3` and the chain parked at `last(2)`
+/// (`too few members confirm they hold the pinned dealer logs`). With
+/// `C[3] = C[4] = {0, 1, 2, 4}` nodes 1, 2 and 4 are `quorum(4) = 3`, and
+/// epoch 5's five-member ceremony (`quorum(5) = 4`) runs after node 3 has
+/// healed. The four premises and three observations are the four-node ones.
 ///
 /// WHAT MAKES IT FALL BEHIND (5.1). Not the rotation: since П-3 a rotated-out
 /// node fetches the epoch key as an artifact over `BEACON_RESOLVER_CHANNEL`
@@ -172,7 +204,7 @@ fn tree_only_hash(events: &[ElEvent]) -> Option<(u64, B256)> {
 ///
 /// The TOMBSTONE is the second half of the same claim, and the reason the run
 /// sets one at all: the contract's equivocation flag is read LIVE at the call's
-/// own block while everything beside it is frozen, so with the four anchors
+/// own block while everything beside it is frozen, so with the five anchors
 /// straddling [`TOMBSTONE_FROM`] the same epoch is read `tombstoned` by some
 /// nodes and not by others. The records still have to agree — which is exactly
 /// what `CommitteeRecord` carrying no `tombstoned` leg buys, and what folding
@@ -188,20 +220,22 @@ fn tree_only_hash(events: &[ElEvent]) -> Option<(u64, B256)> {
 /// read resolving on a speculative hash; a record whose anchor hash is not the
 /// node's canonical hash at that height.
 #[test]
-fn four_nodes_at_four_heights_hold_one_committee_record_per_epoch() {
-    let mut cfg = StandConfig::live(4, 1);
+fn five_nodes_at_five_heights_hold_one_committee_record_per_epoch() {
+    let mut cfg = StandConfig::live(5, 1);
     let roster = cfg.n;
     // The canonical branch and `committees` agree member for member BY
     // CONSTRUCTION — `branching_rotation` is built out of the same closure.
-    cfg.committees = rotate_four_three_four();
+    cfg.committees = rotate_five_four_five();
     cfg.committees_by_branch = Some(branching_rotation(roster));
     // Node 0 sits in every epoch's committee, so the flag reaches every read
     // above the height; node 3 is rotated out of epochs 3 and 4 and would not.
+    // Node 0 is also OUT of every ceremony from the height on (see the
+    // docstring), which is what the fifth seat pays for.
     cfg.tombstoned = vec![(0, TOMBSTONE_FROM)];
     cfg.re_jump_threshold = Some(crate::cold_start_jump::JUMP_THRESHOLD.min(EPOCH_LEN));
     let mut stand = Stand::new(cfg);
     stand
-        .partition(&[0, 1, 2], &[3])
+        .partition(&[0, 1, 2, 4], &[3])
         .after_height(2 * EPOCH_LEN + 4)
         .for_views(EPOCH_LEN as u32 + 8);
     let out = stand.run_until(reached(5 * EPOCH_LEN + 8), Duration::from_secs(400));
@@ -227,7 +261,7 @@ fn four_nodes_at_four_heights_hold_one_committee_record_per_epoch() {
 
     // PREMISE 2a: the fixture's own two halves — the cut fired and healed, and the
     // gate carried node 3 back by a re-jump. Without both there is no catching-up
-    // node and every observation below is about four nodes in lockstep.
+    // node and every observation below is about five nodes in lockstep.
     let part = &out.partitions[0];
     assert!(
         !part.heights_at_heal.is_empty(),
@@ -382,7 +416,8 @@ fn four_nodes_at_four_heights_hold_one_committee_record_per_epoch() {
     out.assert_lockstep_except(&[]);
     eprintln!(
         "(4.1/record) heights={:?} anchors={:?} split_anchors={split_anchors:?} \
-         straddled={straddled:?} tombstoned_seen={:?} tree_only={tree_only:?}",
+         straddled={straddled:?} tombstoned_seen={:?} tree_only={tree_only:?} \
+         jump_calls[3]={:?} cut={:?}",
         out.heights,
         per_node
             .iter()
@@ -391,6 +426,8 @@ fn four_nodes_at_four_heights_hold_one_committee_record_per_epoch() {
         (0..n)
             .map(|i| out.staking_reads[i].tombstoned_seen.clone())
             .collect::<Vec<_>>(),
+        out.jump_calls[3],
+        out.partitions[0],
     );
 }
 

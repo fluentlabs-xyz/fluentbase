@@ -3055,10 +3055,327 @@ fn a_catching_up_member_takes_verify_only_at_every_boundary_below_its_own_tip() 
     );
 }
 
+/// (5.3-В) A REGISTRY-TIER neighbour's dealing is refused at every member's
+/// pre-decode gate, exactly as many times as it was sent, and the ceremony
+/// completes for everyone regardless.
+///
+/// # What this pins
+///
+/// Since 5.3-В the ONE sender classification on the `BEACON_CHANNEL` is the
+/// channel's `GatedReceiver` over the peer set the node's own transition last
+/// registered (`stand.rs`, `GatedReceiver::new(bcr, window, "beacon", true)` —
+/// the production wiring of `node/src/dpos.rs`); the actor holds no membership
+/// opinion of its own, and the seat a sender holds in a frame's epoch is the
+/// consumer's check (`no_seat`). This run is the first in which the stand
+/// EXERCISES that gate: before 5.3-В the stand built neither a window nor a
+/// gate, so a registry-tier sender's frames reached every actor's decode.
+///
+/// # The fixture
+///
+/// Five nodes, `committee[E] = [0, 1, 2, 3]` for every `E` (`n = 4`, `f = 1`),
+/// `PeerSet::AllNodes` — so node 4 is in the registry every member tracks as
+/// its SECONDARY tier and in no committee record. Node 4 is the
+/// `Role::StrayDealer`: once a second it broadcasts a real `Commitment` dealing
+/// for the epoch after its own to everyone. Each member's gate classifies the
+/// sender `Tracked` and refuses the frame as `secondary`. The epoch-2 ceremony
+/// (the deterministic bootstrap, dealt during epoch 1) runs under that fire.
+///
+/// # What is asserted
+///
+///   1. the stray put frames on the wire (`stray_dealer_sends[4] > 0`, every
+///      other node `0`);
+///   2. the beacon channel refused EXACTLY that many frames as `secondary`,
+///      and nothing as `untracked` — the count is attributed to the stray by
+///      construction (it is the only sender any gate can refuse: every other
+///      node is a member of every record) and CHECKED by the exact equality,
+///      which a stray refusal from anywhere else would break;
+///   3. nothing reached a consumer that had to refuse it: `no_seat = 0`;
+///   4. every member holds epoch 2's artifact, its σ at `epoch_start(2)`
+///      verifies under `PK_2` on all of them, and all four dealers are in it;
+///   5. no halt, no divergence, one chain.
+///
+/// Falsifier (M1 of 5.3-В round 2): the stand's `GatedReceiver` removed — the
+/// stray's frames reach every actor, `secondary` reads `0` against a positive
+/// send count, and the consumer's `no_seat` moves off zero.
+#[test]
+fn a_registry_tier_neighbours_dealing_is_refused_at_the_gate_and_the_key_still_mints() {
+    use metrics_util::debugging::DebuggingRecorder;
+
+    const LEN: u64 = EPOCH_LEN;
+    let members = [0usize, 1, 2, 3];
+    let end = 3 * LEN + 8;
+    let recorder = DebuggingRecorder::new();
+    let snap = recorder.snapshotter();
+    let out = metrics::with_local_recorder(&recorder, || {
+        let mut cfg = StandConfig::live(5, 1);
+        cfg.committees = Committees::Schedule(Arc::new(|_epoch, _n| Some(vec![0, 1, 2, 3])));
+        cfg.metrics_snapshotter = Some(snap.clone());
+        let mut stand = Stand::new(cfg);
+        stand.node(4).role(Role::StrayDealer);
+        stand.run_until(
+            move |p| p.min_height_of(&members) >= end,
+            Duration::from_secs(300),
+        )
+    });
+    let drained = &out.metrics_before_collect;
+    // BOTH labels: the family is shared by every gated channel (R-070), so a
+    // `reason`-only sum would read another channel's refusals as the beacon's.
+    let beacon = |reason: &str| beacon_refusals(drained, reason);
+    let (secondary, untracked, no_seat) =
+        (beacon("secondary"), beacon("untracked"), beacon("no_seat"));
+    eprintln!(
+        "(5.3-В) heights={:?} stray_sends={:?} beacon refusals: secondary={secondary} \
+         untracked={untracked} no_seat={no_seat} epoch={} confirm_window={} virtual={:?} real={:?}",
+        out.heights,
+        out.stray_dealer_sends,
+        beacon("epoch"),
+        beacon("confirm_window"),
+        out.virtual_elapsed,
+        out.real_elapsed
+    );
+    if out.timed_out {
+        for line in &out.logs {
+            eprintln!("(5.3-В LOG) {:?} {}", line.level, line.text);
+        }
+    }
+    assert!(!out.timed_out, "heights {:?}", out.heights);
+    assert!(out.halted.is_empty(), "{:?}", out.halted);
+    assert_eq!(out.diverged, None);
+    assert!(out.errors().is_empty(), "{:?}", out.errors());
+
+    // (1) The stray dealt, and nobody else strayed.
+    let sent = out.stray_dealer_sends[4];
+    assert!(sent > 0, "the stray dealer put nothing on the wire");
+    assert!(
+        out.stray_dealer_sends[..4].iter().all(|s| *s == 0),
+        "{:?}",
+        out.stray_dealer_sends
+    );
+
+    // PREMISE of (2): node 4 is what every member's transition tracked as
+    // SECONDARY (the active registry) and never as PRIMARY (a committee record)
+    // — the classification `Tracked` ⇒ the refusal `secondary`. Asserted on the
+    // registrations themselves, so the exact label below is a consequence of a
+    // premise this run states and not of a fixture detail it silently relies on
+    // (a `PeerSet` that dropped node 4 from the registry would make the same
+    // frames `untracked`, and this is where that would be said).
+    let stray_key = {
+        use commonware_cryptography::Signer as _;
+        super::stand::keys(1, 5).0[4].public_key()
+    };
+    for &i in &members {
+        assert!(
+            !out.peer_sets[i].is_empty(),
+            "node {i} tracked nothing — the premise below is about no registration"
+        );
+        for (epoch, primary, secondary) in &out.peer_sets[i] {
+            assert!(
+                secondary.contains(&stray_key) && !primary.contains(&stray_key),
+                "node {i}'s registration for epoch {epoch} does not carry node 4 as \
+                 secondary-only: primary={} secondary={}",
+                primary.contains(&stray_key),
+                secondary.contains(&stray_key)
+            );
+        }
+    }
+
+    // (2) Every one of its frames was refused at a member's gate as `secondary`,
+    // and nothing else was.
+    assert_eq!(
+        (secondary, untracked),
+        (sent, 0),
+        "the gate refused {secondary} frames as `secondary` and {untracked} as `untracked` \
+         against {sent} sent by the stray — the gate is not the one sender classification \
+         on the channel"
+    );
+
+    // (3) No consumer had to refuse a seatless frame: the gate is in front of it.
+    assert_eq!(no_seat, 0, "a stray frame reached a consumer");
+
+    // (4) The key: minted, with every dealer, and the σ under it on every member.
+    let artifact2 = artifact_on_every_node(&out, &members, 2);
+    let pk2 = pk_of(artifact2);
+    seed_agreed_at(&out, &members, 2 * LEN, 2, &pk2);
+    assert_eq!(
+        dealers_of(artifact2),
+        4,
+        "a dealer is missing from epoch 2's artifact"
+    );
+
+    // (5) One chain.
+    out.assert_lockstep_except(&[]);
+}
+
+/// The BEACON channel's refusals under `reason` in a drained recorder — both
+/// labels, because `dpos_ingress_dropped_total` is one family for every gated
+/// channel (R-070) and a `reason`-only sum would count another channel's.
+fn beacon_refusals(drained: &[super::stand::CounterSample], reason: &str) -> u64 {
+    super::stand::counter_where(
+        drained,
+        crate::dpos::INGRESS_DROPPED_TOTAL,
+        &[
+            ("channel", crate::beacon::testing::BEACON_CHANNEL_LABEL),
+            ("reason", reason),
+        ],
+    )
+}
+
+/// (5.3-В, third round) A committee member the chain has TOMBSTONED is refused
+/// at every other member's pre-decode gate as `untracked` — the tombstone
+/// predicate over the node's own `TombstoneSet`, which the stand now fills the
+/// way production does (`TombstoneSet::observe` over the snapshot read at every
+/// finalized height) — and the ceremony completes without it.
+///
+/// # The fixture
+///
+/// Five nodes, `committee[E] = [0..5]` for every `E` (`n = 5`, `f = 1`),
+/// `PeerSet::AllNodes`. Node 4 is reported tombstoned by the contract from
+/// height 4 on (`StandConfig::tombstoned`), i.e. a whole epoch before the
+/// epoch-2 ceremony deals (during epoch 1, from `epoch_start(1) = 32`). Node 4's
+/// own beacon plane runs as an honest member's: it deals, acks, reveals and
+/// confirms for epoch 2 on the `BEACON_CHANNEL`, and every one of those frames
+/// is classified `Dropped` at the four other gates before a byte is decoded.
+/// Its acks never reaching a dealer means each dealer reveals node 4's share in
+/// its log — ONE reveal, within `f` — and its own dealing, acked by nobody, does
+/// not seal. Production severs the peer's transport on top of this; the stand
+/// does not model that (`BlockerSpy` counts, the simulated network delivers), so
+/// node 4 keeps following the chain and the run stays in lockstep.
+///
+/// # What is asserted
+///
+///   1. PREMISE: every member's set observed node 4 before the ceremony dealt
+///      (`Outcome::tombstones_observed`, a height below `epoch_start(1)`) — the
+///      gate had the verdict when the frames came;
+///   2. the beacon channel refused frames as `untracked` and none as `secondary`
+///      (node 4 is in every committee record: only the tombstone can make it
+///      `Dropped`, and `Dropped` is `untracked`), and no consumer had to refuse
+///      one (`no_seat = 0`);
+///   3. every member holds epoch 2's artifact, its σ at `epoch_start(2)`
+///      verifies under `PK_2` on all of them, and the artifact pins exactly the
+///      four dealers `[0, 1, 2, 3]` — node 4's seat is NOT among the pinned
+///      logs, because no member ever took its dealing in;
+///   4. no halt, no divergence, one chain.
+///
+/// Falsifier (M1 of 5.3-В round 3): the stand's `TombstoneSet` left unfilled
+/// (`observe` removed from the boundary feed) — node 4 is a window `Member`
+/// again, `untracked` reads 0 and its dealing is pinned as a fifth log.
+#[test]
+fn a_tombstoned_members_dealing_is_refused_at_the_gate_as_untracked_and_the_key_still_mints() {
+    use metrics_util::debugging::DebuggingRecorder;
+
+    const LEN: u64 = EPOCH_LEN;
+    const TOMBSTONED: usize = 4;
+    const TOMBSTONE_FROM: u64 = 4;
+    let members = [0usize, 1, 2, 3];
+    let end = 3 * LEN + 8;
+    let recorder = DebuggingRecorder::new();
+    let snap = recorder.snapshotter();
+    let out = metrics::with_local_recorder(&recorder, || {
+        let mut cfg = StandConfig::live(5, 1);
+        cfg.tombstoned = vec![(TOMBSTONED, TOMBSTONE_FROM)];
+        cfg.metrics_snapshotter = Some(snap.clone());
+        Stand::new(cfg).run_until(
+            move |p| p.min_height_of(&members) >= end,
+            Duration::from_secs(400),
+        )
+    });
+    let drained = &out.metrics_before_collect;
+    let beacon = |reason: &str| beacon_refusals(drained, reason);
+    let (untracked, secondary, no_seat) =
+        (beacon("untracked"), beacon("secondary"), beacon("no_seat"));
+    eprintln!(
+        "(5.3-В/tombstone) heights={:?} observed={:?} beacon refusals: untracked={untracked} \
+         secondary={secondary} no_seat={no_seat} epoch={} confirm_window={} \
+         proposals_refused_to_bind={} virtual={:?} real={:?}",
+        out.heights,
+        out.tombstones_observed
+            .iter()
+            .map(|seen| seen.iter().map(|(h, _)| *h).collect::<Vec<_>>())
+            .collect::<Vec<_>>(),
+        beacon("epoch"),
+        beacon("confirm_window"),
+        // The OTHER consumer of the same set — the refuse-to-bind gate
+        // (`application.rs`, `verify_block`) — as a diagnostic: the stand's set
+        // now feeds it too.
+        super::stand::counter_of(
+            drained,
+            "dpos_marker_reject_total",
+            Some(("reason", "tombstoned_leader"))
+        ),
+        out.virtual_elapsed,
+        out.real_elapsed
+    );
+    if out.timed_out {
+        for line in &out.logs {
+            eprintln!("(5.3-В/tombstone LOG) {:?} {}", line.level, line.text);
+        }
+    }
+    assert!(!out.timed_out, "heights {:?}", out.heights);
+    assert!(out.halted.is_empty(), "{:?}", out.halted);
+    assert_eq!(out.diverged, None);
+    assert!(out.errors().is_empty(), "{:?}", out.errors());
+
+    // (1) PREMISE: the verdict reached every member's set before the ceremony.
+    let tombstoned_key = {
+        use commonware_cryptography::Signer as _;
+        super::stand::keys(1, 5).0[TOMBSTONED].public_key()
+    };
+    for &i in &members {
+        let seen_at = out.tombstones_observed[i]
+            .iter()
+            .find(|(_, peer)| *peer == tombstoned_key)
+            .map(|(h, _)| *h);
+        assert!(
+            seen_at.is_some_and(|h| h < LEN),
+            "node {i} observed node {TOMBSTONED}'s tombstone at {seen_at:?}, not before the \
+             epoch-2 ceremony dealt at {LEN}: {:?}",
+            out.tombstones_observed[i]
+        );
+        assert!(
+            out.tombstones_observed[i]
+                .iter()
+                .all(|(_, peer)| *peer == tombstoned_key),
+            "node {i} observed a tombstone nobody was given: {:?}",
+            out.tombstones_observed[i]
+        );
+    }
+
+    // (2) Refused as `untracked` — the tombstone's classification — and nothing
+    // reached a consumer.
+    assert!(
+        untracked > 0,
+        "no beacon frame was refused as `untracked`: the tombstoned member's dealing got \
+         through every gate"
+    );
+    assert_eq!(secondary, 0, "a committee member cannot be `secondary`");
+    assert_eq!(no_seat, 0, "a tombstoned member's frame reached a consumer");
+
+    // (3) The key: minted by the four others, and the σ under it on every member.
+    let artifact2 = artifact_on_every_node(&out, &members, 2);
+    let pk2 = pk_of(artifact2);
+    seed_agreed_at(&out, &members, 2 * LEN, 2, &pk2);
+    let pinned: Vec<u8> = decode_artifact(artifact2)
+        .expect("decodes")
+        .0
+        .logs
+        .iter()
+        .map(|(idx, _)| *idx)
+        .collect();
+    let seat_of_tombstoned = committee_seats(1, 5)[TOMBSTONED];
+    assert_eq!(pinned.len(), 4, "epoch 2's artifact pins {pinned:?}");
+    assert!(
+        !pinned.contains(&seat_of_tombstoned),
+        "the tombstoned member's seat {seat_of_tombstoned} is pinned in epoch 2's artifact \
+         {pinned:?} — a member took its dealing in"
+    );
+
+    // (4) One chain — the tombstoned node follows it too.
+    out.assert_lockstep_except(&[]);
+}
+
 /// `committee[E]` is peer-key ASCENDING (`commitEpochCommittee` sorts it), so a
 /// node's seat is the position of its peer key in the sorted set. Derived from the
 /// stand's own key schedule, which is a function of the seed alone.
-#[cfg(feature = "dpos-devnet-byzantine")]
 fn committee_seats(seed: u64, n: usize) -> Vec<u8> {
     use commonware_cryptography::Signer as _;
     let (peers, _) = super::stand::keys(seed, n);

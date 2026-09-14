@@ -166,6 +166,11 @@ pub(crate) use surface::absent_unregistered;
 /// the rows 5.1-5.4 now have to keep nameable while they move it.
 #[cfg(test)]
 pub(crate) mod testing {
+    /// The `channel` label the beacon's refusals carry on the shared
+    /// `dpos_ingress_dropped_total` — the stand tests filter on it, so that a
+    /// `reason` count is the beacon's and not another gated channel's (5.3-В,
+    /// third round).
+    pub(crate) use super::actor::BEACON_CHANNEL_LABEL;
     pub(crate) use super::actor::DETERMINISTIC_BOOTSTRAP_EPOCH;
     pub(crate) use super::artifact::{
         artifact_with_key, decode_artifact, AcquireArtifact, AcquireMint, ArtifactStore,
@@ -195,10 +200,13 @@ pub(crate) mod testing {
     /// they are gated as it is — an ungated re-export is an unused import in a
     /// stand built without the feature.
     #[cfg(feature = "dpos-devnet-byzantine")]
+    pub(crate) use super::{actor::CommitteeFor, ceremony::info_for, dkg_msg::DealerReveal};
+    /// The stand's `Role::StrayDealer` (5.3-В) builds one real `Commitment`
+    /// dealing and frames it as the actor would, so the gate it is refused at is
+    /// tested with a frame the actor could have consumed — hence ungated.
     pub(crate) use super::{
-        actor::CommitteeFor,
-        ceremony::info_for,
-        dkg_msg::{DealerReveal, DkgBody, DkgMsg},
+        ceremony::DkgCeremony,
+        dkg_msg::{DkgBody, DkgMsg},
         wire::BeaconMessage,
     };
 }

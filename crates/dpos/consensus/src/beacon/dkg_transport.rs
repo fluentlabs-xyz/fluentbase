@@ -129,9 +129,21 @@ where
             // dkg_bodies_per_peer_are_measured_under_a_partition_in_the_agreement_window`);
             // `Plan::Forward` re-sends the SAME digest, which the deque does not
             // grow (`CW:broadcast/src/buffered/engine.rs:331-337`). The second
-            // slot is headroom for a re-proposal after a nullify, which the
-            // measurement never produced. `MAX_COMMITTEE_SIZE` was 51 bodies of
-            // ~154 KiB per sender (R-037).
+            // slot is for a re-proposal after a nullify, and that IS a different
+            // body: with nothing certified yet, `DkgAgree::propose` builds the
+            // view's proposal from the confirmations and dealer logs it holds AT
+            // THAT VIEW (`dkg_agree.rs`, the `None` arm of `certified_value` →
+            // `build_proposal`), and a log or confirmation that landed between
+            // the nullified view and this one changes the encoding and so the
+            // digest. The same node leads again `n` views later (round-robin),
+            // so ONE sender can legitimately have two bodies in flight and a
+            // peer parked on the first must still find it — pinned by
+            // `two_bodies_from_one_sender_are_both_retained_a_third_evicts_the_first`
+            // below. A THIRD re-proposal evicts the first, which is the accepted
+            // bound: two nullified leaderships of one node in one agreement is
+            // already past the measured envelope (the precondition pass never
+            // produced even one). `MAX_COMMITTEE_SIZE` was 51 bodies of ~154 KiB
+            // per sender (R-037).
             deque_size: 2,
             priority: true,
             codec_config: (),
@@ -153,6 +165,103 @@ mod tests {
     use commonware_utils::NZUsize;
     use rand_08::{rngs::StdRng, SeedableRng as _};
     use std::time::Duration;
+
+    /// The production body engine holds TWO distinct bodies per primary sender
+    /// and no more — the shape a nullify-then-re-propose produces (see the
+    /// `deque_size` note in [`build_body_engine`]): the first proposal and the
+    /// rebuilt one are both answerable by digest, and a third evicts the first.
+    ///
+    /// Built through [`build_body_engine`] itself, so the number under test is
+    /// the production one and not a copy of it. The sender is this node — its
+    /// own broadcasts are cached under its own key exactly as a peer's are
+    /// (`CW:broadcast/src/buffered/engine.rs:247-249`, `insert_message(self.
+    /// public_key, ..)`), and it is in `latest.primary` by the `track` below.
+    ///
+    /// Falsifier: `deque_size` back to 1 (the second body evicts the first, and
+    /// a peer parked on the nullified view's body never gets it), or raised
+    /// (the third body evicts nothing — the bound the measurement priced is
+    /// gone).
+    #[test]
+    fn two_bodies_from_one_sender_are_both_retained_a_third_evicts_the_first() {
+        use crate::beacon::testing::DkgOutcome;
+        use commonware_broadcast::Broadcaster as _;
+        use commonware_cryptography::bls12381::{
+            dkg::deal, primitives::sharing::Mode, primitives::variant::MinSig,
+        };
+        use commonware_p2p::{Manager as _, Recipients};
+        use commonware_utils::{ordered::Set, N3f1};
+
+        let runner = deterministic::Runner::timed(Duration::from_secs(10));
+        runner.start(|context| async move {
+            let mut rng = StdRng::seed_from_u64(0x53);
+            let me = Ed25519PrivateKey::random(&mut rng).public_key();
+            let (network, oracle) = Network::new(
+                context.with_label("network"),
+                SimConfig {
+                    max_size: 1024 * 1024,
+                    disconnect_on_block: false,
+                    tracked_peer_sets: NZUsize!(4),
+                },
+            );
+            network.start();
+            let channel = oracle
+                .control(me.clone())
+                .register(
+                    fluentbase_p2p::constants::BROADCAST_CHANNEL,
+                    fluentbase_p2p::constants::BROADCAST_QUOTA,
+                )
+                .await
+                .expect("register BROADCAST_CHANNEL");
+            oracle
+                .manager()
+                .track(0, Set::from_iter_dedup([me.clone()]))
+                .await;
+            let (engine, mailbox) =
+                build_body_engine(context.with_label("dkg_bodies"), me, oracle.manager());
+            drop(engine.start(channel));
+
+            // Three bodies of one target epoch that differ in the pinned set — the
+            // way a rebuilt proposal differs from a nullified one.
+            let outcome: DkgOutcome = {
+                let players: Set<PeerPubkey> = Set::from_iter_dedup(
+                    (0..4).map(|_| Ed25519PrivateKey::random(&mut rng).public_key()),
+                );
+                deal::<MinSig, PeerPubkey, N3f1>(&mut rng, Mode::NonZeroCounter, players)
+                    .expect("deal")
+                    .0
+            };
+            let body = |pinned: u8| DkgProposal {
+                target_epoch: 7,
+                logs: (0..=pinned)
+                    .map(|i| (i, alloy_primitives::B256::repeat_byte(0x20 + i)))
+                    .collect(),
+                group_key: outcome.clone(),
+                confirms: Vec::new(),
+            };
+            let (first, second, third) = (body(0), body(1), body(2));
+            let digests = [first.digest(), second.digest(), third.digest()];
+            assert!(
+                digests[0] != digests[1] && digests[1] != digests[2] && digests[0] != digests[2],
+                "the fixture's three bodies must be three digests"
+            );
+
+            mailbox.broadcast(Recipients::All, first).await;
+            mailbox.broadcast(Recipients::All, second).await;
+            assert!(
+                mailbox.get(digests[0]).await.is_some(),
+                "the nullified view's body must still be answerable beside the re-proposal"
+            );
+            assert!(mailbox.get(digests[1]).await.is_some());
+
+            mailbox.broadcast(Recipients::All, third).await;
+            assert!(
+                mailbox.get(digests[0]).await.is_none(),
+                "a third body from one sender must evict the first — the deque is two deep"
+            );
+            assert!(mailbox.get(digests[1]).await.is_some());
+            assert!(mailbox.get(digests[2]).await.is_some());
+        });
+    }
 
     #[test]
     fn subchannel_ids_are_disjoint_from_every_epoch_registration() {

@@ -70,12 +70,16 @@ pub fn record_ingress_drop(channel: &'static str, reason: &'static str) {
 /// A `commonware_p2p::Receiver` that refuses a frame before anything decodes it,
 /// on the peer set this node last registered.
 ///
-/// This is the FIRST half of the 4.3 ingress rule and the only half that can run
-/// before a decode: the sender is either in the tracked window or it is not, and
-/// a tombstoned sender is out regardless. The SECOND half — which epoch's
-/// committee the sender must be in for THIS frame — needs the frame's own epoch
-/// and therefore lives at each channel's own entry (`beacon::actor::on_message`,
-/// `slasher::gossip::ingest_batch`).
+/// This is the ONE classification of a sender on the channel, and the only check
+/// that can run before a decode: the sender is either in the tracked window or
+/// it is not, and a tombstoned sender is out regardless. Binding the sender to
+/// the frame's own EPOCH needs the frame's epoch and therefore lives past the
+/// decode, and the two channels do it differently: EVIDENCE re-reads this window
+/// (`slasher::gossip::ingest_batch`, `Ingress::member_of`); the BEACON asks the
+/// window nothing more — its actor keeps an epoch cost gate (`[now, now + 2]`,
+/// `beacon::actor::on_message`) and leaves the seat to the frame's consumer (the
+/// ceremony's roster, `committee[target_epoch]` for a confirmation; refused
+/// `no_seat` there). 5.3-В.
 ///
 /// `members_only` says which tier the channel serves: BEACON and EVIDENCE are
 /// committee traffic, so a tier-2 (registry) sender has no business on them;

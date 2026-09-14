@@ -744,9 +744,16 @@ where
     ///   before this reads it and only the genesis-era epochs (`E ≤ 2`, before a
     ///   block of `E−1` has executed) can legitimately answer empty. The record is
     ///   then ABSENT from `committees` and the tier is skipped. Nothing downstream
-    ///   loses by it: the beacon's own per-epoch check reads the SAME write-once
-    ///   slot through `committee_for`, so an epoch with no record has no members to
-    ///   admit either.
+    ///   loses by it: a member of the skipped record that sits in no other record
+    ///   is refused at the channel's pre-decode gate (`GatedReceiver`, the one
+    ///   sender classification on the beacon channel) until this node's next
+    ///   `track` carries the record, and the dealer leg re-sends every pre-seal
+    ///   tick. The seat the sender holds in the ceremony is the consumer's check
+    ///   (`beacon::actor`, `no_seat`) over the committed record itself, through
+    ///   `committee_for` — a reading that CAN disagree with this window for the
+    ///   skipped epoch (the record may be readable by the time the consumer asks),
+    ///   in the one direction that is safe: the gate is the stricter, and what it
+    ///   refuses is re-sent.
     /// * `Err` = the read itself failed (backend, decode, an on-chain invariant
     ///   violation). That is NOT a legal state, and it is `?`. Both callers of this
     ///   function turn the error into a retry that re-reads the SAME boundary:

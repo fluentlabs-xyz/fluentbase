@@ -121,6 +121,54 @@ pub(crate) const DKG_MARGIN_BLOCKS: u64 = 20;
 /// (`dpos_ingress_dropped_total`).
 pub(crate) const BEACON_CHANNEL_LABEL: &str = "beacon";
 
+/// How far ABOVE this actor's own epoch clock a frame's ceremony epoch may lie
+/// and still be worth a look: the ingress window is `[now, now + 2]`
+/// ([`within_ingress_window`]), and every ingress rule on this actor reads it
+/// from here — [`DkgActor::epoch_is_actionable`] (the cost gate before the
+/// decode), [`DkgActor::is_bufferable`] (the start-race buffer, which adds its
+/// own `epoch > now`) and [`DkgActor::on_confirm`] (the entry-bar window).
+///
+/// The window is about EPOCHS, not senders. ONE classification and ONE binding,
+/// not one source: who may speak on the channel at all is classified once, by
+/// the channel's pre-decode `GatedReceiver` (`crate::dpos::GatedReceiver`, over
+/// the peer set this node's transition last registered); which SEAT a sender
+/// holds in the frame's epoch is bound once, by the consumer — the ceremony's
+/// roster for a dealing / ack / reveal, `committee[target_epoch]` for a
+/// confirmation. The two read different things (the transition's assembled
+/// window, which skips a neighbour record it could not read; the committed
+/// record itself) and can disagree for a moment at a boundary — the gate is the
+/// stricter of the two, and a dealing it refuses is re-sent. The actor asks a
+/// third question of neither (5.3-В, second round: the per-epoch membership
+/// check this actor used to run between the two was a third answer to "who is
+/// this sender", and it disagreed with both on a lagging clock).
+///
+/// WHY 2 AND NOT 3 (R-126, closed by this record). The two epochs above `now` are
+/// the ceremony this actor may still start (`now + 1`, `maybe_start`) and the one
+/// a peer ONE epoch ahead of it is already dealing for (`now + 2`). A peer two
+/// epochs ahead would mean this actor's clock — the max over its three feeders,
+/// `fin + K`, the upstream cert frontier and the marshal's ordering tip
+/// (`on_height`) — lags the network by two whole epochs, which is the
+/// frozen-tip / cold-start case, not a steady-state race; and nothing that a
+/// frame for `now + 3` carries is lost by refusing it: a dealing is re-sent every
+/// pre-seal tick (`DkgCeremony::retransmit`), a reveal is re-fetched by its pinned
+/// hash (`fetch_missing_logs`), and a confirmation names an entry bar the peers
+/// consume at THEIR agreement — two epochs before this clock could reach it, so
+/// this node's count of it decides nothing.
+pub(crate) const INGRESS_LOOKAHEAD_EPOCHS: u64 = 2;
+
+/// THE ingress window: is `epoch` within `[now, now + INGRESS_LOOKAHEAD_EPOCHS]`?
+/// Pure so the three rules that read it cannot drift apart. `now` is the caller's
+/// epoch clock. Two of the callers ([`DkgActor::epoch_is_actionable`],
+/// [`DkgActor::is_bufferable`]) read it off [`DkgActor::height_now`], which is
+/// `0` before the first height tick — a floor of `[0, 2]` that is the honest
+/// answer for them, since a dealing they refuse is re-sent and nothing else
+/// they gate is one-shot. [`DkgActor::on_confirm`] alone refuses to call this
+/// before its clock has started (it reads `last_height` itself), because a
+/// confirmation refused there is never re-issued.
+pub(crate) fn within_ingress_window(now: u64, epoch: u64) -> bool {
+    (now..=now.saturating_add(INGRESS_LOOKAHEAD_EPOCHS)).contains(&epoch)
+}
+
 /// The epoch the beacon goes live at, deterministically. `committee[2]` runs its
 /// DKG during epoch 1 EVEN IF unchanged from `committee[1]`, so a long-stable
 /// initial committee still seeds the beacon (on-change-only activation would
@@ -360,7 +408,9 @@ pub struct DkgActor<Se, Re, R> {
     resolver: Option<R>,
     /// Inbound `Produce`/`Deliver` requests from the resolver engine
     /// (`log_resolver::LogHandler`), served against the live ceremonies + persisted
-    /// journal in the single-threaded run loop.
+    /// journal in the single-threaded run loop. `Some` and then CLOSED is the
+    /// resolver engine's death, and [`Self::run`] stops on it (the engine is a
+    /// supervised sibling; see the arm); `None` from birth parks the branch.
     resolver_rx: Option<tokio::sync::mpsc::Receiver<LogMessage>>,
     /// The DEALING/QUAL/SERVE roster reader — resolves `committee[epoch]` as the
     /// CEREMONY participants (in production the committed-slot reader, since under the
@@ -865,17 +915,27 @@ where
                 // `recv_or_never` parks forever when no resolver is wired.
                 req = recv_or_never(resolver_rx.as_mut()) => match req {
                     Some(msg) => self.on_resolver_message(msg, &mut rng).await,
-                    // The resolver engine exited (its peer-set subscription / mailbox
-                    // closed) → PARK the inbound branch AND clear the OUTBOUND mailbox so
-                    // `fetch_missing_logs` short-circuits (`self.resolver.is_none()`) instead
-                    // of computing the fetch-set + issuing no-op `send_lossy` calls every
-                    // tick for the life of the process (review [313]). Do NOT break the whole
-                    // loop: the height + gossip arms stay live and recovery degrades to
-                    // gossip-only (the documented no-resolver behaviour). The engine is
-                    // spawned once and never respawned, so the clear is terminal.
+                    // The resolver engine exited: the one holder of the sender is the
+                    // `LogHandler` the plane hands to the resolver engine
+                    // (`plane.rs`, `LogHandler::new(log_resolver_tx)` in `build`, handed
+                    // to `open_artifact_seam`), and that engine is a supervised child of
+                    // the plane (`("beacon_resolver", ..)` in the plane's
+                    // `spawn_supervisor`), whose supervisor is one of the node's own
+                    // supervised handles (`node/dpos.rs`, `("beacon", ..)`): the node
+                    // goes down on its exit. So there is no "gossip-only" life to degrade
+                    // into — what this arm used to do (clear the mailbox, keep the loop)
+                    // described the microseconds between the engine's exit and the
+                    // supervisor's reaction, and hid the exit behind a silent downgrade.
+                    // Say it, and stop: `run` returning is what the plane's supervisor
+                    // sees, and the actor's task is supervised too.
                     None => {
-                        resolver_rx = None;
-                        self.resolver = None;
+                        tracing::error!(
+                            target: "dpos::beacon",
+                            "live DKG: the dealer-log resolver engine exited — its inbound \
+                             channel closed; the resolver is a supervised child of the \
+                             beacon plane and the node stops with it, so the actor stops here"
+                        );
+                        break;
                     }
                 },
                 // Answer an epoch-key agreement instance's question about a
@@ -1546,13 +1606,16 @@ where
     ///
     /// The pool re-verifies the signature against `committee[target_epoch][idx]`, so
     /// the SIGNED half of a relayed confirmation is as good as a directly-sent one.
-    /// The sender is no longer only a diagnostic, though: since 4.3
-    /// [`Self::on_message`] requires `from` to be a member of the frame's own
-    /// ceremony epoch ([`Self::beacon_member`]), and the envelope check below pins
-    /// that epoch to `target_epoch` — so a confirmation RELAYED by a non-member is
-    /// refused upstream of here. Nothing in the tree relays one (the only emitter
-    /// signs and sends its own, `confirmations.rs`), so this costs no live path; a
-    /// future relay would have to carry the signer's membership with it.
+    /// The sender is not only a diagnostic, though: this is the CONSUMER of the
+    /// frame, and the consumer is where a sender is bound to a seat in the frame's
+    /// epoch (5.3-В) — `from` must hold a seat in `committee[target_epoch]`, the
+    /// roster this function reads anyway, or the frame is refused as `no_seat`.
+    /// Nothing in the tree relays a confirmation (the only emitter signs and sends
+    /// its own, `confirmations.rs`), so a member relaying another member's costs no
+    /// live path; a non-member relaying one is refused. Upstream of here the
+    /// channel's `GatedReceiver` has already refused a sender outside the
+    /// registered peer set, and [`Self::epoch_is_actionable`] an epoch outside the
+    /// window; neither asks about seats.
     ///
     /// The unsigned envelope epoch must agree with the signed one — a mismatch is
     /// either a relay bug or an attempt to slip a confirmation past a receive-side
@@ -1598,25 +1661,24 @@ where
         // (`confirmations.rs`, the `previous >= confirmed.len()` memo), so a
         // full-width confirmation dropped here is never re-issued and this node's
         // entry bar undercounts a member for the whole epoch. With no clock the
-        // membership check below is the whole bound — which is the same bound the
-        // window would add nothing to, since an epoch this node cannot place in time
-        // is one whose committee record it either holds or does not.
+        // seat check below is the whole bound — which is the same bound the window
+        // would add nothing to, since an epoch this node cannot place in time is
+        // one whose committee record it either holds or does not.
         if let Some(height) = self.last_height {
-            let now = self.epoch_of(height);
-            if !(now..=now.saturating_add(2)).contains(&confirm.target_epoch) {
-                tracing::debug!(
-                    target: "dpos::beacon",
-                    now,
-                    target_epoch = confirm.target_epoch,
-                    "share-confirmation outside [now, now+2]; dropping before the committee read"
-                );
-                crate::dpos::record_ingress_drop(BEACON_CHANNEL_LABEL, "confirm_window");
+            if !within_ingress_window(self.epoch_of(height), confirm.target_epoch) {
+                self.refuse(from, Some(confirm.target_epoch), "confirm_window");
                 return;
             }
         }
         let Some(roster) = (self.committee_for)(confirm.target_epoch) else {
             return;
         };
+        // The consumer's seat check (see the doc above): the ONE read this
+        // function makes is the roster, and the sender must sit in it.
+        if roster.position(from).is_none() {
+            self.refuse(from, Some(confirm.target_epoch), "no_seat");
+            return;
+        }
         let members: Vec<PeerPubkey> = roster.iter().cloned().collect();
         if !pool.record(&members, confirm) {
             tracing::debug!(
@@ -1929,9 +1991,20 @@ where
             // replay) so its ack broadcast can be gated on ITS OWN `ReceivedDealing`
             // write being durable (step 1f), exactly as the on_message path does.
             let mut steps: Vec<Step> = Vec::new();
+            // A buffered dealing was admitted on its epoch, and on its seat only
+            // if `committee[target]` was readable when it arrived (`on_message`,
+            // the buffer branch); one buffered before that record was readable
+            // was admitted on its epoch alone. The seat is checked (again) HERE,
+            // where the ceremony that consumes it exists — the same `no_seat`
+            // refusal the live dispatch in `on_message` makes.
+            let mut strangers: Vec<PeerPubkey> = Vec::new();
             {
                 let c = self.ceremonies.get_mut(&target).expect("just started");
                 for (from, dealings) in buffered {
+                    if !c.has_seat(&from) {
+                        strangers.push(from);
+                        continue;
+                    }
                     // Replay each present half (commitment-then-share). Order-independent
                     // (`try_ack` fires only once both halves are buffered), so `from` is
                     // re-used per replay → clone (PeerPubkey is Clone, NOT Copy).
@@ -1939,6 +2012,9 @@ where
                         steps.push(c.handle(from.clone(), body));
                     }
                 }
+            }
+            for from in &strangers {
+                self.refuse(from, Some(target), "no_seat");
             }
             for step in steps {
                 if self.append_journal(target, step.journal) {
@@ -2047,6 +2123,11 @@ where
     /// epoch qualify — acks/reveals are meaningless without a live ceremony to feed,
     /// and `last_height` bounds the future window so far-future / garbage epochs
     /// cannot accumulate (a DoS guard); stale buffers are also evicted each tick.
+    ///
+    /// This is the EPOCH half of the buffer's admission only. The SEAT half — is
+    /// the sender in `committee[epoch]` — is the caller's ([`Self::on_message`],
+    /// the buffer branch), asked against that record when it is readable and
+    /// deferred to the drain in [`Self::maybe_start`] when it is not.
     fn is_bufferable(&self, epoch: u64, body: &DkgBody) -> bool {
         if !matches!(body, DkgBody::Commitment(_) | DkgBody::Share(_)) {
             return false;
@@ -2061,8 +2142,10 @@ where
             return false;
         }
         let now = self.epoch_of(self.height_now());
-        if epoch <= now || epoch > now + 2 {
-            return false; // already started / past, or too far in the future
+        // `epoch > now` is this buffer's OWN rule on top of the shared window: a
+        // dealing for `now` or below is for a ceremony already started / past.
+        if epoch <= now || !within_ingress_window(now, epoch) {
+            return false;
         }
         self.store.read().map_or(true, |s| !s.contains_key(&epoch))
     }
@@ -2095,24 +2178,49 @@ where
         if self.ceremonies.contains_key(&epoch) {
             return true;
         }
-        let now = self.epoch_of(self.height_now());
-        (now..=now.saturating_add(2)).contains(&epoch)
+        within_ingress_window(self.epoch_of(self.height_now()), epoch)
     }
 
-    /// The BEACON ingress check: is `from` a member of `epoch`'s committee record?
+    /// THE one place a BEACON frame is refused: one count on the channel's ingress
+    /// metric, one `debug` line naming who sent what for which epoch and why, with
+    /// this actor's own clock beside it (`None` before the first height tick). The
+    /// metric registry is the shared `dpos_ingress_dropped_total` and stays shared
+    /// (R-070 — one counter family per concern, never one endpoint for all).
     ///
-    /// This is the per-epoch half of the 4.3 rule. The tier half — is the sender in
-    /// the registered peer set at all, and is it tombstoned — runs BEFORE this, at
-    /// the channel's `GatedReceiver` (`crate::dpos::GatedReceiver`, wired in
-    /// `node/dpos.rs`), which is why a decode never sees a frame from an untracked
-    /// or tombstoned peer.
+    /// The reasons, and where each is decided:
+    ///  * `undecodable` — [`Self::on_message`], a frame that is not a beacon
+    ///    frame at all (`BeaconMessage::read`), one too short to carry an epoch
+    ///    (the eight-byte peek), or one whose body does not decode as a
+    ///    `DkgMsg`; `epoch` is `None` when the frame never yielded one;
+    ///  * `epoch` — [`Self::epoch_is_actionable`], before the body decode;
+    ///  * `confirm_window` — [`Self::on_confirm`], the entry-bar window;
+    ///  * `no_seat` — the CONSUMER found no seat for the sender in the frame's
+    ///    epoch: the live ceremony's roster ([`DkgCeremony::has_seat`]) at the
+    ///    dispatch in [`Self::on_message`], `committee[epoch]` at the start-race
+    ///    buffer in [`Self::on_message`] when that record is readable, and the
+    ///    ceremony's roster at the drain in [`Self::maybe_start`] for what was
+    ///    buffered before it was; or `committee[target_epoch]` in
+    ///    [`Self::on_confirm`].
     ///
-    /// `committee_for` is the `committee/` module's write-once record — the same
-    /// records the `EpochTransition` builds `TrackedPeers.primary` from — and it is
-    /// asked ONLY for an epoch [`Self::epoch_is_actionable`] already admitted, so a
-    /// stranger naming epoch 10^9 buys no read of anything.
-    fn beacon_member(&self, from: &PeerPubkey, epoch: u64) -> bool {
-        (self.committee_for)(epoch).is_some_and(|roster| roster.position(from).is_some())
+    /// What is NOT counted here is not a refusal: an ack or a reveal with no live
+    /// ceremony to feed (nothing to do, the resolver re-fetches a reveal), a
+    /// confirmation for an epoch whose committee this node cannot read yet (the
+    /// node's own state, not the frame's), and a confirmation the pool already
+    /// holds at that width (a duplicate).
+    ///
+    /// The sender-tier refusals (`untracked`, `secondary`) are the channel's
+    /// pre-decode `GatedReceiver`'s, on the same metric, and never reach here.
+    fn refuse(&self, from: &PeerPubkey, epoch: Option<u64>, reason: &'static str) {
+        let now = self.last_height.map(|h| self.epoch_of(h));
+        tracing::debug!(
+            target: "dpos::beacon",
+            %from,
+            ?epoch,
+            ?now,
+            reason,
+            "DKG frame refused at ingress"
+        );
+        crate::dpos::record_ingress_drop(BEACON_CHANNEL_LABEL, reason);
     }
 
     async fn on_message(&mut self, from: PeerPubkey, buf: &[u8], rng: &mut impl CryptoRngCore) {
@@ -2120,39 +2228,47 @@ where
         let max = NonZeroU32::new(fluentbase_p2p::constants::MAX_COMMITTEE_SIZE as u32)
             .expect("MAX_COMMITTEE_SIZE > 0");
         let mut wire = buf;
+        // A frame that is not a beacon frame is a refusal too, and it is counted
+        // (`undecodable`): `refuse` is THE one place a frame is refused, and a
+        // silent `return` here would make that a half-truth for exactly the
+        // frames an operator most wants to see counted.
         let payload = match BeaconMessage::read(&mut wire) {
             Ok(BeaconMessage::Dkg(p)) => p,
-            Err(_) => return,
+            Err(_) => {
+                self.refuse(&from, None, "undecodable");
+                return;
+            }
         };
-        // MEMBERSHIP BEFORE THE BODY. `DkgMsg`'s wire is
+        // THE EPOCH BEFORE THE BODY. `DkgMsg`'s wire is
         // `ceremony_epoch(u64) ‖ body_tag(u8) ‖ body` (`dkg_msg.rs:83-84`,
         // `:137`), so the epoch is readable from the first eight bytes without
         // touching the `Commitment` / `Reveal` decoders — which are the expensive
-        // ones, being the polynomial and the signed log. Everything a non-member
-        // could have made this node do (a committee resolve, a `pending` slot, a
-        // ceremony `handle`) is downstream of here.
+        // ones, being the polynomial and the signed log. Everything a stranger
+        // naming a far epoch could have made this node do (a committee resolve, a
+        // `pending` slot, a ceremony `handle`) is downstream of here. WHO the
+        // sender is was settled before this function saw the bytes — the
+        // channel's pre-decode `GatedReceiver` admits only the registered peer
+        // set — and which SEAT it holds in `epoch` is the consumer's question,
+        // asked below where the frame is consumed (`has_seat` at the ceremony
+        // dispatch, `committee[epoch]` at the start-race buffer when readable,
+        // `committee[target_epoch]` in `on_confirm`); this actor keeps no
+        // membership opinion of its own (5.3-В, second round).
         let mut header = payload.as_ref();
         let Ok(epoch) = u64::read_cfg(&mut header, &()) else {
+            self.refuse(&from, None, "undecodable");
             return;
         };
         if !self.epoch_is_actionable(epoch) {
-            crate::dpos::record_ingress_drop(BEACON_CHANNEL_LABEL, "epoch");
-            return;
-        }
-        if !self.beacon_member(&from, epoch) {
-            tracing::debug!(
-                target: "dpos::beacon",
-                %from,
-                epoch,
-                "DKG frame from a non-member of that ceremony's committee; dropping"
-            );
-            crate::dpos::record_ingress_drop(BEACON_CHANNEL_LABEL, "not_member");
+            self.refuse(&from, Some(epoch), "epoch");
             return;
         }
         let mut body = payload.as_ref();
         let msg = match DkgMsg::read_cfg(&mut body, &max) {
             Ok(m) => m,
-            Err(_) => return,
+            Err(_) => {
+                self.refuse(&from, Some(epoch), "undecodable");
+                return;
+            }
         };
         debug_assert_eq!(
             msg.ceremony_epoch, epoch,
@@ -2176,6 +2292,19 @@ where
         // a re-sealed Reveal re-arrives once we are live via the long window). DKG-log
         // RECOVERY is no longer a gossip body — it rides the `commonware_resolver::p2p`
         // engine (see `on_resolver_message` / `fetch_missing_logs`).
+        // The consumer's seat check: a live ceremony consumes a frame keyed by its
+        // sender — a dealing is buffered under `from`, an ack prunes `from` from
+        // the retransmit set — and commonware's `Player`/`Dealer` answer a
+        // stranger with a silent `None` / `UnknownPlayer`. Say it instead, once,
+        // on the shared counter.
+        if self
+            .ceremonies
+            .get(&epoch)
+            .is_some_and(|c| !c.has_seat(&from))
+        {
+            self.refuse(&from, Some(epoch), "no_seat");
+            return;
+        }
         if let Some(c) = self.ceremonies.get_mut(&epoch) {
             let step = c.handle(from, body);
             let recorded_log = step.recorded_a_log();
@@ -2227,6 +2356,19 @@ where
                 self.broadcast_all(minted).await;
             }
         } else if self.is_bufferable(epoch, &body) {
+            // The consumer's seat check, as far as it can be asked BEFORE the
+            // ceremony exists: the record a ceremony for `epoch` would be built
+            // over is `committee[epoch]` (`maybe_start`, the same `committee_for`),
+            // so when that record is readable a sender with no seat in it is
+            // refused HERE and occupies no slot — the price is the one memoized
+            // record read, for an epoch the window already admitted. When the
+            // record is not readable yet (the start-race's own case: this node is
+            // behind the dealer) the dealing is buffered on its epoch alone and
+            // the drain in `maybe_start` asks the ceremony's roster instead.
+            if (self.committee_for)(epoch).is_some_and(|roster| roster.position(&from).is_none()) {
+                self.refuse(&from, Some(epoch), "no_seat");
+                return;
+            }
             // PER-SENDER, latest-wins: a sender occupies at most its own slot (≤1
             // Commitment + ≤1 Share), so a Byzantine peer cannot evict honest
             // dealings (N2). The outer + inner maps are roster-bounded, so the
@@ -5338,24 +5480,495 @@ mod clock_tests {
         })
     }
 
-    /// The BEACON ingress rule, measured by what the frame COSTS this node.
+    /// The refusals the shared ingress counter holds right now for the BEACON
+    /// channel under `reason`, DRAINED (the debugging snapshot resets what it
+    /// reads, so each call answers "since the last call").
+    fn beacon_refusals(snap: &metrics_util::debugging::Snapshotter, reason: &str) -> u64 {
+        use metrics_util::debugging::DebugValue;
+        snap.snapshot()
+            .into_vec()
+            .into_iter()
+            .filter_map(|(k, .., v)| {
+                let key = k.key();
+                let DebugValue::Counter(value) = v else {
+                    return None;
+                };
+                (key.name() == crate::dpos::INGRESS_DROPPED_TOTAL
+                    && key
+                        .labels()
+                        .any(|l| l.key() == "channel" && l.value() == BEACON_CHANNEL_LABEL)
+                    && key
+                        .labels()
+                        .any(|l| l.key() == "reason" && l.value() == reason))
+                .then_some(value)
+            })
+            .sum()
+    }
+
+    /// The BEACON ingress rule on a CONFIRMATION, measured by what the frame COSTS
+    /// this node and by what the counter says about it. `now` = 5, the actionable
+    /// window `[5, 7]`, `keys[4]` registered on the plane and in no committee.
     ///
-    /// Three frames, one counter of committee-record lookups:
-    ///  * a `Confirm` naming epoch 10^9 — no lookup at all. This is the E4-12 /
-    ///    R-023 shape: before 4.3 `on_confirm` resolved `committee_for(target_epoch)`
-    ///    for ANY epoch from ANY tracked sender, so this frame bought one state read
-    ///    per message and the counter here would read 1.
-    ///  * the same frame from a NON-MEMBER for an in-window epoch — exactly one
-    ///    lookup, the membership check itself (a memoized record, for an epoch this
-    ///    actor is already running), and nothing downstream: no `pending` slot, no
-    ///    pool record.
-    ///  * the same frame from a MEMBER — admitted, so the epoch is resolved again
-    ///    for the confirmation itself.
+    /// Three frames, one counter of committee-record lookups and the shared
+    /// `dpos_ingress_dropped_total{channel="beacon"}`:
+    ///  * a `Confirm` naming epoch 10^9 — no lookup at all, refused `epoch`. This
+    ///    is the E4-12 / R-023 shape: before 4.3 `on_confirm` resolved
+    ///    `committee_for(target_epoch)` for ANY epoch from ANY tracked sender, so
+    ///    this frame bought one state read per message and the counter here would
+    ///    read 1.
+    ///  * the same frame from a sender with NO SEAT in epoch 6 — exactly ONE
+    ///    lookup, the roster the consumer keys on anyway, and then `no_seat`:
+    ///    nothing downstream, no `pending` slot, no pool record. This is the
+    ///    consumer's own refusal (5.3-В, second round): the actor holds no
+    ///    membership opinion of its own between the channel's gate and the
+    ///    consumer, so the ONE read is the price of asking the roster, and it is
+    ///    the same read a member's frame costs.
+    ///  * the same frame from a MEMBER — admitted, so the epoch is resolved ONCE,
+    ///    for the confirmation itself, and nothing is counted.
     ///
-    /// Falsifier: the first count moving off 0, or the non-member's frame reaching
-    /// `pending`.
+    /// Falsifier: the first count moving off 0; the seatless frame reaching
+    /// `pending` or the pool, or not being COUNTED (M2 of 5.3-В round 2: `no_seat`
+    /// dropped without `refuse` — the counter stays at 0 and this test is red).
     #[test]
-    fn a_beacon_frame_from_a_non_member_costs_no_committee_read_beyond_the_check() {
+    fn a_confirmation_from_a_sender_with_no_seat_costs_one_roster_read_and_is_counted() {
+        let recorder = metrics_util::debugging::DebuggingRecorder::new();
+        let snap = recorder.snapshotter();
+        metrics::with_local_recorder(&recorder, || {
+            let runtime = deterministic::Runner::default();
+            runtime.start(|ctx| async move {
+                let oracle: Oracle<PeerPubkey, SimContext> = {
+                    let (network, oracle) = Network::new(
+                        ctx.with_label("sim_net"),
+                        SimConfig {
+                            max_size: 1024 * 1024,
+                            disconnect_on_block: false,
+                            tracked_peer_sets: NZUsize!(4),
+                        },
+                    );
+                    network.start();
+                    oracle
+                };
+                let mut rng = StdRng::seed_from_u64(0x4301);
+                let keys: Vec<Ed25519PrivateKey> = (0..5)
+                    .map(|_| Ed25519PrivateKey::random(&mut rng))
+                    .collect();
+                // keys[4] is the outsider: registered on the plane, in no committee.
+                let committee = Set::from_iter_dedup(keys[..4].iter().map(|k| k.public_key()));
+                let asked: Arc<std::sync::Mutex<Vec<u64>>> =
+                    Arc::new(std::sync::Mutex::new(Vec::new()));
+                let committee_for: CommitteeFor = {
+                    let set = committee.clone();
+                    let asked = asked.clone();
+                    Arc::new(move |epoch: u64| {
+                        asked.lock().unwrap().push(epoch);
+                        Some(set.clone())
+                    })
+                };
+                let pool = crate::beacon::dkg_agree::ConfirmPool::new(b"FLUENT_TEST_INGRESS");
+                let mut actor =
+                    standalone_actor_cf(&oracle, keys[0].clone(), committee_for.clone(), None)
+                        .await
+                        .with_recorded_logs(Arc::new(RwLock::new(BTreeMap::new())))
+                        .with_share_confirms(pool.clone());
+                let mut arng = StdRng::seed_from_u64(0x4302);
+                // Height 100 at INTERVAL 20 ⇒ `now` = epoch 5; the actionable window is
+                // [5, 7].
+                actor.on_height(100, &mut arng).await;
+                assert_eq!(actor.epoch_of(actor.height_now()), 5);
+                asked.lock().unwrap().clear();
+                let _ = beacon_refusals(&snap, "epoch");
+                let _ = beacon_refusals(&snap, "no_seat");
+
+                let frame = |signer: &Ed25519PrivateKey, epoch: u64| -> Vec<u8> {
+                    let confirm = ShareConfirm::sign(
+                        pool.namespace(),
+                        signer,
+                        0,
+                        epoch,
+                        vec![(0, B256::repeat_byte(0xAA))],
+                    );
+                    BeaconMessage::Dkg(
+                        DkgMsg {
+                            ceremony_epoch: epoch,
+                            body: DkgBody::Confirm(confirm),
+                        }
+                        .encode(),
+                    )
+                    .encode()
+                    .to_vec()
+                };
+
+                // (1) An epoch nobody here could act on: refused before any read.
+                let far = frame(&keys[1], 1_000_000_000);
+                actor
+                    .on_message(keys[1].public_key(), &far, &mut arng)
+                    .await;
+                assert!(
+                    asked.lock().unwrap().is_empty(),
+                    "an out-of-window epoch bought a committee record: {:?}",
+                    asked.lock().unwrap()
+                );
+                assert_eq!(beacon_refusals(&snap, "epoch"), 1);
+                assert_eq!(beacon_refusals(&snap, "no_seat"), 0);
+
+                // (2) In-window epoch, sender in no committee: the consumer reads the
+                // roster ONCE and refuses the sender it finds no seat for.
+                let outsider = frame(&keys[4], 6);
+                actor
+                    .on_message(keys[4].public_key(), &outsider, &mut arng)
+                    .await;
+                assert_eq!(
+                    *asked.lock().unwrap(),
+                    vec![6],
+                    "a seatless sender's confirmation costs exactly the roster read"
+                );
+                assert!(
+                    actor.pending.is_empty(),
+                    "a seatless sender's frame must not occupy ceremony state"
+                );
+                assert_eq!(
+                    beacon_refusals(&snap, "no_seat"),
+                    1,
+                    "the consumer's refusal must be COUNTED, not silent"
+                );
+                asked.lock().unwrap().clear();
+
+                // (3) The same frame from a member is admitted — the check refuses a
+                // sender, not the feature — and the ONE read is the confirmation's own.
+                let member = frame(&keys[1], 6);
+                actor
+                    .on_message(keys[1].public_key(), &member, &mut arng)
+                    .await;
+                assert_eq!(
+                    *asked.lock().unwrap(),
+                    vec![6],
+                    "a member's confirmation is resolved once, for the confirmation itself"
+                );
+                assert_eq!(beacon_refusals(&snap, "no_seat"), 0);
+                assert_eq!(beacon_refusals(&snap, "epoch"), 0);
+            });
+        });
+    }
+
+    /// The consumer's seat check on CEREMONY traffic, at the three places a
+    /// ceremony frame keyed by its sender is taken in:
+    ///  * the start-race BUFFER — no ceremony for epoch 2 yet. While
+    ///    `committee[2]` is not readable, a dealing is buffered on its epoch alone
+    ///    (there is no record to ask), stranger's and dealer's alike; once the
+    ///    record IS readable, the stranger's next dealing is refused `no_seat` at
+    ///    the buffer and occupies no slot (5.3-В round 3, E-09);
+    ///  * the start-race DRAIN — what was buffered before the record was readable
+    ///    is refused `no_seat` the moment `maybe_start` drains it into the
+    ///    ceremony that has a roster;
+    ///  * the live DISPATCH — a ceremony for epoch 2 is running; an `Ack` and a
+    ///    `Commitment` from a sender with no seat are refused `no_seat` before
+    ///    `handle`, so the ceremony never buffers a stranger's half-dealing; the
+    ///    same `Commitment` from a seated dealer is handled.
+    ///
+    /// Model B is the whole reason one predicate serves all three: dealers ==
+    /// players == `committee[epoch]` (`ceremony::info_for`), so "no seat" is the
+    /// same answer for an ack (a player's frame) and a dealing (a dealer's).
+    /// Commonware gives that answer silently (`Player::dealer_message` → `None`,
+    /// `Dealer::receive_player_ack` → `UnknownPlayer`); the counter is what this
+    /// test pins.
+    ///
+    /// Falsifier (M2 of 5.3-В round 3): the buffer's seat check removed — the
+    /// stranger's second dealing is buffered instead of refused, the count before
+    /// the drain reads 0 and not 1; either other `no_seat` refusal removed — the
+    /// stranger's dealing lands in the ceremony's buffer, or the drain replays it,
+    /// and the count is short by one.
+    #[test]
+    fn a_ceremony_frame_from_a_sender_with_no_seat_is_refused_at_the_buffer_the_drain_and_the_dispatch(
+    ) {
+        let recorder = metrics_util::debugging::DebuggingRecorder::new();
+        let snap = recorder.snapshotter();
+        metrics::with_local_recorder(&recorder, || {
+            let runtime = deterministic::Runner::default();
+            runtime.start(|ctx| async move {
+                let oracle: Oracle<PeerPubkey, SimContext> = {
+                    let (network, oracle) = Network::new(
+                        ctx.with_label("sim_net"),
+                        SimConfig {
+                            max_size: 1024 * 1024,
+                            disconnect_on_block: false,
+                            tracked_peer_sets: NZUsize!(4),
+                        },
+                    );
+                    network.start();
+                    oracle
+                };
+                let mut rng = StdRng::seed_from_u64(0x4303);
+                let keys: Vec<Ed25519PrivateKey> = (0..5)
+                    .map(|_| Ed25519PrivateKey::random(&mut rng))
+                    .collect();
+                let committee = Set::from_iter_dedup(keys[..4].iter().map(|k| k.public_key()));
+                // `committee[2]` is unreadable until `readable` flips: the start-race's
+                // own shape (this node is behind the dealer and has no record yet).
+                let readable = Arc::new(std::sync::atomic::AtomicBool::new(false));
+                let committee_for: CommitteeFor = {
+                    let set = committee.clone();
+                    let readable = readable.clone();
+                    Arc::new(move |_epoch: u64| {
+                        readable
+                            .load(std::sync::atomic::Ordering::SeqCst)
+                            .then(|| set.clone())
+                    })
+                };
+                let mut actor =
+                    standalone_actor_cf(&oracle, keys[0].clone(), committee_for, None).await;
+                let mut arng = StdRng::seed_from_u64(0x4304);
+                let ns = b"FLUENT_DPOS_V1_clocktest";
+                let stranger = keys[4].public_key();
+                let dealer = keys[1].public_key();
+                let _ = beacon_refusals(&snap, "no_seat");
+
+                // A real, decodable dealing for epoch 2 from `keys[1]`. The body is
+                // never verified before buffering or before the seat check, so the
+                // same bytes stand in for any sender's dealing.
+                let commitment: DkgBody = {
+                    let (_cer, step) =
+                        DkgCeremony::start(ns, 2, committee.clone(), keys[1].clone())
+                            .expect("start");
+                    step.outgoing
+                        .into_iter()
+                        .find_map(|o| match o.msg.body {
+                            b @ DkgBody::Commitment(_) => Some(b),
+                            _ => None,
+                        })
+                        .expect("a commitment dealing")
+                };
+                let wire = |body: DkgBody| -> Vec<u8> {
+                    BeaconMessage::Dkg(
+                        DkgMsg {
+                            ceremony_epoch: 2,
+                            body,
+                        }
+                        .encode(),
+                    )
+                    .encode()
+                    .to_vec()
+                };
+                let commitment_wire = wire(commitment);
+
+                // THE BUFFER, record unreadable. No height tick yet ⇒ `now` = 0 and
+                // a dealing for 2 is bufferable; with no record to ask, one from the
+                // stranger and one from the dealer are both buffered.
+                actor
+                    .on_message(stranger.clone(), &commitment_wire, &mut arng)
+                    .await;
+                actor
+                    .on_message(dealer.clone(), &commitment_wire, &mut arng)
+                    .await;
+                assert_eq!(
+                    actor.pending.get(&2).map(|m| m.len()),
+                    Some(2),
+                    "with no record readable there is no roster to ask: both are buffered"
+                );
+                assert_eq!(
+                    beacon_refusals(&snap, "no_seat"),
+                    0,
+                    "nothing is refused for a seat while the record is unreadable"
+                );
+
+                // THE BUFFER, record readable. The stranger deals again: refused at
+                // the buffer, and the buffer is exactly as it was.
+                readable.store(true, std::sync::atomic::Ordering::SeqCst);
+                actor
+                    .on_message(stranger.clone(), &commitment_wire, &mut arng)
+                    .await;
+                assert_eq!(
+                    beacon_refusals(&snap, "no_seat"),
+                    1,
+                    "a seatless dealing for a readable record must be refused at the buffer"
+                );
+                assert_eq!(
+                    actor.pending.get(&2).map(|m| m.len()),
+                    Some(2),
+                    "a refused dealing must not add or replace a `pending` slot"
+                );
+                assert!(
+                    actor.ceremonies.is_empty(),
+                    "no ceremony yet — the refusal was the buffer's, not the dispatch's"
+                );
+
+                // THE DRAIN. Height 20 ⇒ `now` = 1 ⇒ `maybe_start(2)`: the bootstrap
+                // epoch always deals, the ceremony starts and the buffer drains into
+                // it; the stranger's slot from before the record was readable is
+                // refused there.
+                actor.on_height(20, &mut arng).await;
+                assert!(
+                    actor.ceremonies.contains_key(&2),
+                    "the bootstrap ceremony must have started"
+                );
+                assert!(!actor.pending.contains_key(&2), "the buffer was drained");
+                assert_eq!(
+                    beacon_refusals(&snap, "no_seat"),
+                    1,
+                    "the stranger's buffered dealing must be refused at the drain, once"
+                );
+
+                // THE LIVE DISPATCH. An ack and a commitment from the stranger, then
+                // the commitment again from the dealer (a re-receipt: handled, not
+                // refused).
+                let ack: DkgBody = {
+                    let (mut cer, _) =
+                        DkgCeremony::start(ns, 2, committee.clone(), keys[2].clone())
+                            .expect("start");
+                    let (_cer1, step1) =
+                        DkgCeremony::start(ns, 2, committee.clone(), keys[1].clone())
+                            .expect("start");
+                    // Feed keys[1]'s dealing to keys[2]'s ceremony to obtain a real ack.
+                    let mut out = Vec::new();
+                    for o in step1.outgoing {
+                        let keep = match &o.target {
+                            Target::Broadcast => true,
+                            Target::Direct(pk) => *pk == keys[2].public_key(),
+                        };
+                        if keep {
+                            out.extend(cer.handle(keys[1].public_key(), o.msg.body).outgoing);
+                        }
+                    }
+                    out.into_iter()
+                        .find_map(|o| match o.msg.body {
+                            b @ DkgBody::Ack(_) => Some(b),
+                            _ => None,
+                        })
+                        .expect("an ack")
+                };
+                actor
+                    .on_message(stranger.clone(), &wire(ack), &mut arng)
+                    .await;
+                assert_eq!(beacon_refusals(&snap, "no_seat"), 1, "a stranger's ack");
+                actor
+                    .on_message(stranger.clone(), &commitment_wire, &mut arng)
+                    .await;
+                assert_eq!(
+                    beacon_refusals(&snap, "no_seat"),
+                    1,
+                    "a stranger's commitment on a live ceremony"
+                );
+                actor
+                    .on_message(dealer.clone(), &commitment_wire, &mut arng)
+                    .await;
+                assert_eq!(
+                    beacon_refusals(&snap, "no_seat"),
+                    0,
+                    "a seated dealer's frame is consumed, never refused for a seat"
+                );
+            });
+        });
+    }
+
+    /// A frame this actor cannot decode is REFUSED, and counted `undecodable`
+    /// (5.3-В round 3, E-05): `refuse` is the one place a beacon frame is refused,
+    /// so the three decode failures on the ingress path go through it too —
+    ///  1. not a beacon frame at all (`BeaconMessage::read` fails on the tag);
+    ///  2. a beacon frame too short to carry the eight-byte epoch (the peek);
+    ///  3. a beacon frame whose epoch is actionable but whose body is not a
+    ///     `DkgMsg` (an unknown body tag).
+    ///
+    /// And the ORDER is pinned by a fourth frame: a body that would fail to decode
+    /// behind an epoch outside the window is refused `epoch`, never `undecodable`
+    /// — the epoch peek is the cost gate and runs before the body decode.
+    ///
+    /// Falsifier (M3 of 5.3-В round 3): any one of the three decode failures back
+    /// to a bare `return` — the `undecodable` count reads 2, not 3.
+    #[test]
+    fn an_undecodable_frame_is_refused_and_counted_at_each_of_the_three_decode_steps() {
+        let recorder = metrics_util::debugging::DebuggingRecorder::new();
+        let snap = recorder.snapshotter();
+        metrics::with_local_recorder(&recorder, || {
+            let runtime = deterministic::Runner::default();
+            runtime.start(|ctx| async move {
+                let oracle: Oracle<PeerPubkey, SimContext> = {
+                    let (network, oracle) = Network::new(
+                        ctx.with_label("sim_net"),
+                        SimConfig {
+                            max_size: 1024 * 1024,
+                            disconnect_on_block: false,
+                            tracked_peer_sets: NZUsize!(4),
+                        },
+                    );
+                    network.start();
+                    oracle
+                };
+                let mut rng = StdRng::seed_from_u64(0x5307);
+                let keys: Vec<Ed25519PrivateKey> = (0..4)
+                    .map(|_| Ed25519PrivateKey::random(&mut rng))
+                    .collect();
+                let committee = Set::from_iter_dedup(keys.iter().map(|k| k.public_key()));
+                let mut actor = standalone_actor(&oracle, keys[0].clone(), committee, None).await;
+                let mut arng = StdRng::seed_from_u64(0x5308);
+                // Height 100 at INTERVAL 20 ⇒ `now` = 5; the window is [5, 7].
+                actor.on_height(100, &mut arng).await;
+                assert_eq!(actor.epoch_of(actor.height_now()), 5);
+                let _ = beacon_refusals(&snap, "undecodable");
+                let _ = beacon_refusals(&snap, "epoch");
+                let sender = keys[1].public_key();
+
+                // (1) Not a beacon frame: an unknown wire tag.
+                actor.on_message(sender.clone(), &[0xFF], &mut arng).await;
+                assert_eq!(beacon_refusals(&snap, "undecodable"), 1, "unknown wire tag");
+
+                // (2) A beacon frame too short to carry an epoch.
+                let short = BeaconMessage::Dkg(Bytes::from_static(&[1, 2, 3])).encode();
+                actor.on_message(sender.clone(), &short, &mut arng).await;
+                assert_eq!(beacon_refusals(&snap, "undecodable"), 1, "no epoch to peek");
+
+                // (3) An actionable epoch in front of a body that is no `DkgMsg`.
+                let bad_body = {
+                    let mut payload = 6u64.encode().to_vec();
+                    payload.push(0xFF); // no such body tag
+                    BeaconMessage::Dkg(Bytes::from(payload)).encode()
+                };
+                actor.on_message(sender.clone(), &bad_body, &mut arng).await;
+                assert_eq!(beacon_refusals(&snap, "undecodable"), 1, "unknown body tag");
+                assert_eq!(beacon_refusals(&snap, "epoch"), 0);
+
+                // (4) The same bad body behind an epoch outside the window: the epoch
+                // gate answers first, so this is `epoch`, not `undecodable`.
+                let far_bad_body = {
+                    let mut payload = 1_000_000_000u64.encode().to_vec();
+                    payload.push(0xFF);
+                    BeaconMessage::Dkg(Bytes::from(payload)).encode()
+                };
+                actor
+                    .on_message(sender.clone(), &far_bad_body, &mut arng)
+                    .await;
+                assert_eq!(beacon_refusals(&snap, "epoch"), 1);
+                assert_eq!(
+                    beacon_refusals(&snap, "undecodable"),
+                    0,
+                    "the epoch peek runs before the body decode"
+                );
+                assert!(
+                    actor.pending.is_empty(),
+                    "nothing undecodable may occupy ceremony state"
+                );
+            });
+        });
+    }
+
+    /// ONE ingress window, read at its three sites. `now` = 5 (height 100 at
+    /// INTERVAL 20): `[5, 7]` is the window, and
+    ///  * `epoch_is_actionable` admits 5..=7 and refuses 8 (and 4, absent a live
+    ///    ceremony there);
+    ///  * `is_bufferable` admits a dealing for 6 and 7, refuses 8 — and refuses 5
+    ///    by its OWN rule (`epoch > now`), which the shared window does not carry;
+    ///  * `on_confirm` reads the window before the committee: a confirmation for 8
+    ///    costs no read, one for 7 costs exactly the confirmation's own.
+    ///
+    /// Falsifier (M2 of 5.3-В): the window widened to `now + 3` at any one site —
+    /// 8 admitted there, and the three rules no longer one rule.
+    #[test]
+    fn the_ingress_window_is_one_rule_at_three_sites() {
+        assert!(within_ingress_window(5, 5) && within_ingress_window(5, 7));
+        assert!(!within_ingress_window(5, 4) && !within_ingress_window(5, 8));
+        assert!(
+            within_ingress_window(u64::MAX, u64::MAX),
+            "the top of the clock saturates rather than wraps"
+        );
+
         let runtime = deterministic::Runner::default();
         runtime.start(|ctx| async move {
             let oracle: Oracle<PeerPubkey, SimContext> = {
@@ -5370,12 +5983,11 @@ mod clock_tests {
                 network.start();
                 oracle
             };
-            let mut rng = StdRng::seed_from_u64(0x4301);
-            let keys: Vec<Ed25519PrivateKey> = (0..5)
+            let mut rng = StdRng::seed_from_u64(0x5303);
+            let keys: Vec<Ed25519PrivateKey> = (0..4)
                 .map(|_| Ed25519PrivateKey::random(&mut rng))
                 .collect();
-            // keys[4] is the outsider: registered on the plane, in no committee.
-            let committee = Set::from_iter_dedup(keys[..4].iter().map(|k| k.public_key()));
+            let committee = Set::from_iter_dedup(keys.iter().map(|k| k.public_key()));
             let asked: Arc<std::sync::Mutex<Vec<u64>>> =
                 Arc::new(std::sync::Mutex::new(Vec::new()));
             let committee_for: CommitteeFor = {
@@ -5386,75 +5998,141 @@ mod clock_tests {
                     Some(set.clone())
                 })
             };
-            let pool = crate::beacon::dkg_agree::ConfirmPool::new(b"FLUENT_TEST_INGRESS");
+            let pool = crate::beacon::dkg_agree::ConfirmPool::new(b"FLUENT_TEST_WINDOW");
             let mut actor = standalone_actor_cf(&oracle, keys[0].clone(), committee_for, None)
                 .await
-                .with_recorded_logs(Arc::new(RwLock::new(BTreeMap::new())))
                 .with_share_confirms(pool.clone());
-            let mut arng = StdRng::seed_from_u64(0x4302);
-            // Height 100 at INTERVAL 20 ⇒ `now` = epoch 5; the actionable window is
-            // [5, 7].
+            let mut arng = StdRng::seed_from_u64(0x5304);
             actor.on_height(100, &mut arng).await;
             assert_eq!(actor.epoch_of(actor.height_now()), 5);
-            asked.lock().unwrap().clear();
 
-            let frame = |signer: &Ed25519PrivateKey, epoch: u64| -> Vec<u8> {
-                let confirm = ShareConfirm::sign(
-                    pool.namespace(),
-                    signer,
-                    0,
-                    epoch,
-                    vec![(0, B256::repeat_byte(0xAA))],
-                );
-                BeaconMessage::Dkg(
-                    DkgMsg {
-                        ceremony_epoch: epoch,
-                        body: DkgBody::Confirm(confirm),
-                    }
-                    .encode(),
+            // Site 1: the cost gate.
+            assert!(actor.epoch_is_actionable(5) && actor.epoch_is_actionable(7));
+            assert!(!actor.epoch_is_actionable(4) && !actor.epoch_is_actionable(8));
+
+            // Site 2: the start-race buffer, with its own `epoch > now` on top. The
+            // body is never verified before buffering, so any dealing stands in.
+            let dealing: DkgBody = {
+                let (_cer, step) = DkgCeremony::start(
+                    b"FLUENT_DPOS_V1_window",
+                    6,
+                    committee.clone(),
+                    keys[1].clone(),
                 )
-                .encode()
-                .to_vec()
+                .expect("start");
+                step.outgoing
+                    .into_iter()
+                    .find_map(|o| match o.msg.body {
+                        b @ DkgBody::Commitment(_) => Some(b),
+                        _ => None,
+                    })
+                    .expect("a commitment dealing")
             };
+            assert!(
+                !actor.is_bufferable(5, &dealing),
+                "a dealing for `now` is past"
+            );
+            assert!(actor.is_bufferable(6, &dealing) && actor.is_bufferable(7, &dealing));
+            assert!(!actor.is_bufferable(8, &dealing));
 
-            // (1) An epoch nobody here could act on: refused before any read.
-            let far = frame(&keys[1], 1_000_000_000);
-            actor
-                .on_message(keys[1].public_key(), &far, &mut arng)
-                .await;
+            // Site 3: the entry-bar window, before the committee read.
+            asked.lock().unwrap().clear();
+            let confirm = |epoch: u64| {
+                ShareConfirm::sign(
+                    pool.namespace(),
+                    &keys[1],
+                    1,
+                    epoch,
+                    vec![(0, B256::repeat_byte(0xAB))],
+                )
+            };
+            actor.on_confirm(8, &keys[1].public_key(), confirm(8));
             assert!(
                 asked.lock().unwrap().is_empty(),
-                "an out-of-window epoch bought a committee record: {:?}",
+                "a confirmation for `now + 3` bought a committee read: {:?}",
                 asked.lock().unwrap()
             );
-
-            // (2) In-window epoch, sender in no committee: one lookup, the check.
-            let outsider = frame(&keys[4], 6);
-            actor
-                .on_message(keys[4].public_key(), &outsider, &mut arng)
-                .await;
+            actor.on_confirm(7, &keys[1].public_key(), confirm(7));
             assert_eq!(
                 *asked.lock().unwrap(),
-                vec![6],
-                "a non-member must cost exactly the one membership check"
+                vec![7],
+                "a confirmation for `now + 2` is resolved once, for itself"
             );
-            assert!(
-                actor.pending.is_empty(),
-                "a non-member's frame must not occupy ceremony state"
-            );
-            asked.lock().unwrap().clear();
+        });
+    }
 
-            // (3) The same frame from a member is admitted — the gate rejects a
-            // sender, not the feature.
-            let member = frame(&keys[1], 6);
-            actor
-                .on_message(keys[1].public_key(), &member, &mut arng)
-                .await;
-            assert_eq!(
-                *asked.lock().unwrap(),
-                vec![6, 6],
-                "a member's confirmation is checked and then resolved as before"
+    /// The resolver engine's exit STOPS the actor (5.3-Г1, map decision 4). The
+    /// engine is the one holder of the actor's inbound `LogMessage` sender; when
+    /// that sender is gone `run` returns — it does not park the branch and carry
+    /// on "gossip-only", because the engine is a supervised sibling of the actor
+    /// and the node is going down with it. The height sink and the gossip channel
+    /// are both still OPEN here, so nothing but the resolver arm can end the loop.
+    ///
+    /// Falsifier (M3 of 5.3-Г1): the arm back to `resolver_rx = None; resolver =
+    /// None` — `run` never returns and this test times out.
+    #[test]
+    fn the_resolver_engines_exit_stops_the_actor() {
+        let runtime = deterministic::Runner::timed(Duration::from_secs(60));
+        runtime.start(|ctx| async move {
+            let oracle: Oracle<PeerPubkey, SimContext> = {
+                let (network, oracle) = Network::new(
+                    ctx.with_label("sim_net"),
+                    SimConfig {
+                        max_size: 1024 * 1024,
+                        disconnect_on_block: false,
+                        tracked_peer_sets: NZUsize!(4),
+                    },
+                );
+                network.start();
+                oracle
+            };
+            let mut rng = StdRng::seed_from_u64(0x5305);
+            let me = Ed25519PrivateKey::random(&mut rng);
+            let committee = Set::from_iter_dedup([me.public_key()]);
+            let committee_for: CommitteeFor = Arc::new(move |_e: u64| Some(committee.clone()));
+            let (sender, receiver) = oracle
+                .control(me.public_key())
+                .register(
+                    fluentbase_p2p::constants::BEACON_CHANNEL,
+                    fluentbase_p2p::constants::BEACON_QUOTA,
+                )
+                .await
+                .expect("register");
+            let (resolver_tx, resolver_rx) = tokio::sync::mpsc::channel::<LogMessage>(4);
+            let actor = DkgActor::new(
+                b"FLUENT_DPOS_V1_clocktest".to_vec(),
+                me,
+                sender,
+                receiver,
+                Some(NoopResolver),
+                Some(resolver_rx),
+                committee_for,
+                Arc::new(RwLock::new(BTreeMap::new())),
+                Arc::new(tokio::sync::Notify::new()),
+                ACTIVATION,
+                INTERVAL,
+                crate::beacon::metrics::BeaconMetrics::default(),
+                None,
+                ShareState::Plaintext,
+                None,
             );
+            let (height_tx, height_rx) = tokio::sync::mpsc::channel::<u64>(4);
+            let run = ctx.with_label("actor").spawn(move |_| async move {
+                actor.run(height_rx, StdRng::seed_from_u64(0x5306)).await
+            });
+            // The loop is up and parked on its four arms; now the engine "dies".
+            ctx.sleep(Duration::from_millis(50)).await;
+            drop(resolver_tx);
+            tokio::select! {
+                res = run => res.expect("the actor task must return, not fail"),
+                _ = ctx.sleep(Duration::from_secs(5)) => panic!(
+                    "the actor kept running after its resolver engine exited — the \
+                     gossip-only degradation is back"
+                ),
+            }
+            // Held open through the whole run so that neither could have been the
+            // reason the loop ended.
+            drop(height_tx);
         });
     }
 

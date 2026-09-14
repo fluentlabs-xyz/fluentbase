@@ -23,7 +23,7 @@ use crate::{
     application::ExecutedChain as _,
     beacon::{
         self,
-        testing::{absent, StaticRandomness},
+        testing::{absent, BeaconMessage, DkgBody, DkgCeremony, DkgMsg, StaticRandomness},
         CommitteeReads, Seed, ValidatorInputs,
     },
     cert_follow::CertUpstream as _,
@@ -39,14 +39,14 @@ use crate::{
     timeouts::ConsensusTimeouts,
 };
 use alloy_primitives::{Address, B256};
-use commonware_codec::DecodeExt as _;
+use commonware_codec::{DecodeExt as _, Encode as _};
 use commonware_consensus::types::{Epoch, Height};
 use commonware_cryptography::{ed25519::PrivateKey as Ed25519PrivateKey, Signer as _};
 use commonware_math::algebra::Random as _;
 use commonware_p2p::{
     simulated::{Config as SimConfig, Link, Network},
     utils::mux::{Builder as _, Muxer},
-    Manager as _,
+    Manager as _, Recipients, Sender as _,
 };
 use commonware_runtime::{
     deterministic, Clock as _, Metrics as _, Quota, Runner as _, Spawner as _,
@@ -658,6 +658,17 @@ pub(super) enum Role {
     /// signing (`DkgActor::drive_finalization`'s doc). For the ceremony the
     /// effect is the same — one dealer fewer.
     AbsentBeacon,
+    /// `Beacon::Live` only (5.3-В): a REGISTRY-TIER neighbour that deals anyway.
+    /// The node is in the registry (`PeerSet::AllNodes`) and, by the committee
+    /// schedule, in no committee; once a second it puts a real, decodable
+    /// `Commitment` dealing for the epoch after its own on the `BEACON_CHANNEL`
+    /// to everyone. Every member's pre-decode gate (`GatedReceiver`, the one
+    /// sender classification on the channel) classifies it `Tracked` and refuses
+    /// the frame as `secondary` before any byte of it is decoded; the actor never
+    /// sees it. The node's own beacon plane runs as an honest non-member's would.
+    /// `Outcome::stray_dealer_sends[i]` counts the `(frame, recipient)` pairs it
+    /// put on the wire, so a test can assert the refusals EXACTLY.
+    StrayDealer,
 }
 
 /// WHICH of the two simulated networks a [`Partition`] cuts.
@@ -837,6 +848,22 @@ pub(super) fn counter_of(
         .iter()
         .filter(|(n, labels, _)| {
             n == name && label.is_none_or(|(lk, lv)| labels.iter().any(|(k, v)| k == lk && v == lv))
+        })
+        .map(|(.., v)| *v)
+        .sum()
+}
+
+/// [`counter_of`] restricted to EVERY label pair in `labels` at once — for a
+/// family that carries more than one label (`dpos_ingress_dropped_total` has
+/// `channel` AND `reason`), where a one-label filter sums across the other.
+pub(super) fn counter_where(drained: &[CounterSample], name: &str, labels: &[(&str, &str)]) -> u64 {
+    drained
+        .iter()
+        .filter(|(n, have, _)| {
+            n == name
+                && labels
+                    .iter()
+                    .all(|(lk, lv)| have.iter().any(|(k, v)| k == lk && v == lv))
         })
         .map(|(.., v)| *v)
         .sum()
@@ -1062,6 +1089,19 @@ pub(super) struct Outcome {
     /// families under its `node{i}_` label).
     pub metrics: String,
     pub logs: Vec<Captured>,
+    /// `stray_dealer_sends[i]` = the `(frame, recipient)` pairs node `i` put on
+    /// the `BEACON_CHANNEL` as a `Role::StrayDealer`, as the simulated network
+    /// accepted them (`Sender::send`'s returned recipients). Zero for any other
+    /// role. Every one of them is refused at the recipient's pre-decode gate, so
+    /// the sum over nodes is the exact `secondary` count the beacon channel
+    /// reports (5.3-В).
+    pub stray_dealer_sends: Vec<u64>,
+    /// `tombstones_observed[i]` = every `(height, peer)` node `i`'s
+    /// `TombstoneSet::observe` newly recorded off the committee snapshot it read
+    /// at that finalized height — the delta production reacts to
+    /// (`node/src/dpos.rs`, the tombstone watch on the beacon plane poller), in
+    /// call order. Empty unless `StandConfig::tombstoned` names someone.
+    pub tombstones_observed: Vec<Vec<(u64, PeerPubkey)>>,
     /// How many times the SIMULATED network failed to return a send-ack — see
     /// [`Outcome::SIMULATOR_ACK_DROP`]. Counted rather than hidden: the
     /// exemption in [`Outcome::errors`] must never be able to swallow anything
@@ -1450,6 +1490,14 @@ struct TrackSink {
     node: usize,
     oracle: Oracle,
     shared: Arc<Mutex<Tracked>>,
+    /// THIS node's ingress window — recorded on every `track` BEFORE the set is
+    /// forwarded, exactly as production's `OracleHandle::track` records it
+    /// (`p2p/src/lib.rs`), and read by this node's beacon `GatedReceiver`, the
+    /// one sender classification on that channel. Per node and not shared: the
+    /// one simulated Oracle forwards only the FIRST node's registration of an
+    /// epoch, but every node's own transition tracks, and the window is what its
+    /// own transition said, which is the production shape.
+    window: fluentbase_p2p::TrackedWindow,
 }
 
 #[derive(Default)]
@@ -1487,6 +1535,10 @@ impl PeerSetSink for TrackSink {
         epoch: u64,
         peers: TrackedPeers,
     ) -> impl core::future::Future<Output = ()> + Send {
+        // Record BEFORE registering, as production does: the window is what every
+        // ingress check reads, and a frame from a member of the new set may
+        // arrive the instant the network applies it.
+        self.window.record(epoch, &peers);
         let primary = peers.primary();
         let primary_members: Vec<PeerPubkey> = primary.iter().cloned().collect();
         let secondary_members: Vec<PeerPubkey> = peers.secondary.iter().cloned().collect();
@@ -1565,6 +1617,11 @@ struct NodeHandles {
     /// This node's ONE blocker spy, handed to both blocker slots.
     blocker: BlockerSpy,
     bodies: BodyTap,
+    /// `(frame, recipient)` pairs this node's stray dealer put on the wire
+    /// (`Role::StrayDealer`); zero for every other role.
+    stray_sends: Arc<AtomicU64>,
+    /// `(height, peer)` per tombstone this node's set newly observed.
+    tombstones_observed: Arc<Mutex<Vec<(u64, PeerPubkey)>>>,
     #[cfg(feature = "dpos-devnet-byzantine")]
     byz: ByzReport,
 }
@@ -1979,6 +2036,14 @@ async fn drive(
         .map(|node| node.jump_calls.lock().unwrap().clone())
         .collect();
     let el_events: Vec<Vec<ElEvent>> = nodes.iter().map(|node| node.chain.el_events()).collect();
+    let stray_dealer_sends: Vec<u64> = nodes
+        .iter()
+        .map(|node| node.stray_sends.load(Ordering::SeqCst))
+        .collect();
+    let tombstones_observed: Vec<Vec<(u64, PeerPubkey)>> = nodes
+        .iter()
+        .map(|node| node.tombstones_observed.lock().unwrap().clone())
+        .collect();
     #[cfg(feature = "dpos-devnet-byzantine")]
     let probe_calls: Vec<u64> = nodes
         .iter()
@@ -2110,6 +2175,8 @@ async fn drive(
         bodies,
         metrics,
         logs,
+        stray_dealer_sends,
+        tombstones_observed,
         simulator_ack_drops,
         log_capture_live,
         partitions: part_obs,
@@ -2393,12 +2460,30 @@ async fn build_node(
     // "nothing tracked yet" sentinel.
     let tracked_epoch_cell = Arc::new(AtomicU64::new(u64::MAX));
     let observer = EtObserver::default();
+    // THE peer-set window the BEACON channel's pre-decode gate on this node
+    // reads, as `node/src/dpos.rs` builds one from the Oracle: the set this
+    // node's own transition registers (below, from its cold start on) plus the
+    // tombstone predicate over the node's ONE `TombstoneSet` — the same object
+    // the `OuterBuilder` takes (the refuse-to-bind gate), filled the way
+    // production fills it: `TombstoneSet::observe` over the committee snapshot
+    // read at every finalized height (the boundary feed below, mirroring the
+    // tombstone watch on `node/src/dpos.rs`'s beacon plane poller), so a node
+    // `StandConfig::tombstoned` names is `Dropped` at this gate from the first
+    // executed read at or above its height — as in production.
+    let tombstones = TombstoneSet::default();
+    let tombstones_observed: Arc<Mutex<Vec<(u64, PeerPubkey)>>> = Arc::new(Mutex::new(Vec::new()));
+    let ingress_window = {
+        let tombstones = tombstones.clone();
+        fluentbase_p2p::TrackedWindow::default()
+            .with_tombstones(Arc::new(move |peer: &PeerPubkey| tombstones.contains(peer)))
+    };
     let et = Arc::new(tokio::sync::Mutex::new(EpochTransition::new(
         staking.clone(),
         TrackSink {
             node: i,
             oracle: oracle.clone(),
             shared: tracked,
+            window: ingress_window.clone(),
         },
         MAX_REGISTRY_PEER_SET as usize,
         Some(bridge_tx),
@@ -2549,6 +2634,8 @@ async fn build_node(
     // inflated frontier makes every probe productive and drops the cadence to the
     // fast burst, so the count climbs far past once-per-block.
     let probe_calls = Arc::new(AtomicU64::new(0));
+    // `(frame, recipient)` pairs a `Role::StrayDealer` put on the beacon channel.
+    let stray_sends = Arc::new(AtomicU64::new(0));
     // Every ladder step this node's probe NAMED, as `(T, last(T+1))` — the stand's
     // window into §5.2's "ступень". Surfaced as `Outcome::frontier_steps`, so a
     // test can assert WHAT was asked for and not merely that something moved.
@@ -2730,6 +2817,51 @@ async fn build_node(
         (Beacon::Live, _) => {
             let (bcs, bcr) = register(BEACON_CHANNEL).await;
             let (brs, brr) = register(BEACON_RESOLVER_CHANNEL).await;
+            // `Role::StrayDealer`: a second handle on the SAME channel sender the
+            // node's beacon gets (the simulated `Sender` is a clone-able mailbox),
+            // driven by a task that deals for the epoch after this node's own once
+            // a second, to everyone. The body is a real `Commitment` — the dealing
+            // this node WOULD broadcast if it had a seat — so that a receiver
+            // whose gate is missing gets a frame its actor can decode and answer,
+            // and the answer is then the consumer's `no_seat`, never silence.
+            if matches!(role, Role::StrayDealer) {
+                let mut sender = bcs.clone();
+                let sends = stray_sends.clone();
+                let chain = chain.clone();
+                let me_key = peers[i].clone();
+                let everyone: Set<PeerPubkey> = Set::from_iter_dedup(pks.iter().cloned());
+                let epoch_len = cfg.epoch_len;
+                ctx_i.with_label("stray_dealer").spawn(move |c| async move {
+                    loop {
+                        c.sleep(Duration::from_secs(1)).await;
+                        let epoch = chain.tip() / epoch_len + 1;
+                        let Ok((_ceremony, step)) = DkgCeremony::start(
+                            b"FLUENT_DPOS_V1_stray",
+                            epoch,
+                            everyone.clone(),
+                            me_key.clone(),
+                        ) else {
+                            continue;
+                        };
+                        let Some(body) = step.outgoing.into_iter().find_map(|o| {
+                            matches!(o.msg.body, DkgBody::Commitment(_)).then_some(o.msg.body)
+                        }) else {
+                            continue;
+                        };
+                        let wire = BeaconMessage::Dkg(
+                            DkgMsg {
+                                ceremony_epoch: epoch,
+                                body,
+                            }
+                            .encode(),
+                        )
+                        .encode();
+                        if let Ok(sent) = sender.send(Recipients::All, wire, false).await {
+                            sends.fetch_add(sent.len() as u64, Ordering::Relaxed);
+                        }
+                    }
+                });
+            }
             #[cfg(feature = "dpos-devnet-byzantine")]
             let roster = {
                 let committee = committee.clone();
@@ -2780,6 +2912,13 @@ async fn build_node(
             let committees: Arc<dyn CommitteeReads> = Arc::new(
                 crate::committee::CommitteeReadsFacade::new(committee.clone()),
             );
+            // The production pre-decode gate on the BEACON channel
+            // (`node/src/dpos.rs`, `GatedReceiver::new(.., "beacon", true)`):
+            // committee traffic, so a registry-tier / untracked / tombstoned
+            // sender never reaches the actor's decode. The ONE sender
+            // classification on the channel; the seat a sender holds in a
+            // frame's epoch is the consumer's check inside the actor (`no_seat`).
+            let bcr = crate::dpos::GatedReceiver::new(bcr, ingress_window.clone(), "beacon", true);
             let (beacon, beacon_tasks) = beacon::build(
                 &ctx_i,
                 ValidatorInputs {
@@ -2888,7 +3027,7 @@ async fn build_node(
         executor_metrics,
         sync_metrics,
         safety_halt: halt.clone(),
-        tombstones: TombstoneSet::default(),
+        tombstones: tombstones.clone(),
         plane_clock,
         dkg_height_tx,
         timeouts: ConsensusTimeouts::fluent_1s(),
@@ -3218,6 +3357,12 @@ async fn build_node(
         // executed — so anything other than a non-empty record is a real defect
         // and not a race.
         let (cold_chain, cold_committee) = (chain.clone(), committee.clone());
+        let (tombstone_chain, tombstone_staking, tombstone_set, tombstone_seen) = (
+            chain.clone(),
+            staking.clone(),
+            tombstones.clone(),
+            tombstones_observed.clone(),
+        );
         let mut cold_start_asserted = false;
         let repoking = Arc::new(AtomicBool::new(false));
         let ctx_repoke = ctx_i.with_label("boundary_repoke");
@@ -3250,7 +3395,7 @@ async fn build_node(
                         digest: block.digest().0,
                         hash: None,
                     });
-                    let parked = {
+                    let (parked, epoch_here) = {
                         let mut guard = et_feed.lock().await;
                         let outcome = guard.on_finalized(block.height).await;
                         *geometry.lock().unwrap() = guard.frozen_geometry();
@@ -3258,8 +3403,34 @@ async fn build_node(
                             number: block.height,
                             outcome: outcome.map_err(|e| format!("{e:?}")),
                         });
-                        guard.has_pending_boundary()
+                        (guard.has_pending_boundary(), guard.epoch_at(block.height))
                     };
+                    // The tombstone watch, on THIS finalized-height feed and no
+                    // second timer — production's shape (`node/src/dpos.rs`, the
+                    // beacon plane poller: `epoch_at(fin)` + `executed_state_hash
+                    // (fin)` → `epoch_committee_snapshot` → `TombstoneSet::observe`).
+                    // STATE-GATED as there: a height whose state is not executed
+                    // yet (`Ok(None)`) is skipped, not read at a header. The
+                    // snapshot goes to the reader directly, not through the
+                    // committee module, exactly as the node's `tombstone_reader`
+                    // does. What production does with the delta — sever the
+                    // peer's transport — the stand does not model: its blocker is
+                    // a counting spy wired into two named slots, and the
+                    // simulated network severs nothing on it; the delta is
+                    // RECORDED (`Outcome::tombstones_observed`) instead.
+                    if let (Some(epoch), Ok(Some(hash))) =
+                        (epoch_here, tombstone_chain.executed_state_hash(block.height))
+                    {
+                        if let Ok(snap) = fluentbase_staking_reader::reader::StakingStateRead::epoch_committee_snapshot(
+                            &tombstone_staking, epoch, hash,
+                        ) {
+                            let newly = tombstone_set.observe(&snap);
+                            if !newly.is_empty() {
+                                let mut seen = tombstone_seen.lock().unwrap();
+                                seen.extend(newly.into_iter().map(|peer| (block.height, peer)));
+                            }
+                        }
+                    }
                     // Re-poke loop: a parked boundary replays only on the next
                     // `on_finalized`, and during catch-up the parked boundary IS
                     // the last deliverable block (`consensus/src/dpos.rs:2168-2203`).
@@ -3315,6 +3486,8 @@ async fn build_node(
         cert_inlet,
         blocker: blocker_spy,
         bodies,
+        stray_sends,
+        tombstones_observed,
         #[cfg(feature = "dpos-devnet-byzantine")]
         byz,
     }

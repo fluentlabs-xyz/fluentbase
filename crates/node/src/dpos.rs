@@ -1887,8 +1887,10 @@ where
                 handles.beacon_sender,
                 // Same gate as EVIDENCE: DKG gossip is committee traffic, so a
                 // registry-tier or untracked or tombstoned sender never reaches the
-                // actor's decode. The per-ceremony membership check is the actor's
-                // (`beacon::actor::on_message`).
+                // actor's decode. This is the ONLY sender classification on the
+                // channel; which seat the sender holds in a frame's epoch is the
+                // consumer's check inside the actor (`no_seat`), not a second
+                // reading of the peer set.
                 fluentbase_consensus::dpos::GatedReceiver::new(
                     handles.beacon_receiver,
                     ingress_window.clone(),
