@@ -28,9 +28,10 @@
 
 use super::stand::{
     CertInletCfg, CertInletFacts, CertInletSource, Committees, Outcome, Progress, Stand,
-    StandConfig, TeeWiring,
+    StandConfig, TeeWiring, BLOCKER_SITE_CONSENSUS, BLOCKER_SITE_FRONTIER,
 };
 use crate::beacon::testing::DETERMINISTIC_BOOTSTRAP_EPOCH;
+use metrics_util::debugging::Snapshotter;
 use std::{sync::Arc, time::Duration};
 
 /// The epoch length every test here SETS on its config rather than inheriting:
@@ -836,6 +837,83 @@ fn a_catching_up_committee_member_is_fed_by_its_inlet_while_its_el_is_behind() {
     );
 }
 
+/// The HELD-LAG fixture over a donor's archive, shared by the two tests below
+/// that differ only in what they OBSERVE on it (the inlet's deferral; the
+/// blocker slots). One place to change the lag, one place to change the cut.
+///
+/// The victim. The keyless test above uses the same index for the same node.
+const HELD_LAG_VICTIM: usize = 4;
+/// The DONOR whose marshal archive the victim's inlet reads directly.
+const HELD_LAG_DONOR: usize = 0;
+/// The same target as the keyless test: the committee climbs well above the
+/// victim's read window, so the walk has heights the victim cannot read.
+const HELD_LAG_TARGET: u64 = 5 * EPOCH_LEN;
+/// Inside epoch 1 and BELOW the epoch-2 mint — see the keyless test above for
+/// why the lag is held by a cut and not by the tracked peer set.
+const HELD_LAG_CUT_AT: u64 = EPOCH_LEN + 4;
+/// Longer than the run's virtual deadline — the cut never heals.
+const HELD_LAG_NEVER: u32 = 4096;
+
+/// Run the held-lag fixture: five live nodes, the victim's inlet over the
+/// donor's archive, the victim cut from the consensus plane inside epoch 1 for
+/// good, the run ending when the committee reaches [`HELD_LAG_TARGET`].
+/// `snapshotter` is ASSIGNED to [`StandConfig::metrics_snapshotter`]
+/// unconditionally: `None` means "no snapshotter", not "keep whatever the
+/// config had".
+fn run_held_lag_over_donor_archive(snapshotter: Option<Snapshotter>) -> Outcome {
+    let mut cfg = StandConfig::live(5, 1);
+    cfg.epoch_len = EPOCH_LEN;
+    cfg.committees = drop_the_last_two_from_epoch_two();
+    cfg.metrics_snapshotter = snapshotter;
+    cfg.cert_inlet = Some(CertInletCfg {
+        nodes: vec![HELD_LAG_VICTIM],
+        source: CertInletSource::PeerArchive {
+            from: HELD_LAG_DONOR,
+        },
+        tee: TeeWiring::Observed,
+    });
+    let mut stand = Stand::new(cfg);
+    stand
+        .partition(&[0, 1, 2, 3], &[HELD_LAG_VICTIM])
+        .after_height(HELD_LAG_CUT_AT)
+        .consensus_only()
+        .for_views(HELD_LAG_NEVER);
+    let out = stand.run_until(
+        move |p| p.min_height_of(&[0, 1, 2]) >= HELD_LAG_TARGET,
+        Duration::from_secs(400),
+    );
+    assert!(
+        !out.timed_out,
+        "the committee did not reach {HELD_LAG_TARGET}: {:?}",
+        out.heights
+    );
+    out
+}
+
+/// The fixture's PREMISE as assertions: the cut that holds the lag really
+/// fired, the victim never executed into the bootstrap epoch, and it holds no
+/// key for it — so the donor's later epochs really are outside its read window.
+fn assert_the_lag_is_held(out: &Outcome) {
+    const VICTIM: usize = HELD_LAG_VICTIM;
+    assert!(
+        !out.partitions[0].heights_at_cut.is_empty(),
+        "the consensus-plane cut never fired: {:?}",
+        out.partitions[0]
+    );
+    assert!(
+        out.heights[VICTIM] < EPOCH_2_START,
+        "node {VICTIM} executed into epoch {DETERMINISTIC_BOOTSTRAP_EPOCH} without a \
+         key: {:?}",
+        out.heights
+    );
+    assert!(
+        !out.artifacts[VICTIM].contains_key(&DETERMINISTIC_BOOTSTRAP_EPOCH),
+        "node {VICTIM} holds the epoch-{DETERMINISTIC_BOOTSTRAP_EPOCH} artifact, so its \
+         window is not below the donor's epochs: {:?}",
+        out.artifacts[VICTIM].keys().collect::<Vec<_>>()
+    );
+}
+
 /// (5.0а, A-05 — the plan row's FIRST input, and the only one with no `deliver`
 /// gate) A donor's marshal archive walked upward by height, which is how the
 /// stand finally reaches the inlet's own NON-FAULT DEFERRAL.
@@ -885,60 +963,15 @@ fn a_catching_up_committee_member_is_fed_by_its_inlet_while_its_el_is_behind() {
 #[test]
 fn a_donors_archive_hands_the_inlet_an_epoch_it_cannot_read_and_it_defers() {
     use fluentbase_types::staking_protocol::{epoch_at_block, MAX_COMMITTEE_LOOKAHEAD_EPOCHS};
-    const VICTIM: usize = 4;
-    const DONOR: usize = 0;
-    /// The same target as the keyless test: the committee climbs well above the
-    /// victim's read window, so the walk has heights the victim cannot read.
-    const TARGET: u64 = 5 * EPOCH_LEN;
-    /// Inside epoch 1 and BELOW the epoch-2 mint — see the keyless test above for
-    /// why the lag is held by a cut and not by the tracked peer set.
-    const CUT_AT: u64 = EPOCH_LEN + 4;
-    /// Longer than the run's virtual deadline — the cut never heals.
-    const NEVER: u32 = 4096;
-    let mut cfg = StandConfig::live(5, 1);
-    cfg.epoch_len = EPOCH_LEN;
-    cfg.committees = drop_the_last_two_from_epoch_two();
-    cfg.cert_inlet = Some(CertInletCfg {
-        nodes: vec![VICTIM],
-        source: CertInletSource::PeerArchive { from: DONOR },
-        tee: TeeWiring::Observed,
-    });
-    let mut stand = Stand::new(cfg);
-    stand
-        .partition(&[0, 1, 2, 3], &[VICTIM])
-        .after_height(CUT_AT)
-        .consensus_only()
-        .for_views(NEVER);
-    let out = stand.run_until(
-        move |p| p.min_height_of(&[0, 1, 2]) >= TARGET,
-        Duration::from_secs(400),
-    );
-    assert!(
-        !out.timed_out,
-        "the committee did not reach {TARGET}: {:?}",
-        out.heights
-    );
+    const VICTIM: usize = HELD_LAG_VICTIM;
+    const DONOR: usize = HELD_LAG_DONOR;
+    const TARGET: u64 = HELD_LAG_TARGET;
+    let out = run_held_lag_over_donor_archive(None);
 
     // PREMISE: the same held lag as the keyless test — the victim's committee
     // anchor stays in epoch 1, which is what puts the donor's later epochs outside
     // its read window — and the cut that holds it really fired.
-    assert!(
-        !out.partitions[0].heights_at_cut.is_empty(),
-        "the consensus-plane cut never fired: {:?}",
-        out.partitions[0]
-    );
-    assert!(
-        out.heights[VICTIM] < EPOCH_2_START,
-        "node {VICTIM} executed into epoch {DETERMINISTIC_BOOTSTRAP_EPOCH} without a \
-         key: {:?}",
-        out.heights
-    );
-    assert!(
-        !out.artifacts[VICTIM].contains_key(&DETERMINISTIC_BOOTSTRAP_EPOCH),
-        "node {VICTIM} holds the epoch-{DETERMINISTIC_BOOTSTRAP_EPOCH} artifact, so its \
-         window is not below the donor's epochs: {:?}",
-        out.artifacts[VICTIM].keys().collect::<Vec<_>>()
-    );
+    assert_the_lag_is_held(&out);
 
     let f = inlet(&out, VICTIM);
     // (1) THE DEFERRAL ARM, REACHED — and it is not a fault.
@@ -1014,6 +1047,399 @@ fn a_donors_archive_hands_the_inlet_an_epoch_it_cannot_read_and_it_defers() {
         f.defers,
         f.rotations,
         out.virtual_elapsed
+    );
+}
+
+/// (5.2 заход В — the FRONTIER half of R-129; the marshal half is watched here,
+/// not exercised) An epoch OUTSIDE THIS NODE'S COMMITTEE-READ WINDOW costs no
+/// peer its channel — and the run proves both halves of that sentence with
+/// counters rather than with the absence of a symptom.
+///
+/// **Read the name: the claim is NARROWED on purpose.** `plane_upstream::deliver`
+/// step (5) drops an answer it cannot authenticate for FOUR distinct reasons, and
+/// all four are statements about THIS node rather than about the peer:
+/// `no_geometry`, `out_of_window`, `not_readable`, `read_failed`
+/// (`plane_upstream.rs:140-143`). A test can only pin the property for the arms
+/// its fixture actually executes, and this fixture executes exactly ONE of them —
+/// `out_of_window`. So that is what the name says and what the coverage
+/// assertion below enforces: the set of `reason` labels OBSERVED under
+/// `dpos_frontier_dropped_total` in this run, read off the recorder rather than
+/// off a list in this file, must equal `COVERED` exactly. A sum over reasons
+/// would quietly swallow the zeroes; a hard-coded list would be blind to a label
+/// it does not name. If the observed set ever changes — an arm stops firing, or
+/// a new one starts — this test goes red and whoever changed it decides what the
+/// test now answers for.
+///
+/// **What R-129 says and which half is here.** The register entry is about the
+/// MARSHAL resolver: "`deliver == false` excludes an honest peer forever". On
+/// that verdict a resolver runs `commonware_p2p::block!(self.blocker, peer, ..)`
+/// and `self.fetcher.block(peer)` back to back (CW
+/// `resolver/src/p2p/engine.rs:437-438`). The first is disarmed in our wiring
+/// by a [`fluentbase_p2p::NoopBlocker`] in every blocker slot — a decision taken
+/// about the simplex BATCHER (`p2p/src/lib.rs`'s "Bug A" rationale) and
+/// inherited by the other slots as a side effect. The second is NOT disarmable
+/// by any `Blocker` choice: it appends to the fetcher's own `excluded` set
+/// (`fetcher.rs:516`), which nothing ever removes from, so the peer is excluded
+/// from that resolver's fetches for the life of the engine regardless. The
+/// protection we have is therefore accidental AND partial, and this test pins
+/// the one rule that is under load here — the frontier plane's.
+///
+/// **Which slot is EXERCISED, and which is only watched.** The victim is cut
+/// from the consensus plane and the frontier plane stays up; step (5) runs
+/// somewhere in the process — how many times, and on which node, is a run fact
+/// the coverage assertion reads off a recorder that carries no node label. The
+/// only per-node observable is the victim's inlet `defers`; the victim's own
+/// `upstream[VICTIM].deliveries_decoded` (its `deliver ⇒ true` count, drops and
+/// admissions together) is PRINTED, not asserted. The consensus slot
+/// ([`BLOCKER_SITE_CONSENSUS`] — the marshal resolver's arms and the simplex
+/// batcher) has the spy wired into it and nothing in this fixture pulls its
+/// trigger, and that is not an oversight of the fixture: with no scheme for an
+/// epoch the marshal refuses BEFORE decoding and answers `true` ("ignoring stale
+/// delivery", CW `marshal/core/actor.rs:965-971`), because `EpochSchemeProvider`
+/// does not override `Provider::all()` and the trait default is `None`
+/// (`cryptography/src/certificate.rs:417-419`). The `verify_delivered ⇒ false`
+/// arm that R-129 is about is unreachable from above this layer. Measured, not
+/// assumed: blinding `EpochSchemeProvider::scoped` to `None` leaves this test
+/// green and only stalls the lagging node (journal
+/// `.dpos-study/history/E5-2-V.md` §0(4), mutation 2, beside the other `E5-*`
+/// records). So this test does NOT close
+/// R-129; it closes the frontier rule and documents the marshal one as
+/// unreachable.
+///
+/// **The counters are PROCESS-WIDE.** `dpos_frontier_dropped_total` and
+/// `_rejected_total` go to one recorder for all five nodes and carry no node
+/// label (`stand::counter_of`'s own doc). Node 3 leaves the committee on the
+/// same schedule and can contribute the same labels, so nothing below
+/// attributes a drop to the victim. The per-node half of "this node cannot read
+/// the epoch" is the victim's OWN inlet counter, `defers`, asserted first.
+///
+/// **Why none of this could simply be asserted on the stand as it stood.** Until
+/// 5.2 the stand's own blocker slots took `NoopBlocker` too, so "no peer was
+/// blocked" was true by construction for ANY code. Five observables carry the
+/// run now, deliberately not one, and each is stated with what it proves:
+///
+/// * [`super::stand::BlockerSpy`] counts `Blocker::block(peer)` without
+///   performing it — it names the PEER and the SLOT. Its `sites` half proves
+///   that `BlockerSpy::at` ran for both labels on every node and, because `at`
+///   is the only constructor of `SpyBlocker` and its fields are private, that
+///   the value each slot was HANDED is the spy; it does not prove the builder
+///   USED it — a `SpyBlocker` that is constructed and discarded looks the same.
+///   For the FRONTIER slot that residual is closed by the per-node counter
+///   below; for the consensus slot it stands (journal).
+/// * `dpos_frontier_rejected_total{reason}` — the plane's own count of
+///   `deliver ⇒ false`, PER REASON, as an ASSUMPTION of this assertion: it is
+///   incremented only in `Self::reject`, so a `false` that bypasses `reject`
+///   is invisible here. Every peer here is honest, so the OBSERVED label set
+///   must be empty, whatever the labels are called.
+/// * `upstream[i].deliveries_rejected` — the stand's own per-node count of the
+///   FACT `deliver ⇒ false` on the frontier plane (`fakes.rs`,
+///   `CountingHandler::deliver` counts the returned `bool`, wrapped
+///   unconditionally in `stand.rs::frontier_plane`): blind to how the `false`
+///   was produced and to what sits in the blocker slot, so it is the witness
+///   that needs neither the spy nor the reason label.
+/// * [`Outcome::peers_blocked`] — the resolver-internal exclusion, blind to the
+///   `Blocker` choice and present on every resolver engine including the beacon
+///   log's and the DKG agreement's, which the spy is never handed to. What its
+///   zero proves is bounded: the gauge is written once per loop iteration, so it
+///   says "nothing excluded as of the engine's last iteration" (that doc has the
+///   line). The expected FAMILIES are asserted by name, not just "some family".
+/// * the `block!` macro's own WARN line in [`Outcome::logs`] — the windowless
+///   witness of the same resolver line, across every engine, when log capture is
+///   live (stated in the output when it is not).
+///
+/// Falsifier: any `block(peer)` on any node; any `dpos_frontier_rejected_total`
+/// label at all; a non-zero `peers_blocked` on any resolver; a `block!` WARN in
+/// the logs; `defers == 0` (then the victim never reached "I cannot read this
+/// epoch"); an observed drop-reason set other than `COVERED` (then the narrowing
+/// in the name is no longer the truth — this catches a reason that STOPS as
+/// well as one that STARTS, for LABELS of the `dpos_frontier_dropped_total`
+/// family: a new self-inflicted code path that does not count under it is
+/// invisible here); a node whose spy was handed to fewer than both
+/// slots, a `blocked` vector shorter than the node count, or a missing resolver
+/// family (the observables are vacuous again); the victim executing into epoch
+/// 2 or holding `PK_2`; the committee halting.
+#[test]
+fn an_epoch_outside_this_nodes_read_window_costs_no_peer_its_channel() {
+    use metrics_util::debugging::DebuggingRecorder;
+    use std::collections::BTreeSet;
+    const VICTIM: usize = HELD_LAG_VICTIM;
+    const N: usize = 5;
+    /// Every `reason` under which `plane_upstream::deliver` step (5) may drop an
+    /// answer WITHOUT punishing the peer — the whole set, in the source's own
+    /// order (`plane_upstream.rs:140-143`). Used for the PRINTED table only, so
+    /// the three arms this fixture does not reach are visible as zeroes; the
+    /// assertion itself reads the observed labels off the recorder.
+    const SELF_INFLICTED: [&str; 4] = [
+        "no_geometry",
+        "out_of_window",
+        "not_readable",
+        "read_failed",
+    ];
+    /// The subset this fixture actually executes, and therefore the only one the
+    /// property below is pinned for. Asserted as an exact set against what the
+    /// recorder saw.
+    const COVERED: [&str; 1] = ["out_of_window"];
+    /// The `block!` macro's WARN as the stand's capture renders it
+    /// (`capture.rs`: `target: message`), from the resolver's own module.
+    const BLOCK_WARN: &str = "commonware_resolver::p2p::engine: invalid data received";
+
+    let recorder = DebuggingRecorder::new();
+    let snapshotter = recorder.snapshotter();
+    let out = metrics::with_local_recorder(&recorder, || {
+        run_held_lag_over_donor_archive(Some(snapshotter.clone()))
+    });
+
+    // PREMISE: the lag is real and HELD, so the epochs the victim is fed are
+    // genuinely outside its read window.
+    assert_the_lag_is_held(&out);
+
+    // PREMISE: the victim's OWN inlet counted `Committee::scheme(E) == None` on
+    // certificates handed to it past its window, and did not call that a data
+    // fault. Per node, which the process-wide plane counters below are not.
+    let f = inlet(&out, VICTIM);
+    assert!(
+        f.defers > 0,
+        "the inlet never deferred, so nothing in this run reached \"the scheme \
+         cannot be built\" and the zeroes below would mean \"nothing happened\": {f:?}"
+    );
+    assert_eq!(
+        f.rotations, 0,
+        "an unreadable committee — this node's OWN lag — cost the donor a rotation: {f:?}"
+    );
+
+    // The windowless witness of the resolver's block line, when capture is live.
+    let block_warns = out.logs_containing(BLOCK_WARN);
+
+    // (1) THE PROPERTY, by peer and by slot. Deliberately BEFORE the coverage
+    // assertion below: "no peer was excluded" is unconditional over the whole
+    // run and does not wait on any premise; what the premises buy is the right
+    // to read the zero as a statement about the code.
+    assert_eq!(
+        out.blocked.len(),
+        N,
+        "the stand reported blocker facts for {} nodes, not {N}",
+        out.blocked.len()
+    );
+    let blocks: Vec<(usize, &[(&'static str, fluentbase_bls::PeerPubkey)])> = out
+        .blocked
+        .iter()
+        .enumerate()
+        .filter(|(_, b)| !b.calls.is_empty())
+        .map(|(i, b)| (i, b.calls.as_slice()))
+        .collect();
+    assert!(
+        blocks.is_empty(),
+        "a node excluded a peer while its inlet deferred {} certificates for epochs \
+         it cannot read — R-129's first half is LIVE in this wiring: {blocks:?} \
+         (block! WARN lines captured: {})",
+        f.defers,
+        block_warns.len()
+    );
+
+    // (2) THE PROPERTY, by reason, off the recorder. `Self::reject` is the ONLY
+    // producer of `deliver ⇒ false` and it counts under the arm's own label
+    // (`plane_upstream.rs`, `FRONTIER_REJECTED`). Every peer in this run is
+    // honest, so the OBSERVED set of rejection labels — whatever they are
+    // called, today or later — has to be empty. The printed table beside it is
+    // the four self-inflicted arms by name, so the three this fixture does not
+    // reach are visible as zeroes rather than summed away.
+    let observed = |family: &str| -> BTreeSet<String> {
+        out.metrics_before_collect
+            .iter()
+            .filter(|(name, _, value)| name == family && *value > 0)
+            .flat_map(|(_, labels, _)| labels.iter())
+            .filter(|(k, _)| k == "reason")
+            .map(|(_, v)| v.clone())
+            .collect()
+    };
+    let rejected_table: Vec<(&str, u64)> = SELF_INFLICTED
+        .iter()
+        .map(|reason| {
+            (
+                *reason,
+                super::stand::counter_of(
+                    &out.metrics_before_collect,
+                    "dpos_frontier_rejected_total",
+                    Some(("reason", reason)),
+                ),
+            )
+        })
+        .collect();
+    let rejected = observed("dpos_frontier_rejected_total");
+    assert!(
+        rejected.is_empty(),
+        "the frontier plane punished a peer in a run where every peer is honest — \
+         the offending labels are `rejected`: {rejected:?}. The table beside it is \
+         ONLY the four self-inflicted arms under the same family and reads \
+         {rejected_table:?}; a punishing reason is not in it by construction"
+    );
+
+    // (2b) THE PROPERTY, by FACT and by node. `CountingHandler::deliver` counts
+    // the `bool` the production consumer returned (`fakes.rs`), on every node's
+    // frontier plane (`stand.rs::frontier_plane` wraps unconditionally). It sees
+    // a `false` whether or not `Self::reject` produced it, and whether or not
+    // the blocker slot held the spy — the one witness of the frontier rule that
+    // depends on neither.
+    let rejected_by_node: Vec<(usize, u64)> = out
+        .upstream
+        .iter()
+        .enumerate()
+        .map(|(i, u)| (i, u.deliveries_rejected))
+        .collect();
+    assert!(
+        rejected_by_node.iter().all(|(_, n)| *n == 0),
+        "a node's frontier plane answered `deliver ⇒ false` in a run where every \
+         peer is honest — (node, deliveries_rejected): {rejected_by_node:?}"
+    );
+
+    // (3) THE PROPERTY, resolver-internal — the half no `Blocker` choice can
+    // disarm (`fetcher.block` → append-only `excluded`, see
+    // `Outcome::peers_blocked`). Wider than the spy: every resolver engine in
+    // the run. The families are asserted BY NAME per node — the three classes
+    // the stand labels itself — plus the DKG agreement's, which only dealers
+    // run; "some family exists" would let a missing engine hide behind another.
+    let gauges = out.peers_blocked();
+    for i in 0..N {
+        for class in [
+            "resolver_resolver",
+            "frontier_resolver",
+            "beacon_log_resolver",
+        ] {
+            let family = format!("node{i}_{class}_peers_blocked");
+            assert!(
+                gauges.iter().any(|(_, k, _)| *k == family),
+                "no `{family}` in the exposition — that resolver's exclusion set is \
+                 unobserved and its zero would be vacuous; families seen: {:?}",
+                gauges
+                    .iter()
+                    .map(|(_, k, _)| k.as_str())
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
+    assert!(
+        gauges
+            .iter()
+            .any(|(_, k, _)| k.contains("dkg_simplex_resolver")),
+        "no DKG agreement resolver family in the exposition — the one class the \
+         spy is never handed to is unobserved; families seen: {:?}",
+        gauges
+            .iter()
+            .map(|(_, k, _)| k.as_str())
+            .collect::<Vec<_>>()
+    );
+    let excluded: Vec<&(usize, String, f64)> = gauges.iter().filter(|(.., v)| *v != 0.0).collect();
+    assert!(
+        excluded.is_empty(),
+        "a resolver had excluded a peer from its own fetches as of its last loop \
+         iteration — this is the half a `NoopBlocker` does not cover: {excluded:?}"
+    );
+    if out.log_capture_live {
+        assert!(
+            block_warns.is_empty(),
+            "the resolver's own `block!` line fired — the windowless witness of an \
+             exclusion, on any engine: {block_warns:?}"
+        );
+    } else {
+        eprintln!("(5.2В/R-129) log capture NOT live: the `block!` WARN witness is absent");
+    }
+
+    // (4) AND THE SPY IS NOT VACUOUS. Every node handed it to BOTH blocker
+    // slots, so the empty list in (1) is a statement about the code and not
+    // about a `NoopBlocker` that could never have spoken. What this proves and
+    // what it does not is in the docstring. Sorted on both sides: `sites` comes
+    // out of a `BTreeSet`, so the literal must not depend on the constants'
+    // spelling.
+    let mut wanted = vec![BLOCKER_SITE_CONSENSUS, BLOCKER_SITE_FRONTIER];
+    wanted.sort_unstable();
+    for (i, b) in out.blocked.iter().enumerate() {
+        let mut got = b.sites.clone();
+        got.sort_unstable();
+        assert_eq!(
+            got, wanted,
+            "node {i} handed the blocker spy to {got:?} instead of both slots — the \
+             assertions above are vacuous for that node"
+        );
+    }
+
+    // (5) COVERAGE — what this run ACTUALLY put under load, as the recorder saw
+    // it. The observed label set is the assertion, so a reason that stops
+    // firing and a reason that starts firing are both red; the printed table
+    // over the four known arms is for the reader.
+    let drops_table: Vec<(&str, u64)> = SELF_INFLICTED
+        .iter()
+        .map(|reason| {
+            (
+                *reason,
+                super::stand::counter_of(
+                    &out.metrics_before_collect,
+                    "dpos_frontier_dropped_total",
+                    Some(("reason", reason)),
+                ),
+            )
+        })
+        .collect();
+    let fired = observed("dpos_frontier_dropped_total");
+    let covered: BTreeSet<String> = COVERED.iter().map(|r| r.to_string()).collect();
+    assert_eq!(
+        fired, covered,
+        "the set of step-(5) reasons this fixture produces has changed (known arms: \
+         {drops_table:?}). The property above is pinned ONLY for the reasons that \
+         actually fire here, and the test's name says which — restate the coverage \
+         (and the name) or extend the fixture; do not let the new arm ride along \
+         unasserted"
+    );
+
+    // (6) THE PRICE OF THE REFUSAL (В-3), measured and not fixed. `deliver`'s
+    // drop answers the waiting caller NOW and the retry driver is the executor's
+    // frozen-tip probe, one ladder step per tick — so the cost is a round trip
+    // per probe tick for as long as the lag is held. The bound below is WEAK
+    // (journal, accepted residual V-04/D-05/E-03) and is NOT an invariant: the
+    // stand's resolver times an active request out at 5 s (`stand.rs`,
+    // `frontier_plane`) while the client waits 8 s (`plane_upstream.rs`,
+    // `FRONTIER_FETCH_TIMEOUT`), so a timed-out request is re-sent by the
+    // resolver (CW `engine.rs`, `pop_active` → `add_retry`) and a later answer
+    // that takes step (5) can add a drop with no new `latest_calls` /
+    // `finalized_calls`. It does not bite here because the donor answers
+    // promptly; it is kept as a sanity rail and a printed number, not as the
+    // proof of anything.
+    let dropped = super::stand::counter_of(
+        &out.metrics_before_collect,
+        "dpos_frontier_dropped_total",
+        None,
+    );
+    let plane_calls: u64 = out
+        .upstream
+        .iter()
+        .map(|u| u.latest_calls + u.finalized_calls)
+        .sum();
+    assert!(
+        dropped <= plane_calls,
+        "the plane dropped {dropped} answers over {plane_calls} fetches this process \
+         issued"
+    );
+
+    assert!(out.halted.is_empty(), "{:?}", out.halted);
+    out.assert_lockstep_except(&[3, VICTIM]);
+    only_these_ran_inlets(&out, &[VICTIM]);
+    eprintln!(
+        "(5.2В/R-129) heights={:?} blocked={:?} sites={:?} peers_blocked_families={} \
+         block_warns={} capture_live={} defers={} ingests={} drops={drops_table:?} \
+         fired={fired:?} rejected={rejected_table:?} plane_calls={plane_calls} \
+         upstream_victim={:?} virtual={:?}",
+        out.heights,
+        out.blocked
+            .iter()
+            .map(|b| b.calls.len())
+            .collect::<Vec<_>>(),
+        out.blocked[VICTIM].sites,
+        gauges.len(),
+        block_warns.len(),
+        out.log_capture_live,
+        f.defers,
+        f.ingests,
+        out.upstream[VICTIM],
+        out.virtual_elapsed,
     );
 }
 

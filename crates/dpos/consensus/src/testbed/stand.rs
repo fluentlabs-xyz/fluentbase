@@ -53,12 +53,9 @@ use commonware_runtime::{
 };
 use commonware_utils::{ordered::Set, NZUsize};
 use fluentbase_bls::{keys::ValidatorBlsKeypair, BlsPubkey, PeerPubkey};
-use fluentbase_p2p::{
-    constants::{
-        BEACON_CHANNEL, BEACON_RESOLVER_CHANNEL, BROADCAST_CHANNEL, CERT_CHANNEL, FRONTIER_CHANNEL,
-        MARSHAL_CHANNEL, MAX_REGISTRY_PEER_SET, RESOLVER_CHANNEL, VOTE_CHANNEL,
-    },
-    NoopBlocker,
+use fluentbase_p2p::constants::{
+    BEACON_CHANNEL, BEACON_RESOLVER_CHANNEL, BROADCAST_CHANNEL, CERT_CHANNEL, FRONTIER_CHANNEL,
+    MARSHAL_CHANNEL, MAX_REGISTRY_PEER_SET, RESOLVER_CHANNEL, VOTE_CHANNEL,
 };
 use fluentbase_staking_reader::{
     epoch_transition::{PeerSetSink, TrackedPeers, TransitionOutcome, PENDING_RETRY_BACKOFF},
@@ -69,7 +66,7 @@ use fluentbase_types::staking_protocol::{epoch_at_block, MAX_COMMITTEE_LOOKAHEAD
 use metrics_util::debugging::{DebugValue, Snapshotter};
 use rand_08::{rngs::StdRng, SeedableRng as _};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     num::{NonZeroU32, NonZeroU64},
     path::PathBuf,
     sync::{
@@ -409,6 +406,86 @@ pub(super) struct CertInletFacts {
     pub tee: TeeWiring,
     pub defers: u64,
     pub carry_forward_fails: u64,
+}
+
+/// The [`OuterBuilder::blocker`] slot. ONE label for two consumers, because the
+/// builder carries ONE field and splitting it would be a production change:
+/// `marshal_p2p::Config.blocker` on both resolver arms (`outer.rs:1267`
+/// `Hybrid`, `:1302` `Plane`) and the simplex engine's own blocker
+/// (`outer.rs:1057` → `epoch_manager.rs:1750` → `engine.rs:290`), which is the
+/// batcher's evidence-free `block!`. A call from either is a call on this label;
+/// WHICH of the two made it is read off the `block!` macro's own
+/// `tracing::warn!` in [`Outcome::logs`].
+pub(super) const BLOCKER_SITE_CONSENSUS: &str = "consensus";
+/// The frontier plane's own resolver (`stand.rs::frontier_plane`, modelled on
+/// `node/src/dpos.rs::build_beacon_plane`) — the slot `plane_upstream::deliver`
+/// step (5) decides with its `bool`.
+pub(super) const BLOCKER_SITE_FRONTIER: &str = "frontier";
+
+/// Every [`commonware_p2p::Blocker::block`] one node's stack made, and every
+/// blocker SLOT the stand wired this spy into.
+///
+/// Why a spy and not [`NoopBlocker`], which is what both slots took before 5.2:
+/// on a no-op blocker "no peer was excluded" holds by construction, for any
+/// code, so an assertion on it is vacuous. This type answers the same question
+/// by COUNTING. It still blocks nobody — the run is byte-identical to a
+/// `NoopBlocker` run — but a `block(peer)` the production wiring makes is now a
+/// fact in the [`Outcome`].
+///
+/// [`Self::sites`] is the anti-vacuity half, and it is load-bearing rather than
+/// decorative: an edit that put `NoopBlocker` back into either slot would leave
+/// [`Self::calls`] empty and every assertion on it GREEN. Registration happens
+/// in [`BlockerSpy::at`], which is the only way to obtain the blocker at all, so
+/// "both slots took this spy" is something the run asserts instead of something
+/// the reader has to check in the source.
+#[derive(Clone, Default)]
+pub(super) struct BlockerSpy {
+    calls: Arc<Mutex<Vec<(&'static str, PeerPubkey)>>>,
+    sites: Arc<Mutex<BTreeSet<&'static str>>>,
+}
+
+impl BlockerSpy {
+    /// Hand this spy to ONE blocker slot, recording that the slot took it.
+    pub(super) fn at(&self, site: &'static str) -> SpyBlocker {
+        self.sites.lock().unwrap().insert(site);
+        SpyBlocker {
+            site,
+            calls: self.calls.clone(),
+        }
+    }
+
+    fn snapshot(&self) -> BlockerFacts {
+        BlockerFacts {
+            calls: self.calls.lock().unwrap().clone(),
+            sites: self.sites.lock().unwrap().iter().copied().collect(),
+        }
+    }
+}
+
+/// One wired blocker slot of one node: counts, never blocks — see
+/// [`BlockerSpy`].
+#[derive(Clone)]
+pub(super) struct SpyBlocker {
+    site: &'static str,
+    calls: Arc<Mutex<Vec<(&'static str, PeerPubkey)>>>,
+}
+
+impl commonware_p2p::Blocker for SpyBlocker {
+    type PublicKey = PeerPubkey;
+
+    async fn block(&mut self, peer: Self::PublicKey) {
+        self.calls.lock().unwrap().push((self.site, peer));
+    }
+}
+
+/// What one node's blockers did over the whole run. See [`BlockerSpy`].
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) struct BlockerFacts {
+    /// `(site, peer)` per `Blocker::block` call, in call order.
+    pub calls: Vec<(&'static str, PeerPubkey)>,
+    /// The slots this node's spy was wired into, sorted. EMPTY would mean the
+    /// node wired the spy nowhere, which makes `calls` say nothing.
+    pub sites: Vec<&'static str>,
 }
 
 /// The randomness surface every node runs.
@@ -947,6 +1024,11 @@ pub(super) struct Outcome {
     /// node ran none (which is every node unless
     /// [`StandConfig::cert_inlet`] names it). See [`CertInletFacts`].
     pub cert_inlet: Vec<Option<CertInletFacts>>,
+    /// `blocked[i]` = every peer node `i`'s stack asked to BLOCK, per wired
+    /// blocker slot, plus the slots that took the spy. See [`BlockerSpy`] —
+    /// chiefly for why the `sites` half has to be asserted beside the `calls`
+    /// half or the whole observable re-vacuums itself.
+    pub blocked: Vec<BlockerFacts>,
     /// `byz[i]` = what node `i`'s byzantine wrappers actually did — all zeros on
     /// an honest node and on a build without `dpos-devnet-byzantine`. The tamper's
     /// own witness: a role test asserts THIS before it asserts anything about how
@@ -1105,6 +1187,74 @@ impl Outcome {
             }
         }
         out
+    }
+
+    /// Every `commonware_resolver::p2p` engine's `peers_blocked` gauge in the
+    /// run, as `(node, family, value)` — every node, every resolver, in
+    /// exposition order. The family is the full exposition key
+    /// (`node{i}_<label chain>_peers_blocked`), so the caller can tell the
+    /// engines apart by the labels the stand gave them.
+    ///
+    /// The SECOND observable of "was a peer excluded", and it is not a duplicate
+    /// of [`BlockerSpy`]: the two see the same LINE but different SETS.
+    /// `handle_network_response` runs `block!(self.blocker, peer, ..)` and
+    /// `self.fetcher.block(peer)` back to back on a `deliver == false` verdict
+    /// (CW `resolver/src/p2p/engine.rs:437-438`), and the second call is the one
+    /// no `Blocker` choice can disarm: it inserts the peer into the fetcher's
+    /// own `excluded` set (`fetcher.rs:516`), which is APPEND-ONLY — it is read
+    /// at `:242` (peers filtered out of every future request) and `:567`, and
+    /// nothing anywhere removes from it. So a `NoopBlocker` still leaves the
+    /// peer excluded from THAT resolver's fetches for the life of the engine,
+    /// and this gauge — `fetcher.len_blocked()` — is where that shows.
+    ///
+    /// What it covers that the spy does not: EVERY resolver engine the runner
+    /// registered, including the ones the stand never hands a blocker to at all
+    /// (the beacon plane's and the DKG log's, `beacon/plane.rs:330` and
+    /// `beacon/dkg_engine.rs:343`, which build their `NoopBlocker` inside).
+    /// What the spy covers that it does not: the peer's identity and the slot —
+    /// this is a bare count under a family name.
+    ///
+    /// WHAT A ZERO PROVES, exactly: the gauge is written in ONE place, the
+    /// select loop's `on_start` arm (`engine.rs:174-178`, the only
+    /// `peers_blocked` site in the checkout), which runs at the top of every
+    /// iteration. So a zero says "no exclusion had been taken as of that
+    /// engine's LAST loop iteration". An exclusion taken in an arm after which
+    /// the engine never iterated again — the run ending mid-arm, or the engine
+    /// being stopped — is not in the exposition. The windowless witness of the
+    /// same line is the `block!` macro's own WARN
+    /// (`commonware_resolver::p2p::engine: invalid data received`), which lands
+    /// in [`Outcome::logs`] synchronously when capture is live; assert the two
+    /// together.
+    ///
+    /// Panics on a value that does not parse AND on a `_peers_blocked` family
+    /// that is not under a `node{i}_` chain: a family that is present but
+    /// unreadable or unattributable must not vanish into "nothing was excluded".
+    pub(super) fn peers_blocked(&self) -> Vec<(usize, String, f64)> {
+        self.metrics
+            .lines()
+            .filter_map(|line| {
+                let (key, value) = line.split_once(' ')?;
+                if !key.ends_with("_peers_blocked") {
+                    return None;
+                }
+                // Suffix first, then the node: a `peers_blocked` family that is
+                // not under a `node{i}_` chain is a family this stand does not
+                // know how to attribute, and it must not vanish into "nothing
+                // was excluded".
+                let node: usize = key
+                    .strip_prefix("node")
+                    .and_then(|rest| rest.split_once('_'))
+                    .and_then(|(i, _)| i.parse().ok())
+                    .unwrap_or_else(|| {
+                        panic!("{key}: a peers_blocked family outside the node{{i}}_ chain")
+                    });
+                let value: f64 = value
+                    .trim()
+                    .parse()
+                    .unwrap_or_else(|e| panic!("{key}: unparsable gauge value {value:?}: {e}"));
+                Some((node, key.to_string(), value))
+            })
+            .collect()
     }
 
     /// The value of one metric family of node `i` (`node{i}_<name>` in the
@@ -1412,6 +1562,8 @@ struct NodeHandles {
     /// The optional cert-inlet task's observables — `None` when this node runs
     /// no inlet.
     cert_inlet: Option<CertInletObs>,
+    /// This node's ONE blocker spy, handed to both blocker slots.
+    blocker: BlockerSpy,
     bodies: BodyTap,
     #[cfg(feature = "dpos-devnet-byzantine")]
     byz: ByzReport,
@@ -1842,6 +1994,7 @@ async fn drive(
         .iter()
         .map(|node| node.cert_inlet.as_ref().map(CertInletObs::snapshot))
         .collect();
+    let blocked: Vec<BlockerFacts> = nodes.iter().map(|node| node.blocker.snapshot()).collect();
     let (tracked_sets, tracked_mismatches, tracked_forwarded) = {
         let t = tracked.lock().unwrap();
         (t.per_node.clone(), t.mismatches, t.forwarded)
@@ -1947,6 +2100,7 @@ async fn drive(
         probe_calls,
         frontier_steps,
         cert_inlet,
+        blocked,
         #[cfg(feature = "dpos-devnet-byzantine")]
         byz,
         head_gap_series,
@@ -2065,7 +2219,9 @@ pub(super) type Oracle = commonware_p2p::simulated::Oracle<PeerPubkey, determini
 /// (the same shape as `node/src/dpos.rs::build_beacon_plane`, same cadence
 /// values), and the `PlaneUpstreamHandle` that issues fetches on it.
 /// `marshal_slot` is the late-bound marshal the serve side reads; the caller
-/// fills it once the `OuterEngine` is built. `counters` sees both ends.
+/// fills it once the `OuterEngine` is built. `counters` sees both ends, and
+/// `blocker` sees the one thing they cannot: whether the resolver excluded the
+/// peer that answered (`plane_upstream::deliver`'s `bool` — see [`BlockerSpy`]).
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn frontier_plane(
     ctx: &deterministic::Context,
@@ -2074,6 +2230,7 @@ pub(super) async fn frontier_plane(
     marshal_slot: Arc<OnceLock<MarshalMailbox>>,
     committee: Arc<dyn crate::committee::Committee>,
     counters: UpstreamCounters,
+    blocker: SpyBlocker,
     #[cfg(feature = "dpos-devnet-byzantine")] byz: ByzReport,
     #[cfg(feature = "dpos-devnet-byzantine")] mode: super::byzantine_roles::ForgeMode,
     #[cfg(feature = "dpos-devnet-byzantine")] lying: Option<super::byzantine_roles::LyingCfg>,
@@ -2093,7 +2250,7 @@ pub(super) async fn frontier_plane(
         ctx.with_label("frontier_resolver"),
         commonware_resolver::p2p::Config {
             peer_provider: oracle.manager(),
-            blocker: NoopBlocker,
+            blocker,
             consumer: handler.clone(),
             producer: handler,
             mailbox_size: MUX_MAILBOX,
@@ -2333,6 +2490,11 @@ async fn build_node(
     // The marshal slot is filled once the `OuterEngine` is built (as
     // `node/src/dpos.rs::run_dpos_stack` does after the layer launch).
     let upstream_counters = UpstreamCounters::default();
+    // This node's ONE blocker spy, wired into BOTH of its blocker slots below.
+    // It replaces the `NoopBlocker` both took: a no-op blocker makes "no honest
+    // peer lost a channel" true for any code at all, and an assertion on it is
+    // vacuous (`BlockerSpy`).
+    let blocker_spy = BlockerSpy::default();
     let marshal_slot: Arc<OnceLock<MarshalMailbox>> = marshal_slots[i].clone();
     let upstream = CountingUpstream::new(
         frontier_plane(
@@ -2342,6 +2504,7 @@ async fn build_node(
             marshal_slot.clone(),
             committee.clone(),
             upstream_counters.clone(),
+            blocker_spy.at(BLOCKER_SITE_FRONTIER),
             #[cfg(feature = "dpos-devnet-byzantine")]
             byz.clone(),
             #[cfg(feature = "dpos-devnet-byzantine")]
@@ -2712,7 +2875,7 @@ async fn build_node(
 
     let outer = OuterBuilder {
         me: me.clone(),
-        blocker: NoopBlocker,
+        blocker: blocker_spy.at(BLOCKER_SITE_CONSENSUS),
         provider: oracle.manager(),
         chain_id: CHAIN_ID,
         epoch_length_blocks: NonZeroU64::new(cfg.epoch_len).expect("epoch_len > 0"),
@@ -3150,6 +3313,7 @@ async fn build_node(
         committee,
         marshal: marshal_slot,
         cert_inlet,
+        blocker: blocker_spy,
         bodies,
         #[cfg(feature = "dpos-devnet-byzantine")]
         byz,

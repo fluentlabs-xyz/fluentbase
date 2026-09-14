@@ -71,6 +71,10 @@ fn a_frontier_fetch_with_no_peer_times_out_on_the_runtime_clock() {
                 // is in before it has read anything at all.
                 crate::committee::testing::SchemeCommittee::new(|_| None),
                 UpstreamCounters::default(),
+                // This probe is about a fetch that PARKS and times out — nothing
+                // is ever delivered, so nothing can be blocked. A throwaway spy
+                // keeps the signature honest without pretending to observe.
+                super::stand::BlockerSpy::default().at(super::stand::BLOCKER_SITE_FRONTIER),
                 #[cfg(feature = "dpos-devnet-byzantine")]
                 Default::default(),
                 #[cfg(feature = "dpos-devnet-byzantine")]
