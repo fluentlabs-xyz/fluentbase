@@ -402,13 +402,20 @@ def _cf_logs(svc):
     Four different answers, and the two proxies' differ from the two followers': phase 3's
     follower refuses at DECODE and phase 4's at VERIFY, which are different lines on different
     code paths, and reading either one from the wrong service is how a negative passes for the
-    wrong reason."""
+    wrong reason.
+
+    The honest follower says TWO things, and the pair is the point: it ENTERED by its own
+    authenticated certificate (`CF_ENTRY_LINE`, phase 1) and it later ADOPTED the epoch key
+    (`CF_KEY_LINE`, phase 4a). A world that produced only the second would let phase 1's entry
+    witness pass on a log that never contains it, i.e. these units would be asserting something
+    the case does not check."""
     if svc == "cert-mitm":
         return vf.MITM_READY_LINE
     if svc == vf.SEED_MITM_SERVICE:
         return "\n".join((vf.MITM_READY_LINE, vf.SEED_ARMED_LINE, vf.SEED_CLEARED_LINE))
     if svc == vf.CF_SERVICE:
-        return vf.CF_KEY_LINE + " epoch=2"
+        return "\n".join((vf.CF_ENTRY_LINE + " target=95 landing=92",
+                          vf.CF_KEY_LINE + " epoch=2"))
     if svc == vf.SEED_TAMPER_SERVICE:
         return vf.CF_KEY_LINE + " epoch=2"
     return vf.TAMPER_REJECT_LINES[0]
@@ -482,6 +489,21 @@ def test_cert_follow_passes_on_a_healthy_world(monkeypatch, capsys):
     assert "PK_epoch delivery" in out
 
 
+def test_cert_follow_FAILS_when_the_follower_was_CARRIED_rather_than_entering(monkeypatch):
+    """PHASE 1's SECOND READING, driven. A follower can align WITHOUT ever taking the entry under
+    test: on this stack it shares the devp2p network with the validators, so they canonicalise its
+    blocks while its consensus layer sits parked — which is exactly the R-131 shape phase 1 could
+    not distinguish from a working entry. The world keeps the KEY line and drops only the ENTRY
+    line, so nothing but the new reading can be what fails."""
+    ctx, _ = _live_ctx(monkeypatch, asserts_follow.CERT_FOLLOW_OVERLAY,
+                       **_cf_world(overlay_logs=lambda *svcs, **k: (
+                           vf.CF_KEY_LINE + " epoch=2" if svcs[0] == vf.CF_SERVICE
+                           else _cf_logs(svcs[0]))))
+    with pytest.raises(SmokeFailure) as e:
+        asserts_follow.assert_cert_follow(ctx)
+    assert "not by the entry under test" in e.value.message
+
+
 def test_cert_follow_FAILS_when_the_tamper_follower_finalized_anything(monkeypatch):
     """THE NEGATIVE, driven through the BODY. A tamper follower reading a real height means the
     driver accepted a forged certificate. The body must read port 38545 and fail on it — a live
@@ -511,7 +533,11 @@ def test_cert_follow_FAILS_when_the_driver_never_logged_the_REJECTION(monkeypatc
     which came up and forwarded NOTHING looks like, so silence cannot be read as refusal."""
     ctx, _ = _live_ctx(monkeypatch, asserts_follow.CERT_FOLLOW_OVERLAY,
                        **_cf_world(overlay_logs=lambda *svcs, **k: (
-                           vf.MITM_READY_LINE if svcs[0] == "cert-mitm" else "cert applied")))
+                           # The silence under test is the TAMPER follower's; the honest
+                           # follower keeps its own two witnesses, or the case fails at phase 1
+                           # and this negative passes for the wrong reason.
+                           _cf_logs(svcs[0]) if svcs[0] in ("cert-mitm", vf.CF_SERVICE)
+                           else "cert applied")))
     with pytest.raises(SmokeFailure) as e:
         asserts_follow.assert_cert_follow(ctx)
     assert "never delivered" in e.value.message
@@ -533,8 +559,12 @@ def test_cert_follow_SKIPS_loudly_and_starts_no_tamper_follower_without_the_mitm
     the exit status of the two positive phases, and NOT start the tamper follower — a tamper
     follower fed by a proxy that never came up would make no progress for the wrong reason and
     the negative would pass vacuously."""
-    ctx, runner = _live_ctx(monkeypatch, asserts_follow.CERT_FOLLOW_OVERLAY,
-                            **_cf_world(overlay_logs=lambda *svcs, **k: ""))
+    # Every service silent EXCEPT the honest follower: what this world negates is the proxy coming
+    # up, and phases 1-2 — whose pass this test asserts — read the follower's own log.
+    ctx, runner = _live_ctx(
+        monkeypatch, asserts_follow.CERT_FOLLOW_OVERLAY,
+        **_cf_world(overlay_logs=lambda *svcs, **k: (
+            _cf_logs(vf.CF_SERVICE) if svcs[0] == vf.CF_SERVICE else "")))
     asserts_follow.assert_cert_follow(ctx)
     out = capsys.readouterr().out
     assert "SKIP (phase 3 tampered-reject)" in out and "offline pip" in out
@@ -560,8 +590,14 @@ def test_cert_follow_FAILS_LOUD_rather_than_reading_an_unreachable_follower_as_h
 # ── cert-follow phase 4 (FLU-1167), driven through the BODY ────────────────
 
 def _no_key(svc):
-    """The world where the follower never obtains `PK_epoch` — i.e. the pre-fix behaviour."""
-    return "" if svc == vf.CF_SERVICE else _cf_logs(svc)
+    """The world where the follower never obtains `PK_epoch` — i.e. the pre-fix behaviour.
+
+    It keeps `CF_ENTRY_LINE`: what this world negates is the KEY, and a follower that never
+    obtained one still entered by its own authenticated certificate. Dropping both witnesses at
+    once would make the case fail at phase 1 and the assertion below would pass on the wrong
+    reading."""
+    return (vf.CF_ENTRY_LINE + " target=95 landing=92" if svc == vf.CF_SERVICE
+            else _cf_logs(svc))
 
 
 def test_cert_follow_FAILS_when_the_follower_never_obtains_PK_epoch(monkeypatch):
@@ -1064,7 +1100,7 @@ def _cc_world(**over):
         wait_finalized_ge=lambda *a, **k: True,
         overlay_wait_align=lambda *a, **k: "0x8c|0xaa",
         overlay_logs=lambda *svcs, **k: (vf.L1_VERIFIED_LINE if svcs[0] == "cert-follower-l1"
-                                         else vf.BOGUS_REJECT_LINE),
+                                         else vf.BOGUS_REJECT_LINES[0]),
         overlay_ps_state=lambda *a, **k: "running",
     )
     world.update(over)

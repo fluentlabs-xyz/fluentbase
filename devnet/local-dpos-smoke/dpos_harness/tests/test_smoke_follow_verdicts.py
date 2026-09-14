@@ -19,6 +19,7 @@ tests are the only place those branches ever execute.
 from __future__ import annotations
 
 import pathlib
+import re
 
 import pytest
 
@@ -454,6 +455,50 @@ def test_the_keyless_precondition_budget_is_a_wait_and_not_the_assertion():
     assert 0 < vf.KEYLESS_ADMISSION_POLL_S < vf.KEYLESS_ADMISSION_S
 
 
+def _emitted_lines(src: pathlib.Path):
+    r"""One Rust source file with `\`-continued string literals JOINED, so that grepping for a
+    message the product EMITS is grepping for one line.
+
+    Without the join, every multi-line `warn!`/`info!` literal in the tree is invisible to a
+    line-wise grep — which is how a token can read as absent while the product prints it."""
+    text = src.read_text(encoding="utf-8", errors="replace")
+    return re.sub(r"\\\n\s*", "", text).splitlines()
+
+
+def test_the_phase_1_entry_witness_has_exactly_ONE_producer():
+    """`CF_ENTRY_LINE` must be written by the entry under test AND BY NOTHING ELSE.
+
+    Phase 1 reads this line over the follower's WHOLE log to separate "entered" from "carried",
+    so a line several code paths can print makes the reading vacuous rather than merely loose.
+    That is what the previous witness was: `"EL-sync: driving reth toward the attested derived
+    hash"` is printed by `cold_start_jump.rs::RethElSync::sync_to`, which has THREE production
+    callers — this arm, the fresh-datadir arm, and the steady-state re-jump — so the reading was
+    correct only because of where in the case it happened to sit (before the phase that restarts
+    the follower, hence before any re-jump) and because the fresh-datadir arm cannot be reached on
+    a devnet whose genesis carries the staking predeploy. Nothing pinned either circumstance
+    (R-131 review, D-11).
+
+    RED on that previous witness: its single source occurrence is in `cold_start_jump.rs`, not in
+    the launcher, which is exactly the difference between "the node drove reth somewhere" and
+    "the node took THIS entry"."""
+    crates = pathlib.Path(__file__).resolve().parents[4] / "crates"
+    if not crates.is_dir():
+        pytest.skip(f"crates not in this tree ({crates})")
+    hits = [(src, n, line) for src in sorted(crates.rglob("*.rs"))
+            for n, line in enumerate(_emitted_lines(src), 1)
+            if vf.CF_ENTRY_LINE in line]
+    assert len(hits) == 1, (
+        f"{vf.CF_ENTRY_LINE!r} must be emitted from exactly ONE place under crates/, found "
+        f"{[(str(p), n) for p, n, _ in hits]} — a phase-1 presence grep over a line several paths "
+        "can print cannot tell 'entered' from 'carried'")
+    src, lineno, line = hits[0]
+    assert src.name == "dpos.rs", (
+        f"the entry witness moved to {src}: phase 1 asserts that the ENTRY MARCH ran, and only "
+        "the launcher's own arm can say that")
+    assert not line.strip().startswith("//"), (
+        f"{src}:{lineno} is a COMMENT — grepping one makes the reading unfalsifiable")
+
+
 # ══ smoke-cert-cascade ═════════════════════════════════════════════════════
 
 def test_l1_checkpoint_verified_needs_the_line():
@@ -468,9 +513,23 @@ def test_l1_checkpoint_verified_fails_when_the_assert_never_ran():
     assert not ok and "the L1 checkpoint assert never ran" in msg
 
 
-def test_bogus_rejected_by_the_logged_refusal():
-    ok, _, witness = vf.evaluate_bogus_rejected("checkpoint hash NOT in the local chain")
-    assert ok and witness == "refusal logged"
+def test_bogus_rejected_by_EITHER_logged_refusal():
+    """BOTH witnesses, and the pair is the assertion. Which refusal a bogus checkpoint produces
+    depends on which ENTRY the follower takes, and PLAN row 4.4 moved the operator checkpoint to
+    the FIRST entry below the activation block: the hash now dies inside `sync_to_checkpoint`
+    ("could not be obtained from any peer") without ever reaching `assert_l1_checkpoint` ("NOT in
+    the local chain"), which stays the refusal for a checkpoint reth CAN obtain but that is not an
+    ancestor of the landing. A one-witness read went vacuous the moment the order changed — that
+    is finding D-06 of the R-131 review, and this unit is what would have caught it.
+
+    The witness is NAMED in the return so a live transcript says which refusal fired."""
+    for line in vf.BOGUS_REJECT_LINES:
+        ok, _, witness = vf.evaluate_bogus_rejected(f"… checkpoint {line} …")
+        assert ok and witness == f"refusal logged: {line!r}", (
+            f"{line!r} is one of the two product refusals and must be accepted as one")
+    assert len(vf.BOGUS_REJECT_LINES) == 2, (
+        "a THIRD refusal path means the entry march grew an entry, and the case's phase 3 has to "
+        "say which one it is measuring")
 
 
 def test_a_DEAD_container_is_not_a_refusal():

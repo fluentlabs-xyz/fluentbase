@@ -938,10 +938,17 @@ impl<E: Clock + Send + Sync> AcquireArtifact for TransportAcquire<E> {
             let first = self.store.insert(minted_at, artifact.clone());
             self.metrics.follower_artifact_adopted.inc();
             if first {
-                debug!(
+                // THE TAIL IS PART OF THE WITNESS, not decoration: without it the line
+                // says an adoption happened and not what the adoption MEANS, which is
+                // the whole reason an operator reads it. It was lost when this moved
+                // out of `beacon/follower.rs` (PLAN row 5.2), along with the level row
+                // 4.4 put back. The harness matches the constant as a SUBSTRING
+                // (`verdicts_follow.CF_KEY_LINE`), so the clause costs no verdict.
+                tracing::info!(
                     epoch = minted_at,
                     group_public = %pk_prefix(&pk),
-                    "beacon: PK_epoch obtained and verified against committee[epoch]"
+                    "beacon: PK_epoch obtained and verified against committee[epoch] — \
+                     certificates of the epochs it covers leave vote-only admission"
                 );
                 // The write-back hop, where the caller wired one: a pulled artifact
                 // must reach the actor's adoption rails exactly as an agreed one

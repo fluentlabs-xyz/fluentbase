@@ -203,23 +203,69 @@ impl UpstreamActor {
             // URL immediately (with backoff), a dropped connection reconnects
             // to the next one — round-robin failover.
             self.next_url = self.next_url.wrapping_add(1);
-            let client = match WsClientBuilder::default().build(&url).await {
+            // EVERY await from here to the live `select!` below runs under
+            // `while_disconnected`, which is what makes the mailbox served in the
+            // "no connection" state instead of silently accumulating (see that
+            // function for why silence is not an option).
+            let Some(built) = while_disconnected(
+                &self.ctx,
+                &self.urls,
+                self.next_url,
+                &mut self.mailbox_rx,
+                WsClientBuilder::default().build(&url),
+            )
+            .await
+            else {
+                return; // mailbox dropped → engine gone → shut down
+            };
+            let client = match built {
                 Ok(c) => {
                     backoff = 1;
                     Arc::new(c)
                 }
                 Err(e) => {
                     warn!(url = %url, error = %e, backoff, "cert-follow upstream connect failed; rotating");
-                    self.ctx.sleep(Duration::from_secs(backoff)).await;
+                    let slept = while_disconnected(
+                        &self.ctx,
+                        &self.urls,
+                        self.next_url,
+                        &mut self.mailbox_rx,
+                        self.ctx.sleep(Duration::from_secs(backoff)),
+                    )
+                    .await;
+                    if slept.is_none() {
+                        return;
+                    }
                     backoff = (backoff * 2).min(MAX_BACKOFF_SECS);
                     continue;
                 }
             };
-            let mut sub: Subscription<Event> = match client.subscribe_events().await {
+            let Some(subscribed) = while_disconnected(
+                &self.ctx,
+                &self.urls,
+                self.next_url,
+                &mut self.mailbox_rx,
+                client.subscribe_events(),
+            )
+            .await
+            else {
+                return;
+            };
+            let mut sub: Subscription<Event> = match subscribed {
                 Ok(s) => s,
                 Err(e) => {
                     warn!(error = %e, "cert-follow upstream subscribe failed; reconnecting");
-                    self.ctx.sleep(Duration::from_secs(1)).await;
+                    let slept = while_disconnected(
+                        &self.ctx,
+                        &self.urls,
+                        self.next_url,
+                        &mut self.mailbox_rx,
+                        self.ctx.sleep(Duration::from_secs(1)),
+                    )
+                    .await;
+                    if slept.is_none() {
+                        return;
+                    }
                     continue;
                 }
             };
@@ -273,7 +319,10 @@ impl UpstreamActor {
                             let next_url = self.next_url;
                             drop(self.ctx.with_label("get_finalization_everywhere").spawn(move |_| async move {
                                 let _ = response.send(
-                                    walk_for_height(&client, &urls, next_url, height).await);
+                                    walk_for_height(Some(&client), &urls, next_url, height)
+                                        .await
+                                        .into_option(),
+                                );
                             }));
                         }
                         Some(UpstreamMsg::GetLatest { response }) => {
@@ -319,7 +368,10 @@ impl UpstreamActor {
                                         let next_url = self.next_url;
                                         drop(self.ctx.with_label("get_finalization_everywhere").spawn(move |_| async move {
                                             let _ = response.send(
-                                                walk_for_height(&client, &urls, next_url, height).await);
+                                                walk_for_height(Some(&client), &urls, next_url, height)
+                                        .await
+                                        .into_option(),
+                                );
                                         }));
                                     }
                                     UpstreamMsg::GetEpochArtifact { epoch, response } => {
@@ -361,6 +413,89 @@ fn drain_after_rotate(rx: &mut mpsc::UnboundedReceiver<UpstreamMsg>) -> (Vec<Ups
         }
     }
     (deferred, coalesced)
+}
+
+/// Answer one mailbox message while the actor has no connection.
+///
+/// Four of the five get the NEGATIVE their own response type already carries, and
+/// none of those negatives is new: a by-height / latest / artifact pull is `None`
+/// ("nothing from here — ask again on your own cadence", the answer those callers
+/// already handle for a content miss and a transport failure alike), and a `Rotate`
+/// is an ACK, because the actor IS between connections and `next_url` has already
+/// advanced — the rotation the caller asked for is what is happening.
+///
+/// [`UpstreamMsg::GetFinalizationEverywhere`] IS THE EXCEPTION, and it is not a
+/// special case bolted on: that pull's whole contract is "ask the REST of the
+/// configured upstreams", its consumers pay for a miss with an epoch of verify-only
+/// or — in crash-survivor recovery — with a verdict of local data loss, and
+/// [`walk_for_height`] needs no live connection to honour it (it builds a
+/// short-lived one per URL). Refusing it WITHOUT ASKING is what made its negative
+/// ambiguous in the first place: a caller cannot tell "every upstream answered and
+/// none holds it" from "the actor had no link". So the disconnected actor SERVES it,
+/// on the same spawn as the connected path, and the walk names which negative it is
+/// (R-131 review, `4.4а-Д-9`).
+fn answer_while_disconnected(ctx: &Context, urls: &[String], next_url: usize, msg: UpstreamMsg) {
+    match msg {
+        UpstreamMsg::GetFinalizationEverywhere { height, response } => {
+            let urls = urls.to_vec();
+            drop(
+                ctx.with_label("get_finalization_everywhere")
+                    .spawn(move |_| async move {
+                        let _ = response.send(
+                            walk_for_height(None, &urls, next_url, height)
+                                .await
+                                .into_option(),
+                        );
+                    }),
+            );
+        }
+        UpstreamMsg::GetFinalization { response, .. } | UpstreamMsg::GetLatest { response } => {
+            let _ = response.send(None);
+        }
+        UpstreamMsg::GetEpochArtifact { response, .. } => {
+            let _ = response.send(None);
+        }
+        UpstreamMsg::Rotate { response } => {
+            let _ = response.send(());
+        }
+    }
+}
+
+/// Drive `fut` — a connect attempt, a backoff sleep, a subscribe attempt: every
+/// phase in which this actor has no connection to serve anything on — WHILE
+/// reading the mailbox and refusing each message ([`refuse_while_disconnected`]).
+/// `None` means the mailbox closed (the engine is gone and the actor must stop);
+/// `Some(out)` is `fut`'s own value.
+///
+/// **A request that cannot be served must be ANSWERED, not left silent, and that
+/// is a contract rather than a courtesy.** Every [`UpstreamHandle`] method sends
+/// and then awaits a `oneshot` with no deadline of its own — deliberately, since a
+/// deadline there would be a timeout on an answer instead of an answer — so a
+/// message this actor never reads is a caller that never returns. `.ok()?` on the
+/// send catches only a DEAD actor: a live one that is merely not reading its
+/// mailbox is indistinguishable from a slow upstream, forever. That is exactly
+/// what the outer loop used to do on a failed connect (warn, sleep, `continue`,
+/// mailbox untouched), and it cost the `--dpos.follower-upstream`-configured
+/// follower below the DPoS activation block its whole entry march: `get_latest`
+/// never returned, so the march never re-probed `block_hash(activation)` either
+/// (R-131 review, D-01).
+async fn while_disconnected<T>(
+    ctx: &Context,
+    urls: &[String],
+    next_url: usize,
+    mailbox_rx: &mut mpsc::UnboundedReceiver<UpstreamMsg>,
+    fut: impl Future<Output = T>,
+) -> Option<T> {
+    let mut fut = std::pin::pin!(fut);
+    loop {
+        tokio::select! {
+            out = &mut fut => return Some(out),
+            msg = mailbox_rx.recv() => match msg {
+                Some(msg) => answer_while_disconnected(ctx, urls, next_url, msg),
+                None => return None,
+            },
+        }
+    }
 }
 
 /// Decode a live `Event::Finalized` into the engine's [`UpstreamFinalized`].
@@ -433,6 +568,36 @@ async fn pull(client: &WsClient, query: Query) -> Pull {
 /// the boot path costs a measured 2 heights × 10 s per dead URL of startup delay.
 const WALK_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(8);
 
+/// How a by-height walk ended. THE TWO NEGATIVES ARE DIFFERENT FACTS and the
+/// walk is the only place in the system that can tell them apart: it is what
+/// asked. Collapsing them is not a cosmetic loss — `dpos`'s crash-survivor
+/// recovery reads "nobody holds it" as local consensus data loss and tells the
+/// operator to re-sync the EL disk from a snapshot, which is irreversible. It may
+/// only ever be told that by a walk that actually got ANSWERS (R-131 review,
+/// `4.4а-Д-9`).
+enum WalkOutcome {
+    Got(Box<UpstreamFinalized>),
+    /// Every configured upstream ANSWERED, and none of them holds the height.
+    /// This — and only this — is evidence about the RECORD.
+    MissedEverywhere,
+    /// Not one configured upstream answered at all: unreachable, or a transport
+    /// failure on the live link. Evidence about the LINK, and about nothing else.
+    NoneAnswered,
+}
+
+impl WalkOutcome {
+    /// The mailbox channel is `Option`-typed ([`CertUpstream`] lives in the
+    /// consensus crate and is not this file's to widen), so the three-way verdict
+    /// collapses HERE — after the walk has NAMED which negative it is in the
+    /// operator's log.
+    fn into_option(self) -> Option<UpstreamFinalized> {
+        match self {
+            Self::Got(uf) => Some(*uf),
+            Self::MissedEverywhere | Self::NoneAnswered => None,
+        }
+    }
+}
+
 /// Ask every configured upstream for `height`, in order, until one serves it.
 ///
 /// **One pass, and the bound is the URL list itself** — no new constant. A second
@@ -449,20 +614,40 @@ const WALK_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(8);
 /// Short-lived connections, never the actor's own: the live subscription is
 /// untouched, which is the entire reason this is not a rotation. `getFinalization`
 /// needs no subscription — the server's feed state is per-node, not per-connection.
+///
+/// `live == None` is the DISCONNECTED actor serving this pull anyway, and it is
+/// the reason the walk can be trusted at all: the alternative — refusing without
+/// asking — produces a negative that the caller cannot distinguish from "the
+/// record is gone", which is exactly the ambiguity this function exists to remove.
+/// With no live link nothing has been asked yet, so the whole list is the walk.
 async fn walk_for_height(
-    live: &WsClient,
+    live: Option<&WsClient>,
     urls: &[String],
     next_url: usize,
     height: Height,
-) -> Option<UpstreamFinalized> {
-    match pull(live, Query::Height(height.get())).await {
-        Pull::Got(uf) => return Some(*uf),
-        Pull::Failed => return None,
-        Pull::ContentMiss => {}
+) -> WalkOutcome {
+    // "Answered" means a server RENDERED A VERDICT on the height — the only thing
+    // that licenses `MissedEverywhere`. A connect failure, a timeout and a decode
+    // failure are all silence.
+    let mut answered = false;
+    if let Some(live) = live {
+        match pull(live, Query::Height(height.get())).await {
+            Pull::Got(uf) => return WalkOutcome::Got(uf),
+            // Stops the walk, as before — connection-level failover owns this case.
+            // It is NOT an answer, so it cannot end as `MissedEverywhere`.
+            Pull::Failed => return WalkOutcome::NoneAnswered,
+            Pull::ContentMiss => answered = true,
+        }
     }
     // `next_url` is where the actor would connect NEXT, so starting there and
     // taking `len - 1` visits every OTHER url exactly once and never the live one.
-    for offset in 0..urls.len().saturating_sub(1) {
+    // With no live link there is no "other": every url is unasked.
+    let hops = if live.is_some() {
+        urls.len().saturating_sub(1)
+    } else {
+        urls.len()
+    };
+    for offset in 0..hops {
         let url = &urls[(next_url + offset) % urls.len()];
         let client =
             match tokio::time::timeout(WALK_ATTEMPT_TIMEOUT, WsClientBuilder::default().build(url))
@@ -472,19 +657,30 @@ async fn walk_for_height(
                 _ => continue,
             };
         match pull(&client, Query::Height(height.get())).await {
-            Pull::Got(uf) => return Some(*uf),
-            Pull::ContentMiss | Pull::Failed => continue,
+            Pull::Got(uf) => return WalkOutcome::Got(uf),
+            Pull::ContentMiss => answered = true,
+            Pull::Failed => continue,
         }
     }
-    // The first place in this system that can say this at all: every configured
-    // source was asked and none holds the height. Previously indistinguishable
-    // from one slow link.
-    warn!(
-        height = height.get(),
-        upstreams = urls.len(),
-        "cert-follow: no configured upstream holds this height"
-    );
-    None
+    if answered {
+        // The first place in this system that can say this at all: every configured
+        // source was asked and none holds the height. Previously indistinguishable
+        // from one slow link.
+        warn!(
+            height = height.get(),
+            upstreams = urls.len(),
+            "cert-follow: no configured upstream holds this height"
+        );
+        WalkOutcome::MissedEverywhere
+    } else {
+        warn!(
+            height = height.get(),
+            upstreams = urls.len(),
+            "cert-follow: no configured upstream ANSWERED this by-height pull — none of them is \
+             reachable right now, which says nothing about whether the height still exists"
+        );
+        WalkOutcome::NoneAnswered
+    }
 }
 
 async fn fetch_finalization(client: &WsClient, query: Query) -> Option<UpstreamFinalized> {
@@ -666,9 +862,13 @@ mod walk_tests {
             .expect("live");
         let urls = vec![url_a, url_b, url_c];
 
-        let got = walk_for_height(&live, &urls, 1, Height::new(7)).await;
+        let got = walk_for_height(Some(&live), &urls, 1, Height::new(7)).await;
 
-        assert!(got.is_none(), "nobody holds it");
+        assert!(
+            matches!(got, WalkOutcome::MissedEverywhere),
+            "every upstream ANSWERED and none holds it — the one negative that is \
+             evidence about the record"
+        );
         assert_eq!(asks_a.load(Ordering::SeqCst), 1, "the live one, once");
         assert_eq!(asks_b.load(Ordering::SeqCst), 1);
         assert_eq!(asks_c.load(Ordering::SeqCst), 1);
@@ -729,6 +929,63 @@ mod walk_tests {
         );
     }
 
+    /// THE TWO NEGATIVES ARE DIFFERENT FACTS, and this is the test that makes them
+    /// so. Same height, same list length, same `None` at the mailbox — and the walk
+    /// must still separate "every configured upstream answered, none holds it" from
+    /// "not one of them answered".
+    ///
+    /// The stake is irreversible. `dpos::refetch_verified_archive_hole` reads the
+    /// first as local consensus data loss and tells the operator to re-sync the EL
+    /// disk from a snapshot; the second is a link condition and must never produce
+    /// that sentence. Before the entry march made a disconnected actor ANSWER its
+    /// mailbox, the second case could not arise (the call simply hung), so nothing
+    /// had to tell them apart — the fix for that hang is what made this test
+    /// necessary (R-131 review, `4.4а-Д-9`).
+    ///
+    /// `live = None` is the disconnected actor serving the pull anyway, which is the
+    /// other half: a walk that refuses without asking cannot classify anything.
+    ///
+    /// Reds on any form where the two cases answer the same — fold `NoneAnswered`
+    /// into `MissedEverywhere` (or drop the `answered` witness) and the second half
+    /// fails naming the URL count it never reached.
+    #[tokio::test]
+    async fn an_unreachable_list_is_not_a_missing_height() {
+        // (1) EVERYBODY ANSWERS, nobody holds it — evidence about the record.
+        let (url_a, asks_a, _ha) = serve(Behaviour::NoContent).await;
+        let (url_b, asks_b, _hb) = serve(Behaviour::NoContent).await;
+        let answering = vec![url_a, url_b];
+
+        let got = walk_for_height(None, &answering, 0, Height::new(7)).await;
+        assert!(
+            matches!(got, WalkOutcome::MissedEverywhere),
+            "two servers rendered a verdict on the height: that IS `MissedEverywhere`"
+        );
+        assert_eq!(
+            (asks_a.load(Ordering::SeqCst), asks_b.load(Ordering::SeqCst)),
+            (1, 1),
+            "with no live link the whole list is the walk — both were really asked, \
+             which is what the verdict rests on"
+        );
+
+        // (2) NOBODY ANSWERS. Two ports that were bound and then released, so the
+        // addresses are well-formed and nothing is listening — the shape of a dead
+        // upstream, not of a malformed URL.
+        let (url_c, _asks_c, hc) = serve(Behaviour::NoContent).await;
+        let (url_d, _asks_d, hd) = serve(Behaviour::NoContent).await;
+        hc.stop().expect("stop c");
+        hd.stop().expect("stop d");
+        hc.stopped().await;
+        hd.stopped().await;
+        let silent = vec![url_c, url_d];
+
+        let got = walk_for_height(None, &silent, 0, Height::new(7)).await;
+        assert!(
+            matches!(got, WalkOutcome::NoneAnswered),
+            "not one upstream answered, so NOTHING here is evidence that the height \
+             is gone — reporting data loss from this is the irreversible mistake"
+        );
+    }
+
     /// A `Failed` pull is NOT a content miss and must not advance the walk.
     /// Treating a broken link as "this server lacks the height" would burn the
     /// whole list on one bad network — and connection-level failover already owns
@@ -745,9 +1002,13 @@ mod walk_tests {
             .expect("live");
         let urls = vec![url_a, url_b];
 
-        let got = walk_for_height(&live, &urls, 1, Height::new(7)).await;
+        let got = walk_for_height(Some(&live), &urls, 1, Height::new(7)).await;
 
-        assert!(got.is_none());
+        assert!(
+            matches!(got, WalkOutcome::NoneAnswered),
+            "a decode failure is SILENCE, not a verdict on the height: it must not end \
+             as `MissedEverywhere`, which is what licenses a data-loss claim"
+        );
         assert_eq!(asks_a.load(Ordering::SeqCst), 1);
         assert_eq!(
             asks_b.load(Ordering::SeqCst),
@@ -766,6 +1027,78 @@ mod tests {
     // an interleaved non-Rotate pull is preserved (re-served on the live connection,
     // never dropped). The full next-url double-advance is integration-only; this
     // unit-tests the Context-free coalescing seam.
+    /// A pull that arrives while the actor has NO connection is ANSWERED — a plain
+    /// negative for the four pulls, an ACK for the rotate — instead of sitting
+    /// silent in a mailbox nobody reads.
+    ///
+    /// **The assertion is a deadline because the defect is a HANG, not a wrong
+    /// value.** On the form this replaced (`warn` + `sleep(backoff)` + `continue`,
+    /// mailbox untouched until a connection exists) all five calls await a
+    /// `oneshot` nobody will ever send, so there is nothing to compare — only a
+    /// caller that never returns. The deadline is paid ONLY on that failure: the
+    /// served path arms no timer and completes in the same poll cycle. The
+    /// PRODUCTION fix carries no timeout at all — a deadline on a hanging call is
+    /// not an answer, it is a guess about one (R-131 review, D-01).
+    #[test]
+    fn a_disconnected_actor_answers_every_pull_instead_of_going_silent() {
+        use commonware_runtime::{tokio::Runner as TokioRunner, Runner as _};
+        // The commonware runner rather than `#[tokio::test]`: serving the mailbox
+        // while disconnected needs the actor's own `Context` (the `_everywhere` pull
+        // is SERVED there, on a spawn, not refused — see `answer_while_disconnected`).
+        TokioRunner::default().start(|ctx| async move {
+            let (tx, mut rx) = mpsc::unbounded_channel();
+            let handle = UpstreamHandle { tx };
+            // EMPTY url list: the walk the `_everywhere` pull is served by then has
+            // nothing to ask, which is the fastest honest way to reach its negative.
+            // Which negative it is, is what `an_unreachable_list_is_not_a_missing_height`
+            // pins; here the property is only that the caller gets an ANSWER.
+            let urls: Vec<String> = Vec::new();
+
+            let ask = async move {
+                let answers = (
+                    handle.get_latest().await.is_none(),
+                    handle.get_finalization(Height::new(7)).await.is_none(),
+                    handle
+                        .get_finalization_everywhere(Height::new(7))
+                        .await
+                        .is_none(),
+                    handle.get_epoch_artifact(3).await.is_none(),
+                );
+                // A `Rotate` that is not ACKed hangs `rotate().await` for exactly the
+                // same reason a silent pull hangs `get_latest().await`, so it is asked
+                // here rather than trusted to the match arm.
+                handle.rotate().await;
+                answers
+                // `handle` drops HERE, closing the mailbox — which is the other half of
+                // the contract and what lets `while_disconnected` return at all.
+            };
+            // `pending`: the connect attempt / backoff sleep this stands for outlives
+            // every one of the five asks. That is the whole condition under test.
+            let serve = while_disconnected(&ctx, &urls, 0, &mut rx, std::future::pending::<()>());
+
+            let (answers, stopped) =
+                tokio::time::timeout(
+                    Duration::from_secs(5),
+                    async move { tokio::join!(ask, serve) },
+                )
+                .await
+                .expect(
+                    "a disconnected actor must ANSWER its mailbox: a caller still waiting on \
+                     a oneshot nobody will send is the D-01 hang",
+                );
+
+            assert_eq!(
+            answers,
+            (true, true, true, true),
+            "every pull is answered, and answered NEGATIVE — there is no connection to serve it on"
+        );
+            assert!(
+                stopped.is_none(),
+                "the closed mailbox, not the pending future, is what ends the disconnected phase"
+            );
+        });
+    }
+
     #[test]
     fn drain_after_rotate_coalesces_rotate_burst() {
         let (tx, mut rx) = mpsc::unbounded_channel();

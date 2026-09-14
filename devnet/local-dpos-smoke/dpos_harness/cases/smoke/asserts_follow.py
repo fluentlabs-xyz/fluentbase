@@ -178,7 +178,24 @@ def assert_cert_follow(ctx) -> None:
               lambda: f"cert-follower did not align with v0 past {align_target} "
                       + _align_diag(ctx, ("cert-follower", vf.CF_SERVICE)),
               on_fail=lambda: ctx.overlay_dump_logs(vf.CF_LOG_TAIL, "cert-follower"))
-    _ok(ctx, "phase 1 subscribe-align", f"cert-follower aligned with v0 at {aligned}")
+    # …and WHO moved it. The alignment above is silent on that, and on this stack it has a second
+    # explanation: the follower shares the devnet's devp2p network with the validators, so a node
+    # whose consensus layer never entered at all can still be carried to the tip by them. The
+    # entry under test writes exactly one line, and no other entry and no other path writes it
+    # (`CF_ENTRY_LINE`), so the reading is a presence grep on the phase's own logs — no second
+    # service, no new phase, and no dependence on WHERE in the case the grep happens to sit.
+    #
+    # `tail=None`, i.e. the WHOLE log, for the reason `SEED_LOG_TAIL` documents: the line is
+    # written in the follower's first seconds, alignment may take up to `CF_ALIGN_S`, and a
+    # depth-limited presence grep over a growing log turns a healthy node into a failure.
+    entered, entered_msg, entry_line = vf.evaluate_entered_by_certificate(
+        ctx.overlay_logs(vf.CF_SERVICE, tail=None,
+                         dry_value=vf.CF_ENTRY_LINE + " target=95 landing=92"),
+        vf.CF_SERVICE)
+    ctx.check(case, entered, entered_msg,
+              on_fail=lambda: ctx.overlay_dump_logs(vf.CF_LOG_TAIL, vf.CF_SERVICE))
+    _ok(ctx, "phase 1 subscribe-align",
+        f"cert-follower aligned with v0 at {aligned} by its own authenticated entry: {entry_line}")
 
     # PHASE 4b's PAIR IS STARTED HERE, ~10 minutes before it is used, and the placement is a fix
     # rather than an optimisation. Started at phase 4 it comes up 200+ blocks behind and has to
@@ -762,10 +779,13 @@ def assert_cert_cascade(ctx) -> None:
     ctx.overlay_up("cert-follower-l1-bogus", note="cc-up-bogus")
 
     def refused():
-        """The refusal, by the product line — the only witness. See `evaluate_bogus_rejected` on
-        why the container-state one was removed rather than kept as a fallback."""
+        """The refusal, by either product line — the only witnesses. See `BOGUS_REJECT_LINES` on
+        why there are two of them and `evaluate_bogus_rejected` on why the container-state one was
+        removed rather than kept as a fallback.
+
+        The dry value is the FIRST of the pair, i.e. the refusal the entry order now produces."""
         ok, _, witness = vf.evaluate_bogus_rejected(
-            ctx.overlay_logs("cert-follower-l1-bogus", dry_value=vf.BOGUS_REJECT_LINE))
+            ctx.overlay_logs("cert-follower-l1-bogus", dry_value=vf.BOGUS_REJECT_LINES[0]))
         return witness if ok else False
 
     hit = ctx.poll(refused, vf.CC_REJECT_S, poll_s=vf.CC_REJECT_POLL_S, dry_value="dry-witness")

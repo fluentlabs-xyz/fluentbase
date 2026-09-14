@@ -222,23 +222,35 @@ SEED_TAMPER_SERVICE = "cert-follower-seed"
 #: The file whose EXISTENCE arms the seed-slot clearing, on the proxy's tmpfs.
 SEED_ARM_FILE = "/armed/arm"
 
-#: `beacon/follower.rs` — the INFO a follower writes ONCE per epoch key it adopted, after
-#: verifying the upstream's artifact against `committee[epoch]` read off its OWN chain state.
+#: `beacon/artifact.rs` — the INFO a follower writes the FIRST time it adopts a given epoch key,
+#: after verifying the upstream's artifact against `committee[epoch]` read off its OWN chain state.
 #:
 #: THIS IS THE ADOPTION WITNESS, and it stays the load-bearing one. It is a POSITIVE witness
 #: rather than an absence: the follower prints it only after `verify_artifact_for_epoch` accepted
 #: the upstream's artifact against the committee this node read from its OWN chain state, so a
 #: lying upstream cannot produce it.
 #:
-#: `CF_ADOPTED_FAMILY` below counts the same event and is read BESIDE it, not instead of it. The
-#: counter lives on the COMMONWARE registry, which a `--cert-follow` node serves only under a
-#: devnet build plus a `--dpos.metrics-port` the compose overlay has to pass; the log line needs
-#: neither. A witness with two devnet preconditions does not get to be the one a verdict rests on.
-CF_KEY_LINE = "cert-follow: PK_epoch obtained and verified against committee[epoch]"
+#: BOTH HALVES OF THIS CONSTANT MOVED ONCE ALREADY, and that is why it is documented at this
+#: length. The line lived in `beacon/follower.rs` until that file was merged into `LiveBeacon`
+#: (PLAN row 5.2); the merge also renamed its prefix `cert-follow:` -> `beacon:` (the line now
+#: serves BOTH classes of node, so `beacon:` is the honest prefix) and dropped it from `info!` to
+#: `debug!`. The drop was a side effect, not a decision, and PLAN row 4.4 put it back: a devnet
+#: that happens to run reth at its default DEBUG verbosity is not a reason for the operator's only
+#: "epoch key obtained and verified" witness to be invisible under `-vv`.
+#:
+#: `CF_ADOPTED_FAMILY` below is read BESIDE this line, not instead of it, and the two do NOT count
+#: the same event: the counter is incremented on EVERY accepted artifact, one line above, while
+#: this log sits inside the `if first` that guards the store insert — so a re-adoption of an epoch
+#: already held moves the counter in silence. On top of that the counter lives on the COMMONWARE
+#: registry, which a `--cert-follow` node serves only under a devnet build plus a
+#: `--dpos.metrics-port` the compose overlay has to pass; the log line needs neither. A witness
+#: with two devnet preconditions and a different event shape does not get to be the one a verdict
+#: rests on.
+CF_KEY_LINE = "beacon: PK_epoch obtained and verified against committee[epoch]"
 
-#: `beacon/metrics.rs` — the SAME adoption event as `CF_KEY_LINE`, counted. Registered under this
-#: name; the scrape line doubles the suffix (`nodes.counter_sample`), which is why no caller
-#: hand-writes the sample name.
+#: `beacon/metrics.rs` — the adoption event `CF_KEY_LINE` announces, counted (on every accepted
+#: artifact, not only the first — see `CF_KEY_LINE`). Registered under this name; the scrape line
+#: doubles the suffix (`nodes.counter_sample`), which is why no caller hand-writes the sample name.
 #:
 #: It is read as CORROBORATION, and the split between the two witnesses is the point: the log line
 #: says the follower's own beacon announced the adoption, the counter says the family that only a
@@ -327,6 +339,49 @@ SEED_LOG_TAIL = None
 #: ten-minute log while still covering far more than the window can contain (~1 refusal per second
 #: over `SEED_OBSERVE_S`).
 SEED_COUNT_TAIL = 4000
+
+
+#: `dpos.rs` (`launch_follower`, the `Certificate` arm of the entry march) — the line the ENTRY
+#: UNDER TEST writes, and only it. Printed after the authenticated finalization has been fetched,
+#: verified and EL-synced, carrying the `target` it asked for and the `landing` it reached.
+#:
+#: WHY PHASE 1 NEEDS IT. A green alignment says the follower's head moved; it does not say WHO
+#: moved it. The cert-follower shares a devp2p network with the validators, so "aligned" is also
+#: what a node looks like when somebody else canonicalised its blocks while its own consensus
+#: layer sat parked. PLAN row 4.4's entry — a follower whose reth is below the DPoS activation
+#: block fetching the finalization for the top of its checkable window and authenticating it under
+#: `committee[E]` read at its OWN finalized hash — is the one thing that emits this line, so its
+#: presence is what separates "entered" from "carried".
+#:
+#: IT USED TO BE `"EL-sync: driving reth toward the attested derived hash"`, and that was a
+#: witness for the ENTRY only by accident (R-131 review, D-11). That line lives in
+#: `cold_start_jump.rs::RethElSync::sync_to`, which has THREE production callers — this arm, the
+#: fresh-datadir arm, and the steady-state re-jump — and the grep reads the whole log, so it was
+#: correct only because of where the reading sits in the case (before the phase that restarts the
+#: follower, and hence before any re-jump could print it) and because the fresh-datadir arm is
+#: unreachable on a devnet whose genesis carries the staking predeploy. Neither of those is
+#: pinned by anything, and moving the reading one phase down would have made it vacuous. This
+#: line has ONE producer and needs no such argument.
+#:
+#: NOT asserted with a height. `target`/`landing` depend on the upstream's tip at the moment the
+#: follower starts, and pinning a number here would turn a timing coincidence into an assertion —
+#: exactly the bound this file refuses elsewhere. The arithmetic itself is unit-tested
+#: (`dpos::cold_start_kind_tests::the_certificate_target_is_the_top_of_the_checkable_window`).
+CF_ENTRY_LINE = "cert-follow: entered below the activation block by an authenticated certificate"
+
+
+def evaluate_entered_by_certificate(logs: str, service: str):
+    """Phase 1's second reading: the follower's own authenticated entry is what moved its reth.
+
+    Returns the matched line third, the shape `evaluate_key_obtained` uses, so the case can print
+    the `target`/`landing` it entered on before its stack is torn down."""
+    for line in (logs or "").splitlines():
+        if CF_ENTRY_LINE in line:
+            return True, "", line.strip()
+    return False, (f"{service} aligned WITHOUT ever logging {CF_ENTRY_LINE!r} — its head moved, but "
+                   "not by the entry under test: either somebody else canonicalised the blocks "
+                   "(the shared devnet devp2p network) or the node took one of the other entries. "
+                   "Phase 1 cannot tell 'entered' from 'carried' on the alignment alone (R-131)"), ""
 
 
 def evaluate_key_obtained(logs: str, service: str):
@@ -567,6 +622,10 @@ def evaluate_seed_vote_only_flat(before, after, scrape_ok: bool, window=SEED_OBS
 #:   11:52:56  cert-follow: PK_epoch obtained and verified against committee[epoch] epoch=2
 #:   11:53:28  below-frontier epoch obtained a late beacon key … epoch=Epoch(2) boundary=159
 #:
+#: (Those two lines are quoted verbatim from that run, so the first still carries the OLD
+#: `cert-follow:` prefix; the live line is `CF_KEY_LINE`, which now reads `beacon:` — PLAN rows
+#: 5.2 and 4.4. The ordering the case asserts is unaffected.)
+#:
 #: The sweep walks the registered epochs BELOW the frontier whose key store no longer misses, so
 #: an epoch whose key landed and which then crossed below the frontier is exactly what it is built
 #: to find. It fires here as a CONSEQUENCE of the event under test, thirty-two seconds after the
@@ -739,8 +798,33 @@ CC_BOGUS_LOG_TAIL = 120
 #: synced chain. Alignment alone does NOT imply it ran: a follower with a misconfigured L1 URL
 #: aligns perfectly off the cert feed, so this grep is the whole of the trust-root assertion.
 L1_VERIFIED_LINE = "L1 Rollup checkpoint verified"
-#: `:96` — the refusal.
-BOGUS_REJECT_LINE = "NOT in the local chain"
+#: `:96` — the refusal, as a PAIR, because which one the bogus follower reaches depends on WHICH
+#: ENTRY it takes, and PLAN row 4.4 moved that.
+#:
+#: The first is the one it now reaches. Below the activation block the operator checkpoint is the
+#: FIRST entry tried (`dpos.rs`, `FollowerEntry::Checkpoint` — `sync_to_checkpoint` needs no cert
+#: upstream, and the L1 assert is counted from the landing, so trying it later turned a survivable
+#: park into a fatal refusal of an honest node). A hash that is in no chain therefore dies inside
+#: `sync_to_checkpoint`, on its own nets, and the launcher wraps that with this text — before
+#: `assert_l1_checkpoint` is ever reached.
+#:
+#: The second is the one the case used to read, and it is still the refusal for a DIFFERENT
+#: configuration: a checkpoint reth CAN obtain but which is not an ancestor of where the node sat
+#: down (`cold_start_jump.rs::assert_l1_checkpoint`, contract-pinned as "MUST survive verbatim").
+#: Both are the trust root refusing to be bypassed, so the verdict accepts either and NAMES the
+#: one it saw — a single-witness read would have gone silently vacuous when the entry order
+#: changed, which is exactly what the review caught (R-131 review, D-06).
+#:
+#: THE BUDGET IS NOT RE-TUNED HERE. `CC_REJECT_S` stays 240 s and its unit keeps pinning 240: the
+#: first refusal runs through `sync_to_checkpoint`'s nets (`EL_SYNC_NO_PEERS_GRACE = 90 s` if the
+#: follower has no devp2p peers, `EL_SYNC_STALL_ESCAPE = 300 s` if it has them and reth makes no
+#: progress), and which of those two a live run trips cannot be established while tier 1 of this
+#: case is red on R-131. PLAN row 4.4 names 420 s; a number picked without a measurement would be
+#: the same mistake in the other direction, so the discrepancy is left OPEN in the journal instead.
+BOGUS_REJECT_LINES = (
+    "could not be obtained from any peer",
+    "NOT in the local chain",
+)
 #: `:88` — a checkpoint hash that exists nowhere in the chain.
 BOGUS_CHECKPOINT_HASH = "0x" + "deadbeef" * 8
 #: `:106` — the message when the refusal budget ran out. Named so the assertion's poll-expiry
@@ -767,7 +851,7 @@ def evaluate_l1_checkpoint_verified(logs: str):
 
 
 def evaluate_bogus_rejected(logs: str):
-    """`:95-110` — the negative, on the ONE witness that names the refusal: the product line.
+    """`:95-110` — the negative, on the witnesses that NAME the refusal: the product lines.
 
     THE `exited` WITNESS IS GONE, and its removal is the point. It read a container STATE as proof
     of a refusal, so a follower that died of a bad address, an OOM or an unresolvable L1 URL was
@@ -778,8 +862,10 @@ def evaluate_bogus_rejected(logs: str):
     reaches `error!(?e, "consensus thread exited with error")` (`bins/fluent/src/main.rs:407`) and
     only then `exit(1)` (`:429`) — and the string is contract-pinned as "MUST survive verbatim"
     (`crates/dpos/consensus/src/cold_start_jump.rs:894-897`)."""
-    if BOGUS_REJECT_LINE in (logs or ""):
-        return True, "", "refusal logged"
+    text = logs or ""
+    for line in BOGUS_REJECT_LINES:
+        if line in text:
+            return True, "", f"refusal logged: {line!r}"
     return False, BOGUS_NOT_REFUSED, ""
 
 

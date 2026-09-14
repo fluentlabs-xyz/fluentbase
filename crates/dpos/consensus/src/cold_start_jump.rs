@@ -16,7 +16,16 @@
 //!     payload↔digest bind at `:987-993`);
 //!   * the frontier channel puts every answer through `FrontierHandler::deliver`
 //!     first (`plane_upstream.rs`), which rejects a foreign height, a swapped
-//!     body and a bad multisig, and now DROPS what it cannot authenticate.
+//!     body and a bad multisig, and now DROPS what it cannot authenticate;
+//!   * the follower's BELOW-ACTIVATION entry (`dpos::launch_follower`, the
+//!     `Certificate` step of `follower_entry`, PLAN row 4.4 / R-131) asks
+//!     `dpos::fetch_verified_entry` for ONE height — the top of the window whose
+//!     committee it can still read at its own finalized hash — which pins the
+//!     height, binds payload↔digest and BLS-verifies under `committee[E]` read at
+//!     that hash before this module sees the pair. (Its own function rather than
+//!     `cert_follow::fetch_verified_boundary`, which runs the identical checks:
+//!     the two differ in what a failure MEANS, and therefore in what they log and
+//!     count — R-131 review, D-04.)
 //!
 //! So there is no PRE-sync structural stage and no POST-sync committee-BLS stage
 //! in the jump any more: both re-ran a check the target had already passed, and
@@ -24,11 +33,11 @@
 //! (pass Б2). [`verify_jump_structural`] and [`verify_jump_authenticated`]
 //! survive as FUNCTIONS, and their caller sets differ:
 //!
-//!   * [`verify_jump_authenticated`] has TWO callers, the by-height seams that
+//!   * [`verify_jump_authenticated`] has THREE callers, the by-height seams that
 //!     fetch a single finalization outside `deliver`'s reach —
-//!     `dpos::refetch_verified_archive_hole` and
-//!     `cert_follow::fetch_verified_boundary`;
-//!   * [`verify_jump_structural`] has THOSE TWO **and a third**: it IS step (2) of
+//!     `dpos::refetch_verified_archive_hole`,
+//!     `cert_follow::fetch_verified_boundary` and `dpos::fetch_verified_entry`;
+//!   * [`verify_jump_structural`] has THOSE THREE **and one more**: it IS step (2) of
 //!     `FrontierHandler::deliver` itself (`plane_upstream.rs`, the payload↔digest
 //!     bind that runs before any committee read). So the bind on the wire is this
 //!     function, not a copy of it.
@@ -682,7 +691,7 @@ where
 /// same bind on the wire (`plane_upstream.rs`). Re-running it there checked
 /// nothing new, and `JumpOutcome::BadTarget` went with it.
 ///
-/// THREE production callers are left, and the first of them is the wire itself:
+/// FOUR production callers are left, and the first of them is the wire itself:
 ///
 ///   1. `plane_upstream::FrontierHandler::deliver` step (2) — every frontier answer
 ///      passes THROUGH this function before any committee is read, and an `Err`
@@ -691,9 +700,13 @@ where
 ///   2. `dpos::refetch_verified_archive_hole` — the #8 below-floor archive hole,
 ///      which the marshal's own resolver will not repair.
 ///   3. `cert_follow::fetch_verified_boundary` — the boundary block below the floor.
+///   4. `dpos::fetch_verified_entry` — the follower's below-activation entry
+///      (PLAN row 4.4 / R-131). Same three checks as (3) over a different failure
+///      surface: a refusal there means "this node has no entry yet", not "this
+///      member is verify-only for an epoch" (R-131 review, D-04).
 ///
-/// (2) and (3) pull ONE height on their own and so bypass both writers: neither
-/// goes through `store_finalization`, so neither inherits its checks — which is why
+/// (2), (3) and (4) pull ONE height on their own and so bypass both writers: none
+/// goes through `store_finalization`, so none inherits its checks — which is why
 /// this function still exists as a function.
 pub(crate) fn verify_jump_structural(latest: &UpstreamFinalized) -> eyre::Result<()> {
     if latest.finalization.proposal.payload != latest.block.digest() {
@@ -718,19 +731,21 @@ pub(crate) fn verify_jump_structural(latest: &UpstreamFinalized) -> eyre::Result
 /// the LANDING and re-running the same multisig was a second opinion on a settled
 /// question, and `JumpOutcome::AuthFailed` went with it.
 ///
-/// TWO production callers are left — the by-height seams, each of which pulls one
+/// THREE production callers are left — the by-height seams, each of which pulls one
 /// height outside both writers: `dpos::refetch_verified_archive_hole` (at the
-/// already-recovered parent's state) and `cert_follow::fetch_verified_boundary` (at
-/// the boundary's own read hash). Unlike [`verify_jump_structural`], this function
+/// already-recovered parent's state), `cert_follow::fetch_verified_boundary` (at the
+/// boundary's own read hash) and `dpos::fetch_verified_entry` (at the follower's own
+/// finalized hash, PLAN row 4.4). Unlike [`verify_jump_structural`], this function
 /// is NOT a step of `FrontierHandler::deliver`: `deliver` runs its own committee
 /// read and BLS check inline (step (4)), because the two verdicts differ there — an
 /// unreadable committee is a DROP on the wire and a REFUSAL here.
 ///
 /// There is no L1 fallback arm: it existed for the far-ahead jump target whose
-/// committee might not be committed even at the landing, and BOTH surviving
-/// callers ask about a height at or below their own anchor, where the committee is
-/// either readable or the node has a real read fault. An unreadable committee here
-/// is therefore a refusal, not a reason to fall back on an operator hash.
+/// committee might not be committed even at the landing, and EVERY surviving caller
+/// asks about a height whose epoch is inside the window readable at the hash it
+/// passes in, where the committee is either readable or the node has a real read
+/// fault. An unreadable committee here is therefore a refusal, not a reason to fall
+/// back on an operator hash.
 ///
 /// Cold-start / boundary verify: no local beacon key is resolvable at these call
 /// sites, so `oracle = None` ⇒ vote-only cert verify — the accepted residual
@@ -916,6 +931,31 @@ where
 /// `BOGUS_REJECT_LINE`) and MUST survive verbatim. The phase-3 one is now the
 /// case's SOLE witness of the refusal: the container-state witness that used to
 /// back it up was removed for reading an OOM as a working trust root.
+///
+/// WHICH NODES CAN STILL REACH THE `None` ARM, after the follower's
+/// below-activation march landed (PLAN row 4.4). The assert is unchanged and still
+/// runs unconditionally after the entry, but it is no longer the FIRST thing a
+/// bogus checkpoint meets on every path:
+///
+///   * a follower with a LOCAL `ChainConfig` now spends the checkpoint as its
+///     FIRST entry step (`follower_entry` ⇒ `FollowerEntry::Checkpoint`), so a
+///     hash nobody serves stops inside `sync_to_checkpoint` — an
+///     `EL_SYNC_STALL_ESCAPE` stall wrapped in the "could not be obtained from any
+///     peer" refusal — and never reaches this function. The ordering is deliberate:
+///     this assert is counted FROM THE LANDING, and the certificate entry lands on
+///     the LOWEST legal height, so a certificate-first march would turn a
+///     survivable park into a fatal refusal (К-73).
+///   * a FRESH datadir (no `ChainConfig`, the `None` arm of `launch_follower`) is
+///     unchanged and still reaches this assert;
+///   * so does any node whose checkpoint IS served but sits on a different history
+///     — the restart-on-a-foreign-datadir case, which is what the verbatim string
+///     is really for.
+///
+/// What `smoke-cert-cascade` phase 3 exercises after the reordering is therefore
+/// NOT established here: the case's tier-1 leg is red on R-131 on the base commit,
+/// so the phase was unreachable and no measurement of it exists. Its budget and
+/// its expected witness are re-measured once tier-1 is green (row 4.4 deviation
+/// `4.4а-Д-1`), not guessed at from this comment.
 pub fn assert_l1_checkpoint<Provider>(provider: &Provider, l1_hash: B256) -> eyre::Result<()>
 where
     Provider: reth_storage_api::BlockReader + Send + Sync,
@@ -2039,7 +2079,8 @@ mod tests {
     /// had to be careful never to forward one. WHAT IT PROVES NOW: there is no such
     /// arm left. The L1 fallback existed for the jump's POST-sync stage, that stage
     /// is gone, and both surviving callers
-    /// (`dpos::refetch_verified_archive_hole`, `cert_follow::fetch_verified_boundary`)
+    /// (`dpos::refetch_verified_archive_hole`, `cert_follow::fetch_verified_boundary`,
+    /// `dpos::fetch_verified_entry`)
     /// ask about a height at or below their own anchor — so the asymmetry the seam
     /// had to defend against no longer exists and the refusal is unconditional.
     ///

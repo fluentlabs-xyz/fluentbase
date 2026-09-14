@@ -268,6 +268,13 @@ pub fn derive_cold_start_heights(
     )
 }
 
+/// How often a park on an EXTERNAL activation input re-asks: reth for the
+/// activation block ([`wait_for_activation_block`]) and, in `launch_follower`'s
+/// entry march, the local probe + the upstream + the committee window. ONE constant
+/// because it is one cadence for one reason — "ask again, the answer is somebody
+/// else's to change" — and two copies of it drift apart silently.
+const ACTIVATION_POLL: Duration = Duration::from_secs(2);
+
 /// Wait for reth to hold the DPoS activation block before adopting it as the
 /// fresh-migration consensus anchor; returns the block's local-canonical hash.
 /// Covers reth still replaying MDBX on restart. There is NO give-up and no
@@ -293,7 +300,6 @@ where
     // `dpos_sync_degraded{reason=activation_wait}=1` as the stuck signal (a stuck
     // gauge, not a crash). A cold restart legitimately shows the block absent for
     // seconds while reth replays MDBX/static files under multi-node contention.
-    const POLL: Duration = Duration::from_secs(2);
     let mut waited = false;
     loop {
         if let Some(hash) = provider
@@ -315,7 +321,7 @@ where
             );
         }
         sync_metrics.degrade(SyncReason::ActivationWait);
-        ctx.sleep(POLL).await;
+        ctx.sleep(ACTIVATION_POLL).await;
     }
 }
 
@@ -364,7 +370,8 @@ enum RecoverOutcome {
     /// the height's OWN round, with the local certificate and the upstream as
     /// fallbacks — no cert is REQUIRED to exist), or, on a below-floor BLOCK hole
     /// (#8), by a BLS-verified by-height re-fetch through the cert upstream
-    /// ([`refetch_verified_archive_hole`]) spliced into the same replay.
+    /// ([`refetch_hole_until_answered`] over [`refetch_verified_archive_hole`])
+    /// spliced into the same replay.
     Recovered(B256),
     /// reth is `> MAX_COLD_RECOVER` behind its OWN (INTACT) consensus archive (#12):
     /// the pre-engine replay is capped, so the caller anchors the cold-start at
@@ -388,7 +395,7 @@ enum RecoverOutcome {
     /// gap-walk agrees (`executor.rs` "a hole below the floor cannot self-heal"). Nor
     /// does the steady-state jump help: a #8 gap is `<= MAX_COLD_RECOVER (64) <
     /// JUMP_THRESHOLD (1024)`, so the jump is always `Lagging` and never fires. #8 is
-    /// therefore healed INLINE by [`refetch_verified_archive_hole`], not deferred.
+    /// therefore healed INLINE by [`refetch_hole_until_answered`], not deferred.
     DeferToElSync { gap: u64 },
 }
 
@@ -434,7 +441,7 @@ where
 /// consensus-store repair is needed). WITHOUT an upstream: residual FATAL — there is
 /// nowhere to devp2p-backfill from, so this is real local data loss (Decision A does
 /// not apply to idiosyncratic local corruption). A #8 archive HOLE does NOT route
-/// here — it heals inline via [`refetch_verified_archive_hole`].
+/// here — it heals inline via [`refetch_hole_until_answered`].
 fn crash_recover_defer_or_fatal<Provider>(
     provider: &Provider,
     target: u64,
@@ -505,7 +512,8 @@ where
 /// (payload == digest) + `verify_jump_authenticated` (2f+1 BLS multisig against
 /// `committee[E]` read at `at_hash`, the already-recovered parent's materialized
 /// state). These two functions exist for exactly this seam and for
-/// `cert_follow::fetch_verified_boundary` — they are no longer stages of any jump.
+/// `cert_follow::fetch_verified_boundary` / [`fetch_verified_entry`] — they are no
+/// longer stages of any jump.
 /// The caller then derives + imports the verified block into reth, splicing the hole
 /// shut in the same replay.
 ///
@@ -519,9 +527,28 @@ where
 /// is the only local reader that needs the block at that moment. Peer-serving of
 /// that below-floor height stays a re-fetch-from-elsewhere concern, unchanged.
 ///
-/// `upstream == None` (no `--dpos.follower-upstream`) OR the upstream no longer
-/// serves the height (gone everywhere) ⇒ residual FATAL — real local consensus
-/// data loss with nowhere to re-fetch from.
+/// `Err` IS A VERDICT: no `--dpos.follower-upstream` is configured, or every
+/// configured upstream answered and none of them holds the record (gone everywhere
+/// — real local consensus data loss), or the answer failed authentication.
+///
+/// `Ok(None)` IS THE ABSENCE OF A VERDICT, and the distinction is the whole point of
+/// this signature: not one configured upstream ANSWERED, so nothing was learned about
+/// the record and the caller must ask again. Before the entry march made a
+/// disconnected WS actor answer its mailbox, this case could not arise — the pull
+/// simply never returned — so a negative here was necessarily a real "nobody holds
+/// it". It can arise now, and folding it back into the `Err` above would print
+/// "re-sync the EL disk from a snapshot" at an operator whose upstream is merely
+/// down. That instruction is irreversible; a retry is free (R-131 review,
+/// `4.4а-Д-9`).
+///
+/// The walk in `cert_follow::upstream` is what separates the two, because it is what
+/// ASKS: it answers `MissedEverywhere` only when servers rendered a verdict on the
+/// height, and `NoneAnswered` when none of them was reachable — and it serves the
+/// `_everywhere` pull with or without a live connection, so its negative is never a
+/// refusal-without-asking. What the `Option`-typed seam cannot carry across the
+/// crate boundary is WHICH of the two it was, so this function asks for the one thing
+/// that settles it positively: `get_latest`, whose `Some` can only come from an
+/// upstream that answered us. Absent that witness nothing is claimed.
 async fn refetch_verified_archive_hole<U, C>(
     upstream: Option<&U>,
     committees: &C,
@@ -529,7 +556,7 @@ async fn refetch_verified_archive_hole<U, C>(
     at_hash: B256,
     height: u64,
     which: &str,
-) -> eyre::Result<crate::cert_follow::UpstreamFinalized>
+) -> eyre::Result<Option<crate::cert_follow::UpstreamFinalized>>
 where
     U: crate::cert_follow::CertUpstream,
     C: crate::cert_inlet::CommitteeSource,
@@ -542,10 +569,18 @@ where
              real local consensus data loss; re-sync the EL disk from a snapshot"
         ));
     };
-    // `_everywhere`: this arm exits FATAL and tells the operator to re-sync the EL
-    // disk from a snapshot. Asking ONE upstream before saying that is not enough
-    // when the operator configured several and the block sits on the second.
+    // `_everywhere`: the FATAL below tells the operator to re-sync the EL disk from a
+    // snapshot. Asking ONE upstream before saying that is not enough when the operator
+    // configured several and the block sits on the second.
     let Some(uf) = up.get_finalization_everywhere(Height::new(height)).await else {
+        // THE NEGATIVE IS NOT YET A VERDICT. Claim data loss only with positive proof
+        // that an upstream answered us at all; `get_latest` is that proof and nothing
+        // else in the seam is (a by-height negative is produced by both cases alike).
+        // Fail-safe direction: a wrongly-withheld verdict costs one more lap, a
+        // wrongly-issued one costs the operator's disk.
+        if up.get_latest().await.is_none() {
+            return Ok(None);
+        }
         return Err(eyre!(
             "crash-survivor recovery: marshal {which} has a below-floor hole at height {height} \
              and the upstream no longer serves it — the consensus record is gone everywhere; \
@@ -573,7 +608,67 @@ where
              height {height} against committee[E] read at the recovered parent {at_hash:?}"
             )
         })?;
-    Ok(uf)
+    Ok(Some(uf))
+}
+
+/// [`refetch_verified_archive_hole`] until it produces a VERDICT: the record, or a
+/// reasoned refusal. The only thing this adds is patience, and it is the block
+/// path's policy rather than the seam's — the σ path deliberately does not wait
+/// (see `replay_seed`).
+///
+/// **Asking again is the answer to "not one upstream answered", and it is not a
+/// softening of the fatal.** A gone-everywhere verdict still exits, with the same
+/// sentence, because that verdict is evidence: servers answered and none holds the
+/// record. What may not happen is printing "re-sync the EL disk from a snapshot" at
+/// an operator whose upstream is merely unreachable — the instruction is
+/// irreversible and the condition is transient. This case became reachable only
+/// when the WS actor started answering its mailbox while disconnected (before that
+/// the pull never returned at all), which is why the patience arrives with it
+/// (R-131 review, `4.4а-Д-9`).
+///
+/// Retry-forever on the cadence the other external-input waits use
+/// (`wait_for_activation_block`, Decision A), under the gauge reason this path
+/// already owns (`crash_recover`): the node stays observable instead of exiting on a
+/// link. Fork-safety permits it — nothing has been written yet, and the answer, when
+/// it comes, is authenticated by the same committee read either way.
+async fn refetch_hole_until_answered<U, C>(
+    upstream: Option<&U>,
+    committees: &C,
+    verify_ctx: &mut (impl commonware_runtime::Clock + rand_core::CryptoRngCore),
+    at_hash: B256,
+    height: u64,
+    which: &str,
+    sync_metrics: &SyncMetrics,
+) -> eyre::Result<crate::cert_follow::UpstreamFinalized>
+where
+    U: crate::cert_follow::CertUpstream,
+    C: crate::cert_inlet::CommitteeSource,
+{
+    let mut waited = false;
+    loop {
+        if let Some(uf) =
+            refetch_verified_archive_hole(upstream, committees, verify_ctx, at_hash, height, which)
+                .await?
+        {
+            if waited {
+                sync_metrics.recover(SyncReason::CrashRecover);
+            }
+            return Ok(uf);
+        }
+        if !waited {
+            waited = true;
+            warn!(
+                height,
+                which,
+                "crash-survivor recovery: a below-floor marshal {which} hole needs a by-height \
+                 re-fetch and NOT ONE configured upstream answered — that says nothing about \
+                 whether the record still exists, so nothing is concluded from it. Polling (no \
+                 give-up); make --dpos.follower-upstream reachable"
+            );
+        }
+        sync_metrics.degrade(SyncReason::CrashRecover);
+        verify_ctx.sleep(ACTIVATION_POLL).await;
+    }
 }
 
 /// One element of the crash-survivor replay walk: the block at `h` from the
@@ -610,13 +705,23 @@ where
     // can't fire at this `<= 64` gap, so a bare defer would strand reth.
     // Re-fetch the BLS-verified finalization+block from the cert upstream and
     // splice the hole shut; no-upstream / gone-everywhere stays fatal.
-    let uf = refetch_verified_archive_hole(
+    //
+    // ASKING AGAIN IS THE ANSWER TO "NOBODY ANSWERED", and it is not a softening of
+    // the fatal: the fatal is still what a gone-everywhere VERDICT produces (see
+    // `refetch_verified_archive_hole`). What may not happen is telling an operator to
+    // re-sync the EL disk because this node could not reach any upstream for a moment
+    // — that instruction is irreversible and the condition is transient. Retry-forever
+    // is the same policy the other external-input waits run (`wait_for_activation_block`,
+    // Decision A), on the same cadence, under the reason the gauge already has for this
+    // path (`crash_recover`): the node stays observable instead of exiting on a link.
+    let uf = refetch_hole_until_answered(
         upstream,
         committees,
         verify_ctx,
         at_hash,
         h,
         "finalized_blocks",
+        sync_metrics,
     )
     .await?;
     sync_metrics.crash_recover_refetched.inc();
@@ -833,7 +938,7 @@ where
         )
         .await
         {
-            Ok(uf) => match seed_via_beacon(beacon, round, &uf.finalization) {
+            Ok(Some(uf)) => match seed_via_beacon(beacon, round, &uf.finalization) {
                 CertSeed::Held(seed) => {
                     sync_metrics.crash_recover_refetched.inc();
                     return Ok(ReplaySeed::Derive(Some(seed)));
@@ -846,6 +951,20 @@ where
                      this node can use for this round (absent, or refused under the epoch key)"
                 ),
             },
+            // NO VERDICT (not one upstream answered) — and here that is the SAME
+            // answer as a verdict, deliberately: this path never claimed data loss,
+            // so it has nothing to withhold. It does not wait either, which is the
+            // other half of why the block path and the σ path read this differently:
+            // the block must exist before reth can move, while a missing σ only
+            // means devp2p carries the EL forward and the caller's defer resumes on
+            // `KeyAvailable`. Blocking the replay for a link would be a worse trade
+            // than deferring it.
+            Ok(None) => warn!(
+                height = order.height,
+                %round,
+                "crash-survivor recovery: not one configured upstream answered the by-height \
+                 pull for this round's σ; deferring to devp2p and the caller's resume"
+            ),
             // NOT fatal here, where it is fatal for a missing BLOCK: the block is
             // already in hand, so a σ that cannot be fetched is a reason to let
             // devp2p carry the EL forward, not evidence of local data loss. The
@@ -1501,6 +1620,215 @@ fn fresh_follower_entry(
         )),
         None => Ok(FreshFollowerEntry::UpstreamLatest),
     }
+}
+
+/// What a follower that DOES have a local `ChainConfig` (geometry readable at
+/// `rf_hash`) uses as its EL entry — the five-way march of `launch_follower`'s
+/// `Some((activation, interval))` arm (R-131 / PLAN row 4.4).
+///
+/// Deliberately NOT [`ColdStartKind`]: that enum is the VALIDATOR discriminator
+/// (`resolve_cold_start_kind`), it is named by the staking-reader's doc contract
+/// (`fluentbase_staking_reader::reader`, the `activation == 0` sentinel), and its
+/// three variants answer a different question (which anchor a populated/empty
+/// consensus archive resumes at). One enum serving both marches would tie two
+/// unrelated decisions together.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FollowerEntry {
+    /// reth already holds the activation block (or its finalized tag is already at
+    /// or above it): the anchor is local, and no peer is contacted at all. Also the
+    /// arm a node that produced the activation block itself lands in.
+    Local,
+    /// No entry of any kind: no operator checkpoint and no upstream — the honest
+    /// sequencer→DPoS migration, where the block will be produced by the pre-DPoS
+    /// sequencer on this very chain, so the node waits for reth to hold it
+    /// (`wait_for_activation_block`, retry-forever). LAST of the three peer-free
+    /// steps, not the second: it is what is left when nothing else can be tried.
+    WaitLocal,
+    /// An operator checkpoint is configured and not yet consumed. It is the FIRST
+    /// entry tried after the local probe, for two independent reasons:
+    ///
+    /// * before the CERTIFICATE entry, because `assert_l1_checkpoint` runs after the
+    ///   match and is counted FROM THE LANDING, and the certificate entry lands on
+    ///   the LOWEST legal height (`activation`), so the reverse order would turn a
+    ///   survivable park into a fatal refusal (К-73);
+    /// * before [`FollowerEntry::WaitLocal`], because `sync_to_checkpoint` needs no
+    ///   upstream at all — it FCUs to the operator's hash and lets devp2p backfill.
+    ///   Ordering it after the upstream test parked a node that had an entry.
+    Checkpoint,
+    /// The ordering chain is not usable as an entry yet, for either of two reasons
+    /// the caller distinguishes in its `warn!`: the upstream serves no `latest` at
+    /// or above `activation + K` (no certificate below `activation + K` carries a
+    /// real EVM hash — `order_block::result_target`), or no epoch's committee is
+    /// readable at `rf_hash` yet (the window where `setDposActivationBlock` has run
+    /// but `commitEpochCommittee(0)` has not). Both are "ask again", never a fatal:
+    /// the input is external, exactly the `wait_for_activation_block` argument.
+    ChainBelowActivation,
+    /// Certificate entry: fetch the finalization for `target` from the upstream,
+    /// authenticate it under the committee read at `rf_hash`, and EL-sync to its
+    /// attested result. `target` is the HIGHEST height this node can still check —
+    /// the one a cascading donor's `JUMP_THRESHOLD` window and a jumped validator's
+    /// archive lose LAST — so one request per attempt replaces a by-height walk.
+    Certificate { target: u64 },
+}
+
+/// The two inputs of [`follower_entry`] that cost a PEER ROUND TRIP, so that the
+/// signature says which ones do: everything else in the march is read locally.
+/// [`Default`] (both absent) is the peer-free pass the caller runs first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct PeerProbes {
+    /// `CertUpstream::get_latest().block.height` — used for ROUTING and as the
+    /// height ceiling only; the hash that comes with it is never read.
+    latest_height: Option<u64>,
+    /// The HIGHEST epoch whose committee reads `Ok` at `rf_hash`, probed over
+    /// `0..=MAX_COMMITTEE_LOOKAHEAD_EPOCHS`; `None` when none does.
+    ///
+    /// "Highest readable" is the right ceiling only because readability is MONOTONIC
+    /// FROM ZERO — `commitEpochCommittee` runs upward from epoch 0 and a
+    /// pre-activation state has pruned none of them. With a hole (epoch 2 readable,
+    /// epoch 0 not) and a tip inside epoch 0, the target would land in the epoch
+    /// whose committee is unreadable and the fetch would refuse it forever. Nothing
+    /// enforces the monotonicity; it is a property of the commit order, recorded
+    /// here because the ceiling depends on it (R-131 review, D-03).
+    e_max: Option<u64>,
+}
+
+/// The march itself: pure, so the order of the five entries is unit-testable
+/// without a node ([`follower_entry`] in `cold_start_kind_tests`).
+///
+/// The [`PeerProbes`] are `Option` because the caller learns them only by ASKING A
+/// PEER, and the first three entries (local anchor, operator checkpoint,
+/// wait-for-sequencer — in that order) must not cost a round trip. The
+/// caller therefore evaluates this twice: once with both `None` (the peer-free
+/// prefix — `Local` / `WaitLocal` / `Checkpoint` are final there), and again with
+/// the probes filled in only when the first verdict was
+/// [`FollowerEntry::ChainBelowActivation`]. Re-deciding through the same function
+/// is what keeps the peer-free prefix from being a second copy of the predicate.
+fn follower_entry(
+    holds_activation: bool,
+    has_upstream: bool,
+    has_checkpoint: bool,
+    probes: PeerProbes,
+    activation: u64,
+    interval: u64,
+    rf_num: u64,
+) -> FollowerEntry {
+    // `rf_num >= activation` is today's local path and does not depend on the
+    // probe: reth's own finalized tag already sits at or above the activation
+    // block, so the anchor is `(rf_num, rf_hash)` whatever a concurrent read of
+    // `block_hash(activation)` says.
+    if holds_activation || rf_num >= activation {
+        return FollowerEntry::Local;
+    }
+    // THE CHECKPOINT COMES BEFORE THE UPSTREAM TEST, and the order is a fix rather
+    // than a preference: `sync_to_checkpoint` needs no `CertUpstream` at all (it FCUs
+    // to the operator's hash and lets devp2p backfill), so gating it behind "an
+    // upstream is configured" parked a node that had a perfectly good entry.
+    if has_checkpoint {
+        return FollowerEntry::Checkpoint;
+    }
+    if !has_upstream {
+        return FollowerEntry::WaitLocal;
+    }
+    // The lowest height whose certificate carries a real EVM hash: `result_target`
+    // answers `PreActivation` below `anchor + K`, so a target under it would
+    // EL-sync toward `B256::ZERO`.
+    let floor = activation.saturating_add(K);
+    let (Some(latest), Some(e_max)) = (probes.latest_height, probes.e_max) else {
+        return FollowerEntry::ChainBelowActivation;
+    };
+    if latest < floor {
+        return FollowerEntry::ChainBelowActivation;
+    }
+    // `last(e)` — the terminal height of epoch `e` in absolute numbering. The top
+    // of the readable window is `last(e_max)`; the chain's own tip caps it.
+    let last_readable = activation
+        .saturating_add(e_max.saturating_add(1).saturating_mul(interval))
+        .saturating_sub(1);
+    // THE READABLE WINDOW CAN END BELOW THE FLOOR — whenever
+    // `(e_max + 1) · interval <= K`, which at `e_max = 0` is any `interval <= K` and
+    // nothing forbids: the contract rejects only a ZERO interval
+    // (`contracts/staking/src/config.rs`, `set_epoch_block_interval`) and
+    // `read_geometry` only `> 0`. There is then no height that is both checkable and
+    // at or above the floor, which is the same state as "the chain is not there yet"
+    // and gets the same answer. Clamping the target UP to the floor instead — the
+    // `.max(floor)` this replaced — asked the upstream for a height in an epoch
+    // whose committee is NOT readable at `rf_hash`, so `fetch_verified_entry`
+    // refused it forever and the node parked on a message about the upstream for a
+    // fault of the geometry (R-131 review, D-03).
+    if last_readable < floor {
+        return FollowerEntry::ChainBelowActivation;
+    }
+    // No `.max(floor)` here, and none is reachable: both inputs of the `min` are at
+    // or above the floor — `latest` by the gate above, `last_readable` by this one.
+    let target = latest.min(last_readable);
+    FollowerEntry::Certificate { target }
+}
+
+/// The entry march's OWN by-height fetch: pull the finalization for `height`, PIN it
+/// to the request, bind the certificate to the body it arrived with, and BLS-verify
+/// it under `committee[E]` read at `at_hash` — the three §5.2 properties, applied
+/// where a failure means "this node has no entry yet and will ask again".
+///
+/// **Deliberately not `cert_follow::fetch_verified_boundary`, which runs the very
+/// same four checks: what differs is the failure SURFACE, and that surface belongs
+/// to another consequence.** That seam increments `jump_boundary_refetch_failed` —
+/// the epoch-boundary seeding counter two other call sites share — and warns that
+/// "this member stays verify-only (no proposals, no votes) until the next epoch
+/// boundary", which for a follower still inside `launch_follower` is false twice
+/// over: it is not a committee member, it takes no admission, it parks. On a
+/// 2-second cadence that put two contradicting diagnoses in the operator's log
+/// forever and moved a counter about a different event (R-131 review, D-04). The
+/// precedent for a caller owning its own surface over these same two verifiers is
+/// [`refetch_verified_archive_hole`].
+///
+/// The reason comes BACK to the caller instead of being logged here, so the park
+/// prints one diagnosis and re-prints only when the reason CHANGES; the metric is
+/// the arm's own `dpos_sync_degraded{reason=activation_wait}`, already raised for
+/// exactly this park.
+async fn fetch_verified_entry<U, C>(
+    upstream: &U,
+    committees: &C,
+    verify_ctx: &mut (impl commonware_runtime::Clock + rand_core::CryptoRngCore),
+    at_hash: B256,
+    height: u64,
+) -> Result<crate::cert_follow::UpstreamFinalized, String>
+where
+    U: crate::cert_follow::CertUpstream,
+    C: crate::cert_inlet::CommitteeSource,
+{
+    // `_everywhere`: ONE ask per `ACTIVATION_POLL`, and a miss costs this node its
+    // entire entry — the shape the method's own doc reserves it for. (The
+    // pathological case it warns against is the marshal's per-sweep fan-out, which
+    // this is not.)
+    let Some(uf) = upstream
+        .get_finalization_everywhere(Height::new(height))
+        .await
+    else {
+        return Err("no configured upstream serves the height".to_owned());
+    };
+    // Nothing else binds the answer to the question: `verify_jump_structural` ties
+    // the cert only to the block it came with, and `verify_jump_authenticated` takes
+    // the epoch from the cert's own round.
+    if uf.block.height != height {
+        return Err(format!(
+            "an upstream served height {} instead of the one asked for",
+            uf.block.height
+        ));
+    }
+    if let Err(e) = crate::cold_start_jump::verify_jump_structural(&uf) {
+        return Err(format!(
+            "the served certificate does not sign the served block ({e:#})"
+        ));
+    }
+    if let Err(e) =
+        crate::cold_start_jump::verify_jump_authenticated(&uf, committees, at_hash, verify_ctx)
+    {
+        return Err(format!(
+            "the served finalization is not a 2f+1 multisig under the committee read at this \
+             node's own finalized hash ({e:#})"
+        ));
+    }
+    Ok(uf)
 }
 
 /// #17 SELF-HEAL visibility belt: a cold-start / follower landing read of a block
@@ -2995,7 +3323,10 @@ impl DposLayer {
         // all. FRESH datadir (runtime-deployed cluster): nothing is readable locally,
         // which is the one place in the system with nothing to check a peer against,
         // so the entry is an explicit operator checkpoint or a refusal.
-        let (rf_num, rf_hash, _h0_num, _h0_hash) =
+        // THE GEOMETRY READ, and only it, is pinned to a single hash: the arm below
+        // re-reads reth's finalized tag on every turn of its own loop (see there),
+        // so the anchor and the committee reads are NOT this binding.
+        let (_, geometry_at_hash, _h0_num, _h0_hash) =
             derive_cold_start_heights(&canonical_state, genesis_hash);
         let mk_el_sync = |activation: u64| {
             crate::cold_start_jump::RethElSync::new(
@@ -3008,7 +3339,7 @@ impl DposLayer {
         };
 
         let (activation, interval, anchor_height, anchor_hash) =
-            match read_geometry(&reader, rf_hash)? {
+            match read_geometry(&reader, geometry_at_hash)? {
                 Some((activation, interval)) => {
                     // THE ANCHOR IS `rf_hash` — reth's own EL-finalized tag, the same
                     // datum the validator path anchors on. The `get_latest ⇒ sync_to`
@@ -3019,17 +3350,338 @@ impl DposLayer {
                     // probe + the marshal's by-height pulls + the steady-state jump
                     // onto a pair out of its own archive.
                     //
-                    // `wait_for_activation_block` stays for `rf < activation`: the
-                    // ordering chain starts at the activation block, so an anchor below
-                    // it is not a DPoS anchor at all and the node waits for reth to
-                    // hold the activation block (the pre-DPoS sequencer finalizes it).
-                    if rf_num < activation {
-                        let hash =
-                            wait_for_activation_block(&ctx, &provider, activation, &sync_metrics)
+                    // BELOW the activation block the anchor is not local yet, and
+                    // `wait_for_activation_block` ALONE (4.2 Б2 .. 4.4) parked such a
+                    // node forever whenever the missing blocks were pre-DPoS sequencer
+                    // blocks that no ordering plane carries (R-131): this arm had no EL
+                    // drive at all, `mk_el_sync` being reachable only from the `None`
+                    // arm (`mk_el_sync` was reachable only from the `None` arm; this arm
+                    // now calls it too). The march is now the five-way `follower_entry` — local,
+                    // operator checkpoint, wait-local, chain-not-there-yet, certificate
+                    // — and only the last two cost a peer round trip. §5.2 holds for the
+                    // new entry the same way it holds for the jump: the height is
+                    // pinned, the payload is bound to the block digest, and the
+                    // finalization is BLS-verified under `committee[E]` READ AT
+                    // `rf_hash` before reth is driven anywhere
+                    // ([`fetch_verified_entry`]).
+                    //
+                    // The cadence is the shared `ACTIVATION_POLL`: this park and
+                    // `wait_for_activation_block`'s are the same wait on the same kind
+                    // of external input (R-131 review, D-10).
+                    // The operator checkpoint is consumed AT MOST ONCE: a checkpoint on
+                    // a pre-DPoS batch lands below the activation block, and re-driving
+                    // it would spin on `sync_to_checkpoint`'s "already canonical"
+                    // short-circuit instead of falling through to the certificate entry.
+                    let mut checkpoint_pending = l1_checkpoint_hash;
+                    let mut warned_wait = false;
+                    // The LAST refusal reason printed for the certificate entry, so the
+                    // park re-prints on a CHANGE of reason and not on every 2-second turn
+                    // (R-131 review, D-04).
+                    let mut unserved_reason: Option<String> = None;
+                    loop {
+                        // THE ANCHOR IS RE-READ EVERY TURN, and that is what makes the
+                        // poll below honest rather than half-honest. `rf_hash` is
+                        // reth's own EL-finalized tag — the same datum the validator
+                        // path anchors on — and the pre-DPoS sequencer keeps MOVING it
+                        // while this node waits. Pinning it before the loop pinned the
+                        // STATE the committee window is read at, so the branch "no
+                        // epoch committee is readable yet" (`setDposActivationBlock`
+                        // has run, `commitEpochCommittee(0)` has not) could never
+                        // change its answer no matter how long the poll ran, while its
+                        // own `warn!` promised "Polling (no give-up)". A late commit
+                        // appears on a LATER block, so the only way to see it is to
+                        // re-read the tag (R-131 review, D-02). Both halves of the
+                        // pair come from one `get_finalized_num_hash()`, so the number
+                        // and the hash are always the same block.
+                        let (rf_num, rf_hash, _, _) =
+                            derive_cold_start_heights(&canonical_state, genesis_hash);
+                        // LOCAL probe first, every turn: it is the only step with no
+                        // network cost, and after a checkpoint landing or a sequencer
+                        // block it is the step that ends the loop.
+                        let activation_hash = provider
+                            .block_hash(activation)
+                            .wrap_err("probing whether reth holds the DPoS activation block")?;
+                        let peer_free = follower_entry(
+                            activation_hash.is_some(),
+                            upstream.is_some(),
+                            checkpoint_pending.is_some(),
+                            PeerProbes::default(),
+                            activation,
+                            interval,
+                            rf_num,
+                        );
+                        // Only the retry frontier of the peer-free prefix is worth a
+                        // round trip; re-deciding through the SAME function is what
+                        // keeps this from being a second copy of the predicate.
+                        let entry = match (peer_free, upstream.as_ref()) {
+                            (FollowerEntry::ChainBelowActivation, Some(up)) => {
+                                // `get_latest` is used for ROUTING and as a height
+                                // ceiling only; its hash is never read here. A liar can
+                                // only pull the target DOWN (never below `activation + K`),
+                                // which costs a lower landing and a ladder climb — it
+                                // cannot raise it past the readable window, and the
+                                // landing hash comes from the attested `result`.
+                                let latest_height =
+                                    up.get_latest().await.map(|latest| latest.block.height);
+                                let committees = crate::cert_inlet::RethCommitteeSource::new(
+                                    RethStakingStateReader::new(
+                                        provider.clone(),
+                                        evm_config.clone(),
+                                        staking_config.clone(),
+                                    ),
+                                    chain_id,
+                                );
+                                // The readable window at `rf_hash`: devnet genesis has
+                                // `committee[0]` only, a pre-activation prod block has up
+                                // to `committee[MAX_COMMITTEE_LOOKAHEAD_EPOCHS]`.
+                                let e_max = (0..=fluentbase_types::staking_protocol::
+                                    MAX_COMMITTEE_LOOKAHEAD_EPOCHS)
+                                    .rev()
+                                    .find(|e| {
+                                        crate::cert_inlet::CommitteeSource::scheme_at(
+                                            &committees,
+                                            *e,
+                                            rf_hash,
+                                            None,
+                                        )
+                                        .is_ok()
+                                    });
+                                follower_entry(
+                                    activation_hash.is_some(),
+                                    true,
+                                    checkpoint_pending.is_some(),
+                                    PeerProbes {
+                                        latest_height,
+                                        e_max,
+                                    },
+                                    activation,
+                                    interval,
+                                    rf_num,
+                                )
+                            }
+                            (final_entry, _) => final_entry,
+                        };
+                        match entry {
+                            FollowerEntry::Local => {
+                                if rf_num >= activation {
+                                    break (activation, interval, rf_num, rf_hash);
+                                }
+                                // Third internal invariant of this dispatch, and named
+                                // as one like the other two (`Checkpoint`,
+                                // `Certificate`): below the activation block `Local` is
+                                // returned ONLY for `holds_activation`, which IS
+                                // `activation_hash.is_some()` of the very read below —
+                                // no second probe stands between the verdict and here,
+                                // so a `None` would mean the march and this dispatch
+                                // disagree. The text it used to carry described a
+                                // concurrent unwind, a state this input cannot produce
+                                // (R-131 review, D-09).
+                                let hash = activation_hash.ok_or_else(|| {
+                                    eyre!(
+                                        "cert-follow: internal — the entry march chose the \
+                                         local anchor below the activation block {activation} \
+                                         with no locally-held activation block"
+                                    )
+                                })?;
+                                if warned_wait || unserved_reason.is_some() {
+                                    sync_metrics.recover(SyncReason::ActivationWait);
+                                }
+                                info!(
+                                    height = activation,
+                                    hash = ?hash,
+                                    "cert-follow: anchoring at the DPoS activation block reth \
+                                     already holds"
+                                );
+                                break (activation, interval, activation, hash);
+                            }
+                            FollowerEntry::WaitLocal => {
+                                // Honest sequencer→DPoS migration: the activation block
+                                // is produced on THIS chain, so there is nobody to ask
+                                // and nothing to authenticate. Retry-forever, Decision A,
+                                // verbatim (`wait_for_activation_block`).
+                                let hash = wait_for_activation_block(
+                                    &ctx,
+                                    &provider,
+                                    activation,
+                                    &sync_metrics,
+                                )
                                 .await?;
-                        (activation, interval, activation, hash)
-                    } else {
-                        (activation, interval, rf_num, rf_hash)
+                                break (activation, interval, activation, hash);
+                            }
+                            FollowerEntry::Checkpoint => {
+                                // `Checkpoint` is returned only for `has_checkpoint`, which IS
+                                // `checkpoint_pending.is_some()` — a `None` here would mean the
+                                // march and this dispatch disagree, which is a code fault and not
+                                // an input the operator can produce.
+                                let l1 = checkpoint_pending.take().ok_or_else(|| {
+                                    eyre!(
+                                        "cert-follow: internal — the entry march chose the \
+                                         operator checkpoint with no checkpoint pending"
+                                    )
+                                })?;
+                                info!(
+                                    checkpoint = ?l1,
+                                    activation,
+                                    "cert-follow: below the activation block — EL-syncing to \
+                                     the operator checkpoint FIRST (it is the entry the L1 \
+                                     assert below is counted against)"
+                                );
+                                let (h, hash) = mk_el_sync(activation)
+                                    .sync_to_checkpoint(l1)
+                                    .await
+                                    .wrap_err_with(|| {
+                                        format!(
+                                            "cert-follow: the operator --dpos.l1-checkpoint \
+                                             {l1:?} could not be obtained from any peer (bogus \
+                                             hash, or every peer is behind it)"
+                                        )
+                                    })?;
+                                if h >= activation {
+                                    break (activation, interval, h, hash);
+                                }
+                                // A checkpoint on a pre-DPoS batch is a legal input and a
+                                // legal landing — it just is not a DPoS anchor. Re-run the
+                                // march WITHOUT sleeping: the local probe may now hold the
+                                // activation block, and otherwise the certificate entry is
+                                // next. `assert_l1_checkpoint` after the match then passes
+                                // trivially, which is the whole reason this step is first.
+                                info!(
+                                    landing = h,
+                                    activation,
+                                    "cert-follow: the operator checkpoint landed BELOW the \
+                                     activation block (a pre-DPoS batch); continuing to the \
+                                     certificate entry"
+                                );
+                                continue;
+                            }
+                            FollowerEntry::ChainBelowActivation => {
+                                // NOT a fatal, for the same reason `wait_for_activation_block`
+                                // is not (`:290-295`): the input is external, the honest
+                                // case is "the chain / the committee commit is not there
+                                // yet", and a fatal here restart-storms every honest joiner
+                                // at once. Gauge + ONE `warn!` make the park visible and
+                                // named instead.
+                                if !warned_wait {
+                                    warned_wait = true;
+                                    warn!(
+                                        activation,
+                                        floor = activation + K,
+                                        "cert-follow: the ordering chain is not an entry yet — \
+                                         the upstream serves no finalized block at or above the \
+                                         activation block + K, or no epoch committee is readable \
+                                         at this node's own finalized hash yet \
+                                         (commitEpochCommittee has not run). Polling (no \
+                                         give-up)"
+                                    );
+                                }
+                                sync_metrics.degrade(SyncReason::ActivationWait);
+                                ctx.sleep(ACTIVATION_POLL).await;
+                            }
+                            FollowerEntry::Certificate { target } => {
+                                // Same invariant as the checkpoint arm: `Certificate` is
+                                // returned only for `has_upstream`.
+                                let up = upstream.as_ref().ok_or_else(|| {
+                                    eyre!(
+                                        "cert-follow: internal — the entry march chose the \
+                                         certificate entry with no upstream configured"
+                                    )
+                                })?;
+                                let committees = crate::cert_inlet::RethCommitteeSource::new(
+                                    RethStakingStateReader::new(
+                                        provider.clone(),
+                                        evm_config.clone(),
+                                        staking_config.clone(),
+                                    ),
+                                    chain_id,
+                                );
+                                let mut fetch_ctx = ctx.clone();
+                                let verified = fetch_verified_entry(
+                                    up,
+                                    &committees,
+                                    &mut fetch_ctx,
+                                    rf_hash,
+                                    target,
+                                )
+                                .await;
+                                let uf = match verified {
+                                    Ok(uf) => uf,
+                                    Err(reason) => {
+                                        // A refusal does not distinguish "the upstream is
+                                        // not up yet" from "nobody keeps this height any
+                                        // more", and a fatal on the first is a restart
+                                        // storm — so this parks, with the REASON and both
+                                        // operator exits named. Re-printed only when the
+                                        // reason changes: the cadence is 2 s and forever,
+                                        // so a per-attempt line is noise, while a CHANGED
+                                        // reason is the one thing worth a new line.
+                                        if unserved_reason.as_deref() != Some(reason.as_str()) {
+                                            warn!(
+                                                target,
+                                                activation,
+                                                reason = %reason,
+                                                "cert-follow: no upstream served a VERIFIABLE \
+                                                 finalization at {target} — the entry below the \
+                                                 activation block needs one. Two operator exits: \
+                                                 give this node --dpos.l1-checkpoint (the L1 \
+                                                 Rollup-finalized block becomes the entry), or \
+                                                 point --dpos.follower-upstream at a validator \
+                                                 whose archive still covers {target}. Polling \
+                                                 (no give-up)"
+                                            );
+                                            unserved_reason = Some(reason);
+                                        }
+                                        sync_metrics.degrade(SyncReason::ActivationWait);
+                                        ctx.sleep(ACTIVATION_POLL).await;
+                                        continue;
+                                    }
+                                };
+                                // A FAILED DRIVE IS A RETRY, NOT A STARTUP FATAL, and the
+                                // reason is the #17 visibility race rather than politeness:
+                                // `sync_to`'s post-landing `block_hash(landing)` can
+                                // transiently miss a block reth has only just
+                                // canonicalized, and that maps to `SyncFailure::Stalled`
+                                // indistinguishably from a real stall (`From<Report>`), so
+                                // `?` turned a race this file absorbs everywhere else into
+                                // a dead node (R-131 review, D-15). Re-driving is safe and
+                                // cheap: the target is already committee-authenticated, the
+                                // next turn short-circuits on `best_block_number >=
+                                // tip_height` if the landing did happen, and each attempt
+                                // costs a full EL-sync net (≥ 90 s), so this cannot spin.
+                                // A genuine wedge now parks OBSERVABLY — gauge up, one line
+                                // per attempt — which is what the steady-state re-jump does
+                                // with the same `Stalled`.
+                                let (landing, hash) =
+                                    match mk_el_sync(activation).sync_to(&uf).await {
+                                        Ok(pair) => pair,
+                                        Err(e) => {
+                                            warn!(
+                                                target,
+                                                activation,
+                                                error = %eyre::Report::from(e),
+                                                "cert-follow: EL-sync toward the authenticated \
+                                                 entry did not land — retrying the entry march \
+                                                 (a transient post-landing read, or reth has no \
+                                                 peers / a wedged pipeline; its own escape text \
+                                                 names which)"
+                                            );
+                                            sync_metrics.degrade(SyncReason::ActivationWait);
+                                            ctx.sleep(ACTIVATION_POLL).await;
+                                            continue;
+                                        }
+                                    };
+                                if warned_wait || unserved_reason.is_some() {
+                                    sync_metrics.recover(SyncReason::ActivationWait);
+                                }
+                                info!(
+                                    target,
+                                    landing,
+                                    activation,
+                                    "cert-follow: entered below the activation block by an \
+                                     authenticated certificate"
+                                );
+                                break (activation, interval, landing, hash);
+                            }
+                        }
                     }
                 }
                 None => {
@@ -3843,11 +4495,19 @@ impl DposLayer {
 
 #[cfg(test)]
 mod cold_start_kind_tests {
-    use super::{fresh_follower_entry, resolve_cold_start_kind, ColdStartKind, FreshFollowerEntry};
+    use super::{
+        follower_entry, fresh_follower_entry, resolve_cold_start_kind, ColdStartKind,
+        FollowerEntry, FreshFollowerEntry, PeerProbes, K,
+    };
     use alloy_primitives::B256;
 
     const ACTIVATION: u64 = 192;
     const INTERVAL: u64 = 64;
+    /// The devnet geometry (`genesis-bootstrap`: `EPOCH_BLOCK_INTERVAL=32`,
+    /// `dposActivationBlock=2 * interval`), used where the target arithmetic is what
+    /// the smoke case will read back out of the log.
+    const DEVNET_ACTIVATION: u64 = 64;
+    const DEVNET_INTERVAL: u64 = 32;
     /// Any of the deployed chain_ids would do — the predicate is the node's
     /// (`node/dpos.rs::is_deployed_network`); this crate only receives its answer.
     const A_DEPLOYED_CHAIN: u64 = 0x5202;
@@ -3985,6 +4645,367 @@ mod cold_start_kind_tests {
     fn zero_activation_is_the_unscheduled_sentinel_and_fatal() {
         let err = resolve_cold_start_kind(0, 0, INTERVAL, 0, true).unwrap_err();
         assert!(err.to_string().contains("unscheduled sentinel"), "{err}");
+    }
+
+    /// The follower march below the activation block (R-131, PLAN row 4.4). Every
+    /// case below fixes ONE step of the five, in the order the arm evaluates them;
+    /// the last two fix the arithmetic the smoke case reads back out of the log.
+    ///
+    /// [`PeerProbes`] are the two inputs that cost a peer round trip, so the
+    /// peer-free steps are asserted with `PeerProbes::default()` — which is exactly
+    /// how the arm calls this function on its first pass.
+    ///
+    /// Falsifier for the pair: a march that reaches the upstream while reth already
+    /// holds the activation block (steps 2..5 firing on `holds = true`); a march that
+    /// asks for a certificate before spending a configured operator checkpoint (the
+    /// order К-73 forbids, because `assert_l1_checkpoint` is counted from the
+    /// landing).
+    #[test]
+    fn holding_the_activation_block_is_a_local_entry_and_costs_no_peer() {
+        // Step 1a: the probe found the block. Upstream AND checkpoint AND a servable
+        // frontier are all present, and none of them is reached.
+        assert_eq!(
+            follower_entry(
+                true,
+                true,
+                true,
+                PeerProbes {
+                    latest_height: Some(ACTIVATION + 500),
+                    e_max: Some(0),
+                },
+                ACTIVATION,
+                INTERVAL,
+                0
+            ),
+            FollowerEntry::Local,
+            "a node that holds the activation block must not contact a peer at all"
+        );
+        // Step 1b: reth's own finalized tag is already at/above activation — today's
+        // `rf_num >= activation` path, which does not depend on the probe.
+        assert_eq!(
+            follower_entry(
+                false,
+                true,
+                true,
+                PeerProbes::default(),
+                ACTIVATION,
+                INTERVAL,
+                ACTIVATION + 1
+            ),
+            FollowerEntry::Local,
+            "an EL-finalized tag at or above activation is a local anchor by itself"
+        );
+    }
+
+    /// Step 3b — nothing to try at all: no checkpoint AND no upstream. That is the
+    /// honest sequencer→DPoS migration, where the block is produced on THIS chain, so
+    /// there is nobody to ask and nothing to authenticate, and the node waits for reth
+    /// to hold it (`wait_for_activation_block`, retry-forever, Decision A). Note what
+    /// separates this input from the one above: `has_checkpoint = false`.
+    ///
+    /// Falsifier: a `ChainBelowActivation`/`Certificate` verdict here would send an
+    /// upstream-less node into a loop that can never make a request.
+    #[test]
+    fn no_upstream_below_activation_waits_for_the_sequencer() {
+        assert_eq!(
+            follower_entry(
+                false,
+                false,
+                false,
+                PeerProbes::default(),
+                ACTIVATION,
+                INTERVAL,
+                0
+            ),
+            FollowerEntry::WaitLocal
+        );
+    }
+
+    /// Step 2 — AN OPERATOR CHECKPOINT WITH NO UPSTREAM AT ALL IS STILL AN ENTRY, and
+    /// this is the one configuration that decides the order of the two peer-free
+    /// fallbacks. `ElSync::sync_to_checkpoint` (`cold_start_jump.rs`) takes `&self`
+    /// and a hash and nothing else: it FCUs reth onto the operator's block and lets
+    /// devp2p backfill, so it works on a node that has no `CertUpstream` configured.
+    /// Testing `has_upstream` first therefore parked — forever, in
+    /// `wait_for_activation_block` — a node whose operator had already handed it a
+    /// working entry.
+    ///
+    /// RED BEFORE THIS CHANGE, verbatim: with the two predicates in the order the
+    /// design shipped them (`if !has_upstream { WaitLocal }` above
+    /// `if has_checkpoint { Checkpoint }`) this input answers
+    /// `FollowerEntry::WaitLocal`, and this assertion fails with
+    /// `left: WaitLocal / right: Checkpoint`.
+    ///
+    /// Falsifier: any verdict but `Checkpoint` on this input — `WaitLocal` is the
+    /// permanent park, and the two retry verdicts cannot even be reached without an
+    /// upstream to ask.
+    #[test]
+    fn a_checkpoint_without_any_upstream_is_still_an_entry() {
+        assert_eq!(
+            follower_entry(
+                false,
+                false,
+                true,
+                PeerProbes::default(),
+                ACTIVATION,
+                INTERVAL,
+                0
+            ),
+            FollowerEntry::Checkpoint,
+            "an operator checkpoint needs no cert upstream — `sync_to_checkpoint` drives reth by \
+             itself, so gating it behind one parks a node that has an entry"
+        );
+    }
+
+    /// Step 3 — the operator checkpoint goes BEFORE the certificate entry, and the
+    /// order is the point: `assert_l1_checkpoint` (`dpos.rs`, after the match) is
+    /// counted FROM THE LANDING, and the certificate entry lands on the lowest legal
+    /// height, so a certificate-first march turns a survivable park into a fatal
+    /// refusal (К-73).
+    ///
+    /// Falsifier: a `Certificate` verdict on this input — that is the ordering bug.
+    #[test]
+    fn a_configured_checkpoint_is_spent_before_the_certificate_entry() {
+        assert_eq!(
+            follower_entry(
+                false,
+                true,
+                true,
+                PeerProbes {
+                    latest_height: Some(ACTIVATION + 500),
+                    e_max: Some(0),
+                },
+                ACTIVATION,
+                INTERVAL,
+                0
+            ),
+            FollowerEntry::Checkpoint,
+            "a servable certificate frontier must not pre-empt the operator checkpoint"
+        );
+    }
+
+    /// Step 4 — the ordering chain is not an entry yet. Three shapes, all "ask
+    /// again": the upstream serves no frontier at all, its frontier is below
+    /// `activation + K`, and the boundary `activation + K − 1` (the highest height
+    /// whose certificate still carries no real EVM hash —
+    /// `order_block::result_target` answers `PreActivation` below `anchor + K`).
+    ///
+    /// Falsifier: a `Certificate { target }` at or below `activation + K − 1` would
+    /// EL-sync toward `B256::ZERO`.
+    #[test]
+    fn a_frontier_below_activation_plus_k_is_not_an_entry() {
+        for latest in [None, Some(0), Some(ACTIVATION + K - 1)] {
+            assert_eq!(
+                follower_entry(
+                    false,
+                    true,
+                    false,
+                    PeerProbes {
+                        latest_height: latest,
+                        e_max: Some(0),
+                    },
+                    ACTIVATION,
+                    INTERVAL,
+                    0
+                ),
+                FollowerEntry::ChainBelowActivation,
+                "latest = {latest:?} must not become a certificate target"
+            );
+        }
+        // And the first height that IS an entry, to show the boundary is a boundary.
+        assert_eq!(
+            follower_entry(
+                false,
+                true,
+                false,
+                PeerProbes {
+                    latest_height: Some(ACTIVATION + K),
+                    e_max: Some(0),
+                },
+                ACTIVATION,
+                INTERVAL,
+                0
+            ),
+            FollowerEntry::Certificate {
+                target: ACTIVATION + K
+            },
+            "the certificate at exactly activation + K carries the activation block's own result"
+        );
+    }
+
+    /// Step 4, second shape — no epoch committee reads at `rf_hash` yet: the window
+    /// where `setDposActivationBlock` has run and `commitEpochCommittee(0)` has not.
+    /// Nothing can authenticate a finalization under a committee that is not there,
+    /// so the march waits instead of asking (A1b).
+    ///
+    /// Falsifier: a `Certificate` verdict with `e_max = None` — the fetch would then
+    /// always fail authentication, and the park would be reported as a refusal.
+    #[test]
+    fn an_unreadable_committee_window_is_not_an_entry() {
+        assert_eq!(
+            follower_entry(
+                false,
+                true,
+                false,
+                PeerProbes {
+                    latest_height: Some(ACTIVATION + 500),
+                    e_max: None,
+                },
+                ACTIVATION,
+                INTERVAL,
+                0
+            ),
+            FollowerEntry::ChainBelowActivation
+        );
+    }
+
+    /// Step 5 — the certificate target, on the three shapes that matter. The target
+    /// is the HIGHEST height this node can still check: `min(tip, last(e_max))`,
+    /// floored at `activation + K`, where
+    /// `last(e) = activation + (e + 1) · interval − 1`. One request per attempt,
+    /// aimed at the height a cascading donor's `JUMP_THRESHOLD` window and a jumped
+    /// validator's archive lose LAST.
+    ///
+    /// Falsifier: a target above `last(e_max)` (the committee needed to authenticate
+    /// it is not readable, so the fetch could never succeed); a target above the tip
+    /// (nobody holds it); a target below `activation + K` (no real EVM hash).
+    #[test]
+    fn the_certificate_target_is_the_top_of_the_checkable_window() {
+        // DEVNET: one readable epoch, tip well past it. `last(0) = 95`, and the
+        // landing the smoke case reads in the log is `95 − K = 92`.
+        assert_eq!(
+            follower_entry(
+                false,
+                true,
+                false,
+                PeerProbes {
+                    latest_height: Some(200),
+                    e_max: Some(0),
+                },
+                DEVNET_ACTIVATION,
+                DEVNET_INTERVAL,
+                0
+            ),
+            FollowerEntry::Certificate { target: 95 },
+            "devnet: the target is last(0) = activation + interval − 1"
+        );
+        // The tip caps the window when the chain is younger than it.
+        assert_eq!(
+            follower_entry(
+                false,
+                true,
+                false,
+                PeerProbes {
+                    latest_height: Some(80),
+                    e_max: Some(0),
+                },
+                DEVNET_ACTIVATION,
+                DEVNET_INTERVAL,
+                0
+            ),
+            FollowerEntry::Certificate { target: 80 },
+            "a tip inside epoch 0 is itself the top of the checkable window"
+        );
+        // MINIMUM: the tip is exactly the first checkable height.
+        assert_eq!(
+            follower_entry(
+                false,
+                true,
+                false,
+                PeerProbes {
+                    latest_height: Some(DEVNET_ACTIVATION + K),
+                    e_max: Some(0),
+                },
+                DEVNET_ACTIVATION,
+                DEVNET_INTERVAL,
+                0
+            ),
+            FollowerEntry::Certificate {
+                target: DEVNET_ACTIVATION + K
+            },
+            "the floor is activation + K, and it is reachable"
+        );
+        // PROD: a pre-activation block reads the whole lookahead window
+        // (`MAX_COMMITTEE_LOOKAHEAD_EPOCHS = 2`), so the top is `last(2)`.
+        assert_eq!(
+            follower_entry(
+                false,
+                true,
+                false,
+                PeerProbes {
+                    latest_height: Some(ACTIVATION + 10_000),
+                    e_max: Some(2),
+                },
+                ACTIVATION,
+                INTERVAL,
+                0
+            ),
+            FollowerEntry::Certificate {
+                target: ACTIVATION + 3 * INTERVAL - 1
+            },
+            "prod: the target is last(2), never the tip the upstream claims"
+        );
+    }
+
+    /// A READABLE WINDOW THAT ENDS BELOW THE FLOOR IS NOT AN ENTRY. `interval <= K`
+    /// puts `last(e_max)` under `activation + K`, so there is no height that is both
+    /// committee-checkable at `rf_hash` and carries a real EVM hash — the same state
+    /// as "the chain has not reached the entry yet", and the same verdict.
+    ///
+    /// RED ON THE FORM THIS REPLACED, which clamped the target UP
+    /// (`min(latest, last(e_max)).max(floor)`): it returned
+    /// `Certificate { target: activation + K }`, a height inside an epoch ABOVE
+    /// `e_max` whose committee the node cannot read, so `fetch_verified_entry`
+    /// could never authenticate it and the node parked forever on the upstream's
+    /// failure text for a fault of the geometry (R-131 review, D-03). Nothing in the
+    /// suite pinned the clamp — deleting it left all fifteen tests green.
+    ///
+    /// Falsifier: any `Certificate` verdict here; a `ChainBelowActivation` on the
+    /// line below, where the window DOES reach the floor and the entry exists.
+    #[test]
+    fn a_readable_window_below_the_floor_is_not_an_entry() {
+        // `interval = 1`, `e_max = 0` ⇒ `last(0) = activation`, floor = activation + 3.
+        for e_max in 0..=2 {
+            assert_eq!(
+                follower_entry(
+                    false,
+                    true,
+                    false,
+                    PeerProbes {
+                        latest_height: Some(DEVNET_ACTIVATION + 10_000),
+                        e_max: Some(e_max),
+                    },
+                    DEVNET_ACTIVATION,
+                    1,
+                    0
+                ),
+                FollowerEntry::ChainBelowActivation,
+                "interval 1: last({e_max}) = activation + {e_max} is under the floor, so the \
+                 window holds no checkable height — asking for one is worse than waiting"
+            );
+        }
+        // The boundary in the other direction: `(e_max + 1) · interval == K + 1` is
+        // the first geometry whose window reaches the floor, and there the entry IS
+        // the floor. Without this half the assertion above would also pass on a
+        // function that never returns `Certificate` at all.
+        assert_eq!(
+            follower_entry(
+                false,
+                true,
+                false,
+                PeerProbes {
+                    latest_height: Some(DEVNET_ACTIVATION + 10_000),
+                    e_max: Some(0),
+                },
+                DEVNET_ACTIVATION,
+                K + 1,
+                0
+            ),
+            FollowerEntry::Certificate {
+                target: DEVNET_ACTIVATION + K
+            },
+            "interval K + 1: last(0) is exactly the floor, which is a legal entry"
+        );
     }
 }
 
@@ -4927,15 +5948,81 @@ mod refetch_hole_tests {
         }
     }
 
-    /// Returns a canned `UpstreamFinalized` (or `None`) for any height requested.
+    /// THE TWO ANSWERS ARE INDEPENDENT FIELDS, because conflating them is the defect
+    /// under test: `height` is what the by-height pull serves, `latest` is what
+    /// `get_latest` serves — the only positive proof that an upstream answered us at
+    /// all. A fake that derived one from the other could not express "reachable, and
+    /// it does not hold the height" apart from "nothing answered", which is exactly
+    /// the pair `refetch_verified_archive_hole` has to separate.
     #[derive(Clone)]
-    struct FakeUpstream(Option<UpstreamFinalized>);
+    struct FakeUpstream {
+        height: Option<UpstreamFinalized>,
+        latest: Option<UpstreamFinalized>,
+    }
+    impl FakeUpstream {
+        /// Serves the height (and is therefore reachable).
+        fn serving(uf: UpstreamFinalized) -> Self {
+            Self {
+                height: Some(uf.clone()),
+                latest: Some(uf),
+            }
+        }
+        /// ANSWERS, and says it does not hold the height — the only shape that is
+        /// evidence about the record, and the only one that may exit fatal.
+        fn reachable_but_missing(latest: UpstreamFinalized) -> Self {
+            Self {
+                height: None,
+                latest: Some(latest),
+            }
+        }
+        /// Nothing answers at all. Evidence about the link, about nothing else.
+        fn unreachable() -> Self {
+            Self {
+                height: None,
+                latest: None,
+            }
+        }
+    }
     impl CertUpstream for FakeUpstream {
         async fn get_finalization(&self, _height: Height) -> Option<UpstreamFinalized> {
-            self.0.clone()
+            self.height.clone()
         }
         async fn get_latest(&self) -> Option<UpstreamFinalized> {
-            self.0.clone()
+            self.latest.clone()
+        }
+        async fn rotate(&self) {}
+    }
+
+    /// Unreachable for the first `silent_laps` by-height pulls, then normal — the
+    /// operator's upstream that is simply not up yet when the node crash-recovers.
+    /// Records the `crash_recover` gauge as seen ON THE SECOND LAP, so the test can
+    /// assert the park was actually visible and not merely survived.
+    #[derive(Clone)]
+    struct FlakyUpstream {
+        served: UpstreamFinalized,
+        silent_laps: usize,
+        laps: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        metrics: crate::sync_metrics::SyncMetrics,
+        gauge_on_second_lap: std::sync::Arc<std::sync::atomic::AtomicI64>,
+    }
+    impl CertUpstream for FlakyUpstream {
+        async fn get_finalization(&self, _height: Height) -> Option<UpstreamFinalized> {
+            use std::sync::atomic::Ordering::SeqCst;
+            let lap = self.laps.fetch_add(1, SeqCst) + 1;
+            if lap == 2 {
+                self.gauge_on_second_lap.store(
+                    self.metrics
+                        .degraded_value(crate::sync_metrics::SyncReason::CrashRecover),
+                    SeqCst,
+                );
+            }
+            (lap > self.silent_laps).then(|| self.served.clone())
+        }
+        async fn get_latest(&self) -> Option<UpstreamFinalized> {
+            use std::sync::atomic::Ordering::SeqCst;
+            // An upstream nobody can reach answers neither pull: the reachability
+            // witness must not be luckier than the pull it corroborates.
+            (self.laps.load(SeqCst) > self.silent_laps).then(|| self.served.clone())
         }
         async fn rotate(&self) {}
     }
@@ -4962,7 +6049,7 @@ mod refetch_hole_tests {
             let c = committee(1);
             let block = sample_order(65);
             let uf = certify(&c, 0, &block);
-            let up = FakeUpstream(Some(uf));
+            let up = FakeUpstream::serving(uf);
             let committees = CannedCommittees(c.verifier.clone());
             let out = refetch_verified_archive_hole(
                 Some(&up),
@@ -4973,7 +6060,8 @@ mod refetch_hole_tests {
                 "finalized_blocks",
             )
             .await
-            .expect("valid cert heals the hole");
+            .expect("valid cert heals the hole")
+            .expect("a served height is a VERDICT, not a `keep asking`");
             assert_eq!(
                 out.block.height, 65,
                 "the re-fetched block is returned for replay"
@@ -5007,11 +6095,17 @@ mod refetch_hole_tests {
 
     // Upstream reachable but no longer serves the below-floor height (pruned
     // everywhere) → FATAL (gone-everywhere).
+    //
+    // THE WORLD IS NOW EXPLICITLY REACHABLE, and that is the point of the change: the
+    // fake used to answer `None` to BOTH the by-height pull and `get_latest`, i.e. it
+    // was simultaneously "pruned everywhere" and "nobody home", and the fatal fired on
+    // the pair. Only the first of the two licenses this sentence (R-131 review,
+    // `4.4а-Д-9`), so the world has to say which one it is.
     #[test]
     fn upstream_missing_height_is_fatal() {
         deterministic::Runner::default().start(|mut ctx| async move {
             let c = committee(3);
-            let up = FakeUpstream(None);
+            let up = FakeUpstream::reachable_but_missing(certify(&c, 0, &sample_order(1)));
             let committees = CannedCommittees(c.verifier);
             let err = refetch_verified_archive_hole(
                 Some(&up),
@@ -5028,6 +6122,111 @@ mod refetch_hole_tests {
         });
     }
 
+    /// AN UNREACHABLE UPSTREAM IS NOT A DATA-LOSS VERDICT. Same `None` from the
+    /// by-height pull as the test above, same height, same committee — and the answer
+    /// must be the opposite one, because the two negatives are different facts.
+    ///
+    /// The stake is irreversible: the sentence this must NOT produce tells the
+    /// operator to re-sync the EL disk from a snapshot. Before the entry march made a
+    /// disconnected WS actor answer its mailbox, the pull simply never returned here,
+    /// so a negative was necessarily "servers answered and none holds it"; the fix for
+    /// that hang is what made this case reachable, and this is the test that keeps the
+    /// two apart (R-131 review, `4.4а-Д-9`).
+    ///
+    /// RED on any form where both cases answer the same — delete the `get_latest`
+    /// witness and this fails with the gone-everywhere error it must not produce,
+    /// while `upstream_missing_height_is_fatal` stays green. That pair is the whole
+    /// discrimination.
+    #[test]
+    fn an_unreachable_upstream_is_not_a_data_loss_verdict() {
+        deterministic::Runner::default().start(|mut ctx| async move {
+            let c = committee(6);
+            let up = FakeUpstream::unreachable();
+            let committees = CannedCommittees(c.verifier);
+            let out = refetch_verified_archive_hole(
+                Some(&up),
+                &committees,
+                &mut ctx,
+                B256::repeat_byte(1),
+                65,
+                "finalized_blocks",
+            )
+            .await
+            .expect("nothing answered, so there is nothing to be fatal ABOUT");
+            assert!(
+                out.is_none(),
+                "no verdict: `Ok(None)` is what makes the caller ask again instead of \
+                 telling the operator to wipe the EL disk"
+            );
+        });
+    }
+
+    /// …and the block path ASKS AGAIN until a verdict exists, healing the hole the
+    /// moment an upstream comes up. The upstream is silent for two laps and then
+    /// serves the record, which is the crash-recovery boot race: the node restarts
+    /// before the validator it pulls from is listening.
+    ///
+    /// Two things are asserted beyond the happy end, and both are the point: the lap
+    /// count proves it RETRIED rather than concluded, and the gauge read taken by the
+    /// fake ON THE SECOND LAP proves the park was OBSERVABLE while it waited — a
+    /// silent wait would be the other half of the same defect.
+    ///
+    /// RED on the form where both negatives answer alike: the first lap exits with
+    /// "gone everywhere" and no second lap happens.
+    #[test]
+    fn a_hole_waits_for_an_upstream_instead_of_declaring_data_loss() {
+        deterministic::Runner::default().start(|mut ctx| async move {
+            use std::sync::{
+                atomic::{AtomicI64, AtomicUsize, Ordering::SeqCst},
+                Arc,
+            };
+            let c = committee(7);
+            let block = sample_order(65);
+            let metrics = crate::sync_metrics::SyncMetrics::default();
+            let laps = Arc::new(AtomicUsize::new(0));
+            let gauge_on_second_lap = Arc::new(AtomicI64::new(-1));
+            let up = FlakyUpstream {
+                served: certify(&c, 0, &block),
+                silent_laps: 2,
+                laps: laps.clone(),
+                metrics: metrics.clone(),
+                gauge_on_second_lap: gauge_on_second_lap.clone(),
+            };
+            let committees = CannedCommittees(c.verifier.clone());
+
+            let out = super::refetch_hole_until_answered(
+                Some(&up),
+                &committees,
+                &mut ctx,
+                B256::repeat_byte(1),
+                65,
+                "finalized_blocks",
+                &metrics,
+            )
+            .await
+            .expect("an upstream that comes up HEALS the hole; it never means data loss");
+
+            assert_eq!(out.block.height, 65, "the record is what comes back");
+            assert_eq!(
+                laps.load(SeqCst),
+                3,
+                "two silent laps were RETRIED and the third served: a single lap means the \
+                 unreachable case is being read as a verdict again"
+            );
+            assert_eq!(
+                gauge_on_second_lap.load(SeqCst),
+                1,
+                "while it waited, `dpos_sync_degraded{{reason=crash_recover}}` was UP — a \
+                 silent wait is the other half of this defect"
+            );
+            assert_eq!(
+                metrics.degraded_value(crate::sync_metrics::SyncReason::CrashRecover),
+                0,
+                "and it is cleared on success, or the node reports a park it left"
+            );
+        });
+    }
+
     // A forged cert (signed by a DIFFERENT committee than the one the trust anchor
     // reads) FAILS the BLS authentication → FATAL: the re-fetch cannot be steered by
     // a malicious upstream.
@@ -5038,7 +6237,7 @@ mod refetch_hole_tests {
             let trust_committee = committee(5); // a DIFFERENT committee
             let block = sample_order(65);
             let uf = certify(&signer_committee, 0, &block);
-            let up = FakeUpstream(Some(uf));
+            let up = FakeUpstream::serving(uf);
             let committees = CannedCommittees(trust_committee.verifier);
             let err = refetch_verified_archive_hole(
                 Some(&up),
