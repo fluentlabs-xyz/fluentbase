@@ -14,9 +14,11 @@
 //! is not one signed broadcast per recorded log:
 //!
 //! - **Never re-announce a width no greater than the last** (`previous >=
-//!   confirmed.len()`). A faithful change detector, because `record_checked_log` is
-//!   first-wins and irreversible: the set never shrinks and never changes an entry in
-//!   place, so equal length means an identical statement.
+//!   confirmed.len()`). A faithful change detector, because the published index is
+//!   first-wins per seat and irreversible (`signed_log_hash` is the FIRST-recorded hash
+//!   of a dealer; `publish_recorded_logs` never overwrites an entry): the set never
+//!   shrinks and never changes an entry in place, so equal length means an identical
+//!   statement.
 //! - **Never announce below the quorum**, whatever the trigger.
 //! - **Under [`ConfirmTrigger::Decisive`], skip intermediate widths** — the height tick
 //!   carries them.
@@ -32,8 +34,9 @@
 //! INTO that index is decided upstream by the actor's `publish_recorded_logs`: a dealer
 //! whose ceremony-journal write did not land (`nondurable_logs`) is excluded there, so
 //! the signed confirmation inherits the exclusion and never claims a log this node could
-//! not back after a restart. Do NOT add a second gate here — the exclusion is per-dealer
-//! and lives with the journal writer, which is the only place that knows a write failed.
+//! not back after a restart. Do NOT add a second gate here — the exclusion is per recorded
+//! log (`(dealer, hash)`, the hash being the one this node publishes for the seat) and
+//! lives with the journal writer, which is the only place that knows a write failed.
 
 use crate::beacon::{
     actor::{CommitteeFor, DkgLogIndex},

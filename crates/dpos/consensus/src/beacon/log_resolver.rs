@@ -5,11 +5,12 @@
 //! (the public, signed, self-verifying half of the ceremony). Those logs are
 //! re-fetched here via the architecture's OWN recovery primitive — the same
 //! `commonware_resolver::p2p` engine the marshal rides for cert backfill — keyed by
-//! `{epoch, dealer}` (a key the node already knows from the committee roster). This
-//! REPLACES the former best-effort `BEACON_CHANNEL` `LogRequest`/`LogResponse`
-//! gossip pull: the resolver owns retry / multi-peer fallback / `fetch_targeted` /
-//! rate-limiting / blocked-peer eviction, and serves ONE ~8.4 KiB log per key (never
-//! a 430 KiB blob).
+//! `{epoch, dealer, hash}`: the exact body the agreement pinned (the hash comes from
+//! a proposal under verification or from the certified artifact), never "some log
+//! of that dealer". This REPLACES the former best-effort `BEACON_CHANNEL`
+//! `LogRequest`/`LogResponse` gossip pull: the resolver owns retry / multi-peer
+//! fallback / `fetch_targeted` / rate-limiting / blocked-peer eviction, and serves
+//! ONE ~8.4 KiB log per key (never a 430 KiB blob).
 //!
 //! Reachability (verified): the beacon plane's `EpochTransition` tracks
 //! `committee[E−1] ∪ committee[E] ∪ committee[E+1]` as PRIMARY on the SAME
@@ -26,6 +27,7 @@
 //! [`crate::beacon::actor::DkgActor`] run loop over an mpsc channel + a oneshot reply
 //! (so the actor stays the sole owner of ceremony state, no shared locks).
 
+use alloy_primitives::B256;
 use bytes::{Buf, BufMut, Bytes};
 use commonware_codec::{EncodeSize, Error as CodecError, Read, ReadExt as _, Write};
 use commonware_resolver::{p2p::Producer, Consumer, Resolver};
@@ -41,32 +43,40 @@ use tracing::error;
 
 use crate::beacon::artifact::ArtifactBridge;
 
-/// Resolver key for one dealer's public log in one ceremony: `{epoch, dealer}`.
+/// Resolver key for ONE signed dealer log in one ceremony: `{epoch, dealer, hash}`.
 ///
-/// A composite `Span` (variable-size `Ord + Hash + Codec<Cfg = ()>` key): `u64`
-/// epoch ‖ 32-byte ed25519 dealer pubkey. NOT a content digest — the node already
-/// knows the roster, so it enumerates exactly the dealer keys it lacks and fetches
-/// those (no broadcast-and-hope). `Ord`/`Hash` derive from the fields; the codec is
-/// fixed-layout so it round-trips byte-identically network-wide.
+/// A composite `Span` (`Ord + Hash + Codec<Cfg = ()>` key): `u64` epoch ‖ 32-byte
+/// ed25519 dealer pubkey ‖ 32-byte content hash
+/// (`ceremony::log_hash` = `keccak256(encode(SignedDealerLog))`, the hash the
+/// agreement pins). The hash is part of the identity, not a hint: a dealer can sign
+/// two `check`-valid logs, and a fetch answered with "a log of that dealer" could
+/// deliver the one the network did NOT pin — which is exactly how a Byzantine dealer
+/// left an honest member shareless (R-002). The server answers a key with the body
+/// under that exact `(dealer, hash)` or with nothing; the requester takes the hash
+/// from the pinned set it is trying to finalize over. `Ord`/`Hash` derive from the
+/// fields; the codec is fixed-layout (72 bytes) so it round-trips byte-identically
+/// network-wide. A WIRE change on `BEACON_RESOLVER_CHANNEL` — every network is
+/// relaunched from genesis, there is no mixed-version window.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct DkgLogKey {
     pub epoch: u64,
     pub dealer: PeerPubkey,
+    pub hash: B256,
 }
 
 impl Debug for DkgLogKey {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "DkgLogKey{{epoch={}, dealer={}}}",
-            self.epoch, self.dealer
+            "DkgLogKey{{epoch={}, dealer={}, hash={}}}",
+            self.epoch, self.dealer, self.hash
         )
     }
 }
 
 impl Display for DkgLogKey {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "dkg-log[e{}/{}]", self.epoch, self.dealer)
+        write!(f, "dkg-log[e{}/{}/{}]", self.epoch, self.dealer, self.hash)
     }
 }
 
@@ -74,12 +84,13 @@ impl Write for DkgLogKey {
     fn write(&self, buf: &mut impl BufMut) {
         self.epoch.write(buf);
         self.dealer.write(buf);
+        buf.put_slice(self.hash.as_slice());
     }
 }
 
 impl EncodeSize for DkgLogKey {
     fn encode_size(&self) -> usize {
-        size_of::<u64>() + self.dealer.encode_size()
+        size_of::<u64>() + self.dealer.encode_size() + B256::len_bytes()
     }
 }
 
@@ -89,7 +100,12 @@ impl Read for DkgLogKey {
     fn read_cfg(buf: &mut impl Buf, _: &()) -> Result<Self, CodecError> {
         let epoch = u64::read(buf)?;
         let dealer = PeerPubkey::read(buf)?;
-        Ok(Self { epoch, dealer })
+        let hash = B256::from(<[u8; 32]>::read(buf)?);
+        Ok(Self {
+            epoch,
+            dealer,
+            hash,
+        })
     }
 }
 
@@ -107,12 +123,14 @@ impl Span for DkgLogKey {}
 ///
 /// The tag byte is the marshal request codec's shape (`resolver/handler.rs`
 /// keys). It is a WIRE change on this channel — a key that used to be a bare
-/// `{epoch, dealer}` now leads with a discriminant — and therefore a coordinated
+/// `{epoch, dealer}` now leads with a discriminant (and, since the hash-identity
+/// change, carries the content hash) — and therefore a coordinated
 /// release, which the `OrderBlock` shrink makes anyway.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum BeaconFetchKey {
-    /// One dealer's public log in one ceremony.
-    Log(DkgLogKey),
+    /// One dealer's public log in one ceremony. Boxed: the 72-byte log key beside
+    /// the 8-byte artifact key would otherwise size every key to the larger arm.
+    Log(Box<DkgLogKey>),
     /// The quorum-signed agreement artifact for one target epoch — the ONLY
     /// source of `PK_epoch` for a node that never ran the ceremony.
     Artifact { epoch: u64 },
@@ -207,7 +225,7 @@ impl Read for BeaconFetchKey {
 
     fn read_cfg(buf: &mut impl Buf, _: &()) -> Result<Self, CodecError> {
         match u8::read(buf)? {
-            Self::TAG_LOG => Ok(Self::Log(DkgLogKey::read(buf)?)),
+            Self::TAG_LOG => Ok(Self::Log(Box::new(DkgLogKey::read(buf)?))),
             Self::TAG_ARTIFACT => Ok(Self::Artifact {
                 epoch: u64::read(buf)?,
             }),
@@ -246,18 +264,22 @@ impl<R: Resolver<Key = BeaconFetchKey>> Resolver for LogFetcher<R> {
     type PublicKey = R::PublicKey;
 
     async fn fetch(&mut self, key: Self::Key) {
-        self.0.fetch(BeaconFetchKey::Log(key)).await;
+        self.0.fetch(BeaconFetchKey::Log(Box::new(key))).await;
     }
 
     async fn fetch_all(&mut self, keys: Vec<Self::Key>) {
         self.0
-            .fetch_all(keys.into_iter().map(BeaconFetchKey::Log).collect())
+            .fetch_all(
+                keys.into_iter()
+                    .map(|key| BeaconFetchKey::Log(Box::new(key)))
+                    .collect(),
+            )
             .await;
     }
 
     async fn fetch_targeted(&mut self, key: Self::Key, targets: NonEmptyVec<Self::PublicKey>) {
         self.0
-            .fetch_targeted(BeaconFetchKey::Log(key), targets)
+            .fetch_targeted(BeaconFetchKey::Log(Box::new(key)), targets)
             .await;
     }
 
@@ -269,14 +291,14 @@ impl<R: Resolver<Key = BeaconFetchKey>> Resolver for LogFetcher<R> {
             .fetch_all_targeted(
                 requests
                     .into_iter()
-                    .map(|(key, targets)| (BeaconFetchKey::Log(key), targets))
+                    .map(|(key, targets)| (BeaconFetchKey::Log(Box::new(key)), targets))
                     .collect(),
             )
             .await;
     }
 
     async fn cancel(&mut self, key: Self::Key) {
-        self.0.cancel(BeaconFetchKey::Log(key)).await;
+        self.0.cancel(BeaconFetchKey::Log(Box::new(key))).await;
     }
 
     async fn clear(&mut self) {
@@ -326,7 +348,7 @@ impl Consumer for BeaconFetchHandler {
 
     async fn deliver(&mut self, key: Self::Key, value: Self::Value) -> bool {
         match key {
-            BeaconFetchKey::Log(key) => self.logs.deliver(key, value).await,
+            BeaconFetchKey::Log(key) => self.logs.deliver(*key, value).await,
             BeaconFetchKey::Artifact { epoch } => self.artifacts.deliver(epoch, value.as_ref()),
         }
     }
@@ -338,7 +360,7 @@ impl Consumer for BeaconFetchHandler {
         // artifact seam's caller learns from a delivered `NotYet` or from its own
         // bounded window; the log side re-issues its missing targets each tick.
         if let BeaconFetchKey::Log(key) = key {
-            self.logs.failed(key, failure).await;
+            self.logs.failed(*key, failure).await;
         }
     }
 }
@@ -348,7 +370,7 @@ impl Producer for BeaconFetchHandler {
 
     async fn produce(&mut self, key: Self::Key) -> oneshot::Receiver<Bytes> {
         match key {
-            BeaconFetchKey::Log(key) => self.logs.produce(key).await,
+            BeaconFetchKey::Log(key) => self.logs.produce(*key).await,
             BeaconFetchKey::Artifact { epoch } => {
                 // ALWAYS an answer, never a dropped responder: a producer that
                 // has nothing says `NotYet`, which is what lets the requester
@@ -423,11 +445,11 @@ impl Consumer for LogHandler {
 
     async fn failed(&mut self, _: Self::Key, _: Self::Failure) {
         // No-op retry: the resolver retries on its own AND the actor re-issues the
-        // missing `{epoch, dealer}` targets each tick (off the live ceremony in-window
+        // missing `{epoch, dealer, hash}` targets each tick (off the live ceremony in-window
         // and off `recompute_pending` past the boundary, within the journal-retention
         // window), so a transiently-unavailable log is re-fetched to completion rather
         // than sat out. A log NO peer holds simply backs off with the epoch's age-out
-        // (the fetch set is bounded to `dealers(E) − held`), so this is not a storm.
+        // (the fetch set is bounded to `pinned(E) − held`), so this is not a storm.
     }
 }
 
@@ -466,10 +488,11 @@ mod tests {
     fn the_shared_key_space_separates_its_two_subjects() {
         let mut rng = StdRng::seed_from_u64(11);
         let dealer = PrivateKey::random(&mut rng).public_key();
-        let log = BeaconFetchKey::Log(DkgLogKey {
+        let log = BeaconFetchKey::Log(Box::new(DkgLogKey {
             epoch: 7,
             dealer: dealer.clone(),
-        });
+            hash: B256::repeat_byte(0x7a),
+        }));
         let artifact = BeaconFetchKey::Artifact { epoch: 7 };
         assert_eq!(
             BeaconFetchKey::decode(log.encode().as_ref()).expect("decode"),
@@ -551,6 +574,7 @@ mod tests {
             logs.fetch(DkgLogKey {
                 epoch: 9,
                 dealer: dealer.clone(),
+                hash: B256::ZERO,
             })
             .await;
             assert_eq!(spy.0.lock().unwrap().len(), 2);
@@ -563,7 +587,12 @@ mod tests {
                 vec![BeaconFetchKey::Artifact { epoch: 9 }],
                 "retain dropped the artifact fetch this handle does not own"
             );
-            logs.fetch(DkgLogKey { epoch: 9, dealer }).await;
+            logs.fetch(DkgLogKey {
+                epoch: 9,
+                dealer,
+                hash: B256::ZERO,
+            })
+            .await;
             logs.clear().await;
             assert_eq!(
                 *spy.0.lock().unwrap(),
@@ -573,27 +602,78 @@ mod tests {
         });
     }
 
+    /// The wire layout of the log key, byte for byte: `u64_be(epoch) ‖ dealer(32) ‖
+    /// hash(32)`, 72 bytes, no length prefixes — so two nodes on the same binary
+    /// encode one key identically and a peer's decode of it names the same body.
+    /// The hash is part of the identity: two keys that differ ONLY in the hash are
+    /// different keys (different bytes, unequal, ordered), which is what makes
+    /// "fetch the pinned body of this dealer, not its other one" expressible on the
+    /// wire at all.
     #[test]
     fn dkg_log_key_round_trips_and_orders_by_epoch_then_dealer() {
         let mut rng = StdRng::seed_from_u64(3);
         let a = PrivateKey::random(&mut rng).public_key();
         let b = PrivateKey::random(&mut rng).public_key();
+        let hash = B256::repeat_byte(0xC3);
         let key = DkgLogKey {
             epoch: 7,
             dealer: a.clone(),
+            hash,
         };
-        let decoded = DkgLogKey::decode(key.encode().as_ref()).expect("decode");
+        let bytes = key.encode();
+        assert_eq!(bytes.len(), 72, "fixed layout: 8 + 32 + 32");
+        assert_eq!(key.encode_size(), 72);
+        assert_eq!(&bytes[..8], &7u64.to_be_bytes(), "epoch leads, big-endian");
+        assert_eq!(&bytes[8..40], a.encode().as_ref(), "the dealer key follows");
+        assert_eq!(
+            &bytes[40..],
+            hash.as_slice(),
+            "the content hash closes the key"
+        );
+        let decoded = DkgLogKey::decode(bytes.as_ref()).expect("decode");
+        assert_eq!(decoded, key);
+        // The envelope the wire carries: ONE tag byte, then the 72-byte key — 73
+        // bytes, the tag leading, the key's bytes unchanged by the boxing.
+        let envelope = BeaconFetchKey::Log(Box::new(key.clone()));
+        let wire = envelope.encode();
+        assert_eq!(wire.len(), 73, "tag + 72");
+        assert_eq!(envelope.encode_size(), 73);
+        assert_eq!(wire[0], BeaconFetchKey::TAG_LOG, "the subject tag leads");
+        assert_eq!(&wire[1..], bytes.as_ref(), "the key follows verbatim");
+        assert_eq!(
+            BeaconFetchKey::decode(wire.as_ref()).expect("decode"),
+            envelope
+        );
         assert_eq!(decoded.epoch, 7);
         assert_eq!(decoded.dealer, a);
-        // Epoch is the primary sort key (the u64 leads the layout).
+        assert_eq!(decoded.hash, hash);
+        assert!(
+            DkgLogKey::decode(&bytes[..71]).is_err(),
+            "a key short of its hash does not decode"
+        );
+        // Epoch is the primary sort key (the u64 leads the layout), the dealer the
+        // second, the hash the third — and a different hash IS a different key.
         let lo = DkgLogKey {
             epoch: 6,
             dealer: b.clone(),
+            hash,
         };
         let hi = DkgLogKey {
             epoch: 7,
-            dealer: b,
+            dealer: b.clone(),
+            hash,
         };
         assert!(lo < hi, "lower epoch orders first regardless of dealer");
+        let other_body = DkgLogKey {
+            epoch: 7,
+            dealer: b,
+            hash: B256::repeat_byte(0xC4),
+        };
+        assert_ne!(
+            hi, other_body,
+            "same epoch + dealer, other hash: another key"
+        );
+        assert_ne!(hi.encode(), other_body.encode());
+        assert!(hi < other_body, "the hash is the last sort key");
     }
 }

@@ -31,6 +31,12 @@ pub struct BeaconMetrics {
     /// A live-DKG ceremony failed to finalize after the ready-probe (epoch beacon
     /// stalls until a reshare / next ceremony).
     pub dkg_ceremony_fail: Counter,
+    /// A dealer was PROVEN to have signed two distinct `check`-valid logs for one
+    /// epoch on this node — the pair is journaled as evidence and the dealer is
+    /// locally banned from gossip for that epoch (`ceremony.rs`). Counted once per
+    /// `(epoch, dealer)` on the node that saw both logs; nothing goes on-chain
+    /// (Д-6 defer). 0 on an honest committee.
+    pub dkg_dealer_equivocation: Counter,
     /// A per-epoch engine self-demoted to the cert-follow plane because it holds no
     /// local beacon polynomial for the epoch (`NoBeaconPolynomial`).
     pub engine_demoted_no_polynomial: Counter,
@@ -47,7 +53,7 @@ pub struct BeaconMetrics {
     pub engine_demoted_geometry_unfrozen: Counter,
     /// A consensus-pinned dealer-log index named a position outside the committed
     /// committee, and the ceremony skipped it. Nothing can ever satisfy such an entry
-    /// (the resolver fetches per-DEALER), so before the skip it held `all_held=false`
+    /// (the resolver fetches a `(dealer, hash)` of the roster), so before the skip it held `all_held=false`
     /// forever and wedged the epoch's DKG in silence. With the `order_block` codec
     /// bound in place an honest chain cannot produce one: non-zero means either a
     /// Byzantine proposer got a block past an accept-biased vote gate, or the
@@ -214,6 +220,13 @@ impl BeaconMetrics {
             "dkg_ceremony_ok_total",
             "Live-DKG ceremonies that finalized (PK_E + share stored).",
             self.dkg_ceremony_ok.clone(),
+        );
+        ctx.register(
+            "dpos_dkg_dealer_equivocation_total",
+            "Dealers proven on this node to have signed two distinct valid DKG logs for one \
+             epoch: the pair is kept as evidence and the dealer is locally banned from gossip \
+             for that epoch. Nothing is sent on-chain.",
+            self.dkg_dealer_equivocation.clone(),
         );
         ctx.register(
             "dkg_ceremony_fail_total",

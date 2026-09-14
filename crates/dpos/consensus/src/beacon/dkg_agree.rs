@@ -373,9 +373,10 @@ impl ConfirmPool {
     /// stored.
     ///
     /// Widest-wins rather than latest-wins: a member's body-checked set only ever
-    /// grows (`record_checked_log` is first-wins and irreversible), so the widest
-    /// confirmation it ever signed is its truest one, and a replayed older
-    /// confirmation cannot narrow what this node counts.
+    /// grows (the published index is first-wins per seat — `signed_log_hash` is the
+    /// FIRST-recorded hash of a dealer and `publish_recorded_logs` never overwrites an
+    /// entry), so the widest confirmation it ever signed is its truest one, and a
+    /// replayed older confirmation cannot narrow what this node counts.
     pub(crate) fn record(&self, committee: &[PeerPubkey], confirm: ShareConfirm) -> bool {
         if !confirm_is_countable(&confirm, self.namespace(), committee, confirm.target_epoch) {
             return false;
@@ -775,7 +776,7 @@ pub(crate) struct DkgAgree<E, R, L> {
     /// is keyed by.
     committee: Vec<PeerPubkey>,
     bodies: BodyMailbox,
-    /// The existing `{epoch, dealer}` dealer-log resolver.
+    /// The existing `{epoch, dealer, hash}` dealer-log resolver.
     logs: R,
     /// `epoch → idx → keccak256(SignedDealerLog)` for the logs this node has
     /// recorded with the body checked. Read to build a proposal; never read to
@@ -1284,8 +1285,9 @@ fn rejects_structurally(
 /// Parks (never resolves) on: a body engine that has gone away, an unreadable
 /// committee, and — the case this whole function exists for — a pinned dealer
 /// log whose body this node does not hold. That last one is a delivery race, not
-/// a bad proposal: the body arrives over the existing `{epoch, dealer}`
-/// resolver, and a later round proposing the same set is accepted. Answering it
+/// a bad proposal: the body arrives over the existing `{epoch, dealer, hash}`
+/// resolver (asked by the proposal's own hash for that seat), and a later round
+/// proposing the same set is accepted. Answering it
 /// with `false` would nullify the view instead.
 impl<E, R, L> DkgAgree<E, R, L>
 where
@@ -1325,7 +1327,7 @@ where
         }
 
         let set: BTreeMap<u8, B256> = proposal.logs.iter().copied().collect();
-        match self.pinned.derive(set).await {
+        match self.pinned.derive(set.clone()).await {
             PinnedDerive::Derived(group_key) => {
                 if *group_key == proposal.group_key {
                     return Verdict::Accept;
@@ -1349,7 +1351,14 @@ where
                     ?indices,
                     "dkg agree: parking verify on missing dealer-log bodies"
                 );
-                fetch_bodies(&mut self.logs, &self.committee, target_epoch, &indices).await;
+                fetch_bodies(
+                    &mut self.logs,
+                    &self.committee,
+                    target_epoch,
+                    &indices,
+                    &set,
+                )
+                .await;
                 Verdict::Park
             }
             PinnedDerive::Unavailable => {
@@ -1363,8 +1372,19 @@ where
     }
 }
 
-async fn fetch_bodies<R>(logs: &mut R, committee: &[PeerPubkey], epoch: u64, indices: &[u8])
-where
+/// Ask the roster for the bodies of the seats in `indices`, each by the EXACT hash
+/// the proposal pins for that seat (`pinned[idx]`). The hash is what makes the fetch
+/// answerable with the body under verification and nothing else: a dealer of which
+/// this node holds a DIFFERENT log is `Missing` here too, and only a by-hash fetch
+/// can fill that seat. A seat with no committee position or no pinned hash is
+/// skipped — nothing could be asked for it.
+async fn fetch_bodies<R>(
+    logs: &mut R,
+    committee: &[PeerPubkey],
+    epoch: u64,
+    indices: &[u8],
+    pinned: &BTreeMap<u8, B256>,
+) where
     R: Resolver<Key = DkgLogKey, PublicKey = PeerPubkey>,
 {
     let Ok(targets) = NonEmptyVec::try_from(committee.to_vec()) else {
@@ -1372,12 +1392,13 @@ where
     };
     let requests: Vec<_> = indices
         .iter()
-        .filter_map(|idx| committee.get(*idx as usize))
-        .map(|dealer| {
+        .filter_map(|idx| Some((committee.get(*idx as usize)?, pinned.get(idx)?)))
+        .map(|(dealer, hash)| {
             (
                 DkgLogKey {
                     epoch,
                     dealer: dealer.clone(),
+                    hash: *hash,
                 },
                 targets.clone(),
             )
@@ -2338,16 +2359,21 @@ mod tests {
                     "verify resolved on a missing body instead of parking"
                 );
 
+                // Each seat is asked for by the PROPOSAL'S OWN hash for it — the
+                // body under verification, not "a log of that dealer".
                 let asked = resolver.0.lock().unwrap().clone();
+                let logs = quorum_logs();
                 for idx in [1usize, 3] {
                     assert!(
                         asked.contains(&DkgLogKey {
                             epoch: TARGET,
                             dealer: committee[idx].clone(),
+                            hash: logs[idx].1,
                         }),
-                        "verify parked without asking the resolver for seat {idx}"
+                        "verify parked without asking the resolver for seat {idx} by its pinned hash"
                     );
                 }
+                assert_eq!(asked.len(), 2, "exactly the two missing seats were asked for");
             });
         }
 

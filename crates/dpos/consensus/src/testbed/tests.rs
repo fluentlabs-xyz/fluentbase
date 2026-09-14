@@ -3085,36 +3085,44 @@ fn committee_seats(seed: u64, n: usize) -> Vec<u8> {
 /// `seal_dealings` broadcast, node 0 receives a second, independently dealt and
 /// validly signed log of the same dealer over the same `Info`.
 ///
-/// **What R-002 predicted** (`.dpos-study/REGISTER.md`, R-002): the confirms are
-/// hash-sensitive, the agreement pins the majority's hash, and the victim's
-/// `all_held` is false FOREVER — no refetch (the dealer is already in
-/// `recorded`), recompute looping — so the victim holds no share for the epoch
-/// and every carry-forward epoch after it.
+/// **What R-002 predicted, and what the run showed until 2026-09-14:** the
+/// confirms are hash-sensitive, the agreement pins the majority's hash, and the
+/// victim's `all_held` was false FOREVER — no refetch, because the dealer was
+/// already in a per-DEALER `recorded` set (`ceremony.rs::record_checked_log`,
+/// first-wins) and the resolver key was `{epoch, dealer}` with no way to name the
+/// OTHER body. Node 0 finished epoch 2 with `dkg_ceremony_ok = 0` and
+/// `epoch_engine_demoted_no_polynomial = 2`: it knew `PK_2`, it held no share
+/// under it (branch (b), REPRODUCED 2026-09-09).
 ///
-/// **What the run showed (2026-09-09): branch (b) — REPRODUCED, for the victim.**
-/// Node 0 finishes the epoch-2 ceremony with `dkg_ceremony_ok = 0` and
-/// `epoch_engine_demoted_no_polynomial = 2`, while nodes 1, 2 and 3 all mint
-/// (`ok = 1`, no demote) and hold the same `PK_2`. Node 0 holds the AGREED
-/// ARTIFACT for epoch 2 — it knows the key, it just has no share under it. The
-/// CHAIN does not stop: three signers is exactly `quorum(4)`, so all four nodes
-/// reach 72 with no halt and no ERROR line. The register's chain-stopping half
-/// needs the second link, which the test below runs.
+/// **What the run shows now (5.3 заход Б, log identity `(dealer, hash)`):** the
+/// victim records the forged log under `(dealer, h2)`, the artifact pins
+/// `(dealer, h1)`, `fetch_missing_logs` asks the roster for exactly `(2, dealer,
+/// h1)` (`beacon/actor.rs`, by pinned hash), a peer serves that body and nothing
+/// else (`serve_log`, exact `(dealer, hash)`), the victim records it as the
+/// dealer's SECOND valid log — the equivocation pair is journaled as evidence, the
+/// dealer is locally banned from gossip, one WARN line names both hashes — and the
+/// victim finalizes over the pinned set like everyone else. Branch (a): the victim
+/// keeps its share, and the split costs the network nothing.
 ///
-/// **Which branch would be vacuous.** Branch (a) — "the victim kept its share" —
-/// is what a COMPLETELY HONEST run also produces, so it would pass over a wrapper
-/// that swapped nothing. That is why the tamper's witness runs first and why one
-/// of its parts is the victim's OWN `ShareConfirm`: it names the forged hash at
-/// the dealer's seat, which no honest run can.
+/// **Which branch would be vacuous.** Branch (a) is what a COMPLETELY HONEST run
+/// also produces, so it would pass over a wrapper that swapped nothing. That is
+/// why the tamper's witness runs first and why one of its parts is the victim's
+/// OWN `ShareConfirm`: it names the forged hash at the dealer's seat, which no
+/// honest run can — and the victim's confirmation KEEPS naming it after the
+/// refetch (`signed_log_hash` is the FIRST-recorded hash, and the published index
+/// is first-wins per seat), so this witness stays live. The second witness is the
+/// evidence itself: exactly one node counted an equivocation, and its WARN line
+/// carries the two hashes the wrapper reported.
 ///
 /// Falsifier: the wrapper not swapping (`reveals_swapped == 0`), the two logs
 /// hashing equal, either log failing the receiver's own `check`, the victim's
-/// confirmation not naming the forged log; a victim that keeps its share (branch
-/// (a) — then the first-wins `recorded` rule does not split the committee and the
-/// register is wrong); a second node demoted (then the split is not confined to
-/// the addressed victim); a halt.
+/// confirmation not naming the forged log; a victim WITHOUT a share (branch (b) —
+/// then the pinned body was not refetched by hash and R-002 is back); any node
+/// demoted; an equivocation counted on a node other than the victim (the wrapper
+/// sent the second log to one node only); a halt or an ERROR line.
 #[cfg(feature = "dpos-devnet-byzantine")]
 #[test]
-fn a_dealer_with_two_logs_leaves_the_addressed_victim_without_a_share() {
+fn a_two_log_dealers_victim_refetches_the_pinned_log_and_keeps_its_share() {
     let mut stand = Stand::new(StandConfig::live(4, 1));
     stand.node(1).role(Role::TwoReveals {
         withhold_partials: false,
@@ -3137,13 +3145,14 @@ fn a_dealer_with_two_logs_leaves_the_addressed_victim_without_a_share() {
         "a log the receiver's own `check` would drop is not an equivocation: {byz:?}"
     );
     // The split reached `DkgCeremony::record_checked_log` on the VICTIM, and this is
-    // an observation rather than an inference from the share it ends up without: a
+    // an observation rather than an inference from the share it ends up with: a
     // `ShareConfirm` is minted from `recorded_dkg_logs` alone
     // (`beacon/confirmations.rs::mint`), and the only writer of the hash at ANOTHER
     // member's seat is `record_checked_log` (`ceremony.rs`). The ceremony's other
-    // two writers of `signed_logs` cannot produce this entry: `seal_dealings` files
-    // only the node's OWN log, and the journal resume replays records those two
-    // wrote — and no node restarts here.
+    // two writers of the recorded set cannot produce this entry: `seal_dealings`
+    // files only the node's OWN log, and the journal resume replays records those
+    // two wrote — and no node restarts here. The refetched pinned body does not
+    // move it either: the index publishes the FIRST-recorded hash per seat.
     //
     // Scoped to the epoch the confirmation was framed under, not to "the last one":
     // a longer run mints one per target epoch and the last would then be a property
@@ -3190,57 +3199,85 @@ fn a_dealer_with_two_logs_leaves_the_addressed_victim_without_a_share() {
         out.metric(0, "epoch_engine_demoted_no_polynomial_total")
     );
     eprintln!(
-        "(R-002/a) branch = {} | heights={:?} log1={:?} log2={:?} virtual={:?} real={:?}",
+        "(R-002/a) branch = {} | heights={:?} log1={:?} log2={:?} equivocations={:?} virtual={:?} real={:?}",
         if victim_demoted {
             "(b) REPRODUCED — the victim holds no share"
         } else {
-            "(a) NOT reproduced — the victim kept its share"
+            "(a) the victim refetched the pinned log by hash and kept its share"
         },
         out.heights,
         byz.log1_hash,
         byz.log2_hash,
+        (0..4)
+            .map(|i| out.metric(i, "dpos_dkg_dealer_equivocation_total"))
+            .collect::<Vec<_>>(),
         out.virtual_elapsed,
         out.real_elapsed
     );
     assert!(
-        victim_demoted,
-        "branch (a) was observed: the victim minted a share despite holding the other log — \
-         R-002's `record_checked_log` split did not happen (metrics: ok={:?}, demote={:?})",
+        victim_minted,
+        "branch (b) was observed: the victim holds no share for the epoch — the pinned body \
+         was not refetched by hash and R-002's split is back (metrics: ok={:?}, demote={:?})",
         out.metric(0, "dkg_ceremony_ok_total"),
         out.metric(0, "epoch_engine_demoted_no_polynomial_total")
     );
 
-    // (3) The observed branch, in full. Most of what follows an HONEST run also
-    // satisfies — it carries "and the chain goes on anyway", not "the tampering
-    // worked". The two load-bearing lines are the victim's `dkg_ceremony_ok == 0`
-    // and the `victim_demoted` above; everything else is the surrounding claim.
+    // (3) The evidence: the victim, and only the victim, proved the equivocation —
+    // it is the one node that ever held both bodies — and said so once, naming the
+    // hashes the wrapper reported (first = the forged log gossip delivered, second =
+    // the pinned original the resolver fetched).
+    for i in 0..4 {
+        assert_eq!(
+            out.metric(i, "dpos_dkg_dealer_equivocation_total"),
+            Some(if i == 0 { 1.0 } else { 0.0 }),
+            "node {i}: the equivocation is proven exactly where both bodies met"
+        );
+    }
+    let warned = out.logs_containing("dealer signed TWO distinct valid logs");
+    assert_eq!(
+        warned.len(),
+        1,
+        "one WARN line per (epoch, dealer), on the one node that saw both: {:?}",
+        warned.iter().map(|l| l.text.as_str()).collect::<Vec<_>>()
+    );
+    let (h1, h2) = (
+        byz.log1_hash.expect("witnessed above"),
+        byz.log2_hash.expect("witnessed above"),
+    );
+    assert!(
+        warned[0].text.contains(&format!("first={h2} "))
+            && warned[0].text.contains(&format!("second={h1} "))
+            && warned[0].text.contains("evidence=\"journaled\""),
+        "the WARN line does not carry the pair in the order the victim met it: {}",
+        warned[0].text
+    );
+
+    // (4) The observed branch, in full: nobody lost anything. Most of what follows
+    // an HONEST run also satisfies — it carries "and the chain goes on", not "the
+    // tampering worked"; the load-bearing lines are the victim's `dkg_ceremony_ok`
+    // and the evidence above.
     assert!(!out.timed_out, "heights {:?}", out.heights);
     assert!(out.halted.is_empty(), "{:?}", out.halted);
     assert!(out.errors().is_empty(), "{:?}", out.errors());
     assert_eq!(out.diverged, None);
     out.assert_lockstep_except(&[]);
-    assert_eq!(
-        out.metric(0, "dkg_ceremony_ok_total"),
-        Some(0.0),
-        "the victim must not have finished the ceremony"
-    );
-    for i in [1, 2, 3] {
+    for i in 0..4 {
         assert_eq!(
             out.metric(i, "dkg_ceremony_ok_total"),
             Some(1.0),
-            "node {i} (not the victim) must have minted"
+            "node {i} must have minted — the split is healed by the refetch, not survived"
         );
         assert_eq!(
             out.metric(i, "epoch_engine_demoted_no_polynomial_total"),
             Some(0.0),
-            "node {i} (not the victim) must keep its share — the split is addressed"
+            "node {i} must keep its share"
         );
     }
-    // The victim knows the KEY (the agreement's artifact reaches it) and has no
-    // SHARE under it: that is precisely the state R-002 describes.
+    // Every node knows the KEY and signs under it: the seeds of the epoch are agreed
+    // on all four, the victim included.
     let pk = pk_of(artifact_on_every_node(&out, &[0, 1, 2, 3], 2));
     for h in 2 * EPOCH_LEN..=*out.heights.iter().min().unwrap() {
-        seed_agreed_at(&out, &[1, 2, 3], h, 2, &pk);
+        seed_agreed_at(&out, &[0, 1, 2, 3], h, 2, &pk);
     }
 }
 
@@ -3250,47 +3287,42 @@ fn a_dealer_with_two_logs_leaves_the_addressed_victim_without_a_share() {
 /// `CombinedScheme::sign` therefore casts NO VOTE at all
 /// (`bls/src/combined_scheme.rs:284-287`).
 ///
-/// **What R-002 predicted:** with the victim shareless, the remaining honest
-/// signers are `n − 1 − f = t − 1`, so every seed needs the byzantine dealer's
-/// partial and withholding it means no certificate of the epoch can be assembled
-/// — the chain stops. The register marked the threshold `t = quorum(n)` as
-/// `[LIKELY]`, unread since 09-03.
+/// **What R-002 predicted, and what the run showed until 2026-09-14:** with the
+/// victim shareless, the remaining honest signers were `n − 1 − f = t − 1`, so
+/// every seed needed the byzantine dealer's partial and withholding it meant no
+/// certificate of the epoch could be assembled — all four nodes stopped at 63,
+/// silently (branch (b1), REPRODUCED 2026-09-09). ONE byzantine dealer had
+/// disabled a SECOND, honest node, and four minus two is below `quorum(4)`.
 ///
-/// **What the run showed (2026-09-09): branch (b1).** All four nodes stop at 63,
-/// the last block of the pre-beacon epoch; `halted` is empty and there is not one
-/// ERROR line, so the stop is SILENT. No node derives 64. What that DOES pin: ONE
-/// byzantine dealer disabled a SECOND, honest node — the victim of the log split
-/// above — and four minus two is below `quorum(4)`, so the damage of a single
-/// participant reached past the BFT bound.
+/// **What the run shows now (5.3 заход Б):** the second link is gone with the
+/// first. The victim refetches the pinned body by hash and holds its share (the
+/// test above), so the honest signers are `n − 1 = 3 = quorum(4)`: nodes 0, 2
+/// and 3 attest with their partials, the withholding dealer is ONE silent node —
+/// `f`, not `f + 1` — and the chain crosses 64 and runs to 72 with every seed of
+/// epoch 2 agreed on every node. Branch (b2). The stop was never a property of
+/// the withholding; it was the price of the shareless victim.
 ///
-/// **What it does NOT pin, and the register's phrasing hides it.** A withheld seed
-/// partial is not a seedless vote — it is NO VOTE: `CombinedScheme::sign` returns
-/// `None` the moment the oracle does (`bls/src/combined_scheme.rs:284-287`), and a
-/// vote that did carry `seed: None` in a beacon-active epoch is rejected whole by
-/// `verify_attestation` (the `None => false` arm). So the seed threshold and the
-/// multisig quorum cannot be separated by any run: with the victim withheld and
-/// this node silent, two of four can attest, and 2 < `N3f1::quorum(4) = 3` stops
-/// the chain BEFORE any seed is assembled, whatever the seed threshold is. The
-/// threshold itself is READ, not measured here — `assemble` computes it as
-/// `M::quorum(participants)` from the same fault model the vote half quorums under
-/// (`bls/src/combined_scheme.rs:387-388`) — and the register's `[LIKELY]` is
-/// settled by that line, not by this test.
+/// **What this does NOT say, and the old (b2) wording got wrong.** Crossing 64
+/// here does not mean a vote with no seed partial was counted: the three votes
+/// that form each quorum all carry partials (`verify_attestation` rejects a
+/// beacon-epoch vote with `seed: None` whole), and the withholding node casts no
+/// vote at all. The seed threshold and the multisig quorum still cannot be
+/// separated by any run — `assemble` computes it as `M::quorum(participants)`
+/// (`bls/src/combined_scheme.rs:387-388`) — and three honest partials meet both.
 ///
-/// **Which branch would be vacuous.** Branch (b2) — "the chain crossed 64" — is
-/// what an honest run produces, so it would pass over a wrapper that withheld
-/// nothing; `withhold_probe == Some((true, false))` is what rules that out. Branch
-/// (b2) is also NOT the threshold falsifier it was first written as: crossing 64
-/// here would mean a vote with no seed partial was COUNTED, i.e. the
-/// `verify_attestation` arm above stopped applying.
+/// **Which branch would be vacuous.** Branch (b2) is what an honest run produces,
+/// so it would pass over a wrapper that withheld nothing;
+/// `withhold_probe == Some((true, false))` and `schemes_withheld >= 1` are what
+/// rule that out, and the victim's `dkg_ceremony_ok == 1` is what ties the verdict
+/// to the refetch rather than to a quorum the withholding node joined.
 ///
 /// Falsifier: `withhold_probe != Some((true, false))` (then the node had no
-/// partial to withhold and the stop says nothing); a chain that crosses 64 (branch
-/// (b2) — then an attestation without a partial was counted toward a quorum); a
-/// halt latch or an ERROR line (then the stop is loud, and "silent" is the part
-/// that makes this a blocker).
+/// partial to withhold and the crossing says nothing); a stop at 63 (branch (b1)
+/// — then the victim is shareless again and one dealer disables two nodes); a
+/// halt latch or an ERROR line; a victim without a share.
 #[cfg(feature = "dpos-devnet-byzantine")]
 #[test]
-fn a_two_log_dealer_that_also_withholds_its_partial_stops_the_chain_silently() {
+fn a_two_log_dealer_that_also_withholds_its_partial_is_one_silent_node_within_f() {
     let mut stand = Stand::new(StandConfig::live(4, 1));
     stand.node(1).role(Role::TwoReveals {
         withhold_partials: true,
@@ -3300,6 +3332,7 @@ fn a_two_log_dealer_that_also_withholds_its_partial_stops_the_chain_silently() {
     // (1) Both tampers' own witnesses.
     let byz = &out.byz[1];
     assert!(byz.reveals_swapped >= 1, "{byz:?}");
+    assert_eq!(byz.reveals_seen, byz.reveals_swapped, "{byz:?}");
     assert!(
         byz.log1_hash.is_some() && byz.log1_hash != byz.log2_hash,
         "{byz:?}"
@@ -3321,7 +3354,7 @@ fn a_two_log_dealer_that_also_withholds_its_partial_stops_the_chain_silently() {
     eprintln!(
         "(R-002/b) branch = {} | heights={:?} virtual={:?} real={:?}",
         if crossed {
-            "(b2) NOT reproduced — a quorum formed without the withheld partial"
+            "(b2) three honest signers meet quorum(4) — the withholding node is one silent node"
         } else {
             "(b1) REPRODUCED — the chain stops at the bootstrap boundary"
         },
@@ -3330,41 +3363,42 @@ fn a_two_log_dealer_that_also_withholds_its_partial_stops_the_chain_silently() {
         out.real_elapsed
     );
     assert!(
-        !crossed,
-        "branch (b2) was observed: some node crossed {} while two of four could attest, so a \
-         vote carrying no seed partial was counted toward a quorum \
-         (`bls/src/combined_scheme.rs::verify_attestation`) — heights {:?}",
+        crossed,
+        "branch (b1) was observed: every node parked below {} — the victim is shareless again \
+         and one dealer disabled two nodes (heights {:?}, victim ok={:?})",
         2 * EPOCH_LEN,
-        out.heights
+        out.heights,
+        out.metric(0, "dkg_ceremony_ok_total")
     );
 
-    // (3) The observed branch, in full: a SILENT stop one block short.
-    assert_eq!(
-        out.heights,
-        vec![2 * EPOCH_LEN - 1; 4],
-        "every node is expected to park on the last block of the pre-beacon epoch"
-    );
-    assert!(out.timed_out, "the run is expected to end on its deadline");
-    assert!(
-        out.halted.is_empty(),
-        "the stop must be silent: {:?}",
-        out.halted
-    );
-    assert!(
-        out.errors().is_empty(),
-        "the stop must be silent: {:?}",
-        out.errors()
-    );
+    // (3) The observed branch, in full: a chain that runs on three signers.
+    assert!(!out.timed_out, "heights {:?}", out.heights);
+    assert!(out.halted.is_empty(), "{:?}", out.halted);
+    assert!(out.errors().is_empty(), "{:?}", out.errors());
+    assert_eq!(out.diverged, None);
+    out.assert_lockstep_except(&[]);
     seedless_on_every_node(&out, &[0, 1, 2, 3], 1..2 * EPOCH_LEN);
-    // The victim is shareless for the same reason as in the test above, and the
-    // other two members did mint — so what is missing is one PARTIAL, not a key.
-    assert_eq!(out.metric(0, "dkg_ceremony_ok_total"), Some(0.0));
-    for i in [1, 2, 3] {
+    // The victim minted for the same reason as in the test above — the pinned body
+    // reached it by hash — and so did everyone else: what is withheld is one
+    // PARTIAL, and three remain.
+    for i in 0..4 {
         assert_eq!(
             out.metric(i, "dkg_ceremony_ok_total"),
             Some(1.0),
             "node {i}"
         );
+    }
+    for i in 0..4 {
+        assert_eq!(
+            out.metric(i, "dpos_dkg_dealer_equivocation_total"),
+            Some(if i == 0 { 1.0 } else { 0.0 }),
+            "node {i}: the equivocation is proven exactly where both bodies met — on the \
+             victim's refetch, and nowhere else"
+        );
+    }
+    let pk = pk_of(artifact_on_every_node(&out, &[0, 1, 2, 3], 2));
+    for h in 2 * EPOCH_LEN..=*out.heights.iter().min().unwrap() {
+        seed_agreed_at(&out, &[0, 1, 2, 3], h, 2, &pk);
     }
 }
 

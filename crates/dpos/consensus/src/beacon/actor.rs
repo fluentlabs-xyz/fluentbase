@@ -40,7 +40,10 @@
 
 use crate::beacon::{
     artifact::ChangedAt,
-    ceremony::{recompute_scoped, CeremonyOutput, DkgCeremony, Outgoing, Step, Target},
+    ceremony::{
+        log_hash, recompute_scoped, CeremonyOutput, DealerEquivocation, DkgCeremony, LogId,
+        Outgoing, Step, Target,
+    },
     confirmations::{ConfirmTrigger, Confirmations},
     dkg_agree::{AgreedArtifact, ConfirmPool, PinnedDerive, PinnedLogs, ShareConfirm},
     dkg_msg::{DealerReveal, DkgBody, DkgMsg},
@@ -153,15 +156,17 @@ pub type AgreedOutcomeAt =
 /// The callee spawns and this returns immediately.
 pub type PullArtifact = Arc<dyn Fn(u64) + Send + Sync>;
 
-/// Per-epoch state of an in-flight demote-heal recompute: the pinned `Output` (read
-/// once from the boundary block — supplies the `dealers()` scope AND the
-/// `validate_share_on_poly` self-check target) and the pinned `dealers()` logs this
-/// node still needs to fetch (`want`, drained as the resolver delivers them). Bounded:
-/// inserted ONLY for a demoted `committee[E]` member-epoch within the retention window,
-/// removed on recompute-success or age-out.
+/// Per-epoch state of an in-flight demote-heal recompute: the pinned `Output` (the
+/// `validate_share_on_poly` self-check target), the artifact's pinned set mapped onto
+/// the committee (`dealer → hash`, the recompute's selection scope — the SAME input
+/// the live finalize scopes to) and the pinned bodies this node still needs to fetch
+/// (`want`, by exact `(dealer, hash)`, drained as the resolver delivers them).
+/// Bounded: inserted ONLY for a demoted `committee[E]` member-epoch within the
+/// retention window, removed on recompute-success or age-out.
 struct RecomputeState {
     outcome: DkgOutcome,
-    want: BTreeSet<PeerPubkey>,
+    pinned: BTreeMap<PeerPubkey, B256>,
+    want: BTreeSet<LogId>,
 }
 
 /// This node's SECRET SHARE per epoch it MINTED at, memoized by the actor during
@@ -246,6 +251,22 @@ fn ceremony_retain_floor(keys: impl Iterator<Item = u64>, now: u64, window: u64)
 /// Resolves committee[epoch] (the Commonware-ordered peer set) at a finalized
 /// state hash — provided by the launch site over the staking reader.
 pub type CommitteeFor = Arc<dyn Fn(u64) -> Option<Set<PeerPubkey>> + Send + Sync>;
+
+/// The artifact's pinned set (`idx → hash`, `idx` = position in `committee`) mapped
+/// onto the dealers it names: `dealer → hash`. An `idx` with no position in
+/// `committee` is skipped — the same deterministic skip
+/// `DkgCeremony::scoped_pinned_logs` applies, since nothing can be asked for a seat
+/// no roster has. THE one translation from "what the network pinned" to "which body
+/// of which dealer", shared by the in-window fetch and the past-boundary recompute.
+fn pinned_by_dealer(
+    committee: &Set<PeerPubkey>,
+    pinned: &BTreeMap<u8, B256>,
+) -> BTreeMap<PeerPubkey, B256> {
+    pinned
+        .iter()
+        .filter_map(|(idx, hash)| Some((committee.iter().nth(*idx as usize)?.clone(), *hash)))
+        .collect()
+}
 /// `recv()` on an optional mpsc receiver, or park forever when it is `None` — so the
 /// resolver and agreement branches of the actor's `select!` are inert on a node with
 /// neither wired (in-process / test default) without a second loop shape.
@@ -427,11 +448,12 @@ pub struct DkgActor<Se, Re, R> {
     /// and with no retransmit behind it, every confirmation that beat the first
     /// tick.
     last_height: Option<u64>,
-    /// Dealers whose LOG journal record failed to land, per target epoch. Excluded
-    /// from [`Self::publish_recorded_logs`] — this node holds the bytes in memory but
-    /// cannot back the claim across a restart. Retried from memory (not re-fetched:
-    /// the bytes are already here) on every publish edge, and cleared on success.
-    nondurable_logs: BTreeMap<u64, BTreeSet<PeerPubkey>>,
+    /// Logs (by `(dealer, hash)`) whose journal record failed to land, per target
+    /// epoch. Excluded from [`Self::publish_recorded_logs`] — this node holds the
+    /// bytes in memory but cannot back the claim across a restart. Retried from
+    /// memory (not re-fetched: the bytes are already here) on every publish edge,
+    /// and cleared on success.
+    nondurable_logs: BTreeMap<u64, BTreeSet<LogId>>,
     /// The registered clock pair whose DKG half this actor publishes, off the
     /// monotone clamp in [`Self::on_height`] — the single point every feeder's
     /// height lands at. `None` in tests and on any node that registers no clock.
@@ -480,6 +502,14 @@ pub struct DkgActor<Se, Re, R> {
     /// Not fatal: a share-less member is safe as a verifier, so it sits the epoch out
     /// instead of taking the node down.
     terminal_recompute: BTreeSet<u64>,
+    /// Proven dealer equivocations per target epoch — the pair of content hashes
+    /// each proven dealer signed (`DealerEquivocation`, the bodies stay in the
+    /// journal and the serve store under their own ids). Filled from
+    /// `Step::equivocation` on the live paths and from a resumed ceremony's own map
+    /// on a restart; OUTLIVES the ceremony (which finalize removes) and ages out
+    /// with every other per-epoch map in [`Self::sweep_epoch_state`]. The reader
+    /// today is the test; the state machine of 5.3 заход А turns it into `Conflict`.
+    equivocations: BTreeMap<u64, BTreeMap<PeerPubkey, DealerEquivocation>>,
     /// The dealer-log hash index this actor PUBLISHES (idx→hash of each recorded
     /// log) for the agreement plane to propose over and for share-confirmations to
     /// state. `None` ⇒ unwired (in-process/test default). Wired at the beacon-plane
@@ -612,6 +642,7 @@ where
             recompute_pending: BTreeMap::new(),
             pull_artifact: None,
             terminal_recompute: BTreeSet::new(),
+            equivocations: BTreeMap::new(),
             recorded_dkg_logs: None,
             confirmations,
             pinned_rx: None,
@@ -720,7 +751,8 @@ where
     /// shared `CeremonyStore`.
     pub fn with_recorded_logs(mut self, recorded: DkgLogIndex) -> Self {
         // The SAME handle on both sides: this actor writes it (`publish_recorded_logs`,
-        // which owns the per-dealer durability gate) and [`Confirmations`] reads it.
+        // which owns the per-`(dealer, hash)` durability gate) and [`Confirmations`]
+        // reads it.
         self.confirmations.set_recorded(recorded.clone());
         self.recorded_dkg_logs = Some(recorded);
         self
@@ -771,8 +803,8 @@ where
     /// authoritative and acking is safe. A write failure warns and returns `false`.
     ///
     /// It does NOT name which record failed, deliberately: the only identity that
-    /// matters here is the dealer a `PeerLog` belongs to, and the ceremony already
-    /// authenticated that key and hands it back as [`Step::recorded_dealer`]. The two
+    /// matters here is the `(dealer, hash)` a recorded log belongs to, and the ceremony
+    /// already authenticated that and hands it back as [`Step::recorded_log`]. The two
     /// recording call sites attribute from there.
     #[must_use]
     fn append_journal(&self, epoch: u64, records: Vec<JournalRecord>) -> bool {
@@ -1193,6 +1225,9 @@ where
         // so keeping the mark would only grow the set one entry per such epoch for
         // the life of the process.
         self.terminal_recompute.retain(|e| retained(*e));
+        // Evidence rides the same window: the journal that holds the two bodies is
+        // reclaimed here, so a pair kept longer would name bodies nobody can show.
+        self.equivocations.retain(|e, _| retained(*e));
         // The two one-shot `maybe_start` marks ride the same window. Both are keyed by
         // `target` (= `now + 1`), and neither was swept before — one entry per epoch, for
         // the life of the process.
@@ -1361,8 +1396,8 @@ where
         //    restarted/late node that lost peer logs) via the DKG-log recovery
         //    resolver — gated on the open window. The resolver owns retry / multi-peer
         //    fallback / rate-limiting / blocked-peer eviction, so this just hands it
-        //    the missing `{epoch, dealer}` keys (deduplicated by the resolver) each
-        //    tick; targeting aims at the known committee roster (the holders).
+        //    the missing `{epoch, dealer, hash}` keys (deduplicated by the resolver)
+        //    each tick; targeting aims at the known committee roster (the holders).
         self.fetch_missing_logs().await;
     }
 
@@ -1422,25 +1457,26 @@ where
         if self.nondurable_logs.is_empty() {
             return;
         }
-        let pending: Vec<(u64, Vec<PeerPubkey>)> = self
+        let pending: Vec<(u64, Vec<LogId>)> = self
             .nondurable_logs
             .iter()
             .map(|(e, set)| (*e, set.iter().cloned().collect()))
             .collect();
-        for (epoch, dealers) in pending {
-            for dealer in dealers {
-                let Some(reveal) = self
+        for (epoch, ids) in pending {
+            for id in ids {
+                // The record that backs THIS log — the evidence pair for the second
+                // half of an equivocation, a `PeerLog` otherwise — so a retry never
+                // downgrades a pair to a lone log.
+                let Some(record) = self
                     .ceremonies
                     .get(&epoch)
-                    .and_then(|c| c.signed_log(&dealer))
-                    .cloned()
+                    .and_then(|c| c.journal_record_for(&id))
                 else {
                     continue;
                 };
-                let record = JournalRecord::PeerLog(Box::new(reveal));
                 if self.append_journal(epoch, vec![record]) {
                     if let Some(set) = self.nondurable_logs.get_mut(&epoch) {
-                        set.remove(&dealer);
+                        set.remove(&id);
                     }
                 }
             }
@@ -1471,14 +1507,25 @@ where
             };
             let nondurable = self.nondurable_logs.get(e);
             for (idx, pk) in committee.iter().enumerate() {
+                let Some(hash) = c.signed_log_hash(pk) else {
+                    continue;
+                };
                 // A log this node holds but cannot back after a restart is NOT
                 // claimed: the index is what the agreement plane proposes from, and
                 // `Confirmations::mint` signs a `ShareConfirm` from this same index.
-                if nondurable.is_some_and(|set| set.contains(pk)) {
+                if nondurable.is_some_and(|set| set.contains(&(pk.clone(), hash))) {
                     continue;
                 }
-                if let Some(hash) = c.signed_log_hash(pk) {
-                    grew |= map.entry(*e).or_default().insert(idx as u8, hash).is_none();
+                // First-wins per seat, IN THE CODE and not only by the stability of
+                // the source: `Confirmations` and the agreement's widest-wins read the
+                // index as a set that never changes an entry in place
+                // (`confirmations.rs` module doc), so a seat once published is never
+                // overwritten here, whatever the ceremony answers later.
+                if let std::collections::btree_map::Entry::Vacant(seat) =
+                    map.entry(*e).or_default().entry(idx as u8)
+                {
+                    seat.insert(hash);
+                    grew = true;
                 }
             }
         }
@@ -1579,6 +1626,45 @@ where
                 "share-confirmation not recorded (unverifiable, or narrower than the one held)"
             );
         }
+    }
+
+    /// Record a dealer equivocation a ceremony step just PROVED: the pair goes
+    /// into [`Self::equivocations`] (outliving the ceremony, until the sweep), one
+    /// WARN line and one count per `(epoch, dealer)` — the step flags it exactly
+    /// once, on the pair's creation — naming both hashes so an operator can pull
+    /// the two bodies out of the journal. Called AFTER the journal append, and
+    /// `durable` says whether the evidence record landed: a pair whose record did
+    /// not is still a proven pair (the ban and the RAM copy hold), but the line
+    /// says so, because a restart would then lose it until the nondurable retry
+    /// re-appends it (`retry_nondurable_journals`). Nothing is sent on-chain (Д-6
+    /// defer, `DECISIONS.md`).
+    fn note_equivocation(&mut self, epoch: u64, dealer: Option<&PeerPubkey>, durable: bool) {
+        let Some(dealer) = dealer else {
+            return;
+        };
+        let Some(pair) = self
+            .ceremonies
+            .get(&epoch)
+            .and_then(|c| c.equivocation(dealer).copied())
+        else {
+            return;
+        };
+        self.equivocations
+            .entry(epoch)
+            .or_default()
+            .insert(dealer.clone(), pair);
+        self.metrics.dkg_dealer_equivocation.inc();
+        tracing::warn!(
+            target: "dpos::beacon",
+            epoch,
+            %dealer,
+            first = %pair.first,
+            second = %pair.second,
+            evidence = if durable { "journaled" } else { "nondurable" },
+            "live DKG: dealer signed TWO distinct valid logs for this epoch — pair kept as \
+             evidence, dealer locally banned from gossip for the epoch; the ceremony \
+             finalizes over whichever of its logs the agreement pinned"
+        );
     }
 
     fn drive_finalization(&mut self, rng: &mut impl CryptoRngCore) {
@@ -1696,12 +1782,14 @@ where
                     // by `sweep_epoch_state`, bounded scratch.
                     let adopted = self.adopt_share(e, &committee, out, share);
                     // The write-back is complete for this epoch, so its agreed set
-                    // is spent. Spent on a REFUSAL too: the pinned set is the
-                    // artifact's and re-running the same finalize over the same set
-                    // would produce the same off-polynomial share, so holding it
-                    // would only re-refuse on every tick. The epoch is verify-only.
-                    self.agreed_pinned.remove(&e);
+                    // is spent. On a REFUSAL it is KEPT: the ceremony is gone from
+                    // the map either way (nothing re-runs this finalize), and the
+                    // pinned `dealer → hash` set is what the recompute-heal that
+                    // `drive_recompute` starts on the next tick scopes its journal
+                    // selection to — without it the heal would have no way to name
+                    // which of a dealer's journaled bodies the network agreed on.
                     if adopted {
+                        self.agreed_pinned.remove(&e);
                         tracing::info!(
                             epoch = e,
                             height = self.height_now(),
@@ -1922,6 +2010,17 @@ where
                 // Seal-state is intrinsic to the resumed ceremony (dealer retired; our
                 // own log in `recorded` iff we sealed) — nothing to track separately.
                 let own_log_recorded = resumed.ceremony.own_log_recorded(&self.me_key.public_key());
+                // The journal's evidence pairs come back with the ceremony; the
+                // actor's copy is what outlives it (until the sweep). First-wins per
+                // dealer, as `insert_log` fixes a pair once: a pair the actor already
+                // holds is never replaced by a replayed one.
+                for (dealer, pair) in resumed.ceremony.equivocations() {
+                    self.equivocations
+                        .entry(target)
+                        .or_default()
+                        .entry(dealer.clone())
+                        .or_insert(*pair);
+                }
                 self.ceremonies.insert(target, resumed.ceremony);
                 out.extend(resumed.outgoing);
                 tracing::info!(
@@ -2092,16 +2191,14 @@ where
             // write failure the ack is WITHHELD: the dealer then reveals our point in its
             // own log, which the recompute recovers just as well — safe, no liveness loss.
             let durable = self.append_journal(epoch, step.journal);
+            self.note_equivocation(epoch, step.equivocation.as_ref(), durable);
             if !durable {
                 // The dealer comes from the ceremony, which `check`ed the signature to
                 // get it — NOT from `from`. A peer may relay another dealer's valid
                 // `Reveal`, and blaming the sender would leave the real dealer's
                 // unbacked claim published while suppressing an honest log.
-                if let Some(dealer) = step.recorded_dealer {
-                    self.nondurable_logs
-                        .entry(epoch)
-                        .or_default()
-                        .insert(dealer);
+                if let Some(id) = step.recorded_log {
+                    self.nondurable_logs.entry(epoch).or_default().insert(id);
                 }
             }
             if durable {
@@ -2117,8 +2214,8 @@ where
                 // The two claims made from here — the log's hash in the shared
                 // `recorded_dkg_logs` index, and the `ShareConfirm`
                 // `Confirmations::mint` signs from that same index — are gated on
-                // per-dealer durability in `publish_recorded_logs`: a dealer named in
-                // `nondurable_logs` is excluded from both. The ACK gate above stays
+                // per-`(dealer, hash)` durability in `publish_recorded_logs`: a log
+                // named in `nondurable_logs` is excluded from both. The ACK gate above stays
                 // separate because it answers a different question (is our own
                 // `Player.view` recoverable), and an ack once withheld is not retried.
                 self.drive_finalization(rng);
@@ -2149,20 +2246,27 @@ where
         }
     }
 
-    /// `fetch_targeted` the missing dealer logs of every open, shorthanded ceremony
-    /// via the DKG-log recovery resolver (§8.11.1). Bounded by the ceremony's own
+    /// `fetch_targeted` every PINNED body a ceremony lacks, by exact
+    /// `(epoch, dealer, hash)`, via the DKG-log recovery resolver (§8.11.1). The
+    /// pinned set — the artifact's `idx → hash`, mapped onto `committee[epoch]` — is
+    /// the ONLY source of what to ask for: it is the truth about which body of each
+    /// dealer is in force, and a dealer whose held log is a DIFFERENT body than the
+    /// pinned one is fetched exactly like one this node holds nothing of (R-002: the
+    /// per-dealer form called that dealer held and never asked). Before an artifact
+    /// there is nothing to ask for by hash — a ceremony still collecting relies on the
+    /// gossip `Reveal`s, and the agreement's own `verify` pulls a PROPOSAL's bodies by
+    /// the proposal's hashes (`dkg_agree::fetch_bodies`). Bounded by the ceremony's
     /// lifetime — `on_height`'s one retention window — and by nothing else, so a
     /// ceremony still holding an agreed set never stops asking for the bodies its
-    /// finalize needs. The resolver dedupes in-flight keys, so re-issuing the
-    /// missing set each tick is idempotent; targeting aims at the known committee
-    /// roster (the log holders, in `latest.primary` via the registry-union tracker).
-    /// No-op without a wired resolver (in-process/test default).
+    /// finalize needs. The resolver dedupes in-flight keys, so re-issuing the missing
+    /// set each tick is idempotent; targeting aims at the known committee roster
+    /// (the log holders, in `latest.primary` via the registry-union tracker). No-op
+    /// without a wired resolver (in-process/test default).
     ///
     /// Runs in `on_height` AFTER finalize + the past-boundary sweep, so `self.ceremonies`
     /// already reflects every drop; it then `retain`s the resolver's in-flight fetches to
     /// exactly the keys it (re)issues this tick — CANCELLING the fetches of any epoch that
-    /// finalized or was swept (incl. the unsatisfiable `{e,me}` of a pre-seal node that has
-    /// since finalized as a player), so the resolver stops re-issuing dead keys every
+    /// finalized or was swept, so the resolver stops re-issuing dead keys every
     /// `fetch_retry_timeout` for the life of the process (the slow request leak).
     async fn fetch_missing_logs(&mut self) {
         if self.resolver.is_none() {
@@ -2181,19 +2285,18 @@ where
         // in NEITHER set → still cancelled, preserving the stale-tail prune.
         let mut unreadable: BTreeSet<u64> = BTreeSet::new();
         for (e, c) in &self.ceremonies {
+            // Nothing pinned yet ⇒ nothing to name. The ceremony's presence in the
+            // map IS its lifetime — `on_height`'s one retention window is the only
+            // bound. Gating the fetch on a second, narrower clock would leave a
+            // retained ceremony holding an agreed set while no longer asking for
+            // the bodies its finalize needs.
+            let Some(agreed) = self.agreed_pinned.get(e) else {
+                continue;
+            };
             let Some(roster) = (self.committee_for)(*e) else {
                 unreadable.insert(*e);
                 continue;
             };
-            let n = roster.len();
-            // Once we hold every committee log there is nothing left to fetch.
-            if n == 0 || c.recorded_log_count() >= n {
-                continue;
-            }
-            // The ceremony's presence in the map IS its lifetime — `on_height`'s one
-            // retention window is the only bound. Gating the fetch on a second,
-            // narrower clock would leave a retained ceremony holding an agreed set
-            // while no longer asking for the bodies its finalize needs.
             // Target each fetch at the roster (the known holders). `fetch_targeted`
             // narrows within `latest.primary`; a committee member's logs are served
             // from any peer that holds them. The holders are in `latest.primary`
@@ -2208,33 +2311,30 @@ where
             else {
                 continue;
             };
-            let recorded = c.recorded_dealers();
-            for dealer in roster.iter() {
-                // A dealer whose log we already hold is served, not fetched. No `me`
-                // special-case: a torn-own-seal node re-fetches its OWN log like any
-                // missing dealer (the peers that recorded its broadcast serve it),
-                // re-passing the finalize gate once `me ∈ recorded`. A genuine pre-seal
-                // node issues ONE unsatisfiable `{e, me}` fetch per tick — deduped
-                // in-flight by the resolver, 16/s-capped, timing out as "no data", not
-                // re-blocked. Harmless.
-                if recorded.contains(dealer) {
+            for (dealer, hash) in pinned_by_dealer(&roster, &agreed.pinned) {
+                // A body we hold under exactly that hash is served, not fetched. No
+                // `me` special-case: a torn-own-seal node re-fetches its OWN pinned
+                // log like any missing body (the peers that recorded its broadcast
+                // serve it), re-passing the finalize gate once it is held.
+                if c.holds(&(dealer.clone(), hash)) {
                     continue;
                 }
                 requests.push((
                     DkgLogKey {
                         epoch: *e,
-                        dealer: dealer.clone(),
+                        dealer,
+                        hash,
                     },
                     targets.clone(),
                 ));
             }
         }
-        // Demote-heal fetches (§8.11.1): drive the pinned `dealers()` logs we still lack
-        // for each recompute_pending epoch, targeting the roster. This runs PAST the
+        // Demote-heal fetches (§8.11.1): drive the pinned bodies we still lack for
+        // each recompute_pending epoch, targeting the roster. This runs PAST the
         // boundary (bounded to the retention window by recompute_pending's own lifetime),
-        // which the in-window ceremony fetch above (gated at `epoch_start`) does not. The
-        // target set is exactly `dealers(E) − held`, so a log NO peer holds simply backs
-        // off with the epoch's age-out — never an unbounded storm.
+        // which the in-window ceremony fetch above does not. The target set is exactly
+        // `pinned(E) − held`, so a body NO peer holds simply backs off with the epoch's
+        // age-out — never an unbounded storm.
         for (e, st) in &self.recompute_pending {
             if st.want.is_empty() {
                 continue;
@@ -2255,11 +2355,12 @@ where
             else {
                 continue;
             };
-            for dealer in &st.want {
+            for (dealer, hash) in &st.want {
                 requests.push((
                     DkgLogKey {
                         epoch: *e,
                         dealer: dealer.clone(),
+                        hash: *hash,
                     },
                     targets.clone(),
                 ));
@@ -2268,10 +2369,9 @@ where
 
         // The keys we still WANT in flight after this tick = exactly the ones just
         // (re)issued. Drop everything else from the resolver so a finalized/swept epoch's
-        // fetches (and the unsatisfiable `{e,me}` of a node that has since finalized) stop
-        // retrying forever. `retain` needs an owned `'static` predicate, so move a snapshot
-        // set in. Re-issued keys are deduped by the resolver (in-flight), so this is purely
-        // a prune of the stale tail.
+        // fetches stop retrying forever. `retain` needs an owned `'static` predicate, so
+        // move a snapshot set in. Re-issued keys are deduped by the resolver (in-flight),
+        // so this is purely a prune of the stale tail.
         let wanted: BTreeSet<DkgLogKey> = requests.iter().map(|(k, _)| k.clone()).collect();
         let resolver = self.resolver.as_mut().expect("checked Some above");
         resolver
@@ -2382,22 +2482,41 @@ where
             if outcome.players() != &committee {
                 continue;
             }
-            // want = pinned dealers() − the dealer logs already in our retained journal.
+            // The pinned `dealer → hash` set is the heal's selection scope and its
+            // fetch list. It reaches this actor with the artifact itself
+            // (`on_artifact`, live or replayed at startup for a journaled epoch
+            // with no share) and is kept until the share is adopted or the epoch
+            // ages out. Absent here means the artifact is in the store but has not
+            // been delivered to this actor yet — a transient, re-asked next tick;
+            // starting a heal without it would have no way to name which of a
+            // dealer's journaled bodies the network agreed on.
+            let Some(agreed) = self.agreed_pinned.get(&e) else {
+                continue;
+            };
+            let pinned = pinned_by_dealer(&committee, &agreed.pinned);
+            // want = pinned bodies − the bodies already in our retained journal, by
+            // exact `(dealer, hash)`: a journaled OTHER body of a pinned dealer is
+            // not "held".
             let held = self.log_store.parse_journal(e);
-            let want: BTreeSet<PeerPubkey> = outcome
-                .dealers()
+            let want: BTreeSet<LogId> = pinned
                 .iter()
-                .filter(|d| !held.contains_key(*d))
-                .cloned()
+                .map(|(d, h)| (d.clone(), *h))
+                .filter(|id| !held.contains_key(id))
                 .collect();
             tracing::info!(
                 epoch = e,
                 want = want.len(),
-                dealers = outcome.dealers().len(),
+                pinned = pinned.len(),
                 "live DKG: demoted committee member detected — starting share recompute-heal"
             );
-            self.recompute_pending
-                .insert(e, RecomputeState { outcome, want });
+            self.recompute_pending.insert(
+                e,
+                RecomputeState {
+                    outcome,
+                    pinned,
+                    want,
+                },
+            );
         }
 
         // 3. Try the ready ones.
@@ -2523,9 +2642,9 @@ where
     }
 
     /// Attempt the scoped share recompute for each `recompute_pending` epoch whose
-    /// `want` is empty (we now hold every pinned dealer's log). Loads the retained
-    /// journal, runs the `dealers()`-scoped [`recompute_scoped`], and adopts the share
-    /// IFF it self-verifies against the pinned `Output` ([`validate_share_on_poly`]).
+    /// `want` is empty (we now hold every pinned body). Loads the retained journal,
+    /// runs the pinned-set-scoped [`recompute_scoped`], and adopts the share IFF it
+    /// self-verifies against the pinned `Output` ([`validate_share_on_poly`]).
     ///
     /// On adopt: persist + store `(PK_E, share)`, seed the serve cache (so peers can
     /// still fetch this epoch's logs while it is in-window), evict the now-superseded
@@ -2546,8 +2665,8 @@ where
             let Some(committee) = (self.committee_for)(e) else {
                 continue;
             };
-            let dealers = match self.recompute_pending.get(&e) {
-                Some(st) => st.outcome.dealers().clone(),
+            let pinned = match self.recompute_pending.get(&e) {
+                Some(st) => st.pinned.clone(),
                 None => continue,
             };
             let records = match self.load_journal(e) {
@@ -2561,7 +2680,7 @@ where
                 e,
                 committee.clone(),
                 self.me_key.clone(),
-                &dealers,
+                &pinned,
                 records,
             );
             // THE FORK-SAFETY GATE IS NO LONGER HERE — it is inside `adopt_share`,
@@ -2670,36 +2789,40 @@ where
         }
     }
 
-    /// Serve the encoded `SignedDealerLog` for `{epoch, dealer}`. The LIVE ceremony's
-    /// recorded `signed_logs` first — an epoch still collecting is only in memory, and
-    /// only this actor holds it — then fall through to [`DealerLogStore`], which owns
-    /// the cached and durable tiers (and the never-cache-a-negative rule that goes with
+    /// Serve the encoded `SignedDealerLog` held under exactly `{epoch, dealer, hash}`,
+    /// or nothing — never a dealer's OTHER log. The LIVE ceremony's recorded
+    /// `signed_logs` first — an epoch still collecting is only in memory, and only
+    /// this actor holds it — then fall through to [`DealerLogStore`], which owns the
+    /// cached and durable tiers (and the never-cache-a-negative rule that goes with
     /// them; see that module).
     ///
-    /// Returns `None` when no tier holds the log → we drop the responder → the resolver
-    /// sends an empty "no data" response → the requester retries another peer.
+    /// Returns `None` when no tier holds that body → we drop the responder → the
+    /// resolver sends an empty "no data" response → the requester retries another peer.
     fn serve_log(&mut self, key: &DkgLogKey) -> Option<Bytes> {
+        let id: LogId = (key.dealer.clone(), key.hash);
         if let Some(signed) = self
             .ceremonies
             .get(&key.epoch)
-            .and_then(|c| c.signed_log(&key.dealer))
+            .and_then(|c| c.signed_log(&id))
         {
             return Some(signed.encode());
         }
-        self.log_store.get(key.epoch, &key.dealer)
+        self.log_store.get(key.epoch, &id)
     }
 
-    /// Ingest a `SignedDealerLog` delivered by the resolver for `{epoch, dealer}`:
-    /// decode + re-`check` + record via the ceremony's peer-Reveal path, journal it,
+    /// Ingest a `SignedDealerLog` delivered by the resolver for `{epoch, dealer, hash}`:
+    /// decode + re-`check` + record via the ceremony's recording path, journal it,
     /// then drive finalize (a recovered log may complete the set). Returns the
     /// resolver `deliver` verdict — a TWO-VALUED API (`true` = clear the fetch + stop;
     /// `false` = block this peer + `add_retry` the key elsewhere; `resolver engine.rs`):
-    /// - `true` — the log `check`-verified AND was signed by the REQUESTED `key.dealer`
-    ///   (the fetch for `{epoch, dealer}` is now genuinely satisfied) or is an honest
-    ///   duplicate; OR there is no live ceremony for this epoch (already finalized/swept
-    ///   — the fetch is genuinely moot, so let it clear rather than block an honest peer).
-    /// - `false` — a genuine forgery (`check` fails), a valid log for the WRONG dealer
-    ///   (a peer answering a targeted fetch for D with D'), OR an UNDECODABLE delivery.
+    /// - `true` — the log `check`-verified AND is exactly the REQUESTED body (signed by
+    ///   `key.dealer`, hashing to `key.hash` — the fetch is now genuinely satisfied) or
+    ///   is an honest duplicate; OR there is no live ceremony for this epoch (already
+    ///   finalized/swept — the fetch is genuinely moot, so let it clear rather than
+    ///   block an honest peer).
+    /// - `false` — a genuine forgery (`check` fails), a valid log that is NOT the one
+    ///   asked for (a peer answering a targeted fetch for `(D, h)` with D' or with D's
+    ///   other body), OR an UNDECODABLE delivery.
     ///   An undecode must NOT return `true`: `true` marks the fetch SATISFIED (clears it),
     ///   so one peer serving garbage for `key` would permanently kill `key`'s recovery
     ///   with no log recorded. `false` keeps the fetch alive (`add_retry` → another peer).
@@ -2707,7 +2830,7 @@ where
     ///   resolver's two-valued deliver API (there is no "no-data, retry, don't block"
     ///   verdict on the deliver path — that only exists when the SERVER returns no data);
     ///   it is bounded + acceptable because a committee peer serving undecodable bytes for
-    ///   an EXPLICIT `{epoch,dealer}` fetch is anomalous, and keeping `key` recoverable
+    ///   an EXPLICIT `{epoch,dealer,hash}` fetch is anomalous, and keeping `key` recoverable
     ///   outweighs not-blocking one such peer.
     async fn ingest_log(
         &mut self,
@@ -2726,19 +2849,25 @@ where
             Err(_) => return false,
         };
         if let Some(c) = self.ceremonies.get_mut(&key.epoch) {
-            // Bind the delivered log to the REQUESTED `key.dealer`: a forgery or a valid
-            // log for a different dealer both return `false` (block + re-fetch `key`).
-            let (accepted, step) = c.ingest_signed_log(&key.dealer, signed);
+            // Bind the delivered log to the REQUESTED `(key.dealer, key.hash)`: a
+            // forgery, a valid log for a different dealer and the dealer's other body
+            // all return `false` (block + re-fetch `key`).
+            let (accepted, step) = c.ingest_signed_log(&(key.dealer.clone(), key.hash), signed);
             if accepted {
-                // Same attribution as the gossip path: the ceremony's `check`ed key,
-                // not `key.dealer`. They are equal here (`ingest_signed_log` rejects a
-                // log signed by anyone else), so one mechanism covers both sites.
-                if !self.append_journal(key.epoch, step.journal) {
-                    if let Some(dealer) = step.recorded_dealer {
+                // Same attribution as the gossip path: the ceremony's `check`ed id,
+                // not the key's. They are equal here (`ingest_signed_log` rejects
+                // anything else), so one mechanism covers both sites.
+                let durable = self.append_journal(key.epoch, step.journal);
+                // The pinned body of a dealer whose OTHER body arrived by gossip
+                // lands here — which is where a victim of a two-log dealer proves
+                // the equivocation.
+                self.note_equivocation(key.epoch, step.equivocation.as_ref(), durable);
+                if !durable {
+                    if let Some(id) = step.recorded_log {
                         self.nondurable_logs
                             .entry(key.epoch)
                             .or_default()
-                            .insert(dealer);
+                            .insert(id);
                     }
                 }
                 self.drive_finalization(rng);
@@ -2757,12 +2886,12 @@ where
 
     /// Ingest a resolver-delivered `SignedDealerLog` for a `recompute_pending` epoch
     /// whose live ceremony was already swept: re-`check` it against the pinned `Info`
-    /// and, iff it is a valid log signed by the REQUESTED `key.dealer`, JOURNAL it
-    /// (retained for the window) + drop the dealer from `want`, then attempt the scoped
-    /// recompute. Verdict mirrors the live-ceremony ingest: `true` = valid + correctly
-    /// targeted (or already held); `false` = a forgery, a wrong-dealer answer, or an
-    /// unverifiable committee read (block + re-fetch the key — never `true`, which would
-    /// clear a still-needed fetch).
+    /// and, iff it is exactly the REQUESTED body (signed by `key.dealer`, hashing to
+    /// `key.hash`), JOURNAL it (retained for the window) + drop the id from `want`,
+    /// then attempt the scoped recompute. Verdict mirrors the live-ceremony ingest:
+    /// `true` = valid + exactly the body asked for (or already held); `false` = a
+    /// forgery, a wrong-body answer, or an unverifiable committee read (block +
+    /// re-fetch the key — never `true`, which would clear a still-needed fetch).
     fn ingest_recompute_log(
         &mut self,
         key: &DkgLogKey,
@@ -2777,21 +2906,21 @@ where
             return false;
         };
         match signed.clone().check(&info) {
-            Some((pk, _)) if pk == key.dealer => {
+            Some((pk, _)) if pk == key.dealer && log_hash(&signed) == key.hash => {
                 let durable =
                     self.append_journal(key.epoch, vec![JournalRecord::PeerLog(Box::new(signed))]);
-                // Only mark the dealer satisfied + attempt recompute once the log is a
+                // Only mark the body satisfied + attempt recompute once the log is a
                 // DURABLE part of the journal the recompute reads; a non-durable write
                 // keeps `want` (retry the fetch next tick).
                 if durable {
                     if let Some(st) = self.recompute_pending.get_mut(&key.epoch) {
-                        st.want.remove(&key.dealer);
+                        st.want.remove(&(key.dealer.clone(), key.hash));
                     }
                     self.try_recompute_pending(rng);
                 }
                 true
             }
-            Some(_) => false, // a valid log, but for a different dealer than fetched
+            Some(_) => false, // a valid log, but not the body fetched
             None => false,    // a forgery
         }
     }
@@ -2870,6 +2999,9 @@ mod clock_tests {
     struct RecordingResolver {
         in_flight: Arc<std::sync::Mutex<BTreeSet<DkgLogKey>>>,
     }
+
+    /// The one-value-per-epoch memory a set of [`spawn_stub_agreement`]s share.
+    type Certified = Arc<std::sync::Mutex<BTreeMap<u64, Vec<(u8, B256)>>>>;
     impl commonware_resolver::Resolver for RecordingResolver {
         type Key = DkgLogKey;
         type PublicKey = PeerPubkey;
@@ -2973,10 +3105,18 @@ mod clock_tests {
     /// announcement, because that is the property the real plane has and one of
     /// these tests turns on: a node whose height feed has frozen still gets its
     /// epoch agreed. One target at a time is enough — no test here runs two.
+    ///
+    /// `certified` is the one thing the real plane has that a per-node stub does
+    /// not: ONE value per epoch across the committee. Stubs handed the same map
+    /// deliver the FIRST set any of them certified — so a node that holds less than
+    /// a quorum still receives the set its peers agreed, exactly as its instance
+    /// would, and then fetches the bodies that set names by hash. A fresh map per
+    /// spawn is the per-node behaviour.
     fn spawn_stub_agreement(
         ctx: &SimContext,
         recorded: DkgLogIndex,
         n: usize,
+        certified: Certified,
     ) -> (
         tokio::sync::mpsc::Sender<u64>,
         tokio::sync::mpsc::Receiver<AgreedArtifact>,
@@ -2991,6 +3131,9 @@ mod clock_tests {
                     continue;
                 }
                 let held: Vec<(u8, B256)> = loop {
+                    if let Some(set) = certified.lock().expect("certified").get(&epoch) {
+                        break set.clone();
+                    }
                     let held: Vec<(u8, B256)> = recorded
                         .read()
                         .ok()
@@ -2998,7 +3141,12 @@ mod clock_tests {
                         .map(|m| m.into_iter().collect())
                         .unwrap_or_default();
                     if held.len() >= quorum {
-                        break held;
+                        break certified
+                            .lock()
+                            .expect("certified")
+                            .entry(epoch)
+                            .or_insert(held)
+                            .clone();
                     }
                     c.sleep(Duration::from_millis(10)).await;
                 };
@@ -3079,7 +3227,7 @@ mod clock_tests {
             Arc::new(move |_epoch: u64| Some(set.clone()))
         };
         let (announce_tx, artifact_rx) =
-            spawn_stub_agreement(ctx, recorded.clone(), committee.len());
+            spawn_stub_agreement(ctx, recorded.clone(), committee.len(), Certified::default());
         let actor = DkgActor::new(
             b"FLUENT_DPOS_V1_clocktest".to_vec(),
             me,
@@ -3132,6 +3280,7 @@ mod clock_tests {
         interval: u64,
         share_dir: Option<PathBuf>,
         rng_seed: u64,
+        certified: Certified,
     ) -> tokio::sync::mpsc::Sender<u64> {
         let pk = me.public_key();
         let (sender, receiver) = oracle
@@ -3186,7 +3335,7 @@ mod clock_tests {
         };
         let recorded: DkgLogIndex = Arc::new(RwLock::new(BTreeMap::new()));
         let (announce_tx, artifact_rx) =
-            spawn_stub_agreement(ctx, recorded.clone(), committee.len());
+            spawn_stub_agreement(ctx, recorded.clone(), committee.len(), certified);
         let actor = DkgActor::new(
             b"FLUENT_DPOS_V1_clocktest".to_vec(),
             me,
@@ -3918,12 +4067,13 @@ mod clock_tests {
             );
 
             // `peer_logs[i]` is `keys[i+1]`'s sealed log; build the matching
-            // `{epoch, dealer}` key per log (`ingest_log` BINDS the delivered log to
-            // the requested `key.dealer`). `dealer0` = the first peer dealer.
+            // `{epoch, dealer, hash}` key per log (`ingest_log` BINDS the delivered
+            // log to the requested body). `dealer0` = the first peer dealer.
             let dealer0 = keys[1].public_key();
             let valid_key0 = DkgLogKey {
                 epoch: DETERMINISTIC_BOOTSTRAP_EPOCH,
                 dealer: dealer0.clone(),
+                hash: log_hash(&peer_logs[0]),
             };
 
             // A wrong-epoch delivery (no live ceremony for epoch 3) is honest — it
@@ -3931,6 +4081,7 @@ mod clock_tests {
             let wrong_epoch_key = DkgLogKey {
                 epoch: 3,
                 dealer: dealer0.clone(),
+                hash: log_hash(&peer_logs[0]),
             };
             let accepted = actor
                 .ingest_log(
@@ -4015,6 +4166,7 @@ mod clock_tests {
                 let key = DkgLogKey {
                     epoch: DETERMINISTIC_BOOTSTRAP_EPOCH,
                     dealer: keys[i + 1].public_key(),
+                    hash: log_hash(signed),
                 };
                 let ok = actor
                     .ingest_log(&key, Bytes::from(signed.encode().to_vec()), &mut arng)
@@ -4080,6 +4232,7 @@ mod clock_tests {
             let key = DkgLogKey {
                 epoch: 2,
                 dealer: keys[1].public_key(),
+                hash: B256::repeat_byte(0x22),
             };
             assert!(
                 actor.serve_log(&key).is_none(),
@@ -4095,7 +4248,8 @@ mod clock_tests {
                 assert!(actor
                     .serve_log(&DkgLogKey {
                         epoch: e,
-                        dealer: keys[1].public_key()
+                        dealer: keys[1].public_key(),
+                        hash: B256::repeat_byte(0x22),
                     })
                     .is_none());
             }
@@ -4167,9 +4321,14 @@ mod clock_tests {
             let mut actor =
                 standalone_actor_cf(&oracle, keys[0].clone(), committee_for, Some(dir.clone()))
                     .await;
+            let (dealer, signed) = logs
+                .iter()
+                .find(|(pk, _)| *pk == keys[1].public_key())
+                .expect("keys[1] sealed");
             let key = DkgLogKey {
                 epoch: 2,
-                dealer: keys[1].public_key(),
+                dealer: dealer.clone(),
+                hash: log_hash(signed),
             };
 
             // Committee unreadable → empty cold-load → None, and CRUCIALLY not cached.
@@ -4198,9 +4357,10 @@ mod clock_tests {
 
     /// [804] uncancelled-fetch leak — `fetch_missing_logs` CANCELS the resolver's
     /// in-flight fetches for an epoch that no longer has an open ceremony (finalized or
-    /// swept), so the resolver stops re-issuing dead `{epoch,dealer}` keys forever. An
-    /// open shorthanded ceremony issues its missing-dealer fetches; once the ceremony
-    /// leaves `ceremonies`, the next `fetch_missing_logs` `retain`s them away.
+    /// swept), so the resolver stops re-issuing dead `{epoch,dealer,hash}` keys
+    /// forever. An open ceremony holding an agreed set issues fetches for the pinned
+    /// bodies it lacks, by hash; once the ceremony leaves `ceremonies`, the next
+    /// `fetch_missing_logs` `retain`s them away.
     #[test]
     fn fetch_missing_logs_cancels_dead_fetches() {
         let runtime = deterministic::Runner::default();
@@ -4256,8 +4416,9 @@ mod clock_tests {
                 None,
             );
 
-            // Inject an OPEN shorthanded ceremony (node-0 started but no peer logs) so
-            // `fetch_missing_logs` issues fetches for the 3 missing peer dealers.
+            // Inject an OPEN shorthanded ceremony (node-0 started but no peer logs)
+            // holding an agreed set that pins a body at every peer seat, so
+            // `fetch_missing_logs` issues fetches for the 3 missing pinned bodies.
             let (cer, _step) = DkgCeremony::start(
                 b"FLUENT_DPOS_V1_clocktest",
                 DETERMINISTIC_BOOTSTRAP_EPOCH,
@@ -4266,11 +4427,31 @@ mod clock_tests {
             )
             .expect("start");
             actor.ceremonies.insert(DETERMINISTIC_BOOTSTRAP_EPOCH, cer);
-            // Within the open window (height < epoch_start(2)): fetches are issued.
+            let pinned: BTreeMap<u8, B256> = committee
+                .iter()
+                .enumerate()
+                .filter(|(_, pk)| **pk != keys[0].public_key())
+                .map(|(i, _)| (i as u8, B256::repeat_byte(0x40 + i as u8)))
+                .collect();
+            actor.agreed_pinned.insert(
+                DETERMINISTIC_BOOTSTRAP_EPOCH,
+                AgreedSet {
+                    pinned: pinned.clone(),
+                },
+            );
             actor.fetch_missing_logs().await;
-            assert!(
-                !in_flight.lock().unwrap().is_empty(),
-                "an open shorthanded ceremony issues missing-dealer fetches"
+            let expected: BTreeSet<DkgLogKey> = pinned
+                .iter()
+                .map(|(i, h)| DkgLogKey {
+                    epoch: DETERMINISTIC_BOOTSTRAP_EPOCH,
+                    dealer: committee.iter().nth(*i as usize).expect("seat").clone(),
+                    hash: *h,
+                })
+                .collect();
+            assert_eq!(
+                *in_flight.lock().unwrap(),
+                expected,
+                "an open ceremony with an agreed set fetches exactly the pinned bodies it lacks"
             );
 
             // Finalize/sweep the ceremony (remove it), then re-run fetch_missing_logs:
@@ -4359,12 +4540,22 @@ mod clock_tests {
             )
             .expect("start");
             actor.ceremonies.insert(DETERMINISTIC_BOOTSTRAP_EPOCH, cer);
+            // An agreed set pinning a body at every peer seat — what the fetch asks by.
+            let pinned: BTreeMap<u8, B256> = committee
+                .iter()
+                .enumerate()
+                .filter(|(_, pk)| **pk != keys[0].public_key())
+                .map(|(i, _)| (i as u8, B256::repeat_byte(0x40 + i as u8)))
+                .collect();
+            actor
+                .agreed_pinned
+                .insert(DETERMINISTIC_BOOTSTRAP_EPOCH, AgreedSet { pinned });
 
             // Committee readable → fetches issued.
             actor.fetch_missing_logs().await;
             assert!(
                 !in_flight.lock().unwrap().is_empty(),
-                "an open shorthanded ceremony issues missing-dealer fetches"
+                "an open ceremony with an agreed set issues fetches for the pinned bodies it lacks"
             );
 
             // Transient committee read failure while the ceremony is STILL live: the
@@ -4547,6 +4738,10 @@ mod clock_tests {
                 .ceremonies
                 .insert(DETERMINISTIC_BOOTSTRAP_EPOCH, cers.remove(&keys[0].public_key()).unwrap());
             let mut arng = StdRng::seed_from_u64(9);
+            let peer = keys[1].public_key();
+            let peer_hash = actor.ceremonies[&DETERMINISTIC_BOOTSTRAP_EPOCH]
+                .signed_log_hash(&peer)
+                .expect("the peer's log is recorded");
             actor.pin_recorded_as_agreed(DETERMINISTIC_BOOTSTRAP_EPOCH);
             actor.drive_finalization(&mut arng);
             assert!(
@@ -4555,10 +4750,10 @@ mod clock_tests {
             );
 
             // SERVE-AFTER-FINALIZE: a peer's log is still served from the serve cache.
-            let peer = keys[1].public_key();
             let key = DkgLogKey {
                 epoch: DETERMINISTIC_BOOTSTRAP_EPOCH,
                 dealer: peer.clone(),
+                hash: peer_hash,
             };
             assert!(
                 actor.serve_log(&key).is_some(),
@@ -4584,6 +4779,382 @@ mod clock_tests {
                 actor.serve_log(&key).is_none(),
                 "the finalized-log serve index is reclaimed once the epoch ages out of the retention window"
             );
+        });
+    }
+
+    /// R-002 on the actor's seams: a dealer of which this node holds a DIFFERENT
+    /// body than the pinned one is refetched BY THE PINNED HASH — the per-dealer
+    /// form called it held and never asked, which is how one Byzantine dealer left
+    /// an honest member shareless.
+    ///
+    /// Node 0 runs the committee[2] ceremony but receives, at dealer 1's seat, a
+    /// second valid log (`log2`) instead of the one everyone else recorded
+    /// (`log1`). The agreed set pins `log1` there. Then:
+    /// - `fetch_missing_logs` issues exactly ONE key: `(2, dealer1, h1)` — the
+    ///   pinned body, not the dealer; a fetch keyed by a zero hash (M2) is neither
+    ///   this key nor one any peer can answer;
+    /// - `serve_log` answers `(2, dealer1, h2)` (held) and nothing for `h1` or a
+    ///   zero hash — a server hands out the exact body or nothing;
+    /// - delivering `log1` under `(2, dealer1, h1)` is accepted, proves the
+    ///   equivocation (counter + evidence), completes the pinned set and finalizes
+    ///   the share; delivering it under `(2, dealer1, h2)` — the OTHER body's key —
+    ///   is refused (`deliver → false`), and the next tick asks for nothing more.
+    #[test]
+    fn a_held_body_that_is_not_the_pinned_one_is_refetched_by_the_pinned_hash() {
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            let oracle: Oracle<PeerPubkey, SimContext> = {
+                let (network, oracle) = Network::new(
+                    ctx.with_label("sim_net"),
+                    SimConfig {
+                        max_size: 1024 * 1024,
+                        disconnect_on_block: false,
+                        tracked_peer_sets: NZUsize!(4),
+                    },
+                );
+                network.start();
+                oracle
+            };
+            let mut rng = StdRng::seed_from_u64(0x2002);
+            let keys: Vec<Ed25519PrivateKey> = (0..4)
+                .map(|_| Ed25519PrivateKey::random(&mut rng))
+                .collect();
+            let committee = Set::from_iter_dedup(keys.iter().map(|k| k.public_key()));
+            oracle.manager().track(0, committee.clone()).await;
+            let ns = b"FLUENT_DPOS_V1_clocktest";
+            let (me0, d1) = (keys[0].public_key(), keys[1].public_key());
+
+            // Dealer 1's SECOND valid log over the same `Info` (independent
+            // polynomial, no acks ⇒ `TooManyReveals`, still `check`-valid) — what
+            // `testbed::byzantine_roles::TwoRevealSender` sends the victim.
+            let log2: DealerReveal = {
+                use commonware_cryptography::bls12381::dkg::Dealer;
+                let (d, _, _) = Dealer::<_, Ed25519PrivateKey>::start::<N3f1>(
+                    StdRng::seed_from_u64(0x5EC0),
+                    info_for_test(&committee),
+                    keys[1].clone(),
+                    None,
+                )
+                .expect("second dealer");
+                d.finalize::<N3f1>()
+            };
+            let h2 = log_hash(&log2);
+
+            // Run the 4 ceremonies to sealed; when dealer 1's `Reveal` reaches node 0,
+            // hand it `log2` instead.
+            let mut cers: BTreeMap<PeerPubkey, DkgCeremony> = BTreeMap::new();
+            let mut queue: Vec<(PeerPubkey, Outgoing)> = Vec::new();
+            for k in &keys {
+                let (cer, step) =
+                    DkgCeremony::start(ns, 2, committee.clone(), k.clone()).expect("start");
+                let from = k.public_key();
+                queue.extend(step.outgoing.into_iter().map(|o| (from.clone(), o)));
+                cers.insert(from, cer);
+            }
+            let deliver = |cers: &mut BTreeMap<PeerPubkey, DkgCeremony>,
+                           queue: &mut Vec<(PeerPubkey, Outgoing)>| {
+                while let Some((from, o)) = queue.pop() {
+                    let tos: Vec<PeerPubkey> = match &o.target {
+                        Target::Broadcast => cers.keys().filter(|p| **p != from).cloned().collect(),
+                        Target::Direct(to) => vec![to.clone()],
+                    };
+                    for to in tos {
+                        let body = match &o.msg.body {
+                            DkgBody::Reveal(_) if from == d1 && to == me0 => {
+                                DkgBody::Reveal(Box::new(log2.clone()))
+                            }
+                            body => body.clone(),
+                        };
+                        let more = cers.get_mut(&to).unwrap().handle(from.clone(), body);
+                        queue.extend(more.outgoing.into_iter().map(|m| (to.clone(), m)));
+                    }
+                }
+            };
+            deliver(&mut cers, &mut queue);
+            for k in &keys {
+                let step = cers.get_mut(&k.public_key()).unwrap().seal_dealings();
+                queue.extend(step.outgoing.into_iter().map(|o| (k.public_key(), o)));
+            }
+            deliver(&mut cers, &mut queue);
+            let h1 = cers[&keys[2].public_key()]
+                .signed_log_hash(&d1)
+                .expect("node 2 recorded dealer 1's sealed log");
+            let log1 = cers[&keys[2].public_key()]
+                .signed_log(&(d1.clone(), h1))
+                .expect("held")
+                .clone();
+            assert_ne!(h1, h2);
+            assert_eq!(
+                cers[&me0].signed_log_hash(&d1),
+                Some(h2),
+                "node 0 holds the OTHER body"
+            );
+            assert!(!cers[&me0].holds(&(d1.clone(), h1)));
+            // The agreed set: what nodes 1..3 recorded — `log1` at dealer 1's seat.
+            let pinned: BTreeMap<u8, B256> = committee
+                .iter()
+                .enumerate()
+                .map(|(i, pk)| {
+                    (
+                        i as u8,
+                        cers[&keys[2].public_key()]
+                            .signed_log_hash(pk)
+                            .expect("recorded"),
+                    )
+                })
+                .collect();
+            let seat1 = committee.iter().position(|pk| *pk == d1).expect("seat") as u8;
+            assert_eq!(pinned[&seat1], h1);
+
+            let (sender, receiver) = oracle
+                .control(me0.clone())
+                .register(
+                    fluentbase_p2p::constants::BEACON_CHANNEL,
+                    fluentbase_p2p::constants::BEACON_QUOTA,
+                )
+                .await
+                .expect("register");
+            let committee_for: CommitteeFor = {
+                let set = committee.clone();
+                Arc::new(move |_e: u64| Some(set.clone()))
+            };
+            let resolver = RecordingResolver::default();
+            let in_flight = resolver.in_flight.clone();
+            let mut actor = DkgActor::new(
+                ns.to_vec(),
+                keys[0].clone(),
+                sender,
+                receiver,
+                Some(resolver),
+                None,
+                committee_for,
+                Arc::new(RwLock::new(BTreeMap::new())),
+                Arc::new(tokio::sync::Notify::new()),
+                ACTIVATION,
+                INTERVAL,
+                crate::beacon::metrics::BeaconMetrics::default(),
+                None,
+                ShareState::Plaintext,
+                None,
+            );
+            actor
+                .ceremonies
+                .insert(DETERMINISTIC_BOOTSTRAP_EPOCH, cers.remove(&me0).unwrap());
+            let mut arng = StdRng::seed_from_u64(9);
+            actor
+                .on_artifact(
+                    agreed_artifact(
+                        DETERMINISTIC_BOOTSTRAP_EPOCH,
+                        pinned.iter().map(|(i, h)| (*i, *h)).collect(),
+                    ),
+                    &mut arng,
+                )
+                .await;
+            assert!(
+                actor
+                    .ceremonies
+                    .contains_key(&DETERMINISTIC_BOOTSTRAP_EPOCH),
+                "the pinned body at dealer 1's seat is not held, so nothing finalized yet"
+            );
+
+            // (1) The fetch names the PINNED body of dealer 1, and only that.
+            let wanted = DkgLogKey {
+                epoch: DETERMINISTIC_BOOTSTRAP_EPOCH,
+                dealer: d1.clone(),
+                hash: h1,
+            };
+            assert_eq!(
+                *in_flight.lock().unwrap(),
+                BTreeSet::from([wanted.clone()]),
+                "a dealer whose held body is not the pinned one is fetched by the pinned hash"
+            );
+
+            // (2) The server side: the exact body or nothing.
+            let key_h2 = DkgLogKey {
+                hash: h2,
+                ..wanted.clone()
+            };
+            let key_zero = DkgLogKey {
+                hash: B256::ZERO,
+                ..wanted.clone()
+            };
+            assert!(
+                actor.serve_log(&key_h2).is_some(),
+                "the held body is served under its hash"
+            );
+            assert!(
+                actor.serve_log(&wanted).is_none(),
+                "a body this node does not hold is not served, dealer match or not"
+            );
+            assert!(
+                actor.serve_log(&key_zero).is_none(),
+                "a zero hash names no body — there is no wildcard"
+            );
+
+            // (3) The delivery: `log1` under the OTHER body's key is refused ...
+            assert!(
+                !actor.ingest_log(&key_h2, log1.encode(), &mut arng).await,
+                "a valid log that is not the body asked for does not satisfy the fetch"
+            );
+            assert_eq!(actor.metrics.dkg_dealer_equivocation.get(), 0);
+            // ... and under its own key it is recorded, proves the pair, and finalizes.
+            assert!(actor.ingest_log(&wanted, log1.encode(), &mut arng).await);
+            assert_eq!(
+                actor.metrics.dkg_dealer_equivocation.get(),
+                1,
+                "the victim is where both bodies meet: the equivocation is proven on the refetch"
+            );
+            assert!(
+                !actor
+                    .ceremonies
+                    .contains_key(&DETERMINISTIC_BOOTSTRAP_EPOCH),
+                "every pinned body held ⇒ finalized"
+            );
+            assert!(
+                actor
+                    .store
+                    .read()
+                    .unwrap()
+                    .contains_key(&DETERMINISTIC_BOOTSTRAP_EPOCH),
+                "the victim holds its share"
+            );
+            assert_eq!(actor.metrics.dkg_ceremony_ok.get(), 1);
+            // The evidence outlives the ceremony in the serve store: both bodies servable.
+            assert!(actor.serve_log(&wanted).is_some() && actor.serve_log(&key_h2).is_some());
+            actor.fetch_missing_logs().await;
+            assert!(
+                in_flight.lock().unwrap().is_empty(),
+                "nothing left to fetch once the pinned set is held"
+            );
+
+            // (4) The evidence OUTLIVES the ceremony: the actor's own copy names the
+            // pair after finalize, and only the retention sweep removes it.
+            assert_eq!(
+                actor
+                    .equivocations
+                    .get(&DETERMINISTIC_BOOTSTRAP_EPOCH)
+                    .and_then(|m| m.get(&d1))
+                    .copied(),
+                Some(DealerEquivocation {
+                    first: h2,
+                    second: h1
+                }),
+                "the pair is held by the actor after the ceremony is gone"
+            );
+            actor
+                .on_height(
+                    INTERVAL * (DETERMINISTIC_BOOTSTRAP_EPOCH + JOURNAL_RETENTION_EPOCHS + 1),
+                    &mut arng,
+                )
+                .await;
+            assert!(
+                !actor
+                    .equivocations
+                    .contains_key(&DETERMINISTIC_BOOTSTRAP_EPOCH),
+                "the pair ages out with the epoch's other maps at the sweep"
+            );
+        });
+    }
+
+    /// The evidence pair survives a RESTART: a journal carrying a
+    /// `DealerEquivocation` record resumes into a ceremony that holds the pair, and
+    /// the actor copies it out on the resume edge — so the copy that outlives the
+    /// ceremony exists on a restarted node too, not only on the one that proved it.
+    #[test]
+    fn an_evidence_pair_comes_back_with_the_journal_on_a_restart() {
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            let oracle: Oracle<PeerPubkey, SimContext> = {
+                let (network, oracle) = Network::new(
+                    ctx.with_label("sim_net"),
+                    SimConfig {
+                        max_size: 1024 * 1024,
+                        disconnect_on_block: false,
+                        tracked_peer_sets: NZUsize!(4),
+                    },
+                );
+                network.start();
+                oracle
+            };
+            let (committee, key0, journal) = node0_pre_seal_journal_full_sealed(57);
+            oracle.manager().track(0, committee.clone()).await;
+            let keys: Vec<Ed25519PrivateKey> = {
+                let mut rng = StdRng::seed_from_u64(57);
+                (0..4)
+                    .map(|_| Ed25519PrivateKey::random(&mut rng))
+                    .collect()
+            };
+            assert_eq!(keys[0].public_key(), key0.public_key());
+            let d1 = keys[1].public_key();
+            let info = info_for_test(&committee);
+            // Dealer 1's sealed log (from the journal) and a SECOND valid one.
+            let log1 = journal
+                .iter()
+                .find_map(|r| match r {
+                    JournalRecord::PeerLog(l)
+                        if l.clone().check(&info).is_some_and(|(pk, _)| pk == d1) =>
+                    {
+                        Some((**l).clone())
+                    }
+                    _ => None,
+                })
+                .expect("dealer 1's log is journaled");
+            let log2: DealerReveal = {
+                use commonware_cryptography::bls12381::dkg::Dealer;
+                let (d, _, _) = Dealer::<_, Ed25519PrivateKey>::start::<N3f1>(
+                    StdRng::seed_from_u64(0x5EC1),
+                    info.clone(),
+                    keys[1].clone(),
+                    None,
+                )
+                .expect("second dealer");
+                d.finalize::<N3f1>()
+            };
+            let (h1, h2) = (log_hash(&log1), log_hash(&log2));
+            assert_ne!(h1, h2);
+
+            let dir = fresh_share_dir("evidence-restart");
+            std::fs::create_dir_all(&dir).expect("mkdir");
+            for r in journal {
+                share_state::append_journal(&dir, 2, &r, &ShareState::Plaintext).expect("append");
+            }
+            share_state::append_journal(
+                &dir,
+                2,
+                &JournalRecord::DealerEquivocation(Box::new(log1), Box::new(log2)),
+                &ShareState::Plaintext,
+            )
+            .expect("append evidence");
+
+            let mut actor =
+                standalone_actor(&oracle, key0, committee.clone(), Some(dir.clone())).await;
+            assert!(
+                actor.equivocations.is_empty(),
+                "a fresh actor holds no evidence"
+            );
+            // The restart proper: `maybe_start(2)` resumes the journal (player-only,
+            // past the seal deadline).
+            let mut arng = StdRng::seed_from_u64(9);
+            actor.on_height(SEAL_DEADLINE + 1, &mut arng).await;
+            assert!(
+                actor
+                    .ceremonies
+                    .contains_key(&DETERMINISTIC_BOOTSTRAP_EPOCH),
+                "the journal resumed the ceremony"
+            );
+            assert_eq!(
+                actor
+                    .equivocations
+                    .get(&DETERMINISTIC_BOOTSTRAP_EPOCH)
+                    .and_then(|m| m.get(&d1))
+                    .copied(),
+                Some(DealerEquivocation {
+                    first: h1,
+                    second: h2
+                }),
+                "the replayed pair is copied out of the resumed ceremony"
+            );
+            let _ = std::fs::remove_dir_all(&dir);
         });
     }
 
@@ -5654,10 +6225,18 @@ mod clock_tests {
 
             // (c) R1: cold cache + present journal ⇒ the cold-miss parse serves a peer's
             // log. An in-memory serve index that a restart wipes returns `None` here.
-            let peer_key = DkgLogKey {
-                epoch: 2,
-                dealer: keys[1].public_key(),
+            let log_of = |i: usize| -> DkgLogKey {
+                let (pk, signed) = logs
+                    .iter()
+                    .find(|(pk, _)| *pk == keys[i].public_key())
+                    .expect("sealed");
+                DkgLogKey {
+                    epoch: 2,
+                    dealer: pk.clone(),
+                    hash: log_hash(signed),
+                }
             };
+            let peer_key = log_of(1);
             assert!(
                 actor.serve_log(&peer_key).is_some(),
                 "a restarted node serves a finalized epoch's log from the journal-backed cache (R1)"
@@ -5670,10 +6249,7 @@ mod clock_tests {
 
             // (e) burst bound: a second serve for the SAME epoch (different dealer) is a
             // cache hit — NO additional parse.
-            let peer_key2 = DkgLogKey {
-                epoch: 2,
-                dealer: keys[2].public_key(),
-            };
+            let peer_key2 = log_of(2);
             assert!(actor.serve_log(&peer_key2).is_some());
             assert!(actor.serve_log(&peer_key).is_some());
             assert_eq!(
@@ -5747,9 +6323,14 @@ mod clock_tests {
                     share_state::append_journal(&dir, e, &rec, &ShareState::Plaintext)
                         .expect("append");
                 }
+                let (pk, signed) = logs
+                    .iter()
+                    .find(|(pk, _)| *pk == keys[1].public_key())
+                    .expect("keys[1] sealed");
                 peer0_keys.push(DkgLogKey {
                     epoch: e,
-                    dealer: keys[1].public_key(),
+                    dealer: pk.clone(),
+                    hash: log_hash(signed),
                 });
             }
 
@@ -5854,10 +6435,23 @@ mod clock_tests {
         } else {
             "res-plain"
         });
+        // ONE agreed value per epoch across the committee: the 6 holders certify the
+        // full set, and the RESTARTED victim receives that set — which is what names
+        // the bodies (incl. its own, in the torn case) it must fetch by hash. The
+        // pre-restart victim is kept off it (a per-node stub that never reaches the
+        // quorum): it crashes before its instance delivers anything, else it would
+        // fetch and finalize through its links to {1,2,3} before the restart and
+        // the restart would find a share on disk.
+        let certified = Certified::default();
         let mut sinks = Vec::new();
         for (i, k) in keys.iter().enumerate() {
             let store = Arc::new(RwLock::new(BTreeMap::new()));
             let dir_i = if i == 0 { Some(dir.clone()) } else { None };
+            let certified_i = if i == 0 {
+                Certified::default()
+            } else {
+                certified.clone()
+            };
             sinks.push(
                 spawn_dealer_resolved(
                     &ctx,
@@ -5869,6 +6463,7 @@ mod clock_tests {
                     INTERVAL,
                     dir_i,
                     7,
+                    certified_i,
                 )
                 .await,
             );
@@ -5913,6 +6508,7 @@ mod clock_tests {
                 INTERVAL,
                 Some(dir.clone()),
                 99,
+                certified.clone(),
             )
             .await
         } else {
@@ -6109,6 +6705,8 @@ mod clock_tests {
         >,
         committee: Set<PeerPubkey>,
         victims: BTreeSet<PeerPubkey>,
+        /// The victims' logs by `(dealer, hash)` — the shape `nondurable_logs` names.
+        victim_ids: BTreeSet<LogId>,
         recorded: DkgLogIndex,
         pool: ConfirmPool,
         me: PeerPubkey,
@@ -6210,6 +6808,10 @@ mod clock_tests {
         let committee = Set::from_iter_dedup(keys.iter().map(|k| k.public_key()));
         let logs = mint_committee_logs_at(&keys, &committee, DETERMINISTIC_BOOTSTRAP_EPOCH);
         let victims: BTreeSet<PeerPubkey> = victims_at.iter().map(|i| logs[*i].0.clone()).collect();
+        let victim_ids: BTreeSet<LogId> = victims_at
+            .iter()
+            .map(|i| (logs[*i].0.clone(), log_hash(&logs[*i].1)))
+            .collect();
 
         let good_dir = fresh_share_dir("nondurable-good");
         let bad_dir = fresh_share_dir("nondurable-bad");
@@ -6248,6 +6850,7 @@ mod clock_tests {
             let key = DkgLogKey {
                 epoch: DETERMINISTIC_BOOTSTRAP_EPOCH,
                 dealer: dealer.clone(),
+                hash: log_hash(signed),
             };
             assert!(
                 actor.ingest_log(&key, signed.encode(), &mut rng).await,
@@ -6258,6 +6861,7 @@ mod clock_tests {
             actor,
             committee,
             victims,
+            victim_ids,
             recorded,
             pool,
             me: keys[0].public_key(),
@@ -6285,8 +6889,8 @@ mod clock_tests {
 
             assert_eq!(
                 f.actor.nondurable_logs.get(&DETERMINISTIC_BOOTSTRAP_EPOCH),
-                Some(&BTreeSet::from([victim.clone()])),
-                "the fault landed on EXACTLY the victim: one failed append, named"
+                Some(&f.victim_ids),
+                "the fault landed on EXACTLY the victim's log: one failed append, named"
             );
             assert!(
                 !f.journaled_dealers().contains(&victim),
@@ -6475,6 +7079,7 @@ mod clock_tests {
                 let key = DkgLogKey {
                     epoch: TARGET,
                     dealer: dealer.clone(),
+                    hash: log_hash(signed),
                 };
                 assert!(actor.ingest_log(&key, signed.encode(), &mut rng).await);
             }
@@ -6504,6 +7109,7 @@ mod clock_tests {
                         key: DkgLogKey {
                             epoch: TARGET,
                             dealer: dealer.clone(),
+                            hash: log_hash(signed),
                         },
                         value: signed.encode(),
                         response,
@@ -6982,6 +7588,7 @@ mod clock_tests {
                 let key = DkgLogKey {
                     epoch: DETERMINISTIC_BOOTSTRAP_EPOCH,
                     dealer,
+                    hash: log_hash(&signed),
                 };
                 let _ = actor.ingest_log(&key, signed.encode(), &mut arng).await;
             }
@@ -7166,9 +7773,14 @@ mod clock_tests {
 
             let mut actor =
                 standalone_actor(&oracle, keys[0].clone(), committee, Some(dir.clone())).await;
+            let (dealer, signed) = logs
+                .iter()
+                .find(|(pk, _)| *pk == keys[1].public_key())
+                .expect("keys[1] sealed");
             let key = DkgLogKey {
                 epoch: 2,
-                dealer: keys[1].public_key(),
+                dealer: dealer.clone(),
+                hash: log_hash(signed),
             };
             assert!(
                 actor.serve_log(&key).is_some(),
@@ -7237,6 +7849,8 @@ mod clock_tests {
             )
             .expect("dkg");
             let missing = outcome.dealers().iter().next().cloned().expect("a dealer");
+            // The body the artifact pinned for that dealer — what the heal asks for.
+            let missing_hash = B256::repeat_byte(0x5A);
 
             let me = keys[0].clone();
             let (sender, receiver) = oracle
@@ -7270,12 +7884,14 @@ mod clock_tests {
                 ShareState::Plaintext,
                 None,
             );
-            // A demote-heal already in flight for epoch 2, still wanting `missing`.
+            // A demote-heal already in flight for epoch 2, still wanting `missing`'s
+            // pinned body.
             actor.recompute_pending.insert(
                 2,
                 RecomputeState {
                     outcome,
-                    want: BTreeSet::from([missing.clone()]),
+                    pinned: BTreeMap::from([(missing.clone(), missing_hash)]),
+                    want: BTreeSet::from([(missing.clone(), missing_hash)]),
                 },
             );
 
@@ -7285,8 +7901,9 @@ mod clock_tests {
                 in_flight.lock().unwrap().contains(&DkgLogKey {
                     epoch: 2,
                     dealer: missing,
+                    hash: missing_hash,
                 }),
-                "recompute_pending keeps fetching the missing pinned dealer PAST the boundary"
+                "recompute_pending keeps fetching the missing pinned body PAST the boundary, by hash"
             );
         });
     }
@@ -7397,13 +8014,27 @@ mod clock_tests {
                 })
             };
             actor.outcome_at = Some(outcome_at);
+            // The artifact itself reaches the actor too (live from the instance, or
+            // replayed at startup for a journaled epoch with no share): its pinned
+            // set is what the heal scopes to and fetches by.
+            let mut arng = StdRng::seed_from_u64(9);
+            actor
+                .on_artifact(
+                    agreed_artifact(2, pinned_canon.iter().map(|(i, h)| (*i, *h)).collect()),
+                    &mut arng,
+                )
+                .await;
 
             // now == 2 (height = epoch_start(2)). The actor self-detects the demote.
-            let mut arng = StdRng::seed_from_u64(9);
             actor.on_height(BOUNDARY, &mut arng).await;
             assert!(
                 actor.recompute_pending.contains_key(&2),
                 "the actor self-detected the demote and began recomputing"
+            );
+            assert_eq!(
+                actor.recompute_pending[&2].want,
+                BTreeSet::from([(held_dealer.clone(), log_hash(&held_log))]),
+                "the heal wants exactly the held-back pinned body, by hash"
             );
             assert!(
                 actor.store.read().unwrap().get(&2).is_none(),
@@ -7419,6 +8050,7 @@ mod clock_tests {
             let key = DkgLogKey {
                 epoch: 2,
                 dealer: held_dealer.clone(),
+                hash: log_hash(&held_log),
             };
             let accepted = actor.ingest_log(&key, held_log.encode(), &mut arng).await;
             assert!(accepted, "the delivered pinned-dealer log is accepted");
@@ -7769,6 +8401,8 @@ mod clock_tests {
             // two copies this test needs are re-parsed from the wire encoding.
             let outcome_bytes = crate::beacon::outcome::encode_outcome(&outcome);
             let missing = outcome.dealers().iter().next().cloned().expect("a dealer");
+            // The body the artifact pinned for that dealer — what the heal asks for.
+            let missing_hash = B256::repeat_byte(0x5A);
 
             // Epoch 2's journal on disk — the heal inputs, before the sweep reclaims
             // them.
@@ -7833,13 +8467,14 @@ mod clock_tests {
                 let asked = asked.clone();
                 Arc::new(move |epoch: u64| asked.lock().expect("asked").push(epoch))
             });
-            // A heal already in flight for epoch 2, still short one pinned dealer log.
+            // A heal already in flight for epoch 2, still short one pinned body.
             actor.recompute_pending.insert(
                 2,
                 RecomputeState {
                     outcome: crate::beacon::outcome::parse_outcome(&outcome_bytes)
                         .expect("re-parse"),
-                    want: BTreeSet::from([missing.clone()]),
+                    pinned: BTreeMap::from([(missing.clone(), missing_hash)]),
+                    want: BTreeSet::from([(missing.clone(), missing_hash)]),
                 },
             );
             assert!(
@@ -8022,6 +8657,14 @@ mod clock_tests {
             });
 
             let mut arng = StdRng::seed_from_u64(9);
+            // The artifact reaches the actor too — its pinned set is what the heal
+            // scopes to.
+            actor
+                .on_artifact(
+                    agreed_artifact(2, pinned_canon.iter().map(|(i, h)| (*i, *h)).collect()),
+                    &mut arng,
+                )
+                .await;
             actor.on_height(BOUNDARY, &mut arng).await; // now = 2
 
             assert!(
@@ -8880,7 +9523,7 @@ mod clock_tests {
                     Some(hash) => (i as u8, hash),
                     None => {
                         missing_dealer = Some(pk.clone());
-                        (i as u8, alloy_primitives::keccak256(withheld.encode()))
+                        (i as u8, log_hash(&withheld))
                     }
                 })
                 .collect();
@@ -8899,6 +9542,7 @@ mod clock_tests {
             let key = DkgLogKey {
                 epoch: DETERMINISTIC_BOOTSTRAP_EPOCH,
                 dealer: missing_dealer,
+                hash: log_hash(&withheld),
             };
             assert!(
                 actor.ingest_log(&key, withheld.encode(), &mut rng).await,

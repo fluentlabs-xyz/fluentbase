@@ -57,7 +57,7 @@ use crate::{
     outer::SharedMux,
 };
 
-/// The resolver mailbox both beacon subjects — the `{epoch, dealer}` dealer log
+/// The resolver mailbox both beacon subjects — the `{epoch, dealer, hash}` dealer log
 /// and the epoch-key artifact — ride.
 pub(crate) type BeaconResolver = commonware_resolver::p2p::Mailbox<BeaconFetchKey, PeerPubkey>;
 
@@ -331,7 +331,7 @@ where
             consumer: handler.clone(),
             producer: handler,
             mailbox_size: RESOLVER_MAILBOX,
-            me: Some(me),
+            me: Some(me.clone()),
             initial: RESOLVER_INITIAL,
             timeout: RESOLVER_TIMEOUT,
             fetch_retry_timeout: RESOLVER_RETRY,
@@ -343,7 +343,7 @@ where
 
     // ONE pull for both consumers, so they share the per-epoch throttle that bounds
     // how often this node asks its peers for the same artifact.
-    let pull = ArtifactPull::new(context.with_label("artifact_pull"), bridge);
+    let pull = ArtifactPull::new(context.with_label("artifact_pull"), bridge, Some(me));
     let acquire: AcquireMint = {
         let pull = pull.clone();
         let mailbox = mailbox.clone();
@@ -415,7 +415,10 @@ struct PlaneAcquire<E: Clock, M> {
 impl<E, M> AcquireArtifact for PlaneAcquire<E, M>
 where
     E: Clock + Send + Sync,
-    M: commonware_resolver::Resolver<Key = BeaconFetchKey> + Clone + Send + Sync,
+    M: commonware_resolver::Resolver<Key = BeaconFetchKey, PublicKey = PeerPubkey>
+        + Clone
+        + Send
+        + Sync,
 {
     fn fetch(&self, minted_at: u64) -> BoxFuture<'_, bool> {
         Box::pin(async move {

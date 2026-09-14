@@ -207,7 +207,7 @@ pub(crate) struct AgreementConfig<P, R, L> {
     pub me: PeerPubkey,
     /// Peer provider for the body engine.
     pub peers: P,
-    /// The existing `{epoch, dealer}` dealer-log resolver mailbox, which is what
+    /// The existing `{epoch, dealer, hash}` dealer-log resolver mailbox, which is what
     /// lets a parked `verify` drive the repair that ends its own park.
     pub logs: R,
     /// `epoch → idx → keccak256(SignedDealerLog)` for the logs this node holds.
@@ -519,7 +519,7 @@ pub struct AgreementPlaneConfig<P, R> {
     /// `committee[target_epoch]` is covered as the incoming record of the epoch the
     /// agreement runs in. The same reachability the dealer-log resolver rides.
     pub peers: P,
-    /// The `{epoch, dealer}` dealer-log resolver, narrowed to the log key space.
+    /// The `{epoch, dealer, hash}` dealer-log resolver, narrowed to the log key space.
     pub logs: R,
     pub recorded: DkgLogIndex,
     /// The beacon actor's pinned-set seam. One sender, one [`PinnedMailbox`] per

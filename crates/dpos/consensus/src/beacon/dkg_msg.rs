@@ -25,7 +25,7 @@
 //!
 //! DKG-log RECOVERY (a mid-window-restarted member re-fetching never-received dealer
 //! logs) is NOT a body here — it rides the `commonware_resolver::p2p` engine on
-//! `BEACON_RESOLVER_CHANNEL`, keyed by `{epoch, dealer}` (see
+//! `BEACON_RESOLVER_CHANNEL`, keyed by `{epoch, dealer, hash}` (see
 //! [`crate::beacon::log_resolver`]). The former best-effort `LogRequest`/`LogResponse`
 //! gossip pull was replaced by it (§8.11.1).
 

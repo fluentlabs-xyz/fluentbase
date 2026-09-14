@@ -374,12 +374,27 @@ pub(crate) enum JournalRecord {
     /// resume rebuilds `unsent` (who has acked) and does not re-reveal an already-acked
     /// player (§8.11.1). NOT secret (acks travel in the clear), but framed uniformly.
     OwnDealerAck(PeerPubkey, Box<Ack>),
+    /// EVIDENCE that one dealer signed two distinct `check`-valid logs for this epoch:
+    /// `(first, second)` in the order this node recorded them. Written INSTEAD of a
+    /// `PeerLog` for the second log on the live paths, so the one record that
+    /// restores the local ban after a restart is the record that restores the second
+    /// body. Replay records through the same rule as the live path, so a journal
+    /// that holds BOTH bodies as plain `PeerLog`s (the past-boundary heal writes
+    /// those, `actor.rs::ingest_recompute_log`) proves the pair again without this
+    /// record — this record is what makes the pair durable when only ONE body is
+    /// journaled on its own. Self-contained on replay (`DkgCeremony::resume`): both
+    /// halves must re-`check` as the SAME dealer under DIFFERENT hashes, else the
+    /// record is dropped whole and neither body is recorded from it. Public data
+    /// (signed logs), framed uniformly with the rest; the codec (`parse_journal_inner`)
+    /// decodes the two bodies and checks nothing — the replay does.
+    DealerEquivocation(Box<DealerReveal>, Box<DealerReveal>),
 }
 
 const REC_RECEIVED_DEALING: u8 = 0;
 const REC_OWN_SEAL: u8 = 1;
 const REC_PEER_LOG: u8 = 2;
 const REC_OWN_DEALER_ACK: u8 = 3;
+const REC_DEALER_EQUIVOCATION: u8 = 4;
 
 /// The tagless inner frame of a journal record: `rec_tag(1) ‖ body`. Both
 /// `ShareState` variants carry this — `TAG_PLAINTEXT` writes `tag ‖ inner`,
@@ -405,6 +420,11 @@ fn journal_inner(record: &JournalRecord) -> Vec<u8> {
             buf.push(REC_OWN_DEALER_ACK);
             player.write(&mut buf);
             ack.write(&mut buf);
+        }
+        JournalRecord::DealerEquivocation(first, second) => {
+            buf.push(REC_DEALER_EQUIVOCATION);
+            first.write(&mut buf);
+            second.write(&mut buf);
         }
     }
     buf
@@ -473,6 +493,13 @@ fn parse_journal_inner(inner: &[u8], committee_size: NonZeroU32) -> eyre::Result
             let ack = Ack::read_cfg(&mut body, &())
                 .map_err(|e| eyre::eyre!("parse journal ack: {e:?}"))?;
             JournalRecord::OwnDealerAck(player, Box::new(ack))
+        }
+        REC_DEALER_EQUIVOCATION => {
+            let first = DealerReveal::read_cfg(&mut body, &committee_size)
+                .map_err(|e| eyre::eyre!("parse journal equivocation first log: {e:?}"))?;
+            let second = DealerReveal::read_cfg(&mut body, &committee_size)
+                .map_err(|e| eyre::eyre!("parse journal equivocation second log: {e:?}"))?;
+            JournalRecord::DealerEquivocation(Box::new(first), Box::new(second))
         }
         other => eyre::bail!("unknown journal record tag {other}"),
     };
@@ -985,7 +1012,7 @@ mod tests {
             .iter()
             .find(|k| k.public_key() == player_pk)
             .expect("player key");
-        let mut player = Player::new(info, player_key.clone()).expect("player");
+        let mut player = Player::new(info.clone(), player_key.clone()).expect("player");
         let ack = player
             .dealer_message::<N3f1>(dealer_key.public_key(), pub_msg.clone(), priv_msg.clone())
             .expect("ack");
@@ -993,6 +1020,13 @@ mod tests {
             .receive_player_ack(player_pk.clone(), ack.clone())
             .expect("receive ack");
         let log = dealer.finalize::<N3f1>();
+        // A second, independently dealt log of the SAME dealer (no acks ⇒ all
+        // reveals) — the other half of an equivocation pair.
+        let (second_dealer, _, _) =
+            Dealer::start::<N3f1>(&mut rng, info.clone(), dealer_key.clone(), None)
+                .expect("second start");
+        let second = second_dealer.finalize::<N3f1>();
+        assert_ne!(second.encode(), log.encode(), "the two logs differ");
 
         let records = vec![
             JournalRecord::ReceivedDealing(
@@ -1002,7 +1036,8 @@ mod tests {
             ),
             JournalRecord::OwnDealerAck(player_pk, Box::new(ack)),
             JournalRecord::OwnSeal(Box::new(log.clone())),
-            JournalRecord::PeerLog(Box::new(log)),
+            JournalRecord::PeerLog(Box::new(log.clone())),
+            JournalRecord::DealerEquivocation(Box::new(log), Box::new(second)),
         ];
         (records, n)
     }
@@ -1026,6 +1061,13 @@ mod tests {
                 (JournalRecord::OwnDealerAck(p0, a0), JournalRecord::OwnDealerAck(p1, a1)) => {
                     assert_eq!(p0, p1, "{state}: dealer-ack player key");
                     assert_eq!(a0.encode(), a1.encode(), "{state}: PlayerAck");
+                }
+                (
+                    JournalRecord::DealerEquivocation(f0, s0),
+                    JournalRecord::DealerEquivocation(f1, s1),
+                ) => {
+                    assert_eq!(f0.encode(), f1.encode(), "{state}: equivocation first log");
+                    assert_eq!(s0.encode(), s1.encode(), "{state}: equivocation second log");
                 }
                 _ => panic!("{state}: record-kind mismatch"),
             }

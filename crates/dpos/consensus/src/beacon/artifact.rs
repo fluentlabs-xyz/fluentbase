@@ -111,10 +111,10 @@ use commonware_cryptography::bls12381::primitives::{sharing::Sharing, variant::M
 use commonware_parallel::Sequential;
 use commonware_runtime::{Clock, Handle, Metrics, Spawner, Storage};
 use commonware_storage::metadata::{Config as MetadataConfig, Error as MetadataError, Metadata};
-use commonware_utils::sequence::U64;
+use commonware_utils::{sequence::U64, vec::NonEmptyVec};
 use fluentbase_bls::{
     beacon::dkg_namespace, beacon::GroupPublic, fluent_namespace, scheme::build_verifier,
-    EpochCommittee, Scheme as BlsScheme,
+    EpochCommittee, PeerPubkey, Scheme as BlsScheme,
 };
 use fluentbase_p2p::constants::MAX_COMMITTEE_SIZE;
 // Only [`verify_artifact_from_snapshot`] speaks the snapshot type, and that is
@@ -1667,17 +1667,87 @@ impl ArtifactBridge {
 pub struct ArtifactPull<E: Clock> {
     context: E,
     bridge: ArtifactBridge,
-    /// Earliest time a pull for each epoch may touch the network again.
-    next_allowed: Arc<Mutex<HashMap<u64, SystemTime>>>,
+    /// Per-epoch pull state — ONE map, ONE retention rule ([`Self::throttle`]
+    /// ages it, a held artifact removes it), so the rotation cursor can never
+    /// outlive the throttle slot it rides with.
+    slots: Arc<Mutex<HashMap<u64, PullSlot>>>,
+    /// This node's own peer key, skipped by the rotation (a member pulling its own
+    /// committee's artifact — the §5.4 partial-success heal — must not spend an
+    /// attempt asking itself). `None` where the puller has no identity (tests).
+    me: Option<PeerPubkey>,
+}
+
+/// What one epoch's pulls carry between attempts.
+#[derive(Clone, Copy, Debug)]
+struct PullSlot {
+    /// Earliest time a pull for the epoch may touch the network again.
+    next_allowed: SystemTime,
+    /// Pulls issued so far — the round-robin cursor over `committee[epoch]` that
+    /// [`ArtifactPull::minter_to_ask`] advances.
+    cursor: usize,
 }
 
 impl<E: Clock> ArtifactPull<E> {
-    pub fn new(context: E, bridge: ArtifactBridge) -> Self {
+    pub fn new(context: E, bridge: ArtifactBridge, me: Option<PeerPubkey>) -> Self {
         Self {
             context,
             bridge,
-            next_allowed: Arc::new(Mutex::new(HashMap::new())),
+            slots: Arc::new(Mutex::new(HashMap::new())),
+            me,
         }
+    }
+
+    /// Drop the epoch's slot: the artifact is held, nothing will be pulled again.
+    fn forget(&self, epoch: u64) {
+        self.slots
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(&epoch);
+    }
+
+    /// The ONE member of `committee[epoch]` this attempt asks, rotating through the
+    /// committee one member per pull; `None` when the committee is unreadable (the
+    /// fetch then goes untargeted, to whoever the resolver ranks first).
+    ///
+    /// The minters hold the artifact first, so they are who to ask — and asking ONE
+    /// of them per attempt is what keeps the pull live. The resolver ranks peers by
+    /// response time, and a fast `NotYet` is a fast response: an untargeted fetch
+    /// re-asks the same non-holder for as long as it keeps answering, while a peer
+    /// it never asked stays at the `initial` estimate and never comes first.
+    /// Measured on the stand (`a_zero_overlap_boundary_is_crossed_by_acquiring_the_
+    /// other_halfs_key`, 2026-09-14): the outgoing half of a zero-overlap boundary
+    /// asked its OWN half 272 times for the incoming half's artifact and never once a
+    /// minter — it had only crossed before because the in-window dealer-log fetches
+    /// of the time happened to penalise those same neighbours' scores. Rotating the
+    /// target makes a member that keeps answering `NotYet` — not converged yet, or
+    /// lying — cost one attempt, never the pull. A target the resolver does not
+    /// track costs one [`PULL_TIMEOUT`] and moves on; this node itself is skipped.
+    fn minter_to_ask(&self, epoch: u64) -> Option<NonEmptyVec<PeerPubkey>> {
+        let committee = (self.bridge.committee)(epoch)?;
+        let others: Vec<&PeerPubkey> = committee
+            .bimap
+            .iter()
+            .filter(|pk| self.me.as_ref() != Some(*pk))
+            .collect();
+        if others.is_empty() {
+            return None;
+        }
+        let target = {
+            let mut slots = self
+                .slots
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            // `throttle` claimed the slot just before; an absent one (a test that
+            // never throttled) starts a fresh walk.
+            let slot = slots.entry(epoch).or_insert(PullSlot {
+                next_allowed: self.context.current(),
+                cursor: 0,
+            });
+            let target = others[slot.cursor % others.len()].clone();
+            slot.cursor = slot.cursor.wrapping_add(1);
+            target
+        };
+        NonEmptyVec::try_from(vec![target]).ok()
     }
 
     /// One bounded pull for `epoch`.
@@ -1694,12 +1764,23 @@ impl<E: Clock> ArtifactPull<E> {
     /// probing peers for a key nobody is waiting on any more.
     pub async fn pull<R>(&self, resolver: &mut R, epoch: u64) -> Option<PullAnswer>
     where
-        R: commonware_resolver::Resolver<Key = crate::beacon::log_resolver::BeaconFetchKey>,
+        R: commonware_resolver::Resolver<
+            Key = crate::beacon::log_resolver::BeaconFetchKey,
+            PublicKey = PeerPubkey,
+        >,
     {
         if let Some(held) = self.bridge.store.get(epoch) {
+            self.forget(epoch);
             return Some(PullAnswer::Have(held));
         }
         self.throttle(epoch).await;
+        // A delivery during the throttle sleep woke only the waiters of that
+        // moment; re-read the store before registering, or this attempt would sit
+        // out the whole `PULL_TIMEOUT` for an artifact already held.
+        if let Some(held) = self.bridge.store.get(epoch) {
+            self.forget(epoch);
+            return Some(PullAnswer::Have(held));
+        }
 
         let (tx, rx) = oneshot::channel();
         self.bridge
@@ -1710,12 +1791,18 @@ impl<E: Clock> ArtifactPull<E> {
             .or_default()
             .push(tx);
         let key = crate::beacon::log_resolver::BeaconFetchKey::Artifact { epoch };
-        resolver.fetch(key.clone()).await;
+        match self.minter_to_ask(epoch) {
+            Some(minter) => resolver.fetch_targeted(key.clone(), minter).await,
+            None => resolver.fetch(key.clone()).await,
+        }
 
         let answer = tokio::select! {
             answer = rx => answer.ok(),
             () = self.context.sleep(PULL_TIMEOUT) => None,
         };
+        if matches!(answer, Some(PullAnswer::Have(_))) {
+            self.forget(epoch);
+        }
         if answer.is_none() {
             self.bridge.metrics.dkg_artifact_pull_exhausted.inc();
             debug!(
@@ -1754,22 +1841,39 @@ impl<E: Clock> ArtifactPull<E> {
     async fn throttle(&self, epoch: u64) {
         let now = self.context.current();
         let wait = {
-            let mut next = self
-                .next_allowed
+            let mut slots = self
+                .slots
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            // An epoch whose slot has already passed is indistinguishable from an
-            // absent one, so the map keeps only the epochs it is still holding
-            // back — otherwise it grows one entry per epoch ever pulled, forever.
-            next.retain(|_, at| *at > now);
-            let at = next.get(&epoch).copied().unwrap_or(now);
-            let wait = at.duration_since(now).unwrap_or_default();
-            next.insert(epoch, at.max(now) + PULL_MIN_INTERVAL);
+            // THE retention rule: an epoch nobody has pulled for a whole
+            // `PULL_MIN_INTERVAL + PULL_TIMEOUT` is done with (its caller gave up
+            // or got the artifact elsewhere), so its slot — throttle AND cursor —
+            // goes; otherwise the map grows one entry per epoch ever pulled,
+            // forever. The `PULL_TIMEOUT` term is what keeps a walk alive across
+            // attempts: an attempt may take the whole timeout, longer than the
+            // interval, and dropping the cursor between two attempts would restart
+            // the rotation at the same member every time.
+            slots.retain(|_, slot| slot.next_allowed + PULL_TIMEOUT > now);
+            let slot = slots.entry(epoch).or_insert(PullSlot {
+                next_allowed: now,
+                cursor: 0,
+            });
+            let wait = slot.next_allowed.duration_since(now).unwrap_or_default();
+            slot.next_allowed = slot.next_allowed.max(now) + PULL_MIN_INTERVAL;
             wait
         };
         if !wait.is_zero() {
             self.context.sleep(wait).await;
         }
+    }
+
+    /// Epochs with a live pull slot — the bound the retention rule keeps. Test-only.
+    #[cfg(test)]
+    fn live_slots(&self) -> usize {
+        self.slots
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .len()
     }
 }
 
@@ -1793,7 +1897,7 @@ mod tests {
     use commonware_math::algebra::Random as _;
     use commonware_resolver::Resolver;
     use commonware_runtime::{deterministic, Runner as _};
-    use commonware_utils::{ordered::BiMap, ordered::Set, vec::NonEmptyVec, N3f1, TryCollect as _};
+    use commonware_utils::{ordered::BiMap, ordered::Set, N3f1, TryCollect as _};
     use fluentbase_bls::{keys::ValidatorBlsKeypair, scheme::build_signer, BlsPubkey, PeerPubkey};
     use fluentbase_staking_reader::reader::{ConsensusKeys, ValidatorWithKeys};
     use rand_08::{rngs::StdRng, SeedableRng as _};
@@ -2504,6 +2608,8 @@ mod tests {
         silent: bool,
         fetches: Arc<Mutex<Vec<u64>>>,
         cancels: Arc<Mutex<Vec<u64>>>,
+        /// The peer each targeted fetch named, in order.
+        targets: Arc<Mutex<Vec<PeerPubkey>>>,
     }
 
     impl Resolver for FakeResolver {
@@ -2528,7 +2634,16 @@ mod tests {
             );
         }
         async fn fetch_all(&mut self, _: Vec<Self::Key>) {}
-        async fn fetch_targeted(&mut self, _: Self::Key, _: NonEmptyVec<Self::PublicKey>) {}
+        // Targeting narrows who is asked; the fake network's one peer answers
+        // regardless, so a targeted fetch is the untargeted one plus a record of
+        // the target.
+        async fn fetch_targeted(&mut self, key: Self::Key, targets: NonEmptyVec<Self::PublicKey>) {
+            self.targets
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .extend(targets.iter().cloned());
+            self.fetch(key).await;
+        }
         async fn fetch_all_targeted(&mut self, _: Vec<(Self::Key, NonEmptyVec<Self::PublicKey>)>) {}
         async fn cancel(&mut self, key: Self::Key) {
             if let crate::beacon::log_resolver::BeaconFetchKey::Artifact { epoch } = key {
@@ -2559,8 +2674,9 @@ mod tests {
                 silent: false,
                 fetches: Arc::new(Mutex::new(Vec::new())),
                 cancels: Arc::new(Mutex::new(Vec::new())),
+                targets: Arc::new(Mutex::new(Vec::new())),
             };
-            let pull = ArtifactPull::new(context.clone(), fetching.clone());
+            let pull = ArtifactPull::new(context.clone(), fetching.clone(), None);
 
             // The peer has not converged yet — the normal state for most of `E`.
             assert!(
@@ -2632,8 +2748,9 @@ mod tests {
                 silent: false,
                 fetches: Arc::new(Mutex::new(Vec::new())),
                 cancels: Arc::new(Mutex::new(Vec::new())),
+                targets: Arc::new(Mutex::new(Vec::new())),
             };
-            let pull = ArtifactPull::new(context.clone(), fetching);
+            let pull = ArtifactPull::new(context.clone(), fetching, None);
 
             let start = context.current();
             for _ in 0..4 {
@@ -2650,6 +2767,25 @@ mod tests {
                     .len(),
                 4
             );
+            // Each attempt is addressed to ONE minter, and successive attempts walk
+            // the committee in its Commonware order: a member that keeps answering
+            // `NotYet` costs one attempt, never the pull. (The resolver ranks peers
+            // by response time; an untargeted fetch re-asks a fast non-holder
+            // forever — measured on the stand, see `minter_to_ask`.)
+            let minters: Vec<PeerPubkey> = epoch_committee_from_snapshot(&c.snapshot(TARGET))
+                .expect("committee")
+                .bimap
+                .iter()
+                .cloned()
+                .collect();
+            assert_eq!(
+                *resolver
+                    .targets
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner),
+                minters[..4].to_vec(),
+                "four attempts, four different minters, in committee order"
+            );
             let elapsed = context.current().duration_since(start).expect("monotonic");
             assert!(
                 elapsed >= PULL_MIN_INTERVAL * 3,
@@ -2665,6 +2801,113 @@ mod tests {
             assert!(
                 context.current().duration_since(before).expect("monotonic") < PULL_MIN_INTERVAL,
                 "the throttle is per epoch, not global"
+            );
+
+            // The slot map is bounded by ONE rule: an epoch nobody pulled for a whole
+            // interval + timeout is forgotten (throttle and rotation cursor alike),
+            // and a held artifact forgets its epoch at once — no entry per epoch ever
+            // pulled, forever.
+            assert_eq!(pull.live_slots(), 2, "two epochs in flight, two slots");
+            context.sleep(PULL_MIN_INTERVAL + PULL_TIMEOUT).await;
+            assert_eq!(
+                pull.live_slots(),
+                2,
+                "nothing is dropped before its slot is stale"
+            );
+            context.sleep(Duration::from_millis(1)).await;
+            assert!(matches!(
+                pull.pull(&mut resolver, TARGET + 6).await,
+                Some(PullAnswer::NotYet)
+            ));
+            assert_eq!(
+                pull.live_slots(),
+                1,
+                "a pull ages the stale slots out and keeps only its own"
+            );
+            // Held locally (the store hit that short-circuits the network): forgotten.
+            let mine = artifact(&c, TARGET + 6);
+            assert!(resolver.fetching.store.insert(TARGET + 6, mine));
+            assert!(matches!(
+                pull.pull(&mut resolver, TARGET + 6).await,
+                Some(PullAnswer::Have(_))
+            ));
+            assert_eq!(pull.live_slots(), 0, "a held artifact forgets its slot");
+
+            // The production shape skips the puller itself: a member pulling its
+            // own committee's artifact walks the OTHER members only, in order,
+            // wrapping — an attempt is never spent asking oneself. (A puller of its
+            // own, so its walk starts fresh; `TARGET` is the one epoch whose
+            // committee the fake bridge can read.)
+            let me = minters[1].clone();
+            let member =
+                ArtifactPull::new(context.clone(), resolver.fetching.clone(), Some(me.clone()));
+            let asked_before = resolver
+                .targets
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .len();
+            for _ in 0..4 {
+                assert!(matches!(
+                    member.pull(&mut resolver, TARGET).await,
+                    Some(PullAnswer::NotYet)
+                ));
+            }
+            let asked: Vec<PeerPubkey> = resolver
+                .targets
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)[asked_before..]
+                .to_vec();
+            assert_eq!(
+                asked,
+                vec![
+                    minters[0].clone(),
+                    minters[2].clone(),
+                    minters[3].clone(),
+                    minters[0].clone()
+                ],
+                "a member walks the other members, wrapping, and never asks itself"
+            );
+            assert!(!asked.contains(&me));
+
+            // An artifact that lands DURING the throttle sleep is found before the
+            // network is asked: the sleep answers only the waiters of its moment,
+            // so the store is re-read after it — otherwise this attempt would wait
+            // out the whole `PULL_TIMEOUT` for a body already held.
+            assert!(matches!(
+                pull.pull(&mut resolver, TARGET + 8).await,
+                Some(PullAnswer::NotYet)
+            ));
+            let issued = resolver
+                .fetches
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .len();
+            let landing = artifact(&c, TARGET + 8);
+            let store = resolver.fetching.store.clone();
+            drop(context.with_label("landing").spawn(move |ctx| async move {
+                ctx.sleep(Duration::from_secs(1)).await;
+                assert!(store.insert(TARGET + 8, landing));
+            }));
+            assert!(
+                matches!(
+                    pull.pull(&mut resolver, TARGET + 8).await,
+                    Some(PullAnswer::Have(_))
+                ),
+                "an artifact held by the end of the throttle is answered from the store"
+            );
+            assert_eq!(
+                resolver
+                    .fetches
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .len(),
+                issued,
+                "and the network is not asked for it"
+            );
+            assert_eq!(
+                pull.live_slots(),
+                0,
+                "the found artifact forgets its slot too"
             );
         });
     }

@@ -1,5 +1,7 @@
 //! The dealer-log serve store: the CACHED + DURABLE tiers behind "give me the
-//! `SignedDealerLog` for `{epoch, dealer}`".
+//! `SignedDealerLog` for `{epoch, dealer, hash}`" — the exact body, never "a log of
+//! that dealer": an equivocating dealer's two logs are both servable, each under its
+//! own hash.
 //!
 //! The DKG-log recovery `Producer` ([`DkgActor::serve_log`](crate::beacon::actor)) has
 //! three sources, in order: the LIVE ceremony's recorded `signed_logs`, the bounded
@@ -50,13 +52,12 @@
 
 use crate::beacon::{
     actor::CommitteeFor,
-    ceremony::checked_serve_map,
+    ceremony::{checked_serve_map, LogId},
     dkg_msg::DealerReveal,
     share_state::{self, JournalLoad, ShareState},
 };
 use bytes::Bytes;
 use commonware_codec::Encode as _;
-use fluentbase_bls::PeerPubkey;
 use std::{collections::BTreeMap, num::NonZeroU32, path::PathBuf, sync::Arc};
 
 /// Test-only counter of cold-cache journal parses, so the fetch-burst-bound test can
@@ -66,8 +67,9 @@ use std::{collections::BTreeMap, num::NonZeroU32, path::PathBuf, sync::Arc};
 pub(crate) static COLD_PARSE_COUNT: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(0);
 
-/// One epoch's servable dealer logs. `Arc` so a serve clones a cheap handle.
-pub(crate) type ServeMap = Arc<BTreeMap<PeerPubkey, DealerReveal>>;
+/// One epoch's servable dealer logs, by `(dealer, hash)`. `Arc` so a serve clones a
+/// cheap handle.
+pub(crate) type ServeMap = Arc<BTreeMap<LogId, DealerReveal>>;
 
 /// Cached + durable dealer-log lookup for the DKG-log recovery `Producer`. See the
 /// module docs — in particular the never-cache-a-negative invariant this type owns.
@@ -104,18 +106,19 @@ impl DealerLogStore {
         }
     }
 
-    /// Serve the encoded `SignedDealerLog` for `{epoch, dealer}` from the cache, or —
-    /// on a miss — from a ONE-TIME parse of the durable journal, cached IFF it produced
-    /// anything. A cache hit does no per-request BLS `check`.
+    /// Serve the encoded `SignedDealerLog` held under exactly `(epoch, id)` from the
+    /// cache, or — on a miss — from a ONE-TIME parse of the durable journal, cached
+    /// IFF it produced anything. A cache hit does no per-request BLS `check`.
     ///
-    /// `None` when neither tier holds the log; the caller drops the responder, the
-    /// resolver sends an empty "no data" response and the requester retries elsewhere.
-    pub(crate) fn get(&mut self, epoch: u64, dealer: &PeerPubkey) -> Option<Bytes> {
+    /// `None` when neither tier holds that exact body (a dealer's OTHER log is not an
+    /// answer); the caller drops the responder, the resolver sends an empty "no data"
+    /// response and the requester retries elsewhere.
+    pub(crate) fn get(&mut self, epoch: u64, id: &LogId) -> Option<Bytes> {
         if let Some(logs) = self.cache.get(&epoch) {
-            return logs.get(dealer).map(|s| s.encode());
+            return logs.get(id).map(|s| s.encode());
         }
         let logs = self.parse_journal(epoch);
-        let bytes = logs.get(dealer).map(|s| s.encode());
+        let bytes = logs.get(id).map(|s| s.encode());
         self.cache_positive(epoch, logs);
         bytes
     }
@@ -126,13 +129,14 @@ impl DealerLogStore {
     /// An empty map is DROPPED, not stored (the invariant). A successful finalize ran
     /// over a dealer-quorum of recorded logs, so this cannot be empty in practice; the
     /// guard is here so the rule holds for the type, not for one caller's argument.
-    pub(crate) fn seed(&mut self, epoch: u64, logs: BTreeMap<PeerPubkey, DealerReveal>) {
+    pub(crate) fn seed(&mut self, epoch: u64, logs: BTreeMap<LogId, DealerReveal>) {
         self.cache_positive(epoch, Arc::new(logs));
     }
 
     /// Parse the epoch's journal WITHOUT touching the cache — the recompute-heal's
-    /// "which pinned dealer logs do I already hold?" read, which asks about an epoch it
-    /// is not (yet) serving and must not warm the serve path on that question alone.
+    /// "which pinned `(dealer, hash)` bodies do I already hold?" read, which asks about
+    /// an epoch it is not (yet) serving and must not warm the serve path on that
+    /// question alone.
     pub(crate) fn parse_journal(&self, epoch: u64) -> ServeMap {
         let Some(dir) = &self.share_dir else {
             return Arc::new(BTreeMap::new());
@@ -203,9 +207,11 @@ impl DealerLogStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_primitives::B256;
     use commonware_cryptography::{ed25519::PrivateKey as Ed25519PrivateKey, Signer as _};
     use commonware_math::algebra::Random as _;
     use commonware_utils::ordered::Set;
+    use fluentbase_bls::PeerPubkey;
     use rand_08::{rngs::StdRng, SeedableRng as _};
 
     /// The never-cache-a-negative invariant at the store's own seam, on BOTH entry
@@ -243,10 +249,10 @@ mod tests {
         // never grow the cache ([954]), and each stays a MISS rather than a cached
         // negative, so a later servable parse of the same epoch is still reachable
         // ([965] — the poison this rule exists to prevent).
-        let dealer = keys[1].public_key();
+        let id = (keys[1].public_key(), B256::repeat_byte(0x11));
         for epoch in 1_000u64..1_050 {
             assert!(
-                store.get(epoch, &dealer).is_none(),
+                store.get(epoch, &id).is_none(),
                 "an epoch with no journal serves no log"
             );
             assert!(
