@@ -171,7 +171,7 @@ jobs:
         # Binds the image digest to this workflow, this repository and the commit that built it.
         # release.yml verifies the attestation with `gh attestation verify` before it builds
         # inside the image, which is what turns the pulled digest into a checked value.
-        uses: actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f # v3.2.0
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           subject-digest: ${{ steps.build.outputs.digest }}
