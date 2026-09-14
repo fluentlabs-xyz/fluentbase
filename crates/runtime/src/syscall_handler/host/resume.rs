@@ -16,6 +16,13 @@ pub fn syscall_resume_handler(
     params: &[Value],
     result: &mut [Value],
 ) -> Result<(), TrapCode> {
+    // Reject non-root callers before copying unmetered guest memory.
+    if caller.data().call_depth > 0 {
+        Err(syscall_process_exit_code(caller, ExitCode::RootCallOnly))
+    } else {
+        Ok(())
+    }?;
+
     let (call_id, return_data_ptr, return_data_len, exit_code, fuel16_ptr) = (
         params[0].i32().unwrap() as u32,
         params[1].i32().unwrap() as usize,
@@ -81,4 +88,65 @@ pub fn syscall_resume_impl(
         // We return `call_id` as exit code, it's safe since exit code can't be positive
         result.exit_code,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::executor::RuntimeFactoryExecutor;
+    use fluentbase_types::{import_linker_v1_preview, keccak256, Address, BytecodeOrHash};
+    use rwasm::{CompilationConfig, RwasmModule};
+
+    #[test]
+    fn resume_checks_call_depth_before_guest_memory() {
+        // Exercise the return-data pointer, length, and fuel pointer independently.
+        [(-1, 1, 0), (0, -1, 0), (0, 0, -1)]
+            .into_iter()
+            .for_each(|(return_data_ptr, return_data_len, fuel16_ptr)| {
+                let wasm = wat::parse_str(format!(
+                    r#"(module
+                        (import "fluentbase_v1preview" "_resume"
+                            (func $resume (param i32 i32 i32 i32 i32) (result i32)))
+                        (memory (export "memory") 1)
+                        (func (export "main")
+                            i32.const 0
+                            i32.const {return_data_ptr}
+                            i32.const {return_data_len}
+                            i32.const 0
+                            i32.const {fuel16_ptr}
+                            call $resume
+                            drop))"#
+                ))
+                .unwrap();
+                let import_linker = import_linker_v1_preview();
+                let config = CompilationConfig::default()
+                    .with_entrypoint_name("main".into())
+                    .with_import_linker(import_linker.clone());
+                let (module, _) = RwasmModule::compile(config, &wasm).unwrap();
+                let mut executor = RuntimeFactoryExecutor::new(import_linker);
+
+                [0, 1, 1024].into_iter().for_each(|call_depth| {
+                    let result = executor.execute(
+                        BytecodeOrHash::Bytecode {
+                            bytecode: module.clone(),
+                            hash: keccak256(&wasm),
+                            address: Address::ZERO,
+                        },
+                        RuntimeContext::default()
+                            .with_fuel_limit(100_000)
+                            .with_call_depth(call_depth),
+                    );
+                    let expected = if call_depth == 0 {
+                        ExitCode::MemoryOutOfBounds
+                    } else {
+                        ExitCode::RootCallOnly
+                    };
+                    assert_eq!(
+                        result.exit_code,
+                        expected.into_i32(),
+                        "depth={call_depth}, return_data=({return_data_ptr}, {return_data_len}), fuel={fuel16_ptr}"
+                    );
+                });
+            });
+    }
 }
